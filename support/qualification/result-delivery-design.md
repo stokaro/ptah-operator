@@ -3,9 +3,10 @@
 Implementation design for [#586](https://github.com/stokaro/ptah-operator/issues/586).
 The target is stable 0.2.0. This document does not qualify the transport or
 authorize a release. Installed Jobs still use log frames. The storage, TLS
-delivery, live authorization, and runner command path are implemented, but
-workload builders do not select durable delivery yet. The certificate issuer,
-manager listener, chart, and controller consumption remain unconnected.
+delivery, live authorization, credential issuer, runner command, and optional
+workload projection are implemented. The manager does not select or issue these
+credentials yet. Its listener, chart, admission, and result consumption remain
+unconnected.
 
 ## Storage boundary
 
@@ -133,9 +134,10 @@ refuse an outcome that the runner has already produced. This grants permission
 to deliver evidence, never permission to execute SQL.
 
 The authorizer does not issue credentials, install admission, or establish a
-transaction across its reads and the completion write. The issuer must freeze
-the original generation and attempt before signing, and must not remint an old
-attempt for a newer generation. Consumers still decide whether evidence is
+transaction across its reads and the completion write. The issuer reads
+the original generation from the Job template, covered by its admission
+snapshot. The authorizer refuses a certificate whose generation differs from
+that value even if the live resource now has that generation. Consumers still decide whether evidence is
 current and whether the SQL process has stopped under the existing Lease and
 unknown-outcome rules. Tests cover all nine operation types using the golden
 Jobs that workload tests hold to the production builders, plus authority changes,
@@ -150,7 +152,8 @@ bounded to 64 KiB. The command verifies the key pair, client certificate lifetim
 and usage, receiver configuration, and the certificate's operation, operation
 ID, target engine, and actual Pod namespace/name/UID before starting a child.
 The Pod identity must come from downward API values `PTAH_RESULT_POD_NAMESPACE`,
-`PTAH_RESULT_POD_NAME`, and `PTAH_RESULT_POD_UID`. Duplicate binding variables
+`PTAH_RESULT_POD_NAME`, and `PTAH_RESULT_POD_UID`. The original resource
+generation is the literal `PTAH_RESULT_GENERATION` in the Job template. Duplicate binding variables
 are refused. These are delivery credentials, not Kubernetes API credentials.
 The receiver remains responsible for authenticating the issuer and current
 claim. Config validation does not promise the receiver is reachable.
@@ -179,6 +182,45 @@ first persistence. The API client in this test is fake; it does not prove a real
 database commit, installed admission, or a Job lifecycle. Plan tests exercise
 exact-limit and maximum-plus-one output without a process key.
 
+## Credential issuance and Job projection
+
+`workload.Builder.ResultEndpoint` selects the durable runner arguments and
+credential projection for every schema and migration operation. It remains
+empty in the manager until installation wiring is ready. The common
+`jobconfig` package fixes the Secret name from resource UID, operation ID, and
+Job name, the original resource generation, the actual-Pod downward API fields,
+and a read-only `0440` Secret mount in the main runner container. Admission
+snapshots cover this complete template. Readback refuses credential aliases,
+mounts in init or ephemeral containers, credential environment references,
+image-pull use, and automatic Kubernetes API token mounting.
+
+`internal/resultcredentials` uses a dedicated client CA and an uncached reader.
+It validates live authority before generating a key, again before creation, and
+after direct Secret readback. It only creates immutable TLS Secrets and never
+updates them. Concurrent issuers converge on the persisted winner; a lost API
+response is retried by reading that winner. The certificate carries the exact
+identity in one URI SAN and permits client authentication only. Its lifetime
+covers the supported Job horizon plus ten minutes for grace and reporting, and
+must fit within the signer's remaining lifetime.
+
+The credential Secret belongs to the schema or migration, not the Job or Pod.
+It fixes the original Pod identity even after that Pod disappears: a replacement
+Pod cannot overwrite or reuse the same attempt's credential. A Job from an older
+generation cannot be reissued under the new generation. The configured client
+trust pool may include the previous signer; an existing credential is preserved
+during that overlap. This is not proof of installed CA rotation. Server trust
+is immutable in the credential: installation rotation must preserve old runners'
+trust until their bounded attempts finish, rather than rewriting their Secrets.
+
+Before enabling issuance, admission must protect credential creation, metadata,
+and deletion, and prevent unrelated Pods from projecting these Secrets. Deleting
+an active credential and allowing reminting would erase its original-Pod pin;
+resource ownership and `immutable: true` alone do not prevent that. Restore and
+retention must preserve active pins. Issuance and authority reads are not a
+cross-object transaction, so consumer and receiver checks remain required.
+Component tests use production Job fixtures and a fake API. They do not prove
+kubelet projection, garbage collection, installed authorization, or backup.
+
 ## Installation and runner integration still required
 
 The receiver runs independently of family reconcile workers, behind its own TLS
@@ -187,14 +229,10 @@ uploads and body-read time, reject saturation without queuing unbounded bodies,
 and apply a storage deadline. Manager HTTP logs and rejection messages must not
 include payloads or credentials.
 
-The intended sender credential is a short-lived, per-attempt client certificate,
-issued only after a direct read establishes the actual Job and Pod UIDs and the
-existing `jobclaim` and Pod-intent contracts. Its private key is projected from
-an operation-specific Secret; it is not a Kubernetes API token. The certificate
-must bind the Pod UID and operation authority, not just a ServiceAccount or Job
-label. A replacement Pod must never inherit authority to submit as its
-predecessor. The admission/projection design must enforce that before this
-credential path is implemented or enabled.
+The manager must invoke the issuer after exact Job adoption and Pod admission,
+and installation admission must enforce the projection and active credential
+pin before enabling that path. A replacement Pod must never inherit authority
+to submit as its predecessor.
 
 The receiver must revalidate the execution epoch, exact live Job/Pod, and current
 claim through direct reads. Certificate expiration alone is not revocation.

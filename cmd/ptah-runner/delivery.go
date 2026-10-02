@@ -9,18 +9,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/stokaro/ptah-operator/internal/resultdelivery"
+	"github.com/stokaro/ptah-operator/internal/resultdelivery/jobconfig"
 	"github.com/stokaro/ptah-operator/internal/runner"
-)
-
-// The workload projects these from the actual Pod, never from a claim label.
-const (
-	resultPodNamespace = "PTAH_RESULT_POD_NAMESPACE"
-	resultPodName      = "PTAH_RESULT_POD_NAME"
-	resultPodUID       = "PTAH_RESULT_POD_UID"
 )
 
 var deliveryRetry = resultdelivery.RetryPolicy{Attempts: 4, Interval: time.Second, AttemptTimeout: 30 * time.Second, TotalTimeout: 2 * time.Minute}
@@ -85,7 +80,7 @@ func prepareDelivery(endpoint, directory string, operation runner.Operation, env
 	}
 	// Duplicate authority variables are ambiguous and must not choose a binding
 	// differently from the runner or child. Non-authority environment is untouched.
-	wanted := map[string]string{runner.EnvOperationID: identity.Binding.OperationID, resultPodNamespace: identity.Binding.Namespace, resultPodName: identity.Binding.PodName, resultPodUID: string(identity.Binding.PodUID)}
+	wanted := map[string]string{jobconfig.Generation: strconv.FormatInt(identity.Binding.Generation, 10), runner.EnvOperationID: identity.Binding.OperationID, jobconfig.PodNamespace: identity.Binding.Namespace, jobconfig.PodName: identity.Binding.PodName, jobconfig.PodUID: string(identity.Binding.PodUID)}
 	if identity.Engine != "" {
 		wanted[runner.EnvExpectedDatabaseEngine] = identity.Engine
 	}

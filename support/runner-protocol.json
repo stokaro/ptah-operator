@@ -17,6 +17,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:926c2691a4565b5f1e36248fa60e4137cb47bbd3aa829a446074782e5735c6f2",
       "reason": "Complete the initial durable result transport before the first tagged 0.2.0 release. Explicit TLS delivery validates projected credentials and operation/Pod identity before child dispatch, sends the completed result with bounded retries, and never falls back to logs. Durable Plan results contain the exact validated plaintext bytes instead of process-key ciphertext; termination summaries retain their payload digest and do not claim acknowledgment. Jobs without delivery configuration retain their existing log protocol during integration. No tagged release could have stored or consumed an earlier protocol-1 contract; the development contract counters remain 1."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:736ab6547c32e0221ad22b557d562437f3343db5fffeb3877e339e97185de173",
+      "reason": "Complete the initial durable delivery identity before the first tagged 0.2.0 release. The runner now requires the original resource generation as a literal Job-template input and holds its client certificate to that generation as well as the operation and actual Pod identity. A shared Job projection fixes the TLS credential Secret, read-only mount, downward API identity, and absence of Kubernetes credentials; legacy Jobs without durable delivery flags retain their existing behavior. No tagged release could have stored or consumed an earlier protocol-1 contract; development contract counters remain 1."
     }
   ]
 }

@@ -32,6 +32,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/stokaro/ptah-operator/internal/resultdelivery"
+	"github.com/stokaro/ptah-operator/internal/resultdelivery/jobconfig"
 	"github.com/stokaro/ptah-operator/internal/resultstore"
 	"github.com/stokaro/ptah-operator/internal/runner"
 )
@@ -111,7 +112,7 @@ func newDeliveryFixture(t *testing.T, configureCertificate func(*x509.Certificat
 }
 
 func (f *deliveryFixture) environment(t *testing.T) []string {
-	return append(migrationApplyEnvironment(t, f.identity.Binding.OperationID, 30*time.Second), resultPodNamespace+"="+f.identity.Binding.Namespace, resultPodName+"="+f.identity.Binding.PodName, resultPodUID+"="+string(f.identity.Binding.PodUID))
+	return append(migrationApplyEnvironment(t, f.identity.Binding.OperationID, 30*time.Second), jobconfig.Generation+"=1", jobconfig.PodNamespace+"="+f.identity.Binding.Namespace, jobconfig.PodName+"="+f.identity.Binding.PodName, jobconfig.PodUID+"="+string(f.identity.Binding.PodUID))
 }
 
 func (f *deliveryFixture) server(t *testing.T, wrap func(http.Handler) http.Handler) *httptest.Server {
@@ -273,7 +274,7 @@ func TestRunnerDoesNotFallBackToLogsAfterDeliveryRefusal(t *testing.T) {
 }
 
 func TestRunnerRefusesDeliveryMisconfigurationBeforeDispatch(t *testing.T) {
-	for _, name := range []string{"empty endpoint", "missing directory", "HTTP endpoint", "missing key", "key is a directory", "oversized CA", "Pod UID", "operation ID", "duplicate identity", "engine", "expired certificate", "server certificate"} {
+	for _, name := range []string{"empty endpoint", "missing directory", "HTTP endpoint", "missing key", "key is a directory", "oversized CA", "Pod UID", "generation", "operation ID", "duplicate identity", "engine", "expired certificate", "server certificate"} {
 		t.Run(name, func(t *testing.T) {
 			f := newDeliveryFixture(t, func(cert *x509.Certificate) {
 				if name == "expired certificate" {
@@ -311,8 +312,14 @@ func TestRunnerRefusesDeliveryMisconfigurationBeforeDispatch(t *testing.T) {
 				}
 			case "Pod UID":
 				for i, v := range env {
-					if strings.HasPrefix(v, resultPodUID+"=") {
-						env[i] = resultPodUID + "=other"
+					if strings.HasPrefix(v, jobconfig.PodUID+"=") {
+						env[i] = jobconfig.PodUID + "=other"
+					}
+				}
+			case "generation":
+				for i, v := range env {
+					if strings.HasPrefix(v, jobconfig.Generation+"=") {
+						env[i] = jobconfig.Generation + "=2"
 					}
 				}
 			case "operation ID":
@@ -322,7 +329,7 @@ func TestRunnerRefusesDeliveryMisconfigurationBeforeDispatch(t *testing.T) {
 					}
 				}
 			case "duplicate identity":
-				env = append(env, resultPodUID+"="+string(f.identity.Binding.PodUID))
+				env = append(env, jobconfig.PodUID+"="+string(f.identity.Binding.PodUID))
 			case "engine":
 				for i, v := range env {
 					if strings.HasPrefix(v, runner.EnvExpectedDatabaseEngine+"=") {

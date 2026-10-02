@@ -18,6 +18,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/mutationlifecycle"
 	"github.com/stokaro/ptah-operator/internal/podintent"
 	"github.com/stokaro/ptah-operator/internal/resultdelivery"
+	"github.com/stokaro/ptah-operator/internal/resultdelivery/jobconfig"
 )
 
 // ErrNotReady is transient: the controller has not yet persisted the exact Job
@@ -48,6 +49,10 @@ func (a Authorizer) Check(ctx context.Context, identity resultdelivery.Identity)
 		return readError(err)
 	}
 	if job.UID != b.JobUID || jobclaim.Match(job, claim) != nil || podintent.ValidateActiveJob(job) != nil {
+		return resultdelivery.ErrAuthority
+	}
+	projection, err := jobconfig.Read(job, b.UID, b.OperationID)
+	if err != nil || projection.Generation != b.Generation {
 		return resultdelivery.ErrAuthority
 	}
 	pod := &corev1.Pod{}
