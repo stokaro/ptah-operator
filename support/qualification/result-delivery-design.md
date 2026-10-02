@@ -1076,9 +1076,10 @@ The revised recovery inventory includes `PtahResultRecord` and requires the
 journal's original projection/policy identities. The proof retains only safe
 identities and checksums in Git. Its encrypted archive and key remain private.
 The isolated member and plaintext files are removed, and source schemas return
-to suspension with their original policies. This proves storage restoration;
-restored manager/rotator execution, service RPO/RTO, loss during Apply and lagged
-operator backups remain requirements of #579. The lifecycle checkbox stays open.
+to suspension with their original policies. This proves storage restoration. The preserved-identity startup case below
+adds restored manager/rotator execution; service RPO/RTO, loss during Apply and
+lagged operator backups remain requirements of #579. The lifecycle checkbox
+stays open.
 
 
 ## Installed terminating-namespace cleanup
@@ -1104,3 +1105,21 @@ configuration is removed and all three API servers and both managers are ready.
 
 This closes the terminating-namespace cleanup case. The remaining lifecycle,
 restore, payload matrix and final acceptance requirements stay open.
+
+
+## Restored storage used by new processes
+
+[Preserved-identity startup](evidence/result-control-plane-restore-2026-10-03/summary.json)
+now extends storage readback through actual manager/rotator execution. All three
+original etcd stores are replaced from a verified encrypted snapshot. The new
+logical cluster preserves the original 41 result/key objects and their binding
+hashes. Both receivers and the rotator restart on their original Pod UIDs and
+unchanged images, with a verified informer revision bump and compaction.
+
+After restoring leader access, the controller first consumes the saved receipt,
+publishes the identical 8 MiB plan, and converges through one newly approved
+PostgreSQL Apply. No replacement Plan Job runs. Temporary plaintext and restore
+containers are removed; runtime, admission and leadership readback pass. The
+case's namespace waits for ordinary retention after its database is removed.
+This completes the preserved-identity startup case on Kubernetes 1.37 Linux
+amd64. Other recovery cells and final acceptance remain open.

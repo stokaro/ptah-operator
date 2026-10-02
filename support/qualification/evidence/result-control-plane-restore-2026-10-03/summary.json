@@ -1,0 +1,278 @@
+{
+  "issues": [
+    586,
+    579
+  ],
+  "status": "passed",
+  "scope": "PostgreSQL/PtahSchema first consumption of an acknowledged result after encrypted full etcd storage restoration with original Kubernetes object identities. Databases survive.",
+  "sourceBaseline": "08bbfd26e71cd3c998fc173d5db6e7b9741c6cde",
+  "managerRevision": "7b21f8957bc1a266044008e1c9c0d2b5e6de18d6",
+  "runtimeBefore": [
+    {
+      "name": "ptah-runtime-generated-name-prefix-boun-cert-rotator-84648zcpp4",
+      "uid": "5de618fa-3fe2-4fd1-8737-c8120a4878e3",
+      "node": "ptah-e2e-1-37-0-result-restar-5a0ef2fe7d-worker",
+      "containerID": "containerd://4c9c45427b3f8a8c9c055ccadcd20cbad07dadd2bc4201dc83232d72b3d29fba",
+      "imageID": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/operator@sha256:f338a4c98d77e4908426d0c4b45a1b177ffc8c2916cae3029217b9ec12cd6f36"
+    },
+    {
+      "name": "ptah-runtime-generated-name-prefix-boundary-proof-5a0ef2fe865gt",
+      "uid": "31919737-a9ac-433f-9d31-c2e258675f2f",
+      "node": "ptah-e2e-1-37-0-result-restar-5a0ef2fe7d-worker",
+      "containerID": "containerd://2e5cb3409a361a00073e44ae91102db014c1db0e984a31591470f5696a5ff722",
+      "imageID": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/operator-namespace-retirement@sha256:8014beb573c192f435a456196921e334cf8ba6239956bdee9b93b89789462da3"
+    },
+    {
+      "name": "ptah-runtime-generated-name-prefix-boundary-proof-5a0ef2fe94xcj",
+      "uid": "aa75870e-79aa-4228-ad61-c0a3eeb35cb5",
+      "node": "ptah-e2e-1-37-0-result-restar-5a0ef2fe7d-worker",
+      "containerID": "containerd://b810a8791e2deba658e169be2f8c4adb70216cf93356d8cba40f12b8a1f0aeab",
+      "imageID": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/operator-namespace-retirement@sha256:8014beb573c192f435a456196921e334cf8ba6239956bdee9b93b89789462da3"
+    }
+  ],
+  "runtimeAfterStoreRestore": [
+    {
+      "name": "ptah-runtime-generated-name-prefix-boun-cert-rotator-84648zcpp4",
+      "uid": "5de618fa-3fe2-4fd1-8737-c8120a4878e3",
+      "containerID": "containerd://34d9b89e8449fa0492f58b9970b16ab47a1183ebcaa2854da7257cdab9fc7834",
+      "imageID": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/operator@sha256:f338a4c98d77e4908426d0c4b45a1b177ffc8c2916cae3029217b9ec12cd6f36"
+    },
+    {
+      "name": "ptah-runtime-generated-name-prefix-boundary-proof-5a0ef2fe865gt",
+      "uid": "31919737-a9ac-433f-9d31-c2e258675f2f",
+      "containerID": "containerd://5323cba72cf8f882f6fcedb043a6ddbca6657fa66d30427c3d4b1cccbc898e55",
+      "imageID": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/operator-namespace-retirement@sha256:8014beb573c192f435a456196921e334cf8ba6239956bdee9b93b89789462da3"
+    },
+    {
+      "name": "ptah-runtime-generated-name-prefix-boundary-proof-5a0ef2fe94xcj",
+      "uid": "aa75870e-79aa-4228-ad61-c0a3eeb35cb5",
+      "containerID": "containerd://b23c8b09c86209e8b5e5799162c9bcaadd555745bd1d7fc362fa5a62267f20fa",
+      "imageID": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/operator-namespace-retirement@sha256:8014beb573c192f435a456196921e334cf8ba6239956bdee9b93b89789462da3"
+    }
+  ],
+  "retainedObjects": {
+    "PtahResultRecord": 34,
+    "Secret": 6,
+    "ConfigMap": 1
+  },
+  "encryptedArchiveSHA256": "7e62140ba4fb2184503160ec8aefb2ee74e42062c9a3082931a35e3e8a2c18c6",
+  "snapshotSHA256": "fc527e6f5ccf231b97d8a965adb3367680c5767304b8eec270514436e38c729e",
+  "originalObjectsAndBindingsPreserved": true,
+  "newEtcdClusterAndMemberIDs": true,
+  "revisionBump": 1000000000,
+  "markedCompacted": true,
+  "startupAfterLossSeconds": 80.85071992874146,
+  "firstHarvest": {
+    "commit": "7b21f8957bc1a266044008e1c9c0d2b5e6de18d6",
+    "namespace": "ptah-result-restored-state",
+    "resourceUID": "0fc738dd-8847-4df2-9ef5-c7d1979dfcd9",
+    "binding": {
+      "namespace": "ptah-result-restored-state",
+      "kind": "PtahSchema",
+      "name": "first-harvest",
+      "uid": "0fc738dd-8847-4df2-9ef5-c7d1979dfcd9",
+      "generation": 1,
+      "executionBindingID": "v1-40f3cd8377f792c4fbad7433a6b81329",
+      "inputFingerprint": "sha256:dc85e80b76243945b0ba561cae5c33e6bbd3b35b310e8d703d5f74bfceebdae2",
+      "operation": "plan",
+      "operationID": "sha256:39f0a7a6d96b5bfac3b724bef5e5b39ee8bc7325d1da14ba076187b64c92ecf0",
+      "jobName": "ptah-plan-first-harvest-4c7ce50f77ff1fcd",
+      "jobUID": "8c3b87bf-26d0-4c1b-8481-880d9216cb8a",
+      "podName": "ptah-plan-first-harvest-4c7ce50f77ff1fcd-xvrlb",
+      "podUID": "c9d1c13b-18f7-4817-bccb-2509699f6c09"
+    },
+    "jobUID": "8c3b87bf-26d0-4c1b-8481-880d9216cb8a",
+    "podUID": "c9d1c13b-18f7-4817-bccb-2509699f6c09",
+    "intentUID": "dae1b78f-458c-4470-8988-a53d785f73ba",
+    "receiptUID": "833e7f1b-0197-4cf2-8254-6ca46b7176e4",
+    "payloadDigest": "sha256:34089309ace3fc0345902961f38c75bef3b1e2b4a5bc39dbabfd027d251aee9d",
+    "payloadBytes": 9787143,
+    "planUID": "7a8d7f06-897e-46dd-8d16-aa0ffb7b165c",
+    "planContentDigest": "sha256:4cbf0611d9903407949baaf9351badbff91c6c47e9765d5c5079067eb30c528a",
+    "conditions": [
+      {
+        "lastTransitionTime": "2026-10-02T22:16:40Z",
+        "message": "Database engine \"PostgreSQL\" is supported",
+        "observedGeneration": 1,
+        "reason": "SupportedEngine",
+        "status": "True",
+        "type": "EngineSupported"
+      },
+      {
+        "lastTransitionTime": "2026-10-02T22:16:40Z",
+        "message": "Plan is waiting for approval",
+        "observedGeneration": 1,
+        "reason": "AwaitingApproval",
+        "status": "False",
+        "type": "Ready"
+      },
+      {
+        "lastTransitionTime": "2026-10-02T22:16:50Z",
+        "message": "The latest operation completed",
+        "observedGeneration": 1,
+        "reason": "Succeeded",
+        "status": "False",
+        "type": "ReconciliationFailed"
+      },
+      {
+        "lastTransitionTime": "2026-10-02T22:16:50Z",
+        "message": "Desired OCI reference resolved to immutable content",
+        "observedGeneration": 1,
+        "reason": "DigestPinned",
+        "status": "True",
+        "type": "ArtifactResolved"
+      },
+      {
+        "lastTransitionTime": "2026-10-02T22:17:00Z",
+        "message": "Artifact type and verification policy were satisfied",
+        "observedGeneration": 1,
+        "reason": "PolicySatisfied",
+        "status": "True",
+        "type": "ArtifactVerified"
+      },
+      {
+        "lastTransitionTime": "2026-10-02T22:17:11Z",
+        "message": "Database schema was observed",
+        "observedGeneration": 1,
+        "reason": "Observed",
+        "status": "True",
+        "type": "DatabaseReachable"
+      },
+      {
+        "lastTransitionTime": "2026-10-02T22:20:49Z",
+        "message": "Managed scope requires 1 schema statements; highest severity safe",
+        "observedGeneration": 1,
+        "reason": "ScopedChanges",
+        "status": "True",
+        "type": "DriftDetected"
+      },
+      {
+        "lastTransitionTime": "2026-10-02T22:20:49Z",
+        "message": "The authoritative managed scope differs from the verified artifact",
+        "observedGeneration": 1,
+        "reason": "ScopedChanges",
+        "status": "False",
+        "type": "InSync"
+      },
+      {
+        "lastTransitionTime": "2026-10-02T22:20:52Z",
+        "message": "An exact immutable plan is ready for approval",
+        "observedGeneration": 1,
+        "reason": "PlanReady",
+        "status": "True",
+        "type": "ApprovalRequired"
+      },
+      {
+        "lastTransitionTime": "2026-10-02T22:20:52Z",
+        "message": "Exact plan bytes are stored in immutable chunks",
+        "observedGeneration": 1,
+        "reason": "Published",
+        "status": "True",
+        "type": "PlanReady"
+      }
+    ],
+    "status": "passed",
+    "managerUIDsBeforeDelivery": [
+      "31919737-a9ac-433f-9d31-c2e258675f2f",
+      "aa75870e-79aa-4228-ad61-c0a3eeb35cb5"
+    ],
+    "managerUIDsBeforeConsumption": [
+      "b9af46c4-18b6-40c9-94aa-001d5528a8ad",
+      "f74aed3e-a7ec-4dbc-bc95-124f4ccc3564"
+    ],
+    "controllersStoppedAt": "2026-10-02T22:17:27.068656+00:00",
+    "procedureSHA256": "182a093feb7bbf22c2cd833513793eb42739de919d3c81b58bfb309c89f44e41",
+    "scope": "Plan receipt first consumed after producing Pod/log removal (completed Job retained) and manager restart. Leader permission was removed while the receiver remained available. This read-only Plan row does not measure SQL replay.",
+    "planBytes": 8388608,
+    "planChunks": 16,
+    "resultChunks": 19,
+    "converged": true,
+    "applyJobUID": "07cdbb52-40e5-401a-b3dd-b52e9974188f",
+    "approvedApplyJobs": 1,
+    "databaseDefault": "1398006:1398002:4",
+    "completedAt": "2026-10-02T22:21:40.700388+00:00"
+  },
+  "readback": {
+    "status": "passed",
+    "retainedObjects": 41,
+    "nativeConvergence": true,
+    "approvedApplyJobs": 1,
+    "leaderBindingRestored": true,
+    "admissionGateAbsent": true,
+    "readyRuntimePods": 3,
+    "nodes": [
+      {
+        "node": "ptah-e2e-1-37-0-result-restar-5a0ef2fe7d-control-plane",
+        "kubeletActive": true,
+        "restorePlaintextAbsent": true,
+        "restoreContainersAbsent": true
+      },
+      {
+        "node": "ptah-e2e-1-37-0-result-restar-5a0ef2fe7d-control-plane2",
+        "kubeletActive": true,
+        "restorePlaintextAbsent": true,
+        "restoreContainersAbsent": true
+      },
+      {
+        "node": "ptah-e2e-1-37-0-result-restar-5a0ef2fe7d-control-plane3",
+        "kubeletActive": true,
+        "restorePlaintextAbsent": true,
+        "restoreContainersAbsent": true
+      },
+      {
+        "node": "ptah-e2e-1-37-0-result-restar-5a0ef2fe7d-worker",
+        "kubeletActive": true,
+        "restorePlaintextAbsent": true,
+        "restoreContainersAbsent": true
+      }
+    ],
+    "privateArchiveSHA256": "7e62140ba4fb2184503160ec8aefb2ee74e42062c9a3082931a35e3e8a2c18c6"
+  },
+  "cleanup": {
+    "databaseAbsent": true,
+    "namespace": "ptah-result-restored-state",
+    "namespaceUID": "7c23006b-2284-4e4b-b574-7f3d1814904d",
+    "namespaceRemovalRequested": true,
+    "namespaceAbsent": false,
+    "retentionBypassed": false,
+    "sharedLabRetained": true,
+    "namespaceDeletionTimestamp": "2026-10-02T22:26:50Z"
+  },
+  "localChecks": [
+    {
+      "command": "python3 -m unittest discover -s support/qualification/probes -p result_control_plane_restore_test.py -v",
+      "tests": 2,
+      "exitCode": 0
+    },
+    {
+      "command": "python3 -m unittest discover -s support/qualification/probes -p result_first_harvest_test.py -v",
+      "tests": 4,
+      "exitCode": 0
+    }
+  ],
+  "notProved": [
+    "Other engines, resource families, Kubernetes minors or architectures.",
+    "Full #579 loss/timing matrix or production-profile RPO/RTO; provisioning is not part of this preserved-node case.",
+    "Final artifact acceptance or backup archive/key custody.",
+    "Namespace removal is requested and remains subject to normal retention."
+  ],
+  "dependencySHA256": {
+    "operator_restore.py": "032df9516141d27efc6f05b3005dcee422551aba1f3e66fe8e8136371c8e6d0d",
+    "result_first_harvest.py": "182a093feb7bbf22c2cd833513793eb42739de919d3c81b58bfb309c89f44e41",
+    "result_control_plane_restore.py": "16b162c88025967c007fbe0777344ff21eaff8a165e967c7f0885c8e224e98aa"
+  },
+  "filesSHA256": {
+    "cleanup.json": "9ace0682be76df6c8d1dc0ce230b55e59cec750649f78f44018738436fa6c6a5",
+    "executed-cleanup.py": "a04afe33f0dfd68d3e0fb64138f6398b6ca33bdce2ca53e8a0d72b76852d0eab",
+    "executed-first-harvest.py": "182a093feb7bbf22c2cd833513793eb42739de919d3c81b58bfb309c89f44e41",
+    "executed-readback.py": "87abd2e16777534f9b9d2ac78d9191f1fec24b6611430aef5223873210ab4301",
+    "executed-restore.py": "16b162c88025967c007fbe0777344ff21eaff8a165e967c7f0885c8e224e98aa",
+    "first-harvest.json": "83e86a2444a745d403f8f98902f0b37924451509d321b3f0439b68e3496048ff",
+    "inputs.json": "8e23fb0e15f8b91ddbedd6a6a69b9997fcb0d5795acc8b5b5a28b7f49a44fa46",
+    "kubelets.json": "ea16c2d9e43aafe92e3a7ac50023811d70023f603ce956ca874a91f9e06f7b5f",
+    "manager-rolebinding-before.json": "b9718cbfee27f22b5b2cc63ce23b16d4f137d14c0e541aed9a6747f5b343a2db",
+    "readback.json": "285814aec853988f79972c8b9c48133bf3937468b5aad7d288f4c032d05676c4",
+    "restore-report.json": "c3908fc5782ec10f8f04bca7f8f697b69e80967c3bd9a0aa71290417345f5e37",
+    "run.txt": "7c2ac2df73809fb352f5067d9cb13a5ec90a5566451503f436477690e26d4528"
+  }
+}

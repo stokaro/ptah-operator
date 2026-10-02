@@ -572,3 +572,40 @@ captures receiver and producer API objects automatically; those documents were
 captured separately during this recorded run. Initial local harness failures in
 multi-document JSON parsing and the example namespace occurred before native
 execution; they are not operator defects or passing network evidence.
+
+## Control-plane restore before first harvest
+
+Set `RESULT_PROBE_RESTORE_CONTROL_PLANE=1` for the existing first-harvest probe
+and point `RESULT_RESTORE_PRIVATE_DIR` at a new restricted local directory.
+Do not combine this case with either certificate-rotation fault flag. Use only
+the owned four-node kind lab (three control-plane members and one worker), with
+no live mutating Job or Pod. The first-harvest leader-permission fence stays
+active throughout recovery.
+
+After the acknowledged Plan's producing Pod is removed, the procedure stops
+kubelets, both manager processes, the rotator, and Kubernetes scheduling and
+controller processes. It inventories the original records, credential
+projections, trust, rotation journal and enrollment policy. It captures an etcd
+snapshot, encrypts it, decrypts the archive and verifies the plaintext checksum.
+Each of the three replacement member stores is prepared from those same bytes.
+Then all API servers and original etcd processes stop, their old stores are
+removed, and the restored stores replace them. Databases and their volumes
+survive.
+
+The restore uses new etcd cluster/member identities and the existing TLS and
+peer endpoints. It applies a billion-revision bump and marks the prior revision
+compacted, following [etcd's Kubernetes recovery guidance](https://etcd.io/docs/v3.7/op-guide/recovery/).
+Readback must confirm both settings, new manager/rotator container identities on
+the original Pod UIDs, unchanged runtime images, and exact original result/key
+UIDs and content/binding hashes. The parent probe then restores leader access,
+requires first consumption of the original receipt, reconstructs the exact
+plan bytes, and continues through approval, one Apply and native database
+convergence.
+
+Encrypted snapshots and private identities stay outside Git. Remove temporary
+plaintext and helper containers from each owned node after readback. A failure
+before member replacement restarts the original kubelets. A partially replaced
+store remains fenced for repair from the captured archive; do not start mixed
+old and restored members. This procedure is the preserved-identity result/key
+startup case. It does not supply the remaining database-loss, interrupted-Apply,
+lagged-backup or final-profile recovery matrix.
