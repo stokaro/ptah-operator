@@ -514,7 +514,8 @@ The result rotation state machine uses that fence in this order:
 3. After the second wait and endpoint verification, publish the replacement-only
    enrollment policy and projection. Retire the old private material only after
    exact readback and endpoint verification. The journal must resume uncertain
-   writes at every step without shortening either wait or regenerating a candidate.
+   writes at every step without shortening either wait or regenerating usable
+   candidate authorities.
 
 Each policy write precedes the corresponding Secret update. Stale replicas may
 be temporarily unready; the rotator's own policy and Secret writes must not
@@ -543,14 +544,34 @@ current overlap. The probe sends HEAD without an operation identity and requires
 HTTP 401: this proves TLS client authentication succeeded without invoking
 publication. TLS handshake completion alone is insufficient.
 
+An interrupted transition can outlive its serving certificates. The rotator
+renews an expired pending leaf under the same authority and journals both leaf
+versions before changing the projection. Exact readback retires the previous
+leaf; neither enrollment nor an existing fence changes. This also resumes a
+repair whose write response was lost or whose replacement leaf expired during
+another outage.
+
+Once both candidate authorities have expired, including the clock-skew margin,
+the rotator journals their removal before returning to the current authorities.
+Credentials issued under the current signer retain their server trust; no
+candidate credential remains usable. The current authorities may themselves
+have expired, so this checkpoint stays pending and the normal renewal path must
+produce a successful endpoint verdict before claiming readiness. Subsequent
+rotation starts new enrollment fences. An authority that has not expired prevents
+this recovery path, even if the other authority has expired. Foreign projection
+or enrollment data is still refused before either recovery starts or resumes.
+
 Local fake-API tests cover both persisted waits, delayed policy writes, lost
 write responses and failed readbacks, restart, rollback refusal, replaced object
-UIDs, leaf renewal, and expired stable authorities. Real TLS tests cover both
+UIDs, leaf renewal, expired stable authorities, and expired pending leaves and
+authorities in every transition phase. The recovery fixture verifies certificate
+chains and expiration against its clock; it does not simulate endpoint reload.
+Real TLS tests cover both
 client roots, a missing root, the wrong serving leaf, unavailable endpoints, and
 endpoint identity changes. Command tests hold independent startup, aggregate
 readiness, and joint shutdown. These do not prove kubelet projection, installed
-RBAC, multi-replica rotation, or recovery after a pending candidate itself expires
-in a long outage; those remain installation acceptance work.
+RBAC, multi-replica rotation, or installed recovery after a long outage; those
+remain installation acceptance work.
 
 Local tests cover stale local signers, changed policy between generation and
 CREATE, missing/malformed policy, API failure, cancellation, and readiness

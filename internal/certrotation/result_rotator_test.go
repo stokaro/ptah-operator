@@ -3,6 +3,7 @@ package certrotation
 import (
 	"bytes"
 	"context"
+	"crypto/x509"
 	"errors"
 	"maps"
 	"testing"
@@ -46,6 +47,19 @@ func (f *resultRotationFixture) bind() {
 		f.probes++
 		if len(p) != 6 || len(cas) == 0 {
 			return errors.New("empty probe")
+		}
+		leaf, err := parseLeafAndKey(p["tls.crt"], p["tls.key"])
+		if err != nil {
+			return err
+		}
+		roots := x509.NewCertPool()
+		roots.AppendCertsFromPEM(p["ca.crt"])
+		if _, err := leaf.Verify(x509.VerifyOptions{Roots: roots, CurrentTime: f.clock, DNSName: "results.system.svc", KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}); err != nil {
+			return err
+		}
+		signer, _, err := parseSingleCertificate(p["client-ca.crt"])
+		if err != nil || !certificateCurrentlyValid(signer, f.clock) {
+			return errors.New("projected client signer is expired")
 		}
 		return ctx.Err()
 	}

@@ -52,6 +52,13 @@ type resultJournal struct {
 	// FencedAt is written only after the public policy was read back. It is
 	// cleared between waits, never inferred from a pre-write client timestamp.
 	FencedAt *time.Time `json:"fencedAt,omitempty"`
+	// Keep the previous leaves until the replacement projection is read back.
+	// A restart can then distinguish our interrupted repair from foreign trust.
+	PreviousLeaves *resultLeafRepair `json:"previousLeaves,omitempty"`
+	// Both candidate authorities have expired, including the clock-skew margin.
+	// Returning to Current discards no usable candidate credentials. It starts
+	// any subsequent rotation with new fences instead of reusing an old wait.
+	DiscardExpiredCandidate bool `json:"discardExpiredCandidate,omitempty"`
 }
 
 func NewResultRotator(api kubernetes.Interface, config ResultConfig) (*ResultRotator, error) {
@@ -160,11 +167,28 @@ func (r *ResultRotator) step(ctx context.Context) (Result, error) {
 	// accepting a rolled-back enrollment policy would revive old issuance while
 	// retaining an earlier retirement deadline.
 	desiredPolicy := enrollment(desired)
-	if !maps.Equal(policy.Data, desiredPolicy) && (st.FencedAt != nil || !maps.Equal(policy.Data, enrollment(prior))) {
+	resetPolicy := st.DiscardExpiredCandidate && maps.Equal(policy.Data, enrollment(st.Current.projection()))
+	if !resetPolicy && !maps.Equal(policy.Data, desiredPolicy) && (st.FencedAt != nil || !maps.Equal(policy.Data, enrollment(prior))) {
 		return Result{}, errors.New("result enrollment policy moved outside the pending transition")
 	}
-	if !equalBytes(projection.Data, desired) && !equalBytes(projection.Data, prior) {
+	if !st.acceptsProjection(projection.Data) {
 		return Result{}, errors.New("result trust projection moved outside the pending transition")
+	}
+	if st.DiscardExpiredCandidate {
+		return r.discardExpiredCandidate(ctx, journal, projection, policy, st)
+	}
+	if r.candidateExpired(st) {
+		st.DiscardExpiredCandidate = true
+		return Result{Pending: true, RequeueAfter: time.Second}, r.saveJournal(ctx, journal, st)
+	}
+	if st.PreviousLeaves == nil {
+		changed, err := r.repairPendingLeaves(&st)
+		if err != nil {
+			return Result{}, err
+		}
+		if changed {
+			return Result{Pending: true, RequeueAfter: time.Second}, r.saveJournal(ctx, journal, st)
+		}
 	}
 	if err := r.writePolicy(ctx, policy, desiredPolicy); err != nil {
 		return Result{}, err
@@ -178,6 +202,10 @@ func (r *ResultRotator) step(ctx context.Context) (Result, error) {
 	}
 	if err := r.writeProjection(ctx, projection, desired); err != nil {
 		return Result{}, err
+	}
+	if st.PreviousLeaves != nil {
+		st.PreviousLeaves = nil
+		return Result{Pending: true, RequeueAfter: time.Second}, r.saveJournal(ctx, journal, st)
 	}
 	if st.Phase == "prepare" || st.Phase == "switch" {
 		deadline := r.retirementDeadline(st)
@@ -348,6 +376,9 @@ func (r *ResultRotator) decodeJournal(data map[string][]byte) (resultJournal, er
 		if _, _, err := r.inspectKeys(*st.Next); err != nil {
 			return st, invalid
 		}
+	}
+	if err := r.validateRecovery(st); err != nil {
+		return st, invalid
 	}
 	return st, nil
 }
