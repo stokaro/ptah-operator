@@ -234,7 +234,7 @@ func main() {
 	}
 	if results != nil {
 		reconciler.Results = results.Consumer
-		reconciler.ResultCredentials = results.Issuer
+		reconciler.ResultCredentials = results
 	}
 	if err := reconciler.SetupWithManager(manager); err != nil {
 		log.Error(err, "register PtahSchema controller")
@@ -252,7 +252,7 @@ func main() {
 	}
 	if results != nil {
 		migrations.Results = results.Consumer
-		migrations.ResultCredentials = results.Issuer
+		migrations.ResultCredentials = results
 	}
 	if err := migrations.SetupWithManager(manager); err != nil {
 		log.Error(err, "register PtahMigration controller")
@@ -302,7 +302,7 @@ func main() {
 	}})
 	writeValidator := &controllerwrite.Validator{Reader: manager.GetAPIReader(), Jobs: builder, ManagerUsername: controllerServiceAccountUsername}
 	if results != nil {
-		writeValidator.ResultCredentials = results.Issuer
+		writeValidator.ResultCredentials = results
 	}
 	manager.GetWebhookServer().Register(validateControllerWritePath, &cradmission.Webhook{Handler: &controllerwrite.ValidationHandler{Validator: writeValidator}})
 

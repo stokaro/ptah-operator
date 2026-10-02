@@ -42,6 +42,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:471a7a76576eccb0c9167abf79a724d60bb216569ade964c6abca083955452ee",
       "reason": "Complete durable result consumption before the first tagged 0.2.0 release. The result store can locate and verify a publication by its immutable attempt without reading the producing Pod or Job. Consumers must check the returned full binding and protocol against the persisted operation. The runner wire payload and execution behavior are unchanged; development protocol counters remain 1."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:e268ff71d1e568283329ccea88d78528c4495e62611446f2da67554172139ec3",
+      "reason": "Complete receiver trust reload before the first tagged 0.2.0 release. Rotating receivers revalidate the current client CA at every authority check, including after upload and before durable completion, so an existing TLS connection cannot retain removed trust. Runner payload, execution checks, and bounded retries are unchanged. No tagged release consumed an earlier protocol-1 contract; development counters remain 1."
     }
   ]
 }

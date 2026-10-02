@@ -288,6 +288,31 @@ func TestAuthorityRecheckedAtPublicationBoundary(t *testing.T) {
 	}
 }
 
+func TestCurrentClientTrustRecheckedAtPublicationBoundary(t *testing.T) {
+	for _, refuseAt := range []int32{1, 2, 3} {
+		t.Run(fmt.Sprint(refuseAt), func(t *testing.T) {
+			identity := testIdentity()
+			store := testStore(t)
+			certs := testCertificates(t, identity)
+			var calls atomic.Int32
+			r := testReceiver(t, store, func(context.Context, Identity) error { return nil }, time.Second)
+			r.config.VerifyClient = func(*tls.ConnectionState) error {
+				if calls.Add(1) >= refuseAt {
+					return errors.New("private trust refusal details")
+				}
+				return nil
+			}
+			server := startReceiver(t, r, certs, nil)
+			if _, err := testSender(t, server.URL, identity, certs).Send(t.Context(), testPayload(t, identity)); err == nil || err.Error() != "result receiver returned HTTP 403" {
+				t.Fatalf("retired client trust acknowledged: %v", err)
+			}
+			if _, _, err := store.Load(t.Context(), identity.Binding); !errors.Is(err, resultstore.ErrIncomplete) {
+				t.Fatalf("retired client trust committed a result: %v", err)
+			}
+		})
+	}
+}
+
 func TestTLSRefusesUntrustedOrMissingClientAndServerCertificates(t *testing.T) {
 	identity := testIdentity()
 	certs := testCertificates(t, identity)

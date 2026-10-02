@@ -45,6 +45,9 @@ func (v *Validator) validateResultRecord(ctx context.Context, req admissionv1.Ad
 			if !strings.HasPrefix(record.Name, jobconfig.SecretPrefix) {
 				return denyf("credential record name is outside its reserved namespace")
 			}
+			if v.ResultCredentials == nil {
+				return denyf("result credential trust is not configured")
+			}
 			err = v.ResultCredentials.ValidateRecordCreate(ctx, record)
 		} else {
 			if v.ResultCredentials == nil {

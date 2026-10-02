@@ -25,8 +25,11 @@ type Publisher interface {
 // transient failure. It must return promptly when ctx is canceled. Admission and the consuming
 // controller retain their own authority checks across concurrent state changes.
 type ReceiverConfig struct {
-	Store         Publisher
-	Authorize     func(context.Context, Identity) error
+	Store     Publisher
+	Authorize func(context.Context, Identity) error
+	// VerifyClient optionally adds a current-trust check to the mandatory mTLS
+	// identity check. Rotating receivers use it to revoke preexisting connections.
+	VerifyClient  func(*tls.ConnectionState) error
 	MaxConcurrent int
 	Timeout       time.Duration
 }
@@ -131,6 +134,11 @@ func (r *Receiver) ServeHTTP(w http.ResponseWriter, request *http.Request) {
 		current, err := authenticatedIdentity(request.TLS, time.Now())
 		if err != nil || current != identity {
 			return ErrAuthority
+		}
+		if r.config.VerifyClient != nil {
+			if err := r.config.VerifyClient(request.TLS); err != nil {
+				return ErrAuthority
+			}
 		}
 		if err := r.config.Authorize(ctx, identity); err != nil {
 			return err

@@ -38,6 +38,9 @@ func (v *Validator) validateResultCredential(ctx context.Context, req admissionv
 		if decodeErr != nil {
 			return decodeErr
 		}
+		if v.ResultCredentials == nil {
+			return denyf("result credential trust is not configured")
+		}
 		err = v.ResultCredentials.ValidateCreate(ctx, secret)
 	case admissionv1.Update:
 		old, decodeErr := decode(req.OldObject.Raw)

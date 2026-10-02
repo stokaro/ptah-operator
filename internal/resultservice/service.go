@@ -1,26 +1,20 @@
 // Package resultservice connects durable delivery to the manager lifecycle.
-// Trust is provisioned separately and read from bounded mounted files at startup.
+// Trust is provisioned separately and reloaded from bounded mounted files.
 package resultservice
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"errors"
-	"fmt"
 	"io"
 	"log"
 	"net"
 	"net/http"
-	"net/url"
-	"os"
-	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/stokaro/ptah-operator/internal/resultauthority"
 	"github.com/stokaro/ptah-operator/internal/resultconsumer"
-	"github.com/stokaro/ptah-operator/internal/resultcredentials"
 	"github.com/stokaro/ptah-operator/internal/resultdelivery"
 	"github.com/stokaro/ptah-operator/internal/resultdelivery/jobconfig"
 	"github.com/stokaro/ptah-operator/internal/resultstore"
@@ -32,16 +26,21 @@ type Config struct {
 	Uploads                                 int
 	UploadTimeout                           time.Duration
 	Consumer                                resultconsumer.Options
+	ReloadInterval                          time.Duration
 }
 
 type Service struct {
-	Issuer   *resultcredentials.Issuer
-	Consumer *resultconsumer.Reader
-	server   *http.Server
-	address  string
-	ready    atomic.Bool
-	started  atomic.Bool
-	notAfter time.Time
+	Consumer     *resultconsumer.Reader
+	server       *http.Server
+	address      string
+	ready        atomic.Bool
+	started      atomic.Bool
+	trust        atomic.Pointer[trustSnapshot]
+	reloadFailed atomic.Bool
+	reloadMu     sync.Mutex
+	config       Config
+	writer       client.Client
+	reader       client.Reader
 }
 
 // New never generates or fetches trust through the Kubernetes API. Both replicas
@@ -55,93 +54,40 @@ func New(config Config, writer client.Client, reader client.Reader) (*Service, e
 	if _, _, err := net.SplitHostPort(config.Address); err != nil {
 		return nil, errors.New("invalid result service listen address")
 	}
-	material := map[string][]byte{}
-	for _, name := range []string{"tls.crt", "tls.key", "ca.crt", "client-ca.crt", "client-ca.key", "client-trust.crt"} {
-		data, err := readFile(config.CertificateDirectory, name)
-		if err != nil {
-			return nil, fmt.Errorf("result service cannot load %s", name)
-		}
-		material[name] = data
+	if config.ReloadInterval == 0 {
+		config.ReloadInterval = 5 * time.Second
 	}
-	serving, err := tls.X509KeyPair(material["tls.crt"], material["tls.key"])
-	if err != nil {
-		return nil, errors.New("invalid result server key pair")
+	if config.ReloadInterval < time.Millisecond || config.ReloadInterval > time.Minute {
+		return nil, errors.New("invalid result trust reload interval")
 	}
-	roots := x509.NewCertPool()
-	if !roots.AppendCertsFromPEM(material["ca.crt"]) {
-		return nil, errors.New("invalid result server trust")
+	service := &Service{address: config.Address, config: config, writer: writer, reader: reader}
+	if err := service.reload(); err != nil {
+		return nil, err
 	}
-	endpoint, _ := url.Parse(config.Endpoint)
-	leaf, err := x509.ParseCertificate(serving.Certificate[0])
-	if err != nil || leaf.IsCA {
-		return nil, errors.New("invalid result server certificate")
-	}
-	intermediates := x509.NewCertPool()
-	for _, der := range serving.Certificate[1:] {
-		c, err := x509.ParseCertificate(der)
-		if err != nil {
-			return nil, errors.New("invalid result server chain")
-		}
-		intermediates.AddCert(c)
-	}
-	if _, err := leaf.Verify(x509.VerifyOptions{DNSName: endpoint.Hostname(), Roots: roots, Intermediates: intermediates, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}); err != nil {
-		return nil, errors.New("result server certificate does not authenticate its endpoint")
-	}
-	signer, err := tls.X509KeyPair(material["client-ca.crt"], material["client-ca.key"])
-	if err != nil {
-		return nil, errors.New("invalid result client signer")
-	}
-	clientTrust := x509.NewCertPool()
-	if !clientTrust.AppendCertsFromPEM(material["client-trust.crt"]) {
-		return nil, errors.New("invalid result client trust")
-	}
-	issuer, err := resultcredentials.New(writer, reader, signer, clientTrust, material["ca.crt"])
-	if err != nil {
-		return nil, errors.New("result client signer is not trusted or usable")
-	}
-	signerLeaf, _ := x509.ParseCertificate(signer.Certificate[0]) // New verified this exact signer.
+	trust := service.trust.Load()
 	store := resultstore.Store{Client: writer, Reader: reader}
-	receiver, err := resultdelivery.NewReceiver(resultdelivery.ReceiverConfig{Store: store, Authorize: (resultauthority.Authorizer{Reader: reader}).Check, MaxConcurrent: config.Uploads, Timeout: config.UploadTimeout})
+	receiver, err := resultdelivery.NewReceiver(resultdelivery.ReceiverConfig{Store: store, Authorize: (resultauthority.Authorizer{Reader: reader}).Check, VerifyClient: service.verifyClient, MaxConcurrent: config.Uploads, Timeout: config.UploadTimeout})
 	if err != nil {
 		return nil, err
 	}
-	server, err := receiver.Server(serving, clientTrust)
+	server, err := receiver.Server(trust.tls.Certificates[0], trust.tls.ClientCAs)
 	if err != nil {
 		return nil, err
 	}
+	server.TLSConfig.GetConfigForClient = service.tlsConfig
 	// TLS failures must not emit certificate identities or transport diagnostics.
 	server.ErrorLog = log.New(io.Discard, "", 0)
 	consumer, err := resultconsumer.New(resultconsumer.StoreLoader{Store: store}, config.Consumer)
 	if err != nil {
 		return nil, err
 	}
-	expires := leaf.NotAfter
-	if signerLeaf.NotAfter.Before(expires) {
-		expires = signerLeaf.NotAfter
-	}
-	return &Service{Issuer: issuer, Consumer: consumer, server: server, address: config.Address, notAfter: expires}, nil
-}
-
-func readFile(directory, name string) ([]byte, error) {
-	file, err := os.Open(filepath.Join(directory, name))
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-	info, err := file.Stat()
-	if err != nil || !info.Mode().IsRegular() || info.Size() < 1 || info.Size() > 64<<10 {
-		return nil, errors.New("invalid trust file")
-	}
-	data, err := io.ReadAll(io.LimitReader(file, 64<<10+1))
-	if err != nil || len(data) == 0 || len(data) > 64<<10 {
-		return nil, errors.New("invalid trust file")
-	}
-	return data, nil
+	service.Consumer, service.server = consumer, server
+	return service, nil
 }
 
 func (*Service) NeedLeaderElection() bool { return false }
 func (s *Service) Ready(*http.Request) error {
-	if !s.ready.Load() || !time.Now().Before(s.notAfter) {
+	if !s.ready.Load() || s.reloadFailed.Load() || !time.Now().Before(s.trust.Load().notAfter) {
 		return errors.New("result service is not ready")
 	}
 	return nil
@@ -165,6 +111,22 @@ func (s *Service) Start(ctx context.Context) error {
 	serverDone := make(chan error, 1)
 	go func() { consumerDone <- s.Consumer.Start(runCtx) }()
 	go func() { serverDone <- s.server.ServeTLS(listener, "", "") }()
+	reloadDone := make(chan struct{})
+	go func() {
+		defer close(reloadDone)
+		ticker := time.NewTicker(s.config.ReloadInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-runCtx.Done():
+				return
+			case <-ticker.C:
+				// Keep the last validated snapshot, but remove this replica from
+				// readiness until mounted trust can be validated again.
+				_ = s.reload()
+			}
+		}
+	}()
 	s.ready.Store(true)
 	var failure error
 	serverFinished, consumerFinished := false, false
@@ -192,5 +154,6 @@ func (s *Service) Start(ctx context.Context) error {
 	if !consumerFinished {
 		<-consumerDone
 	}
+	<-reloadDone
 	return failure
 }

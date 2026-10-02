@@ -68,6 +68,9 @@ func (i *Issuer) ValidateRecordCreate(ctx context.Context, record *api.PtahResul
 	if err != nil {
 		return err
 	}
+	if !bytes.Equal(secret.Data["ca.crt"], i.serverTrust) {
+		return ErrCredential
+	}
 	certificate, err := tls.X509KeyPair(secret.Data["tls.crt"], secret.Data["tls.key"])
 	if err != nil {
 		return ErrCredential

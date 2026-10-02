@@ -8,8 +8,7 @@ workload projection are implemented. Explicit manager flags now connect the
 listener, issuer, admission validator, and background consumer. The chart routes
 credential and Pod admission guards, verified against a local API server, but
 does not yet enable these flags or provide the receiver trust, Service,
-NetworkPolicy, and result-record permissions. Trust rotation and result retention
-remain incomplete.
+NetworkPolicy, and result-record permissions. Trust provisioning, coordinated CA rotation, and result retention remain incomplete.
 
 ## Storage boundary
 
@@ -371,14 +370,39 @@ runners, `client-ca.crt` and `client-ca.key` for the dedicated client signer,
 and `client-trust.crt` for accepted client signers. Startup validates the server
 chain and endpoint hostname, the signer, and its trust. It generates no process
 CA and reads no Kubernetes Secret. All manager replicas must mount compatible
-trust; these files are loaded once at startup. Automatic provisioning, rotation,
-overlap, and reload remain installation work. In particular, server rotation
-must preserve the immutable trust already projected into outstanding runners.
+trust. The service polls the mount every five seconds. For a Kubernetes Secret
+projection it resolves `..data` once and reads only that generation. Plain
+externally provisioned directories must be replaced atomically, never edited in
+place. Each bounded candidate is fully validated before TLS and issuer switch
+through one immutable snapshot. Invalid material preserves the last validated
+snapshot, fails readiness, and pauses issuance until a valid projection returns.
+The background consumer remains independent of certificate state.
+
+Reconciliation and admission retain a stable service reference and select its
+current issuer per call. New handshakes use the current serving certificate and
+client roots. Every receiver authority check also verifies the peer against
+current client roots, including after upload and at the publication boundary;
+a keep-alive connection cannot preserve trust in a removed CA.
+
+Existing canonical credentials retain their original server bundle. Expanding
+the bundle for new Jobs does not rewrite or invalidate those records. Admission
+requires the current bundle for a new credential record and exact canonical bytes
+for every Secret projection. Client CA overlap permits existing credentials;
+removing their signer refuses further delivery but does not affect reading
+already acknowledged records.
+
+Automatic provisioning and coordinated rotation remain installation work. The
+rotator must establish trust on every serving replica before selecting a new
+signer. Server CA rotation must first give new runners the expanded bundle and
+keep serving a certificate old runners trust until their bounded attempts retire.
+The runtime reload mechanism does not establish that overlap or authorize early
+root removal.
 
 The service runs independently of leader election and family reconcile workers.
 It starts the receiver and background reader together, cancels their API work
 and closes TLS connections on shutdown, and reports not ready before startup,
-after shutdown, or when its serving certificate or client signer expires.
+after shutdown, on an invalid trust update, or when its serving chain or client
+signer expires.
 Listener or reader termination stops the service. HTTP diagnostics cannot emit
 client identities or payloads. Manager configuration currently bounds uploads
 to one with a two-minute deadline, and background reads to one worker with four
@@ -391,13 +415,21 @@ and bind the credential to the operation, original generation, and actual UID.
 Issuance has a five-second deadline. A pending Pod or issuance error returns a
 short retry, preserving the existing Lease path; Events contain only a generic
 failure. A terminal Job goes directly to result consumption without requiring
-credential reissuance. The same issuer verifies the manager's credential and
-publication writes in admission. Configured durable Jobs cannot fall back to logs.
+credential reissuance. The same service selects the current issuer for credential and publication
+writes in admission. Configured durable Jobs cannot fall back to logs.
 
 Local tests exercise the assembled service over real mTLS with a fake API client:
 issue a credential, authenticate preflight, persist a result, stop the service,
 start another from the same trust, and read the same receipt after Job and Pod
-removal. The reader refuses Secret GET. Separate controller-helper tests hold
+removal. The reader refuses Secret GET. Rotation tests expand server trust,
+change the client signer with overlap, change the serving certificate, and remove
+old client trust. New handshakes succeed with the expanded bundle; a preexisting
+keep-alive connection under the removed client CA receives HTTP 403. Admission
+and issuance also refuse that retired credential, while its acknowledged result
+remains readable. These tests deliberately trigger root removal to measure the
+refusal; they do not prove a safe production overlap schedule. Invalid projected
+material fails readiness and recovers automatically after replacement. Separate
+controller-helper tests hold
 all nine operation bindings, missing or ambiguous Pods, changed workload and
 generation, invalid credential receipts, and cancellation to their expected
 outcomes. They do not prove installed reconciliation, kubelet Secret projection,

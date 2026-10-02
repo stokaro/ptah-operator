@@ -154,7 +154,7 @@ func TestServiceIssuesDeliversAndConsumesAcrossRestart(t *testing.T) {
 		t.Fatal("service cannot follow leader changes")
 	}
 	stop := running(t, s)
-	issued, err := s.Issuer.Ensure(t.Context(), f.Identity)
+	issued, err := s.Ensure(t.Context(), f.Identity)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +196,7 @@ func TestServiceIssuesDeliversAndConsumesAcrossRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	running(t, next)
-	if repeated, err := next.Issuer.Ensure(t.Context(), f.Identity); err != nil || repeated != issued {
+	if repeated, err := next.Ensure(t.Context(), f.Identity); err != nil || repeated != issued {
 		t.Fatalf("replica changed canonical credential: %v", err)
 	}
 	if err := api.Delete(t.Context(), f.Pod); err != nil {

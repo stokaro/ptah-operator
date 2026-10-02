@@ -204,13 +204,20 @@ func (i *Issuer) validate(secret *corev1.Secret, identity resultdelivery.Identit
 	if owner.APIVersion != api.GroupVersion.String() || owner.Kind != b.Kind || owner.Name != b.Name || owner.UID != b.UID || owner.Controller == nil || !*owner.Controller || owner.BlockOwnerDeletion == nil || !*owner.BlockOwnerDeletion {
 		return Credential{}, ErrCredential
 	}
-	if secret.Labels["app.kubernetes.io/managed-by"] != "ptah-operator" || secret.Labels["app.kubernetes.io/component"] != "result-credential" || !reflect.DeepEqual(secret.Annotations, annotations(identity)) || !bytes.Equal(secret.Data["ca.crt"], i.serverTrust) {
+	if secret.Labels["app.kubernetes.io/managed-by"] != "ptah-operator" || secret.Labels["app.kubernetes.io/component"] != "result-credential" || !reflect.DeepEqual(secret.Annotations, annotations(identity)) {
 		return Credential{}, ErrCredential
 	}
 	for _, data := range secret.Data {
 		if len(data) == 0 || len(data) > 64<<10 {
 			return Credential{}, ErrCredential
 		}
+	}
+	// Existing canonical credentials pin the server trust from issuance. A
+	// rotation may expand the bundle for new Jobs without rewriting that pin.
+	// ValidateRecordCreate separately requires the current issuance bundle;
+	// Secret creation must still match the exact canonical record.
+	if !x509.NewCertPool().AppendCertsFromPEM(secret.Data["ca.crt"]) {
+		return Credential{}, ErrCredential
 	}
 	certificate, err := tls.X509KeyPair(secret.Data["tls.crt"], secret.Data["tls.key"])
 	if err != nil || len(certificate.Certificate) != 1 {

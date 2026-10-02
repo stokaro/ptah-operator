@@ -29,7 +29,8 @@ import (
 	"github.com/stokaro/ptah-operator/internal/mutationlifecycle"
 	"github.com/stokaro/ptah-operator/internal/plancontract"
 	"github.com/stokaro/ptah-operator/internal/planstore"
-	"github.com/stokaro/ptah-operator/internal/resultcredentials"
+	"github.com/stokaro/ptah-operator/internal/resultdelivery"
+	"github.com/stokaro/ptah-operator/internal/resultstore"
 	"github.com/stokaro/ptah-operator/internal/workload"
 )
 
@@ -79,6 +80,12 @@ type JobBuilder interface {
 
 var _ JobBuilder = workload.Builder{}
 
+type ResultCredentialValidator interface {
+	ValidateCreate(context.Context, *corev1.Secret) error
+	ValidateRecordCreate(context.Context, *operatorv1alpha1.PtahResultRecord) error
+	AuthorizePublication(context.Context, resultstore.Binding) (resultdelivery.Identity, error)
+}
+
 // Validator checks requests using uncached API reads. Reader must be the
 // manager's direct API reader, never its informer cache.
 type Validator struct {
@@ -87,7 +94,7 @@ type Validator struct {
 	ManagerUsername string
 	// ResultCredentials remains nil until the installation has delivery trust.
 	// Reserved credential writes are still guarded while issuance is disabled.
-	ResultCredentials *resultcredentials.Issuer
+	ResultCredentials ResultCredentialValidator
 }
 
 // ValidationHandler adapts Validator to controller-runtime admission.
