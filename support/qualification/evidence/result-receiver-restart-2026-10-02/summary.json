@@ -1,0 +1,40 @@
+{
+  "status": "passed",
+  "sourceCommit": "b2576f9bbbe72979ba392456846fb16da1f0f03a",
+  "procedureSHA256": "4e060e791e5b8ffc9dff6310fa41ce00171d56606d70dd66b6146e8ea4f3c6dc",
+  "engines": {
+    "MySQL": {
+      "directory": "mysql",
+      "databaseVersion": "8.4.11",
+      "verification": {
+        "deliveries": 2,
+        "sqlExecutions": 1,
+        "receiptUID": "e6cab052-35b3-4b85-a8c3-a679ededf5c2"
+      },
+      "files": {
+        "lost-ack.json": "0d8ff905fd32be10362c78959dda27ffde4da8bfba81c4d186ef6ebde093baab",
+        "held-retry.json": "4f74b357909d534a791c81ff531d5ff60f4b9cc98f5dffc452f5e07e24392fb0",
+        "publication.json": "3af990d077c5f95c001e28841dce3785dfe3eb4c6cb3cce53308e67da70d2208",
+        "installation.json": "08589a3caa8c14a0db39f88b242ba1be9468b3a8c18a83e596eef2747ef637b6",
+        "receiver-restart.json": "d71e8645480400347840427437eb3fb72669846a79a47497a8aa4cd938b232a2"
+      }
+    },
+    "PostgreSQL": {
+      "directory": "pg",
+      "databaseVersion": "PostgreSQL 17.11 on x86_64-pc-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit",
+      "verification": {
+        "deliveries": 2,
+        "sqlExecutions": 1,
+        "receiptUID": "ffdc250e-647d-4ed2-823e-f70df5265853"
+      },
+      "files": {
+        "lost-ack.json": "4e2d5a75234571e41aa7d598dcbc68ba7e6d3d58d9d4f2fc76ff4bc43ae48d61",
+        "held-retry.json": "45030c9596e4d0b47093fd7d59879523391ef9591844e701cb1ddad831199bbf",
+        "publication.json": "3aaa6bf68390baebb676d47c17bfe4f742f881685016fca142526133e8c4b987",
+        "installation.json": "3c693d8d257bca1a00f38c52c7e367f3d33912cbd1285a11c82a41cdcaeb5ff3",
+        "receiver-restart.json": "f369c967bf399cc71ed3d2a643493f956a0b389cfea76ad903c81e4036a0ad5c"
+      }
+    }
+  },
+  "scope": "Native PostgreSQL 17.11 and MySQL 8.4.11 InnoDB migration Apply on Kubernetes 1.37, two manager replicas, and default 10Mi kubelet logs. Each original Pod redelivered identical bytes after one lost HTTP acknowledgment and replacement of both receiving manager Pods, then received the same persisted receipt. The retry was gated before forwarding until both old Pods were absent and both replacements and backend endpoints were ready. Both witnesses were calibrated with a rolled-back insertion before execution. SQL effects and allocated counters remained one before restart and after the held retry was released. This is not concurrent-duplicate, certificate-rotation, or complete supported-minor proof."
+}

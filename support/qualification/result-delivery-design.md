@@ -773,9 +773,20 @@ one committed row and one allocated counter value. The retained publications
 were reconstructed and their digests checked independently. Both probes restored
 the Service route and removed their proxies and copied credentials.
 
+[Receiver replacement evidence](evidence/result-receiver-restart-2026-10-02/summary.json)
+adds both native migration engines on the packaged `b2576f9b` runtime. The proxy
+held the retry before forwarding it. After reconstructing the first persisted
+publication and observing one SQL effect, the probe removed both manager Pods
+and waited for two new ready UIDs and their Service endpoints. Only then could
+the retry reach the replacement receivers. Both runs returned the original
+receipt, completed the original Job and Pod without restarts, and reached
+current-generation `HistoryMatched` with one SQL effect. The evidence retains
+the old and new manager UID sets, ordering observations, immutable publication,
+calibrated database counters, and exact runtime identities.
+
 This proves one lost acknowledgment for each recorded native migration row.
-Concurrent duplicate requests, receiver failure during retry, and other minor
-combinations still require installed proof. Remaining failure cases,
+Concurrent duplicate requests, failures beyond the recorded receiver replacement,
+and other minor combinations still require installed proof. Remaining failure cases,
 abandoned partial-publication cleanup,
 restore, CA rotation, enforced NetworkPolicy, Lease contention, and the complete
 Kubernetes and database matrix remain explicit #586 acceptance work. The option

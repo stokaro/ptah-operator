@@ -1,0 +1,16 @@
+{
+  "before": [
+    "09c3e0f9-716e-42d4-a916-f2bdaa066a1a",
+    "a92aa6e6-3d11-493d-a5cd-83428eab1fd7"
+  ],
+  "after": [
+    "9f5c22ec-5707-4cd9-adf1-11c0e5cb7a45",
+    "db945d18-755c-45d4-860b-b9d42188584d"
+  ],
+  "oldPodsAbsent": true,
+  "newPodsReady": true,
+  "oldPodsAbsentAt": "2026-10-02T12:37:35.484456+00:00",
+  "newPodsReadyAt": "2026-10-02T12:37:48.765041+00:00",
+  "receiptUIDBeforeRestart": "e6cab052-35b3-4b85-a8c3-a679ededf5c2",
+  "databaseBeforeRestart": "1:1:true"
+}
