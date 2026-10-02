@@ -69,6 +69,12 @@ therefore cannot change the artifacts attributed to the tested commit.
 
 ## Result log retention
 
+The current log-based result transport requires the workaround below.
+[Durable result delivery for 0.2.0](https://github.com/stokaro/ptah-operator/issues/586)
+must remove this prerequisite before qualification can accept installation
+with default kubelet logging. Increasing log retention does not make result
+delivery durable.
+
 Set kubelet `containerLogMaxSize` to at least `64Mi` on every node that can
 run operation Pods. This is a node configuration requirement; Helm cannot
 change it. Keep container logs available until the operator has collected the
