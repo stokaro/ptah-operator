@@ -144,7 +144,7 @@ func payloadDigest(payload []byte) string {
 
 // Encode encodes the durable wire document. For a changed Plan, Stdout must
 // contain the exact plaintext plan, not a process-sealed legacy log payload.
-// These bytes are only for authenticated TLS delivery and Secret storage.
+// These bytes are only for authenticated TLS delivery and confidential result-record storage.
 func Encode(identity Identity, result runner.Result) ([]byte, error) {
 	payload, err := json.Marshal(result)
 	if err != nil {

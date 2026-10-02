@@ -11,7 +11,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"reflect"
 	"regexp"
 	"strings"
 
@@ -227,10 +226,8 @@ func (s Store) Load(ctx context.Context, b Binding) ([]byte, Receipt, error) {
 	if err != nil {
 		return nil, Receipt{}, err
 	}
-	var m manifest
-	if err := json.Unmarshal(intent.Spec.Data, &m); err != nil || m.Version != 1 || m.Binding != b ||
-		m.Size <= 0 || m.Size > MaxPayloadBytes || !digestPattern.MatchString(m.Digest) ||
-		len(m.Chunks) != int((m.Size+ChunkBytes-1)/ChunkBytes) || len(m.Chunks) > maxChunks {
+	m, _, err := admissionManifest(intent)
+	if err != nil || m.Binding != b {
 		return nil, Receipt{}, ErrConflict
 	}
 	childOwner := owner(apiVersion, "PtahResultRecord", intent.Name, intent.UID)
@@ -239,7 +236,7 @@ func (s Store) Load(ctx context.Context, b Binding) ([]byte, Receipt, error) {
 		return nil, Receipt{}, err
 	}
 	var c completion
-	if err := json.Unmarshal(ready.Spec.Data, &c); err != nil || c.ManifestUID != intent.UID ||
+	if !canonicalRecord(ready.Spec.Data, &c) || c.ManifestUID != intent.UID ||
 		c.ManifestDigest != digest(intent.Spec.Data) || len(c.ChunkUIDs) != len(m.Chunks) {
 		return nil, Receipt{}, ErrConflict
 	}
@@ -289,8 +286,7 @@ func (s Store) read(ctx context.Context, want *api.PtahResultRecord) (*api.PtahR
 		}
 		return nil, err
 	}
-	if got.UID == "" || !got.DeletionTimestamp.IsZero() || got.Spec.Type != want.Spec.Type || !reflect.DeepEqual(got.OwnerReferences, want.OwnerReferences) ||
-		got.Labels[labelRecord] != want.Labels[labelRecord] || len(got.Spec.Data) == 0 || len(got.Spec.Data) > ChunkBytes {
+	if got.UID == "" || !got.DeletionTimestamp.IsZero() || !recordShape(got, want) || len(got.Spec.Data) == 0 || len(got.Spec.Data) > ChunkBytes {
 		return nil, ErrConflict
 	}
 	return got, nil

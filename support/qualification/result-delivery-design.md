@@ -26,10 +26,10 @@ The schema requires the role and bounded payload, freezes the whole spec, and
 has no default or status. The reader independently checks decoded byte limits,
 metadata, owner UIDs, and publication digests. Local API-server tests publish and
 read a multi-chunk result using only `get` and `create` on this resource while
-Secret GET remains forbidden. Installed manager RBAC and publication-record admission are still pending.
-The chart currently admits only credential-role records through the configured
-issuer; intent, chunk, and completion writes are refused until their guards are
-implemented. The chart does not grant result-record writes yet.
+Secret GET remains forbidden. The chart routes all record writes through the
+controller-write webhook. With delivery trust configured, that guard admits
+credential and publication records under the rules below. Installed manager RBAC
+remains pending; the chart does not grant result-record writes yet.
 
 The record binds namespace, resource kind/name/UID/generation, execution binding,
 input fingerprint, operation type/ID, attempt Job name/UID, and Pod name/UID.
@@ -67,6 +67,42 @@ completion belong to the intent. Deleting a Job must not garbage-collect the
 result. Resource finalization must preserve unresolved evidence until the
 existing recovery rules allow deletion. A storage test without Kubernetes
 controllers does not prove that lifecycle.
+
+## Publication admission
+
+Only the configured manager may create result records. For every intent, chunk,
+and completion, admission reads the canonical credential, verifies its trusted
+certificate and exact publication binding, and checks current Job/Pod and
+operation authority. A missing issuer or credential refuses publication.
+
+Intent bytes must encode a canonical versioned manifest with the complete size,
+digest, bounded chunk geometry, exact name, and resource owner. A chunk must
+belong to the persisted intent UID and match its declared index, size, and hash.
+Before admitting completion, the webhook reads all chunks directly, validates
+their UIDs and full-payload digest, and validates the runner protocol against the
+credential's operation and engine. The store's ordinary reader uses the same
+canonical manifest and metadata rules, including after restore.
+
+Admission freezes metadata as well as bytes. Identical CREATE retries remain
+admissible so the API can return AlreadyExists, including concurrent completion
+writes. A missing member of an already completed publication cannot be recreated.
+These checks do not make the live authority reads and API writes transactional;
+receiver and consumer checks remain necessary.
+
+Publication DELETE and DeleteCollection remain refused until consumption and
+retention are integrated. Retiring SQL authority alone cannot establish that its
+result was consumed or backed up. This is a remaining installation requirement,
+not a completed cleanup implementation; credential retirement is separate.
+
+Local API-server tests publish through the chart's actual admission handlers,
+read the same result back, refuse unissued and retired authority and invalid
+protocol bytes, and resume a lost API response after intent, chunk, or completion.
+They also verify metadata protection, deletion refusal after retirement, and the
+removal/restoration of the deletion guard. These use a Resolve refusal payload,
+not an installed database workflow or maximum-size plan. Admission readers in
+this fixture still use administrator access. Unit tests separately hold chunk
+geometry, corruption, changed UIDs, forbidden repair, and concurrent identical
+publication to both accepted and refused inputs.
 
 ## TLS delivery component
 
@@ -317,7 +353,7 @@ still apply. SQL and publication are not an atomic transaction.
 
 ## Retention and acceptance
 
-Before enabling this path, complete guarded publication-record creation and deletion,
+Before enabling this path, complete publication-record retention and authorized deletion,
 receiver certificates and NetworkPolicy, bounded request metrics, and receipt
 consumption and retention. Do not attach a time-only TTL to unconsumed results or
 unresolved operations. Abandoned partial publications become eligible only after
@@ -330,8 +366,8 @@ not accept an incomplete publication or reactivate retired delivery authority.
 The current tests prove component publication integrity, TLS identity checking,
 bounded redelivery, result-record persistence without Secret read permission,
 credential issuance without Secret reads, authenticated preflight before SQL,
-issuer authority predicates, and chart credential admission through a local API
-server. They do not prove installed
+issuer authority predicates, and chart credential and publication admission
+through a local API server. They do not prove installed
 RBAC and trust rotation, garbage collection, manager failover, Lease independence,
 or the complete Job-to-controller workflow at the supported plan limit. Those remain the
 explicit #586 acceptance rows.

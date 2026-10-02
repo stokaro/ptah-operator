@@ -119,6 +119,9 @@ func TestIssueAndReadBackAllOperationCredentials(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			if identity, err := issuer.AuthorizePublication(t.Context(), f.Identity.Binding); err != nil || identity != f.Identity {
+				t.Fatalf("issued operation cannot publish: %v", err)
+			}
 			canonical := getCredential(t, api, f)
 			secret := &corev1.Secret{}
 			if err := api.Get(t.Context(), client.ObjectKeyFromObject(canonical), secret); err != nil {
