@@ -1,0 +1,142 @@
+{
+  "commit": "942f5704ad1777bb81990062e51e5c6f7a43dc2c",
+  "namespace": "ptah-result-135-mysql-maximum",
+  "resourceUID": "5b7ddc04-097f-4a38-ab96-732bc44fe794",
+  "binding": {
+    "namespace": "ptah-result-135-mysql-maximum",
+    "kind": "PtahSchema",
+    "name": "first-harvest",
+    "uid": "5b7ddc04-097f-4a38-ab96-732bc44fe794",
+    "generation": 1,
+    "executionBindingID": "v1-2e39aa21207e9d9df40e719995c1a2bc",
+    "inputFingerprint": "sha256:527197375225753721c44177da9cf2d96d6d292b6abc2c22e1d2b5a41e48142c",
+    "operation": "plan",
+    "operationID": "sha256:bace96da13296b932f0407027f5cc2e3df427671ec587a242e769da3f40021f3",
+    "jobName": "ptah-plan-first-harvest-dc160be68a1341f3",
+    "jobUID": "46f959e5-9252-49ee-8ce7-ea0558a36e78",
+    "podName": "ptah-plan-first-harvest-dc160be68a1341f3-n2q9s",
+    "podUID": "34150c7a-46ab-4cc9-a7c7-7a201d5510b1"
+  },
+  "jobUID": "46f959e5-9252-49ee-8ce7-ea0558a36e78",
+  "podUID": "34150c7a-46ab-4cc9-a7c7-7a201d5510b1",
+  "intentUID": "0e60ecb7-77b7-4de7-bde7-022bbd26c2f1",
+  "receiptUID": "56e44ab2-7dd6-4546-9580-dbb28719e958",
+  "payloadDigest": "sha256:85af5d6241b83fe23733ded7523d637f37d9b445ac40acd9d1bc1ba4de7f2345",
+  "payloadBytes": 9784723,
+  "planUID": "a6ca23c3-83cb-4c67-9266-c1c0103ff6fd",
+  "planContentDigest": "sha256:b855691d812b2139133ee9f29e374465393ed851450784559ea7aea9444df2af",
+  "conditions": [
+    {
+      "lastTransitionTime": "2026-10-02T23:42:40Z",
+      "message": "Database engine \"MySQL\" is supported",
+      "observedGeneration": 1,
+      "reason": "SupportedEngine",
+      "status": "True",
+      "type": "EngineSupported"
+    },
+    {
+      "lastTransitionTime": "2026-10-02T23:42:40Z",
+      "message": "Plan is waiting for approval",
+      "observedGeneration": 1,
+      "reason": "AwaitingApproval",
+      "status": "False",
+      "type": "Ready"
+    },
+    {
+      "lastTransitionTime": "2026-10-02T23:42:49Z",
+      "message": "The latest operation completed",
+      "observedGeneration": 1,
+      "reason": "Succeeded",
+      "status": "False",
+      "type": "ReconciliationFailed"
+    },
+    {
+      "lastTransitionTime": "2026-10-02T23:42:49Z",
+      "message": "Desired OCI reference resolved to immutable content",
+      "observedGeneration": 1,
+      "reason": "DigestPinned",
+      "status": "True",
+      "type": "ArtifactResolved"
+    },
+    {
+      "lastTransitionTime": "2026-10-02T23:42:59Z",
+      "message": "Artifact type and verification policy were satisfied",
+      "observedGeneration": 1,
+      "reason": "PolicySatisfied",
+      "status": "True",
+      "type": "ArtifactVerified"
+    },
+    {
+      "lastTransitionTime": "2026-10-02T23:43:10Z",
+      "message": "Database schema was observed",
+      "observedGeneration": 1,
+      "reason": "Observed",
+      "status": "True",
+      "type": "DatabaseReachable"
+    },
+    {
+      "lastTransitionTime": "2026-10-02T23:44:34Z",
+      "message": "Managed scope requires 100 schema statements; highest severity safe",
+      "observedGeneration": 1,
+      "reason": "ScopedChanges",
+      "status": "True",
+      "type": "DriftDetected"
+    },
+    {
+      "lastTransitionTime": "2026-10-02T23:44:34Z",
+      "message": "The authoritative managed scope differs from the verified artifact",
+      "observedGeneration": 1,
+      "reason": "ScopedChanges",
+      "status": "False",
+      "type": "InSync"
+    },
+    {
+      "lastTransitionTime": "2026-10-02T23:44:36Z",
+      "message": "Create an approval bound to the current plan fingerprint",
+      "observedGeneration": 1,
+      "reason": "Waiting",
+      "status": "True",
+      "type": "ApprovalRequired"
+    },
+    {
+      "lastTransitionTime": "2026-10-02T23:44:36Z",
+      "message": "Exact plan bytes are stored in immutable chunks",
+      "observedGeneration": 1,
+      "reason": "Published",
+      "status": "True",
+      "type": "PlanReady"
+    },
+    {
+      "lastTransitionTime": "2026-10-02T23:44:36Z",
+      "message": "Reconciliation is active",
+      "observedGeneration": 1,
+      "reason": "Active",
+      "status": "False",
+      "type": "Suspended"
+    }
+  ],
+  "status": "passed",
+  "managerUIDsBeforeDelivery": [
+    "1978c03f-3693-4223-97d0-cc46c2a10782",
+    "e23bdc03-869c-4da8-a6de-2007ef1ca347"
+  ],
+  "managerUIDsBeforeConsumption": [
+    "542a4773-19cf-4578-bf44-744deea9f488",
+    "d82b2c74-4054-4a0c-b3a1-0df1ce230df5"
+  ],
+  "controllersStoppedAt": "2026-10-02T23:43:26.889920+00:00",
+  "procedureSHA256": "0150aee11a55cafcd67e2cff298eaffff11db6aacab42daff7d4740a3e2df5da",
+  "scope": "Plan receipt first consumed after producing Pod/log removal (completed Job retained) and manager restart. Leader permission was removed while the receiver remained available. This read-only Plan row does not measure SQL replay.",
+  "engine": "mysql",
+  "repeatedCharacters": 1393515,
+  "asciiSuffix": 1,
+  "calibrationSHA256": "5304b4f4a7a6c55ec1ecb339422a3c28e608c7f52a1e262d8c669d02e063d56a",
+  "planBytes": 8388608,
+  "planChunks": 16,
+  "resultChunks": 19,
+  "converged": true,
+  "applyJobUID": "c44a7124-df9f-448f-8bb2-e94120a0059e",
+  "approvedApplyJobs": 1,
+  "databaseDefault": "100:1393516:1393515",
+  "completedAt": "2026-10-02T23:45:24.139903+00:00"
+}

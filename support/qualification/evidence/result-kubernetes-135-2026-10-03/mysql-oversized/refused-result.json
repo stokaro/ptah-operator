@@ -1,0 +1,13 @@
+{
+  "protocolVersion": 1,
+  "operation": "plan",
+  "operationId": "sha256:07449bd1238ece19716b9fbd5fc3a50ecd7ee6def2ff72acd8ee72f31dada331",
+  "childExitCode": 0,
+  "stdout": "",
+  "coordinationDigest": "sha256:6e158abc54597a7da5c0264f4733b1413a562a21f03cb867f3b3436e51db6830",
+  "targetIdentityDigest": "sha256:02817e6fd35236a130547c74d5fe3db8d52827bfc0d1a4913ffc8e0b15ea5deb",
+  "error": {
+    "code": "invalid_plan_output",
+    "message": "plan output exceeds the configured plan limit: saved file has 8388609 bytes; limit is 8388608"
+  }
+}

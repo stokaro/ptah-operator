@@ -1,0 +1,135 @@
+{
+  "status": "passed",
+  "cases": [
+    {
+      "engine": "postgresql",
+      "boundary": "maximum",
+      "namespace": "ptah-result-135-postgresql-maximum",
+      "resourceUID": "eb6ace7f-a375-4262-a11a-861522beed6d",
+      "receiptUID": "42905bb2-d6d2-40d5-91eb-ad38eb3f7c69",
+      "payloadDigest": "sha256:b171967b2c2b5502b30af5a489d56ca31847e50a21e0e2129799e54c604fd75d",
+      "planBytes": 8388608,
+      "planChunks": 16,
+      "applyPublications": 1,
+      "databaseWitness": "1398006:1398002:4",
+      "originalPodAbsent": true,
+      "managersReplacedBeforeHarvest": true,
+      "leaderBindingRestored": true,
+      "admissionGateAbsent": true
+    },
+    {
+      "engine": "postgresql",
+      "boundary": "oversized",
+      "namespace": "ptah-result-135-postgresql-oversized",
+      "resourceUID": "9f3a81d4-262b-4224-8313-d2758e5dccbe",
+      "receiptUID": "932c0067-3ee0-49fe-beed-5d774940eddc",
+      "payloadDigest": "sha256:3825d5bc025129c5d755e697581f3618d7827886fda0b31be16a1f406e3b33d5",
+      "planBytes": 8388609,
+      "planChunks": 0,
+      "applyPublications": 0,
+      "databaseWitness": "0 tables",
+      "originalPodAbsent": true,
+      "managersReplacedBeforeHarvest": true,
+      "leaderBindingRestored": true,
+      "admissionGateAbsent": true
+    },
+    {
+      "engine": "mysql",
+      "boundary": "maximum",
+      "namespace": "ptah-result-135-mysql-maximum",
+      "resourceUID": "5b7ddc04-097f-4a38-ab96-732bc44fe794",
+      "receiptUID": "56e44ab2-7dd6-4546-9580-dbb28719e958",
+      "payloadDigest": "sha256:85af5d6241b83fe23733ded7523d637f37d9b445ac40acd9d1bc1ba4de7f2345",
+      "planBytes": 8388608,
+      "planChunks": 16,
+      "applyPublications": 1,
+      "databaseWitness": "100:1393516:1393515",
+      "originalPodAbsent": true,
+      "managersReplacedBeforeHarvest": true,
+      "leaderBindingRestored": true,
+      "admissionGateAbsent": true
+    },
+    {
+      "engine": "mysql",
+      "boundary": "oversized",
+      "namespace": "ptah-result-135-mysql-oversized",
+      "resourceUID": "562f477f-3fb1-474f-92c4-d10cfd0584b1",
+      "receiptUID": "4031ad22-2cbb-4d3f-8cdc-a7759ae63ffd",
+      "payloadDigest": "sha256:ccda3e8ac1f82f0cc2de7e026ad0aa099146a6db441f82afe218bd7ca8ef8b40",
+      "planBytes": 8388609,
+      "planChunks": 0,
+      "applyPublications": 0,
+      "databaseWitness": "0 tables",
+      "originalPodAbsent": true,
+      "managersReplacedBeforeHarvest": true,
+      "leaderBindingRestored": true,
+      "admissionGateAbsent": true
+    }
+  ],
+  "kubelets": [
+    {
+      "node": "ptah-e2e-1-35-8-result-135-94-909f6c6617-control-plane",
+      "uid": "41b15186-9e8d-4eb1-a86c-b06ee78d0a23",
+      "kubeletVersion": "v1.35.8",
+      "architecture": "amd64",
+      "containerLogMaxSize": "10Mi",
+      "explicitLogSizeSettingAbsent": true
+    },
+    {
+      "node": "ptah-e2e-1-35-8-result-135-94-909f6c6617-control-plane2",
+      "uid": "161e2d54-667e-4604-ae00-b10f706a179f",
+      "kubeletVersion": "v1.35.8",
+      "architecture": "amd64",
+      "containerLogMaxSize": "10Mi",
+      "explicitLogSizeSettingAbsent": true
+    },
+    {
+      "node": "ptah-e2e-1-35-8-result-135-94-909f6c6617-control-plane3",
+      "uid": "23dd4cab-e351-49f5-89be-4771a0e5cb2a",
+      "kubeletVersion": "v1.35.8",
+      "architecture": "amd64",
+      "containerLogMaxSize": "10Mi",
+      "explicitLogSizeSettingAbsent": true
+    },
+    {
+      "node": "ptah-e2e-1-35-8-result-135-94-909f6c6617-worker",
+      "uid": "15c01c48-9359-4b5d-97fb-ff3d0bfcc31b",
+      "kubeletVersion": "v1.35.8",
+      "architecture": "amd64",
+      "containerLogMaxSize": "10Mi",
+      "explicitLogSizeSettingAbsent": true
+    }
+  ],
+  "runtime": [
+    {
+      "name": "ptah-runtime-generated-name-prefix-boun-cert-rotator-687c77rjcn",
+      "uid": "381a812c-c0a0-436c-98c6-335a1d44f3aa",
+      "images": [
+        {
+          "image": "sha256:9a9e1429a750cee7eeb3d1b3aabf45c00ad398f807939ce68b03e56d538ce97c",
+          "imageID": "e2e-registry.ptah-test-a-1-35-8-result-135-942f5704-909f6c6617.svc.cluster.local:5000/ptah-operator@sha256:596623217e3b85e089ab066d87205c08f875eecfa1ebc3a82f0453dcd8885d38"
+        }
+      ]
+    },
+    {
+      "name": "ptah-runtime-generated-name-prefix-boundary-proof-909f6c669hs7c",
+      "uid": "69e3ed45-0508-4b34-a45c-46f68b445df9",
+      "images": [
+        {
+          "image": "sha256:9a9e1429a750cee7eeb3d1b3aabf45c00ad398f807939ce68b03e56d538ce97c",
+          "imageID": "e2e-registry.ptah-test-a-1-35-8-result-135-942f5704-909f6c6617.svc.cluster.local:5000/ptah-operator@sha256:596623217e3b85e089ab066d87205c08f875eecfa1ebc3a82f0453dcd8885d38"
+        }
+      ]
+    },
+    {
+      "name": "ptah-runtime-generated-name-prefix-boundary-proof-909f6c669vbgn",
+      "uid": "b6718817-0126-49ec-b6f6-5b384982087c",
+      "images": [
+        {
+          "image": "sha256:9a9e1429a750cee7eeb3d1b3aabf45c00ad398f807939ce68b03e56d538ce97c",
+          "imageID": "e2e-registry.ptah-test-a-1-35-8-result-135-942f5704-909f6c6617.svc.cluster.local:5000/ptah-operator@sha256:596623217e3b85e089ab066d87205c08f875eecfa1ebc3a82f0453dcd8885d38"
+        }
+      ]
+    }
+  ]
+}

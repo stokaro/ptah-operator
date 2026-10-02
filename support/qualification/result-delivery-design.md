@@ -1165,3 +1165,23 @@ Plan intent and credential, with no Apply authority. MySQL's corrected native
 probe exits zero. Both test databases are removed; namespace deletion follows
 ordinary retention. The remaining default-log boundary rows are Kubernetes
 1.35 and 1.36. These cases do not complete lifecycle or final acceptance.
+
+
+### Kubernetes 1.35 default-log boundary rows
+
+[Installed Kubernetes 1.35.8 evidence](evidence/result-kubernetes-135-2026-10-03/summary.json)
+passes the exact maximum and maximum-plus-one on PostgreSQL and MySQL using
+runtime images built from `942f5704`. All four native probes exit zero. Each
+receipt is persisted before its producing Pod/logs are removed and both
+managers replaced. The maximum plans reconstruct from 16 full chunks and reach
+one approved Apply with exact native database defaults. Oversized plans report
+8,388,609 saved bytes and leave no plan, chunks, Apply or database tables.
+Independent readback confirms the original receipts, plan contents, every
+escaping-heavy statement, current-generation outcomes and restored controls.
+All four kubelets report `10Mi` and have no explicit log-size setting.
+
+The completed 1.35 cluster, registry and databases are removed after evidence
+capture. The older completed 1.37 lab was also removed to avoid shared-host
+contention during preparation. Cluster deletion is not Helm uninstall
+qualification. Kubernetes 1.36 remains the missing minor for this boundary DoD;
+full lifecycle and final-profile acceptance remain separate requirements.
