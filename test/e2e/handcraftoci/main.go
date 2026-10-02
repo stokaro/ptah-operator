@@ -82,6 +82,8 @@ func main() {
 func run(args []string) error {
 	if len(args) > 0 {
 		switch args[0] {
+		case "result-expired-trust":
+			return runExpiredResultTrust(args[1:])
 		case "result-ack-proxy":
 			return runResultACKProxy(args[1:])
 		case "tls-proxy":

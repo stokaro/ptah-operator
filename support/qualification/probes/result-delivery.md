@@ -421,3 +421,41 @@ gate, rotator arguments and leadership on failure.
 This case proves installed leaf/key renewal and interruption recovery. It does
 not exercise CA replacement or either credential retirement wait. Those remain
 required alongside the existing local state-machine tests.
+
+## Expired pending CA recovery before first harvest
+
+Build the existing fixture for the host with
+`GOFLAGS=-p=1 go build -o /tmp/ptah-result-trust-fixture ./test/e2e/handcraftoci`.
+Set `RESULT_TRUST_FIXTURE_BINARY` to that path and `RESULT_PROBE_ROTATE_CA=1`
+when running the first-harvest probe; leave the leaf-renewal flag off.
+
+After the original Plan receipt is verified and its Pod is removed, the harness
+stops the installed rotator and reads its stable journal. The fixture accepts
+only that canonical journal, preserves its installation UIDs, and creates a
+pending `prepare` transition with correctly signed expired current and candidate
+certificates. Their signed expiration dates precede the test by more than the
+five-minute skew allowance. The candidate has distinct private keys. Private
+material travels only through subprocess pipes and API requests. Retained
+evidence contains the public certificates, expiration dates and key hashes.
+
+This is an injected expired-state fixture, not elapsed real-world certificate
+lifetime. No cluster clock, production lifetime or retirement bound is changed.
+It models recovery after the rotator was unavailable long enough for a pending
+candidate and the current authorities to expire. Local state-machine tests
+remain the evidence for both full credential-retirement waits.
+
+The harness installs the expired journal, enrollment policy and projection while
+the rotator is stopped. It replaces both managers and requires new unavailable
+Pod identities. An exact-Secret admission hold then keeps the recovery projection
+from moving. The installed rotator must discard the expired candidate and
+persist fresh authorities plus an enrollment fence. Replacing the rotator at
+that point must preserve those authorities and that fence. Removing the hold
+lets the unchanged production expiry-plus-skew path switch and retire trust.
+Both receivers and the rotator must become ready with the new authorities.
+
+The enclosing first-harvest case then replaces the receiving processes again,
+restores leadership and requires the original receipt, identical 8 MiB plan,
+ordinary approval, one Apply and database-verified convergence. A failed CA
+probe restores the original journal, policy, projection and replica count before
+restoring leadership. A successful probe keeps the new stable trust. Neither
+case leaves its admission hold installed.

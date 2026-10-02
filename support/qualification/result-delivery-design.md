@@ -902,10 +902,27 @@ original receipt and reconstructed the same 8 MiB plan. Ordinary approval led to
 one Apply and verified PostgreSQL convergence. Independent live readback then
 rebuilt both the receipt payload and planstore bytes. Temporary gates, rotator
 arguments and leadership were restored. This closes the installed serving-key
-renewal/interruption case; CA replacement and its retirement waits remain open.
+renewal/interruption case; it does not exercise CA replacement or retirement waits.
 
-Other minor combinations still require installed proof. Remaining failure cases,
+[Installed expired CA recovery evidence](evidence/result-ca-rotation-2026-10-02/summary.json)
+covers the same PostgreSQL first-harvest boundary through replacement of both
+server and client authorities. An injected, correctly signed pending journal
+held expired current and candidate CAs; the rotator was stopped during injection.
+Both manager processes were removed. The installed rotator discarded the expired
+candidate, persisted fresh CA keys and an enrollment fence, and was replaced
+while a projection hold prevented completion. Its replacement retained the same
+candidate and fence. Removing the hold allowed the production expiry-plus-skew
+path to switch and retire trust; both receivers and the rotator became ready.
+After a further manager replacement, first harvest reconstructed the original
+8 MiB plan and ordinary approval led to one verified native Apply. Live readback
+independently rebuilt both the publication and planstore bytes. This is installed
+recovery from deliberately expired state. It does not represent elapsed normal
+credential-retirement waits; the existing local state-machine tests retain that
+separate timing claim. Both installed rotation cases use unchanged production
+code, default log sizes, and the recorded runtime identities.
+
+Other minor combinations still require installed proof. Remaining partial-Apply authorization,
 abandoned partial-publication cleanup,
-restore, CA rotation, enforced NetworkPolicy, and the complete
+restore, enforced NetworkPolicy, and the complete
 Kubernetes and database matrix remain explicit #586 acceptance work. The option
 remains disabled by default.
