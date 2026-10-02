@@ -88,6 +88,12 @@ def main():
     if upload_budget not in ('0', '1') or (upload_budget == '1' and (runner_loss or restart_receiver or concurrent)):
         raise ValueError('Upload budget must run separately from other faults')
     upload_budget = upload_budget == '1'
+    family = E.get('RESULT_PROBE_FAMILY', 'PtahMigration')
+    if family not in ('PtahMigration', 'PtahSchema') or (family == 'PtahSchema' and not upload_budget):
+        raise ValueError('Schema probes require the upload-budget case')
+    schema_budget = family == 'PtahSchema'
+    apply_prefix = 'ptah-apply-' if schema_budget else 'ptah-m-apply-'
+    empty_witness = {'columns': [], 'primaryKeyColumns': []} if schema_budget else '0:1:false'
     engine = E['RESULT_PROBE_ENGINE']
     if engine not in ('PostgreSQL', 'MySQL'):
         raise ValueError('RESULT_PROBE_ENGINE must be PostgreSQL or MySQL')
@@ -142,6 +148,9 @@ def main():
         return run(['docker', '--context', E['E2E_DOCKER_CONTEXT'], 'exec', '-i', E['E2E_EXTERNAL_POSTGRES_CONTAINER_ID'], 'sh', '-ec', 'PGPASSWORD="$POSTGRES_PASSWORD" exec psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$1" -At -v ON_ERROR_STOP=1', 'probe', db or database], query + '\n').strip()
 
     def witness(db=None):
+        if schema_budget:
+            from result_upload_budget import schema_witness
+            return schema_witness(sql, engine, db or database)
         if engine == 'MySQL':
             # Read the allocated counter, including rolled-back attempts. Cached
             # information_schema statistics would hide a replay.
@@ -178,7 +187,7 @@ def main():
     backend = managers[0]
     host = service_name + '.' + opns + '.svc'
     create({'apiVersion': 'v1', 'kind': 'Namespace', 'metadata': {'name': ns, 'labels': {'operator.ptah.run/acceptance-owner': E['E2E_KIND_CLUSTER_NAME']}}})
-    for kind, name in [('secret', 'demo-registry'), ('secret', 'demo-registry-pull'), ('configmap', 'demo-migration-verification-policy')]:
+    for kind, name in [('secret', 'demo-registry'), ('secret', 'demo-registry-pull'), ('configmap', 'demo-verification-policy' if schema_budget else 'demo-migration-verification-policy')]:
         o = get(kind, name, source)
         o['metadata'] = {'name': name, 'namespace': ns}
         create(o)
@@ -187,36 +196,42 @@ def main():
         creds = {key: base64.b64decode(value).decode() for key, value in get('secret', 'demo-mysql-database', source)['data'].items()}
         assert creds['username'] == 'demo'
         sql('CREATE DATABASE `' + database + '`; GRANT ALL ON `' + database + '`.* TO \'demo\'@\'%\';', 'mysql')
-        sql('CREATE TABLE delivery_probe_calls(n BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY) ENGINE=InnoDB;')
-        storage_engine = sql("SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='delivery_probe_calls';")
-        assert storage_engine == 'InnoDB'
         migration_sql = 'INSERT INTO delivery_probe_calls VALUES (NULL);'
-        expected_rollback = '0:1:true'
+        if not schema_budget:
+            sql('CREATE TABLE delivery_probe_calls(n BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY) ENGINE=InnoDB;')
+            storage_engine = sql("SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='delivery_probe_calls';")
+            assert storage_engine == 'InnoDB'
     else:
         creds = json.loads(pathlib.Path(E['E2E_EXTERNAL_POSTGRES_CREDENTIALS_FILE']).read_text())
         owner = '"' + creds['username'].replace('"', '""') + '"'
         sql('CREATE DATABASE ' + database + ' OWNER ' + owner + ';', urllib.parse.urlsplit(creds['url']).path[1:])
-        sql('SET ROLE ' + owner + '; CREATE SEQUENCE delivery_probe_sequence; CREATE TABLE delivery_probe_calls(n bigint NOT NULL);')
         migration_sql = "INSERT INTO delivery_probe_calls(n) VALUES (nextval('delivery_probe_sequence'));"
-        storage_engine = 'PostgreSQL sequence'
-        expected_rollback = '0:1:true'
-    assert witness() == '0:1:false'
-    sql('BEGIN; ' + migration_sql + ' ROLLBACK;')
-    calibration = {'storageEngine': storage_engine, 'afterRollback': witness()}
-    assert calibration['afterRollback'] == expected_rollback
-    sql('TRUNCATE delivery_probe_calls;' if engine == 'MySQL' else 'ALTER SEQUENCE delivery_probe_sequence RESTART WITH 1;')
-    calibration['afterReset'] = witness()
-    assert calibration['afterReset'] == '0:1:false'
+        if not schema_budget:
+            sql('SET ROLE ' + owner + '; CREATE SEQUENCE delivery_probe_sequence; CREATE TABLE delivery_probe_calls(n bigint NOT NULL);')
+            storage_engine = 'PostgreSQL sequence'
+    assert witness() == empty_witness
+    if schema_budget:
+        calibration = {'before': witness()}
+    else:
+        sql('BEGIN; ' + migration_sql + ' ROLLBACK;')
+        calibration = {'storageEngine': storage_engine, 'afterRollback': witness()}
+        assert calibration['afterRollback'] == '0:1:true'
+        sql('TRUNCATE delivery_probe_calls;' if engine == 'MySQL' else 'ALTER SEQUENCE delivery_probe_sequence RESTART WITH 1;')
+        calibration['afterReset'] = witness()
+        assert calibration['afterReset'] == '0:1:false'
     server_version = sql('SELECT VERSION();')
     url = urllib.parse.urlunsplit(urllib.parse.urlsplit(creds['url'])._replace(path='/' + database))
     create({'apiVersion': 'v1', 'kind': 'Secret', 'metadata': {'name': 'ack-database', 'namespace': ns}, 'stringData': {'url': url}})
-    create({'apiVersion': 'v1', 'kind': 'ConfigMap', 'metadata': {'name': 'ack-migrations', 'namespace': ns}, 'data': {'0000000001_record_delivery.up.sql': migration_sql + '\n', '0000000001_record_delivery.down.sql': 'DELETE FROM delivery_probe_calls;\n'}})
+    create({'apiVersion': 'v1', 'kind': 'ConfigMap', 'metadata': {'name': 'ack-migrations', 'namespace': ns}, 'data': ({'schema.sql': 'CREATE TABLE qualification_probe (id bigint NOT NULL PRIMARY KEY, email text NOT NULL);\n'} if schema_budget else {'0000000001_record_delivery.up.sql': migration_sql + '\n', '0000000001_record_delivery.down.sql': 'DELETE FROM delivery_probe_calls;\n'})})
     original = get('job', 'result-schema-publish', source)
     template = copy.deepcopy(original['spec']['template'])
     template['metadata'] = {}
     container = template['spec']['containers'][0]
     container['command'] = ['/bin/sh', '-ec']
     container['args'] = ['mkdir -p /work/migrations; cp -L /schema/*.sql /work/migrations/; exec /usr/local/bin/ptah "$@"', 'publisher', 'migrations', 'push', 'oci://' + E['E2E_REGISTRY_HOST'] + '/migrations/demo:' + ns, '--migrations-dir', '/work/migrations', '--dir-format', 'ptah', '--version', ns, '--plain-http']
+    if schema_budget:
+        container['command'] = ['/usr/local/bin/ptah']
+        container['args'] = ['schema', 'push', 'oci://' + E['E2E_REGISTRY_HOST'] + '/schemas/demo:' + ns, '--schema-file', '/schema/schema.sql', '--dialect', 'mysql' if engine == 'MySQL' else 'postgres', '--plain-http']
     for v in template['spec']['volumes']:
         if v['name'] == 'schema':
             v['configMap'] = {'name': 'ack-migrations'}
@@ -246,12 +261,12 @@ def main():
         uids = {e.get('targetRef', {}).get('uid') for s in slices for e in s.get('endpoints', []) if e.get('conditions', {}).get('ready')}
         return uids == expected
     try:
-        create({'apiVersion': 'admissionregistration.k8s.io/v1', 'kind': 'ValidatingAdmissionPolicy', 'metadata': {'name': gate}, 'spec': {'failurePolicy': 'Fail', 'matchConstraints': {'resourceRules': [{'apiGroups': [''], 'apiVersions': ['v1'], 'operations': ['CREATE'], 'resources': ['secrets']}]}, 'validations': [{'expression': "!has(object.metadata.annotations) || !('operator.ptah.run/result-pod-name' in object.metadata.annotations) || !object.metadata.annotations['operator.ptah.run/result-pod-name'].startsWith('ptah-m-apply-')", 'message': 'Acceptance probe holds migration Apply credentials'}]}})
+        create({'apiVersion': 'admissionregistration.k8s.io/v1', 'kind': 'ValidatingAdmissionPolicy', 'metadata': {'name': gate}, 'spec': {'failurePolicy': 'Fail', 'matchConstraints': {'resourceRules': [{'apiGroups': [''], 'apiVersions': ['v1'], 'operations': ['CREATE'], 'resources': ['secrets']}]}, 'validations': [{'expression': "!has(object.metadata.annotations) || !('operator.ptah.run/result-pod-name' in object.metadata.annotations) || !object.metadata.annotations['operator.ptah.run/result-pod-name'].startsWith('" + apply_prefix + "')", 'message': 'Acceptance probe holds migration Apply credentials'}]}})
         gated = True
         create({'apiVersion': 'admissionregistration.k8s.io/v1', 'kind': 'ValidatingAdmissionPolicyBinding', 'metadata': {'name': gate}, 'spec': {'policyName': gate, 'validationActions': ['Deny'], 'matchResources': {'namespaceSelector': {'matchLabels': {'kubernetes.io/metadata.name': ns}}}}})
 
         def gate_ready():
-            o = {'apiVersion': 'v1', 'kind': 'Secret', 'metadata': {'name': 'gate-probe', 'namespace': ns, 'annotations': {'operator.ptah.run/result-pod-name': 'ptah-m-apply-probe'}}}
+            o = {'apiVersion': 'v1', 'kind': 'Secret', 'metadata': {'name': 'gate-probe', 'namespace': ns, 'annotations': {'operator.ptah.run/result-pod-name': apply_prefix + 'probe'}}}
             p = subprocess.run(['kubectl', '--kubeconfig', E['E2E_KUBECONFIG'], 'create', '--dry-run=server', '-f', '-'], input=json.dumps(o), text=True, capture_output=True)
             return p.returncode and 'Acceptance probe holds migration Apply credentials' in p.stderr
         wait(gate_ready, 30)
@@ -259,6 +274,13 @@ def main():
         env.update(APPLY='Always', INTERVAL='30s' if runner_loss else '2h')
         manifest = subprocess.run(['demo/bin/lab', 'manifest', 'shipments', digest], env=env, text=True, capture_output=True, check=True).stdout
         migration = json.loads(k('create', '--dry-run=client', '--validate=false', '-f', '-', '-o', 'json', data=manifest, namespace=source))
+        if schema_budget:
+            original_schema = get('ptahschema', 'storefront', source)
+            migration = {'apiVersion': original_schema['apiVersion'], 'kind': 'PtahSchema', 'spec': copy.deepcopy(original_schema['spec'])}
+            migration['spec']['desired']['ociRef'] = 'oci://' + E['E2E_REGISTRY_HOST'] + '/schemas/demo@' + digest
+            migration['spec']['policy']['apply'] = 'Always'
+            migration['spec']['interval'] = '2h'
+            migration['spec']['suspend'] = False
         migration['metadata'] = {'name': 'lost-ack', 'namespace': ns}
         migration['spec']['target']['coordinationKey'] = 'acceptance/' + ns
         migration['spec']['target']['urlFrom']['name'] = 'ack-database'
@@ -267,7 +289,7 @@ def main():
         resource = create(migration)
 
         def held():
-            matches = [r for r in records() if r['spec']['type'] == 'credential' and r['metadata'].get('annotations', {}).get('operator.ptah.run/result-pod-name', '').startswith('ptah-m-apply-')]
+            matches = [r for r in records() if r['spec']['type'] == 'credential' and r['metadata'].get('annotations', {}).get('operator.ptah.run/result-pod-name', '').startswith(apply_prefix)]
             return matches[0] if len(matches) == 1 else None
         credential = wait(held, 300)
         certificate_der = ssl.PEM_cert_to_DER_cert(base64.b64decode(dec(credential)['tls.crt']).decode())
@@ -277,10 +299,10 @@ def main():
         assert pod['status']['phase'] == 'Pending'
         assert pod['spec']['automountServiceAccountToken'] is False
         assert not any('serviceAccountToken' in source for volume in pod['spec'].get('volumes', []) for source in volume.get('projected', {}).get('sources', []))
-        operation = get('ptahmigration', 'lost-ack')['status']['activeOperation']
+        operation = get(family.lower(), 'lost-ack')['status']['activeOperation']
         job_name = operation['jobName']
         job_uid = operation['jobUID']
-        assert witness() == '0:1:false'
+        assert witness() == empty_witness
         def open_execution_gate():
             nonlocal gated
             k('delete', 'validatingadmissionpolicybinding', gate)

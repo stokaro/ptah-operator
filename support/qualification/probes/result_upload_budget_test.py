@@ -1,10 +1,11 @@
 import base64
+import copy
 import hashlib
 import json
 import pathlib
 import unittest
 
-from result_upload_budget import SECOND, verify_evidence
+from result_upload_budget import SECOND, EXPECTED_SCHEMA, EMPTY_SCHEMA, verify_evidence
 from result_first_harvest import publication
 
 
@@ -43,6 +44,42 @@ class UploadBudgetTests(unittest.TestCase):
     def test_accepts_bounded_uploads_progress_and_renewal(self):
         self.assertEqual(verify_evidence(self.fixture()),
                          {'timedOutUploads': 2, 'renewals': 34, 'independentSQLExecutions': 2})
+
+    def schema_fixture(self):
+        value = self.fixture()
+        value.update(evidenceVersion=2, family='PtahSchema')
+        value['calibration'] = {'before': copy.deepcopy(EMPTY_SCHEMA)}
+        value['peerCalibration'] = {'before': copy.deepcopy(EMPTY_SCHEMA)}
+        for row in value['executions'].values():
+            row['databaseWitness'] = copy.deepcopy(EXPECTED_SCHEMA)
+            row['conditions'][0]['reason'] = 'InSync'
+        return value
+
+    def test_accepts_schema_convergence_without_claiming_sql_counters(self):
+        self.assertEqual(verify_evidence(self.schema_fixture()),
+                         {'timedOutUploads': 2, 'renewals': 34, 'independentSchemasConverged': 2})
+
+    def test_refuses_schema_status_without_actual_database_effects(self):
+        mutations = [
+            (['calibration', 'before'], EXPECTED_SCHEMA),
+            (['peerCalibration', 'before'], EXPECTED_SCHEMA),
+            (['executions', 'peer', 'databaseWitness'], EMPTY_SCHEMA),
+            (['executions', 'original', 'databaseWitness', 'columns'], ['id:bigint:NO']),
+            (['executions', 'original', 'databaseWitness', 'columns'], ['id:bigint:YES', 'email:text:NO']),
+            (['executions', 'original', 'databaseWitness', 'primaryKeyColumns'], []),
+            (['executions', 'peer', 'databaseWitness', 'primaryKeyColumns'], ['email']),
+            (['executions', 'peer', 'conditions', 0, 'reason'], 'HistoryMatched'),
+            (['family'], 'PtahMigration'),
+        ]
+        for path, replacement in mutations:
+            with self.subTest(path=path):
+                value = self.schema_fixture()
+                target = value
+                for key in path[:-1]:
+                    target = target[key]
+                target[path[-1]] = replacement
+                with self.assertRaises((ValueError, KeyError)):
+                    verify_evidence(value)
 
     def test_refuses_vacuous_or_unbounded_evidence(self):
         mutations = [
@@ -132,6 +169,90 @@ class UploadBudgetTests(unittest.TestCase):
                     self.assertEqual(binding['generation'], execution['generation'])
                     self.assertEqual(complete['metadata']['uid'], execution['receiptUID'])
                     self.assertEqual(json.loads(payload)['migrationRun']['outcome'], 'applied')
+
+    def test_replays_both_schema_engine_cases(self):
+        root = pathlib.Path(__file__).resolve().parents[1] / 'evidence/result-schema-upload-budget-2026-10-02'
+        summary = json.loads((root / 'summary.json').read_text())
+        self.assertEqual(summary['family'], 'PtahSchema')
+        self.assertEqual(set(summary['engines']), {'PostgreSQL', 'MySQL'})
+        inventory_bytes = (root / 'operation-inventory.json').read_bytes()
+        self.assertEqual(hashlib.sha256(inventory_bytes).hexdigest(), summary['operationInventorySHA256'])
+        inventory = json.loads(inventory_bytes)
+        self.assertEqual(inventory['operatorRevision'], summary['operatorRevision'])
+        self.assertEqual(set(inventory['engines']), {'PostgreSQL', 'MySQL'})
+        expected_operations = {'PtahSchema/' + op for op in ('resolve', 'verify', 'observe', 'plan', 'apply')}
+        expected_operations |= {'PtahMigration/' + op for op in ('resolve', 'verify', 'migration-history', 'migration-apply')}
+        for item in inventory['engines'].values():
+            self.assertEqual(set(item['operations']), expected_operations)
+            for operation, row in item['operations'].items():
+                self.assertEqual(row['childExitCode'], 0)
+                self.assertGreater(row['payloadBytes'], 0)
+                self.assertGreaterEqual(row['memberCount'], 3)
+                self.assertTrue(all(row[k] for k in ('resourceUID', 'jobUID', 'podUID', 'receiptUID', 'intentUID')))
+                intent, complete, payload = publication(row['publication'], row['jobUID'])
+                binding = json.loads(base64.b64decode(intent['spec']['data']))['binding']
+                self.assertEqual(binding['kind'] + '/' + binding['operation'], operation)
+                self.assertEqual(binding['uid'], row['resourceUID'])
+                self.assertEqual(binding['podUID'], row['podUID'])
+                self.assertEqual(intent['metadata']['uid'], row['intentUID'])
+                self.assertEqual(complete['metadata']['uid'], row['receiptUID'])
+                self.assertEqual(len(payload), row['payloadBytes'])
+                self.assertEqual('sha256:' + hashlib.sha256(payload).hexdigest(), row['payloadDigest'])
+                self.assertEqual(json.loads(payload)['childExitCode'], 0)
+            self.assertEqual(len(item['access']), 4)
+            for row in item['access']:
+                attributes = row['request']['resourceAttributes']
+                self.assertEqual(attributes['namespace'], row['namespace'])
+                self.assertEqual(attributes['verb'], 'get')
+                self.assertEqual(row['request']['user'], inventory['managerIdentity'])
+                self.assertEqual(row['status']['allowed'], row['allowed'])
+                self.assertFalse(row['status'].get('evaluationError'))
+                if row['resource'] == 'pods/log':
+                    self.assertEqual(attributes['resource'], 'pods')
+                    self.assertEqual(attributes['subresource'], 'log')
+                    self.assertFalse(attributes.get('name'))
+                else:
+                    self.assertEqual(attributes['resource'], 'ptahresultrecords')
+                    self.assertEqual(attributes['group'], 'operator.ptah.run')
+            namespaces = {row['namespace'] for row in item['access']}
+            self.assertEqual(len(namespaces), 2)
+            for namespace in namespaces:
+                self.assertEqual({(row['verb'], row['resource'], row['allowed']) for row in item['access']
+                                  if row['namespace'] == namespace},
+                                 {('get', 'pods/log', False), ('get', 'ptahresultrecords.operator.ptah.run', True)})
+        for engine, entry in summary['engines'].items():
+            with self.subTest(engine=engine):
+                directory = root / entry['directory']
+                self.assertEqual(set(entry['files']), {'upload-budget.json', 'original-publication.json',
+                                                      'peer-publication.json', 'installation.json'})
+                for name, expected in entry['files'].items():
+                    self.assertEqual(hashlib.sha256((directory / name).read_bytes()).hexdigest(), expected)
+                proof = json.loads((directory / 'upload-budget.json').read_text())
+                install = json.loads((directory / 'installation.json').read_text())
+                self.assertEqual(proof['family'], 'PtahSchema')
+                self.assertEqual(proof['engine'], engine)
+                self.assertEqual(verify_evidence(proof), entry['verification'])
+                self.assertEqual(proof['procedureSHA256'], summary['procedures'])
+                self.assertEqual(proof['commit'], install['operatorRevision'])
+                self.assertEqual(proof['commit'], summary['operatorRevision'])
+                self.assertEqual(set(install['receivers']), {row['receiverUID'] for row in proof['slowUploads']})
+                self.assertTrue(all(install[k] for k in ['serviceRestored', 'temporaryLabelRemoved', 'credentialGateRemoved']))
+                self.assertTrue(install['nodes'])
+                self.assertTrue(all(n['containerLogMaxSize'] == '10Mi' for n in install['nodes']))
+                for execution in ('original', 'peer'):
+                    row = proof['executions'][execution]
+                    records = json.loads((directory / (execution + '-publication.json')).read_text())
+                    self.assertTrue(records)
+                    self.assertTrue(all(r['spec']['type'] in ('intent', 'chunk', 'complete') for r in records.values()))
+                    intent, complete, payload = publication(records, row['jobUID'])
+                    binding = json.loads(base64.b64decode(intent['spec']['data']))['binding']
+                    self.assertEqual(binding['kind'], 'PtahSchema')
+                    self.assertEqual(binding['operation'], 'apply')
+                    self.assertEqual(binding['uid'], row['resourceUID'])
+                    self.assertEqual(binding['podUID'], row['podUID'])
+                    self.assertEqual(binding['generation'], row['generation'])
+                    self.assertEqual(complete['metadata']['uid'], row['receiptUID'])
+                    self.assertEqual(json.loads(payload)['childExitCode'], 0)
 
 
 if __name__ == '__main__':

@@ -843,9 +843,21 @@ held original Apply Lease retains its identity and renews with a maximum gap of
 5.23 seconds. No incomplete upload creates an intent. Restoring the route and
 releasing the original Pod yields one calibrated SQL effect in each database,
 with no replacement Apply. The evidence retains actual Lease samples, request
-intervals, both native publications per engine, and fault cleanup. This covers
-the migration cases; it does not establish schema-controller independence or
-progress while all receivers or persistent storage are unavailable.
+intervals, both native publications per engine, and fault cleanup.
+
+`evidence/result-schema-upload-budget-2026-10-02/` completes the same slow-client
+and saturation cases for PtahSchema on both engines. Independent schemas reach
+`InSync` in 73.12 and 72.43 seconds; direct database reads verify the declared
+column types, nullability and primary key. The maximum Lease renewal gap is
+5.61 seconds, and each original Apply Job/Pod completes without replacement or
+restart. This schema evidence claims database convergence, not the allocated SQL
+counters used by the migration probes. Both engines' retained operation inventory
+independently reconstructs successful publications for all nine supported
+family/operation pairs. SubjectAccessReview records include an explicit `log`
+subresource and show result-record GET allowed and Pod-log GET denied for the
+installed manager. The existing background-consumer evidence remains applicable:
+its reader and controller source hashes are unchanged. These results do not
+establish progress while all receivers or persistent storage are unavailable.
 
 Failures beyond the recorded cases and other minor combinations still require
 installed proof. Remaining failure cases,

@@ -374,3 +374,17 @@ or stalled Lease, SQL replay and stale convergence. This case covers migration
 progress with one available receiver and renewal with both upload slots busy.
 It does not claim that new delivery succeeds while all receivers are unavailable,
 or supply the other controller-family and installed-failure requirements.
+
+Set `RESULT_PROBE_FAMILY=PtahSchema` with the upload-budget mode to exercise the
+other controller family. The default remains `PtahMigration`. The schema case
+starts two empty databases, publishes a small native schema, and holds the
+original Apply credential. An independent schema must reach current-generation
+`InSync` through the free receiver before the first upload times out. Both
+final database readings must contain the exact declared column types,
+nullability, and primary key. Empty metadata, a preexisting fixture, a missing
+key, or status without the database effect fails the evidence verifier.
+
+Schema evidence is version 2 and records the resource family explicitly. It
+proves two distinct original Apply Jobs and native schema convergence, without
+claiming the sequence/auto-increment SQL counters used by migration evidence.
+The upload, Lease, authentication, cleanup and observation budgets are unchanged.

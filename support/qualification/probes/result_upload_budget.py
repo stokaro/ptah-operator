@@ -1,8 +1,8 @@
-"""Bound stalled installed uploads while another native migration progresses.
+"""Bound stalled installed uploads while another native resource progresses.
 
 The held Apply Pod has not started SQL. Its credential authorizes the fault
 requests, while its real controller must keep renewing the database Lease.
-Only the receiver on the current leader is occupied during the peer migration;
+Only the receiver on the current leader is occupied during the peer operation;
 both replicas are then occupied to measure refusal and independent recovery.
 """
 import base64
@@ -29,11 +29,31 @@ RESPONSE_SECONDS = 5
 RENEWAL_SECONDS = 15
 
 
+EMPTY_SCHEMA = {'columns': [], 'primaryKeyColumns': []}
+EXPECTED_SCHEMA = {'columns': ['id:bigint:NO', 'email:text:NO'], 'primaryKeyColumns': ['id']}
+
+
+def schema_witness(sql, engine, database):
+    """Read native metadata; a controller condition is not database convergence."""
+    if engine == 'MySQL':
+        columns = sql("SELECT CONCAT(COLUMN_NAME, ':', DATA_TYPE, ':', IS_NULLABLE) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='qualification_probe' ORDER BY ORDINAL_POSITION;", database)
+        keys = sql("SELECT COLUMN_NAME FROM information_schema.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='qualification_probe' AND CONSTRAINT_NAME='PRIMARY' ORDER BY ORDINAL_POSITION;", database)
+    else:
+        columns = sql("SELECT column_name || ':' || data_type || ':' || is_nullable FROM information_schema.columns WHERE table_schema='public' AND table_name='qualification_probe' ORDER BY ordinal_position;", database)
+        keys = sql("SELECT k.column_name FROM information_schema.table_constraints c JOIN information_schema.key_column_usage k USING (constraint_catalog, constraint_schema, constraint_name) WHERE c.table_schema='public' AND c.table_name='qualification_probe' AND c.constraint_type='PRIMARY KEY' ORDER BY k.ordinal_position;", database)
+    return {'columns': columns.splitlines(), 'primaryKeyColumns': keys.splitlines()}
+
+
 def verify_evidence(value):
     def require(condition, message):
         if not condition:
             raise ValueError(message)
-    require(value['evidenceVersion'] == 1 and value['engine'] in ('PostgreSQL', 'MySQL'), 'Unknown case')
+    version = value['evidenceVersion']
+    family = 'PtahMigration' if version == 1 else value.get('family')
+    require(version in (1, 2) and family in ('PtahMigration', 'PtahSchema') and value['engine'] in ('PostgreSQL', 'MySQL'), 'Unknown case')
+    schema = family == 'PtahSchema'
+    expected_database = EXPECTED_SCHEMA if schema else '1:1:true'
+    expected_reason = 'InSync' if schema else 'HistoryMatched'
     require(value['budgets'] == {'uploadSeconds': 120, 'responseSeconds': 5, 'renewalSeconds': 15}, 'Changed budgets')
     slow = value['slowUploads']
     require(len(slow) == 2 and len({r['receiverUID'] for r in slow}) == 2, 'Missing receiver')
@@ -81,25 +101,35 @@ def verify_evidence(value):
         require(row['observedNs'] - last_change <= RENEWAL_SECONDS * SECOND, 'Lease stopped renewing')
     require(value['leaderUnchanged'] is True and value['publicationsBeforeRelease'] == 0, 'Leader changed or partial result published')
     require(value['serviceRestored'] is True, 'Service route not restored')
-    require(value['calibration']['afterRollback'] == '0:1:true' and value['calibration']['afterReset'] == '0:1:false', 'Ineffective original SQL witness')
-    require(value['peerCalibration']['afterRollback'] == '0:1:true' and value['peerCalibration']['afterReset'] == '0:1:false', 'Ineffective peer SQL witness')
+    for key in ('calibration', 'peerCalibration'):
+        if schema:
+            require(value[key]['before'] == EMPTY_SCHEMA, 'Schema already existed before execution')
+        else:
+            require(value[key]['afterRollback'] == '0:1:true' and value[key]['afterReset'] == '0:1:false', 'Ineffective SQL witness')
     executions = value['executions']
     require(set(executions) == {'original', 'peer'}, 'Missing independent execution')
     require(executions['original']['resourceUID'] != executions['peer']['resourceUID'], 'Peer is original resource')
     for row in executions.values():
-        require(row['databaseWitness'] == '1:1:true' and row['applyJobs'] == row['executionPods'] == 1
+        require(row['databaseWitness'] == expected_database and row['applyJobs'] == row['executionPods'] == 1
                 and row['podRestarts'] == 0 and row['podPhase'] == 'Succeeded' and row['runnerAPICredentials'] is False,
                 'SQL replay, replacement execution, or runner API credentials')
         require(row['jobUID'] and row['podUID'] and row['receiptUID'], 'Missing execution identity')
-        require(any(c['type'] == 'Ready' and c['status'] == 'True' and c.get('reason') == 'HistoryMatched'
+        require(any(c['type'] == 'Ready' and c['status'] == 'True' and c.get('reason') == expected_reason
                     and c.get('observedGeneration') == row['generation'] for c in row['conditions']), 'No current convergence')
-    return {'timedOutUploads': 2, 'renewals': len(renewals), 'independentSQLExecutions': 2}
+    return {'timedOutUploads': 2, 'renewals': len(renewals),
+            'independentSchemasConverged' if schema else 'independentSQLExecutions': 2}
 
 
 def run(*, k, get, create, wait, save, witness, records, open_gate, resource, pod,
         operation, engine, environment, calibration, managers, host, credential,
         service, restore_service, endpoints_are, gate, sql, creds, database, migration_sql):
     ns, opns = resource['metadata']['namespace'], environment['E2E_OPERATOR_NAMESPACE']
+    family = resource['kind']
+    schema = family == 'PtahSchema'
+    kind = family.lower()
+    apply_prefix = 'ptah-apply-' if schema else 'ptah-m-apply-'
+    expected_database = EXPECTED_SCHEMA if schema else '1:1:true'
+    expected_reason = 'InSync' if schema else 'HistoryMatched'
     leader = get('lease', 'ptah-operator.operator.ptah.run', opns)
     holder = leader['spec']['holderIdentity']
     managers = sorted(managers, key=lambda p: not holder.startswith(p['metadata']['name'] + '_'))
@@ -112,16 +142,22 @@ def run(*, k, get, create, wait, save, witness, records, open_gate, resource, po
     peer_database = database + '_peer'
     if engine == 'MySQL':
         sql('CREATE DATABASE `' + peer_database + '`; GRANT ALL ON `' + peer_database + '`.* TO \'demo\'@\'%\';', 'mysql')
-        sql('CREATE TABLE delivery_probe_calls(n BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY) ENGINE=InnoDB;', peer_database)
+        if not schema:
+            sql('CREATE TABLE delivery_probe_calls(n BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY) ENGINE=InnoDB;', peer_database)
     else:
         owner = '"' + creds['username'].replace('"', '""') + '"'
         sql('CREATE DATABASE ' + peer_database + ' OWNER ' + owner + ';', urllib.parse.urlsplit(creds['url']).path[1:])
-        sql('SET ROLE ' + owner + '; CREATE SEQUENCE delivery_probe_sequence; CREATE TABLE delivery_probe_calls(n bigint NOT NULL);', peer_database)
-    sql('BEGIN; ' + migration_sql + ' ROLLBACK;', peer_database)
-    peer_calibration = {'afterRollback': witness(peer_database)}
-    sql('TRUNCATE delivery_probe_calls;' if engine == 'MySQL' else 'ALTER SEQUENCE delivery_probe_sequence RESTART WITH 1;', peer_database)
-    peer_calibration['afterReset'] = witness(peer_database)
-    assert peer_calibration == {'afterRollback': '0:1:true', 'afterReset': '0:1:false'}
+        if not schema:
+            sql('SET ROLE ' + owner + '; CREATE SEQUENCE delivery_probe_sequence; CREATE TABLE delivery_probe_calls(n bigint NOT NULL);', peer_database)
+    if schema:
+        peer_calibration = {'before': witness(peer_database)}
+        assert peer_calibration['before'] == EMPTY_SCHEMA
+    else:
+        sql('BEGIN; ' + migration_sql + ' ROLLBACK;', peer_database)
+        peer_calibration = {'afterRollback': witness(peer_database)}
+        sql('TRUNCATE delivery_probe_calls;' if engine == 'MySQL' else 'ALTER SEQUENCE delivery_probe_sequence RESTART WITH 1;', peer_database)
+        peer_calibration['afterReset'] = witness(peer_database)
+        assert peer_calibration == {'afterRollback': '0:1:true', 'afterReset': '0:1:false'}
     url = urllib.parse.urlunsplit(urllib.parse.urlsplit(creds['url'])._replace(path='/' + peer_database))
     create({'apiVersion': 'v1', 'kind': 'Secret', 'metadata': {'name': 'peer-database', 'namespace': ns}, 'stringData': {'url': url}})
     peer_manifest = {'apiVersion': resource['apiVersion'], 'kind': resource['kind'],
@@ -133,7 +169,7 @@ def run(*, k, get, create, wait, save, witness, records, open_gate, resource, po
     k('patch', 'validatingadmissionpolicy', gate, '--type=json', '-p', json.dumps([{'op': 'replace', 'path': '/spec/validations/0/expression', 'value': expression}]))
     def gate_ready():
         results = []
-        for name in [pod['metadata']['name'], 'ptah-m-apply-peer-probe']:
+        for name in [pod['metadata']['name'], apply_prefix + 'peer-probe']:
             probe = {'apiVersion': 'v1', 'kind': 'Secret', 'metadata': {'name': 'gate-check', 'namespace': ns, 'annotations': {'operator.ptah.run/result-pod-name': name}}}
             r = subprocess.run(['kubectl', '--kubeconfig', environment['E2E_KUBECONFIG'], 'create', '--dry-run=server', '-f', '-'], input=json.dumps(probe), text=True, capture_output=True, timeout=30)
             results.append((r.returncode, r.stderr))
@@ -196,9 +232,9 @@ def run(*, k, get, create, wait, save, witness, records, open_gate, resource, po
             return row
         return pool.submit(finish)
     def converged(name):
-        r = get('ptahmigration', name)
+        r = get(kind, name)
         return r if not r.get('status', {}).get('activeOperation') and any(
-            c['type'] == 'Ready' and c['status'] == 'True' and c.get('reason') == 'HistoryMatched'
+            c['type'] == 'Ready' and c['status'] == 'True' and c.get('reason') == expected_reason
             and c.get('observedGeneration') == r['metadata']['generation'] for c in r.get('status', {}).get('conditions', [])) else None
     try:
         assert head('initial', 0) == head('initial', 1) == 204
@@ -220,8 +256,8 @@ def run(*, k, get, create, wait, save, witness, records, open_gate, resource, po
         peer = create(peer_manifest)
         wait(lambda: converged('peer'), 100)
         peer_converged = time.monotonic_ns()
-        assert witness(peer_database) == '1:1:true'
-        print('Independent native migration converged while the leader receiver was stalled', flush=True)
+        assert witness(peer_database) == expected_database
+        print('Independent native ' + family + ' converged while the leader receiver was stalled', flush=True)
         second = begin_slow(1)
         time.sleep(0.5)
         assert head('both-busy', 0) == head('both-busy', 1) == 503
@@ -236,7 +272,7 @@ def run(*, k, get, create, wait, save, witness, records, open_gate, resource, po
         current_leader = get('lease', 'ptah-operator.operator.ptah.run', opns)
         assert current_leader['metadata']['uid'] == leader['metadata']['uid'] and current_leader['spec']['holderIdentity'] == holder
         assert not any(r['metadata']['name'] == attempt for r in records())
-        assert witness() == '0:1:false'
+        assert witness() == (EMPTY_SCHEMA if schema else '0:1:false')
         restore_service()
         routed = False
         wait(lambda: endpoints_are({m['metadata']['uid'] for m in managers}), 30)
@@ -246,7 +282,7 @@ def run(*, k, get, create, wait, save, witness, records, open_gate, resource, po
         for key, obj, db in [('original', resource, database), ('peer', peer, peer_database)]:
             final = converged(obj['metadata']['name'])
             assert final and final['metadata']['uid'] == obj['metadata']['uid']
-            jobs = [j for j in get('jobs')['items'] if j['metadata']['name'].startswith('ptah-m-apply-')
+            jobs = [j for j in get('jobs')['items'] if j['metadata']['name'].startswith(apply_prefix)
                     and any(o['uid'] == obj['metadata']['uid'] for o in j['metadata'].get('ownerReferences', []))]
             assert len(jobs) == 1
             job = jobs[0]
@@ -265,7 +301,7 @@ def run(*, k, get, create, wait, save, witness, records, open_gate, resource, po
                 'podPhase': p['status']['phase'], 'podRestarts': sum(c['restartCount'] for c in p['status']['containerStatuses']),
                 'runnerAPICredentials': p['spec'].get('automountServiceAccountToken', True) or any('serviceAccountToken' in s for v in p['spec'].get('volumes', []) for s in v.get('projected', {}).get('sources', [])),
                 'conditions': final['status']['conditions']}
-        result = {'evidenceVersion': 1, 'engine': engine, 'commit': environment['E2E_CONTROLLER_REVISION'],
+        result = {'evidenceVersion': 2, 'family': family, 'engine': engine, 'commit': environment['E2E_CONTROLLER_REVISION'],
             'namespace': ns, 'leaderUID': managers[0]['metadata']['uid'], 'leaderUnchanged': True,
             'budgets': {'uploadSeconds': UPLOAD_SECONDS, 'responseSeconds': RESPONSE_SECONDS, 'renewalSeconds': RENEWAL_SECONDS},
             'slowUploads': slow, 'checks': checks, 'leaseSamples': samples, 'leaseEpoch': operation['leaseEpoch'],
@@ -276,7 +312,7 @@ def run(*, k, get, create, wait, save, witness, records, open_gate, resource, po
             'completedAt': dt.datetime.now(dt.timezone.utc).isoformat()}
         save('upload-budget.json', result)
         verify_evidence(result)
-        print('PASS: two bounded stalled uploads, continuous Apply Lease renewal, independent native progress', flush=True)
+        print('PASS: ' + family + ': two bounded stalled uploads, continuous Apply Lease renewal, independent native progress', flush=True)
     finally:
         stop.set()
         if thread.ident:
