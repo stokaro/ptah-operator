@@ -123,11 +123,12 @@ type JobBuilder interface {
 // Approval -> Apply -> Observe convergence state machine.
 type SchemaReconciler struct {
 	client.Client
-	APIReader client.Reader
-	Scheme    *runtime.Scheme
-	Recorder  record.EventRecorder
-	Logs      PodLogReader
-	Results   OperationResults
+	APIReader         client.Reader
+	Scheme            *runtime.Scheme
+	Recorder          record.EventRecorder
+	Logs              PodLogReader
+	Results           OperationResults
+	ResultCredentials ResultCredentialIssuer
 	// ResultReadTimeout bounds the pod/log read of one terminal operation.
 	// Zero means defaultResultReadTimeout, which is what the manager runs.
 	ResultReadTimeout time.Duration
@@ -979,6 +980,19 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 		}
 	}
 	if !jobTerminal(job) {
+		if durableDeliveryRequested(job) {
+			engine := ""
+			if operation.Target != nil {
+				engine = string(operation.Target.Engine)
+			}
+			issued, issueErr := issueResultCredential(ctx, r.directReader(), r.ResultCredentials, schema, "PtahSchema", job, operation.AdmissionSnapshot, operation.ExecutionBindingID, operation.InputFingerprint, string(schemaOperation(operation).Runner), operation.ID, engine)
+			if issueErr != nil {
+				r.event(schema, corev1.EventTypeWarning, "ResultCredentialFailed", "Result delivery credential is not ready; issuance will be retried")
+			}
+			if issueErr != nil || !issued {
+				return ctrl.Result{RequeueAfter: resultReadRetryInterval}, nil
+			}
+		}
 		if err := r.reportPodAdmission(ctx, schema, job); err != nil {
 			return ctrl.Result{}, err
 		}

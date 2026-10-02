@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	coordinationv1 "k8s.io/api/coordination/v1"
@@ -33,6 +34,8 @@ import (
 	"github.com/stokaro/ptah-operator/internal/planseal"
 	"github.com/stokaro/ptah-operator/internal/planstore"
 	"github.com/stokaro/ptah-operator/internal/podintent"
+	"github.com/stokaro/ptah-operator/internal/resultconsumer"
+	"github.com/stokaro/ptah-operator/internal/resultservice"
 	"github.com/stokaro/ptah-operator/internal/targetlock"
 	"github.com/stokaro/ptah-operator/internal/telemetry"
 	"github.com/stokaro/ptah-operator/internal/workload"
@@ -69,6 +72,7 @@ func main() {
 	var controllerServiceAccountUsername string
 	var webhookCertDir string
 	var webhookPort int
+	var resultEndpoint, resultCertDir, resultAddress string
 	var defaultTolerationsEnabled bool
 	var defaultNotReadyTolerationSeconds int64
 	var defaultUnreachableTolerationSeconds int64
@@ -87,6 +91,9 @@ func main() {
 	flag.StringVar(&controllerServiceAccountUsername, "controller-service-account-username", "", "exact Kubernetes username of the operator manager ServiceAccount")
 	flag.StringVar(&webhookCertDir, "webhook-cert-dir", "/tmp/k8s-webhook-server/serving-certs", "directory containing tls.crt and tls.key")
 	flag.IntVar(&webhookPort, "webhook-port", 9443, "approval webhook TLS port")
+	flag.StringVar(&resultEndpoint, "result-endpoint", "", "HTTPS origin for durable runner results; requires result-cert-dir")
+	flag.StringVar(&resultCertDir, "result-cert-dir", "", "directory containing dedicated result server and client-signing trust")
+	flag.StringVar(&resultAddress, "result-bind-address", ":9444", "listen address for the durable result receiver")
 	flag.BoolVar(&defaultTolerationsEnabled, "default-tolerations-enabled", true, "whether kube-apiserver enables DefaultTolerationSeconds admission")
 	flag.Int64Var(&defaultNotReadyTolerationSeconds, "default-not-ready-toleration-seconds", 300, "expected kube-apiserver not-ready NoExecute toleration seconds")
 	flag.Int64Var(&defaultUnreachableTolerationSeconds, "default-unreachable-toleration-seconds", 300, "expected kube-apiserver unreachable NoExecute toleration seconds")
@@ -117,6 +124,7 @@ func main() {
 		ControllerRevision:     controllerRevision,
 		ControllerStateVersion: controllerstate.CurrentVersion,
 		PlanSealPublicKey:      sealKey.PublicKey(),
+		ResultEndpoint:         resultEndpoint,
 	}
 	if err := builder.Validate(); err != nil {
 		log.Error(err, "invalid immutable execution configuration")
@@ -170,6 +178,27 @@ func main() {
 		os.Exit(1)
 	}
 
+	if (resultEndpoint == "") != (resultCertDir == "") {
+		log.Error(fmt.Errorf("result-endpoint and result-cert-dir must be configured together"), "invalid result delivery configuration")
+		os.Exit(1)
+	}
+	var results *resultservice.Service
+	if resultEndpoint != "" {
+		results, err = resultservice.New(resultservice.Config{Endpoint: resultEndpoint, Address: resultAddress, CertificateDirectory: resultCertDir, Uploads: 1, UploadTimeout: 2 * time.Minute, Consumer: resultconsumer.Options{Workers: 1, Entries: 4, Timeout: 30 * time.Second, Retention: time.Minute}}, manager.GetClient(), manager.GetAPIReader())
+		if err != nil {
+			log.Error(err, "configure durable result service")
+			os.Exit(1)
+		}
+		if err := manager.Add(results); err != nil {
+			log.Error(err, "register durable result service")
+			os.Exit(1)
+		}
+		if err := manager.AddReadyzCheck("result-service", results.Ready); err != nil {
+			log.Error(err, "register result service readiness")
+			os.Exit(1)
+		}
+	}
+
 	clientset, err := kubernetes.NewForConfig(manager.GetConfig())
 	if err != nil {
 		log.Error(err, "create Kubernetes clientset")
@@ -203,6 +232,10 @@ func main() {
 		Telemetry:        operatorMetrics,
 		AdmissionOptions: admissionOptions,
 	}
+	if results != nil {
+		reconciler.Results = results.Consumer
+		reconciler.ResultCredentials = results.Issuer
+	}
 	if err := reconciler.SetupWithManager(manager); err != nil {
 		log.Error(err, "register PtahSchema controller")
 		os.Exit(1)
@@ -216,6 +249,10 @@ func main() {
 		LockNamespace:    targetLockNamespace,
 		Telemetry:        operatorMetrics,
 		AdmissionOptions: admissionOptions,
+	}
+	if results != nil {
+		migrations.Results = results.Consumer
+		migrations.ResultCredentials = results.Issuer
 	}
 	if err := migrations.SetupWithManager(manager); err != nil {
 		log.Error(err, "register PtahMigration controller")
@@ -263,12 +300,11 @@ func main() {
 	manager.GetWebhookServer().Register(validatePodIntentPath, &cradmission.Webhook{Handler: &podintent.ValidationHandler{
 		Reader: manager.GetAPIReader(), Decoder: decoder,
 	}})
-	manager.GetWebhookServer().Register(validateControllerWritePath, &cradmission.Webhook{Handler: &controllerwrite.ValidationHandler{
-		Validator: &controllerwrite.Validator{
-			Reader: manager.GetAPIReader(), Jobs: builder,
-			ManagerUsername: controllerServiceAccountUsername,
-		},
-	}})
+	writeValidator := &controllerwrite.Validator{Reader: manager.GetAPIReader(), Jobs: builder, ManagerUsername: controllerServiceAccountUsername}
+	if results != nil {
+		writeValidator.ResultCredentials = results.Issuer
+	}
+	manager.GetWebhookServer().Register(validateControllerWritePath, &cradmission.Webhook{Handler: &controllerwrite.ValidationHandler{Validator: writeValidator}})
 
 	if err := manager.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		log.Error(err, "register health check")

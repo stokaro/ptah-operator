@@ -86,11 +86,12 @@ type MigrationJobBuilder interface {
 // authorized.
 type MigrationReconciler struct {
 	client.Client
-	APIReader client.Reader
-	Scheme    *runtime.Scheme
-	Recorder  record.EventRecorder
-	Logs      PodLogReader
-	Results   OperationResults
+	APIReader         client.Reader
+	Scheme            *runtime.Scheme
+	Recorder          record.EventRecorder
+	Logs              PodLogReader
+	Results           OperationResults
+	ResultCredentials ResultCredentialIssuer
 	// ResultReadTimeout bounds the pod/log read of one terminal operation.
 	// Zero means defaultResultReadTimeout, which is what the manager runs.
 	ResultReadTimeout time.Duration
@@ -726,6 +727,19 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 		}
 	}
 	if !jobTerminal(job) {
+		if durableDeliveryRequested(job) {
+			engine := ""
+			if operation.Target != nil {
+				engine = string(operation.Target.Engine)
+			}
+			issued, issueErr := issueResultCredential(ctx, r.directReader(), r.ResultCredentials, migration, "PtahMigration", job, operation.AdmissionSnapshot, operation.ExecutionBindingID, operation.InputFingerprint, string(migrationOperation(operation).Runner), operation.ID, engine)
+			if issueErr != nil {
+				r.event(migration, corev1.EventTypeWarning, "ResultCredentialFailed", "Result delivery credential is not ready; issuance will be retried")
+			}
+			if issueErr != nil || !issued {
+				return ctrl.Result{RequeueAfter: resultReadRetryInterval}, nil
+			}
+		}
 		if err := r.reportMigrationPodAdmission(ctx, migration, job); err != nil {
 			return ctrl.Result{}, err
 		}

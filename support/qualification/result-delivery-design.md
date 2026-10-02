@@ -4,10 +4,12 @@ Implementation design for [#586](https://github.com/stokaro/ptah-operator/issues
 The target is stable 0.2.0. This document does not qualify the transport or
 authorize a release. Installed Jobs still use log frames. The storage, TLS
 delivery, live authorization, credential issuer, runner command, and optional
-workload projection are implemented. The manager does not select or issue these
-credentials yet. The chart routes credential and Pod admission guards, verified
-against a local API server. The receiver listener, installation permissions and
-trust lifecycle, and activation of controller result consumption remain unconnected.
+workload projection are implemented. Explicit manager flags now connect the
+listener, issuer, admission validator, and background consumer. The chart routes
+credential and Pod admission guards, verified against a local API server, but
+does not yet enable these flags or provide the receiver trust, Service,
+NetworkPolicy, and result-record permissions. Trust rotation and result retention
+remain incomplete.
 
 ## Storage boundary
 
@@ -240,7 +242,7 @@ exact-limit and maximum-plus-one output without a process key.
 
 `workload.Builder.ResultEndpoint` selects the durable runner arguments and
 credential projection for every schema and migration operation. It remains
-empty in the manager until installation wiring is ready. The common
+empty unless the manager receives `--result-endpoint`. The common
 `jobconfig` package fixes the Secret name from resource UID, operation ID, and
 Job name, the original resource generation, the actual-Pod downward API fields,
 and a read-only `0440` Secret mount in the main runner container. Admission
@@ -333,8 +335,9 @@ bounded background workers. Reconcile polls memory and requeues while a load is
 pending or the reader is saturated. Worker count, retained entries, read deadline,
 and memory retention require explicit configuration; expiration removes memory
 only. A failed status write can reload the same durable evidence. Shutdown
-cancels loads. The loader must honor its context. Manager activation and resource
-sizing for these configured limits remain pending.
+cancels loads. The loader must honor its context. The manager starts this reader
+with the receiver when durable delivery is explicitly configured. Installed
+resource sizing for these limits remains unqualified.
 
 The existing Job-intent, current-input, execution-binding, Lease, and terminal-Job
 checks still precede consumption. A live replacement or additional Pod remains a
@@ -355,48 +358,73 @@ payload without knowing the Pod identity in advance. These are component and
 controller-path tests; they do not run an installed manager, kubelet, or database
 workflow and do not complete the default-logging acceptance matrix.
 
-## Installation and runner integration still required
+## Manager runtime
 
-The receiver runs independently of family reconcile workers, behind its own TLS
-Service. It must authenticate clients before reading a large body, bound active
-uploads and body-read time, reject saturation without queuing unbounded bodies,
-and apply a storage deadline. Manager HTTP logs and rejection messages must not
-include payloads or credentials.
+`--result-endpoint` and `--result-cert-dir` must be supplied together. The first
+also selects durable arguments and credential projection in every Job builder.
+`--result-bind-address` defaults to `:9444`. Without the endpoint, existing
+installations continue to use logs.
 
-The manager must invoke the issuer after exact Job adoption and Pod admission,
-and installation admission must enforce the projection and active credential
-pin before enabling that path. A replacement Pod must never inherit authority
-to submit as its predecessor.
+`internal/resultservice` loads six bounded files from the mounted directory:
+`tls.crt` and `tls.key` for the server, `ca.crt` for the server trust given to
+runners, `client-ca.crt` and `client-ca.key` for the dedicated client signer,
+and `client-trust.crt` for accepted client signers. Startup validates the server
+chain and endpoint hostname, the signer, and its trust. It generates no process
+CA and reads no Kubernetes Secret. All manager replicas must mount compatible
+trust; these files are loaded once at startup. Automatic provisioning, rotation,
+overlap, and reload remain installation work. In particular, server rotation
+must preserve the immutable trust already projected into outstanding runners.
 
-The receiver must revalidate the execution epoch, exact live Job/Pod, and current
-claim through direct reads. Certificate expiration alone is not revocation.
-Before committing a new completion, it must recheck authority after the upload.
-Controllers must retain their own epoch and provenance checks when consuming a
-receipt: persistence is evidence, not permission to apply. Admission must bind
-receiver writes to the same publication intent and protect the metadata as well
-as the immutable payload. Spec immutability does not prevent deleting and recreating a record.
+The service runs independently of leader election and family reconcile workers.
+It starts the receiver and background reader together, cancels their API work
+and closes TLS connections on shutdown, and reports not ready before startup,
+after shutdown, or when its serving certificate or client signer expires.
+Listener or reader termination stops the service. HTTP diagnostics cannot emit
+client identities or payloads. Manager configuration currently bounds uploads
+to one with a two-minute deadline, and background reads to one worker with four
+retained entries, a 30-second deadline, and one-minute memory retention. These
+bounds still need installed resource and contention qualification.
 
-Workload builders must supply the receiver configuration, projected credentials,
-and downward API identity to the implemented runner path. Manager wiring must activate the implemented durable consumer in both
-controllers; its durable path has no correctness fallback to `pods/log`.
+Both controllers invoke the issuer after exact Job adoption and Lease renewal.
+They list at most two matching Pods, require the single admitted original Pod,
+and bind the credential to the operation, original generation, and actual UID.
+Issuance has a five-second deadline. A pending Pod or issuance error returns a
+short retry, preserving the existing Lease path; Events contain only a generic
+failure. A terminal Job goes directly to result consumption without requiring
+credential reissuance. The same issuer verifies the manager's credential and
+publication writes in admission. Configured durable Jobs cannot fall back to logs.
 
-The new TLS payload must carry usable plan bytes, not an old per-process sealed
-Plan. Storing those bytes in access-controlled result records removes the dependency on
-the receiving process's private key. The old log seal may be removed only as the
-new protocol stops emitting plan content to logs. Receiver CA/server/client key
-rotation, overlap, restore, and HA behavior remain separate requirements; none
-may make an acknowledged payload unreadable.
+Local tests exercise the assembled service over real mTLS with a fake API client:
+issue a credential, authenticate preflight, persist a result, stop the service,
+start another from the same trust, and read the same receipt after Job and Pod
+removal. The reader refuses Secret GET. Separate controller-helper tests hold
+all nine operation bindings, missing or ambiguous Pods, changed workload and
+generation, invalid credential receipts, and cancellation to their expected
+outcomes. They do not prove installed reconciliation, kubelet Secret projection,
+API admission, leader election, or a database workflow. The controllers still
+retain their existing missing-Job and unknown-outcome behavior.
 
-Controllers must consume durable receipts without requiring the producing Pod
-to remain present. If no receipt exists after a mutating runner disappears,
-existing unknown-outcome recovery, database inspection, and fresh authorization
-still apply. SQL and publication are not an atomic transaction.
+## Installation still required
+
+The chart must provision and rotate dedicated trust, expose the receiver Service,
+route allowed runner traffic through NetworkPolicy, grant the required record
+and credential-create permissions, and pass the manager flags. Installed
+admission must protect publication and original-Pod credentials under those
+permissions before the new path is enabled. No runner receives Kubernetes API
+credentials. HA, key overlap, restore, and rollout must preserve acknowledged
+results and outstanding deliveries.
+
+The implemented receiver rechecks live authority after upload; consumers retain
+their own epoch and provenance checks. Persistence is evidence, not permission
+to apply. If no receipt exists after a mutating runner disappears, existing
+unknown-outcome recovery, database inspection, and fresh authorization still
+apply. SQL and publication are not an atomic transaction.
 
 ## Retention and acceptance
 
 Before enabling this path, complete publication-record retention and authorized deletion,
-receiver certificates and NetworkPolicy, bounded request metrics, and activation of receipt
-consumption and retention. Do not attach a time-only TTL to unconsumed results or
+receiver certificates and NetworkPolicy, bounded request metrics, and installed
+receipt consumption. Do not attach a time-only TTL to unconsumed results or
 unresolved operations. Abandoned partial publications become eligible only after
 the exact attempt is retired and cannot still deliver. Cleanup must use UID/RV
 preconditions and respect the backup/recovery window and pinned plan evidence.
