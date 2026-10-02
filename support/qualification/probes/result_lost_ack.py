@@ -74,6 +74,10 @@ def main():
     if runner_loss not in ('0', '1') or (runner_loss == '1' and restart_receiver):
         raise ValueError('Select either runner loss or receiver replacement')
     runner_loss = runner_loss == '1'
+    partial_loss = E.get('RESULT_PROBE_PARTIAL_LOSS', '0')
+    if partial_loss not in ('0', '1') or (partial_loss == '1' and not runner_loss):
+        raise ValueError('Partial loss requires the runner-loss case')
+    partial_loss = partial_loss == '1'
     first_publication = E.get('RESULT_PROBE_FIRST_PUBLICATION', '0')
     if first_publication not in ('0', '1'):
         raise ValueError('RESULT_PROBE_FIRST_PUBLICATION must be 0 or 1')
@@ -222,7 +226,8 @@ def main():
     server_version = sql('SELECT VERSION();')
     url = urllib.parse.urlunsplit(urllib.parse.urlsplit(creds['url'])._replace(path='/' + database))
     create({'apiVersion': 'v1', 'kind': 'Secret', 'metadata': {'name': 'ack-database', 'namespace': ns}, 'stringData': {'url': url}})
-    create({'apiVersion': 'v1', 'kind': 'ConfigMap', 'metadata': {'name': 'ack-migrations', 'namespace': ns}, 'data': ({'schema.sql': 'CREATE TABLE qualification_probe (id bigint NOT NULL PRIMARY KEY, email text NOT NULL);\n'} if schema_budget else {'0000000001_record_delivery.up.sql': migration_sql + '\n', '0000000001_record_delivery.down.sql': 'DELETE FROM delivery_probe_calls;\n'})})
+    artifact_sql = ('-- +ptah no_transaction\n' + migration_sql + '\nINSERT INTO qualification_missing_table VALUES (1);\n') if partial_loss else migration_sql + '\n'
+    create({'apiVersion': 'v1', 'kind': 'ConfigMap', 'metadata': {'name': 'ack-migrations', 'namespace': ns}, 'data': ({'schema.sql': 'CREATE TABLE qualification_probe (id bigint NOT NULL PRIMARY KEY, email text NOT NULL);\n'} if schema_budget else {'0000000001_record_delivery.up.sql': artifact_sql, '0000000001_record_delivery.down.sql': 'DELETE FROM delivery_probe_calls;\n'})})
     original = get('job', 'result-schema-publish', source)
     template = copy.deepcopy(original['spec']['template'])
     template['metadata'] = {}
@@ -271,7 +276,7 @@ def main():
             return p.returncode and 'Acceptance probe holds migration Apply credentials' in p.stderr
         wait(gate_ready, 30)
         env = E.copy()
-        env.update(APPLY='Always', INTERVAL='30s' if runner_loss else '2h')
+        env.update(APPLY='OnApproval' if partial_loss else 'Always', INTERVAL='30s' if runner_loss else '2h')
         manifest = subprocess.run(['demo/bin/lab', 'manifest', 'shipments', digest], env=env, text=True, capture_output=True, check=True).stdout
         migration = json.loads(k('create', '--dry-run=client', '--validate=false', '-f', '-', '-o', 'json', data=manifest, namespace=source))
         if schema_budget:
@@ -287,6 +292,9 @@ def main():
         migration['spec']['target']['engine'] = engine
         migration['spec']['execution']['activeDeadlineSeconds'] = 900
         resource = create(migration)
+        if partial_loss:
+            from result_partial_loss import authorize_initial
+            initial_authorization = authorize_initial(k, get, create, wait, resource)
 
         def held():
             matches = [r for r in records() if r['spec']['type'] == 'credential' and r['metadata'].get('annotations', {}).get('operator.ptah.run/result-pod-name', '').startswith(apply_prefix)]
@@ -317,6 +325,14 @@ def main():
                        managers=managers, host=host, credential=dec(credential), service=service,
                        restore_service=restore_service, endpoints_are=endpoints_are, gate=gate,
                        sql=sql, creds=creds, database=database, migration_sql=migration_sql)
+            return
+        if partial_loss:
+            from result_partial_loss import run as run_partial
+            run_partial(k=k, get=get, create=create, wait=wait, save=save, witness=witness,
+                        records=records, open_gate=open_execution_gate, resource=resource, pod=pod,
+                        operation=operation, engine=engine, environment=E, calibration=calibration,
+                        sql=sql, migration_sql=migration_sql, publish_template=template,
+                        initial=initial_authorization)
             return
         if runner_loss:
             from result_runner_loss import run as run_loss
