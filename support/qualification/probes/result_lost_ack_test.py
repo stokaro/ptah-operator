@@ -1,0 +1,91 @@
+import copy
+import unittest
+
+from result_lost_ack import verify_evidence
+
+
+class LostAcknowledgmentEvidenceTests(unittest.TestCase):
+    def fixture(self):
+        receipt = {'Name': 'attempt-complete', 'UID': 'receipt',
+                   'Digest': 'sha256:' + 'a' * 64, 'Size': 120}
+        return {
+            'commit': 'b' * 40, 'procedureSHA256': 'c' * 64,
+            'namespace': 'acceptance', 'resourceUID': 'resource',
+            'jobUID': 'job', 'podUID': 'pod', 'intentUID': 'intent',
+            'receiptUID': 'receipt', 'receiptName': 'attempt-complete',
+            'payloadDigest': receipt['Digest'], 'payloadBytes': 120,
+            'credentialCertificateDigest': 'sha256:' + 'd' * 64,
+            'binding': {'kind': 'PtahMigration', 'operation': 'migration-apply',
+                        'namespace': 'acceptance', 'uid': 'resource',
+                        'jobUID': 'job', 'podUID': 'pod', 'generation': 1},
+            'proxy': {'clientCertificateDigest': 'sha256:' + 'd' * 64,
+                      'preflights': 1, 'dropped': True, 'released': True,
+                      'attempts': [
+                          {'receivedAt': '2026-10-02T11:00:01Z',
+                           'receipt': copy.deepcopy(receipt)},
+                          {'receivedAt': '2026-10-02T11:00:02Z',
+                           'receipt': copy.deepcopy(receipt)}]},
+            'converged': True, 'applyJobs': 1, 'podRestarts': 0,
+            'executionPods': 1, 'runnerAPICredentials': False,
+            'podPhase': 'Succeeded', 'databaseBeforeExecution': '0:1:false',
+            'databaseBeforeRelease': '1:1:true', 'databaseAfterRelease': '1:1:true',
+            'completedAt': '2026-10-02T11:00:03+00:00',
+            'conditions': [{'type': 'Ready', 'status': 'True',
+                            'reason': 'HistoryMatched', 'observedGeneration': 1}],
+        }
+
+    def test_accepts_one_execution_and_identical_receipts(self):
+        self.assertEqual(verify_evidence(self.fixture()), {
+            'deliveries': 2, 'sqlExecutions': 1, 'receiptUID': 'receipt'})
+
+    def test_refuses_absent_fault_replay_or_changed_identity(self):
+        mutations = [
+            ('absent commit', ['commit'], ''),
+            ('absent procedure', ['procedureSHA256'], ''),
+            ('wrong family', ['binding', 'kind'], 'PtahSchema'),
+            ('read-only result', ['binding', 'operation'], 'migration-status'),
+            ('different namespace', ['binding', 'namespace'], 'other'),
+            ('different resource', ['binding', 'uid'], 'other'),
+            ('different Job', ['binding', 'jobUID'], 'other'),
+            ('different Pod', ['binding', 'podUID'], 'other'),
+            ('missing intent', ['intentUID'], ''),
+            ('missing convergence', ['converged'], False),
+            ('replacement Apply', ['applyJobs'], 2),
+            ('replacement Pod', ['executionPods'], 2),
+            ('runner API credentials', ['runnerAPICredentials'], True),
+            ('restarted runner', ['podRestarts'], 1),
+            ('unfinished runner', ['podPhase'], 'Running'),
+            ('preexisting SQL', ['databaseBeforeExecution'], '1:1:true'),
+            ('no SQL', ['databaseBeforeRelease'], '0:1:false'),
+            ('replayed SQL', ['databaseAfterRelease'], '2:2:true'),
+            ('rolled-back replay', ['databaseAfterRelease'], '1:2:true'),
+            ('no lost ACK', ['proxy', 'dropped'], False),
+            ('no release', ['proxy', 'released'], False),
+            ('no preflight', ['proxy', 'preflights'], 0),
+            ('another execution preflight', ['proxy', 'preflights'], 2),
+            ('missing client', ['proxy', 'clientCertificateDigest'], ''),
+            ('changed client', ['credentialCertificateDigest'], 'sha256:' + 'e' * 64),
+            ('no deliveries', ['proxy', 'attempts'], []),
+            ('changed receipt', ['proxy', 'attempts', 1, 'receipt', 'UID'], 'other'),
+            ('another stored receipt', ['receiptUID'], 'other'),
+            ('another stored payload', ['payloadDigest'], 'sha256:' + 'e' * 64),
+            ('wrong stored size', ['payloadBytes'], 0),
+            ('no retry interval', ['proxy', 'attempts', 1, 'receivedAt'],
+             '2026-10-02T11:00:01Z'),
+            ('unfinished acceptance', ['completedAt'], '2026-10-02T11:00:01+00:00'),
+            ('no conditions', ['conditions'], []),
+            ('stale convergence', ['conditions', 0, 'observedGeneration'], 2),
+        ]
+        for name, path, replacement in mutations:
+            with self.subTest(name=name):
+                value = self.fixture()
+                target = value
+                for key in path[:-1]:
+                    target = target[key]
+                target[path[-1]] = replacement
+                with self.assertRaises(ValueError):
+                    verify_evidence(value)
+
+
+if __name__ == '__main__':
+    unittest.main()

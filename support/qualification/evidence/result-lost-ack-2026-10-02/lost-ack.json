@@ -1,0 +1,110 @@
+{
+  "commit": "ded02b25f877e67956329c02ad6da00b260703b2",
+  "fixtureImage": "e2e-registry.ptah-test-a-1-37-0-result-ack-ded02b25-6b1290016e.svc.cluster.local:5000/e2e-fixture@sha256:55993690c963686c225ca9396c83ad5e848198dce6918594cb1111d6d9221bd6",
+  "credentialCertificateDigest": "sha256:200a75d805acf44618fde2c558515544d4de5135c47135f0f65f182688e9471d",
+  "credentialUID": "44d78815-f240-49f7-a656-81da3974487c",
+  "namespace": "ptah-result-lost-ack-v2",
+  "database": "result_lost_ack_v2",
+  "resourceUID": "a3924498-abf1-4719-9f76-88ce19dcc224",
+  "binding": {
+    "namespace": "ptah-result-lost-ack-v2",
+    "kind": "PtahMigration",
+    "name": "lost-ack",
+    "uid": "a3924498-abf1-4719-9f76-88ce19dcc224",
+    "generation": 1,
+    "executionBindingID": "v1-47b89f2dcb47d8f522a4721382c48a61",
+    "inputFingerprint": "sha256:78417d7787df1a86132d3155682b47030652374b55758de45712ce3967ebec27",
+    "operation": "migration-apply",
+    "operationID": "sha256:a2c649ab7c643ec824ca5125c0a7ff5df84f1dc68f02ba88acbdf7ea10be1080",
+    "jobName": "ptah-m-apply-lost-ack-41638f5b12cb7ad1",
+    "jobUID": "bde9bab8-a2ce-4c68-99ec-0d9063fee4d0",
+    "podName": "ptah-m-apply-lost-ack-41638f5b12cb7ad1-8qddg",
+    "podUID": "aa687bf7-b2e3-493b-abc0-0e76a0cca67c"
+  },
+  "jobUID": "bde9bab8-a2ce-4c68-99ec-0d9063fee4d0",
+  "podUID": "aa687bf7-b2e3-493b-abc0-0e76a0cca67c",
+  "intentUID": "59e5bdba-2442-45e1-9d11-c85cd5b66606",
+  "receiptUID": "0f67fbfd-fb96-46cb-9a5a-8e2d508421b2",
+  "payloadDigest": "sha256:7e97218694f2d0d35c4c88ba9b254ee11138db40267fb4f7460d9a509def1ab3",
+  "receiptName": "ptah-result-2ded52162cb6c364430bfc7711c151d152893fd012d9fefc5be1ea17f8b893af-complete",
+  "payloadBytes": 873,
+  "proxy": {
+    "clientCertificateDigest": "sha256:200a75d805acf44618fde2c558515544d4de5135c47135f0f65f182688e9471d",
+    "preflights": 1,
+    "attempts": [
+      {
+        "receivedAt": "2026-10-02T11:40:16.932937192Z",
+        "receipt": {
+          "Name": "ptah-result-2ded52162cb6c364430bfc7711c151d152893fd012d9fefc5be1ea17f8b893af-complete",
+          "UID": "0f67fbfd-fb96-46cb-9a5a-8e2d508421b2",
+          "Digest": "sha256:7e97218694f2d0d35c4c88ba9b254ee11138db40267fb4f7460d9a509def1ab3",
+          "Size": 873
+        }
+      },
+      {
+        "receivedAt": "2026-10-02T11:40:18.03649945Z",
+        "receipt": {
+          "Name": "ptah-result-2ded52162cb6c364430bfc7711c151d152893fd012d9fefc5be1ea17f8b893af-complete",
+          "UID": "0f67fbfd-fb96-46cb-9a5a-8e2d508421b2",
+          "Digest": "sha256:7e97218694f2d0d35c4c88ba9b254ee11138db40267fb4f7460d9a509def1ab3",
+          "Size": 873
+        }
+      }
+    ],
+    "dropped": true,
+    "released": true
+  },
+  "databaseBeforeRelease": "1:1:true",
+  "databaseAfterRelease": "1:1:true",
+  "databaseBeforeExecution": "0:1:false",
+  "applyJobs": 1,
+  "podRestarts": 0,
+  "podPhase": "Succeeded",
+  "executionPods": 1,
+  "runnerAPICredentials": false,
+  "converged": true,
+  "conditions": [
+    {
+      "lastTransitionTime": "2026-10-02T11:40:39Z",
+      "message": "Nothing is pending",
+      "observedGeneration": 1,
+      "reason": "HistoryMatched",
+      "status": "False",
+      "type": "Progressing"
+    },
+    {
+      "lastTransitionTime": "2026-10-02T11:39:53Z",
+      "message": "The resolved artifact satisfied its verification policy",
+      "observedGeneration": 1,
+      "reason": "PolicySatisfied",
+      "status": "True",
+      "type": "ArtifactVerified"
+    },
+    {
+      "lastTransitionTime": "2026-10-02T11:40:05Z",
+      "message": "The history continues this artifact",
+      "observedGeneration": 1,
+      "reason": "HistoryMatched",
+      "status": "False",
+      "type": "Blocked"
+    },
+    {
+      "lastTransitionTime": "2026-10-02T11:40:39Z",
+      "message": "The database has every migration this artifact carries",
+      "observedGeneration": 1,
+      "reason": "HistoryMatched",
+      "status": "True",
+      "type": "Ready"
+    },
+    {
+      "lastTransitionTime": "2026-10-02T11:40:05Z",
+      "message": "The plan's approval requirements are satisfied",
+      "observedGeneration": 1,
+      "reason": "Satisfied",
+      "status": "False",
+      "type": "ApprovalRequired"
+    }
+  ],
+  "procedureSHA256": "18fad58104fffffd7d156f5ab81e9aaf5cb4a8a44387d8f099ece7c0dd2a87ce",
+  "completedAt": "2026-10-02T11:40:41.719402+00:00"
+}

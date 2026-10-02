@@ -35,6 +35,42 @@ acceptance must also retain the original Job/Pod identities, successful runner
 completion, the matching persisted receipt, and an independent database witness
 showing one execution before and after redelivery.
 
+`result_lost_ack.py` runs that installed PostgreSQL migration proof. Use the
+owned bootstrap environment and fixture digest described below, with the lab's
+`demo-migration-verification-policy` and completed `result-schema-publish` Job
+available in the source namespace. Choose a fresh namespace and database:
+
+```sh
+export RESULT_PROBE_NAMESPACE=ptah-result-lost-ack
+export RESULT_PROBE_DATABASE=result_lost_ack
+export RESULT_PROBE_EVIDENCE_DIR=/path/to/lost-ack-evidence
+python3 support/qualification/probes/result_lost_ack.py
+```
+
+The probe gates Apply credentials before execution, creates the test proxy,
+and moves only the receiver Service selector. It checks two identical receipts
+while the original runner is still running. A migration inserts a row using a
+PostgreSQL sequence: a committed replay changes the row count, and a rolled-back
+replay still advances the sequence. Both must remain one before and after the
+retry is released. The original Job and Pod must complete without replacements
+or restarts, and migration history must converge at the current generation.
+
+The probe reconstructs the persisted publication independently and records its
+binding and receipt identity in `lost-ack.json`, the held retry in
+`held-retry.json`, and the exact immutable publication in `publication.json`.
+The procedure hash identifies the executed script. `verify_evidence` and its
+refusal tests reject missing faults, changed receipts or bindings, empty or
+repeated SQL, replaced executions, repeated preflight, and stale convergence.
+This synthetic migration contains no private SQL or credentials in its result.
+
+The Service selector is restored and the proxy Pod and copied credential are
+removed in `finally`. `receiver-service-before.json` retains the original
+selector for recovery after a killed probe process; verify its UID before
+restoring it. The namespace and database remain until the owning lab is removed.
+This row proves a single lost acknowledgment for PostgreSQL on the recorded
+Kubernetes minor. Concurrent duplicate delivery, receiver failure during retry,
+and the other engine/minor combinations remain separate requirements.
+
 ## First harvest
 
 `result_first_harvest.py` runs a native PostgreSQL plan of exactly 8 MiB

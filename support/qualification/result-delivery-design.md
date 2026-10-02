@@ -742,7 +742,29 @@ UID sets and checks the full publication before removal. Its verifier refuses
 missing, replaced, foreign, and corrupted members. This establishes first
 consumption after Pod/log loss and manager restart for the recorded PostgreSQL
 and Kubernetes versions. It does not establish first consumption after Job
-deletion or redelivery after a lost HTTP acknowledgment. Remaining failure cases,
+deletion or redelivery after a lost HTTP acknowledgment.
+
+[Lost-acknowledgment evidence](evidence/result-lost-ack-2026-10-02/summary.json)
+uses the packaged installation built from `ded02b25`, PostgreSQL migrations,
+Kubernetes 1.37, two manager replicas, and default `10Mi` kubelet logs. An
+isolated mTLS proxy forwarded the original Apply Pod's credential to the real
+receiver, read its successful durable receipt, and closed the runner connection
+without sending an HTTP response. The retry returned identical receipt bytes
+and the same UID. While that response was held, the original runner was still
+running and independent API reads reconstructed the complete publication.
+
+The migration inserted one row using a PostgreSQL sequence. Both the committed
+row count and the sequence remained one before and after releasing the retry;
+the sequence would advance even if another execution rolled back. The same Job
+and Pod completed without replacements or restarts, with one preflight, and the
+current generation reached `HistoryMatched`. The probe restored the ordinary
+Service route before releasing the retry and removed its proxy and copied
+credential afterward. Retained evidence includes the exact immutable publication,
+receipt observations, runtime identities, and original Job/Pod completion.
+
+This proves one lost acknowledgment for the recorded PostgreSQL migration row.
+Concurrent duplicate requests, receiver failure during retry, and other engine
+and minor combinations still require installed proof. Remaining failure cases,
 abandoned partial-publication cleanup,
 restore, CA rotation, enforced NetworkPolicy, Lease contention, and the complete
 Kubernetes and database matrix remain explicit #586 acceptance work. The option
