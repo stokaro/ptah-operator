@@ -92,10 +92,10 @@ writes. A missing member of an already completed publication cannot be recreated
 These checks do not make the live authority reads and API writes transactional;
 receiver and consumer checks remain necessary.
 
-Publication DELETE and DeleteCollection remain refused until consumption and
-retention are integrated. Retiring SQL authority alone cannot establish that its
-result was consumed or backed up. This is a remaining installation requirement,
-not a completed cleanup implementation; credential retirement is separate.
+Publication DELETE is admitted only after the persisted retirement window and
+the live pin, source identity, and Job-absence checks described below.
+DeleteCollection remains refused. Retiring SQL authority alone cannot establish
+that its result was consumed or backed up.
 
 Local API-server tests publish through the chart's actual admission handlers,
 read the same result back, refuse unissued and retired authority and invalid
@@ -308,9 +308,9 @@ authority. API failures refuse deletion. Legacy resource-owned projections keep
 the original active-operation deletion guard. Resource ownership and
 `immutable: true` alone do not preserve this first-Pod pin.
 
-These checks establish the deletion boundary, not a retention schedule. The
-publication retention collector and installed garbage-collection proof remain
-required before default activation.
+The collector applies this deletion boundary after the persisted retention
+window. Its installed garbage-collection and recovery proofs remain required
+before default activation.
 
 The Pod webhook also receives direct references to reserved credential names,
 including unlabeled Pods, environment sources, image-pull credentials, projected
@@ -596,9 +596,9 @@ refuses rotation readiness. Separate admission tests prove that the real API
 server refuses arbitrary manager Secret creation while allowing canonical
 credentials and ordinary administrator Secrets.
 
-This option is not yet a qualified installation mode. Retention, authorized
-cleanup, backup/restore, metrics, HA, complete key rotation, and the installed
-Job-to-controller workflow remain required before enabling it by default. HA,
+This option is not yet a qualified installation mode. Installed retention and
+cleanup, backup/restore, resource bounds, HA, complete key rotation, and the full
+Job-to-controller acceptance matrix remain required before default activation. HA,
 key overlap, restore, and rollout must preserve acknowledged results and
 outstanding deliveries.
 
@@ -684,8 +684,24 @@ It exposed and fixed the Job guard's missing durable credential volume.
 After consumption and convergence, the run removed all seven operation Jobs
 and their Pods, restarted both managers, and independently verified unchanged
 receipt UIDs, chunk sizes, and digests. The plan still reconstructed from its
-16 chunks. This does not prove recovery after acknowledgment but before first
-consumption, or a lost acknowledgment. Installed failure cases, retention,
+16 chunks. That run did not remove logs before first consumption.
+
+[First-harvest evidence](evidence/result-first-harvest-2026-10-02.json) uses a
+fresh installation built entirely from `7ec19b64`. With every kubelet still
+reporting `10Mi`, an exact 8 MiB native PostgreSQL Plan was acknowledged while
+both fresh managers lacked leadership permission. The active claim remained
+unchanged and no plan had been published. The probe then removed the producing
+Pod and its logs, replaced both manager processes again, and restored leadership.
+The first harvest reconstructed the same bytes into 16 planstore chunks. An
+ordinary approval led to one Apply and database-verified convergence. The
+9,787,143-byte result occupied 19 result chunks. The completed Job remained.
+
+The [repeatable probe](probes/result-delivery.md) records the distinct manager
+UID sets and checks the full publication before removal. Its verifier refuses
+missing, replaced, foreign, and corrupted members. This establishes first
+consumption after Pod/log loss and manager restart for the recorded PostgreSQL
+and Kubernetes versions. It does not establish first consumption after Job
+deletion or redelivery after a lost HTTP acknowledgment. Failure cases, retention,
 restore, CA rotation, enforced NetworkPolicy, Lease contention, and the complete
 Kubernetes and database matrix remain explicit #586 acceptance work. The option
 remains disabled by default.
