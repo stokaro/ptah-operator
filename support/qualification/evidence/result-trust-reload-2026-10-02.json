@@ -1,0 +1,104 @@
+{
+  "schemaVersion": 1,
+  "issue": 586,
+  "status": "Atomic mounted-trust reload verified locally; coordinated installation rotation remains incomplete",
+  "testedCommit": "2a2ece736df0b4b653c7f9cc54327185f5e03cc0",
+  "recordedAt": "2026-10-02T04:53:09.186610+00:00",
+  "sourceSHA256": {
+    "cmd/manager/main.go": "b0a6b7a061398d0df4d380c80c5ed5f9e947853b9d1715142e08a71b3033a7c7",
+    "internal/controllerwrite/result_credentials.go": "e99077e326e3af7125ae8ebc26e8fe073e2a11676b4dc9a5ccc35b265b37a57a",
+    "internal/controllerwrite/result_records.go": "0458ba7a3a227b1e2d61f4da422aa5b3f41e641dd3aee525ef0978077e9a9996",
+    "internal/controllerwrite/validator.go": "5b87254670a80ff2792f26bc0df9df25ef7f951e99ba793b3c4c25fe47dcd0c9",
+    "internal/resultcredentials/admission.go": "56eaf663e816fdfda4069f30e78e1f6caac5b609a0fb2b0e8cbc8fe1093f6b8e",
+    "internal/resultcredentials/issuer.go": "01abc368db06cc9df238a2c721012c3e0e7dd454ab38085b5a3782b3f031f8e6",
+    "internal/resultdelivery/delivery_test.go": "f17526633b4ca0f9cab9d9a66c3aac642646f668efddee53a8c9a40b259d76e4",
+    "internal/resultdelivery/receiver.go": "3df967cf9f71e4103b651d456ffcac0aecf439d98038d7831e36d8e1b8a1a61b",
+    "internal/resultservice/service.go": "e41bf12aac1f79bb406b51c201acc986d8c2aa4de0781317f3d5b18652d2f4f3",
+    "internal/resultservice/service_test.go": "42196d5f3390073259ff6f408a7d9758825a084d271360a2917a0a4a38575f97",
+    "internal/resultservice/trust.go": "39980a473ecf9ad7ef528890b4fcb1ccfad1172e95666865b929520102d95a32",
+    "internal/resultservice/trust_test.go": "498f37a67013bee36f381a4ea85e8db5c4b3b178e87f74a4e1993b714e8db01f",
+    "support/qualification/result-delivery-design.md": "e9267d2e95ea8721f1e21b9bb93fcd49667912f17b7cc4b6ef2cba1441d5a2b5",
+    "support/runner-protocol.json": "5c14724c88af9564c4ea2123a7eb3fca802fcc5ee117615411962733bd1665cd"
+  },
+  "environment": {
+    "go": "go version go1.27.1 darwin/arm64",
+    "API": "Fake client in service tests; Kubernetes 1.37.0 kube-apiserver and etcd for admission tests",
+    "transport": "Real TCP and mTLS in service and delivery tests",
+    "Docker": "Not used"
+  },
+  "checks": [
+    {
+      "command": "GOFLAGS=-p=1 go test -race -count=1 -json ./internal/resultservice ./internal/resultdelivery ./internal/resultcredentials ./internal/controllerwrite ./internal/controller",
+      "exitCode": 0,
+      "passingTestsAndSubtests": 1328,
+      "skips": [],
+      "packages": [
+        {
+          "name": "github.com/stokaro/ptah-operator/internal/resultservice",
+          "elapsedSeconds": 2.711
+        },
+        {
+          "name": "github.com/stokaro/ptah-operator/internal/resultdelivery",
+          "elapsedSeconds": 32.457
+        },
+        {
+          "name": "github.com/stokaro/ptah-operator/internal/resultcredentials",
+          "elapsedSeconds": 4.88
+        },
+        {
+          "name": "github.com/stokaro/ptah-operator/internal/controllerwrite",
+          "elapsedSeconds": 2.953
+        },
+        {
+          "name": "github.com/stokaro/ptah-operator/internal/controller",
+          "elapsedSeconds": 8.44
+        }
+      ]
+    },
+    {
+      "command": "KUBEBUILDER_ASSETS=<Kubernetes 1.37.0 darwin/arm64 assets> PTAH_REQUIRE_ENVTEST=1 GOFLAGS=-p=1 go test -count=1 -json ./test/envtest/webhook -run TestResult",
+      "exitCode": 0,
+      "passingTestsAndSubtests": 26,
+      "skips": [],
+      "packages": [
+        {
+          "name": "github.com/stokaro/ptah-operator/test/envtest/webhook",
+          "elapsedSeconds": 11.31
+        }
+      ]
+    },
+    {
+      "command": "GOFLAGS=-p=1 make fmt-check vet; GOFLAGS=-p=1 make verify-runner-protocol",
+      "exitCode": 0
+    }
+  ],
+  "proved": [
+    "Receiver TLS and issuance/admission delegates select one validated immutable trust snapshot. Kubernetes projected Secret reads pin one resolved ..data generation. Background reload rejects invalid material, retains the last validated snapshot, fails readiness, pauses issuance, and recovers after a valid projection returns.",
+    "An old canonical credential remains usable after new issuances receive an expanded server CA bundle. New credential records must carry the current bundle; Secret projections must still match their canonical record exactly. Local tests refuse a changed bundle at both admission boundaries.",
+    "Real TLS service tests change the client signer with overlap, issue a credential under the new signer with expanded server trust, switch the serving certificate, and successfully establish a fresh connection. Removing the old client CA makes its preexisting keep-alive connection return HTTP 403. The test confirms connection reuse rather than relying on a new handshake.",
+    "Issuance, projection admission, and publication authorization refuse the retired client CA. A result acknowledged before rotation remains readable with the same bytes and receipt after the CA is removed. The test deliberately removes trust to test revocation; it does not test a production rotation schedule.",
+    "The receiver rechecks current client trust before reading the body, after reading it, and at the storage publication boundary. Injected trust refusal at each check yields HTTP 403 and no completed result.",
+    "Existing credential and publication admission tests pass against the real pinned Kubernetes API server through chart webhook routing, including immutable bindings, unauthorized writes, deletion protection, Secret-read RBAC denial, and publication retries. These fixtures do not run the reloading service."
+  ],
+  "notProved": [
+    "Automatic receiver trust provisioning, a coordinated CA overlap schedule across replicas and outstanding runners, certificate-rotation controller integration, or installed HA behavior.",
+    "Helm still does not enable durable delivery, mount receiver trust, expose its Service, or provide the required NetworkPolicy and result-record permissions. Installed Jobs still use logs.",
+    "Installed maximum-plan/default-logging workflow, SQL execution, kubelet projection, measured concurrent Lease/progress budgets, or real manager replacement during a database workflow.",
+    "Retention, authorized deletion, quota, garbage collection, backup/restore, metrics, the full supported Kubernetes/engine matrix, or full make verify on this commit.",
+    "Issue 586 end-to-end DoDs, issue 242 acceptance, and release authorization remain open."
+  ],
+  "localLogs": {
+    "/private/tmp/ptah-trust-race.jsonl": {
+      "sha256": "b715c8367767e6698374bc8cacc9d263f511aa3fb501b9ac609e2e1a284a71c2",
+      "custody": "Local diagnostic log; final release evidence custody remains pending"
+    },
+    "/private/tmp/ptah-trust-envtest.jsonl": {
+      "sha256": "0b4e62842942303f8f2a365f3a232db493cad08b9ddf2657cb748f2816de93b1",
+      "custody": "Local diagnostic log; final release evidence custody remains pending"
+    },
+    "/private/tmp/ptah-trust-gates.log": {
+      "sha256": "926154b37099c55ecd7849e395748581f1ec27b2c9ba344d8a173b0c5182e1b1",
+      "custody": "Local diagnostic log; final release evidence custody remains pending"
+    }
+  }
+}
