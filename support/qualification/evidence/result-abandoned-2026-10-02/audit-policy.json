@@ -1,0 +1,43 @@
+{
+  "apiVersion": "audit.k8s.io/v1",
+  "kind": "Policy",
+  "omitStages": [
+    "RequestReceived"
+  ],
+  "rules": [
+    {
+      "level": "Request",
+      "verbs": [
+        "delete"
+      ],
+      "resources": [
+        {
+          "group": "operator.ptah.run",
+          "resources": [
+            "ptahresultrecords"
+          ]
+        },
+        {
+          "group": "",
+          "resources": [
+            "secrets"
+          ]
+        }
+      ]
+    },
+    {
+      "level": "Metadata",
+      "resources": [
+        {
+          "group": "operator.ptah.run",
+          "resources": [
+            "ptahresultrecords"
+          ]
+        }
+      ]
+    },
+    {
+      "level": "None"
+    }
+  ]
+}

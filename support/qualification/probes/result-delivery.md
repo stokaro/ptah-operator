@@ -499,3 +499,36 @@ ordinary approval, one Apply and database-verified convergence. A failed CA
 probe restores the original journal, policy, projection and replica count before
 restoring leadership. A successful probe keeps the new stable trust. Neither
 case leaves its admission hold installed.
+
+## Abandoned partial-publication collection
+
+`result_abandoned.py` fills the dedicated `ptah-result-abandoned` namespace's
+result-record quota with the canonical credential and Resolve intent. Before
+completion it suspends that read-only schema, removes the original Job/Pod and
+releases quota for the collector's retirement record. The source schema and
+credentials come from the owned lab's existing `storefront` fixture. No Apply
+is permitted. Run with the same lab environment, explicit Docker context and
+`RESULT_PROBE_EVIDENCE_DIR` used by the other installed probes.
+
+The API audit policy must record Request-level DELETEs for result records and
+Secret projections, and Metadata-level result-record operations. It must not
+capture payload or credential write bodies. The executed setup is retained as
+`evidence/result-abandoned-2026-10-02/audit-setup.py`; it saves each original
+API-server manifest before enabling that policy, leaves default kubelet logging
+unchanged, and waits for each replacement API server before advancing. Restore
+those saved manifests after collecting the evidence.
+
+The probe freezes the abandoned record UIDs, data hashes and retirement
+creation time. The unchanged minimum one-hour window elapses on the real clock.
+The suspended `ptah-result-partial-mysql/lost-ack` fixture supplies the existing
+latest-run pin; its records and credential projection must remain unchanged.
+Published source schema plans retain their UIDs and spec hashes. The observer
+requires the abandoned namespace to have no result records or Jobs after
+collection. API audit events must identify exact UIDs and place every successful
+DELETE after its persisted deadline; Secret deletion must come from Kubernetes
+garbage collection. The first chunk CREATE must have an actual quota refusal.
+
+Replay the frozen collection with `result_retention_evidence.verify_abandoned`;
+its refusal tests reject a completed or replaced publication, missing quota
+fault, incomplete collection, early DELETE and lost pinned evidence. A running
+checkpoint or elapsed timer is not a passing result.

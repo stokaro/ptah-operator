@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Replay the frozen retention cohort against successful API DELETE events."""
 import argparse
+import base64
 import datetime as dt
 import json
 from pathlib import Path
@@ -112,6 +113,47 @@ def verify(before, after, markers, audits):
     return {'status': 'passed', 'eligibleRecords': len(eligible), 'pinnedRecords': len(pinned),
             'collectedSecretProjections': len(eligible_secrets), 'preservedPlanObjects': len(before['planDigests']),
             'garbageCollectorIdentities': sorted(actors), 'recordDeletes': witnesses}
+
+
+
+def verify_abandoned(interrupted, before, after, markers, audits, refusals):
+    """Require an actual unfinished publication before replaying its collection."""
+    intent = interrupted['intent']
+    manifest = json.loads(base64.b64decode(intent['spec']['data'], validate=True))
+    binding = manifest['binding']
+    require(binding['operation'] == 'resolve' and manifest['chunks'], 'Missing read-only publication')
+    resource, job, pod = interrupted['resource'], interrupted['job'], interrupted['pod']
+    require(resource['metadata']['uid'] == binding['uid']
+            and resource['status']['activeOperation']['id'] == binding['operationID']
+            and job['metadata']['uid'] == binding['jobUID']
+            and pod['metadata']['uid'] == binding['podUID'], 'Wrong interrupted execution identity')
+    rows = interrupted['records']
+    require(len(rows) == 2 and {r['type'] for r in rows} == {'intent', 'credential'},
+            'Publication was complete or its interruption census is missing')
+    require(next(r['uid'] for r in rows if r['type'] == 'intent') == intent['metadata']['uid'],
+            'Interrupted intent was replaced')
+    frozen = {r['name']: r for r in before['records']}
+    require(all(r['name'] in frozen and frozen[r['name']] == r for r in rows),
+            'Abandoned publication changed before retirement')
+    expected = {r['name'] for r in rows} | {m['metadata']['name'] for m in markers}
+    require(set(before['eligibleNames']) == expected and len(expected) == 3,
+            'Retirement cohort does not cover exactly the abandoned publication')
+    quota = interrupted['quota']
+    key = 'count/ptahresultrecords.operator.ptah.run'
+    require(quota['status']['hard'][key] == '2' and quota['status']['used'][key] == '2',
+            'Quota did not fill at the interrupted publication')
+    matches = [a for a in refusals if a.get('verb') == 'create' and a.get('stage') == 'ResponseComplete'
+               and a.get('responseStatus', {}).get('code') == 403
+               and ('exceeded quota: ' + quota['metadata']['name']) in a.get('responseStatus', {}).get('message', '')
+               and a.get('objectRef', {}).get('namespace') == binding['namespace']
+               and a['objectRef'].get('resource') == 'ptahresultrecords'
+               and a['objectRef'].get('name') == intent['metadata']['name'] + '-000']
+    require(matches, 'No actual API refusal of the first chunk')
+    report = verify(before, after, markers, audits)
+    report['abandonedPublication'] = {'intentUID': intent['metadata']['uid'],
+                                     'jobUID': binding['jobUID'], 'recordsBeforeRetirement': 2,
+                                     'quotaRefusalAuditIDs': sorted({a['auditID'] for a in matches})}
+    return report
 
 
 def main():
