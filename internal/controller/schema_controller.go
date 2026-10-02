@@ -45,6 +45,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/planstore"
 	"github.com/stokaro/ptah-operator/internal/podintent"
 	"github.com/stokaro/ptah-operator/internal/policy"
+	"github.com/stokaro/ptah-operator/internal/resultconsumer"
 	"github.com/stokaro/ptah-operator/internal/runner"
 	"github.com/stokaro/ptah-operator/internal/schemaselector"
 	"github.com/stokaro/ptah-operator/internal/targetlock"
@@ -126,6 +127,7 @@ type SchemaReconciler struct {
 	Scheme    *runtime.Scheme
 	Recorder  record.EventRecorder
 	Logs      PodLogReader
+	Results   OperationResults
 	// ResultReadTimeout bounds the pod/log read of one terminal operation.
 	// Zero means defaultResultReadTimeout, which is what the manager runs.
 	ResultReadTimeout time.Duration
@@ -1036,10 +1038,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 		}
 		return ctrl.Result{}, err
 	}
-	result, parseErr := runner.ParseResultFor(evidence.Logs, schemaOperation(operation).Runner, operation.ID)
-	if evidence.LogLost != nil {
-		parseErr = evidence.LogLost
-	}
+	result, parseErr := evidence.parseResult(schemaOperation(operation).Runner, operation.ID)
 	if requeue, wait := awaitFrameArrival(job, parseErr, r.now()); wait {
 		return ctrl.Result{RequeueAfter: requeue}, nil
 	}
@@ -1122,7 +1121,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 			)
 		}
 	}
-	return r.consumeResult(ctx, schema, job, result, evidence.PodUIDs, evidence.PodCount)
+	return r.consumeResultWithTransport(ctx, schema, job, result, evidence.PodUIDs, evidence.PodCount, evidence.Durable)
 }
 
 func (r *SchemaReconciler) recoverLeaseContinuity(
@@ -1402,6 +1401,10 @@ func (r *SchemaReconciler) consumeResult(
 	podUIDs []types.UID,
 	podCount int32,
 ) (ctrl.Result, error) {
+	return r.consumeResultWithTransport(ctx, schema, job, result, podUIDs, podCount, false)
+}
+
+func (r *SchemaReconciler) consumeResultWithTransport(ctx context.Context, schema *operatorv1alpha1.PtahSchema, job *batchv1.Job, result runner.Result, podUIDs []types.UID, podCount int32, durable bool) (ctrl.Result, error) {
 	if err := r.markJobHarvested(ctx, job); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -1586,31 +1589,38 @@ func (r *SchemaReconciler) consumeResult(
 				setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonDesiredStateChanged, "A newer resource generation is pending")
 			}
 		} else {
-			// The claim recorded, at dispatch, the digest of the key this Job
-			// was sealed to. A mismatch means this process cannot be the one
-			// that dispatched it -- most likely a restart generated a new key
-			// in between -- so the payload is unreadable by construction, not
-			// merely rejected. Plan is read-only: retrying costs a fresh Job
-			// sealed to the current key, which is exactly what harvesting the
-			// old one would have cost anyway.
-			if operation.PlanSealPublicKeyDigest == "" ||
-				operation.PlanSealPublicKeyDigest != planSealPublicKeyDigest(r.SealKey.PublicKey()) {
-				return r.retryOperation(ctx, schema, job,
-					fmt.Errorf("plan was sealed to a manager key this process does not hold"))
+			var planDocument []byte
+			var err error
+			if durable {
+				planDocument = []byte(result.Stdout)
+			} else {
+				// The claim recorded, at dispatch, the digest of the key this Job
+				// was sealed to. A mismatch means this process cannot be the one
+				// that dispatched it -- most likely a restart generated a new key
+				// in between -- so the payload is unreadable by construction, not
+				// merely rejected. Plan is read-only: retrying costs a fresh Job
+				// sealed to the current key, which is exactly what harvesting the
+				// old one would have cost anyway.
+				if operation.PlanSealPublicKeyDigest == "" ||
+					operation.PlanSealPublicKeyDigest != planSealPublicKeyDigest(r.SealKey.PublicKey()) {
+					return r.retryOperation(ctx, schema, job,
+						fmt.Errorf("plan was sealed to a manager key this process does not hold"))
+				}
+				// The envelope inside the sealed payload names the exact operation
+				// and Job it was sealed for. A NaCl sealed box carries no
+				// associated data, so opening successfully proves only that this
+				// process's key sealed it, never that it was sealed for this
+				// harvest -- a validly sealed plan from another operation, or
+				// another attempt of this one, would otherwise open and validate
+				// just as well.
+				planDocument, err = r.SealKey.OpenPlan(result.Stdout, planseal.Envelope{
+					OperationID: operation.ID, JobName: operation.JobName,
+				})
+				if err != nil {
+					return r.retryOperation(ctx, schema, job, fmt.Errorf("open sealed plan payload: %w", err))
+				}
 			}
-			// The envelope inside the sealed payload names the exact operation
-			// and Job it was sealed for. A NaCl sealed box carries no
-			// associated data, so opening successfully proves only that this
-			// process's key sealed it, never that it was sealed for this
-			// harvest -- a validly sealed plan from another operation, or
-			// another attempt of this one, would otherwise open and validate
-			// just as well.
-			planDocument, err := r.SealKey.OpenPlan(result.Stdout, planseal.Envelope{
-				OperationID: operation.ID, JobName: operation.JobName,
-			})
-			if err != nil {
-				return r.retryOperation(ctx, schema, job, fmt.Errorf("open sealed plan payload: %w", err))
-			}
+
 			if result.PlanContentDigest == "" || result.PlanContentDigest != fingerprint.DigestBytes(planDocument) {
 				return r.retryOperation(ctx, schema, job, fmt.Errorf("plan result content digest is missing or mismatched"))
 			}
@@ -3160,10 +3170,13 @@ var (
 )
 
 type terminalEvidence struct {
-	Logs     []byte
-	PodUIDs  []types.UID
-	PodCount int32
-	Trusted  bool
+	Durable     bool
+	Result      *runner.Result
+	ResultError error
+	Logs        []byte
+	PodUIDs     []types.UID
+	PodCount    int32
+	Trusted     bool
 	// TerminationMessage is the executor container's termination message as
 	// the kubelet recorded it in Pod status. It is set only where Trusted is:
 	// a container that never terminated wrote none.
@@ -3331,6 +3344,17 @@ func (r *SchemaReconciler) terminalLogs(
 	schema *operatorv1alpha1.PtahSchema,
 	job *batchv1.Job,
 ) (terminalEvidence, error) {
+	if durableDeliveryRequested(job) {
+		operation := schema.Status.ActiveOperation
+		if operation == nil {
+			return terminalEvidence{}, errors.New("active schema operation is missing")
+		}
+		engine := ""
+		if operation.Target != nil {
+			engine = strings.ToLower(string(operation.Target.Engine))
+		}
+		return durableTerminalResult(ctx, r.directReader(), r.Results, schema, "PtahSchema", job, operation.AdmissionSnapshot, resultconsumer.Request{ExecutionBindingID: operation.ExecutionBindingID, InputFingerprint: operation.InputFingerprint, Operation: string(schemaOperation(operation).Runner), OperationID: operation.ID, JobUID: operation.JobUID, Engine: engine})
+	}
 	evidence, selected, err := r.collectTerminalPodEvidence(ctx, schema, job)
 	if err != nil {
 		return evidence, err

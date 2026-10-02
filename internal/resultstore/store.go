@@ -92,8 +92,48 @@ func Name(b Binding) (string, error) {
 	if err := b.validate(); err != nil {
 		return "", err
 	}
-	key, _ := json.Marshal([]string{b.Namespace, string(b.UID), b.OperationID, b.JobName})
+	return AttemptName(b.Namespace, b.UID, b.OperationID, b.JobName)
+}
+
+// AttemptName locates a publication without requiring its producing Pod to
+// remain present. Finding a name does not authorize consuming its contents.
+func AttemptName(namespace string, uid types.UID, operationID, jobName string) (string, error) {
+	if len(validation.IsDNS1123Label(namespace)) != 0 || len(validation.IsDNS1123Subdomain(jobName)) != 0 {
+		return "", ErrInvalid
+	}
+	for _, value := range []string{string(uid), operationID} {
+		if value == "" || len(value) > 256 || strings.ContainsAny(value, " \t\r\n\x00") {
+			return "", ErrInvalid
+		}
+	}
+	key, _ := json.Marshal([]string{namespace, string(uid), operationID, jobName})
 	return "ptah-result-" + digest(key)[len("sha256:"):], nil
+}
+
+// LoadAttempt returns verified storage evidence without reading a Job, Pod,
+// credential, or log. The consumer must hold the returned binding to its full
+// persisted claim and revalidate its current execution epoch and inputs.
+func (s Store) LoadAttempt(ctx context.Context, namespace string, uid types.UID, operationID, jobName string) (Binding, []byte, Receipt, error) {
+	name, err := AttemptName(namespace, uid, operationID, jobName)
+	if err != nil || s.Reader == nil {
+		return Binding{}, nil, Receipt{}, ErrInvalid
+	}
+	intent := &api.PtahResultRecord{}
+	if err := s.Reader.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, intent); err != nil {
+		if apierrors.IsNotFound(err) {
+			err = ErrIncomplete
+		}
+		return Binding{}, nil, Receipt{}, err
+	}
+	m, found, err := admissionManifest(intent)
+	if err != nil || found != name || m.Binding.Namespace != namespace || m.Binding.UID != uid || m.Binding.OperationID != operationID || m.Binding.JobName != jobName {
+		return Binding{}, nil, Receipt{}, ErrConflict
+	}
+	payload, receipt, err := s.Load(ctx, m.Binding)
+	if err != nil {
+		return Binding{}, nil, Receipt{}, err
+	}
+	return m.Binding, payload, receipt, nil
 }
 
 type manifest struct {

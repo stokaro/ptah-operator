@@ -82,8 +82,8 @@ func TestMaximumPayloadAndRecordImmutability(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, readReceipt, err := (resultstore.Store{Reader: second}).Load(t.Context(), b)
-	if err != nil || !bytes.Equal(got, payload) || readReceipt != receipt {
+	found, got, readReceipt, err := (resultstore.Store{Reader: second}).LoadAttempt(t.Context(), b.Namespace, b.UID, b.OperationID, b.JobName)
+	if err != nil || found != b || !bytes.Equal(got, payload) || readReceipt != receipt {
 		t.Fatalf("fresh API client lost result: %v", err)
 	}
 	list := &recordapi.PtahResultRecordList{}

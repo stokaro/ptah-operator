@@ -7,7 +7,7 @@ delivery, live authorization, credential issuer, runner command, and optional
 workload projection are implemented. The manager does not select or issue these
 credentials yet. The chart routes credential and Pod admission guards, verified
 against a local API server. The receiver listener, installation permissions and
-trust lifecycle, and controller result consumption remain unconnected.
+trust lifecycle, and activation of controller result consumption remain unconnected.
 
 ## Storage boundary
 
@@ -314,6 +314,47 @@ webhook RBAC, kubelet projection, garbage collection, or backup. Restore and
 retention must preserve active pins. Issuance and authority reads are not a
 cross-object transaction, so consumer and receiver checks remain required.
 
+## Controller consumption
+
+Both controllers select durable consumption from the Job's explicit delivery
+arguments. A malformed projection is refused; a Job requesting durable delivery
+never falls back to logs or a termination summary. Jobs without those arguments
+retain their legacy path until installation activation.
+
+The consumer locates the intent by namespace, resource UID, operation ID, and
+Job name, verifies the complete publication, and holds its full binding to the
+persisted claim: resource kind/name/UID/generation, execution epoch, input
+fingerprint, operation, and exact Job UID. It decodes the protocol for the
+claim's engine. Reading requires only result-record access, not live credentials,
+Pods, logs, or the receiving manager's process key.
+
+`internal/resultconsumer.Reader` performs API reads and payload validation in
+bounded background workers. Reconcile polls memory and requeues while a load is
+pending or the reader is saturated. Worker count, retained entries, read deadline,
+and memory retention require explicit configuration; expiration removes memory
+only. A failed status write can reload the same durable evidence. Shutdown
+cancels loads. The loader must honor its context. Manager activation and resource
+sizing for these configured limits remain pending.
+
+The existing Job-intent, current-input, execution-binding, Lease, and terminal-Job
+checks still precede consumption. A live replacement or additional Pod remains a
+refusal. When the original Pod is absent, the publication supplies its historical
+UID, which is not treated as live termination evidence or proof of SQL quiescence.
+A missing or invalid receipt follows existing retry and unknown-outcome recovery.
+Controllers still require the Job; a missing mutating Job retains its existing
+unknown-outcome handling. The storage loader's ability to read without a Job does
+not change that controller decision.
+
+Durable Plan bytes enter the existing digest, engine, target, policy, exclusion,
+and planstore validation directly. Legacy Plan frames still require their sealed
+envelope. Unit tests cover both controllers' durable harvest paths for all nine
+operations after Pod deletion, no log/summary fallback, replacement-Pod refusal,
+exact-limit Plan loading, bounded background work, and plan publication after
+manager key loss. The API-server storage test also locates a maximum-size stored
+payload without knowing the Pod identity in advance. These are component and
+controller-path tests; they do not run an installed manager, kubelet, or database
+workflow and do not complete the default-logging acceptance matrix.
+
 ## Installation and runner integration still required
 
 The receiver runs independently of family reconcile workers, behind its own TLS
@@ -336,8 +377,8 @@ receiver writes to the same publication intent and protect the metadata as well
 as the immutable payload. Spec immutability does not prevent deleting and recreating a record.
 
 Workload builders must supply the receiver configuration, projected credentials,
-and downward API identity to the implemented runner path. Controllers must use
-durable results without a correctness fallback to `pods/log`.
+and downward API identity to the implemented runner path. Manager wiring must activate the implemented durable consumer in both
+controllers; its durable path has no correctness fallback to `pods/log`.
 
 The new TLS payload must carry usable plan bytes, not an old per-process sealed
 Plan. Storing those bytes in access-controlled result records removes the dependency on
@@ -354,7 +395,7 @@ still apply. SQL and publication are not an atomic transaction.
 ## Retention and acceptance
 
 Before enabling this path, complete publication-record retention and authorized deletion,
-receiver certificates and NetworkPolicy, bounded request metrics, and receipt
+receiver certificates and NetworkPolicy, bounded request metrics, and activation of receipt
 consumption and retention. Do not attach a time-only TTL to unconsumed results or
 unresolved operations. Abandoned partial publications become eligible only after
 the exact attempt is retired and cannot still deliver. Cleanup must use UID/RV

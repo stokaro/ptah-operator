@@ -46,7 +46,7 @@ func terminationSummaryStandIn(
 	operation runner.Operation,
 	operationID string,
 ) (runner.Summary, bool, error) {
-	if !evidence.Trusted || evidence.TerminationMessage == "" {
+	if evidence.Durable || !evidence.Trusted || evidence.TerminationMessage == "" {
 		return runner.Summary{}, false, nil
 	}
 	summary, err := runner.ParseSummaryFor(evidence.TerminationMessage, operation, operationID)

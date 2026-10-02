@@ -37,6 +37,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:1311d92d6531c466e44a082281029681687c2d53803d215949745903b854a23e",
       "reason": "Complete durable publication admission before the first tagged 0.2.0 release. Result records now share strict canonical manifest, metadata, owner, length, and digest checks between admission and readback. Completion validates every persisted chunk UID and the full protocol under the canonical credential and live operation authority. Identical concurrent writes remain idempotent; completed publications cannot be healed by recreating missing members. The wire payload and execution behavior are unchanged. No tagged release consumed an earlier protocol-1 contract; development counters remain 1."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:471a7a76576eccb0c9167abf79a724d60bb216569ade964c6abca083955452ee",
+      "reason": "Complete durable result consumption before the first tagged 0.2.0 release. The result store can locate and verify a publication by its immutable attempt without reading the producing Pod or Job. Consumers must check the returned full binding and protocol against the persisted operation. The runner wire payload and execution behavior are unchanged; development protocol counters remain 1."
     }
   ]
 }
