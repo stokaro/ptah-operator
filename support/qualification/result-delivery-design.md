@@ -921,6 +921,41 @@ credential-retirement waits; the existing local state-machine tests retain that
 separate timing claim. Both installed rotation cases use unchanged production
 code, default log sizes, and the recorded runtime identities.
 
+## Publication, authority and retry evidence mapping
+
+The following rows map the existing #586 requirements to executed checks.
+`evidence/result-dod-audit-2026-10-02/reuse.json` records unchanged Git objects
+for production packages, installation contracts, dependencies and real API tests
+since the successful `make verify-source` at `54ebef04`. Its original log is
+retained beside the mapping. No component execution was repeated for this audit.
+Installed bundles retain the actual runtime image identities; none is relabeled
+as a final release build.
+
+| Durable acknowledgment boundary | Executed evidence |
+| --- | --- |
+| Complete length/digest, protocol and exact binding before receipt | `TestSizeDigestAndInvalidBindingRefusedBeforeWrites`, `TestInvalidBodyAndRouteNeverReachStorage`, `TestPublicationBindsEveryIdentity`, and `TestPublicationAdmissionRefusesDamagedCompletion`. Installed first-harvest, concurrent delivery and quota-recovery bundles independently reconstruct manifests, all chunks and completion records. |
+| Partial/canceled writes, missing or corrupt members and failed final readback | `TestStorageDamageCannotProduceReceipt`, `TestCanceledPublicationReturnsNoReceipt`, `TestFinalReadbackFailurePreventsAcknowledgment`, and `TestCompletedPublicationCannotBeHealed`. The real API publication suite rejects invalid protocol and record writes. Installed quota recovery retains an actual refused chunk CREATE. |
+| Restart/resume at every publication write | `TestResumeEveryPublicationBoundary` covers failure before and after intent, each chunk and completion, then resumes with a fresh store. `TestResultPublicationResumesLostAPIWriteResponse` does the role-level lost-response cases through real API admission. Installed receiver replacement preserves the same receipt; these are separate component/API/process claims. |
+
+| Exact authority/confidentiality boundary | Executed evidence |
+| --- | --- |
+| Namespace, resource UID/generation, epoch, operation, attempt and exact Job/Pod | `TestPublicationBindsEveryIdentity`, `TestRefusals` in `internal/resultauthority`, `TestMigrationClaimRefusals`, `TestAuthorityReadRacesAndFailures`, `TestSecondPodRefused`, and `TestReplacementPodCannotRemintAttemptCredential`. All-operation credential and workload tests bind these predicates to production builders. |
+| Authenticated sender/receiver and expiration | `TestTLSRefusesUntrustedOrMissingClientAndServerCertificates`, `TestExpiredIdentityOnExistingConnectionAndMalformedSAN`, `TestAuthorityRecheckedAtPublicationBoundary`, `TestCurrentClientTrustRecheckedAtPublicationBoundary`, and `TestIssuedCredentialDeliversThroughLiveAuthority`. Actual runner preflight refuses invalid projection/authority before SQL. Installed recovery and rotation bundles use the chart's mTLS endpoint. |
+| Enrollment epoch, retired or changed credentials | `TestEnrollmentRefusesStaleSignerWithoutChangingIssuedCredentials`, `TestEnrollmentRechecksPolicyBeforeCanonicalWrite`, `TestOldAttemptCannotAcquireNewGeneration`, `TestIssuerRejectsCorruptedOrForeignCredential`, and real API `TestResultEnrollmentPolicyFencesStaleReplicas` / `TestResultPublicationRefusesUnissuedOrRetiredAuthority`. |
+| No API credential/object-write grant to the runner | `TestBuildHardensEveryContainerAndPod` and `TestBuildMigrationHardensEveryContainerAndPod` require disabled token automount. Workload and admission tests reject broadened Pod projections. `TestResultCredentialAdmission` and `TestUnrelatedPodCredentialReferences` enforce exact, read-only original-Pod credentials; `TestResultChartRBACAndTrustBootstrap` exercises rendered permissions. The installed Jobs use these same templates and guards. |
+| No plan/key/credential data in diagnostic output or ordinary status | `TestRunnerRedeliversAfterLostAcknowledgmentWithoutReexecuting` requires empty stdout; `TestRunnerDoesNotFallBackToLogsAfterDeliveryRefusal` requires a fixed stderr and no frame. Misconfiguration and preflight refusal tests likewise assert fixed diagnostics. `TestDurablePlanPreservesBytesWithoutProcessKey` refuses SQL in diagnostics; `TestTheSummaryCarriesNoCredentialAndNoChildText`, `TestRunRedactsCredentialsAndURLPasswords`, and the migration error-redaction tests retain the existing bounded output contract. Controller harvesting continues to project typed metadata into ordinary status, with plan bytes in the protected store. Sensitive data stays in the scoped result records and credential projection. |
+
+| Idempotent delivery boundary | Executed evidence |
+| --- | --- |
+| Identical bytes retain the receipt; changed bytes cannot replace it | `TestConcurrentIdenticalAndConflictingDelivery`, `TestConflictingBytesCannotReplacePartialPublication`, and the installed concurrent-redelivery and first-publication-race bundles. The retained pre-fix 503 and post-fix 409 show the admission conflict correction. |
+| Lost response, receiving process/leader replacement, no SQL rerun | Installed `result-lost-ack-engines-2026-10-02/` and `result-receiver-restart-2026-10-02/` retain the original Job/Pod, same durable receipt and calibrated native execution counter on both engines. `TestRunnerRedeliversAfterLostAcknowledgmentWithoutReexecuting` separately counts child invocations. |
+| Retry and upload bounds | `TestDeliveryAttemptAndDeadlineBounds`, `TestSenderRefusesRedirectsAndMismatchedReceipts`, and `TestSlowUploadReleasesSlotAndSaturationDoesNotQueue`. Installed slow-upload bundles for both families/engines retain the 120-second body deadline, immediate excess-request refusal, Lease renewal and independent progress. |
+
+These mappings complete the durable-acknowledgment, authority and idempotency
+case inventories. Component refusal tests, real API admission tests and installed
+fault cases are explicitly distinct. They do not close the remaining supported
+logging matrix, retention/restore lifecycle, default enablement or #584 acceptance.
+
 ## Acknowledged-result survival evidence mapping
 
 | Required boundary | Retained result |
