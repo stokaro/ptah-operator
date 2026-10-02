@@ -859,9 +859,39 @@ installed manager. The existing background-consumer evidence remains applicable:
 its reader and controller source hashes are unchanged. These results do not
 establish progress while all receivers or persistent storage are unavailable.
 
-Failures beyond the recorded cases and other minor combinations still require
-installed proof. Remaining failure cases,
+### Controller-independence evidence mapping
+
+The #586 controller-independence row is supported by the following complementary
+checks. They do not claim successful new delivery during a total receiver or
+storage outage. Such a claim is not the existing DoD: unavailable delivery must
+remain bounded without occupying reconciliation or replaying SQL.
+
+| Required behavior | Retained evidence |
+| --- | --- |
+| Both families and every supported operation | `result-schema-upload-budget-2026-10-02/operation-inventory.json` retains complete publications for all nine operation pairs on both engines. `TestBothControllersReadDurableResultsAfterPodDeletion` and `TestStoreLoaderSurvivesPodAndJobLossForEveryOperation` exercise consumption. |
+| No Pod-log dependency | The inventory's explicit Pod `log` subresource SubjectAccessReviews deny access. `TestDurableResultNeverUsesLogsOrTerminationSummary` refuses any fallback. |
+| Slow upload, saturation, concurrent progress and Lease renewal | Both installed upload-budget directories retain four family/engine cases. Independent resources converge before the first upload times out; both occupied receivers refuse excess requests; held Apply Leases renew within the predeclared 15-second bound. |
+| Receiver unavailability | `TestRunnerAuthenticatesProjectionBeforeStartingSQL/receiver_unavailable` uses a real runner process and TLS endpoint returning 503 and proves the SQL child never starts. `result-receiver-restart-2026-10-02/` removes both installed receivers after acknowledgment; the same original runner later receives its original receipt, with one calibrated SQL effect on each engine. |
+| Storage failures | `result-retention-2026-10-02/quota-recovery.json` and its API audit retain an actual refused chunk write followed by completion of the same publication. `result-runner-loss-2026-10-02/` covers quota refusal after native SQL, loss of the original Job/Pod, and recovery by fresh history without replay on both engines. |
+| Bounded controller reads under failures | `TestLoadTimeoutCancellationAndRetry` bounds failed storage reads; `TestReaderRequiresLifecycleAndDropsFailedValues` discards partial failed values; `TestPollDoesNotWaitAndDeduplicates` proves polling does not wait on the background loader. These are component checks, not installed database-outage timings. |
+
+The five consumer/controller files listed in
+`evidence/result-consumption-2026-10-02.json` that implement and test durable
+harvest and background reads still match their recorded SHA-256 values at
+`63783c6c`. The runner main, delivery test and sender still match
+`evidence/result-credential-records-2026-10-02.json`. The later full
+`make verify-source` passed at `54ebef04`; production directories and dependency
+files are unchanged between that tree and `63783c6c`. Reusing those executions
+avoids repeating unchanged checks. Installed evidence retains each actual
+manager, runner, fixture and chart identity, rather than claiming all images
+were built from the documentation commit.
+
+This mapping completes the case inventory for controller independence in the
+recorded environment. The final supported matrix and acceptance decision remain
+open; the component rows do not stand in for that matrix.
+
+Other minor combinations still require installed proof. Remaining failure cases,
 abandoned partial-publication cleanup,
-restore, CA rotation, enforced NetworkPolicy, Lease contention, and the complete
+restore, CA rotation, enforced NetworkPolicy, and the complete
 Kubernetes and database matrix remain explicit #586 acceptance work. The option
 remains disabled by default.
