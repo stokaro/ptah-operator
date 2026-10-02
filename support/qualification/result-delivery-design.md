@@ -8,7 +8,7 @@ workload projection are implemented. Explicit manager flags now connect the
 listener, issuer, admission validator, and background consumer. The chart routes
 credential and Pod admission guards, verified against a local API server, but
 does not yet enable these flags or provide the receiver trust, Service,
-NetworkPolicy, and result-record permissions. Trust provisioning, coordinated CA rotation, and result retention remain incomplete.
+NetworkPolicy, and result-record permissions. The certificate rotator now implements provisioning and coordinated CA rotation as an optional independent loop; chart activation and result retention remain incomplete.
 
 ## Storage boundary
 
@@ -392,7 +392,8 @@ for every Secret projection. Client CA overlap permits existing credentials;
 removing their signer refuses further delivery but does not affect reading
 already acknowledged records.
 
-Automatic provisioning and coordinated rotation remain installation work. The
+Automatic provisioning and coordinated rotation are implemented in the rotator
+loop described below; their chart installation remains pending. The
 rotator must establish trust on every serving replica before selecting a new
 signer. Server CA rotation must first give new runners the expanded bundle and
 keep serving a certificate old runners trust until their bounded attempts retire.
@@ -465,8 +466,8 @@ authority. Changing the enrollment policy neither revokes a still-trusted
 credential nor extends its lifetime.
 
 The maximum client certificate lifetime is declared once as
-`resultcredentials.MaxCredentialLifetime` (24 hours and 12 minutes). A future
-rotation transition must first persist and read back the new enrollment policy.
+`resultcredentials.MaxCredentialLifetime` (24 hours and 12 minutes). A
+rotation transition first persists and reads back the new enrollment policy.
 Only then may it persist the start of the retirement wait; a timestamp taken
 before a delayed policy write would shorten the protection window. Waiting at
 least that lifetime plus the declared clock-skew allowance bounds every old
@@ -475,7 +476,7 @@ acknowledgments may extend this wait, never shorten it. The rotator must still
 coordinate trust distribution and serving-certificate changes across replicas;
 the enrollment fence alone does not implement that state machine.
 
-The remaining rotation state machine will use that fence in this order:
+The result rotation state machine uses that fence in this order:
 
 1. Persist replacement server/client authorities in the rotator's private journal.
    Publish an enrollment policy for the current signer and expanded server trust,
@@ -493,8 +494,39 @@ The remaining rotation state machine will use that fence in this order:
 
 Each policy write precedes the corresponding Secret update. Stale replicas may
 be temporarily unready; the rotator's own policy and Secret writes must not
-require the manager webhook to be available. These are installation requirements,
-not completed rotation behavior.
+require the manager webhook to be available. The loop updates only precreated
+objects: the six-file projection Secret, a private journal Secret, a public
+policy ConfigMap, and a dedicated Lease. It checks exact Helm ownership metadata
+and pins the projection and policy UIDs in the journal. Foreign state, missing
+objects, replacement UIDs, or a policy rollback after a wait started are refused.
+A lost UPDATE response is resolved by direct readback; a failed readback leaves
+recovery to the persisted journal. No Secret CREATE permission is required.
+
+`ptah-cert-rotator` accepts `--result-secret-name`,
+`--result-journal-secret-name`, `--result-enrollment-policy`,
+`--result-service-name`, and `--result-lease-name` together. The result loop and
+webhook loop have separate Leases, deadlines, retry schedules, and readiness.
+They run concurrently: either can publish bootstrap material while the other
+waits for the manager. Process readiness requires both loops to have a successful
+endpoint verdict; advancing a journal alone does not claim readiness.
+
+Each wait is the maximum credential lifetime plus five minutes of clock skew,
+bounded by the old authority's expiration plus that skew. A serving leaf that
+cannot survive the first wait is renewed under the old CA before starting the
+transition. Direct Pod probes check a stable, nonempty EndpointSlice snapshot,
+the exact served certificate, and mTLS under every still-valid client CA in the
+current overlap. The probe sends HEAD without an operation identity and requires
+HTTP 401: this proves TLS client authentication succeeded without invoking
+publication. TLS handshake completion alone is insufficient.
+
+Local fake-API tests cover both persisted waits, delayed policy writes, lost
+write responses and failed readbacks, restart, rollback refusal, replaced object
+UIDs, leaf renewal, and expired stable authorities. Real TLS tests cover both
+client roots, a missing root, the wrong serving leaf, unavailable endpoints, and
+endpoint identity changes. Command tests hold independent startup, aggregate
+readiness, and joint shutdown. These do not prove kubelet projection, installed
+RBAC, multi-replica rotation, or recovery after a pending candidate itself expires
+in a long outage; those remain installation acceptance work.
 
 Local tests cover stale local signers, changed policy between generation and
 CREATE, missing/malformed policy, API failure, cancellation, and readiness

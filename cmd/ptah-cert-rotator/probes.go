@@ -18,13 +18,22 @@ func (s *probeState) setReady(value bool) {
 	s.ready.Store(value)
 }
 
-func (s *probeState) handler() http.Handler {
+func (s *probeState) handler(others ...*probeState) http.Handler {
+	states := append([]*probeState{s}, others...)
+	healthy := func(ready bool) bool {
+		for _, state := range states {
+			if !state.live.Load() || (ready && !state.ready.Load()) {
+				return false
+			}
+		}
+		return true
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(writer http.ResponseWriter, request *http.Request) {
-		serveProbe(writer, request, s.live.Load())
+		serveProbe(writer, request, healthy(false))
 	})
 	mux.HandleFunc("/readyz", func(writer http.ResponseWriter, request *http.Request) {
-		serveProbe(writer, request, s.live.Load() && s.ready.Load())
+		serveProbe(writer, request, healthy(true))
 	})
 	return mux
 }
