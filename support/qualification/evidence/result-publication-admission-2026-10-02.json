@@ -1,0 +1,100 @@
+{
+  "schemaVersion": 1,
+  "issue": 586,
+  "status": "Publication admission and strict readback pass local checks; manager activation and retention remain incomplete",
+  "testedCommit": "d28c77aac7d99f2b5e1f7b7fa6783bc59309bb5d",
+  "recordedAt": "2026-10-02T04:04:10.799766+00:00",
+  "sourceSHA256": {
+    "internal/controllerwrite/result_records.go": "5cd27a936e55aebc31b732f181ad0871a6edc2d3d8aa9dee9de9d948fc386b3d",
+    "internal/controllerwrite/validator.go": "ee3c8cfe03139b86d2967ee636014fc08f7d87560e1a7c8d6a5a0d0cb5ea1aef",
+    "internal/resultcredentials/issuer_test.go": "2c379f2350a5e4da2952fe097516a6a963919e9e8a09383f98a37385fe4a4b88",
+    "internal/resultcredentials/publication.go": "2200d4bd55309e98688fae295c91c3ec812f6bbcdfa6b79866c68ad12ff87d85",
+    "internal/resultcredentials/publication_test.go": "cd53a651eb888bd114a8c811f6aed03deb2fce915375649baed5320af673711c",
+    "internal/resultdelivery/protocol.go": "0274902debe67eaa670dd1259489fcceef1fc5fa92712fd7243fbf17ba052467",
+    "internal/resultstore/admission.go": "a9f9579bbb08ee71a7dc191b1dd074e664902ac1aaefdf6e649f92f92e1d8e81",
+    "internal/resultstore/admission_test.go": "26fd5984d7d18b185bb87ff08d3386ff9fc324c31aefb96c2fe24313bacd1073",
+    "internal/resultstore/store.go": "46e5f4acd293a9c70f2c30d7c3085f5fbadb163752c62ea3fe8add7308425c04",
+    "support/qualification/result-delivery-design.md": "93c0a33a37f4b8b07c1db37bc8783a7a86842a507a3e88dd2a46d6858a1090ae",
+    "support/runner-protocol.json": "678ffd225f57e5558fb213d89cef5e84244918ccd9591c15007b0088897783ac",
+    "test/envtest/webhook/result_publication_test.go": "b2cde331de326c779bc6c1ce187a0c14c29135be2a78caf4ca7d5d9024e6a352"
+  },
+  "environment": {
+    "go": "go version go1.27.1 darwin/arm64",
+    "host": "darwin/arm64",
+    "API": "Kubernetes 1.37.0 kube-apiserver and etcd",
+    "Docker": "Not used for this checkpoint"
+  },
+  "checks": [
+    {
+      "command": "GOFLAGS=-p=1 go test -race -count=1 -json ./internal/resultstore ./internal/resultcredentials ./internal/controllerwrite",
+      "exitCode": 0,
+      "passingTestsAndSubtests": 472,
+      "skips": [],
+      "packages": [
+        {
+          "name": "github.com/stokaro/ptah-operator/internal/resultstore",
+          "elapsedSeconds": 30.375
+        },
+        {
+          "name": "github.com/stokaro/ptah-operator/internal/resultcredentials",
+          "elapsedSeconds": 5.154
+        },
+        {
+          "name": "github.com/stokaro/ptah-operator/internal/controllerwrite",
+          "elapsedSeconds": 2.989
+        }
+      ]
+    },
+    {
+      "command": "KUBEBUILDER_ASSETS=<Kubernetes 1.37.0 darwin/arm64 assets> PTAH_REQUIRE_ENVTEST=1 GOFLAGS=-p=1 go test -count=1 -json ./test/envtest/resultstore ./test/envtest/webhook",
+      "exitCode": 0,
+      "passingTestsAndSubtests": 91,
+      "skips": [],
+      "packages": [
+        {
+          "name": "github.com/stokaro/ptah-operator/test/envtest/resultstore",
+          "elapsedSeconds": 21.214
+        },
+        {
+          "name": "github.com/stokaro/ptah-operator/test/envtest/webhook",
+          "elapsedSeconds": 11.787
+        }
+      ]
+    },
+    {
+      "command": "GOFLAGS=-p=1 make fmt-check vet verify-runner-protocol",
+      "exitCode": 0
+    }
+  ],
+  "proved": [
+    "Only the configured manager can create publication records through the chart webhook. Each create requires the canonical issued credential, its exact binding, and current operation/Job/Pod authority. All nine operation credential fixtures authorize their own publication bindings.",
+    "Intent geometry and canonical bytes, chunk names/lengths/digests and intent owner UID, and completion manifest/chunk UIDs and full payload digest are validated. Completion additionally validates the runner protocol and engine under canonical authority.",
+    "Durable readback shares strict canonical manifest and metadata validation; unsupported metadata and malformed or damaged records do not yield partial payloads.",
+    "Real API publication of a Resolve refusal result succeeds through installed guards and reads back the same bytes. Unissued authority, retirement before completion, and invalid runner protocol leave no completion or receipt.",
+    "Identical retry and lost API responses after intent, chunk, or completion resume through real admission. Concurrent identical publications converge in unit tests; completion visibility between admission and CREATE is not mistaken for repair.",
+    "Publication metadata UPDATE, DELETE, and DeleteCollection are refused through the real webhook. Deletion remains refused after SQL authority is retired. Removing/restoring the webhook demonstrates its deletion refusal.",
+    "A missing intent or chunk of an already completed publication cannot be recreated through admission."
+  ],
+  "notProved": [
+    "Installed manager receiver activation, chart permissions, controller durable-result consumption, or default-log maximum-plan workflow.",
+    "The real webhook publication fixture uses a small Resolve refusal payload, not a maximum-size Plan or database execution. Separate resultstore tests exercise the full storage payload bound without publication admission.",
+    "Publication deletion is intentionally refused pending retention and consumption integration; this checkpoint does not complete garbage collection, quota, backup/restore, or uninstall.",
+    "Admission handlers use an administrator reader in envtest; this does not prove installed least-privilege admission permissions.",
+    "Live authority checks and record creation are not atomic across Kubernetes objects. Receiver and consumer validation remain necessary.",
+    "Complete supported environment matrix, production acceptance, all issue 586 DoDs, or full make verify on this commit."
+  ],
+  "localLogs": {
+    "/private/tmp/ptah-publication-final-race.jsonl": {
+      "sha256": "410d23c97c0be7e27f8d61a719369721c08a1b47c0a97efd78d6fb9858f5cd0e",
+      "custody": "Local diagnostic log; final release evidence custody remains pending"
+    },
+    "/private/tmp/ptah-publication-final-envtest.jsonl": {
+      "sha256": "f1c635e854f5d74cbca9170a92adbe23de76854643aa4d41d088b73a29efb5a3",
+      "custody": "Local diagnostic log; final release evidence custody remains pending"
+    },
+    "/private/tmp/ptah-publication-gates.log": {
+      "sha256": "4dfe96a9a4dbadd5943dc5df0e319e6cefb29488d3bdcec6693c95d75827334a",
+      "custody": "Local diagnostic log; final release evidence custody remains pending"
+    }
+  }
+}
