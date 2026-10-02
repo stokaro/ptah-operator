@@ -121,14 +121,17 @@ func (a *alertingRun) unresolvedSchemaCase(m *migrationRun) {
 		_, e := serverSQL(ctx, a.cluster, a.in.TestNamespace, m.engine, statement)
 		a.check(e, "drop the isolated schema database")
 	}()
-	wait := func(description string, predicate func(*ptahv1.PtahSchema) bool) *ptahv1.PtahSchema {
+	waitFor := func(description string, bound time.Duration, predicate func(*ptahv1.PtahSchema) bool) *ptahv1.PtahSchema {
 		var v *ptahv1.PtahSchema
-		a.check(harness.Wait(a.ctx, description, alTimeout+time.Minute, time.Second, func(context.Context) (bool, string, error) {
+		a.check(harness.Wait(a.ctx, description, bound, time.Second, func(context.Context) (bool, string, error) {
 			check()
 			v = read()
-			return predicate(v), description, nil
+			return predicate(v), fmt.Sprintf("%s: phase=%s pendingObservation=%t pendingLockRelease=%t", description, v.Status.Phase, v.Status.PendingObservation != nil, v.Status.PendingLockRelease != nil), nil
 		}), "%s", description)
 		return v
+	}
+	wait := func(description string, predicate func(*ptahv1.PtahSchema) bool) *ptahv1.PtahSchema {
+		return waitFor(description, alTimeout+time.Minute, predicate)
 	}
 	ready := wait("the original schema approval gate", func(v *ptahv1.PtahSchema) bool { return alLockApprovalReady(v) })
 	approve := func(v *ptahv1.PtahSchema, suffix string) *ptahv1.PtahSchemaApproval {
@@ -271,7 +274,9 @@ func (a *alertingRun) unresolvedSchemaCase(m *migrationRun) {
 	_, err = alReadSchemaUnresolvedTrace(schemas.snapshot(), original, false)
 	a.check(err, "retain Unknown until read-only recovery is enabled")
 	suspend(false)
-	recovered := wait("fresh schema approval after observation and planning", func(v *ptahv1.PtahSchema) bool {
+	recoveryWait, err := alSchemaRecoveryWait(unknown.Status.PendingObservation.ObserveAfter, time.Now())
+	a.check(err, "retain the original schema recovery deadline")
+	recovered := waitFor("fresh schema approval after observation and planning", recoveryWait, func(v *ptahv1.PtahSchema) bool {
 		return alRecoveredSchemaApprovalReady(v, original.UID, original.Status.ActiveOperation.StartedAt.Time)
 	})
 	storedStateWatchBarrier(a.t, a.ctx, a.cluster, schemas, recovered)

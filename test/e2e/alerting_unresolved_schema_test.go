@@ -202,3 +202,49 @@ func TestAlSchemaUnresolvedTraceRejectsMissingOrCorruptProof(t *testing.T) {
 		})
 	}
 }
+
+func TestSchemaRecoveryWaitStartsAfterPersistedSafetyHorizon(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("../..", "testdata/e2e/readings", "alert-schema-recovery-wait.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pending ptahv1.PtahSchema
+	if err := json.Unmarshal(raw, &pending); err != nil {
+		t.Fatal(err)
+	}
+	if pending.Spec.Suspend || pending.Status.PendingObservation == nil || pending.Status.PendingObservation.ObserveAfter == nil {
+		t.Fatal("native reading lost the resumed schema and its mandatory safety horizon")
+	}
+	horizon := *pending.Status.PendingObservation.ObserveAfter
+	// Place the test clock before this native horizon; recovery cannot use
+	// the 314 seconds during which observation remains forbidden.
+	resumed := horizon.Add(-314 * time.Second)
+	bound, err := alSchemaRecoveryWait(&horizon, resumed)
+	if err != nil || !resumed.Add(bound).Equal(horizon.Add(alTimeout+time.Minute)) {
+		t.Fatalf("recovery deadline lost its original horizon: %s, %v", bound, err)
+	}
+	// The old six-minute wait left only 46 seconds for Observe and Plan.
+	recovered := horizon.Add(90 * time.Second)
+	if !recovered.After(resumed.Add(alTimeout+time.Minute)) || recovered.After(resumed.Add(bound)) {
+		t.Fatal("the regression no longer distinguishes mandatory waiting from recovery")
+	}
+	later := resumed.Add(time.Minute)
+	next, err := alSchemaRecoveryWait(&horizon, later)
+	if err != nil || !later.Add(next).Equal(resumed.Add(bound)) {
+		t.Fatal("a later poll moved the frozen recovery deadline", err)
+	}
+	for _, at := range []time.Time{horizon.Add(alTimeout + time.Minute), horizon.Add(alTimeout + 2*time.Minute)} {
+		if _, err := alSchemaRecoveryWait(&horizon, at); err == nil {
+			t.Fatal("expired recovery received a fresh budget")
+		}
+	}
+	if _, err := alSchemaRecoveryWait(nil, resumed); err == nil {
+		t.Fatal("missing horizon accepted")
+	}
+	if _, err := alSchemaRecoveryWait(&metav1.Time{}, resumed); err == nil {
+		t.Fatal("zero horizon accepted")
+	}
+	if _, err := alSchemaRecoveryWait(&horizon, time.Time{}); err == nil {
+		t.Fatal("missing current time accepted")
+	}
+}

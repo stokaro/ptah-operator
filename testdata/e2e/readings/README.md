@@ -16,3 +16,11 @@ these readings and rejects stale observations, unresolved work, replacements
 and mutation authority. The separate recorded-history tests require the actual
 Observe and Plan sequence; the final snapshot alone does not prove that history
 or successful delivery of the recovery notification.
+
+`alert-schema-recovery-wait.json` is a native PostgreSQL schema reading from
+Kubernetes 1.37.0 at source `b1a2e99c1ad121bb2103e9f15b82cf47679307ce`.
+The schema has resumed after an interrupted Apply but must still wait until
+`pendingObservation.observeAfter`. The original alert proof exhausted its
+six-minute wait during the later Plan. The deadline regression reads this
+persisted horizon and places its test clock before it; it does not infer the
+resume time from the resource phase or claim this snapshot proves convergence.

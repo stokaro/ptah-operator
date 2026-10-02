@@ -15,6 +15,20 @@ import (
 
 type alSchemaUnresolvedTrace struct{ recorded, observed, accounted time.Time }
 
+// The original Apply's safety horizon is mandatory waiting, not time spent
+// recovering. Freeze the recovery deadline at that persisted horizon so polling
+// neither consumes the proof budget early nor renews it on every attempt.
+func alSchemaRecoveryWait(observeAfter *metav1.Time, now time.Time) (time.Duration, error) {
+	if observeAfter == nil || observeAfter.IsZero() || now.IsZero() {
+		return 0, errors.New("schema recovery needs its persisted safety horizon and current time")
+	}
+	remaining := observeAfter.Add(alTimeout + time.Minute).Sub(now)
+	if remaining <= 0 {
+		return 0, errors.New("schema recovery deadline has expired")
+	}
+	return remaining, nil
+}
+
 // Recovery requires fresh read-only evidence and a new approval decision.
 // An immutable plan can keep its UID when its exact content has not changed.
 // The recorded Observe/Plan history is checked separately before approving it.

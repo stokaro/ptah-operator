@@ -1,0 +1,39 @@
+{
+  "scope": "Focused PostgreSQL unresolved-schema recovery and real alert delivery; not a full phase or final qualification matrix",
+  "runtimeSourceCommit": "b1a2e99c1ad121bb2103e9f15b82cf47679307ce",
+  "testBaseCommit": "6e1db25a",
+  "kubernetes": "1.37.0",
+  "runtimePlatform": "linux/amd64",
+  "before": {
+    "exitCode": 1,
+    "elapsedSeconds": 447.59,
+    "failure": "Original six-minute wait expired during Plan after the mandatory Apply safety horizon",
+    "logSHA256": "b59781b084744edef1fcf807a0d7b054c7c7765b1f7e48bdacec1bfee7d1e7f3"
+  },
+  "after": {
+    "exitCode": 0,
+    "elapsedSeconds": 489.66,
+    "logSHA256": "e565c4cc17003795ae97e01cb0a65941fac377b64c75cb39ceded46fc1157789",
+    "binarySHA256": "4fdcdd81b7978f64f661e6db5e061f706756ebdf05af5d84b408f52787914c82",
+    "schemaUID": "ee84feca-d6d1-43d2-91da-b127bef1568f",
+    "originalJobUID": "d513e568-c747-434a-8f5e-dbe266ac27e3",
+    "originalPodUID": "8535a66c-f80a-4716-82d0-b0ebf3e4c6e0",
+    "unknownRecordedAt": "2026-10-02T00:16:29Z",
+    "alertReceivedAt": "2026-10-02T00:16:41.033718190Z",
+    "observeAfter": "2026-10-02T00:21:56Z",
+    "freshObservationAt": "2026-10-02T00:22:05Z",
+    "readOnlyProofCompletedAt": "2026-10-02T00:22:16Z",
+    "resolutionReceivedAt": "2026-10-02T00:22:21.053712642Z",
+    "databaseAssertion": "Retained control row unchanged; fault_token absent through read-only recovery and added only after fresh approval"
+  },
+  "changedProofFiles": {
+    "test/e2e/alerting_unresolved_schema.go": "e88831911fb85dd83fd85030813664ead1d06c198f175fee3e3986606f46c6d0",
+    "test/e2e/alerting_unresolved_schema_e2e_test.go": "bfa95920b489acf2f83a3aaebc67da9c57afda1f08d2b28286ee6104f8135b73"
+  },
+  "limitations": [
+    "Diagnostic overlays supplied a suspended reference template and recorded resource readings. The recovery predicates, data assertions, real monitoring path, and persisted Apply safety horizon were retained.",
+    "Only PostgreSQL on Kubernetes 1.37.0 / Linux amd64 was rerun live for this change.",
+    "Logs and complete snapshots are retained locally; durable external custody remains part of final acceptance.",
+    "The separate intermittent SQL-lifetime CI failure was not reproduced by three complete local replacement scenarios; no fix is claimed for it."
+  ]
+}
