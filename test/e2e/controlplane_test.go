@@ -371,7 +371,8 @@ func validatingFixture() *admissionregistrationv1.ValidatingWebhookConfiguration
 		namespacedRule("batch", "v1", createAndUpdate, "jobs"),
 		namespacedRule("", "v1", createOnly, "configmaps"),
 		namespacedRule("operator.ptah.run", "v1alpha1", createOnly, "ptahschemaplans", "ptahschemaplanchunks", "ptahmigrationplans"),
-		namespacedRule("", "v1", []admissionregistrationv1.OperationType{admissionregistrationv1.Create, admissionregistrationv1.Update, admissionregistrationv1.Delete}, "secrets"))
+		namespacedRule("", "v1", []admissionregistrationv1.OperationType{admissionregistrationv1.Create, admissionregistrationv1.Update, admissionregistrationv1.Delete}, "secrets"),
+		namespacedRule("operator.ptah.run", "v1alpha1", []admissionregistrationv1.OperationType{admissionregistrationv1.Create, admissionregistrationv1.Update, admissionregistrationv1.Delete}, "ptahresultrecords"))
 	write.MatchPolicy = pointer(admissionregistrationv1.Exact)
 	write.TimeoutSeconds = pointer[int32](30)
 	write.MatchConditions = []admissionregistrationv1.MatchCondition{{
@@ -430,6 +431,9 @@ func TestValidatingAdmissionExact(t *testing.T) {
 			if before == c.Webhooks[2].MatchConditions[0].Expression {
 				t.Fatal("mutation changed nothing")
 			}
+		}},
+		{"credential record deletion omitted", func(c *admissionregistrationv1.ValidatingWebhookConfiguration) {
+			c.Webhooks[3].Rules[4].Operations = createAndUpdate
 		}},
 		{"credential deletion omitted", func(c *admissionregistrationv1.ValidatingWebhookConfiguration) {
 			c.Webhooks[3].Rules[3].Operations = createAndUpdate

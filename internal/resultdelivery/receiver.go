@@ -68,7 +68,8 @@ func (r *Receiver) ServeHTTP(w http.ResponseWriter, request *http.Request) {
 		_ = http.NewResponseController(w).SetReadDeadline(time.Now())
 		http.Error(w, http.StatusText(code), code)
 	}
-	if request.Method != http.MethodPut {
+	preflight := request.Method == http.MethodHead
+	if request.Method != http.MethodPut && !preflight {
 		refuse(http.StatusMethodNotAllowed)
 		return
 	}
@@ -82,21 +83,28 @@ func (r *Receiver) ServeHTTP(w http.ResponseWriter, request *http.Request) {
 		refuse(http.StatusForbidden)
 		return
 	}
-	if values := request.Header.Values("Content-Type"); len(values) != 1 || values[0] != ContentType || request.Header.Get("Content-Encoding") != "" {
-		refuse(http.StatusUnsupportedMediaType)
-		return
-	}
-	if request.ContentLength < 1 {
-		refuse(http.StatusLengthRequired)
-		return
-	}
-	if request.ContentLength > resultstore.MaxPayloadBytes {
-		refuse(http.StatusRequestEntityTooLarge)
-		return
-	}
-	if len(request.Header.Values(DigestHeader)) != 1 {
-		refuse(http.StatusBadRequest)
-		return
+	if preflight {
+		if request.ContentLength != 0 || request.Header.Get("Content-Encoding") != "" {
+			refuse(http.StatusBadRequest)
+			return
+		}
+	} else {
+		if values := request.Header.Values("Content-Type"); len(values) != 1 || values[0] != ContentType || request.Header.Get("Content-Encoding") != "" {
+			refuse(http.StatusUnsupportedMediaType)
+			return
+		}
+		if request.ContentLength < 1 {
+			refuse(http.StatusLengthRequired)
+			return
+		}
+		if request.ContentLength > resultstore.MaxPayloadBytes {
+			refuse(http.StatusRequestEntityTooLarge)
+			return
+		}
+		if len(request.Header.Values(DigestHeader)) != 1 {
+			refuse(http.StatusBadRequest)
+			return
+		}
 	}
 	select {
 	case r.slots <- struct{}{}:
@@ -138,6 +146,12 @@ func (r *Receiver) ServeHTTP(w http.ResponseWriter, request *http.Request) {
 	}
 	if err := check(ctx); err != nil {
 		authorityError(err)
+		return
+	}
+	if preflight {
+		// This proves current delivery authentication, not an SQL permission or
+		// a durable receipt. The operation's execution guards still apply.
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	payload, err := io.ReadAll(io.LimitReader(request.Body, request.ContentLength+1))

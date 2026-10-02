@@ -423,6 +423,7 @@ func validatingAdmissionExact(configuration *admissionregistrationv1.ValidatingW
 				namespacedRule("operator.ptah.run", "v1alpha1", createOnly,
 					"ptahschemaplans", "ptahschemaplanchunks", "ptahmigrationplans"),
 				namespacedRule("", "v1", []admissionregistrationv1.OperationType{admissionregistrationv1.Create, admissionregistrationv1.Update, admissionregistrationv1.Delete}, "secrets"),
+				namespacedRule("operator.ptah.run", "v1alpha1", []admissionregistrationv1.OperationType{admissionregistrationv1.Create, admissionregistrationv1.Update, admissionregistrationv1.Delete}, "ptahresultrecords"),
 			},
 		},
 	}

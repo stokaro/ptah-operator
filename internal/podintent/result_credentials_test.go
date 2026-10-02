@@ -28,8 +28,8 @@ type credentialMetadataReader struct {
 func (r *credentialMetadataReader) Get(_ context.Context, key client.ObjectKey, obj client.Object, _ ...client.GetOption) error {
 	r.reads++
 	metadata, ok := obj.(*metav1.PartialObjectMetadata)
-	if !ok || metadata.Kind != "Secret" || metadata.APIVersion != "v1" {
-		return errors.New("credential check requested payload instead of Secret metadata")
+	if !ok || metadata.Kind != "PtahResultRecord" || metadata.APIVersion != "operator.ptah.run/v1alpha1" {
+		return errors.New("credential check requested payload instead of credential record metadata")
 	}
 	if key.Namespace != r.metadata.Namespace || key.Name != r.metadata.Name {
 		return errors.New("credential metadata read used another identity")
@@ -68,7 +68,7 @@ func TestResultCredentialPodMetadataGuard(t *testing.T) {
 			reader := &credentialMetadataReader{metadata: metav1.PartialObjectMetadata{ObjectMeta: metav1.ObjectMeta{Namespace: pod.Namespace, Name: jobconfig.CredentialName("subject-uid", "operation", job.Name), Annotations: map[string]string{binding.PodUID: string(pod.UID), binding.PodName: pod.Name, binding.JobUID: string(job.UID), binding.OperationID: "operation"}}}}
 			switch row.name {
 			case "initial Pod":
-				reader.failure = apierrors.NewNotFound(schema.GroupResource{Resource: "secrets"}, reader.metadata.Name)
+				reader.failure = apierrors.NewNotFound(schema.GroupResource{Group: "operator.ptah.run", Resource: "ptahresultrecords"}, reader.metadata.Name)
 			case "wrong Pod UID":
 				reader.metadata.Annotations[binding.PodUID] = "replacement"
 			case "wrong Pod name":

@@ -619,3 +619,78 @@ func TestDeliveryAttemptAndDeadlineBounds(t *testing.T) {
 		t.Fatalf("canceled delivery reached receiver: %v", err)
 	}
 }
+
+func TestPreflightChecksLiveAuthorityWithoutPublishing(t *testing.T) {
+	identity := testIdentity()
+	store := testStore(t)
+	certs := testCertificates(t, identity)
+	var calls atomic.Int64
+	var retired atomic.Bool
+	r := testReceiver(t, store, func(_ context.Context, got Identity) error {
+		calls.Add(1)
+		if got != identity || retired.Load() {
+			return ErrAuthority
+		}
+		return nil
+	}, time.Second)
+	server := startReceiver(t, r, certs, nil)
+	sender := testSender(t, server.URL, identity, certs)
+	if err := sender.Check(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if calls.Load() != 1 || store.Client.(*identifyingClient).count.Load() != 0 {
+		t.Fatal("preflight skipped authority or published bytes")
+	}
+	retired.Store(true)
+	if err := sender.Check(t.Context()); err == nil || !strings.Contains(err.Error(), "403") {
+		t.Fatalf("retired authority passed preflight: %v", err)
+	}
+	if calls.Load() != 2 {
+		t.Fatal("reused connection did not recheck authority")
+	}
+	r.slots <- struct{}{}
+	if err := sender.Check(t.Context()); err == nil || !strings.Contains(err.Error(), "503") {
+		t.Fatalf("saturation passed preflight: %v", err)
+	}
+	<-r.slots
+	if calls.Load() != 2 {
+		t.Fatal("saturated preflight performed live API work")
+	}
+	if store.Client.(*identifyingClient).count.Load() != 0 {
+		t.Fatal("preflight wrote a result")
+	}
+}
+
+func TestPreflightBoundsAuthorityAndRefusesBodies(t *testing.T) {
+	identity := testIdentity()
+	store := testStore(t)
+	certs := testCertificates(t, identity)
+	r := testReceiver(t, store, func(ctx context.Context, _ Identity) error {
+		<-ctx.Done()
+		return ctx.Err()
+	}, 30*time.Millisecond)
+	server := startReceiver(t, r, certs, nil)
+	sender := testSender(t, server.URL, identity, certs)
+	start := time.Now()
+	if err := sender.Check(t.Context()); err == nil || !strings.Contains(err.Error(), "503") {
+		t.Fatalf("stalled authority passed preflight: %v", err)
+	}
+	if time.Since(start) > time.Second {
+		t.Fatal("preflight exceeded its server-side deadline")
+	}
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodHead, sender.endpoint, strings.NewReader("payload"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := sender.client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusBadRequest {
+		t.Fatalf("HEAD with a body returned %d", response.StatusCode)
+	}
+	if store.Client.(*identifyingClient).count.Load() != 0 {
+		t.Fatal("preflight wrote a result")
+	}
+}

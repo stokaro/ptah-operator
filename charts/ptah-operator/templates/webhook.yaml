@@ -319,7 +319,8 @@ webhooks:
     matchConditions:
       - name: controller-service-account
         expression: >-
-          (request.resource.resource != 'secrets' && request.userInfo.username ==
+          (request.resource.resource == 'ptahresultrecords') ||
+          (request.resource.resource != 'secrets' && request.resource.resource != 'ptahresultrecords' && request.userInfo.username ==
           'system:serviceaccount:{{ .Release.Namespace }}:{{ include "ptah-operator.serviceAccountName" . }}') ||
           (request.resource.resource == 'secrets' && (
             (object != null && object.metadata.name.startsWith('ptah-result-key-')) ||
@@ -351,4 +352,9 @@ webhooks:
         apiVersions: ["v1"]
         operations: ["CREATE", "UPDATE", "DELETE"]
         resources: ["secrets"]
+        scope: Namespaced
+      - apiGroups: ["operator.ptah.run"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE", "DELETE"]
+        resources: ["ptahresultrecords"]
         scope: Namespaced

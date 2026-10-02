@@ -26,8 +26,10 @@ The schema requires the role and bounded payload, freezes the whole spec, and
 has no default or status. The reader independently checks decoded byte limits,
 metadata, owner UIDs, and publication digests. Local API-server tests publish and
 read a multi-chunk result using only `get` and `create` on this resource while
-Secret GET remains forbidden. Installed manager RBAC and record admission are
-still pending; the chart does not grant result-record writes yet.
+Secret GET remains forbidden. Installed manager RBAC and publication-record admission are still pending.
+The chart currently admits only credential-role records through the configured
+issuer; intent, chunk, and completion writes are refused until their guards are
+implemented. The chart does not grant result-record writes yet.
 
 The record binds namespace, resource kind/name/UID/generation, execution binding,
 input fingerprint, operation type/ID, attempt Job name/UID, and Pod name/UID.
@@ -90,7 +92,7 @@ completion write or return of a previously committed receipt. A concurrent
 epoch change still requires admission and consumer-side validation; these API
 operations are not a cross-object transaction.
 
-Requests have a required length and SHA-256 header. Unknown-length, oversized,
+Payload PUT requests have a required length and SHA-256 header. Unknown-length, oversized,
 noncanonical JSON, mismatched operation, foreign-engine plan, invalid protocol,
 or unreadable process-sealed plan payloads are refused before publication.
 The wire media type is `application/vnd.ptah.result.v1+json`; this endpoint never
@@ -111,7 +113,11 @@ whose identity matches the supplied binding. It refuses redirects and validates
 the returned receipt name, UID, length, and digest. Network failures and explicit
 transient statuses retry the same copied bytes within bounded attempts and an
 overall deadline. Definitive refusals stop delivery. The sender has no SQL or
-executor callback. The runner invokes it only after its one execution returns.
+executor callback. The runner invokes payload delivery only after its one execution returns.
+Before execution, its read-only HEAD preflight uses the same TLS identity, route,
+live-authority check, concurrency bound, and request deadline. A successful
+preflight returns 204 without writing any record; it is not a durable receipt
+or permission to execute SQL.
 
 The local TLS tests cover a lost acknowledgment after persistence, a new receiver
 reading the existing store, conflicting retransmission, invalid client/server
@@ -163,7 +169,12 @@ The Pod identity must come from downward API values `PTAH_RESULT_POD_NAMESPACE`,
 generation is the literal `PTAH_RESULT_GENERATION` in the Job template. Duplicate binding variables
 are refused. These are delivery credentials, not Kubernetes API credentials.
 The receiver remains responsible for authenticating the issuer and current
-claim. Config validation does not promise the receiver is reachable.
+claim. After local validation, the runner makes one authenticated HEAD request,
+bounded to 30 seconds, before starting its child. Invalid trust, revoked
+authority, or an unavailable receiver stops the command without SQL or a log
+fallback. Existing execution guards still apply after this preflight. A receiver
+can fail after the check, so result delivery and unknown-outcome recovery remain
+necessary.
 
 After execution, the runner encodes one immutable result, writes a bounded
 termination summary, and sends the payload. The summary's existing
@@ -202,16 +213,25 @@ mounts in init or ephemeral containers, credential environment references,
 image-pull use, and automatic Kubernetes API token mounting.
 
 `internal/resultcredentials` uses a dedicated client CA and an uncached reader.
-It validates live authority before generating a key, again before creation, and
-after direct Secret readback. It only creates immutable TLS Secrets and never
-updates them. Concurrent issuers converge on the persisted winner; a lost API
-response is retried by reading that winner. The certificate carries the exact
-identity in one URI SAN and permits client authentication only. Its lifetime
-covers the supported Job horizon plus ten minutes for grace and reporting, and
-must fit within the signer's remaining lifetime.
+It validates live authority before generating a key, before creating a canonical
+credential-role `PtahResultRecord`, and after direct record readback. The record
+holds the private key, certificate, trust bundle, and original-Pod binding.
+Concurrent issuers converge on the persisted winner; a lost record-write response
+is retried by reading that winner. The certificate carries the exact identity in
+one URI SAN and permits client authentication only. Its lifetime covers the
+supported Job horizon plus ten minutes for grace and reporting, and must fit
+within the signer's remaining lifetime.
 
-The credential Secret belongs to the schema or migration, not the Job or Pod.
-It fixes the original Pod identity even after that Pod disappears: a replacement
+The issuer then creates an immutable TLS Secret from the exact recorded bytes.
+It never reads, patches, or updates Secrets. Its returned UID identifies the
+canonical record, not the Secret. A lost projection-write response preserves the
+same canonical key on retry. `AlreadyExists` does not prove the projection's
+contents: the mandatory runner preflight authenticates the mounted credential
+before SQL starts. A preexisting unusable projection can prevent progress, but
+must not let the child start with unverified delivery credentials.
+
+The credential record and Secret belong to the schema or migration, not the Job
+or Pod. The canonical record fixes the original Pod identity even after that Pod disappears: a replacement
 Pod cannot overwrite or reuse the same attempt's credential. A Job from an older
 generation cannot be reissued under the new generation. The configured client
 trust pool may include the previous signer; an existing credential is preserved
@@ -222,7 +242,10 @@ trust until their bounded attempts finish, rather than rewriting their Secrets.
 The chart routes reserved credential Secret names to the controller-write
 webhook for CREATE, UPDATE, and DELETE, regardless of the writer's identity.
 CREATE requires the configured manager, trusted certificate bytes, exact public
-binding metadata, and current operation authority. Without an issuer configured
+binding metadata, and current operation authority. Secret creation also requires
+its bytes and binding to match the canonical record. Credential-record creation
+authenticates the same certificate and live binding; record UPDATE freezes its
+spec and metadata, and record DELETE preserves the active operation pin. Without an issuer configured
 in the manager, creation is refused. UPDATE preserves data, ownership, labels,
 annotations, and finalizers. DELETE reads the owner directly and refuses while
 that exact operation ID remains active, including after Pod loss, generation
@@ -233,32 +256,27 @@ alone do not preserve this first-Pod pin.
 The Pod webhook also receives direct references to reserved credential names,
 including unlabeled Pods, environment sources, image-pull credentials, projected
 volumes, inline CSI, and legacy storage sources. It refuses them outside the
-exact admitted operation workload. The first Pod can precede its Secret; later
-CREATEs cannot reuse an existing credential. An UPDATE verifies the original
-Pod identity through a metadata-only Secret GET. The runner independently checks
-its downward-API UID against the certificate before executing anything, including
-when a second Pod races the first credential publication.
-
-Metadata-only reads still require Secret GET authorization. The current chart
-does not grant it: installation integration must preserve the existing boundary
-that the manager cannot read database credentials. Do not solve that boundary by
-granting unrestricted Secret reads in workload namespaces. The result store now uses the dedicated CRD described above. The issuer and Pod
-guard still read Secrets and remain disabled in production. Their next step is
-to persist the canonical credential and original-Pod binding in a credential
-record, then project those exact bytes into an immutable Secret using CREATE
-without Secret GET. Admission must compare the projection to that record and
-protect the active record against deletion. A Secret alone must not be the
-original-Pod pin.
+exact admitted operation workload. The first Pod can precede its credential record;
+later CREATEs cannot reuse an existing credential. An UPDATE verifies the
+original Pod identity through a metadata-only GET on `PtahResultRecord`, never
+on Secrets. The runner independently checks its downward-API UID against the
+certificate and authenticates delivery before executing anything, including when
+a second Pod races the first credential publication.
 
 Local API-server tests use the actual issuer, chart routing, and admission
-handlers. They prove creation/readback, metadata protection, active deletion
-refusal, original-Pod updates, replacement refusal, and retirement cleanup.
-Removing each webhook admits its otherwise-refused request; restoring it
-restores the refusal. These tests run no kubelet or garbage collector and use
-an administrator as the admission reader, so they do not prove installed RBAC,
-Secret projection, garbage collection, or backup. Restore and retention must
-preserve active pins. Issuance and authority reads are not a cross-object
-transaction, so consumer and receiver checks remain required.
+handlers. An impersonated issuer identity has record GET/CREATE and Secret
+CREATE, while GET on both the credential projection and a database Secret is
+forbidden. Issuance and repeated issuance succeed under those permissions. The
+tests also prove canonical-record and projection metadata protection, active
+DELETE and DeleteCollection refusal, original-Pod updates, replacement refusal,
+and retirement cleanup. Removing the webhook admits its otherwise-refused
+record deletion; restoring it restores the refusal.
+
+These tests run no kubelet or garbage collector. The admission handlers still
+use an administrator as their API reader, so these tests do not prove installed
+webhook RBAC, kubelet projection, garbage collection, or backup. Restore and
+retention must preserve active pins. Issuance and authority reads are not a
+cross-object transaction, so consumer and receiver checks remain required.
 
 ## Installation and runner integration still required
 
@@ -299,7 +317,7 @@ still apply. SQL and publication are not an atomic transaction.
 
 ## Retention and acceptance
 
-Before enabling this path, implement guarded result-record and credential-Secret creation and deletion,
+Before enabling this path, complete guarded publication-record creation and deletion,
 receiver certificates and NetworkPolicy, bounded request metrics, and receipt
 consumption and retention. Do not attach a time-only TTL to unconsumed results or
 unresolved operations. Abandoned partial publications become eligible only after
@@ -311,8 +329,9 @@ not accept an incomplete publication or reactivate retired delivery authority.
 
 The current tests prove component publication integrity, TLS identity checking,
 bounded redelivery, result-record persistence without Secret read permission,
-issuer authority predicates, and chart
-credential admission through a local API server. They do not prove installed
+credential issuance without Secret reads, authenticated preflight before SQL,
+issuer authority predicates, and chart credential admission through a local API
+server. They do not prove installed
 RBAC and trust rotation, garbage collection, manager failover, Lease independence,
 or the complete Job-to-controller workflow at the supported plan limit. Those remain the
 explicit #586 acceptance rows.

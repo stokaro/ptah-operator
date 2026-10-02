@@ -27,6 +27,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:8d7ac632775915e913542724d62a07cb4a3403d9f966a9779ef390108ee59cee",
       "reason": "Complete the initial 0.2.0 result transport before the first tagged release. Durable publication now uses the dedicated immutable PtahResultRecord API instead of workload Secrets, preserving digest reservation, chunk identity checks, completion readback, payload bounds, and TLS redelivery. The storage change grants no Kubernetes API credential to the runner and requires no database Secret reads. The log path and wire payload are unchanged; development protocol counters remain 1."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:832fe02102c0541f893b6f4a944553e75d3519e3393afcb0c59d7e52dd3fe913",
+      "reason": "Complete the initial durable transport before the first tagged 0.2.0 release. Before starting SQL, a configured runner authenticates its projected credential through a bounded mTLS HEAD request with live delivery-authority checks. This request publishes nothing and is neither execution permission nor a durable receipt. Failed authentication or receiver unavailability stops the child; completed results retain identical-byte redelivery. Legacy Jobs without delivery configuration are unchanged. No tagged release consumed an earlier protocol-1 contract; development counters remain 1."
     }
   ]
 }

@@ -175,6 +175,10 @@ func TestRunnerRedeliversAfterLostAcknowledgmentWithoutReexecuting(t *testing.T)
 	var first []byte
 	server := f.server(t, func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodHead {
+				next.ServeHTTP(w, r)
+				return
+			}
 			payload, err := io.ReadAll(r.Body)
 			if err != nil {
 				t.Error(err)
@@ -239,8 +243,12 @@ func TestRunnerRedeliversAfterLostAcknowledgmentWithoutReexecuting(t *testing.T)
 func TestRunnerDoesNotFallBackToLogsAfterDeliveryRefusal(t *testing.T) {
 	f := newDeliveryFixture(t, nil)
 	var attempts atomic.Int64
-	server := f.server(t, func(http.Handler) http.Handler {
+	server := f.server(t, func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodHead {
+				next.ServeHTTP(w, r)
+				return
+			}
 			attempts.Add(1)
 			http.Error(w, "forbidden", http.StatusForbidden)
 		})
@@ -346,6 +354,55 @@ func TestRunnerRefusesDeliveryMisconfigurationBeforeDispatch(t *testing.T) {
 			}
 			if _, err := os.Stat(counter); !os.IsNotExist(err) {
 				t.Fatalf("executor started with invalid delivery configuration: %v", err)
+			}
+		})
+	}
+}
+
+func TestRunnerAuthenticatesProjectionBeforeStartingSQL(t *testing.T) {
+	for _, name := range []string{"foreign client key", "foreign server trust", "authority refused", "receiver unavailable"} {
+		t.Run(name, func(t *testing.T) {
+			f := newDeliveryFixture(t, nil)
+			server := f.server(t, func(next http.Handler) http.Handler {
+				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if name == "authority refused" {
+						http.Error(w, "refused", http.StatusForbidden)
+						return
+					}
+					if name == "receiver unavailable" {
+						http.Error(w, "unavailable", http.StatusServiceUnavailable)
+						return
+					}
+					next.ServeHTTP(w, r)
+				})
+			})
+			if strings.HasPrefix(name, "foreign") {
+				foreign := newDeliveryFixture(t, nil)
+				files := []string{"tls.crt", "tls.key"}
+				if name == "foreign server trust" {
+					files = []string{"ca.crt"}
+				}
+				for _, file := range files {
+					data, err := os.ReadFile(filepath.Join(foreign.credentials, file))
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(filepath.Join(f.credentials, file), data, 0600); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			executable, counter := applyExecutable(t)
+			var stdout, stderr bytes.Buffer
+			code := run(t.Context(), []string{"--ptah-binary", executable, "--operation", "migration-apply", "--result-endpoint", server.URL, "--result-credentials", f.credentials}, &stdout, &stderr, append(f.environment(t), "PTAH_TEST_INVOCATIONS="+counter), "")
+			if code != 2 || stdout.Len() != 0 || stderr.String() != "ptah-runner: result receiver preflight failed\n" {
+				t.Fatalf("exit=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+			}
+			if _, err := os.Stat(counter); !os.IsNotExist(err) {
+				t.Fatalf("SQL started despite failed receiver authentication: %v", err)
+			}
+			if _, _, err := f.store.Load(t.Context(), f.identity.Binding); err == nil {
+				t.Fatal("preflight published a result")
 			}
 		})
 	}

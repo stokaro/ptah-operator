@@ -129,6 +129,9 @@ func (v *Validator) Validate(ctx context.Context, req admissionv1.AdmissionReque
 	if req.Resource == (metav1.GroupVersionResource{Version: "v1", Resource: "secrets"}) {
 		return v.validateResultCredential(ctx, req)
 	}
+	if req.Resource == (metav1.GroupVersionResource{Group: "operator.ptah.run", Version: "v1alpha1", Resource: "ptahresultrecords"}) {
+		return v.validateResultCredentialRecord(ctx, req)
+	}
 	if req.UserInfo.Username != v.ManagerUsername {
 		return denyf("request username is not the configured operator manager identity")
 	}

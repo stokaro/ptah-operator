@@ -658,6 +658,10 @@ func currentControllerWriteWebhookContract(expected RuntimeInvariants) webhookCo
 				Operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Create, admissionregistrationv1.Update, admissionregistrationv1.Delete},
 				Rule:       admissionregistrationv1.Rule{APIGroups: []string{""}, APIVersions: []string{"v1"}, Resources: []string{"secrets"}, Scope: &scope},
 			},
+			{
+				Operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Create, admissionregistrationv1.Update, admissionregistrationv1.Delete},
+				Rule:       admissionregistrationv1.Rule{APIGroups: []string{"operator.ptah.run"}, APIVersions: []string{"v1alpha1"}, Resources: []string{"ptahresultrecords"}, Scope: &scope},
+			},
 		},
 		failurePolicy: admissionregistrationv1.Fail, matchPolicy: admissionregistrationv1.Exact,
 		namespaceSelector: &metav1.LabelSelector{}, objectSelector: &metav1.LabelSelector{},

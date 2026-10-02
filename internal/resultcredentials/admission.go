@@ -1,9 +1,11 @@
 package resultcredentials
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"errors"
+	"maps"
 	"reflect"
 
 	corev1 "k8s.io/api/core/v1"
@@ -39,7 +41,75 @@ func (i *Issuer) ValidateCreate(ctx context.Context, secret *corev1.Secret) erro
 	if _, err := i.validate(candidate, identity); err != nil {
 		return err
 	}
+	record := &api.PtahResultRecord{}
+	if err := i.reader.Get(ctx, client.ObjectKeyFromObject(secret), record); err != nil {
+		return err
+	}
+	stored, err := recordSecret(record)
+	if err != nil {
+		return err
+	}
+	if _, err := i.validate(stored, identity); err != nil {
+		return err
+	}
+	if !maps.EqualFunc(stored.Data, secret.Data, bytes.Equal) || !reflect.DeepEqual(stored.Labels, secret.Labels) || !reflect.DeepEqual(stored.Annotations, secret.Annotations) || !reflect.DeepEqual(stored.OwnerReferences, secret.OwnerReferences) {
+		return ErrCredential
+	}
 	return (resultauthority.Authorizer{Reader: i.reader}).Check(ctx, identity)
+}
+
+// ValidateRecordCreate authenticates the canonical credential before it exists.
+// The caller checks the manager identity and exact admission resource binding.
+func (i *Issuer) ValidateRecordCreate(ctx context.Context, record *api.PtahResultRecord) error {
+	if i == nil {
+		return ErrCredential
+	}
+	secret, err := recordSecret(record)
+	if err != nil {
+		return err
+	}
+	certificate, err := tls.X509KeyPair(secret.Data["tls.crt"], secret.Data["tls.key"])
+	if err != nil {
+		return ErrCredential
+	}
+	identity, err := resultdelivery.ClientIdentity(certificate)
+	if err != nil {
+		return ErrCredential
+	}
+	if secret.UID == "" {
+		secret.UID = "admission-only"
+	}
+	if len(secret.Labels) != 2 {
+		return ErrCredential
+	}
+	if _, err := i.validate(secret, identity); err != nil {
+		return err
+	}
+	return (resultauthority.Authorizer{Reader: i.reader}).Check(ctx, identity)
+}
+
+// ValidateRecordUpdate freezes metadata as well as the CRD's immutable spec.
+func ValidateRecordUpdate(old, next *api.PtahResultRecord) error {
+	if old == nil || next == nil || !reflect.DeepEqual(old.Spec, next.Spec) {
+		return ErrCredential
+	}
+	a, err := recordSecret(old)
+	if err != nil {
+		return err
+	}
+	b, err := recordSecret(next)
+	if err != nil {
+		return err
+	}
+	return ValidateUpdate(a, b)
+}
+
+func ValidateRecordDelete(ctx context.Context, reader client.Reader, record *api.PtahResultRecord) error {
+	secret, err := recordSecret(record)
+	if err != nil {
+		return err
+	}
+	return ValidateDelete(ctx, reader, secret)
 }
 
 // ValidateUpdate protects the public binding and owner as well as the key.

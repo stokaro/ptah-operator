@@ -87,8 +87,10 @@ func New(writer client.Client, reader client.Reader, ca tls.Certificate, clientT
 	return &Issuer{writer: writer, reader: reader, ca: parsed, signer: signer, roots: clientTrust.Clone(), serverTrust: bytes.Clone(serverTrust)}, nil
 }
 
-// Credential carries no private key. Success means the exact immutable Secret
-// was read back through the direct API reader and authority still held.
+// Credential carries no private key. UID identifies the authoritative record,
+// read back through the direct API reader while authority still held. Creating
+// its immutable Secret projection never grants Secret read permission. Success
+// is not proof that a kubelet has mounted the projection.
 type Credential struct {
 	Name     string
 	UID      types.UID
@@ -110,7 +112,7 @@ func (i *Issuer) Ensure(ctx context.Context, identity resultdelivery.Identity) (
 		return Credential{}, ErrCredential
 	}
 	key := client.ObjectKey{Namespace: b.Namespace, Name: projection.SecretName}
-	existing := &corev1.Secret{}
+	existing := &api.PtahResultRecord{}
 	err = i.reader.Get(ctx, key, existing)
 	if apierrors.IsNotFound(err) {
 		// Cover the supported Job horizon, termination grace, and bounded delivery.
@@ -128,7 +130,11 @@ func (i *Issuer) Ensure(ctx context.Context, identity resultdelivery.Identity) (
 		if err := authority.Check(ctx, identity); err != nil {
 			return Credential{}, err
 		}
-		if err := i.writer.Create(ctx, secret); err != nil && !apierrors.IsAlreadyExists(err) {
+		record, err := credentialRecord(secret)
+		if err != nil {
+			return Credential{}, err
+		}
+		if err := i.writer.Create(ctx, record); err != nil && !apierrors.IsAlreadyExists(err) {
 			return Credential{}, err
 		}
 		// Losing a write acknowledgment is safe: the next call reads the winner.
@@ -139,8 +145,21 @@ func (i *Issuer) Ensure(ctx context.Context, identity resultdelivery.Identity) (
 	} else if err != nil {
 		return Credential{}, err
 	}
-	credential, err := i.validate(existing, identity)
+	secret, err := recordSecret(existing)
 	if err != nil {
+		return Credential{}, err
+	}
+	credential, err := i.validate(secret, identity)
+	if err != nil {
+		return Credential{}, err
+	}
+	if err := authority.Check(ctx, identity); err != nil {
+		return Credential{}, err
+	}
+	// Admission requires these exact bytes from the canonical record. A retry
+	// may encounter the immutable projection from a prior successful CREATE.
+	// No projection contents are inferred from an AlreadyExists response.
+	if err := i.writer.Create(ctx, credentialProjection(secret)); err != nil && !apierrors.IsAlreadyExists(err) {
 		return Credential{}, err
 	}
 	if err := authority.Check(ctx, identity); err != nil {

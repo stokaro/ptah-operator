@@ -22,9 +22,9 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	recordapi "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/resultauthority"
 	"github.com/stokaro/ptah-operator/internal/resultdelivery"
 	"github.com/stokaro/ptah-operator/internal/resultdelivery/jobconfig"
@@ -35,16 +35,23 @@ import (
 
 type credentialAPI struct {
 	client.Client
-	creates atomic.Int64
-	lostACK atomic.Bool
+	creates           atomic.Int64
+	lostACK           atomic.Bool
+	projections       atomic.Int64
+	lostProjectionACK atomic.Bool
 }
 
 func (c *credentialAPI) Create(ctx context.Context, obj client.Object, opts ...client.CreateOption) error {
-	obj.SetUID(types.UID(fmt.Sprintf("credential-%d", c.creates.Add(1))))
+	_, record := obj.(*recordapi.PtahResultRecord)
+	if record {
+		obj.SetUID(types.UID(fmt.Sprintf("credential-%d", c.creates.Add(1))))
+	} else {
+		obj.SetUID(types.UID(fmt.Sprintf("projection-%d", c.projections.Add(1))))
+	}
 	if err := c.Client.Create(ctx, obj, opts...); err != nil {
 		return err
 	}
-	if c.lostACK.Swap(false) {
+	if (record && c.lostACK.Swap(false)) || (!record && c.lostProjectionACK.Swap(false)) {
 		return errors.New("API write response lost")
 	}
 	return nil
@@ -70,10 +77,19 @@ func testCA(t *testing.T, validFor time.Duration) (tls.Certificate, *x509.CertPo
 	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}, roots, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 }
 
+type secretForbiddenReader struct{ client.Reader }
+
+func (r secretForbiddenReader) Get(ctx context.Context, key client.ObjectKey, object client.Object, opts ...client.GetOption) error {
+	if _, ok := object.(*corev1.Secret); ok || object.GetObjectKind().GroupVersionKind().Kind == "Secret" {
+		return errors.New("Secret GET forbidden")
+	}
+	return r.Reader.Get(ctx, key, object, opts...)
+}
+
 func testIssuer(t *testing.T, api client.Client) (*Issuer, tls.Certificate, *x509.CertPool, []byte) {
 	t.Helper()
 	ca, roots, trust := testCA(t, 7*24*time.Hour)
-	issuer, err := New(api, api, ca, roots, trust)
+	issuer, err := New(api, secretForbiddenReader{Reader: api}, ca, roots, trust)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,8 +98,12 @@ func testIssuer(t *testing.T, api client.Client) (*Issuer, tls.Certificate, *x50
 
 func getCredential(t *testing.T, c client.Reader, f *resulttest.Fixture) *corev1.Secret {
 	t.Helper()
-	s := &corev1.Secret{}
-	if err := c.Get(t.Context(), client.ObjectKey{Namespace: f.Identity.Binding.Namespace, Name: jobconfig.CredentialName(f.Identity.Binding.UID, f.Identity.Binding.OperationID, f.Identity.Binding.JobName)}, s); err != nil {
+	record := &recordapi.PtahResultRecord{}
+	if err := c.Get(t.Context(), client.ObjectKey{Namespace: f.Identity.Binding.Namespace, Name: jobconfig.CredentialName(f.Identity.Binding.UID, f.Identity.Binding.OperationID, f.Identity.Binding.JobName)}, record); err != nil {
+		t.Fatal(err)
+	}
+	s, err := recordSecret(record)
+	if err != nil {
 		t.Fatal(err)
 	}
 	return s
@@ -99,7 +119,14 @@ func TestIssueAndReadBackAllOperationCredentials(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			secret := getCredential(t, api, f)
+			canonical := getCredential(t, api, f)
+			secret := &corev1.Secret{}
+			if err := api.Get(t.Context(), client.ObjectKeyFromObject(canonical), secret); err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(canonical.Data["tls.key"], secret.Data["tls.key"]) || !bytes.Equal(canonical.Data["tls.crt"], secret.Data["tls.crt"]) || !bytes.Equal(canonical.Data["ca.crt"], secret.Data["ca.crt"]) {
+				t.Fatal("projection differs from canonical record")
+			}
 			cert, err := tls.X509KeyPair(secret.Data["tls.crt"], secret.Data["tls.key"])
 			if err != nil {
 				t.Fatal(err)
@@ -215,9 +242,7 @@ func TestOldAttemptCannotAcquireNewGeneration(t *testing.T) {
 
 func TestIssuerRejectsCorruptedOrForeignCredential(t *testing.T) {
 	changes := map[string]func(*corev1.Secret){
-		"mutable":              func(s *corev1.Secret) { s.Immutable = ptr.To(false) },
 		"wrong owner":          func(s *corev1.Secret) { s.OwnerReferences[0].UID = "other" },
-		"wrong type":           func(s *corev1.Secret) { s.Type = corev1.SecretTypeOpaque },
 		"invalid key":          func(s *corev1.Secret) { s.Data["tls.key"] = []byte("invalid") },
 		"changed server trust": func(s *corev1.Secret) { s.Data["ca.crt"] = []byte("invalid") },
 		"unknown data":         func(s *corev1.Secret) { s.Data["extra"] = []byte("extra") },
@@ -233,9 +258,12 @@ func TestIssuerRejectsCorruptedOrForeignCredential(t *testing.T) {
 			}
 			secret := getCredential(t, api, f)
 			change(secret)
-			// Fake-client corruption models a persisted bad object, not an API claim
-			// that immutable Secret data can be updated on a real cluster.
-			if err := api.Update(t.Context(), secret); err != nil {
+			// Model persisted corruption independently of the CRD's immutability.
+			record, err := credentialRecord(secret)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := api.Update(t.Context(), record); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := issuer.Ensure(t.Context(), f.Identity); !errors.Is(err, ErrCredential) || api.creates.Load() != 1 {
@@ -289,14 +317,14 @@ func TestInsufficientSignerLifetimeRefusesBeforeCreation(t *testing.T) {
 	}
 }
 
-type secretReadFailure struct {
+type recordReadFailure struct {
 	client.Reader
 	creates     *atomic.Int64
 	unavailable error
 }
 
-func (r secretReadFailure) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
-	if _, ok := obj.(*corev1.Secret); ok && r.creates.Load() > 0 {
+func (r recordReadFailure) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+	if _, ok := obj.(*recordapi.PtahResultRecord); ok && r.creates.Load() > 0 {
 		return r.unavailable
 	}
 	return r.Reader.Get(ctx, key, obj, opts...)
@@ -307,7 +335,7 @@ func TestCredentialRequiresDirectReadBack(t *testing.T) {
 	api := &credentialAPI{Client: f.Client(t)}
 	ca, roots, trust := testCA(t, 7*24*time.Hour)
 	unavailable := errors.New("credential readback unavailable")
-	issuer, err := New(api, secretReadFailure{Reader: api, creates: &api.creates, unavailable: unavailable}, ca, roots, trust)
+	issuer, err := New(api, recordReadFailure{Reader: api, creates: &api.creates, unavailable: unavailable}, ca, roots, trust)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -414,11 +442,37 @@ func TestAuthorityChangeAtCredentialWriteReturnsNoReceipt(t *testing.T) {
 	if !errors.Is(err, resultdelivery.ErrAuthority) || receipt.UID != "" {
 		t.Fatalf("retired authority returned a credential receipt: %#v %v", receipt, err)
 	}
-	// A cross-object change can race creation. The Secret is evidence of that
+	// A cross-object change can race creation. The record is evidence of that
 	// race, not authority: neither a successful issuance receipt nor receiver
 	// authorization survives the changed generation.
 	_ = getCredential(t, api, f)
 	if err := (resultauthority.Authorizer{Reader: api}).Check(t.Context(), f.Identity); !errors.Is(err, resultdelivery.ErrAuthority) {
 		t.Fatalf("retired identity authorizes delivery: %v", err)
+	}
+}
+
+func TestLostProjectionResponseReusesCanonicalCredential(t *testing.T) {
+	f := resulttest.New(t, "schema-observe")
+	c := &credentialAPI{Client: f.Client(t)}
+	issuer, _, _, _ := testIssuer(t, c)
+	c.lostProjectionACK.Store(true)
+	if _, err := issuer.Ensure(t.Context(), f.Identity); err == nil {
+		t.Fatal("lost projection response returned success")
+	}
+	canonical := getCredential(t, c, f)
+	secret := &corev1.Secret{}
+	if err := c.Get(t.Context(), client.ObjectKeyFromObject(canonical), secret); err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := issuer.Ensure(t.Context(), f.Identity)
+	if err != nil || receipt.UID != canonical.UID || c.creates.Load() != 1 {
+		t.Fatalf("retry replaced canonical credential: %#v %v", receipt, err)
+	}
+	retained := &corev1.Secret{}
+	if err := c.Get(t.Context(), client.ObjectKeyFromObject(secret), retained); err != nil {
+		t.Fatal(err)
+	}
+	if retained.UID != secret.UID || !bytes.Equal(retained.Data["tls.key"], secret.Data["tls.key"]) {
+		t.Fatal("retry replaced the immutable projection")
 	}
 }

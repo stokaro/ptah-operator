@@ -19,6 +19,7 @@ import (
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	recordapi "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/resultcredentials"
 	"github.com/stokaro/ptah-operator/internal/resultcredentials/binding"
 	"github.com/stokaro/ptah-operator/internal/resultdelivery"
@@ -69,9 +70,14 @@ func TestResultCredentialAdmission(t *testing.T) {
 	}
 	fixture.schema.Status.ActiveOperation.JobUID = job.UID
 	writeStatus(t, fixture.schema)
-	grant(t, fixture.namespace, "manager-result-secrets", managerSubject(t), rbacv1.PolicyRule{APIGroups: []string{""}, Resources: []string{"secrets"}, Verbs: []string{"create", "get"}})
+	grant(t, fixture.namespace, "manager-result-secrets", managerSubject(t), rbacv1.PolicyRule{APIGroups: []string{""}, Resources: []string{"secrets"}, Verbs: []string{"create"}})
+	grant(t, fixture.namespace, "manager-result-records", managerSubject(t),
+		rbacv1.PolicyRule{APIGroups: []string{"operator.ptah.run"}, Resources: []string{"ptahresultrecords"}, Verbs: []string{"get", "create"}},
+		rbacv1.PolicyRule{APIGroups: []string{"operator.ptah.run"}, Resources: []string{"ptahschemas", "ptahmigrations"}, Verbs: []string{"get"}},
+		rbacv1.PolicyRule{APIGroups: []string{"batch"}, Resources: []string{"jobs"}, Verbs: []string{"get"}},
+		rbacv1.PolicyRule{APIGroups: []string{""}, Resources: []string{"pods"}, Verbs: []string{"get", "list"}})
 	managerAPI := clientAs(t, manager.username)
-	issuer, err := resultcredentials.New(managerAPI, admin, resultSigningCA, resultClientTrust, resultServerTrust)
+	issuer, err := resultcredentials.New(managerAPI, managerAPI, resultSigningCA, resultClientTrust, resultServerTrust)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,6 +91,35 @@ func TestResultCredentialAdmission(t *testing.T) {
 	if err := admin.Get(ctx, client.ObjectKey{Namespace: fixture.namespace, Name: receipt.Name}, secret); err != nil {
 		t.Fatal(err)
 	}
+	record := &recordapi.PtahResultRecord{}
+	if err := managerAPI.Get(ctx, client.ObjectKeyFromObject(secret), record); err != nil {
+		t.Fatal(err)
+	}
+	databaseSecret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: fixture.namespace, Name: "database-boundary"}, Data: map[string][]byte{"password": []byte("test-only")}}
+	if err := admin.Create(ctx, databaseSecret); err != nil {
+		t.Fatal(err)
+	}
+	if err := managerAPI.Get(ctx, client.ObjectKeyFromObject(databaseSecret), &corev1.Secret{}); !apierrors.IsForbidden(err) {
+		t.Fatalf("manager can read database credentials: %v", err)
+	}
+	if record.UID != receipt.UID {
+		t.Fatal("receipt does not name the canonical record")
+	}
+	if err := managerAPI.Get(ctx, client.ObjectKeyFromObject(secret), &corev1.Secret{}); !apierrors.IsForbidden(err) {
+		t.Fatalf("issuer can read Secrets: %v", err)
+	}
+	if repeated, err := issuer.Ensure(ctx, identity); err != nil || repeated != receipt {
+		t.Fatalf("retry without Secret read changed credential: %#v %v", repeated, err)
+	}
+	t.Run("record metadata cannot move the Pod pin", func(t *testing.T) {
+		next := record.DeepCopy()
+		next.Annotations[resultcredentials.AnnotationPodUID] = "replacement"
+		requireDenied(t, admin.Update(ctx, next, client.DryRunAll), controllerWriteWebhook, "immutable operation binding")
+	})
+	t.Run("active record deletion is refused", func(t *testing.T) {
+		requireDenied(t, admin.Delete(ctx, record, client.DryRunAll), controllerWriteWebhook, "immutable operation binding")
+		requireDenied(t, admin.DeleteAllOf(ctx, &recordapi.PtahResultRecord{}, client.InNamespace(fixture.namespace), client.MatchingFields{"metadata.name": record.Name}, client.DryRunAll), controllerWriteWebhook, "immutable operation binding")
+	})
 	t.Run("unchanged Secret update is admitted", func(t *testing.T) {
 		if err := admin.Update(ctx, secret.DeepCopy(), client.DryRunAll); err != nil {
 			t.Fatal(err)
@@ -133,6 +168,9 @@ func TestResultCredentialAdmission(t *testing.T) {
 		if err := eventually(10*time.Second, attempt); err != nil {
 			t.Fatalf("removing the guard did not admit deletion: %v", err)
 		}
+		if err := admin.Delete(ctx, record, client.DryRunAll); err != nil {
+			t.Fatalf("record deletion stayed refused without its guard: %v", err)
+		}
 		restore()
 		if err := eventually(10*time.Second, func() error {
 			if attempt() == nil {
@@ -143,6 +181,7 @@ func TestResultCredentialAdmission(t *testing.T) {
 			t.Fatal(err)
 		}
 		requireDenied(t, attempt(), controllerWriteWebhook, "immutable operation binding")
+		requireDenied(t, admin.Delete(ctx, record, client.DryRunAll), controllerWriteWebhook, "immutable operation binding")
 	})
 	t.Run("retired operation permits credential cleanup", func(t *testing.T) {
 		fixture.schema.Status.ActiveOperation = nil
@@ -152,6 +191,12 @@ func TestResultCredentialAdmission(t *testing.T) {
 		}
 		if err := admin.Get(ctx, client.ObjectKeyFromObject(secret), &corev1.Secret{}); !apierrors.IsNotFound(err) {
 			t.Fatalf("retired pin survived collection cleanup: %v", err)
+		}
+		if err := admin.DeleteAllOf(ctx, &recordapi.PtahResultRecord{}, client.InNamespace(fixture.namespace), client.MatchingFields{"metadata.name": record.Name}); err != nil {
+			t.Fatal(err)
+		}
+		if err := admin.Get(ctx, client.ObjectKeyFromObject(record), &recordapi.PtahResultRecord{}); !apierrors.IsNotFound(err) {
+			t.Fatalf("retired record survived cleanup: %v", err)
 		}
 	})
 }

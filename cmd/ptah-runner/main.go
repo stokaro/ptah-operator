@@ -155,6 +155,10 @@ func run(ctx context.Context, arguments []string, stdout, stderr io.Writer, envi
 			return 2
 		}
 		defer delivery.sender.Close()
+		if err := delivery.sender.Check(ctx); err != nil {
+			_, _ = fmt.Fprintln(stderr, "ptah-runner: result receiver preflight failed")
+			return 2
+		}
 	}
 
 	result := runner.Run(ctx, runner.Config{

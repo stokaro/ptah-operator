@@ -12,13 +12,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	cradmission "sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
+	api "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/resultcredentials/binding"
 	"github.com/stokaro/ptah-operator/internal/resultdelivery/jobconfig"
 )
 
 // Called only after the complete Job/Pod admission envelope has been checked.
-// The metadata read asks the API server for no Secret data. The issuer and
-// Secret webhook protect these public annotations against modification.
+// The metadata read uses the dedicated result API, never Secrets. The issuer
+// and record webhook protect the canonical original-Pod pin.
 func (h *ValidationHandler) validateResultCredential(ctx context.Context, operation admissionv1.Operation, pod *corev1.Pod, job *batchv1.Job, operationID string) *cradmission.Response {
 	refs := binding.References(pod)
 	if len(refs) == 0 {
@@ -32,7 +33,7 @@ func (h *ValidationHandler) validateResultCredential(ctx context.Context, operat
 	if err != nil || len(refs) != 1 || refs[0] != projection.SecretName {
 		return deny("Pod does not have the exact result credential projection")
 	}
-	metadata := &metav1.PartialObjectMetadata{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"}}
+	metadata := &metav1.PartialObjectMetadata{TypeMeta: metav1.TypeMeta{APIVersion: api.GroupVersion.String(), Kind: "PtahResultRecord"}}
 	err = h.Reader.Get(ctx, client.ObjectKey{Namespace: pod.Namespace, Name: projection.SecretName}, metadata)
 	if apierrors.IsNotFound(err) {
 		// The Job's first Pod must exist before its exact UID can be certified.

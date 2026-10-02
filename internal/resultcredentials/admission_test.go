@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -179,8 +180,80 @@ func TestCredentialDeleteAdmission(t *testing.T) {
 					if (err == nil) != allow {
 						t.Fatalf("allow=%v, error=%v", allow, err)
 					}
+					record, err := credentialRecord(secret)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err := ValidateRecordDelete(t.Context(), reader, record); (err == nil) != allow {
+						t.Fatalf("record allow=%v, error=%v", allow, err)
+					}
 				})
 			}
 		})
+	}
+}
+
+func TestCredentialRecordAdmission(t *testing.T) {
+	f := resulttest.New(t, "schema-observe")
+	c := &credentialAPI{Client: f.Client(t)}
+	issuer, _, _, _ := testIssuer(t, c)
+	if _, err := issuer.Ensure(t.Context(), f.Identity); err != nil {
+		t.Fatal(err)
+	}
+	secret := getCredential(t, c, f)
+	record, err := credentialRecord(secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := issuer.ValidateRecordCreate(t.Context(), record); err != nil {
+		t.Fatal(err)
+	}
+	var disabled *Issuer
+	if err := disabled.ValidateRecordCreate(t.Context(), record); err == nil {
+		t.Fatal("disabled issuer admitted record")
+	}
+	bookkeeping := record.DeepCopy()
+	bookkeeping.ResourceVersion = "next"
+	if err := ValidateRecordUpdate(record, bookkeeping); err != nil {
+		t.Fatal(err)
+	}
+	for name, mutate := range map[string]func(*api.PtahResultRecord){
+		"foreign Pod":        func(r *api.PtahResultRecord) { r.Annotations[AnnotationPodUID] = "other" },
+		"foreign owner":      func(r *api.PtahResultRecord) { r.OwnerReferences[0].UID = "other" },
+		"foreign role":       func(r *api.PtahResultRecord) { r.Spec.Type = "chunk" },
+		"invalid bytes":      func(r *api.PtahResultRecord) { r.Spec.Data = []byte("invalid") },
+		"noncanonical bytes": func(r *api.PtahResultRecord) { r.Spec.Data = append(r.Spec.Data, ' ') },
+		"finalizer":          func(r *api.PtahResultRecord) { r.Finalizers = []string{"other/finalizer"} },
+		"additional label":   func(r *api.PtahResultRecord) { r.Labels["other"] = "value" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			changed := record.DeepCopy()
+			mutate(changed)
+			if err := issuer.ValidateRecordCreate(t.Context(), changed); err == nil {
+				t.Fatal("invalid record admitted")
+			}
+			if err := ValidateRecordUpdate(record, changed); err == nil {
+				t.Fatal("record mutation admitted")
+			}
+		})
+	}
+	if err := ValidateRecordDelete(t.Context(), c, record); err == nil {
+		t.Fatal("active record deletion admitted")
+	}
+	// Another valid certificate for the same identity is not the persisted key.
+	other, err := issuer.issue(f.Identity, secret.Name, time.Now(), time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := issuer.ValidateCreate(t.Context(), other); err == nil {
+		t.Fatal("projection replaced the canonical key with another trusted key")
+	}
+	owner := f.Subject.(*api.PtahSchema).DeepCopy()
+	owner.Status.ActiveOperation = nil
+	if err := c.Update(t.Context(), owner); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateRecordDelete(t.Context(), c, record); err != nil {
+		t.Fatalf("retired record cleanup refused: %v", err)
 	}
 }

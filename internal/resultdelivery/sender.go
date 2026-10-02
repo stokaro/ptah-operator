@@ -68,6 +68,28 @@ func NewSender(endpoint string, identity Identity, tlsConfig *tls.Config, retry 
 
 func (s *Sender) Close() { s.transport.CloseIdleConnections() }
 
+// Check authenticates the projected credential with the configured receiver
+// before a runner starts its child. An existing Secret is not evidence that its
+// bytes match the canonical credential record. This bounded, read-only request
+// catches unusable projections without executing SQL or publishing a result.
+func (s *Sender) Check(parent context.Context) error {
+	ctx, cancel := context.WithTimeout(parent, s.retry.AttemptTimeout)
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, http.MethodHead, s.endpoint, nil)
+	if err != nil {
+		return errors.New("cannot prepare receiver authentication")
+	}
+	response, err := s.client.Do(request)
+	if err != nil {
+		return errors.New("result receiver authentication failed")
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("result receiver preflight returned HTTP %d", response.StatusCode)
+	}
+	return ctx.Err()
+}
+
 // Send never changes bytes between attempts, never follows a redirect, and
 // returns no payload or server response body in an error. A lost response after
 // durable persistence may be retried; a definitive refusal is returned at once.
