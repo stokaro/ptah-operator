@@ -24,7 +24,7 @@ import (
 	"testing"
 	"time"
 
-	corev1 "k8s.io/api/core/v1"
+	recordapi "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -64,7 +64,7 @@ func (c *identifyingClient) Create(ctx context.Context, o client.Object, opts ..
 func testStore(t *testing.T) resultstore.Store {
 	t.Helper()
 	scheme := runtime.NewScheme()
-	if err := corev1.AddToScheme(scheme); err != nil {
+	if err := recordapi.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
 	c := &identifyingClient{Client: fake.NewClientBuilder().WithScheme(scheme).Build()}
@@ -199,7 +199,7 @@ func TestLostAcknowledgmentOnlyRedeliversSavedBytes(t *testing.T) {
 	if err != nil || stored != receipt || !bytes.Equal(got, payload) {
 		t.Fatalf("readback lost result: %v", err)
 	}
-	list := &corev1.SecretList{}
+	list := &recordapi.PtahResultRecordList{}
 	if err := store.Client.List(t.Context(), list); err != nil || len(list.Items) != 3 {
 		t.Fatalf("duplicate delivery created another publication: %v", err)
 	}
@@ -386,7 +386,7 @@ func TestInvalidBodyAndRouteNeverReachStorage(t *testing.T) {
 			}
 		})
 	}
-	list := &corev1.SecretList{}
+	list := &recordapi.PtahResultRecordList{}
 	if err := store.Client.List(t.Context(), list); err != nil || len(list.Items) != 0 {
 		t.Fatalf("invalid body persisted: %v", err)
 	}

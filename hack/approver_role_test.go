@@ -89,6 +89,10 @@ func TestTheApproverRoleCheckRefusesWhatItExistsToRefuse(t *testing.T) {
 		// application ConfigMap in the namespace.
 		"ConfigMaps": append(slices.Clone(complete),
 			rbacv1.PolicyRule{APIGroups: []string{""}, Resources: []string{"configmaps"}, Verbs: []string{"get"}}),
+		// Result records include private delivery keys. Approvers read published
+		// plans and their chunks, never the internal result transport.
+		"result credentials": append(slices.Clone(complete),
+			operatorRule(approverReadVerbs, "ptahresultrecords")),
 		"Pod logs": append(slices.Clone(complete),
 			rbacv1.PolicyRule{APIGroups: []string{""}, Resources: []string{"pods/log"}, Verbs: []string{"get"}}),
 		"an edit of an approval": append(slices.Clone(complete),
@@ -126,7 +130,7 @@ func TestTheApproverClusterRoleCanBeLeftOut(t *testing.T) {
 }
 
 // approverRoleProblems reports every way rules differ from the approver's
-// role: read on every served resource, create on every approval kind and on
+// role: read on every public family resource, create on every approval kind and on
 // the run acknowledgment, and no other grant at all.
 func approverRoleProblems(rules []rbacv1.PolicyRule, served []string) []string {
 	allowed := map[string][]string{}
@@ -181,8 +185,8 @@ func approvalResources(served []string) []string {
 	return approvals
 }
 
-// servedOperatorResources reads the plural of every namespaced CRD the
-// generator wrote. It refuses fewer than two families, and fewer approval kinds
+// servedOperatorResources reads the public namespaced CRDs the generator wrote.
+// Internal result records contain delivery keys and are excluded. It refuses fewer than two families, and fewer approval kinds
 // than families, because a short list turns every check above into one that
 // passes.
 //
@@ -218,7 +222,9 @@ func servedOperatorResources(t *testing.T) []string {
 		}
 		switch crd.Spec.Scope {
 		case "Namespaced":
-			served = append(served, crd.Spec.Names.Plural)
+			if crd.Spec.Names.Plural != "ptahresultrecords" {
+				served = append(served, crd.Spec.Names.Plural)
+			}
 		case "Cluster":
 		default:
 			t.Fatalf("%s has scope %q", path, crd.Spec.Scope)

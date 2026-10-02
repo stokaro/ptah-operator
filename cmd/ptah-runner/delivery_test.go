@@ -25,7 +25,7 @@ import (
 	"testing"
 	"time"
 
-	corev1 "k8s.io/api/core/v1"
+	recordapi "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -104,7 +104,7 @@ func newDeliveryFixture(t *testing.T, configureCertificate func(*x509.Certificat
 		}
 	}
 	scheme := runtime.NewScheme()
-	if err := corev1.AddToScheme(scheme); err != nil {
+	if err := recordapi.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
 	api := &deliveryAPI{Client: fake.NewClientBuilder().WithScheme(scheme).Build()}

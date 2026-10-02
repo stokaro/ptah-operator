@@ -1113,16 +1113,16 @@ static_require_order "$(cat "$ROOT_DIR/hack/e2e-kind.sh")" \
 # shellcheck disable=SC2016 # Match the exact generated OpenAPI regular expression.
 controller_revision_pattern='pattern: ^[^[:space:][:cntrl:]]([^[:cntrl:]]*[^[:space:][:cntrl:]])?$'
 # The realm kind is an administrator's grant and carries no controller state,
-# and a plan chunk carries bytes and nothing about who wrote them, which its
-# plan records; so neither has to carry a controllerRevision. Neither is
-# skipped: a revision field added to one later is held to the exact pattern
+# plan chunks and result records carry immutable bytes, with provenance checked
+# by their readers. These kinds need no controllerRevision. None is skipped:
+# a revision field added to one later is held to the exact pattern
 # like the rest.
 for controller_revision_crd in "$ROOT_DIR"/config/crd/bases/*.yaml; do
 	controller_revision_fields=$(grep -c '^[[:space:]]*controllerRevision:' "$controller_revision_crd" || true)
 	controller_revision_patterns=$(grep -Fc "$controller_revision_pattern" "$controller_revision_crd" || true)
 	controller_revision_minimum=1
 	case "${controller_revision_crd##*/}" in
-	operator.ptah.run_ptahrealms.yaml | operator.ptah.run_ptahschemaplanchunks.yaml)
+	operator.ptah.run_ptahrealms.yaml | operator.ptah.run_ptahschemaplanchunks.yaml | operator.ptah.run_ptahresultrecords.yaml)
 		controller_revision_minimum=0
 		;;
 	*approvals.yaml | *acknowledgments.yaml)
@@ -1993,8 +1993,8 @@ for crd_file in "$ROOT_DIR"/config/crd/bases/*.yaml; do
 	[ "$(grep -Fc "operator.ptah.run/crd-schema-version: \"$EXPECTED_CRD_SCHEMA_VERSION\"" "$crd_file")" -eq 1 ]
 	[ "$(grep -Ec 'operator[.]ptah[.]run/crd-schema-digest: "sha256:[0-9a-f]{64}"' "$crd_file")" -eq 1 ]
 done
-[ "$(find "$ROOT_DIR/config/crd/bases" -type f -name '*.yaml' | wc -l | tr -d '[:space:]')" = 9 ]
-[ "$(find "$ROOT_DIR/internal/crdupgrade/assets" -type f -name '*.yaml' | wc -l | tr -d '[:space:]')" = 9 ]
+[ "$(find "$ROOT_DIR/config/crd/bases" -type f -name '*.yaml' | wc -l | tr -d '[:space:]')" = 10 ]
+[ "$(find "$ROOT_DIR/internal/crdupgrade/assets" -type f -name '*.yaml' | wc -l | tr -d '[:space:]')" = 10 ]
 for crd_directory in \
 	"$ROOT_DIR/config/crd/bases" \
 	"$ROOT_DIR/charts/ptah-operator/crds" \

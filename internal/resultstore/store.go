@@ -11,12 +11,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
 	"reflect"
 	"regexp"
 	"strings"
 
-	corev1 "k8s.io/api/core/v1"
+	api "github.com/stokaro/ptah-operator/api/v1alpha1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -128,7 +127,7 @@ type Receipt struct {
 
 // Store requires a direct API reader. A cached read cannot certify a completed
 // publication. The caller supplies request deadlines and limits concurrency.
-// Result Secrets are not projected into operation Pods.
+// Result records are not projected into operation Pods.
 type Store struct {
 	Client client.Client
 	Reader client.Reader
@@ -171,13 +170,13 @@ func (s Store) publish(ctx context.Context, b Binding, payload []byte, expectedD
 		m.Chunks = append(m.Chunks, chunk{Digest: digest(part), Size: len(part)})
 	}
 	encoded, _ := json.Marshal(m)
-	intent := secret(b.Namespace, name, "intent", owner(apiVersion, b.Kind, b.Name, b.UID), encoded)
+	intent := record(b.Namespace, name, "intent", owner(apiVersion, b.Kind, b.Name, b.UID), encoded)
 	if err := s.ensure(ctx, intent); err != nil {
 		return Receipt{}, err
 	}
-	childOwner := owner("v1", "Secret", intent.Name, intent.UID)
+	childOwner := owner(apiVersion, "PtahResultRecord", intent.Name, intent.UID)
 	// Once committed, never recreate a missing chunk or rewrite a receipt.
-	ready := &corev1.Secret{}
+	ready := &api.PtahResultRecord{}
 	err = s.Reader.Get(ctx, client.ObjectKey{Namespace: b.Namespace, Name: name + "-complete"}, ready)
 	if err == nil {
 		if check != nil {
@@ -194,7 +193,7 @@ func (s Store) publish(ctx context.Context, b Binding, payload []byte, expectedD
 	c := completion{ManifestUID: intent.UID, ManifestDigest: digest(encoded)}
 	for index := range m.Chunks {
 		offset := index * ChunkBytes
-		part := secret(b.Namespace, chunkName(name, index), "chunk", childOwner,
+		part := record(b.Namespace, chunkName(name, index), "chunk", childOwner,
 			payload[offset:min(offset+ChunkBytes, len(payload))])
 		if err := s.ensure(ctx, part); err != nil {
 			return Receipt{}, err
@@ -207,7 +206,7 @@ func (s Store) publish(ctx context.Context, b Binding, payload []byte, expectedD
 			return Receipt{}, err
 		}
 	}
-	if err := s.ensure(ctx, secret(b.Namespace, name+"-complete", "complete", childOwner, encodedCompletion)); err != nil {
+	if err := s.ensure(ctx, record(b.Namespace, name+"-complete", "complete", childOwner, encodedCompletion)); err != nil {
 		return Receipt{}, err
 	}
 	_, receipt, err := s.Load(ctx, b)
@@ -224,24 +223,24 @@ func (s Store) Load(ctx context.Context, b Binding) ([]byte, Receipt, error) {
 	if s.Reader == nil {
 		return nil, Receipt{}, ErrInvalid
 	}
-	intent, err := s.read(ctx, secret(b.Namespace, name, "intent", owner(apiVersion, b.Kind, b.Name, b.UID), nil))
+	intent, err := s.read(ctx, record(b.Namespace, name, "intent", owner(apiVersion, b.Kind, b.Name, b.UID), nil))
 	if err != nil {
 		return nil, Receipt{}, err
 	}
 	var m manifest
-	if err := json.Unmarshal(intent.Data["data"], &m); err != nil || m.Version != 1 || m.Binding != b ||
+	if err := json.Unmarshal(intent.Spec.Data, &m); err != nil || m.Version != 1 || m.Binding != b ||
 		m.Size <= 0 || m.Size > MaxPayloadBytes || !digestPattern.MatchString(m.Digest) ||
 		len(m.Chunks) != int((m.Size+ChunkBytes-1)/ChunkBytes) || len(m.Chunks) > maxChunks {
 		return nil, Receipt{}, ErrConflict
 	}
-	childOwner := owner("v1", "Secret", intent.Name, intent.UID)
-	ready, err := s.read(ctx, secret(b.Namespace, name+"-complete", "complete", childOwner, nil))
+	childOwner := owner(apiVersion, "PtahResultRecord", intent.Name, intent.UID)
+	ready, err := s.read(ctx, record(b.Namespace, name+"-complete", "complete", childOwner, nil))
 	if err != nil {
 		return nil, Receipt{}, err
 	}
 	var c completion
-	if err := json.Unmarshal(ready.Data["data"], &c); err != nil || c.ManifestUID != intent.UID ||
-		c.ManifestDigest != digest(intent.Data["data"]) || len(c.ChunkUIDs) != len(m.Chunks) {
+	if err := json.Unmarshal(ready.Spec.Data, &c); err != nil || c.ManifestUID != intent.UID ||
+		c.ManifestDigest != digest(intent.Spec.Data) || len(c.ChunkUIDs) != len(m.Chunks) {
 		return nil, Receipt{}, ErrConflict
 	}
 	payload := make([]byte, 0, int(m.Size))
@@ -250,14 +249,14 @@ func (s Store) Load(ctx context.Context, b Binding) ([]byte, Receipt, error) {
 		if ref.Size != wantSize || !digestPattern.MatchString(ref.Digest) || c.ChunkUIDs[index] == "" {
 			return nil, Receipt{}, ErrConflict
 		}
-		part, err := s.read(ctx, secret(b.Namespace, chunkName(name, index), "chunk", childOwner, nil))
+		part, err := s.read(ctx, record(b.Namespace, chunkName(name, index), "chunk", childOwner, nil))
 		if err != nil {
 			return nil, Receipt{}, err
 		}
-		if part.UID != c.ChunkUIDs[index] || len(part.Data["data"]) != ref.Size || digest(part.Data["data"]) != ref.Digest {
+		if part.UID != c.ChunkUIDs[index] || len(part.Spec.Data) != ref.Size || digest(part.Spec.Data) != ref.Digest {
 			return nil, Receipt{}, ErrConflict
 		}
-		payload = append(payload, part.Data["data"]...)
+		payload = append(payload, part.Spec.Data...)
 	}
 	if int64(len(payload)) != m.Size || digest(payload) != m.Digest {
 		return nil, Receipt{}, ErrConflict
@@ -265,7 +264,7 @@ func (s Store) Load(ctx context.Context, b Binding) ([]byte, Receipt, error) {
 	return payload, Receipt{Name: ready.Name, UID: ready.UID, Digest: m.Digest, Size: m.Size}, nil
 }
 
-func (s Store) ensure(ctx context.Context, want *corev1.Secret) error {
+func (s Store) ensure(ctx context.Context, want *api.PtahResultRecord) error {
 	// Preserve the request before Create fills in server-assigned fields.
 	expected := want.DeepCopy()
 	if err := s.Client.Create(ctx, want); err != nil && !apierrors.IsAlreadyExists(err) {
@@ -275,36 +274,33 @@ func (s Store) ensure(ctx context.Context, want *corev1.Secret) error {
 	if err != nil {
 		return err
 	}
-	if !maps.EqualFunc(got.Data, expected.Data, bytes.Equal) {
+	if !bytes.Equal(got.Spec.Data, expected.Spec.Data) {
 		return ErrConflict
 	}
 	*want = *got
 	return nil
 }
 
-func (s Store) read(ctx context.Context, want *corev1.Secret) (*corev1.Secret, error) {
-	got := &corev1.Secret{}
+func (s Store) read(ctx context.Context, want *api.PtahResultRecord) (*api.PtahResultRecord, error) {
+	got := &api.PtahResultRecord{}
 	if err := s.Reader.Get(ctx, client.ObjectKeyFromObject(want), got); err != nil {
 		if apierrors.IsNotFound(err) {
 			return nil, ErrIncomplete
 		}
 		return nil, err
 	}
-	if got.UID == "" || !got.DeletionTimestamp.IsZero() || got.Immutable == nil || !*got.Immutable ||
-		got.Type != want.Type || !reflect.DeepEqual(got.OwnerReferences, want.OwnerReferences) ||
-		got.Labels[labelRecord] != want.Labels[labelRecord] || len(got.Data) != 1 || len(got.Data["data"]) == 0 {
+	if got.UID == "" || !got.DeletionTimestamp.IsZero() || got.Spec.Type != want.Spec.Type || !reflect.DeepEqual(got.OwnerReferences, want.OwnerReferences) ||
+		got.Labels[labelRecord] != want.Labels[labelRecord] || len(got.Spec.Data) == 0 || len(got.Spec.Data) > ChunkBytes {
 		return nil, ErrConflict
 	}
 	return got, nil
 }
 
-func secret(namespace, name, role string, ref metav1.OwnerReference, data []byte) *corev1.Secret {
-	immutable := true
-	return &corev1.Secret{
+func record(namespace, name, role string, ref metav1.OwnerReference, data []byte) *api.PtahResultRecord {
+	return &api.PtahResultRecord{
 		ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: name,
 			OwnerReferences: []metav1.OwnerReference{ref}, Labels: map[string]string{labelRecord: role}},
-		Type: corev1.SecretType("operator.ptah.run/result-" + role + "-v1"), Immutable: &immutable,
-		Data: map[string][]byte{"data": bytes.Clone(data)},
+		Spec: api.PtahResultRecordSpec{Type: role, Data: bytes.Clone(data)},
 	}
 }
 

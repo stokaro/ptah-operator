@@ -18,6 +18,7 @@ const (
 	// The chunks a schema plan's bytes are stored in. A manager that publishes
 	// plans into a kind the cluster does not serve cannot publish one.
 	PtahSchemaPlanChunkCRDName = "ptahschemaplanchunks.operator.ptah.run"
+	PtahResultRecordCRDName    = "ptahresultrecords.operator.ptah.run"
 	// The versioned-migration kinds. They are owned by the same manager as the
 	// schema kinds because they share one release and one rollback fence: a
 	// cluster that has the newer schema CRDs and not these would be running a
@@ -55,6 +56,7 @@ var expectedNames = []string{
 	PtahMigrationRunAcknowledgmentCRDName,
 	PtahMigrationCRDName,
 	PtahRealmCRDName,
+	PtahResultRecordCRDName,
 	PtahSchemaApprovalCRDName,
 	PtahSchemaPlanChunkCRDName,
 	PtahSchemaPlanCRDName,

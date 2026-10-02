@@ -16,25 +16,37 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 
+	recordapi "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/resultstore"
 	"github.com/stokaro/ptah-operator/test/envtest/internal/harness"
+	"k8s.io/apimachinery/pkg/runtime"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 )
 
 var (
-	plane = harness.New(&envtest.Environment{})
-	api   client.Client
+	plane  = harness.New(&envtest.Environment{CRDDirectoryPaths: []string{harness.CRDDirectory()}})
+	scheme = runtime.NewScheme()
+	api    client.Client
 )
 
 func TestMain(m *testing.M) {
+	if err := clientgoscheme.AddToScheme(scheme); err != nil {
+		panic(err)
+	}
+	if err := recordapi.AddToScheme(scheme); err != nil {
+		panic(err)
+	}
+	plane.Environment.Scheme = scheme
 	os.Exit(plane.Main(m, func() error {
 		var err error
-		api, err = client.New(plane.Config, client.Options{})
+		api, err = client.New(plane.Config, client.Options{Scheme: scheme})
 		return err
 	}))
 }
@@ -56,7 +68,7 @@ func digest(payload []byte) string {
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
-func TestMaximumPayloadAndSecretImmutability(t *testing.T) {
+func TestMaximumPayloadAndRecordImmutability(t *testing.T) {
 	b := newBinding(t)
 	// Exercise every storage chunk at the complete payload bound. Protocol
 	// validity is the receiver's separate obligation; this is arbitrary binary.
@@ -66,7 +78,7 @@ func TestMaximumPayloadAndSecretImmutability(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := client.New(plane.Config, client.Options{})
+	second, err := client.New(plane.Config, client.Options{Scheme: scheme})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,20 +86,20 @@ func TestMaximumPayloadAndSecretImmutability(t *testing.T) {
 	if err != nil || !bytes.Equal(got, payload) || readReceipt != receipt {
 		t.Fatalf("fresh API client lost result: %v", err)
 	}
-	list := &corev1.SecretList{}
+	list := &recordapi.PtahResultRecordList{}
 	if err := api.List(t.Context(), list, client.InNamespace(b.Namespace)); err != nil {
 		t.Fatal(err)
 	}
 	wantChunks := int((resultstore.MaxPayloadBytes + resultstore.ChunkBytes - 1) / resultstore.ChunkBytes)
 	if len(list.Items) != wantChunks+2 {
-		t.Fatalf("stored %d Secrets, want %d", len(list.Items), wantChunks+2)
+		t.Fatalf("stored %d records, want %d", len(list.Items), wantChunks+2)
 	}
 	for _, original := range list.Items {
 		obj := original.DeepCopy()
-		obj.Data["data"][0] ^= 1
+		obj.Spec.Data[0] ^= 1
 		err := api.Update(t.Context(), obj)
 		if !apierrors.IsInvalid(err) || !strings.Contains(err.Error(), "immutable") {
-			t.Fatalf("Secret %s permitted payload mutation: %v", obj.Name, err)
+			t.Fatalf("Record %s permitted payload mutation: %v", obj.Name, err)
 		}
 	}
 	if _, err := s.Publish(t.Context(), b, append(bytes.Clone(payload), 'x'), "sha256:"+strings.Repeat("0", 64)); !errors.Is(err, resultstore.ErrInvalid) {
@@ -213,7 +225,7 @@ func TestResultNeedsNeitherJobNorPodToLoad(t *testing.T) {
 			t.Fatalf("object still exists: %v", err)
 		}
 	}
-	fresh, err := client.New(plane.Config, client.Options{})
+	fresh, err := client.New(plane.Config, client.Options{Scheme: scheme})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +243,7 @@ func TestReplacementChunkUIDIsNotAccepted(t *testing.T) {
 		t.Fatal(err)
 	}
 	name, _ := resultstore.Name(b)
-	part := &corev1.Secret{}
+	part := &recordapi.PtahResultRecord{}
 	if err := api.Get(t.Context(), types.NamespacedName{Namespace: b.Namespace, Name: name + "-000"}, part); err != nil {
 		t.Fatal(err)
 	}
@@ -251,5 +263,46 @@ func TestReplacementChunkUIDIsNotAccepted(t *testing.T) {
 	}
 	if got, receipt, err := s.Load(t.Context(), b); !errors.Is(err, resultstore.ErrConflict) || len(got) != 0 || receipt != (resultstore.Receipt{}) {
 		t.Fatalf("replacement accepted: %v", err)
+	}
+}
+
+// The result API must not require the permission that reads database Secrets.
+// This test uses a real RBAC identity with only get/create on result records,
+// not the administrator reader used by the persistence fault cases above.
+func TestPublicationWithNoSecretReadPermission(t *testing.T) {
+	b := newBinding(t)
+	ctx := t.Context()
+	const username = "result-record-writer"
+	role := &rbacv1.Role{ObjectMeta: metav1.ObjectMeta{Namespace: b.Namespace, Name: "result-writer"}, Rules: []rbacv1.PolicyRule{{APIGroups: []string{recordapi.GroupVersion.Group}, Resources: []string{"ptahresultrecords"}, Verbs: []string{"get", "create"}}}}
+	if err := api.Create(ctx, role); err != nil {
+		t.Fatal(err)
+	}
+	grant := &rbacv1.RoleBinding{ObjectMeta: metav1.ObjectMeta{Namespace: b.Namespace, Name: role.Name}, RoleRef: rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "Role", Name: role.Name}, Subjects: []rbacv1.Subject{{Kind: "User", APIGroup: rbacv1.GroupName, Name: username}}}
+	if err := api.Create(ctx, grant); err != nil {
+		t.Fatal(err)
+	}
+	databaseSecret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: b.Namespace, Name: "database"}, Data: map[string][]byte{"password": []byte("test-only")}}
+	if err := api.Create(ctx, databaseSecret); err != nil {
+		t.Fatal(err)
+	}
+	restricted, err := client.New(plane.Impersonate(username), client.Options{Scheme: scheme})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := restricted.Get(ctx, client.ObjectKeyFromObject(databaseSecret), &corev1.Secret{}); !apierrors.IsForbidden(err) {
+		t.Fatalf("database Secret read was not forbidden: %v", err)
+	}
+	payload := bytes.Repeat([]byte("durable result"), resultstore.ChunkBytes/13+1)
+	store := resultstore.Store{Client: restricted, Reader: restricted}
+	receipt, err := store.Publish(ctx, b, payload, digest(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, readReceipt, err := store.Load(ctx, b)
+	if err != nil || !bytes.Equal(loaded, payload) || readReceipt != receipt {
+		t.Fatalf("restricted result read failed: %v", err)
+	}
+	if err := restricted.Get(ctx, client.ObjectKeyFromObject(databaseSecret), &corev1.Secret{}); !apierrors.IsForbidden(err) {
+		t.Fatalf("publication granted Secret access: %v", err)
 	}
 }

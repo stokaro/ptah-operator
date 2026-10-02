@@ -142,9 +142,9 @@ func validateRestarts(restarts []historyRestart) error {
 		if restart.reason == "" {
 			return fmt.Errorf("the restart from schema version %d gives no reason", restart.fromVersion)
 		}
-		names := requiredCRDNames()
+		names := restartCRDNames()
 		if len(restart.fromDigests) != len(names) {
-			return fmt.Errorf("the restart from schema version %d records %d CRD digests, want the %d generated CRDs",
+			return fmt.Errorf("the restart from schema version %d records %d CRD digests, want the %d CRDs that existed at the restart",
 				restart.fromVersion, len(restart.fromDigests), len(names))
 		}
 		for _, name := range names {
@@ -166,4 +166,20 @@ func validateRestarts(restarts []historyRestart) error {
 		}
 	}
 	return nil
+}
+
+// The historical reset predates result records. Its inventory is frozen;
+// adding a current kind must not rewrite the tree that reset left behind.
+func restartCRDNames() []string {
+	return []string{
+		"ptahmigrationapprovals.operator.ptah.run",
+		"ptahmigrationplans.operator.ptah.run",
+		"ptahmigrationrunacknowledgments.operator.ptah.run",
+		"ptahmigrations.operator.ptah.run",
+		"ptahrealms.operator.ptah.run",
+		"ptahschemaapprovals.operator.ptah.run",
+		"ptahschemaplanchunks.operator.ptah.run",
+		"ptahschemaplans.operator.ptah.run",
+		"ptahschemas.operator.ptah.run",
+	}
 }

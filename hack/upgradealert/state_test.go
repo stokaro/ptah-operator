@@ -20,7 +20,7 @@ func fixtureState() State {
 	start := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
 	digest := "sha256:" + strings.Repeat("a", 64)
 	crds := map[string]string{}
-	for _, name := range []string{crdupgrade.PtahSchemaCRDName, crdupgrade.PtahSchemaPlanCRDName, crdupgrade.PtahSchemaPlanChunkCRDName, crdupgrade.PtahSchemaApprovalCRDName, crdupgrade.PtahMigrationCRDName, crdupgrade.PtahMigrationPlanCRDName, crdupgrade.PtahMigrationApprovalCRDName, crdupgrade.PtahMigrationRunAcknowledgmentCRDName, crdupgrade.PtahRealmCRDName} {
+	for _, name := range crdupgrade.Names() {
 		crds[name] = digest
 	}
 	return State{Version: 1, Intent: Intent{Namespace: "operator", Release: "ptah", HookJob: "ptah-crd-manager", Manager: "ptah", Rotator: "ptah-cert-rotator", Image: "example.invalid/operator@" + digest, HookArgs: []string{"reconcile", "--schema-version=1"}, ChartDigest: digest, ValuesDigest: digest, CRDDigests: crds, Probes: []Probe{{Kind: "PtahSchema", Namespace: "workloads", Name: "probe", UID: "probe-uid", Generation: 1}}}, StartedAt: start, Deadline: start.Add(upgradeDeadline), BaselineJobUID: "previous-release", ResourceVersion: "100"}
@@ -166,7 +166,7 @@ func TestStateRefusesIncompleteContractsAndCorruption(t *testing.T) {
 		"unknown version": func(s *State) { s.Version++ },
 		"new deadline":    func(s *State) { s.Deadline = s.Deadline.Add(time.Minute) },
 		"missing cursor":  func(s *State) { s.ResourceVersion = "" },
-		"arbitrary nine CRDs": func(s *State) {
+		"arbitrary CRDs": func(s *State) {
 			delete(s.Intent.CRDDigests, crdupgrade.PtahSchemaCRDName)
 			s.Intent.CRDDigests["other.example.test"] = s.Intent.ChartDigest
 		},

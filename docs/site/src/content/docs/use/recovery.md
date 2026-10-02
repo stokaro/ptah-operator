@@ -108,6 +108,10 @@ A backup that omits any of these turns a consistent restore into a rebuild.
 - Every `PtahSchemaPlanChunk`, with its UID. A chunk has no status, but it
   holds the plan's bytes, and a `PtahSchemaPlan` names each of its chunks by
   UID in `status.publishedChunks`.
+- Every `PtahResultRecord`, preserving its UID, owner references, metadata, and
+  immutable payload. These internal records can contain SQL or delivery key
+  material; keep them in the restricted backup. Partial publications and records
+  with changed identities cannot establish an acknowledged result.
 - Every `PtahRealm`. A realm has no status, but a restore without it refuses
   every resource that names it.
 - The verification-policy ConfigMaps the plans and approvals bind by UID and
@@ -143,7 +147,7 @@ holder that no longer exists and makes it wait out an interval for nothing.
    the certificate Secret.
 3. Restore the Secrets and the verification-policy ConfigMaps.
 4. Restore the `PtahRealm` objects, then the seven namespaced kinds with their
-   status, then the plan chunks.
+   status, then the plan chunks and result records.
 5. Start the manager. It re-reads the database before it plans.
 
 Do not start the manager between steps. Its first reconciliation will act on

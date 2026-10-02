@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	corev1 "k8s.io/api/core/v1"
+	recordapi "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -36,7 +36,7 @@ func (c *identifiedClient) Create(ctx context.Context, obj client.Object, opts .
 func newStore(t *testing.T) Store {
 	t.Helper()
 	scheme := runtime.NewScheme()
-	if err := corev1.AddToScheme(scheme); err != nil {
+	if err := recordapi.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
 	c := &identifiedClient{Client: fake.NewClientBuilder().WithScheme(scheme).Build()}
@@ -168,7 +168,7 @@ func TestPublicationBindsEveryIdentity(t *testing.T) {
 }
 
 func TestStorageDamageCannotProduceReceipt(t *testing.T) {
-	for _, damage := range []string{"missing chunk", "replaced chunk", "corrupt chunk", "changed owner", "mutable chunk", "extra data", "deleting chunk", "wrong type", "missing complete", "corrupt complete", "corrupt manifest"} {
+	for _, damage := range []string{"missing chunk", "replaced chunk", "corrupt chunk", "changed owner", "empty chunk", "oversized chunk", "deleting chunk", "wrong type", "missing complete", "corrupt complete", "corrupt manifest"} {
 		t.Run(damage, func(t *testing.T) {
 			s := newStore(t)
 			b := binding()
@@ -184,7 +184,7 @@ func TestStorageDamageCannotProduceReceipt(t *testing.T) {
 			if damage == "corrupt manifest" {
 				target = name
 			}
-			obj := &corev1.Secret{}
+			obj := &recordapi.PtahResultRecord{}
 			if err := s.Reader.Get(t.Context(), client.ObjectKey{Namespace: b.Namespace, Name: target}, obj); err != nil {
 				t.Fatal(err)
 			}
@@ -198,20 +198,19 @@ func TestStorageDamageCannotProduceReceipt(t *testing.T) {
 					obj.UID = "replacement"
 				case "changed owner":
 					obj.OwnerReferences[0].UID = "replacement"
-				case "mutable chunk":
-					value := false
-					obj.Immutable = &value
-				case "extra data":
-					obj.Data["extra"] = []byte("uncommitted")
+				case "empty chunk":
+					obj.Spec.Data = nil
+				case "oversized chunk":
+					obj.Spec.Data = bytes.Repeat([]byte("x"), ChunkBytes+1)
 				case "deleting chunk":
 					obj.Finalizers = []string{"test.example/hold"}
 				case "wrong type":
-					obj.Type = corev1.SecretTypeOpaque
+					obj.Spec.Type = "credential"
 				default:
-					obj.Data["data"][0] ^= 1
+					obj.Spec.Data[0] ^= 1
 				}
 				// The fake deliberately permits corruption a real immutable
-				// Secret refuses, to test readback independently of admission.
+				// record refuses, to test readback independently of admission.
 				if err := s.Client.Update(t.Context(), obj); err != nil {
 					t.Fatal(err)
 				}
@@ -303,7 +302,7 @@ func TestSizeDigestAndInvalidBindingRefusedBeforeWrites(t *testing.T) {
 			if _, err := s.Publish(t.Context(), row.b, row.payload, row.sum); !errors.Is(err, ErrInvalid) {
 				t.Fatalf("invalid upload: %v", err)
 			}
-			list := &corev1.SecretList{}
+			list := &recordapi.PtahResultRecordList{}
 			if err := s.Client.List(t.Context(), list); err != nil || len(list.Items) != 0 {
 				t.Fatal("invalid upload wrote objects")
 			}
@@ -322,7 +321,7 @@ func TestMaximumPayloadSurvivesNewStore(t *testing.T) {
 	if err != nil || loaded != receipt || !bytes.Equal(got, payload) {
 		t.Fatalf("maximum payload read: %v", err)
 	}
-	list := &corev1.SecretList{}
+	list := &recordapi.PtahResultRecordList{}
 	if err := s.Client.List(t.Context(), list); err != nil || len(list.Items) != maxChunks+2 {
 		t.Fatalf("unexpected object count: %v", err)
 	}
@@ -413,7 +412,7 @@ func TestSupportedOperationsAndMissingAuthority(t *testing.T) {
 			if _, err := s.Publish(t.Context(), b, payload, digest(payload)); !errors.Is(err, ErrInvalid) {
 				t.Fatalf("invalid authority persisted: %v", err)
 			}
-			list := &corev1.SecretList{}
+			list := &recordapi.PtahResultRecordList{}
 			if err := s.Client.List(t.Context(), list); err != nil || len(list.Items) != 0 {
 				t.Fatal("invalid authority wrote objects")
 			}

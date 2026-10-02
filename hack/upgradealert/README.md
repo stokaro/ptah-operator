@@ -33,7 +33,7 @@ Create `intent.json` with these fields:
 | `image` | The candidate operator image pinned by digest |
 | `hookArgs` | The rendered hook container's complete argument array |
 | `chartDigest`, `valuesDigest` | `sha256:` plus the digest of the exact packaged chart and values file |
-| `crdDigests` | All nine CRD names mapped to the candidate's normalized schema digests |
+| `crdDigests` | All operator CRD names mapped to the candidate's normalized schema digests |
 | `probes` | Existing `PtahSchema` or `PtahMigration` resources, each with `kind`, `namespace`, `name`, immutable `uid` and current `generation` |
 
 Include both resource families when both are in service. Choose controlled probes
@@ -86,7 +86,7 @@ explicit probes. It never reads Secrets.
 
 - In the operator namespace: get/list/watch Jobs, get Deployments and
   ReplicaSets, and list Pods.
-- Cluster-wide: get the nine operator CRDs.
+- Cluster-wide: get the operator CRDs.
 - In each probe namespace: get and patch the named Schema or Migration only.
   Kubernetes RBAC cannot distinguish a dry-run patch from a stored patch; the
   tool sends `dryRun=All` and an optimistic resource-version precondition.

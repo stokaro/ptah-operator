@@ -82,8 +82,8 @@ func (i Intent) validate() error {
 	if len(validation.IsDNS1123Label(i.Namespace)) != 0 || len(i.HookArgs) == 0 {
 		return errors.New("upgrade intent requires a namespace and exact hook arguments")
 	}
-	if i.Manager == i.Rotator || len(i.Probes) == 0 || len(i.Probes) > 20 || len(i.CRDDigests) != 9 {
-		return errors.New("upgrade intent requires distinct runtimes, probe inventory and all nine CRD identities")
+	if i.Manager == i.Rotator || len(i.Probes) == 0 || len(i.Probes) > 20 || len(i.CRDDigests) != len(crdupgrade.Names()) {
+		return errors.New("upgrade intent requires distinct runtimes, probe inventory and the complete CRD inventory")
 	}
 	seen := map[string]bool{}
 	for _, p := range i.Probes {
@@ -93,7 +93,7 @@ func (i Intent) validate() error {
 		}
 		seen[key] = true
 	}
-	for _, name := range []string{crdupgrade.PtahSchemaCRDName, crdupgrade.PtahSchemaPlanCRDName, crdupgrade.PtahSchemaPlanChunkCRDName, crdupgrade.PtahSchemaApprovalCRDName, crdupgrade.PtahMigrationCRDName, crdupgrade.PtahMigrationPlanCRDName, crdupgrade.PtahMigrationApprovalCRDName, crdupgrade.PtahMigrationRunAcknowledgmentCRDName, crdupgrade.PtahRealmCRDName} {
+	for _, name := range crdupgrade.Names() {
 		if i.CRDDigests[name] == "" {
 			return errors.New("upgrade intent omitted an operator CRD")
 		}

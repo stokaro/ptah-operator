@@ -15,13 +15,19 @@ trust lifecycle, and controller result consumption remain unconnected.
 the protocol and authenticate the operation before calling it. The package
 cannot establish those properties by hashing a request or checking its fields.
 
-Use immutable Secrets in the resource's namespace for the upload intent,
-payload chunks, and completion record. ConfigMaps would expose plan content to
-identities that only need ordinary configuration. Secrets are access controlled,
-not inherently encrypted at rest: the cluster's existing encryption and backup
-policy still applies. A principal with Secret read access in the namespace can
-read these bytes. This access expansion must be covered by the security review
-before the receiver is enabled; no chart permissions change in this step.
+Use immutable `PtahResultRecord` objects in the resource's namespace for the
+upload intent, payload chunks, and completion record. This dedicated RBAC
+resource lets the receiver read results without permission to read database
+Secrets. Ordinary ConfigMap readers must not gain access to plans. Record read
+access exposes confidential operation data and, for the credential role, private
+delivery keys: encryption at rest and backups must explicitly cover this CRD.
+
+The schema requires the role and bounded payload, freezes the whole spec, and
+has no default or status. The reader independently checks decoded byte limits,
+metadata, owner UIDs, and publication digests. Local API-server tests publish and
+read a multi-chunk result using only `get` and `create` on this resource while
+Secret GET remains forbidden. Installed manager RBAC and record admission are
+still pending; the chart does not grant result-record writes yet.
 
 The record binds namespace, resource kind/name/UID/generation, execution binding,
 input fingerprint, operation type/ID, attempt Job name/UID, and Pod name/UID.
@@ -110,7 +116,7 @@ executor callback. The runner invokes it only after its one execution returns.
 The local TLS tests cover a lost acknowledgment after persistence, a new receiver
 reading the existing store, conflicting retransmission, invalid client/server
 trust, authority retirement at each check, a stalled body, saturation, redirects,
-and an exact 8 MiB escaping-heavy plan. They use the real Secret store over a fake
+and an exact 8 MiB escaping-heavy plan. They use the result-record store over a fake
 API client; the separate envtest suite covers the real API's storage behavior.
 Neither is a complete Job-to-controller acceptance run.
 
@@ -176,7 +182,7 @@ log protocol until the issuer, workload, and consumer integration is ready.
 Removing that installation dependency remains required for #586.
 
 Local command tests run a real child process that returns a native migration
-Apply report, persist its result through TLS and the Secret store, then lose the
+Apply report, persist its result through TLS and the result-record store, then lose the
 first acknowledgment. The runner redelivers identical bytes and starts the child
 only once, including when the execution context has been canceled after the
 first persistence. The API client in this test is fake; it does not prove a real
@@ -236,8 +242,13 @@ when a second Pod races the first credential publication.
 Metadata-only reads still require Secret GET authorization. The current chart
 does not grant it: installation integration must preserve the existing boundary
 that the manager cannot read database credentials. Do not solve that boundary by
-granting unrestricted Secret reads in workload namespaces. The result store and
-issuer need an explicit storage and RBAC design before activation.
+granting unrestricted Secret reads in workload namespaces. The result store now uses the dedicated CRD described above. The issuer and Pod
+guard still read Secrets and remain disabled in production. Their next step is
+to persist the canonical credential and original-Pod binding in a credential
+record, then project those exact bytes into an immutable Secret using CREATE
+without Secret GET. Admission must compare the projection to that record and
+protect the active record against deletion. A Secret alone must not be the
+original-Pod pin.
 
 Local API-server tests use the actual issuer, chart routing, and admission
 handlers. They prove creation/readback, metadata protection, active deletion
@@ -268,15 +279,14 @@ Before committing a new completion, it must recheck authority after the upload.
 Controllers must retain their own epoch and provenance checks when consuming a
 receipt: persistence is evidence, not permission to apply. Admission must bind
 receiver writes to the same publication intent and protect the metadata as well
-as the immutable payload. Deleting/recreating a Secret is not prevented by
-`immutable: true`.
+as the immutable payload. Spec immutability does not prevent deleting and recreating a record.
 
 Workload builders must supply the receiver configuration, projected credentials,
 and downward API identity to the implemented runner path. Controllers must use
 durable results without a correctness fallback to `pods/log`.
 
 The new TLS payload must carry usable plan bytes, not an old per-process sealed
-Plan. Storing those bytes in access-controlled Secrets removes the dependency on
+Plan. Storing those bytes in access-controlled result records removes the dependency on
 the receiving process's private key. The old log seal may be removed only as the
 new protocol stops emitting plan content to logs. Receiver CA/server/client key
 rotation, overlap, restore, and HA behavior remain separate requirements; none
@@ -289,7 +299,7 @@ still apply. SQL and publication are not an atomic transaction.
 
 ## Retention and acceptance
 
-Before enabling this path, implement guarded Secret creation and deletion,
+Before enabling this path, implement guarded result-record and credential-Secret creation and deletion,
 receiver certificates and NetworkPolicy, bounded request metrics, and receipt
 consumption and retention. Do not attach a time-only TTL to unconsumed results or
 unresolved operations. Abandoned partial publications become eligible only after
@@ -300,7 +310,8 @@ certificate authority needed for outstanding delivery credentials. Restore must
 not accept an incomplete publication or reactivate retired delivery authority.
 
 The current tests prove component publication integrity, TLS identity checking,
-bounded redelivery, Secret persistence, issuer authority predicates, and chart
+bounded redelivery, result-record persistence without Secret read permission,
+issuer authority predicates, and chart
 credential admission through a local API server. They do not prove installed
 RBAC and trust rotation, garbage collection, manager failover, Lease independence,
 or the complete Job-to-controller workflow at the supported plan limit. Those remain the

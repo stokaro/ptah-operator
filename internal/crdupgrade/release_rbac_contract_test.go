@@ -110,6 +110,7 @@ func releaseCRDNames() []string {
 		"ptahmigrationrunacknowledgments.operator.ptah.run",
 		"ptahmigrations.operator.ptah.run",
 		"ptahrealms.operator.ptah.run",
+		"ptahresultrecords.operator.ptah.run",
 		"ptahschemaapprovals.operator.ptah.run",
 		"ptahschemaplanchunks.operator.ptah.run",
 		"ptahschemaplans.operator.ptah.run",
