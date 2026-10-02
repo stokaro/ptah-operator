@@ -1,12 +1,14 @@
 package webhook_test
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"math/big"
 	"testing"
@@ -32,8 +34,11 @@ var resultSigningCA tls.Certificate
 var resultClientTrust *x509.CertPool
 var resultServerTrust []byte
 
+const resultEnrollmentNamespace = "result-enrollment-system"
+const resultEnrollmentName = "current"
+
 // This test installation supplies delivery trust explicitly. The production
-// manager still leaves issuance disabled until its trust lifecycle is wired.
+// manager requires this public policy when durable delivery is enabled.
 func setupResultCredentialIssuer() error {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -53,7 +58,23 @@ func setupResultCredentialIssuer() error {
 	resultClientTrust.AddCert(parsed)
 	resultServerTrust = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 	resultCredentialIssuer, err = resultcredentials.New(admin, admin, resultSigningCA, resultClientTrust, resultServerTrust)
-	return err
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := admin.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: resultEnrollmentNamespace}}); err != nil {
+		return err
+	}
+	if err := admin.Create(ctx, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Namespace: resultEnrollmentNamespace, Name: resultEnrollmentName}, Data: resultcredentials.EnrollmentData(der, resultServerTrust)}); err != nil {
+		return err
+	}
+	policy, err := resultcredentials.NewEnrollmentPolicy(admin, resultEnrollmentNamespace, resultEnrollmentName)
+	if err != nil {
+		return err
+	}
+	resultCredentialIssuer = resultCredentialIssuer.WithEnrollmentPolicy(policy)
+	return nil
 }
 
 func TestResultCredentialAdmission(t *testing.T) {
@@ -307,4 +328,105 @@ func TestUnrelatedPodCredentialReferences(t *testing.T) {
 		}
 		requireDenied(t, attempt(), podIntentWebhook, "result credentials may only be projected")
 	})
+}
+
+// Neither issuer nor webhook reloads its local CA during this test. Only the
+// policy changes in the API, so refusal proves the stale-replica fence.
+func TestResultEnrollmentPolicyFencesStaleReplicas(t *testing.T) {
+	f, identity, store := publicationFixture(t, false)
+	_, issuedIdentity, issuedStore := publicationFixture(t, true)
+	apiClient := clientAs(t, manager.username)
+	grant(t, resultEnrollmentNamespace, "enrollment-read", managerSubject(t), rbacv1.PolicyRule{APIGroups: []string{""}, Resources: []string{"configmaps"}, ResourceNames: []string{resultEnrollmentName}, Verbs: []string{"get"}})
+	policyRef, err := resultcredentials.NewEnrollmentPolicy(apiClient, resultEnrollmentNamespace, resultEnrollmentName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldIssuer, err := resultcredentials.New(apiClient, apiClient, resultSigningCA, resultClientTrust, resultServerTrust)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldIssuer = oldIssuer.WithEnrollmentPolicy(policyRef)
+	initialReceipt, err := oldIssuer.Ensure(t.Context(), issuedIdentity)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var candidate *recordapi.PtahResultRecord
+	interrupted := errors.New("stop before credential persistence")
+	capture := publicationWriter{Client: apiClient, before: func(record *recordapi.PtahResultRecord) error { candidate = record.DeepCopy(); return interrupted }}
+	capturingIssuer, err := resultcredentials.New(capture, apiClient, resultSigningCA, resultClientTrust, resultServerTrust)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := capturingIssuer.Ensure(t.Context(), identity); !errors.Is(err, interrupted) || candidate == nil {
+		t.Fatalf("failed to prepare legitimate credential: %v", err)
+	}
+	attempt := func() error { return apiClient.Create(t.Context(), candidate.DeepCopy(), client.DryRunAll) }
+	if err := attempt(); err != nil {
+		t.Fatalf("current policy did not admit the candidate: %v", err)
+	}
+
+	key := client.ObjectKey{Namespace: resultEnrollmentNamespace, Name: resultEnrollmentName}
+	policy := &corev1.ConfigMap{}
+	if err := apiClient.Get(t.Context(), key, policy); err != nil {
+		t.Fatal(err)
+	}
+	if err := apiClient.Update(t.Context(), policy.DeepCopy(), client.DryRunAll); !apierrors.IsForbidden(err) {
+		t.Fatalf("manager can rewrite enrollment authority: %v", err)
+	}
+	originalData := policy.DeepCopy().Data
+	restore := func() {
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), 10*time.Second)
+		defer cancel()
+		current := &corev1.ConfigMap{}
+		if err := admin.Get(ctx, key, current); err != nil {
+			t.Fatal(err)
+		}
+		current.Data = originalData
+		if err := admin.Update(ctx, current); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(restore)
+	renewed, err := x509.ParseCertificate(resultSigningCA.Certificate[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	renewed.SerialNumber = big.NewInt(2)
+	renewed.NotAfter = renewed.NotAfter.Add(time.Hour)
+	nextDER, err := x509.CreateCertificate(rand.Reader, renewed, renewed, renewed.PublicKey, resultSigningCA.PrivateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy.Data = resultcredentials.EnrollmentData(nextDER, resultServerTrust)
+	if err := admin.Update(t.Context(), policy); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := oldIssuer.Ensure(t.Context(), identity); !errors.Is(err, resultcredentials.ErrCredential) {
+		t.Fatalf("stale issuer enrolled after policy advanced: %v", err)
+	}
+	requireDenied(t, attempt(), controllerWriteWebhook, "immutable operation binding")
+	if err := admin.Get(t.Context(), client.ObjectKey{Namespace: f.namespace, Name: candidate.Name}, &recordapi.PtahResultRecord{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("refused enrollment left a canonical record: %v", err)
+	}
+	if got, err := oldIssuer.Ensure(t.Context(), issuedIdentity); err != nil || got != initialReceipt {
+		t.Fatalf("policy advancement changed already-issued authority: %v", err)
+	}
+	payload := publicationPayload(t, issuedIdentity)
+	if _, err := issuedStore.Publish(t.Context(), issuedIdentity.Binding, payload, publicationDigest(payload)); err != nil {
+		t.Fatalf("policy advancement blocked delivery by an already-issued credential: %v", err)
+	}
+
+	restore()
+	if err := attempt(); err != nil {
+		t.Fatalf("restoring the policy did not recover the same admission: %v", err)
+	}
+	if _, err := oldIssuer.Ensure(t.Context(), identity); err != nil {
+		t.Fatalf("restored policy did not recover issuance: %v", err)
+	}
+	payload = publicationPayload(t, identity)
+	if _, err := store.Publish(t.Context(), identity.Binding, payload, publicationDigest(payload)); err != nil {
+		t.Fatalf("recovered credential cannot publish: %v", err)
+	}
 }

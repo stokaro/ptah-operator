@@ -110,6 +110,13 @@ func loadTrust(config Config, writer client.Client, reader client.Reader, previo
 	if err != nil {
 		return nil, errors.New("result client signer is not trusted or usable")
 	}
+	if config.EnrollmentPolicyName != "" {
+		policy, err := resultcredentials.NewEnrollmentPolicy(reader, config.EnrollmentPolicyNamespace, config.EnrollmentPolicyName)
+		if err != nil {
+			return nil, err
+		}
+		issuer = issuer.WithEnrollmentPolicy(policy)
+	}
 	signerLeaf, _ := x509.ParseCertificate(signer.Certificate[0]) // New verified this exact signer.
 
 	expires := leaf.NotAfter
@@ -193,4 +200,18 @@ func (s *Service) ValidateRecordCreate(ctx context.Context, record *api.PtahResu
 }
 func (s *Service) AuthorizePublication(ctx context.Context, binding resultstore.Binding) (resultdelivery.Identity, error) {
 	return s.trust.Load().issuer.AuthorizePublication(ctx, binding)
+}
+
+// Readiness is a cached, bounded observation. Admission still reads the policy
+// on each enrollment, so this polling interval cannot grant a stale signer
+// authority. Existing results remain readable even when enrollment is unavailable.
+func (s *Service) refreshTrust(ctx context.Context) {
+	if err := s.reload(); err != nil {
+		s.enrollmentReady.Store(false)
+		return
+	}
+	snapshot := s.trust.Load()
+	checkCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	s.enrollmentReady.Store(snapshot.issuer.CheckEnrollment(checkCtx) == nil)
 }

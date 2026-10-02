@@ -15,11 +15,13 @@ import (
 	"time"
 
 	api "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/resultcredentials"
 	"github.com/stokaro/ptah-operator/internal/resultdelivery"
 	"github.com/stokaro/ptah-operator/internal/resultdelivery/resulttest"
 	"github.com/stokaro/ptah-operator/internal/resultstore"
 	"github.com/stokaro/ptah-operator/internal/runner"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -286,5 +288,72 @@ func TestTrustProjectionReadPinsOneGeneration(t *testing.T) {
 	}
 	if len(observed) != 6 || trustDigest(observed) != trustDigest(material) || trustDigest(observed) == trustDigest(replacement) {
 		t.Fatal("one load mixed projected generations")
+	}
+}
+
+func TestServiceEnrollmentPolicyRemovesStaleReplicaFromReadiness(t *testing.T) {
+	config := mountedTrust(t)
+	material := trustMaterial(t, config)
+	config.ReloadInterval = 5 * time.Millisecond
+	config.EnrollmentPolicyNamespace, config.EnrollmentPolicyName = "operator", "result-enrollment"
+	ca, err := tls.X509KeyPair(material["client-ca.crt"], material["client-ca.key"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Namespace: "operator", Name: "result-enrollment", UID: "policy-uid"}, Data: resultcredentials.EnrollmentData(ca.Certificate[0], material["ca.crt"])}
+	f := resulttest.New(t, "schema-observe")
+	c := &identifyingAPI{Client: f.Client(t, policy)}
+	s, err := New(config, c, noSecrets{Reader: c})
+	if err != nil {
+		t.Fatal(err)
+	}
+	running(t, s)
+	credential, err := s.Ensure(t.Context(), f.Identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := &api.PtahResultRecord{}
+	if err := c.Get(t.Context(), client.ObjectKey{Namespace: f.Job.Namespace, Name: credential.Name}, record); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ValidateRecordCreate(t.Context(), record); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := c.Get(t.Context(), client.ObjectKeyFromObject(policy), policy); err != nil {
+		t.Fatal(err)
+	}
+	correct := maps.Clone(policy.Data)
+	policy.Data["clientCA"] = "retired"
+	if err := c.Update(t.Context(), policy); err != nil {
+		t.Fatal(err)
+	}
+	// No mount reload is needed for the admission refusal: it reads the API.
+	if err := s.ValidateRecordCreate(t.Context(), record); err == nil {
+		t.Fatal("stale service admitted new enrollment")
+	}
+	deadline := time.Now().Add(time.Second)
+	for s.Ready(nil) == nil {
+		if time.Now().After(deadline) {
+			t.Fatal("stale service remained ready")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if repeated, err := s.Ensure(t.Context(), f.Identity); err != nil || repeated != credential {
+		t.Fatalf("stale enrollment policy destroyed issued authority: %v", err)
+	}
+	if _, err := s.AuthorizePublication(t.Context(), f.Identity.Binding); err != nil {
+		t.Fatalf("stale enrollment policy destroyed delivery authority: %v", err)
+	}
+	policy.Data = correct
+	if err := c.Update(t.Context(), policy); err != nil {
+		t.Fatal(err)
+	}
+	deadline = time.Now().Add(time.Second)
+	for s.Ready(nil) != nil {
+		if time.Now().After(deadline) {
+			t.Fatal("service did not recover after policy matched")
+		}
+		time.Sleep(time.Millisecond)
 	}
 }

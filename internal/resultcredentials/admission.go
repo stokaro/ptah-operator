@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"maps"
 	"reflect"
@@ -88,7 +89,17 @@ func (i *Issuer) ValidateRecordCreate(ctx context.Context, record *api.PtahResul
 	if _, err := i.validate(secret, identity); err != nil {
 		return err
 	}
-	return (resultauthority.Authorizer{Reader: i.reader}).Check(ctx, identity)
+	// Trust overlap permits already-issued credentials, not enrollment by a
+	// retired signer. A stale replica and a current replica must make the same
+	// refusal after the rotator advances the direct-read policy.
+	leaf, err := x509.ParseCertificate(certificate.Certificate[0])
+	if err != nil || leaf.CheckSignatureFrom(i.ca) != nil {
+		return ErrCredential
+	}
+	if err := (resultauthority.Authorizer{Reader: i.reader}).Check(ctx, identity); err != nil {
+		return err
+	}
+	return i.CheckEnrollment(ctx)
 }
 
 // ValidateRecordUpdate freezes metadata as well as the CRD's immutable spec.

@@ -359,7 +359,8 @@ workflow and do not complete the default-logging acceptance matrix.
 
 ## Manager runtime
 
-`--result-endpoint` and `--result-cert-dir` must be supplied together. The first
+`--result-endpoint`, `--result-cert-dir`, and `--result-enrollment-policy` must
+be supplied together. The first
 also selects durable arguments and credential projection in every Job builder.
 `--result-bind-address` defaults to `:9444`. Without the endpoint, existing
 installations continue to use logs.
@@ -401,8 +402,9 @@ root removal.
 The service runs independently of leader election and family reconcile workers.
 It starts the receiver and background reader together, cancels their API work
 and closes TLS connections on shutdown, and reports not ready before startup,
-after shutdown, on an invalid trust update, or when its serving chain or client
-signer expires.
+after shutdown, on an invalid trust update, when its enrollment snapshot is stale
+or the public policy is unavailable, or when its serving chain or client signer
+expires.
 Listener or reader termination stops the service. HTTP diagnostics cannot emit
 client identities or payloads. Manager configuration currently bounds uploads
 to one with a two-minute deadline, and background reads to one worker with four
@@ -435,6 +437,73 @@ generation, invalid credential receipts, and cancellation to their expected
 outcomes. They do not prove installed reconciliation, kubelet Secret projection,
 API admission, leader election, or a database workflow. The controllers still
 retain their existing missing-Job and unknown-outcome behavior.
+
+## Enrollment fence for coordinated rotation
+
+The manager's `--result-enrollment-policy` names a public ConfigMap in its
+ServiceAccount namespace. The ConfigMap has exactly `version: "1"`, `clientCA`
+(the SHA-256 of the selected client CA's DER certificate), and `serverTrust`
+(the SHA-256 of the exact PEM bundle issued to new runners). It contains no keys.
+The installation rotator owns writes; the manager needs only GET on this exact
+ConfigMap. A missing, terminating, malformed, foreign, or unreadable policy
+refuses new issuance. The chart has not provisioned this object or its RBAC yet.
+
+An issuer reads the policy directly before generating a credential and again
+before its canonical-record CREATE. Admission separately requires the current
+local signer, rather than any signer in overlap trust, and reads the policy
+immediately before accepting the record. A replica still holding old mounted
+material cannot keep enrolling under it after the policy changes. The service
+also checks the policy in its background refresh, with a five-second deadline,
+and fails readiness while the mounted snapshot differs. Readiness is advisory;
+each enrollment's direct read is the authority check.
+
+This fence applies to new canonical records. Recreating an existing canonical
+credential's Secret projection, validating its publication, and reading a saved
+result do not require the current enrollment policy to match that credential.
+They retain the original binding, overlap-trust checks, and live operation
+authority. Changing the enrollment policy neither revokes a still-trusted
+credential nor extends its lifetime.
+
+The maximum client certificate lifetime is declared once as
+`resultcredentials.MaxCredentialLifetime` (24 hours and 12 minutes). A future
+rotation transition must first persist and read back the new enrollment policy.
+Only then may it persist the start of the retirement wait; a timestamp taken
+before a delayed policy write would shorten the protection window. Waiting at
+least that lifetime plus the declared clock-skew allowance bounds every old
+credential that could have passed admission before the fence changed. Lost
+acknowledgments may extend this wait, never shorten it. The rotator must still
+coordinate trust distribution and serving-certificate changes across replicas;
+the enrollment fence alone does not implement that state machine.
+
+The remaining rotation state machine will use that fence in this order:
+
+1. Persist replacement server/client authorities in the rotator's private journal.
+   Publish an enrollment policy for the current signer and expanded server trust,
+   then project expanded server/client trust while retaining the current serving
+   certificate and signer. Start the retirement wait only after policy readback.
+   This bounds credentials that still trust only the old server CA.
+2. After that wait, advance the policy to the replacement client signer while
+   retaining expanded server trust. Project the replacement serving certificate
+   and signer with both client roots. Start a new persisted wait after readback;
+   it bounds the remaining credentials signed by the old client CA.
+3. After the second wait and endpoint verification, publish the replacement-only
+   enrollment policy and projection. Retire the old private material only after
+   exact readback and endpoint verification. The journal must resume uncertain
+   writes at every step without shortening either wait or regenerating a candidate.
+
+Each policy write precedes the corresponding Secret update. Stale replicas may
+be temporarily unready; the rotator's own policy and Secret writes must not
+require the manager webhook to be available. These are installation requirements,
+not completed rotation behavior.
+
+Local tests cover stale local signers, changed policy between generation and
+CREATE, missing/malformed policy, API failure, cancellation, and readiness
+recovery. A real API-server test changes only the ConfigMap while issuer and
+webhook retain their old CA, verifies both refuse new enrollment, and verifies
+an already-issued credential still publishes a result. The manager identity
+can read the exact policy and cannot update it in this fixture. Restoring the
+policy admits the same previously refused request. These tests establish the
+fence, not installed rotation or cluster-wide least-privilege permissions.
 
 ## Installation still required
 

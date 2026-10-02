@@ -72,7 +72,7 @@ func main() {
 	var controllerServiceAccountUsername string
 	var webhookCertDir string
 	var webhookPort int
-	var resultEndpoint, resultCertDir, resultAddress string
+	var resultEndpoint, resultCertDir, resultAddress, resultEnrollmentPolicy string
 	var defaultTolerationsEnabled bool
 	var defaultNotReadyTolerationSeconds int64
 	var defaultUnreachableTolerationSeconds int64
@@ -93,6 +93,7 @@ func main() {
 	flag.IntVar(&webhookPort, "webhook-port", 9443, "approval webhook TLS port")
 	flag.StringVar(&resultEndpoint, "result-endpoint", "", "HTTPS origin for durable runner results; requires result-cert-dir")
 	flag.StringVar(&resultCertDir, "result-cert-dir", "", "directory containing dedicated result server and client-signing trust")
+	flag.StringVar(&resultEnrollmentPolicy, "result-enrollment-policy", "", "public credential enrollment ConfigMap in the manager ServiceAccount namespace")
 	flag.StringVar(&resultAddress, "result-bind-address", ":9444", "listen address for the durable result receiver")
 	flag.BoolVar(&defaultTolerationsEnabled, "default-tolerations-enabled", true, "whether kube-apiserver enables DefaultTolerationSeconds admission")
 	flag.Int64Var(&defaultNotReadyTolerationSeconds, "default-not-ready-toleration-seconds", 300, "expected kube-apiserver not-ready NoExecute toleration seconds")
@@ -178,13 +179,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	if (resultEndpoint == "") != (resultCertDir == "") {
-		log.Error(fmt.Errorf("result-endpoint and result-cert-dir must be configured together"), "invalid result delivery configuration")
+	if (resultEndpoint == "") != (resultCertDir == "") || (resultEndpoint == "") != (resultEnrollmentPolicy == "") {
+		log.Error(fmt.Errorf("result-endpoint, result-cert-dir, and result-enrollment-policy must be configured together"), "invalid result delivery configuration")
 		os.Exit(1)
 	}
 	var results *resultservice.Service
 	if resultEndpoint != "" {
-		results, err = resultservice.New(resultservice.Config{Endpoint: resultEndpoint, Address: resultAddress, CertificateDirectory: resultCertDir, Uploads: 1, UploadTimeout: 2 * time.Minute, Consumer: resultconsumer.Options{Workers: 1, Entries: 4, Timeout: 30 * time.Second, Retention: time.Minute}}, manager.GetClient(), manager.GetAPIReader())
+		results, err = resultservice.New(resultservice.Config{Endpoint: resultEndpoint, Address: resultAddress, CertificateDirectory: resultCertDir, EnrollmentPolicyNamespace: managerIdentity[2], EnrollmentPolicyName: resultEnrollmentPolicy, Uploads: 1, UploadTimeout: 2 * time.Minute, Consumer: resultconsumer.Options{Workers: 1, Entries: 4, Timeout: 30 * time.Second, Retention: time.Minute}}, manager.GetClient(), manager.GetAPIReader())
 		if err != nil {
 			log.Error(err, "configure durable result service")
 			os.Exit(1)

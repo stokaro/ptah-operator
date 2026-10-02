@@ -22,25 +22,27 @@ import (
 )
 
 type Config struct {
-	Endpoint, Address, CertificateDirectory string
-	Uploads                                 int
-	UploadTimeout                           time.Duration
-	Consumer                                resultconsumer.Options
-	ReloadInterval                          time.Duration
+	Endpoint, Address, CertificateDirectory         string
+	Uploads                                         int
+	UploadTimeout                                   time.Duration
+	Consumer                                        resultconsumer.Options
+	ReloadInterval                                  time.Duration
+	EnrollmentPolicyNamespace, EnrollmentPolicyName string
 }
 
 type Service struct {
-	Consumer     *resultconsumer.Reader
-	server       *http.Server
-	address      string
-	ready        atomic.Bool
-	started      atomic.Bool
-	trust        atomic.Pointer[trustSnapshot]
-	reloadFailed atomic.Bool
-	reloadMu     sync.Mutex
-	config       Config
-	writer       client.Client
-	reader       client.Reader
+	Consumer        *resultconsumer.Reader
+	server          *http.Server
+	address         string
+	ready           atomic.Bool
+	started         atomic.Bool
+	trust           atomic.Pointer[trustSnapshot]
+	reloadFailed    atomic.Bool
+	enrollmentReady atomic.Bool
+	reloadMu        sync.Mutex
+	config          Config
+	writer          client.Client
+	reader          client.Reader
 }
 
 // New never generates or fetches trust through the Kubernetes API. Both replicas
@@ -54,6 +56,9 @@ func New(config Config, writer client.Client, reader client.Reader) (*Service, e
 	if _, _, err := net.SplitHostPort(config.Address); err != nil {
 		return nil, errors.New("invalid result service listen address")
 	}
+	if (config.EnrollmentPolicyName == "") != (config.EnrollmentPolicyNamespace == "") {
+		return nil, errors.New("result enrollment policy needs both namespace and name")
+	}
 	if config.ReloadInterval == 0 {
 		config.ReloadInterval = 5 * time.Second
 	}
@@ -64,6 +69,7 @@ func New(config Config, writer client.Client, reader client.Reader) (*Service, e
 	if err := service.reload(); err != nil {
 		return nil, err
 	}
+	service.enrollmentReady.Store(config.EnrollmentPolicyName == "")
 	trust := service.trust.Load()
 	store := resultstore.Store{Client: writer, Reader: reader}
 	receiver, err := resultdelivery.NewReceiver(resultdelivery.ReceiverConfig{Store: store, Authorize: (resultauthority.Authorizer{Reader: reader}).Check, VerifyClient: service.verifyClient, MaxConcurrent: config.Uploads, Timeout: config.UploadTimeout})
@@ -87,7 +93,7 @@ func New(config Config, writer client.Client, reader client.Reader) (*Service, e
 
 func (*Service) NeedLeaderElection() bool { return false }
 func (s *Service) Ready(*http.Request) error {
-	if !s.ready.Load() || s.reloadFailed.Load() || !time.Now().Before(s.trust.Load().notAfter) {
+	if !s.ready.Load() || !s.enrollmentReady.Load() || s.reloadFailed.Load() || !time.Now().Before(s.trust.Load().notAfter) {
 		return errors.New("result service is not ready")
 	}
 	return nil
@@ -117,13 +123,12 @@ func (s *Service) Start(ctx context.Context) error {
 		ticker := time.NewTicker(s.config.ReloadInterval)
 		defer ticker.Stop()
 		for {
+			s.refreshTrust(runCtx)
 			select {
 			case <-runCtx.Done():
 				return
 			case <-ticker.C:
-				// Keep the last validated snapshot, but remove this replica from
-				// readiness until mounted trust can be validated again.
-				_ = s.reload()
+
 			}
 		}
 	}()

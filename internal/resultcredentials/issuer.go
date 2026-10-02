@@ -33,6 +33,11 @@ import (
 	"github.com/stokaro/ptah-operator/internal/resultdelivery/jobconfig"
 )
 
+// MaxCredentialLifetime includes the longest supported Job, delivery grace,
+// and issuance backdating. CA retirement must wait at least this long after
+// enrollment is fenced, plus the installation's clock-skew allowance.
+const MaxCredentialLifetime = 24*time.Hour + 12*time.Minute
+
 var ErrCredential = errors.New("result delivery credential is absent, invalid, or bound to another attempt")
 
 const (
@@ -55,6 +60,7 @@ type Issuer struct {
 	signer      crypto.Signer
 	roots       *x509.CertPool
 	serverTrust []byte
+	enrollment  *EnrollmentPolicy
 }
 
 // New requires a direct API reader, a dedicated client signer, the complete
@@ -115,6 +121,9 @@ func (i *Issuer) Ensure(ctx context.Context, identity resultdelivery.Identity) (
 	existing := &api.PtahResultRecord{}
 	err = i.reader.Get(ctx, key, existing)
 	if apierrors.IsNotFound(err) {
+		if err := i.CheckEnrollment(ctx); err != nil {
+			return Credential{}, err
+		}
 		// Cover the supported Job horizon, termination grace, and bounded delivery.
 		// An operation may still refuse its own elapsed execution deadline; issuing
 		// a reporting credential never changes that deadline or restarts its SQL.
@@ -132,6 +141,9 @@ func (i *Issuer) Ensure(ctx context.Context, identity resultdelivery.Identity) (
 		}
 		record, err := credentialRecord(secret)
 		if err != nil {
+			return Credential{}, err
+		}
+		if err := i.CheckEnrollment(ctx); err != nil {
 			return Credential{}, err
 		}
 		if err := i.writer.Create(ctx, record); err != nil && !apierrors.IsAlreadyExists(err) {
@@ -234,7 +246,7 @@ func (i *Issuer) validate(secret *corev1.Secret, identity resultdelivery.Identit
 	if _, err := leaf.Verify(x509.VerifyOptions{Roots: i.roots, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}); err != nil {
 		return Credential{}, ErrCredential
 	}
-	if leaf.NotAfter.Sub(leaf.NotBefore) > 24*time.Hour+12*time.Minute || leaf.KeyUsage != x509.KeyUsageDigitalSignature || len(leaf.ExtKeyUsage) != 1 || leaf.ExtKeyUsage[0] != x509.ExtKeyUsageClientAuth {
+	if leaf.NotAfter.Sub(leaf.NotBefore) > MaxCredentialLifetime || leaf.KeyUsage != x509.KeyUsageDigitalSignature || len(leaf.ExtKeyUsage) != 1 || leaf.ExtKeyUsage[0] != x509.ExtKeyUsageClientAuth {
 		return Credential{}, ErrCredential
 	}
 	return Credential{Name: secret.Name, UID: secret.UID, NotAfter: leaf.NotAfter}, nil
