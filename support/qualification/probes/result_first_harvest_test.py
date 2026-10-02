@@ -5,7 +5,7 @@ import json
 import pathlib
 import unittest
 
-from result_first_harvest import publication, size_fixture
+from result_first_harvest import publication, size_fixture, oversized_refusal
 
 
 def digest(data):
@@ -40,6 +40,75 @@ class SizeFixtureTests(unittest.TestCase):
         for engine in ('', 'postgres', 'MySQL', 'sqlite'):
             with self.subTest(engine=engine), self.assertRaises(ValueError):
                 size_fixture(engine)
+
+
+class OversizedRefusalTests(unittest.TestCase):
+    def fixture(self):
+        identity = 'sha256:' + 'a' * 64
+        schema = {'metadata': {'uid': 'original', 'generation': 1}, 'status': {
+            'phase': 'Failed', 'source': {'digest': identity, 'verified': True},
+            'target': {'coordinationDigest': identity, 'identityDigest': identity},
+            'conditions': [{'type': 'ReconciliationFailed', 'status': 'True',
+                            'reason': 'OperationFailed', 'observedGeneration': 1}]}}
+        payload = {'operation': 'plan', 'operationId': 'original-operation', 'childExitCode': 0,
+                   'coordinationDigest': identity, 'targetIdentityDigest': identity,
+                   'error': {'code': 'invalid_plan_output', 'message':
+                       'plan output exceeds the configured plan limit: saved file has 8388609 bytes; limit is 8388608'}}
+        return schema, payload, identity
+
+    def test_accepts_exact_bound_and_bindings(self):
+        schema, payload, identity = self.fixture()
+        oversized_refusal(schema, payload, identity, 'original-operation')
+        for engine in ('postgresql', 'mysql'):
+            _, repeated, suffix, _ = size_fixture(engine)
+            _, oversize_repeated, oversize_suffix, _ = size_fixture(engine, 8388609)
+            self.assertEqual(oversize_repeated * 6 + oversize_suffix, repeated * 6 + suffix + 1)
+        for size in (0, 8388607, 8388610):
+            with self.assertRaises(ValueError):
+                size_fixture('mysql', size)
+
+    def test_refuses_wrong_size_target_dispatch_and_leaked_plan(self):
+        changes = [(key, value) for key, value in (
+            ('operation', 'apply'), ('operationId', 'replacement'), ('childExitCode', 1),
+            ('coordinationDigest', 'sha256:' + 'b' * 64),
+            ('targetIdentityDigest', 'sha256:' + 'b' * 64),
+            ('stdout', 'SQL'), ('planContentDigest', 'sha256:' + 'a' * 64),
+            ('planOutcome', 'changes'), ('mutationStarted', True), ('uncertain', True),
+            ('truncation', {'stdout': True}), ('truncation', {}), ('error', {'code': 'other'}))]
+        schema, payload, identity = self.fixture()
+        for key, value in changes:
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                oversized_refusal(schema, {**payload, key: value}, identity, 'original-operation')
+        for size in ('8388608', '8388610'):
+            bad = copy.deepcopy(payload)
+            bad['error']['message'] = bad['error']['message'].replace('8388609', size)
+            with self.subTest(size=size), self.assertRaises(ValueError):
+                oversized_refusal(schema, bad, identity, 'original-operation')
+
+    def test_accepts_native_refusal_with_an_undispatched_retry_claim(self):
+        folder = pathlib.Path(__file__).resolve().parents[1] / 'evidence/result-oversized-2026-10-03/postgresql'
+        schema = json.loads((folder / 'refused-resource.json').read_text())
+        payload = json.loads((folder / 'refused-result.json').read_text())
+        manifest = json.loads((folder / 'manifest.json').read_text())
+        self.assertEqual(schema['status']['activeOperation']['attempt'], 2)
+        self.assertFalse(schema['status']['activeOperation'].get('jobUID'))
+        oversized_refusal(schema, payload, schema['status']['source']['digest'], manifest['binding']['operationID'])
+
+    def test_refuses_unverified_stale_or_published_resource(self):
+        mutations = {
+            'missing UID': lambda s: s['metadata'].update(uid=''),
+            'stale condition': lambda s: s['metadata'].update(generation=2),
+            'unverified': lambda s: s['status']['source'].update(verified=False),
+            'foreign artifact': lambda s: s['status']['source'].update(digest='foreign'),
+            'published plan': lambda s: s['status'].update(plan={'name': 'unexpected'}),
+            'missing refusal': lambda s: s['status'].update(conditions=[]),
+        }
+        for name, mutate in mutations.items():
+            with self.subTest(name=name):
+                schema, payload, identity = self.fixture()
+                mutate(schema)
+                with self.assertRaises(ValueError):
+                    oversized_refusal(schema, payload, identity, 'original-operation')
 
 
 class PublicationTests(unittest.TestCase):

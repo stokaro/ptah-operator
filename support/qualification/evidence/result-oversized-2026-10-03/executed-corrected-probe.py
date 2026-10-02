@@ -99,9 +99,9 @@ def oversized_refusal(schema, payload, artifact_digest, operation_id):
         if not re.fullmatch('sha256:[0-9a-f]{64}', expected) or payload.get(key) != expected:
             raise ValueError('The refusal belongs to another target')
     if (payload.get('operation') != 'plan' or not operation_id or payload.get('operationId') != operation_id
-            or payload.get('childExitCode') != 0 or payload.get('truncation') is not None
+            or payload.get('childExitCode') != 0
             or any(payload.get(key) for key in ('stdout', 'planContentDigest', 'planOutcome',
-                                               'mutationStarted', 'uncertain'))):
+                                               'mutationStarted', 'uncertain', 'truncation'))):
         raise ValueError('The oversized Plan dispatched incorrectly or exposed executable bytes')
     error = payload.get('error') or {}
     if (error.get('code') != 'invalid_plan_output'

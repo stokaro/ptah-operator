@@ -1142,3 +1142,26 @@ The recorded runtime images are development identities. The database is
 removed and namespace deletion follows ordinary retention. This closes this
 engine/minor maximum row; maximum-plus-one and the other supported minors remain
 open. PostgreSQL's unchanged maximum proof is reused, not rerun.
+
+
+### Native maximum-plus-one refusal without logs
+
+[Installed boundary refusal evidence](evidence/result-oversized-2026-10-03/summary.json)
+records PostgreSQL 17.11 and MySQL 8.4.11 on Kubernetes 1.37 Linux amd64.
+Each native executor saves exactly 8,388,609 plan bytes and exits zero; the
+runner returns `invalid_plan_output` with the actual size and unchanged
+8,388,608-byte limit. The original receipt remains readable after its producing
+Pod/logs are removed and both managers are replaced before consumption.
+Independent API and database readback confirms no plan, plan chunks, Apply
+Jobs or native tables, with standard `10Mi` logging on every node.
+
+The initial PostgreSQL probe failed because it required an empty active claim.
+The controller retains an undispatched read-only retry claim while recording
+its failure. The archive preserves that failure and the actual reading used by
+the corrected verifier's regression. Verification reuses the same native
+receipt; PostgreSQL Plan was not rerun. Delayed readback also accounts for
+normal completed-Job cleanup by positively identifying the original retained
+Plan intent and credential, with no Apply authority. MySQL's corrected native
+probe exits zero. Both test databases are removed; namespace deletion follows
+ordinary retention. The remaining default-log boundary rows are Kubernetes
+1.35 and 1.36. These cases do not complete lifecycle or final acceptance.

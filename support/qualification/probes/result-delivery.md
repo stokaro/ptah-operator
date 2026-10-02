@@ -229,6 +229,23 @@ checks the resulting size, all 16 planstore chunks, and their reconstructed
 SHA-256. A changed serializer that produces a different size fails the probe.
 It does not silently lower the maximum-size requirement.
 
+For the existing maximum-plus-one refusal row, set
+`RESULT_PROBE_PLAN_BYTES=8388609`. The same fixture adds exactly one byte to
+its native saved plan. The runner must report `invalid_plan_output` with the
+actual saved-file size and unchanged limit, after its native child exits zero.
+The probe removes the producing Pod/logs and replaces both managers before
+first consumption, just as for the maximum. It requires a verified artifact,
+matching operation and target bindings, no executable result bytes, and no
+plan, plan chunks, Apply Job, or native database tables. The refusal does not
+create an approval. A one-hour failure retry interval keeps this single
+read-only attempt available for inspection.
+
+`oversized-refusal.json`, `refused-resource.json`, and `refused-result.json`
+record that outcome. The controller may retain an undispatched retry claim
+when it records the refusal; the proof requires the current-generation refusal
+and an unchanged census of one Plan Job, rather than an empty active claim.
+The native maximum-plus-one regression reading is retained with the evidence.
+
 ## Fault and assertions
 
 A namespace-scoped admission binding holds only Plan credential projections.

@@ -1,0 +1,214 @@
+{
+  "apiVersion": "operator.ptah.run/v1alpha1",
+  "kind": "PtahSchema",
+  "metadata": {
+    "creationTimestamp": "2026-10-02T23:05:09Z",
+    "finalizers": [
+      "operator.ptah.run/active-operation"
+    ],
+    "generation": 1,
+    "name": "first-harvest",
+    "namespace": "ptah-result-oversized-mysql",
+    "resourceVersion": "1000135918",
+    "uid": "5cdfa57e-d6d3-4278-b218-1db09f9fa64a"
+  },
+  "spec": {
+    "desired": {
+      "ociRef": "oci://e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/schemas/demo@sha256:90a94e3c933eeee288bafaea86dc10b3dd91d3849618ef579108a2e7fdb9f833",
+      "registryAuthFrom": {
+        "dockerConfigJSONKey": ".dockerconfigjson",
+        "mode": "Environment",
+        "name": "demo-registry",
+        "passwordKey": "password",
+        "tokenKey": "token",
+        "usernameKey": "username"
+      },
+      "transport": {
+        "plainHTTP": true
+      },
+      "verificationPolicyFrom": {
+        "key": "policy.yaml",
+        "name": "demo-verification-policy"
+      }
+    },
+    "execution": {
+      "activeDeadlineSeconds": 900,
+      "connectTimeout": "30s",
+      "failureRetryInterval": "1h",
+      "resources": {
+        "limits": {
+          "cpu": "1",
+          "memory": "512Mi"
+        },
+        "requests": {
+          "cpu": "100m",
+          "memory": "64Mi"
+        }
+      }
+    },
+    "interval": "2h",
+    "policy": {
+      "allowDestructive": false,
+      "apply": "OnApproval",
+      "driftSeverity": "all",
+      "lockTimeout": "30s",
+      "transactionMode": "none"
+    },
+    "suspend": false,
+    "target": {
+      "coordinationKey": "acceptance/ptah-result-oversized-mysql",
+      "engine": "MySQL",
+      "sharedRealm": false,
+      "urlFrom": {
+        "key": "url",
+        "name": "first-harvest-database"
+      }
+    }
+  },
+  "status": {
+    "activeOperation": {
+      "attempt": 2,
+      "coordinationDigest": "sha256:168088b40812169589c4abf4587f296883fa9965f0019a00ad18706b710cc620",
+      "executionBindingID": "v1-93c73f84dcd9852ec18e1adace360b18",
+      "id": "sha256:e177036cc5354755b1b6c7d2d7bc47e55a9f384db23912d2510b69d34b0ceed0",
+      "inputFingerprint": "sha256:34df6f280f43128513f9c53f8ed38b9de6f9161c00969d386d3b41cc5bf64d01",
+      "jobName": "ptah-plan-first-harvest-47d094af52567ef3",
+      "leaseDurationSeconds": 960,
+      "observationConnectTimeout": "30s",
+      "observationLockTimeout": "30s",
+      "observationSeverity": "all",
+      "planSealPublicKeyDigest": "sha256:2e5b3e35feae3bd310cf49f1bda0f38ae85ff5ea49d92745b3b00b42501075bd",
+      "source": {
+        "digest": "sha256:90a94e3c933eeee288bafaea86dc10b3dd91d3849618ef579108a2e7fdb9f833",
+        "registryAuthFrom": {
+          "dockerConfigJSONKey": ".dockerconfigjson",
+          "mode": "Environment",
+          "name": "demo-registry",
+          "passwordKey": "password",
+          "tokenKey": "token",
+          "usernameKey": "username"
+        },
+        "resolvedReference": "oci://e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/schemas/demo@sha256:90a94e3c933eeee288bafaea86dc10b3dd91d3849618ef579108a2e7fdb9f833",
+        "transport": {
+          "plainHTTP": true
+        }
+      },
+      "startedAt": "2026-10-02T23:05:39Z",
+      "target": {
+        "engine": "MySQL",
+        "urlFrom": {
+          "key": "url",
+          "name": "first-harvest-database"
+        }
+      },
+      "targetIdentityDigest": "sha256:4df9d0c38d877624a563d3e6347a056c90d259a5a314d5ea48120ae746a07ee0",
+      "type": "Plan"
+    },
+    "conditions": [
+      {
+        "lastTransitionTime": "2026-10-02T23:05:09Z",
+        "message": "Database engine \"MySQL\" is supported",
+        "observedGeneration": 1,
+        "reason": "SupportedEngine",
+        "status": "True",
+        "type": "EngineSupported"
+      },
+      {
+        "lastTransitionTime": "2026-10-02T23:05:09Z",
+        "message": "Reconciliation did not complete",
+        "observedGeneration": 1,
+        "reason": "OperationFailed",
+        "status": "False",
+        "type": "Ready"
+      },
+      {
+        "lastTransitionTime": "2026-10-02T23:06:59Z",
+        "message": "invalid_plan_output: plan output exceeds the configured plan limit: saved file has 8388609 bytes; limit is 8388608",
+        "observedGeneration": 1,
+        "reason": "OperationFailed",
+        "status": "True",
+        "type": "ReconciliationFailed"
+      },
+      {
+        "lastTransitionTime": "2026-10-02T23:05:18Z",
+        "message": "Desired OCI reference resolved to immutable content",
+        "observedGeneration": 1,
+        "reason": "DigestPinned",
+        "status": "True",
+        "type": "ArtifactResolved"
+      },
+      {
+        "lastTransitionTime": "2026-10-02T23:05:28Z",
+        "message": "Artifact type and verification policy were satisfied",
+        "observedGeneration": 1,
+        "reason": "PolicySatisfied",
+        "status": "True",
+        "type": "ArtifactVerified"
+      },
+      {
+        "lastTransitionTime": "2026-10-02T23:05:39Z",
+        "message": "Database schema was observed",
+        "observedGeneration": 1,
+        "reason": "Observed",
+        "status": "True",
+        "type": "DatabaseReachable"
+      },
+      {
+        "lastTransitionTime": "2026-10-02T23:05:39Z",
+        "message": "Raw drift was recorded; the authoritative managed scope is being planned",
+        "observedGeneration": 1,
+        "reason": "ScopedPlanPending",
+        "status": "Unknown",
+        "type": "DriftDetected"
+      },
+      {
+        "lastTransitionTime": "2026-10-02T23:05:39Z",
+        "message": "Convergence is unknown until scoped planning completes",
+        "observedGeneration": 1,
+        "reason": "ScopedPlanPending",
+        "status": "Unknown",
+        "type": "InSync"
+      }
+    ],
+    "executionBinding": {
+      "controllerStateVersion": 1,
+      "epoch": "v1-93c73f84dcd9852ec18e1adace360b18",
+      "executorImage": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-executor@sha256:45530f0f2c41f4d649c207fe8221dad268946ca8da13b503244805c016f3c9dd",
+      "ptahVersion": "v0.9.0-73-gf6e562c5b",
+      "runnerProtocolVersion": 1
+    },
+    "lastAttemptTime": "2026-10-02T23:05:39Z",
+    "nextReconciliationTime": "2026-10-03T00:06:59Z",
+    "observedGeneration": 1,
+    "phase": "Failed",
+    "source": {
+      "artifactType": "application/vnd.stokaro.ptah.schema.v1",
+      "digest": "sha256:90a94e3c933eeee288bafaea86dc10b3dd91d3849618ef579108a2e7fdb9f833",
+      "mediaType": "application/vnd.oci.image.manifest.v1+json",
+      "requestedReference": "oci://e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/schemas/demo@sha256:90a94e3c933eeee288bafaea86dc10b3dd91d3849618ef579108a2e7fdb9f833",
+      "resolvedAt": "2026-10-02T23:05:18Z",
+      "resolvedReference": "oci://e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/schemas/demo@sha256:90a94e3c933eeee288bafaea86dc10b3dd91d3849618ef579108a2e7fdb9f833",
+      "size": 803,
+      "verificationPolicyDigest": "sha256:e6fd539e50737a7554662ef60342989c5f4590530a602f8716380a209a510065",
+      "verificationPolicyUID": "ba935eff-2072-400c-bf5c-9f49fbc9de20",
+      "verified": true,
+      "verifiedAt": "2026-10-02T23:05:28Z"
+    },
+    "target": {
+      "coordinationDigest": "sha256:168088b40812169589c4abf4587f296883fa9965f0019a00ad18706b710cc620",
+      "driftFindingCount": 100,
+      "driftFindings": [
+        {
+          "category": "tables_added",
+          "count": 100,
+          "severity": "safe"
+        }
+      ],
+      "driftReportDigest": "sha256:0efaf3b9ef1f1b6310b63ca42e008ccefaa54cad0a040c9ce510a37577b6850e",
+      "engine": "MySQL",
+      "highestDriftSeverity": "safe",
+      "identityDigest": "sha256:4df9d0c38d877624a563d3e6347a056c90d259a5a314d5ea48120ae746a07ee0",
+      "lastObservedAt": "2026-10-02T23:05:39Z"
+    }
+  }
+}

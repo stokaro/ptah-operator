@@ -1,0 +1,101 @@
+{
+  "status": "passed",
+  "cases": [
+    {
+      "engine": "postgresql",
+      "nativeRunExitCode": 1,
+      "verifierCorrection": true,
+      "databaseVersion": "17.11",
+      "namespace": "ptah-result-oversized-postgresql",
+      "namespaceUID": "32f58279-5919-46af-9945-f90fd8d74241",
+      "resourceUID": "ca9ea5f3-1a7c-4771-a200-00b1a6d35d8d",
+      "receiptUID": "91b7eed0-2602-4223-8c6e-217643746ae8",
+      "payloadDigest": "sha256:37a407a4b37d38dab963a34be0ee67d2cec1c76730fd84bf5e5509effdaa4607",
+      "nativePlanBytes": 8388609,
+      "plans": 0,
+      "planChunks": 0,
+      "applyJobs": 0,
+      "databaseTables": 0,
+      "originalPodAbsent": true,
+      "leaderBindingRestored": true,
+      "admissionGateAbsent": true
+    },
+    {
+      "engine": "mysql",
+      "nativeRunExitCode": 0,
+      "verifierCorrection": false,
+      "databaseVersion": "8.4.11",
+      "namespace": "ptah-result-oversized-mysql",
+      "namespaceUID": "9d6c3478-060a-43e6-8a60-d4ad867a8972",
+      "resourceUID": "5cdfa57e-d6d3-4278-b218-1db09f9fa64a",
+      "receiptUID": "3c0d27a6-b1ec-4a4a-acee-2290800a5053",
+      "payloadDigest": "sha256:1099edabe3887feb07b2494c01477fe338e49b7db543b9195386a2dd2060dd4a",
+      "nativePlanBytes": 8388609,
+      "plans": 0,
+      "planChunks": 0,
+      "applyJobs": 0,
+      "databaseTables": 0,
+      "originalPodAbsent": true,
+      "leaderBindingRestored": true,
+      "admissionGateAbsent": true
+    }
+  ],
+  "kubelets": [
+    {
+      "node": "ptah-e2e-1-37-0-result-restar-5a0ef2fe7d-control-plane",
+      "kubeletVersion": "v1.37.0",
+      "architecture": "amd64",
+      "containerLogMaxSize": "10Mi"
+    },
+    {
+      "node": "ptah-e2e-1-37-0-result-restar-5a0ef2fe7d-control-plane2",
+      "kubeletVersion": "v1.37.0",
+      "architecture": "amd64",
+      "containerLogMaxSize": "10Mi"
+    },
+    {
+      "node": "ptah-e2e-1-37-0-result-restar-5a0ef2fe7d-control-plane3",
+      "kubeletVersion": "v1.37.0",
+      "architecture": "amd64",
+      "containerLogMaxSize": "10Mi"
+    },
+    {
+      "node": "ptah-e2e-1-37-0-result-restar-5a0ef2fe7d-worker",
+      "kubeletVersion": "v1.37.0",
+      "architecture": "amd64",
+      "containerLogMaxSize": "10Mi"
+    }
+  ],
+  "runtime": [
+    {
+      "name": "ptah-runtime-generated-name-prefix-boun-cert-rotator-84648zcpp4",
+      "uid": "5de618fa-3fe2-4fd1-8737-c8120a4878e3",
+      "images": [
+        {
+          "image": "sha256:314f4329ac66afea31e189577c4aaa97c387458c9ded660ce1eec0910e59fde5",
+          "imageID": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/operator@sha256:f338a4c98d77e4908426d0c4b45a1b177ffc8c2916cae3029217b9ec12cd6f36"
+        }
+      ]
+    },
+    {
+      "name": "ptah-runtime-generated-name-prefix-boundary-proof-5a0ef2fegbppb",
+      "uid": "486e07b8-219a-477b-8c87-a033ade234ae",
+      "images": [
+        {
+          "image": "sha256:f5a852193db9a6e97d6150eed0971681dd22bb714e62fae4316406f6e26b870a",
+          "imageID": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/operator-namespace-retirement@sha256:8014beb573c192f435a456196921e334cf8ba6239956bdee9b93b89789462da3"
+        }
+      ]
+    },
+    {
+      "name": "ptah-runtime-generated-name-prefix-boundary-proof-5a0ef2fehmv5m",
+      "uid": "8879c905-c47d-4738-a265-4f1c250d5665",
+      "images": [
+        {
+          "image": "sha256:f5a852193db9a6e97d6150eed0971681dd22bb714e62fae4316406f6e26b870a",
+          "imageID": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/operator-namespace-retirement@sha256:8014beb573c192f435a456196921e334cf8ba6239956bdee9b93b89789462da3"
+        }
+      ]
+    }
+  ]
+}

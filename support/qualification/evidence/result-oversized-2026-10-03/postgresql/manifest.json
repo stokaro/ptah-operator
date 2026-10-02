@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "binding": {
+    "namespace": "ptah-result-oversized-postgresql",
+    "kind": "PtahSchema",
+    "name": "first-harvest",
+    "uid": "ca9ea5f3-1a7c-4771-a200-00b1a6d35d8d",
+    "generation": 1,
+    "executionBindingID": "v1-441bac4cc36d108b4c965ccfe737c19b",
+    "inputFingerprint": "sha256:e3f45764b2ef97ee14f6284ea03086b85515f1da7b27efc3dce24994cf7edc20",
+    "operation": "plan",
+    "operationID": "sha256:090538cfe83fd50d60bd2570632f62b88dd5c98c6f071483db9f78e6fa8dfa36",
+    "jobName": "ptah-plan-first-harvest-1fea828dadbe4452",
+    "jobUID": "f7b88408-cc62-4304-b625-857c280e1197",
+    "podName": "ptah-plan-first-harvest-1fea828dadbe4452-lqk7k",
+    "podUID": "e5a7d254-5a3f-45ca-8d9a-4e9688eb8f87"
+  },
+  "digest": "sha256:37a407a4b37d38dab963a34be0ee67d2cec1c76730fd84bf5e5509effdaa4607",
+  "size": 495,
+  "chunks": [
+    {
+      "digest": "sha256:37a407a4b37d38dab963a34be0ee67d2cec1c76730fd84bf5e5509effdaa4607",
+      "size": 495
+    }
+  ]
+}
