@@ -74,10 +74,16 @@ def main():
     if runner_loss not in ('0', '1') or (runner_loss == '1' and restart_receiver):
         raise ValueError('Select either runner loss or receiver replacement')
     runner_loss = runner_loss == '1'
-    concurrent = E.get('RESULT_PROBE_CONCURRENT', '0')
+    first_publication = E.get('RESULT_PROBE_FIRST_PUBLICATION', '0')
+    if first_publication not in ('0', '1'):
+        raise ValueError('RESULT_PROBE_FIRST_PUBLICATION must be 0 or 1')
+    first_publication = first_publication == '1'
+    concurrent = E.get('RESULT_PROBE_CONCURRENT', '1' if first_publication else '0')
     if concurrent not in ('0', '1') or (concurrent == '1' and (runner_loss or restart_receiver)):
         raise ValueError('Concurrent delivery must run separately from replacement or loss')
     concurrent = concurrent == '1'
+    if first_publication and not concurrent:
+        raise ValueError('First publication requires concurrent delivery')
     engine = E['RESULT_PROBE_ENGINE']
     if engine not in ('PostgreSQL', 'MySQL'):
         raise ValueError('RESULT_PROBE_ENGINE must be PostgreSQL or MySQL')
@@ -222,12 +228,14 @@ def main():
     backend_service = None
     receiver_restart = None
     concurrent_client = None
+    publication_webhook = None
+    publication_port_added = False
     proxy_name = ns + '-proxy'
     client_secret = ns + '-client'
 
     def restore_service():
         assert get('service', service_name, opns)['metadata']['uid'] == service['metadata']['uid']
-        k('patch', 'service', service_name, '--type=json', '-p', json.dumps([{'op': 'replace', 'path': '/spec/selector', 'value': original_selector}]), namespace=opns)
+        k('patch', 'service', service_name, '--type=json', '-p', json.dumps([{'op': 'replace', 'path': '/spec/selector', 'value': original_selector}, {'op': 'replace', 'path': '/spec/ports', 'value': service['spec']['ports']}]), namespace=opns)
 
     def endpoints_are(expected, name=service_name):
         slices = json.loads(k('get', 'endpointslices', '-l', 'kubernetes.io/service-name=' + name, '-o', 'json', namespace=opns))['items']
@@ -295,7 +303,7 @@ def main():
         if concurrent:
             from result_concurrent import Client
             concurrent_client = Client(E, managers, host, dec(credential))
-            spec['containers'][0]['args'].append('--pause-retry')
+            spec['containers'][0]['args'].append('--pause-first-namespace=' + ns if first_publication else '--pause-retry')
         proxy = create({'apiVersion': 'v1', 'kind': 'Pod', 'metadata': {'name': proxy_name, 'namespace': opns, 'labels': {'acceptance-proxy': ns}}, 'spec': spec})
         proxy_created = True
         k('wait', '--for=condition=Ready', 'pod/' + proxy_name, '--timeout=120s', namespace=opns)
@@ -316,6 +324,31 @@ def main():
         k('patch', 'service', service_name, '--type=json', '-p', json.dumps([{'op': 'replace', 'path': '/spec/selector', 'value': {'acceptance-proxy': ns}}]), namespace=opns)
         routed = True
         wait(lambda: endpoints_are({proxy['metadata']['uid']}), 30)
+        if first_publication:
+            ports = service['spec']['ports'] + [{'name': 'publication-barrier', 'port': 9445, 'targetPort': 9445}]
+            k('patch', 'service', service_name, '--type=json', '-p', json.dumps([{'op': 'replace', 'path': '/spec/ports', 'value': ports}]), namespace=opns)
+            publication_port_added = True
+            publication_webhook = ns + '-publication'
+            create({'apiVersion': 'admissionregistration.k8s.io/v1', 'kind': 'MutatingWebhookConfiguration',
+                    'metadata': {'name': publication_webhook}, 'webhooks': [{
+                        'name': 'first-publication.ptah.run', 'admissionReviewVersions': ['v1'],
+                        'sideEffects': 'None', 'failurePolicy': 'Fail', 'timeoutSeconds': 10,
+                        'namespaceSelector': {'matchLabels': {'kubernetes.io/metadata.name': ns}},
+                        'matchConditions': [{'name': 'intent-only', 'expression': 'object.spec.type == "intent"'}],
+                        'rules': [{'apiGroups': ['operator.ptah.run'], 'apiVersions': ['v1alpha1'],
+                                   'operations': ['CREATE'], 'resources': ['ptahresultrecords'], 'scope': 'Namespaced'}],
+                        'clientConfig': {'caBundle': dec(credential)['ca.crt'],
+                                         'service': {'namespace': opns, 'name': service_name,
+                                                     'port': 9445, 'path': '/first-publication'}}}]})
+            probe_record = next(r for r in records() if r['spec']['type'] == 'intent')
+            probe_record['metadata'] = {key: value for key, value in probe_record['metadata'].items()
+                                        if key in ('name', 'namespace', 'labels', 'ownerReferences')}
+            def publication_barrier_ready():
+                check = subprocess.run(['kubectl', '--kubeconfig', E['E2E_KUBECONFIG'],
+                                        '-n', ns, 'create', '--dry-run=server', '-f', '-'],
+                                       input=json.dumps(probe_record), text=True, capture_output=True, timeout=15)
+                return check.returncode and 'first-publication.ptah.run' in check.stderr
+            wait(publication_barrier_ready, 30)
         open_execution_gate()
         print('Apply released through the ACK-loss proxy:', job_name, flush=True)
 
@@ -347,7 +380,15 @@ def main():
             assert admin('/resume-retry', True) == 204
             print('Both receiving managers replaced before retry forwarding', flush=True)
 
-        if concurrent:
+        if first_publication:
+            from result_first_publication import run as run_first_publication
+            run_first_publication(client=concurrent_client, admin=admin, records=records,
+                                  save=save, wait=wait, job_uid=job_uid)
+            k('delete', 'mutatingwebhookconfiguration', publication_webhook)
+            publication_webhook = None
+            assert admin('/resume-first', True) == 204
+
+        if concurrent and not first_publication:
             from result_concurrent import verify_evidence as verify_concurrent
             def concurrent_retry_paused():
                 value = admin('/evidence')
@@ -415,9 +456,11 @@ def main():
         save('lost-ack.json', result)
         print('PASS: identical receipt redelivered after lost ACK; one native migration SQL execution', flush=True)
     finally:
+        if publication_webhook:
+            k('delete', 'mutatingwebhookconfiguration', publication_webhook, '--ignore-not-found')
         if concurrent_client:
             concurrent_client.close()
-        if routed:
+        if routed or publication_port_added:
             restore_service()
         if gated:
             k('delete', 'validatingadmissionpolicybinding', gate, '--ignore-not-found')

@@ -307,3 +307,36 @@ including one calibrated SQL effect and original Job/Pod completion.
 request timestamps, receipt, and procedure hash, including on verdict failure.
 This tests overlapping redelivery after publication. A race between first
 publishers of an absent intent and single-replica saturation need separate rows.
+
+## First-publication race
+
+Set `RESULT_PROBE_FIRST_PUBLICATION=1`; leave the replacement and runner-loss
+modes off. This includes the concurrent-delivery client. The test-only proxy
+holds the original native result before forwarding its first PUT. Its loopback
+`/pending-first` endpoint exposes those bytes only to the privileged harness;
+ordinary evidence and logs contain no payload. Resuming the original request
+clears this temporary copy.
+
+A temporary mutating webhook matches only intent CREATEs in this probe's
+namespace. The proxy serves it over verified TLS on a temporary Service port.
+A server dry run must reach that webhook before execution is released. The
+harness verifies the original intent and completion are absent, then sends the
+original bytes concurrently to both installed receivers. The webhook holds
+neither write past its eight-second bound and admits neither until two distinct
+manager Pod identities have reached the same intent with the original digest.
+Admission request UIDs and entry/release times prove both CREATEs overlapped;
+client starts alone do not establish that property.
+
+Both requests must return the same durable receipt. The subsequent conflicting
+and mixed pairs retain the ordinary concurrent-delivery requirements. The
+harness independently reconstructs the publication, removes the temporary
+webhook, and resumes the original runner, which must complete the lost-ACK row
+with one SQL effect. The Service ports and selector are restored, and the
+webhook, proxy, copied credential, and port forwards are removed in `finally`.
+
+`first-publication.json` retains the absent-record census, both blocked
+admissions, concurrent responses, and procedure digest. The absent read and
+client headers are ordered by the harness's monotonic clock; admission entry
+and release use the fixture's own clock. No cross-machine clock comparison is
+needed. This row forces identical first writes. Different first payloads racing
+to choose a winner and same-receiver saturation remain separate cases.

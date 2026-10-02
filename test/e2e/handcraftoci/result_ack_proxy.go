@@ -34,14 +34,18 @@ type ackAttempt struct {
 }
 
 type ackEvidence struct {
-	ClientCertificateDigest string       `json:"clientCertificateDigest"`
-	Preflights              int          `json:"preflights"`
-	Attempts                []ackAttempt `json:"attempts"`
-	Dropped                 bool         `json:"dropped"`
-	Released                bool         `json:"released"`
-	RetryGateEnabled        bool         `json:"retryGateEnabled,omitempty"`
-	RetryWaits              int          `json:"retryWaits,omitempty"`
-	RetryResumedAt          *time.Time   `json:"retryResumedAt,omitempty"`
+	FirstGateEnabled        bool             `json:"firstGateEnabled,omitempty"`
+	FirstWaits              int              `json:"firstWaits,omitempty"`
+	FirstResumedAt          *time.Time       `json:"firstResumedAt,omitempty"`
+	FirstAdmissions         []firstAdmission `json:"firstAdmissions,omitempty"`
+	ClientCertificateDigest string           `json:"clientCertificateDigest"`
+	Preflights              int              `json:"preflights"`
+	Attempts                []ackAttempt     `json:"attempts"`
+	Dropped                 bool             `json:"dropped"`
+	Released                bool             `json:"released"`
+	RetryGateEnabled        bool             `json:"retryGateEnabled,omitempty"`
+	RetryWaits              int              `json:"retryWaits,omitempty"`
+	RetryResumedAt          *time.Time       `json:"retryResumedAt,omitempty"`
 }
 
 // Only the disposable fixture holds these keys. It forwards one original Pod's
@@ -49,18 +53,22 @@ type ackEvidence struct {
 // holds the identical retry until the harness restores the ordinary Service.
 // Neither payload bytes nor credentials appear in its evidence or errors.
 type resultACKProxy struct {
-	client      *http.Client
-	origin      string
-	clientLeaf  []byte
-	mu          sync.Mutex
-	evidence    ackEvidence
-	slot        chan struct{}
-	release     chan struct{}
-	resumeRetry chan struct{}
+	firstNamespace  string
+	pending         *firstPending
+	resumeFirst     chan struct{}
+	firstAdmissions chan struct{}
+	client          *http.Client
+	origin          string
+	clientLeaf      []byte
+	mu              sync.Mutex
+	evidence        ackEvidence
+	slot            chan struct{}
+	release         chan struct{}
+	resumeRetry     chan struct{}
 }
 
 func newResultACKProxy(client *http.Client, origin string, clientLeaf []byte) *resultACKProxy {
-	return &resultACKProxy{client: client, origin: origin, clientLeaf: bytes.Clone(clientLeaf), slot: make(chan struct{}, 1), release: make(chan struct{}), resumeRetry: make(chan struct{}), evidence: ackEvidence{ClientCertificateDigest: digest(clientLeaf), Attempts: []ackAttempt{}}}
+	return &resultACKProxy{resumeFirst: make(chan struct{}), firstAdmissions: make(chan struct{}), client: client, origin: origin, clientLeaf: bytes.Clone(clientLeaf), slot: make(chan struct{}, 1), release: make(chan struct{}), resumeRetry: make(chan struct{}), evidence: ackEvidence{ClientCertificateDigest: digest(clientLeaf), Attempts: []ackAttempt{}}}
 }
 
 func (p *resultACKProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -91,6 +99,27 @@ func (p *resultACKProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPut && conflict {
 		http.Error(w, "unexpected fixture retry", http.StatusConflict)
 		return
+	}
+	if r.Method == http.MethodPut && count == 0 {
+		p.mu.Lock()
+		paused := p.evidence.FirstGateEnabled && p.evidence.FirstResumedAt == nil
+		if paused {
+			if p.pending != nil && (p.pending.Path != r.URL.Path || p.pending.Digest != digest(body)) {
+				p.mu.Unlock()
+				http.Error(w, "first fixture payload changed", http.StatusConflict)
+				return
+			}
+			p.pending = &firstPending{Path: r.URL.Path, Payload: body, Digest: digest(body)}
+			p.evidence.FirstWaits++
+		}
+		p.mu.Unlock()
+		if paused {
+			select {
+			case <-p.resumeFirst:
+			case <-r.Context().Done():
+				return
+			}
+		}
 	}
 	if r.Method == http.MethodPut && count == 1 {
 		p.mu.Lock()
@@ -180,6 +209,25 @@ func (p *resultACKProxy) admin(w http.ResponseWriter, r *http.Request) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	switch {
+	case r.Method == http.MethodGet && r.URL.Path == "/pending-first":
+		if !p.evidence.FirstGateEnabled || p.pending == nil {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(p.pending)
+	case r.Method == http.MethodPost && r.URL.Path == "/resume-first":
+		if !p.evidence.FirstGateEnabled || p.evidence.FirstWaits == 0 || len(p.evidence.FirstAdmissions) != 2 || p.evidence.FirstAdmissions[0].ReleasedAt == nil || p.evidence.FirstAdmissions[1].ReleasedAt == nil {
+			http.Error(w, "first publication is not ready", http.StatusConflict)
+			return
+		}
+		if p.evidence.FirstResumedAt == nil {
+			now := time.Now().UTC()
+			p.evidence.FirstResumedAt = &now
+			p.pending = nil
+			close(p.resumeFirst)
+		}
+		w.WriteHeader(http.StatusNoContent)
 	case r.Method == http.MethodGet && r.URL.Path == "/evidence":
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(p.evidence)
@@ -217,6 +265,7 @@ func runResultACKProxy(args []string) error {
 	trustDir := flags.String("trust-directory", "", "")
 	credentialDir := flags.String("credential-directory", "", "")
 	pauseRetry := flags.Bool("pause-retry", false, "")
+	pauseFirst := flags.String("pause-first-namespace", "", "")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || *serverName == "" || strings.ContainsAny(*serverName, "/:@?#") || !filepath.IsAbs(*trustDir) || !filepath.IsAbs(*credentialDir) {
 		return errors.New("invalid result ACK proxy configuration")
 	}
@@ -254,6 +303,8 @@ func runResultACKProxy(args []string) error {
 	client := &http.Client{Transport: transport, Timeout: 25 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("fixture refuses redirects") }}
 	proxy := newResultACKProxy(client, "https://"+*serverName, credential.Certificate[0])
 	proxy.evidence.RetryGateEnabled = *pauseRetry
+	proxy.evidence.FirstGateEnabled = *pauseFirst != ""
+	proxy.firstNamespace = *pauseFirst
 	dataServer := &http.Server{Handler: proxy, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 35 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10, ErrorLog: log.New(io.Discard, "", 0), TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{server}, ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: clientRoots, NextProtos: []string{"http/1.1"}}}
 	adminServer := &http.Server{Handler: http.HandlerFunc(proxy.admin), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: 5 * time.Second, MaxHeaderBytes: 4 << 10}
 	dataListener, err := net.Listen("tcp", ":9444")
@@ -272,7 +323,17 @@ func runResultACKProxy(args []string) error {
 	defer stop()
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
-	failures := make(chan error, 2)
+	failures := make(chan error, 3)
+	if *pauseFirst != "" {
+		listener, err := net.Listen("tcp", ":9445")
+		if err != nil {
+			return errors.New("cannot listen for publication barrier")
+		}
+		defer listener.Close()
+		barrierServer := &http.Server{Handler: http.HandlerFunc(proxy.publicationBarrier), ReadHeaderTimeout: 2 * time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: 12 * time.Second, MaxHeaderBytes: 16 << 10, ErrorLog: log.New(io.Discard, "", 0), TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{server}}}
+		defer barrierServer.Close()
+		go func() { failures <- barrierServer.ServeTLS(listener, "", "") }()
+	}
 	go func() { failures <- dataServer.ServeTLS(dataListener, "", "") }()
 	go func() { failures <- adminServer.Serve(adminListener) }()
 	select {

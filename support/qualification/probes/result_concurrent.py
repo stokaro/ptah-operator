@@ -148,6 +148,8 @@ class Client:
                 futures = [executor.submit(self.request, i, body, name, barrier)
                            for i, body in enumerate(bodies)]
                 rounds.append({'name': label, 'requests': [f.result(timeout=25) for f in futures]})
+                if label == 'identical' and receipt is None:
+                    receipt = rounds[-1]['requests'][0].get('receipt', {})
         return {'evidenceVersion': 1, 'receipt': receipt, 'originalDigest': digest(payload),
                 'changedDigest': digest(changed), 'receivers': [m['metadata']['uid'] for m in self.managers],
                 'rounds': rounds, 'observedAt': dt.datetime.now(dt.timezone.utc).isoformat(),
