@@ -1,0 +1,7 @@
+test_refusals (__main__.AuditProof.test_refusals) ... ok
+test_retained_reading (__main__.AuditProof.test_retained_reading) ... ok
+
+----------------------------------------------------------------------
+Ran 2 tests in 0.214s
+
+OK

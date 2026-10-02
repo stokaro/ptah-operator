@@ -659,8 +659,9 @@ foreground retirement does not authorize delivery or execution to resume.
 A real-API regression reproduces the NamespaceLifecycle refusal before this
 fallback and checks refused early deletion/finalizer removal, absent Job and
 active-claim gates, and permitted completion after the window. Envtest has no
-garbage collector: its finalizer-removal requests model that actor. Installed
-namespace deletion and its real retention interval require separate evidence.
+garbage collector: its finalizer-removal requests model that actor. The
+[installed namespace cleanup evidence](evidence/result-namespace-cleanup-2026-10-02/summary.json)
+now supplies native collection after the real one-hour interval.
 
 Both authority checks around a delivery read the retirement fence. A restored
 active claim cannot issue credentials, resume a partial publication, or obtain a
@@ -1049,9 +1050,11 @@ traffic readings, resources, Jobs, receipts, database metadata, runtime image
 identities and the executed procedure. Offline replay refuses changed selectors,
 Pod/Job bindings, missing operations, extra Apply Jobs, changed chunks and absent
 traffic controls. Temporary policies, probe Pods and four databases are removed after capture.
-Deletion is requested for the four namespaces; result-retention admission delays
-their removal until collection becomes eligible. No guard or retention window is
-bypassed. The shared qualification lab remains for remaining work.
+Both schema namespaces were removed. The two migration namespaces exposed a
+retirement-marker CREATE refusal during namespace termination. The foreground
+retirement fix and installed proof below complete their removal without bypassing
+admission or shortening retention. The shared qualification lab remains for
+remaining work.
 
 This completes the receiver network case on the recorded environment. It does
 not replace the other denied-destination egress rows in #578, the supported-minor
@@ -1076,3 +1079,28 @@ The isolated member and plaintext files are removed, and source schemas return
 to suspension with their original policies. This proves storage restoration;
 restored manager/rotator execution, service RPO/RTO, loss during Apply and lagged
 operator backups remain requirements of #579. The lifecycle checkbox stays open.
+
+
+## Installed terminating-namespace cleanup
+
+[Native cleanup evidence](evidence/result-namespace-cleanup-2026-10-02/summary.json)
+records both previously stuck migration namespaces on manager `7b21f895`,
+Kubernetes 1.37 Linux amd64 and unchanged `10Mi` kubelet logs. The API starts
+foreground retirement at 20:49:38 UTC for intents and 20:49:43 for credentials.
+All eight original records have successful API GETs after their full one-hour
+deadlines. No successful CREATE can substitute a replacement UID. Completion
+and chunks are deleted, garbage collection finishes the intents, and the
+namespace controller collects the remaining credentials at 21:50:44 UTC.
+Both namespaces disappear; four recovery-pinned control records retain their
+UIDs and data hashes.
+
+The original probe completed its retention hold and namespace checks, then
+failed audit verification because it required named mutations and omitted
+`DeleteCollection`. That failed report is preserved. Corrected offline replay
+accepts the actual namespace-controller path and refuses missing post-deadline
+reads, early or failed collection, a filtered request, a foreign caller, and
+replacement creation. It does not rerun or shorten the hour. Temporary audit
+configuration is removed and all three API servers and both managers are ready.
+
+This closes the terminating-namespace cleanup case. The remaining lifecycle,
+restore, payload matrix and final acceptance requirements stay open.

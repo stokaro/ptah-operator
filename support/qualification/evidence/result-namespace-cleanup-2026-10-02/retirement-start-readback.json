@@ -1,0 +1,37 @@
+{
+  "observedAt": "2026-10-02T20:58:57.246456+00:00",
+  "roots": [
+    {
+      "namespace": "ptah-result-network-pg-migration",
+      "recordUID": "b3f701dd-90de-4f0c-a45d-dde873de9781",
+      "auditIDs": [
+        "350b9f0b-3358-4183-a4e5-0020700c54ba"
+      ],
+      "retiredAt": "2026-10-02T20:49:38Z"
+    },
+    {
+      "namespace": "ptah-result-network-pg-migration",
+      "recordUID": "e19b013d-072c-4da9-815b-69ba6c61bbb9",
+      "auditIDs": [
+        "831548aa-4a72-430b-8e72-81a2f0ba4b1c"
+      ],
+      "retiredAt": "2026-10-02T20:49:43Z"
+    },
+    {
+      "namespace": "ptah-result-network-mysql-migration",
+      "recordUID": "daadc154-3eeb-4ad4-bc48-bf8a0f881c63",
+      "auditIDs": [
+        "355e3fe6-0e22-40e3-8a9a-7f4f455c0327"
+      ],
+      "retiredAt": "2026-10-02T20:49:38Z"
+    },
+    {
+      "namespace": "ptah-result-network-mysql-migration",
+      "recordUID": "a89eebab-e32b-4f8f-a963-e006ff635f09",
+      "auditIDs": [
+        "465e192e-6fbf-42a2-ac26-115a3e203e7e"
+      ],
+      "retiredAt": "2026-10-02T20:49:43Z"
+    }
+  ]
+}

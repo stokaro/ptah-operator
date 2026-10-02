@@ -1,0 +1,4 @@
+ok  	github.com/stokaro/ptah-operator/internal/resultcleanup	1.179s
+ok  	github.com/stokaro/ptah-operator/internal/controllerwrite	0.605s
+ok  	github.com/stokaro/ptah-operator/internal/resultcredentials	0.918s
+ok  	github.com/stokaro/ptah-operator/internal/resultstore	2.245s

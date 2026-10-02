@@ -1,0 +1,4 @@
+=== RUN   TestResultCollectorInTerminatingNamespace
+--- PASS: TestResultCollectorInTerminatingNamespace (2.65s)
+PASS
+ok  	github.com/stokaro/ptah-operator/test/envtest/webhook	7.369s

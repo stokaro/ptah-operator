@@ -1,0 +1,149 @@
+{
+  "status": "passed",
+  "originalProbeStatus": "FAIL",
+  "correction": "The original verifier omitted DeleteCollection. Post-deadline successful GETs prove all original records survived the window; no successful CREATE permits UID replacement. Credentials were then collected by the namespace controller.",
+  "namespacesRemoved": [
+    "ptah-result-network-pg-migration",
+    "ptah-result-network-mysql-migration"
+  ],
+  "records": [
+    {
+      "namespace": "ptah-result-network-pg-migration",
+      "name": "ptah-result-30be6126d6c4ba1af1ac04e1199a84a583dc1b6aadbfdae979141145219d889b",
+      "uid": "b3f701dd-90de-4f0c-a45d-dde873de9781",
+      "notBefore": "2026-10-02T21:49:38+00:00",
+      "retainedAfterDeadlineAuditIDs": [
+        "17844edc-1657-4a66-b160-bed4b7a71c9f",
+        "2cf51f80-aec9-4642-a92a-aa45dac0796b",
+        "58876810-73b9-43bd-b181-f2a01d34c835",
+        "28e0e8f3-513d-44b4-9300-ce01d41b0d06",
+        "28210d64-ca0d-48eb-9bd5-d0d46a7c4240",
+        "65dab325-2677-4b95-bd21-2c6c8bea0a94",
+        "3f174d45-4977-4a4a-855c-2547f9547630",
+        "24f504fc-5497-48a4-84fa-b26686874146",
+        "4e0c40e4-0d2e-4430-bacb-b99356070d34",
+        "35886d77-05e1-49d9-b89c-613263bb06b3",
+        "000b5f5d-1a1e-406e-bfb7-276ae109f5a7"
+      ],
+      "firstEligibleMutationAt": "2026-10-02T21:49:58.583927Z",
+      "mutationAuditIDs": [
+        "4b3d355e-3d7b-42f3-a789-e93828f151bc"
+      ],
+      "method": "named mutation"
+    },
+    {
+      "namespace": "ptah-result-network-pg-migration",
+      "name": "ptah-result-30be6126d6c4ba1af1ac04e1199a84a583dc1b6aadbfdae979141145219d889b-000",
+      "uid": "b867ee22-8441-4290-a938-9fd820175d5c",
+      "notBefore": "2026-10-02T21:49:38+00:00",
+      "retainedAfterDeadlineAuditIDs": [
+        "72db8480-759a-470c-8f72-cc5866136c5d"
+      ],
+      "firstEligibleMutationAt": "2026-10-02T21:49:58.562800Z",
+      "mutationAuditIDs": [
+        "80566b4f-bbf1-4cee-b371-fe5af84f0248"
+      ],
+      "method": "named mutation"
+    },
+    {
+      "namespace": "ptah-result-network-pg-migration",
+      "name": "ptah-result-30be6126d6c4ba1af1ac04e1199a84a583dc1b6aadbfdae979141145219d889b-complete",
+      "uid": "809501a5-a827-4864-97a0-ed799a180741",
+      "notBefore": "2026-10-02T21:49:38+00:00",
+      "retainedAfterDeadlineAuditIDs": [
+        "c0e17f9e-162d-4501-9e10-679237659367"
+      ],
+      "firstEligibleMutationAt": "2026-10-02T21:49:58.538830Z",
+      "mutationAuditIDs": [
+        "587abdf4-6576-4fd0-90a6-ad818a8eef8d"
+      ],
+      "method": "named mutation"
+    },
+    {
+      "namespace": "ptah-result-network-pg-migration",
+      "name": "ptah-result-key-c2f88e686387aea7ebea96ea8b0452b0",
+      "uid": "e19b013d-072c-4da9-815b-69ba6c61bbb9",
+      "notBefore": "2026-10-02T21:49:43+00:00",
+      "retainedAfterDeadlineAuditIDs": [
+        "fd6bdfcc-d751-459b-b99d-9c6ce37e2290",
+        "6ca8c526-dd73-4e7b-a536-c727cb75b4ca",
+        "75d69419-97f5-4eff-9ce6-d06a5afe451f",
+        "3bb85440-0ada-47cc-92a0-feabb63afd58"
+      ],
+      "firstEligibleMutationAt": "2026-10-02T21:50:44.199025Z",
+      "mutationAuditIDs": [
+        "3a145d00-bdc8-4170-b658-804a0b17f9ea"
+      ],
+      "method": "namespace-controller DeleteCollection"
+    },
+    {
+      "namespace": "ptah-result-network-mysql-migration",
+      "name": "ptah-result-d0394cd7e74269b2018b59c31b6af4a50c051f79c062d3f3d2bd69e4faae1483",
+      "uid": "daadc154-3eeb-4ad4-bc48-bf8a0f881c63",
+      "notBefore": "2026-10-02T21:49:38+00:00",
+      "retainedAfterDeadlineAuditIDs": [
+        "acf5a731-efc8-466a-b2c3-de3327cb0397",
+        "ecc41937-39d0-48e2-9ca8-ef3706935e9e",
+        "40c9b2e2-db30-42a8-a842-e8618963b951",
+        "021b4289-bf57-402a-9e74-7d1e37a56ce1",
+        "6adfb3a3-17ae-431a-b05c-4cc31df73d90",
+        "aee65f5a-75ca-439a-a299-71eebbe82310",
+        "89deb887-24a2-44a0-9fa8-0cf75d05b385",
+        "4df59d84-8189-4874-b8a6-eb1074cdf35f",
+        "42f16924-893c-451a-9a04-4e7c4d75d928",
+        "5ed5477f-2d78-4a2e-ab74-abc7b0ea6397",
+        "b82f054d-32c7-4a1e-bf28-2be982eddfd7"
+      ],
+      "firstEligibleMutationAt": "2026-10-02T21:49:58.498903Z",
+      "mutationAuditIDs": [
+        "2fc2ae07-867c-4c85-989e-3b407819e3b8"
+      ],
+      "method": "named mutation"
+    },
+    {
+      "namespace": "ptah-result-network-mysql-migration",
+      "name": "ptah-result-d0394cd7e74269b2018b59c31b6af4a50c051f79c062d3f3d2bd69e4faae1483-000",
+      "uid": "b2c4ffa1-03ef-41cb-a087-33c828ebbfa5",
+      "notBefore": "2026-10-02T21:49:38+00:00",
+      "retainedAfterDeadlineAuditIDs": [
+        "157982f1-8d54-4850-b7e7-82cf69232028"
+      ],
+      "firstEligibleMutationAt": "2026-10-02T21:49:58.479163Z",
+      "mutationAuditIDs": [
+        "6307842b-57c5-4fb0-a817-8b741f3bb7ec"
+      ],
+      "method": "named mutation"
+    },
+    {
+      "namespace": "ptah-result-network-mysql-migration",
+      "name": "ptah-result-d0394cd7e74269b2018b59c31b6af4a50c051f79c062d3f3d2bd69e4faae1483-complete",
+      "uid": "bbbdb0fd-9eab-4951-964a-a5f9f95de248",
+      "notBefore": "2026-10-02T21:49:38+00:00",
+      "retainedAfterDeadlineAuditIDs": [
+        "abfd486d-ed37-4a1e-92db-d52463ee67ed"
+      ],
+      "firstEligibleMutationAt": "2026-10-02T21:49:58.451796Z",
+      "mutationAuditIDs": [
+        "0bb200a1-4792-45d4-a532-5d5c8a1f0bd3"
+      ],
+      "method": "named mutation"
+    },
+    {
+      "namespace": "ptah-result-network-mysql-migration",
+      "name": "ptah-result-key-d3490ebb6066ec33a5c4f5acc5edaeae",
+      "uid": "a89eebab-e32b-4f8f-a963-e006ff635f09",
+      "notBefore": "2026-10-02T21:49:43+00:00",
+      "retainedAfterDeadlineAuditIDs": [
+        "2500f1c7-8490-461f-9972-1a3f4c0e049a",
+        "f38705e6-2649-4f56-80f8-e93fda795968",
+        "81778b36-9555-4f06-a72c-72c420a90c70",
+        "cd2bc3a2-7a0a-4403-81f4-ceab124ecde5"
+      ],
+      "firstEligibleMutationAt": "2026-10-02T21:50:44.039258Z",
+      "mutationAuditIDs": [
+        "656823ff-c8de-4685-ac35-f06f6d31db1d"
+      ],
+      "method": "namespace-controller DeleteCollection"
+    }
+  ]
+}
