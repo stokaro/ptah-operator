@@ -87,13 +87,14 @@ type enrollmentReader struct {
 	calls  int
 	mutate func(*corev1.ConfigMap)
 	err    error
-	wait   bool
+	cancel context.CancelFunc
 }
 
 func (r *enrollmentReader) Get(ctx context.Context, key client.ObjectKey, out client.Object, opts ...client.GetOption) error {
 	if policy, ok := out.(*corev1.ConfigMap); ok {
 		r.calls++
-		if r.wait {
+		if r.cancel != nil {
+			r.cancel()
 			<-ctx.Done()
 			return ctx.Err()
 		}
@@ -148,14 +149,20 @@ func TestEnrollmentRefusesUnavailableOrInvalidPolicy(t *testing.T) {
 			if scenario == "unavailable" {
 				reader.err = errors.New("API unavailable")
 			}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
 			if scenario == "canceled" {
-				reader.wait = true
+				// Cancel at the policy read, after authority checks reach it.
+				// A wall-clock timeout can expire before this row's target.
+				reader.cancel = cancel
 			}
 			issuer = bindEnrollment(t, issuer, reader)
-			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Millisecond)
-			defer cancel()
-			if _, err := issuer.Ensure(ctx, f.Identity); err == nil || apiClient.creates.Load() != 0 {
+			_, err := issuer.Ensure(ctx, f.Identity)
+			if err == nil || apiClient.creates.Load() != 0 {
 				t.Fatalf("unsafe enrollment: %v", err)
+			}
+			if scenario == "canceled" && !errors.Is(err, context.Canceled) {
+				t.Fatalf("policy read did not preserve cancellation: %v", err)
 			}
 			if reader.calls != 1 {
 				t.Fatalf("did not read the live policy: %d", reader.calls)
