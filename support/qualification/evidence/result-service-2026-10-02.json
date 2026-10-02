@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 1,
+  "issue": 586,
+  "status": "Explicit manager runtime wiring passes local tests; installed delivery remains disabled",
+  "testedCommit": "26273bc4c9fe7fe2b84fd6659f6e43bade33e8d0",
+  "recordedAt": "2026-10-02T04:40:27.852226+00:00",
+  "sourceSHA256": {
+    "cmd/manager/main.go": "e2f99154d92ff21384c381800f29246cae1778575cdef652e8ea17f711b9ec00",
+    "internal/controller/migration_controller.go": "4cae8d49b78b9d29188a1c93abf83a93dd206b0e4c4135b693b25b82b72fc193",
+    "internal/controller/result_issuance.go": "7ebc65aa8e7755fd3c0c36c87af98adf191648b539d016800d5df315e8bf120a",
+    "internal/controller/result_issuance_test.go": "40e3795db3cca48789524e287d5ca835df8196e0c90912d4c44d4876e7bbcfc0",
+    "internal/controller/schema_controller.go": "bce2eb3a3cc9e1fbb0174b7d034860822a787b79772765df0f9082f16e0f0fc2",
+    "internal/resultservice/service.go": "93bed8de739c0c0c9f11f9736b0cadbced26742af83e4770409f35ea32f6040b",
+    "internal/resultservice/service_test.go": "4fccf349ed104160820ccc2dcd569fff9b5c1cd039ce9e8a8cc3dab45e476da3",
+    "support/qualification/result-delivery-design.md": "4a7a07c1c9eb4080e51ef36b0d544b58766bb299fab11a29280f8d1744af3ab9"
+  },
+  "environment": {
+    "go": "go version go1.27.1 darwin/arm64",
+    "API": "Fake Kubernetes client; real TCP and mTLS",
+    "Docker": "Not used"
+  },
+  "checks": [
+    {
+      "command": "GOFLAGS=-p=1 go test -race -count=1 -json ./internal/resultservice ./internal/controller",
+      "exitCode": 0,
+      "passingTestsAndSubtests": 944,
+      "skips": [],
+      "packages": [
+        {
+          "name": "github.com/stokaro/ptah-operator/internal/resultservice",
+          "elapsedSeconds": 2.333
+        },
+        {
+          "name": "github.com/stokaro/ptah-operator/internal/controller",
+          "elapsedSeconds": 8.461
+        }
+      ]
+    },
+    {
+      "command": "GOFLAGS=-p=1 make fmt-check vet; GOFLAGS=-p=1 make verify-runner-protocol",
+      "exitCode": 0
+    }
+  ],
+  "proved": [
+    "The assembled service issues a canonical credential, authenticates runner preflight over real mTLS, persists an Observe refusal result, and returns its payload digest. A new service using the same mounted trust preserves that credential and reads the same receipt after the fixture Job and Pod are deleted. The service reader refuses Secret GET.",
+    "Service startup refuses missing or oversized files, foreign client trust, a mismatched server hostname, a CA used as the serving leaf, missing certificate options, and an occupied listener. Readiness refuses an unstarted or stopped service. Context cancellation stops the listener and consumer.",
+    "Controller issuance helper fixtures pass exact identities for all nine operations with a deadline at most five seconds. Missing Pods remain pending. Multiple Pods, altered workload, missing Pod UID, changed generation, absent issuer, and foreign credential receipts refuse issuance. Parent cancellation interrupts a blocked issuer.",
+    "Manager compilation and repository vet pass with the opt-in service connected to both controllers, the Job builder, readiness, and the controller-write admission validator. The runner protocol source identity is unchanged."
+  ],
+  "notProved": [
+    "The service test uses a fake API and a refusal result. It does not exercise an installed manager, real API admission, kubelet Secret projection, SQL execution, database convergence, or leader election.",
+    "Controller issuance tests exercise the helper, not a complete reconciler lifecycle. Service record reading after Job removal does not change controller missing-Job recovery.",
+    "Helm does not enable the new manager flags, mount receiver trust, expose its Service, or provide the required NetworkPolicy and record permissions. Installed Jobs still use logs.",
+    "Trust provisioning, automatic rotation, overlap/reload, HA rollout, retention, authorized deletion, quota, garbage collection, backup/restore, and metrics remain incomplete.",
+    "Installed maximum-plan delivery, log deletion, manager replacement, simultaneous upload/read resource sizing and Lease budgets, the supported Kubernetes/engine matrix, and full make verify on this commit remain unqualified.",
+    "No issue 586 end-to-end checkbox, issue 242 acceptance verdict, or release authorization follows from these component tests."
+  ],
+  "localLogs": {
+    "/private/tmp/ptah-service-race.jsonl": {
+      "sha256": "7aa4152744765a1e1883ecc12399a1596968e475604d79aeffad5d9d1010f878",
+      "custody": "Local diagnostic log; final release evidence custody remains pending"
+    },
+    "/private/tmp/ptah-service-gates.log": {
+      "sha256": "b733f42499dfd4222c6c2ef60ca6fe5794a0a9e45f2e68793f894ae09bd81c02",
+      "custody": "Local diagnostic log; final release evidence custody remains pending"
+    }
+  }
+}
