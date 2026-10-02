@@ -1,6 +1,7 @@
 import base64
 import copy
 import json
+import pathlib
 import unittest
 from result_retention_evidence import verify_abandoned
 import result_retention_evidence_test as retention_tests
@@ -37,7 +38,7 @@ class AbandonedEvidenceTests(unittest.TestCase):
 
     def test_refuses_wrong_fault_or_collection(self):
         for fault in ('complete', 'wrong Pod', 'changed intent', 'missing cohort', 'quota available',
-                      'missing refusal', 'wrong refused namespace', 'early delete', 'lost pin'):
+                      'missing refusal', 'wrong refusal cause', 'wrong refused namespace', 'early delete', 'lost pin'):
             with self.subTest(fault=fault):
                 args = list(self.fixture())
                 interrupted, before, after, markers, audits, refusals = args
@@ -47,8 +48,19 @@ class AbandonedEvidenceTests(unittest.TestCase):
                 if fault == 'missing cohort': before['eligibleNames'].remove('intent')
                 if fault == 'quota available': interrupted['quota']['status']['hard']['count/ptahresultrecords.operator.ptah.run'] = '3'
                 if fault == 'missing refusal': refusals.clear()
+                if fault == 'wrong refusal cause': refusals[0]['responseStatus']['message'] = 'forbidden by another guard'
                 if fault == 'wrong refused namespace': refusals[0]['objectRef']['namespace'] = 'foreign'
                 if fault == 'early delete': audits[0]['requestReceivedTimestamp'] = '2026-10-02T09:59:59Z'
                 if fault == 'lost pin': after['remainingPinned'] = []
                 with self.assertRaises(ValueError):
                     verify_abandoned(*args)
+
+    def test_replays_retained_installed_cleanup(self):
+        root = pathlib.Path(__file__).resolve().parents[1] / 'evidence/result-abandoned-2026-10-02'
+        names = ('interrupted.json', 'retention-before.json', 'retention-after.json',
+                 'retention-markers.json', 'retention-delete-audit.json', 'quota-refusal-audit.json')
+        report = verify_abandoned(*[json.loads((root / n).read_text()) for n in names])
+        self.assertEqual(report['eligibleRecords'], 3)
+        self.assertEqual(report['pinnedRecords'], 4)
+        self.assertEqual(report['collectedSecretProjections'], 1)
+        self.assertEqual(report['preservedPlanObjects'], 2)

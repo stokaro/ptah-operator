@@ -701,9 +701,8 @@ after a lost acknowledgment. The retained audit and cohort can be checked with
 early deletions, replaced identities, changed pins, and incorrect GC actors.
 
 Before enabling this path by default, finish the installed lifecycle matrix,
-including abandoned partial-publication cleanup, backup/restore, receiver trust
-rotation and NetworkPolicy, bounded request metrics, and the remaining receipt
-consumption failures. Do not attach a time-only TTL to unconsumed results or
+including backup/restore and enforced NetworkPolicy. The installed cleanup,
+rotation, request bounds and receipt-consumption cases are mapped below. Do not attach a time-only TTL to unconsumed results or
 unresolved operations. Abandoned partial publications become eligible only after
 the exact attempt is retired and cannot still deliver. Cleanup must use UID/RV
 preconditions and respect the backup/recovery window and pinned plan evidence.
@@ -977,6 +976,33 @@ This completes the case inventory for acknowledged-result survival. It does not
 make database execution and result publication atomic. The existing recovery
 and fresh-authorization requirements remain necessary.
 
-Other minor combinations, abandoned partial-publication cleanup, restore,
-enforced NetworkPolicy, and the complete Kubernetes and database matrix remain
+Other minor combinations, restore, enforced NetworkPolicy, and the complete
+Kubernetes and database matrix remain
 explicit #586 acceptance work. The option remains disabled by default.
+
+## Abandoned publication collection evidence
+
+[Installed cleanup evidence](evidence/result-abandoned-2026-10-02/summary.json)
+closes the remaining partial-publication collection case on Kubernetes 1.37
+Linux amd64. A real quota refusal stopped the first Resolve chunk after its
+intent and canonical credential were persisted. Suspending the read-only
+resource retired that exact operation; the original Job and Pod were removed.
+No complete receipt existed. The collector persisted its own retirement record,
+which fixed the unchanged one-hour deadline at 18:21:27 UTC on October 2, 2026.
+
+The three-record cohort was collected between 18:21:27.899 and 18:21:27.971 UTC.
+Successful API DELETE records carry the exact original UIDs as preconditions.
+Kubernetes garbage collection removed the credential's Secret projection.
+The namespace contained no remaining result records after collection. Throughout
+the wait, a suspended native MySQL migration's latest-run pin retained its four
+records and credential projection unchanged; two published schema plan objects
+also retained their identities and spec hashes. No clock, object timestamp or
+retention setting was shortened.
+
+The original interruption, quota-refusal audit, frozen cohort, observations,
+deletions and independently replayed verdict are retained. The probe's refusal
+tests reject a completed or replaced publication, a different cause for the 403,
+early deletion, missing members and changed pinned evidence. The temporary
+API audit captures no result or credential write bodies. Its original manifests
+are restored after the proof. This completes this cleanup case; backup/restore,
+enforced NetworkPolicy and final profile acceptance remain separate requirements.

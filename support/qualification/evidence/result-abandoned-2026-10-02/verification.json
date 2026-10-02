@@ -1,0 +1,47 @@
+{
+  "status": "passed",
+  "eligibleRecords": 3,
+  "pinnedRecords": 4,
+  "collectedSecretProjections": 1,
+  "preservedPlanObjects": 2,
+  "garbageCollectorIdentities": [
+    "system:serviceaccount:kube-system:generic-garbage-collector"
+  ],
+  "recordDeletes": [
+    {
+      "name": "ptah-result-8d1ad1a601d2cd8c5cac3e97b534170de16734abf7b8e30403b426db29e2e694",
+      "uid": "d547c2f7-57c4-48b5-9014-0f0c512df460",
+      "notBefore": "2026-10-02T18:21:27+00:00",
+      "deletedAt": "2026-10-02T18:21:27.899018Z",
+      "auditIDs": [
+        "1cd70b52-6e21-4473-a8db-9046bcd1cd8f"
+      ]
+    },
+    {
+      "name": "ptah-result-8d1ad1a601d2cd8c5cac3e97b534170de16734abf7b8e30403b426db29e2e694-retired",
+      "uid": "f6706d46-1f26-4b05-83e4-26a60d34dfec",
+      "notBefore": "2026-10-02T18:21:27+00:00",
+      "deletedAt": "2026-10-02T18:21:27.971407Z",
+      "auditIDs": [
+        "9576dbf6-78f6-4ed0-b81d-c67ccda6380f"
+      ]
+    },
+    {
+      "name": "ptah-result-key-8b435eacdac96caaf5817d8e342f1693",
+      "uid": "2020118d-6cdd-4c5a-9b9c-e9f9db2115a1",
+      "notBefore": "2026-10-02T18:21:27+00:00",
+      "deletedAt": "2026-10-02T18:21:27.933618Z",
+      "auditIDs": [
+        "712fd9b7-9e4d-44fa-9a4c-b6b2981cfb29"
+      ]
+    }
+  ],
+  "abandonedPublication": {
+    "intentUID": "d547c2f7-57c4-48b5-9014-0f0c512df460",
+    "jobUID": "f0c765dc-883b-4417-8df4-a10b315343ff",
+    "recordsBeforeRetirement": 2,
+    "quotaRefusalAuditIDs": [
+      "8eff3475-b920-4d83-8e58-f3b29fc81857"
+    ]
+  }
+}

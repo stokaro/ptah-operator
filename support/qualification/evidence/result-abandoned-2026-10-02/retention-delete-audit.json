@@ -1,0 +1,276 @@
+[
+  {
+    "kind": "Event",
+    "apiVersion": "audit.k8s.io/v1",
+    "level": "Request",
+    "auditID": "bb44a1e9-bc98-472c-8d63-96742d3ec337",
+    "stage": "ResponseComplete",
+    "requestURI": "/api/v1/namespaces/ptah-result-abandoned/secrets/ptah-result-key-8b435eacdac96caaf5817d8e342f1693",
+    "verb": "delete",
+    "user": {
+      "username": "system:serviceaccount:kube-system:generic-garbage-collector",
+      "uid": "2787dd64-5d9d-4f7f-8e63-6b2901a96a7d",
+      "groups": [
+        "system:serviceaccounts",
+        "system:serviceaccounts:kube-system",
+        "system:authenticated"
+      ],
+      "extra": {
+        "authentication.kubernetes.io/credential-id": [
+          "JTI=547b199b-d777-4599-a5cf-76e3be2f8f1e"
+        ]
+      }
+    },
+    "sourceIPs": [
+      "172.18.0.3"
+    ],
+    "userAgent": "kube-controller-manager/v1.37.0 (linux/amd64) kubernetes/f54c212/system:serviceaccount:kube-system:generic-garbage-collector",
+    "objectRef": {
+      "resource": "secrets",
+      "namespace": "ptah-result-abandoned",
+      "name": "ptah-result-key-8b435eacdac96caaf5817d8e342f1693",
+      "apiVersion": "v1"
+    },
+    "responseStatus": {
+      "metadata": {},
+      "status": "Success",
+      "details": {
+        "name": "ptah-result-key-8b435eacdac96caaf5817d8e342f1693",
+        "kind": "secrets",
+        "uid": "b6cf663a-f3f8-4f17-b50b-1337f529e206"
+      },
+      "code": 200
+    },
+    "requestObject": {
+      "kind": "DeleteOptions",
+      "apiVersion": "meta.k8s.io/__internal",
+      "preconditions": {
+        "uid": "b6cf663a-f3f8-4f17-b50b-1337f529e206",
+        "resourceVersion": "70998"
+      },
+      "propagationPolicy": "Background"
+    },
+    "requestReceivedTimestamp": "2026-10-02T18:21:27.955421Z",
+    "stageTimestamp": "2026-10-02T18:21:27.966956Z",
+    "annotations": {
+      "authorization.k8s.io/decision": "allow",
+      "authorization.k8s.io/reason": "RBAC: allowed by ClusterRoleBinding \"system:controller:generic-garbage-collector\" of ClusterRole \"system:controller:generic-garbage-collector\" to ServiceAccount \"generic-garbage-collector/kube-system\""
+    }
+  },
+  {
+    "kind": "Event",
+    "apiVersion": "audit.k8s.io/v1",
+    "level": "Request",
+    "auditID": "1cd70b52-6e21-4473-a8db-9046bcd1cd8f",
+    "stage": "ResponseComplete",
+    "requestURI": "/apis/operator.ptah.run/v1alpha1/namespaces/ptah-result-abandoned/ptahresultrecords/ptah-result-8d1ad1a601d2cd8c5cac3e97b534170de16734abf7b8e30403b426db29e2e694",
+    "verb": "delete",
+    "user": {
+      "username": "system:serviceaccount:ptah-system-1-37-0-result-restart-b2576f9b-5a0ef2fe7d:ptah-runtime-generated-name-prefix-boundary-proof-5a0ef2fe7d",
+      "uid": "8053b4ee-b8d9-4bb2-bdd4-dee258843475",
+      "groups": [
+        "system:serviceaccounts",
+        "system:serviceaccounts:ptah-system-1-37-0-result-restart-b2576f9b-5a0ef2fe7d",
+        "system:authenticated"
+      ],
+      "extra": {
+        "authentication.kubernetes.io/credential-id": [
+          "JTI=67c765b5-06c4-4287-9c71-29bc529afe7b"
+        ],
+        "authentication.kubernetes.io/node-name": [
+          "ptah-e2e-1-37-0-result-restar-5a0ef2fe7d-worker"
+        ],
+        "authentication.kubernetes.io/node-uid": [
+          "8b04565a-a00c-405e-acbc-96c473f52cae"
+        ],
+        "authentication.kubernetes.io/pod-name": [
+          "ptah-runtime-generated-name-prefix-boundary-proof-5a0ef2fezmsgm"
+        ],
+        "authentication.kubernetes.io/pod-uid": [
+          "8cfe6173-7210-4f55-a824-ae0c3e96b79f"
+        ]
+      }
+    },
+    "sourceIPs": [
+      "172.18.0.6"
+    ],
+    "userAgent": "manager/v0.0.0 (linux/amd64) kubernetes/$Format",
+    "objectRef": {
+      "resource": "ptahresultrecords",
+      "namespace": "ptah-result-abandoned",
+      "name": "ptah-result-8d1ad1a601d2cd8c5cac3e97b534170de16734abf7b8e30403b426db29e2e694",
+      "apiGroup": "operator.ptah.run",
+      "apiVersion": "v1alpha1"
+    },
+    "responseStatus": {
+      "metadata": {},
+      "status": "Success",
+      "details": {
+        "name": "ptah-result-8d1ad1a601d2cd8c5cac3e97b534170de16734abf7b8e30403b426db29e2e694",
+        "group": "operator.ptah.run",
+        "kind": "ptahresultrecords",
+        "uid": "d547c2f7-57c4-48b5-9014-0f0c512df460"
+      },
+      "code": 200
+    },
+    "requestObject": {
+      "kind": "DeleteOptions",
+      "apiVersion": "meta.k8s.io/__internal",
+      "preconditions": {
+        "uid": "d547c2f7-57c4-48b5-9014-0f0c512df460",
+        "resourceVersion": "71012"
+      },
+      "propagationPolicy": "Background"
+    },
+    "requestReceivedTimestamp": "2026-10-02T18:21:27.899018Z",
+    "stageTimestamp": "2026-10-02T18:21:27.919194Z",
+    "annotations": {
+      "authorization.k8s.io/decision": "allow",
+      "authorization.k8s.io/reason": "RBAC: allowed by ClusterRoleBinding \"ptah-runtime-generated-name-prefix-boundary-proof-5a0ef2fe7d\" of ClusterRole \"ptah-runtime-generated-name-prefix-boundary-proof-5a0ef2fe7d\" to ServiceAccount \"ptah-runtime-generated-name-prefix-boundary-proof-5a0ef2fe7d/ptah-system-1-37-0-result-restart-b2576f9b-5a0ef2fe7d\""
+    }
+  },
+  {
+    "kind": "Event",
+    "apiVersion": "audit.k8s.io/v1",
+    "level": "Request",
+    "auditID": "712fd9b7-9e4d-44fa-9a4c-b6b2981cfb29",
+    "stage": "ResponseComplete",
+    "requestURI": "/apis/operator.ptah.run/v1alpha1/namespaces/ptah-result-abandoned/ptahresultrecords/ptah-result-key-8b435eacdac96caaf5817d8e342f1693",
+    "verb": "delete",
+    "user": {
+      "username": "system:serviceaccount:ptah-system-1-37-0-result-restart-b2576f9b-5a0ef2fe7d:ptah-runtime-generated-name-prefix-boundary-proof-5a0ef2fe7d",
+      "uid": "8053b4ee-b8d9-4bb2-bdd4-dee258843475",
+      "groups": [
+        "system:serviceaccounts",
+        "system:serviceaccounts:ptah-system-1-37-0-result-restart-b2576f9b-5a0ef2fe7d",
+        "system:authenticated"
+      ],
+      "extra": {
+        "authentication.kubernetes.io/credential-id": [
+          "JTI=67c765b5-06c4-4287-9c71-29bc529afe7b"
+        ],
+        "authentication.kubernetes.io/node-name": [
+          "ptah-e2e-1-37-0-result-restar-5a0ef2fe7d-worker"
+        ],
+        "authentication.kubernetes.io/node-uid": [
+          "8b04565a-a00c-405e-acbc-96c473f52cae"
+        ],
+        "authentication.kubernetes.io/pod-name": [
+          "ptah-runtime-generated-name-prefix-boundary-proof-5a0ef2fezmsgm"
+        ],
+        "authentication.kubernetes.io/pod-uid": [
+          "8cfe6173-7210-4f55-a824-ae0c3e96b79f"
+        ]
+      }
+    },
+    "sourceIPs": [
+      "172.18.0.6"
+    ],
+    "userAgent": "manager/v0.0.0 (linux/amd64) kubernetes/$Format",
+    "objectRef": {
+      "resource": "ptahresultrecords",
+      "namespace": "ptah-result-abandoned",
+      "name": "ptah-result-key-8b435eacdac96caaf5817d8e342f1693",
+      "apiGroup": "operator.ptah.run",
+      "apiVersion": "v1alpha1"
+    },
+    "responseStatus": {
+      "metadata": {},
+      "status": "Success",
+      "details": {
+        "name": "ptah-result-key-8b435eacdac96caaf5817d8e342f1693",
+        "group": "operator.ptah.run",
+        "kind": "ptahresultrecords",
+        "uid": "2020118d-6cdd-4c5a-9b9c-e9f9db2115a1"
+      },
+      "code": 200
+    },
+    "requestObject": {
+      "kind": "DeleteOptions",
+      "apiVersion": "meta.k8s.io/__internal",
+      "preconditions": {
+        "uid": "2020118d-6cdd-4c5a-9b9c-e9f9db2115a1",
+        "resourceVersion": "70997"
+      },
+      "propagationPolicy": "Background"
+    },
+    "requestReceivedTimestamp": "2026-10-02T18:21:27.933618Z",
+    "stageTimestamp": "2026-10-02T18:21:27.950269Z",
+    "annotations": {
+      "authorization.k8s.io/decision": "allow",
+      "authorization.k8s.io/reason": "RBAC: allowed by ClusterRoleBinding \"ptah-runtime-generated-name-prefix-boundary-proof-5a0ef2fe7d\" of ClusterRole \"ptah-runtime-generated-name-prefix-boundary-proof-5a0ef2fe7d\" to ServiceAccount \"ptah-runtime-generated-name-prefix-boundary-proof-5a0ef2fe7d/ptah-system-1-37-0-result-restart-b2576f9b-5a0ef2fe7d\""
+    }
+  },
+  {
+    "kind": "Event",
+    "apiVersion": "audit.k8s.io/v1",
+    "level": "Request",
+    "auditID": "9576dbf6-78f6-4ed0-b81d-c67ccda6380f",
+    "stage": "ResponseComplete",
+    "requestURI": "/apis/operator.ptah.run/v1alpha1/namespaces/ptah-result-abandoned/ptahresultrecords/ptah-result-8d1ad1a601d2cd8c5cac3e97b534170de16734abf7b8e30403b426db29e2e694-retired",
+    "verb": "delete",
+    "user": {
+      "username": "system:serviceaccount:ptah-system-1-37-0-result-restart-b2576f9b-5a0ef2fe7d:ptah-runtime-generated-name-prefix-boundary-proof-5a0ef2fe7d",
+      "uid": "8053b4ee-b8d9-4bb2-bdd4-dee258843475",
+      "groups": [
+        "system:serviceaccounts",
+        "system:serviceaccounts:ptah-system-1-37-0-result-restart-b2576f9b-5a0ef2fe7d",
+        "system:authenticated"
+      ],
+      "extra": {
+        "authentication.kubernetes.io/credential-id": [
+          "JTI=67c765b5-06c4-4287-9c71-29bc529afe7b"
+        ],
+        "authentication.kubernetes.io/node-name": [
+          "ptah-e2e-1-37-0-result-restar-5a0ef2fe7d-worker"
+        ],
+        "authentication.kubernetes.io/node-uid": [
+          "8b04565a-a00c-405e-acbc-96c473f52cae"
+        ],
+        "authentication.kubernetes.io/pod-name": [
+          "ptah-runtime-generated-name-prefix-boundary-proof-5a0ef2fezmsgm"
+        ],
+        "authentication.kubernetes.io/pod-uid": [
+          "8cfe6173-7210-4f55-a824-ae0c3e96b79f"
+        ]
+      }
+    },
+    "sourceIPs": [
+      "172.18.0.6"
+    ],
+    "userAgent": "manager/v0.0.0 (linux/amd64) kubernetes/$Format",
+    "objectRef": {
+      "resource": "ptahresultrecords",
+      "namespace": "ptah-result-abandoned",
+      "name": "ptah-result-8d1ad1a601d2cd8c5cac3e97b534170de16734abf7b8e30403b426db29e2e694-retired",
+      "apiGroup": "operator.ptah.run",
+      "apiVersion": "v1alpha1"
+    },
+    "responseStatus": {
+      "metadata": {},
+      "status": "Success",
+      "details": {
+        "name": "ptah-result-8d1ad1a601d2cd8c5cac3e97b534170de16734abf7b8e30403b426db29e2e694-retired",
+        "group": "operator.ptah.run",
+        "kind": "ptahresultrecords",
+        "uid": "f6706d46-1f26-4b05-83e4-26a60d34dfec"
+      },
+      "code": 200
+    },
+    "requestObject": {
+      "kind": "DeleteOptions",
+      "apiVersion": "meta.k8s.io/__internal",
+      "preconditions": {
+        "uid": "f6706d46-1f26-4b05-83e4-26a60d34dfec",
+        "resourceVersion": "71080"
+      },
+      "propagationPolicy": "Background"
+    },
+    "requestReceivedTimestamp": "2026-10-02T18:21:27.971407Z",
+    "stageTimestamp": "2026-10-02T18:21:27.993162Z",
+    "annotations": {
+      "authorization.k8s.io/decision": "allow",
+      "authorization.k8s.io/reason": "RBAC: allowed by ClusterRoleBinding \"ptah-runtime-generated-name-prefix-boundary-proof-5a0ef2fe7d\" of ClusterRole \"ptah-runtime-generated-name-prefix-boundary-proof-5a0ef2fe7d\" to ServiceAccount \"ptah-runtime-generated-name-prefix-boundary-proof-5a0ef2fe7d/ptah-system-1-37-0-result-restart-b2576f9b-5a0ef2fe7d\""
+    }
+  }
+]

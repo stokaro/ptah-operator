@@ -1,0 +1,12 @@
+{
+  "operatorRevision": "b0a51ff740784beaf6cd1ebb2fe8c2715583e1b5",
+  "operatorImage": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/operator@sha256:f338a4c98d77e4908426d0c4b45a1b177ffc8c2916cae3029217b9ec12cd6f36",
+  "runnerRevision": "b2576f9bbbe72979ba392456846fb16da1f0f03a",
+  "runnerImage": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-runner@sha256:7e2199f5c03660f094244b00962ec7e222f752f9cfc86276ac7cea296ce5d4b6",
+  "chartSHA256": "43c718af58a8ef74824b1081917d431290ea985e99fb99ba94efa2997de2260e",
+  "ptahRevision": "f6e562c5b0986cd29a53a5cc01938827336b780a",
+  "executorImage": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-executor@sha256:45530f0f2c41f4d649c207fe8221dad268946ca8da13b503244805c016f3c9dd",
+  "remainingAbandonedNamespaceRecords": 0,
+  "quotaRemoved": true,
+  "readyReceivers": 2
+}
