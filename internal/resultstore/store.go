@@ -308,6 +308,13 @@ func (s Store) ensure(ctx context.Context, want *api.PtahResultRecord) error {
 	// Preserve the request before Create fills in server-assigned fields.
 	expected := want.DeepCopy()
 	if err := s.Client.Create(ctx, want); err != nil && !apierrors.IsAlreadyExists(err) {
+		// Admission can refuse changed bytes before storage returns AlreadyExists.
+		// Classify a conflict only from a direct read of the immutable record;
+		// never turn an unrelated write failure into a successful receipt.
+		got, readErr := s.read(ctx, expected)
+		if errors.Is(readErr, ErrConflict) || readErr == nil && !bytes.Equal(got.Spec.Data, expected.Spec.Data) {
+			return ErrConflict
+		}
 		return err
 	}
 	got, err := s.read(ctx, expected)

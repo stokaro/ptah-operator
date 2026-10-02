@@ -11,7 +11,9 @@ import (
 	"testing"
 
 	recordapi "github.com/stokaro/ptah-operator/api/v1alpha1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -427,4 +429,45 @@ func (c canceledClient) Create(ctx context.Context, obj client.Object, opts ...c
 		return err
 	}
 	return c.Client.Create(ctx, obj, opts...)
+}
+
+// The API runs admission before storage can answer AlreadyExists. Its refusal
+// of different bytes must remain a permanent content conflict at the receiver.
+type admittedClient struct {
+	client.Client
+	store Store
+}
+
+func (c *admittedClient) Create(ctx context.Context, obj client.Object, opts ...client.CreateOption) error {
+	if _, _, err := c.store.ValidateRecordCreate(ctx, obj.(*recordapi.PtahResultRecord)); err != nil {
+		return apierrors.NewForbidden(schema.GroupResource{Group: recordapi.GroupVersion.Group, Resource: "ptahresultrecords"}, obj.GetName(), err)
+	}
+	return c.Client.Create(ctx, obj, opts...)
+}
+
+func TestAdmissionConflictKeepsPermanentPublicationError(t *testing.T) {
+	s := newStore(t)
+	s.Client = &admittedClient{Client: s.Client, store: s}
+	payload := []byte("original")
+	receipt, err := s.Publish(t.Context(), binding(), payload, digest(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := []byte("conflicting")
+	if got, err := s.Publish(t.Context(), binding(), other, digest(other)); !errors.Is(err, ErrConflict) || got != (Receipt{}) {
+		t.Fatalf("admission refusal must be a permanent conflict without a receipt: %v %v", got, err)
+	}
+	if got, err := s.Publish(t.Context(), binding(), payload, digest(payload)); err != nil || got != receipt {
+		t.Fatalf("identical admitted retry changed receipt: %v %v", got, err)
+	}
+	// A failed write of identical bytes is not a conflict and must not be
+	// converted to a receipt merely because the old publication is readable.
+	broken := Store{Client: &failingClient{Client: s.Client, at: 1}, Reader: s.Reader}
+	if got, err := broken.Publish(t.Context(), binding(), payload, digest(payload)); !errors.Is(err, errLostWrite) || got != (Receipt{}) {
+		t.Fatalf("unrelated write failure changed: %v %v", got, err)
+	}
+	got, retained, err := s.Load(t.Context(), binding())
+	if err != nil || !bytes.Equal(got, payload) || retained != receipt {
+		t.Fatalf("original publication changed: %v", err)
+	}
 }

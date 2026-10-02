@@ -280,3 +280,30 @@ all nine operation kinds, with the latest migration run held as a live pin.
 A passed audit replay establishes the recorded cohort's deletion timing and
 ownership. It does not establish backup/restore, cleanup of every abandoned
 partial publication, or a capacity bound under sustained load.
+
+## Concurrent redelivery of a committed result
+
+Set `RESULT_PROBE_CONCURRENT=1` with both replacement and runner-loss modes off.
+The shared migration setup holds the runner's retry before forwarding it, after
+its first result has been durably accepted. `result_concurrent.py` opens a
+port forward to each manager Pod and verifies TLS against the receiver Service
+name. The privileged harness borrows the original Pod's client credential;
+0600 files live in a temporary directory removed in `finally`. The runner's
+permissions do not change. Both port forwards are also stopped in `finally`.
+
+Each request pair waits at a barrier after TLS and HTTP headers, before sending
+its body. The evidence must show overlapping request intervals on distinct
+receiver Pod UIDs. Both identical requests must return the original receipt.
+Both changed requests must return 409, and a mixed pair must return that same
+receipt and 409 respectively. The changed document preserves canonical encoding
+and alters only the native migration description; a 422 validation failure, 403
+permission refusal, or 503 temporary error cannot satisfy this row.
+
+The probe independently reconstructs the original publication before and after
+all six requests and checks every stored member remains unchanged. It then
+resumes the original runner retry and requires the ordinary lost-ACK proof,
+including one calibrated SQL effect and original Job/Pod completion.
+`concurrent.json` records each response, payload digest, receiver UID, monotonic
+request timestamps, receipt, and procedure hash, including on verdict failure.
+This tests overlapping redelivery after publication. A race between first
+publishers of an absent intent and single-replica saturation need separate rows.

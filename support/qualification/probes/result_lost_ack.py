@@ -74,6 +74,10 @@ def main():
     if runner_loss not in ('0', '1') or (runner_loss == '1' and restart_receiver):
         raise ValueError('Select either runner loss or receiver replacement')
     runner_loss = runner_loss == '1'
+    concurrent = E.get('RESULT_PROBE_CONCURRENT', '0')
+    if concurrent not in ('0', '1') or (concurrent == '1' and (runner_loss or restart_receiver)):
+        raise ValueError('Concurrent delivery must run separately from replacement or loss')
+    concurrent = concurrent == '1'
     engine = E['RESULT_PROBE_ENGINE']
     if engine not in ('PostgreSQL', 'MySQL'):
         raise ValueError('RESULT_PROBE_ENGINE must be PostgreSQL or MySQL')
@@ -217,6 +221,7 @@ def main():
     proxy_created = False
     backend_service = None
     receiver_restart = None
+    concurrent_client = None
     proxy_name = ns + '-proxy'
     client_secret = ns + '-client'
 
@@ -287,6 +292,10 @@ def main():
             wait(lambda: endpoints_are({p['metadata']['uid'] for p in managers}, backend_service['metadata']['name']), 30)
             spec['containers'][0]['args'][1] = '--backend-address=' + backend_service['spec']['clusterIP'] + ':9444'
             spec['containers'][0]['args'].append('--pause-retry')
+        if concurrent:
+            from result_concurrent import Client
+            concurrent_client = Client(E, managers, host, dec(credential))
+            spec['containers'][0]['args'].append('--pause-retry')
         proxy = create({'apiVersion': 'v1', 'kind': 'Pod', 'metadata': {'name': proxy_name, 'namespace': opns, 'labels': {'acceptance-proxy': ns}}, 'spec': spec})
         proxy_created = True
         k('wait', '--for=condition=Ready', 'pod/' + proxy_name, '--timeout=120s', namespace=opns)
@@ -338,6 +347,29 @@ def main():
             assert admin('/resume-retry', True) == 204
             print('Both receiving managers replaced before retry forwarding', flush=True)
 
+        if concurrent:
+            from result_concurrent import verify_evidence as verify_concurrent
+            def concurrent_retry_paused():
+                value = admin('/evidence')
+                return value if value and value.get('retryWaits', 0) > 0 and value['dropped'] and len(value['attempts']) == 1 else None
+            paused = wait(concurrent_retry_paused, 60)
+            rs_before = {r['metadata']['name']: r for r in records()}
+            saved_intent, saved_complete, saved_data = publication(rs_before, job_uid)
+            receipt = paused['attempts'][0]['receipt']
+            assert saved_complete['metadata']['uid'] == receipt['UID']
+            concurrent_result = concurrent_client.run(saved_data, saved_intent['metadata']['name'], receipt)
+            rs_after = {r['metadata']['name']: r for r in records()}
+            after_intent, after_complete, after_data = publication(rs_after, job_uid)
+            owned = {name: r for name, r in rs_before.items() if name == saved_intent['metadata']['name']
+                     or any(o['uid'] == saved_intent['metadata']['uid'] for o in r['metadata'].get('ownerReferences', []))}
+            assert owned and all(rs_after[name] == r for name, r in owned.items())
+            assert after_intent == saved_intent and after_complete == saved_complete and after_data == saved_data
+            concurrent_result['publicationUnchanged'] = True
+            save('concurrent.json', concurrent_result)
+            verify_concurrent(concurrent_result)
+            assert admin('/resume-retry', True) == 204
+            print('PASS: concurrent identical and conflicting redeliveries through both receivers', flush=True)
+
         def retry_saved():
             value = admin('/evidence')
             return value if value and value['dropped'] and (len(value['attempts']) == 2) else None
@@ -383,6 +415,8 @@ def main():
         save('lost-ack.json', result)
         print('PASS: identical receipt redelivered after lost ACK; one native migration SQL execution', flush=True)
     finally:
+        if concurrent_client:
+            concurrent_client.close()
         if routed:
             restore_service()
         if gated:
