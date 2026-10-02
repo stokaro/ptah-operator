@@ -1,5 +1,42 @@
 # Installed result delivery probes
 
+## Lost acknowledgment fixture
+
+The isolated fixture image provides `result-ack-proxy`. It accepts only one
+original Pod's mTLS certificate and forwards that same credential to the real
+receiver. After a valid successful receipt, it closes the downstream connection
+without sending an HTTP status. It forwards one identical retry and holds that
+response while the harness restores the ordinary receiver Service route.
+Conflicting payloads, changed receipt UIDs, invalid receipts, and upstream
+refusals cannot count as successful redelivery.
+
+The command takes `--backend-address=<manager-pod-ip>:9444`,
+`--server-name=<receiver-service>.<operator-namespace>.svc`,
+`--trust-directory=/trust`, and `--credential-directory=/credential`.
+The trust mount contains only `tls.crt`, `tls.key`, and `client-trust.crt` from
+the installed receiver projection. The credential mount contains the original
+operation Pod's `tls.crt`, `tls.key`, and `ca.crt`. Copying that credential into
+the fixture is privileged test setup; runner permissions remain unchanged.
+Use this fixture only in an owned disposable installation with other operations
+idle. Remove its Pod and copied Secret when the probe ends.
+
+The data listener uses mTLS on port 9444. The control listener binds only
+`127.0.0.1:8081`; access it through a Pod port-forward. `GET /evidence` returns
+receipt metadata, timestamps, counters, and the client certificate digest,
+without payload or credential bytes. Once it reports two identical receipts,
+restore the Service selector and confirm its normal endpoints before sending
+`POST /release`. A premature release is refused. The process is limited to ten
+minutes, one in-flight request, and two successful deliveries.
+
+The real-TLS fixture tests establish that the first response is actually lost,
+the second cannot escape before release, and false receipt evidence is refused.
+They do not prove installed runner behavior or SQL execution counts. Installed
+acceptance must also retain the original Job/Pod identities, successful runner
+completion, the matching persisted receipt, and an independent database witness
+showing one execution before and after redelivery.
+
+## First harvest
+
 `result_first_harvest.py` runs a native PostgreSQL plan of exactly 8 MiB
 through acknowledgment, Pod/log deletion, manager restart, first controller
 consumption, approval, Apply, and database-verified convergence. It requires an

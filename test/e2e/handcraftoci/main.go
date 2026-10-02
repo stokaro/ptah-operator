@@ -82,6 +82,8 @@ func main() {
 func run(args []string) error {
 	if len(args) > 0 {
 		switch args[0] {
+		case "result-ack-proxy":
+			return runResultACKProxy(args[1:])
 		case "tls-proxy":
 			return runTLSProxy(args[1:])
 		case "verify-certificate":
