@@ -2,9 +2,10 @@ import base64
 import copy
 import hashlib
 import json
+import pathlib
 import unittest
 
-from result_first_harvest import publication
+from result_first_harvest import publication, size_fixture
 
 
 def digest(data):
@@ -18,6 +19,27 @@ def record(name, uid, role, value, owner=None):
         metadata['ownerReferences'] = [{'uid': owner}]
     return {'metadata': metadata, 'spec': {
         'type': role, 'data': base64.b64encode(raw).decode()}}
+
+
+class SizeFixtureTests(unittest.TestCase):
+    def test_captured_native_calibration_hits_exact_limit(self):
+        for engine in ('postgresql', 'mysql'):
+            with self.subTest(engine=engine):
+                dialect, repeated, suffix, checksum = size_fixture(engine)
+                path = pathlib.Path(__file__).resolve().parents[3] / (
+                    'testdata/e2e/readings/plan-size-small-' + dialect + '.json')
+                raw = path.read_bytes()
+                self.assertEqual(checksum, hashlib.sha256(raw).hexdigest())
+                envelope = len(raw) - 32 * len(b'\\u003c')
+                self.assertEqual(envelope + repeated * 6 + suffix, 8 * 1024 * 1024)
+                self.assertGreater(repeated, 1_000_000)
+                self.assertGreaterEqual(suffix, 0)
+                self.assertLess(suffix, 6)
+
+    def test_refuses_an_unrecognized_engine(self):
+        for engine in ('', 'postgres', 'MySQL', 'sqlite'):
+            with self.subTest(engine=engine), self.assertRaises(ValueError):
+                size_fixture(engine)
 
 
 class PublicationTests(unittest.TestCase):

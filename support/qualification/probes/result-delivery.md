@@ -183,7 +183,7 @@ holds were removed. This proves the partial-loss authorization case on Kubernete
 
 ## First harvest
 
-`result_first_harvest.py` runs a native PostgreSQL plan of exactly 8 MiB
+`result_first_harvest.py` runs a native PostgreSQL or MySQL plan of exactly 8 MiB
 through acknowledgment, Pod/log deletion, manager restart, first controller
 consumption, approval, Apply, and database-verified convergence. It requires an
 owned disposable cluster prepared by `hack/e2e-kind.sh` and `demo/bin/lab`.
@@ -200,8 +200,9 @@ belong to `E2E_KIND_CLUSTER_NAME` on that daemon.
 Source the environment written by the bootstrap. The source workload namespace
 must contain the native PostgreSQL `storefront` schema, the completed
 `result-schema-publish` Job, `demo-registry`, `demo-registry-pull`, and
-`demo-verification-policy`. The lab's external PostgreSQL container and its
-credential file must still exist. These objects supply the pinned executor,
+`demo-verification-policy`. For PostgreSQL, the lab's external database
+container and its credential file must still exist. MySQL uses the source namespace's `demo-mysql` Deployment
+and `demo-mysql-database` Secret. These objects supply the pinned executor,
 registry, verification settings, and database fixture; they are not altered.
 
 Provide fresh names and an evidence directory outside the repository:
@@ -211,6 +212,7 @@ set -a
 . /path/to/owned-bootstrap.env
 set +a
 export DOCKER_CONFIG="$E2E_DOCKER_CONFIG"
+export RESULT_PROBE_ENGINE=postgresql  # Or mysql.
 export RESULT_PROBE_NAMESPACE=ptah-result-first-harvest
 export RESULT_PROBE_DATABASE=result_first_harvest
 export RESULT_PROBE_EVIDENCE_DIR=/path/to/private-evidence
@@ -219,7 +221,10 @@ python3 support/qualification/probes/result_first_harvest.py
 ```
 
 The fixture image must be the task-built image. Its `plan-size-schema` command
-uses the native executor's JSON escaping to produce the 8 MiB plan. The probe
+uses the captured native serializer calibration in
+`testdata/e2e/readings/plan-size-small-{postgres,mysql}.json` to generate the
+8 MiB plan. MySQL distributes the escaped default across 100 tables and uses
+`transactionMode: none`; PostgreSQL uses one table. The probe
 checks the resulting size, all 16 planstore chunks, and their reconstructed
 SHA-256. A changed serializer that produces a different size fails the probe.
 It does not silently lower the maximum-size requirement.
@@ -250,7 +255,9 @@ Restoring the RoleBinding allows the first harvest. The probe requires the
 same plan digest, independently reconstructs its stored bytes, and refuses a
 replacement Plan attempt. It then submits the ordinary approval, requires one
 Apply publication and current-generation `InSync`, and checks the generated
-PostgreSQL default by inserting and reading a row.
+PostgreSQL default by inserting and reading a row. For MySQL, it checks all
+100 native table defaults through `information_schema`, including their total
+length and escaped-character count.
 
 `first-harvest-maximum.json` records the binding, UIDs, digests, source revision,
 procedure digest, and outcomes. A complete run must exit zero and contain

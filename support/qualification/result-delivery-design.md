@@ -1123,3 +1123,22 @@ containers are removed; runtime, admission and leadership readback pass. The
 case's namespace waits for ordinary retention after its database is removed.
 This completes the preserved-identity startup case on Kubernetes 1.37 Linux
 amd64. Other recovery cells and final acceptance remain open.
+
+
+### Native MySQL maximum with default logs
+
+[Installed MySQL boundary evidence](evidence/result-mysql-maximum-2026-10-03/summary.json)
+proves the exact 8 MiB plan on Kubernetes 1.37 Linux amd64 with all four
+kubelets reporting `10Mi`. The Plan receipt is committed while controller
+leadership is disabled. Its producer Pod and logs are removed, both managers
+are replaced, and only then is leadership restored. First harvest reconstructs
+the same digest from 16 plan chunks. One fresh approval permits one Apply;
+MySQL 8.4.11 reports all 100 tables and the expected 1,393,516 default characters,
+including 1,393,515 `<` characters. Independent readback checks every generated
+statement and its escaping, current-generation convergence, the completed Apply
+Job UID, and restored admission/leadership controls.
+
+The recorded runtime images are development identities. The database is
+removed and namespace deletion follows ordinary retention. This closes this
+engine/minor maximum row; maximum-plus-one and the other supported minors remain
+open. PostgreSQL's unchanged maximum proof is reused, not rerun.
