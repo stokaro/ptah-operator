@@ -1,0 +1,97 @@
+{
+  "schemaVersion": 1,
+  "issue": 586,
+  "status": "Durable consumer and controller paths pass local checks; installed activation remains incomplete",
+  "testedCommit": "c3afb4bb1e04082a5f9de630dad5475f1475abb6",
+  "recordedAt": "2026-10-02T04:22:47.663838+00:00",
+  "sourceSHA256": {
+    "internal/controller/durable_results.go": "227fe98e201e954136b19749b4e7bc68ceee9a7a743d48ab83fb9cff305e8746",
+    "internal/controller/durable_results_test.go": "a0961f60fb4fb0e1dddf42ba5f98617de72e9386fdc229393fdca20f24246bfd",
+    "internal/controller/migration_controller.go": "54c556227082e426773ceb5dfd61d196b6f0ade3cb15b9b8d0a200238a069105",
+    "internal/controller/migration_termination_summary.go": "aa911d048d57299e5aa8dce1f1591d167a1776a4d7352ba4848b5958abcc0138",
+    "internal/controller/schema_controller.go": "a451a2d33c98c42827f066b05c98d8ab47f9cbfba92ae1cc87705024bd3b2e93",
+    "internal/resultconsumer/reader.go": "cb227a695d192ec9b19a51ce6dca0a2f0a214fe43cb07f69681c70f4013748e1",
+    "internal/resultconsumer/reader_test.go": "32827769a9110cb94690dbce3a4ae1594ff60fd3a84e3549dd2b546bf083e595",
+    "internal/resultconsumer/store_test.go": "ea207b985761c44eaa8500815bfeb523027dcdf30794cfc8a1d973c4db47e9af",
+    "internal/resultstore/store.go": "330676cf9b302b56787330a0254470146122b69892ff0c7270baecd7903388cd",
+    "support/qualification/result-delivery-design.md": "90694cfe96c06649420875ce8df57afa6f5793bf66562ae7dbf9a34c671ddbb0",
+    "support/runner-protocol.json": "3f163e7ca92044010063fcdb67ae5ca51976c5a32635ba0e3fa38ae5e9d9c8a4",
+    "test/envtest/resultstore/store_test.go": "6d02883cb171a2805ea3db7fe41b731154c147e7363982e66af6e871de3c0505"
+  },
+  "environment": {
+    "go": "go version go1.27.1 darwin/arm64",
+    "host": "darwin/arm64",
+    "API": "Kubernetes 1.37.0 kube-apiserver and etcd",
+    "Docker": "Not used for this checkpoint"
+  },
+  "checks": [
+    {
+      "command": "GOFLAGS=-p=1 go test -race -count=1 -json ./internal/resultconsumer ./internal/controller ./internal/resultstore",
+      "exitCode": 0,
+      "passingTestsAndSubtests": 1069,
+      "skips": [],
+      "packages": [
+        {
+          "name": "github.com/stokaro/ptah-operator/internal/resultconsumer",
+          "elapsedSeconds": 21.978
+        },
+        {
+          "name": "github.com/stokaro/ptah-operator/internal/controller",
+          "elapsedSeconds": 9.693999999999999
+        },
+        {
+          "name": "github.com/stokaro/ptah-operator/internal/resultstore",
+          "elapsedSeconds": 29.553
+        }
+      ]
+    },
+    {
+      "command": "KUBEBUILDER_ASSETS=<Kubernetes 1.37.0 darwin/arm64 assets> PTAH_REQUIRE_ENVTEST=1 GOFLAGS=-p=1 go test -count=1 -json ./test/envtest/resultstore",
+      "exitCode": 0,
+      "passingTestsAndSubtests": 14,
+      "skips": [],
+      "packages": [
+        {
+          "name": "github.com/stokaro/ptah-operator/test/envtest/resultstore",
+          "elapsedSeconds": 20.646
+        }
+      ]
+    },
+    {
+      "command": "GOFLAGS=-p=1 make fmt-check vet verify-runner-protocol",
+      "exitCode": 0
+    }
+  ],
+  "proved": [
+    "LoadAttempt finds a publication by namespace, resource UID, operation ID, and Job name, then verifies the full publication. StoreLoader checks the returned binding against the expected resource, generation, operation, input fingerprint, execution binding, and exact Job UID before decoding the protocol for its engine.",
+    "For all nine operation fixtures, a fresh loader reads results after Pod and Job removal using a reader that refuses non-record GETs and all LISTs. These are fixture-based storage/loader checks, not a change to the controllers missing-Job policy.",
+    "Background loading has explicit worker, retained-entry, deadline, and memory-retention bounds. Poll does not perform API I/O; duplicate requests share one load, saturation does not enqueue unbounded work, failure can retry, caller cancellation prevents scheduling, expiration releases memory, and shutdown cancels loads.",
+    "Both controllers durable harvest paths read persisted results for all nine operation fixtures after Pod removal. Historical Pod UID is retained without marking a missing Pod as trusted live termination evidence. Live replacement Pods are refused.",
+    "Durable Jobs do not read logs or substitute a termination summary for an absent receipt. Missing receipts enter the existing arrival/recovery path.",
+    "An exact 8 MiB escaping-heavy Plan loads without a manager process key. The existing plan publication method publishes durable plaintext after key loss while retaining its digest, target, engine, policy, and exclusion checks.",
+    "The real API test locates and reads the full 50,397,184-byte storage payload through a fresh client without knowing Pod identity in advance. Existing storage immutability and crash-boundary checks also pass."
+  ],
+  "notProved": [
+    "Installed manager startup, receiver listener, trust/RBAC/Service/NetworkPolicy wiring, credential issuance during real reconciliation, or activation of the consumer. Installed Jobs still use logs.",
+    "A complete real-cluster workflow, manager replacement during that workflow, or a maximum Plan passing publication admission and both controllers under default kubelet logging.",
+    "The all-operation controller tests exercise durable harvest methods, not an entire reconciler/database lifecycle. The plan key-loss check exercises the existing consumption/publication method directly.",
+    "Preservation of measured Lease/progress budgets under installed simultaneous uploads and result loads. Existing controller safety tests pass, but the installed contention acceptance remains required.",
+    "Retention, authorized result deletion, quota, backup/restore, trust rotation, or garbage collection.",
+    "Job-independent controller recovery: controllers still require their exact Job; a missing mutating Job retains unknown-outcome handling.",
+    "Production acceptance, the full supported matrix, complete issue 586 DoDs, or full make verify on this commit."
+  ],
+  "localLogs": {
+    "/private/tmp/ptah-consumer-race.jsonl": {
+      "sha256": "1fedd9f0e7a4313a423f882f84add6d95f822fccfa2855f7c126d7332c5c89d7",
+      "custody": "Local diagnostic log; final release evidence custody remains pending"
+    },
+    "/private/tmp/ptah-consumer-envtest.jsonl": {
+      "sha256": "a504030ecba3f7ad46c40ab9cebb4d22e6769a5959c49e4ad32604269b47b830",
+      "custody": "Local diagnostic log; final release evidence custody remains pending"
+    },
+    "/private/tmp/ptah-consumer-gates.log": {
+      "sha256": "b733f42499dfd4222c6c2ef60ca6fe5794a0a9e45f2e68793f894ae09bd81c02",
+      "custody": "Local diagnostic log; final release evidence custody remains pending"
+    }
+  }
+}
