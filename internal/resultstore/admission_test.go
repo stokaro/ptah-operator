@@ -81,17 +81,19 @@ func TestPublicationAdmissionRefusesRecordChanges(t *testing.T) {
 				t.Fatal(err)
 			}
 			changes := map[string]func(*api.PtahResultRecord){
-				"name":             func(r *api.PtahResultRecord) { r.Name += "-other" },
-				"namespace":        func(r *api.PtahResultRecord) { r.Namespace = "other" },
-				"owner UID":        func(r *api.PtahResultRecord) { r.OwnerReferences[0].UID = "foreign" },
-				"owner controller": func(r *api.PtahResultRecord) { r.OwnerReferences[0].Controller = nil },
-				"labels":           func(r *api.PtahResultRecord) { r.Labels["extra"] = "extra" },
-				"annotations":      func(r *api.PtahResultRecord) { r.Annotations = map[string]string{"extra": "extra"} },
-				"finalizer":        func(r *api.PtahResultRecord) { r.Finalizers = []string{"operator.ptah.run/extra"} },
-				"generate name":    func(r *api.PtahResultRecord) { r.GenerateName = "extra-" },
-				"empty bytes":      func(r *api.PtahResultRecord) { r.Spec.Data = nil },
-				"changed bytes":    func(r *api.PtahResultRecord) { r.Spec.Data = append(r.Spec.Data, ' ') },
-				"foreign role":     func(r *api.PtahResultRecord) { r.Spec.Type = "credential" },
+				"name":                  func(r *api.PtahResultRecord) { r.Name += "-other" },
+				"namespace":             func(r *api.PtahResultRecord) { r.Namespace = "other" },
+				"owner UID":             func(r *api.PtahResultRecord) { r.OwnerReferences[0].UID = "foreign" },
+				"owner controller":      func(r *api.PtahResultRecord) { r.OwnerReferences[0].Controller = nil },
+				"labels":                func(r *api.PtahResultRecord) { r.Labels["extra"] = "extra" },
+				"missing attempt index": func(r *api.PtahResultRecord) { delete(r.Labels, LabelAttempt) },
+				"foreign attempt index": func(r *api.PtahResultRecord) { r.Labels[LabelAttempt] = AttemptLabel("foreign") },
+				"annotations":           func(r *api.PtahResultRecord) { r.Annotations = map[string]string{"extra": "extra"} },
+				"finalizer":             func(r *api.PtahResultRecord) { r.Finalizers = []string{"operator.ptah.run/extra"} },
+				"generate name":         func(r *api.PtahResultRecord) { r.GenerateName = "extra-" },
+				"empty bytes":           func(r *api.PtahResultRecord) { r.Spec.Data = nil },
+				"changed bytes":         func(r *api.PtahResultRecord) { r.Spec.Data = append(r.Spec.Data, ' ') },
+				"foreign role":          func(r *api.PtahResultRecord) { r.Spec.Type = "credential" },
 			}
 			for name, change := range changes {
 				t.Run(name, func(t *testing.T) {
@@ -254,5 +256,27 @@ func TestConcurrentPublicationsPassAdmission(t *testing.T) {
 		if result.receipt != first {
 			t.Fatal("concurrent identical writes yielded different receipts")
 		}
+	}
+}
+
+func TestUnindexedPersistedPublicationRemainsReadableAndRetryable(t *testing.T) {
+	s, records := publishedRecords(t)
+	payload, before, err := s.Load(t.Context(), binding())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range records {
+		delete(r.Labels, LabelAttempt)
+		if err := s.Client.Update(t.Context(), r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, after, err := s.Load(t.Context(), binding())
+	if err != nil || before != after || !bytes.Equal(got, payload) {
+		t.Fatalf("legacy readback: %v", err)
+	}
+	retry, err := s.Publish(t.Context(), binding(), payload, digest(payload))
+	if err != nil || retry != before {
+		t.Fatalf("legacy retry changed receipt: %v", err)
 	}
 }

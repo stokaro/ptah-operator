@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"maps"
 	"reflect"
 
 	api "github.com/stokaro/ptah-operator/api/v1alpha1"
@@ -59,6 +60,9 @@ func (s Store) ValidateRecordCreate(ctx context.Context, candidate *api.PtahResu
 	m, name, err := admissionManifest(intent)
 	if err != nil {
 		return Binding{}, nil, err
+	}
+	if candidate.Labels[LabelAttempt] != AttemptLabel(name) {
+		return Binding{}, nil, ErrInvalid
 	}
 	childOwner := owner(apiVersion, "PtahResultRecord", name, intent.UID)
 	var payload []byte
@@ -160,8 +164,15 @@ func canonicalRecord(data []byte, value any) bool {
 
 // Server bookkeeping is not caller-controlled publication metadata.
 func recordShape(got, want *api.PtahResultRecord) bool {
+	labels := want.Labels
+	// Previously persisted development records have no attempt index. They
+	// stay immutable and readable; new CREATEs require the index above.
+	if got.UID != "" && got.Labels[LabelAttempt] == "" {
+		labels = maps.Clone(labels)
+		delete(labels, LabelAttempt)
+	}
 	return got.Namespace == want.Namespace && got.Name == want.Name && got.GenerateName == "" && len(got.Annotations) == 0 && len(got.Finalizers) == 0 &&
-		reflect.DeepEqual(got.Labels, want.Labels) && reflect.DeepEqual(got.OwnerReferences, want.OwnerReferences) && got.Spec.Type == want.Spec.Type
+		reflect.DeepEqual(got.Labels, labels) && reflect.DeepEqual(got.OwnerReferences, want.OwnerReferences) && got.Spec.Type == want.Spec.Type
 }
 
 // ValidateRecordUpdate preserves both immutable bytes and their ownership.
@@ -171,6 +182,9 @@ func ValidateRecordUpdate(old, next *api.PtahResultRecord) error {
 		return ErrInvalid
 	}
 	a, b := old.DeepCopy(), next.DeepCopy()
+	if !a.DeletionTimestamp.IsZero() && !b.DeletionTimestamp.IsZero() && len(a.Finalizers) == 1 && a.Finalizers[0] == metav1.FinalizerDeleteDependents && len(b.Finalizers) == 0 {
+		a.Finalizers = b.Finalizers
+	}
 	a.ResourceVersion, b.ResourceVersion = "", ""
 	a.ManagedFields, b.ManagedFields = nil, nil
 	a.DeletionTimestamp, b.DeletionTimestamp = nil, nil

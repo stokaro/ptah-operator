@@ -34,7 +34,9 @@ import (
 	"github.com/stokaro/ptah-operator/internal/planseal"
 	"github.com/stokaro/ptah-operator/internal/planstore"
 	"github.com/stokaro/ptah-operator/internal/podintent"
+	"github.com/stokaro/ptah-operator/internal/resultcleanup"
 	"github.com/stokaro/ptah-operator/internal/resultconsumer"
+	"github.com/stokaro/ptah-operator/internal/resultretention"
 	"github.com/stokaro/ptah-operator/internal/resultservice"
 	"github.com/stokaro/ptah-operator/internal/targetlock"
 	"github.com/stokaro/ptah-operator/internal/telemetry"
@@ -184,6 +186,7 @@ func main() {
 		os.Exit(1)
 	}
 	var results *resultservice.Service
+	var cleanupPolicy *resultcleanup.Policy
 	if resultEndpoint != "" {
 		results, err = resultservice.New(resultservice.Config{Endpoint: resultEndpoint, Address: resultAddress, CertificateDirectory: resultCertDir, EnrollmentPolicyNamespace: managerIdentity[2], EnrollmentPolicyName: resultEnrollmentPolicy, Uploads: 1, UploadTimeout: 2 * time.Minute, Consumer: resultconsumer.Options{Workers: 1, Entries: 4, Timeout: 30 * time.Second, Retention: time.Minute}}, manager.GetClient(), manager.GetAPIReader())
 		if err != nil {
@@ -192,6 +195,16 @@ func main() {
 		}
 		if err := manager.Add(results); err != nil {
 			log.Error(err, "register durable result service")
+			os.Exit(1)
+		}
+		cleanupPolicy = &resultcleanup.Policy{Reader: manager.GetAPIReader(), Window: resultretention.MinimumWindow}
+		collector, err := resultcleanup.New(manager.GetClient(), *cleanupPolicy, ctrlmetrics.Registry)
+		if err != nil {
+			log.Error(err, "configure result cleanup")
+			os.Exit(1)
+		}
+		if err := manager.Add(collector); err != nil {
+			log.Error(err, "register result cleanup")
 			os.Exit(1)
 		}
 		if err := manager.AddReadyzCheck("result-service", results.Ready); err != nil {
@@ -304,6 +317,7 @@ func main() {
 	writeValidator := &controllerwrite.Validator{Reader: manager.GetAPIReader(), Jobs: builder, ManagerUsername: controllerServiceAccountUsername}
 	if results != nil {
 		writeValidator.ResultCredentials = results
+		writeValidator.ResultCleanup = cleanupPolicy
 	}
 	manager.GetWebhookServer().Register(validateControllerWritePath, &cradmission.Webhook{Handler: &controllerwrite.ValidationHandler{Validator: writeValidator}})
 

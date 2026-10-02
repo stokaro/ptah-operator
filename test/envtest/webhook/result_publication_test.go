@@ -102,7 +102,7 @@ func publicationFixture(t *testing.T, issueCredential bool) (dispatchFixture, re
 	writeStatus(t, f.schema)
 	grant(t, f.namespace, "result-publication", managerSubject(t),
 		rbacv1.PolicyRule{APIGroups: []string{"operator.ptah.run"}, Resources: []string{"ptahresultrecords", "ptahschemas", "ptahmigrations"}, Verbs: []string{"get"}},
-		rbacv1.PolicyRule{APIGroups: []string{"operator.ptah.run"}, Resources: []string{"ptahresultrecords"}, Verbs: []string{"create"}},
+		rbacv1.PolicyRule{APIGroups: []string{"operator.ptah.run"}, Resources: []string{"ptahresultrecords"}, Verbs: []string{"create", "list", "delete"}},
 		rbacv1.PolicyRule{APIGroups: []string{""}, Resources: []string{"secrets"}, Verbs: []string{"create"}},
 		rbacv1.PolicyRule{APIGroups: []string{"batch"}, Resources: []string{"jobs"}, Verbs: []string{"get"}},
 		rbacv1.PolicyRule{APIGroups: []string{""}, Resources: []string{"pods"}, Verbs: []string{"get", "list"}},

@@ -29,6 +29,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/mutationlifecycle"
 	"github.com/stokaro/ptah-operator/internal/plancontract"
 	"github.com/stokaro/ptah-operator/internal/planstore"
+	"github.com/stokaro/ptah-operator/internal/resultcleanup"
 	"github.com/stokaro/ptah-operator/internal/resultdelivery"
 	"github.com/stokaro/ptah-operator/internal/resultstore"
 	"github.com/stokaro/ptah-operator/internal/workload"
@@ -95,6 +96,7 @@ type Validator struct {
 	// ResultCredentials remains nil until the installation has delivery trust.
 	// Reserved credential writes are still guarded while issuance is disabled.
 	ResultCredentials ResultCredentialValidator
+	ResultCleanup     *resultcleanup.Policy
 }
 
 // ValidationHandler adapts Validator to controller-runtime admission.

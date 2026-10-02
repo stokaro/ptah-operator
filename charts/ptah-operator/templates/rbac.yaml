@@ -86,10 +86,10 @@ rules:
     verbs: ["get", "list", "watch"]
   {{- if .Values.resultDelivery.enabled }}
   # The receiver reads immutable records directly; it never caches or watches
-  # payloads. Cleanup permissions are withheld until retention is qualified.
+  # payloads. The leader scans metadata and admission guards every deletion.
   - apiGroups: ["operator.ptah.run"]
     resources: ["ptahresultrecords"]
-    verbs: ["get", "create"]
+    verbs: ["get", "list", "create", "delete"]
   # RBAC cannot constrain CREATE by name. The controller-write webhook checks
   # every manager Secret request and allows only exact canonical credentials.
   - apiGroups: [""]

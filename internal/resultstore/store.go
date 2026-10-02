@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -30,6 +31,8 @@ const (
 	maxChunks       = int((MaxPayloadBytes + ChunkBytes - 1) / ChunkBytes)
 	apiVersion      = "operator.ptah.run/v1alpha1"
 	labelRecord     = "operator.ptah.run/result-record"
+	LabelAttempt    = "operator.ptah.run/result-attempt"
+	LabelRecord     = labelRecord
 )
 
 var (
@@ -333,11 +336,22 @@ func (s Store) read(ctx context.Context, want *api.PtahResultRecord) (*api.PtahR
 }
 
 func record(namespace, name, role string, ref metav1.OwnerReference, data []byte) *api.PtahResultRecord {
+	attempt := name
+	if ref.Kind == "PtahResultRecord" {
+		attempt = ref.Name
+	}
 	return &api.PtahResultRecord{
 		ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: name,
-			OwnerReferences: []metav1.OwnerReference{ref}, Labels: map[string]string{labelRecord: role}},
+			OwnerReferences: []metav1.OwnerReference{ref}, Labels: map[string]string{labelRecord: role, LabelAttempt: AttemptLabel(attempt)}},
 		Spec: api.PtahResultRecordSpec{Type: role, Data: bytes.Clone(data)},
 	}
+}
+
+// AttemptLabel indexes metadata only. Full binding and owner identity remain
+// authoritative. The alphabet and fixed alphanumeric ends form a label value.
+func AttemptLabel(name string) string {
+	sum := sha256.Sum256([]byte(name))
+	return "r" + base64.RawURLEncoding.EncodeToString(sum[:]) + "r"
 }
 
 func owner(version, kind, name string, uid types.UID) metav1.OwnerReference {

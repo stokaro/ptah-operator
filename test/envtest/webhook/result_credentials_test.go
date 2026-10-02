@@ -258,6 +258,13 @@ func TestResultCredentialAdmission(t *testing.T) {
 		}
 		requireDenied(t, admin.Delete(ctx, secret, client.DryRunAll), controllerWriteWebhook, "immutable operation binding")
 		requireDenied(t, admin.Delete(ctx, record, client.PropagationPolicy(metav1.DeletePropagationOrphan), client.DryRunAll), controllerWriteWebhook, "require cascading deletion")
+		requireDenied(t, admin.Delete(ctx, record, client.DryRunAll), controllerWriteWebhook, "immutable operation binding")
+		cleanupClockOffset.Store(int64(2 * time.Hour))
+		defer cleanupClockOffset.Store(0)
+		requireDenied(t, admin.Delete(ctx, record, client.DryRunAll), controllerWriteWebhook, "immutable operation binding")
+		if err := admin.Delete(ctx, job, client.PropagationPolicy(metav1.DeletePropagationBackground)); err != nil {
+			t.Fatal(err)
+		}
 		if err := admin.Delete(ctx, record, &client.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &record.UID, ResourceVersion: &record.ResourceVersion}, PropagationPolicy: ptr.To(metav1.DeletePropagationForeground)}); err != nil {
 			t.Fatal(err)
 		}

@@ -31,8 +31,8 @@ read a multi-chunk result using only `get` and `create` on this resource while
 Secret GET remains forbidden. The chart routes all record writes through the
 controller-write webhook. With delivery trust configured, that guard admits
 credential and publication records under the rules below. Installed manager RBAC
-uses GET and CREATE on result records when durable delivery is enabled; no
-record list, watch, update, or deletion grant is added.
+uses GET/CREATE for delivery and LIST/DELETE for cleanup when durable delivery
+is enabled. No record watch or update grant is added.
 
 The record binds namespace, resource kind/name/UID/generation, execution binding,
 input fingerprint, operation type/ID, attempt Job name/UID, and Pod name/UID.
@@ -298,8 +298,8 @@ changes, Lease loss, or the start of resource deletion. Pending schema observati
 pending Lease release, migration unresolved/resolved-run evidence, and the most
 recent migration run also retain their attempt. An unresolved-run annotation
 keeps that protection when restore omits status; an unreadable annotation refuses
-cleanup. A retired, unpinned operation or absent/replaced owner allows
-credential-record cleanup. A projection whose exact
+cleanup. The enabled collector also requires the persisted retirement window
+and original Job absence before credential-record deletion. A projection whose exact
 canonical record still exists cannot be deleted, even after retirement. After
 record removal or replacement, projection DELETE decodes the immutable
 certificate's recorded binding and rechecks the original resource directly.
@@ -568,7 +568,7 @@ built-in certificate rotation with generated webhook trust. The manager mounts
 only the six-file projection, read-only with mode 0440 and its existing fsGroup;
 it does not mount the private journal or receive Secret-read permission. The
 rotator can GET/UPDATE only the named projection, journal, policy, and Leases.
-The manager receives result-record GET/CREATE and Secret CREATE. Since RBAC cannot
+The manager receives result-record GET/LIST/CREATE/DELETE and Secret CREATE. Since RBAC cannot
 scope CREATE by name, every manager Secret request reaches the fail-closed
 controller-write webhook, which accepts only an exact canonical delivery
 credential. Other writers still cannot create reserved delivery credentials.
@@ -631,18 +631,38 @@ Unreadable fences and API failures refuse new authority. Real API tests exercise
 both credential and intent sources, an attempted backdated creation time,
 immutable marker retries, restored claims, and intact receipt bytes.
 
-Retirement recording and eligibility are implemented; automatic scanning and
-authorized publication deletion are not yet connected. Publication DELETE and
-DeleteCollection remain refused, and manager cleanup permissions remain absent.
-The collector must delete only after the window and pin checks, use UID/RV
-preconditions, remove publication children before their intent, and remove a
-retirement fence last. A fence must remain while the original Job UID exists,
-so restoring its old claim cannot reactivate the original Pod after collection.
-These collection and quota behaviors still require installed proof.
+The enabled manager runs automatic cleanup as a separate leader-only worker.
+It scans metadata in pages of 64 with a 30-second deadline per step, retains no
+payload cache, and retries failures without making the reconcile workers wait.
+New publications carry an immutable attempt index; existing unindexed records
+remain readable and retryable. Child discovery is bounded to 128 indexed
+members and 16 pages of 128 unindexed legacy children per namespace. An
+incomplete scan retains the attempt. Large legacy sets may require repeated
+passes as earlier attempts are collected; this is not an unbounded LIST.
 
-Before enabling this path, complete publication-record retention and authorized deletion,
-receiver certificates and NetworkPolicy, bounded request metrics, and installed
-receipt consumption. Do not attach a time-only TTL to unconsumed results or
+Every DELETE rechecks the retirement window, live recovery pins, original Job
+absence, source identity, and child ownership through direct API reads. The
+webhook independently applies the same policy to every caller. Each late record
+also receives a full window from its own API creation time. A longer saved or
+current window wins. Deletion uses UID and resource-version preconditions and
+removes completion, chunks, intent, credential, and finally the retirement
+fence. The original Job UID must be absent before any deletion, so restoring an
+old claim cannot reactivate its original Pod after collection. Orphan deletion
+is refused. The Kubernetes garbage collector removes the credential's Secret
+projection; the manager receives neither Secret GET nor Secret DELETE.
+
+`ptah_operator_result_cleanup_operations_total` reports scan, retirement, and
+deletion outcomes with only bounded action/outcome labels. Local tests restart
+collection after failures before and after every publication deletion, refuse
+partial scans and API errors, retain late writes and restored claims, and
+collect legacy children whose intent was lost. A real API-server test runs the
+collector with manager permissions and admission, advancing only its test clock
+to exercise the one-hour window. Envtest has no garbage collector; installed
+Secret collection, quota recovery, and backup/restore still require proof.
+
+Before enabling this path by default, qualify retention and collection on an
+installed cluster, receiver trust rotation and NetworkPolicy, bounded request
+metrics, and installed receipt consumption. Do not attach a time-only TTL to unconsumed results or
 unresolved operations. Abandoned partial publications become eligible only after
 the exact attempt is retired and cannot still deliver. Cleanup must use UID/RV
 preconditions and respect the backup/recovery window and pinned plan evidence.

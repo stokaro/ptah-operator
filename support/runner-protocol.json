@@ -57,6 +57,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:5316c44fe37a4a8dc0262bc58c11f7f70839d2796278bb5a0e8959822a500830",
       "reason": "Add the immutable retired result-record role and a cleanup-only intent binding reader before the first 0.2.0 tag. Retirement fences new delivery while existing receipts remain readable, and its API creation time starts the recovery window. Runner payloads, TLS identities, and SQL execution limits are unchanged. No tagged release consumed an earlier protocol-1 contract; development counters remain 1."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:6ba7d2c6dcfd643dffae5854fb88026e0eb155294656eb9da70d211c52a7f539",
+      "reason": "Add an immutable attempt index to new result publications before the first 0.2.0 tag. Previously persisted unindexed publications remain readable and retryable. Cleanup validates child ownership and permits finalizing foreground deletion without changing payloads, digests, delivery identity, or SQL execution. No tagged release consumed an earlier protocol-1 contract; development counters remain 1."
     }
   ]
 }

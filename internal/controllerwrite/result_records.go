@@ -94,14 +94,17 @@ func (v *Validator) validateResultRecord(ctx context.Context, req admissionv1.Ad
 		if old.UID == "" {
 			return denyf("result deletion has no persisted record identity")
 		}
-		if old.Spec.Type == "credential" {
-			if err := validateCredentialDeleteOptions(req); err != nil {
-				return err
+		if err := validateCredentialDeleteOptions(req); err != nil {
+			return err
+		}
+		if v.ResultCleanup != nil {
+			err = v.ResultCleanup.AuthorizeDelete(ctx, old)
+			if err != nil && old.Spec.Type != "credential" {
+				return denyf("result publication retention has not authorized deletion")
 			}
+		} else if old.Spec.Type == "credential" {
 			err = resultcredentials.ValidateRecordDelete(ctx, v.Reader, old)
 		} else {
-			// No publication may be discarded before receipt consumption and retention
-			// are integrated. Active-operation retirement alone is not sufficient.
 			return denyf("result publication retention has not authorized deletion")
 		}
 	default:
