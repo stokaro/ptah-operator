@@ -1,0 +1,27 @@
+[
+  {
+    "kind": "Event",
+    "apiVersion": "audit.k8s.io/v1",
+    "level": "Metadata",
+    "auditID": "b06e7f4f-3966-44b5-97e1-3af32dbf14f0",
+    "stage": "ResponseComplete",
+    "verb": "create",
+    "objectRef": {
+      "resource": "ptahresultrecords",
+      "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+      "name": "ptah-result-36f27c118e2290f619ccd4f851a4b1c75e74ef409953aa4cdbf0c725f23698cd-000",
+      "apiGroup": "operator.ptah.run",
+      "apiVersion": "v1alpha1"
+    },
+    "requestReceivedTimestamp": "2026-10-02T09:31:33.562512Z",
+    "stageTimestamp": "2026-10-02T09:31:33.597668Z",
+    "responseStatus": {
+      "message": "ptahresultrecords.operator.ptah.run \"ptah-result-36f27c118e2290f619ccd4f851a4b1c75e74ef409953aa4cdbf0c725f23698cd-000\" is forbidden: exceeded quota: result-record-capacity, requested: count/ptahresultrecords.operator.ptah.run=1, used: count/ptahresultrecords.operator.ptah.run=61, limited: count/ptahresultrecords.operator.ptah.run=61",
+      "reason": "Forbidden",
+      "code": 403
+    },
+    "user": {
+      "username": "system:serviceaccount:ptah-system-1-37-0-result-cleanup-d3c14609-dca0c0b75d:ptah-runtime-generated-name-prefix-boundary-proof-dca0c0b75d"
+    }
+  }
+]

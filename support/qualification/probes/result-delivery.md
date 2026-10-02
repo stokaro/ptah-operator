@@ -97,3 +97,43 @@ not establish first consumption after Job deletion, a lost HTTP acknowledgment,
 SQL replay behavior after a lost acknowledgment, or recovery from Pod death
 between SQL commit and publication. It covers PostgreSQL on the recorded
 Kubernetes version; it is not the complete supported-version or engine matrix.
+
+## Retention audit replay
+
+`result_retention_evidence.py` verifies a completed installed retention run
+without requiring the cluster to remain alive:
+
+```sh
+python3 support/qualification/probes/result_retention_evidence.py /path/to/retention-evidence
+```
+
+The input directory contains `retention-before.json`, `retention-after.json`,
+`retention-markers.json`, and `retention-delete-audit.json`. The before record
+freezes the eligible and pinned record names and UIDs, receipt hashes, plan
+identities and hashes, Secret ownership, and deletion deadlines. The marker
+file contains the immutable retirement policy and API-assigned creation time
+for each frozen attempt. The after record contains the remaining pinned
+records, plan hashes, and collection counts.
+
+The verifier independently recomputes every deadline from the marker's saved
+window and the later of the marker's and member's API creation times. It
+rejects shortened windows, changed sources, incomplete or overlapping cohorts,
+changed pins or plans, and missing successful DELETE events. A matching event
+must name the exact namespace, resource, object name, and UID precondition.
+Its API `requestReceivedTimestamp` must follow the deadline; the time a polling
+loop noticed absence cannot substitute for it. Secret deletion must name the
+Kubernetes controller manager or garbage-collector ServiceAccount, not the
+operator manager or an administrator.
+
+For capture, audit DELETE requests at Request level for `PtahResultRecord` and
+Secret objects, and other result-record operations at Metadata level. DELETE
+bodies contain DeleteOptions and UID preconditions. Do not audit Secret or
+result CREATE/UPDATE request bodies or response bodies: those contain private
+credentials or operation data. Retain every API server's events until the
+cohort is collected. The three-server installed run uses real one-hour windows;
+no test clock is advanced. Its fixed cohort covers both resource families and
+all nine operation kinds, with the latest migration run held as a live pin.
+
+A passed audit replay establishes the recorded cohort's deletion timing and
+ownership. It does not establish backup/restore, cleanup of every abandoned
+partial publication, or a capacity bound under sustained load.

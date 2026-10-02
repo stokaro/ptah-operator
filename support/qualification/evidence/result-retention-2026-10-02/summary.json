@@ -1,0 +1,88 @@
+{
+  "schemaVersion": 1,
+  "issue": 586,
+  "status": "Passed for the frozen installed cohort; full transport acceptance remains incomplete",
+  "testedCommit": "7ec19b647e68f799b2cfd7008575d92fedb3c31b",
+  "recordedAt": "2026-10-02T10:34:36.357824+00:00",
+  "kubernetes": "1.37.0",
+  "database": "PostgreSQL",
+  "dockerContext": "remote-dev-container",
+  "resultDeliveryEnabled": true,
+  "kubelets": [
+    {
+      "node": "ptah-e2e-1-37-0-result-cleanu-dca0c0b75d-control-plane",
+      "containerLogMaxSize": "10Mi"
+    },
+    {
+      "node": "ptah-e2e-1-37-0-result-cleanu-dca0c0b75d-control-plane2",
+      "containerLogMaxSize": "10Mi"
+    },
+    {
+      "node": "ptah-e2e-1-37-0-result-cleanu-dca0c0b75d-control-plane3",
+      "containerLogMaxSize": "10Mi"
+    },
+    {
+      "node": "ptah-e2e-1-37-0-result-cleanu-dca0c0b75d-worker",
+      "containerLogMaxSize": "10Mi"
+    }
+  ],
+  "verification": {
+    "status": "passed",
+    "eligibleRecords": 75,
+    "pinnedRecords": 4,
+    "collectedSecretProjections": 15,
+    "preservedPlanObjects": 4,
+    "garbageCollectorIdentities": [
+      "system:serviceaccount:kube-system:generic-garbage-collector"
+    ]
+  },
+  "operations": [
+    "PtahMigration/migration-apply",
+    "PtahMigration/migration-history",
+    "PtahMigration/resolve",
+    "PtahMigration/verify",
+    "PtahSchema/apply",
+    "PtahSchema/observe",
+    "PtahSchema/plan",
+    "PtahSchema/resolve",
+    "PtahSchema/verify"
+  ],
+  "quotaRecovery": "API quota refused the first result chunk after intent persistence; the same Resolve Job, intent UID, payload digest, and completion receipt were retained when capacity returned.",
+  "procedure": "python3 support/qualification/probes/result_retention_evidence.py support/qualification/evidence/result-retention-2026-10-02",
+  "probeTests": {
+    "count": 78,
+    "exitCode": 0
+  },
+  "limits": [
+    "The clock was not advanced; all bounds use API creation and DELETE request timestamps.",
+    "Managers restarted after the retirement markers were persisted.",
+    "The latest migration run retained its four records and credential projection; four schema plan objects retained their UIDs and spec hashes.",
+    "Quota recovery used a read-only Resolve operation; lost HTTP acknowledgments and SQL replay were not measured.",
+    "Backup/restore, abandoned partial-publication cleanup, sustained capacity, other engines and Kubernetes minors, CA rotation, and NetworkPolicy enforcement remain unqualified by this cohort."
+  ],
+  "filesSHA256": {
+    "collector-metrics.json": "eedd99d640bbf00a631175cea531939d8087c49edfc4437dc766ad0e35c42a18",
+    "credential-expiry.json": "a922f6642032e8ca203c37b3acdcf89a316d699a58bf4b550c1878b6d6a8cb1f",
+    "manager-permissions.json": "c13f0bbc2c24a374bacdd95cb3dbaf4b4c24bd9d53a43eee2ae0e8ee6187bca2",
+    "quota-recovery.json": "0b24f0b04ba432c4008b7a3b896cf826c96d32135abd573071efbe444fe5fc99",
+    "quota-refusal-audit.json": "b8411049070a8d40a37c31ce0436415ade317056806b2c589978d89ac817475b",
+    "retention-after.json": "c805044ef63cd53fd3caaed690592bd2459bf65fd3d68868561d04db7411a701",
+    "retention-before.json": "c21fb1f14040642a6f1e8c1b6f942321cf6ef59396a501a7e1f429c5364a9646",
+    "retention-delete-audit.json": "938a6e12500fd41c3a737bc7a5cba3ca7fe8bbafae9cc0711a6b9a5d3f408ce9",
+    "retention-markers.json": "6dfacc488f27eba6c84d3089d256bf751e3c90a017756aa5ff816851c469ecb2",
+    "retention-observations.jsonl": "192e8722d7c33e7f914722e96747784232a33b2e9e69eb36ebd4cbed8670d876",
+    "verification.json": "0937b050971efe788ef6c4fa359ec9c21ee492667b9a6ae33e8d5c1aec49de5a"
+  },
+  "runtime": {
+    "E2E_CONTROLLER_REVISION": "7ec19b647e68f799b2cfd7008575d92fedb3c31b",
+    "E2E_CONTROLLER_IMAGE": "e2e-registry.ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d.svc.cluster.local:5000/ptah-operator@sha256:468dd4d61d7d57faa5f33bb43644471d0b9d148500ecf8e8b3a9455d2ee5421d",
+    "E2E_EXECUTOR_IMAGE": "e2e-registry.ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d.svc.cluster.local:5000/ptah-executor@sha256:abca19f3735c68493467b46928f8b2f7bf8e25c468f33e1fe2df63fc4a028de1",
+    "E2E_RUNNER_IMAGE": "e2e-registry.ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d.svc.cluster.local:5000/ptah-runner@sha256:468dd4d61d7d57faa5f33bb43644471d0b9d148500ecf8e8b3a9455d2ee5421d",
+    "E2E_PTAH_REVISION": "f6e562c5b0986cd29a53a5cc01938827336b780a",
+    "E2E_POSTGRES_IMAGE": "e2e-registry.ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d.svc.cluster.local:5000/postgresql@sha256:7456ef82e5f5bc43d997f4781bbd7c0d6389bff397564649a356e206ba473aee",
+    "E2E_KUBERNETES_VERSION": "1.37.0",
+    "E2E_KIND_CLUSTER_NAME": "ptah-e2e-1-37-0-result-cleanu-dca0c0b75d",
+    "E2E_OPERATOR_NAMESPACE": "ptah-system-1-37-0-result-cleanup-d3c14609-dca0c0b75d"
+  },
+  "chartSHA256": "2bc81c4728f51813cd6c82dd53dd2bb3e1fa6c6e841fca9146aa302574f9fc8f"
+}

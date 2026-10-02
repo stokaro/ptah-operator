@@ -1,0 +1,527 @@
+[
+  {
+    "metadata": {
+      "name": "ptah-result-014bdea9532c6359bea1093ee69b17eb01c885288cd9597529c07c884cd00ad4-retired",
+      "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+      "uid": "d11f5e93-bb9f-4ebd-81a5-b6d31564bd3c",
+      "creationTimestamp": "2026-10-02T09:32:49Z"
+    },
+    "spec": {
+      "type": "retired",
+      "value": {
+        "version": 1,
+        "binding": {
+          "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+          "kind": "PtahSchema",
+          "name": "quota-probe",
+          "uid": "c26c10d1-cbef-4ade-a1bb-9d9ae3e46d04",
+          "generation": 1,
+          "executionBindingID": "v1-37ae8c8acb7dab6af54efdc07f455204",
+          "inputFingerprint": "sha256:88120abc9f79255a79b981612fe37f195c348a0c0a028be36dc8a364aac51bda",
+          "operation": "plan",
+          "operationID": "sha256:1dc82f16c8592134833caa77a6dd12b80d6dc65882e04f5072fc5ff33f17d155",
+          "jobName": "ptah-plan-quota-probe-159e96ed7ca4fc00",
+          "jobUID": "c38f564b-ce47-4bcf-af9d-dc13282e8355",
+          "podName": "ptah-plan-quota-probe-159e96ed7ca4fc00-dq5w5",
+          "podUID": "aee47345-0ad7-4bd2-93f3-49d2dec6ddeb"
+        },
+        "source": {
+          "name": "ptah-result-key-bd255b7847200da5c8916246935e7814",
+          "uid": "65b010c0-98cb-488a-90f4-d9030d89e769",
+          "type": "credential"
+        },
+        "retentionSeconds": 3600
+      }
+    }
+  },
+  {
+    "metadata": {
+      "name": "ptah-result-36f27c118e2290f619ccd4f851a4b1c75e74ef409953aa4cdbf0c725f23698cd-retired",
+      "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+      "uid": "5199d096-97bc-41ae-8561-e4f31642fe5d",
+      "creationTimestamp": "2026-10-02T09:32:04Z"
+    },
+    "spec": {
+      "type": "retired",
+      "value": {
+        "version": 1,
+        "binding": {
+          "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+          "kind": "PtahSchema",
+          "name": "quota-probe",
+          "uid": "c26c10d1-cbef-4ade-a1bb-9d9ae3e46d04",
+          "generation": 1,
+          "executionBindingID": "v1-37ae8c8acb7dab6af54efdc07f455204",
+          "inputFingerprint": "sha256:511efb60828d626ba3a74ec177d9459163db428cdea35d0b87b6b233459f7096",
+          "operation": "resolve",
+          "operationID": "sha256:aee3902fedb62fe5dbef7963df24553263d2d975623dfc942448f7180ea4cac0",
+          "jobName": "ptah-resolve-quota-probe-60a876d8f093305e",
+          "jobUID": "f8adca1d-b0ec-431f-8ab8-7b4016d0cc70",
+          "podName": "ptah-resolve-quota-probe-60a876d8f093305e-5dkmw",
+          "podUID": "c5167474-e2d0-4291-8ce2-1c4d382b194f"
+        },
+        "source": {
+          "name": "ptah-result-36f27c118e2290f619ccd4f851a4b1c75e74ef409953aa4cdbf0c725f23698cd",
+          "uid": "bb1f69a4-040b-42d6-a39a-5200c46a6c70",
+          "type": "intent"
+        },
+        "retentionSeconds": 3600
+      }
+    }
+  },
+  {
+    "metadata": {
+      "name": "ptah-result-379df57a62361e27a7b685853f2c2371809ecb964b2863be73ada15c64ed5f7d-retired",
+      "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+      "uid": "534ce834-a7ee-4127-8ce0-b427cb2973e5",
+      "creationTimestamp": "2026-10-02T09:32:24Z"
+    },
+    "spec": {
+      "type": "retired",
+      "value": {
+        "version": 1,
+        "binding": {
+          "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+          "kind": "PtahSchema",
+          "name": "quota-probe",
+          "uid": "c26c10d1-cbef-4ade-a1bb-9d9ae3e46d04",
+          "generation": 1,
+          "executionBindingID": "v1-37ae8c8acb7dab6af54efdc07f455204",
+          "inputFingerprint": "sha256:37a3f41bd3aa2400dbe1ba6ebd47cc20f3520095876ab9be207ade310f9e547f",
+          "operation": "observe",
+          "operationID": "sha256:e2b21bcfa382317e24f16c9028bb540fd7bce9946cef44bc8bf383c6e1a5e877",
+          "jobName": "ptah-observe-quota-probe-1a6a6f8375de2d4f",
+          "jobUID": "95870eed-b3d5-4c03-999f-ddca498fc55b",
+          "podName": "ptah-observe-quota-probe-1a6a6f8375de2d4f-4npxt",
+          "podUID": "78a67637-6070-4346-915f-60d795b3cd3e"
+        },
+        "source": {
+          "name": "ptah-result-379df57a62361e27a7b685853f2c2371809ecb964b2863be73ada15c64ed5f7d",
+          "uid": "f3b7447a-6de1-48dc-90cd-18a31822cdf2",
+          "type": "intent"
+        },
+        "retentionSeconds": 3600
+      }
+    }
+  },
+  {
+    "metadata": {
+      "name": "ptah-result-390812798b0717cc4ae23b2a299586d4feef78b5a952b78124ed5472e155d0be-retired",
+      "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+      "uid": "36835544-5e6f-471b-b6fc-b07f82e784c2",
+      "creationTimestamp": "2026-10-02T09:23:44Z"
+    },
+    "spec": {
+      "type": "retired",
+      "value": {
+        "version": 1,
+        "binding": {
+          "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+          "kind": "PtahSchema",
+          "name": "storefront",
+          "uid": "2da59c1a-d308-4f9b-9b39-0bd46e929349",
+          "generation": 1,
+          "executionBindingID": "v1-c98946e559536d24fdb9663ef1cfe651",
+          "inputFingerprint": "sha256:3d0c49d7ce897f8adcf743a0f3bfcc020eb654cc5dc8c2570d1ab39306289c84",
+          "operation": "observe",
+          "operationID": "sha256:f95b572e321dc8e4e642f932c9582c7c11225e7db84f52adcac32cfa01e2c215",
+          "jobName": "ptah-observe-storefront-419319e81605df48",
+          "jobUID": "8bb74993-cf5f-422c-ad4c-dabf21e7f166",
+          "podName": "ptah-observe-storefront-419319e81605df48-cxgbv",
+          "podUID": "a3f8b069-0895-4b13-83f8-859c140e5cff"
+        },
+        "source": {
+          "name": "ptah-result-390812798b0717cc4ae23b2a299586d4feef78b5a952b78124ed5472e155d0be",
+          "uid": "ba6f019a-2adc-4f00-849e-7258967832d3",
+          "type": "intent"
+        },
+        "retentionSeconds": 3600
+      }
+    }
+  },
+  {
+    "metadata": {
+      "name": "ptah-result-43eb41cbe24955adee8dfba9f8321ca79d7b5915ebee26b89a886f0c2816afed-retired",
+      "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+      "uid": "cf407733-36e2-42f9-a990-39571643d98a",
+      "creationTimestamp": "2026-10-02T09:32:14Z"
+    },
+    "spec": {
+      "type": "retired",
+      "value": {
+        "version": 1,
+        "binding": {
+          "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+          "kind": "PtahSchema",
+          "name": "quota-probe",
+          "uid": "c26c10d1-cbef-4ade-a1bb-9d9ae3e46d04",
+          "generation": 1,
+          "executionBindingID": "v1-37ae8c8acb7dab6af54efdc07f455204",
+          "inputFingerprint": "sha256:17d9192534405c059c817746b1098b5b7aee14aa66beec8a2546f1c52d5ae801",
+          "operation": "verify",
+          "operationID": "sha256:95c3cfd1e64a17bbd2169bf6b151e8967f69e551d622d83f7023dfa9f5d2c1cb",
+          "jobName": "ptah-verify-quota-probe-0e88c5b6d0fe2b00",
+          "jobUID": "7a5dd3a8-aee3-4b70-a9e4-68fe2c0c6299",
+          "podName": "ptah-verify-quota-probe-0e88c5b6d0fe2b00-shxr6",
+          "podUID": "a73810f2-86e8-4853-acde-9bca3a21b883"
+        },
+        "source": {
+          "name": "ptah-result-43eb41cbe24955adee8dfba9f8321ca79d7b5915ebee26b89a886f0c2816afed",
+          "uid": "a02d3378-0e4e-41bf-84f0-053e46648dd6",
+          "type": "intent"
+        },
+        "retentionSeconds": 3600
+      }
+    }
+  },
+  {
+    "metadata": {
+      "name": "ptah-result-5f07db6b25b3a76a8f488a7f7282360e22ca6513d333914fd976f19204c38f04-retired",
+      "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+      "uid": "04db7f47-68e1-437d-9c3f-4a276fd5809f",
+      "creationTimestamp": "2026-10-02T09:23:29Z"
+    },
+    "spec": {
+      "type": "retired",
+      "value": {
+        "version": 1,
+        "binding": {
+          "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+          "kind": "PtahSchema",
+          "name": "storefront",
+          "uid": "2da59c1a-d308-4f9b-9b39-0bd46e929349",
+          "generation": 1,
+          "executionBindingID": "v1-c98946e559536d24fdb9663ef1cfe651",
+          "inputFingerprint": "sha256:6cf90afd3b389744ac4a3610bc9184cd44a7a89c1a906de78984c426ebbc4458",
+          "operation": "plan",
+          "operationID": "sha256:5c4c1cef00b7e8a0902ae559718b278b1820e2562e3187fb57ced6eee8ce361b",
+          "jobName": "ptah-plan-storefront-ade0b0d8db64878b",
+          "jobUID": "6e001a52-d78b-4f02-b6ec-97d0b97c09d7",
+          "podName": "ptah-plan-storefront-ade0b0d8db64878b-df7dr",
+          "podUID": "4cd0ee09-b92e-4acd-b552-080ad5446f65"
+        },
+        "source": {
+          "name": "ptah-result-key-f19948ca663438f1e7d950743d06c3e0",
+          "uid": "fac8489c-3ae6-4a68-a331-4471b88c125d",
+          "type": "credential"
+        },
+        "retentionSeconds": 3600
+      }
+    }
+  },
+  {
+    "metadata": {
+      "name": "ptah-result-7f4d0bc83badda3d40d1238cec39fc65e7f56d8f3c81064e27e255d7595b4a56-retired",
+      "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+      "uid": "3f907e98-321f-4eb1-bc63-fc2d8469dd7a",
+      "creationTimestamp": "2026-10-02T09:31:04Z"
+    },
+    "spec": {
+      "type": "retired",
+      "value": {
+        "version": 1,
+        "binding": {
+          "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+          "kind": "PtahMigration",
+          "name": "cleanup-migration",
+          "uid": "8142fabc-776e-4a94-8134-606a91a15f3f",
+          "generation": 1,
+          "executionBindingID": "v1-808323c100f225985ab08d71f39f96fb",
+          "inputFingerprint": "sha256:a10439eeec2ed07331497a763ee61ce56e564e734ff5cf227c2680a3eb23cb40",
+          "operation": "migration-history",
+          "operationID": "sha256:b6a1334145144cafcb9dd0c84313d6928e238ba314c1e607d1908f1ff90c6248",
+          "jobName": "ptah-m-history-cleanup-migration-c267ee982786eb7b",
+          "jobUID": "aaec51fd-732e-41ee-988d-54467a30a078",
+          "podName": "ptah-m-history-cleanup-migration-c267ee982786eb7b-7gsm5",
+          "podUID": "e85d4df7-8a64-445a-85cd-0d91381af3ec"
+        },
+        "source": {
+          "name": "ptah-result-7f4d0bc83badda3d40d1238cec39fc65e7f56d8f3c81064e27e255d7595b4a56",
+          "uid": "cb23e44d-7895-42c6-8223-8acd2a39c3ec",
+          "type": "intent"
+        },
+        "retentionSeconds": 3600
+      }
+    }
+  },
+  {
+    "metadata": {
+      "name": "ptah-result-8589ca2d08ce1254292cda2308c33818bf086867155863644054d87b5e61312f-retired",
+      "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+      "uid": "34e8cd82-112f-416b-b00d-1a89bba39369",
+      "creationTimestamp": "2026-10-02T09:30:14Z"
+    },
+    "spec": {
+      "type": "retired",
+      "value": {
+        "version": 1,
+        "binding": {
+          "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+          "kind": "PtahMigration",
+          "name": "cleanup-migration",
+          "uid": "8142fabc-776e-4a94-8134-606a91a15f3f",
+          "generation": 1,
+          "executionBindingID": "v1-808323c100f225985ab08d71f39f96fb",
+          "inputFingerprint": "sha256:a10439eeec2ed07331497a763ee61ce56e564e734ff5cf227c2680a3eb23cb40",
+          "operation": "migration-history",
+          "operationID": "sha256:492aa83280aa674fa7f39b25f1bf0ceae9db836668d075992fb3851b8118cad5",
+          "jobName": "ptah-m-history-cleanup-migration-1afa2f74cad5ad5c",
+          "jobUID": "fa39f411-b7a5-4c1b-9c0b-4f8605d597b5",
+          "podName": "ptah-m-history-cleanup-migration-1afa2f74cad5ad5c-bgr7m",
+          "podUID": "a7854fb3-0d56-4dd7-a3cf-118984ccd043"
+        },
+        "source": {
+          "name": "ptah-result-8589ca2d08ce1254292cda2308c33818bf086867155863644054d87b5e61312f",
+          "uid": "907c6971-a11a-4d60-a290-5085180e6a7c",
+          "type": "intent"
+        },
+        "retentionSeconds": 3600
+      }
+    }
+  },
+  {
+    "metadata": {
+      "name": "ptah-result-9b2ec60c97038e0ca4b4d82d67567024c0334c2378f1ae32d5841bb86e32b02b-retired",
+      "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+      "uid": "547155ad-ad9b-4301-9a1a-e1b5fba3a947",
+      "creationTimestamp": "2026-10-02T09:30:24Z"
+    },
+    "spec": {
+      "type": "retired",
+      "value": {
+        "version": 1,
+        "binding": {
+          "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+          "kind": "PtahMigration",
+          "name": "cleanup-migration",
+          "uid": "8142fabc-776e-4a94-8134-606a91a15f3f",
+          "generation": 1,
+          "executionBindingID": "v1-808323c100f225985ab08d71f39f96fb",
+          "inputFingerprint": "sha256:589a10d6cfb29409a96e9fc73734b4b02baa9e3bd0889a088b0de029ac92c746",
+          "operation": "verify",
+          "operationID": "sha256:e47aa4c3bc2beba885bb9eb0e8a791cd14e6bd329f9aad102ec1d053f13d5bac",
+          "jobName": "ptah-m-verify-cleanup-migration-91abd95d25b88701",
+          "jobUID": "0255a49a-ff42-4311-b94a-fedfd37a829a",
+          "podName": "ptah-m-verify-cleanup-migration-91abd95d25b88701-vzh2g",
+          "podUID": "e0cc0954-a49d-4a76-ac16-e2e4a9363081"
+        },
+        "source": {
+          "name": "ptah-result-9b2ec60c97038e0ca4b4d82d67567024c0334c2378f1ae32d5841bb86e32b02b",
+          "uid": "3b5c3bf9-bc05-491b-a764-6a05623774bf",
+          "type": "intent"
+        },
+        "retentionSeconds": 3600
+      }
+    }
+  },
+  {
+    "metadata": {
+      "name": "ptah-result-a822b3e2e6b5d2c42eb8f763644126767dcb289521c514e0a71e37b60520f918-retired",
+      "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+      "uid": "b2649ce0-9821-413e-b79e-ddea2b41fd65",
+      "creationTimestamp": "2026-10-02T09:22:59Z"
+    },
+    "spec": {
+      "type": "retired",
+      "value": {
+        "version": 1,
+        "binding": {
+          "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+          "kind": "PtahSchema",
+          "name": "storefront",
+          "uid": "2da59c1a-d308-4f9b-9b39-0bd46e929349",
+          "generation": 1,
+          "executionBindingID": "v1-c98946e559536d24fdb9663ef1cfe651",
+          "inputFingerprint": "sha256:b2354ac693c1c930f15d80bedcd108bcfda834ab1840695813e1e1368b7a833c",
+          "operation": "verify",
+          "operationID": "sha256:d4cf34f4c6c170dd4fde889f0e2d880905bfef10d430a44b9ea554c68ce32c0e",
+          "jobName": "ptah-verify-storefront-7be444151cc4fdc6",
+          "jobUID": "8a25b8ae-d71f-4cd0-a8f5-ff41b8bd5669",
+          "podName": "ptah-verify-storefront-7be444151cc4fdc6-5ngvn",
+          "podUID": "955b9e7f-8874-4876-8635-01467e4316a7"
+        },
+        "source": {
+          "name": "ptah-result-key-e6a9d1e2b5d9957e83da43b428afecab",
+          "uid": "117801be-f158-4ccf-af6d-715f2a0d35c8",
+          "type": "credential"
+        },
+        "retentionSeconds": 3600
+      }
+    }
+  },
+  {
+    "metadata": {
+      "name": "ptah-result-cdc27fa6e99080c6608aa3e9660cb3d0d7a195e30744446ee5eaa232a3e3f1f2-retired",
+      "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+      "uid": "117af728-7f49-4ce1-a27f-266964516bf0",
+      "creationTimestamp": "2026-10-02T09:23:49Z"
+    },
+    "spec": {
+      "type": "retired",
+      "value": {
+        "version": 1,
+        "binding": {
+          "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+          "kind": "PtahSchema",
+          "name": "storefront",
+          "uid": "2da59c1a-d308-4f9b-9b39-0bd46e929349",
+          "generation": 1,
+          "executionBindingID": "v1-c98946e559536d24fdb9663ef1cfe651",
+          "inputFingerprint": "sha256:e4e26ada346b5366f11c90d82087c23d08f20c8557eeb5c0c39a77da854c4f9f",
+          "operation": "apply",
+          "operationID": "sha256:59147a9ecbd0c835f8b012cccfdad19747d03355cfba3c46424a277ca723d305",
+          "jobName": "ptah-apply-storefront-ddb26d3ed5d37f2f",
+          "jobUID": "85a92a7e-5d90-4d57-902a-caf48230d3cc",
+          "podName": "ptah-apply-storefront-ddb26d3ed5d37f2f-t4spq",
+          "podUID": "41d387e7-fd9f-41ba-bb94-b28589a87def"
+        },
+        "source": {
+          "name": "ptah-result-key-804c3b064a2b3f0981f0af8bd802964c",
+          "uid": "ce5d3611-5374-4d34-a281-0913699582a6",
+          "type": "credential"
+        },
+        "retentionSeconds": 3600
+      }
+    }
+  },
+  {
+    "metadata": {
+      "name": "ptah-result-d27947b5e996508c7b132c16e9829efb658452a250ea2a9db60cfce8c63e2546-retired",
+      "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+      "uid": "c4b7a4ba-94cb-4ab3-8108-c6a78a0f79d2",
+      "creationTimestamp": "2026-10-02T09:22:49Z"
+    },
+    "spec": {
+      "type": "retired",
+      "value": {
+        "version": 1,
+        "binding": {
+          "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+          "kind": "PtahSchema",
+          "name": "storefront",
+          "uid": "2da59c1a-d308-4f9b-9b39-0bd46e929349",
+          "generation": 1,
+          "executionBindingID": "v1-c98946e559536d24fdb9663ef1cfe651",
+          "inputFingerprint": "sha256:212dac7f33e1ea6e003985d03da881a25aa13a76e4a520f9dd7e0b4f7b370703",
+          "operation": "resolve",
+          "operationID": "sha256:b0c120e6be4f9d9bf5b0e9050dc91ac2570cd0785f03c355530f93122672664a",
+          "jobName": "ptah-resolve-storefront-6f7ffbe9bb6a2669",
+          "jobUID": "ef9ae8df-db13-4656-8371-27f10376ac58",
+          "podName": "ptah-resolve-storefront-6f7ffbe9bb6a2669-cmv9v",
+          "podUID": "42995e53-d47f-42cc-b86f-06349f9828f9"
+        },
+        "source": {
+          "name": "ptah-result-key-9ad7c75c5044dc701be3e3136787cca6",
+          "uid": "e647d9f2-7cd8-4887-8812-f605c300e763",
+          "type": "credential"
+        },
+        "retentionSeconds": 3600
+      }
+    }
+  },
+  {
+    "metadata": {
+      "name": "ptah-result-da573e67c743a18a14101df4ad1c567020570642889f2259b9f369950b4de0d3-retired",
+      "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+      "uid": "154d906d-703e-4e24-a715-8670d0adbc72",
+      "creationTimestamp": "2026-10-02T09:23:09Z"
+    },
+    "spec": {
+      "type": "retired",
+      "value": {
+        "version": 1,
+        "binding": {
+          "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+          "kind": "PtahSchema",
+          "name": "storefront",
+          "uid": "2da59c1a-d308-4f9b-9b39-0bd46e929349",
+          "generation": 1,
+          "executionBindingID": "v1-c98946e559536d24fdb9663ef1cfe651",
+          "inputFingerprint": "sha256:693d83f145fd05b815b72872ceeba57df33a86c27e9e4943680d4343b4e56a8d",
+          "operation": "observe",
+          "operationID": "sha256:f9cce8d466d52597ae47eb5d404d6b72fc4aa95a296fcd72c7f74de7788aaa8d",
+          "jobName": "ptah-observe-storefront-0f065cf0cb949b1d",
+          "jobUID": "4e4089b5-9a25-4c49-99d4-231ec7e47718",
+          "podName": "ptah-observe-storefront-0f065cf0cb949b1d-gbxtf",
+          "podUID": "be353562-5dc1-4384-913e-0a0a1b3651f7"
+        },
+        "source": {
+          "name": "ptah-result-key-ae97fecd3af3a72338e36047619a1c7b",
+          "uid": "bf8d8326-4726-4755-bb24-cfd5c86b3c41",
+          "type": "credential"
+        },
+        "retentionSeconds": 3600
+      }
+    }
+  },
+  {
+    "metadata": {
+      "name": "ptah-result-dd063ac68a272357e11e6f99777ec909651da8be8a998a4d767c41b469cc12b1-retired",
+      "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+      "uid": "1c3fb4fc-9f4d-4521-86cc-127ce2bf2de2",
+      "creationTimestamp": "2026-10-02T09:23:59Z"
+    },
+    "spec": {
+      "type": "retired",
+      "value": {
+        "version": 1,
+        "binding": {
+          "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+          "kind": "PtahSchema",
+          "name": "storefront",
+          "uid": "2da59c1a-d308-4f9b-9b39-0bd46e929349",
+          "generation": 1,
+          "executionBindingID": "v1-c98946e559536d24fdb9663ef1cfe651",
+          "inputFingerprint": "sha256:711639cb5c3f873ef9bd514ba7bd7977f64da51089da99a2fc0c1171575c9fe1",
+          "operation": "plan",
+          "operationID": "sha256:b47b0d5109ac039b3b045d1dacb3a967c1d683f5686670b16f9a6a42b17fb33b",
+          "jobName": "ptah-plan-storefront-4d07ef6e379713f3",
+          "jobUID": "a4b344b0-f35f-4740-938b-38ce68c1fab1",
+          "podName": "ptah-plan-storefront-4d07ef6e379713f3-6wvhl",
+          "podUID": "4b6858d1-48d0-4b05-bded-74316fa89263"
+        },
+        "source": {
+          "name": "ptah-result-key-77b19c4318a71052bd8f9422e79a69e3",
+          "uid": "5c0ce574-80f3-4c32-ac1b-348a135ea374",
+          "type": "credential"
+        },
+        "retentionSeconds": 3600
+      }
+    }
+  },
+  {
+    "metadata": {
+      "name": "ptah-result-e1eae4f067e676f3339f6b7f5306a229d4fa4cb0710fc1aff88258c288527ba3-retired",
+      "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+      "uid": "655b771b-b4ff-4013-ad38-09b1e3f1b0fb",
+      "creationTimestamp": "2026-10-02T09:30:14Z"
+    },
+    "spec": {
+      "type": "retired",
+      "value": {
+        "version": 1,
+        "binding": {
+          "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+          "kind": "PtahMigration",
+          "name": "cleanup-migration",
+          "uid": "8142fabc-776e-4a94-8134-606a91a15f3f",
+          "generation": 1,
+          "executionBindingID": "v1-808323c100f225985ab08d71f39f96fb",
+          "inputFingerprint": "sha256:060ba94e20c6cd4a765f0a31c6f5327ffdb89127473fc3fa5b5b73c191e67928",
+          "operation": "resolve",
+          "operationID": "sha256:9e75dc187097f790dd10a34b2553dbf051024a6adf28630e8ed4855f8688e96c",
+          "jobName": "ptah-m-resolve-cleanup-migration-3c1f02c455c5d699",
+          "jobUID": "45644e14-94d3-4b9c-86eb-c0c5aaaf3851",
+          "podName": "ptah-m-resolve-cleanup-migration-3c1f02c455c5d699-f4wwd",
+          "podUID": "c78ebe7a-5698-46ab-b907-d319c8f658ad"
+        },
+        "source": {
+          "name": "ptah-result-e1eae4f067e676f3339f6b7f5306a229d4fa4cb0710fc1aff88258c288527ba3",
+          "uid": "1d7e545a-5cac-4151-a686-c678e8c49e9b",
+          "type": "intent"
+        },
+        "retentionSeconds": 3600
+      }
+    }
+  }
+]

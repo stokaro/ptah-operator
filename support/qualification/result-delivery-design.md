@@ -657,12 +657,32 @@ collection after failures before and after every publication deletion, refuse
 partial scans and API errors, retain late writes and restored claims, and
 collect legacy children whose intent was lost. A real API-server test runs the
 collector with manager permissions and admission, advancing only its test clock
-to exercise the one-hour window. Envtest has no garbage collector; installed
-Secret collection, quota recovery, and backup/restore still require proof.
+to exercise the one-hour window. Envtest has no garbage collector; it cannot
+establish installed Secret collection or quota recovery.
 
-Before enabling this path by default, qualify retention and collection on an
-installed cluster, receiver trust rotation and NetworkPolicy, bounded request
-metrics, and installed receipt consumption. Do not attach a time-only TTL to unconsumed results or
+[Installed retention evidence](evidence/result-retention-2026-10-02/summary.json)
+records the real one-hour window on Kubernetes 1.37 with PostgreSQL and both
+resource families. A frozen cohort covered all nine operation kinds. After
+manager replacement, 75 eligible records and 15 Secret projections were removed;
+the latest migration run retained its four records and projection, and four
+published plan objects retained their UIDs and spec hashes. Successful API
+DELETE events carry each original UID as a precondition and start no earlier
+than that member's independently recomputed deadline. The Secret deletions
+belong to Kubernetes' garbage-collector ServiceAccount. Actual authorization
+reviews still deny the manager Secret GET/DELETE and `pods/log` GET.
+
+The same installation exhausted result-record quota after a Resolve intent was
+persisted. Audit records the first chunk's quota refusal. Restoring capacity
+allowed the original Job to complete the same intent UID and payload digest.
+This is read-only publication recovery, not proof of SQL replay prevention
+after a lost acknowledgment. The retained audit and cohort can be checked with
+`support/qualification/probes/result_retention_evidence.py`; refusal tests cover
+early deletions, replaced identities, changed pins, and incorrect GC actors.
+
+Before enabling this path by default, finish the installed lifecycle matrix,
+including abandoned partial-publication cleanup, backup/restore, receiver trust
+rotation and NetworkPolicy, bounded request metrics, and the remaining receipt
+consumption failures. Do not attach a time-only TTL to unconsumed results or
 unresolved operations. Abandoned partial publications become eligible only after
 the exact attempt is retired and cannot still deliver. Cleanup must use UID/RV
 preconditions and respect the backup/recovery window and pinned plan evidence.
@@ -701,7 +721,8 @@ UID sets and checks the full publication before removal. Its verifier refuses
 missing, replaced, foreign, and corrupted members. This establishes first
 consumption after Pod/log loss and manager restart for the recorded PostgreSQL
 and Kubernetes versions. It does not establish first consumption after Job
-deletion or redelivery after a lost HTTP acknowledgment. Failure cases, retention,
+deletion or redelivery after a lost HTTP acknowledgment. Remaining failure cases,
+abandoned partial-publication cleanup,
 restore, CA rotation, enforced NetworkPolicy, Lease contention, and the complete
 Kubernetes and database matrix remain explicit #586 acceptance work. The option
 remains disabled by default.

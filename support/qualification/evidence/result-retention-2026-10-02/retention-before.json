@@ -1,0 +1,2687 @@
+{
+  "commit": "7ec19b647e68f799b2cfd7008575d92fedb3c31b",
+  "records": [
+    {
+      "name": "ptah-result-014bdea9532c6359bea1093ee69b17eb01c885288cd9597529c07c884cd00ad4",
+      "uid": "7360ebee-49a9-4c4e-9d29-60ec4e782ffc",
+      "createdAt": "2026-10-02T09:32:07Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "controller": true,
+          "kind": "PtahSchema",
+          "name": "quota-probe",
+          "uid": "c26c10d1-cbef-4ade-a1bb-9d9ae3e46d04"
+        }
+      ],
+      "type": "intent",
+      "dataDigest": "sha256:10b269fbf261c0dd9368bcf63e3fa7908f74cc35b11fbb450a94ec4a382f3ea2",
+      "binding": {
+        "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+        "kind": "PtahSchema",
+        "name": "quota-probe",
+        "uid": "c26c10d1-cbef-4ade-a1bb-9d9ae3e46d04",
+        "generation": 1,
+        "executionBindingID": "v1-37ae8c8acb7dab6af54efdc07f455204",
+        "inputFingerprint": "sha256:88120abc9f79255a79b981612fe37f195c348a0c0a028be36dc8a364aac51bda",
+        "operation": "plan",
+        "operationID": "sha256:1dc82f16c8592134833caa77a6dd12b80d6dc65882e04f5072fc5ff33f17d155",
+        "jobName": "ptah-plan-quota-probe-159e96ed7ca4fc00",
+        "jobUID": "c38f564b-ce47-4bcf-af9d-dc13282e8355",
+        "podName": "ptah-plan-quota-probe-159e96ed7ca4fc00-dq5w5",
+        "podUID": "aee47345-0ad7-4bd2-93f3-49d2dec6ddeb"
+      }
+    },
+    {
+      "name": "ptah-result-014bdea9532c6359bea1093ee69b17eb01c885288cd9597529c07c884cd00ad4-000",
+      "uid": "2c1c6523-59d3-4b7b-bbe7-caa0e84f3cb3",
+      "createdAt": "2026-10-02T09:32:07Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "controller": true,
+          "kind": "PtahResultRecord",
+          "name": "ptah-result-014bdea9532c6359bea1093ee69b17eb01c885288cd9597529c07c884cd00ad4",
+          "uid": "7360ebee-49a9-4c4e-9d29-60ec4e782ffc"
+        }
+      ],
+      "type": "chunk",
+      "dataDigest": "sha256:be39ac03dcf7c3150e6158b1a4c00a170b017135e51b08ef1b23d137ec8288b2"
+    },
+    {
+      "name": "ptah-result-014bdea9532c6359bea1093ee69b17eb01c885288cd9597529c07c884cd00ad4-complete",
+      "uid": "73e98cbc-bfd3-47c2-a2f6-beec103d6326",
+      "createdAt": "2026-10-02T09:32:07Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "controller": true,
+          "kind": "PtahResultRecord",
+          "name": "ptah-result-014bdea9532c6359bea1093ee69b17eb01c885288cd9597529c07c884cd00ad4",
+          "uid": "7360ebee-49a9-4c4e-9d29-60ec4e782ffc"
+        }
+      ],
+      "type": "complete",
+      "dataDigest": "sha256:c3bd6c836a14d839ad8c95a34364b303499919a835c09c55b18ad918bef6fa63"
+    },
+    {
+      "name": "ptah-result-014bdea9532c6359bea1093ee69b17eb01c885288cd9597529c07c884cd00ad4-retired",
+      "uid": "d11f5e93-bb9f-4ebd-81a5-b6d31564bd3c",
+      "createdAt": "2026-10-02T09:32:49Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "blockOwnerDeletion": false,
+          "controller": true,
+          "kind": "PtahSchema",
+          "name": "quota-probe",
+          "uid": "c26c10d1-cbef-4ade-a1bb-9d9ae3e46d04"
+        }
+      ],
+      "type": "retired",
+      "dataDigest": "sha256:e0f32f2540327c1af69bb7f86eabfd241c4b7b8cf30f60853dfa44a9682f56a1",
+      "binding": {
+        "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+        "kind": "PtahSchema",
+        "name": "quota-probe",
+        "uid": "c26c10d1-cbef-4ade-a1bb-9d9ae3e46d04",
+        "generation": 1,
+        "executionBindingID": "v1-37ae8c8acb7dab6af54efdc07f455204",
+        "inputFingerprint": "sha256:88120abc9f79255a79b981612fe37f195c348a0c0a028be36dc8a364aac51bda",
+        "operation": "plan",
+        "operationID": "sha256:1dc82f16c8592134833caa77a6dd12b80d6dc65882e04f5072fc5ff33f17d155",
+        "jobName": "ptah-plan-quota-probe-159e96ed7ca4fc00",
+        "jobUID": "c38f564b-ce47-4bcf-af9d-dc13282e8355",
+        "podName": "ptah-plan-quota-probe-159e96ed7ca4fc00-dq5w5",
+        "podUID": "aee47345-0ad7-4bd2-93f3-49d2dec6ddeb"
+      }
+    },
+    {
+      "name": "ptah-result-36f27c118e2290f619ccd4f851a4b1c75e74ef409953aa4cdbf0c725f23698cd",
+      "uid": "bb1f69a4-040b-42d6-a39a-5200c46a6c70",
+      "createdAt": "2026-10-02T09:31:33Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "controller": true,
+          "kind": "PtahSchema",
+          "name": "quota-probe",
+          "uid": "c26c10d1-cbef-4ade-a1bb-9d9ae3e46d04"
+        }
+      ],
+      "type": "intent",
+      "dataDigest": "sha256:d86628b299e8fef87d02bbb0d3fcde278705fbd44e5cb3af24339943340ba304",
+      "binding": {
+        "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+        "kind": "PtahSchema",
+        "name": "quota-probe",
+        "uid": "c26c10d1-cbef-4ade-a1bb-9d9ae3e46d04",
+        "generation": 1,
+        "executionBindingID": "v1-37ae8c8acb7dab6af54efdc07f455204",
+        "inputFingerprint": "sha256:511efb60828d626ba3a74ec177d9459163db428cdea35d0b87b6b233459f7096",
+        "operation": "resolve",
+        "operationID": "sha256:aee3902fedb62fe5dbef7963df24553263d2d975623dfc942448f7180ea4cac0",
+        "jobName": "ptah-resolve-quota-probe-60a876d8f093305e",
+        "jobUID": "f8adca1d-b0ec-431f-8ab8-7b4016d0cc70",
+        "podName": "ptah-resolve-quota-probe-60a876d8f093305e-5dkmw",
+        "podUID": "c5167474-e2d0-4291-8ce2-1c4d382b194f"
+      }
+    },
+    {
+      "name": "ptah-result-36f27c118e2290f619ccd4f851a4b1c75e74ef409953aa4cdbf0c725f23698cd-000",
+      "uid": "4349a809-4f86-47d9-bafc-2994dc249112",
+      "createdAt": "2026-10-02T09:31:34Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "controller": true,
+          "kind": "PtahResultRecord",
+          "name": "ptah-result-36f27c118e2290f619ccd4f851a4b1c75e74ef409953aa4cdbf0c725f23698cd",
+          "uid": "bb1f69a4-040b-42d6-a39a-5200c46a6c70"
+        }
+      ],
+      "type": "chunk",
+      "dataDigest": "sha256:b947eb0f1c7a9ec617b527088622b13f9e802566a043bf0f1c0397ade53b88c4"
+    },
+    {
+      "name": "ptah-result-36f27c118e2290f619ccd4f851a4b1c75e74ef409953aa4cdbf0c725f23698cd-complete",
+      "uid": "6c8a9410-8f4c-443a-af52-be3efe45da46",
+      "createdAt": "2026-10-02T09:31:34Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "controller": true,
+          "kind": "PtahResultRecord",
+          "name": "ptah-result-36f27c118e2290f619ccd4f851a4b1c75e74ef409953aa4cdbf0c725f23698cd",
+          "uid": "bb1f69a4-040b-42d6-a39a-5200c46a6c70"
+        }
+      ],
+      "type": "complete",
+      "dataDigest": "sha256:2565db2cef8a1959bcd1c3217eb66dfe6c76c9f49de5f5797b9e5ae9907f333a"
+    },
+    {
+      "name": "ptah-result-36f27c118e2290f619ccd4f851a4b1c75e74ef409953aa4cdbf0c725f23698cd-retired",
+      "uid": "5199d096-97bc-41ae-8561-e4f31642fe5d",
+      "createdAt": "2026-10-02T09:32:04Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "blockOwnerDeletion": false,
+          "controller": true,
+          "kind": "PtahSchema",
+          "name": "quota-probe",
+          "uid": "c26c10d1-cbef-4ade-a1bb-9d9ae3e46d04"
+        }
+      ],
+      "type": "retired",
+      "dataDigest": "sha256:90ec7d86938f494d018e3176ea2fc09acd680dce4c0d8fbe3db5be42e76fd12b",
+      "binding": {
+        "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+        "kind": "PtahSchema",
+        "name": "quota-probe",
+        "uid": "c26c10d1-cbef-4ade-a1bb-9d9ae3e46d04",
+        "generation": 1,
+        "executionBindingID": "v1-37ae8c8acb7dab6af54efdc07f455204",
+        "inputFingerprint": "sha256:511efb60828d626ba3a74ec177d9459163db428cdea35d0b87b6b233459f7096",
+        "operation": "resolve",
+        "operationID": "sha256:aee3902fedb62fe5dbef7963df24553263d2d975623dfc942448f7180ea4cac0",
+        "jobName": "ptah-resolve-quota-probe-60a876d8f093305e",
+        "jobUID": "f8adca1d-b0ec-431f-8ab8-7b4016d0cc70",
+        "podName": "ptah-resolve-quota-probe-60a876d8f093305e-5dkmw",
+        "podUID": "c5167474-e2d0-4291-8ce2-1c4d382b194f"
+      }
+    },
+    {
+      "name": "ptah-result-379df57a62361e27a7b685853f2c2371809ecb964b2863be73ada15c64ed5f7d",
+      "uid": "f3b7447a-6de1-48dc-90cd-18a31822cdf2",
+      "createdAt": "2026-10-02T09:31:54Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "controller": true,
+          "kind": "PtahSchema",
+          "name": "quota-probe",
+          "uid": "c26c10d1-cbef-4ade-a1bb-9d9ae3e46d04"
+        }
+      ],
+      "type": "intent",
+      "dataDigest": "sha256:8987acb7337767b28ac79e22d76861159e885e950841a0b69e2bb1df7d470418",
+      "binding": {
+        "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+        "kind": "PtahSchema",
+        "name": "quota-probe",
+        "uid": "c26c10d1-cbef-4ade-a1bb-9d9ae3e46d04",
+        "generation": 1,
+        "executionBindingID": "v1-37ae8c8acb7dab6af54efdc07f455204",
+        "inputFingerprint": "sha256:37a3f41bd3aa2400dbe1ba6ebd47cc20f3520095876ab9be207ade310f9e547f",
+        "operation": "observe",
+        "operationID": "sha256:e2b21bcfa382317e24f16c9028bb540fd7bce9946cef44bc8bf383c6e1a5e877",
+        "jobName": "ptah-observe-quota-probe-1a6a6f8375de2d4f",
+        "jobUID": "95870eed-b3d5-4c03-999f-ddca498fc55b",
+        "podName": "ptah-observe-quota-probe-1a6a6f8375de2d4f-4npxt",
+        "podUID": "78a67637-6070-4346-915f-60d795b3cd3e"
+      }
+    },
+    {
+      "name": "ptah-result-379df57a62361e27a7b685853f2c2371809ecb964b2863be73ada15c64ed5f7d-000",
+      "uid": "e0779872-abe6-412a-927a-e6ad78455e92",
+      "createdAt": "2026-10-02T09:31:54Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "controller": true,
+          "kind": "PtahResultRecord",
+          "name": "ptah-result-379df57a62361e27a7b685853f2c2371809ecb964b2863be73ada15c64ed5f7d",
+          "uid": "f3b7447a-6de1-48dc-90cd-18a31822cdf2"
+        }
+      ],
+      "type": "chunk",
+      "dataDigest": "sha256:259303264fcf98f3a53608ae78f21e1d3b27413bff801a7f8e760665daa9204f"
+    },
+    {
+      "name": "ptah-result-379df57a62361e27a7b685853f2c2371809ecb964b2863be73ada15c64ed5f7d-complete",
+      "uid": "4e2db7c8-7f38-4bdc-ae81-1eaaafbde323",
+      "createdAt": "2026-10-02T09:31:54Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "controller": true,
+          "kind": "PtahResultRecord",
+          "name": "ptah-result-379df57a62361e27a7b685853f2c2371809ecb964b2863be73ada15c64ed5f7d",
+          "uid": "f3b7447a-6de1-48dc-90cd-18a31822cdf2"
+        }
+      ],
+      "type": "complete",
+      "dataDigest": "sha256:fe5f37c8ca2e256bcb272b6b26703a7995fd63bf49a4ac913d1bbfbe55e45b16"
+    },
+    {
+      "name": "ptah-result-379df57a62361e27a7b685853f2c2371809ecb964b2863be73ada15c64ed5f7d-retired",
+      "uid": "534ce834-a7ee-4127-8ce0-b427cb2973e5",
+      "createdAt": "2026-10-02T09:32:24Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "blockOwnerDeletion": false,
+          "controller": true,
+          "kind": "PtahSchema",
+          "name": "quota-probe",
+          "uid": "c26c10d1-cbef-4ade-a1bb-9d9ae3e46d04"
+        }
+      ],
+      "type": "retired",
+      "dataDigest": "sha256:4cb27bbeee846ade0d9a95869c04f7a4faef4caed99a6457f559d1adb56907b1",
+      "binding": {
+        "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+        "kind": "PtahSchema",
+        "name": "quota-probe",
+        "uid": "c26c10d1-cbef-4ade-a1bb-9d9ae3e46d04",
+        "generation": 1,
+        "executionBindingID": "v1-37ae8c8acb7dab6af54efdc07f455204",
+        "inputFingerprint": "sha256:37a3f41bd3aa2400dbe1ba6ebd47cc20f3520095876ab9be207ade310f9e547f",
+        "operation": "observe",
+        "operationID": "sha256:e2b21bcfa382317e24f16c9028bb540fd7bce9946cef44bc8bf383c6e1a5e877",
+        "jobName": "ptah-observe-quota-probe-1a6a6f8375de2d4f",
+        "jobUID": "95870eed-b3d5-4c03-999f-ddca498fc55b",
+        "podName": "ptah-observe-quota-probe-1a6a6f8375de2d4f-4npxt",
+        "podUID": "78a67637-6070-4346-915f-60d795b3cd3e"
+      }
+    },
+    {
+      "name": "ptah-result-390812798b0717cc4ae23b2a299586d4feef78b5a952b78124ed5472e155d0be",
+      "uid": "ba6f019a-2adc-4f00-849e-7258967832d3",
+      "createdAt": "2026-10-02T09:23:14Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "controller": true,
+          "kind": "PtahSchema",
+          "name": "storefront",
+          "uid": "2da59c1a-d308-4f9b-9b39-0bd46e929349"
+        }
+      ],
+      "type": "intent",
+      "dataDigest": "sha256:55fd922ca1f070d00ac6d38294162b056303bd93c828ddf5788c1ddd49ea7198",
+      "binding": {
+        "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+        "kind": "PtahSchema",
+        "name": "storefront",
+        "uid": "2da59c1a-d308-4f9b-9b39-0bd46e929349",
+        "generation": 1,
+        "executionBindingID": "v1-c98946e559536d24fdb9663ef1cfe651",
+        "inputFingerprint": "sha256:3d0c49d7ce897f8adcf743a0f3bfcc020eb654cc5dc8c2570d1ab39306289c84",
+        "operation": "observe",
+        "operationID": "sha256:f95b572e321dc8e4e642f932c9582c7c11225e7db84f52adcac32cfa01e2c215",
+        "jobName": "ptah-observe-storefront-419319e81605df48",
+        "jobUID": "8bb74993-cf5f-422c-ad4c-dabf21e7f166",
+        "podName": "ptah-observe-storefront-419319e81605df48-cxgbv",
+        "podUID": "a3f8b069-0895-4b13-83f8-859c140e5cff"
+      }
+    },
+    {
+      "name": "ptah-result-390812798b0717cc4ae23b2a299586d4feef78b5a952b78124ed5472e155d0be-000",
+      "uid": "68ac60ff-229b-42e4-8ee6-0fd73963b42f",
+      "createdAt": "2026-10-02T09:23:14Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "controller": true,
+          "kind": "PtahResultRecord",
+          "name": "ptah-result-390812798b0717cc4ae23b2a299586d4feef78b5a952b78124ed5472e155d0be",
+          "uid": "ba6f019a-2adc-4f00-849e-7258967832d3"
+        }
+      ],
+      "type": "chunk",
+      "dataDigest": "sha256:0e08ca5c8cbad502c215e0f4549a767ef66be6aba13f1a411017d0c5c5e7ab69"
+    },
+    {
+      "name": "ptah-result-390812798b0717cc4ae23b2a299586d4feef78b5a952b78124ed5472e155d0be-complete",
+      "uid": "1b154cb5-bb99-459d-ad36-3adff359fc5a",
+      "createdAt": "2026-10-02T09:23:14Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "controller": true,
+          "kind": "PtahResultRecord",
+          "name": "ptah-result-390812798b0717cc4ae23b2a299586d4feef78b5a952b78124ed5472e155d0be",
+          "uid": "ba6f019a-2adc-4f00-849e-7258967832d3"
+        }
+      ],
+      "type": "complete",
+      "dataDigest": "sha256:9cd6dfe90d7c61213f5ab275d857cbaa56c673e7d840efe26595e6fc0bccb200"
+    },
+    {
+      "name": "ptah-result-390812798b0717cc4ae23b2a299586d4feef78b5a952b78124ed5472e155d0be-retired",
+      "uid": "36835544-5e6f-471b-b6fc-b07f82e784c2",
+      "createdAt": "2026-10-02T09:23:44Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "blockOwnerDeletion": false,
+          "controller": true,
+          "kind": "PtahSchema",
+          "name": "storefront",
+          "uid": "2da59c1a-d308-4f9b-9b39-0bd46e929349"
+        }
+      ],
+      "type": "retired",
+      "dataDigest": "sha256:4906cbd0d419d923a16770cc300a91173844ab0b14dc276fe049f8b7af296567",
+      "binding": {
+        "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+        "kind": "PtahSchema",
+        "name": "storefront",
+        "uid": "2da59c1a-d308-4f9b-9b39-0bd46e929349",
+        "generation": 1,
+        "executionBindingID": "v1-c98946e559536d24fdb9663ef1cfe651",
+        "inputFingerprint": "sha256:3d0c49d7ce897f8adcf743a0f3bfcc020eb654cc5dc8c2570d1ab39306289c84",
+        "operation": "observe",
+        "operationID": "sha256:f95b572e321dc8e4e642f932c9582c7c11225e7db84f52adcac32cfa01e2c215",
+        "jobName": "ptah-observe-storefront-419319e81605df48",
+        "jobUID": "8bb74993-cf5f-422c-ad4c-dabf21e7f166",
+        "podName": "ptah-observe-storefront-419319e81605df48-cxgbv",
+        "podUID": "a3f8b069-0895-4b13-83f8-859c140e5cff"
+      }
+    },
+    {
+      "name": "ptah-result-43eb41cbe24955adee8dfba9f8321ca79d7b5915ebee26b89a886f0c2816afed",
+      "uid": "a02d3378-0e4e-41bf-84f0-053e46648dd6",
+      "createdAt": "2026-10-02T09:31:43Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "controller": true,
+          "kind": "PtahSchema",
+          "name": "quota-probe",
+          "uid": "c26c10d1-cbef-4ade-a1bb-9d9ae3e46d04"
+        }
+      ],
+      "type": "intent",
+      "dataDigest": "sha256:fe9671066a604e640c49cba59d0b6b3d1864acff1eebcf483bdeaa668a650c52",
+      "binding": {
+        "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+        "kind": "PtahSchema",
+        "name": "quota-probe",
+        "uid": "c26c10d1-cbef-4ade-a1bb-9d9ae3e46d04",
+        "generation": 1,
+        "executionBindingID": "v1-37ae8c8acb7dab6af54efdc07f455204",
+        "inputFingerprint": "sha256:17d9192534405c059c817746b1098b5b7aee14aa66beec8a2546f1c52d5ae801",
+        "operation": "verify",
+        "operationID": "sha256:95c3cfd1e64a17bbd2169bf6b151e8967f69e551d622d83f7023dfa9f5d2c1cb",
+        "jobName": "ptah-verify-quota-probe-0e88c5b6d0fe2b00",
+        "jobUID": "7a5dd3a8-aee3-4b70-a9e4-68fe2c0c6299",
+        "podName": "ptah-verify-quota-probe-0e88c5b6d0fe2b00-shxr6",
+        "podUID": "a73810f2-86e8-4853-acde-9bca3a21b883"
+      }
+    },
+    {
+      "name": "ptah-result-43eb41cbe24955adee8dfba9f8321ca79d7b5915ebee26b89a886f0c2816afed-000",
+      "uid": "6bd37a89-fdf7-42db-948b-0197a35e20eb",
+      "createdAt": "2026-10-02T09:31:43Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "controller": true,
+          "kind": "PtahResultRecord",
+          "name": "ptah-result-43eb41cbe24955adee8dfba9f8321ca79d7b5915ebee26b89a886f0c2816afed",
+          "uid": "a02d3378-0e4e-41bf-84f0-053e46648dd6"
+        }
+      ],
+      "type": "chunk",
+      "dataDigest": "sha256:77f4e44a79fa9ac373a1cb0f347a65f9ebb7ded492f93eb58fc08c0ecb2225f4"
+    },
+    {
+      "name": "ptah-result-43eb41cbe24955adee8dfba9f8321ca79d7b5915ebee26b89a886f0c2816afed-complete",
+      "uid": "ba282132-b36e-454f-9fda-77083604e5d5",
+      "createdAt": "2026-10-02T09:31:43Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "controller": true,
+          "kind": "PtahResultRecord",
+          "name": "ptah-result-43eb41cbe24955adee8dfba9f8321ca79d7b5915ebee26b89a886f0c2816afed",
+          "uid": "a02d3378-0e4e-41bf-84f0-053e46648dd6"
+        }
+      ],
+      "type": "complete",
+      "dataDigest": "sha256:2858e3bd43a1588213aac3092a80da38c7282ef31787ed1d7a480852c007a2ad"
+    },
+    {
+      "name": "ptah-result-43eb41cbe24955adee8dfba9f8321ca79d7b5915ebee26b89a886f0c2816afed-retired",
+      "uid": "cf407733-36e2-42f9-a990-39571643d98a",
+      "createdAt": "2026-10-02T09:32:14Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "blockOwnerDeletion": false,
+          "controller": true,
+          "kind": "PtahSchema",
+          "name": "quota-probe",
+          "uid": "c26c10d1-cbef-4ade-a1bb-9d9ae3e46d04"
+        }
+      ],
+      "type": "retired",
+      "dataDigest": "sha256:da43c36edf41fc5ba11d436c1f969047247dc21b352ddca5af7d5c9fdf2cc6ce",
+      "binding": {
+        "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+        "kind": "PtahSchema",
+        "name": "quota-probe",
+        "uid": "c26c10d1-cbef-4ade-a1bb-9d9ae3e46d04",
+        "generation": 1,
+        "executionBindingID": "v1-37ae8c8acb7dab6af54efdc07f455204",
+        "inputFingerprint": "sha256:17d9192534405c059c817746b1098b5b7aee14aa66beec8a2546f1c52d5ae801",
+        "operation": "verify",
+        "operationID": "sha256:95c3cfd1e64a17bbd2169bf6b151e8967f69e551d622d83f7023dfa9f5d2c1cb",
+        "jobName": "ptah-verify-quota-probe-0e88c5b6d0fe2b00",
+        "jobUID": "7a5dd3a8-aee3-4b70-a9e4-68fe2c0c6299",
+        "podName": "ptah-verify-quota-probe-0e88c5b6d0fe2b00-shxr6",
+        "podUID": "a73810f2-86e8-4853-acde-9bca3a21b883"
+      }
+    },
+    {
+      "name": "ptah-result-5f07db6b25b3a76a8f488a7f7282360e22ca6513d333914fd976f19204c38f04",
+      "uid": "92249c37-4a5c-4348-b93e-eb51fe8b9ca0",
+      "createdAt": "2026-10-02T09:22:52Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "controller": true,
+          "kind": "PtahSchema",
+          "name": "storefront",
+          "uid": "2da59c1a-d308-4f9b-9b39-0bd46e929349"
+        }
+      ],
+      "type": "intent",
+      "dataDigest": "sha256:1084d2426ce3e3565b8acb288e4395f5e9b6a383eaa59167dda044124d9dae0f",
+      "binding": {
+        "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+        "kind": "PtahSchema",
+        "name": "storefront",
+        "uid": "2da59c1a-d308-4f9b-9b39-0bd46e929349",
+        "generation": 1,
+        "executionBindingID": "v1-c98946e559536d24fdb9663ef1cfe651",
+        "inputFingerprint": "sha256:6cf90afd3b389744ac4a3610bc9184cd44a7a89c1a906de78984c426ebbc4458",
+        "operation": "plan",
+        "operationID": "sha256:5c4c1cef00b7e8a0902ae559718b278b1820e2562e3187fb57ced6eee8ce361b",
+        "jobName": "ptah-plan-storefront-ade0b0d8db64878b",
+        "jobUID": "6e001a52-d78b-4f02-b6ec-97d0b97c09d7",
+        "podName": "ptah-plan-storefront-ade0b0d8db64878b-df7dr",
+        "podUID": "4cd0ee09-b92e-4acd-b552-080ad5446f65"
+      }
+    },
+    {
+      "name": "ptah-result-5f07db6b25b3a76a8f488a7f7282360e22ca6513d333914fd976f19204c38f04-000",
+      "uid": "228356cb-8ecb-4a33-a1eb-78dc40662301",
+      "createdAt": "2026-10-02T09:22:52Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "controller": true,
+          "kind": "PtahResultRecord",
+          "name": "ptah-result-5f07db6b25b3a76a8f488a7f7282360e22ca6513d333914fd976f19204c38f04",
+          "uid": "92249c37-4a5c-4348-b93e-eb51fe8b9ca0"
+        }
+      ],
+      "type": "chunk",
+      "dataDigest": "sha256:342435cf71a6c63e7bed278e831d8138d2aec08c0bf1dc23a3d530568c82a014"
+    },
+    {
+      "name": "ptah-result-5f07db6b25b3a76a8f488a7f7282360e22ca6513d333914fd976f19204c38f04-complete",
+      "uid": "8b1c2544-03eb-4722-a2fe-9f0ca4951fac",
+      "createdAt": "2026-10-02T09:22:52Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "controller": true,
+          "kind": "PtahResultRecord",
+          "name": "ptah-result-5f07db6b25b3a76a8f488a7f7282360e22ca6513d333914fd976f19204c38f04",
+          "uid": "92249c37-4a5c-4348-b93e-eb51fe8b9ca0"
+        }
+      ],
+      "type": "complete",
+      "dataDigest": "sha256:2dba17ef9246b45c1760fe149cb4bf4e3070335b25523196c7a1ab080462b2b2"
+    },
+    {
+      "name": "ptah-result-5f07db6b25b3a76a8f488a7f7282360e22ca6513d333914fd976f19204c38f04-retired",
+      "uid": "04db7f47-68e1-437d-9c3f-4a276fd5809f",
+      "createdAt": "2026-10-02T09:23:29Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "blockOwnerDeletion": false,
+          "controller": true,
+          "kind": "PtahSchema",
+          "name": "storefront",
+          "uid": "2da59c1a-d308-4f9b-9b39-0bd46e929349"
+        }
+      ],
+      "type": "retired",
+      "dataDigest": "sha256:8c663579edf664b9dc72be5bae18656fb2b839697e4ec9393dc827c6b52bd198",
+      "binding": {
+        "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+        "kind": "PtahSchema",
+        "name": "storefront",
+        "uid": "2da59c1a-d308-4f9b-9b39-0bd46e929349",
+        "generation": 1,
+        "executionBindingID": "v1-c98946e559536d24fdb9663ef1cfe651",
+        "inputFingerprint": "sha256:6cf90afd3b389744ac4a3610bc9184cd44a7a89c1a906de78984c426ebbc4458",
+        "operation": "plan",
+        "operationID": "sha256:5c4c1cef00b7e8a0902ae559718b278b1820e2562e3187fb57ced6eee8ce361b",
+        "jobName": "ptah-plan-storefront-ade0b0d8db64878b",
+        "jobUID": "6e001a52-d78b-4f02-b6ec-97d0b97c09d7",
+        "podName": "ptah-plan-storefront-ade0b0d8db64878b-df7dr",
+        "podUID": "4cd0ee09-b92e-4acd-b552-080ad5446f65"
+      }
+    },
+    {
+      "name": "ptah-result-7f4d0bc83badda3d40d1238cec39fc65e7f56d8f3c81064e27e255d7595b4a56",
+      "uid": "cb23e44d-7895-42c6-8223-8acd2a39c3ec",
+      "createdAt": "2026-10-02T09:30:29Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "controller": true,
+          "kind": "PtahMigration",
+          "name": "cleanup-migration",
+          "uid": "8142fabc-776e-4a94-8134-606a91a15f3f"
+        }
+      ],
+      "type": "intent",
+      "dataDigest": "sha256:8127ef80c5eb472b920054e509895b7ef8a7d30df43c664fd97ea94f055da5fb",
+      "binding": {
+        "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+        "kind": "PtahMigration",
+        "name": "cleanup-migration",
+        "uid": "8142fabc-776e-4a94-8134-606a91a15f3f",
+        "generation": 1,
+        "executionBindingID": "v1-808323c100f225985ab08d71f39f96fb",
+        "inputFingerprint": "sha256:a10439eeec2ed07331497a763ee61ce56e564e734ff5cf227c2680a3eb23cb40",
+        "operation": "migration-history",
+        "operationID": "sha256:b6a1334145144cafcb9dd0c84313d6928e238ba314c1e607d1908f1ff90c6248",
+        "jobName": "ptah-m-history-cleanup-migration-c267ee982786eb7b",
+        "jobUID": "aaec51fd-732e-41ee-988d-54467a30a078",
+        "podName": "ptah-m-history-cleanup-migration-c267ee982786eb7b-7gsm5",
+        "podUID": "e85d4df7-8a64-445a-85cd-0d91381af3ec"
+      }
+    },
+    {
+      "name": "ptah-result-7f4d0bc83badda3d40d1238cec39fc65e7f56d8f3c81064e27e255d7595b4a56-000",
+      "uid": "48c8d5f1-1939-4f79-a091-439e9dd124a1",
+      "createdAt": "2026-10-02T09:30:29Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "controller": true,
+          "kind": "PtahResultRecord",
+          "name": "ptah-result-7f4d0bc83badda3d40d1238cec39fc65e7f56d8f3c81064e27e255d7595b4a56",
+          "uid": "cb23e44d-7895-42c6-8223-8acd2a39c3ec"
+        }
+      ],
+      "type": "chunk",
+      "dataDigest": "sha256:208723c67709846bd708a56ca90aace35276681e5ed8fe3afc14d653351dfde3"
+    },
+    {
+      "name": "ptah-result-7f4d0bc83badda3d40d1238cec39fc65e7f56d8f3c81064e27e255d7595b4a56-complete",
+      "uid": "2076738e-fd77-4e0e-96bc-a7756670c5cf",
+      "createdAt": "2026-10-02T09:30:29Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "controller": true,
+          "kind": "PtahResultRecord",
+          "name": "ptah-result-7f4d0bc83badda3d40d1238cec39fc65e7f56d8f3c81064e27e255d7595b4a56",
+          "uid": "cb23e44d-7895-42c6-8223-8acd2a39c3ec"
+        }
+      ],
+      "type": "complete",
+      "dataDigest": "sha256:96b99ce5b9f3e668ce1b68014116e734836059876f40401e50b56bb4b8e886b9"
+    },
+    {
+      "name": "ptah-result-7f4d0bc83badda3d40d1238cec39fc65e7f56d8f3c81064e27e255d7595b4a56-retired",
+      "uid": "3f907e98-321f-4eb1-bc63-fc2d8469dd7a",
+      "createdAt": "2026-10-02T09:31:04Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "blockOwnerDeletion": false,
+          "controller": true,
+          "kind": "PtahMigration",
+          "name": "cleanup-migration",
+          "uid": "8142fabc-776e-4a94-8134-606a91a15f3f"
+        }
+      ],
+      "type": "retired",
+      "dataDigest": "sha256:8a91ce0920b97087cc6b78be095571ccfbad96f080c1b9a86994308c77c1fee2",
+      "binding": {
+        "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+        "kind": "PtahMigration",
+        "name": "cleanup-migration",
+        "uid": "8142fabc-776e-4a94-8134-606a91a15f3f",
+        "generation": 1,
+        "executionBindingID": "v1-808323c100f225985ab08d71f39f96fb",
+        "inputFingerprint": "sha256:a10439eeec2ed07331497a763ee61ce56e564e734ff5cf227c2680a3eb23cb40",
+        "operation": "migration-history",
+        "operationID": "sha256:b6a1334145144cafcb9dd0c84313d6928e238ba314c1e607d1908f1ff90c6248",
+        "jobName": "ptah-m-history-cleanup-migration-c267ee982786eb7b",
+        "jobUID": "aaec51fd-732e-41ee-988d-54467a30a078",
+        "podName": "ptah-m-history-cleanup-migration-c267ee982786eb7b-7gsm5",
+        "podUID": "e85d4df7-8a64-445a-85cd-0d91381af3ec"
+      }
+    },
+    {
+      "name": "ptah-result-8589ca2d08ce1254292cda2308c33818bf086867155863644054d87b5e61312f",
+      "uid": "907c6971-a11a-4d60-a290-5085180e6a7c",
+      "createdAt": "2026-10-02T09:30:05Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "controller": true,
+          "kind": "PtahMigration",
+          "name": "cleanup-migration",
+          "uid": "8142fabc-776e-4a94-8134-606a91a15f3f"
+        }
+      ],
+      "type": "intent",
+      "dataDigest": "sha256:beccc97d37b622b16707431d2f92024f5bb6d5f8cf914874a81f224c05047e40",
+      "binding": {
+        "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+        "kind": "PtahMigration",
+        "name": "cleanup-migration",
+        "uid": "8142fabc-776e-4a94-8134-606a91a15f3f",
+        "generation": 1,
+        "executionBindingID": "v1-808323c100f225985ab08d71f39f96fb",
+        "inputFingerprint": "sha256:a10439eeec2ed07331497a763ee61ce56e564e734ff5cf227c2680a3eb23cb40",
+        "operation": "migration-history",
+        "operationID": "sha256:492aa83280aa674fa7f39b25f1bf0ceae9db836668d075992fb3851b8118cad5",
+        "jobName": "ptah-m-history-cleanup-migration-1afa2f74cad5ad5c",
+        "jobUID": "fa39f411-b7a5-4c1b-9c0b-4f8605d597b5",
+        "podName": "ptah-m-history-cleanup-migration-1afa2f74cad5ad5c-bgr7m",
+        "podUID": "a7854fb3-0d56-4dd7-a3cf-118984ccd043"
+      }
+    },
+    {
+      "name": "ptah-result-8589ca2d08ce1254292cda2308c33818bf086867155863644054d87b5e61312f-000",
+      "uid": "aca5b1b5-9c78-44b4-81b6-9dd7275fbf91",
+      "createdAt": "2026-10-02T09:30:05Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "controller": true,
+          "kind": "PtahResultRecord",
+          "name": "ptah-result-8589ca2d08ce1254292cda2308c33818bf086867155863644054d87b5e61312f",
+          "uid": "907c6971-a11a-4d60-a290-5085180e6a7c"
+        }
+      ],
+      "type": "chunk",
+      "dataDigest": "sha256:c3e40408480eb86d0321598dbc81768971b098bf32c7a4f91f10ea92da2fd5f8"
+    },
+    {
+      "name": "ptah-result-8589ca2d08ce1254292cda2308c33818bf086867155863644054d87b5e61312f-complete",
+      "uid": "c161b771-b82c-4a90-a18b-9add3900e814",
+      "createdAt": "2026-10-02T09:30:05Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "controller": true,
+          "kind": "PtahResultRecord",
+          "name": "ptah-result-8589ca2d08ce1254292cda2308c33818bf086867155863644054d87b5e61312f",
+          "uid": "907c6971-a11a-4d60-a290-5085180e6a7c"
+        }
+      ],
+      "type": "complete",
+      "dataDigest": "sha256:ffaab9654a6ca0622676c5aa2072499d87ae9383cdaca6876defddfdd379bf4f"
+    },
+    {
+      "name": "ptah-result-8589ca2d08ce1254292cda2308c33818bf086867155863644054d87b5e61312f-retired",
+      "uid": "34e8cd82-112f-416b-b00d-1a89bba39369",
+      "createdAt": "2026-10-02T09:30:14Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "blockOwnerDeletion": false,
+          "controller": true,
+          "kind": "PtahMigration",
+          "name": "cleanup-migration",
+          "uid": "8142fabc-776e-4a94-8134-606a91a15f3f"
+        }
+      ],
+      "type": "retired",
+      "dataDigest": "sha256:5434cdc64fee12c95b17367f511222e444e611d4a29160ecaf06656de1bd1dae",
+      "binding": {
+        "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+        "kind": "PtahMigration",
+        "name": "cleanup-migration",
+        "uid": "8142fabc-776e-4a94-8134-606a91a15f3f",
+        "generation": 1,
+        "executionBindingID": "v1-808323c100f225985ab08d71f39f96fb",
+        "inputFingerprint": "sha256:a10439eeec2ed07331497a763ee61ce56e564e734ff5cf227c2680a3eb23cb40",
+        "operation": "migration-history",
+        "operationID": "sha256:492aa83280aa674fa7f39b25f1bf0ceae9db836668d075992fb3851b8118cad5",
+        "jobName": "ptah-m-history-cleanup-migration-1afa2f74cad5ad5c",
+        "jobUID": "fa39f411-b7a5-4c1b-9c0b-4f8605d597b5",
+        "podName": "ptah-m-history-cleanup-migration-1afa2f74cad5ad5c-bgr7m",
+        "podUID": "a7854fb3-0d56-4dd7-a3cf-118984ccd043"
+      }
+    },
+    {
+      "name": "ptah-result-8fae8da333cb7d512577f07f0082922c67cc8f970eb85cbdb0980129413b139d",
+      "uid": "8b9564cd-b22e-4a56-929b-33ae2e92e873",
+      "createdAt": "2026-10-02T09:30:17Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "controller": true,
+          "kind": "PtahMigration",
+          "name": "cleanup-migration",
+          "uid": "8142fabc-776e-4a94-8134-606a91a15f3f"
+        }
+      ],
+      "type": "intent",
+      "dataDigest": "sha256:292aaadc4d397961abdfcc553038f4ba7aadda3b387f57c79f4e490a0cf795d8",
+      "binding": {
+        "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+        "kind": "PtahMigration",
+        "name": "cleanup-migration",
+        "uid": "8142fabc-776e-4a94-8134-606a91a15f3f",
+        "generation": 1,
+        "executionBindingID": "v1-808323c100f225985ab08d71f39f96fb",
+        "inputFingerprint": "sha256:152f7351fc43cb1d8f72a0cb3cedc561beb2b2478bf95f4930543c843949934f",
+        "operation": "migration-apply",
+        "operationID": "sha256:626957639c431d720881934411590ed9f4a144222aa18390951be5ff05aa1b61",
+        "jobName": "ptah-m-apply-cleanup-migration-011819968ce5cdf9",
+        "jobUID": "87fe2cce-dcd3-42e2-a343-552b707b5636",
+        "podName": "ptah-m-apply-cleanup-migration-011819968ce5cdf9-jzxch",
+        "podUID": "7fb3509c-b4b5-446b-aa47-10c7b1bcfb23"
+      }
+    },
+    {
+      "name": "ptah-result-8fae8da333cb7d512577f07f0082922c67cc8f970eb85cbdb0980129413b139d-000",
+      "uid": "0c0d7ca6-19d9-471e-ae4d-04be72192f1f",
+      "createdAt": "2026-10-02T09:30:17Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "controller": true,
+          "kind": "PtahResultRecord",
+          "name": "ptah-result-8fae8da333cb7d512577f07f0082922c67cc8f970eb85cbdb0980129413b139d",
+          "uid": "8b9564cd-b22e-4a56-929b-33ae2e92e873"
+        }
+      ],
+      "type": "chunk",
+      "dataDigest": "sha256:7cd2581dc84d97a20e6f2a3404115bea04e44109e4230a6110198fb12ad95c0e"
+    },
+    {
+      "name": "ptah-result-8fae8da333cb7d512577f07f0082922c67cc8f970eb85cbdb0980129413b139d-complete",
+      "uid": "85216fbc-e1b2-4631-9a49-2d7224171303",
+      "createdAt": "2026-10-02T09:30:17Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "controller": true,
+          "kind": "PtahResultRecord",
+          "name": "ptah-result-8fae8da333cb7d512577f07f0082922c67cc8f970eb85cbdb0980129413b139d",
+          "uid": "8b9564cd-b22e-4a56-929b-33ae2e92e873"
+        }
+      ],
+      "type": "complete",
+      "dataDigest": "sha256:0e7244549359bff6fcccca193195cc1c0625f2a5af0f9e77c5d908a391ba2782"
+    },
+    {
+      "name": "ptah-result-9b2ec60c97038e0ca4b4d82d67567024c0334c2378f1ae32d5841bb86e32b02b",
+      "uid": "3b5c3bf9-bc05-491b-a764-6a05623774bf",
+      "createdAt": "2026-10-02T09:29:53Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "controller": true,
+          "kind": "PtahMigration",
+          "name": "cleanup-migration",
+          "uid": "8142fabc-776e-4a94-8134-606a91a15f3f"
+        }
+      ],
+      "type": "intent",
+      "dataDigest": "sha256:67ccecded4173db1dfd37df2d3b1b32645a1d5088ae65c6201ab375b35d871c4",
+      "binding": {
+        "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+        "kind": "PtahMigration",
+        "name": "cleanup-migration",
+        "uid": "8142fabc-776e-4a94-8134-606a91a15f3f",
+        "generation": 1,
+        "executionBindingID": "v1-808323c100f225985ab08d71f39f96fb",
+        "inputFingerprint": "sha256:589a10d6cfb29409a96e9fc73734b4b02baa9e3bd0889a088b0de029ac92c746",
+        "operation": "verify",
+        "operationID": "sha256:e47aa4c3bc2beba885bb9eb0e8a791cd14e6bd329f9aad102ec1d053f13d5bac",
+        "jobName": "ptah-m-verify-cleanup-migration-91abd95d25b88701",
+        "jobUID": "0255a49a-ff42-4311-b94a-fedfd37a829a",
+        "podName": "ptah-m-verify-cleanup-migration-91abd95d25b88701-vzh2g",
+        "podUID": "e0cc0954-a49d-4a76-ac16-e2e4a9363081"
+      }
+    },
+    {
+      "name": "ptah-result-9b2ec60c97038e0ca4b4d82d67567024c0334c2378f1ae32d5841bb86e32b02b-000",
+      "uid": "0408444b-ee6c-4613-83ad-0fadabb8e8b4",
+      "createdAt": "2026-10-02T09:29:53Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "controller": true,
+          "kind": "PtahResultRecord",
+          "name": "ptah-result-9b2ec60c97038e0ca4b4d82d67567024c0334c2378f1ae32d5841bb86e32b02b",
+          "uid": "3b5c3bf9-bc05-491b-a764-6a05623774bf"
+        }
+      ],
+      "type": "chunk",
+      "dataDigest": "sha256:d7002465c6668b4679e661a8e195787ad3d422da47f5bbe8d4c427ea8efaded3"
+    },
+    {
+      "name": "ptah-result-9b2ec60c97038e0ca4b4d82d67567024c0334c2378f1ae32d5841bb86e32b02b-complete",
+      "uid": "415f30c6-47aa-4a14-bdad-2d0d21cd47c1",
+      "createdAt": "2026-10-02T09:29:53Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "controller": true,
+          "kind": "PtahResultRecord",
+          "name": "ptah-result-9b2ec60c97038e0ca4b4d82d67567024c0334c2378f1ae32d5841bb86e32b02b",
+          "uid": "3b5c3bf9-bc05-491b-a764-6a05623774bf"
+        }
+      ],
+      "type": "complete",
+      "dataDigest": "sha256:0814882f6907f2170c44cdce232c1e4f732e726a00f48d7e86b333ae2cd40cde"
+    },
+    {
+      "name": "ptah-result-9b2ec60c97038e0ca4b4d82d67567024c0334c2378f1ae32d5841bb86e32b02b-retired",
+      "uid": "547155ad-ad9b-4301-9a1a-e1b5fba3a947",
+      "createdAt": "2026-10-02T09:30:24Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "blockOwnerDeletion": false,
+          "controller": true,
+          "kind": "PtahMigration",
+          "name": "cleanup-migration",
+          "uid": "8142fabc-776e-4a94-8134-606a91a15f3f"
+        }
+      ],
+      "type": "retired",
+      "dataDigest": "sha256:2542e5f37e1bcc97a233f27fc0246d84085ee06c4eff5e63a271fb9859edfac6",
+      "binding": {
+        "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+        "kind": "PtahMigration",
+        "name": "cleanup-migration",
+        "uid": "8142fabc-776e-4a94-8134-606a91a15f3f",
+        "generation": 1,
+        "executionBindingID": "v1-808323c100f225985ab08d71f39f96fb",
+        "inputFingerprint": "sha256:589a10d6cfb29409a96e9fc73734b4b02baa9e3bd0889a088b0de029ac92c746",
+        "operation": "verify",
+        "operationID": "sha256:e47aa4c3bc2beba885bb9eb0e8a791cd14e6bd329f9aad102ec1d053f13d5bac",
+        "jobName": "ptah-m-verify-cleanup-migration-91abd95d25b88701",
+        "jobUID": "0255a49a-ff42-4311-b94a-fedfd37a829a",
+        "podName": "ptah-m-verify-cleanup-migration-91abd95d25b88701-vzh2g",
+        "podUID": "e0cc0954-a49d-4a76-ac16-e2e4a9363081"
+      }
+    },
+    {
+      "name": "ptah-result-a822b3e2e6b5d2c42eb8f763644126767dcb289521c514e0a71e37b60520f918",
+      "uid": "b1973560-25ba-4419-bb54-68ab3b7f26db",
+      "createdAt": "2026-10-02T09:22:29Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "controller": true,
+          "kind": "PtahSchema",
+          "name": "storefront",
+          "uid": "2da59c1a-d308-4f9b-9b39-0bd46e929349"
+        }
+      ],
+      "type": "intent",
+      "dataDigest": "sha256:d5838f96263bd3ad1d2876e75d5074b68058c125aed61a0ea4ee75d7b67313d1",
+      "binding": {
+        "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+        "kind": "PtahSchema",
+        "name": "storefront",
+        "uid": "2da59c1a-d308-4f9b-9b39-0bd46e929349",
+        "generation": 1,
+        "executionBindingID": "v1-c98946e559536d24fdb9663ef1cfe651",
+        "inputFingerprint": "sha256:b2354ac693c1c930f15d80bedcd108bcfda834ab1840695813e1e1368b7a833c",
+        "operation": "verify",
+        "operationID": "sha256:d4cf34f4c6c170dd4fde889f0e2d880905bfef10d430a44b9ea554c68ce32c0e",
+        "jobName": "ptah-verify-storefront-7be444151cc4fdc6",
+        "jobUID": "8a25b8ae-d71f-4cd0-a8f5-ff41b8bd5669",
+        "podName": "ptah-verify-storefront-7be444151cc4fdc6-5ngvn",
+        "podUID": "955b9e7f-8874-4876-8635-01467e4316a7"
+      }
+    },
+    {
+      "name": "ptah-result-a822b3e2e6b5d2c42eb8f763644126767dcb289521c514e0a71e37b60520f918-000",
+      "uid": "d628e719-d303-4219-9366-7ac7cc4ed884",
+      "createdAt": "2026-10-02T09:22:29Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "controller": true,
+          "kind": "PtahResultRecord",
+          "name": "ptah-result-a822b3e2e6b5d2c42eb8f763644126767dcb289521c514e0a71e37b60520f918",
+          "uid": "b1973560-25ba-4419-bb54-68ab3b7f26db"
+        }
+      ],
+      "type": "chunk",
+      "dataDigest": "sha256:4dfd59a8dbf90bc03a704dcc837017bf622fee3feaf542f4ea2348154d9bc57b"
+    },
+    {
+      "name": "ptah-result-a822b3e2e6b5d2c42eb8f763644126767dcb289521c514e0a71e37b60520f918-complete",
+      "uid": "3f5a41e5-7165-49bd-99b3-3d7c332a892a",
+      "createdAt": "2026-10-02T09:22:29Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "controller": true,
+          "kind": "PtahResultRecord",
+          "name": "ptah-result-a822b3e2e6b5d2c42eb8f763644126767dcb289521c514e0a71e37b60520f918",
+          "uid": "b1973560-25ba-4419-bb54-68ab3b7f26db"
+        }
+      ],
+      "type": "complete",
+      "dataDigest": "sha256:24c5a24ce1c6cdd36670e6a3041b4c882482af16cb72cf0230d89de604c58cc0"
+    },
+    {
+      "name": "ptah-result-a822b3e2e6b5d2c42eb8f763644126767dcb289521c514e0a71e37b60520f918-retired",
+      "uid": "b2649ce0-9821-413e-b79e-ddea2b41fd65",
+      "createdAt": "2026-10-02T09:22:59Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "blockOwnerDeletion": false,
+          "controller": true,
+          "kind": "PtahSchema",
+          "name": "storefront",
+          "uid": "2da59c1a-d308-4f9b-9b39-0bd46e929349"
+        }
+      ],
+      "type": "retired",
+      "dataDigest": "sha256:def79b7c005f8519ab8fc08c61a975f24c5fcc0bc85d2fd4be7862bdc1e016b9",
+      "binding": {
+        "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+        "kind": "PtahSchema",
+        "name": "storefront",
+        "uid": "2da59c1a-d308-4f9b-9b39-0bd46e929349",
+        "generation": 1,
+        "executionBindingID": "v1-c98946e559536d24fdb9663ef1cfe651",
+        "inputFingerprint": "sha256:b2354ac693c1c930f15d80bedcd108bcfda834ab1840695813e1e1368b7a833c",
+        "operation": "verify",
+        "operationID": "sha256:d4cf34f4c6c170dd4fde889f0e2d880905bfef10d430a44b9ea554c68ce32c0e",
+        "jobName": "ptah-verify-storefront-7be444151cc4fdc6",
+        "jobUID": "8a25b8ae-d71f-4cd0-a8f5-ff41b8bd5669",
+        "podName": "ptah-verify-storefront-7be444151cc4fdc6-5ngvn",
+        "podUID": "955b9e7f-8874-4876-8635-01467e4316a7"
+      }
+    },
+    {
+      "name": "ptah-result-cdc27fa6e99080c6608aa3e9660cb3d0d7a195e30744446ee5eaa232a3e3f1f2",
+      "uid": "847bd0f9-b901-4c71-928f-7aa489b76b93",
+      "createdAt": "2026-10-02T09:23:02Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "controller": true,
+          "kind": "PtahSchema",
+          "name": "storefront",
+          "uid": "2da59c1a-d308-4f9b-9b39-0bd46e929349"
+        }
+      ],
+      "type": "intent",
+      "dataDigest": "sha256:7578452c73dc3596a0873bcb54c2800e82192a7ef6b55677253dcb154a6a43c8",
+      "binding": {
+        "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+        "kind": "PtahSchema",
+        "name": "storefront",
+        "uid": "2da59c1a-d308-4f9b-9b39-0bd46e929349",
+        "generation": 1,
+        "executionBindingID": "v1-c98946e559536d24fdb9663ef1cfe651",
+        "inputFingerprint": "sha256:e4e26ada346b5366f11c90d82087c23d08f20c8557eeb5c0c39a77da854c4f9f",
+        "operation": "apply",
+        "operationID": "sha256:59147a9ecbd0c835f8b012cccfdad19747d03355cfba3c46424a277ca723d305",
+        "jobName": "ptah-apply-storefront-ddb26d3ed5d37f2f",
+        "jobUID": "85a92a7e-5d90-4d57-902a-caf48230d3cc",
+        "podName": "ptah-apply-storefront-ddb26d3ed5d37f2f-t4spq",
+        "podUID": "41d387e7-fd9f-41ba-bb94-b28589a87def"
+      }
+    },
+    {
+      "name": "ptah-result-cdc27fa6e99080c6608aa3e9660cb3d0d7a195e30744446ee5eaa232a3e3f1f2-000",
+      "uid": "66285244-199c-486f-b7a6-335c0b29f389",
+      "createdAt": "2026-10-02T09:23:02Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "controller": true,
+          "kind": "PtahResultRecord",
+          "name": "ptah-result-cdc27fa6e99080c6608aa3e9660cb3d0d7a195e30744446ee5eaa232a3e3f1f2",
+          "uid": "847bd0f9-b901-4c71-928f-7aa489b76b93"
+        }
+      ],
+      "type": "chunk",
+      "dataDigest": "sha256:3a42b0d2cb6b93d6432faa6cce0497f20ff9b4831337656b8cf3a4d826574d0c"
+    },
+    {
+      "name": "ptah-result-cdc27fa6e99080c6608aa3e9660cb3d0d7a195e30744446ee5eaa232a3e3f1f2-complete",
+      "uid": "ca33612d-ef7a-4f7a-873e-95c54b2bba26",
+      "createdAt": "2026-10-02T09:23:02Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "controller": true,
+          "kind": "PtahResultRecord",
+          "name": "ptah-result-cdc27fa6e99080c6608aa3e9660cb3d0d7a195e30744446ee5eaa232a3e3f1f2",
+          "uid": "847bd0f9-b901-4c71-928f-7aa489b76b93"
+        }
+      ],
+      "type": "complete",
+      "dataDigest": "sha256:4aee3400b0d56025a138e3b28643725293e4dcdb4dd5f5726172c78435def7c9"
+    },
+    {
+      "name": "ptah-result-cdc27fa6e99080c6608aa3e9660cb3d0d7a195e30744446ee5eaa232a3e3f1f2-retired",
+      "uid": "117af728-7f49-4ce1-a27f-266964516bf0",
+      "createdAt": "2026-10-02T09:23:49Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "blockOwnerDeletion": false,
+          "controller": true,
+          "kind": "PtahSchema",
+          "name": "storefront",
+          "uid": "2da59c1a-d308-4f9b-9b39-0bd46e929349"
+        }
+      ],
+      "type": "retired",
+      "dataDigest": "sha256:780ed3c1490c942d74ce0d098f009394033512ea10291416c76427e448b512ef",
+      "binding": {
+        "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+        "kind": "PtahSchema",
+        "name": "storefront",
+        "uid": "2da59c1a-d308-4f9b-9b39-0bd46e929349",
+        "generation": 1,
+        "executionBindingID": "v1-c98946e559536d24fdb9663ef1cfe651",
+        "inputFingerprint": "sha256:e4e26ada346b5366f11c90d82087c23d08f20c8557eeb5c0c39a77da854c4f9f",
+        "operation": "apply",
+        "operationID": "sha256:59147a9ecbd0c835f8b012cccfdad19747d03355cfba3c46424a277ca723d305",
+        "jobName": "ptah-apply-storefront-ddb26d3ed5d37f2f",
+        "jobUID": "85a92a7e-5d90-4d57-902a-caf48230d3cc",
+        "podName": "ptah-apply-storefront-ddb26d3ed5d37f2f-t4spq",
+        "podUID": "41d387e7-fd9f-41ba-bb94-b28589a87def"
+      }
+    },
+    {
+      "name": "ptah-result-d27947b5e996508c7b132c16e9829efb658452a250ea2a9db60cfce8c63e2546",
+      "uid": "7e9ac1c6-a82f-45cd-9818-fde1198ba4c5",
+      "createdAt": "2026-10-02T09:22:20Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "controller": true,
+          "kind": "PtahSchema",
+          "name": "storefront",
+          "uid": "2da59c1a-d308-4f9b-9b39-0bd46e929349"
+        }
+      ],
+      "type": "intent",
+      "dataDigest": "sha256:864a0b7fda678e0559d966537ca92747fab7b6760c274cd31e51036ea39343ea",
+      "binding": {
+        "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+        "kind": "PtahSchema",
+        "name": "storefront",
+        "uid": "2da59c1a-d308-4f9b-9b39-0bd46e929349",
+        "generation": 1,
+        "executionBindingID": "v1-c98946e559536d24fdb9663ef1cfe651",
+        "inputFingerprint": "sha256:212dac7f33e1ea6e003985d03da881a25aa13a76e4a520f9dd7e0b4f7b370703",
+        "operation": "resolve",
+        "operationID": "sha256:b0c120e6be4f9d9bf5b0e9050dc91ac2570cd0785f03c355530f93122672664a",
+        "jobName": "ptah-resolve-storefront-6f7ffbe9bb6a2669",
+        "jobUID": "ef9ae8df-db13-4656-8371-27f10376ac58",
+        "podName": "ptah-resolve-storefront-6f7ffbe9bb6a2669-cmv9v",
+        "podUID": "42995e53-d47f-42cc-b86f-06349f9828f9"
+      }
+    },
+    {
+      "name": "ptah-result-d27947b5e996508c7b132c16e9829efb658452a250ea2a9db60cfce8c63e2546-000",
+      "uid": "d80ec185-a477-48ac-8fa2-326719ee261a",
+      "createdAt": "2026-10-02T09:22:20Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "controller": true,
+          "kind": "PtahResultRecord",
+          "name": "ptah-result-d27947b5e996508c7b132c16e9829efb658452a250ea2a9db60cfce8c63e2546",
+          "uid": "7e9ac1c6-a82f-45cd-9818-fde1198ba4c5"
+        }
+      ],
+      "type": "chunk",
+      "dataDigest": "sha256:3fa5a08c2c3fc5a5ca17fb685e59cc06fff67a147f07c1760cdf080c13c4cf54"
+    },
+    {
+      "name": "ptah-result-d27947b5e996508c7b132c16e9829efb658452a250ea2a9db60cfce8c63e2546-complete",
+      "uid": "cbc3491c-899e-4ccf-945a-ea287762f562",
+      "createdAt": "2026-10-02T09:22:20Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "controller": true,
+          "kind": "PtahResultRecord",
+          "name": "ptah-result-d27947b5e996508c7b132c16e9829efb658452a250ea2a9db60cfce8c63e2546",
+          "uid": "7e9ac1c6-a82f-45cd-9818-fde1198ba4c5"
+        }
+      ],
+      "type": "complete",
+      "dataDigest": "sha256:d4168af94b39df27e9c322a230bb77e392eb119dd5b4e272d751a12b1d945c41"
+    },
+    {
+      "name": "ptah-result-d27947b5e996508c7b132c16e9829efb658452a250ea2a9db60cfce8c63e2546-retired",
+      "uid": "c4b7a4ba-94cb-4ab3-8108-c6a78a0f79d2",
+      "createdAt": "2026-10-02T09:22:49Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "blockOwnerDeletion": false,
+          "controller": true,
+          "kind": "PtahSchema",
+          "name": "storefront",
+          "uid": "2da59c1a-d308-4f9b-9b39-0bd46e929349"
+        }
+      ],
+      "type": "retired",
+      "dataDigest": "sha256:6cd54e7375bff80861d726e5c77d7863d290fd48316583c43dd6455a67df5a51",
+      "binding": {
+        "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+        "kind": "PtahSchema",
+        "name": "storefront",
+        "uid": "2da59c1a-d308-4f9b-9b39-0bd46e929349",
+        "generation": 1,
+        "executionBindingID": "v1-c98946e559536d24fdb9663ef1cfe651",
+        "inputFingerprint": "sha256:212dac7f33e1ea6e003985d03da881a25aa13a76e4a520f9dd7e0b4f7b370703",
+        "operation": "resolve",
+        "operationID": "sha256:b0c120e6be4f9d9bf5b0e9050dc91ac2570cd0785f03c355530f93122672664a",
+        "jobName": "ptah-resolve-storefront-6f7ffbe9bb6a2669",
+        "jobUID": "ef9ae8df-db13-4656-8371-27f10376ac58",
+        "podName": "ptah-resolve-storefront-6f7ffbe9bb6a2669-cmv9v",
+        "podUID": "42995e53-d47f-42cc-b86f-06349f9828f9"
+      }
+    },
+    {
+      "name": "ptah-result-da573e67c743a18a14101df4ad1c567020570642889f2259b9f369950b4de0d3",
+      "uid": "fea33c88-d95a-4bdd-a29a-447777070f0c",
+      "createdAt": "2026-10-02T09:22:40Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "controller": true,
+          "kind": "PtahSchema",
+          "name": "storefront",
+          "uid": "2da59c1a-d308-4f9b-9b39-0bd46e929349"
+        }
+      ],
+      "type": "intent",
+      "dataDigest": "sha256:7423a915afb8bed2aa3a11fb327008c13ae6bf7d2057d8089553574bf0a6f045",
+      "binding": {
+        "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+        "kind": "PtahSchema",
+        "name": "storefront",
+        "uid": "2da59c1a-d308-4f9b-9b39-0bd46e929349",
+        "generation": 1,
+        "executionBindingID": "v1-c98946e559536d24fdb9663ef1cfe651",
+        "inputFingerprint": "sha256:693d83f145fd05b815b72872ceeba57df33a86c27e9e4943680d4343b4e56a8d",
+        "operation": "observe",
+        "operationID": "sha256:f9cce8d466d52597ae47eb5d404d6b72fc4aa95a296fcd72c7f74de7788aaa8d",
+        "jobName": "ptah-observe-storefront-0f065cf0cb949b1d",
+        "jobUID": "4e4089b5-9a25-4c49-99d4-231ec7e47718",
+        "podName": "ptah-observe-storefront-0f065cf0cb949b1d-gbxtf",
+        "podUID": "be353562-5dc1-4384-913e-0a0a1b3651f7"
+      }
+    },
+    {
+      "name": "ptah-result-da573e67c743a18a14101df4ad1c567020570642889f2259b9f369950b4de0d3-000",
+      "uid": "55bff08f-31c7-4341-8811-c50852efccc0",
+      "createdAt": "2026-10-02T09:22:40Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "controller": true,
+          "kind": "PtahResultRecord",
+          "name": "ptah-result-da573e67c743a18a14101df4ad1c567020570642889f2259b9f369950b4de0d3",
+          "uid": "fea33c88-d95a-4bdd-a29a-447777070f0c"
+        }
+      ],
+      "type": "chunk",
+      "dataDigest": "sha256:d030398f2a39fb454c9d804f4b4878c03577a82c1c49d8226fdd423121412970"
+    },
+    {
+      "name": "ptah-result-da573e67c743a18a14101df4ad1c567020570642889f2259b9f369950b4de0d3-complete",
+      "uid": "2907cb3e-58ae-4f70-8f98-0507e07a0270",
+      "createdAt": "2026-10-02T09:22:40Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "controller": true,
+          "kind": "PtahResultRecord",
+          "name": "ptah-result-da573e67c743a18a14101df4ad1c567020570642889f2259b9f369950b4de0d3",
+          "uid": "fea33c88-d95a-4bdd-a29a-447777070f0c"
+        }
+      ],
+      "type": "complete",
+      "dataDigest": "sha256:b78724617dba73f15f2339cff16333559bd307a9c70d067ab757024891af5e97"
+    },
+    {
+      "name": "ptah-result-da573e67c743a18a14101df4ad1c567020570642889f2259b9f369950b4de0d3-retired",
+      "uid": "154d906d-703e-4e24-a715-8670d0adbc72",
+      "createdAt": "2026-10-02T09:23:09Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "blockOwnerDeletion": false,
+          "controller": true,
+          "kind": "PtahSchema",
+          "name": "storefront",
+          "uid": "2da59c1a-d308-4f9b-9b39-0bd46e929349"
+        }
+      ],
+      "type": "retired",
+      "dataDigest": "sha256:c44594b61c2ba3af028d7556a38d8eafca8de0edad4f003fdf34064d7733f2bf",
+      "binding": {
+        "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+        "kind": "PtahSchema",
+        "name": "storefront",
+        "uid": "2da59c1a-d308-4f9b-9b39-0bd46e929349",
+        "generation": 1,
+        "executionBindingID": "v1-c98946e559536d24fdb9663ef1cfe651",
+        "inputFingerprint": "sha256:693d83f145fd05b815b72872ceeba57df33a86c27e9e4943680d4343b4e56a8d",
+        "operation": "observe",
+        "operationID": "sha256:f9cce8d466d52597ae47eb5d404d6b72fc4aa95a296fcd72c7f74de7788aaa8d",
+        "jobName": "ptah-observe-storefront-0f065cf0cb949b1d",
+        "jobUID": "4e4089b5-9a25-4c49-99d4-231ec7e47718",
+        "podName": "ptah-observe-storefront-0f065cf0cb949b1d-gbxtf",
+        "podUID": "be353562-5dc1-4384-913e-0a0a1b3651f7"
+      }
+    },
+    {
+      "name": "ptah-result-dd063ac68a272357e11e6f99777ec909651da8be8a998a4d767c41b469cc12b1",
+      "uid": "dfdb5faf-5b18-4cb1-9e6c-ffed6b38cac6",
+      "createdAt": "2026-10-02T09:23:26Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "controller": true,
+          "kind": "PtahSchema",
+          "name": "storefront",
+          "uid": "2da59c1a-d308-4f9b-9b39-0bd46e929349"
+        }
+      ],
+      "type": "intent",
+      "dataDigest": "sha256:20443e8faff342a987e6c291bd550acfd920f34b240b2500b866af99bfe54df2",
+      "binding": {
+        "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+        "kind": "PtahSchema",
+        "name": "storefront",
+        "uid": "2da59c1a-d308-4f9b-9b39-0bd46e929349",
+        "generation": 1,
+        "executionBindingID": "v1-c98946e559536d24fdb9663ef1cfe651",
+        "inputFingerprint": "sha256:711639cb5c3f873ef9bd514ba7bd7977f64da51089da99a2fc0c1171575c9fe1",
+        "operation": "plan",
+        "operationID": "sha256:b47b0d5109ac039b3b045d1dacb3a967c1d683f5686670b16f9a6a42b17fb33b",
+        "jobName": "ptah-plan-storefront-4d07ef6e379713f3",
+        "jobUID": "a4b344b0-f35f-4740-938b-38ce68c1fab1",
+        "podName": "ptah-plan-storefront-4d07ef6e379713f3-6wvhl",
+        "podUID": "4b6858d1-48d0-4b05-bded-74316fa89263"
+      }
+    },
+    {
+      "name": "ptah-result-dd063ac68a272357e11e6f99777ec909651da8be8a998a4d767c41b469cc12b1-000",
+      "uid": "0172996a-f39c-4121-81b4-48e71e88e83c",
+      "createdAt": "2026-10-02T09:23:26Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "controller": true,
+          "kind": "PtahResultRecord",
+          "name": "ptah-result-dd063ac68a272357e11e6f99777ec909651da8be8a998a4d767c41b469cc12b1",
+          "uid": "dfdb5faf-5b18-4cb1-9e6c-ffed6b38cac6"
+        }
+      ],
+      "type": "chunk",
+      "dataDigest": "sha256:5664115c12b76f61e98c77ff7a84a44122a8a71dce3ccdc4403b95916c44e9f8"
+    },
+    {
+      "name": "ptah-result-dd063ac68a272357e11e6f99777ec909651da8be8a998a4d767c41b469cc12b1-complete",
+      "uid": "276ac628-136a-4a22-8710-188ef2622554",
+      "createdAt": "2026-10-02T09:23:27Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "controller": true,
+          "kind": "PtahResultRecord",
+          "name": "ptah-result-dd063ac68a272357e11e6f99777ec909651da8be8a998a4d767c41b469cc12b1",
+          "uid": "dfdb5faf-5b18-4cb1-9e6c-ffed6b38cac6"
+        }
+      ],
+      "type": "complete",
+      "dataDigest": "sha256:7e133611cffe19ca27d44ec6acac6cfb16ecdd410cb5a95d0b6032e519e2789b"
+    },
+    {
+      "name": "ptah-result-dd063ac68a272357e11e6f99777ec909651da8be8a998a4d767c41b469cc12b1-retired",
+      "uid": "1c3fb4fc-9f4d-4521-86cc-127ce2bf2de2",
+      "createdAt": "2026-10-02T09:23:59Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "blockOwnerDeletion": false,
+          "controller": true,
+          "kind": "PtahSchema",
+          "name": "storefront",
+          "uid": "2da59c1a-d308-4f9b-9b39-0bd46e929349"
+        }
+      ],
+      "type": "retired",
+      "dataDigest": "sha256:3f4d92158d0ca190ed856820f6b07aaf150df0fd7a1499cbc484227d74d09296",
+      "binding": {
+        "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+        "kind": "PtahSchema",
+        "name": "storefront",
+        "uid": "2da59c1a-d308-4f9b-9b39-0bd46e929349",
+        "generation": 1,
+        "executionBindingID": "v1-c98946e559536d24fdb9663ef1cfe651",
+        "inputFingerprint": "sha256:711639cb5c3f873ef9bd514ba7bd7977f64da51089da99a2fc0c1171575c9fe1",
+        "operation": "plan",
+        "operationID": "sha256:b47b0d5109ac039b3b045d1dacb3a967c1d683f5686670b16f9a6a42b17fb33b",
+        "jobName": "ptah-plan-storefront-4d07ef6e379713f3",
+        "jobUID": "a4b344b0-f35f-4740-938b-38ce68c1fab1",
+        "podName": "ptah-plan-storefront-4d07ef6e379713f3-6wvhl",
+        "podUID": "4b6858d1-48d0-4b05-bded-74316fa89263"
+      }
+    },
+    {
+      "name": "ptah-result-e1eae4f067e676f3339f6b7f5306a229d4fa4cb0710fc1aff88258c288527ba3",
+      "uid": "1d7e545a-5cac-4151-a686-c678e8c49e9b",
+      "createdAt": "2026-10-02T09:29:44Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "controller": true,
+          "kind": "PtahMigration",
+          "name": "cleanup-migration",
+          "uid": "8142fabc-776e-4a94-8134-606a91a15f3f"
+        }
+      ],
+      "type": "intent",
+      "dataDigest": "sha256:b9486ea81a1062ae28b3a685349278376b09bd2bcf6816b89de3d47373a9e76f",
+      "binding": {
+        "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+        "kind": "PtahMigration",
+        "name": "cleanup-migration",
+        "uid": "8142fabc-776e-4a94-8134-606a91a15f3f",
+        "generation": 1,
+        "executionBindingID": "v1-808323c100f225985ab08d71f39f96fb",
+        "inputFingerprint": "sha256:060ba94e20c6cd4a765f0a31c6f5327ffdb89127473fc3fa5b5b73c191e67928",
+        "operation": "resolve",
+        "operationID": "sha256:9e75dc187097f790dd10a34b2553dbf051024a6adf28630e8ed4855f8688e96c",
+        "jobName": "ptah-m-resolve-cleanup-migration-3c1f02c455c5d699",
+        "jobUID": "45644e14-94d3-4b9c-86eb-c0c5aaaf3851",
+        "podName": "ptah-m-resolve-cleanup-migration-3c1f02c455c5d699-f4wwd",
+        "podUID": "c78ebe7a-5698-46ab-b907-d319c8f658ad"
+      }
+    },
+    {
+      "name": "ptah-result-e1eae4f067e676f3339f6b7f5306a229d4fa4cb0710fc1aff88258c288527ba3-000",
+      "uid": "b6353273-c0bf-4263-8718-463a3159b189",
+      "createdAt": "2026-10-02T09:29:44Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "controller": true,
+          "kind": "PtahResultRecord",
+          "name": "ptah-result-e1eae4f067e676f3339f6b7f5306a229d4fa4cb0710fc1aff88258c288527ba3",
+          "uid": "1d7e545a-5cac-4151-a686-c678e8c49e9b"
+        }
+      ],
+      "type": "chunk",
+      "dataDigest": "sha256:195270da36e7ed361aec15c03ee94ad750b906f0bb2555556ff025a07f82436a"
+    },
+    {
+      "name": "ptah-result-e1eae4f067e676f3339f6b7f5306a229d4fa4cb0710fc1aff88258c288527ba3-complete",
+      "uid": "60a2e0f7-d66f-460d-828f-2441a00b371d",
+      "createdAt": "2026-10-02T09:29:44Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "controller": true,
+          "kind": "PtahResultRecord",
+          "name": "ptah-result-e1eae4f067e676f3339f6b7f5306a229d4fa4cb0710fc1aff88258c288527ba3",
+          "uid": "1d7e545a-5cac-4151-a686-c678e8c49e9b"
+        }
+      ],
+      "type": "complete",
+      "dataDigest": "sha256:a8324cf4c1251c72b9714029d490d8d7b33116cf53ffdeee0322dd927c458ece"
+    },
+    {
+      "name": "ptah-result-e1eae4f067e676f3339f6b7f5306a229d4fa4cb0710fc1aff88258c288527ba3-retired",
+      "uid": "655b771b-b4ff-4013-ad38-09b1e3f1b0fb",
+      "createdAt": "2026-10-02T09:30:14Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "blockOwnerDeletion": false,
+          "controller": true,
+          "kind": "PtahMigration",
+          "name": "cleanup-migration",
+          "uid": "8142fabc-776e-4a94-8134-606a91a15f3f"
+        }
+      ],
+      "type": "retired",
+      "dataDigest": "sha256:0a2507d4d49b7b671f8cb003c73568df444a59e0ba060c7d46f8633f7081804e",
+      "binding": {
+        "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+        "kind": "PtahMigration",
+        "name": "cleanup-migration",
+        "uid": "8142fabc-776e-4a94-8134-606a91a15f3f",
+        "generation": 1,
+        "executionBindingID": "v1-808323c100f225985ab08d71f39f96fb",
+        "inputFingerprint": "sha256:060ba94e20c6cd4a765f0a31c6f5327ffdb89127473fc3fa5b5b73c191e67928",
+        "operation": "resolve",
+        "operationID": "sha256:9e75dc187097f790dd10a34b2553dbf051024a6adf28630e8ed4855f8688e96c",
+        "jobName": "ptah-m-resolve-cleanup-migration-3c1f02c455c5d699",
+        "jobUID": "45644e14-94d3-4b9c-86eb-c0c5aaaf3851",
+        "podName": "ptah-m-resolve-cleanup-migration-3c1f02c455c5d699-f4wwd",
+        "podUID": "c78ebe7a-5698-46ab-b907-d319c8f658ad"
+      }
+    },
+    {
+      "name": "ptah-result-key-0c5526a474e75f215f6e19bd6ede372f",
+      "uid": "7d0481ff-5890-454e-a573-93861bfe4568",
+      "createdAt": "2026-10-02T09:31:32Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "blockOwnerDeletion": true,
+          "controller": true,
+          "kind": "PtahSchema",
+          "name": "quota-probe",
+          "uid": "c26c10d1-cbef-4ade-a1bb-9d9ae3e46d04"
+        }
+      ],
+      "type": "credential",
+      "dataDigest": "sha256:4861119f7fd6b012eeccfbfa900b9fc20081a5241bd4fcbaed3fd7fdcff6e138"
+    },
+    {
+      "name": "ptah-result-key-1077dbff6caa36a032f67e0e3f7359e8",
+      "uid": "3460fd7f-6137-45a0-adea-c1f0f7a687b9",
+      "createdAt": "2026-10-02T09:29:51Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "blockOwnerDeletion": true,
+          "controller": true,
+          "kind": "PtahMigration",
+          "name": "cleanup-migration",
+          "uid": "8142fabc-776e-4a94-8134-606a91a15f3f"
+        }
+      ],
+      "type": "credential",
+      "dataDigest": "sha256:78a155cfb84889d25c4a0a3f690369b9f05556c53df05f4d9374884f6a44ad7f"
+    },
+    {
+      "name": "ptah-result-key-24471c0af5e1b5c5c20da684de60f978",
+      "uid": "ec220deb-8f85-48c3-aac6-d9ed8ca35cac",
+      "createdAt": "2026-10-02T09:30:01Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "blockOwnerDeletion": true,
+          "controller": true,
+          "kind": "PtahMigration",
+          "name": "cleanup-migration",
+          "uid": "8142fabc-776e-4a94-8134-606a91a15f3f"
+        }
+      ],
+      "type": "credential",
+      "dataDigest": "sha256:ac5aa86127af0fa250dd942847a5876c629bcc6261b94b830688b8f4e345a85e"
+    },
+    {
+      "name": "ptah-result-key-2982b34b6d2b2b8bc33b9d4fb07d5be7",
+      "uid": "3ba9d760-351b-4dda-8f99-7286c10ecbbd",
+      "createdAt": "2026-10-02T09:30:13Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "blockOwnerDeletion": true,
+          "controller": true,
+          "kind": "PtahMigration",
+          "name": "cleanup-migration",
+          "uid": "8142fabc-776e-4a94-8134-606a91a15f3f"
+        }
+      ],
+      "type": "credential",
+      "dataDigest": "sha256:c2145e8ca9abcaa3a2ae80ef8f9939cc1839632e86aea20fab7b5d92db9e6307"
+    },
+    {
+      "name": "ptah-result-key-3d3c5c3354e2aef328c74a3074aa773e",
+      "uid": "fbd086fc-762c-4ac2-9658-6e0688e27574",
+      "createdAt": "2026-10-02T09:31:42Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "blockOwnerDeletion": true,
+          "controller": true,
+          "kind": "PtahSchema",
+          "name": "quota-probe",
+          "uid": "c26c10d1-cbef-4ade-a1bb-9d9ae3e46d04"
+        }
+      ],
+      "type": "credential",
+      "dataDigest": "sha256:c7b6c1d8823fe76a4355c92014c2dedb66265359c5774ba2a660a3c56750783a"
+    },
+    {
+      "name": "ptah-result-key-460df3cd9f62c103a4a146a096772723",
+      "uid": "4b3b59a6-55b9-46c5-9a23-26ca36b99e8f",
+      "createdAt": "2026-10-02T09:30:25Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "blockOwnerDeletion": true,
+          "controller": true,
+          "kind": "PtahMigration",
+          "name": "cleanup-migration",
+          "uid": "8142fabc-776e-4a94-8134-606a91a15f3f"
+        }
+      ],
+      "type": "credential",
+      "dataDigest": "sha256:a3084f8ed9e63adff92fc80c4ad9dfe7a50a56519d5537ac28175a9c52cc0834"
+    },
+    {
+      "name": "ptah-result-key-5333471f64101f4220713c5d3716c033",
+      "uid": "cc68ab8b-037d-4ff5-ab83-88bd0b283bdb",
+      "createdAt": "2026-10-02T09:31:51Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "blockOwnerDeletion": true,
+          "controller": true,
+          "kind": "PtahSchema",
+          "name": "quota-probe",
+          "uid": "c26c10d1-cbef-4ade-a1bb-9d9ae3e46d04"
+        }
+      ],
+      "type": "credential",
+      "dataDigest": "sha256:155b5436735274d1014c3fdbc11d035c1ccc8051ec81f11ab502d25a58de34d9"
+    },
+    {
+      "name": "ptah-result-key-77b19c4318a71052bd8f9422e79a69e3",
+      "uid": "5c0ce574-80f3-4c32-ac1b-348a135ea374",
+      "createdAt": "2026-10-02T09:23:22Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "blockOwnerDeletion": true,
+          "controller": true,
+          "kind": "PtahSchema",
+          "name": "storefront",
+          "uid": "2da59c1a-d308-4f9b-9b39-0bd46e929349"
+        }
+      ],
+      "type": "credential",
+      "dataDigest": "sha256:bca418df7897027a666f4ad2df0a6d35f11e503dc6417a5dc737a3c1e0da5850"
+    },
+    {
+      "name": "ptah-result-key-804c3b064a2b3f0981f0af8bd802964c",
+      "uid": "ce5d3611-5374-4d34-a281-0913699582a6",
+      "createdAt": "2026-10-02T09:23:00Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "blockOwnerDeletion": true,
+          "controller": true,
+          "kind": "PtahSchema",
+          "name": "storefront",
+          "uid": "2da59c1a-d308-4f9b-9b39-0bd46e929349"
+        }
+      ],
+      "type": "credential",
+      "dataDigest": "sha256:b74bb8eea9d08c1d5286f15d612c46cd83a268c31dfd20f802371b1d2edd3535"
+    },
+    {
+      "name": "ptah-result-key-874d3a5d32fd62ea4ae92ae62035091e",
+      "uid": "865b2f5f-0251-4d96-825f-975369e2028d",
+      "createdAt": "2026-10-02T09:29:43Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "blockOwnerDeletion": true,
+          "controller": true,
+          "kind": "PtahMigration",
+          "name": "cleanup-migration",
+          "uid": "8142fabc-776e-4a94-8134-606a91a15f3f"
+        }
+      ],
+      "type": "credential",
+      "dataDigest": "sha256:7ea27540c011cc3fe4b80949198b78efa4c69d91e29b01d0b0fa42a2f8706f2b"
+    },
+    {
+      "name": "ptah-result-key-9ad7c75c5044dc701be3e3136787cca6",
+      "uid": "e647d9f2-7cd8-4887-8812-f605c300e763",
+      "createdAt": "2026-10-02T09:22:18Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "blockOwnerDeletion": true,
+          "controller": true,
+          "kind": "PtahSchema",
+          "name": "storefront",
+          "uid": "2da59c1a-d308-4f9b-9b39-0bd46e929349"
+        }
+      ],
+      "type": "credential",
+      "dataDigest": "sha256:d1fc36eccbe04e8e528ef607400cfd380f7a26927ad18ad559cb848b9556403c"
+    },
+    {
+      "name": "ptah-result-key-ae97fecd3af3a72338e36047619a1c7b",
+      "uid": "bf8d8326-4726-4755-bb24-cfd5c86b3c41",
+      "createdAt": "2026-10-02T09:22:36Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "blockOwnerDeletion": true,
+          "controller": true,
+          "kind": "PtahSchema",
+          "name": "storefront",
+          "uid": "2da59c1a-d308-4f9b-9b39-0bd46e929349"
+        }
+      ],
+      "type": "credential",
+      "dataDigest": "sha256:c218260d4517d8a296b40c28f80e81f7e44db82a18e60d7481b30e9a235729bd"
+    },
+    {
+      "name": "ptah-result-key-bd255b7847200da5c8916246935e7814",
+      "uid": "65b010c0-98cb-488a-90f4-d9030d89e769",
+      "createdAt": "2026-10-02T09:32:02Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "blockOwnerDeletion": true,
+          "controller": true,
+          "kind": "PtahSchema",
+          "name": "quota-probe",
+          "uid": "c26c10d1-cbef-4ade-a1bb-9d9ae3e46d04"
+        }
+      ],
+      "type": "credential",
+      "dataDigest": "sha256:84ded882ea55f7fdd8e0e942be167ade6e417d763357b2ed844a42fc5ee9fddd"
+    },
+    {
+      "name": "ptah-result-key-d2c6903803e3b0b58b8bde2d505563d6",
+      "uid": "f136d728-2846-437c-ae56-eae5c38041e7",
+      "createdAt": "2026-10-02T09:23:10Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "blockOwnerDeletion": true,
+          "controller": true,
+          "kind": "PtahSchema",
+          "name": "storefront",
+          "uid": "2da59c1a-d308-4f9b-9b39-0bd46e929349"
+        }
+      ],
+      "type": "credential",
+      "dataDigest": "sha256:22a67924703cc97d91dc1bcd836913a3ba4bfdc1d42c331d5c8c7002bf33ddb5"
+    },
+    {
+      "name": "ptah-result-key-e6a9d1e2b5d9957e83da43b428afecab",
+      "uid": "117801be-f158-4ccf-af6d-715f2a0d35c8",
+      "createdAt": "2026-10-02T09:22:28Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "blockOwnerDeletion": true,
+          "controller": true,
+          "kind": "PtahSchema",
+          "name": "storefront",
+          "uid": "2da59c1a-d308-4f9b-9b39-0bd46e929349"
+        }
+      ],
+      "type": "credential",
+      "dataDigest": "sha256:49471777a936327bf5a9ad3672871915b5db1c1be361e9c8e86c62fe176187ee"
+    },
+    {
+      "name": "ptah-result-key-f19948ca663438f1e7d950743d06c3e0",
+      "uid": "fac8489c-3ae6-4a68-a331-4471b88c125d",
+      "createdAt": "2026-10-02T09:22:48Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "blockOwnerDeletion": true,
+          "controller": true,
+          "kind": "PtahSchema",
+          "name": "storefront",
+          "uid": "2da59c1a-d308-4f9b-9b39-0bd46e929349"
+        }
+      ],
+      "type": "credential",
+      "dataDigest": "sha256:409ce47b0d34dfffe51f33941a4cedd8ba22f8a5229b016c6346030fb479160d"
+    }
+  ],
+  "receipts": [
+    {
+      "binding": {
+        "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+        "kind": "PtahSchema",
+        "name": "quota-probe",
+        "uid": "c26c10d1-cbef-4ade-a1bb-9d9ae3e46d04",
+        "generation": 1,
+        "executionBindingID": "v1-37ae8c8acb7dab6af54efdc07f455204",
+        "inputFingerprint": "sha256:88120abc9f79255a79b981612fe37f195c348a0c0a028be36dc8a364aac51bda",
+        "operation": "plan",
+        "operationID": "sha256:1dc82f16c8592134833caa77a6dd12b80d6dc65882e04f5072fc5ff33f17d155",
+        "jobName": "ptah-plan-quota-probe-159e96ed7ca4fc00",
+        "jobUID": "c38f564b-ce47-4bcf-af9d-dc13282e8355",
+        "podName": "ptah-plan-quota-probe-159e96ed7ca4fc00-dq5w5",
+        "podUID": "aee47345-0ad7-4bd2-93f3-49d2dec6ddeb"
+      },
+      "uid": "73e98cbc-bfd3-47c2-a2f6-beec103d6326",
+      "digest": "sha256:be39ac03dcf7c3150e6158b1a4c00a170b017135e51b08ef1b23d137ec8288b2",
+      "bytes": 1101
+    },
+    {
+      "binding": {
+        "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+        "kind": "PtahSchema",
+        "name": "quota-probe",
+        "uid": "c26c10d1-cbef-4ade-a1bb-9d9ae3e46d04",
+        "generation": 1,
+        "executionBindingID": "v1-37ae8c8acb7dab6af54efdc07f455204",
+        "inputFingerprint": "sha256:511efb60828d626ba3a74ec177d9459163db428cdea35d0b87b6b233459f7096",
+        "operation": "resolve",
+        "operationID": "sha256:aee3902fedb62fe5dbef7963df24553263d2d975623dfc942448f7180ea4cac0",
+        "jobName": "ptah-resolve-quota-probe-60a876d8f093305e",
+        "jobUID": "f8adca1d-b0ec-431f-8ab8-7b4016d0cc70",
+        "podName": "ptah-resolve-quota-probe-60a876d8f093305e-5dkmw",
+        "podUID": "c5167474-e2d0-4291-8ce2-1c4d382b194f"
+      },
+      "uid": "6c8a9410-8f4c-443a-af52-be3efe45da46",
+      "digest": "sha256:b947eb0f1c7a9ec617b527088622b13f9e802566a043bf0f1c0397ade53b88c4",
+      "bytes": 539
+    },
+    {
+      "binding": {
+        "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+        "kind": "PtahSchema",
+        "name": "quota-probe",
+        "uid": "c26c10d1-cbef-4ade-a1bb-9d9ae3e46d04",
+        "generation": 1,
+        "executionBindingID": "v1-37ae8c8acb7dab6af54efdc07f455204",
+        "inputFingerprint": "sha256:37a3f41bd3aa2400dbe1ba6ebd47cc20f3520095876ab9be207ade310f9e547f",
+        "operation": "observe",
+        "operationID": "sha256:e2b21bcfa382317e24f16c9028bb540fd7bce9946cef44bc8bf383c6e1a5e877",
+        "jobName": "ptah-observe-quota-probe-1a6a6f8375de2d4f",
+        "jobUID": "95870eed-b3d5-4c03-999f-ddca498fc55b",
+        "podName": "ptah-observe-quota-probe-1a6a6f8375de2d4f-4npxt",
+        "podUID": "78a67637-6070-4346-915f-60d795b3cd3e"
+      },
+      "uid": "4e2db7c8-7f38-4bdc-ae81-1eaaafbde323",
+      "digest": "sha256:259303264fcf98f3a53608ae78f21e1d3b27413bff801a7f8e760665daa9204f",
+      "bytes": 623
+    },
+    {
+      "binding": {
+        "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+        "kind": "PtahSchema",
+        "name": "storefront",
+        "uid": "2da59c1a-d308-4f9b-9b39-0bd46e929349",
+        "generation": 1,
+        "executionBindingID": "v1-c98946e559536d24fdb9663ef1cfe651",
+        "inputFingerprint": "sha256:3d0c49d7ce897f8adcf743a0f3bfcc020eb654cc5dc8c2570d1ab39306289c84",
+        "operation": "observe",
+        "operationID": "sha256:f95b572e321dc8e4e642f932c9582c7c11225e7db84f52adcac32cfa01e2c215",
+        "jobName": "ptah-observe-storefront-419319e81605df48",
+        "jobUID": "8bb74993-cf5f-422c-ad4c-dabf21e7f166",
+        "podName": "ptah-observe-storefront-419319e81605df48-cxgbv",
+        "podUID": "a3f8b069-0895-4b13-83f8-859c140e5cff"
+      },
+      "uid": "1b154cb5-bb99-459d-ad36-3adff359fc5a",
+      "digest": "sha256:0e08ca5c8cbad502c215e0f4549a767ef66be6aba13f1a411017d0c5c5e7ab69",
+      "bytes": 476
+    },
+    {
+      "binding": {
+        "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+        "kind": "PtahSchema",
+        "name": "quota-probe",
+        "uid": "c26c10d1-cbef-4ade-a1bb-9d9ae3e46d04",
+        "generation": 1,
+        "executionBindingID": "v1-37ae8c8acb7dab6af54efdc07f455204",
+        "inputFingerprint": "sha256:17d9192534405c059c817746b1098b5b7aee14aa66beec8a2546f1c52d5ae801",
+        "operation": "verify",
+        "operationID": "sha256:95c3cfd1e64a17bbd2169bf6b151e8967f69e551d622d83f7023dfa9f5d2c1cb",
+        "jobName": "ptah-verify-quota-probe-0e88c5b6d0fe2b00",
+        "jobUID": "7a5dd3a8-aee3-4b70-a9e4-68fe2c0c6299",
+        "podName": "ptah-verify-quota-probe-0e88c5b6d0fe2b00-shxr6",
+        "podUID": "a73810f2-86e8-4853-acde-9bca3a21b883"
+      },
+      "uid": "ba282132-b36e-454f-9fda-77083604e5d5",
+      "digest": "sha256:77f4e44a79fa9ac373a1cb0f347a65f9ebb7ded492f93eb58fc08c0ecb2225f4",
+      "bytes": 416
+    },
+    {
+      "binding": {
+        "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+        "kind": "PtahSchema",
+        "name": "storefront",
+        "uid": "2da59c1a-d308-4f9b-9b39-0bd46e929349",
+        "generation": 1,
+        "executionBindingID": "v1-c98946e559536d24fdb9663ef1cfe651",
+        "inputFingerprint": "sha256:6cf90afd3b389744ac4a3610bc9184cd44a7a89c1a906de78984c426ebbc4458",
+        "operation": "plan",
+        "operationID": "sha256:5c4c1cef00b7e8a0902ae559718b278b1820e2562e3187fb57ced6eee8ce361b",
+        "jobName": "ptah-plan-storefront-ade0b0d8db64878b",
+        "jobUID": "6e001a52-d78b-4f02-b6ec-97d0b97c09d7",
+        "podName": "ptah-plan-storefront-ade0b0d8db64878b-df7dr",
+        "podUID": "4cd0ee09-b92e-4acd-b552-080ad5446f65"
+      },
+      "uid": "8b1c2544-03eb-4722-a2fe-9f0ca4951fac",
+      "digest": "sha256:342435cf71a6c63e7bed278e831d8138d2aec08c0bf1dc23a3d530568c82a014",
+      "bytes": 1101
+    },
+    {
+      "binding": {
+        "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+        "kind": "PtahMigration",
+        "name": "cleanup-migration",
+        "uid": "8142fabc-776e-4a94-8134-606a91a15f3f",
+        "generation": 1,
+        "executionBindingID": "v1-808323c100f225985ab08d71f39f96fb",
+        "inputFingerprint": "sha256:a10439eeec2ed07331497a763ee61ce56e564e734ff5cf227c2680a3eb23cb40",
+        "operation": "migration-history",
+        "operationID": "sha256:b6a1334145144cafcb9dd0c84313d6928e238ba314c1e607d1908f1ff90c6248",
+        "jobName": "ptah-m-history-cleanup-migration-c267ee982786eb7b",
+        "jobUID": "aaec51fd-732e-41ee-988d-54467a30a078",
+        "podName": "ptah-m-history-cleanup-migration-c267ee982786eb7b-7gsm5",
+        "podUID": "e85d4df7-8a64-445a-85cd-0d91381af3ec"
+      },
+      "uid": "2076738e-fd77-4e0e-96bc-a7756670c5cf",
+      "digest": "sha256:208723c67709846bd708a56ca90aace35276681e5ed8fe3afc14d653351dfde3",
+      "bytes": 1002
+    },
+    {
+      "binding": {
+        "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+        "kind": "PtahMigration",
+        "name": "cleanup-migration",
+        "uid": "8142fabc-776e-4a94-8134-606a91a15f3f",
+        "generation": 1,
+        "executionBindingID": "v1-808323c100f225985ab08d71f39f96fb",
+        "inputFingerprint": "sha256:a10439eeec2ed07331497a763ee61ce56e564e734ff5cf227c2680a3eb23cb40",
+        "operation": "migration-history",
+        "operationID": "sha256:492aa83280aa674fa7f39b25f1bf0ceae9db836668d075992fb3851b8118cad5",
+        "jobName": "ptah-m-history-cleanup-migration-1afa2f74cad5ad5c",
+        "jobUID": "fa39f411-b7a5-4c1b-9c0b-4f8605d597b5",
+        "podName": "ptah-m-history-cleanup-migration-1afa2f74cad5ad5c-bgr7m",
+        "podUID": "a7854fb3-0d56-4dd7-a3cf-118984ccd043"
+      },
+      "uid": "c161b771-b82c-4a90-a18b-9add3900e814",
+      "digest": "sha256:c3e40408480eb86d0321598dbc81768971b098bf32c7a4f91f10ea92da2fd5f8",
+      "bytes": 832
+    },
+    {
+      "binding": {
+        "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+        "kind": "PtahMigration",
+        "name": "cleanup-migration",
+        "uid": "8142fabc-776e-4a94-8134-606a91a15f3f",
+        "generation": 1,
+        "executionBindingID": "v1-808323c100f225985ab08d71f39f96fb",
+        "inputFingerprint": "sha256:152f7351fc43cb1d8f72a0cb3cedc561beb2b2478bf95f4930543c843949934f",
+        "operation": "migration-apply",
+        "operationID": "sha256:626957639c431d720881934411590ed9f4a144222aa18390951be5ff05aa1b61",
+        "jobName": "ptah-m-apply-cleanup-migration-011819968ce5cdf9",
+        "jobUID": "87fe2cce-dcd3-42e2-a343-552b707b5636",
+        "podName": "ptah-m-apply-cleanup-migration-011819968ce5cdf9-jzxch",
+        "podUID": "7fb3509c-b4b5-446b-aa47-10c7b1bcfb23"
+      },
+      "uid": "85216fbc-e1b2-4631-9a49-2d7224171303",
+      "digest": "sha256:7cd2581dc84d97a20e6f2a3404115bea04e44109e4230a6110198fb12ad95c0e",
+      "bytes": 1120
+    },
+    {
+      "binding": {
+        "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+        "kind": "PtahMigration",
+        "name": "cleanup-migration",
+        "uid": "8142fabc-776e-4a94-8134-606a91a15f3f",
+        "generation": 1,
+        "executionBindingID": "v1-808323c100f225985ab08d71f39f96fb",
+        "inputFingerprint": "sha256:589a10d6cfb29409a96e9fc73734b4b02baa9e3bd0889a088b0de029ac92c746",
+        "operation": "verify",
+        "operationID": "sha256:e47aa4c3bc2beba885bb9eb0e8a791cd14e6bd329f9aad102ec1d053f13d5bac",
+        "jobName": "ptah-m-verify-cleanup-migration-91abd95d25b88701",
+        "jobUID": "0255a49a-ff42-4311-b94a-fedfd37a829a",
+        "podName": "ptah-m-verify-cleanup-migration-91abd95d25b88701-vzh2g",
+        "podUID": "e0cc0954-a49d-4a76-ac16-e2e4a9363081"
+      },
+      "uid": "415f30c6-47aa-4a14-bdad-2d0d21cd47c1",
+      "digest": "sha256:d7002465c6668b4679e661a8e195787ad3d422da47f5bbe8d4c427ea8efaded3",
+      "bytes": 420
+    },
+    {
+      "binding": {
+        "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+        "kind": "PtahSchema",
+        "name": "storefront",
+        "uid": "2da59c1a-d308-4f9b-9b39-0bd46e929349",
+        "generation": 1,
+        "executionBindingID": "v1-c98946e559536d24fdb9663ef1cfe651",
+        "inputFingerprint": "sha256:b2354ac693c1c930f15d80bedcd108bcfda834ab1840695813e1e1368b7a833c",
+        "operation": "verify",
+        "operationID": "sha256:d4cf34f4c6c170dd4fde889f0e2d880905bfef10d430a44b9ea554c68ce32c0e",
+        "jobName": "ptah-verify-storefront-7be444151cc4fdc6",
+        "jobUID": "8a25b8ae-d71f-4cd0-a8f5-ff41b8bd5669",
+        "podName": "ptah-verify-storefront-7be444151cc4fdc6-5ngvn",
+        "podUID": "955b9e7f-8874-4876-8635-01467e4316a7"
+      },
+      "uid": "3f5a41e5-7165-49bd-99b3-3d7c332a892a",
+      "digest": "sha256:4dfd59a8dbf90bc03a704dcc837017bf622fee3feaf542f4ea2348154d9bc57b",
+      "bytes": 416
+    },
+    {
+      "binding": {
+        "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+        "kind": "PtahSchema",
+        "name": "storefront",
+        "uid": "2da59c1a-d308-4f9b-9b39-0bd46e929349",
+        "generation": 1,
+        "executionBindingID": "v1-c98946e559536d24fdb9663ef1cfe651",
+        "inputFingerprint": "sha256:e4e26ada346b5366f11c90d82087c23d08f20c8557eeb5c0c39a77da854c4f9f",
+        "operation": "apply",
+        "operationID": "sha256:59147a9ecbd0c835f8b012cccfdad19747d03355cfba3c46424a277ca723d305",
+        "jobName": "ptah-apply-storefront-ddb26d3ed5d37f2f",
+        "jobUID": "85a92a7e-5d90-4d57-902a-caf48230d3cc",
+        "podName": "ptah-apply-storefront-ddb26d3ed5d37f2f-t4spq",
+        "podUID": "41d387e7-fd9f-41ba-bb94-b28589a87def"
+      },
+      "uid": "ca33612d-ef7a-4f7a-873e-95c54b2bba26",
+      "digest": "sha256:3a42b0d2cb6b93d6432faa6cce0497f20ff9b4831337656b8cf3a4d826574d0c",
+      "bytes": 468
+    },
+    {
+      "binding": {
+        "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+        "kind": "PtahSchema",
+        "name": "storefront",
+        "uid": "2da59c1a-d308-4f9b-9b39-0bd46e929349",
+        "generation": 1,
+        "executionBindingID": "v1-c98946e559536d24fdb9663ef1cfe651",
+        "inputFingerprint": "sha256:212dac7f33e1ea6e003985d03da881a25aa13a76e4a520f9dd7e0b4f7b370703",
+        "operation": "resolve",
+        "operationID": "sha256:b0c120e6be4f9d9bf5b0e9050dc91ac2570cd0785f03c355530f93122672664a",
+        "jobName": "ptah-resolve-storefront-6f7ffbe9bb6a2669",
+        "jobUID": "ef9ae8df-db13-4656-8371-27f10376ac58",
+        "podName": "ptah-resolve-storefront-6f7ffbe9bb6a2669-cmv9v",
+        "podUID": "42995e53-d47f-42cc-b86f-06349f9828f9"
+      },
+      "uid": "cbc3491c-899e-4ccf-945a-ea287762f562",
+      "digest": "sha256:3fa5a08c2c3fc5a5ca17fb685e59cc06fff67a147f07c1760cdf080c13c4cf54",
+      "bytes": 539
+    },
+    {
+      "binding": {
+        "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+        "kind": "PtahSchema",
+        "name": "storefront",
+        "uid": "2da59c1a-d308-4f9b-9b39-0bd46e929349",
+        "generation": 1,
+        "executionBindingID": "v1-c98946e559536d24fdb9663ef1cfe651",
+        "inputFingerprint": "sha256:693d83f145fd05b815b72872ceeba57df33a86c27e9e4943680d4343b4e56a8d",
+        "operation": "observe",
+        "operationID": "sha256:f9cce8d466d52597ae47eb5d404d6b72fc4aa95a296fcd72c7f74de7788aaa8d",
+        "jobName": "ptah-observe-storefront-0f065cf0cb949b1d",
+        "jobUID": "4e4089b5-9a25-4c49-99d4-231ec7e47718",
+        "podName": "ptah-observe-storefront-0f065cf0cb949b1d-gbxtf",
+        "podUID": "be353562-5dc1-4384-913e-0a0a1b3651f7"
+      },
+      "uid": "2907cb3e-58ae-4f70-8f98-0507e07a0270",
+      "digest": "sha256:d030398f2a39fb454c9d804f4b4878c03577a82c1c49d8226fdd423121412970",
+      "bytes": 623
+    },
+    {
+      "binding": {
+        "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+        "kind": "PtahSchema",
+        "name": "storefront",
+        "uid": "2da59c1a-d308-4f9b-9b39-0bd46e929349",
+        "generation": 1,
+        "executionBindingID": "v1-c98946e559536d24fdb9663ef1cfe651",
+        "inputFingerprint": "sha256:711639cb5c3f873ef9bd514ba7bd7977f64da51089da99a2fc0c1171575c9fe1",
+        "operation": "plan",
+        "operationID": "sha256:b47b0d5109ac039b3b045d1dacb3a967c1d683f5686670b16f9a6a42b17fb33b",
+        "jobName": "ptah-plan-storefront-4d07ef6e379713f3",
+        "jobUID": "a4b344b0-f35f-4740-938b-38ce68c1fab1",
+        "podName": "ptah-plan-storefront-4d07ef6e379713f3-6wvhl",
+        "podUID": "4b6858d1-48d0-4b05-bded-74316fa89263"
+      },
+      "uid": "276ac628-136a-4a22-8710-188ef2622554",
+      "digest": "sha256:5664115c12b76f61e98c77ff7a84a44122a8a71dce3ccdc4403b95916c44e9f8",
+      "bytes": 376
+    },
+    {
+      "binding": {
+        "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+        "kind": "PtahMigration",
+        "name": "cleanup-migration",
+        "uid": "8142fabc-776e-4a94-8134-606a91a15f3f",
+        "generation": 1,
+        "executionBindingID": "v1-808323c100f225985ab08d71f39f96fb",
+        "inputFingerprint": "sha256:060ba94e20c6cd4a765f0a31c6f5327ffdb89127473fc3fa5b5b73c191e67928",
+        "operation": "resolve",
+        "operationID": "sha256:9e75dc187097f790dd10a34b2553dbf051024a6adf28630e8ed4855f8688e96c",
+        "jobName": "ptah-m-resolve-cleanup-migration-3c1f02c455c5d699",
+        "jobUID": "45644e14-94d3-4b9c-86eb-c0c5aaaf3851",
+        "podName": "ptah-m-resolve-cleanup-migration-3c1f02c455c5d699-f4wwd",
+        "podUID": "c78ebe7a-5698-46ab-b907-d319c8f658ad"
+      },
+      "uid": "60a2e0f7-d66f-460d-828f-2441a00b371d",
+      "digest": "sha256:195270da36e7ed361aec15c03ee94ad750b906f0bb2555556ff025a07f82436a",
+      "bytes": 543
+    }
+  ],
+  "pinnedNames": [
+    "ptah-result-8fae8da333cb7d512577f07f0082922c67cc8f970eb85cbdb0980129413b139d",
+    "ptah-result-8fae8da333cb7d512577f07f0082922c67cc8f970eb85cbdb0980129413b139d-000",
+    "ptah-result-8fae8da333cb7d512577f07f0082922c67cc8f970eb85cbdb0980129413b139d-complete",
+    "ptah-result-key-2982b34b6d2b2b8bc33b9d4fb07d5be7"
+  ],
+  "eligibleNames": [
+    "ptah-result-014bdea9532c6359bea1093ee69b17eb01c885288cd9597529c07c884cd00ad4",
+    "ptah-result-014bdea9532c6359bea1093ee69b17eb01c885288cd9597529c07c884cd00ad4-000",
+    "ptah-result-014bdea9532c6359bea1093ee69b17eb01c885288cd9597529c07c884cd00ad4-complete",
+    "ptah-result-014bdea9532c6359bea1093ee69b17eb01c885288cd9597529c07c884cd00ad4-retired",
+    "ptah-result-36f27c118e2290f619ccd4f851a4b1c75e74ef409953aa4cdbf0c725f23698cd",
+    "ptah-result-36f27c118e2290f619ccd4f851a4b1c75e74ef409953aa4cdbf0c725f23698cd-000",
+    "ptah-result-36f27c118e2290f619ccd4f851a4b1c75e74ef409953aa4cdbf0c725f23698cd-complete",
+    "ptah-result-36f27c118e2290f619ccd4f851a4b1c75e74ef409953aa4cdbf0c725f23698cd-retired",
+    "ptah-result-379df57a62361e27a7b685853f2c2371809ecb964b2863be73ada15c64ed5f7d",
+    "ptah-result-379df57a62361e27a7b685853f2c2371809ecb964b2863be73ada15c64ed5f7d-000",
+    "ptah-result-379df57a62361e27a7b685853f2c2371809ecb964b2863be73ada15c64ed5f7d-complete",
+    "ptah-result-379df57a62361e27a7b685853f2c2371809ecb964b2863be73ada15c64ed5f7d-retired",
+    "ptah-result-390812798b0717cc4ae23b2a299586d4feef78b5a952b78124ed5472e155d0be",
+    "ptah-result-390812798b0717cc4ae23b2a299586d4feef78b5a952b78124ed5472e155d0be-000",
+    "ptah-result-390812798b0717cc4ae23b2a299586d4feef78b5a952b78124ed5472e155d0be-complete",
+    "ptah-result-390812798b0717cc4ae23b2a299586d4feef78b5a952b78124ed5472e155d0be-retired",
+    "ptah-result-43eb41cbe24955adee8dfba9f8321ca79d7b5915ebee26b89a886f0c2816afed",
+    "ptah-result-43eb41cbe24955adee8dfba9f8321ca79d7b5915ebee26b89a886f0c2816afed-000",
+    "ptah-result-43eb41cbe24955adee8dfba9f8321ca79d7b5915ebee26b89a886f0c2816afed-complete",
+    "ptah-result-43eb41cbe24955adee8dfba9f8321ca79d7b5915ebee26b89a886f0c2816afed-retired",
+    "ptah-result-5f07db6b25b3a76a8f488a7f7282360e22ca6513d333914fd976f19204c38f04",
+    "ptah-result-5f07db6b25b3a76a8f488a7f7282360e22ca6513d333914fd976f19204c38f04-000",
+    "ptah-result-5f07db6b25b3a76a8f488a7f7282360e22ca6513d333914fd976f19204c38f04-complete",
+    "ptah-result-5f07db6b25b3a76a8f488a7f7282360e22ca6513d333914fd976f19204c38f04-retired",
+    "ptah-result-7f4d0bc83badda3d40d1238cec39fc65e7f56d8f3c81064e27e255d7595b4a56",
+    "ptah-result-7f4d0bc83badda3d40d1238cec39fc65e7f56d8f3c81064e27e255d7595b4a56-000",
+    "ptah-result-7f4d0bc83badda3d40d1238cec39fc65e7f56d8f3c81064e27e255d7595b4a56-complete",
+    "ptah-result-7f4d0bc83badda3d40d1238cec39fc65e7f56d8f3c81064e27e255d7595b4a56-retired",
+    "ptah-result-8589ca2d08ce1254292cda2308c33818bf086867155863644054d87b5e61312f",
+    "ptah-result-8589ca2d08ce1254292cda2308c33818bf086867155863644054d87b5e61312f-000",
+    "ptah-result-8589ca2d08ce1254292cda2308c33818bf086867155863644054d87b5e61312f-complete",
+    "ptah-result-8589ca2d08ce1254292cda2308c33818bf086867155863644054d87b5e61312f-retired",
+    "ptah-result-9b2ec60c97038e0ca4b4d82d67567024c0334c2378f1ae32d5841bb86e32b02b",
+    "ptah-result-9b2ec60c97038e0ca4b4d82d67567024c0334c2378f1ae32d5841bb86e32b02b-000",
+    "ptah-result-9b2ec60c97038e0ca4b4d82d67567024c0334c2378f1ae32d5841bb86e32b02b-complete",
+    "ptah-result-9b2ec60c97038e0ca4b4d82d67567024c0334c2378f1ae32d5841bb86e32b02b-retired",
+    "ptah-result-a822b3e2e6b5d2c42eb8f763644126767dcb289521c514e0a71e37b60520f918",
+    "ptah-result-a822b3e2e6b5d2c42eb8f763644126767dcb289521c514e0a71e37b60520f918-000",
+    "ptah-result-a822b3e2e6b5d2c42eb8f763644126767dcb289521c514e0a71e37b60520f918-complete",
+    "ptah-result-a822b3e2e6b5d2c42eb8f763644126767dcb289521c514e0a71e37b60520f918-retired",
+    "ptah-result-cdc27fa6e99080c6608aa3e9660cb3d0d7a195e30744446ee5eaa232a3e3f1f2",
+    "ptah-result-cdc27fa6e99080c6608aa3e9660cb3d0d7a195e30744446ee5eaa232a3e3f1f2-000",
+    "ptah-result-cdc27fa6e99080c6608aa3e9660cb3d0d7a195e30744446ee5eaa232a3e3f1f2-complete",
+    "ptah-result-cdc27fa6e99080c6608aa3e9660cb3d0d7a195e30744446ee5eaa232a3e3f1f2-retired",
+    "ptah-result-d27947b5e996508c7b132c16e9829efb658452a250ea2a9db60cfce8c63e2546",
+    "ptah-result-d27947b5e996508c7b132c16e9829efb658452a250ea2a9db60cfce8c63e2546-000",
+    "ptah-result-d27947b5e996508c7b132c16e9829efb658452a250ea2a9db60cfce8c63e2546-complete",
+    "ptah-result-d27947b5e996508c7b132c16e9829efb658452a250ea2a9db60cfce8c63e2546-retired",
+    "ptah-result-da573e67c743a18a14101df4ad1c567020570642889f2259b9f369950b4de0d3",
+    "ptah-result-da573e67c743a18a14101df4ad1c567020570642889f2259b9f369950b4de0d3-000",
+    "ptah-result-da573e67c743a18a14101df4ad1c567020570642889f2259b9f369950b4de0d3-complete",
+    "ptah-result-da573e67c743a18a14101df4ad1c567020570642889f2259b9f369950b4de0d3-retired",
+    "ptah-result-dd063ac68a272357e11e6f99777ec909651da8be8a998a4d767c41b469cc12b1",
+    "ptah-result-dd063ac68a272357e11e6f99777ec909651da8be8a998a4d767c41b469cc12b1-000",
+    "ptah-result-dd063ac68a272357e11e6f99777ec909651da8be8a998a4d767c41b469cc12b1-complete",
+    "ptah-result-dd063ac68a272357e11e6f99777ec909651da8be8a998a4d767c41b469cc12b1-retired",
+    "ptah-result-e1eae4f067e676f3339f6b7f5306a229d4fa4cb0710fc1aff88258c288527ba3",
+    "ptah-result-e1eae4f067e676f3339f6b7f5306a229d4fa4cb0710fc1aff88258c288527ba3-000",
+    "ptah-result-e1eae4f067e676f3339f6b7f5306a229d4fa4cb0710fc1aff88258c288527ba3-complete",
+    "ptah-result-e1eae4f067e676f3339f6b7f5306a229d4fa4cb0710fc1aff88258c288527ba3-retired",
+    "ptah-result-key-0c5526a474e75f215f6e19bd6ede372f",
+    "ptah-result-key-1077dbff6caa36a032f67e0e3f7359e8",
+    "ptah-result-key-24471c0af5e1b5c5c20da684de60f978",
+    "ptah-result-key-3d3c5c3354e2aef328c74a3074aa773e",
+    "ptah-result-key-460df3cd9f62c103a4a146a096772723",
+    "ptah-result-key-5333471f64101f4220713c5d3716c033",
+    "ptah-result-key-77b19c4318a71052bd8f9422e79a69e3",
+    "ptah-result-key-804c3b064a2b3f0981f0af8bd802964c",
+    "ptah-result-key-874d3a5d32fd62ea4ae92ae62035091e",
+    "ptah-result-key-9ad7c75c5044dc701be3e3136787cca6",
+    "ptah-result-key-ae97fecd3af3a72338e36047619a1c7b",
+    "ptah-result-key-bd255b7847200da5c8916246935e7814",
+    "ptah-result-key-d2c6903803e3b0b58b8bde2d505563d6",
+    "ptah-result-key-e6a9d1e2b5d9957e83da43b428afecab",
+    "ptah-result-key-f19948ca663438f1e7d950743d06c3e0"
+  ],
+  "deadlines": {
+    "ptah-result-a822b3e2e6b5d2c42eb8f763644126767dcb289521c514e0a71e37b60520f918-complete": "2026-10-02T10:22:59+00:00",
+    "ptah-result-5f07db6b25b3a76a8f488a7f7282360e22ca6513d333914fd976f19204c38f04": "2026-10-02T10:23:29+00:00",
+    "ptah-result-cdc27fa6e99080c6608aa3e9660cb3d0d7a195e30744446ee5eaa232a3e3f1f2-complete": "2026-10-02T10:23:49+00:00",
+    "ptah-result-key-f19948ca663438f1e7d950743d06c3e0": "2026-10-02T10:23:29+00:00",
+    "ptah-result-36f27c118e2290f619ccd4f851a4b1c75e74ef409953aa4cdbf0c725f23698cd-complete": "2026-10-02T10:32:04+00:00",
+    "ptah-result-014bdea9532c6359bea1093ee69b17eb01c885288cd9597529c07c884cd00ad4-retired": "2026-10-02T10:32:49+00:00",
+    "ptah-result-8589ca2d08ce1254292cda2308c33818bf086867155863644054d87b5e61312f-retired": "2026-10-02T10:30:14+00:00",
+    "ptah-result-014bdea9532c6359bea1093ee69b17eb01c885288cd9597529c07c884cd00ad4-000": "2026-10-02T10:32:49+00:00",
+    "ptah-result-key-ae97fecd3af3a72338e36047619a1c7b": "2026-10-02T10:23:09+00:00",
+    "ptah-result-36f27c118e2290f619ccd4f851a4b1c75e74ef409953aa4cdbf0c725f23698cd-retired": "2026-10-02T10:32:04+00:00",
+    "ptah-result-379df57a62361e27a7b685853f2c2371809ecb964b2863be73ada15c64ed5f7d": "2026-10-02T10:32:24+00:00",
+    "ptah-result-e1eae4f067e676f3339f6b7f5306a229d4fa4cb0710fc1aff88258c288527ba3-complete": "2026-10-02T10:30:14+00:00",
+    "ptah-result-5f07db6b25b3a76a8f488a7f7282360e22ca6513d333914fd976f19204c38f04-complete": "2026-10-02T10:23:29+00:00",
+    "ptah-result-key-9ad7c75c5044dc701be3e3136787cca6": "2026-10-02T10:22:49+00:00",
+    "ptah-result-014bdea9532c6359bea1093ee69b17eb01c885288cd9597529c07c884cd00ad4-complete": "2026-10-02T10:32:49+00:00",
+    "ptah-result-dd063ac68a272357e11e6f99777ec909651da8be8a998a4d767c41b469cc12b1-000": "2026-10-02T10:23:59+00:00",
+    "ptah-result-9b2ec60c97038e0ca4b4d82d67567024c0334c2378f1ae32d5841bb86e32b02b-complete": "2026-10-02T10:30:24+00:00",
+    "ptah-result-e1eae4f067e676f3339f6b7f5306a229d4fa4cb0710fc1aff88258c288527ba3-000": "2026-10-02T10:30:14+00:00",
+    "ptah-result-5f07db6b25b3a76a8f488a7f7282360e22ca6513d333914fd976f19204c38f04-000": "2026-10-02T10:23:29+00:00",
+    "ptah-result-7f4d0bc83badda3d40d1238cec39fc65e7f56d8f3c81064e27e255d7595b4a56-000": "2026-10-02T10:31:04+00:00",
+    "ptah-result-d27947b5e996508c7b132c16e9829efb658452a250ea2a9db60cfce8c63e2546-000": "2026-10-02T10:22:49+00:00",
+    "ptah-result-43eb41cbe24955adee8dfba9f8321ca79d7b5915ebee26b89a886f0c2816afed-retired": "2026-10-02T10:32:14+00:00",
+    "ptah-result-8589ca2d08ce1254292cda2308c33818bf086867155863644054d87b5e61312f": "2026-10-02T10:30:14+00:00",
+    "ptah-result-e1eae4f067e676f3339f6b7f5306a229d4fa4cb0710fc1aff88258c288527ba3": "2026-10-02T10:30:14+00:00",
+    "ptah-result-d27947b5e996508c7b132c16e9829efb658452a250ea2a9db60cfce8c63e2546-retired": "2026-10-02T10:22:49+00:00",
+    "ptah-result-da573e67c743a18a14101df4ad1c567020570642889f2259b9f369950b4de0d3-complete": "2026-10-02T10:23:09+00:00",
+    "ptah-result-9b2ec60c97038e0ca4b4d82d67567024c0334c2378f1ae32d5841bb86e32b02b": "2026-10-02T10:30:24+00:00",
+    "ptah-result-key-e6a9d1e2b5d9957e83da43b428afecab": "2026-10-02T10:22:59+00:00",
+    "ptah-result-d27947b5e996508c7b132c16e9829efb658452a250ea2a9db60cfce8c63e2546": "2026-10-02T10:22:49+00:00",
+    "ptah-result-5f07db6b25b3a76a8f488a7f7282360e22ca6513d333914fd976f19204c38f04-retired": "2026-10-02T10:23:29+00:00",
+    "ptah-result-9b2ec60c97038e0ca4b4d82d67567024c0334c2378f1ae32d5841bb86e32b02b-000": "2026-10-02T10:30:24+00:00",
+    "ptah-result-da573e67c743a18a14101df4ad1c567020570642889f2259b9f369950b4de0d3": "2026-10-02T10:23:09+00:00",
+    "ptah-result-key-77b19c4318a71052bd8f9422e79a69e3": "2026-10-02T10:23:59+00:00",
+    "ptah-result-key-804c3b064a2b3f0981f0af8bd802964c": "2026-10-02T10:23:49+00:00",
+    "ptah-result-43eb41cbe24955adee8dfba9f8321ca79d7b5915ebee26b89a886f0c2816afed-000": "2026-10-02T10:32:14+00:00",
+    "ptah-result-36f27c118e2290f619ccd4f851a4b1c75e74ef409953aa4cdbf0c725f23698cd-000": "2026-10-02T10:32:04+00:00",
+    "ptah-result-d27947b5e996508c7b132c16e9829efb658452a250ea2a9db60cfce8c63e2546-complete": "2026-10-02T10:22:49+00:00",
+    "ptah-result-7f4d0bc83badda3d40d1238cec39fc65e7f56d8f3c81064e27e255d7595b4a56-retired": "2026-10-02T10:31:04+00:00",
+    "ptah-result-390812798b0717cc4ae23b2a299586d4feef78b5a952b78124ed5472e155d0be-complete": "2026-10-02T10:23:44+00:00",
+    "ptah-result-390812798b0717cc4ae23b2a299586d4feef78b5a952b78124ed5472e155d0be": "2026-10-02T10:23:44+00:00",
+    "ptah-result-9b2ec60c97038e0ca4b4d82d67567024c0334c2378f1ae32d5841bb86e32b02b-retired": "2026-10-02T10:30:24+00:00",
+    "ptah-result-379df57a62361e27a7b685853f2c2371809ecb964b2863be73ada15c64ed5f7d-retired": "2026-10-02T10:32:24+00:00",
+    "ptah-result-key-1077dbff6caa36a032f67e0e3f7359e8": "2026-10-02T10:30:24+00:00",
+    "ptah-result-cdc27fa6e99080c6608aa3e9660cb3d0d7a195e30744446ee5eaa232a3e3f1f2": "2026-10-02T10:23:49+00:00",
+    "ptah-result-key-d2c6903803e3b0b58b8bde2d505563d6": "2026-10-02T10:23:44+00:00",
+    "ptah-result-390812798b0717cc4ae23b2a299586d4feef78b5a952b78124ed5472e155d0be-000": "2026-10-02T10:23:44+00:00",
+    "ptah-result-7f4d0bc83badda3d40d1238cec39fc65e7f56d8f3c81064e27e255d7595b4a56-complete": "2026-10-02T10:31:04+00:00",
+    "ptah-result-key-bd255b7847200da5c8916246935e7814": "2026-10-02T10:32:49+00:00",
+    "ptah-result-key-460df3cd9f62c103a4a146a096772723": "2026-10-02T10:31:04+00:00",
+    "ptah-result-key-3d3c5c3354e2aef328c74a3074aa773e": "2026-10-02T10:32:14+00:00",
+    "ptah-result-379df57a62361e27a7b685853f2c2371809ecb964b2863be73ada15c64ed5f7d-000": "2026-10-02T10:32:24+00:00",
+    "ptah-result-a822b3e2e6b5d2c42eb8f763644126767dcb289521c514e0a71e37b60520f918-000": "2026-10-02T10:22:59+00:00",
+    "ptah-result-a822b3e2e6b5d2c42eb8f763644126767dcb289521c514e0a71e37b60520f918": "2026-10-02T10:22:59+00:00",
+    "ptah-result-e1eae4f067e676f3339f6b7f5306a229d4fa4cb0710fc1aff88258c288527ba3-retired": "2026-10-02T10:30:14+00:00",
+    "ptah-result-cdc27fa6e99080c6608aa3e9660cb3d0d7a195e30744446ee5eaa232a3e3f1f2-000": "2026-10-02T10:23:49+00:00",
+    "ptah-result-8589ca2d08ce1254292cda2308c33818bf086867155863644054d87b5e61312f-complete": "2026-10-02T10:30:14+00:00",
+    "ptah-result-390812798b0717cc4ae23b2a299586d4feef78b5a952b78124ed5472e155d0be-retired": "2026-10-02T10:23:44+00:00",
+    "ptah-result-43eb41cbe24955adee8dfba9f8321ca79d7b5915ebee26b89a886f0c2816afed-complete": "2026-10-02T10:32:14+00:00",
+    "ptah-result-key-24471c0af5e1b5c5c20da684de60f978": "2026-10-02T10:30:14+00:00",
+    "ptah-result-7f4d0bc83badda3d40d1238cec39fc65e7f56d8f3c81064e27e255d7595b4a56": "2026-10-02T10:31:04+00:00",
+    "ptah-result-43eb41cbe24955adee8dfba9f8321ca79d7b5915ebee26b89a886f0c2816afed": "2026-10-02T10:32:14+00:00",
+    "ptah-result-379df57a62361e27a7b685853f2c2371809ecb964b2863be73ada15c64ed5f7d-complete": "2026-10-02T10:32:24+00:00",
+    "ptah-result-8589ca2d08ce1254292cda2308c33818bf086867155863644054d87b5e61312f-000": "2026-10-02T10:30:14+00:00",
+    "ptah-result-dd063ac68a272357e11e6f99777ec909651da8be8a998a4d767c41b469cc12b1-retired": "2026-10-02T10:23:59+00:00",
+    "ptah-result-36f27c118e2290f619ccd4f851a4b1c75e74ef409953aa4cdbf0c725f23698cd": "2026-10-02T10:32:04+00:00",
+    "ptah-result-a822b3e2e6b5d2c42eb8f763644126767dcb289521c514e0a71e37b60520f918-retired": "2026-10-02T10:22:59+00:00",
+    "ptah-result-da573e67c743a18a14101df4ad1c567020570642889f2259b9f369950b4de0d3-retired": "2026-10-02T10:23:09+00:00",
+    "ptah-result-key-874d3a5d32fd62ea4ae92ae62035091e": "2026-10-02T10:30:14+00:00",
+    "ptah-result-key-5333471f64101f4220713c5d3716c033": "2026-10-02T10:32:24+00:00",
+    "ptah-result-cdc27fa6e99080c6608aa3e9660cb3d0d7a195e30744446ee5eaa232a3e3f1f2-retired": "2026-10-02T10:23:49+00:00",
+    "ptah-result-key-0c5526a474e75f215f6e19bd6ede372f": "2026-10-02T10:32:04+00:00",
+    "ptah-result-014bdea9532c6359bea1093ee69b17eb01c885288cd9597529c07c884cd00ad4": "2026-10-02T10:32:49+00:00",
+    "ptah-result-dd063ac68a272357e11e6f99777ec909651da8be8a998a4d767c41b469cc12b1": "2026-10-02T10:23:59+00:00",
+    "ptah-result-dd063ac68a272357e11e6f99777ec909651da8be8a998a4d767c41b469cc12b1-complete": "2026-10-02T10:23:59+00:00",
+    "ptah-result-da573e67c743a18a14101df4ad1c567020570642889f2259b9f369950b4de0d3-000": "2026-10-02T10:23:09+00:00"
+  },
+  "secretOwners": {
+    "ptah-result-key-0c5526a474e75f215f6e19bd6ede372f": {
+      "annotations": {
+        "operator.ptah.run/result-job-uid": "f8adca1d-b0ec-431f-8ab8-7b4016d0cc70",
+        "operator.ptah.run/result-operation-id": "sha256:aee3902fedb62fe5dbef7963df24553263d2d975623dfc942448f7180ea4cac0",
+        "operator.ptah.run/result-pod-name": "ptah-resolve-quota-probe-60a876d8f093305e-5dkmw",
+        "operator.ptah.run/result-pod-uid": "c5167474-e2d0-4291-8ce2-1c4d382b194f"
+      },
+      "creationTimestamp": "2026-10-02T09:31:32Z",
+      "labels": {
+        "app.kubernetes.io/component": "result-credential",
+        "app.kubernetes.io/managed-by": "ptah-operator"
+      },
+      "name": "ptah-result-key-0c5526a474e75f215f6e19bd6ede372f",
+      "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+      "ownerReferences": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "blockOwnerDeletion": false,
+          "controller": true,
+          "kind": "PtahResultRecord",
+          "name": "ptah-result-key-0c5526a474e75f215f6e19bd6ede372f",
+          "uid": "7d0481ff-5890-454e-a573-93861bfe4568"
+        }
+      ],
+      "resourceVersion": "5368",
+      "uid": "b060e744-cb1d-4db2-ad92-1b980b3cfe31"
+    },
+    "ptah-result-key-1077dbff6caa36a032f67e0e3f7359e8": {
+      "annotations": {
+        "operator.ptah.run/result-job-uid": "0255a49a-ff42-4311-b94a-fedfd37a829a",
+        "operator.ptah.run/result-operation-id": "sha256:e47aa4c3bc2beba885bb9eb0e8a791cd14e6bd329f9aad102ec1d053f13d5bac",
+        "operator.ptah.run/result-pod-name": "ptah-m-verify-cleanup-migration-91abd95d25b88701-vzh2g",
+        "operator.ptah.run/result-pod-uid": "e0cc0954-a49d-4a76-ac16-e2e4a9363081"
+      },
+      "creationTimestamp": "2026-10-02T09:29:51Z",
+      "labels": {
+        "app.kubernetes.io/component": "result-credential",
+        "app.kubernetes.io/managed-by": "ptah-operator"
+      },
+      "name": "ptah-result-key-1077dbff6caa36a032f67e0e3f7359e8",
+      "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+      "ownerReferences": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "blockOwnerDeletion": false,
+          "controller": true,
+          "kind": "PtahResultRecord",
+          "name": "ptah-result-key-1077dbff6caa36a032f67e0e3f7359e8",
+          "uid": "3460fd7f-6137-45a0-adea-c1f0f7a687b9"
+        }
+      ],
+      "resourceVersion": "4879",
+      "uid": "3e1b6074-3833-4a16-a769-0ab0804a35a2"
+    },
+    "ptah-result-key-24471c0af5e1b5c5c20da684de60f978": {
+      "annotations": {
+        "operator.ptah.run/result-job-uid": "fa39f411-b7a5-4c1b-9c0b-4f8605d597b5",
+        "operator.ptah.run/result-operation-id": "sha256:492aa83280aa674fa7f39b25f1bf0ceae9db836668d075992fb3851b8118cad5",
+        "operator.ptah.run/result-pod-name": "ptah-m-history-cleanup-migration-1afa2f74cad5ad5c-bgr7m",
+        "operator.ptah.run/result-pod-uid": "a7854fb3-0d56-4dd7-a3cf-118984ccd043"
+      },
+      "creationTimestamp": "2026-10-02T09:30:01Z",
+      "labels": {
+        "app.kubernetes.io/component": "result-credential",
+        "app.kubernetes.io/managed-by": "ptah-operator"
+      },
+      "name": "ptah-result-key-24471c0af5e1b5c5c20da684de60f978",
+      "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+      "ownerReferences": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "blockOwnerDeletion": false,
+          "controller": true,
+          "kind": "PtahResultRecord",
+          "name": "ptah-result-key-24471c0af5e1b5c5c20da684de60f978",
+          "uid": "ec220deb-8f85-48c3-aac6-d9ed8ca35cac"
+        }
+      ],
+      "resourceVersion": "4946",
+      "uid": "18b2a46a-1caa-493b-95a4-26a4c2b48a74"
+    },
+    "ptah-result-key-2982b34b6d2b2b8bc33b9d4fb07d5be7": {
+      "annotations": {
+        "operator.ptah.run/result-job-uid": "87fe2cce-dcd3-42e2-a343-552b707b5636",
+        "operator.ptah.run/result-operation-id": "sha256:626957639c431d720881934411590ed9f4a144222aa18390951be5ff05aa1b61",
+        "operator.ptah.run/result-pod-name": "ptah-m-apply-cleanup-migration-011819968ce5cdf9-jzxch",
+        "operator.ptah.run/result-pod-uid": "7fb3509c-b4b5-446b-aa47-10c7b1bcfb23"
+      },
+      "creationTimestamp": "2026-10-02T09:30:13Z",
+      "labels": {
+        "app.kubernetes.io/component": "result-credential",
+        "app.kubernetes.io/managed-by": "ptah-operator"
+      },
+      "name": "ptah-result-key-2982b34b6d2b2b8bc33b9d4fb07d5be7",
+      "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+      "ownerReferences": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "blockOwnerDeletion": false,
+          "controller": true,
+          "kind": "PtahResultRecord",
+          "name": "ptah-result-key-2982b34b6d2b2b8bc33b9d4fb07d5be7",
+          "uid": "3ba9d760-351b-4dda-8f99-7286c10ecbbd"
+        }
+      ],
+      "resourceVersion": "5033",
+      "uid": "6c6727c7-a1df-4f7a-88f5-2371fde85fbb"
+    },
+    "ptah-result-key-3d3c5c3354e2aef328c74a3074aa773e": {
+      "annotations": {
+        "operator.ptah.run/result-job-uid": "7a5dd3a8-aee3-4b70-a9e4-68fe2c0c6299",
+        "operator.ptah.run/result-operation-id": "sha256:95c3cfd1e64a17bbd2169bf6b151e8967f69e551d622d83f7023dfa9f5d2c1cb",
+        "operator.ptah.run/result-pod-name": "ptah-verify-quota-probe-0e88c5b6d0fe2b00-shxr6",
+        "operator.ptah.run/result-pod-uid": "a73810f2-86e8-4853-acde-9bca3a21b883"
+      },
+      "creationTimestamp": "2026-10-02T09:31:42Z",
+      "labels": {
+        "app.kubernetes.io/component": "result-credential",
+        "app.kubernetes.io/managed-by": "ptah-operator"
+      },
+      "name": "ptah-result-key-3d3c5c3354e2aef328c74a3074aa773e",
+      "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+      "ownerReferences": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "blockOwnerDeletion": false,
+          "controller": true,
+          "kind": "PtahResultRecord",
+          "name": "ptah-result-key-3d3c5c3354e2aef328c74a3074aa773e",
+          "uid": "fbd086fc-762c-4ac2-9658-6e0688e27574"
+        }
+      ],
+      "resourceVersion": "5442",
+      "uid": "29e5db57-f518-4e2a-a5b8-8414f122d310"
+    },
+    "ptah-result-key-460df3cd9f62c103a4a146a096772723": {
+      "annotations": {
+        "operator.ptah.run/result-job-uid": "aaec51fd-732e-41ee-988d-54467a30a078",
+        "operator.ptah.run/result-operation-id": "sha256:b6a1334145144cafcb9dd0c84313d6928e238ba314c1e607d1908f1ff90c6248",
+        "operator.ptah.run/result-pod-name": "ptah-m-history-cleanup-migration-c267ee982786eb7b-7gsm5",
+        "operator.ptah.run/result-pod-uid": "e85d4df7-8a64-445a-85cd-0d91381af3ec"
+      },
+      "creationTimestamp": "2026-10-02T09:30:25Z",
+      "labels": {
+        "app.kubernetes.io/component": "result-credential",
+        "app.kubernetes.io/managed-by": "ptah-operator"
+      },
+      "name": "ptah-result-key-460df3cd9f62c103a4a146a096772723",
+      "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+      "ownerReferences": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "blockOwnerDeletion": false,
+          "controller": true,
+          "kind": "PtahResultRecord",
+          "name": "ptah-result-key-460df3cd9f62c103a4a146a096772723",
+          "uid": "4b3b59a6-55b9-46c5-9a23-26ca36b99e8f"
+        }
+      ],
+      "resourceVersion": "5128",
+      "uid": "c514c9f7-0d8a-4757-b762-22b374514d38"
+    },
+    "ptah-result-key-5333471f64101f4220713c5d3716c033": {
+      "annotations": {
+        "operator.ptah.run/result-job-uid": "95870eed-b3d5-4c03-999f-ddca498fc55b",
+        "operator.ptah.run/result-operation-id": "sha256:e2b21bcfa382317e24f16c9028bb540fd7bce9946cef44bc8bf383c6e1a5e877",
+        "operator.ptah.run/result-pod-name": "ptah-observe-quota-probe-1a6a6f8375de2d4f-4npxt",
+        "operator.ptah.run/result-pod-uid": "78a67637-6070-4346-915f-60d795b3cd3e"
+      },
+      "creationTimestamp": "2026-10-02T09:31:51Z",
+      "labels": {
+        "app.kubernetes.io/component": "result-credential",
+        "app.kubernetes.io/managed-by": "ptah-operator"
+      },
+      "name": "ptah-result-key-5333471f64101f4220713c5d3716c033",
+      "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+      "ownerReferences": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "blockOwnerDeletion": false,
+          "controller": true,
+          "kind": "PtahResultRecord",
+          "name": "ptah-result-key-5333471f64101f4220713c5d3716c033",
+          "uid": "cc68ab8b-037d-4ff5-ab83-88bd0b283bdb"
+        }
+      ],
+      "resourceVersion": "5511",
+      "uid": "bab957f6-671c-4cd6-bb1d-09a643761809"
+    },
+    "ptah-result-key-77b19c4318a71052bd8f9422e79a69e3": {
+      "annotations": {
+        "operator.ptah.run/result-job-uid": "a4b344b0-f35f-4740-938b-38ce68c1fab1",
+        "operator.ptah.run/result-operation-id": "sha256:b47b0d5109ac039b3b045d1dacb3a967c1d683f5686670b16f9a6a42b17fb33b",
+        "operator.ptah.run/result-pod-name": "ptah-plan-storefront-4d07ef6e379713f3-6wvhl",
+        "operator.ptah.run/result-pod-uid": "4b6858d1-48d0-4b05-bded-74316fa89263"
+      },
+      "creationTimestamp": "2026-10-02T09:23:22Z",
+      "labels": {
+        "app.kubernetes.io/component": "result-credential",
+        "app.kubernetes.io/managed-by": "ptah-operator"
+      },
+      "name": "ptah-result-key-77b19c4318a71052bd8f9422e79a69e3",
+      "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+      "ownerReferences": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "blockOwnerDeletion": false,
+          "controller": true,
+          "kind": "PtahResultRecord",
+          "name": "ptah-result-key-77b19c4318a71052bd8f9422e79a69e3",
+          "uid": "5c0ce574-80f3-4c32-ac1b-348a135ea374"
+        }
+      ],
+      "resourceVersion": "3611",
+      "uid": "4f23d2e6-edb5-4efd-bfe8-e0459975311a"
+    },
+    "ptah-result-key-804c3b064a2b3f0981f0af8bd802964c": {
+      "annotations": {
+        "operator.ptah.run/result-job-uid": "85a92a7e-5d90-4d57-902a-caf48230d3cc",
+        "operator.ptah.run/result-operation-id": "sha256:59147a9ecbd0c835f8b012cccfdad19747d03355cfba3c46424a277ca723d305",
+        "operator.ptah.run/result-pod-name": "ptah-apply-storefront-ddb26d3ed5d37f2f-t4spq",
+        "operator.ptah.run/result-pod-uid": "41d387e7-fd9f-41ba-bb94-b28589a87def"
+      },
+      "creationTimestamp": "2026-10-02T09:23:00Z",
+      "labels": {
+        "app.kubernetes.io/component": "result-credential",
+        "app.kubernetes.io/managed-by": "ptah-operator"
+      },
+      "name": "ptah-result-key-804c3b064a2b3f0981f0af8bd802964c",
+      "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+      "ownerReferences": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "blockOwnerDeletion": false,
+          "controller": true,
+          "kind": "PtahResultRecord",
+          "name": "ptah-result-key-804c3b064a2b3f0981f0af8bd802964c",
+          "uid": "ce5d3611-5374-4d34-a281-0913699582a6"
+        }
+      ],
+      "resourceVersion": "3434",
+      "uid": "f8c85f4d-bcea-4868-a13d-59b504f0dc9e"
+    },
+    "ptah-result-key-874d3a5d32fd62ea4ae92ae62035091e": {
+      "annotations": {
+        "operator.ptah.run/result-job-uid": "45644e14-94d3-4b9c-86eb-c0c5aaaf3851",
+        "operator.ptah.run/result-operation-id": "sha256:9e75dc187097f790dd10a34b2553dbf051024a6adf28630e8ed4855f8688e96c",
+        "operator.ptah.run/result-pod-name": "ptah-m-resolve-cleanup-migration-3c1f02c455c5d699-f4wwd",
+        "operator.ptah.run/result-pod-uid": "c78ebe7a-5698-46ab-b907-d319c8f658ad"
+      },
+      "creationTimestamp": "2026-10-02T09:29:43Z",
+      "labels": {
+        "app.kubernetes.io/component": "result-credential",
+        "app.kubernetes.io/managed-by": "ptah-operator"
+      },
+      "name": "ptah-result-key-874d3a5d32fd62ea4ae92ae62035091e",
+      "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+      "ownerReferences": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "blockOwnerDeletion": false,
+          "controller": true,
+          "kind": "PtahResultRecord",
+          "name": "ptah-result-key-874d3a5d32fd62ea4ae92ae62035091e",
+          "uid": "865b2f5f-0251-4d96-825f-975369e2028d"
+        }
+      ],
+      "resourceVersion": "4818",
+      "uid": "241136cc-9af3-49ba-8c24-3ab35a37933b"
+    },
+    "ptah-result-key-9ad7c75c5044dc701be3e3136787cca6": {
+      "annotations": {
+        "operator.ptah.run/result-job-uid": "ef9ae8df-db13-4656-8371-27f10376ac58",
+        "operator.ptah.run/result-operation-id": "sha256:b0c120e6be4f9d9bf5b0e9050dc91ac2570cd0785f03c355530f93122672664a",
+        "operator.ptah.run/result-pod-name": "ptah-resolve-storefront-6f7ffbe9bb6a2669-cmv9v",
+        "operator.ptah.run/result-pod-uid": "42995e53-d47f-42cc-b86f-06349f9828f9"
+      },
+      "creationTimestamp": "2026-10-02T09:22:18Z",
+      "labels": {
+        "app.kubernetes.io/component": "result-credential",
+        "app.kubernetes.io/managed-by": "ptah-operator"
+      },
+      "name": "ptah-result-key-9ad7c75c5044dc701be3e3136787cca6",
+      "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+      "ownerReferences": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "blockOwnerDeletion": false,
+          "controller": true,
+          "kind": "PtahResultRecord",
+          "name": "ptah-result-key-9ad7c75c5044dc701be3e3136787cca6",
+          "uid": "e647d9f2-7cd8-4887-8812-f605c300e763"
+        }
+      ],
+      "resourceVersion": "3110",
+      "uid": "008d091a-fc0d-4b2e-986e-77750eb7f9f3"
+    },
+    "ptah-result-key-ae97fecd3af3a72338e36047619a1c7b": {
+      "annotations": {
+        "operator.ptah.run/result-job-uid": "4e4089b5-9a25-4c49-99d4-231ec7e47718",
+        "operator.ptah.run/result-operation-id": "sha256:f9cce8d466d52597ae47eb5d404d6b72fc4aa95a296fcd72c7f74de7788aaa8d",
+        "operator.ptah.run/result-pod-name": "ptah-observe-storefront-0f065cf0cb949b1d-gbxtf",
+        "operator.ptah.run/result-pod-uid": "be353562-5dc1-4384-913e-0a0a1b3651f7"
+      },
+      "creationTimestamp": "2026-10-02T09:22:36Z",
+      "labels": {
+        "app.kubernetes.io/component": "result-credential",
+        "app.kubernetes.io/managed-by": "ptah-operator"
+      },
+      "name": "ptah-result-key-ae97fecd3af3a72338e36047619a1c7b",
+      "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+      "ownerReferences": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "blockOwnerDeletion": false,
+          "controller": true,
+          "kind": "PtahResultRecord",
+          "name": "ptah-result-key-ae97fecd3af3a72338e36047619a1c7b",
+          "uid": "bf8d8326-4726-4755-bb24-cfd5c86b3c41"
+        }
+      ],
+      "resourceVersion": "3242",
+      "uid": "e79f80e2-2829-43bd-b059-31de187e3172"
+    },
+    "ptah-result-key-bd255b7847200da5c8916246935e7814": {
+      "annotations": {
+        "operator.ptah.run/result-job-uid": "c38f564b-ce47-4bcf-af9d-dc13282e8355",
+        "operator.ptah.run/result-operation-id": "sha256:1dc82f16c8592134833caa77a6dd12b80d6dc65882e04f5072fc5ff33f17d155",
+        "operator.ptah.run/result-pod-name": "ptah-plan-quota-probe-159e96ed7ca4fc00-dq5w5",
+        "operator.ptah.run/result-pod-uid": "aee47345-0ad7-4bd2-93f3-49d2dec6ddeb"
+      },
+      "creationTimestamp": "2026-10-02T09:32:03Z",
+      "labels": {
+        "app.kubernetes.io/component": "result-credential",
+        "app.kubernetes.io/managed-by": "ptah-operator"
+      },
+      "name": "ptah-result-key-bd255b7847200da5c8916246935e7814",
+      "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+      "ownerReferences": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "blockOwnerDeletion": false,
+          "controller": true,
+          "kind": "PtahResultRecord",
+          "name": "ptah-result-key-bd255b7847200da5c8916246935e7814",
+          "uid": "65b010c0-98cb-488a-90f4-d9030d89e769"
+        }
+      ],
+      "resourceVersion": "5602",
+      "uid": "ed8ed3b3-6d57-447e-ab37-e01ec50b6e11"
+    },
+    "ptah-result-key-d2c6903803e3b0b58b8bde2d505563d6": {
+      "annotations": {
+        "operator.ptah.run/result-job-uid": "8bb74993-cf5f-422c-ad4c-dabf21e7f166",
+        "operator.ptah.run/result-operation-id": "sha256:f95b572e321dc8e4e642f932c9582c7c11225e7db84f52adcac32cfa01e2c215",
+        "operator.ptah.run/result-pod-name": "ptah-observe-storefront-419319e81605df48-cxgbv",
+        "operator.ptah.run/result-pod-uid": "a3f8b069-0895-4b13-83f8-859c140e5cff"
+      },
+      "creationTimestamp": "2026-10-02T09:23:10Z",
+      "labels": {
+        "app.kubernetes.io/component": "result-credential",
+        "app.kubernetes.io/managed-by": "ptah-operator"
+      },
+      "name": "ptah-result-key-d2c6903803e3b0b58b8bde2d505563d6",
+      "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+      "ownerReferences": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "blockOwnerDeletion": false,
+          "controller": true,
+          "kind": "PtahResultRecord",
+          "name": "ptah-result-key-d2c6903803e3b0b58b8bde2d505563d6",
+          "uid": "f136d728-2846-437c-ae56-eae5c38041e7"
+        }
+      ],
+      "resourceVersion": "3511",
+      "uid": "fc9a15ad-dc4b-48e3-ba4b-912b28263ea1"
+    },
+    "ptah-result-key-e6a9d1e2b5d9957e83da43b428afecab": {
+      "annotations": {
+        "operator.ptah.run/result-job-uid": "8a25b8ae-d71f-4cd0-a8f5-ff41b8bd5669",
+        "operator.ptah.run/result-operation-id": "sha256:d4cf34f4c6c170dd4fde889f0e2d880905bfef10d430a44b9ea554c68ce32c0e",
+        "operator.ptah.run/result-pod-name": "ptah-verify-storefront-7be444151cc4fdc6-5ngvn",
+        "operator.ptah.run/result-pod-uid": "955b9e7f-8874-4876-8635-01467e4316a7"
+      },
+      "creationTimestamp": "2026-10-02T09:22:28Z",
+      "labels": {
+        "app.kubernetes.io/component": "result-credential",
+        "app.kubernetes.io/managed-by": "ptah-operator"
+      },
+      "name": "ptah-result-key-e6a9d1e2b5d9957e83da43b428afecab",
+      "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+      "ownerReferences": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "blockOwnerDeletion": false,
+          "controller": true,
+          "kind": "PtahResultRecord",
+          "name": "ptah-result-key-e6a9d1e2b5d9957e83da43b428afecab",
+          "uid": "117801be-f158-4ccf-af6d-715f2a0d35c8"
+        }
+      ],
+      "resourceVersion": "3178",
+      "uid": "673849d2-ce63-4b26-bea9-354de6a4728c"
+    },
+    "ptah-result-key-f19948ca663438f1e7d950743d06c3e0": {
+      "annotations": {
+        "operator.ptah.run/result-job-uid": "6e001a52-d78b-4f02-b6ec-97d0b97c09d7",
+        "operator.ptah.run/result-operation-id": "sha256:5c4c1cef00b7e8a0902ae559718b278b1820e2562e3187fb57ced6eee8ce361b",
+        "operator.ptah.run/result-pod-name": "ptah-plan-storefront-ade0b0d8db64878b-df7dr",
+        "operator.ptah.run/result-pod-uid": "4cd0ee09-b92e-4acd-b552-080ad5446f65"
+      },
+      "creationTimestamp": "2026-10-02T09:22:48Z",
+      "labels": {
+        "app.kubernetes.io/component": "result-credential",
+        "app.kubernetes.io/managed-by": "ptah-operator"
+      },
+      "name": "ptah-result-key-f19948ca663438f1e7d950743d06c3e0",
+      "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+      "ownerReferences": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "blockOwnerDeletion": false,
+          "controller": true,
+          "kind": "PtahResultRecord",
+          "name": "ptah-result-key-f19948ca663438f1e7d950743d06c3e0",
+          "uid": "fac8489c-3ae6-4a68-a331-4471b88c125d"
+        }
+      ],
+      "resourceVersion": "3332",
+      "uid": "96b6c543-5a8a-4e3f-8631-f7c425947a62"
+    }
+  },
+  "planDigests": {
+    "920730a2-2e7a-46a4-8954-acf86c738c92": "sha256:02fc0c891419cf1ae8c33072486e2d72ff49d5fda7ff2afac192efe37978f427",
+    "a7ba8bf8-0213-4d9f-ab04-787aee032361": "sha256:046a43ee17411a303a5c8cb816225c8a4d814abcec152cc57cded4a4ed92a305",
+    "875dd40d-0a33-4f6c-aa03-96c95b8c2aa0": "sha256:b43b3e0311a95eb779ec1ddfbfe4ea5f235046a05835ef9856f034e33833e376",
+    "6b656d73-7138-448f-ba0a-de4d75d9aff9": "sha256:b43b3e0311a95eb779ec1ddfbfe4ea5f235046a05835ef9856f034e33833e376"
+  }
+}

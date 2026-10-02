@@ -1,0 +1,115 @@
+{
+  "remainingPinned": [
+    {
+      "name": "ptah-result-8fae8da333cb7d512577f07f0082922c67cc8f970eb85cbdb0980129413b139d",
+      "uid": "8b9564cd-b22e-4a56-929b-33ae2e92e873",
+      "createdAt": "2026-10-02T09:30:17Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "controller": true,
+          "kind": "PtahMigration",
+          "name": "cleanup-migration",
+          "uid": "8142fabc-776e-4a94-8134-606a91a15f3f"
+        }
+      ],
+      "type": "intent",
+      "dataDigest": "sha256:292aaadc4d397961abdfcc553038f4ba7aadda3b387f57c79f4e490a0cf795d8",
+      "binding": {
+        "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+        "kind": "PtahMigration",
+        "name": "cleanup-migration",
+        "uid": "8142fabc-776e-4a94-8134-606a91a15f3f",
+        "generation": 1,
+        "executionBindingID": "v1-808323c100f225985ab08d71f39f96fb",
+        "inputFingerprint": "sha256:152f7351fc43cb1d8f72a0cb3cedc561beb2b2478bf95f4930543c843949934f",
+        "operation": "migration-apply",
+        "operationID": "sha256:626957639c431d720881934411590ed9f4a144222aa18390951be5ff05aa1b61",
+        "jobName": "ptah-m-apply-cleanup-migration-011819968ce5cdf9",
+        "jobUID": "87fe2cce-dcd3-42e2-a343-552b707b5636",
+        "podName": "ptah-m-apply-cleanup-migration-011819968ce5cdf9-jzxch",
+        "podUID": "7fb3509c-b4b5-446b-aa47-10c7b1bcfb23"
+      }
+    },
+    {
+      "name": "ptah-result-8fae8da333cb7d512577f07f0082922c67cc8f970eb85cbdb0980129413b139d-000",
+      "uid": "0c0d7ca6-19d9-471e-ae4d-04be72192f1f",
+      "createdAt": "2026-10-02T09:30:17Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "controller": true,
+          "kind": "PtahResultRecord",
+          "name": "ptah-result-8fae8da333cb7d512577f07f0082922c67cc8f970eb85cbdb0980129413b139d",
+          "uid": "8b9564cd-b22e-4a56-929b-33ae2e92e873"
+        }
+      ],
+      "type": "chunk",
+      "dataDigest": "sha256:7cd2581dc84d97a20e6f2a3404115bea04e44109e4230a6110198fb12ad95c0e"
+    },
+    {
+      "name": "ptah-result-8fae8da333cb7d512577f07f0082922c67cc8f970eb85cbdb0980129413b139d-complete",
+      "uid": "85216fbc-e1b2-4631-9a49-2d7224171303",
+      "createdAt": "2026-10-02T09:30:17Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "controller": true,
+          "kind": "PtahResultRecord",
+          "name": "ptah-result-8fae8da333cb7d512577f07f0082922c67cc8f970eb85cbdb0980129413b139d",
+          "uid": "8b9564cd-b22e-4a56-929b-33ae2e92e873"
+        }
+      ],
+      "type": "complete",
+      "dataDigest": "sha256:0e7244549359bff6fcccca193195cc1c0625f2a5af0f9e77c5d908a391ba2782"
+    },
+    {
+      "name": "ptah-result-key-2982b34b6d2b2b8bc33b9d4fb07d5be7",
+      "uid": "3ba9d760-351b-4dda-8f99-7286c10ecbbd",
+      "createdAt": "2026-10-02T09:30:13Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "blockOwnerDeletion": true,
+          "controller": true,
+          "kind": "PtahMigration",
+          "name": "cleanup-migration",
+          "uid": "8142fabc-776e-4a94-8134-606a91a15f3f"
+        }
+      ],
+      "type": "credential",
+      "dataDigest": "sha256:c2145e8ca9abcaa3a2ae80ef8f9939cc1839632e86aea20fab7b5d92db9e6307"
+    }
+  ],
+  "receipts": [
+    {
+      "binding": {
+        "namespace": "ptah-test-a-1-37-0-result-cleanup-d3c14609-dca0c0b75d",
+        "kind": "PtahMigration",
+        "name": "cleanup-migration",
+        "uid": "8142fabc-776e-4a94-8134-606a91a15f3f",
+        "generation": 1,
+        "executionBindingID": "v1-808323c100f225985ab08d71f39f96fb",
+        "inputFingerprint": "sha256:152f7351fc43cb1d8f72a0cb3cedc561beb2b2478bf95f4930543c843949934f",
+        "operation": "migration-apply",
+        "operationID": "sha256:626957639c431d720881934411590ed9f4a144222aa18390951be5ff05aa1b61",
+        "jobName": "ptah-m-apply-cleanup-migration-011819968ce5cdf9",
+        "jobUID": "87fe2cce-dcd3-42e2-a343-552b707b5636",
+        "podName": "ptah-m-apply-cleanup-migration-011819968ce5cdf9-jzxch",
+        "podUID": "7fb3509c-b4b5-446b-aa47-10c7b1bcfb23"
+      },
+      "uid": "85216fbc-e1b2-4631-9a49-2d7224171303",
+      "digest": "sha256:7cd2581dc84d97a20e6f2a3404115bea04e44109e4230a6110198fb12ad95c0e",
+      "bytes": 1120
+    }
+  ],
+  "planDigests": {
+    "920730a2-2e7a-46a4-8954-acf86c738c92": "sha256:02fc0c891419cf1ae8c33072486e2d72ff49d5fda7ff2afac192efe37978f427",
+    "a7ba8bf8-0213-4d9f-ab04-787aee032361": "sha256:046a43ee17411a303a5c8cb816225c8a4d814abcec152cc57cded4a4ed92a305",
+    "875dd40d-0a33-4f6c-aa03-96c95b8c2aa0": "sha256:b43b3e0311a95eb779ec1ddfbfe4ea5f235046a05835ef9856f034e33833e376",
+    "6b656d73-7138-448f-ba0a-de4d75d9aff9": "sha256:b43b3e0311a95eb779ec1ddfbfe4ea5f235046a05835ef9856f034e33833e376"
+  },
+  "eligibleRecordsCollected": 75,
+  "eligibleSecretProjectionsCollected": 15,
+  "status": "passed"
+}
