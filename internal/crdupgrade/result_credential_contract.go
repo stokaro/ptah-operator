@@ -27,10 +27,25 @@ func resultCredentialReferences(pod string) string {
 
 var podIntentMatchExpression = podIntentIdentityMatchExpression + " || " + resultCredentialReferences("object") + " || " + resultCredentialReferences("oldObject")
 
+// PodIntentMatchExpression is the installed routing contract, shared with
+// lifecycle acceptance so a valid credential reference cannot escape its check.
+func PodIntentMatchExpression() string { return podIntentMatchExpression }
+
 func controllerWriteMatchExpression(expected RuntimeInvariants) string {
+	return ControllerWriteMatchExpression("system:serviceaccount:" + expected.ReleaseNamespace + ":" + expected.ControllerServiceAccountName)
+}
+
+// ControllerWriteMatchExpression includes reserved credentials for every writer.
+func ControllerWriteMatchExpression(controllerUser string) string {
 	return fmt.Sprintf(`(request.resource.resource != 'secrets' && request.userInfo.username ==
- 'system:serviceaccount:%s:%s') ||
+ '%s') ||
  (request.resource.resource == 'secrets' && (
  (object != null && object.metadata.name.startsWith('ptah-result-key-')) ||
- (oldObject != null && oldObject.metadata.name.startsWith('ptah-result-key-'))))`, expected.ReleaseNamespace, expected.ControllerServiceAccountName)
+ (oldObject != null && oldObject.metadata.name.startsWith('ptah-result-key-'))))`, controllerUser)
+}
+
+// MatchExpressionsEqual ignores formatting outside CEL string literals while
+// preserving the exact identities and name prefixes those literals contain.
+func MatchExpressionsEqual(actual, expected string) bool {
+	return normalizeExpression(actual) == normalizeExpression(expected)
 }

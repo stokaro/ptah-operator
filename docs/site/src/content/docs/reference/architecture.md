@@ -183,6 +183,14 @@ one namespace manage, and lists the namespaces allowed to claim it. The manager
 reads it and never writes it. See
 [Concurrency and coordination](../execution/#concurrency-and-coordination).
 
+`PtahResultRecord` stores immutable intent, payload, and completion records for
+durable runner result delivery. Publication checks the complete payload before
+acknowledgment; a consumer checks the binding and all chunk identities before
+using it. The dedicated resource permits result reads without access to database
+Secrets. Its payloads are confidential and must be excluded from ordinary reader
+and author roles. The delivery components are implemented, but installed Jobs
+still use logs until the receiver and controller integration is complete.
+
 The manager reconciles the two desired-state kinds, watches the two approval
 kinds, the run acknowledgments and the realms, and watches the verification-policy ConfigMaps resources
 point at, so an edited policy is noticed rather than waited out. A realm's

@@ -140,7 +140,7 @@ is what you mean.
 Helm reporting success means its hook completed, which is not the same as the
 manager serving.
 [Confirm it installed](../../start/install/#confirm-it-installed) carries the
-two readings that settle it: nine CRDs at `Established=True`, and the manager
+two readings that settle it: ten CRDs at `Established=True`, and the manager
 and certificate-rotator Deployments available.
 
 #### Where to stop {#install-stop}
@@ -214,7 +214,7 @@ helm upgrade <release> <chart> --values <values>
 #### What proves it worked {#upgrade-evidence}
 
 The readings are the ones an install ends with, against the new digests:
-`Established=True` on nine CRDs, both Deployments available, and manager Pods
+`Established=True` on ten CRDs, both Deployments available, and manager Pods
 whose image is the candidate's.
 
 An upgrade that keeps the manager image, the shape a GitOps re-sync or a
@@ -294,7 +294,7 @@ left behind. Helm then applies the candidate over the stopped Deployments.
 
 #### What proves it worked {#retry-evidence}
 
-The same readings an upgrade ends with: `Established=True` on nine CRDs, both
+The same readings an upgrade ends with: `Established=True` on ten CRDs, both
 Deployments available, and manager Pods carrying the candidate image.
 
 #### Where to stop {#retry-stop}
@@ -430,7 +430,7 @@ helm uninstall <release> --wait --timeout 5m
 #### What proves it worked {#uninstall-evidence}
 
 Helm reports the release uninstalled. What remains afterwards is deliberate:
-the nine CRDs with their custom resources.
+the ten CRDs with their custom resources.
 
 #### Where to stop {#uninstall-stop}
 
@@ -478,7 +478,7 @@ In this order:
 3. Place the databases in a maintenance window.
 4. Scale the manager and certificate-rotation Deployments to zero.
 5. Back up all Ptah custom resources.
-6. Uninstall the release, and verify that the nine CRDs and their objects
+6. Uninstall the release, and verify that the ten CRDs and their objects
    remain.
 7. Install exactly one release of the first published version or newer, with
    the new invariant values where those are what is changing.
@@ -487,7 +487,7 @@ In this order:
 
 #### What proves it worked {#offline-evidence}
 
-The nine CRDs and their objects present after the uninstall, before anything is
+The ten CRDs and their objects present after the uninstall, before anything is
 installed over them. Then the new release's admission annotations carrying its
 own identity, manager readiness, and both kinds converging again.
 
@@ -495,7 +495,7 @@ own identity, manager readiness, and both kinds converging again.
 
 Do not start with a migration still running: a migration left running is a
 writer this procedure does not stop. Do not install over the uninstalled
-release if the nine CRDs or their objects did not survive it, and do not treat a
+release if the ten CRDs or their objects did not survive it, and do not treat a
 resource whose `status.unresolvedRun` and its copy in the
 `operator.ptah.run/unresolved-run` annotation both went missing as one that has
 nothing outstanding.

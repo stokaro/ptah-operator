@@ -1,6 +1,8 @@
 package e2e
 
 import (
+	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -18,6 +20,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
+	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
@@ -165,31 +168,41 @@ func mustRegexp(pattern string) *regexp.Regexp {
 
 const contentDigestFixtureForTest = "sha256:2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"
 
-// The Pod intent entry's match condition, as the phase writes it from its
-// parts, is the chart's with its whitespace collapsed.
+// Validate the rendered configuration, including expanded Helm helpers, rather
+// than comparing a raw template to the narrower pre-credential predicate.
 func TestOperationPodConditionIsTheCharts(t *testing.T) {
 	t.Parallel()
-	template, err := os.ReadFile(filepath.Join("..", "..", "charts", "ptah-operator", "templates", "webhook.yaml"))
-	if err != nil {
-		t.Fatal(err)
+	rendered := alHelm(t, "template", "ptah-operator", alChart, "--namespace", "operator",
+		"--set-string", "image.digest=sha256:"+strings.Repeat("a", 64),
+		"--set-string", "execution.runnerImage=ghcr.io/stokaro/ptah-operator@sha256:"+strings.Repeat("a", 64),
+		"--set-string", "execution.executorImage=ghcr.io/stokaro/ptah@sha256:"+strings.Repeat("b", 64),
+		"--set-string", "execution.ptahVersion=v0.7.0",
+		"--set-string", "serviceAccount.name=ptah-controller",
+		"--set-string", "fullnameOverride=ptah-operator",
+		"--show-only", "templates/webhook.yaml")
+	decoder := utilyaml.NewYAMLOrJSONDecoder(strings.NewReader(rendered), 4096)
+	count := 0
+	for {
+		var document json.RawMessage
+		if err := decoder.Decode(&document); err == io.EOF {
+			break
+		} else if err != nil {
+			t.Fatal(err)
+		}
+		var configuration admissionregistrationv1.ValidatingWebhookConfiguration
+		if err := json.Unmarshal(document, &configuration); err != nil {
+			t.Fatal(err)
+		}
+		if configuration.Kind != "ValidatingWebhookConfiguration" {
+			continue
+		}
+		count++
+		if err := validatingAdmissionExact(&configuration, "operator", "ptah-operator-webhook", controllerUserFixture); err != nil {
+			t.Fatal(err)
+		}
 	}
-	text := string(template)
-	start := strings.Index(text, "- name: managed-or-operation-job-pod")
-	if start < 0 {
-		t.Fatal("the chart carries no managed-or-operation-job-pod condition")
-	}
-	block := text[start:]
-	begin := strings.Index(block, "expression: >-")
-	end := strings.Index(block, "clientConfig:")
-	if begin < 0 || end < begin {
-		t.Fatal("the condition's expression could not be found")
-	}
-	expression := strings.TrimSpace(collapseWhitespace(block[begin+len("expression: >-") : end]))
-	if expression != operationPodCondition() {
-		t.Fatalf("the chart's condition is\n%s\nthe phase expects\n%s", expression, operationPodCondition())
-	}
-	if collapseWhitespace("a \n\t  b") != "a b" {
-		t.Fatal("collapseWhitespace does not collapse a run of whitespace")
+	if count != 1 {
+		t.Fatalf("read %d validating configurations, want one", count)
 	}
 }
 
@@ -357,11 +370,12 @@ func validatingFixture() *admissionregistrationv1.ValidatingWebhookConfiguration
 	write := entry("vcontrollerwrite.operator.ptah.run", "/validate-operator-controller-write",
 		namespacedRule("batch", "v1", createAndUpdate, "jobs"),
 		namespacedRule("", "v1", createOnly, "configmaps"),
-		namespacedRule("operator.ptah.run", "v1alpha1", createOnly, "ptahschemaplans", "ptahschemaplanchunks", "ptahmigrationplans"))
+		namespacedRule("operator.ptah.run", "v1alpha1", createOnly, "ptahschemaplans", "ptahschemaplanchunks", "ptahmigrationplans"),
+		namespacedRule("", "v1", []admissionregistrationv1.OperationType{admissionregistrationv1.Create, admissionregistrationv1.Update, admissionregistrationv1.Delete}, "secrets"))
 	write.MatchPolicy = pointer(admissionregistrationv1.Exact)
 	write.TimeoutSeconds = pointer[int32](30)
 	write.MatchConditions = []admissionregistrationv1.MatchCondition{{
-		Name: "controller-service-account", Expression: "request.userInfo.username == '" + controllerUserFixture + "'",
+		Name: "controller-service-account", Expression: controllerWriteCondition(controllerUserFixture),
 	}}
 	return &admissionregistrationv1.ValidatingWebhookConfiguration{Webhooks: []admissionregistrationv1.ValidatingWebhook{
 		entry("vapproval.operator.ptah.run", "/validate-operator-ptah-run-v1alpha1-ptahschemaapproval",
@@ -409,6 +423,19 @@ func TestValidatingAdmissionExact(t *testing.T) {
 		}},
 		{"Pod intent misses resize", func(c *admissionregistrationv1.ValidatingWebhookConfiguration) {
 			c.Webhooks[2].Rules[0].Resources = []string{"pods", "pods/ephemeralcontainers"}
+		}},
+		{"Pod credential references omitted", func(c *admissionregistrationv1.ValidatingWebhookConfiguration) {
+			before := c.Webhooks[2].MatchConditions[0].Expression
+			c.Webhooks[2].MatchConditions[0].Expression = strings.ReplaceAll(before, "ptah-result-key-", "other-key-")
+			if before == c.Webhooks[2].MatchConditions[0].Expression {
+				t.Fatal("mutation changed nothing")
+			}
+		}},
+		{"credential deletion omitted", func(c *admissionregistrationv1.ValidatingWebhookConfiguration) {
+			c.Webhooks[3].Rules[3].Operations = createAndUpdate
+		}},
+		{"credential admission restricted to the manager", func(c *admissionregistrationv1.ValidatingWebhookConfiguration) {
+			c.Webhooks[3].MatchConditions[0].Expression = "request.userInfo.username == '" + controllerUserFixture + "'"
 		}},
 		{"controller write matched equivalently", func(c *admissionregistrationv1.ValidatingWebhookConfiguration) {
 			c.Webhooks[3].MatchPolicy = pointer(admissionregistrationv1.Equivalent)

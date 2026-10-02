@@ -1,14 +1,14 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-10-01T08:23:10.982157+00:00",
-  "profileSourceCommit": "ff5cf00cec240141e87c12ebde4a09d66c88bca5",
+  "frozenAt": "2026-10-02T03:04:35.259719+00:00",
+  "profileSourceCommit": "8e5ac09ef5be1f70677cccef7851fc1fd7520205",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
   "sourceFiles": [
     {
       "path": "support/qualification/0.2.0.md",
-      "sha256": "d3c3924fedec2ad7c8d5906f6ce19fedbb4d1d0acb4b0f09f2dad235d952b4ac"
+      "sha256": "2dc768bbceec6565401117bae00d03a66ea7dae618bb397acb0e46efb774bb38"
     },
     {
       "path": "support/qualification/0.2.0-coverage.md",
@@ -66,10 +66,10 @@
     "disposition": "No published predecessor. Synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 26,
+  "revision": 27,
   "supersedes": {
-    "freezeCommit": "ff5cf00cec240141e87c12ebde4a09d66c88bca5",
-    "sha256": "a7a62bc5adab5e356c532f1bb62090b0b2a247680e59f3839f3ea1cd0b8e6bff"
+    "freezeCommit": "8e5ac09ef5be1f70677cccef7851fc1fd7520205",
+    "sha256": "a1710abadbf32ca3ae40bf518ce6da2b9d6128386686389e4e30fb7164b16b7e"
   },
-  "revisionReason": "Add the 64 MiB kubelet result-log precondition introduced in 73862fdb; the previous freeze did not include that profile edit. Preserve revision 25 in the superseded commit. The existing 5101109f CI and native development run use the earlier profile and do not establish this precondition. Rotation loss was reproduced on a 10 MiB node; positive native qualification with 64 MiB remains pending. The 8 MiB plan limit, all other targets, 30 functional cells and 36 recovery combinations remain unchanged. Acceptance remains Not assessed."
+  "revisionReason": "Record the durable result-delivery requirement added to the profile in 6e1db25a for issue #586. Revision 26 is preserved in the superseded commit. The profile still describes 64 MiB logs as a temporary workaround, and no earlier run proves the default-kubelet, result-survival, or integrated delivery requirements. This revision changes no payload limit, deadline, capacity target, matrix denominator, or acceptance verdict. Repeat affected proofs after transport integration; acceptance remains Not assessed."
 }
