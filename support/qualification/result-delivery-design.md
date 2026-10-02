@@ -3,6 +3,9 @@
 Implementation design for [#586](https://github.com/stokaro/ptah-operator/issues/586).
 The target is stable 0.2.0. This document does not qualify the transport or
 authorize a release. The current runner still writes result frames to logs.
+The storage and TLS delivery components are implemented; the installation,
+certificate issuer, live Kubernetes authorizer, and controllers do not use them
+yet.
 
 ## Storage boundary
 
@@ -55,7 +58,60 @@ result. Resource finalization must preserve unresolved evidence until the
 existing recovery rules allow deletion. A storage test without Kubernetes
 controllers does not prove that lifecycle.
 
-## Receiver and runner integration still required
+## TLS delivery component
+
+`internal/resultdelivery` implements a dedicated HTTP receiver and a sender
+that accepts already executed result bytes. The receiver requires TLS 1.3 and
+a verified client certificate. The certificate's single URI SAN encodes the
+complete publication binding and target engine. The route must name that
+binding's deterministic publication name; the result must name its operation
+and operation ID. Certificates are checked again on every request and before
+publication, including their validity on reused TLS connections.
+
+The receiver requires an explicit live-authorizer callback. No callback that
+permits arbitrary requests is supplied by production code. The Kubernetes
+implementation still has to check the exact claim, epoch, Job, Pod, and engine;
+the TLS tests use controlled authorization callbacks and do not prove this part.
+A definitive authority refusal is HTTP 403. A temporary API failure is HTTP 503,
+so a runner may retry delivery without mistaking an outage for revoked authority.
+
+The receiver checks authority before reading the body, after validating it, and
+through `resultstore.PublishAuthorized` after chunk writes, just before the
+completion write or return of a previously committed receipt. A concurrent
+epoch change still requires admission and consumer-side validation; these API
+operations are not a cross-object transaction.
+
+Requests have a required length and SHA-256 header. Unknown-length, oversized,
+noncanonical JSON, mismatched operation, foreign-engine plan, invalid protocol,
+or unreadable process-sealed plan payloads are refused before publication.
+The wire media type is `application/vnd.ptah.result.v1+json`; this endpoint never
+parses mixed diagnostic logs. The existing result validator is shared with the
+log protocol rather than copied. Plaintext plans are decoded and hash-checked
+under the unchanged 8 MiB limit. Controller policy checks remain necessary.
+
+The configured upload limit is enforced before reading bodies or performing
+live API checks. Saturation returns 503 immediately. A request context bounds
+API operations; a socket/stream read deadline also terminates a stalled body.
+Rejected bodies retain a read deadline and close HTTP/1 connections, so the
+HTTP server cannot indefinitely drain them after releasing an upload slot.
+Installation sizing must account for concurrent decoded and encoded payload
+buffers; the package's configurable bound is not a resource-budget qualification.
+
+The sender requires server certificate verification and a client certificate
+whose identity matches the supplied binding. It refuses redirects and validates
+the returned receipt name, UID, length, and digest. Network failures and explicit
+transient statuses retry the same copied bytes within bounded attempts and an
+overall deadline. Definitive refusals stop delivery. The sender has no SQL or
+executor callback. Wiring this into the runner must preserve that boundary.
+
+The local TLS tests cover a lost acknowledgment after persistence, a new receiver
+reading the existing store, conflicting retransmission, invalid client/server
+trust, authority retirement at each check, a stalled body, saturation, redirects,
+and an exact 8 MiB escaping-heavy plan. They use the real Secret store over a fake
+API client; the separate envtest suite covers the real API's storage behavior.
+Neither is a complete Job-to-controller acceptance run.
+
+## Installation and runner integration still required
 
 The receiver runs independently of family reconcile workers, behind its own TLS
 Service. It must authenticate clients before reading a large body, bound active
@@ -111,9 +167,11 @@ Backups must include intents, chunks, completions, consumption state, and the
 certificate authority needed for outstanding delivery credentials. Restore must
 not accept an incomplete publication or reactivate retired delivery authority.
 
-The current tests prove publication integrity, replay behavior, and Kubernetes
-Secret persistence/immutability. They do not prove authentication, TLS, RBAC,
-admission, garbage collection, manager failover, Lease independence, or the
-end-to-end supported plan limit. Those remain the explicit #586 acceptance rows.
+The current tests prove component publication integrity, TLS identity checking,
+bounded redelivery, and Kubernetes Secret persistence/immutability. They do not
+prove live claim authorization, credential issuance, installed RBAC/admission,
+garbage collection, manager failover, Lease independence, or the complete
+Job-to-controller workflow at the supported plan limit. Those remain the
+explicit #586 acceptance rows.
 Keep the 64 MiB workaround until the complete workflow passes with the default
 10 MiB kubelet configuration, deliberate log removal, and manager replacement.

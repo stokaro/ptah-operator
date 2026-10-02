@@ -7,6 +7,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:12780012a739674513f29ea61cf5f9b7bea8fefe966dec75a03645650b89e03b",
       "reason": "Complete the initial protocol before the first tagged 0.2.0 release. The invalid_plan_output diagnostic now includes the measured saved-file size or an honest read lower bound and the unchanged 8 MiB limit. Its error code, result shape, refusal boundaries, payload handling, and execution behavior are unchanged. No tagged release could have stored or consumed an earlier protocol-1 contract; all development contract counters remain 1."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:b2da427538fa9ab6f68af5f253a739638d11d2306a4a43fb2c53f1d6800663d7",
+      "reason": "Expose the existing decoded-result validator for authenticated delivery without changing the runner command, execution checks, result fields, log framing, or acceptance rules. The new function requires an explicit operation and ID and delegates to the same validator used by the existing parser. The receiver and sender are not yet connected to the runner command; protocol version 1 remains unchanged."
     }
   ]
 }

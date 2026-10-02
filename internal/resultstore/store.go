@@ -142,6 +142,21 @@ type Store struct {
 // payload must already be protocol-validated and independently readable after
 // process key loss; storing an old process-sealed Plan is not sufficient.
 func (s Store) Publish(ctx context.Context, b Binding, payload []byte, expectedDigest string) (Receipt, error) {
+	return s.publish(ctx, b, payload, expectedDigest, nil)
+}
+
+// PublishAuthorized rechecks the receiver's live authority after chunk writes,
+// immediately before creating the completion record. A duplicate publication
+// must pass the same check before its existing receipt is returned. Admission
+// and the consuming controller still enforce the current execution epoch.
+func (s Store) PublishAuthorized(ctx context.Context, b Binding, payload []byte, expectedDigest string, check func(context.Context) error) (Receipt, error) {
+	if check == nil {
+		return Receipt{}, ErrInvalid
+	}
+	return s.publish(ctx, b, payload, expectedDigest, check)
+}
+
+func (s Store) publish(ctx context.Context, b Binding, payload []byte, expectedDigest string, check func(context.Context) error) (Receipt, error) {
 	name, err := Name(b)
 	if err != nil {
 		return Receipt{}, err
@@ -165,6 +180,11 @@ func (s Store) Publish(ctx context.Context, b Binding, payload []byte, expectedD
 	ready := &corev1.Secret{}
 	err = s.Reader.Get(ctx, client.ObjectKey{Namespace: b.Namespace, Name: name + "-complete"}, ready)
 	if err == nil {
+		if check != nil {
+			if err := check(ctx); err != nil {
+				return Receipt{}, err
+			}
+		}
 		_, receipt, err := s.Load(ctx, b)
 		return receipt, err
 	}
@@ -182,6 +202,11 @@ func (s Store) Publish(ctx context.Context, b Binding, payload []byte, expectedD
 		c.ChunkUIDs = append(c.ChunkUIDs, part.UID)
 	}
 	encodedCompletion, _ := json.Marshal(c)
+	if check != nil {
+		if err := check(ctx); err != nil {
+			return Receipt{}, err
+		}
+	}
 	if err := s.ensure(ctx, secret(b.Namespace, name+"-complete", "complete", childOwner, encodedCompletion)); err != nil {
 		return Receipt{}, err
 	}

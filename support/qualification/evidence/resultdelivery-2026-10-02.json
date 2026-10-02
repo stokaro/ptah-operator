@@ -1,0 +1,135 @@
+{
+  "schemaVersion": 1,
+  "issue": 586,
+  "status": "TLS delivery component verified; installation integration incomplete",
+  "sourceBase": "d3d8a4db1f5de030bf5d0fefb669a0feaedcf27a",
+  "sourceSHA256": {
+    "internal/resultdelivery/delivery_test.go": "cbcf779e874bd2b05aadcaaaef58fa4431b5d4c46b363e86728c31adfc48b6dd",
+    "internal/resultdelivery/protocol.go": "a32787c4a014630eb42570deeb9e7fdf0bc5bc78e0b005bed758ea8811463bb2",
+    "internal/resultdelivery/receiver.go": "5159d63165b481b25d98cb7a66796833bcda917b6cb021aa410469530e75d1b0",
+    "internal/resultdelivery/sender.go": "788ce34db27e04543b3156170a08d20fa6f992fcd68dbde6e0b058e0cc03109e",
+    "internal/resultstore/store.go": "434aac839d84b407f648879470a1231755e4e793812ff1bb64bb5553cbdb2a07",
+    "internal/runner/validation.go": "de0b2f1708851dc0b028e97e7378f9c331b359476ed4eabe2588dc78eecbf524",
+    "internal/runner/validation_test.go": "508827791d4210fd22a38ccf91cb9e7d70a31618dda9b9ff354148fbf0216b23",
+    "support/runner-protocol.json": "41c452d0bc33dec243aef345e93b9cf0a1948888a2792e5bcbe05a7bbfbdb026"
+  },
+  "environment": {
+    "go": "go1.27.1",
+    "host": "darwin/arm64",
+    "tls": "TLS 1.3 over real local sockets",
+    "storeForTLSTests": "resultstore backed by a fake Kubernetes API client",
+    "realAPI": "separate isolated Kubernetes 1.37.0 envtest suite"
+  },
+  "checks": [
+    {
+      "command": "go test -count=1 -json ./internal/resultdelivery",
+      "scope": "complete final delivery suite",
+      "passedTestsAndSubtests": 28,
+      "failed": 0,
+      "skipped": 0,
+      "elapsedSeconds": 4.465
+    },
+    {
+      "command": "go test -race -count=1 -json ./internal/resultdelivery",
+      "scope": "27 delivery rows before adding the separate retry-bound test; production source matches final",
+      "passedTestsAndSubtests": 27,
+      "failed": 0,
+      "skipped": 0,
+      "elapsedSeconds": 33.03
+    },
+    {
+      "command": "go test -race -count=1 -run TestDeliveryAttemptAndDeadlineBounds -json ./internal/resultdelivery",
+      "scope": "subsequently added retry-bound row",
+      "passedTestsAndSubtests": 1,
+      "failed": 0,
+      "skipped": 0,
+      "elapsedSeconds": 2.202
+    },
+    {
+      "command": "go test -count=1 -json ./internal/runner",
+      "scope": "complete runner suite",
+      "passedTestsAndSubtests": 551,
+      "failed": 0,
+      "skipped": 0,
+      "elapsedSeconds": 2.08
+    },
+    {
+      "command": "KUBEBUILDER_ASSETS=<1.37.0-darwin-arm64> PTAH_REQUIRE_ENVTEST=1 go test -count=1 -json -timeout=10m ./test/envtest/resultstore",
+      "scope": "real API-server storage suite",
+      "passedTestsAndSubtests": 13,
+      "failed": 0,
+      "skipped": 0,
+      "elapsedSeconds": 5.713
+    },
+    {
+      "command": "go test -race -p 1 -count=1 -json ./internal/resultdelivery ./internal/resultstore",
+      "scope": "resultstore package",
+      "passedTestsAndSubtests": 72,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "command": "go vet ./internal/resultdelivery ./internal/resultstore ./internal/runner",
+      "exitCode": 0
+    },
+    {
+      "command": "go run ./hack/verifyrunnerprotocol",
+      "exitCode": 0,
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:b2da427538fa9ab6f68af5f253a739638d11d2306a4a43fb2c53f1d6800663d7"
+    }
+  ],
+  "localLogs": {
+    "/private/tmp/ptah-resultdelivery-final.jsonl": {
+      "sha256": "c6e6e00950dd99871b2e9abe8980a3a778a27a4b53ca4f412f85413a7e553e78",
+      "custody": "local diagnostic log; not final release evidence custody"
+    },
+    "/private/tmp/ptah-resultdelivery-final-race.jsonl": {
+      "sha256": "25afe2dd3aa155489877b845e9c217136b495066099c492bfc3c64252d8d3ebb",
+      "custody": "local diagnostic log; not final release evidence custody"
+    },
+    "/private/tmp/ptah-resultdelivery-retry-bounds.jsonl": {
+      "sha256": "d5ff2efc8b4f0a88971ae186a32675d9873f1e7c8a3a1f5cc631d0f8ca41f492",
+      "custody": "local diagnostic log; not final release evidence custody"
+    },
+    "/private/tmp/ptah-resultdelivery-runner.jsonl": {
+      "sha256": "42e96fd72b6974014bb00f57187a0a8fae94965d057d8f0892738e028c2d2806",
+      "custody": "local diagnostic log; not final release evidence custody"
+    },
+    "/private/tmp/ptah-resultdelivery-envtest.jsonl": {
+      "sha256": "fadb270fd24434682a0e76279efeeea8177ba8f53e6e05a9499452fb03743ccd",
+      "custody": "local diagnostic log; not final release evidence custody"
+    },
+    "/private/tmp/ptah-resultdelivery-race.jsonl": {
+      "sha256": "9b945b7d5c7f805ec43f7381659b12dcccdd41599142fc5e5639db9e1988681c",
+      "custody": "local diagnostic log; not final release evidence custody"
+    }
+  },
+  "proved": [
+    "TLS rejects missing or untrusted client certificates and an untrusted server certificate",
+    "certificate identity binds the route, operation, and Pod; payload must match",
+    "authority is checked before reading, after validation, and before completion",
+    "lost acknowledgment returns the same stored receipt on retransmission and with a replacement receiver object",
+    "conflicting bytes are refused without retry or overwrite",
+    "an open stalled request receives server HTTP 408; saturation is refused immediately",
+    "exact 8 MiB escaping-heavy plan crosses TLS and reads back unchanged; maximum-plus-one is refused",
+    "sender refuses redirects and mismatched receipts; retry count and overall deadline are bounded"
+  ],
+  "notProved": [
+    "live Kubernetes claim and Pod authorization; test callbacks are controlled fixtures",
+    "certificate issuance, exact Pod projection, rotation, or installed TLS lifecycle",
+    "runner command integration or actual SQL execution without replay after a lost acknowledgment",
+    "controller consumption, manager process or leader replacement, or Lease renewal under load",
+    "installed RBAC/admission, network policy, retention, garbage collection, backup/restore, or quota",
+    "full default-kubelet-log workflow across supported Kubernetes minors, engines, and architectures"
+  ],
+  "earlierAttempts": [
+    {
+      "log": "/private/tmp/ptah-resultdelivery-first.log",
+      "result": "Plan fixture lacked the required coordination digest; corrected before accepting the test result"
+    },
+    {
+      "finding": "stalled-body test strengthened to require receiver HTTP 408 with the client stream still open; premature read-deadline reset removed so rejected-body draining cannot hold the HTTP worker"
+    }
+  ]
+}
