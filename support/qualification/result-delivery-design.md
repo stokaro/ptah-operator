@@ -600,13 +600,22 @@ Backups must include intents, chunks, completions, consumption state, and the
 certificate authority needed for outstanding delivery credentials. Restore must
 not accept an incomplete publication or reactivate retired delivery authority.
 
-The current tests prove component publication integrity, TLS identity checking,
-bounded redelivery, result-record persistence without Secret read permission,
-credential issuance without Secret reads, authenticated preflight before SQL,
-issuer authority predicates, and chart credential and publication admission
-through a local API server. They do not prove installed
-RBAC and trust rotation, garbage collection, manager failover, Lease independence,
-or the complete Job-to-controller workflow at the supported plan limit. Those remain the
-explicit #586 acceptance rows.
-Keep the 64 MiB workaround until the complete workflow passes with the default
-10 MiB kubelet configuration, deliberate log removal, and manager replacement.
+The component checks cover publication integrity, TLS identity, bounded
+redelivery, credential issuance without Secret reads, authenticated preflight,
+and admission through a real API server.
+
+[Installed PostgreSQL evidence](evidence/result-installed-2026-10-02.json)
+records a four-node Kubernetes 1.37 run with every kubelet reporting `10Mi`
+container logs. A native plan of exactly 8 MiB reached approval, one Apply,
+and `InSync`; database inspection confirmed its generated default. The run used
+operator images from `8ea0a44f` and generated admission policies from `d924b70e`.
+It exposed and fixed the Job guard's missing durable credential volume.
+
+After consumption and convergence, the run removed all seven operation Jobs
+and their Pods, restarted both managers, and independently verified unchanged
+receipt UIDs, chunk sizes, and digests. The plan still reconstructed from its
+16 chunks. This does not prove recovery after acknowledgment but before first
+consumption, or a lost acknowledgment. Installed failure cases, retention,
+restore, CA rotation, enforced NetworkPolicy, Lease contention, and the complete
+Kubernetes and database matrix remain explicit #586 acceptance work. The option
+remains disabled by default.

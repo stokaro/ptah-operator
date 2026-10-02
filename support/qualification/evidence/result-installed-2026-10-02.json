@@ -1,0 +1,222 @@
+{
+  "schemaVersion": 1,
+  "issue": 586,
+  "status": "Installed PostgreSQL maximum-plan delivery and post-consumption persistence verified; default rollout and failure-matrix acceptance remain incomplete",
+  "testedCommit": "c198bed789858e79e709588945b653b2fd19dd70",
+  "recordedAt": "2026-10-02T06:38:20.315217+00:00",
+  "runtime": {
+    "operatorCommit": "8ea0a44f80044a4833a1d7ebf24aee08899e291e",
+    "admissionPolicyCommit": "d924b70ed13980bb711b6acaf0fe39cb1dd58228",
+    "note": "The existing operator images ran with the generated object policies from d924b70e applied to the isolated cluster. This is an explicitly mixed installation, not a rebuilt image or complete release matrix for testedCommit.",
+    "ptahCommit": "f6e562c5b0986cd29a53a5cc01938827336b780a",
+    "kubernetes": "v1.37.0",
+    "nodes": 4,
+    "managerReplicas": 2,
+    "dockerContext": "remote-dev-container",
+    "resultDeliveryEnabled": true,
+    "networkPolicyEnforcementTested": false,
+    "E2E_KIND_CLUSTER_NAME": "ptah-e2e-1-37-0-result-delive-0bb3ed440a",
+    "E2E_OPERATOR_NAMESPACE": "ptah-system-1-37-0-result-delivery-8ea0a44f-0bb3ed440a",
+    "E2E_TEST_NAMESPACE": "ptah-test-a-1-37-0-result-delivery-8ea0a44f-0bb3ed440a",
+    "E2E_CONTROLLER_IMAGE": "e2e-registry.ptah-test-a-1-37-0-result-delivery-8ea0a44f-0bb3ed440a.svc.cluster.local:5000/ptah-operator@sha256:4f6a1e8c88c232848f3f3ededdf750223559591741ffdaacd83d36d51127d271",
+    "E2E_EXECUTOR_IMAGE": "e2e-registry.ptah-test-a-1-37-0-result-delivery-8ea0a44f-0bb3ed440a.svc.cluster.local:5000/ptah-executor@sha256:55c9508c1380b826f9d723eaae1d641852d6e1e4e8850f3767e3f603b2347003",
+    "E2E_RUNNER_IMAGE": "e2e-registry.ptah-test-a-1-37-0-result-delivery-8ea0a44f-0bb3ed440a.svc.cluster.local:5000/ptah-runner@sha256:4f6a1e8c88c232848f3f3ededdf750223559591741ffdaacd83d36d51127d271",
+    "E2E_POSTGRES_IMAGE": "e2e-registry.ptah-test-a-1-37-0-result-delivery-8ea0a44f-0bb3ed440a.svc.cluster.local:5000/postgresql@sha256:7456ef82e5f5bc43d997f4781bbd7c0d6389bff397564649a356e206ba473aee",
+    "chartSHA256": "1ea9453a274609c47dd9e12a5ed48460105b9777d8d85d4d64854710d590ab8f"
+  },
+  "kubelets": [
+    {
+      "node": "ptah-e2e-1-37-0-result-delive-0bb3ed440a-control-plane",
+      "containerLogMaxSize": "10Mi",
+      "configzSHA256": "62878734a3dee2eab879ce3aa67ca77f9e8e9a75bfb392cdd07eaacd443cee4b"
+    },
+    {
+      "node": "ptah-e2e-1-37-0-result-delive-0bb3ed440a-control-plane2",
+      "containerLogMaxSize": "10Mi",
+      "configzSHA256": "1a141a41e5770a105c2d8001c0336e2eabff6be9550fb72ff7777a9a3335e2f6"
+    },
+    {
+      "node": "ptah-e2e-1-37-0-result-delive-0bb3ed440a-control-plane3",
+      "containerLogMaxSize": "10Mi",
+      "configzSHA256": "163cf05513393d1d91a494a287362a82d7c906ca1c76731eebf4731124fa9740"
+    },
+    {
+      "node": "ptah-e2e-1-37-0-result-delive-0bb3ed440a-worker",
+      "containerLogMaxSize": "10Mi",
+      "configzSHA256": "d7a081d9d91623b05a365bbb282d5e3193f0ed38af82321b077833e0af42882e"
+    }
+  ],
+  "checks": [
+    {
+      "command": "GOCACHE=<shared Go cache> GOFLAGS=-p=1 make verify",
+      "exitCode": 0,
+      "scope": "Generation, static gates, build, unit tests, required real API envtests, and repository race target. Its three declared shell-mutation exclusions still run in the ordinary unit target."
+    },
+    {
+      "command": "KUBEBUILDER_ASSETS=<Kubernetes 1.37.0 assets> PTAH_REQUIRE_ENVTEST=1 GOFLAGS=-p=1 go test -count=1 -json ./test/envtest/admissionpolicy",
+      "exitCode": 0,
+      "passingTestsAndSubtests": 98,
+      "skips": []
+    },
+    {
+      "command": "GOFLAGS=-p=1 go test -race -count=1 -json ./internal/crdupgrade",
+      "exitCode": 0,
+      "passingTestsAndSubtests": 298,
+      "skips": [
+        "TestRenderedReleaseRBACMatchesCompiledContract",
+        "TestRenderedAdmissionSingletonMatchesRuntimeContract"
+      ],
+      "note": "Both render-dependent rows pass in the e2e-static gate with its required render environment."
+    }
+  ],
+  "nativePlan": {
+    "calibrationBytes": [
+      784,
+      790,
+      785
+    ],
+    "repeated": 1398002,
+    "suffix": 4,
+    "actual": "1398006:1398002:4",
+    "envelope": 592,
+    "width": 6,
+    "size": 8388608,
+    "planChunks": 16,
+    "resultChunks": 19,
+    "payloadBytes": 9787143,
+    "equivalentBase64FrameBodyBytes": 13049524,
+    "approvedApplyJobs": 1,
+    "converged": true
+  },
+  "postRestart": {
+    "planUID": "718bf4e8-e3bc-4352-a5d4-40f0cef5ee61",
+    "planSize": 8388608,
+    "planDigest": "sha256:4cbf0611d9903407949baaf9351badbff91c6c47e9765d5c5079067eb30c528a",
+    "chunks": 16,
+    "jobs": 0,
+    "pods": 0,
+    "inSync": true,
+    "managerReadyReplicas": 2,
+    "managerRestartedAt": "2026-10-02T08:28:11+02:00"
+  },
+  "receipts": [
+    {
+      "operation": "apply",
+      "jobName": "ptah-apply-result-size-maximum-7fed51399c5fdf34",
+      "jobUID": "da792189-3652-4b62-8630-12fd14fd66e1",
+      "podUID": "281dd504-9945-477a-a752-9c6078de7b38",
+      "receiptName": "ptah-result-65bc37ac8ae190a54bd0ca376705f6704ef4fb6c56a2beb6246a49b94d1105b8-complete",
+      "receiptUID": "b12c9c77-3308-4475-9cd2-da36cb009068",
+      "payloadSize": 468,
+      "payloadDigest": "sha256:bbafd58d318f7051006dcf571be8073e5a890797b9e14544a6ecc3da7df6bde0",
+      "chunkCount": 1
+    },
+    {
+      "operation": "observe",
+      "jobName": "ptah-observe-result-size-maximum-9ee7d7c3ca52f1bd",
+      "jobUID": "65737398-1aad-488e-9438-5a46cd1532da",
+      "podUID": "bfd55a52-44ab-45d0-a5a2-08d6a5ec7878",
+      "receiptName": "ptah-result-776ceff0b6ac753e08f55a85cc8a08381f3cb4d101c77a36cba342c667b4cc22-complete",
+      "receiptUID": "6c4cecd3-b099-47b9-8101-896361efde3b",
+      "payloadSize": 476,
+      "payloadDigest": "sha256:3594c3195d0ac22387180755c194f2fa6d1f7c117e36ddd9a392579165e33cc1",
+      "chunkCount": 1
+    },
+    {
+      "operation": "observe",
+      "jobName": "ptah-observe-result-size-maximum-b265cf7f68814d85",
+      "jobUID": "60befc6b-31cf-40f0-a5c0-5eb2380e1943",
+      "podUID": "20d81db7-7fad-47d9-9c1a-4b5fed71a0c3",
+      "receiptName": "ptah-result-9096275c23bd86ebe764d22e44ca390ce1862192060093848f4765e371258449-complete",
+      "receiptUID": "69f2794b-0739-4c0a-8b7b-bde81a631147",
+      "payloadSize": 623,
+      "payloadDigest": "sha256:ad3b47d5c30caa8586b771e9c4b0d132bf025fcc8613e0b6f44f2cb848d87f09",
+      "chunkCount": 1
+    },
+    {
+      "operation": "plan",
+      "jobName": "ptah-plan-result-size-maximum-0679503425087655",
+      "jobUID": "7c5b2496-e351-46e7-8d84-2de3f0319aa1",
+      "podUID": "db99a840-6a29-470a-b784-e76c33c4a07d",
+      "receiptName": "ptah-result-56e260d0361d0e1dc60b3a674e3acebb5d84ce9c026cdcf35c073371a5731801-complete",
+      "receiptUID": "52366907-deb2-45ba-a2d8-4908067efb44",
+      "payloadSize": 9787143,
+      "payloadDigest": "sha256:c7d1523176016cff4ae9acbcd314c21219897ebd4cd6647b41e764b2d2655d3a",
+      "chunkCount": 19
+    },
+    {
+      "operation": "plan",
+      "jobName": "ptah-plan-result-size-maximum-723e53920fc81c30",
+      "jobUID": "f8b0ed54-1e00-49bd-bb3f-1c562bf0d2a3",
+      "podUID": "54d0a617-068b-4c48-88c9-bf1babcc3212",
+      "receiptName": "ptah-result-1be312b103412f9e75f146bd32ee434599385d38e12c1c95d00fa7b9864f9238-complete",
+      "receiptUID": "c402b8e9-786c-4969-a170-250cdaa97378",
+      "payloadSize": 376,
+      "payloadDigest": "sha256:78ae9e10e19c838d15748bea64e2561bde7a54cbb99502ee99828da15b7bd82f",
+      "chunkCount": 1
+    },
+    {
+      "operation": "resolve",
+      "jobName": "ptah-resolve-result-size-maximum-087d45f0a0bd3a71",
+      "jobUID": "4f05b0a0-54bc-4062-b205-13d99799515a",
+      "podUID": "9b3f22b2-edfa-410c-8978-8b81805c21de",
+      "receiptName": "ptah-result-3e5b01284af90867ea1e77f99033f2fe65e718836675952142c1d7622ab72b66-complete",
+      "receiptUID": "6971d896-4e88-4e25-935b-40155071cfb3",
+      "payloadSize": 540,
+      "payloadDigest": "sha256:17cb2c4817b849be6f8df4cda0963caceec7ebf7653cf2eaee9ec21ed99fcb83",
+      "chunkCount": 1
+    },
+    {
+      "operation": "verify",
+      "jobName": "ptah-verify-result-size-maximum-5d68afa0f9b8d0bf",
+      "jobUID": "d78c9418-b5e6-4640-ac17-21ab1e02c169",
+      "podUID": "bafd2e79-5700-4c77-80f5-b4070c514bb6",
+      "receiptName": "ptah-result-a9e75bca3a63457a1788e62178c20a530098748d0e00daab204e7923ac370426-complete",
+      "receiptUID": "54b21d17-cff1-4ba7-a7ad-2400b773189f",
+      "payloadSize": 416,
+      "payloadDigest": "sha256:6be8a135b806f0470c1e06ed1c95637298866708106d6f26c26bfb534561b27a",
+      "chunkCount": 1
+    }
+  ],
+  "proved": [
+    "Before all schema operations, every node reported containerLogMaxSize=10Mi through configz. Helm enabled the receiver and the restricted rotator bootstrapped real projected trust; both manager replicas became Ready.",
+    "A normal PostgreSQL schema and a native exact-8-MiB plan completed Resolve, Verify, Observe, Plan, Apply, and convergence through durable Jobs. The size case required exact-plan approval. Database inspection verified the generated default length and character counts.",
+    "The original CEL policy refused the durable Job volume. The focused unit row failed before the fix and passed after it. Installed generated policy and real API mutation tests admit isolated credentials and refuse unreserved Secrets, world-readable keys, writable mounts, and init-container access.",
+    "Live manager authorization denied GET on the pods log subresource and Secrets, and allowed result-record GET. Every captured normal-workflow operation Job had durable-delivery flags and automountServiceAccountToken=false.",
+    "After convergence, all seven maximum-plan Jobs and their Pods were removed, then both manager replicas were restarted. An independent API reader verified unchanged completion/manifest/chunk UIDs, sizes, and SHA-256 digests for all seven receipts. The 16 plan chunks reconstructed the same exact 8-MiB document; no operation Jobs or Pods remained."
+  ],
+  "notProved": [
+    "The deletion/restart test runs after controller consumption and convergence. It does not prove controller harvest after an ACK but before consumption, loss of an ACK, duplicate delivery, or Pod death between SQL mutation and publication.",
+    "This covers PostgreSQL on Kubernetes 1.37 only. MySQL, migration operations, other supported minors, measured Lease contention, installed CA rotation, enforced NetworkPolicy, quota, backup/restore, retention, and authorized result-record cleanup remain unqualified.",
+    "The development option remains disabled by default. Log-based default installations still require the documented workaround. This record does not close issue 586 or 242 or authorize publication."
+  ],
+  "cleanup": {
+    "taskClusterRemoved": true,
+    "taskContainersRemaining": 0,
+    "taskTaggedImagesRemaining": 0,
+    "taskVolumesRemaining": 0,
+    "replacementSSHTunnelStopped": true,
+    "sharedResourcesPruned": false
+  },
+  "sourceSHA256": {
+    "charts/ptah-operator/templates/controller-object-guard.yaml": "14c5a215f7fede1514dd6f72ed603beebde2ac8deb328fda643d7a1bee37d667",
+    "internal/crdupgrade/controller_object_guard.go": "fbce8024d6ee3205e40a36bb0dadd532b8e2908ea46e1aa96400ccfff778b80c",
+    "internal/crdupgrade/result_credential_contract.go": "db6162805e4d4f94c89eff876087540e76dd2efeabc83990bff85747b9bdba80",
+    "internal/crdupgrade/result_job_contract_test.go": "77fdf7091cb52a44a4f85d2a2a065e4c07826b5ad526ef68a4c0ffd8ce87ec9a",
+    "test/envtest/admissionpolicy/result_job_test.go": "818ecab4e9243f94ac981ec37e82f8a1429c4a9aafb0729e41355f6641b53e6a",
+    "hack/status_permissions_test.go": "65edc4ebfe21c50083d83320357247b13e6f9da3e0e340026fb0128cf0b3d8f5",
+    "hack/uncertainty_record_writers_test.go": "988d40415b90b7e0081e0328960ef1f799bc33fc94b2ff0915a98e1505931967",
+    "test/e2e/migrations_isolation.go": "d6b8597b1e05425815454664dcd6e1633aa45f46df16916c59154bc857fd103b",
+    "test/e2e/migrations_isolation_e2e_test.go": "56cd40320dcb635df6edaf01d1d92acbf664241a5f24c00376d14238b2375b19",
+    "test/e2e/migrations_isolation_test.go": "cf9443af0d306b322da66c2e1fef21212080104ecdd6d2c6367d2c4495bf835b"
+  },
+  "localEvidenceSHA256": {
+    "/private/tmp/ptah-result-integration-bootstrap.log": "0e0fb20b5beeac2536d3ed18d653c8a97de0c943cf1733a33107b92483f28c98",
+    "/private/tmp/ptah-result-integration-workflow.log": "82e8e80302bddc4c932d23d4e181f4abd8cb51343bd2331737793813a1cc5e4e",
+    "/private/tmp/ptah-result-size-workflow.log": "0c1658d71832bab23b5d5415e5356b5965f1088daff26898eacac352549c0f1d",
+    "/private/tmp/ptah-result-job-guard-api.jsonl": "c47976b10c475426d093e2d1e383f81feaab22fe90d69286e98649225ee41609",
+    "/private/tmp/ptah-result-job-guard-race-final.jsonl": "879b417759e9ef660092d554e345c154c9b1ec42d2ac0b638648bddcda08c151",
+    "/private/tmp/ptah-result-integration-verify-final.log": "182d241d59fb164b005a76ba49a3b38b4b35363923a20038b7e6dbfeed20eed8",
+    "/private/tmp/ptah-result-integration-cleanup.log": "4adc92952dff563122c48b3592c04a0310b558e60e9c7359c6d701fc893e170c"
+  }
+}
