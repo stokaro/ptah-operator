@@ -9,8 +9,9 @@ import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 type PtahResultRecordSpec struct {
 	// Type identifies the record's role in credential or result publication.
 	// Credential records contain delivery key material; intent, chunk, and
-	// completion records contain authenticated operation evidence.
-	// +kubebuilder:validation:Enum=credential;intent;chunk;complete
+	// completion records contain authenticated operation evidence. Retired
+	// records fence delivery and start the evidence retention window.
+	// +kubebuilder:validation:Enum=credential;intent;chunk;complete;retired
 	Type string `json:"type"`
 
 	// Data is the record's exact bytes, base64-encoded on the wire. Readers must

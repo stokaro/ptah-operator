@@ -8,8 +8,25 @@ import (
 
 	api "github.com/stokaro/ptah-operator/api/v1alpha1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
+
+// StoredBinding reads the binding of an admission-protected intent for cleanup.
+// Unlike Load, it accepts an API-controlled foreground deletion in progress;
+// it grants no read receipt or authority to resume publication.
+func StoredBinding(intent *api.PtahResultRecord) (Binding, error) {
+	if intent == nil || intent.UID == "" {
+		return Binding{}, ErrInvalid
+	}
+	copy := intent.DeepCopy()
+	if !copy.DeletionTimestamp.IsZero() && len(copy.Finalizers) == 1 && copy.Finalizers[0] == metav1.FinalizerDeleteDependents {
+		copy.Finalizers = nil
+	}
+	copy.DeletionTimestamp = nil
+	m, _, err := admissionManifest(copy)
+	return m.Binding, err
+}
 
 // ValidateRecordCreate checks publication structure through direct API reads.
 // It returns the intent's binding and, for a completion, the complete payload.

@@ -8,9 +8,11 @@ import (
 	"github.com/stokaro/ptah-operator/internal/resultcredentials"
 	"github.com/stokaro/ptah-operator/internal/resultdelivery"
 	"github.com/stokaro/ptah-operator/internal/resultdelivery/jobconfig"
+	"github.com/stokaro/ptah-operator/internal/resultretention"
 	"github.com/stokaro/ptah-operator/internal/resultstore"
 	admissionv1 "k8s.io/api/admission/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 func (v *Validator) validateResultRecord(ctx context.Context, req admissionv1.AdmissionRequest) error {
@@ -41,7 +43,12 @@ func (v *Validator) validateResultRecord(ctx context.Context, req admissionv1.Ad
 		if decodeErr != nil {
 			return decodeErr
 		}
-		if record.Spec.Type == "credential" {
+		if record.Spec.Type == "retired" {
+			if v.ResultCredentials == nil {
+				return denyf("result publication trust is not configured")
+			}
+			err = v.validateResultRetirement(ctx, record)
+		} else if record.Spec.Type == "credential" {
 			if !strings.HasPrefix(record.Name, jobconfig.SecretPrefix) {
 				return denyf("credential record name is outside its reserved namespace")
 			}
@@ -105,4 +112,29 @@ func (v *Validator) validateResultRecord(ctx context.Context, req admissionv1.Ad
 		return denyf("result record write violates its immutable operation binding")
 	}
 	return nil
+}
+
+func (v *Validator) validateResultRetirement(ctx context.Context, record *api.PtahResultRecord) error {
+	r, err := resultretention.Decode(record)
+	if err != nil || !record.DeletionTimestamp.IsZero() || len(record.Finalizers) != 0 {
+		return resultretention.ErrRecord
+	}
+	source := &api.PtahResultRecord{}
+	if err := v.Reader.Get(ctx, client.ObjectKey{Namespace: record.Namespace, Name: r.Source.Name}, source); err != nil {
+		return err
+	}
+	if source.UID != r.Source.UID || source.Spec.Type != r.Source.Type {
+		return resultretention.ErrRecord
+	}
+	var binding resultstore.Binding
+	if source.Spec.Type == "credential" {
+		identity, readErr := resultcredentials.StoredRecordIdentity(source)
+		binding, err = identity.Binding, readErr
+	} else {
+		binding, err = resultstore.StoredBinding(source)
+	}
+	if err != nil || binding != r.Binding {
+		return resultretention.ErrRecord
+	}
+	return resultretention.CheckUnpinned(ctx, v.Reader, binding)
 }

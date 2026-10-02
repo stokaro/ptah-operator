@@ -18,6 +18,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/resultauthority"
 	"github.com/stokaro/ptah-operator/internal/resultdelivery"
 	"github.com/stokaro/ptah-operator/internal/resultdelivery/jobconfig"
+	"github.com/stokaro/ptah-operator/internal/resultretention"
 )
 
 // ValidateCreate checks the submitted bytes using the issuer's trust, without
@@ -185,53 +186,55 @@ func ValidateDelete(ctx context.Context, reader client.Reader, secret *corev1.Se
 		if err != nil && !apierrors.IsNotFound(err) {
 			return err
 		}
-		certificate, err := tls.X509KeyPair(secret.Data["tls.crt"], secret.Data["tls.key"])
-		if err != nil {
-			return ErrCredential
-		}
-		identity, err := resultdelivery.StoredClientIdentity(certificate)
-		if err != nil {
-			return ErrCredential
-		}
-		b := identity.Binding
-		if secret.Namespace != b.Namespace || secret.Name != jobconfig.CredentialName(b.UID, b.OperationID, b.JobName) ||
-			!reflect.DeepEqual(secret.Annotations, annotations(identity)) {
-			return ErrCredential
-		}
-		// Parent loss or replacement is not proof that the operation stopped.
-		// Read the owner directly even after the canonical record disappeared.
-		owner = metav1.OwnerReference{APIVersion: api.GroupVersion.String(), Kind: b.Kind, Name: b.Name, UID: b.UID}
 	}
-	key := client.ObjectKey{Namespace: secret.Namespace, Name: owner.Name}
-	var object client.Object
-	var activeID string
-	var err error
-	switch owner.Kind {
-	case "PtahSchema":
-		schema := &api.PtahSchema{}
-		object = schema
-		err = reader.Get(ctx, key, schema)
-		if schema.Status.ActiveOperation != nil {
-			activeID = schema.Status.ActiveOperation.ID
-		}
-	case "PtahMigration":
-		migration := &api.PtahMigration{}
-		object = migration
-		err = reader.Get(ctx, key, migration)
-		if migration.Status.ActiveOperation != nil {
-			activeID = migration.Status.ActiveOperation.ID
-		}
-	default:
-		return ErrCredential
-	}
-	if apierrors.IsNotFound(err) {
-		return nil
-	}
+	identity, err := storedIdentity(secret)
 	if err != nil {
 		return err
 	}
-	if object.GetUID() == owner.UID && activeID == secret.Annotations[AnnotationOperationID] {
-		return errors.New("result credential belongs to an active operation")
+	b := identity.Binding
+	if owner.Kind != "PtahResultRecord" && (owner.Kind != b.Kind || owner.Name != b.Name || owner.UID != b.UID) {
+		return ErrCredential
 	}
-	return nil
+	// Parent loss or replacement is not proof that recovery has finished.
+	return resultretention.CheckUnpinned(ctx, reader, b)
+}
+
+// StoredRecordIdentity reads the immutable binding without granting delivery
+// authority. Cleanup uses it after certificate or CA expiry. The caller must
+// read the persisted, admission-protected record directly from the API.
+func StoredRecordIdentity(record *api.PtahResultRecord) (resultdelivery.Identity, error) {
+	secret, err := recordSecret(record)
+	if err != nil || record.UID == "" {
+		return resultdelivery.Identity{}, ErrCredential
+	}
+	identity, err := storedIdentity(secret)
+	if err != nil {
+		return resultdelivery.Identity{}, err
+	}
+	b := identity.Binding
+	if len(secret.OwnerReferences) != 1 {
+		return resultdelivery.Identity{}, ErrCredential
+	}
+	owner := secret.OwnerReferences[0]
+	if owner.APIVersion != api.GroupVersion.String() || owner.Kind != b.Kind || owner.Name != b.Name || owner.UID != b.UID || owner.Controller == nil || !*owner.Controller || owner.BlockOwnerDeletion == nil || !*owner.BlockOwnerDeletion {
+		return resultdelivery.Identity{}, ErrCredential
+	}
+	return identity, nil
+}
+
+func storedIdentity(secret *corev1.Secret) (resultdelivery.Identity, error) {
+	certificate, err := tls.X509KeyPair(secret.Data["tls.crt"], secret.Data["tls.key"])
+	if err != nil {
+		return resultdelivery.Identity{}, ErrCredential
+	}
+	identity, err := resultdelivery.StoredClientIdentity(certificate)
+	if err != nil {
+		return resultdelivery.Identity{}, ErrCredential
+	}
+	b := identity.Binding
+	if secret.Namespace != b.Namespace || secret.Name != jobconfig.CredentialName(b.UID, b.OperationID, b.JobName) ||
+		!reflect.DeepEqual(secret.Annotations, annotations(identity)) {
+		return resultdelivery.Identity{}, ErrCredential
+	}
+	return identity, nil
 }

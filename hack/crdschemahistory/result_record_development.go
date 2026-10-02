@@ -2,7 +2,8 @@ package crdschemahistory
 
 // resultRecordDevelopmentBase pins the complete unreleased schema-1 tree before
 // durable result records were added for 0.2.0. No existing CRD changes in this
-// transition, and no published release stored either tree. Keep the initial
+// transition, and no published release stored either tree. The second exact
+// transition adds the retired role to the initial result-record schema. Keep the initial
 // contract at 1 without exempting any other schema change from the history gate.
 // After the first tag, ordinary schema changes still require a version advance.
 var resultRecordDevelopmentBase = map[string]string{
@@ -17,10 +18,22 @@ var resultRecordDevelopmentBase = map[string]string{
 	"ptahschemas.operator.ptah.run":                     "sha256:b748c135a91ab9f47252aba72d8b556d301e2cec6d505c3caa4ed6f2eb8736fe",
 }
 
-const resultRecordDevelopmentDigest = "sha256:e12cd230da4d27c306ed813eabed59995f464d909474a7412fc537e8063a8f6b"
+const resultRecordDevelopmentDigest = "sha256:edd0a51e21a0d2d59ad6e762079888fb696ae180ed940eeea10cac675f79c61e"
+const resultRecordBeforeRetirementDigest = "sha256:e12cd230da4d27c306ed813eabed59995f464d909474a7412fc537e8063a8f6b"
 
 func resultRecordDevelopmentAddition(baseline, candidate documentSet) bool {
-	if len(baseline.byName) != len(resultRecordDevelopmentBase) || len(candidate.byName) != len(resultRecordDevelopmentBase)+1 {
+	if len(candidate.byName) != len(resultRecordDevelopmentBase)+1 {
+		return false
+	}
+	switch len(baseline.byName) {
+	case len(resultRecordDevelopmentBase):
+		// The initial, unreleased addition of durable result records.
+	case len(resultRecordDevelopmentBase) + 1:
+		before, found := baseline.byName["ptahresultrecords.operator.ptah.run"]
+		if !found || before.crd.Annotations[schemaVersionAnnotation] != "1" || digestSpec(before.normalizedSpec) != resultRecordBeforeRetirementDigest {
+			return false
+		}
+	default:
 		return false
 	}
 	for name, expected := range resultRecordDevelopmentBase {

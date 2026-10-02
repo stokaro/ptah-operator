@@ -5,7 +5,7 @@ metadata:
   annotations:
     operator.ptah.run/controller-state-version: "1"
     operator.ptah.run/crd-schema-version: "1"
-    operator.ptah.run/crd-schema-digest: "sha256:e12cd230da4d27c306ed813eabed59995f464d909474a7412fc537e8063a8f6b"
+    operator.ptah.run/crd-schema-digest: "sha256:edd0a51e21a0d2d59ad6e762079888fb696ae180ed940eeea10cac675f79c61e"
     controller-gen.kubebuilder.io/version: v0.22.0
   name: ptahresultrecords.operator.ptah.run
 spec:
@@ -46,6 +46,7 @@ spec:
                 - intent
                 - chunk
                 - complete
+                - retired
                 type: string
             required:
             - data

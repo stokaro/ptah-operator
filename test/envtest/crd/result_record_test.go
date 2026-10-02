@@ -22,7 +22,7 @@ func TestResultRecordSchema(t *testing.T) {
 		{name: "empty data", mutate: setting("", "spec", "data"), want: []cause{{"spec.data", "at least 1"}}},
 		{name: "oversized encoded data", mutate: setting(base64.StdEncoding.EncodeToString([]byte(strings.Repeat("x", 524291))), "spec", "data"), want: []cause{{"spec.data", "699052"}}},
 	})
-	for _, role := range []string{"credential", "intent", "chunk", "complete"} {
+	for _, role := range []string{"credential", "intent", "chunk", "complete", "retired"} {
 		t.Run(role, func(t *testing.T) {
 			object := base()
 			object.SetName(role)

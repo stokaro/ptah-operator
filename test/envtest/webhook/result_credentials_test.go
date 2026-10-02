@@ -26,6 +26,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/resultcredentials/binding"
 	"github.com/stokaro/ptah-operator/internal/resultdelivery"
 	"github.com/stokaro/ptah-operator/internal/resultdelivery/jobconfig"
+	"github.com/stokaro/ptah-operator/internal/resultretention"
 	"github.com/stokaro/ptah-operator/internal/resultstore"
 )
 
@@ -132,6 +133,13 @@ func TestResultCredentialAdmission(t *testing.T) {
 	if repeated, err := issuer.Ensure(ctx, identity); err != nil || repeated != receipt {
 		t.Fatalf("retry without Secret read changed credential: %#v %v", repeated, err)
 	}
+	retirement, err := resultretention.Record(identity.Binding, resultretention.Source{Name: record.Name, UID: record.UID, Type: "credential"}, resultretention.MinimumWindow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Run("active attempt cannot be marked retired", func(t *testing.T) {
+		requireDenied(t, managerAPI.Create(ctx, retirement.DeepCopy(), client.DryRunAll), controllerWriteWebhook, "immutable operation binding")
+	})
 	t.Run("record metadata cannot move the Pod pin", func(t *testing.T) {
 		next := record.DeepCopy()
 		next.Annotations[resultcredentials.AnnotationPodUID] = "replacement"
@@ -208,6 +216,39 @@ func TestResultCredentialAdmission(t *testing.T) {
 		requireDenied(t, admin.Delete(ctx, record, client.DryRunAll), controllerWriteWebhook, "immutable operation binding")
 	})
 	t.Run("retired record is collected before its Secret", func(t *testing.T) {
+		fixture.schema.Status.ActiveOperation = nil
+		writeStatus(t, fixture.schema)
+		wrong, err := resultretention.Record(identity.Binding, resultretention.Source{Name: record.Name, UID: "replaced", Type: "credential"}, resultretention.MinimumWindow)
+		if err != nil {
+			t.Fatal(err)
+		}
+		requireDenied(t, managerAPI.Create(ctx, wrong, client.DryRunAll), controllerWriteWebhook, "immutable operation binding")
+		requireDenied(t, admin.Create(ctx, retirement.DeepCopy(), client.DryRunAll), controllerWriteWebhook, "only the configured operator manager")
+		before := time.Now().Add(-time.Second)
+		// A caller-supplied date must not backdate the retention clock.
+		retirement.CreationTimestamp = metav1.NewTime(before.Add(-24 * time.Hour))
+		if err := managerAPI.Create(ctx, retirement); err != nil {
+			t.Fatal(err)
+		}
+		if err := managerAPI.Get(ctx, client.ObjectKeyFromObject(retirement), retirement); err != nil {
+			t.Fatal(err)
+		}
+		if retirement.UID == "" || retirement.CreationTimestamp.Before(&metav1.Time{Time: before}) {
+			t.Fatal("retirement clock was not assigned by the API")
+		}
+		if err := resultretention.Eligible(ctx, admin, retirement, time.Now(), resultretention.MinimumWindow); !errors.Is(err, resultretention.ErrWindow) {
+			t.Fatalf("new retirement marker bypasses its retention window: %v", err)
+		}
+		next := retirement.DeepCopy()
+		next.Annotations = map[string]string{"override": "cleanup"}
+		requireDenied(t, admin.Update(ctx, next, client.DryRunAll), controllerWriteWebhook, "immutable operation binding")
+		// Restore the old claim while its original Job and Pod still exist.
+		// Its persisted retirement must prevent issuing delivery authority again.
+		fixture.schema.Status.ActiveOperation = op
+		writeStatus(t, fixture.schema)
+		if _, err := issuer.Ensure(ctx, identity); !errors.Is(err, resultdelivery.ErrAuthority) {
+			t.Fatalf("retirement did not fence the restored claim: %v", err)
+		}
 		fixture.schema.Status.ActiveOperation = nil
 		writeStatus(t, fixture.schema)
 		if len(secret.OwnerReferences) != 1 || secret.OwnerReferences[0].Kind != "PtahResultRecord" ||

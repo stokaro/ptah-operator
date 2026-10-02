@@ -10,10 +10,53 @@ import (
 	api "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/resultdelivery"
 	"github.com/stokaro/ptah-operator/internal/resultdelivery/resulttest"
+	"github.com/stokaro/ptah-operator/internal/resultretention"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
+
+func TestCredentialCleanupPreservesRecoveryAfterClaimRetires(t *testing.T) {
+	for _, family := range []string{"schema-apply-admitted-scheduling", "migration-apply-admitted-scheduling"} {
+		t.Run(family, func(t *testing.T) {
+			f := resulttest.New(t, family)
+			c := &credentialAPI{Client: f.Client(t)}
+			issuer, _, _, _ := testIssuer(t, c)
+			if _, err := issuer.Ensure(t.Context(), f.Identity); err != nil {
+				t.Fatal(err)
+			}
+			canonical := getCredential(t, c, f)
+			projection := credentialProjection(canonical)
+			projection.UID = "projection-uid"
+			switch owner := f.Subject.(type) {
+			case *api.PtahSchema:
+				owner.Status.ActiveOperation = nil
+				owner.Status.PendingObservation = &api.PendingObservationStatus{ApplyOperationID: f.Identity.Binding.OperationID}
+			case *api.PtahMigration:
+				owner.Status.ActiveOperation = nil
+				owner.Status.UnresolvedRun = &api.UnresolvedMigrationRunStatus{OperationID: f.Identity.Binding.OperationID}
+			}
+			if err := c.Update(t.Context(), f.Subject); err != nil {
+				t.Fatal(err)
+			}
+			record := &api.PtahResultRecord{}
+			if err := c.Get(t.Context(), client.ObjectKeyFromObject(canonical), record); err != nil {
+				t.Fatal(err)
+			}
+			if err := ValidateRecordDelete(t.Context(), secretForbiddenReader{Reader: c}, record); !errors.Is(err, resultretention.ErrPinned) {
+				t.Fatalf("unsettled operation lost its credential record: %v", err)
+			}
+			// Even a lost parent must not let collection erase the projection
+			// while the resource still needs the original execution evidence.
+			if err := c.Client.Delete(t.Context(), record); err != nil {
+				t.Fatal(err)
+			}
+			if err := ValidateDelete(t.Context(), secretForbiddenReader{Reader: c}, projection); !errors.Is(err, resultretention.ErrPinned) {
+				t.Fatalf("unsettled operation lost its orphaned projection: %v", err)
+			}
+		})
+	}
+}
 
 func TestCredentialForegroundFinalizerRemoval(t *testing.T) {
 	f := resulttest.New(t, "schema-observe")

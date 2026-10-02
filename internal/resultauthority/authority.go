@@ -19,6 +19,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/podintent"
 	"github.com/stokaro/ptah-operator/internal/resultdelivery"
 	"github.com/stokaro/ptah-operator/internal/resultdelivery/jobconfig"
+	"github.com/stokaro/ptah-operator/internal/resultretention"
 )
 
 // ErrNotReady is transient: the controller has not yet persisted the exact Job
@@ -38,6 +39,9 @@ func (a Authorizer) Check(ctx context.Context, identity resultdelivery.Identity)
 	}
 	if _, err := resultdelivery.CertificateURI(identity); err != nil {
 		return resultdelivery.ErrAuthority
+	}
+	if err := a.checkRetirement(ctx, identity); err != nil {
+		return err
 	}
 	claim, err := a.claim(ctx, identity)
 	if err != nil {
@@ -80,7 +84,18 @@ func (a Authorizer) Check(ctx context.Context, identity resultdelivery.Identity)
 	if !reflect.DeepEqual(current, claim) {
 		return resultdelivery.ErrAuthority
 	}
+	if err := a.checkRetirement(ctx, identity); err != nil {
+		return err
+	}
 	return ctx.Err()
+}
+
+func (a Authorizer) checkRetirement(ctx context.Context, identity resultdelivery.Identity) error {
+	err := resultretention.CheckOpen(ctx, a.Reader, identity.Binding)
+	if errors.Is(err, resultretention.ErrRetired) {
+		return resultdelivery.ErrAuthority
+	}
+	return err
 }
 
 func (a Authorizer) claim(ctx context.Context, identity resultdelivery.Identity) (jobclaim.Claim, error) {

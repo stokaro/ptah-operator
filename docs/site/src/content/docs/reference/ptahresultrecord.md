@@ -12,6 +12,12 @@ identities allowed to inspect operation SQL and delivery credentials; ordinary
 Secret read permission does not grant access to them. Include this resource in
 the cluster's encryption-at-rest and restricted backup configuration.
 
+A `retired` record binds a completed or abandoned attempt to the exact credential
+or publication intent that proved its identity. Its API-assigned creation time
+starts the retention window. It prevents issuing credentials or publishing more
+results for that attempt; it does not erase an acknowledged result or override
+the resource's recovery pins. These records are created by the manager.
+
 A payload chunk has the following shape. Its publication intent supplies the
 binding, index, byte length, and digest. Reading a chunk alone does not establish
 that a complete result was accepted.
@@ -47,7 +53,7 @@ spec:
 | Field | Type | What it does |
 | --- | --- | --- |
 | `spec.data` | `string`, required | Data is the record's exact bytes, base64-encoded on the wire. Readers must validate its protocol and digest before using it. Treat every role as confidential: payloads may contain SQL and credentials contain private keys. MaxLength is the base64 length of the 512 KiB record ceiling. |
-| `spec.type` | `string`, required, one of `credential`, `intent`, `chunk`, `complete` | Type identifies the record's role in credential or result publication. Credential records contain delivery key material; intent, chunk, and completion records contain authenticated operation evidence. |
+| `spec.type` | `string`, required, one of `credential`, `intent`, `chunk`, `complete`, `retired` | Type identifies the record's role in credential or result publication. Credential records contain delivery key material; intent, chunk, and completion records contain authenticated operation evidence. Retired records fence delivery and start the evidence retention window. |
 
 ## status
 

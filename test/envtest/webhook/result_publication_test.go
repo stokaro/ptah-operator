@@ -10,14 +10,81 @@ import (
 	"time"
 
 	api "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/resultauthority"
 	"github.com/stokaro/ptah-operator/internal/resultcredentials"
 	"github.com/stokaro/ptah-operator/internal/resultdelivery"
+	"github.com/stokaro/ptah-operator/internal/resultretention"
 	"github.com/stokaro/ptah-operator/internal/resultstore"
 	"github.com/stokaro/ptah-operator/internal/runner"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
+
+func TestResultRetirementFencesPublicationWithoutErasingReceipts(t *testing.T) {
+	for _, partial := range []bool{false, true} {
+		t.Run(fmt.Sprintf("partial=%v", partial), func(t *testing.T) {
+			f, identity, store := publicationFixture(t, true)
+			payload := publicationPayload(t, identity)
+			publishing := store
+			interrupted := errors.New("stop after intent")
+			if partial {
+				publishing.Client = publicationWriter{Client: store.Client, after: func(r *api.PtahResultRecord) error {
+					if r.Spec.Type == "intent" {
+						return interrupted
+					}
+					return nil
+				}}
+			}
+			receipt, err := publishing.Publish(t.Context(), identity.Binding, payload, publicationDigest(payload))
+			if (partial && !errors.Is(err, interrupted)) || (!partial && err != nil) {
+				t.Fatalf("publication boundary: %v", err)
+			}
+			name, err := resultstore.Name(identity.Binding)
+			if err != nil {
+				t.Fatal(err)
+			}
+			intent := &api.PtahResultRecord{}
+			if err := store.Reader.Get(t.Context(), client.ObjectKey{Namespace: f.namespace, Name: name}, intent); err != nil {
+				t.Fatal(err)
+			}
+			marker, err := resultretention.Record(identity.Binding, resultretention.Source{Name: intent.Name, UID: intent.UID, Type: "intent"}, resultretention.MinimumWindow)
+			if err != nil {
+				t.Fatal(err)
+			}
+			op := f.schema.Status.ActiveOperation.DeepCopy()
+			f.schema.Status.ActiveOperation = nil
+			writeStatus(t, f.schema)
+			if err := store.Client.Create(t.Context(), marker); err != nil {
+				t.Fatal(err)
+			}
+			// A client that lost the marker's CREATE response sees the same
+			// immutable record, rather than resetting its retention clock.
+			retry, err := resultretention.Record(identity.Binding, resultretention.Source{Name: intent.Name, UID: intent.UID, Type: "intent"}, resultretention.MinimumWindow)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := store.Client.Create(t.Context(), retry); !apierrors.IsAlreadyExists(err) {
+				t.Fatalf("same retirement retry: %v", err)
+			}
+			f.schema.Status.ActiveOperation = op
+			writeStatus(t, f.schema)
+			_, err = store.PublishAuthorized(t.Context(), identity.Binding, payload, publicationDigest(payload), func(ctx context.Context) error {
+				return (resultauthority.Authorizer{Reader: store.Reader}).Check(ctx, identity)
+			})
+			if err == nil {
+				t.Fatal("restored claim resumed retired delivery")
+			}
+			if partial {
+				if _, _, err := store.Load(t.Context(), identity.Binding); !errors.Is(err, resultstore.ErrIncomplete) {
+					t.Fatalf("retired partial publication was completed: %v", err)
+				}
+			} else if got, loaded, err := store.Load(t.Context(), identity.Binding); err != nil || loaded != receipt || !bytes.Equal(got, payload) {
+				t.Fatalf("retirement erased acknowledged evidence: %v", err)
+			}
+		})
+	}
+}
 
 func publicationFixture(t *testing.T, issueCredential bool) (dispatchFixture, resultdelivery.Identity, resultstore.Store) {
 	t.Helper()

@@ -288,14 +288,18 @@ CREATE requires the configured manager, trusted certificate bytes, exact public
 binding metadata, and current operation authority. Secret creation also requires
 its bytes and binding to match the canonical record. Credential-record creation
 authenticates the same certificate and live binding; record UPDATE freezes its
-spec and metadata, and record DELETE preserves the active operation pin. Without an issuer configured
+spec and metadata, and record DELETE preserves execution and recovery pins. Without an issuer configured
 in the manager, creation is refused. UPDATE preserves data, ownership, labels,
 annotations, and finalizers, except removal of the API's sole `foregroundDeletion`
 finalizer from an already-deleting object. Orphan deletion is refused because it
 would require rewriting immutable owner references. DELETE reads the owner directly and refuses while
 that exact operation ID remains active, including after Pod loss, generation
-changes, Lease loss, or the start of resource deletion. A retired operation or
-absent/replaced owner allows credential-record cleanup. A projection whose exact
+changes, Lease loss, or the start of resource deletion. Pending schema observation,
+pending Lease release, migration unresolved/resolved-run evidence, and the most
+recent migration run also retain their attempt. An unresolved-run annotation
+keeps that protection when restore omits status; an unreadable annotation refuses
+cleanup. A retired, unpinned operation or absent/replaced owner allows
+credential-record cleanup. A projection whose exact
 canonical record still exists cannot be deleted, even after retirement. After
 record removal or replacement, projection DELETE decodes the immutable
 certificate's recorded binding and rechecks the original resource directly.
@@ -605,6 +609,36 @@ unknown-outcome recovery, database inspection, and fresh authorization still
 apply. SQL and publication are not an atomic transaction.
 
 ## Retention and acceptance
+
+An immutable `retired` record fixes the attempt's full binding, the name and UID
+of the credential or intent that proved it, and a minimum retention duration.
+Only the manager can create it. Admission reads that source directly, checks the
+complete binding, and refuses every execution or recovery pin described above.
+Source expiry does not invalidate historical identity. Source replacement does.
+
+The API server assigns the retirement record's creation time. Eligibility starts
+there, not at the creation of a potentially long-running Job or publication.
+The minimum window is one hour, exceeding the profile's five-minute backup lag
+plus thirty-minute combined recovery objective. A longer saved or current policy
+wins, and every eligibility check re-reads the live pins. This timing rule is not
+proof that a backup was made or that restore meets those objectives.
+
+Both authority checks around a delivery read the retirement fence. A restored
+active claim cannot issue credentials, resume a partial publication, or obtain a
+new delivery acknowledgment for an attempt with a retirement record. Existing
+complete receipts remain readable: fencing delivery does not discard evidence.
+Unreadable fences and API failures refuse new authority. Real API tests exercise
+both credential and intent sources, an attempted backdated creation time,
+immutable marker retries, restored claims, and intact receipt bytes.
+
+Retirement recording and eligibility are implemented; automatic scanning and
+authorized publication deletion are not yet connected. Publication DELETE and
+DeleteCollection remain refused, and manager cleanup permissions remain absent.
+The collector must delete only after the window and pin checks, use UID/RV
+preconditions, remove publication children before their intent, and remove a
+retirement fence last. A fence must remain while the original Job UID exists,
+so restoring its old claim cannot reactivate the original Pod after collection.
+These collection and quota behaviors still require installed proof.
 
 Before enabling this path, complete publication-record retention and authorized deletion,
 receiver certificates and NetworkPolicy, bounded request metrics, and installed
