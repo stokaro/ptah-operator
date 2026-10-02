@@ -1,0 +1,30 @@
+{
+  "recordedAt": "2026-10-02T20:18:01.375973+00:00",
+  "checks": 70,
+  "status": "PASS",
+  "backups": {
+    "operator-checkpoint": {
+      "ciphertextMatches": true,
+      "plaintextMatches": true
+    },
+    "roles": {
+      "ciphertextMatches": true,
+      "plaintextMatches": true
+    },
+    "database": {
+      "ciphertextMatches": true,
+      "plaintextMatches": true
+    },
+    "target-release-evidence": {
+      "ciphertextMatches": true,
+      "plaintextMatches": true
+    }
+  },
+  "originalApplyReceipt": {
+    "uid": "493d84ae-af7b-4d0c-9d51-283f3f5a1dec",
+    "payloadSHA256": "56e8d968f790271e3dfa5c376364dc3cfad9523351248f7d02711640742ba00a"
+  },
+  "expectedAndObservedLostRows": [
+    3
+  ]
+}

@@ -1,0 +1,43 @@
+{
+  "status": "PASS",
+  "acceptance": "Not assessed",
+  "scope": "Idle PostgreSQL migration combined cluster/database loss with durable result delivery on Kubernetes 1.37.0 linux/amd64.",
+  "sourceCommit": "107ef22e47dd3be621815c42a51bde9a3c0f4a13",
+  "checks": 70,
+  "recoverySeconds": 555.359,
+  "rtoBoundSeconds": 1800,
+  "databaseRPOUpperBoundSeconds": 4.810686,
+  "operatorRPOUpperBoundSeconds": 10.883663,
+  "rpoBoundSeconds": 300,
+  "expectedLostRowIDs": [
+    3
+  ],
+  "observedLostRowIDs": [
+    3
+  ],
+  "freshApplyJobs": 1,
+  "completeFreshApplyReceipts": 1,
+  "cleanup": "Both dedicated clusters and owned database resources are absent in independent Docker readback.",
+  "limitations": [
+    "One development recovery case; the other declared engine/family/loss/timing rows remain required.",
+    "The host reports 15979683840 bytes of RAM, below the frozen 16 GiB profile minimum; measured timing is a development result.",
+    "Bootstrap retains 64Mi kubelet logs. This record does not satisfy the separate default-10Mi logging requirement.",
+    "The new installation has new trust, journal, enrollment and resource UIDs. Original result bindings remain archived, not rewritten as new authority. Exact storage restoration is covered separately by result-backup-restore-2026-10-02.",
+    "Encrypted backups and keys remain locally restricted pending durable-store and custody acceptance. Temporary registries were removed and are not a portable recovery kit."
+  ],
+  "priorFailure": {
+    "sourceCommit": "d234b915359f972b3f3ddc7bb48eaa00dba444b8",
+    "stage": "Enable source result delivery before backup or loss injection",
+    "cause": "Bootstrap shell exit closed the source API SSH tunnel; Helm could not connect to 127.0.0.1:31817.",
+    "fix": "The recovery procedure owns any required replacement tunnel, validates its exact recorded forwarding endpoint, and marks pre-backup failures terminal."
+  },
+  "files": {
+    "cleanup-readback.json": "59fb5b83b19f8ea2eeb2722ebfe6bb13a62298dd845187cacb0b3712b93c1bc6",
+    "executed-cluster.py": "334e81d0e9c1f4613e3e45115a261f11f90b8685887f145b0221f210801b55d8",
+    "executed-operator.py": "032df9516141d27efc6f05b3005dcee422551aba1f3e66fe8e8136371c8e6d0d",
+    "independent-readback.json": "a010431c7ed9aa243fc1dfa631a2c8276c495683c65d1f495bcc8cd5d0c4babe",
+    "report.json": "3993a1536ebb91113a0450c625b5eb187f58d541318ab8c7fe0c5baa4f147c21",
+    "source-context.json": "d5c2736c069a6d6e67732f38f48a4c860b56cee45335be95d8ea9bb3cdbd0c01",
+    "target-context.json": "2668806e58c037b786abe0b56cb4037f2f349f58df204e320bbdf3de68e9d9ca"
+  }
+}

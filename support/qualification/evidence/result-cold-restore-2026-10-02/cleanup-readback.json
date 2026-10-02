@@ -1,0 +1,24 @@
+{
+  "recordedAt": "2026-10-02T20:18:34.856253+00:00",
+  "dockerContext": "remote-dev-container",
+  "cleanup": {
+    "sourceCluster": {
+      "nodes": [],
+      "containers": [],
+      "volumes": []
+    },
+    "targetCluster": {
+      "nodes": [],
+      "containers": [],
+      "volumes": []
+    },
+    "databaseContainers": [],
+    "databaseVolumes": [],
+    "databaseNetworks": []
+  },
+  "host": {
+    "NCPU": 8,
+    "MemTotal": 15979683840,
+    "Architecture": "x86_64"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "runID": "020-cold-durable-pg-reconnect",
+  "githubRunID": "",
+  "githubRunAttempt": "",
+  "operatorRevision": "107ef22e47dd3be621815c42a51bde9a3c0f4a13",
+  "ptahCommit": "f6e562c5b0986cd29a53a5cc01938827336b780a",
+  "ptahVersion": "v0.9.0-73-gf6e562c5b",
+  "kubernetes": "1.37.0",
+  "suite": "all",
+  "cluster": "ptah-e2e-1-37-0-020-cold-dura-3f3ad4b3f1"
+}
