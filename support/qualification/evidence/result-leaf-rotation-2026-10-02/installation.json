@@ -1,0 +1,52 @@
+{
+  "operatorRevision": "b0a51ff740784beaf6cd1ebb2fe8c2715583e1b5",
+  "operatorImage": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/operator@sha256:f338a4c98d77e4908426d0c4b45a1b177ffc8c2916cae3029217b9ec12cd6f36",
+  "runnerRevision": "b2576f9bbbe72979ba392456846fb16da1f0f03a",
+  "runnerImage": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-runner@sha256:7e2199f5c03660f094244b00962ec7e222f752f9cfc86276ac7cea296ce5d4b6",
+  "executorImage": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-executor@sha256:45530f0f2c41f4d649c207fe8221dad268946ca8da13b503244805c016f3c9dd",
+  "ptahRevision": "f6e562c5b0986cd29a53a5cc01938827336b780a",
+  "chartSHA256": "43c718af58a8ef74824b1081917d431290ea985e99fb99ba94efa2997de2260e",
+  "fixture": {
+    "fixtureRevision": "5cf47289dfe6cce29b699108dfcdb0f5b6ac116a",
+    "fixtureImage": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/e2e-fixture@sha256:4fbd272f6da19fe11dd50b26018b3fad796470e201d3753a26ea3e9c2a0e32bc",
+    "operatorRevision": "b0a51ff740784beaf6cd1ebb2fe8c2715583e1b5",
+    "operatorImage": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/operator@sha256:f338a4c98d77e4908426d0c4b45a1b177ffc8c2916cae3029217b9ec12cd6f36",
+    "runnerRevision": "b2576f9bbbe72979ba392456846fb16da1f0f03a",
+    "runnerImage": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-runner@sha256:7e2199f5c03660f094244b00962ec7e222f752f9cfc86276ac7cea296ce5d4b6"
+  },
+  "nodes": [
+    {
+      "name": "ptah-e2e-1-37-0-result-restar-5a0ef2fe7d-control-plane",
+      "version": "v1.37.0",
+      "architecture": "amd64",
+      "containerLogMaxSize": "10Mi"
+    },
+    {
+      "name": "ptah-e2e-1-37-0-result-restar-5a0ef2fe7d-control-plane2",
+      "version": "v1.37.0",
+      "architecture": "amd64",
+      "containerLogMaxSize": "10Mi"
+    },
+    {
+      "name": "ptah-e2e-1-37-0-result-restar-5a0ef2fe7d-control-plane3",
+      "version": "v1.37.0",
+      "architecture": "amd64",
+      "containerLogMaxSize": "10Mi"
+    },
+    {
+      "name": "ptah-e2e-1-37-0-result-restar-5a0ef2fe7d-worker",
+      "version": "v1.37.0",
+      "architecture": "amd64",
+      "containerLogMaxSize": "10Mi"
+    }
+  ],
+  "managerUIDs": [
+    "e09e3664-0137-4d34-895d-b159e169b7f6",
+    "0ca26803-0f5b-447c-87c6-54bfdf3a4049"
+  ],
+  "leadershipRestored": true,
+  "temporaryGatesRemoved": true,
+  "rotatorArgumentsRestored": true,
+  "publicationVerifiedAfterConvergence": true,
+  "planstoreVerifiedAfterConvergence": true
+}

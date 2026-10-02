@@ -248,6 +248,10 @@ def main():
         print('Plan completed and receipt verified before any controller could harvest', flush=True)
         k('delete', 'pod', pod_name, '--wait=true', '--timeout=60s')
         assert not k('get', 'pod', pod_name, '--ignore-not-found', '-o', 'name').strip()
+        if E.get('RESULT_PROBE_ROTATE_LEAF') == '1':
+            import result_rotation
+            result_rotation.run(k, get, create, wait, save, E)
+            assert claim() == before and not plans(), 'controller harvested during rotation'
         restart()
         wait(leaders_stopped, 120)
         second_managers = {p['metadata']['uid'] for p in json.loads(k('get', 'pods', '-l', selector, '-o', 'json', namespace=opns))['items']}

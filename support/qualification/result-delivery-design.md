@@ -890,6 +890,20 @@ This mapping completes the case inventory for controller independence in the
 recorded environment. The final supported matrix and acceptance decision remain
 open; the component rows do not stand in for that matrix.
 
+[Installed interrupted leaf-renewal evidence](evidence/result-leaf-rotation-2026-10-02/summary.json)
+adds PostgreSQL / Kubernetes 1.37 / Linux amd64 proof before first harvest. The
+rotator saved a new serving certificate and key while an exact-Secret admission
+hold prevented projection. After its Pod was removed, its replacement resumed
+the same candidate. Both unchanged manager Pods loaded the new projection; the
+rotator verified their endpoints before returning to stable and ready. CA digests,
+enrollment policy and trust-object UIDs stayed unchanged. After the producing
+Pod/logs and both receiving managers were removed, the controller consumed the
+original receipt and reconstructed the same 8 MiB plan. Ordinary approval led to
+one Apply and verified PostgreSQL convergence. Independent live readback then
+rebuilt both the receipt payload and planstore bytes. Temporary gates, rotator
+arguments and leadership were restored. This closes the installed serving-key
+renewal/interruption case; CA replacement and its retirement waits remain open.
+
 Other minor combinations still require installed proof. Remaining failure cases,
 abandoned partial-publication cleanup,
 restore, CA rotation, enforced NetworkPolicy, and the complete

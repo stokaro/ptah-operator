@@ -388,3 +388,36 @@ Schema evidence is version 2 and records the resource family explicitly. It
 proves two distinct original Apply Jobs and native schema convergence, without
 claiming the sequence/auto-increment SQL counters used by migration evidence.
 The upload, Lease, authentication, cleanup and observation budgets are unchanged.
+
+## Interrupted result serving-key renewal before first harvest
+
+Set `RESULT_PROBE_ROTATE_LEAF=1` when running `result_first_harvest.py` in the
+owned lab. The existing first-harvest procedure holds leadership, obtains and
+independently verifies the native 8 MiB Plan receipt, and removes the producing
+Pod. Before restarting the receiving managers and restoring leadership, it runs
+`result_rotation.py` against the installed certificate-rotator Deployment.
+
+A temporary admission policy holds changes to the exact result trust projection
+Secret. A server dry run must prove the hold. The probe moves the rotator's
+renewal threshold to 2160 hours and replacement leaf validity to 2400 hours;
+these values retain the installed 168-hour scheduling margin. It changes no CA,
+credential lifetime or retirement fence. The installed rotator journals a new
+leaf and key, but cannot project them. The probe removes that rotator Pod and
+requires its replacement to resume the same persisted candidate. It then removes
+the hold and waits for the journal to return to `stable` and rotator readiness.
+The production rotator only completes that transition after verifying every
+ready receiver endpoint serves the expected certificate over authenticated TLS.
+Both manager UIDs must remain unchanged during projection, so process restart
+cannot substitute for kubelet projection and trust reload.
+
+The evidence retains leaf/key hashes, unchanged CA hashes and enrollment policy,
+trust-object UIDs, manager and rotator UIDs, and restoration of the original
+rotator arguments. It never records private journal or projection bytes. The
+surrounding first-harvest proof then replaces both managers and requires the
+original receipt, exact reconstructed plan bytes, ordinary approval, one Apply,
+and the native database result. Its `finally` handlers restore the admission
+gate, rotator arguments and leadership on failure.
+
+This case proves installed leaf/key renewal and interruption recovery. It does
+not exercise CA replacement or either credential retirement wait. Those remain
+required alongside the existing local state-machine tests.
