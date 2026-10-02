@@ -394,7 +394,7 @@ func (m *migrationRun) acknowledgeUnresolvedRun(name, operation string) {
 	acknowledger, err := m.cluster.As(rest.ImpersonationConfig{UserName: person, Groups: []string{group}})
 	m.check(err, "act as %s", person)
 	m.logf("acknowledging the %s run as %s", m.engine.kind, person)
-	if err := acknowledger.Create(m.ctx, &unstructured.Unstructured{Object: map[string]any{
+	if err := harness.CreateAfterRoleBinding(m.ctx, acknowledger, &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": ptahSchemaAPIVersion, "kind": "PtahMigrationRunAcknowledgment",
 		"metadata": map[string]any{"namespace": m.in.TestNamespace, "name": acknowledgmentName},
 		"spec": map[string]any{
