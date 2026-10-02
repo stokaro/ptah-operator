@@ -84,6 +84,10 @@ def main():
     concurrent = concurrent == '1'
     if first_publication and not concurrent:
         raise ValueError('First publication requires concurrent delivery')
+    upload_budget = E.get('RESULT_PROBE_UPLOAD_BUDGET', '0')
+    if upload_budget not in ('0', '1') or (upload_budget == '1' and (runner_loss or restart_receiver or concurrent)):
+        raise ValueError('Upload budget must run separately from other faults')
+    upload_budget = upload_budget == '1'
     engine = E['RESULT_PROBE_ENGINE']
     if engine not in ('PostgreSQL', 'MySQL'):
         raise ValueError('RESULT_PROBE_ENGINE must be PostgreSQL or MySQL')
@@ -137,7 +141,7 @@ def main():
                      'probe', db or database, data=query + '\n', namespace=source).strip()
         return run(['docker', '--context', E['E2E_DOCKER_CONTEXT'], 'exec', '-i', E['E2E_EXTERNAL_POSTGRES_CONTAINER_ID'], 'sh', '-ec', 'PGPASSWORD="$POSTGRES_PASSWORD" exec psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$1" -At -v ON_ERROR_STOP=1', 'probe', db or database], query + '\n').strip()
 
-    def witness():
+    def witness(db=None):
         if engine == 'MySQL':
             # Read the allocated counter, including rolled-back attempts. Cached
             # information_schema statistics would hide a replay.
@@ -146,8 +150,8 @@ def main():
                        "GREATEST(AUTO_INCREMENT - 1, 1), ':', "
                        "IF(AUTO_INCREMENT > 1, 'true', 'false')) "
                        "FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() "
-                       "AND TABLE_NAME='delivery_probe_calls';").splitlines()[-1]
-        return sql("SELECT (SELECT count(*) FROM delivery_probe_calls)::text || ':' || last_value::text || ':' || is_called::text FROM delivery_probe_sequence;").splitlines()[-1]
+                       "AND TABLE_NAME='delivery_probe_calls';", db).splitlines()[-1]
+        return sql("SELECT (SELECT count(*) FROM delivery_probe_calls)::text || ':' || last_value::text || ':' || is_called::text FROM delivery_probe_sequence;", db).splitlines()[-1]
     endpoint = run(['docker', '--context', E['E2E_DOCKER_CONTEXT'], 'context', 'inspect', E['E2E_DOCKER_CONTEXT'], '--format', '{{.Endpoints.docker.Host}}']).strip()
     assert endpoint == E['E2E_DOCKER_ENDPOINT']
     nodes = get('nodes')['items']
@@ -283,6 +287,15 @@ def main():
             k('delete', 'validatingadmissionpolicy', gate)
             gated = False
 
+        if upload_budget:
+            from result_upload_budget import run as run_budget
+            run_budget(k=k, get=get, create=create, wait=wait, save=save, witness=witness,
+                       records=records, open_gate=open_execution_gate, resource=resource, pod=pod,
+                       operation=operation, engine=engine, environment=E, calibration=calibration,
+                       managers=managers, host=host, credential=dec(credential), service=service,
+                       restore_service=restore_service, endpoints_are=endpoints_are, gate=gate,
+                       sql=sql, creds=creds, database=database, migration_sql=migration_sql)
+            return
         if runner_loss:
             from result_runner_loss import run as run_loss
             run_loss(k=k, get=get, create=create, wait=wait, save=save, witness=witness,

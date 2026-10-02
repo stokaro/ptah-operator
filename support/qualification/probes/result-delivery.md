@@ -340,3 +340,37 @@ client headers are ordered by the harness's monotonic clock; admission entry
 and release use the fixture's own clock. No cross-machine clock comparison is
 needed. This row forces identical first writes. Different first payloads racing
 to choose a winner and same-receiver saturation remain separate cases.
+
+## Slow uploads and independent migration progress
+
+Set `RESULT_PROBE_UPLOAD_BUDGET=1` with the other fault flags unset or zero.
+The shared native setup holds the original Apply Pod before execution. The
+privileged harness uses that Pod's recorded credential over verified mTLS;
+the runner receives no API permission. It sends one byte of a declared 4096-byte
+body to the receiver on the current leader. A second request must receive 503
+and `Retry-After: 1`, while the other receiver still admits authenticated HEAD.
+
+The result Service temporarily selects only the free receiver. A second native
+migration on a separate database must converge before the stalled upload ends.
+The harness then occupies the second receiver and requires both to refuse excess
+requests. Each incomplete body must receive 408 after the installed two-minute
+limit, and each slot must admit HEAD again after its timeout. Neither incomplete
+body may create the original intent. The original Apply Lease is sampled
+throughout; its UID, holder and epoch must remain unchanged with renewal gaps
+no greater than the case's predeclared 15 seconds. Responses to the extra
+requests must complete within five seconds. These are focused fault-case
+budgets, not replacements for the frozen capacity profile.
+
+After restoring the Service, the original runner must finish its single Apply.
+Both native databases must show one committed effect and no rolled-back replay,
+using the calibrated counters from the shared setup. Evidence includes both
+immutable publications, receiver identities, monotonic request intervals, raw
+Lease samples and independent-resource convergence. Cleanup restores the
+Service selector and removes the temporary Pod label and credential gate.
+
+`result_upload_budget.verify_evidence` replays these bounds. Its refusal tests
+reject absent or short faults, serial saturation, unbounded responses, a changed
+or stalled Lease, SQL replay and stale convergence. This case covers migration
+progress with one available receiver and renewal with both upload slots busy.
+It does not claim that new delivery succeeds while all receivers are unavailable,
+or supply the other controller-family and installed-failure requirements.

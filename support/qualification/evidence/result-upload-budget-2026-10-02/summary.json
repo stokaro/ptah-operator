@@ -1,0 +1,55 @@
+{
+  "status": "passed",
+  "operatorRevision": "b0a51ff740784beaf6cd1ebb2fe8c2715583e1b5",
+  "runnerRevision": "b2576f9bbbe72979ba392456846fb16da1f0f03a",
+  "procedures": {
+    "result_upload_budget.py": "6a9eb340b885b23ee2948e32a0fa55c9d55d087007f1eb5847635a8f15ef6170",
+    "result_concurrent.py": "fa2da7e6489865d5bda04963452955dafbb30e8e8ddc2d6beb558077d69ecdee",
+    "result_lost_ack.py": "1d86b71520893579d3faaac4b5f235456af1cd84d257dc22814e28cdff38ae51"
+  },
+  "engines": {
+    "PostgreSQL": {
+      "directory": "pg",
+      "verification": {
+        "timedOutUploads": 2,
+        "renewals": 36,
+        "independentSQLExecutions": 2
+      },
+      "files": {
+        "upload-budget.json": "eba53f46411d617de9898d402498681c8d38137be5e72e1e5d294497de8b5f83",
+        "original-publication.json": "b9aef68b8a598647b623524761cd335a0ddee3f53107b499fab81347e5c67904",
+        "peer-publication.json": "1cf02c52389ff18a9ea7f0fe84d075e789419aca6cbd6d0bb27fdacb761e2e12",
+        "installation.json": "578f3948bd9a6f6d1d816570824657bf2251232ee830faefeebb0a5a51499fb6"
+      },
+      "uploadSeconds": [
+        120.025857166,
+        120.027171834
+      ],
+      "maximumRenewalGapSeconds": 5.227041,
+      "peerConvergenceSeconds": 55.411605292,
+      "maximumResponseSeconds": 0.197824792
+    },
+    "MySQL": {
+      "directory": "mysql",
+      "verification": {
+        "timedOutUploads": 2,
+        "renewals": 35,
+        "independentSQLExecutions": 2
+      },
+      "files": {
+        "upload-budget.json": "a4f5dddd8f06cea51e622a4591f18384e500e6573ce0409276060f74d7d188e0",
+        "original-publication.json": "2be9a20a961473ea0d33158211eb78dc3b941d05042f9075b19f2bde04cf37e8",
+        "peer-publication.json": "55d98c77b0850b1d3f0d7742864a2c8eeba652115aafa0dad8b69cca6f5a7525",
+        "installation.json": "578f3948bd9a6f6d1d816570824657bf2251232ee830faefeebb0a5a51499fb6"
+      },
+      "uploadSeconds": [
+        120.028219708,
+        120.025945584
+      ],
+      "maximumRenewalGapSeconds": 5.15867,
+      "peerConvergenceSeconds": 53.788200084,
+      "maximumResponseSeconds": 0.161486
+    }
+  },
+  "scope": "Kubernetes 1.37.0 Linux amd64, native PostgreSQL and MySQL PtahMigration. The privileged harness borrows a live held Apply credential and occupies the leader receiver with an incomplete body. Ordinary delivery is temporarily routed to the other replica; an independent migration completes while the first receiver remains occupied. Both replicas then refuse additional requests, each times out its incomplete body after two minutes, and the original Apply Lease continues renewing. Neither incomplete upload publishes an intent. Restored routing lets the original runner execute once. Each engine retains two original Apply publications, one per resource. This is not proof of progress while every receiver is unavailable, PtahSchema controller independence, installed certificate rotation, or the complete supported matrix."
+}

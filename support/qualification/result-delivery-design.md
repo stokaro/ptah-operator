@@ -830,8 +830,22 @@ and mixed pairs preserved it. Each original runner then completed its lost-ACK
 row with one calibrated SQL effect and no replacement execution. The evidence
 retains the absent-record census, overlapping admission timestamps, publication,
 and restored Service ports and webhook cleanup. This forces identical first
-writes; competing different first payloads and same-receiver saturation are
-separate cases.
+writes; competing different first payloads are a separate case.
+
+The installed slow-upload evidence in
+`evidence/result-upload-budget-2026-10-02/` covers native PostgreSQL and MySQL
+migrations on Kubernetes 1.37.0 / Linux amd64. An incomplete authenticated body
+occupies the leader receiver while another migration converges through the free
+replica in 55.41 and 53.79 seconds, respectively. Both receivers are then occupied;
+extra requests receive 503 with retry advice within 0.20 seconds. Each stalled
+body receives 408 after about 120.03 seconds and its upload slot recovers. The
+held original Apply Lease retains its identity and renews with a maximum gap of
+5.23 seconds. No incomplete upload creates an intent. Restoring the route and
+releasing the original Pod yields one calibrated SQL effect in each database,
+with no replacement Apply. The evidence retains actual Lease samples, request
+intervals, both native publications per engine, and fault cleanup. This covers
+the migration cases; it does not establish schema-controller independence or
+progress while all receivers or persistent storage are unavailable.
 
 Failures beyond the recorded cases and other minor combinations still require
 installed proof. Remaining failure cases,
