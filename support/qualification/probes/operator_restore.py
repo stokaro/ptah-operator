@@ -12,6 +12,7 @@ import secrets
 import subprocess
 import time
 from urllib.parse import urlencode
+from result_first_harvest import publication
 
 REPO = Path(__file__).resolve().parents[3]
 OPERATOR_CRDS = frozenset(name + '.operator.ptah.run' for name in (
@@ -472,6 +473,34 @@ class OperatorProbe(db.Probe):
             self.check('real migration history is populated', bool(result['history'].strip()))
         return result
 
+    def verify_recovered_results(self, checkpoint, fresh_apply_uids):
+        original = checkpoint.get('namespaceState', checkpoint).get('durableResults', {})
+        if not original.get('enabled'):
+            return
+        restored = self.result_backup()
+        self.check('durable delivery remains enabled after recovery', restored['enabled'])
+        records = {r['metadata']['name']: r for r in restored['records']}
+        receipts = []
+        for job_uid in fresh_apply_uids:
+            intent, receipt, payload = publication(records, job_uid)
+            binding = json.loads(base64.b64decode(intent['spec']['data']))['binding']
+            self.check('restored controller consumed successful fresh Apply bytes',
+                       binding['uid'] == self.uid and binding['namespace'] == self.namespace
+                       and binding['operation'] == ('apply' if self.family == 'schema' else 'migration-apply')
+                       and json.loads(payload)['childExitCode'] == 0)
+            receipts.append({'jobUID': job_uid, 'receiptUID': receipt['metadata']['uid'],
+                             'payloadSHA256': db.digest(payload)})
+        self.check('one fresh Apply has a complete durable receipt', len(receipts) == 1)
+        identities = {name: {'originalUID': original[name]['metadata']['uid'],
+                             'recoveredUID': restored[name]['metadata']['uid']}
+                      for name in ('trust', 'journal', 'enrollmentPolicy')}
+        replacement = bool(self.report.get('targetCluster'))
+        self.check('result trust follows the declared retained-or-rebuilt installation',
+                   all((r['originalUID'] != r['recoveredUID']) == replacement for r in identities.values()))
+        self.report['recoveredDelivery'] = {'receipts': receipts, 'installationIdentities': identities,
+            'originalRecordsArchived': len(original['records']),
+            'mode': 'new installation and authority; original bindings remain archived' if replacement else 'retained installation and authority'}
+
     @staticmethod
     def wait_for_backup_lag(completed, monotonic=time.monotonic, sleep=time.sleep):
         # Date the gap from completed backup bytes, not from the poll that
@@ -766,6 +795,7 @@ class OperatorProbe(db.Probe):
             self.check('exactly one fresh Apply followed restoration', len(final_jobs - set(original_jobs)) == 1 and set(original_jobs) <= final_jobs)
             if self.family == 'migration':
                 self.check('fresh approved migration is recorded in actual history', self.sql(restored, 'SELECT version FROM schema_migrations ORDER BY version;').stdout.strip() == '\n'.join(str(v) for v in range(1, final_revision + 1)).encode())
+            self.verify_recovered_results(checkpoint, final_jobs - set(original_jobs))
             recovery_seconds = round(time.monotonic()-clock, 3)
             rpo_seconds = (db.dt.datetime.fromisoformat(self.report['lossInjectedAt']) - db.dt.datetime.fromisoformat(self.report['databaseBackupStartedAt'])).total_seconds()
             self.check('database recovery point is within five minutes of loss', 0 <= rpo_seconds <= 300)

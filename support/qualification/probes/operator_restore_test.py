@@ -3,6 +3,7 @@ import base64
 import json
 from pathlib import Path
 import unittest
+import tempfile
 
 from operator_restore import OperatorProbe
 
@@ -25,6 +26,38 @@ class ResultBackupInventoryTest(unittest.TestCase):
                 if fault == 'replaced policy': p['metadata']['uid'] = 'replacement'
                 with self.assertRaises(RuntimeError):
                     OperatorProbe.validate_result_material(t, j, p)
+
+
+class RecoveredDeliveryTest(unittest.TestCase):
+    def test_fresh_apply_requires_receipt_and_declared_authority(self):
+        path = Path(__file__).resolve().parents[1] / 'evidence/result-network-2026-10-02/ptah-result-network-pg-migration-workflow.json'
+        reading = json.loads(path.read_text())
+        job_uid = reading['verification']['publications']['migration-apply']['jobUID']
+        for replacement in (True, False):
+            for defect in ('none', 'missing receipt', 'wrong resource', 'wrong authority'):
+                with self.subTest(replacement=replacement, defect=defect), tempfile.TemporaryDirectory() as directory:
+                    probe = object.__new__(OperatorProbe)
+                    probe.root = Path(directory); probe.report = {'checks': {}}
+                    if replacement: probe.report['targetCluster'] = {'uid': 'replacement-cluster'}
+                    probe.family = 'migration'; probe.namespace = reading['resource']['metadata']['namespace']
+                    probe.uid = reading['resource']['metadata']['uid']
+                    records = copy.deepcopy(list(reading['publications'].values()))
+                    if defect == 'missing receipt': records = [r for r in records if r['spec']['type'] != 'complete']
+                    if defect == 'wrong resource': probe.uid = 'foreign-resource'
+                    original = {'enabled': True, 'records': records}
+                    restored = {'enabled': True, 'records': records}
+                    for key in ('trust', 'journal', 'enrollmentPolicy'):
+                        original[key] = {'metadata': {'uid': 'old-' + key}}
+                        restored[key] = {'metadata': {'uid': ('new-' if replacement else 'old-') + key}}
+                    if defect == 'wrong authority':
+                        restored['trust']['metadata']['uid'] = original['trust']['metadata']['uid'] if replacement else 'changed'
+                    probe.result_backup = lambda: restored
+                    if defect == 'none':
+                        probe.verify_recovered_results({'durableResults': original}, {job_uid})
+                        self.assertEqual(len(probe.report['recoveredDelivery']['receipts']), 1)
+                    else:
+                        with self.assertRaises((RuntimeError, ValueError, KeyError)):
+                            probe.verify_recovered_results({'durableResults': original}, {job_uid})
 
 
 class WorkloadHistoryTest(unittest.TestCase):

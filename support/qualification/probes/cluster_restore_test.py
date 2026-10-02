@@ -4,7 +4,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from cluster_restore import ClusterRestoreProbe
 from operator_restore import OPERATOR_CRDS, OperatorProbe
@@ -83,6 +83,26 @@ class ColdRestoreContractTest(unittest.TestCase):
 
 
 class ColdRestoreCleanupTest(unittest.TestCase):
+    def test_pre_backup_failure_is_terminal_and_stops_owned_tunnel(self):
+        with tempfile.TemporaryDirectory() as directory:
+            probe = object.__new__(ClusterRestoreProbe)
+            probe.root = Path(directory)
+            probe.source_envs = {}
+            probe.source_environment = probe.root / 'absent-source'
+            probe.target_environment = probe.root / 'absent-target'
+            process = Mock()
+            process.poll.return_value = None
+            probe.api_tunnels = [process]
+            probe.report = {'status': 'RUNNING'}
+            with patch.object(probe, 'ensure_api_connection', side_effect=RuntimeError('connection lost')):
+                with self.assertRaisesRegex(RuntimeError, 'connection lost'):
+                    probe.run()
+            process.terminate.assert_called_once()
+            process.wait.assert_called_once_with(timeout=10)
+            report = json.loads((probe.root / 'result.json').read_text())
+            self.assertEqual(report['status'], 'FAIL')
+            self.assertIn('connection lost', report['failure'])
+
     def test_durable_mode_requires_effective_helm_readback(self):
         environment = {'E2E_KUBECONFIG': '/target/kubeconfig', 'E2E_OPERATOR_NAMESPACE': 'target-system',
                        'E2E_HELM_RELEASE': 'target-release', 'E2E_CHART_PACKAGE': '/target/operator.tgz'}
@@ -113,8 +133,9 @@ class ColdRestoreCleanupTest(unittest.TestCase):
                 probe.source_environment = probe.root / 'source-environment'
                 probe.target_environment.touch()
                 probe.source_environment.touch()
+                probe.source_envs = {}
                 probe.report = {'status': 'PASS', 'cleanupSucceeded': True}
-                with patch.object(OperatorProbe, 'run'), patch('cluster_restore.subprocess.run',
+                with patch.object(probe, 'ensure_api_connection'), patch.object(OperatorProbe, 'run'), patch('cluster_restore.subprocess.run',
                         side_effect=[failure, subprocess.CompletedProcess(['lab'], 0)]) as cleanup:
                     with self.assertRaisesRegex(RuntimeError, 'Owned cluster cleanup failed'):
                         probe.run()
@@ -126,6 +147,43 @@ class ColdRestoreCleanupTest(unittest.TestCase):
                 self.assertFalse(persisted['cleanupSucceeded'])
                 self.assertNotEqual(persisted['clusterCleanup'][0]['exitCode'], 0)
                 self.assertEqual(persisted['clusterCleanup'][1], {'cluster': 'source', 'exitCode': 0})
+
+
+class ColdRestoreTunnelTest(unittest.TestCase):
+    def test_reconnect_uses_exact_recorded_forward_and_owns_only_new_process(self):
+        with tempfile.TemporaryDirectory() as directory:
+            probe = object.__new__(ClusterRestoreProbe)
+            probe.root = Path(directory); probe.report = {}; probe.api_tunnels = []
+            environment = {'E2E_KUBECONFIG': '/recorded/config',
+                           'E2E_DOCKER_ENDPOINT': 'ssh://buster@remote-dev:2222',
+                           'E2E_TUNNEL_FORWARD': '127.0.0.1:31817:127.0.0.1:31817'}
+            config = {'clusters': [{'cluster': {'server': 'https://127.0.0.1:31817'}}]}
+            process = Mock(); process.poll.return_value = None
+            with patch.object(probe, 'api_ready', side_effect=[False, True, True]), patch.object(
+                    probe, 'command', return_value=subprocess.CompletedProcess([], 0, json.dumps(config).encode())), patch(
+                    'cluster_restore.subprocess.Popen', return_value=process) as start:
+                probe.ensure_api_connection(environment, 'source')
+                probe.ensure_api_connection(environment, 'source')
+            start.assert_called_once()
+            argv = start.call_args.args[0]
+            self.assertEqual(argv[argv.index('-L') + 1], environment['E2E_TUNNEL_FORWARD'])
+            self.assertEqual(argv[-4:], ['-p', '2222', '--', 'buster@remote-dev'])
+            self.assertEqual(probe.api_tunnels, [process])
+            self.assertEqual(probe.report['reopenedAPITunnels'], ['source'])
+            probe.close_api_tunnels()
+            process.terminate.assert_called_once()
+
+    def test_mismatched_forward_cannot_connect_to_another_cluster(self):
+        probe = object.__new__(ClusterRestoreProbe)
+        environment = {'E2E_KUBECONFIG': '/recorded/config', 'E2E_DOCKER_ENDPOINT': 'ssh://buster@remote-dev',
+                       'E2E_TUNNEL_FORWARD': '127.0.0.1:31818:127.0.0.1:31818'}
+        config = {'clusters': [{'cluster': {'server': 'https://127.0.0.1:31817'}}]}
+        with patch.object(probe, 'api_ready', return_value=False), patch.object(
+                probe, 'command', return_value=subprocess.CompletedProcess([], 0, json.dumps(config).encode())), patch(
+                'cluster_restore.subprocess.Popen') as start:
+            with self.assertRaisesRegex(RuntimeError, 'recorded loopback'):
+                probe.ensure_api_connection(environment, 'source')
+            start.assert_not_called()
 
 
 if __name__ == '__main__':

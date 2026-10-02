@@ -9,6 +9,8 @@ from pathlib import Path
 import signal
 import ssl
 import subprocess
+import time
+from urllib.parse import urlsplit
 
 from operator_restore import OPERATOR_CRDS, OperatorProbe, REPO, db
 
@@ -28,9 +30,66 @@ class ClusterRestoreProbe(OperatorProbe):
         self.archived_workloads = {'jobs': [], 'pods': []}
         self.target_active = False
         self.result_delivery = result_delivery
+        self.api_tunnels = []
         self.report.update(scope='Development-image cold-cluster recovery. The original kind control plane is destroyed, a separate cluster is provisioned after loss, and namespace state is rebuilt from an encrypted backup. Final-profile, in-flight and final-artifact acceptance remain required.',
                            procedureSHA256=db.digest(Path(__file__).read_bytes()),
                            operatorProcedureSHA256=db.digest((REPO / 'support/qualification/probes/operator_restore.py').read_bytes()))
+
+    @staticmethod
+    def api_ready(environment):
+        try:
+            result = subprocess.run(['kubectl', '--kubeconfig', environment['E2E_KUBECONFIG'],
+                                     '--request-timeout=3s', 'get', '--raw=/readyz'],
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
+        except subprocess.TimeoutExpired:
+            return False
+        return result.returncode == 0 and result.stdout.strip() == b'ok'
+
+    def ensure_api_connection(self, environment, name):
+        if self.api_ready(environment):
+            return
+        # Bootstrap's background SSH process can die when its invoking shell
+        # exits. Own a replacement for this procedure, without trusting a saved
+        # PID that could already belong to another process.
+        config = json.loads(self.command('read the recorded API endpoint', [
+            'kubectl', '--kubeconfig', environment['E2E_KUBECONFIG'],
+            'config', 'view', '--minify', '-o', 'json']).stdout)
+        server = urlsplit(config['clusters'][0]['cluster']['server'])
+        endpoint = urlsplit(environment['E2E_DOCKER_ENDPOINT'])
+        forward = environment.get('E2E_TUNNEL_FORWARD', '')
+        if (server.scheme != 'https' or server.hostname != '127.0.0.1' or not server.port
+                or forward != f'127.0.0.1:{server.port}:127.0.0.1:{server.port}'
+                or endpoint.scheme != 'ssh' or not endpoint.hostname or endpoint.password):
+            raise RuntimeError('Cannot reopen an API tunnel outside the recorded loopback SSH endpoint')
+        target = (endpoint.username + '@' if endpoint.username else '') + endpoint.hostname
+        args = ['ssh', '-N', '-o', 'BatchMode=yes', '-o', 'ExitOnForwardFailure=yes',
+                '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=3', '-L', forward]
+        if endpoint.port:
+            args += ['-p', str(endpoint.port)]
+        args += ['--', target]
+        with open(self.root / (name + '-api-tunnel.private.log'), 'wb') as output:
+            process = subprocess.Popen(args, stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
+        self.api_tunnels.append(process)
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            if process.poll() is not None:
+                raise RuntimeError('Owned API tunnel exited; private diagnostics retained')
+            if self.api_ready(environment):
+                self.report.setdefault('reopenedAPITunnels', []).append(name)
+                self.persist()
+                return
+            time.sleep(1)
+        raise RuntimeError('API did not become ready through its owned tunnel')
+
+    def close_api_tunnels(self):
+        for process in getattr(self, 'api_tunnels', []):
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=10)
 
     def release_state(self, environment):
         helm = ['helm', '--kubeconfig', environment['E2E_KUBECONFIG'], '--namespace', environment['E2E_OPERATOR_NAMESPACE']]
@@ -130,6 +189,7 @@ class ClusterRestoreProbe(OperatorProbe):
                    target['E2E_CONTROLLER_REVISION'] == self.source_envs['E2E_CONTROLLER_REVISION'] and
                    target['E2E_PTAH_REVISION'] == self.source_envs['E2E_PTAH_REVISION'])
         self.envs = target
+        self.ensure_api_connection(target, 'replacement')
         if self.source_result_delivery:
             self.enable_result_delivery(target)
         target_uid = self.read('namespaces', 'kube-system')['metadata']['uid']
@@ -241,10 +301,16 @@ class ClusterRestoreProbe(OperatorProbe):
 
     def run(self):
         try:
+            self.ensure_api_connection(self.source_envs, 'source')
             if getattr(self, 'result_delivery', False):
                 self.enable_result_delivery(self.source_envs)
             super().run()
+        except BaseException as exc:
+            self.report.update(status='FAIL', failure=type(exc).__name__ + ': ' + str(exc))
+            self.persist()
+            raise
         finally:
+            self.close_api_tunnels()
             outcomes = []
             for name, path in (('replacement', self.target_environment), ('source', self.source_environment)):
                 if not path.exists():
