@@ -11,11 +11,13 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	api "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/resultauthority"
 	"github.com/stokaro/ptah-operator/internal/resultdelivery"
+	"github.com/stokaro/ptah-operator/internal/resultdelivery/jobconfig"
 )
 
 // ValidateCreate checks the submitted bytes using the issuer's trust, without
@@ -33,15 +35,6 @@ func (i *Issuer) ValidateCreate(ctx context.Context, secret *corev1.Secret) erro
 	if err != nil {
 		return ErrCredential
 	}
-	// A CREATE review may precede UID assignment. This placeholder is confined
-	// to validation; neither the persisted Secret nor its certificate uses it.
-	candidate := secret.DeepCopy()
-	if candidate.UID == "" {
-		candidate.UID = "admission-only"
-	}
-	if _, err := i.validate(candidate, identity); err != nil {
-		return err
-	}
 	record := &api.PtahResultRecord{}
 	if err := i.reader.Get(ctx, client.ObjectKeyFromObject(secret), record); err != nil {
 		return err
@@ -53,8 +46,19 @@ func (i *Issuer) ValidateCreate(ctx context.Context, secret *corev1.Secret) erro
 	if _, err := i.validate(stored, identity); err != nil {
 		return err
 	}
-	if !maps.EqualFunc(stored.Data, secret.Data, bytes.Equal) || !reflect.DeepEqual(stored.Labels, secret.Labels) || !reflect.DeepEqual(stored.Annotations, secret.Annotations) || !reflect.DeepEqual(stored.OwnerReferences, secret.OwnerReferences) {
+	if !maps.EqualFunc(stored.Data, secret.Data, bytes.Equal) || !reflect.DeepEqual(stored.Labels, secret.Labels) || !reflect.DeepEqual(stored.Annotations, secret.Annotations) || !reflect.DeepEqual(credentialProjection(stored).OwnerReferences, secret.OwnerReferences) {
 		return ErrCredential
+	}
+	// Validate all remaining projection fields against the operation identity.
+	// Its owner differs deliberately: the record retains the resource binding,
+	// while the kubelet Secret pins that exact canonical record's UID.
+	candidate := secret.DeepCopy()
+	candidate.OwnerReferences = stored.OwnerReferences
+	if candidate.UID == "" {
+		candidate.UID = "admission-only"
+	}
+	if _, err := i.validate(candidate, identity); err != nil {
+		return err
 	}
 	return (resultauthority.Authorizer{Reader: i.reader}).Check(ctx, identity)
 }
@@ -133,6 +137,11 @@ func ValidateUpdate(old, next *corev1.Secret) error {
 		return ErrCredential
 	}
 	a, b := old.DeepCopy(), next.DeepCopy()
+	// Foreground DELETE adds this API-controlled finalizer. The garbage
+	// collector must be able to remove it without changing the frozen binding.
+	if foregroundDeleting(a.ObjectMeta) && !b.DeletionTimestamp.IsZero() && len(b.Finalizers) == 0 {
+		a.Finalizers = b.Finalizers
+	}
 	// API bookkeeping may change on an otherwise identical write. Deletion
 	// state is API-controlled and DELETE is separately checked below.
 	a.ResourceVersion, b.ResourceVersion = "", ""
@@ -143,6 +152,10 @@ func ValidateUpdate(old, next *corev1.Secret) error {
 		return ErrCredential
 	}
 	return nil
+}
+
+func foregroundDeleting(meta metav1.ObjectMeta) bool {
+	return !meta.DeletionTimestamp.IsZero() && len(meta.Finalizers) == 1 && meta.Finalizers[0] == metav1.FinalizerDeleteDependents
 }
 
 // ValidateDelete retains the attempt's first-Pod pin until the owning resource
@@ -157,6 +170,37 @@ func ValidateDelete(ctx context.Context, reader client.Reader, secret *corev1.Se
 	owner := secret.OwnerReferences[0]
 	if owner.APIVersion != api.GroupVersion.String() || owner.UID == "" || owner.Name == "" || owner.Controller == nil || !*owner.Controller {
 		return ErrCredential
+	}
+	if owner.Kind == "PtahResultRecord" {
+		if owner.Name != secret.Name || owner.BlockOwnerDeletion == nil || *owner.BlockOwnerDeletion {
+			return ErrCredential
+		}
+		record := &api.PtahResultRecord{}
+		err := reader.Get(ctx, client.ObjectKey{Namespace: secret.Namespace, Name: owner.Name}, record)
+		if err == nil && record.UID == owner.UID {
+			// The canonical record is the cleanup authority. Retiring SQL
+			// authority alone must not orphan its still-retained projection.
+			return errors.New("result credential record is still retained")
+		}
+		if err != nil && !apierrors.IsNotFound(err) {
+			return err
+		}
+		certificate, err := tls.X509KeyPair(secret.Data["tls.crt"], secret.Data["tls.key"])
+		if err != nil {
+			return ErrCredential
+		}
+		identity, err := resultdelivery.StoredClientIdentity(certificate)
+		if err != nil {
+			return ErrCredential
+		}
+		b := identity.Binding
+		if secret.Namespace != b.Namespace || secret.Name != jobconfig.CredentialName(b.UID, b.OperationID, b.JobName) ||
+			!reflect.DeepEqual(secret.Annotations, annotations(identity)) {
+			return ErrCredential
+		}
+		// Parent loss or replacement is not proof that the operation stopped.
+		// Read the owner directly even after the canonical record disappeared.
+		owner = metav1.OwnerReference{APIVersion: api.GroupVersion.String(), Kind: b.Kind, Name: b.Name, UID: b.UID}
 	}
 	key := client.ObjectKey{Namespace: secret.Namespace, Name: owner.Name}
 	var object client.Object

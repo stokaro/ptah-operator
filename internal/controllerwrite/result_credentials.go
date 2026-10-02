@@ -2,6 +2,7 @@ package controllerwrite
 
 import (
 	"context"
+	"encoding/json"
 	"github.com/stokaro/ptah-operator/internal/resultcredentials"
 	"github.com/stokaro/ptah-operator/internal/resultdelivery/jobconfig"
 	admissionv1 "k8s.io/api/admission/v1"
@@ -53,6 +54,9 @@ func (v *Validator) validateResultCredential(ctx context.Context, req admissionv
 		}
 		err = resultcredentials.ValidateUpdate(old, next)
 	case admissionv1.Delete:
+		if err := validateCredentialDeleteOptions(req); err != nil {
+			return err
+		}
 		old, decodeErr := decode(req.OldObject.Raw)
 		if decodeErr != nil {
 			return decodeErr
@@ -69,6 +73,22 @@ func (v *Validator) validateResultCredential(ctx context.Context, req admissionv
 	if err != nil {
 		// Never include credential material or parser diagnostics in a response.
 		return denyf("result credential write violates its immutable operation binding")
+	}
+	return nil
+}
+
+// Orphaning requires the collector to rewrite immutable owner references.
+// Refuse that deletion policy instead of leaving a stuck orphan finalizer.
+func validateCredentialDeleteOptions(req admissionv1.AdmissionRequest) error {
+	var options metav1.DeleteOptions
+	if len(req.Options.Raw) != 0 {
+		if err := json.Unmarshal(req.Options.Raw, &options); err != nil {
+			return denyf("invalid result credential deletion options")
+		}
+	}
+	if (options.PropagationPolicy != nil && *options.PropagationPolicy == metav1.DeletePropagationOrphan) ||
+		(options.OrphanDependents != nil && *options.OrphanDependents) {
+		return denyf("result credentials require cascading deletion")
 	}
 	return nil
 }

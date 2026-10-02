@@ -207,20 +207,51 @@ func TestResultCredentialAdmission(t *testing.T) {
 		requireDenied(t, attempt(), controllerWriteWebhook, "immutable operation binding")
 		requireDenied(t, admin.Delete(ctx, record, client.DryRunAll), controllerWriteWebhook, "immutable operation binding")
 	})
-	t.Run("retired operation permits credential cleanup", func(t *testing.T) {
+	t.Run("retired record is collected before its Secret", func(t *testing.T) {
 		fixture.schema.Status.ActiveOperation = nil
 		writeStatus(t, fixture.schema)
-		if err := admin.DeleteAllOf(ctx, &corev1.Secret{}, client.InNamespace(fixture.namespace), client.MatchingFields{"metadata.name": secret.Name}); err != nil {
+		if len(secret.OwnerReferences) != 1 || secret.OwnerReferences[0].Kind != "PtahResultRecord" ||
+			secret.OwnerReferences[0].Name != record.Name || secret.OwnerReferences[0].UID != record.UID ||
+			secret.OwnerReferences[0].BlockOwnerDeletion == nil || *secret.OwnerReferences[0].BlockOwnerDeletion {
+			t.Fatal("Secret does not belong to its exact canonical record")
+		}
+		requireDenied(t, admin.Delete(ctx, secret, client.DryRunAll), controllerWriteWebhook, "immutable operation binding")
+		requireDenied(t, admin.Delete(ctx, record, client.PropagationPolicy(metav1.DeletePropagationOrphan), client.DryRunAll), controllerWriteWebhook, "require cascading deletion")
+		if err := admin.Delete(ctx, record, &client.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &record.UID, ResourceVersion: &record.ResourceVersion}, PropagationPolicy: ptr.To(metav1.DeletePropagationForeground)}); err != nil {
 			t.Fatal(err)
 		}
-		if err := admin.Get(ctx, client.ObjectKeyFromObject(secret), &corev1.Secret{}); !apierrors.IsNotFound(err) {
-			t.Fatalf("retired pin survived collection cleanup: %v", err)
-		}
-		if err := admin.DeleteAllOf(ctx, &recordapi.PtahResultRecord{}, client.InNamespace(fixture.namespace), client.MatchingFields{"metadata.name": record.Name}); err != nil {
+		// Envtest has no garbage collector. Exercise its finalizer update and
+		// dependent DELETE explicitly; this is admission, not collection proof.
+		if err := admin.Get(ctx, client.ObjectKeyFromObject(record), record); err != nil {
 			t.Fatal(err)
+		}
+		if record.DeletionTimestamp.IsZero() || len(record.Finalizers) != 1 || record.Finalizers[0] != metav1.FinalizerDeleteDependents {
+			t.Fatal("API did not stage foreground deletion")
+		}
+		requireDenied(t, admin.Delete(ctx, secret, client.DryRunAll), controllerWriteWebhook, "immutable operation binding")
+		record.Finalizers = nil
+		if err := admin.Update(ctx, record); err != nil {
+			t.Fatalf("garbage collector cannot finalize the record: %v", err)
 		}
 		if err := admin.Get(ctx, client.ObjectKeyFromObject(record), &recordapi.PtahResultRecord{}); !apierrors.IsNotFound(err) {
 			t.Fatalf("retired record survived cleanup: %v", err)
+		}
+		requireDenied(t, admin.Delete(ctx, secret, client.PropagationPolicy(metav1.DeletePropagationOrphan), client.DryRunAll), controllerWriteWebhook, "require cascading deletion")
+		if err := admin.DeleteAllOf(ctx, &corev1.Secret{}, client.InNamespace(fixture.namespace), client.MatchingFields{"metadata.name": secret.Name}, client.PropagationPolicy(metav1.DeletePropagationForeground)); err != nil {
+			t.Fatal(err)
+		}
+		if err := admin.Get(ctx, client.ObjectKeyFromObject(secret), secret); err != nil {
+			t.Fatal(err)
+		}
+		if secret.DeletionTimestamp.IsZero() || len(secret.Finalizers) != 1 || secret.Finalizers[0] != metav1.FinalizerDeleteDependents {
+			t.Fatal("API did not stage foreground Secret deletion")
+		}
+		secret.Finalizers = nil
+		if err := admin.Update(ctx, secret); err != nil {
+			t.Fatal(err)
+		}
+		if err := admin.Get(ctx, client.ObjectKeyFromObject(secret), &corev1.Secret{}); !apierrors.IsNotFound(err) {
+			t.Fatalf("orphaned projection survived cleanup: %v", err)
 		}
 	})
 }

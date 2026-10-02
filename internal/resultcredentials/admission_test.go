@@ -21,7 +21,7 @@ func TestCredentialCreateAdmission(t *testing.T) {
 	if _, err := issuer.Ensure(t.Context(), f.Identity); err != nil {
 		t.Fatal(err)
 	}
-	secret := getCredential(t, c, f)
+	secret := credentialProjection(getCredential(t, c, f))
 	secret.UID = ""
 	if err := issuer.ValidateCreate(t.Context(), secret); err != nil {
 		t.Fatal(err)
@@ -245,6 +245,7 @@ func TestCredentialRecordAdmission(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	other.OwnerReferences = credentialProjection(secret).OwnerReferences
 	if err := issuer.ValidateCreate(t.Context(), other); err == nil {
 		t.Fatal("projection replaced the canonical key with another trusted key")
 	}

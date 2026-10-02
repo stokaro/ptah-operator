@@ -47,6 +47,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:e268ff71d1e568283329ccea88d78528c4495e62611446f2da67554172139ec3",
       "reason": "Complete receiver trust reload before the first tagged 0.2.0 release. Rotating receivers revalidate the current client CA at every authority check, including after upload and before durable completion, so an existing TLS connection cannot retain removed trust. Runner payload, execution checks, and bounded retries are unchanged. No tagged release consumed an earlier protocol-1 contract; development counters remain 1."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:068e789c7a05f206714d6bf83615e11070410ea1bbec96a0fcde8446c5b1798b",
+      "reason": "Separate immutable credential identity decoding for cleanup from live client authentication. Cleanup can read a retained expired certificate after its canonical record disappears, then check the original resource before deleting its Secret projection. ClientIdentity still rejects expired and not-yet-valid leaves; TLS, live authority, runner payload, execution, and retry behavior are unchanged. No tagged release consumed an earlier protocol-1 contract; development counters remain 1."
     }
   ]
 }

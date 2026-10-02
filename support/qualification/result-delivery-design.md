@@ -269,8 +269,12 @@ contents: the mandatory runner preflight authenticates the mounted credential
 before SQL starts. A preexisting unusable projection can prevent progress, but
 must not let the child start with unverified delivery credentials.
 
-The credential record and Secret belong to the schema or migration, not the Job
-or Pod. The canonical record fixes the original Pod identity even after that Pod disappears: a replacement
+The credential record belongs to the schema or migration. A new Secret
+projection belongs to that exact record by UID, with `blockOwnerDeletion: false`.
+Neither is owned by the Job or Pod. Removing an eligible record lets Kubernetes
+collect its projection without giving the manager Secret GET or DELETE.
+Existing development projections owned directly by the resource remain readable;
+new CREATEs must use the canonical record owner. The canonical record fixes the original Pod identity even after that Pod disappears: a replacement
 Pod cannot overwrite or reuse the same attempt's credential. A Job from an older
 generation cannot be reissued under the new generation. The configured client
 trust pool may include the previous signer; an existing credential is preserved
@@ -286,11 +290,23 @@ its bytes and binding to match the canonical record. Credential-record creation
 authenticates the same certificate and live binding; record UPDATE freezes its
 spec and metadata, and record DELETE preserves the active operation pin. Without an issuer configured
 in the manager, creation is refused. UPDATE preserves data, ownership, labels,
-annotations, and finalizers. DELETE reads the owner directly and refuses while
+annotations, and finalizers, except removal of the API's sole `foregroundDeletion`
+finalizer from an already-deleting object. Orphan deletion is refused because it
+would require rewriting immutable owner references. DELETE reads the owner directly and refuses while
 that exact operation ID remains active, including after Pod loss, generation
 changes, Lease loss, or the start of resource deletion. A retired operation or
-absent/replaced owner allows cleanup. Resource ownership and `immutable: true`
-alone do not preserve this first-Pod pin.
+absent/replaced owner allows credential-record cleanup. A projection whose exact
+canonical record still exists cannot be deleted, even after retirement. After
+record removal or replacement, projection DELETE decodes the immutable
+certificate's recorded binding and rechecks the original resource directly.
+Expiry and CA retirement do not prevent this cleanup, but never restore delivery
+authority. API failures refuse deletion. Legacy resource-owned projections keep
+the original active-operation deletion guard. Resource ownership and
+`immutable: true` alone do not preserve this first-Pod pin.
+
+These checks establish the deletion boundary, not a retention schedule. The
+publication retention collector and installed garbage-collection proof remain
+required before default activation.
 
 The Pod webhook also receives direct references to reserved credential names,
 including unlabeled Pods, environment sources, image-pull credentials, projected

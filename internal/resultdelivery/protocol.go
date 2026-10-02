@@ -73,12 +73,28 @@ func CertificateURI(identity Identity) (*url.URL, error) {
 // certificate. It refuses an expired or non-client leaf, but does not authenticate
 // its issuer; the receiver's TLS verification establishes that trust.
 func ClientIdentity(certificate tls.Certificate) (Identity, error) {
+	identity, err := StoredClientIdentity(certificate)
+	if err != nil {
+		return Identity{}, err
+	}
+	leaf, err := x509.ParseCertificate(certificate.Certificate[0])
+	now := time.Now()
+	if err != nil || now.Before(leaf.NotBefore) || !now.Before(leaf.NotAfter) {
+		return Identity{}, ErrAuthority
+	}
+	return identity, nil
+}
+
+// StoredClientIdentity decodes an immutable credential's recorded binding for
+// cleanup after expiry or CA retirement. It authenticates neither the issuer
+// nor current execution authority and must never authorize delivery. The caller
+// must establish the stored object's provenance and check live retention pins.
+func StoredClientIdentity(certificate tls.Certificate) (Identity, error) {
 	if len(certificate.Certificate) == 0 || certificate.PrivateKey == nil {
 		return Identity{}, ErrAuthority
 	}
 	leaf, err := x509.ParseCertificate(certificate.Certificate[0])
-	now := time.Now()
-	if err != nil || leaf.IsCA || len(leaf.URIs) != 1 || now.Before(leaf.NotBefore) || !now.Before(leaf.NotAfter) {
+	if err != nil || leaf.IsCA || len(leaf.URIs) != 1 {
 		return Identity{}, ErrAuthority
 	}
 	for _, usage := range leaf.ExtKeyUsage {

@@ -138,8 +138,8 @@ func TestIssueAndReadBackAllOperationCredentials(t *testing.T) {
 			if err != nil || identity != f.Identity {
 				t.Fatalf("issued identity=%#v, %v", identity, err)
 			}
-			if len(secret.OwnerReferences) != 1 || secret.OwnerReferences[0].UID != f.Identity.Binding.UID || secret.OwnerReferences[0].Kind != f.Identity.Binding.Kind {
-				t.Fatal("credential is not owned by the persistent operation resource")
+			if len(secret.OwnerReferences) != 1 || secret.OwnerReferences[0].UID != first.UID || secret.OwnerReferences[0].Kind != "PtahResultRecord" || secret.OwnerReferences[0].Name != first.Name || secret.OwnerReferences[0].BlockOwnerDeletion == nil || *secret.OwnerReferences[0].BlockOwnerDeletion {
+				t.Fatal("projection is not owned by its canonical credential record")
 			}
 			repeated, err := issuer.Ensure(t.Context(), f.Identity)
 			if err != nil || first != repeated || api.creates.Load() != 1 {

@@ -62,7 +62,7 @@ func TestEnrollmentRefusesStaleSignerWithoutChangingIssuedCredentials(t *testing
 	if got, err := issuer.Ensure(t.Context(), f.Identity); err != nil || got != issued {
 		t.Fatalf("policy advancement invalidated an issued credential: %v", err)
 	}
-	if err := issuer.ValidateCreate(t.Context(), secret); err != nil {
+	if err := issuer.ValidateCreate(t.Context(), credentialProjection(secret)); err != nil {
 		t.Fatalf("existing projection lost authorization: %v", err)
 	}
 	if _, err := issuer.AuthorizePublication(t.Context(), f.Identity.Binding); err != nil {
@@ -207,7 +207,7 @@ func TestEnrollmentOverlapDoesNotAuthorizeNewRecordsFromOldSigner(t *testing.T) 
 	if err := next.ValidateRecordCreate(t.Context(), record); !errors.Is(err, ErrCredential) {
 		t.Fatalf("overlap authorized old signer enrollment: %v", err)
 	}
-	if err := next.ValidateCreate(t.Context(), getCredential(t, c, f)); err != nil {
+	if err := next.ValidateCreate(t.Context(), credentialProjection(getCredential(t, c, f))); err != nil {
 		t.Fatalf("overlap refused existing projection: %v", err)
 	}
 }

@@ -88,6 +88,9 @@ func (v *Validator) validateResultRecord(ctx context.Context, req admissionv1.Ad
 			return denyf("result deletion has no persisted record identity")
 		}
 		if old.Spec.Type == "credential" {
+			if err := validateCredentialDeleteOptions(req); err != nil {
+				return err
+			}
 			err = resultcredentials.ValidateRecordDelete(ctx, v.Reader, old)
 		} else {
 			// No publication may be discarded before receipt consumption and retention
