@@ -197,10 +197,10 @@ it does not change kubelet configuration itself. `E2E_DOCKER_CONTEXT` must
 address the endpoint recorded by the bootstrap, and every cluster node must
 belong to `E2E_KIND_CLUSTER_NAME` on that daemon.
 
-Source the environment written by the bootstrap. The source workload namespace
-must contain the native PostgreSQL `storefront` schema, the completed
-`result-schema-publish` Job, `demo-registry`, `demo-registry-pull`, and
-`demo-verification-policy`. For PostgreSQL, the lab's external database
+Load the environment written by the bootstrap. The source workload namespace
+must contain `demo-registry`, `demo-registry-pull`, and
+`demo-verification-policy`. `E2E_EXECUTOR_IMAGE` identifies the pinned publisher
+image; the probe creates its own publisher and schema. For PostgreSQL, the lab's external database
 container and its credential file must still exist. MySQL uses the source namespace's `demo-mysql` Deployment
 and `demo-mysql-database` Secret. These objects supply the pinned executor,
 registry, verification settings, and database fixture; they are not altered.
@@ -248,19 +248,21 @@ The native maximum-plus-one regression reading is retained with the evidence.
 
 ## Fault and assertions
 
-A namespace-scoped admission binding holds only Plan credential projections.
-Resolve, Verify, and Observe complete normally. Once the canonical Plan
-credential exists and its Pod is still pending, the probe saves the manager's
+A namespace-scoped admission binding holds Plan Pod creation.
+Resolve, Verify, and Observe complete normally. Once the exact Plan Job is
+recorded in the active claim, with no Pod or result, the probe saves the manager's
 RoleBinding, removes its subjects, and replaces both manager processes. It
 requires two new ready Pods and an explicit denial of leader Lease access.
 No old process may remain to consume the result.
 
-The probe removes the gate and creates the exact immutable Secret projection
-from the canonical credential, impersonating the manager's identity. It retries
-only the demonstrated admission-cache delay. The runner retains its ordinary
-Pod and credentials and sends its result to the ordinary receiver Service.
-Credential bytes stay in memory and kubectl pipes; evidence files contain no
-private keys or database credentials.
+The probe removes the gate, observes the original Pod, and creates its immutable
+public binding through the actual admission handler while impersonating the
+manager. This performs the enrollment that paused reconciliation cannot perform.
+The record uses the admitted Job template and actual Job/Pod UIDs. The receiver
+still authenticates the original runner's own Pod-bound token. The probe never
+reads or copies that token and creates no operation credential Secret. The
+runner sends its result to the ordinary receiver Service. Evidence files contain
+public binding metadata, with no token, private key or database credentials.
 
 After the Job completes, the probe rebuilds its complete durable publication
 and verifies intent, completion, and chunk UIDs, ownership, lengths, and hashes.

@@ -5,7 +5,7 @@ import json
 import pathlib
 import unittest
 
-from result_first_harvest import publication, size_fixture, oversized_refusal
+from result_first_harvest import publication, size_fixture, oversized_refusal, pod_binding_record
 
 
 def digest(data):
@@ -19,6 +19,59 @@ def record(name, uid, role, value, owner=None):
         metadata['ownerReferences'] = [{'uid': owner}]
     return {'metadata': metadata, 'spec': {
         'type': role, 'data': base64.b64encode(raw).decode()}}
+
+
+class PodBindingTests(unittest.TestCase):
+    def fixture(self):
+        owner = {'apiVersion': 'operator.ptah.run/v1alpha1', 'kind': 'PtahSchema',
+                 'name': 'schema', 'uid': 'schema-uid', 'controller': True}
+        job = {'metadata': {'namespace': 'probe', 'name': 'ptah-plan-probe', 'uid': 'job-uid',
+                            'ownerReferences': [owner]}}
+        identity = {'binding': {'namespace': 'probe', 'kind': 'PtahSchema', 'name': 'schema',
+                    'uid': 'schema-uid', 'generation': 1, 'executionBindingID': 'v1-' + 'a' * 32,
+                    'inputFingerprint': 'sha256:' + 'b' * 64, 'operation': 'plan',
+                    'operationID': 'operation', 'jobName': 'ptah-plan-probe',
+                    'jobUID': '', 'podName': '', 'podUID': ''}, 'engine': 'postgresql'}
+        pod = {'metadata': {'namespace': 'probe', 'name': 'original-pod', 'uid': 'pod-uid',
+                            'ownerReferences': [{'uid': 'job-uid'}]},
+               'spec': {'automountServiceAccountToken': False,
+                        'containers': [{'env': [{'name': 'PTAH_RESULT_IDENTITY_TEMPLATE',
+                                                'value': json.dumps(identity)}]}],
+                        'volumes': [{'name': 'result-credentials', 'projected': {'sources': [
+                            {'serviceAccountToken': {'audience': 'operator.ptah.run/results',
+                                                     'expirationSeconds': 3600, 'path': 'token'}}]}}]}}
+        return job, pod
+
+    def test_enrolls_public_identity_without_reading_a_token(self):
+        job, pod = self.fixture()
+        bound = pod_binding_record(job, pod)
+        identity = json.loads(base64.b64decode(bound['spec']['data']))
+        self.assertEqual(set(identity), {'binding', 'engine'})
+        self.assertEqual(identity['binding']['jobUID'], 'job-uid')
+        self.assertEqual(identity['binding']['podUID'], 'pod-uid')
+        self.assertEqual(identity['binding']['podName'], 'original-pod')
+        self.assertEqual(bound['metadata']['ownerReferences'][0]['uid'], 'schema-uid')
+        self.assertEqual(bound['metadata']['annotations']['operator.ptah.run/result-pod-uid'], 'pod-uid')
+        self.assertEqual(json.loads(pod['spec']['containers'][0]['env'][0]['value'])['binding']['podUID'], '')
+
+    def test_refuses_foreign_identity_and_api_token(self):
+        for fault in ('owner', 'namespace', 'missing UID', 'automount', 'audience', 'extra token', 'template'):
+            with self.subTest(fault=fault):
+                job, pod = self.fixture()
+                if fault == 'owner': pod['metadata']['ownerReferences'][0]['uid'] = 'foreign-job'
+                if fault == 'namespace': pod['metadata']['namespace'] = 'foreign'
+                if fault == 'missing UID': pod['metadata']['uid'] = ''
+                if fault == 'automount': pod['spec']['automountServiceAccountToken'] = True
+                if fault == 'audience':
+                    pod['spec']['volumes'][0]['projected']['sources'][0]['serviceAccountToken']['audience'] = 'https://kubernetes.default.svc'
+                if fault == 'extra token': pod['spec']['volumes'].append(copy.deepcopy(pod['spec']['volumes'][0]))
+                if fault == 'template':
+                    env = pod['spec']['containers'][0]['env'][0]
+                    identity = json.loads(env['value'])
+                    identity['binding']['uid'] = 'foreign-schema'
+                    env['value'] = json.dumps(identity)
+                with self.assertRaises(ValueError):
+                    pod_binding_record(job, pod)
 
 
 class SizeFixtureTests(unittest.TestCase):

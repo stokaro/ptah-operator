@@ -167,8 +167,50 @@
         "name": "pod-token-2026-10-03.tar.gz",
         "sha256": "6ab606d73142bf487f0c74d856f31a99561a8d300cfb4943112efd3b9dfad5d5",
         "downloadVerified": true
+      },
+      {
+        "name": "pod-token-first-harvest-2026-10-03.tar.gz",
+        "sha256": "419bae7e5f8d724bc5139c8987af63d66f4a1d3276dd9132b16886eda005af90",
+        "downloadVerified": true
       }
     ],
     "scope": "Development evidence copy. Final #584 custody, retention policy and owner acceptance remain unassessed."
+  },
+  "podTokenFirstHarvest": {
+    "requirement": "#586 acknowledged-result survival before first controller harvest",
+    "conclusion": "passed",
+    "source": "866125a1737bcc2b3d890387da4fbcd7f9a8e786",
+    "imageDigest": "sha256:885c1bc6f33f097c26b6c25d1052fc17cb09c3af724d76ac0fea2b99ca9e039d",
+    "procedureSHA256": "0c83d3efe6fd0e4ca5ea462559585715f162cfe392c2db9b0c8ae40f8e22f9f9",
+    "platform": "Kubernetes 1.37.0, linux/amd64, diabolocom",
+    "method": "Hold the original Plan Pod before execution, pause reconciliation, enroll only its public identity through manager admission, then let the original runner publish using its own Pod-bound token. Remove the producing Pod and logs and replace both managers before first consumption. Reconstruct the exact saved plan, approve it once and verify the native database result.",
+    "runs": [
+      {
+        "engine": "postgresql",
+        "report": "first-harvest-postgresql/first-harvest-maximum.json",
+        "reportSHA256": "f98ed6ceb6aa42c04897bac7b225b1e6d778ad8574aea83ad64be96c840330aa",
+        "completedAt": "2026-10-03T20:21:53.464567+00:00",
+        "planBytes": 8388608,
+        "planChunks": 16,
+        "approvedApplyJobs": 1,
+        "converged": true
+      },
+      {
+        "engine": "mysql",
+        "report": "first-harvest-mysql/first-harvest-maximum.json",
+        "reportSHA256": "7bdb5bb4253bb38d827af01be1b777b98d6363e3162dee7276c20afa6d1ee1b7",
+        "completedAt": "2026-10-03T20:25:38.779732+00:00",
+        "planBytes": 8388608,
+        "planChunks": 16,
+        "approvedApplyJobs": 1,
+        "converged": true
+      }
+    ],
+    "archive": {
+      "name": "pod-token-first-harvest-2026-10-03.tar.gz",
+      "sha256": "419bae7e5f8d724bc5139c8987af63d66f4a1d3276dd9132b16886eda005af90",
+      "downloadVerified": true
+    },
+    "scope": "Both native engines at the exact supported 8 MiB limit. This does not qualify lost-acknowledgment redelivery, other Kubernetes minors, final artifacts or #242 as a whole."
   }
 }

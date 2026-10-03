@@ -109,6 +109,57 @@ def oversized_refusal(schema, payload, artifact_digest, operation_id):
         raise ValueError('The refusal does not measure an actual native plan exactly one byte over the limit')
 
 
+def pod_binding_record(job, pod):
+    """Enroll the original Pod while reconciliation is paused for first harvest.
+
+    The manager's actual admission handler validates this public record. The
+    receiver still authenticates the runner's own projected token independently.
+    No token or private key is read by the probe.
+    """
+    jm, pm, spec = job['metadata'], pod['metadata'], pod['spec']
+    owner = jm['ownerReferences'][0]
+    if (len(jm['ownerReferences']) != 1 or not owner.get('controller')
+            or owner['apiVersion'] != 'operator.ptah.run/v1alpha1'
+            or pm['namespace'] != jm['namespace'] or not jm.get('uid') or not pm.get('uid')
+            or len(pm['ownerReferences']) != 1
+            or pm['ownerReferences'][0].get('uid') != jm['uid']
+            or spec.get('automountServiceAccountToken') is not False
+            or len(spec['containers']) != 1):
+        raise ValueError('Expected the exact original Job and isolated Pod')
+    projections = [(v['name'], s['serviceAccountToken']) for v in spec.get('volumes', [])
+                   for s in v.get('projected', {}).get('sources', []) if 'serviceAccountToken' in s]
+    expected = [('result-credentials', {'audience': 'operator.ptah.run/results',
+                                      'expirationSeconds': 3600, 'path': 'token'})]
+    if projections != expected:
+        raise ValueError('Expected only the receiver-audience Pod token')
+    templates = [e['value'] for e in spec['containers'][0]['env']
+                 if e['name'] == 'PTAH_RESULT_IDENTITY_TEMPLATE' and 'value' in e]
+    if len(templates) != 1:
+        raise ValueError('Missing the admitted public identity template')
+    identity = json.loads(templates[0])
+    b = identity['binding']
+    if (any(b[k] for k in ('jobUID', 'podName', 'podUID')) or b['namespace'] != jm['namespace']
+            or b['jobName'] != jm['name'] or b['uid'] != owner['uid']
+            or b['name'] != owner['name'] or b['kind'] != owner['kind']):
+        raise ValueError('The admitted template belongs to another operation')
+    b.update(jobUID=jm['uid'], podName=pm['name'], podUID=pm['uid'])
+    name = 'ptah-result-key-' + hashlib.sha256(
+        '\0'.join((b['uid'], b['operationID'], b['jobName'])).encode()).hexdigest()[:32]
+    raw = json.dumps(identity, separators=(',', ':')).encode()
+    return {'apiVersion': 'operator.ptah.run/v1alpha1', 'kind': 'PtahResultRecord',
+            'metadata': {'name': name, 'namespace': b['namespace'],
+                         'labels': {'app.kubernetes.io/managed-by': 'ptah-operator',
+                                    'app.kubernetes.io/component': 'result-credential'},
+                         'annotations': {'operator.ptah.run/result-pod-uid': b['podUID'],
+                                         'operator.ptah.run/result-pod-name': b['podName'],
+                                         'operator.ptah.run/result-job-uid': b['jobUID'],
+                                         'operator.ptah.run/result-operation-id': b['operationID']},
+                         'ownerReferences': [{'apiVersion': owner['apiVersion'], 'kind': b['kind'],
+                                              'name': b['name'], 'uid': b['uid'],
+                                              'controller': True, 'blockOwnerDeletion': True}]},
+            'spec': {'type': 'credential', 'data': base64.b64encode(raw).decode()}}
+
+
 def main():
     if not __debug__:
         raise RuntimeError('Run without Python optimization; acceptance assertions are required')
@@ -222,59 +273,89 @@ def main():
         sql('CREATE DATABASE ' + database + ' OWNER ' + owner + ';', urllib.parse.urlsplit(credentials['url']).path[1:])
         url = urllib.parse.urlunsplit(urllib.parse.urlsplit(credentials['url'])._replace(path='/' + database))
     create({'apiVersion': 'v1', 'kind': 'Secret', 'metadata': {'name': 'first-harvest-database', 'namespace': ns}, 'stringData': {'url': url}})
-    publisher = get('job', 'result-schema-publish', source)
-    template = copy.deepcopy(publisher['spec']['template'])
-    template.pop('metadata', None)
-    podspec = template['spec']
-    container = podspec['containers'][0]
+    security = {'allowPrivilegeEscalation': False, 'readOnlyRootFilesystem': True,
+                'capabilities': {'drop': ['ALL']}}
+    container = {'name': 'publisher', 'image': E['E2E_EXECUTOR_IMAGE'],
+                 'command': ['/usr/local/bin/ptah'], 'securityContext': security,
+                 'resources': {'requests': {'cpu': '100m', 'memory': '32Mi'},
+                               'limits': {'cpu': '1', 'memory': '256Mi'}},
+                 'env': [{'name': 'HOME', 'value': '/work'}, {'name': 'TMPDIR', 'value': '/work'}] + [
+                     {'name': 'PTAH_OCI_' + name.upper(), 'valueFrom': {'secretKeyRef': {
+                     'name': 'demo-registry', 'key': name}}} for name in ('registry', 'username', 'password')],
+                 'volumeMounts': [{'name': 'schema', 'mountPath': '/schema', 'readOnly': True},
+                                  {'name': 'work', 'mountPath': '/work'}]}
+    podspec = {'restartPolicy': 'Never', 'automountServiceAccountToken': False,
+               'imagePullSecrets': [{'name': 'demo-registry-pull'}],
+               'securityContext': {'runAsNonRoot': True, 'runAsUser': 65532, 'runAsGroup': 65532,
+                                   'fsGroup': 65532, 'seccompProfile': {'type': 'RuntimeDefault'}},
+               'containers': [container]}
+    template = {'spec': podspec}
     container['args'] = ['schema', 'push', 'oci://' + E['E2E_REGISTRY_HOST'] + '/schemas/demo:' + ns, '--schema-file', '/schema/schema.sql', '--dialect', dialect, '--plain-http']
     podspec['volumes'] = [{'name': 'schema', 'emptyDir': {'sizeLimit': '8Mi'}}, {'name': 'work', 'emptyDir': {'sizeLimit': '64Mi'}}]
     podspec['initContainers'] = [{'name': 'generate', 'image': fixture, 'command': ['/e2e-handcraft-oci'], 'args': ['plan-size-schema', dialect, str(repeated), str(suffix), '/schema/schema.sql'], 'volumeMounts': [{'name': 'schema', 'mountPath': '/schema'}], 'securityContext': copy.deepcopy(container['securityContext'])}]
     create({'apiVersion': 'batch/v1', 'kind': 'Job', 'metadata': {'name': 'first-harvest-publish', 'namespace': ns}, 'spec': {'backoffLimit': 0, 'activeDeadlineSeconds': 300, 'template': template}})
     k('wait', '--for=condition=complete', 'job/first-harvest-publish', '--timeout=300s')
     artifact_digest = re.search('^Digest: (sha256:[0-9a-f]{64})$', k('logs', 'job/first-harvest-publish'), re.M).group(1)
-    policy = {'apiVersion': 'admissionregistration.k8s.io/v1', 'kind': 'ValidatingAdmissionPolicy', 'metadata': {'name': gate}, 'spec': {'failurePolicy': 'Fail', 'matchConstraints': {'resourceRules': [{'apiGroups': [''], 'apiVersions': ['v1'], 'operations': ['CREATE'], 'resources': ['secrets']}]}, 'validations': [{'expression': "!has(object.metadata.annotations) || !('operator.ptah.run/result-pod-name' in object.metadata.annotations) || !object.metadata.annotations['operator.ptah.run/result-pod-name'].startsWith('ptah-plan-')", 'message': 'Acceptance probe holds Plan credentials before execution'}]}}
+    message = 'Acceptance probe holds Plan Pods before execution'
+    expression = ("!has(object.metadata.labels) || !("
+                  "('operator.ptah.run/operation' in object.metadata.labels && "
+                  "object.metadata.labels['operator.ptah.run/operation'] == 'plan') || "
+                  "('operator.ptah.run/acceptance-gate-probe' in object.metadata.labels))")
+    policy = {'apiVersion': 'admissionregistration.k8s.io/v1', 'kind': 'ValidatingAdmissionPolicy',
+              'metadata': {'name': gate}, 'spec': {'failurePolicy': 'Fail',
+                  'matchConstraints': {'resourceRules': [{'apiGroups': [''], 'apiVersions': ['v1'],
+                      'operations': ['CREATE'], 'resources': ['pods']}]},
+                  'validations': [{'expression': expression, 'message': message}]}}
     try:
         create(policy)
         gated = True
         create({'apiVersion': 'admissionregistration.k8s.io/v1', 'kind': 'ValidatingAdmissionPolicyBinding', 'metadata': {'name': gate}, 'spec': {'policyName': gate, 'validationActions': ['Deny'], 'matchResources': {'namespaceSelector': {'matchLabels': {'kubernetes.io/metadata.name': ns}}}}})
 
         def gate_ready():
-            obj = {'apiVersion': 'v1', 'kind': 'Secret', 'metadata': {'name': 'probe', 'namespace': ns, 'annotations': {'operator.ptah.run/result-pod-name': 'ptah-plan-proof'}}}
-            p = subprocess.run(['kubectl', '--kubeconfig', E['E2E_KUBECONFIG'], 'create', '--dry-run=server', '-f', '-'], input=json.dumps(obj), text=True, capture_output=True)
-            return p.returncode and 'Acceptance probe holds Plan credentials' in p.stderr
+            obj = {'apiVersion': 'v1', 'kind': 'Pod', 'metadata': {'name': 'probe', 'namespace': ns,
+                   'labels': {'operator.ptah.run/acceptance-gate-probe': 'true'}},
+                   'spec': {'containers': [{'name': 'probe', 'image': fixture}],
+                            'automountServiceAccountToken': False, 'restartPolicy': 'Never'}}
+            p = subprocess.run(['kubectl', '--kubeconfig', E['E2E_KUBECONFIG'], 'create',
+                                '--dry-run=server', '-f', '-'], input=json.dumps(obj), text=True,
+                               capture_output=True, timeout=30)
+            return p.returncode and message in p.stderr
         wait(gate_ready)
-        schema = get('ptahschema', 'storefront', source)
-        spec = copy.deepcopy(schema['spec'])
-        spec['target']['engine'] = 'MySQL' if engine == 'mysql' else 'PostgreSQL'
+        spec = {'target': {'engine': 'MySQL' if engine == 'mysql' else 'PostgreSQL',
+                          'coordinationKey': 'acceptance/' + ns,
+                          'urlFrom': {'name': 'first-harvest-database', 'key': 'url'}},
+                'desired': {'ociRef': 'oci://' + E['E2E_REGISTRY_HOST'] + '/schemas/demo@' + artifact_digest,
+                            'verificationPolicyFrom': {'name': 'demo-verification-policy', 'key': 'policy.yaml'},
+                            'registryAuthFrom': {'name': 'demo-registry', 'mode': 'Environment',
+                                                 'usernameKey': 'username', 'passwordKey': 'password'},
+                            'transport': {'plainHTTP': True}},
+                'policy': {'apply': 'OnApproval', 'allowDestructive': False, 'driftSeverity': 'all'},
+                'interval': '2h', 'execution': {'activeDeadlineSeconds': 900,
+                    'failureRetryInterval': '1h' if plan_bytes == 8388609 else '30s',
+                    'resources': {'requests': {'cpu': '100m', 'memory': '64Mi'},
+                                  'limits': {'cpu': '1', 'memory': '512Mi'}}}}
         if engine == 'mysql':
             spec['policy']['transactionMode'] = 'none'
-        spec['target']['coordinationKey'] = 'acceptance/' + ns
-        spec['target']['urlFrom']['name'] = 'first-harvest-database'
-        spec['policy']['apply'] = 'OnApproval'
-        spec['interval'] = '2h'
-        spec['desired']['ociRef'] = 'oci://' + E['E2E_REGISTRY_HOST'] + '/schemas/demo@' + artifact_digest
-        spec['execution']['activeDeadlineSeconds'] = 900
-        if plan_bytes == 8388609:
-            spec['execution']['failureRetryInterval'] = '1h'
-        spec['execution']['resources'] = {'requests': {'cpu': '100m', 'memory': '64Mi'}, 'limits': {'cpu': '1', 'memory': '512Mi'}}
-        resource = create({'apiVersion': schema['apiVersion'], 'kind': schema['kind'], 'metadata': {'name': 'first-harvest', 'namespace': ns}, 'spec': spec})
+        resource = create({'apiVersion': 'operator.ptah.run/v1alpha1', 'kind': 'PtahSchema',
+                           'metadata': {'name': 'first-harvest', 'namespace': ns}, 'spec': spec})
         uid = resource['metadata']['uid']
 
-        def held_credential():
-            candidates = [r for r in records() if r['spec']['type'] == 'credential' and r['metadata'].get('annotations', {}).get('operator.ptah.run/result-pod-name', '').startswith('ptah-plan-')]
+        def held_job():
+            operation = get('ptahschema', 'first-harvest').get('status', {}).get('activeOperation') or {}
+            if operation.get('type') not in ('Plan', 'plan') or not operation.get('jobUID'):
+                return None
+            candidates = [j for j in get('jobs')['items'] if j['metadata']['uid'] == operation['jobUID']]
             return candidates[0] if len(candidates) == 1 else None
-        credential = wait(held_credential, 240)
+        job = wait(held_job, 240)
         before = claim()
-        assert before['type'] == 'Plan' or before['type'] == 'plan'
+        job_name, job_uid = job['metadata']['name'], job['metadata']['uid']
         assert not plans(), 'Plan was published before the gate'
-        secret_name = credential['metadata']['name']
-        assert secret_name not in {x['metadata']['name'] for x in get('secrets')['items']}
-        job_name = before['jobName']
-        job_uid = before['jobUID']
-        pod_name = credential['metadata']['annotations']['operator.ptah.run/result-pod-name']
-        pod = get('pod', pod_name)
-        assert pod['status']['phase'] == 'Pending'
+        def job_pods():
+            return [p for p in get('pods')['items'] if any(
+                o.get('uid') == job_uid for o in p['metadata'].get('ownerReferences', []))]
+        assert not job_pods(), 'Plan Pod escaped the admission gate'
+        assert not any(r['spec']['type'] == 'intent' and dec(r)['binding']['jobUID'] == job_uid
+                       for r in records()), 'Plan result exists before execution'
         print('Plan held before execution:', job_name, flush=True)
         save('manager-rolebinding-before.json', rb)
         old_pods = {p['metadata']['uid'] for p in json.loads(k('get', 'pods', '-l', selector, '-o', 'json', namespace=opns))['items']}
@@ -295,18 +376,18 @@ def main():
         k('delete', 'validatingadmissionpolicybinding', gate)
         k('delete', 'validatingadmissionpolicy', gate)
         gated = False
-        cm = credential['metadata']
-        projection = {'apiVersion': 'v1', 'kind': 'Secret', 'metadata': {key: cm[key] for key in ('name', 'namespace', 'labels', 'annotations') if key in cm}, 'type': 'kubernetes.io/tls', 'immutable': True, 'data': dec(credential)}
-        projection['metadata']['ownerReferences'] = [{'apiVersion': 'operator.ptah.run/v1alpha1', 'kind': 'PtahResultRecord', 'name': cm['name'], 'uid': cm['uid'], 'controller': True, 'blockOwnerDeletion': False}]
-
-        def project_after_gate_removed():
-            try:
-                return create(projection, '--as=' + user)
-            except RuntimeError as e:
-                if 'Acceptance probe holds Plan credentials' not in str(e):
-                    raise
-                return False
-        wait(project_after_gate_removed, 30)
+        def original_pod():
+            pods = job_pods()
+            assert len(pods) <= 1, 'Plan attempt created a replacement Pod'
+            return pods[0] if pods else None
+        pod = wait(original_pod, 180)
+        pod_name = pod['metadata']['name']
+        # Reconciliation is intentionally stopped. Create its public enrollment
+        # record as the manager through the actual admission handler, without
+        # reading or copying the token. Only the original Pod can authenticate.
+        credential = create(pod_binding_record(job, pod), '--as=' + user)
+        save('pod-binding.json', credential)
+        assert credential['metadata']['name'] not in {x['metadata']['name'] for x in get('secrets')['items']}
         if plan_bytes == 8388609:
             def job_terminal():
                 job = get('job', job_name)
