@@ -13,6 +13,8 @@ import (
 	"k8s.io/apimachinery/pkg/watch"
 )
 
+const hookWatchTimeout = 30 * time.Second
+
 func (o *observer) watch(ctx context.Context) error {
 	for ctx.Err() == nil {
 		s := o.snapshot()
@@ -20,7 +22,7 @@ func (o *observer) watch(ctx context.Context) error {
 			<-ctx.Done()
 			return nil
 		}
-		seconds := int64(30)
+		seconds := int64(hookWatchTimeout / time.Second)
 		stream, err := o.jobs.BatchV1().Jobs(s.Intent.Namespace).Watch(ctx, metav1.ListOptions{FieldSelector: "metadata.name=" + s.Intent.HookJob, ResourceVersion: s.ResourceVersion, AllowWatchBookmarks: true, TimeoutSeconds: &seconds})
 		if err != nil {
 			if apierrors.IsResourceExpired(err) || apierrors.IsGone(err) {
@@ -121,7 +123,9 @@ func (o *observer) segment(ctx context.Context, stream watch.Interface) error {
 			}
 			// A fresh Job read prevents clearing over a retry already visible to the
 			// API but not yet delivered to this watch.
-			current, err := o.jobs.BatchV1().Jobs(s.Intent.Namespace).Get(ctx, s.Intent.HookJob, metav1.GetOptions{})
+			readCtx, stopRead := context.WithTimeout(ctx, 10*time.Second)
+			current, err := o.jobs.BatchV1().Jobs(s.Intent.Namespace).Get(readCtx, s.Intent.HookJob, metav1.GetOptions{})
+			stopRead()
 			if err != nil && !apierrors.IsNotFound(err) {
 				continue
 			}

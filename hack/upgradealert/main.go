@@ -24,6 +24,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 	clientscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -85,7 +86,11 @@ func runWithListener(ctx context.Context, args []string, listenSocket func(strin
 		return err
 	}
 	config.Timeout = 10 * time.Second
-	jobs, err := kubernetes.NewForConfig(config)
+	// HTTP client timeouts include streaming response bodies. Let a quiet
+	// watch reach its server-side segment boundary and receive bookmarks.
+	jobConfig := rest.CopyConfig(config)
+	jobConfig.Timeout = hookWatchTimeout + config.Timeout
+	jobs, err := kubernetes.NewForConfig(jobConfig)
 	if err != nil {
 		return err
 	}
@@ -130,7 +135,9 @@ func runWithListener(ctx context.Context, args []string, listenSocket func(strin
 			}
 		}
 		started := time.Now().UTC()
-		list, err := jobs.BatchV1().Jobs(intent.Namespace).List(ctx, metav1.ListOptions{FieldSelector: "metadata.name=" + intent.HookJob})
+		listCtx, stopList := context.WithTimeout(ctx, config.Timeout)
+		defer stopList()
+		list, err := jobs.BatchV1().Jobs(intent.Namespace).List(listCtx, metav1.ListOptions{FieldSelector: "metadata.name=" + intent.HookJob})
 		if err != nil {
 			return fmt.Errorf("establish hook watch boundary: %w", err)
 		}

@@ -218,6 +218,9 @@ func (a *alertingRun) upgradeAlertCase(intent alUpgradeIntent, hookAccount, char
 		body, _, err := a.cluster.Kubectl(a.ctx, "-n", alMonitoringNamespace, "exec", observer.Name, "-c", alUpgradeObserver, "--", "/e2e-upgrade-observer", "inspect", "--state", "/data/state.json")
 		a.check(err, "inspect retained upgrade state")
 		s, err := alUpgradeReadState(body, intent, original)
+		if err != nil {
+			retain("refused-observer-state.json", body)
+		}
 		a.check(err, "validate immutable upgrade transaction")
 		return s
 	}

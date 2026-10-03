@@ -164,3 +164,92 @@ func TestPrepareServeAndRestartRetainTheFailedHook(t *testing.T) {
 	}
 	lock.Close()
 }
+
+// A quiet hook watch still owes bookmark delivery. The ordinary ten-second
+// request bound must not close that stream before its thirty-second segment.
+func TestServeKeepsQuietWatchUntilBookmark(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "state.json")
+	if err := saveState(statePath, fixtureState()); err != nil {
+		t.Fatal(err)
+	}
+	earlyClose := make(chan time.Duration, 1)
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/apis/batch/v1/namespaces/operator/jobs" || r.URL.Query().Get("watch") != "true" || r.URL.Query().Get("allowWatchBookmarks") != "true" {
+			http.Error(w, "unexpected request", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
+		started := time.Now()
+		timer := time.NewTimer(12 * time.Second)
+		defer timer.Stop()
+		select {
+		case <-r.Context().Done():
+			select {
+			case earlyClose <- time.Since(started):
+			default:
+			}
+			return
+		case <-timer.C:
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"type": "BOOKMARK", "object": &batchv1.Job{TypeMeta: metav1.TypeMeta{APIVersion: "batch/v1", Kind: "Job"}, ObjectMeta: metav1.ObjectMeta{ResourceVersion: "101"}}})
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	}))
+	defer api.Close()
+	config := clientcmdapi.NewConfig()
+	config.Clusters["test"] = &clientcmdapi.Cluster{Server: api.URL}
+	config.AuthInfos["test"] = &clientcmdapi.AuthInfo{}
+	config.Contexts["test"] = &clientcmdapi.Context{Cluster: "test", AuthInfo: "test"}
+	config.CurrentContext = "test"
+	kubeconfig := filepath.Join(dir, "kubeconfig")
+	if err := clientcmd.WriteToFile(*config, kubeconfig); err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() {
+		done <- runWithListener(ctx, []string{"serve", "--state", statePath, "--kubeconfig", kubeconfig}, func(string, string) (net.Listener, error) { return listener, nil })
+	}()
+	defer func() {
+		cancel()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Error(err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Error("observer did not release its watch")
+		}
+	}()
+	deadline := time.NewTimer(20 * time.Second)
+	defer deadline.Stop()
+	tick := time.NewTicker(20 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		select {
+		case elapsed := <-earlyClose:
+			t.Fatalf("quiet watch closed after %s before its bookmark", elapsed)
+		case <-deadline.C:
+			t.Fatal("quiet watch did not persist its bookmark")
+		case <-tick.C:
+			s, err := loadState(statePath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if s.ResourceVersion == "101" {
+				if s.HistoryLost || len(s.Attempts) != 0 {
+					t.Fatal("bookmark invented an attempt or lost history")
+				}
+				return
+			}
+		}
+	}
+}

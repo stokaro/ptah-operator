@@ -1,0 +1,17 @@
+Release "ptah-1-37-0-pr585-alerts-25ec38ca61" has been upgraded. Happy Helming!
+NAME: ptah-1-37-0-pr585-alerts-25ec38ca61
+LAST DEPLOYED: Sat Oct  3 17:09:32 2026
+NAMESPACE: ptah-system-1-37-0-pr585-alerts-diabolocom-3e6dd38e-25ec38ca61
+STATUS: deployed
+REVISION: 4
+DESCRIPTION: Upgrade complete
+TEST SUITE: None
+NOTES:
+The operator is installed with credential-isolated execution Jobs.
+
+Create database and registry Secrets only in the namespace of each PtahSchema.
+The controller ClusterRole intentionally has no permission to read Secrets.
+
+The optional ClusterRole ptah-runtime-generated-name-prefix-boundary-proof-25ec38ca61-approver is not
+bound automatically. Bind it only to authenticated identities allowed to create
+exact-plan approvals.

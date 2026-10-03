@@ -1,0 +1,5 @@
+--- FAIL: TestServeKeepsQuietWatchUntilBookmark (10.02s)
+    main_test.go:239: quiet watch closed after 9.999905041s before its bookmark
+FAIL
+FAIL	github.com/stokaro/ptah-operator/hack/upgradealert	10.581s
+FAIL
