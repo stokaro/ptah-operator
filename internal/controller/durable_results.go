@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -62,9 +63,13 @@ func durableTerminalResult(ctx context.Context, reader client.Reader, results Op
 	request.Kind = kind
 	request.Generation = config.Generation
 	request.JobName = job.Name
-	if selected != nil && !evidence.Trusted {
+	if selected != nil && !evidence.Trusted && selected.Status.Phase != corev1.PodFailed {
 		return evidence, errTerminalPodPending
 	}
+	// A failed init container leaves the executor unstarted. The terminal Pod
+	// cannot finish it later: read any durable receipt, or expose its absence
+	// to the existing read-only retry and uncertain-Apply recovery paths.
+	// Its identity is retained, but it is not trusted executor termination.
 	if results == nil {
 		return evidence, fmt.Errorf("durable result reader is not configured")
 	}

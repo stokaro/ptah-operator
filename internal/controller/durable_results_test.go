@@ -140,6 +140,44 @@ func TestDurableResultNeverUsesLogsOrTerminationSummary(t *testing.T) {
 	}
 }
 
+func TestDurableResultDoesNotWaitForAnExecutorInAFailedPod(t *testing.T) {
+	for _, name := range []string{"schema-observe", "schema-apply-admitted-scheduling", "migration-history", "migration-apply-admitted-scheduling"} {
+		for _, phase := range []corev1.PodPhase{corev1.PodRunning, corev1.PodFailed} {
+			t.Run(name+"/"+string(phase), func(t *testing.T) {
+				f := resulttest.New(t, name)
+				f.Pod.Status.Phase = phase
+				f.Pod.Status.ContainerStatuses = []corev1.ContainerStatus{{Name: executorContainerName, State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "PodInitializing"}}}}
+				f.Pod.Status.InitContainerStatuses = []corev1.ContainerStatus{{Name: f.Pod.Spec.InitContainers[0].Name, State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 2}}}}
+				apiClient := f.Client(t)
+				consumer := controllerConsumer(t, apiClient)
+				var read func() (terminalEvidence, error)
+				switch subject := f.Subject.(type) {
+				case *api.PtahSchema:
+					r := &SchemaReconciler{Client: apiClient, APIReader: apiClient, Results: consumer, Logs: forbiddenResultLogs{t}}
+					read = func() (terminalEvidence, error) { return r.terminalLogs(t.Context(), subject, f.Job) }
+				case *api.PtahMigration:
+					r := &MigrationReconciler{Client: apiClient, APIReader: apiClient, Results: consumer, Logs: forbiddenResultLogs{t}}
+					read = func() (terminalEvidence, error) { return r.migrationTerminalLogs(t.Context(), subject, f.Job) }
+				}
+				evidence, err := pollEvidence(t, read)
+				if phase == corev1.PodRunning {
+					if !errors.Is(err, errTerminalPodPending) {
+						t.Fatalf("a nonterminal Pod stopped waiting: %v", err)
+					}
+					return
+				}
+				if err != nil {
+					t.Fatalf("failed init Pod remained pending instead of exposing the missing receipt: %v", err)
+				}
+				_, err = evidence.parseResult(runner.Operation(f.Identity.Binding.Operation), f.Identity.Binding.OperationID)
+				if !errors.Is(err, runner.ErrFrameNotFound) || evidence.Trusted || !evidence.Durable || evidence.PodCount != 1 || len(evidence.PodUIDs) != 1 || evidence.PodUIDs[0] != f.Pod.UID {
+					t.Fatalf("failed init lost its exact missing-result evidence: evidence=%+v error=%v", evidence, err)
+				}
+			})
+		}
+	}
+}
+
 func TestDurableConsumerStillRefusesReplacementPod(t *testing.T) {
 	f := resulttest.New(t, "schema-observe")
 	f.Pod.UID = "replacement"

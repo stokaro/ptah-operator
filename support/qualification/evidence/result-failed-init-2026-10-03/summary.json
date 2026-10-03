@@ -1,0 +1,41 @@
+{
+  "status": "local red/green and complete controller tests passed; corrected native verification pending",
+  "baseCommit": "45e33ba06932361cdf8923a77c9dbc9c2fe77395",
+  "requirement": "#586 unknown-outcome recovery and final integration; existing #578 unsupported-runner refusal/recovery",
+  "native": {
+    "controllerCommit": "a19ec58463bb60ddf976ef8184c4048776760f91",
+    "runnerCommit": "46b512288e8a7abab0881f25bb071ca706af5e72",
+    "incompatibleRunnerManifest": "sha256:7243140e7aa2b64d2254c859d266f390fc177a8b610d59cbf5c590e8e0f56f4c",
+    "platform": "Kubernetes 1.37.0 linux/amd64",
+    "scenario": "unsupported-runner-protocol-after-approval",
+    "observation": "Both Apply attempts refused protocol 2 before SQL. The original unknown outcomes were retained. Subsequent Observe init guards refused; their Pods and Jobs failed, but the controller still waited for the unstarted main executor after the supported runner was restored.",
+    "result": "failed",
+    "durationSeconds": 817.38,
+    "failure": "timed out waiting for e2e-runner-protocol-postgresql: supported read-only recovery to reach a fresh approval gate"
+  },
+  "cause": "durableTerminalResult returned errTerminalPodPending whenever an exact Pod had no terminated main container, including PodFailed after an init refusal. Unlike the legacy path, it never exposed missing-result evidence to existing retry/recovery.",
+  "change": "Only non-failed Pods without executor termination continue waiting. A failed Pod permits durable storage lookup; a missing receipt reaches existing read-only retry or uncertain-Apply handling, with exact Pod identity retained and Trusted=false. No log or termination-summary fallback.",
+  "checks": [
+    {
+      "command": "GOFLAGS=-p=1 go test ./internal/controller -run ^TestDurableResultDoesNotWaitForAnExecutorInAFailedPod$ -count=1 -v",
+      "exitCode": 1,
+      "expected": "old source fails all four terminal rows; nonterminal controls pass"
+    },
+    {
+      "command": "GOFLAGS=-p=1 go test ./internal/controller -count=1",
+      "exitCode": 0
+    },
+    {
+      "command": "GOFLAGS=-p=1 go vet ./internal/controller",
+      "exitCode": 0
+    }
+  ],
+  "sourceSHA256": {
+    "internal/controller/durable_results.go": "e7b0cbd98282d5814b2e616f1f1df72a90215a0703b9ca4c91f57ba0291669af",
+    "internal/controller/durable_results_test.go": "658e1e6f39acdbb0da1f72c312ce41b5c9ee271fd69eae7ee3cc8a4c31df2535"
+  },
+  "limits": [
+    "Corrected native recovery and the last running-Apply scenario remain unverified.",
+    "No current-head CI or release-readiness verdict."
+  ]
+}
