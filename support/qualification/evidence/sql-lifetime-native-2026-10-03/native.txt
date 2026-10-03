@@ -1,0 +1,13 @@
+=== RUN   TestRetainedSQLReplacement
+=== RUN   TestRetainedSQLReplacement/approval-resource-replacement
+    main_e2e_test.go:645: e2e migrations: PASS PostgreSQL same-name replacement refused approval resource-uid at its binding guard
+    main_e2e_test.go:645: e2e migrations: PASS PostgreSQL same-name replacement refused approval plan-uid at its binding guard
+    main_e2e_test.go:645: e2e migrations: PASS PostgreSQL same-name replacement refused approval fingerprint at its binding guard
+    main_e2e_test.go:645: e2e migrations: SQL refusal audit: engine=postgresql migrationUID=285f7d4d-ffb6-45fc-8532-73864c279ed0 jobUID=559bb325-f538-4683-98d2-727cafbf92e1 podUID=5b235a70-c706-4dac-98d2-ff96ebadadce operation=history client=10.244.3.231 allowedDiagnosticRecords=17 unauthorizedRecords=0
+    main_e2e_test.go:645: e2e migrations: SQL refusal audit: engine=postgresql migrationUID=a96f0cd7-2d1d-41f7-ac1f-c81018dc907f jobUID=addf9f8e-1bcd-47e2-8678-92f24e4a1bfa podUID=eebfeec6-aad0-49ef-af5b-3b1532af2177 operation=history client=10.244.3.236 allowedDiagnosticRecords=17 unauthorizedRecords=0
+    main_e2e_test.go:645: e2e migrations: SQL refusal audit: engine=postgresql migrationUID=a96f0cd7-2d1d-41f7-ac1f-c81018dc907f actor=harness allowedReadRecords=3
+    main_e2e_test.go:645: SQL audit: engine=postgresql jobUID=29a4905d-2939-48bb-8790-cdb9f3e8d33e podUID=b9a44c9a-0b52-4bd7-b3d6-0543276f9e4f client=10.244.3.237 receivedRecords=64 positiveControl=true serverRecords=322
+    main_e2e_test.go:645: e2e migrations: PASS PostgreSQL same-name migration replacement: oldUID=285f7d4d-ffb6-45fc-8532-73864c279ed0 newUID=a96f0cd7-2d1d-41f7-ac1f-c81018dc907f old approval refused; new approval applied once
+--- PASS: TestRetainedSQLReplacement (113.15s)
+    --- PASS: TestRetainedSQLReplacement/approval-resource-replacement (113.15s)
+PASS

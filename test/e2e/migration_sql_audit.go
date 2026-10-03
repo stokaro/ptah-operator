@@ -51,7 +51,9 @@ func operationSQLLifetimes(clients map[string]operationSQLClient, pods map[types
 				if terminated := status.State.Terminated; terminated != nil {
 					if terminated.FinishedAt.IsZero() || terminated.StartedAt.IsZero() || terminated.FinishedAt.Before(&terminated.StartedAt) ||
 						terminated.StartedAt.Before(&pod.CreationTimestamp) {
-						return nil, errors.New("SQL lifetime contains incomplete or reversed container dates")
+						return nil, fmt.Errorf("SQL lifetime contains incomplete or reversed container dates: podUID=%s resourceVersion=%s container=%s created=%s started=%s finished=%s",
+							pod.UID, pod.ResourceVersion, status.Name, pod.CreationTimestamp.UTC().Format(time.RFC3339Nano),
+							terminated.StartedAt.UTC().Format(time.RFC3339Nano), terminated.FinishedAt.UTC().Format(time.RFC3339Nano))
 					}
 					if terminated.FinishedAt.After(finished) {
 						finished = terminated.FinishedAt.Time
