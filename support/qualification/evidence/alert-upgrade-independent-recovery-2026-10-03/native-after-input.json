@@ -1,0 +1,18 @@
+{
+  "testSourceRevision": "ea4edefd3f9483c29c43242754d537cd9f8dcb65",
+  "runtimeRevision": "3e6dd38e660b43a50c529f2045ee879fc72143b9",
+  "dockerContext": "diabolocom",
+  "scope": "Only the final complete existing upgrade-alert scenario. All other native alert passes remain retained and are not repeated.",
+  "preparation": "Exact original runtime restored through Helm. Same four frozen Never-policy probe UIDs/specs retained. Diagnostic fixture replaces only the observer with the watch-timeout and independent-recovery fixes. Collection histories begin at this focused attempt; no full phase result.",
+  "overlayHashes": {
+    "main_e2e_test.go": "9749b2c4f82ed6c609934f1f8d7ad807b1a5c0fafac9758fb49a8f3c7395149a",
+    "alerting_unresolved_schema_e2e_test.go": "b19335ba60187f97b81309eba599e90ed30008e80f520d25251e2cee35338e5c",
+    "alerting.go": "3c5d812c5fcc85a15218d24e23de44b4d29dc374f4eec295c5e3ab3ccb1576b9",
+    "alerting_lock_e2e_test.go": "4c35eab676c7056c8d40f6595a49b7985a8e1a01125e58109c31da2f078e96b2",
+    "alerting_plan_store_e2e_test.go": "10275b92b009c9589238a54ed7f609ef206223f50fbcba08fb3396c7be23b83d",
+    "alerting_upgrade_probes_e2e_test.go": "9f17acf90155c30e24dadb9103171213db10341f86927d697824b1222ffc6cc8"
+  },
+  "runnerHash": "e5c4de164fae3cad23938ebe446081ca07a9da4a6f4393b0879bd458291fdbb3",
+  "probeInputSHA256": "ccce106d3dec084c58752e3bc87c6e5d676a92d463494494e04affb1d976c295",
+  "fixtureImage": "e2e-registry.ptah-test-a-1-37-0-pr585-alerts-diabolocom-3e6dd38e-25ec38ca61.svc.cluster.local:5000/e2e-fixture@sha256:6a413325cc59297fa641958ee51337d8b56f76a87ede5ef1c9134c967928510e"
+}

@@ -6,7 +6,17 @@
   "reproducedDefect": "The stateless verifier requires every resource to be idle at the same polling instant. A local regression alternates healthy boundaries and ordinary reads so each resource recovers but no common idle snapshot exists; the original verifier refuses it.",
   "correction": "Keep per-probe receipts within one completed hook while inspecting every current resource and executing real admission dry-runs. A verified resource may continue its first-attempt ordinary reads. Identity/generation change, stale or future readings, failures, pending outcomes, Apply, retry backoff and admission refusal still block recovery. A new hook or observer restart discards receipts. Poll and alert deadlines are unchanged.",
   "localValidation": "The staggered regression passes; existing identity/availability refusal cases now also run after cached progress. Fresh admission and current Apply controls, new-hook isolation and Migration History versus Apply/backoff controls pass. Full observer package passes with race detector. Observer vet and Linux amd64 compilation pass.",
-  "status": "Corrected native recovery and deadline scenario pending; no complete phase or #581 closure.",
+  "status": "Failed-hook subcase passes natively. Deadline subcase and final closure of the shared four-probe histories remain pending. This focused continuation is not a full phase or #581 DoD closure.",
   "fixtureImage": "e2e-registry.ptah-test-a-1-37-0-pr585-alerts-diabolocom-3e6dd38e-25ec38ca61.svc.cluster.local:5000/e2e-fixture@sha256:6a413325cc59297fa641958ee51337d8b56f76a87ede5ef1c9134c967928510e",
-  "observerBinarySHA256": "d337b3b154e83e6916f97ea5e47a9ddf3a63183a893e03e71b802ba7d8808100"
+  "observerBinarySHA256": "d337b3b154e83e6916f97ea5e47a9ddf3a63183a893e03e71b802ba7d8808100",
+  "nativeAfter": {
+    "failedHookCase": "PASS",
+    "initialHookUID": "5d7da1eb-cff8-48dc-b79c-73070a46584a",
+    "retryHookUID": "0b679557-8ff3-43b3-94fc-dcce0f4f7320",
+    "failureAt": "2026-10-03T15:46:29Z",
+    "firingReceivedAt": "2026-10-03T15:46:38.540801979Z",
+    "healthyBoundary": "2026-10-03T15:48:42Z",
+    "resolvedReceivedAt": "2026-10-03T15:48:58.546806268Z",
+    "checks": "Exact candidate retry, original failed and distinct completed hook identities, continuous watch history, actual admission, both families on both engines, bounded firing and resolution."
+  }
 }
