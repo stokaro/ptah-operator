@@ -118,7 +118,7 @@
       "postgresql.json",
       "mysql.json"
     ],
-    "cleanup": "Both resources were suspended after their measured completion; namespace retirement is tracked separately.",
+    "cleanup": "Both workload namespaces and their database fixture namespaces were removed after the existing result retention deadlines.",
     "archive": {
       "name": "pod-token-2026-10-03.tar.gz",
       "sha256": "6ab606d73142bf487f0c74d856f31a99561a8d300cfb4943112efd3b9dfad5d5"
@@ -172,6 +172,11 @@
         "name": "pod-token-first-harvest-2026-10-03.tar.gz",
         "sha256": "419bae7e5f8d724bc5139c8987af63d66f4a1d3276dd9132b16886eda005af90",
         "downloadVerified": true
+      },
+      {
+        "name": "pod-token-receiver-restart-2026-10-03.tar.gz",
+        "sha256": "0c0c6fc11b5f47701d99486b3d15b7238ac1f1fc68ae9e858a2d21555f696b7c",
+        "downloadVerified": true
       }
     ],
     "scope": "Development evidence copy. Final #584 custody, retention policy and owner acceptance remain unassessed."
@@ -212,5 +217,44 @@
       "downloadVerified": true
     },
     "scope": "Both native engines at the exact supported 8 MiB limit. This does not qualify lost-acknowledgment redelivery, other Kubernetes minors, final artifacts or #242 as a whole."
+  },
+  "podTokenReceiverRestart": {
+    "requirement": "#586 idempotent redelivery after lost acknowledgment and receiver replacement with Pod-token authentication",
+    "conclusion": "passed",
+    "source": "866125a1737bcc2b3d890387da4fbcd7f9a8e786",
+    "fixtureSource": "97053b41c5e720d5c8b4fddfbd19991ca994f67d",
+    "procedureSource": "1c72b1ce6aa2b05d30cfb28afaf4d57a32a47f73",
+    "fixtureImage": "e2e-registry.ptah-test-a-1-37-0-pr585-soak-b9409060-59e0909df3.svc.cluster.local:5000/e2e-fixture@sha256:883a3fab26f4224c334eef32ef1e9d8d0f915110e2ed5e3b5f57ac83b41625b9",
+    "procedureSHA256": "b9461c066488c71595a84c4293449fb63c3ac2a1b0619bd652930ba2c32bd18c",
+    "platform": "Kubernetes 1.37.0, linux/amd64, diabolocom",
+    "runs": [
+      {
+        "engine": "PostgreSQL",
+        "report": "receiver-restart-postgresql/lost-ack.json",
+        "reportSHA256": "c9f2ccc60ac8d2961cd8bfd3cc6da6e97b58b6a0f4e69515da3a15e6c0f43811",
+        "completedAt": "2026-10-03T21:39:17.054564+00:00",
+        "receiptUID": "436f3df9-c73c-40a1-9f0f-bd2458144fe9",
+        "applyJobs": 1,
+        "podRestarts": 0,
+        "converged": true
+      },
+      {
+        "engine": "MySQL",
+        "report": "receiver-restart-mysql/lost-ack.json",
+        "reportSHA256": "aa59438034eb69ed548fd77fe72030609f629f7f9d517459f1aacc8dc9b5dd46",
+        "completedAt": "2026-10-03T21:41:07.630567+00:00",
+        "receiptUID": "ae097fd7-c9e7-4bf2-b560-653df9fed236",
+        "applyJobs": 1,
+        "podRestarts": 0,
+        "converged": true
+      }
+    ],
+    "archive": {
+      "name": "pod-token-receiver-restart-2026-10-03.tar.gz",
+      "sha256": "0c0c6fc11b5f47701d99486b3d15b7238ac1f1fc68ae9e858a2d21555f696b7c",
+      "downloadVerified": true
+    },
+    "preparationFailure": "The first PostgreSQL attempt used migration-apply instead of the actual apply Pod label. Its missing-Pod assertion failed before proxy routing; the migration was suspended. The corrected gate and dry-run control use the actual label and both complete native proofs pass. The failed attempt is retained in the external archive.",
+    "scope": "Lost acknowledgment and replacement of both receiving managers, both native engines, original projected Pod tokens. This does not qualify concurrent conflicting uploads, all authority refusals, other minors, final artifacts, or #242 as a whole."
   }
 }
