@@ -74,9 +74,84 @@
           }
         }
       }
+    },
+    {
+      "if": {
+        "properties": {
+          "resultDelivery": {
+            "properties": {
+              "enabled": {
+                "const": true
+              }
+            },
+            "required": [
+              "enabled"
+            ]
+          }
+        },
+        "required": [
+          "resultDelivery"
+        ]
+      },
+      "then": {
+        "properties": {
+          "certificateRotation": {
+            "properties": {
+              "enabled": {
+                "const": true
+              }
+            }
+          },
+          "webhook": {
+            "properties": {
+              "existingSecret": {
+                "const": ""
+              },
+              "port": {
+                "not": {
+                  "const": 9444
+                }
+              }
+            }
+          }
+        }
+      }
     }
   ],
   "properties": {
+    "resultDelivery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "networkPolicy"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "networkPolicy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "enabled",
+            "infrastructurePeers"
+          ],
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "infrastructurePeers": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "minProperties": 1
+              }
+            }
+          }
+        }
+      }
+    },
     "replicaCount": {
       "type": "integer",
       "minimum": 1

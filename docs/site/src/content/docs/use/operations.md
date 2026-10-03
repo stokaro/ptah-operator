@@ -140,7 +140,7 @@ is what you mean.
 Helm reporting success means its hook completed, which is not the same as the
 manager serving.
 [Confirm it installed](../../start/install/#confirm-it-installed) carries the
-two readings that settle it: nine CRDs at `Established=True`, and the manager
+two readings that settle it: ten CRDs at `Established=True`, and the manager
 and certificate-rotator Deployments available.
 
 #### Where to stop {#install-stop}
@@ -214,7 +214,7 @@ helm upgrade <release> <chart> --values <values>
 #### What proves it worked {#upgrade-evidence}
 
 The readings are the ones an install ends with, against the new digests:
-`Established=True` on nine CRDs, both Deployments available, and manager Pods
+`Established=True` on ten CRDs, both Deployments available, and manager Pods
 whose image is the candidate's.
 
 An upgrade that keeps the manager image, the shape a GitOps re-sync or a
@@ -294,7 +294,7 @@ left behind. Helm then applies the candidate over the stopped Deployments.
 
 #### What proves it worked {#retry-evidence}
 
-The same readings an upgrade ends with: `Established=True` on nine CRDs, both
+The same readings an upgrade ends with: `Established=True` on ten CRDs, both
 Deployments available, and manager Pods carrying the candidate image.
 
 #### Where to stop {#retry-stop}
@@ -430,7 +430,7 @@ helm uninstall <release> --wait --timeout 5m
 #### What proves it worked {#uninstall-evidence}
 
 Helm reports the release uninstalled. What remains afterwards is deliberate:
-the nine CRDs with their custom resources.
+the ten CRDs with their custom resources.
 
 #### Where to stop {#uninstall-stop}
 
@@ -478,7 +478,7 @@ In this order:
 3. Place the databases in a maintenance window.
 4. Scale the manager and certificate-rotation Deployments to zero.
 5. Back up all Ptah custom resources.
-6. Uninstall the release, and verify that the nine CRDs and their objects
+6. Uninstall the release, and verify that the ten CRDs and their objects
    remain.
 7. Install exactly one release of the first published version or newer, with
    the new invariant values where those are what is changing.
@@ -487,7 +487,7 @@ In this order:
 
 #### What proves it worked {#offline-evidence}
 
-The nine CRDs and their objects present after the uninstall, before anything is
+The ten CRDs and their objects present after the uninstall, before anything is
 installed over them. Then the new release's admission annotations carrying its
 own identity, manager readiness, and both kinds converging again.
 
@@ -495,7 +495,7 @@ own identity, manager readiness, and both kinds converging again.
 
 Do not start with a migration still running: a migration left running is a
 writer this procedure does not stop. Do not install over the uninstalled
-release if the nine CRDs or their objects did not survive it, and do not treat a
+release if the ten CRDs or their objects did not survive it, and do not treat a
 resource whose `status.unresolvedRun` and its copy in the
 `operator.ptah.run/unresolved-run` annotation both went missing as one that has
 nothing outstanding.
@@ -751,7 +751,7 @@ validation. Ordinary workload creators cannot use missing or copied labels or
 extra owner references to gain operation admission; matching requests enter
 the rule, and the handler rejects foreign or ambiguous ownership.
 
-## Webhook certificate lifecycle
+## Webhook certificate lifecycle {#webhook-certificate-lifecycle}
 
 For a chart-generated webhook Secret, the chart stores `tls.crt`, `tls.key`,
 `ca.crt`, and `ca.key` and schedules a separate certificate rotator. The
@@ -1593,8 +1593,17 @@ and survive an unrelated refusal rewriting the resource's conditions.
 | --- | --- |
 | `ptah_operator_unresolved_attempts{family}` | Resources carrying a record of a mutation nobody accounted for |
 | `ptah_operator_unresolved_owed_seconds{family}` | Seconds since the operator could first have settled the oldest such record. Absent where a family has none |
-| `ptah_operator_unresolved_view_synced{}` | 1 once the view behind the two gauges has caught up |
+| `ptah_operator_unresolved_view_synced{}` | 1 when the leader read the complete state for this scrape |
 | `ptah_operator_unresolved_view_read_failures_total{}` | Scrapes that could not read that state |
+
+The leader reads both resource families and both plan kinds directly from the
+API server once per scrape, sharing those results across the unresolved,
+resource-state and plan-store gauges. All four lists share a three-second
+budget. A failed or timed-out list suppresses every state gauge for that scrape
+and increments the read-failure counter; a warm controller cache cannot conceal
+the loss of API access. Followers publish no state. Losing leadership cancels
+an in-progress read. These are separate lists, not an atomic cross-kind snapshot.
+Plan chunks and ConfigMap payloads are not listed.
 
 **Every alert on these has to require the view first.** A manager that has just
 started, or one whose read failed, publishes no counts at all and reports
@@ -1677,7 +1686,7 @@ while `ptah_operator_unresolved_view_synced` reads 0.
 | `ptah_operator_overdue_resources{family}` | Resources, not suspended, past their own `status.nextReconciliationTime` |
 | `ptah_operator_overdue_seconds{family}` | How far past it the latest one is. Absent where none is overdue |
 | `ptah_operator_active_operations{family,operation}` | Resources with an operation in flight, by type. A failed attempt waiting for its retry is not in flight |
-| `ptah_operator_active_operation_seconds{family,operation}` | How long the oldest of each type has been in flight |
+| `ptah_operator_active_operation_seconds{family,operation}` | How long the oldest of each type has been eligible to run, excluding a declared retry delay |
 | `ptah_operator_pending_lock_releases{family}` | Resources still owing the release of a realm Lease |
 | `ptah_operator_stored_plans{family}` | Plans retained in the cluster. The operator prunes none; [pruning stored plans](#prune-plans) is the procedure |
 | `ptah_operator_stored_plan_bytes{}` | Bytes the retained schema plans hold in their chunks, from each plan's `spec.size`. A migration plan stores no chunk |

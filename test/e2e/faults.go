@@ -680,10 +680,10 @@ func coordinationLeaseUIDs(leases []coordinationv1.Lease) checkpoint {
 	return sortedCheckpoint(uids)
 }
 
-// newReleasedLease is the one target Lease the checkpoint does not hold, when
-// there is exactly one: it has to be released, at a valid epoch. The count of
-// new Leases is returned whatever it is.
-func newReleasedLease(leases []coordinationv1.Lease, before checkpoint) (leaseIdentity, int, error) {
+// newReleasedLease is the one target Lease the checkpoint does not hold.
+// A valid held Lease is still pending: publishing the Plan status precedes
+// releasing its Lease. The count is returned even while release is pending.
+func newReleasedLease(leases []coordinationv1.Lease, before checkpoint) (leaseIdentity, int, bool, error) {
 	var fresh []*coordinationv1.Lease
 	for index := range leases {
 		if !before.holds(string(leases[index].UID)) {
@@ -691,17 +691,14 @@ func newReleasedLease(leases []coordinationv1.Lease, before checkpoint) (leaseId
 		}
 	}
 	if len(fresh) != 1 {
-		return leaseIdentity{}, len(fresh), nil
+		return leaseIdentity{}, len(fresh), false, nil
 	}
 	lease := fresh[0]
 	identity := leaseIdentity{name: lease.Name, uid: string(lease.UID), epoch: lease.Annotations[annotationLeaseEpoch]}
-	if !holderEmpty(lease) {
-		return identity, 1, errors.New("was not released after its initial Plan")
-	}
 	if !leaseEpochPattern.MatchString(identity.epoch) {
-		return identity, 1, errors.New("has no valid released acquisition epoch")
+		return identity, 1, false, errors.New("has no valid acquisition epoch")
 	}
-	return identity, 1, nil
+	return identity, 1, holderEmpty(lease), nil
 }
 
 // reacquiredLease is the released Lease held again: the same UID, a holder,
@@ -895,32 +892,54 @@ func executionIdentityOnJob(job *batchv1.Job, controller controllerIdentity) boo
 		template[annotationBindingID] == binding && controller.stampedOn(template)
 }
 
-// faultApprovalConsumed is an approval, as stored, that dispatched the plan
-// named and was retired with it: nothing in its spec but what a person wrote
-// and admission stamped, and the history of both kept.
-func faultApprovalConsumed(stored *unstructured.Unstructured, planUID string) error {
+// faultApprovalCommitted proves dispatch, independently of later plan retirement.
+// An unknown result may retain a current plan while read-only recovery is pending.
+func faultApprovalCommitted(stored *unstructured.Unstructured, planUID string) (*ptahv1alpha1.PtahSchemaApproval, error) {
+	if stored == nil {
+		return nil, errors.New("it has no stored approval")
+	}
 	spec, found, err := unstructured.NestedMap(stored.Object, "spec")
 	if err != nil || !found {
-		return errors.New("it has no spec")
+		return nil, errors.New("it has no spec")
 	}
 	if keys := slices.Sorted(maps.Keys(spec)); !slices.Equal(keys,
 		[]string{"approvedAt", "approver", "mutationRequestUID", "planFingerprint", "planRef", "schemaRef"}) {
-		return fmt.Errorf("its spec carries %v", keys)
+		return nil, fmt.Errorf("its spec carries %v", keys)
 	}
 	approval := &ptahv1alpha1.PtahSchemaApproval{}
 	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(stored.Object, approval); err != nil {
-		return fmt.Errorf("it does not decode: %w", err)
+		return nil, fmt.Errorf("it does not decode: %w", err)
+	}
+	if planUID == "" || string(approval.Spec.PlanRef.UID) != planUID {
+		return nil, fmt.Errorf("it approves plan UID %s", approval.Spec.PlanRef.UID)
+	}
+	if !conditionIs(approval.Status.Conditions, "Consumed", metav1.ConditionTrue, "DispatchCommitted") {
+		return nil, errors.New("it is not Consumed by a committed dispatch")
+	}
+	return approval, nil
+}
+
+// faultApprovalConsumed additionally requires the dispatched plan to have retired.
+func faultApprovalConsumed(stored *unstructured.Unstructured, planUID string) error {
+	return faultApprovalRetiredBy(stored, planUID, ptahv1alpha1.ReasonPlanNoLongerCurrent)
+}
+
+// Require the reason belonging to this transition. Executor rotation retires
+// its plan as ExecutionBindingChanged; ordinary convergence uses PlanNoLongerCurrent.
+func faultApprovalRetiredBy(stored *unstructured.Unstructured, planUID string, reason ptahv1alpha1.ConditionReason) error {
+	if reason != ptahv1alpha1.ReasonPlanNoLongerCurrent && reason != ptahv1alpha1.ReasonExecutionBindingChanged {
+		return errors.New("the approval retirement needs a known transition reason")
+	}
+	approval, err := faultApprovalCommitted(stored, planUID)
+	if err != nil {
+		return err
 	}
 	conditions := approval.Status.Conditions
 	switch {
-	case planUID == "" || string(approval.Spec.PlanRef.UID) != planUID:
-		return fmt.Errorf("it approves plan UID %s", approval.Spec.PlanRef.UID)
-	case !conditionIs(conditions, "Consumed", metav1.ConditionTrue, "DispatchCommitted"):
-		return errors.New("it is not Consumed by a committed dispatch")
-	case !conditionIs(conditions, "Accepted", metav1.ConditionFalse, "PlanNoLongerCurrent"):
-		return errors.New("it is still Accepted")
-	case !conditionIs(conditions, "Stale", metav1.ConditionTrue, "PlanNoLongerCurrent"):
-		return errors.New("it is not Stale")
+	case !conditionIs(conditions, "Accepted", metav1.ConditionFalse, string(reason)):
+		return fmt.Errorf("Accepted is not False with reason %s", reason)
+	case !conditionIs(conditions, "Stale", metav1.ConditionTrue, string(reason)):
+		return fmt.Errorf("Stale is not True with reason %s", reason)
 	}
 	return nil
 }

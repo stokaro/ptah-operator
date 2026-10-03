@@ -1226,6 +1226,30 @@ assert_kind_ha_topology() {
 		fail "Kubernetes node inventory does not match the ready HA kind topology $KIND_ISOLATION_TOPOLOGY"
 }
 
+# Durable results must work with standard Kubernetes logging. Verify the
+# running kubelets, not only the absence of an override in the kind template.
+assert_kubelet_log_budget() {
+	kubelet_budget_expected=4
+	if [ "$ISOLATION_WORKER" = true ]; then kubelet_budget_expected=5; fi
+	jq -er '.items[].metadata.name' "$NODE_READINESS_FILE" >"$WORK_DIR/kubelet-log-nodes.txt" ||
+		fail "could not enumerate Kubernetes nodes for the kubelet log budget"
+	kubelet_budget_count=0
+	while IFS= read -r kubelet_budget_node; do
+		[ -n "$kubelet_budget_node" ] || continue
+		kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=15s get \
+			--raw "/api/v1/nodes/$kubelet_budget_node/proxy/configz" \
+			>"$WORK_DIR/kubelet-log-config-$kubelet_budget_node.json" ||
+			fail "could not read the effective kubelet log budget on $kubelet_budget_node"
+		jq -e '.kubeletconfig.containerLogMaxSize == "10Mi"' \
+			"$WORK_DIR/kubelet-log-config-$kubelet_budget_node.json" >/dev/null ||
+			fail "kubelet $kubelet_budget_node must use the standard 10Mi container log size for durable-result acceptance"
+		kubelet_budget_count=$((kubelet_budget_count + 1))
+	done <"$WORK_DIR/kubelet-log-nodes.txt"
+	[ "$kubelet_budget_count" -eq "$kubelet_budget_expected" ] ||
+		fail "kubelet log budget was not verified on every declared node"
+	printf 'e2e: verified default 10Mi container log files on %s kubelets\n' "$kubelet_budget_count"
+}
+
 assert_api_server_endpoint_inventory() {
 	api_endpoint_deadline=$(($(date +%s) + 60))
 	while [ "$(date +%s)" -lt "$api_endpoint_deadline" ]; do
@@ -1669,6 +1693,7 @@ cleanup() {
 		trap - EXIT
 		printf 'e2e: E2E_KEEP_ON_FAILURE=1: retaining cluster %s (kubeconfig %s), registry %s, database %s and %s\n' \
 			"$CLUSTER_NAME" "$KUBECONFIG_FILE" "$REGISTRY_CONTAINER" "$EXTERNAL_PG_CONTAINER" "$WORK_DIR" >&2
+		timing_abandon retained
 		exit "$status"
 	fi
 	cleanup_failed=0
@@ -1869,8 +1894,12 @@ cleanup() {
 	if [ "$cleanup_failed" -ne 0 ]; then
 		printf '%s\n' 'e2e: cleanup is incomplete; remove only the named resources reported above' >&2
 		[ "$status" -ne 0 ] || status=1
+		timing_abandon fail
 	elif [ "$status" -ne 0 ]; then
 		printf 'e2e: failed; task-created resources were cleaned up\n' >&2
+		timing_abandon pass
+	else
+		timing_abandon pass
 	fi
 	exit "$status"
 }
@@ -2272,6 +2301,12 @@ fi
 if tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)e2e-alert-sink$'; then
 	fail "the controller image contains the test-only alert receiver"
 fi
+if tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)e2e-upgrade-observer$'; then
+	fail "the controller image contains the external upgrade observer fixture"
+fi
+if tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)e2e-protocol-runner(\.json)?$'; then
+	fail "the controller image contains the unsupported-runner fixture"
+fi
 tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)manager$' ||
 	fail "the controller image does not contain /manager"
 tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)ptah-runner$' ||
@@ -2286,6 +2321,12 @@ tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)e2e-handcraft-oci$' ||
 	fail "the isolated fixture image does not contain /e2e-handcraft-oci"
 tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)e2e-alert-sink$' ||
 	fail "the isolated fixture image does not contain /e2e-alert-sink"
+tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)e2e-upgrade-observer$' ||
+	fail "the isolated fixture image does not contain /e2e-upgrade-observer"
+tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)e2e-protocol-runner$' ||
+	fail "the isolated fixture image does not contain the unsupported runner"
+tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)e2e-protocol-runner\.json$' ||
+	fail "the isolated fixture image does not contain unsupported-runner provenance"
 if tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)(manager|ptah-runner)$'; then
 	fail "the isolated fixture image contains an operator binary"
 fi
@@ -2325,6 +2366,7 @@ kind create cluster \
 	--wait 5m
 require_ready_nodes "after kind cluster creation"
 assert_kind_ha_topology
+assert_kubelet_log_budget
 assert_api_server_endpoint_inventory
 assert_api_server_feature_gate_scope "$EXPECTED_API_SERVER_FEATURE_GATES"
 
@@ -2478,7 +2520,11 @@ docker --context "$DOCKER_CONTEXT" create --restart=no \
 	--tmpfs '/var/lib/postgresql/data:rw,noexec,nosuid,nodev,size=536870912' \
 	--label "operator.ptah.run/e2e-owner=${CLUSTER_NAME}" \
 	--label 'operator.ptah.run/e2e-component=external-postgresql' \
-	"$E2E_POSTGRES_SOURCE_IMAGE" >/dev/null
+	"$E2E_POSTGRES_SOURCE_IMAGE" postgres \
+	-c logging_collector=on -c log_destination=jsonlog \
+	-c log_directory=/tmp/ptah-sql-audit -c log_filename=statements.log \
+	-c log_rotation_age=0 -c log_rotation_size=0 \
+	-c log_min_error_statement=error -c log_hostname=off -c log_timezone=UTC >/dev/null
 # external-postgresql-container-create-end
 EXTERNAL_PG_CONTAINER_ID=$(docker --context "$DOCKER_CONTEXT" container inspect \
 	--format '{{.Id}}' "$EXTERNAL_PG_CONTAINER")
@@ -2855,9 +2901,11 @@ E2E_DATAPLANE_MODE=$DATAPLANE_MODE \
 # engine included: each phase runs the engine its name ends in. The Docker
 # context and the cluster name reach the isolation worker's node container,
 # which is where the phase cuts that node off from the API server.
+E2E_FIXTURE_IMAGE=$E2E_FIXTURE_IMAGE \
 E2E_KUBECONFIG=$KUBECONFIG_FILE \
 E2E_TEST_NAMESPACE=$TEST_NAMESPACE \
 E2E_EXECUTOR_IMAGE=$E2E_EXECUTOR_IMAGE \
+E2E_PTAH_VERSION=$E2E_PTAH_VERSION \
 E2E_RUNNER_IMAGE=$E2E_RUNNER_IMAGE \
 E2E_CONTROLLER_IMAGE=$CANDIDATE_OPERATOR_IMAGE \
 E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION \
@@ -2870,9 +2918,11 @@ E2E_KIND_CLUSTER_NAME=$CLUSTER_NAME \
 E2E_ENGINE=postgresql \
 	run_recorded_phase migrations-postgresql run_go_phase migrations-postgresql
 
+E2E_FIXTURE_IMAGE=$E2E_FIXTURE_IMAGE \
 E2E_KUBECONFIG=$KUBECONFIG_FILE \
 E2E_TEST_NAMESPACE=$TEST_NAMESPACE \
 E2E_EXECUTOR_IMAGE=$E2E_EXECUTOR_IMAGE \
+E2E_PTAH_VERSION=$E2E_PTAH_VERSION \
 E2E_RUNNER_IMAGE=$E2E_RUNNER_IMAGE \
 E2E_CONTROLLER_IMAGE=$CANDIDATE_OPERATOR_IMAGE \
 E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION \
@@ -2917,6 +2967,8 @@ E2E_OPERATOR_NAMESPACE=$OPERATOR_NAMESPACE \
 E2E_TEST_NAMESPACE=$TEST_NAMESPACE \
 E2E_HELM_RELEASE=$HELM_RELEASE \
 E2E_CHART_PACKAGE=$CHART_PACKAGE \
+E2E_NEXT_CHART_PACKAGE=$NEXT_CHART_PACKAGE \
+E2E_NEXT_VALUES_FILE=$NEXT_VALUES_FILE \
 E2E_FIXTURE_IMAGE=$E2E_FIXTURE_IMAGE \
 E2E_PROMETHEUS_IMAGE=$E2E_PROMETHEUS_IMAGE \
 E2E_ALERTMANAGER_IMAGE=$E2E_ALERTMANAGER_IMAGE \

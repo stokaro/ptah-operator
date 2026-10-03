@@ -208,8 +208,45 @@ func TestIsolatedRunSettled(t *testing.T) {
  "history":{"observedAt":"2026-09-26T10:08:31Z","pendingCount":0}}}`, false},
 		{"no run at all", `{"status":{"history":{"observedAt":"2026-09-26T10:08:31Z","pendingCount":0}}}`, false},
 	}, func(migration *ptahv1alpha1.PtahMigration) bool {
-		return isolatedRunSettled(migration.Status, miJob)
+		return isolatedRunSettled(migration.Status, miJob, ptahv1alpha1.MigrationRunOutcomeUnknown)
 	})
+}
+
+func TestIsolatedDurableRunCIReading(t *testing.T) {
+	// CI run 37154162826, job 111295506918: the Apply receipt survived
+	// node isolation even though the original Pod and its logs were gone.
+	data, err := os.ReadFile(filepath.Join("../..", "testdata/e2e/readings/isolated-node-durable-migration.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	status := miMigration(t, string(data)).Status
+	job := string(status.LastRun.JobUID)
+	if !isolatedRunApplied(status, job) || !isolatedRunSettled(status, job, ptahv1alpha1.MigrationRunOutcomeApplied) {
+		t.Fatal("the original Apply and its later converged history were refused")
+	}
+	if isolatedRunUnknown(status, job) || isolatedRunSettled(status, job, ptahv1alpha1.MigrationRunOutcomeUnknown) {
+		t.Fatal("a durable Applied result was accepted as an unknown legacy result")
+	}
+	for name, mutate := range map[string]func(*ptahv1alpha1.PtahMigrationStatus){
+		"another Job":      func(s *ptahv1alpha1.PtahMigrationStatus) { s.LastRun.JobUID = "replacement" },
+		"unknown outcome":  func(s *ptahv1alpha1.PtahMigrationStatus) { s.LastRun.Outcome = ptahv1alpha1.MigrationRunOutcomeUnknown },
+		"missing versions": func(s *ptahv1alpha1.PtahMigrationStatus) { s.LastRun.AppliedVersions = nil },
+		"another version":  func(s *ptahv1alpha1.PtahMigrationStatus) { s.LastRun.AppliedVersions = []int64{1, 2, 4} },
+		"unresolved run": func(s *ptahv1alpha1.PtahMigrationStatus) {
+			s.UnresolvedRun = &ptahv1alpha1.UnresolvedMigrationRunStatus{}
+		},
+		"active operation": func(s *ptahv1alpha1.PtahMigrationStatus) {
+			s.ActiveOperation = &ptahv1alpha1.MigrationOperationStatus{}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			changed := status.DeepCopy()
+			mutate(changed)
+			if isolatedRunApplied(*changed, job) {
+				t.Fatal("accepted an incomplete or replaced isolated run")
+			}
+		})
+	}
 }
 
 func TestRefusedAtBoundary(t *testing.T) {
@@ -820,7 +857,7 @@ func TestEgressExampleShaped(t *testing.T) {
 func TestRenderEgressPolicies(t *testing.T) {
 	t.Parallel()
 	example := miEgressExample(t)
-	rendered, err := renderEgressPolicies(example, "ptah-e2e", "172.18.0.9", "e2e-postgresql", 5432)
+	rendered, err := renderEgressPolicies(example, "ptah-e2e", "172.18.0.9", "e2e-postgresql", 5432, "operator-system", map[string]string{"app.kubernetes.io/instance": "test-release"})
 	if err != nil {
 		t.Fatalf("render the example: %v", err)
 	}
@@ -841,6 +878,13 @@ func TestRenderEgressPolicies(t *testing.T) {
 	if selector["app.kubernetes.io/name"] != "e2e-postgresql" || port["port"] != int64(5432) || port["protocol"] != "TCP" {
 		t.Fatalf("the database rule was rendered as %v", database)
 	}
+	resultRule := miPolicy(t, rendered, "ptah-operations-results")["spec"].(map[string]any)["egress"].([]any)[0].(map[string]any)
+	peer := resultRule["to"].([]any)[0].(map[string]any)
+	if peer["namespaceSelector"].(map[string]any)["matchLabels"].(map[string]any)["kubernetes.io/metadata.name"] != "operator-system" ||
+		peer["podSelector"].(map[string]any)["matchLabels"].(map[string]any)["app.kubernetes.io/instance"] != "test-release" ||
+		len(resultRule["to"].([]any)) != 1 {
+		t.Fatalf("receiver destination was not bound to the installed manager: %v", resultRule)
+	}
 	// What the example does not tell a reader to replace stays the example's.
 	dns := miPolicy(t, rendered, "ptah-operations-dns")["spec"]
 	if !miEqualJSON(t, dns, miPolicy(t, example, "ptah-operations-dns")["spec"]) {
@@ -858,7 +902,7 @@ func TestRenderEgressPolicies(t *testing.T) {
 		},
 		"a policy type added": func(spec map[string]any) { spec["policyTypes"] = []any{"Egress", "Ingress"} },
 	} {
-		moved, err := renderEgressPolicies(example, "ptah-e2e", "172.18.0.9", "e2e-postgresql", 5432)
+		moved, err := renderEgressPolicies(example, "ptah-e2e", "172.18.0.9", "e2e-postgresql", 5432, "operator-system", map[string]string{"app.kubernetes.io/instance": "test-release"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -873,7 +917,7 @@ func TestRenderEgressPolicies(t *testing.T) {
 			delete(item.(map[string]any)["spec"].(map[string]any), "egress")
 		}
 	}
-	if _, err := renderEgressPolicies(miFromAny(broken), "ptah-e2e", "172.18.0.9", "e2e-postgresql", 5432); err == nil {
+	if _, err := renderEgressPolicies(miFromAny(broken), "ptah-e2e", "172.18.0.9", "e2e-postgresql", 5432, "operator-system", map[string]string{"app.kubernetes.io/instance": "test-release"}); err == nil {
 		t.Fatal("a registry policy with no rules to adapt was rendered")
 	}
 }
@@ -881,7 +925,7 @@ func TestRenderEgressPolicies(t *testing.T) {
 func TestEgressProbeCopy(t *testing.T) {
 	t.Parallel()
 	render := func() []map[string]any {
-		rendered, err := renderEgressPolicies(miEgressExample(t), "ptah-e2e", "172.18.0.9", "e2e-mysql", 3306)
+		rendered, err := renderEgressPolicies(miEgressExample(t), "ptah-e2e", "172.18.0.9", "e2e-mysql", 3306, "operator-system", map[string]string{"app.kubernetes.io/instance": "test-release"})
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -1,0 +1,49 @@
+{
+  "source": "Kubernetes 1.37.0 envtest; installed chart status policy; JSON Patch dry run; manager admitted the same request",
+  "rows": [
+    {
+      "resource": "ptahschemas",
+      "name": "orders",
+      "policy": "ptah-operator-status-write-guard-fac399396b22",
+      "status": {
+        "metadata": {},
+        "status": "Failure",
+        "message": "ptahschemas.operator.ptah.run \"orders\" is forbidden: ValidatingAdmissionPolicy 'ptah-operator-status-write-guard-fac399396b22' with binding 'ptah-operator-status-write-guard-fac399396b22' denied request: Ptah status is written only by the operator's manager; settle an unresolved migration run with a PtahMigrationRunAcknowledgment",
+        "reason": "Invalid",
+        "details": {
+          "name": "orders",
+          "group": "operator.ptah.run",
+          "kind": "ptahschemas",
+          "causes": [
+            {
+              "message": "ValidatingAdmissionPolicy 'ptah-operator-status-write-guard-fac399396b22' with binding 'ptah-operator-status-write-guard-fac399396b22' denied request: Ptah status is written only by the operator's manager; settle an unresolved migration run with a PtahMigrationRunAcknowledgment"
+            }
+          ]
+        },
+        "code": 422
+      }
+    },
+    {
+      "resource": "ptahmigrations",
+      "name": "ledger",
+      "policy": "ptah-operator-status-write-guard-fac399396b22",
+      "status": {
+        "metadata": {},
+        "status": "Failure",
+        "message": "ptahmigrations.operator.ptah.run \"ledger\" is forbidden: ValidatingAdmissionPolicy 'ptah-operator-status-write-guard-fac399396b22' with binding 'ptah-operator-status-write-guard-fac399396b22' denied request: Ptah status is written only by the operator's manager; settle an unresolved migration run with a PtahMigrationRunAcknowledgment",
+        "reason": "Invalid",
+        "details": {
+          "name": "ledger",
+          "group": "operator.ptah.run",
+          "kind": "ptahmigrations",
+          "causes": [
+            {
+              "message": "ValidatingAdmissionPolicy 'ptah-operator-status-write-guard-fac399396b22' with binding 'ptah-operator-status-write-guard-fac399396b22' denied request: Ptah status is written only by the operator's manager; settle an unresolved migration run with a PtahMigrationRunAcknowledgment"
+            }
+          ]
+        },
+        "code": 422
+      }
+    }
+  ]
+}

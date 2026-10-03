@@ -20,6 +20,7 @@ REVISION ?= $(shell git rev-parse --verify HEAD 2>/dev/null)
 # above are audited as one line, and appending to it is a change to that audit
 # for the sake of a demonstration.
 .PHONY: demo demo-up demo-record demo-serve demo-test demo-reproduce demo-down verify-demo-recording verify-go-mod
+.PHONY: test-qualification-probes
 
 all: verify build
 
@@ -33,6 +34,9 @@ build:
 # mutation suites in it run nowhere else.
 test:
 	$(GO) test -timeout=30m ./...
+
+test-qualification-probes:
+	python3 -m unittest discover -s support/qualification/probes -p '*_test.py'
 
 # The suites under test/envtest run against a real kube-apiserver and etcd and
 # nothing else: the CRD schemas and their CEL, the chart's admission policies
@@ -134,7 +138,7 @@ lint-workflows:
 
 verify: verify-source test-race
 
-verify-source: fmt-check lint-workflows generate manifests chart-policies verify-crd-schema-history verify-kubernetes-support verify-ptah-support verify-runner-protocol verify-release verify-demo-recording verify-go-mod e2e-static vet build test test-envtest
+verify-source: fmt-check lint-workflows generate manifests chart-policies verify-crd-schema-history verify-kubernetes-support verify-ptah-support verify-runner-protocol verify-release verify-demo-recording verify-go-mod test-qualification-probes e2e-static vet build test test-envtest
 	@git diff --exit-code -- api/v1alpha1/zz_generated.deepcopy.go config/crd/bases charts/ptah-operator/crds internal/crdupgrade/assets \
 		charts/ptah-operator/templates/controller-object-guard.yaml \
 		charts/ptah-operator/templates/controller-write-guard.yaml \

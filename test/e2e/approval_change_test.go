@@ -4,12 +4,82 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 )
+
+func TestChangedMigrationArtifactNeedsItsExactReplacement(t *testing.T) {
+	t.Parallel()
+	oldDigest := "sha256:" + strings.Repeat("a", 64)
+	newDigest := "sha256:" + strings.Repeat("b", 64)
+	plans := func() (*ptahv1alpha1.PtahMigrationPlan, *ptahv1alpha1.PtahMigrationPlan) {
+		old := &ptahv1alpha1.PtahMigrationPlan{
+			ObjectMeta: metav1.ObjectMeta{Name: "old", UID: "old-plan"},
+			Spec: ptahv1alpha1.PtahMigrationPlanSpec{
+				MigrationRef:   ptahv1alpha1.ImmutableObjectReference{Name: "migration", UID: "migration-uid"},
+				ArtifactDigest: oldDigest, Fingerprint: "old-fingerprint", PolicyFingerprint: "policy",
+				TargetIdentityDigest: "sha256:" + strings.Repeat("c", 64),
+				CoordinationDigest:   "sha256:" + strings.Repeat("d", 64),
+				Migrations:           []ptahv1alpha1.PlannedMigration{{Version: 1}, {Version: 2}},
+			},
+		}
+		current := old.DeepCopy()
+		current.Name, current.UID = "new", "new-plan"
+		current.Spec.ArtifactDigest, current.Spec.Fingerprint = newDigest, "new-fingerprint"
+		current.Spec.Migrations = append(current.Spec.Migrations, ptahv1alpha1.PlannedMigration{Version: 3})
+		return old, current
+	}
+	old, current := plans()
+	if err := changedMigrationArtifactPlan(old, current, oldDigest, newDigest); err != nil {
+		t.Fatalf("refused the exact replacement artifact and sequence: %v", err)
+	}
+	for name, mutate := range map[string]func(*ptahv1alpha1.PtahMigrationPlan, *ptahv1alpha1.PtahMigrationPlan){
+		"same plan":        func(o, n *ptahv1alpha1.PtahMigrationPlan) { n.UID = o.UID },
+		"missing old UID":  func(o, _ *ptahv1alpha1.PtahMigrationPlan) { o.UID = "" },
+		"missing new UID":  func(_, n *ptahv1alpha1.PtahMigrationPlan) { n.UID = "" },
+		"old digest":       func(o, n *ptahv1alpha1.PtahMigrationPlan) { n.Spec.ArtifactDigest = o.Spec.ArtifactDigest },
+		"wrong original":   func(o, _ *ptahv1alpha1.PtahMigrationPlan) { o.Spec.ArtifactDigest = newDigest },
+		"no fingerprint":   func(_, n *ptahv1alpha1.PtahMigrationPlan) { n.Spec.Fingerprint = "" },
+		"same fingerprint": func(o, n *ptahv1alpha1.PtahMigrationPlan) { n.Spec.Fingerprint = o.Spec.Fingerprint },
+		"another resource": func(_, n *ptahv1alpha1.PtahMigrationPlan) { n.Spec.MigrationRef.UID = "replacement" },
+		"missing resource": func(o, n *ptahv1alpha1.PtahMigrationPlan) {
+			o.Spec.MigrationRef.UID, n.Spec.MigrationRef.UID = "", ""
+		},
+		"another target": func(_, n *ptahv1alpha1.PtahMigrationPlan) { n.Spec.TargetIdentityDigest = oldDigest },
+		"no target": func(o, n *ptahv1alpha1.PtahMigrationPlan) {
+			o.Spec.TargetIdentityDigest, n.Spec.TargetIdentityDigest = "", ""
+		},
+		"another realm":  func(_, n *ptahv1alpha1.PtahMigrationPlan) { n.Spec.CoordinationDigest = oldDigest },
+		"another policy": func(_, n *ptahv1alpha1.PtahMigrationPlan) { n.Spec.PolicyFingerprint = "other-policy" },
+		"original already current": func(o, n *ptahv1alpha1.PtahMigrationPlan) {
+			o.Spec.Migrations = n.Spec.Migrations
+		},
+		"old sequence": func(o, n *ptahv1alpha1.PtahMigrationPlan) { n.Spec.Migrations = o.Spec.Migrations },
+		"another selection": func(_, n *ptahv1alpha1.PtahMigrationPlan) {
+			n.Spec.Migrations[2].Version = 4
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			old, current := plans()
+			mutate(old, current)
+			if changedMigrationArtifactPlan(old, current, oldDigest, newDigest) == nil {
+				t.Fatal("accepted an unrelated or obsolete artifact decision")
+			}
+		})
+	}
+	if changedMigrationArtifactPlan(nil, current, oldDigest, newDigest) == nil ||
+		changedMigrationArtifactPlan(old, nil, oldDigest, newDigest) == nil ||
+		changedMigrationArtifactPlan(old, current, "", newDigest) == nil ||
+		changedMigrationArtifactPlan(old, current, oldDigest, "malformed") == nil ||
+		changedMigrationArtifactPlan(old, current, oldDigest, oldDigest) == nil {
+		t.Fatal("accepted missing plans or invalid artifact identities")
+	}
+}
 
 func TestChangedMigrationApprovalRequiresFreshEvidence(t *testing.T) {
 	t.Parallel()

@@ -1,0 +1,342 @@
+{
+  "migration": {
+    "resource": {
+      "metadata": {
+        "generation": 2,
+        "uid": "deba454a-d876-4aa7-9005-0ff3048549d0"
+      },
+      "spec": {
+        "suspend": true
+      },
+      "status": {
+        "phase": "Suspended",
+        "observedGeneration": 2,
+        "conditions": [
+          {
+            "lastTransitionTime": "2026-09-30T18:36:17Z",
+            "message": "New migration operations are suspended",
+            "observedGeneration": 2,
+            "reason": "Suspended",
+            "status": "False",
+            "type": "Progressing"
+          },
+          {
+            "lastTransitionTime": "2026-09-30T18:35:57Z",
+            "message": "The resolved artifact satisfied its verification policy",
+            "observedGeneration": 1,
+            "reason": "PolicySatisfied",
+            "status": "True",
+            "type": "ArtifactVerified"
+          },
+          {
+            "lastTransitionTime": "2026-09-30T18:36:03Z",
+            "message": "The history continues this artifact",
+            "observedGeneration": 1,
+            "reason": "HistoryMatched",
+            "status": "False",
+            "type": "Blocked"
+          },
+          {
+            "lastTransitionTime": "2026-09-30T18:36:19Z",
+            "message": "Reconciliation is suspended",
+            "observedGeneration": 2,
+            "reason": "Suspended",
+            "status": "False",
+            "type": "Ready"
+          },
+          {
+            "lastTransitionTime": "2026-09-30T18:36:05Z",
+            "message": "The plan's approval requirements are satisfied",
+            "observedGeneration": 1,
+            "reason": "Satisfied",
+            "status": "False",
+            "type": "ApprovalRequired"
+          }
+        ],
+        "activeOperation": null
+      }
+    },
+    "initialApplied": {
+      "metadata": {
+        "generation": 1,
+        "uid": "deba454a-d876-4aa7-9005-0ff3048549d0"
+      },
+      "spec": {
+        "suspend": false
+      },
+      "status": {
+        "phase": "InSync",
+        "observedGeneration": 1,
+        "conditions": [
+          {
+            "lastTransitionTime": "2026-09-30T18:36:17Z",
+            "message": "Nothing is pending",
+            "observedGeneration": 1,
+            "reason": "HistoryMatched",
+            "status": "False",
+            "type": "Progressing"
+          },
+          {
+            "lastTransitionTime": "2026-09-30T18:35:57Z",
+            "message": "The resolved artifact satisfied its verification policy",
+            "observedGeneration": 1,
+            "reason": "PolicySatisfied",
+            "status": "True",
+            "type": "ArtifactVerified"
+          },
+          {
+            "lastTransitionTime": "2026-09-30T18:36:03Z",
+            "message": "The history continues this artifact",
+            "observedGeneration": 1,
+            "reason": "HistoryMatched",
+            "status": "False",
+            "type": "Blocked"
+          },
+          {
+            "lastTransitionTime": "2026-09-30T18:36:17Z",
+            "message": "The database has every migration this artifact carries",
+            "observedGeneration": 1,
+            "reason": "HistoryMatched",
+            "status": "True",
+            "type": "Ready"
+          },
+          {
+            "lastTransitionTime": "2026-09-30T18:36:05Z",
+            "message": "The plan's approval requirements are satisfied",
+            "observedGeneration": 1,
+            "reason": "Satisfied",
+            "status": "False",
+            "type": "ApprovalRequired"
+          }
+        ],
+        "activeOperation": null
+      }
+    }
+  },
+  "schema": {
+    "resource": {
+      "metadata": {
+        "generation": 2,
+        "uid": "e3003ae5-a24c-4e6e-afcb-3834705f1420"
+      },
+      "spec": {
+        "suspend": true
+      },
+      "status": {
+        "phase": "Suspended",
+        "observedGeneration": 2,
+        "conditions": [
+          {
+            "lastTransitionTime": "2026-09-30T18:42:16Z",
+            "message": "Database engine \"PostgreSQL\" is supported",
+            "observedGeneration": 2,
+            "reason": "SupportedEngine",
+            "status": "True",
+            "type": "EngineSupported"
+          },
+          {
+            "lastTransitionTime": "2026-09-30T18:42:58Z",
+            "message": "Reconciliation is suspended",
+            "observedGeneration": 2,
+            "reason": "Suspended",
+            "status": "False",
+            "type": "Ready"
+          },
+          {
+            "lastTransitionTime": "2026-09-30T18:42:19Z",
+            "message": "The latest operation completed",
+            "observedGeneration": 1,
+            "reason": "Succeeded",
+            "status": "False",
+            "type": "ReconciliationFailed"
+          },
+          {
+            "lastTransitionTime": "2026-09-30T18:42:19Z",
+            "message": "Desired OCI reference resolved to immutable content",
+            "observedGeneration": 1,
+            "reason": "DigestPinned",
+            "status": "True",
+            "type": "ArtifactResolved"
+          },
+          {
+            "lastTransitionTime": "2026-09-30T18:42:24Z",
+            "message": "Artifact type and verification policy were satisfied",
+            "observedGeneration": 1,
+            "reason": "PolicySatisfied",
+            "status": "True",
+            "type": "ArtifactVerified"
+          },
+          {
+            "lastTransitionTime": "2026-09-30T18:42:30Z",
+            "message": "Database schema was observed",
+            "observedGeneration": 1,
+            "reason": "Observed",
+            "status": "True",
+            "type": "DatabaseReachable"
+          },
+          {
+            "lastTransitionTime": "2026-09-30T18:42:54Z",
+            "message": "The authoritative managed scope has no changes",
+            "observedGeneration": 1,
+            "reason": "ScopedConverged",
+            "status": "False",
+            "type": "DriftDetected"
+          },
+          {
+            "lastTransitionTime": "2026-09-30T18:42:54Z",
+            "message": "A stable scoped plan proves convergence",
+            "observedGeneration": 1,
+            "reason": "ScopedConverged",
+            "status": "True",
+            "type": "InSync"
+          },
+          {
+            "lastTransitionTime": "2026-09-30T18:42:38Z",
+            "message": "Current plan approval requirements are satisfied",
+            "observedGeneration": 1,
+            "reason": "Satisfied",
+            "status": "False",
+            "type": "ApprovalRequired"
+          },
+          {
+            "lastTransitionTime": "2026-09-30T18:42:54Z",
+            "message": "No executable plan is required",
+            "observedGeneration": 1,
+            "reason": "NoChanges",
+            "status": "False",
+            "type": "PlanReady"
+          },
+          {
+            "lastTransitionTime": "2026-09-30T18:42:58Z",
+            "message": "New database operations are suspended",
+            "observedGeneration": 2,
+            "reason": "Requested",
+            "status": "True",
+            "type": "Suspended"
+          },
+          {
+            "lastTransitionTime": "2026-09-30T18:42:42Z",
+            "message": "Apply Job completed; convergence observation is pending",
+            "observedGeneration": 1,
+            "reason": "JobCompleted",
+            "status": "False",
+            "type": "Applying"
+          }
+        ],
+        "activeOperation": null
+      }
+    },
+    "initialApplied": {
+      "metadata": {
+        "generation": 1,
+        "uid": "e3003ae5-a24c-4e6e-afcb-3834705f1420"
+      },
+      "spec": {
+        "suspend": false
+      },
+      "status": {
+        "phase": "InSync",
+        "observedGeneration": 1,
+        "conditions": [
+          {
+            "lastTransitionTime": "2026-09-30T18:42:16Z",
+            "message": "Database engine \"PostgreSQL\" is supported",
+            "observedGeneration": 1,
+            "reason": "SupportedEngine",
+            "status": "True",
+            "type": "EngineSupported"
+          },
+          {
+            "lastTransitionTime": "2026-09-30T18:42:54Z",
+            "message": "Schema is in sync",
+            "observedGeneration": 1,
+            "reason": "InSync",
+            "status": "True",
+            "type": "Ready"
+          },
+          {
+            "lastTransitionTime": "2026-09-30T18:42:19Z",
+            "message": "The latest operation completed",
+            "observedGeneration": 1,
+            "reason": "Succeeded",
+            "status": "False",
+            "type": "ReconciliationFailed"
+          },
+          {
+            "lastTransitionTime": "2026-09-30T18:42:19Z",
+            "message": "Desired OCI reference resolved to immutable content",
+            "observedGeneration": 1,
+            "reason": "DigestPinned",
+            "status": "True",
+            "type": "ArtifactResolved"
+          },
+          {
+            "lastTransitionTime": "2026-09-30T18:42:24Z",
+            "message": "Artifact type and verification policy were satisfied",
+            "observedGeneration": 1,
+            "reason": "PolicySatisfied",
+            "status": "True",
+            "type": "ArtifactVerified"
+          },
+          {
+            "lastTransitionTime": "2026-09-30T18:42:30Z",
+            "message": "Database schema was observed",
+            "observedGeneration": 1,
+            "reason": "Observed",
+            "status": "True",
+            "type": "DatabaseReachable"
+          },
+          {
+            "lastTransitionTime": "2026-09-30T18:42:54Z",
+            "message": "The authoritative managed scope has no changes",
+            "observedGeneration": 1,
+            "reason": "ScopedConverged",
+            "status": "False",
+            "type": "DriftDetected"
+          },
+          {
+            "lastTransitionTime": "2026-09-30T18:42:54Z",
+            "message": "A stable scoped plan proves convergence",
+            "observedGeneration": 1,
+            "reason": "ScopedConverged",
+            "status": "True",
+            "type": "InSync"
+          },
+          {
+            "lastTransitionTime": "2026-09-30T18:42:38Z",
+            "message": "Current plan approval requirements are satisfied",
+            "observedGeneration": 1,
+            "reason": "Satisfied",
+            "status": "False",
+            "type": "ApprovalRequired"
+          },
+          {
+            "lastTransitionTime": "2026-09-30T18:42:54Z",
+            "message": "No executable plan is required",
+            "observedGeneration": 1,
+            "reason": "NoChanges",
+            "status": "False",
+            "type": "PlanReady"
+          },
+          {
+            "lastTransitionTime": "2026-09-30T18:42:36Z",
+            "message": "Reconciliation is active",
+            "observedGeneration": 1,
+            "reason": "Active",
+            "status": "False",
+            "type": "Suspended"
+          },
+          {
+            "lastTransitionTime": "2026-09-30T18:42:42Z",
+            "message": "Apply Job completed; convergence observation is pending",
+            "observedGeneration": 1,
+            "reason": "JobCompleted",
+            "status": "False",
+            "type": "Applying"
+          }
+        ],
+        "activeOperation": null
+      }
+    }
+  }
+}

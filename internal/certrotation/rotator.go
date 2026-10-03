@@ -83,6 +83,9 @@ type Config struct {
 // Result tells the caller when the next reconciliation is due, if that is
 // sooner than its own schedule.
 type Result struct {
+	// Pending means a durable transition advanced without an endpoint verdict.
+	// The supervisor must retry without claiming readiness.
+	Pending bool
 	// RequeueAfter is positive while a CA transition waits for its switch.
 	RequeueAfter time.Duration
 }

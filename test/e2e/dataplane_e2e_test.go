@@ -56,8 +56,13 @@ func TestDataPlane(t *testing.T) {
 		{"external-postgresql-lifecycle", d.externalPostgresqlLifecycle},
 		{"mysql-lifecycle", d.mysqlLifecycle},
 		{"mysql-dsn-refusal", d.mysqlDSNRefusalScenario},
+		{"native-plan-size-boundary", d.planSizeBoundaries},
 		{"watches", func() { f = newFaultRun(d); f.watches() }},
+		{"approval-resource-replacement", func() { f.schemaIdentityReplacement() }},
 		{"approval-target-secret-change", func() { f.targetSecretChanges() }},
+		{"approval-destructive-policy-change", func() { f.destructivePolicyChanges() }},
+		{"approval-exclusion-policy-change", func() { f.exclusionPolicyChanges() }},
+		{"approval-verification-policy-change", func() { f.verificationPolicyChanges() }},
 		{"mysql-drift-before-dispatch", func() { f.mysqlDriftBeforeDispatch() }},
 		{"hung-schema-result-read", func() { f.hungResultReads() }},
 		{"job-deadline", func() { f.jobDeadline() }},
@@ -67,6 +72,11 @@ func TestDataPlane(t *testing.T) {
 		{"closing-audits", d.closingAudits},
 		{"four-eyes-distinct-approver", d.fourEyesDistinctApprover},
 		{"pod-metadata-admission", d.podMetadataAdmission},
+		{"approval-executor-image-change", func() { f.executorImageChanges() }},
+		{"approval-ptah-version-change", func() { f.ptahVersionChanges() }},
+		{"unsupported-controller-state-after-approval", func() { f.unsupportedControllerStates() }},
+		{"unsupported-runner-protocol-after-approval", func() { f.unsupportedRunnerProtocols() }},
+		{"running-apply-executor-image-change", func() { f.runningExecutorImageChanges() }},
 	} {
 		if !run.Scenario(scenario.name, d.scenario(scenario.body)) {
 			return

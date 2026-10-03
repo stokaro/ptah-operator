@@ -1,0 +1,224 @@
+{
+    "apiVersion": "operator.ptah.run/v1alpha1",
+    "kind": "PtahSchema",
+    "metadata": {
+        "annotations": {
+            "operator.ptah.run/e2e-watch-barrier": "a28ddb4f-9284-47aa-87aa-c85cc67aba1e"
+        },
+        "creationTimestamp": "2026-10-01T08:33:37Z",
+        "generation": 3,
+        "name": "e2e-alert-schema-postgresql",
+        "namespace": "ptah-test-a-1-37-0-020-baseline-5101109f-2c0c2ad35d",
+        "resourceVersion": "116057",
+        "uid": "95be094d-0ff0-45e1-bff2-37b8067ba546"
+    },
+    "spec": {
+        "desired": {
+            "ociRef": "oci://e2e-registry.ptah-test-a-1-37-0-020-baseline-5101109f-2c0c2ad35d.svc.cluster.local:5000/e2e-alert-schema:postgresql@sha256:3b984128de2a7343d5050886b74d4389e1b1d4a644a5fe6900187ad3271b7846",
+            "registryAuthFrom": {
+                "dockerConfigJSONKey": ".dockerconfigjson",
+                "mode": "Environment",
+                "name": "e2e-registry-auth",
+                "passwordKey": "password",
+                "tokenKey": "token",
+                "usernameKey": "username"
+            },
+            "transport": {
+                "plainHTTP": true
+            },
+            "verificationPolicyFrom": {
+                "key": "policy.yaml",
+                "name": "e2e-reference-verification-policy"
+            }
+        },
+        "execution": {
+            "activeDeadlineSeconds": 300,
+            "connectTimeout": "10s",
+            "failureRetryInterval": "30s",
+            "resources": {}
+        },
+        "interval": "1h0m0s",
+        "policy": {
+            "allowDestructive": true,
+            "apply": "OnApproval",
+            "driftSeverity": "all",
+            "lockTimeout": "4m0s",
+            "transactionMode": "file"
+        },
+        "suspend": false,
+        "target": {
+            "coordinationKey": "e2e/alert-schema/postgresql",
+            "engine": "PostgreSQL",
+            "sharedRealm": false,
+            "urlFrom": {
+                "key": "url",
+                "name": "e2e-alert-schema-postgresql-db"
+            }
+        }
+    },
+    "status": {
+        "conditions": [
+            {
+                "lastTransitionTime": "2026-10-01T08:33:37Z",
+                "message": "Database engine \"PostgreSQL\" is supported",
+                "observedGeneration": 3,
+                "reason": "SupportedEngine",
+                "status": "True",
+                "type": "EngineSupported"
+            },
+            {
+                "lastTransitionTime": "2026-10-01T08:33:37Z",
+                "message": "Plan is waiting for approval",
+                "observedGeneration": 3,
+                "reason": "AwaitingApproval",
+                "status": "False",
+                "type": "Ready"
+            },
+            {
+                "lastTransitionTime": "2026-10-01T08:39:54Z",
+                "message": "The latest operation completed",
+                "observedGeneration": 3,
+                "reason": "Succeeded",
+                "status": "False",
+                "type": "ReconciliationFailed"
+            },
+            {
+                "lastTransitionTime": "2026-10-01T08:40:13Z",
+                "message": "Desired OCI reference resolved to immutable content",
+                "observedGeneration": 3,
+                "reason": "DigestPinned",
+                "status": "True",
+                "type": "ArtifactResolved"
+            },
+            {
+                "lastTransitionTime": "2026-10-01T08:40:19Z",
+                "message": "Artifact type and verification policy were satisfied",
+                "observedGeneration": 3,
+                "reason": "PolicySatisfied",
+                "status": "True",
+                "type": "ArtifactVerified"
+            },
+            {
+                "lastTransitionTime": "2026-10-01T08:34:01Z",
+                "message": "Database schema was observed",
+                "observedGeneration": 3,
+                "reason": "Observed",
+                "status": "True",
+                "type": "DatabaseReachable"
+            },
+            {
+                "lastTransitionTime": "2026-10-01T08:40:40Z",
+                "message": "Managed scope requires 1 schema statements; highest severity safe",
+                "observedGeneration": 3,
+                "reason": "ScopedChanges",
+                "status": "True",
+                "type": "DriftDetected"
+            },
+            {
+                "lastTransitionTime": "2026-10-01T08:40:40Z",
+                "message": "The authoritative managed scope differs from the verified artifact",
+                "observedGeneration": 3,
+                "reason": "ScopedChanges",
+                "status": "False",
+                "type": "InSync"
+            },
+            {
+                "lastTransitionTime": "2026-10-01T08:40:40Z",
+                "message": "Create an approval bound to the current plan fingerprint",
+                "observedGeneration": 3,
+                "reason": "Waiting",
+                "status": "True",
+                "type": "ApprovalRequired"
+            },
+            {
+                "lastTransitionTime": "2026-10-01T08:40:40Z",
+                "message": "Exact plan bytes are stored in immutable chunks",
+                "observedGeneration": 3,
+                "reason": "Published",
+                "status": "True",
+                "type": "PlanReady"
+            },
+            {
+                "lastTransitionTime": "2026-10-01T08:39:44Z",
+                "message": "Reconciliation is active",
+                "observedGeneration": 3,
+                "reason": "Active",
+                "status": "False",
+                "type": "Suspended"
+            },
+            {
+                "lastTransitionTime": "2026-10-01T08:34:19Z",
+                "message": "Apply outcome is uncertain; only read-only observation is permitted",
+                "observedGeneration": 2,
+                "reason": "OutcomeUnknown",
+                "status": "False",
+                "type": "Applying"
+            }
+        ],
+        "executionBinding": {
+            "controllerStateVersion": 1,
+            "epoch": "v1-8e8aedbbe7b7e39a08d561dcc00cb094",
+            "executorImage": "e2e-registry.ptah-test-a-1-37-0-020-baseline-5101109f-2c0c2ad35d.svc.cluster.local:5000/ptah-executor@sha256:fbeb5f38226bd0a1ea02368267112ed75a05f0ba8a13d5faf8deae7fffb093a9",
+            "ptahVersion": "v0.9.0-73-gf6e562c5b",
+            "runnerProtocolVersion": 1
+        },
+        "lastAttemptTime": "2026-10-01T08:40:40Z",
+        "nextReconciliationTime": "2026-10-01T09:40:40Z",
+        "observedGeneration": 3,
+        "phase": "AwaitingApproval",
+        "plan": {
+            "actualStateFingerprint": "sha256:0b474b8d2de1db4ec74dcb9f8a70a99e2fb470d05388db099e5ecaea1141b98a",
+            "artifactDigest": "sha256:3b984128de2a7343d5050886b74d4389e1b1d4a644a5fe6900187ad3271b7846",
+            "contentDigest": "sha256:b472165ca1b93d800b1c9b5ebd36550ef5d513077536f5fa63dcc0e7f2d91b4d",
+            "controllerImage": "e2e-registry.ptah-test-a-1-37-0-020-baseline-5101109f-2c0c2ad35d.svc.cluster.local:5000/ptah-operator@sha256:57f5a1992a381ffc198981665e35c6f8e71f0cb6404708bf6e40b98b36a0cd22",
+            "controllerRevision": "5101109f2603c74447c4bf101f76a491aef80ffd",
+            "controllerStateVersion": 1,
+            "coordinationDigest": "sha256:2c3ae20b629bddfad4913fc2295dbe4ee21965ee79584b23be2c5fb4f4d20739",
+            "createdAt": "2026-10-01T08:34:12Z",
+            "desiredStateFingerprint": "sha256:0f3d48ec90edb54f8b96c29f8310fbda05ebae5c364c18eacf4f659771bf5681",
+            "destructive": false,
+            "executionBindingID": "v1-8e8aedbbe7b7e39a08d561dcc00cb094",
+            "executorImage": "e2e-registry.ptah-test-a-1-37-0-020-baseline-5101109f-2c0c2ad35d.svc.cluster.local:5000/ptah-executor@sha256:fbeb5f38226bd0a1ea02368267112ed75a05f0ba8a13d5faf8deae7fffb093a9",
+            "fingerprint": "sha256:9e719473095ef87d3e429aafbfa7785bc2b507f581dc2bb7a65b086c7fbe2cc0",
+            "name": "ptah-plan-9e719473095ef87d3e429aaf",
+            "policyFingerprint": "sha256:a45ed7e2113da756719140634ec19fb90d9c98e2be1620659fc75b57fa0c3c58",
+            "ptahVersion": "v0.9.0-73-gf6e562c5b",
+            "runnerImage": "e2e-registry.ptah-test-a-1-37-0-020-baseline-5101109f-2c0c2ad35d.svc.cluster.local:5000/ptah-runner@sha256:57f5a1992a381ffc198981665e35c6f8e71f0cb6404708bf6e40b98b36a0cd22",
+            "runnerProtocolVersion": 1,
+            "statementCount": 1,
+            "targetIdentityDigest": "sha256:25418c9116aed86a730c1ab08e8bd453ca939d1a64e087dfc9968f5806aaf8d0",
+            "uid": "10ab7250-9169-40cf-990a-6fc478e744db",
+            "verificationPolicyDigest": "sha256:c84039b250125e32f0d51caea6afd1d13ebe4e5e0f90d382ee3be2c027574007",
+            "verificationPolicyUID": "f666ab27-2038-499c-a03b-89ad2b91d8a9"
+        },
+        "source": {
+            "artifactType": "application/vnd.stokaro.ptah.schema.v1",
+            "digest": "sha256:3b984128de2a7343d5050886b74d4389e1b1d4a644a5fe6900187ad3271b7846",
+            "mediaType": "application/vnd.oci.image.manifest.v1+json",
+            "requestedReference": "oci://e2e-registry.ptah-test-a-1-37-0-020-baseline-5101109f-2c0c2ad35d.svc.cluster.local:5000/e2e-alert-schema:postgresql@sha256:3b984128de2a7343d5050886b74d4389e1b1d4a644a5fe6900187ad3271b7846",
+            "resolvedAt": "2026-10-01T08:40:13Z",
+            "resolvedReference": "oci://e2e-registry.ptah-test-a-1-37-0-020-baseline-5101109f-2c0c2ad35d.svc.cluster.local:5000/e2e-alert-schema@sha256:3b984128de2a7343d5050886b74d4389e1b1d4a644a5fe6900187ad3271b7846",
+            "size": 799,
+            "verificationPolicyDigest": "sha256:c84039b250125e32f0d51caea6afd1d13ebe4e5e0f90d382ee3be2c027574007",
+            "verificationPolicyUID": "f666ab27-2038-499c-a03b-89ad2b91d8a9",
+            "verified": true,
+            "verifiedAt": "2026-10-01T08:40:19Z"
+        },
+        "target": {
+            "coordinationDigest": "sha256:2c3ae20b629bddfad4913fc2295dbe4ee21965ee79584b23be2c5fb4f4d20739",
+            "driftFindingCount": 1,
+            "driftFindings": [
+                {
+                    "category": "columns_added",
+                    "count": 1,
+                    "severity": "warning"
+                }
+            ],
+            "driftReportDigest": "sha256:b13e969b7d70d1ec6870a2b92f430a0015e45a8a5efb1986219c19dae901dfda",
+            "engine": "PostgreSQL",
+            "highestDriftSeverity": "warning",
+            "identityDigest": "sha256:25418c9116aed86a730c1ab08e8bd453ca939d1a64e087dfc9968f5806aaf8d0",
+            "lastObservedAt": "2026-10-01T08:40:29Z"
+        }
+    }
+}

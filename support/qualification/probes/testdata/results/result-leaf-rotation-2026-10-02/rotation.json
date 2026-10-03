@@ -1,0 +1,52 @@
+{
+  "phaseBefore": "stable",
+  "leafBefore": "3888cf4190e6680cea7962dbc871aabb6cfab17fd4378f7ccd3e7d6901a32dfe",
+  "keyBefore": "474e222bd69f092fb8159171ac7c606a56e2ed094ad66ecaef9b15e5408d304a",
+  "serverCABefore": "624ae165a03f2e62c0704b3daf353db23d5018445b195338d32976b3f7c85533",
+  "clientCABefore": "2656baabc0338335edf26a9490325b9269db8f7cd3c1f9d37e6f2db112ee552d",
+  "managerUIDsBefore": [
+    "8263bda5-bdf3-4b52-b29b-facf7f399c6a",
+    "bf7badb7-2915-45d7-8e5a-4ad1768809d3"
+  ],
+  "projectionUIDBefore": "addf6704-0450-417a-a135-9e3be1cdc521",
+  "journalUIDBefore": "f2a07f8f-c1d7-4a56-b720-02b8e2dac368",
+  "policyBefore": {
+    "clientCA": "sha256:3682adaea4d6a6904164bb87a1c2d02becb884570e36c427c9386978cc15c009",
+    "serverTrust": "sha256:624ae165a03f2e62c0704b3daf353db23d5018445b195338d32976b3f7c85533",
+    "version": "1"
+  },
+  "procedureSHA256": "1bbbb649dd894bab2ad7249fc9bd606365a2ec877ba5caeef48b431a3b866b2e",
+  "scope": "Installed interrupted serving-certificate/key renewal; CA retirement waits are unchanged and not exercised.",
+  "image": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/operator@sha256:f338a4c98d77e4908426d0c4b45a1b177ffc8c2916cae3029217b9ec12cd6f36",
+  "startedAtUnix": 1790956172.7365918,
+  "gateRefused": true,
+  "phaseInterrupted": "leaf",
+  "candidateBeforeRestart": "5dd1a2a1b18b1cd52ba8cb2b57a818d283d4d1b197beddb35634a2330be392b4",
+  "projectionHeld": true,
+  "rotatorUIDBefore": "5c0959d7-5220-4eb4-b5b1-8b361419d727",
+  "rotatorUIDAfter": "703b702b-0ab4-462d-8dc3-fa730416db1f",
+  "candidateAfterRestart": "5dd1a2a1b18b1cd52ba8cb2b57a818d283d4d1b197beddb35634a2330be392b4",
+  "phaseAfter": "stable",
+  "leafAfter": "5dd1a2a1b18b1cd52ba8cb2b57a818d283d4d1b197beddb35634a2330be392b4",
+  "keyAfter": "387570dbc296079128b20535b267155976e768803980681231bb03d2314c24a2",
+  "serverCAAfter": "624ae165a03f2e62c0704b3daf353db23d5018445b195338d32976b3f7c85533",
+  "clientCAAfter": "2656baabc0338335edf26a9490325b9269db8f7cd3c1f9d37e6f2db112ee552d",
+  "managerUIDsAfter": [
+    "8263bda5-bdf3-4b52-b29b-facf7f399c6a",
+    "bf7badb7-2915-45d7-8e5a-4ad1768809d3"
+  ],
+  "projectionUIDAfter": "addf6704-0450-417a-a135-9e3be1cdc521",
+  "journalUIDAfter": "f2a07f8f-c1d7-4a56-b720-02b8e2dac368",
+  "policyAfter": {
+    "clientCA": "sha256:3682adaea4d6a6904164bb87a1c2d02becb884570e36c427c9386978cc15c009",
+    "serverTrust": "sha256:624ae165a03f2e62c0704b3daf353db23d5018445b195338d32976b3f7c85533",
+    "version": "1"
+  },
+  "rotatorReadyAfter": true,
+  "restoredArguments": true,
+  "finishedAtUnix": 1790956305.8555992,
+  "verification": {
+    "persistedCandidateResumed": true,
+    "servingReplicas": 2
+  }
+}

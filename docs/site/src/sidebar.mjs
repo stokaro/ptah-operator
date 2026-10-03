@@ -84,6 +84,7 @@ export const sidebar = [
           { label: 'PtahMigrationApproval', link: '/reference/ptahmigrationapproval/' },
           { label: 'PtahMigrationRunAcknowledgment', link: '/reference/ptahmigrationrunacknowledgment/' },
           { label: 'PtahRealm', link: '/reference/ptahrealm/' },
+          { label: 'PtahResultRecord', link: '/reference/ptahresultrecord/' },
         ],
       },
     ],

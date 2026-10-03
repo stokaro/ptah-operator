@@ -15,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/resultdelivery/jobconfig"
 )
 
 // The predicates below were the data plane's filters that earned a file of
@@ -771,6 +772,13 @@ func (in sourceJobIsolationInputs) safeJobContract(job *batchv1.Job) bool {
 }
 
 func (in sourceJobIsolationInputs) sourceJobIsolated(job *batchv1.Job) bool {
+	if durableResultJob(job) {
+		var err error
+		job, err = resultJobWithoutProjection(job)
+		if err != nil {
+			return false
+		}
+	}
 	operation := job.Labels[labelOperation]
 	spec := job.Spec.Template.Spec
 	if !slices.Equal(containerNames(viewContainers(spec.Containers)), []string{"ptah"}) ||
@@ -861,6 +869,7 @@ func publisherJobIsolation(job *batchv1.Job, image, registrySecret string) bool 
 // customCAPodIsolationInputs are what the custom-CA Pod isolation reads
 // besides the Pods.
 type customCAPodIsolationInputs struct {
+	jobs              []batchv1.Job
 	databaseSecret    string
 	registrySecret    string
 	registryAuthority string
@@ -1013,6 +1022,43 @@ func sameStringsSorted(values []string, want ...string) bool {
 }
 
 func (in customCAPodIsolationInputs) isolated(pod *corev1.Pod) bool {
+	// Compare the Pod's projection with its original Job before checking the
+	// unchanged registry/database isolation contract on the remaining fields.
+	podJob := &batchv1.Job{Spec: batchv1.JobSpec{Template: corev1.PodTemplateSpec{Spec: pod.Spec}}}
+	var boundJob *batchv1.Job
+	for i := range in.jobs {
+		job := &in.jobs[i]
+		if pod.Namespace == job.Namespace && ownedExactlyOnce(pod.OwnerReferences, "batch/v1", "Job", job.Name, job.UID) {
+			if boundJob != nil {
+				return false
+			}
+			boundJob = job
+		}
+	}
+	if durableResultJob(podJob) || (boundJob != nil && durableResultJob(boundJob)) {
+		if boundJob == nil {
+			return false
+		}
+		podJob.ObjectMeta = boundJob.ObjectMeta
+		owner, err := schemaOwnerUID(boundJob, boundJob.Labels[labelSchema])
+		if err != nil {
+			return false
+		}
+		expected, err := jobconfig.Read(boundJob, owner, boundJob.Annotations[annotationOperationID])
+		if err != nil {
+			return false
+		}
+		actual, err := jobconfig.Read(podJob, owner, boundJob.Annotations[annotationOperationID])
+		if err != nil || actual != expected {
+			return false
+		}
+		normalized, err := resultJobWithoutProjection(podJob)
+		if err != nil {
+			return false
+		}
+		pod = pod.DeepCopy()
+		pod.Spec = normalized.Spec.Template.Spec
+	}
 	all := viewContainers(podContainers(pod))
 	main, install := containersNamed(all, "ptah"), containersNamed(all, "install-runner")
 	guard, fetch := containersNamed(all, "validate-source-authority"), containersNamed(all, "fetch-schema")

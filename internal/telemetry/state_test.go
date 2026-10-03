@@ -205,3 +205,49 @@ func writeCertificate(t *testing.T, path string, notAfter time.Time) {
 		t.Fatal(err)
 	}
 }
+
+// A migration retains its claim and phase while a read-only retry is deferred.
+// Its age starts when dispatch becomes eligible, including after dispatch.
+func TestMigrationRetryWaitIsNotAnOperationInFlight(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name       string
+		delay      time.Duration
+		dispatched bool
+		apply      bool
+		wantAge    string
+	}{
+		{name: "future", delay: time.Minute},
+		{name: "due", delay: 0, wantAge: "0"},
+		{name: "overdue", delay: -30 * time.Second, wantAge: "30"},
+		{name: "dispatched retry", delay: -30 * time.Second, dispatched: true, wantAge: "30"},
+		{name: "Apply cannot hide behind a read-only retry", delay: time.Minute, apply: true, wantAge: "600"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			operation := operatorv1alpha1.MigrationOperationResolve
+			if tt.apply {
+				operation = operatorv1alpha1.MigrationOperationApply
+			}
+			deadline := metav1.NewTime(collectorNow.Add(tt.delay))
+			active := &operatorv1alpha1.MigrationOperationStatus{Type: operation, StartedAt: *minutesBefore(10), RetryNotBefore: &deadline}
+			if tt.dispatched {
+				active.JobUID = "retry-job"
+			}
+			out := gatherState(t, stateView{synced: true, migrations: []operatorv1alpha1.PtahMigration{{Status: operatorv1alpha1.PtahMigrationStatus{
+				Phase: operatorv1alpha1.MigrationPhaseResolving, ActiveOperation: active,
+			}}}})
+			labels := "{family=migration}{operation=" + string(operation) + "}"
+			if tt.wantAge == "" {
+				if strings.Contains(out, labels) {
+					t.Fatalf("deferred retry published as in flight:\n%s", out)
+				}
+				return
+			}
+			for _, want := range []string{"ptah_operator_active_operations" + labels + " 1\n", "ptah_operator_active_operation_seconds" + labels + " " + tt.wantAge + "\n"} {
+				if !strings.Contains(out, want) {
+					t.Errorf("missing %q:\n%s", want, out)
+				}
+			}
+		})
+	}
+}

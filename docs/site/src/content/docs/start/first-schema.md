@@ -23,21 +23,47 @@ description: One worked example, from Secret and policy to a converged PtahSchem
 ## Create what the schema reads
 
 The database URL is a namespaced Secret and the verification policy a
-ConfigMap, both in the namespace the resource lives in:
+ConfigMap, both in the namespace the resource lives in. Store the URL in a
+private file with no trailing newline, outside the repository. Set
+`DATABASE_URL_FILE` to its path. The command below reads that file so the
+credential does not become a command argument or shell-history entry:
 
 ```sh
+DATABASE_URL_FILE=/path/to/private/database-url
 kubectl create namespace application
 kubectl -n application create secret generic application-database \
-  --from-literal=url='<database-url>'
+  --from-file=url="$DATABASE_URL_FILE"
 kubectl -n application create configmap ptah-verification-policy \
   --from-file=policy.yaml=examples/verification-policy.yaml
 kubectl -n application patch configmap ptah-verification-policy \
   --type=merge -p '{"immutable":true}'
+```
+
+For PostgreSQL, replace the artifact placeholder in `examples/ptahschema.yaml`
+and apply it:
+
+```sh
 kubectl apply -f examples/ptahschema.yaml
 kubectl -n application get ptahschema application -w
 ```
 
-Replace every placeholder in the example first. For private registries, add a
+For MySQL, use a MySQL database URL in that Secret and publish the schema with
+`ptah schema push --dialect mysql`. Replace the artifact placeholder in
+`examples/ptahschema-mysql.yaml` with the resulting digest, then apply that
+manifest instead:
+
+```sh
+kubectl apply -f examples/ptahschema-mysql.yaml
+kubectl -n application get ptahschema application -w
+```
+
+Both examples name the resource `application`, so the plan review and approval
+commands below work for either engine. Choose one manifest for this resource.
+The MySQL example manages a database of its own; see
+[shared realms](../../reference/ptahrealm/) before adding another resource
+that writes to the same database.
+
+For private registries, add a
 same-namespace `registryAuthFrom` reference; the API supports environment-key
 Secrets and standard Docker config JSON Secrets. Either representation must
 contain a fixed `registry` key whose authority-only `host[:port]` value exactly

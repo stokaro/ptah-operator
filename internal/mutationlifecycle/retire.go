@@ -31,7 +31,8 @@ type Retirement struct {
 	// takes no Lease.
 	RecordHoldsRealm bool
 	// MayStillWrite says something the claim dispatched may still be
-	// executing, so its Lease is left to expire rather than handed back. It
+	// executing, so its Lease is not handed back. The family must keep enough
+	// of the claim to renew that realm while the workload may still write. It
 	// matters only for a mutating run the family does not keep the realm for.
 	MayStillWrite bool
 	// EndsProof says the same write removes the pending observation the claim
@@ -46,8 +47,8 @@ type Retirement struct {
 // account, only when its write ends the proof. A mutating run that may have
 // changed the database leaves the realm with whatever outlives it: the record
 // the family keeps it for, or an executor that may still be writing, whose
-// Lease is sized to outlive it. Everything else that holds the realm in its
-// own right hands it back.
+// claim keeps the realm until the workload stops. Everything else that holds
+// the realm in its own right hands it back.
 func (r Retirement) Releases() RealmOwner {
 	switch RealmHeldBy(r.Claim) {
 	case OwnerProof:

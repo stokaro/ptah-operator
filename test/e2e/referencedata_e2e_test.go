@@ -455,6 +455,12 @@ func (r *referenceRun) createReferenceDatabase() {
 // publish publishes one revision of the declared schema and rows, waits for
 // the publisher to finish, and returns the digest it reported.
 func (r *referenceRun) publish(revision string) string {
+	return r.publishWithCheck(revision, nil)
+}
+
+// Keep collecting dependent workload results while their missing artifact is
+// published. Blocking the collector here could lose them to the Job TTL.
+func (r *referenceRun) publishWithCheck(revision string, check func()) string {
 	r.t.Helper()
 	directory := filepath.Join(repositoryRoot, "testdata", "e2e", "reference", revision)
 	configMap := r.names.configMapPrefix + revision
@@ -477,6 +483,9 @@ func (r *referenceRun) publish(revision string) string {
 		r.names.artifact, revision, mounts)), "create Job %s", name)
 	deadline := time.Now().Add(waitTimeout)
 	for time.Now().Before(deadline) {
+		if check != nil {
+			check()
+		}
 		job := &batchv1.Job{}
 		if r.get(name, job) == nil {
 			switch referencePublisherState(job) {

@@ -51,10 +51,12 @@ type faultState struct {
 	deletedPrint      string
 	deletedCheckpoint checkpoint
 
-	manual       faultTarget
-	manualPrint  string
-	manualJobUID string
-	manualPodUID string
+	manual            faultTarget
+	manualPrint       string
+	manualJobUID      string
+	manualPodUID      string
+	manualSQL         *schemaRefusalWindow
+	manualSQLControls []operationSQLClient
 }
 
 func newFaultTargets() faultState {
@@ -463,8 +465,8 @@ func (f *faultRun) runnerTermination() {
 	if err := freshPlanBound(postfault, fresh, plan.result.result, parsed, contentDigest); err != nil {
 		f.fatalf("fresh MySQL plan is not bound to the exact recovery Plan result: %v", err)
 	}
-	f.assertSealed(plan.result.result, document, "the MySQL recovery")
-	f.logf("the MySQL recovery Plan result is sealed, and its content digest covers the %d-chunk plan document", chunks)
+	f.assertConfidentialPlan(plan.result.result, document, "the MySQL recovery")
+	f.logf("the MySQL recovery Plan result preserves confidentiality and the exact %d-chunk plan document", chunks)
 	f.assertApprovalConsumed(unknown.approval, unknown.originalPlanUID)
 	if f.addedJobCount(unknown.schema, "apply") != 1 {
 		f.fatalf("the uncertain MySQL Apply was replayed without a fresh approval")
@@ -764,7 +766,8 @@ func (f *faultRun) sharedAlias() {
 // for approval and holds the database untouched; and changes a database by
 // hand under an approved plan and holds the operator to refusing the stale
 // plan. It then closes the watches and holds their whole history to every
-// proof of the fault injection once more.
+// proof of the fault injection once more, before approving the manual-drift
+// recovery plan as its allowed control.
 func (f *faultRun) jobDeletion() {
 	f.t.Helper()
 	f.logf("removing a held read-only Job while its operation is active")
@@ -772,6 +775,13 @@ func (f *faultRun) jobDeletion() {
 	f.deletionLeavesTheDatabase()
 	f.manualDrift()
 	f.closingHistory()
+	// The complete history above closes the deadline recovery and no-replay
+	// proof. Later executor changes would otherwise start unrelated reads
+	// with this fixture's 45-second deadline, after its Pod/log watch closed.
+	// Suspend only now, so the measured recovery window remains unchanged.
+	f.suspend(f.state.mysqlTimeout.schema, true)
+	f.waitForSchema(f.state.mysqlTimeout.schema, "the completed deadline fixture to stop creating workloads", quiescentlySuspended)
+	f.manualDriftRecovery()
 }
 
 // readLoss removes the first held Job of a read chain. A read-only Job that
@@ -866,6 +876,7 @@ func (f *faultRun) manualDrift() {
 	s := &f.state
 	manual := &s.manual
 	f.createDatabase("postgresql", manual.database, manual.secret)
+	f.query("postgresql", manual.database, "INSERT INTO e2e_widgets (id, name, note) VALUES (701, 'drift-control', 'preserve-this-row')")
 	f.planTarget(manual, faultSchema{engine: "PostgreSQL", reference: f.pgReference},
 		"the manual-drift schema's initial Plan target lock")
 	schema := f.schema(manual.schema)
@@ -896,6 +907,8 @@ func (f *faultRun) manualDrift() {
 	f.assertColumn("postgresql", manual.database, "enabled", 0)
 	f.assertColumn("postgresql", manual.database, "fault_token", 0)
 	s.manualPrint = f.pgFingerprint(manual.database)
+	s.manualSQL = f.startSchemaDriftWindow(manual.schema, manual.database, "",
+		&databaseSQLAudit{t: f.t, ctx: f.ctx, cluster: f.cluster, namespace: f.in.TestNamespace, engine: "postgresql"}, "")
 	f.startReadBarrier()
 	f.mustResumeStatusWrites("could not restore controller status-write RBAC after the manual-drift barrier")
 	f.waitForWatchCountAbove(manual.schema, "apply", 0, "the manual-drift Apply Job to be created behind the scheduling barrier")
@@ -936,6 +949,10 @@ func (f *faultRun) manualDrift() {
 	observe, plan := f.captureUncertainReadProofPair(manual.schema, manual.run, manual.lease,
 		manual.observeBefore, manual.planBefore, false)
 	manual.proofObserveUID, manual.proofPlanUID = observe.uid, plan.uid
+	s.manualSQLControls = []operationSQLClient{
+		{resourceUID: string(schema.UID), jobUID: observe.uid, podUID: observe.result.podUID, operation: "observe"},
+		{resourceUID: string(schema.UID), jobUID: plan.uid, podUID: plan.result.podUID, operation: "plan"},
+	}
 	f.waitForManualDriftContract(manual.schema, manual.approval, operationID, manual.originalPlanUID,
 		old.Spec.ActualStateFingerprint, manual.observeBefore)
 	current := f.schema(manual.schema)
@@ -954,8 +971,8 @@ func (f *faultRun) manualDrift() {
 	if err := freshPlanBound(current, fresh, plan.result.result, parsed, contentDigest); err != nil {
 		f.fatalf("manual-drift fresh plan is not bound to the exact Plan result: %v", err)
 	}
-	f.assertSealed(plan.result.result, document, "the manual-drift fresh")
-	f.logf("the manual-drift fresh Plan result is sealed, and its content digest covers the %d-chunk plan document", chunks)
+	f.assertConfidentialPlan(plan.result.result, document, "the manual-drift fresh")
+	f.logf("the manual-drift fresh Plan result preserves confidentiality and the exact %d-chunk plan document", chunks)
 	f.assertApprovalConsumed(manual.approval, manual.originalPlanUID)
 	if f.pgFingerprint(manual.database) != s.manualPrint {
 		f.fatalf("manual-drift read-only Observe or Plan changed the database schema")
@@ -984,6 +1001,54 @@ func (f *faultRun) manualDrift() {
 		applyPods: podEvidence{uids: []string{stale.podUID}}, mode: uncertainManualDrift,
 		oldActual: old.Spec.ActualStateFingerprint,
 	})
+}
+
+// manualDriftRecovery starts after closingHistory has checked the complete
+// refusal window. The original watches remain closed and unchanged. The
+// ordinary data-plane ledger audits the newly authorized operation.
+func (f *faultRun) manualDriftRecovery() {
+	f.t.Helper()
+	manual := &f.state.manual
+	current := f.waitForSchema(manual.schema, "the exact manual-drift recovery plan awaiting approval",
+		func(resource *ptahv1alpha1.PtahSchema) bool {
+			return planAwaitingApproval(resource) && string(resource.Status.Plan.UID) == manual.freshPlanUID
+		})
+	fresh := f.schemaPlan(current.Status.Plan.Name)
+	if string(fresh.UID) != manual.freshPlanUID || string(fresh.UID) == manual.originalPlanUID {
+		f.fatalf("manual-drift recovery read an unrelated plan")
+	}
+	if f.pgFingerprint(manual.database) != f.state.manualPrint {
+		f.fatalf("manual-drift database changed before its fresh authorization")
+	}
+	audit := &databaseSQLAudit{t: f.t, ctx: f.ctx, cluster: f.cluster, namespace: f.in.TestNamespace, engine: "postgresql"}
+	beforeSQL := audit.snapshot()
+	beforeApply := f.checkpointJobs(manual.schema, "apply")
+	approval := manual.approval + "-current"
+	f.createApproval(manual.schema, approval)
+	f.waitForApprovedPlanConverged(manual.schema, fresh.Spec.ArtifactDigest, fresh.Spec.Fingerprint,
+		string(fresh.UID), "the freshly approved manual-drift plan to converge")
+	result := f.captureOneNewJobResult(manual.schema, "apply", beforeApply, nil)
+	if err := automaticApplyResult(result, fresh.Spec.ContentDigest, fresh.Spec.CoordinationDigest, fresh.Spec.TargetIdentityDigest); err != nil {
+		f.fatalf("manual-drift recovery did not execute its exact fresh plan: %v", err)
+	}
+	completed := f.captured
+	if completed.jobUID == f.state.manualJobUID || completed.podUID == f.state.manualPodUID {
+		f.fatalf("manual-drift recovery reused the refused Apply identity")
+	}
+	audit.assertRecords(beforeSQL, audit.snapshot(),
+		audit.terminalPod(map[string]string{"job-name": completed.jobName}, completed.jobUID), true)
+	audit.close()
+	f.dataPlane.assertApprovalConsumed(approval, string(fresh.UID))
+	f.assertColumn("postgresql", manual.database, "enabled", 1)
+	f.assertColumn("postgresql", manual.database, "fault_token", 1)
+	if f.query("postgresql", manual.database, "SELECT count(*) FROM e2e_widgets WHERE id=701 AND name='drift-control' AND note='preserve-this-row'") != "1" ||
+		f.query("postgresql", manual.database, "SELECT count(*) FROM e2e_widgets") != "1" {
+		f.fatalf("manual-drift recovery changed the preserved row")
+	}
+	f.assertOneNewJob(manual.schema, "apply", beforeApply)
+	f.auditRuntime()
+	f.assertObservedJobsAudited()
+	f.logf("PASS PostgreSQL manual drift: the closed refusal history contains no replay; fresh approval applied its exact plan and preserved the row")
 }
 
 // assertDeletedSchemaStartedNothing holds the deleted schema to no Job the
@@ -1161,6 +1226,13 @@ func (f *faultRun) closingHistory() {
 	}
 	f.waitForAuditComplete()
 	f.recordJobsForParent()
+	if s.manualSQL == nil || len(s.manualSQLControls) != 2 {
+		f.fatalf("manual drift lost its SQL window or recovery result controls")
+	}
+	f.retainSchemaSQLWatch(s.manualSQL)
+	s.manualSQL.assertStale(f.schema(manual.schema), operationSQLClient{
+		resourceUID: string(s.manualSQL.resourceUID), jobUID: s.manualJobUID, podUID: s.manualPodUID, operation: "apply",
+	}, s.manualSQLControls...)
 	f.logf("PASS watches, Kubernetes deadline recovery, stale-plan preflight, native lock barriers, restart identity, " +
 		"uncertain recovery, deletion, Pod serialization, credential audit, and coordination realms")
 }

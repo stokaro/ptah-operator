@@ -1,0 +1,75 @@
+{
+  "schemaVersion": 1,
+  "release": "0.2.0",
+  "frozenAt": "2026-10-03T10:10:29.523944+00:00",
+  "profileSourceCommit": "b549924f777dadd2910b908a95acef4831ec0107",
+  "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
+  "decision": "Not assessed",
+  "sourceFiles": [
+    {
+      "path": "support/qualification/0.2.0.md",
+      "sha256": "ce11076cdcf45e94f19c705caf71903a58ce608ffa97ec3a9c63501d091739fa"
+    },
+    {
+      "path": "support/qualification/0.2.0-coverage.md",
+      "sha256": "e4ef3a564ec6e35e75935ec35351d82bd236cceb67e6e30220292d19e8ca6c33"
+    },
+    {
+      "path": "support/qualification/0.2.0-monitoring.yaml",
+      "sha256": "464b4352a25ecb1ed41379034d056056bb3744ade566f4b1938558b3cbc8ae65"
+    },
+    {
+      "path": "support/acceptance/0.2.0.json",
+      "sha256": "972430c03d9f557c505f4c60511cab4a0ed27e3f8720db023d8167e5e1d069ea"
+    },
+    {
+      "path": "support/kubernetes.json",
+      "sha256": "316c844dad7c04fb372b75fb9b3b9953b678bafaa944d79388cea3ca0bec0c18"
+    },
+    {
+      "path": "support/e2e-suites.json",
+      "sha256": "2c616fbb705aeb930a06a5ed30516bd75ec00a001d94287f62f7eadb248a7134"
+    },
+    {
+      "path": "support/ptah.json",
+      "sha256": "c7af39d043cfe038972ebf112225bd7e7be721c68e4cd8b5478aa2b7981472ab"
+    },
+    {
+      "path": "docs/site/src/content/docs/support/databases.md",
+      "sha256": "20d5cff4c9a2f9b0905f08e37ffb18e7abc6e1555addf39359dbd94c832fef56"
+    }
+  ],
+  "functionalMatrix": {
+    "path": "support/qualification/0.2.0-functional-matrix.md",
+    "sha256": "7029224e90bb469dbb0c16e8883388dcfd6061d41f97a1069bb465ee7da72366",
+    "generatedFromCommit": "ff5cf00cec240141e87c12ebde4a09d66c88bca5",
+    "command": "go run ./hack/acceptancecoverage",
+    "kubernetesMinors": [
+      "1.35",
+      "1.36",
+      "1.37"
+    ],
+    "runtimePlatforms": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "cellsPerPlatform": 15,
+    "requiredCells": 30,
+    "additionalRequirements": "Q-01 through Q-12 in support/qualification/0.2.0-coverage.md remain required; the functional matrix alone is insufficient."
+  },
+  "publishedPredecessors": {
+    "checkedAt": "2026-09-29T19:00:03+00:00",
+    "repository": "stokaro/ptah-operator",
+    "releaseCount": 0,
+    "tagCount": 0,
+    "evidence": "Authenticated GitHub releases and tags API reads returned empty inventories before this freeze.",
+    "disposition": "No published predecessor. Synthetic transition, refusal and recovery proofs remain required."
+  },
+  "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
+  "revision": 28,
+  "supersedes": {
+    "freezeCommit": "3e6dd38e660b43a50c529f2045ee879fc72143b9",
+    "sha256": "53b9c851c1ad65a764d4bfbbbbfeb9828978787109db7c9621b4d2b622a6e729"
+  },
+  "revisionReason": "Record the default durable-delivery profile introduced in 7f4d71d5 and clarified in b549924f777dadd2910b908a95acef4831ec0107. Revision 27 remains preserved at the superseded commit. The baseline uses standard 10 MiB kubelet logs; the old stream-read bounds apply to legacy log delivery, while durable delivery must progress independently of diagnostic reads. This revision changes no payload limit, deadline, capacity target, required scenario, matrix denominator, or acceptance verdict. Earlier log-transport evidence does not qualify the durable baseline; acceptance remains Not assessed."
+}

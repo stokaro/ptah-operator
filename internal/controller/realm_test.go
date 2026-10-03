@@ -854,3 +854,92 @@ func TestARealmChangeWakesTheResourcesThatNameIt(t *testing.T) {
 		t.Fatalf("an object that is not a PtahRealm woke %v", got)
 	}
 }
+
+// Both alert fixtures need a real next deadline, then a new Resolve claim
+// after the missed deadline. Migration's failed-operation backoff has no such
+// nextReconciliationTime, so use the realm recheck both controllers persist.
+func TestRealmRecheckDeadlineClearsOnFreshResolveAfterGrant(t *testing.T) {
+	t.Parallel()
+	for _, family := range []string{"schema", "migration"} {
+		t.Run(family, func(t *testing.T) {
+			now := time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
+			var object client.Object
+			var api client.Client
+			var reconcile func() error
+			if family == "schema" {
+				s := schemaFixture()
+				s.Spec.Target.CoordinationKey = ""
+				s.Spec.Target.RealmRef = &operatorv1alpha1.PtahRealmReference{Name: "overdue-realm"}
+				s.Spec.Interval.Duration = time.Minute
+				r, c := fakeReconciler(t, nil, s)
+				r.Clock = func() time.Time { return now }
+				object, api = s, c
+				reconcile = func() error {
+					_, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(s)})
+					return err
+				}
+			} else {
+				m := migrationFixture()
+				m.Spec.Target.CoordinationKey = ""
+				m.Spec.Target.RealmRef = &operatorv1alpha1.PtahRealmReference{Name: "overdue-realm"}
+				m.Spec.Interval.Duration = time.Minute
+				r, c := fakeMigrationReconciler(t, nil, m)
+				r.Clock = func() time.Time { return now }
+				object, api = m, c
+				reconcile = func() error { _, err := r.Reconcile(context.Background(), migrationRequest(m)); return err }
+			}
+			read := func() (string, *metav1.Time, *metav1.Time) {
+				t.Helper()
+				if err := api.Get(context.Background(), client.ObjectKeyFromObject(object), object); err != nil {
+					t.Fatal(err)
+				}
+				switch r := object.(type) {
+				case *operatorv1alpha1.PtahSchema:
+					if r.Status.ActiveOperation != nil {
+						return string(r.Status.ActiveOperation.Type), r.Status.NextReconciliationTime, &r.Status.ActiveOperation.StartedAt
+					}
+					return string(r.Status.Phase), r.Status.NextReconciliationTime, nil
+				case *operatorv1alpha1.PtahMigration:
+					if r.Status.ActiveOperation != nil {
+						return string(r.Status.ActiveOperation.Type), r.Status.NextReconciliationTime, &r.Status.ActiveOperation.StartedAt
+					}
+					return string(r.Status.Phase), r.Status.NextReconciliationTime, nil
+				}
+				t.Fatal("unknown family")
+				return "", nil, nil
+			}
+			var deadline *metav1.Time
+			for range 10 {
+				if err := reconcile(); err != nil {
+					t.Fatal(err)
+				}
+				phase, next, active := read()
+				if phase == "Blocked" && active == nil {
+					deadline = next
+					break
+				}
+			}
+			if deadline == nil || !deadline.Time.Equal(now.Add(time.Minute)) {
+				t.Fatalf("no native one-minute realm recheck deadline: %v", deadline)
+			}
+			now = deadline.Add(2 * time.Minute)
+			realm := realmFixture("overdue-realm", operatorv1alpha1.RealmSharingExclusive, object.GetNamespace())
+			if err := api.Create(context.Background(), realm); err != nil {
+				t.Fatal(err)
+			}
+			for range 10 {
+				if err := reconcile(); err != nil {
+					t.Fatal(err)
+				}
+				operation, next, started := read()
+				if operation == "Resolve" {
+					if next != nil || started == nil || !started.Time.Equal(now) {
+						t.Fatal("recovery did not clear the deadline at the native claim time")
+					}
+					return
+				}
+			}
+			t.Fatal("grant did not produce a new Resolve claim")
+		})
+	}
+}

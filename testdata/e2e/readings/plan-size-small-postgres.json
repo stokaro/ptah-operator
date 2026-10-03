@@ -1,0 +1,15 @@
+{
+  "format_version": 1,
+  "name": "plan_2e0dc1e2b6dc",
+  "dialect": "postgres",
+  "from_fingerprint": "sha256:5cac52535569a9b409ab69f47b6592b18a2f77b2f06075c0e72846bb8b189242",
+  "to_fingerprint": "sha256:e5adbba154ab8baf2ed90441da2fd6a8d3ecb2adf81a8b31b54944cc49f41acc",
+  "destructive": false,
+  "statements": [
+    {
+      "sql": "-- POSTGRES TABLE: e2e_plan_size_limit --\nCREATE TABLE \"e2e_plan_size_limit\" (\n  \"id\" BIGINT PRIMARY KEY NOT NULL,\n  \"payload\" TEXT DEFAULT '\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c'\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    }
+  ]
+}

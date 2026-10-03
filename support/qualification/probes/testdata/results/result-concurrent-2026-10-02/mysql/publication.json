@@ -1,0 +1,89 @@
+{
+  "ptah-result-4f3d97b50b967e78ecbacd662eb33c11daade3dffeaae0ed16307cfe208945da": {
+    "apiVersion": "operator.ptah.run/v1alpha1",
+    "kind": "PtahResultRecord",
+    "metadata": {
+      "creationTimestamp": "2026-10-02T13:35:21Z",
+      "generation": 1,
+      "labels": {
+        "operator.ptah.run/result-attempt": "rIJmVuN4LJJ5H3d2Kvo9RiAXM5_X8IXn_vGu0_sXYTRkr",
+        "operator.ptah.run/result-record": "intent"
+      },
+      "name": "ptah-result-4f3d97b50b967e78ecbacd662eb33c11daade3dffeaae0ed16307cfe208945da",
+      "namespace": "ptah-result-concurrent-mysql-v3",
+      "ownerReferences": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "controller": true,
+          "kind": "PtahMigration",
+          "name": "lost-ack",
+          "uid": "79117485-9e30-4453-bbd8-635ddc523633"
+        }
+      ],
+      "resourceVersion": "19963",
+      "uid": "aaaca983-5de9-4e8a-865b-8b5a3708a2a9"
+    },
+    "spec": {
+      "data": "eyJ2ZXJzaW9uIjoxLCJiaW5kaW5nIjp7Im5hbWVzcGFjZSI6InB0YWgtcmVzdWx0LWNvbmN1cnJlbnQtbXlzcWwtdjMiLCJraW5kIjoiUHRhaE1pZ3JhdGlvbiIsIm5hbWUiOiJsb3N0LWFjayIsInVpZCI6Ijc5MTE3NDg1LTllMzAtNDQ1My1iYmQ4LTYzNWRkYzUyMzYzMyIsImdlbmVyYXRpb24iOjEsImV4ZWN1dGlvbkJpbmRpbmdJRCI6InYxLTA5YmRlZmIwMzdkODY1NTJhOTBkYTU2N2JiZmM0OWE5IiwiaW5wdXRGaW5nZXJwcmludCI6InNoYTI1NjpmODFiYTJkMGM2MzNhMzA4NWQ1ODFiYWUxYzYyMGQ3MzZhNjQ5MjIzMzA0NTg0OTFhODlmYmQ5OWNjMzE3MGJkIiwib3BlcmF0aW9uIjoibWlncmF0aW9uLWFwcGx5Iiwib3BlcmF0aW9uSUQiOiJzaGEyNTY6YjVjZWNlZThjMGFkNmQzNjE3ZWJlZmFmNGZhMWMzMjRlOGVlNWFlMzBlMDI4Mzc4MTBjMzliYzk0YTZhNmFkMyIsImpvYk5hbWUiOiJwdGFoLW0tYXBwbHktbG9zdC1hY2stOTMyMGE0NzAyMzE0MDY4YyIsImpvYlVJRCI6IjcyY2JlMDQ0LTFmNjMtNDc5NS04NWUxLTM0OTdlNGNlMzBjZCIsInBvZE5hbWUiOiJwdGFoLW0tYXBwbHktbG9zdC1hY2stOTMyMGE0NzAyMzE0MDY4Yy1tbHFnbSIsInBvZFVJRCI6IjM4NjFmNWJlLWQyNDAtNDE5MS1hYTdhLTU1NTdmYjkwNmZlMSJ9LCJkaWdlc3QiOiJzaGEyNTY6NTJjMTBiYTFiY2YzM2FmOWI5MGM1YmQ5ZTg2MzNjY2VlOGVmZjE2YzZmZWY5NzViZGEyY2RiMDFmMjc1ZDg2YyIsInNpemUiOjg3MywiY2h1bmtzIjpbeyJkaWdlc3QiOiJzaGEyNTY6NTJjMTBiYTFiY2YzM2FmOWI5MGM1YmQ5ZTg2MzNjY2VlOGVmZjE2YzZmZWY5NzViZGEyY2RiMDFmMjc1ZDg2YyIsInNpemUiOjg3M31dfQ==",
+      "type": "intent"
+    }
+  },
+  "ptah-result-4f3d97b50b967e78ecbacd662eb33c11daade3dffeaae0ed16307cfe208945da-000": {
+    "apiVersion": "operator.ptah.run/v1alpha1",
+    "kind": "PtahResultRecord",
+    "metadata": {
+      "creationTimestamp": "2026-10-02T13:35:21Z",
+      "generation": 1,
+      "labels": {
+        "operator.ptah.run/result-attempt": "rIJmVuN4LJJ5H3d2Kvo9RiAXM5_X8IXn_vGu0_sXYTRkr",
+        "operator.ptah.run/result-record": "chunk"
+      },
+      "name": "ptah-result-4f3d97b50b967e78ecbacd662eb33c11daade3dffeaae0ed16307cfe208945da-000",
+      "namespace": "ptah-result-concurrent-mysql-v3",
+      "ownerReferences": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "controller": true,
+          "kind": "PtahResultRecord",
+          "name": "ptah-result-4f3d97b50b967e78ecbacd662eb33c11daade3dffeaae0ed16307cfe208945da",
+          "uid": "aaaca983-5de9-4e8a-865b-8b5a3708a2a9"
+        }
+      ],
+      "resourceVersion": "19964",
+      "uid": "5b321343-4796-4d90-8503-9f28a869c4d8"
+    },
+    "spec": {
+      "data": "eyJwcm90b2NvbFZlcnNpb24iOjEsIm9wZXJhdGlvbiI6Im1pZ3JhdGlvbi1hcHBseSIsIm9wZXJhdGlvbklkIjoic2hhMjU2OmI1Y2VjZWU4YzBhZDZkMzYxN2ViZWZhZjRmYTFjMzI0ZThlZTVhZTMwZTAyODM3ODEwYzM5YmM5NGE2YTZhZDMiLCJjaGlsZEV4aXRDb2RlIjowLCJzdGRvdXQiOiIiLCJjb29yZGluYXRpb25EaWdlc3QiOiJzaGEyNTY6NDAxNGEzMmQ1M2I5NjdkOGI1M2M0ZDg0MWVkODY5NDljZDY1ZGFiZjMzZDU3NmRkYThmM2JkZDI3ZTczODE5MSIsInRhcmdldElkZW50aXR5RGlnZXN0Ijoic2hhMjU2OjEwM2ZlNDU2ZGMwNjY4NjlkN2JlNmUxZGEyMzdiODU0OTBhNWY4OTliNzJiNDNmN2MzYWNkNzA0MmFiYjFmZjUiLCJtdXRhdGlvblN0YXJ0ZWQiOnRydWUsIm1pZ3JhdGlvblJ1biI6eyJjb250cmFjdF92ZXJzaW9uIjoxLCJkaXJlY3Rpb24iOiJ1cCIsIm91dGNvbWUiOiJhcHBsaWVkIiwicGxhbm5lZCI6WzFdLCJhcHBsaWVkIjpbMV0sInN0YXR1cyI6eyJjb250cmFjdF92ZXJzaW9uIjoxLCJjdXJyZW50X3ZlcnNpb24iOjEsInRvdGFsX21pZ3JhdGlvbnMiOjEsImhhc19wZW5kaW5nX2NoYW5nZXMiOmZhbHNlLCJwZW5kaW5nX21pZ3JhdGlvbnMiOltdLCJtaWdyYXRpb25zIjpbeyJ2ZXJzaW9uIjoxLCJ2ZXJzaW9uX2tleSI6IjEiLCJkZXNjcmlwdGlvbiI6IlJlY29yZCBEZWxpdmVyeSIsImNoZWNrc3VtIjoiMjkwYjhkNTNmYWM1YmRkNmYyMWI2MjlmYTU4ZmI1ZjMxZWUwNzFmZmY0ZTc0OGMxNTVhOGM3YTZjMTMyNjFiNiIsImFwcGxpZWRfY2hlY2tzdW0iOiIyOTBiOGQ1M2ZhYzViZGQ2ZjIxYjYyOWZhNThmYjVmMzFlZTA3MWZmZjRlNzQ4YzE1NWE4YzdhNmMxMzI2MWI2Iiwic3RhdGUiOiJhcHBsaWVkIn1dfX19",
+      "type": "chunk"
+    }
+  },
+  "ptah-result-4f3d97b50b967e78ecbacd662eb33c11daade3dffeaae0ed16307cfe208945da-complete": {
+    "apiVersion": "operator.ptah.run/v1alpha1",
+    "kind": "PtahResultRecord",
+    "metadata": {
+      "creationTimestamp": "2026-10-02T13:35:21Z",
+      "generation": 1,
+      "labels": {
+        "operator.ptah.run/result-attempt": "rIJmVuN4LJJ5H3d2Kvo9RiAXM5_X8IXn_vGu0_sXYTRkr",
+        "operator.ptah.run/result-record": "complete"
+      },
+      "name": "ptah-result-4f3d97b50b967e78ecbacd662eb33c11daade3dffeaae0ed16307cfe208945da-complete",
+      "namespace": "ptah-result-concurrent-mysql-v3",
+      "ownerReferences": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "controller": true,
+          "kind": "PtahResultRecord",
+          "name": "ptah-result-4f3d97b50b967e78ecbacd662eb33c11daade3dffeaae0ed16307cfe208945da",
+          "uid": "aaaca983-5de9-4e8a-865b-8b5a3708a2a9"
+        }
+      ],
+      "resourceVersion": "19965",
+      "uid": "f12d6286-73f5-4595-89b8-ebc1a8116faa"
+    },
+    "spec": {
+      "data": "eyJtYW5pZmVzdFVJRCI6ImFhYWNhOTgzLTVkZTktNGU4YS04NjViLThiNWEzNzA4YTJhOSIsIm1hbmlmZXN0RGlnZXN0Ijoic2hhMjU2OjZhZTViZWQxZWY1MzRhNzNkMmFiYjMyNmUzOWE1YTFhYWY0Njc0M2RmZThiZjIwYzA2NTZiN2M5OTk3YjJjMzEiLCJjaHVua1VJRHMiOlsiNWIzMjEzNDMtNDc5Ni00ZDkwLTg1MDMtOWYyOGE4NjljNGQ4Il19",
+      "type": "complete"
+    }
+  }
+}

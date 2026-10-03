@@ -1,0 +1,102 @@
+{
+  "operatorRevision": "b0a51ff740784beaf6cd1ebb2fe8c2715583e1b5",
+  "operatorImage": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/operator@sha256:f338a4c98d77e4908426d0c4b45a1b177ffc8c2916cae3029217b9ec12cd6f36",
+  "runnerImage": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-runner@sha256:7e2199f5c03660f094244b00962ec7e222f752f9cfc86276ac7cea296ce5d4b6",
+  "runnerRevision": "b2576f9bbbe72979ba392456846fb16da1f0f03a",
+  "executorImage": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-executor@sha256:45530f0f2c41f4d649c207fe8221dad268946ca8da13b503244805c016f3c9dd",
+  "ptahRevision": "f6e562c5b0986cd29a53a5cc01938827336b780a",
+  "chartSHA256": "43c718af58a8ef74824b1081917d431290ea985e99fb99ba94efa2997de2260e",
+  "nodes": [
+    {
+      "name": "ptah-e2e-1-37-0-result-restar-5a0ef2fe7d-control-plane",
+      "version": "v1.37.0",
+      "architecture": "amd64",
+      "containerLogMaxSize": "10Mi"
+    },
+    {
+      "name": "ptah-e2e-1-37-0-result-restar-5a0ef2fe7d-control-plane2",
+      "version": "v1.37.0",
+      "architecture": "amd64",
+      "containerLogMaxSize": "10Mi"
+    },
+    {
+      "name": "ptah-e2e-1-37-0-result-restar-5a0ef2fe7d-control-plane3",
+      "version": "v1.37.0",
+      "architecture": "amd64",
+      "containerLogMaxSize": "10Mi"
+    },
+    {
+      "name": "ptah-e2e-1-37-0-result-restar-5a0ef2fe7d-worker",
+      "version": "v1.37.0",
+      "architecture": "amd64",
+      "containerLogMaxSize": "10Mi"
+    }
+  ],
+  "receiverUIDs": [
+    "94ca2cc7-f383-440e-b5a2-d919e600f279",
+    "8cfe6173-7210-4f55-a824-ae0c3e96b79f"
+  ],
+  "quotaRemoved": true,
+  "credentialGateRemoved": true,
+  "publications": {
+    "history-before-approval": {
+      "jobUID": "91efe792-a52f-4bd8-8bc8-0df35abe9818",
+      "jobCreatedAt": null,
+      "receiptUID": "e3125bcb-3976-493d-81f8-41fee43891ea",
+      "receiptCreatedAt": "2026-10-02T16:48:25Z",
+      "digest": "sha256:162eb38fc8844ef4b875bc1f664535e2ac4b654816f0b8fb41d20ca8ee79ed83",
+      "operation": "migration-history"
+    },
+    "fresh-apply": {
+      "jobUID": "036268ce-10f5-47cd-86b4-e86e12fe15e2",
+      "jobCreatedAt": "2026-10-02T16:48:34Z",
+      "receiptUID": "15118f7e-a971-4487-87b0-e0039854c3d1",
+      "receiptCreatedAt": "2026-10-02T16:48:37Z",
+      "digest": "sha256:e417c23fad9d21cd1c0fbef5af58e148ae39ebe2ead5f05d70000e0f9349314f",
+      "operation": "migration-apply"
+    }
+  },
+  "acknowledgedAt": "2026-10-02T16:46:22Z",
+  "freshApprovalCreatedAt": "2026-10-02T16:48:34Z",
+  "verification": {
+    "originalPartialExecutions": 1,
+    "humanAcknowledgments": 1,
+    "freshApprovedExecutions": 1,
+    "unapprovedExecutions": 0
+  },
+  "historyCredential": {
+    "metadata": {
+      "annotations": {
+        "operator.ptah.run/result-job-uid": "91efe792-a52f-4bd8-8bc8-0df35abe9818",
+        "operator.ptah.run/result-operation-id": "sha256:64ca09a87116c0f2f8c746989d8776c25ee998457b59e082b8e18458446f7d78",
+        "operator.ptah.run/result-pod-name": "ptah-m-history-lost-ack-ba10a0ae45dbeb18-j6hvt",
+        "operator.ptah.run/result-pod-uid": "8592ac66-9f72-4ee5-a95f-dfa4e720b661"
+      },
+      "creationTimestamp": "2026-10-02T16:48:22Z",
+      "generation": 1,
+      "labels": {
+        "app.kubernetes.io/component": "result-credential",
+        "app.kubernetes.io/managed-by": "ptah-operator"
+      },
+      "name": "ptah-result-key-5d0fd68e15d8e1bb087df0a8978872a4",
+      "namespace": "ptah-result-partial-pg",
+      "ownerReferences": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "blockOwnerDeletion": true,
+          "controller": true,
+          "kind": "PtahMigration",
+          "name": "lost-ack",
+          "uid": "f29748bf-2996-472e-81bd-6eb8bb02cd68"
+        }
+      ],
+      "resourceVersion": "61821",
+      "uid": "d58af1ef-0515-4a62-8b72-77530943c0eb"
+    },
+    "certificatePEM": "-----BEGIN CERTIFICATE-----\nMIIFSTCCBO+gAwIBAgIRAIzfZilWenPk7cWIGdubOK4wCgYIKoZIzj0EAwIwXDFa\nMFgGA1UEAxNRcHRhaC1ydW50aW1lLWdlbmVyYXRlZC1uYW1lLXByZWZpeC1ib3Vu\nZGFyeS1wcm9vZi01YTBlZi1yZXN1bHRzLWNsaWVudCB3ZWJob29rIENBMB4XDTI2\nMTAwMjE2NDcyMloXDTI2MTAwMjE3MTMyMlowADBZMBMGByqGSM49AgEGCCqGSM49\nAwEHA0IABKoYkXiURKzptGoy2xF1nOAWYbVkZRXrXZlBJGg0koRA3uwOWITjUWf3\nHkmQGRX4Stsw9nrE3fHZFiOPfOyGeFejggPsMIID6DAOBgNVHQ8BAf8EBAMCB4Aw\nEwYDVR0lBAwwCgYIKwYBBQUHAwIwHwYDVR0jBBgwFoAUqOtj/bDU0UI75zCl6lUC\nmBBeC9kwggOeBgNVHREBAf8EggOSMIIDjoaCA4pwdGFoLXJlc3VsdDovL29wZXJh\ndG9yLnB0YWgucnVuL3YxL2V5SmlhVzVrYVc1bklqcDdJbTVoYldWemNHRmpaU0k2\nSW5CMFlXZ3RjbVZ6ZFd4MExYQmhjblJwWVd3dGNHY2lMQ0pyYVc1a0lqb2lVSFJo\nYUUxcFozSmhkR2x2YmlJc0ltNWhiV1VpT2lKc2IzTjBMV0ZqYXlJc0luVnBaQ0k2\nSW1ZeU9UYzBPR0ptTFRJNU9UWXRORGN5WlMwNE1XSmtMVFpsWWpoaVlqQXlZMlEy\nT0NJc0ltZGxibVZ5WVhScGIyNGlPalFzSW1WNFpXTjFkR2x2YmtKcGJtUnBibWRK\nUkNJNkluWXhMVEl4TnpneVltRXpNemxtWXpBeE1EUTNaRFV3TlRrNE9EZGlaVEE1\nTkRVeElpd2lhVzV3ZFhSR2FXNW5aWEp3Y21sdWRDSTZJbk5vWVRJMU5qb3dOVFkw\nWkdFM1ltUXlabVl3TURVek1tTTFNak0yTnpJeVlXTTVaVEJsTUdRMFpUVmtNRGht\nTnpNMVkyRmxNRGN3TmpJME56WTBZekUyWldRME0yWTFJaXdpYjNCbGNtRjBhVzl1\nSWpvaWJXbG5jbUYwYVc5dUxXaHBjM1J2Y25raUxDSnZjR1Z5WVhScGIyNUpSQ0k2\nSW5Ob1lUSTFOam8yTkdOaE1EbGhPRGN4TVRaak1HWXlaamhqTnpRMk9UZzVaRGcz\nTnpaak1qVmxaVGs1T0RRMU4ySTFPV1V3T0RKaU9HVXhPRFExT0RRME5tWTNaRGM0\nSWl3aWFtOWlUbUZ0WlNJNkluQjBZV2d0YlMxb2FYTjBiM0o1TFd4dmMzUXRZV05y\nTFdKaE1UQmhNR0ZsTkRWa1ltVmlNVGdpTENKcWIySlZTVVFpT2lJNU1XVm1aVGM1\nTWkxaE5USm1MVFJpWkRndE9HSmpPQzB3WkdZek5XRmlaVGs0TVRnaUxDSndiMlJP\nWVcxbElqb2ljSFJoYUMxdExXaHBjM1J2Y25rdGJHOXpkQzFoWTJzdFltRXhNR0V3\nWVdVME5XUmlaV0l4T0MxcU5taDJkQ0lzSW5CdlpGVkpSQ0k2SWpnMU9USmhZelky\nTFRsbU56SXROR1ZsTlMxaE9UVm1MV1JtWVRSbE56SXdZalkyTVNKOUxDSmxibWRw\nYm1VaU9pSndiM04wWjNKbGMzRnNJbjAwCgYIKoZIzj0EAwIDSAAwRQIgNRWOgZFo\n1u2Par/1vQT2f7G6qxkTgYy69dMfQLo4c18CIQDbjDCVHUXwTYZqfiqdgXOrHMFe\nTwHc2iFxf7nOyOAjuw==\n-----END CERTIFICATE-----\n",
+    "issuedAt": "2026-10-02T16:48:22Z",
+    "issuanceBackdatingSeconds": 60,
+    "basis": "internal/resultcredentials/issuer.go: issue sets NotBefore to issuance time minus one minute; runner requires its exact credential before execution"
+  },
+  "historyJobMetadataCollectedByTTL": true
+}

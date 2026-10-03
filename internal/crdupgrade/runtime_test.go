@@ -363,6 +363,32 @@ func TestRuntimeVerifierRejectsAdmissionContractDrift(t *testing.T) {
 			},
 		},
 		{
+			name: "Pod credential routing removed", want: "matchConditions",
+			mutate: func(verifier *RuntimeVerifier) {
+				validatingWebhook(t, verifier, podIntentWebhookName).MatchConditions[0].Expression = podIntentIdentityMatchExpression
+			},
+		},
+		{
+			name: "credential record route removed", want: "rules do not match",
+			mutate: func(verifier *RuntimeVerifier) {
+				webhook := validatingWebhook(t, verifier, controllerWriteWebhookName)
+				webhook.Rules = webhook.Rules[:4]
+			},
+		},
+		{
+			name: "credential deletion route removed", want: "rules do not match",
+			mutate: func(verifier *RuntimeVerifier) {
+				webhook := validatingWebhook(t, verifier, controllerWriteWebhookName)
+				webhook.Rules = webhook.Rules[:3]
+			},
+		},
+		{
+			name: "credential route restricted to manager", want: "matchConditions",
+			mutate: func(verifier *RuntimeVerifier) {
+				validatingWebhook(t, verifier, controllerWriteWebhookName).MatchConditions[0].Expression = "request.userInfo.username == 'system:serviceaccount:operator-system:ptah-operator'"
+			},
+		},
+		{
 			name: "controller write match policy", want: "matchPolicy must be Exact",
 			mutate: func(verifier *RuntimeVerifier) {
 				equivalent := admissionregistrationv1.Equivalent
@@ -1071,14 +1097,18 @@ func readyControllerWriteWebhook(expected RuntimeInvariants) admissionregistrati
 				Operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Create},
 				Rule:       admissionregistrationv1.Rule{APIGroups: []string{"operator.ptah.run"}, APIVersions: []string{"v1alpha1"}, Resources: []string{"ptahschemaplans", "ptahschemaplanchunks", "ptahmigrationplans"}, Scope: &scope},
 			},
+			{
+				Operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Create, admissionregistrationv1.Update, admissionregistrationv1.Delete},
+				Rule:       admissionregistrationv1.Rule{APIGroups: []string{""}, APIVersions: []string{"v1"}, Resources: []string{"secrets"}, Scope: &scope},
+			},
+			{
+				Operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Create, admissionregistrationv1.Update, admissionregistrationv1.Delete},
+				Rule:       admissionregistrationv1.Rule{APIGroups: []string{"operator.ptah.run"}, APIVersions: []string{"v1alpha1"}, Resources: []string{"ptahresultrecords"}, Scope: &scope},
+			},
 		},
 		MatchConditions: []admissionregistrationv1.MatchCondition{{
-			Name: controllerWriteMatchConditionName,
-			Expression: fmt.Sprintf(
-				"request.userInfo.username == 'system:serviceaccount:%s:%s'",
-				expected.ReleaseNamespace,
-				expected.ControllerServiceAccountName,
-			),
+			Name:       controllerWriteMatchConditionName,
+			Expression: controllerWriteMatchExpression(expected),
 		}},
 	}
 }

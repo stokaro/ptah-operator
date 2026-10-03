@@ -295,6 +295,8 @@ webhooks:
             (has(oldObject.metadata.ownerReferences) && oldObject.metadata.ownerReferences.exists(ref,
               ref.apiVersion == 'batch/v1' && ref.kind == 'Job' && ref.controller == true &&
               ref.name.matches('^ptah-(m-)?(resolve|verify|observe|plan|history|apply)-')))))
+          || {{ include "ptah-operator.resultCredentialReferences" "object" | nindent 10 }}
+          || {{ include "ptah-operator.resultCredentialReferences" "oldObject" | nindent 10 }}
     clientConfig:
       caBundle: {{ index $entryBundles "podValidating" }}
       service:
@@ -317,8 +319,12 @@ webhooks:
     matchConditions:
       - name: controller-service-account
         expression: >-
-          request.userInfo.username ==
-          'system:serviceaccount:{{ .Release.Namespace }}:{{ include "ptah-operator.serviceAccountName" . }}'
+          (request.resource.resource == 'ptahresultrecords') ||
+          (request.userInfo.username ==
+          'system:serviceaccount:{{ .Release.Namespace }}:{{ include "ptah-operator.serviceAccountName" . }}') ||
+          (request.resource.resource == 'secrets' && (
+            (object != null && object.metadata.name.startsWith('ptah-result-key-')) ||
+            (oldObject != null && oldObject.metadata.name.startsWith('ptah-result-key-'))))
     clientConfig:
       caBundle: {{ index $entryBundles "controllerWriteValidating" }}
       service:
@@ -341,4 +347,14 @@ webhooks:
         apiVersions: ["v1alpha1"]
         operations: ["CREATE"]
         resources: ["ptahschemaplans", "ptahschemaplanchunks", "ptahmigrationplans"]
+        scope: Namespaced
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE", "DELETE"]
+        resources: ["secrets"]
+        scope: Namespaced
+      - apiGroups: ["operator.ptah.run"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE", "DELETE"]
+        resources: ["ptahresultrecords"]
         scope: Namespaced

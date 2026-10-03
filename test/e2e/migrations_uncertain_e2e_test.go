@@ -3,9 +3,11 @@
 package e2e
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -50,6 +52,10 @@ func (m *migrationRun) uncertainApplyProof() {
 	m.t.Helper()
 	m.isolatedDatabase(m.uncertainDatabase(), m.uncertainSecret())
 	m.publish("uncertain", m.fixtureDir("-uncertain"), m.reference("-uncertain"))
+	watcher, err := client.NewWithWatch(m.cluster.Config, client.Options{Scheme: m.cluster.Scheme})
+	m.check(err, "open direct API watches before the uncertain migration exists")
+	jobs := migrationExecutorRecorder[*batchv1.Job](m, watcher, "uncertain-jobs", m.in.TestNamespace, func() client.ObjectList { return &batchv1.JobList{} })
+	pods := migrationExecutorRecorder[*corev1.Pod](m, watcher, "uncertain-pods", m.in.TestNamespace, func() client.ObjectList { return &corev1.PodList{} })
 	// Always, because the row is about a run that started and not about the
 	// gate that authorizes one. An approval here would only add a step between
 	// the publish and the interruption.
@@ -84,14 +90,46 @@ func (m *migrationRun) uncertainApplyProof() {
 	if err := m.get(jobName, live); err != nil || string(live.UID) != jobUID {
 		m.fatalf("the %s Apply Job under that name is not the one the resource dispatched", m.engine.name)
 	}
+	original := m.migration(m.uncertainMigration()).Status.ActiveOperation.DeepCopy()
+	if original == nil || original.JobName != jobName || string(original.JobUID) != jobUID {
+		m.fatalf("the interrupted %s Apply no longer holds its original claim", m.engine.name)
+	}
+	allPods := &corev1.PodList{}
+	m.check(m.list(allPods), "read the original Apply's ownership before deletion")
+	owned := ownedPods(allPods.Items, live.UID)
+	if len(owned) != 1 || owned[0].UID == "" || owned[0].Status.Phase != corev1.PodRunning {
+		m.fatalf("the interrupted %s Apply does not own exactly one running Pod", m.engine.name)
+	}
+	originalPodUID := string(owned[0].UID)
+	migrationExecutorWatchBarrier(m, jobs, live)
+	migrationExecutorPodWatchBarrier(m, pods, &owned[0])
 	m.deleteAndWait(live, "the "+m.engine.name+" Apply Job")
-	m.assertUncertainApplyBlocksWithoutReplaying()
+	m.assertUncertainApplyBlocksWithoutReplaying(original)
 	m.assertUnresolvedRunSurvivesAnotherRefusal(jobName, jobUID)
+	// Close both watches before a person's acknowledgment can authorize any
+	// later work. Their histories include the original ADDED events because
+	// the resource did not exist when the watches began.
+	for _, recorder := range []recorder{jobs, pods} {
+		m.check(recorder.alive(), "the uncertain Apply %s watch stopped", recorder.stem())
+		recorder.requestStop()
+	}
+	watchDeadline := time.Now().Add(35 * time.Second)
+	for _, recorder := range []recorder{jobs, pods} {
+		m.check(recorder.await(time.Until(watchDeadline)), "close the uncertain Apply %s watch at natural EOF", recorder.stem())
+		history, count, err := recorder.history()
+		m.check(err, "encode the uncertain Apply %s history", recorder.stem())
+		if count == 0 {
+			m.fatalf("the uncertain Apply %s watch recorded nothing", recorder.stem())
+		}
+		m.scan(history, recorder.stem()+" closed history")
+	}
+	if !migrationExecutorNoReplay(jobs.snapshot(), pods.snapshot(), m.uncertainMigration(), jobUID, originalPodUID) {
+		m.fatalf("the interrupted %s Apply was replayed or overlapped another run in the complete Job/Pod history", m.engine.name)
+	}
 	m.assertUnresolvedRunAcknowledgedByAPerson()
 	m.logf("PASS %s stopped on a run it could not read, and replayed nothing", m.engine.kind)
 }
 
-// waitForUncertainPhase waits for the uncertain migration to reach a phase.
 // waitForUncertainPhase waits for the uncertain migration to reach a phase
 // and returns the document that showed it: a resource that stopped still
 // reads its history at its interval, so a later read can land mid-cycle.
@@ -122,12 +160,19 @@ func (m *migrationRun) uncertainWidgetRows() string {
 	return m.query("SELECT count(*) FROM e2e_migration_widgets", m.uncertainDatabase())
 }
 
-func (m *migrationRun) assertUncertainApplyBlocksWithoutReplaying() {
+func (m *migrationRun) assertUncertainApplyBlocksWithoutReplaying(original *ptahv1alpha1.MigrationOperationStatus) {
 	m.t.Helper()
 	name := m.uncertainMigration()
-	blocked := m.waitForUncertainPhase(ptahv1alpha1.MigrationPhaseBlocked)
-	if err := uncertainRunRefused(blocked.Status); err != nil {
-		m.fatalf("%s did not stop on a run whose evidence it could not read: %v", name, err)
+	if !m.within(2*time.Second, func() bool {
+		current := m.migration(name)
+		pods := &corev1.PodList{}
+		m.check(m.list(pods), "read all Pods while the interrupted Apply settles")
+		settled, err := uncertainApplySettled(current.Status, original, pods.Items)
+		m.check(err, "%s violated its interrupted Apply boundary", name)
+		m.assertNoNewApplyJob([]string{string(original.JobUID)}, "while its interrupted workload was settling", name)
+		return settled
+	}) {
+		m.fatalf("%s did not stop its owned Pods, retire its original claim and preserve Unknown within %s", name, waitTimeout)
 	}
 	// The run is over and the database keeps what it committed. Both halves
 	// matter: without the first the refusal is about nothing, and without the
@@ -272,7 +317,19 @@ func (m *migrationRun) assertUnresolvedRunAcknowledgedByAPerson() {
 	if current.Status.UnresolvedRun == nil {
 		m.fatalf("%s carries no unresolved run to acknowledge", name)
 	}
-	operation := current.Status.UnresolvedRun.OperationID
+	m.acknowledgeUnresolvedRun(name, current.Status.UnresolvedRun.OperationID)
+}
+
+// acknowledgeUnresolvedRun uses the installed approver role to account for
+// one exact run, then verifies a fresh database reading. The caller must
+// establish that the run can no longer write and inspect its database effects
+// before asking a person to settle it.
+func (m *migrationRun) acknowledgeUnresolvedRun(name, operation string) {
+	m.t.Helper()
+	current := m.migration(name)
+	if operation == "" || current.Status.UnresolvedRun == nil || current.Status.UnresolvedRun.OperationID != operation {
+		m.fatalf("%s no longer carries the exact unresolved run to acknowledge", name)
+	}
 	if current.UID == "" {
 		m.fatalf("%s carries no UID", name)
 	}
@@ -337,7 +394,7 @@ func (m *migrationRun) assertUnresolvedRunAcknowledgedByAPerson() {
 	acknowledger, err := m.cluster.As(rest.ImpersonationConfig{UserName: person, Groups: []string{group}})
 	m.check(err, "act as %s", person)
 	m.logf("acknowledging the %s run as %s", m.engine.kind, person)
-	if err := acknowledger.Create(m.ctx, &unstructured.Unstructured{Object: map[string]any{
+	if err := harness.CreateAfterRoleBinding(m.ctx, acknowledger, &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": ptahSchemaAPIVersion, "kind": "PtahMigrationRunAcknowledgment",
 		"metadata": map[string]any{"namespace": m.in.TestNamespace, "name": acknowledgmentName},
 		"spec": map[string]any{
@@ -512,6 +569,8 @@ func (m *migrationRun) lateDispatchProof() {
 	m.t.Helper()
 	name, database := "e2e-late-dispatch-"+m.engine.name, "ptah_e2e_late_dispatch"
 	m.isolatedDatabase(database, "e2e-"+m.engine.name+"-late-dispatch-db")
+	audit := &databaseSQLAudit{t: m.t, ctx: m.ctx, cluster: m.cluster, namespace: m.in.TestNamespace, engine: m.engine.name}
+	initial := audit.snapshot()
 	// Open first. The selector reaches the Resolve, Verify and History Jobs as
 	// well, so a gate that is closed here strands the first of them.
 	m.openApplyGate()
@@ -525,6 +584,7 @@ func (m *migrationRun) lateDispatchProof() {
 		coordinationKey: "e2e/late-dispatch/" + m.engine.name, apply: "OnApproval", interval: "1h",
 		execution: gatedExecution(),
 	}))
+	fixtureUID := string(m.migration(name).UID)
 	// The read-only chain has to finish before there is an Apply to delay.
 	var plan string
 	if !m.within(migrationPoll, func() bool {
@@ -535,6 +595,7 @@ func (m *migrationRun) lateDispatchProof() {
 		m.reportGatedState(name, true)
 		m.fatalf("%s did not publish a plan to approve within %s", name, waitTimeout)
 	}
+	audit.assertRecords(initial, audit.snapshot(), audit.terminalPod(map[string]string{labelMigration: name, labelOperation: "history"}, ""), true)
 	m.logf("closing the gate before approving the %s plan", m.engine.kind)
 	m.closeApplyGate()
 	// Approving is what claims the Apply, and the gate is already closed, so
@@ -582,10 +643,30 @@ func (m *migrationRun) lateDispatchProof() {
 		m.fatalf("the %s Apply Job had already ended when its window closed, so it does not outlive the window by workload.JobDeadlineGrace", m.engine.name)
 	}
 	m.logf("opening the gate on the %s Apply Pod after its window closed", m.engine.kind)
+	beforeRefusal := audit.snapshot()
 	m.openApplyGate()
 	m.assertLateDispatchNeverReachesTheDatabase(name, database, claim.jobUID)
 	m.closeApplyGate()
-	m.logf("PASS %s refused an Apply Pod that started after its window closed", m.engine.kind)
+	audit.assertRecords(beforeRefusal, audit.snapshot(), audit.terminalPod(map[string]string{"job-name": claim.jobName}, claim.jobUID), false)
+	// The old alert phase consumed this unresolved fixture. The current phase
+	// induces its own incidents from zero, so retain the completed refusal and
+	// remove only this exact fixture before it can contaminate later rows.
+	var retired *ptahv1alpha1.PtahMigration
+	if !m.within(time.Second, func() bool {
+		retired = m.migration(name)
+		return lateFixtureRetirable(retired, fixtureUID, claim.jobUID)
+	}) {
+		m.reportGatedState(name, true)
+		m.fatalf("%s is not the proved, drained late-dispatch fixture", name)
+	}
+	pod := audit.terminalPod(map[string]string{"job-name": claim.jobName}, claim.jobUID)
+	m.check(m.get(claim.jobName, job), "retain the terminal late-dispatch Job")
+	m.retainMigrationFixture(retired, job, pod, beforeRefusal, audit.snapshot())
+	m.check(storedStateDeleteExact(m.ctx, m.cluster, retired), "finalize only the proved late-dispatch fixture")
+	m.assertNoNewApplyJob([]string{claim.jobUID}, "while retiring the late-dispatch fixture", name)
+	audit.assertRecords(beforeRefusal, audit.snapshot(), pod, false)
+	m.logf("PASS %s refused an Apply Pod that started after its window closed; exact fixture finalized", m.engine.kind)
+	audit.close()
 }
 
 func (m *migrationRun) assertLateDispatchNeverReachesTheDatabase(name, database, jobUID string) {
@@ -622,12 +703,17 @@ func (m *migrationRun) assertLateDispatchNeverReachesTheDatabase(name, database,
 // one, whose plan approves [3] alone, and the gate holds the Apply Pod while
 // the database is restored to version 1. Released, the run selects [2 3], and
 // the row asserts that it ran none of it, that the resource says so by name,
-// and that the next plan asks for [2 3].
+// and that only a fresh approval of [2 3] resumes the migration.
 func (m *migrationRun) restoredHistoryProof() {
 	m.t.Helper()
 	name, database := "e2e-restore-"+m.engine.name, "ptah_e2e_restore"
 	secret := "e2e-" + m.engine.name + "-restore-db"
-	m.isolatedDatabase(database, secret)
+	var auditUser string
+	if m.engine.name == "mysql" {
+		auditUser = m.isolatedMySQLAuditDatabase(database, secret)
+	} else {
+		m.isolatedDatabase(database, secret)
+	}
 	m.publish("restore-older", m.fixtureDir("-older"), m.reference("-restore-older"))
 	m.publish("restore", m.fixtureDir(""), m.reference("-restore"))
 	m.openApplyGate()
@@ -641,7 +727,11 @@ func (m *migrationRun) restoredHistoryProof() {
 	}))
 	revisions := func() string { return m.query(restoreRevisionsQuery(m.engine.name), database) }
 	// Version 2, applied by the operator itself.
-	m.within(migrationPoll, func() bool { return restoreInSyncApplied(m.migration(name).Status) })
+	initial := m.waitForGenerationInSync(name)
+	if !restoreInSyncApplied(initial.Status) || initial.Status.LastRun.JobUID == "" {
+		m.fatalf("%s did not retain its initial successful Apply identity", name)
+	}
+	initialJobUID := string(initial.Status.LastRun.JobUID)
 	if applied := revisions(); applied != "1,2" {
 		m.reportGatedState(name, false)
 		m.fatalf("%s did not bring its database to version 2; it records [%s]", name, applied)
@@ -652,7 +742,7 @@ func (m *migrationRun) restoredHistoryProof() {
 	m.patchMigration(name, map[string]any{"spec": map[string]any{
 		"artifact": map[string]any{"ociRef": m.reference("-restore")}, "policy": map[string]any{"apply": "OnApproval"},
 	}})
-	approved := m.waitForRestorePlan(name, "")
+	approved := m.waitForRestorePlan(name, "", nil)
 	if versions := planVersionList(m.planOf(approved)); versions != "3" {
 		m.fatalf("the plan %s published approves [%s], and this row needs [3]", name, versions)
 	}
@@ -672,10 +762,27 @@ func (m *migrationRun) restoredHistoryProof() {
 	if restored := revisions(); restored != "1" {
 		m.fatalf("the restore left the %s database recording [%s], and this row needs [1]", m.engine.name, restored)
 	}
+	// The destructive restore is a harness action, completed while the Apply
+	// is unscheduled. Audit every statement after it, before opening that gate.
+	audit := &databaseSQLAudit{t: m.t, ctx: m.ctx, cluster: m.cluster, namespace: m.in.TestNamespace, engine: m.engine.name}
+	var pgBefore []byte
+	var mysqlBefore []mysqlStatementRecord
+	if m.engine.name == "postgresql" {
+		audit.snapshot()
+		pgBefore = audit.pgPrefix
+	} else {
+		mysqlBefore = audit.mysqlStatementSnapshot()
+	}
+	inventory := &migrationSQLInventory{jobs: map[types.UID]batchv1.Job{}, pods: map[types.UID]corev1.Pod{}}
+	m.captureMigrationSQLInventory(name, inventory)
 	m.openApplyGate()
 	// The refusal is read from the run the approval claimed, by its Job UID,
 	// and by the message that names both lists.
-	if !m.within(migrationPoll, func() bool { return restoreRefused(m.migration(name).Status, jobUID) }) {
+	if !m.within(migrationPoll, func() bool {
+		resource := m.migration(name)
+		m.captureMigrationSQLInventory(name, inventory)
+		return restoreRefused(resource.Status, jobUID)
+	}) {
 		m.reportGatedState(name, false)
 		m.fatalf("%s never recorded that its approved [3] was refused for a selection of [2 3]", name)
 	}
@@ -687,22 +794,66 @@ func (m *migrationRun) restoredHistoryProof() {
 		m.fatalf("after the refused run the %s database has migration 2's column again; the selection ran", m.engine.name)
 	}
 	// And the resource asks again, for what the history now needs.
-	next := m.waitForRestorePlan(name, approved)
-	if versions := planVersionList(m.planOf(next)); versions != "2 3" {
+	next := m.waitForRestorePlan(name, approved, inventory)
+	fresh := m.planOf(next)
+	if versions := planVersionList(fresh); versions != "2 3" {
 		m.fatalf("after the restore %s asks to approve [%s], and the history needs [2 3]", name, versions)
 	}
+	m.assertNoNewApplyJob([]string{initialJobUID, jobUID}, "before fresh approval of the restored history", name)
+	if revisions() != "1" || m.widgetColumnCount("color", database) != "0" {
+		m.fatalf("%s changed the restored database while the fresh plan awaited approval", name)
+	}
+	beforeApply := audit.snapshot()
+	m.assertRestoredHistoryRefusalSQL(audit, pgBefore, mysqlBefore, database, auditUser, jobUID, m.migration(name), inventory)
+	m.check(m.approve(name+"-current", name, fresh.Name, string(fresh.UID), fresh.Spec.Fingerprint),
+		"approve the plan for the restored history")
+	converged := m.waitForMigration(name, "a fresh successful Apply of the restored history", migrationPoll,
+		func(resource *ptahv1alpha1.PtahMigration) bool {
+			return restoredHistoryApplied(resource, initialJobUID, jobUID)
+		})
+	run := converged.Status.LastRun
+	proofPod := audit.terminalPod(map[string]string{"job-name": run.JobName}, string(run.JobUID))
+	afterApply := audit.snapshot()
+	audit.assertRecords(beforeApply, afterApply, proofPod, true)
+	audit.close()
+	m.assertNoNewApplyJob([]string{initialJobUID, jobUID, string(run.JobUID)}, "after the restored history converged", name)
+	if revisions() != "1,2,3" || m.widgetColumnCount("color", database) != "1" ||
+		m.query("SELECT count(*) FROM e2e_migration_widgets", database) != "3" ||
+		m.query("SELECT color FROM e2e_migration_widgets WHERE id=1", database) != "blue" {
+		m.fatalf("%s did not establish the approved schema, rows and history after restore", name)
+	}
+	// This fixture's scheduler gate closes at the end of the row. Leaving the
+	// resource behind would strand its next read and page during alert tests.
+	proofJob := &batchv1.Job{}
+	m.check(m.get(run.JobName, proofJob), "retain the completed restored-history Job")
+	m.retainMigrationFixture(converged, proofJob, proofPod, beforeApply, afterApply)
+	m.check(storedStateDeleteExact(m.ctx, m.cluster, converged), "finalize only the proved restored-history fixture")
 	m.closeApplyGate()
-	m.logf("PASS %s refused an approved [3] that a restored history turned into [2 3]", m.engine.kind)
+	m.logf("PASS %s refused the stale [3] decision, then applied [2 3] only after fresh approval of the restored history; exact fixture finalized", m.engine.kind)
+}
+
+// These fixture documents outlive both their source resources and the phase's
+// temporary working directory. The phase log binds the private bytes by digest.
+func (m *migrationRun) retainMigrationFixture(resource *ptahv1alpha1.PtahMigration, job *batchv1.Job, pod *corev1.Pod, before, after sqlAuditCounts) {
+	evidence, err := os.MkdirTemp("", "ptah-e2e-migration-fixture-evidence.")
+	m.check(err, "create private retained migration fixture evidence")
+	body, err := json.Marshal(map[string]any{"migration": resource, "job": job, "pod": pod, "sqlBefore": before, "sqlAfter": after})
+	m.check(err, "encode the proved migration fixture")
+	m.check(os.WriteFile(filepath.Join(evidence, "proof.json"), body, 0600), "retain migration fixture evidence before deleting its source")
+	m.logf("retained private migration fixture evidence: %s sha256:%x", evidence, sha256.Sum256(body))
 }
 
 // waitForRestorePlan waits until the resource asks for a decision on a plan
 // other than the previous one, and returns it.
-func (m *migrationRun) waitForRestorePlan(name, previous string) string {
+func (m *migrationRun) waitForRestorePlan(name, previous string, inventory *migrationSQLInventory) string {
 	m.t.Helper()
 	var plan string
 	if !m.within(migrationPoll, func() bool {
 		var ok bool
 		plan, ok = decisionOnNewPlan(m.migration(name).Status, previous)
+		if inventory != nil {
+			m.captureMigrationSQLInventory(name, inventory)
+		}
 		return ok
 	}) {
 		m.reportGatedState(name, false)

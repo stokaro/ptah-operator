@@ -39,6 +39,7 @@ var referenceKinds = []struct {
 	{kind: "PtahMigration", namespaced: true},
 	{kind: "PtahRealm"},
 	{kind: "PtahSchemaPlan", namespaced: true, completion: schemaPlanSpec},
+	{kind: "PtahResultRecord", namespaced: true},
 	{kind: "PtahSchemaPlanChunk", namespaced: true},
 	{kind: "PtahMigrationPlan", namespaced: true, completion: migrationPlanSpec},
 	{kind: "PtahSchemaApproval", namespaced: true, completion: schemaApprovalSpec},

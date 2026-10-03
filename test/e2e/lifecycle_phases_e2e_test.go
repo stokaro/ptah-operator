@@ -255,9 +255,22 @@ func (l *lifecycleRun) nextReleaseUpgrade() {
 	l.dispatchReadOnlyJobFixture()
 	l.startRunningApplyBarrier()
 	l.prepareRunningApplyFixture()
+	audit := l.externalPostgresAudit()
+	initialSQL := audit.snapshot()
+	initialJournalBytes := len(audit.pgPrefix)
 	l.startRunningApplyFixture()
+	applyClient := l.runningApplySQLClient()
+	heldSQL := audit.snapshot()
+	controlRecords, err := sqlAuditDelta(initialSQL, heldSQL, applyClient.Client)
+	l.check(err, "count SQL received from the original lifecycle Apply")
+	if controlRecords <= 0 {
+		l.fatalf("the held lifecycle Apply supplied no received SQL control")
+	}
+	l.check(lifecycleSQLBackendControl(audit.pgPrefix[initialJournalBytes:], applyClient),
+		"match the received barrier statement to its exact server backend session")
 	l.stagePredecessorApplyJobUIDGapWhileRunning()
 	l.proveLateFailureRecovery(l.currentReleaseControllerImage)
+	l.assertRunningApplySQLUnchanged(audit, heldSQL, applyClient, "late upgrade failure")
 	l.setPodWebhookFailurePolicy("Fail", "Ignore")
 	l.stageReadOnlyJobCompletion()
 	l.setPodWebhookFailurePolicy("Ignore", "Fail")
@@ -273,9 +286,14 @@ func (l *lifecycleRun) nextReleaseUpgrade() {
 	l.waitForReadOnlyJobCleanup()
 	l.quiesceReadOnlyJobSchema()
 	l.assertPredecessorApplyRemainsExclusiveWhileRunning()
+	l.assertRunningApplySQLUnchanged(audit, heldSQL, applyClient, "same-candidate upgrade retry")
+	l.runningApply.sqlBackend = applyClient
+	l.runningApply.sqlJournal = bytes.Clone(audit.pgPrefix)
+	audit.close()
 	l.releaseRunningApplyBarrier()
 	l.waitForPredecessorApplyJobTerminal()
 	l.waitForPredecessorApplyJobCleanup()
+	l.quiesceCompletedApply()
 	if l.deployedRevision() != l.lateRevision+1 {
 		l.fatalf("same-candidate recovery did not create exactly one retry Helm revision")
 	}
@@ -311,8 +329,12 @@ func (l *lifecycleRun) nextReleaseUpgrade() {
 // goes through.
 func (l *lifecycleRun) rollbackToTheCurrentRelease() {
 	l.t.Helper()
-	l.proveRollbackRefusedOverFutureState(l.currentReleaseRevision)
-	l.proveRollback(l.currentReleaseRevision, l.currentReleaseControllerImage)
+	l.auditQuiescentTransition("refused downgrade", func() {
+		l.proveRollbackRefusedOverFutureState(l.currentReleaseRevision)
+	})
+	l.auditQuiescentTransition("allowed rollback", func() {
+		l.proveRollback(l.currentReleaseRevision, l.currentReleaseControllerImage)
+	})
 	l.assertProofUnchanged("-before")
 	// Everything after this, including the uninstall, is held to the state
 	// the rollback leaves behind.
@@ -355,7 +377,8 @@ func (l *lifecycleRun) reinstallOverRetainedCRDs() {
 }
 
 // installTheExportedChart: the exact exported current-release chart bytes
-// install fresh over retained drifted CRDs and uninstall with no residue.
+// recover from quota refusal under restricted Pod Security over retained
+// drifted CRDs, then uninstall with no residue.
 func (l *lifecycleRun) installTheExportedChart() {
 	l.t.Helper()
 	l.logf("fresh-installing the exact exported current-release chart bytes")
@@ -364,8 +387,7 @@ func (l *lifecycleRun) installTheExportedChart() {
 	// and Helm 4 refuses to change a field another manager owns. This install
 	// carries the force for the same reason the one before it does, and proves
 	// the same thing: that the install converges a retained CRD.
-	l.mustHelm("", "install", l.in.helmRelease, l.in.chartPackage, "--namespace", l.in.operatorNamespace,
-		"--values", l.in.candidateValuesFile, "--force-conflicts", "--wait", "--timeout", "5m")
+	l.installWithQuotaAndPodSecurity()
 	l.waitRuntimeReady()
 	if l.crdDescription("ptahschemas.operator.ptah.run") == "exact released-chart install drift" {
 		l.fatalf("the exact released-chart install did not reconcile a retained CRD another manager drifted")
@@ -387,8 +409,12 @@ func (l *lifecycleRun) installTheExportedChart() {
 func (l *lifecycleRun) uninstallAndAssertRetained(failure string) {
 	l.t.Helper()
 	l.captureCertificateSecretNames()
-	l.mustHelm(failure, "uninstall", l.in.helmRelease, "-n", l.in.operatorNamespace, "--wait", "--timeout", "5m")
+	privileges := l.captureReleasePrivileges()
+	l.auditQuiescentTransition("release uninstall", func() {
+		l.mustHelm(failure, "uninstall", l.in.helmRelease, "-n", l.in.operatorNamespace, "--wait", "--timeout", "5m")
+	})
 	l.assertReleaseRuntimeRemoved()
+	l.assertReleasePrivilegesRemoved(privileges)
 	l.assertCRDsRetained()
 	l.assertProofUnchanged("-before")
 }

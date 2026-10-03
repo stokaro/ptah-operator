@@ -20,6 +20,7 @@ type window struct {
 
 // report is the whole measurement: what ran, where, and what it cost.
 type report struct {
+	Cycles        cycleEvidence  `json:"cycles"`
 	FormatVersion int            `json:"formatVersion"`
 	Workload      workload       `json:"workload"`
 	Environment   map[string]any `json:"environment"`
@@ -30,29 +31,34 @@ type report struct {
 
 // scenarioCost is one window reduced to the figures the capacity page names.
 type scenarioCost struct {
+	EligibleFreshness *freshnessCost `json:"eligibleFreshness"`
 	window
-	Incomplete            map[string]int     `json:"incomplete,omitempty"`
-	Samples               int                `json:"samples"`
-	JobsCreated           int                `json:"jobsCreated"`
-	JobsFailed            int                `json:"jobsFailed"`
-	JobsPerMinuteAverage  float64            `json:"jobsPerMinuteAverage"`
-	JobsPerMinutePeak     int                `json:"jobsPerMinutePeak"`
-	JobStartSeconds       quantiles          `json:"jobStartSeconds"`
-	JobCompletionSeconds  quantiles          `json:"jobCompletionSeconds"`
-	PodsPendingMax        int                `json:"podsPendingMax"`
-	PodsRunningMax        int                `json:"podsRunningMax"`
-	ObservationAgeMax     float64            `json:"observationAgeMaxSeconds"`
-	OverdueMax            float64            `json:"overdueMaxSeconds"`
-	ManagerRSSMaxBytes    float64            `json:"managerRSSMaxBytes"`
-	ManagerCPUCores       float64            `json:"managerCPUCoresAverage"`
-	WorkqueueDepthMax     map[string]float64 `json:"workqueueDepthMax"`
-	QueueWaitSeconds      quantiles          `json:"queueWaitSeconds"`
-	ClientThrottleSeconds float64            `json:"clientThrottleSeconds"`
-	Requests429           float64            `json:"requests429"`
-	AdmissionSeconds      quantiles          `json:"admissionSeconds"`
-	APIRejected           float64            `json:"apiRejected"`
-	PlansAtEnd            int                `json:"plansAtEnd"`
-	ChunkBytesAtEnd       int64              `json:"chunkBytesAtEnd"`
+	RefreshCycles         []resourceCycleCount `json:"refreshCycles"`
+	CycleProblems         []string             `json:"cycleProblems,omitempty"`
+	APICounterProblems    []string             `json:"apiCounterProblems,omitempty"`
+	CounterProblems       []string             `json:"counterProblems,omitempty"`
+	Incomplete            map[string]int       `json:"incomplete,omitempty"`
+	Samples               int                  `json:"samples"`
+	JobsCreated           int                  `json:"jobsCreated"`
+	JobsFailed            int                  `json:"jobsFailed"`
+	JobsPerMinuteAverage  float64              `json:"jobsPerMinuteAverage"`
+	JobsPerMinutePeak     int                  `json:"jobsPerMinutePeak"`
+	JobStartSeconds       quantiles            `json:"jobStartSeconds"`
+	JobCompletionSeconds  quantiles            `json:"jobCompletionSeconds"`
+	PodsPendingMax        int                  `json:"podsPendingMax"`
+	PodsRunningMax        int                  `json:"podsRunningMax"`
+	ObservationAgeMax     float64              `json:"observationAgeMaxSeconds"`
+	OverdueMax            float64              `json:"overdueMaxSeconds"`
+	ManagerRSSMaxBytes    float64              `json:"managerRSSMaxBytes"`
+	ManagerCPUCores       float64              `json:"managerCPUCoresAverage"`
+	WorkqueueDepthMax     map[string]float64   `json:"workqueueDepthMax"`
+	QueueWaitSeconds      quantiles            `json:"queueWaitSeconds"`
+	ClientThrottleSeconds float64              `json:"clientThrottleSeconds"`
+	Requests429           float64              `json:"requests429"`
+	APIServers            map[string]apiCost   `json:"apiServers"`
+	APIRejected           float64              `json:"apiRejected"`
+	PlansAtEnd            int                  `json:"plansAtEnd"`
+	ChunkBytesAtEnd       int64                `json:"chunkBytesAtEnd"`
 }
 
 // quantiles are over the observations a window holds. For a histogram they
@@ -95,6 +101,7 @@ func cost(w window, samples []sample, jobs []jobRecord) scenarioCost {
 			inside = append(inside, reading)
 		}
 	}
+	out.EligibleFreshness = eligibleFreshnessInWindow(w, samples)
 	out.Samples = len(inside)
 	for _, reading := range inside {
 		for _, source := range reading.Incomplete {
@@ -115,8 +122,17 @@ func cost(w window, samples []sample, jobs []jobRecord) scenarioCost {
 		last := inside[len(inside)-1]
 		out.PlansAtEnd, out.ChunkBytesAtEnd = last.Plans, last.ChunkBytes
 	}
+	out.CounterProblems = managerCounterContinuity(inside)
+	if len(out.CounterProblems) > 0 {
+		out.Incomplete[sourceManagerContinuity] = len(out.CounterProblems)
+	}
 	out.ManagerCPUCores, out.ClientThrottleSeconds, out.Requests429, out.QueueWaitSeconds = managerGrowth(inside)
-	out.AdmissionSeconds, out.APIRejected = apiGrowth(inside)
+	var apiProblems []string
+	out.APIServers, out.APIRejected, apiProblems = apiGrowth(inside)
+	if len(apiProblems) > 0 {
+		out.Incomplete[sourceAPIContinuity] += len(apiProblems)
+		out.APICounterProblems = apiProblems
+	}
 
 	perMinute := map[int64]int{}
 	var starts, completions []float64
@@ -148,9 +164,9 @@ func cost(w window, samples []sample, jobs []jobRecord) scenarioCost {
 }
 
 // managerGrowth is what the manager processes spent inside a window, summed
-// over the Pods that served in it. Each Pod's counters are compared with its
-// own first reading, so a restart in the window starts a new process rather
-// than a negative delta.
+// over the Pods that served in it. These provisional deltas are publishable
+// only when managerCounterContinuity proves every intermediate reading came
+// from the same processes without a reset or collection gap.
 func managerGrowth(inside []sample) (cores, throttle, too float64, wait quantiles) {
 	type span struct {
 		first, last managerReading
@@ -175,7 +191,7 @@ func managerGrowth(inside []sample) (cores, throttle, too float64, wait quantile
 		cpu += counterDelta(s.last.CPUSeconds, s.first.CPUSeconds)
 		throttle += counterDelta(s.last.ThrottleSeconds, s.first.ThrottleSeconds)
 		too += counterDelta(s.last.Requests429, s.first.Requests429)
-		total = total.add(s.last.queueWait.since(s.first.queueWait))
+		total = total.add(s.last.QueueWait.since(s.first.QueueWait))
 	}
 	elapsed := inside[len(inside)-1].At.Sub(inside[0].At).Seconds()
 	if elapsed > 0 {
@@ -184,29 +200,15 @@ func managerGrowth(inside []sample) (cores, throttle, too float64, wait quantile
 	return cores, throttle, too, histogramQuantiles(total)
 }
 
-func apiGrowth(inside []sample) (quantiles, float64) {
-	var first, last *apiReading
-	for index := range inside {
-		if inside[index].APIServer == nil {
-			continue
-		}
-		if first == nil {
-			first = inside[index].APIServer
-		}
-		last = inside[index].APIServer
-	}
-	if first == nil || last == first {
-		return quantiles{}, 0
-	}
-	return histogramQuantiles(last.admission.since(first.admission)), counterDelta(last.Rejected, first.Rejected)
-}
-
 // writeSummary is the report as a reader of the capacity page reads it.
 func writeSummary(out io.Writer, r report) error {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Capacity measurement: %s\n\n%s\n\n", r.Workload.Name, r.Workload.Description)
 	fmt.Fprintf(&b, "%d PtahSchemas and %d PtahMigrations, each on a database of its own, at an interval of %s.\n\n",
 		r.Workload.Schemas, r.Workload.Migrations, r.Workload.Interval)
+	if r.Environment["executionScope"] == "retention-fault-only" {
+		b.WriteString("This diagnostic reused the recorded fleet and ran only the retention fault. It did not repeat the soak, cold start, restart, or outage scenarios.\n\n")
+	}
 	keys := make([]string, 0, len(r.Environment))
 	for key := range r.Environment {
 		keys = append(keys, key)
@@ -245,9 +247,25 @@ func writeSummary(out io.Writer, r report) error {
 			figure(sourceJobs, "%.1f (%d)", s.JobsPerMinuteAverage, s.JobsPerMinutePeak), completion,
 			figure(sourcePods, "%d", s.PodsPendingMax),
 			figure(sourceResources, "%.0f", s.ObservationAgeMax), figure(sourceResources, "%.0f", s.OverdueMax),
-			figure(sourceManagers, "%.0f", s.ManagerRSSMaxBytes/(1<<20)), figure(sourceManagers, "%.2f", s.ManagerCPUCores),
-			figure(sourceManagers, "%s", atMost(s.QueueWaitSeconds)), figure(sourceManagers, "%.1f", s.ClientThrottleSeconds),
-			figure(sourceAPI, "%s", atMost(s.AdmissionSeconds)), strings.Join(outcome, ", "))
+			figure(sourceManagers, "%.0f", s.ManagerRSSMaxBytes/(1<<20)), figure(sourceManagerContinuity, "%.2f", s.ManagerCPUCores),
+			figure(sourceManagerContinuity, "%s", atMost(s.QueueWaitSeconds)), figure(sourceManagerContinuity, "%.1f", s.ClientThrottleSeconds),
+			figure(sourceAPI, "%s", apiAdmissionSummary(s.APIServers)), strings.Join(outcome, ", "))
+	}
+	b.WriteString("\nThe main table retains freshness maxima over all resources, including suspended ones. Eligible freshness below excludes only suspended or deleting resources; approval-gated resources still refresh. Freshness uses each resource list's actual read time within the scenario. Active claims retain their age and stay eligible for observation freshness. Scheduled overdue measures persisted deadlines; a claim without a deadline is in flight, while a missing deadline without a claim remains unavailable. Scheduled and in-flight counts can overlap during recovery. Older reports without per-resource readings remain unavailable.\n\n")
+	b.WriteString("| Scenario | Eligible readings | Suspended readings | Deleting readings | Missing observations | Missing deadlines | Scheduled readings | In-flight readings | Eligible oldest reading s | Scheduled overdue s | Active claim age s |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n")
+	for _, s := range r.Scenarios {
+		f := s.EligibleFreshness
+		if f == nil {
+			fmt.Fprintf(&b, "| %s | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |\n", s.Name)
+			continue
+		}
+		number := func(v *float64) string {
+			if v == nil {
+				return "n/a"
+			}
+			return fmt.Sprintf("%.0f", *v)
+		}
+		fmt.Fprintf(&b, "| %s | %d | %d | %d | %d | %d | %d | %d | %s | %s | %s |\n", s.Name, f.EligibleReadings, f.SuspendedReadings, f.DeletingReadings, f.MissingObservations, f.MissingDeadlines, f.ScheduledReadings, f.InFlightReadings, number(f.ObservationAgeMaxSeconds), number(f.OverdueMaxSeconds), number(f.ActiveOperationAgeMaxSeconds))
 	}
 	_, err := io.WriteString(out, b.String())
 	return err

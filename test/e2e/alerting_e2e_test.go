@@ -3,7 +3,6 @@
 package e2e
 
 import (
-	"cmp"
 	"context"
 	"fmt"
 	"os"
@@ -11,7 +10,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -20,12 +18,10 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/test/e2e/harness"
 	"github.com/stokaro/ptah-operator/test/e2e/phases"
 )
@@ -39,9 +35,10 @@ import (
 // rendered exactly as the chart renders them, an Alertmanager that has to route
 // them, and a receiver that has to be told. The phase asserts at the receiver:
 //
-//   - an Apply nobody accounted for, which the migrations phase leaves behind,
-//     reaches the receiver naming its family, with a count the runbook's own
-//     drill-down reproduces and a runbook link that resolves to a heading;
+//   - independently interrupted PostgreSQL and MySQL Applies in both families
+//     reach the receiver within their persisted time bounds, then resolve after
+//     database inspection and either a migration acknowledgment or schema
+//     observation and planning; each requires fresh approval to mutate again;
 //   - an operation held off every node fires as stalled once its threshold has
 //     passed and not before, and resolves once the operation leaves flight;
 //   - every manager gone fires as a view nobody can read, and resolves once
@@ -63,16 +60,23 @@ func TestAlerting(t *testing.T) {
 	}{
 		{"monitoring-path", a.monitoringPath},
 		{"unresolved-apply", a.unresolvedApply},
+		{"ordinary-policy-waits", a.negativeControls},
 		{"stalled-operation", a.stalledOperation},
+		{"resource-overdue", a.resourceOverdue},
+		{"lock-release-owed", a.lockReleaseOwed},
+		{"operations-failing", a.operationsFailing},
+		{"plan-store-large", a.planStoreLarge},
+		{"unresolved-view-read-failures", a.viewReadFailures},
 		{"lost-scrape-target", a.lostScrapeTarget},
 		{"certificate-expiry", a.certificateExpiry},
 		{"lost-view", a.lostView},
+		{"upgrade-alerts", a.upgradeAlerts},
 	} {
 		if !run.Scenario(scenario.name, a.scenario(scenario.body)) {
 			return
 		}
 	}
-	run.Logf("e2e alerting: PASS unresolved work, a stalled operation, a failed leader scrape, certificate expiry, failed admission and a lost view reached the receiver; recoverable faults cleared")
+	run.Logf("e2e alerting: PASS unresolved work, a stalled operation, an overdue resource, failed state reads, a failed leader scrape, certificate expiry, failed admission, a lost view and failed or interrupted upgrades reached the receiver; recoverable faults cleared")
 }
 
 // alertingRun is what the alerting scenarios share. Each scenario runs as a
@@ -292,13 +296,15 @@ func (a *alertingRun) monitoringPath() {
 	a.standUp(rules)
 	a.waitForTargets()
 	a.waitForAPIServerTargets()
-	body, err := a.prometheus(a.ctx, "/api/v1/rules", nil)
-	if err != nil {
-		a.fatalf("Prometheus did not answer for its rules: %v", err)
-	}
-	if !alRulesLoaded(body) {
-		a.fatalf("Prometheus did not load the chart's rules")
-	}
+	a.check(harness.Wait(a.ctx, "every frozen chart rule to evaluate successfully", alDetectionSlack, alDeliveryPoll,
+		func(ctx context.Context) (bool, string, error) {
+			body, err := a.prometheus(ctx, "/api/v1/rules", nil)
+			if err != nil {
+				return false, "", err
+			}
+			return alRulesLoaded(body), "a frozen rule is missing, duplicated, unevaluated or failing", nil
+		}), "verify the complete loaded alert rules")
+
 	a.logf("Prometheus scrapes all %d manager replicas and loaded the chart rules", a.replicas)
 }
 
@@ -387,11 +393,7 @@ func (a *alertingRun) renderRules() string {
 	rendered, err := a.cluster.Helm(a.ctx, "template", a.in.HelmRelease, a.in.ChartPackage,
 		"--namespace", a.in.OperatorNamespace,
 		"-f", valuesFile,
-		"--set", "monitoring.prometheusRule.enabled=true",
-		"--set", fmt.Sprintf("monitoring.prometheusRule.viewUnsyncedFor=%ds", int(alViewUnsyncedFor/time.Second)),
-		"--set", fmt.Sprintf("monitoring.prometheusRule.operationStalledAfterSeconds=%d", int(alStalledAfter/time.Second)),
-		"--set", fmt.Sprintf("monitoring.prometheusRule.certificateExpiresWithinSeconds=%d", int(alCertificateWarning/time.Second)),
-		"--set", fmt.Sprintf("monitoring.prometheusRule.admissionFailingFor=%ds", int(alAdmissionWindow/time.Second)),
+		"-f", filepath.Join(repositoryRoot, "support", "qualification", "0.2.0-monitoring.yaml"),
 		"--show-only", "templates/prometheusrule.yaml")
 	if err != nil {
 		a.fatalf("the chart did not render its PrometheusRule: %v", err)
@@ -479,127 +481,8 @@ func (a *alertingRun) waitForTargets() {
 	}
 }
 
-// unresolvedApply waits for the alert on an Apply nobody accounted for. The
-// migrations phase leaves at least one: the row that removed an Apply Job
-// while its run was going. The count the runbook's drill-down finds is the
-// count the alert has to carry.
-func (a *alertingRun) unresolvedApply() {
-	a.t.Helper()
-	migrations := &ptahv1alpha1.PtahMigrationList{}
-	a.check(a.cluster.Client.List(a.ctx, migrations), "list every PtahMigration")
-	listed := alUnresolvedMigrations(migrations.Items)
-	if listed < 1 {
-		a.fatalf("no PtahMigration carries an unresolved run, so this row has nothing to alert on; the migrations phase leaves one")
-	}
-	unresolved, _ := a.waitForDelivery(
-		alMatch{status: "firing", alertName: alUnresolvedApply, labels: map[string]string{"family": "migration"}},
-		"PtahOperatorUnresolvedApply for the migration family", alTimeout, 0)
-	if unresolved.Annotations["runbook_url"] != a.runbookBase+"#unresolved-gauges" || unresolved.Labels["severity"] != "critical" {
-		a.fatalf("the unresolved alert arrived without the runbook link or severity the chart gives it: %s", unresolved.raw)
-	}
-	if !alRunbookAnchor(a.operationsPage(), "unresolved-gauges") {
-		a.fatalf("the unresolved alert links to #unresolved-gauges, and the operations page has no such heading")
-	}
-	// The summary carries the count, and the drill-down on the page has to name
-	// as many resources as the alert counted, or the page does not lead to the
-	// scope.
-	count, _ := alAlertedCount(unresolved.Annotations["summary"])
-	if count != strconv.Itoa(listed) {
-		a.fatalf("the alert counts %s unresolved migrations and the runbook's drill-down lists %d", cmp.Or(count, "nothing"), listed)
-	}
-	a.logf("PASS the receiver got PtahOperatorUnresolvedApply for %d migration(s), and the runbook lists them", listed)
-}
-
-// stalledOperation holds a schema's Resolve off every node, and requires the
-// stalled alert once its threshold has passed and not before, and its
-// resolution once the operation leaves flight. Nothing else in the cluster
-// runs a schema Resolve for this long, which the row checks rather than
-// assumes.
-func (a *alertingRun) stalledOperation() {
-	a.t.Helper()
-	if !a.noActiveAlerts(`ALERTS{alertname="PtahOperatorOperationStalled",family="schema",operation="Resolve"}`) {
-		a.fatalf("a schema Resolve was already stalled before this row held one, so the row could not tell them apart")
-	}
-	from := a.deliveryCount()
-	a.createHeldSchema()
-
-	var started time.Time
-	for deadline := time.Now().Add(alTimeout); time.Now().Before(deadline); {
-		schema := &ptahv1alpha1.PtahSchema{}
-		if err := a.cluster.Client.Get(a.ctx, types.NamespacedName{Namespace: alStalledNamespace, Name: alStalledSchema}, schema); err == nil {
-			if at, ok := alResolveClaim(schema); ok {
-				started = at
-				break
-			}
-		}
-		a.sleep(alClaimPoll)
-	}
-	if started.IsZero() {
-		a.fatalf("%s never claimed its Resolve", alStalledSchema)
-	}
-	a.logf("%s claimed a Resolve at %s that no node will run", alStalledSchema, started.UTC().Format(time.RFC3339))
-
-	stallMatch := map[string]string{"family": "schema", "operation": "Resolve"}
-	stalled, stalledAt := a.waitForDelivery(alMatch{status: "firing", alertName: alOperationStall, labels: stallMatch},
-		"PtahOperatorOperationStalled for the held schema Resolve", alStalledAfter+alTimeout, from)
-	threshold, slack := int64(alStalledAfter/time.Second), int64(alDetectionSlack/time.Second)
-	after := alSecondsBetween(started, stalled.ReceivedAt)
-	if after < threshold {
-		a.fatalf("the stalled alert arrived %ds after the operation started, before its %ds threshold", after, threshold)
-	}
-	if after > threshold+slack {
-		a.fatalf("the stalled alert arrived %ds after the operation started; the declared target is %ds plus %ds",
-			after, threshold, slack)
-	}
-	if stalled.Annotations["runbook_url"] != a.runbookBase+"#resource-state" {
-		a.fatalf("the stalled alert arrived without the runbook link the chart gives it: %s", stalled.raw)
-	}
-	if !alRunbookAnchor(a.operationsPage(), "resource-state") {
-		a.fatalf("the stalled alert links to #resource-state, and the operations page has no such heading")
-	}
-	a.logf("PASS the receiver got PtahOperatorOperationStalled %ds after the Resolve started", after)
-
-	// Released, the Resolve runs, fails against the unreachable registry and
-	// leaves flight, and the alert has to clear on its own.
-	a.gateOpened = true
-	if err := a.setGate(a.ctx, "open"); err != nil {
-		a.fatalf("the gate could not be opened: %v", err)
-	}
-	var left time.Time
-	for deadline := time.Now().Add(alTimeout); time.Now().Before(deadline); {
-		schema := &ptahv1alpha1.PtahSchema{}
-		if err := a.cluster.Client.Get(a.ctx, types.NamespacedName{Namespace: alStalledNamespace, Name: alStalledSchema}, schema); err == nil &&
-			alLeftFlight(schema) {
-			left = time.Now()
-			break
-		}
-		a.sleep(alClaimPoll)
-	}
-	if left.IsZero() {
-		a.fatalf("the released Resolve never left flight")
-	}
-	resolved, _ := a.waitForDelivery(alMatch{status: "resolved", alertName: alOperationStall, labels: stallMatch},
-		"the resolution of PtahOperatorOperationStalled once the Resolve left flight", alDetectionSlack+60*time.Second, stalledAt+1)
-	cleared := alSecondsBetween(left, resolved.ReceivedAt)
-	if cleared > slack {
-		a.fatalf("the stalled alert cleared %ds after the operation left flight; the declared target is %ds", cleared, slack)
-	}
-	// Suspended before the gate closes again, so its next Resolve is not held
-	// and does not fire the alert a second time.
-	schema := &ptahv1alpha1.PtahSchema{}
-	schema.Namespace, schema.Name = alStalledNamespace, alStalledSchema
-	a.check(a.cluster.Client.Patch(a.ctx, schema, client.RawPatch(types.MergePatchType, []byte(`{"spec":{"suspend":true}}`)),
-		client.FieldOwner(harness.FieldOwner)), "suspend %s", alStalledSchema)
-	if err := a.setGate(a.ctx, ""); err != nil {
-		a.fatalf("the gate could not be closed: %v", err)
-	}
-	a.gateOpened = false
-	a.logf("PASS the stalled alert cleared %ds after the Resolve left flight", cleared)
-}
-
-// createHeldSchema stands up the stalled namespace: the verification policy,
-// a database URL nothing will dial, the pull credential, and the held schema.
-func (a *alertingRun) createHeldSchema() {
+// createHeldNamespace prepares both families' held Resolve fixtures.
+func (a *alertingRun) createHeldNamespace() {
 	a.t.Helper()
 	namespace := &corev1.Namespace{}
 	namespace.Name = alStalledNamespace
@@ -622,73 +505,6 @@ func (a *alertingRun) createHeldSchema() {
 		ObjectMeta: metav1.ObjectMeta{Namespace: alStalledNamespace, Name: pull.Name},
 		Type:       pull.Type, Data: pull.Data,
 	}, "the held schema's pull Secret")
-	a.check(a.cluster.Client.Create(a.ctx, &unstructured.Unstructured{Object: alHeldSchema(alStalledNamespace)},
-		client.FieldOwner(harness.FieldOwner), client.FieldValidation("Strict")), "create PtahSchema %s", alStalledSchema)
-}
-
-// lostView removes every manager with every node cordoned. Nothing scrapes a
-// manager that is not running, so the counts disappear rather than fall to
-// zero, and an absent count is not evidence that nothing is unresolved: the
-// rule that covers that silence has to fire. Cordoning every node keeps the
-// replacement Pods Pending, which is a loss that lasts, where deleting them
-// alone is a restart the Deployment repairs at once.
-func (a *alertingRun) lostView() {
-	a.t.Helper()
-	if !a.noActiveAlerts(`ALERTS{alertname="PtahOperatorUnresolvedViewNotSynced"}`) {
-		a.fatalf("PtahOperatorUnresolvedViewNotSynced was already active with every manager running")
-	}
-	nodes := &corev1.NodeList{}
-	a.check(a.cluster.Client.List(a.ctx, nodes), "list the nodes")
-	for index := range nodes.Items {
-		name := nodes.Items[index].Name
-		// Recorded before the write: an update that landed and still returned
-		// an error leaves the node cordoned, and uncordoning one that never
-		// was changes nothing.
-		a.cordoned = append(a.cordoned, name)
-		if err := a.setUnschedulable(a.ctx, name, true); err != nil {
-			a.fatalf("node %s could not be cordoned: %v", name, err)
-		}
-	}
-	a.logf("removing every manager replica with every node cordoned")
-	from := a.deliveryCount()
-	if err := a.removeManagers(); err != nil {
-		a.fatalf("the manager Pods could not be removed: %v", err)
-	}
-	lost := time.Now()
-	running := &corev1.PodList{}
-	a.check(a.cluster.Client.List(a.ctx, running, client.InNamespace(a.in.OperatorNamespace),
-		client.MatchingLabels(a.managerLabels), client.MatchingFields{"status.phase": string(corev1.PodRunning)}),
-		"list the running manager Pods")
-	if len(running.Items) != 0 {
-		names := make([]string, 0, len(running.Items))
-		for _, pod := range running.Items {
-			names = append(names, "pod/"+pod.Name)
-		}
-		a.fatalf("manager Pods are running with every node cordoned: %s", strings.Join(names, " "))
-	}
-	delivered, deliveredAt := a.waitForDelivery(alMatch{status: "firing", alertName: alViewNotSynced},
-		"PtahOperatorUnresolvedViewNotSynced with every manager gone", alViewUnsyncedFor+alTimeout, from)
-	threshold, slack := int64(alViewUnsyncedFor/time.Second), int64(alDetectionSlack/time.Second)
-	lostAfter := alSecondsBetween(lost, delivered.ReceivedAt)
-	if lostAfter > threshold+slack {
-		a.fatalf("the lost-view alert arrived %ds after the managers went; the declared target is %ds plus %ds",
-			lostAfter, threshold, slack)
-	}
-	a.logf("PASS the receiver got PtahOperatorUnresolvedViewNotSynced %ds after every manager went", lostAfter)
-
-	for len(a.cordoned) > 0 {
-		name := a.cordoned[0]
-		if err := a.setUnschedulable(a.ctx, name, false); err != nil {
-			a.fatalf("node %s could not be uncordoned: %v", name, err)
-		}
-		a.cordoned = a.cordoned[1:]
-	}
-	if err := a.cluster.WaitForRollout(a.ctx, a.in.OperatorNamespace, a.manager, alTimeout); err != nil {
-		a.fatalf("the managers did not come back: %v", err)
-	}
-	a.waitForDelivery(alMatch{status: "resolved", alertName: alViewNotSynced},
-		"the resolution of PtahOperatorUnresolvedViewNotSynced once the managers were back", alTimeout, deliveredAt+1)
-	a.logf("PASS the lost-view alert cleared once the managers were back")
 }
 
 // removeManagers deletes every manager Pod and waits for each one deleted to

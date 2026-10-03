@@ -22,6 +22,7 @@ type supervisorConfig struct {
 	OperationTimeout time.Duration
 	RetryInitial     time.Duration
 	RetryMax         time.Duration
+	ResultRotation   resultRotationOptions
 }
 
 func (c supervisorConfig) validate() error {
@@ -148,7 +149,7 @@ func (s *rotationSupervisor) Run(ctx context.Context) error {
 			return nil
 		}
 
-		s.logger.Info("reconciling generated webhook certificate")
+		s.logger.Info("reconciling generated certificates")
 		operationCtx, cancel := context.WithTimeout(ctx, s.config.OperationTimeout)
 		result, err := s.runner.Run(operationCtx)
 		operationErr := operationCtx.Err()
@@ -162,14 +163,14 @@ func (s *rotationSupervisor) Run(ctx context.Context) error {
 		}
 
 		if err == nil {
-			s.probes.setReady(true)
+			s.probes.setReady(!result.Pending)
 			retryDelay = s.config.RetryInitial
 			next := s.config.RunInterval
 			if result.RequeueAfter > 0 {
 				next = min(next, result.RequeueAfter)
 				s.logger.Info("CA transition waits for its switch", "switch_in", result.RequeueAfter)
 			} else {
-				s.logger.Info("generated webhook certificate is current")
+				s.logger.Info("generated certificates are current")
 			}
 			if !s.wait(ctx, next) {
 				return nil

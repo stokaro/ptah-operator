@@ -491,7 +491,7 @@ func TestExecutablePlanSizeBoundary(t *testing.T) {
 		TempDir:     t.TempDir(),
 	})
 	if oversizedResult.Error == nil || oversizedResult.Error.Code != "invalid_plan_output" ||
-		!strings.Contains(oversizedResult.Error.Message, "plan limit") ||
+		!strings.Contains(oversizedResult.Error.Message, fmt.Sprintf("saved file has %d bytes; limit is %d", DefaultMaxPlanBytes+1, DefaultMaxPlanBytes)) ||
 		oversizedResult.Stdout != "" || oversizedResult.PlanContentDigest != "" || oversizedResult.PlanOutcome != "" {
 		t.Fatalf("limit+1 Run(Plan) = %#v", oversizedResult)
 	}

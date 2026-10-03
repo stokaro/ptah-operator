@@ -32,6 +32,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/ocireference"
 	"github.com/stokaro/ptah-operator/internal/planseal"
 	"github.com/stokaro/ptah-operator/internal/planstore"
+	"github.com/stokaro/ptah-operator/internal/resultdelivery/jobconfig"
 	"github.com/stokaro/ptah-operator/internal/runner"
 )
 
@@ -139,6 +140,12 @@ var (
 // ControllerRevision and RunnerImage identify the manager's own release: a Job
 // and a plan record them, and nothing is invalidated when only they change.
 type Builder struct {
+	// ResultEndpoint selects durable delivery when installation wiring is ready.
+	// Empty retains the legacy log path during development integration.
+	ResultEndpoint string
+	// ResultServerTrust supplies the current public CA bundle for a new Job.
+	// When set, durable delivery uses the explicit receiver-audience Pod token.
+	ResultServerTrust      func() []byte
 	ExecutorImage          string
 	RunnerImage            string
 	PtahVersion            string
@@ -783,6 +790,11 @@ func addRegistryAccess(
 }
 
 func (b Builder) validate() error {
+	if b.ResultEndpoint != "" {
+		if err := jobconfig.ValidateEndpoint(b.ResultEndpoint); err != nil {
+			return err
+		}
+	}
 	if !imageDigestPattern.MatchString(b.ControllerImage) {
 		return errors.New("controller image must be pinned by a lowercase SHA-256 digest")
 	}

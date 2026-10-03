@@ -1,0 +1,31 @@
+{
+  "apiVersion": "v1",
+  "count": 1,
+  "eventTime": null,
+  "firstTimestamp": "2026-09-30T05:00:26Z",
+  "involvedObject": {
+    "apiVersion": "batch/v1",
+    "kind": "Job",
+    "name": "ptah-resolve-e2e-pod-metadata-refused-postgres-5fc1f24969162a8d",
+    "namespace": "ptah-test-a-1-37-0-020-audit-boundary-e21a1ff4-fc7110885d",
+    "resourceVersion": "44445",
+    "uid": "dedeae3b-0cf5-4984-8000-3141a6999b0f"
+  },
+  "kind": "Event",
+  "lastTimestamp": "2026-09-30T05:00:26Z",
+  "message": "Error creating: pods \"ptah-resolve-e2e-pod-metadata-refused-postgres-5fc1f249691gbbzb\" is forbidden: ValidatingAdmissionPolicy 'e2e-pod-metadata-mesh-opt-out' with binding 'e2e-pod-metadata-mesh-opt-out' denied request: operation Pods in this namespace must opt out of sidecar injection",
+  "metadata": {
+    "creationTimestamp": "2026-09-30T05:00:26Z",
+    "name": "ptah-resolve-e2e-pod-metadata-refused-postgres-5fc1f24969162a8d.18da00915b1ff3cd",
+    "namespace": "ptah-test-a-1-37-0-020-audit-boundary-e21a1ff4-fc7110885d",
+    "resourceVersion": "44446",
+    "uid": "48db48cd-5760-4fce-9755-aff2a777a5bd"
+  },
+  "reason": "FailedCreate",
+  "reportingComponent": "job-controller",
+  "reportingInstance": "",
+  "source": {
+    "component": "job-controller"
+  },
+  "type": "Warning"
+}

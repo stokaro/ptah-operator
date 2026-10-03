@@ -66,3 +66,28 @@ Before creating Docker resources, the harness archives the selected Git commit
 into an isolated directory. Chart packaging, image builds, and child test scripts
 consume that snapshot. Ignored files or later edits in the original checkout
 therefore cannot change the artifacts attributed to the tested commit.
+
+## Result delivery {#result-log-retention}
+
+The default installation sends runner results over TLS with a receiver-audience Pod token to the manager's
+result Service. It acknowledges only after validating and storing the complete
+result in immutable `PtahResultRecord` objects. Container logs are diagnostic
+output; rotating or deleting them cannot remove an acknowledged result.
+
+No operator-specific kubelet log-size setting is required. The acceptance
+cluster leaves `containerLogMaxSize` unset and verifies the effective standard
+`10Mi` value on every node. The executable-plan limit remains 8 MiB; it is not
+reduced to fit a container log.
+
+Allow operation Pods to reach the result Service on port 443 (manager port
+9444), including any namespace egress restrictions. Durable delivery requires
+the chart's built-in certificate rotator and generated webhook trust. See
+[Result confidentiality](../../use/security/#pod-logs-carry-plans) and
+[Backup and recovery](../../use/recovery/#what-to-preserve) for the stored
+records and keys.
+
+Explicitly setting `resultDelivery.enabled=false` selects the legacy log
+transport for new Jobs. That mode still needs `containerLogMaxSize: 64Mi` or
+larger and intact logs until collection. It does not provide the default
+installation's acknowledged-result durability and is outside the stable 0.2.0
+qualification profile.

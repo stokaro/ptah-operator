@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -38,6 +39,7 @@ type releaseRBACInventory struct {
 	controllerServiceAccountName string
 	certificateName              string
 	certificateRuntimeEnabled    bool
+	resultDeliveryEnabled        bool
 }
 
 // contracts compiles every ClusterRole and Role the release installs for its
@@ -45,7 +47,7 @@ type releaseRBACInventory struct {
 func (t releaseRBACInventory) contracts() []releaseRBACContract {
 	crdNames := releaseCRDNames()
 	contracts := []releaseRBACContract{
-		{name: t.controllerName, cluster: true, rules: controllerClusterRoleRules()},
+		{name: t.controllerName, cluster: true, rules: controllerClusterRoleRules(t.resultDeliveryEnabled)},
 		{
 			name: t.controllerName, namespace: t.coordinationNamespace,
 			rules: []rbacv1.PolicyRule{
@@ -77,6 +79,20 @@ func (t releaseRBACInventory) contracts() []releaseRBACContract {
 		},
 	}
 	if t.certificateRuntimeEnabled {
+		secretNames := []string{t.controllerName + "-webhook-cert", t.controllerName + "-cert-rotation-stage"}
+		leaseNames := []string{t.controllerName + "-cert-rotation"}
+		if t.resultDeliveryEnabled {
+			secretNames = append(secretNames, t.controllerName+"-result-trust", t.controllerName+"-result-journal")
+			leaseNames = append(leaseNames, t.controllerName+"-result-rotation")
+		}
+		rotationRules := []rbacv1.PolicyRule{
+			privilegePolicyRule([]string{""}, []string{"secrets"}, secretNames, []string{"get", "update"}),
+			privilegePolicyRule([]string{"coordination.k8s.io"}, []string{"leases"}, leaseNames, []string{"get", "update"}),
+		}
+		if t.resultDeliveryEnabled {
+			rotationRules = append(rotationRules, privilegePolicyRule([]string{""}, []string{"configmaps"}, []string{t.controllerName + "-result-enrollment"}, []string{"get", "update"}))
+		}
+		rotationRules = append(rotationRules, privilegePolicyRule([]string{"discovery.k8s.io"}, []string{"endpointslices"}, nil, []string{"list"}))
 		contracts = append(contracts,
 			releaseRBACContract{
 				name: t.certificateName, cluster: true,
@@ -88,15 +104,7 @@ func (t releaseRBACInventory) contracts() []releaseRBACContract {
 			},
 			releaseRBACContract{
 				name: t.certificateName, namespace: t.releaseNamespace,
-				rules: []rbacv1.PolicyRule{
-					privilegePolicyRule(
-						[]string{""}, []string{"secrets"},
-						[]string{t.controllerName + "-webhook-cert", t.controllerName + "-cert-rotation-stage"},
-						[]string{"get", "update"},
-					),
-					privilegePolicyRule([]string{"coordination.k8s.io"}, []string{"leases"}, []string{t.controllerName + "-cert-rotation"}, []string{"get", "update"}),
-					privilegePolicyRule([]string{"discovery.k8s.io"}, []string{"endpointslices"}, nil, []string{"list"}),
-				},
+				rules: rotationRules,
 			},
 		)
 	}
@@ -110,6 +118,7 @@ func releaseCRDNames() []string {
 		"ptahmigrationrunacknowledgments.operator.ptah.run",
 		"ptahmigrations.operator.ptah.run",
 		"ptahrealms.operator.ptah.run",
+		"ptahresultrecords.operator.ptah.run",
 		"ptahschemaapprovals.operator.ptah.run",
 		"ptahschemaplanchunks.operator.ptah.run",
 		"ptahschemaplans.operator.ptah.run",
@@ -118,8 +127,8 @@ func releaseCRDNames() []string {
 }
 
 // controllerClusterRoleRules is the controller ClusterRole the chart renders.
-func controllerClusterRoleRules() []rbacv1.PolicyRule {
-	return []rbacv1.PolicyRule{
+func controllerClusterRoleRules(durable bool) []rbacv1.PolicyRule {
+	rules := []rbacv1.PolicyRule{
 		privilegePolicyRule([]string{"apiextensions.k8s.io"}, []string{"customresourcedefinitions"}, releaseCRDNames(), []string{"get"}),
 		privilegePolicyRule(
 			[]string{"admissionregistration.k8s.io"},
@@ -152,6 +161,17 @@ func controllerClusterRoleRules() []rbacv1.PolicyRule {
 		privilegePolicyRule([]string{""}, []string{"configmaps"}, nil, []string{"get", "list", "watch", "create"}),
 		privilegePolicyRule([]string{""}, []string{"events"}, nil, []string{"create", "patch", "update", "list"}),
 	}
+	if durable {
+		for i, rule := range rules {
+			if slices.Equal(rule.Resources, []string{"pods/log"}) {
+				rules = slices.Replace(rules, i, i+1,
+					privilegePolicyRule([]string{"operator.ptah.run"}, []string{"ptahresultrecords"}, nil, []string{"get", "list", "create", "delete"}),
+					privilegePolicyRule([]string{"authentication.k8s.io"}, []string{"tokenreviews"}, nil, []string{"create"}))
+				break
+			}
+		}
+	}
+	return rules
 }
 
 func privilegePolicyRule(apiGroups, resources, resourceNames, verbs []string) rbacv1.PolicyRule {
@@ -276,6 +296,7 @@ type renderedRBACSettings struct {
 	controllerServiceAccountName   string
 	controllerServiceAccountCreate bool
 	certificateRuntimeEnabled      bool
+	resultDeliveryEnabled          bool
 }
 
 func renderedReleaseRBACInventory(t *testing.T) releaseRBACInventory {
@@ -295,6 +316,7 @@ func renderedReleaseRBACInventory(t *testing.T) releaseRBACInventory {
 		controllerServiceAccountName: settings.controllerServiceAccountName,
 		certificateName:              controllerName + "-cert-rotator",
 		certificateRuntimeEnabled:    settings.certificateRuntimeEnabled,
+		resultDeliveryEnabled:        settings.resultDeliveryEnabled,
 	}
 }
 
@@ -309,6 +331,7 @@ func renderedRBACSettingsFromEnvironment(lookup func(string) (string, bool)) (re
 		controllerServiceAccountName:   defaultControllerName,
 		controllerServiceAccountCreate: true,
 		certificateRuntimeEnabled:      true,
+		resultDeliveryEnabled:          true,
 	}
 	if value, found := lookup("PTAH_RBAC_RELEASE_NAMESPACE"); found {
 		if value == "" || value != strings.TrimSpace(value) {
@@ -333,6 +356,19 @@ func renderedRBACSettingsFromEnvironment(lookup func(string) (string, bool)) (re
 			return renderedRBACSettings{}, errors.New("PTAH_RBAC_CERTIFICATE_RUNTIME_ENABLED must be exactly true or false")
 		}
 	}
+	if value, found := lookup("PTAH_RBAC_RESULT_DELIVERY_ENABLED"); found {
+		switch value {
+		case "true":
+			settings.resultDeliveryEnabled = true
+		case "false":
+			settings.resultDeliveryEnabled = false
+		default:
+			return renderedRBACSettings{}, errors.New("PTAH_RBAC_RESULT_DELIVERY_ENABLED must be exactly true or false")
+		}
+	}
+	if settings.resultDeliveryEnabled && !settings.certificateRuntimeEnabled {
+		return renderedRBACSettings{}, errors.New("durable delivery requires the certificate runtime")
+	}
 	return settings, nil
 }
 
@@ -348,7 +384,7 @@ func TestRenderedRBACSettingsFromEnvironment(t *testing.T) {
 			name: "defaults",
 			want: renderedRBACSettings{
 				releaseNamespace: "ptah-e2e", coordinationNamespace: "ptah-e2e",
-				controllerServiceAccountName: "ptah-e2e-ptah-operator", controllerServiceAccountCreate: true, certificateRuntimeEnabled: true,
+				controllerServiceAccountName: "ptah-e2e-ptah-operator", controllerServiceAccountCreate: true, certificateRuntimeEnabled: true, resultDeliveryEnabled: true,
 			},
 		},
 		{
@@ -356,7 +392,7 @@ func TestRenderedRBACSettingsFromEnvironment(t *testing.T) {
 			values: map[string]string{"PTAH_RBAC_RELEASE_NAMESPACE": "ptah-system", "PTAH_RBAC_COORDINATION_NAMESPACE": "ptah-coordination"},
 			want: renderedRBACSettings{
 				releaseNamespace: "ptah-system", coordinationNamespace: "ptah-coordination",
-				controllerServiceAccountName: "ptah-e2e-ptah-operator", controllerServiceAccountCreate: true, certificateRuntimeEnabled: true,
+				controllerServiceAccountName: "ptah-e2e-ptah-operator", controllerServiceAccountCreate: true, certificateRuntimeEnabled: true, resultDeliveryEnabled: true,
 			},
 		},
 		{
@@ -364,12 +400,12 @@ func TestRenderedRBACSettingsFromEnvironment(t *testing.T) {
 			values: map[string]string{"PTAH_RBAC_RELEASE_NAMESPACE": "ptah-system", "PTAH_RBAC_COORDINATION_NAMESPACE": ""},
 			want: renderedRBACSettings{
 				releaseNamespace: "ptah-system", coordinationNamespace: "ptah-system",
-				controllerServiceAccountName: "ptah-e2e-ptah-operator", controllerServiceAccountCreate: true, certificateRuntimeEnabled: true,
+				controllerServiceAccountName: "ptah-e2e-ptah-operator", controllerServiceAccountCreate: true, certificateRuntimeEnabled: true, resultDeliveryEnabled: true,
 			},
 		},
 		{
 			name:   "an external certificate",
-			values: map[string]string{"PTAH_RBAC_CERTIFICATE_RUNTIME_ENABLED": "false"},
+			values: map[string]string{"PTAH_RBAC_CERTIFICATE_RUNTIME_ENABLED": "false", "PTAH_RBAC_RESULT_DELIVERY_ENABLED": "false"},
 			want: renderedRBACSettings{
 				releaseNamespace: "ptah-e2e", coordinationNamespace: "ptah-e2e",
 				controllerServiceAccountName: "ptah-e2e-ptah-operator", controllerServiceAccountCreate: true, certificateRuntimeEnabled: false,

@@ -1,0 +1,214 @@
+{
+  "apiVersion": "operator.ptah.run/v1alpha1",
+  "kind": "PtahSchema",
+  "metadata": {
+    "creationTimestamp": "2026-10-02T22:59:00Z",
+    "finalizers": [
+      "operator.ptah.run/active-operation"
+    ],
+    "generation": 1,
+    "name": "first-harvest",
+    "namespace": "ptah-result-oversized-postgresql",
+    "resourceVersion": "1000134433",
+    "uid": "ca9ea5f3-1a7c-4771-a200-00b1a6d35d8d"
+  },
+  "spec": {
+    "desired": {
+      "ociRef": "oci://e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/schemas/demo@sha256:43f492a00125dadd85df208d3c034712e56990931f48eecedebd411b30e00e80",
+      "registryAuthFrom": {
+        "dockerConfigJSONKey": ".dockerconfigjson",
+        "mode": "Environment",
+        "name": "demo-registry",
+        "passwordKey": "password",
+        "tokenKey": "token",
+        "usernameKey": "username"
+      },
+      "transport": {
+        "plainHTTP": true
+      },
+      "verificationPolicyFrom": {
+        "key": "policy.yaml",
+        "name": "demo-verification-policy"
+      }
+    },
+    "execution": {
+      "activeDeadlineSeconds": 900,
+      "connectTimeout": "30s",
+      "failureRetryInterval": "1h",
+      "resources": {
+        "limits": {
+          "cpu": "1",
+          "memory": "512Mi"
+        },
+        "requests": {
+          "cpu": "100m",
+          "memory": "64Mi"
+        }
+      }
+    },
+    "interval": "2h",
+    "policy": {
+      "allowDestructive": false,
+      "apply": "OnApproval",
+      "driftSeverity": "all",
+      "lockTimeout": "30s",
+      "transactionMode": "file"
+    },
+    "suspend": false,
+    "target": {
+      "coordinationKey": "acceptance/ptah-result-oversized-postgresql",
+      "engine": "PostgreSQL",
+      "sharedRealm": false,
+      "urlFrom": {
+        "key": "url",
+        "name": "first-harvest-database"
+      }
+    }
+  },
+  "status": {
+    "activeOperation": {
+      "attempt": 2,
+      "coordinationDigest": "sha256:680bc6a7db378d12d20927cdb209fe960c670130c478da70d8befec0f0485c1f",
+      "executionBindingID": "v1-441bac4cc36d108b4c965ccfe737c19b",
+      "id": "sha256:090538cfe83fd50d60bd2570632f62b88dd5c98c6f071483db9f78e6fa8dfa36",
+      "inputFingerprint": "sha256:e3f45764b2ef97ee14f6284ea03086b85515f1da7b27efc3dce24994cf7edc20",
+      "jobName": "ptah-plan-first-harvest-8390780e97af2963",
+      "leaseDurationSeconds": 960,
+      "observationConnectTimeout": "30s",
+      "observationLockTimeout": "30s",
+      "observationSeverity": "all",
+      "planSealPublicKeyDigest": "sha256:ab9b6ca2c0e81406ecc4ce5887a754de533432bbc55551d30cde5f0cbfb7e879",
+      "source": {
+        "digest": "sha256:43f492a00125dadd85df208d3c034712e56990931f48eecedebd411b30e00e80",
+        "registryAuthFrom": {
+          "dockerConfigJSONKey": ".dockerconfigjson",
+          "mode": "Environment",
+          "name": "demo-registry",
+          "passwordKey": "password",
+          "tokenKey": "token",
+          "usernameKey": "username"
+        },
+        "resolvedReference": "oci://e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/schemas/demo@sha256:43f492a00125dadd85df208d3c034712e56990931f48eecedebd411b30e00e80",
+        "transport": {
+          "plainHTTP": true
+        }
+      },
+      "startedAt": "2026-10-02T22:59:30Z",
+      "target": {
+        "engine": "PostgreSQL",
+        "urlFrom": {
+          "key": "url",
+          "name": "first-harvest-database"
+        }
+      },
+      "targetIdentityDigest": "sha256:c8d2482ce8874b074151e7d72c8a942508369a1267ec59d7c489b031fd45f597",
+      "type": "Plan"
+    },
+    "conditions": [
+      {
+        "lastTransitionTime": "2026-10-02T22:59:00Z",
+        "message": "Database engine \"PostgreSQL\" is supported",
+        "observedGeneration": 1,
+        "reason": "SupportedEngine",
+        "status": "True",
+        "type": "EngineSupported"
+      },
+      {
+        "lastTransitionTime": "2026-10-02T22:59:00Z",
+        "message": "Reconciliation did not complete",
+        "observedGeneration": 1,
+        "reason": "OperationFailed",
+        "status": "False",
+        "type": "Ready"
+      },
+      {
+        "lastTransitionTime": "2026-10-02T23:00:46Z",
+        "message": "invalid_plan_output: plan output exceeds the configured plan limit: saved file has 8388609 bytes; limit is 8388608",
+        "observedGeneration": 1,
+        "reason": "OperationFailed",
+        "status": "True",
+        "type": "ReconciliationFailed"
+      },
+      {
+        "lastTransitionTime": "2026-10-02T22:59:10Z",
+        "message": "Desired OCI reference resolved to immutable content",
+        "observedGeneration": 1,
+        "reason": "DigestPinned",
+        "status": "True",
+        "type": "ArtifactResolved"
+      },
+      {
+        "lastTransitionTime": "2026-10-02T22:59:18Z",
+        "message": "Artifact type and verification policy were satisfied",
+        "observedGeneration": 1,
+        "reason": "PolicySatisfied",
+        "status": "True",
+        "type": "ArtifactVerified"
+      },
+      {
+        "lastTransitionTime": "2026-10-02T22:59:30Z",
+        "message": "Database schema was observed",
+        "observedGeneration": 1,
+        "reason": "Observed",
+        "status": "True",
+        "type": "DatabaseReachable"
+      },
+      {
+        "lastTransitionTime": "2026-10-02T22:59:30Z",
+        "message": "Raw drift was recorded; the authoritative managed scope is being planned",
+        "observedGeneration": 1,
+        "reason": "ScopedPlanPending",
+        "status": "Unknown",
+        "type": "DriftDetected"
+      },
+      {
+        "lastTransitionTime": "2026-10-02T22:59:30Z",
+        "message": "Convergence is unknown until scoped planning completes",
+        "observedGeneration": 1,
+        "reason": "ScopedPlanPending",
+        "status": "Unknown",
+        "type": "InSync"
+      }
+    ],
+    "executionBinding": {
+      "controllerStateVersion": 1,
+      "epoch": "v1-441bac4cc36d108b4c965ccfe737c19b",
+      "executorImage": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-executor@sha256:45530f0f2c41f4d649c207fe8221dad268946ca8da13b503244805c016f3c9dd",
+      "ptahVersion": "v0.9.0-73-gf6e562c5b",
+      "runnerProtocolVersion": 1
+    },
+    "lastAttemptTime": "2026-10-02T22:59:30Z",
+    "nextReconciliationTime": "2026-10-03T00:00:46Z",
+    "observedGeneration": 1,
+    "phase": "Failed",
+    "source": {
+      "artifactType": "application/vnd.stokaro.ptah.schema.v1",
+      "digest": "sha256:43f492a00125dadd85df208d3c034712e56990931f48eecedebd411b30e00e80",
+      "mediaType": "application/vnd.oci.image.manifest.v1+json",
+      "requestedReference": "oci://e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/schemas/demo@sha256:43f492a00125dadd85df208d3c034712e56990931f48eecedebd411b30e00e80",
+      "resolvedAt": "2026-10-02T22:59:10Z",
+      "resolvedReference": "oci://e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/schemas/demo@sha256:43f492a00125dadd85df208d3c034712e56990931f48eecedebd411b30e00e80",
+      "size": 803,
+      "verificationPolicyDigest": "sha256:e6fd539e50737a7554662ef60342989c5f4590530a602f8716380a209a510065",
+      "verificationPolicyUID": "5f430a13-d6ec-4575-a6ed-d853d954f61a",
+      "verified": true,
+      "verifiedAt": "2026-10-02T22:59:18Z"
+    },
+    "target": {
+      "coordinationDigest": "sha256:680bc6a7db378d12d20927cdb209fe960c670130c478da70d8befec0f0485c1f",
+      "driftFindingCount": 1,
+      "driftFindings": [
+        {
+          "category": "tables_added",
+          "count": 1,
+          "severity": "safe"
+        }
+      ],
+      "driftReportDigest": "sha256:aad669f98621f552efdb11efd71fced7d23611968455b109de4844aa6c703941",
+      "engine": "PostgreSQL",
+      "highestDriftSeverity": "safe",
+      "identityDigest": "sha256:c8d2482ce8874b074151e7d72c8a942508369a1267ec59d7c489b031fd45f597",
+      "lastObservedAt": "2026-10-02T22:59:30Z"
+    }
+  }
+}

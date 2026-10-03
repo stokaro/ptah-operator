@@ -23,8 +23,7 @@ import (
 // A migration plan names migrations the artifact carries and stores no chunk of
 // its own, so it is counted and adds no bytes.
 //
-// Like the state gauges, these are rebuilt on every scrape from the cached
-// view and published only while that view is synchronized.
+// Like the state gauges, these are rebuilt on every scrape from the API reading and published only while that view is synchronized.
 
 // PlanStoreView lists the plans the store gauges are built from.
 type PlanStoreView interface {

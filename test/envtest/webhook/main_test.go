@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -35,6 +36,8 @@ import (
 	"github.com/stokaro/ptah-operator/internal/controllerstate"
 	"github.com/stokaro/ptah-operator/internal/controllerwrite"
 	"github.com/stokaro/ptah-operator/internal/podintent"
+	"github.com/stokaro/ptah-operator/internal/resultcleanup"
+	"github.com/stokaro/ptah-operator/internal/resultretention"
 	"github.com/stokaro/ptah-operator/internal/workload"
 	"github.com/stokaro/ptah-operator/test/envtest/internal/harness"
 )
@@ -59,6 +62,12 @@ const (
 // the manager. The handlers require one, and the plans the tests write carry
 // the same value.
 const controllerRevision = "envtest"
+
+var cleanupClockOffset atomic.Int64
+
+func cleanupPolicy() resultcleanup.Policy {
+	return resultcleanup.Policy{Reader: admin, Window: resultretention.MinimumWindow, Now: func() time.Time { return time.Now().Add(time.Duration(cleanupClockOffset.Load())) }}
+}
 
 var (
 	plane  = harness.New(&envtest.Environment{CRDDirectoryPaths: []string{harness.CRDDirectory()}})
@@ -397,9 +406,13 @@ func serveManagerHandlers() (func(), error) {
 	server.Register(validatePodIntentPath, &cradmission.Webhook{Handler: &podintent.ValidationHandler{
 		Reader: admin, Decoder: decoder,
 	}})
+	if err := setupResultCredentialIssuer(); err != nil {
+		return nil, err
+	}
+	resultCleanup := cleanupPolicy()
 	server.Register(validateControllerWritePath, &cradmission.Webhook{Handler: &controllerwrite.ValidationHandler{
 		Validator: &controllerwrite.Validator{
-			Reader: admin, Jobs: manager.builder(), ManagerUsername: manager.username,
+			Reader: admin, Jobs: manager.builder(), ManagerUsername: manager.username, ResultCredentials: resultCredentialIssuer, ResultCleanup: &resultCleanup,
 		},
 	}})
 

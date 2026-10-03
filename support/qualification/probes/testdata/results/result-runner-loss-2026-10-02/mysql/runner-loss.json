@@ -1,0 +1,316 @@
+{
+  "engine": "MySQL",
+  "commit": "b2576f9bbbe72979ba392456846fb16da1f0f03a",
+  "namespace": "ptah-result-runner-loss-mysql-v2",
+  "resourceUID": "ef52eb15-48fe-4707-84de-385db015f424",
+  "jobUID": "25633597-d362-4c58-9007-f1be67f3be4f",
+  "podUID": "8ba21d4b-7464-4301-94d7-5038a42c6027",
+  "operationID": "sha256:0f40cf17696d83a34a6e5fcd2158e4d26f4d58090a9eb4eb49e71e9b390bd4af",
+  "calibration": {
+    "storageEngine": "InnoDB",
+    "afterRollback": "0:1:true",
+    "afterReset": "0:1:false"
+  },
+  "beforeLoss": {
+    "databaseWitness": "1:1:true",
+    "podPhase": "Running",
+    "podRestarts": 0,
+    "publications": 0,
+    "observedAt": "2026-10-02T12:57:28.340676+00:00"
+  },
+  "quota": {
+    "uid": "49c965f6-88c4-44fa-ba30-08d4341a016a",
+    "hard": 14,
+    "used": 14
+  },
+  "originalJobAbsent": true,
+  "originalPodAbsent": true,
+  "unknown": {
+    "metadata": {
+      "name": "lost-ack",
+      "namespace": "ptah-result-runner-loss-mysql-v2",
+      "uid": "ef52eb15-48fe-4707-84de-385db015f424",
+      "generation": 1,
+      "annotations": {
+        "operator.ptah.run/unresolved-run": "{\"outcome\":\"Unknown\",\"operationID\":\"sha256:0f40cf17696d83a34a6e5fcd2158e4d26f4d58090a9eb4eb49e71e9b390bd4af\",\"jobName\":\"ptah-m-apply-lost-ack-a62fa73a7094d762\",\"jobUID\":\"25633597-d362-4c58-9007-f1be67f3be4f\",\"planRef\":{\"name\":\"ptah-mplan-b819bedd1718ce3169999766\",\"uid\":\"47040366-4d6f-4a39-8148-394646a7d668\"},\"targetIdentityDigest\":\"sha256:8697603a45e07290872cffbafb9041609b4191b0b16f2551dd2b86b079f77423\",\"recordedAt\":\"2026-10-02T12:57:28Z\"}"
+      }
+    },
+    "status": {
+      "activeOperation": {
+        "admissionSnapshot": {
+          "alwaysPullImagesEnabled": false,
+          "defaultNotReadyTolerationSeconds": 300,
+          "defaultTolerationsEnabled": true,
+          "defaultUnreachableTolerationSeconds": 300,
+          "digest": "sha256:230eb1598dce65291a746c7c3e7b13e9c4cfd77754aa454771fa0985be4a3fbf",
+          "extendedResourceTolerationEnabled": false,
+          "priorityClass": {
+            "preemptionPolicy": "PreemptLowerPriority",
+            "value": 0
+          },
+          "serviceAccount": {
+            "imagePullSecrets": [
+              {
+                "name": "demo-registry-pull"
+              }
+            ],
+            "object": {
+              "name": "default",
+              "resourceVersion": "7758",
+              "uid": "b62eee65-7d02-4c21-94fc-ee2906c1a514"
+            }
+          },
+          "templateDigest": "sha256:8760eeffa8c2004249746dfbc9cb0621d6aba80d3a484d9c9a66a2874bacadaa",
+          "version": "v1"
+        },
+        "attempt": 1,
+        "coordinationDigest": "sha256:0e7740c97f2886bda253cf3c77c365e181b82082bbe64939f4a432e6059bd5e2",
+        "dispatchNotAfter": "2026-10-02T13:12:17Z",
+        "dispatchStarted": true,
+        "executionBindingID": "v1-4d739c2561cb8c84773fdf3f6db198b9",
+        "executionNotAfter": "2026-10-02T13:12:17Z",
+        "id": "sha256:0f40cf17696d83a34a6e5fcd2158e4d26f4d58090a9eb4eb49e71e9b390bd4af",
+        "inputFingerprint": "sha256:7f8b107da9b1df8ea3ae2f40c2c99b2fc6a6cb82094ced24f780302ae3d6b37c",
+        "jobName": "ptah-m-apply-lost-ack-a62fa73a7094d762",
+        "jobUID": "25633597-d362-4c58-9007-f1be67f3be4f",
+        "leaseDurationSeconds": 1020,
+        "leaseEpoch": "v1-7d7dcac73d14d2a2cd2bb36fdc643a81",
+        "planRef": {
+          "name": "ptah-mplan-b819bedd1718ce3169999766",
+          "uid": "47040366-4d6f-4a39-8148-394646a7d668"
+        },
+        "source": {
+          "digest": "sha256:caff1a2dd6540eb0e65d78ecc21eaa49fe9befd38d2bf30f24682dc2d0dfa907",
+          "registryAuthFrom": {
+            "dockerConfigJSONKey": ".dockerconfigjson",
+            "mode": "Environment",
+            "name": "demo-registry",
+            "passwordKey": "password",
+            "tokenKey": "token",
+            "usernameKey": "username"
+          },
+          "resolvedReference": "oci://e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/migrations/demo@sha256:caff1a2dd6540eb0e65d78ecc21eaa49fe9befd38d2bf30f24682dc2d0dfa907",
+          "transport": {
+            "plainHTTP": true
+          }
+        },
+        "startedAt": "2026-10-02T12:57:17Z",
+        "target": {
+          "engine": "MySQL",
+          "urlFrom": {
+            "key": "url",
+            "name": "ack-database"
+          }
+        },
+        "type": "Apply"
+      },
+      "artifact": {
+        "digest": "sha256:caff1a2dd6540eb0e65d78ecc21eaa49fe9befd38d2bf30f24682dc2d0dfa907",
+        "registryAuthFrom": {
+          "dockerConfigJSONKey": ".dockerconfigjson",
+          "mode": "Environment",
+          "name": "demo-registry",
+          "passwordKey": "password",
+          "tokenKey": "token",
+          "usernameKey": "username"
+        },
+        "resolvedReference": "oci://e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/migrations/demo@sha256:caff1a2dd6540eb0e65d78ecc21eaa49fe9befd38d2bf30f24682dc2d0dfa907",
+        "transport": {
+          "plainHTTP": true
+        }
+      },
+      "conditions": [
+        {
+          "lastTransitionTime": "2026-10-02T12:57:28Z",
+          "message": "The dispatched run's outcome is unknown and may not be retried",
+          "observedGeneration": 1,
+          "reason": "ApplyOutcomeUnknown",
+          "status": "False",
+          "type": "Progressing"
+        },
+        {
+          "lastTransitionTime": "2026-10-02T12:57:05Z",
+          "message": "The resolved artifact satisfied its verification policy",
+          "observedGeneration": 1,
+          "reason": "PolicySatisfied",
+          "status": "True",
+          "type": "ArtifactVerified"
+        },
+        {
+          "lastTransitionTime": "2026-10-02T12:57:28Z",
+          "message": "the dispatched Apply Job is missing and will not be recreated",
+          "observedGeneration": 1,
+          "reason": "ApplyOutcomeUnknown",
+          "status": "True",
+          "type": "Blocked"
+        },
+        {
+          "lastTransitionTime": "2026-10-02T12:57:16Z",
+          "message": "What the dispatched run did is unknown until the database is read",
+          "observedGeneration": 1,
+          "reason": "ApplyOutcomeUnknown",
+          "status": "False",
+          "type": "Ready"
+        },
+        {
+          "lastTransitionTime": "2026-10-02T12:57:16Z",
+          "message": "The plan's approval requirements are satisfied",
+          "observedGeneration": 1,
+          "reason": "Satisfied",
+          "status": "False",
+          "type": "ApprovalRequired"
+        }
+      ],
+      "executionBinding": {
+        "controllerStateVersion": 1,
+        "epoch": "v1-4d739c2561cb8c84773fdf3f6db198b9",
+        "executorImage": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-executor@sha256:45530f0f2c41f4d649c207fe8221dad268946ca8da13b503244805c016f3c9dd",
+        "ptahVersion": "v0.9.0-73-gf6e562c5b",
+        "runnerProtocolVersion": 1
+      },
+      "history": {
+        "appliedCount": 0,
+        "contractVersion": 1,
+        "currentVersion": 0,
+        "fingerprint": "sha256:342a3f14aefb8317c4236fe8a9e7b62c46f3ec809147d386748e8f1ed14c73c7",
+        "observedAt": "2026-10-02T12:57:16Z",
+        "pendingCount": 1,
+        "targetIdentityDigest": "sha256:8697603a45e07290872cffbafb9041609b4191b0b16f2551dd2b86b079f77423"
+      },
+      "lastRun": {
+        "finishedAt": "2026-10-02T12:57:28Z",
+        "jobName": "ptah-m-apply-lost-ack-a62fa73a7094d762",
+        "jobUID": "25633597-d362-4c58-9007-f1be67f3be4f",
+        "message": "the dispatched Apply Job is missing and will not be recreated",
+        "outcome": "Unknown",
+        "startedAt": "2026-10-02T12:57:17Z"
+      },
+      "nextReconciliationTime": "2026-10-02T12:57:58Z",
+      "observedGeneration": 1,
+      "phase": "Blocked",
+      "unresolvedRun": {
+        "jobName": "ptah-m-apply-lost-ack-a62fa73a7094d762",
+        "jobUID": "25633597-d362-4c58-9007-f1be67f3be4f",
+        "operationID": "sha256:0f40cf17696d83a34a6e5fcd2158e4d26f4d58090a9eb4eb49e71e9b390bd4af",
+        "outcome": "Unknown",
+        "planRef": {
+          "name": "ptah-mplan-b819bedd1718ce3169999766",
+          "uid": "47040366-4d6f-4a39-8148-394646a7d668"
+        },
+        "recordedAt": "2026-10-02T12:57:28Z",
+        "targetIdentityDigest": "sha256:8697603a45e07290872cffbafb9041609b4191b0b16f2551dd2b86b079f77423"
+      }
+    }
+  },
+  "afterRecovery": {
+    "databaseWitness": "1:1:true",
+    "publications": 0,
+    "replacementApplyJobs": 0,
+    "migration": {
+      "metadata": {
+        "name": "lost-ack",
+        "namespace": "ptah-result-runner-loss-mysql-v2",
+        "uid": "ef52eb15-48fe-4707-84de-385db015f424",
+        "generation": 1,
+        "annotations": {}
+      },
+      "status": {
+        "artifact": {
+          "digest": "sha256:caff1a2dd6540eb0e65d78ecc21eaa49fe9befd38d2bf30f24682dc2d0dfa907",
+          "registryAuthFrom": {
+            "dockerConfigJSONKey": ".dockerconfigjson",
+            "mode": "Environment",
+            "name": "demo-registry",
+            "passwordKey": "password",
+            "tokenKey": "token",
+            "usernameKey": "username"
+          },
+          "resolvedReference": "oci://e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/migrations/demo@sha256:caff1a2dd6540eb0e65d78ecc21eaa49fe9befd38d2bf30f24682dc2d0dfa907",
+          "transport": {
+            "plainHTTP": true
+          }
+        },
+        "conditions": [
+          {
+            "lastTransitionTime": "2026-10-02T12:58:27Z",
+            "message": "Nothing is pending",
+            "observedGeneration": 1,
+            "reason": "HistoryMatched",
+            "status": "False",
+            "type": "Progressing"
+          },
+          {
+            "lastTransitionTime": "2026-10-02T12:58:16Z",
+            "message": "The resolved artifact satisfied its verification policy",
+            "observedGeneration": 1,
+            "reason": "PolicySatisfied",
+            "status": "True",
+            "type": "ArtifactVerified"
+          },
+          {
+            "lastTransitionTime": "2026-10-02T12:58:27Z",
+            "message": "The history continues this artifact",
+            "observedGeneration": 1,
+            "reason": "HistoryMatched",
+            "status": "False",
+            "type": "Blocked"
+          },
+          {
+            "lastTransitionTime": "2026-10-02T12:58:27Z",
+            "message": "The database has every migration this artifact carries",
+            "observedGeneration": 1,
+            "reason": "HistoryMatched",
+            "status": "True",
+            "type": "Ready"
+          },
+          {
+            "lastTransitionTime": "2026-10-02T12:57:16Z",
+            "message": "The plan's approval requirements are satisfied",
+            "observedGeneration": 1,
+            "reason": "Satisfied",
+            "status": "False",
+            "type": "ApprovalRequired"
+          }
+        ],
+        "executionBinding": {
+          "controllerStateVersion": 1,
+          "epoch": "v1-4d739c2561cb8c84773fdf3f6db198b9",
+          "executorImage": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-executor@sha256:45530f0f2c41f4d649c207fe8221dad268946ca8da13b503244805c016f3c9dd",
+          "ptahVersion": "v0.9.0-73-gf6e562c5b",
+          "runnerProtocolVersion": 1
+        },
+        "history": {
+          "appliedCount": 1,
+          "contractVersion": 1,
+          "currentVersion": 1,
+          "fingerprint": "sha256:d84425cbd67304ef55ee4163861fddc6630894379593d04edccfa05b8e8b2ce9",
+          "observedAt": "2026-10-02T12:58:27Z",
+          "pendingCount": 0,
+          "targetIdentityDigest": "sha256:8697603a45e07290872cffbafb9041609b4191b0b16f2551dd2b86b079f77423"
+        },
+        "lastRun": {
+          "finishedAt": "2026-10-02T12:57:28Z",
+          "jobName": "ptah-m-apply-lost-ack-a62fa73a7094d762",
+          "jobUID": "25633597-d362-4c58-9007-f1be67f3be4f",
+          "message": "the dispatched Apply Job is missing and will not be recreated",
+          "outcome": "Unknown",
+          "startedAt": "2026-10-02T12:57:17Z"
+        },
+        "nextReconciliationTime": "2026-10-02T12:58:57Z",
+        "observedGeneration": 1,
+        "phase": "InSync",
+        "resolvedRun": {
+          "operationID": "sha256:0f40cf17696d83a34a6e5fcd2158e4d26f4d58090a9eb4eb49e71e9b390bd4af",
+          "outcome": "Unknown",
+          "resolution": "HistoryRead",
+          "resolvedAt": "2026-10-02T12:58:27Z"
+        }
+      }
+    }
+  },
+  "procedureSHA256": {
+    "result_lost_ack.py": "dcffb5a66501c06479f2955d4754919f571086aaa969c8ace56d116bc0811826",
+    "result_runner_loss.py": "b3f19049ea8e68edf0d4fa17696608738170cc46f25352237dd5f26e67b53a27"
+  },
+  "completedAt": "2026-10-02T12:58:28.066415+00:00"
+}

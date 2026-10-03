@@ -90,6 +90,10 @@ func (m *migrationRun) engineMigrations() {
 // credential and no database credential, and returns the digest it reported.
 // The harness owns no migration-directory format of its own.
 func (m *migrationRun) publish(version, directory, reference string) string {
+	return m.publishWithCheck(version, directory, reference, nil)
+}
+
+func (m *migrationRun) publishWithCheck(version, directory, reference string, check func()) string {
 	m.t.Helper()
 	configMap := "e2e-migrations-" + m.engine.name + "-" + version
 	name := "e2e-push-migrations-" + m.engine.name + "-" + version
@@ -176,6 +180,9 @@ func (m *migrationRun) publish(version, directory, reference string) string {
 	})
 	job := &batchv1.Job{}
 	m.poll("the migration publisher Job "+name, 3*time.Second, func() bool {
+		if check != nil {
+			check()
+		}
 		if m.get(name, job) != nil {
 			return false
 		}

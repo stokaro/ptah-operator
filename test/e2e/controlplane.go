@@ -26,6 +26,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/crdupgrade"
 )
 
 // The admission singleton's configurations are named for the chart, not for
@@ -372,9 +373,8 @@ func mutatingAdmissionExact(configuration *admissionregistrationv1.MutatingWebho
 }
 
 // validatingAdmissionExact holds the validating singleton to its exact,
-// fail-closed shape. The Pod intent entry is narrowed by one match condition,
-// written here from its parts, and the controller-write entry by the
-// manager's identity.
+// fail-closed shape. Routing includes operation Pods, reserved credential
+// references, manager writes, and credential writes by every identity.
 func validatingAdmissionExact(configuration *admissionregistrationv1.ValidatingWebhookConfiguration,
 	namespace, service, controllerUser string,
 ) error {
@@ -403,7 +403,7 @@ func validatingAdmissionExact(configuration *admissionregistrationv1.ValidatingW
 			matchPolicy: admissionregistrationv1.Equivalent, timeoutSeconds: 5,
 			matchConditions: func(conditions []admissionregistrationv1.MatchCondition) bool {
 				return len(conditions) == 1 && conditions[0].Name == "managed-or-operation-job-pod" &&
-					collapseWhitespace(conditions[0].Expression) == operationPodCondition()
+					crdupgrade.MatchExpressionsEqual(conditions[0].Expression, operationPodCondition())
 			},
 			service: serviceReference(namespace, service, "/validate-v1-pod-ptah-operation-intent"),
 			rules: []admissionregistrationv1.RuleWithOperations{
@@ -413,10 +413,8 @@ func validatingAdmissionExact(configuration *admissionregistrationv1.ValidatingW
 		"vcontrollerwrite.operator.ptah.run": {
 			matchPolicy: admissionregistrationv1.Exact, timeoutSeconds: 30,
 			matchConditions: func(conditions []admissionregistrationv1.MatchCondition) bool {
-				return reflect.DeepEqual(conditions, []admissionregistrationv1.MatchCondition{{
-					Name:       "controller-service-account",
-					Expression: "request.userInfo.username == '" + controllerUser + "'",
-				}})
+				return len(conditions) == 1 && conditions[0].Name == "controller-service-account" &&
+					crdupgrade.MatchExpressionsEqual(conditions[0].Expression, controllerWriteCondition(controllerUser))
 			},
 			service: serviceReference(namespace, service, "/validate-operator-controller-write"),
 			rules: []admissionregistrationv1.RuleWithOperations{
@@ -424,6 +422,8 @@ func validatingAdmissionExact(configuration *admissionregistrationv1.ValidatingW
 				namespacedRule("", "v1", createOnly, "configmaps"),
 				namespacedRule("operator.ptah.run", "v1alpha1", createOnly,
 					"ptahschemaplans", "ptahschemaplanchunks", "ptahmigrationplans"),
+				namespacedRule("", "v1", []admissionregistrationv1.OperationType{admissionregistrationv1.Create, admissionregistrationv1.Update, admissionregistrationv1.Delete}, "secrets"),
+				namespacedRule("operator.ptah.run", "v1alpha1", []admissionregistrationv1.OperationType{admissionregistrationv1.Create, admissionregistrationv1.Update, admissionregistrationv1.Delete}, "ptahresultrecords"),
 			},
 		},
 	}
@@ -463,33 +463,14 @@ func entryNames(entries []admissionEntry, want []string) error {
 	return nil
 }
 
-var whitespaceRun = regexp.MustCompile(`\s+`)
-
-// collapseWhitespace is jq's gsub("\\s+"; " ").
-func collapseWhitespace(expression string) string {
-	return whitespaceRun.ReplaceAllString(expression, " ")
+// operationPodCondition includes both operation identities and direct delivery
+// credential references. Hold acceptance to the same installed routing contract.
+func operationPodCondition() string {
+	return crdupgrade.PodIntentMatchExpression()
 }
 
-// operationPodCondition is the Pod intent entry's match condition, built from
-// its parts: a Pod the operator's labels name, or one a Job of an operation
-// controls, and on an update the same of the Pod it replaces.
-func operationPodCondition() string {
-	labels := func(object string) string {
-		return "(has(" + object + ".metadata.labels) && " +
-			"'app.kubernetes.io/managed-by' in " + object + ".metadata.labels && " +
-			object + ".metadata.labels['app.kubernetes.io/managed-by'] == 'ptah-operator' && " +
-			"'app.kubernetes.io/component' in " + object + ".metadata.labels && " +
-			object + ".metadata.labels['app.kubernetes.io/component'] in ['schema-operation', 'migration-operation'])"
-	}
-	owner := func(object string) string {
-		return "(has(" + object + ".metadata.ownerReferences) && " +
-			object + ".metadata.ownerReferences.exists(ref, ref.apiVersion == 'batch/v1'" +
-			" && ref.kind == 'Job' && ref.controller == true && ref.name.matches(" +
-			"'^ptah-(m-)?(resolve|verify|observe|plan|history|apply)-')))"
-	}
-	return labels("object") + " || " + owner("object") +
-		" || (request.operation == 'UPDATE' && oldObject != null && ( " +
-		labels("oldObject") + " || " + owner("oldObject") + "))"
+func controllerWriteCondition(user string) string {
+	return crdupgrade.ControllerWriteMatchExpression(user)
 }
 
 // crdSpecProperties is the v1alpha1 spec's properties of a CRD.

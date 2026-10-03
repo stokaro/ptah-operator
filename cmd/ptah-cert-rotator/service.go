@@ -18,6 +18,7 @@ type serviceRuntimeConfig struct {
 	HealthBindAddress string
 	HealthHandler     http.Handler
 	Supervisor        *rotationSupervisor
+	ResultSupervisor  *rotationSupervisor
 }
 
 func (c serviceRuntimeConfig) validate() error {
@@ -74,13 +75,23 @@ func runServiceOnListener(
 
 	serviceCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	results := make(chan serviceRuntimeResult, 2)
+	components := 2
+	if config.ResultSupervisor != nil {
+		components++
+	}
+	results := make(chan serviceRuntimeResult, components)
 	go func() {
 		results <- serviceRuntimeResult{component: healthServiceComponent, err: healthServer.Serve(healthListener)}
 	}()
 	go func() {
 		results <- serviceRuntimeResult{component: supervisorServiceComponent, err: config.Supervisor.Run(serviceCtx)}
 	}()
+
+	if config.ResultSupervisor != nil {
+		go func() {
+			results <- serviceRuntimeResult{component: resultSupervisorServiceComponent, err: config.ResultSupervisor.Run(serviceCtx)}
+		}()
+	}
 
 	first := <-results
 	contextWasDone := ctx.Err() != nil
@@ -92,7 +103,7 @@ func runServiceOnListener(
 	allResults := []serviceRuntimeResult{first}
 	waitTimer := time.NewTimer(serviceShutdownTimeout)
 	defer waitTimer.Stop()
-	for len(allResults) < 2 {
+	for len(allResults) < components {
 		select {
 		case result := <-results:
 			allResults = append(allResults, result)
@@ -106,8 +117,9 @@ func runServiceOnListener(
 type serviceComponent string
 
 const (
-	healthServiceComponent     serviceComponent = "health"
-	supervisorServiceComponent serviceComponent = "certificate rotation supervisor"
+	healthServiceComponent           serviceComponent = "health"
+	supervisorServiceComponent       serviceComponent = "certificate rotation supervisor"
+	resultSupervisorServiceComponent serviceComponent = "result certificate rotation supervisor"
 )
 
 type serviceRuntimeResult struct {
@@ -124,7 +136,7 @@ func serviceRuntimeError(
 	errs := []error{shutdownErr}
 	for _, result := range results {
 		switch result.component {
-		case supervisorServiceComponent:
+		case supervisorServiceComponent, resultSupervisorServiceComponent:
 			if result.err != nil {
 				errs = append(errs, result.err)
 			} else if result.component == first && !contextWasDone {

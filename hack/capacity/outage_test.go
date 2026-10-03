@@ -88,7 +88,7 @@ func TestUnobservedOutageFailsAndRemovesOnlyItsPolicy(t *testing.T) {
 func TestRegistryFailureNeedsAFreshBoundRunnerFailure(t *testing.T) {
 	t.Parallel()
 	start := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
-	s := &scenarios{load: workload{Schemas: 1, Migrations: 1}}
+	s := &scenarios{in: inputs{namespace: "work"}, load: workload{Schemas: 1, Migrations: 1}}
 	for _, family := range []string{"schema", "migration"} {
 		good := resolvePod(t, family, start.Add(time.Second), nil)
 		if got, digest := s.failedResolve(good, start); got != family || !strings.HasPrefix(digest, "sha256:") {
@@ -96,6 +96,7 @@ func TestRegistryFailureNeedsAFreshBoundRunnerFailure(t *testing.T) {
 		}
 		for name, mutate := range map[string]func(*corev1.Pod){
 			"old Pod":              func(p *corev1.Pod) { p.CreationTimestamp = metav1.NewTime(start.Add(-time.Second)) },
+			"wrong namespace":      func(p *corev1.Pod) { p.Namespace = "other" },
 			"no UID":               func(p *corev1.Pod) { p.UID = "" },
 			"unrelated resource":   func(p *corev1.Pod) { p.Labels["operator.ptah.run/"+family] = "unrelated" },
 			"another operation":    func(p *corev1.Pod) { p.Labels[operationworkload.LabelOperation] = "verify" },

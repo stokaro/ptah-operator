@@ -1,0 +1,3650 @@
+{
+  "source": {
+    "run": 36855172004,
+    "artifact": 11161705978,
+    "head": "a6f3dbec27179275fe44c9d757ba888c172fb472",
+    "reportSHA256": "ae114920cc0071f0efb5bbb74aae6fcb31d02c65c379cadf445a0ed9793da3b1",
+    "selection": "Unmodified last pre-fault reading, first ready reading before fresh recovery, bound post-fault Plan/History claim and its accepted convergence, first following active operation, and last reading within 180 seconds, per resource; duplicate selections removed. Conditions are projected to Ready and InSync; retained field values are unchanged."
+  },
+  "start": "2026-10-01T11:55:27.829408172Z",
+  "deadline": "2026-10-01T11:58:27.829408172Z",
+  "histories": [
+    {
+      "family": "schema",
+      "namespace": "ptah-capacity-bbe8803caf-a",
+      "selector": "operator.ptah.run/capacity=lab-20",
+      "startedAt": "2026-10-01T11:38:05.574283978Z",
+      "endedAt": "2026-10-01T12:06:29.303890016Z",
+      "cursor": "46593",
+      "readings": [
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:54:27.980817345Z",
+          "resourceVersion": "27901",
+          "namespace": "ptah-capacity-bbe8803caf-a",
+          "name": "capacity-schema-000",
+          "uid": "097aaa88-e224-4444-ac73-b9e6076bc315",
+          "createdAt": "2026-10-01T11:38:05Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:54:27Z",
+              "reason": "InSync",
+              "message": ""
+            },
+            {
+              "type": "InSync",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:54:27Z",
+              "reason": "ScopedConverged",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:54:27Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:54:48.668443267Z",
+          "resourceVersion": "28329",
+          "namespace": "ptah-capacity-bbe8803caf-a",
+          "name": "capacity-schema-008",
+          "uid": "1c42d809-52ac-4f13-aa1f-9a000e17b880",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:54:48Z",
+              "reason": "InSync",
+              "message": ""
+            },
+            {
+              "type": "InSync",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:54:48Z",
+              "reason": "ScopedConverged",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:54:48Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:54:52.176032432Z",
+          "resourceVersion": "28392",
+          "namespace": "ptah-capacity-bbe8803caf-a",
+          "name": "capacity-schema-006",
+          "uid": "626042ef-ba42-412b-9e20-b4fadb53cab0",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:54:52Z",
+              "reason": "InSync",
+              "message": ""
+            },
+            {
+              "type": "InSync",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:54:52Z",
+              "reason": "ScopedConverged",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:54:52Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:55:21.963768489Z",
+          "resourceVersion": "29450",
+          "namespace": "ptah-capacity-bbe8803caf-a",
+          "name": "capacity-schema-004",
+          "uid": "baad125a-74ee-4297-b3cc-9cf02d09f2ba",
+          "createdAt": "2026-10-01T11:38:06Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "operation": {
+            "type": "Plan",
+            "id": "sha256:6d5ba549741e3b54e18fa1ad8d9ad984ce418861b10b43c46427f5f2b5138389",
+            "jobName": "ptah-plan-capacity-schema-004-f1b46013e202ddd0",
+            "jobUID": "b66c2342-1695-4bcc-a98b-bc6ae802b511",
+            "startedAt": "2026-10-01T11:55:20Z"
+          },
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "False",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:54:57Z",
+              "reason": "OperationInProgress",
+              "message": ""
+            },
+            {
+              "type": "InSync",
+              "status": "Unknown",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:54:57Z",
+              "reason": "ScopedPlanPending",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:52:57Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:55:23.672854888Z",
+          "resourceVersion": "29511",
+          "namespace": "ptah-capacity-bbe8803caf-a",
+          "name": "capacity-schema-002",
+          "uid": "3aa59a70-aa3f-4688-a625-9b7d70313375",
+          "createdAt": "2026-10-01T11:38:05Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "operation": {
+            "type": "Plan",
+            "id": "sha256:3d6790e3c8d273d75cf16a943b26c756e6f87ef1e96f44083754ecc94af83d35",
+            "jobName": "ptah-plan-capacity-schema-002-e63937cd17e8ffde",
+            "jobUID": "4ac0a1a8-4de8-4ac4-a44b-f8cd6e21022d",
+            "startedAt": "2026-10-01T11:55:21Z"
+          },
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "False",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:55:00Z",
+              "reason": "OperationInProgress",
+              "message": ""
+            },
+            {
+              "type": "InSync",
+              "status": "Unknown",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:55:00Z",
+              "reason": "ScopedPlanPending",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:53:00Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:55:49.478933699Z",
+          "resourceVersion": "29980",
+          "namespace": "ptah-capacity-bbe8803caf-a",
+          "name": "capacity-schema-002",
+          "uid": "3aa59a70-aa3f-4688-a625-9b7d70313375",
+          "createdAt": "2026-10-01T11:38:05Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:55:49Z",
+              "reason": "InSync",
+              "message": ""
+            },
+            {
+              "type": "InSync",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:55:49Z",
+              "reason": "ScopedConverged",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:55:49Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:55:49.495446505Z",
+          "resourceVersion": "29985",
+          "namespace": "ptah-capacity-bbe8803caf-a",
+          "name": "capacity-schema-002",
+          "uid": "3aa59a70-aa3f-4688-a625-9b7d70313375",
+          "createdAt": "2026-10-01T11:38:05Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:55:49Z",
+              "reason": "InSync",
+              "message": ""
+            },
+            {
+              "type": "InSync",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:55:49Z",
+              "reason": "ScopedConverged",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:55:49Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:55:52.241208822Z",
+          "resourceVersion": "30152",
+          "namespace": "ptah-capacity-bbe8803caf-a",
+          "name": "capacity-schema-004",
+          "uid": "baad125a-74ee-4297-b3cc-9cf02d09f2ba",
+          "createdAt": "2026-10-01T11:38:06Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:55:51Z",
+              "reason": "InSync",
+              "message": ""
+            },
+            {
+              "type": "InSync",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:55:51Z",
+              "reason": "ScopedConverged",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:55:51Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:55:52.273789558Z",
+          "resourceVersion": "30157",
+          "namespace": "ptah-capacity-bbe8803caf-a",
+          "name": "capacity-schema-004",
+          "uid": "baad125a-74ee-4297-b3cc-9cf02d09f2ba",
+          "createdAt": "2026-10-01T11:38:06Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:55:51Z",
+              "reason": "InSync",
+              "message": ""
+            },
+            {
+              "type": "InSync",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:55:51Z",
+              "reason": "ScopedConverged",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:55:51Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:56:27.107878657Z",
+          "resourceVersion": "31448",
+          "namespace": "ptah-capacity-bbe8803caf-a",
+          "name": "capacity-schema-000",
+          "uid": "097aaa88-e224-4444-ac73-b9e6076bc315",
+          "createdAt": "2026-10-01T11:38:05Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:54:27Z",
+              "reason": "InSync",
+              "message": ""
+            },
+            {
+              "type": "InSync",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:54:27Z",
+              "reason": "ScopedConverged",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:54:27Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:56:44.537842959Z",
+          "resourceVersion": "31668",
+          "namespace": "ptah-capacity-bbe8803caf-a",
+          "name": "capacity-schema-000",
+          "uid": "097aaa88-e224-4444-ac73-b9e6076bc315",
+          "createdAt": "2026-10-01T11:38:05Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "operation": {
+            "type": "Plan",
+            "id": "sha256:2cd32c1f843d55cc0650027870cb772e9a92563a89a5b55418ceaa20c82f6a8d",
+            "jobName": "ptah-plan-capacity-schema-000-a5acf445214ea695",
+            "jobUID": "5411bd49-a9fc-47af-8d2c-3babf0e3db1a",
+            "startedAt": "2026-10-01T11:56:44Z"
+          },
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "False",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:56:27Z",
+              "reason": "OperationInProgress",
+              "message": ""
+            },
+            {
+              "type": "InSync",
+              "status": "Unknown",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:56:27Z",
+              "reason": "ScopedPlanPending",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:54:27Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:56:48.186334479Z",
+          "resourceVersion": "31710",
+          "namespace": "ptah-capacity-bbe8803caf-a",
+          "name": "capacity-schema-008",
+          "uid": "1c42d809-52ac-4f13-aa1f-9a000e17b880",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:54:48Z",
+              "reason": "InSync",
+              "message": ""
+            },
+            {
+              "type": "InSync",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:54:48Z",
+              "reason": "ScopedConverged",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:54:48Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:56:52.067554962Z",
+          "resourceVersion": "31768",
+          "namespace": "ptah-capacity-bbe8803caf-a",
+          "name": "capacity-schema-006",
+          "uid": "626042ef-ba42-412b-9e20-b4fadb53cab0",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:54:52Z",
+              "reason": "InSync",
+              "message": ""
+            },
+            {
+              "type": "InSync",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:54:52Z",
+              "reason": "ScopedConverged",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:54:52Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:56:53.737199597Z",
+          "resourceVersion": "31799",
+          "namespace": "ptah-capacity-bbe8803caf-a",
+          "name": "capacity-schema-000",
+          "uid": "097aaa88-e224-4444-ac73-b9e6076bc315",
+          "createdAt": "2026-10-01T11:38:05Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:56:53Z",
+              "reason": "InSync",
+              "message": ""
+            },
+            {
+              "type": "InSync",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:56:53Z",
+              "reason": "ScopedConverged",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:56:53Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:56:53.746339242Z",
+          "resourceVersion": "31800",
+          "namespace": "ptah-capacity-bbe8803caf-a",
+          "name": "capacity-schema-000",
+          "uid": "097aaa88-e224-4444-ac73-b9e6076bc315",
+          "createdAt": "2026-10-01T11:38:05Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:56:53Z",
+              "reason": "InSync",
+              "message": ""
+            },
+            {
+              "type": "InSync",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:56:53Z",
+              "reason": "ScopedConverged",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:56:53Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:57:07.941978113Z",
+          "resourceVersion": "32089",
+          "namespace": "ptah-capacity-bbe8803caf-a",
+          "name": "capacity-schema-008",
+          "uid": "1c42d809-52ac-4f13-aa1f-9a000e17b880",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "operation": {
+            "type": "Plan",
+            "id": "sha256:43a86e0678d006a50326ead508bd54aa9f6dc11a82d9a81671ba04c1fd012c49",
+            "jobName": "ptah-plan-capacity-schema-008-8f8243789b53ff65",
+            "jobUID": "6d7c03ac-9a9b-45e6-ad65-05dc73ecdc8e",
+            "startedAt": "2026-10-01T11:57:07Z"
+          },
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "False",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:56:48Z",
+              "reason": "OperationInProgress",
+              "message": ""
+            },
+            {
+              "type": "InSync",
+              "status": "Unknown",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:56:48Z",
+              "reason": "ScopedPlanPending",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:54:48Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:57:11.712720347Z",
+          "resourceVersion": "32181",
+          "namespace": "ptah-capacity-bbe8803caf-a",
+          "name": "capacity-schema-006",
+          "uid": "626042ef-ba42-412b-9e20-b4fadb53cab0",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "operation": {
+            "type": "Plan",
+            "id": "sha256:962c428124d7e5ad88ef4e6e76caa1e489858fd9fe546034557fdcb7cae0a472",
+            "jobName": "ptah-plan-capacity-schema-006-c24e21c40951f02a",
+            "jobUID": "f3bd5547-ebfe-4995-bcf3-3665108ee6fc",
+            "startedAt": "2026-10-01T11:57:10Z"
+          },
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "False",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:56:52Z",
+              "reason": "OperationInProgress",
+              "message": ""
+            },
+            {
+              "type": "InSync",
+              "status": "Unknown",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:56:52Z",
+              "reason": "ScopedPlanPending",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:54:52Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:57:14.758329769Z",
+          "resourceVersion": "32244",
+          "namespace": "ptah-capacity-bbe8803caf-a",
+          "name": "capacity-schema-008",
+          "uid": "1c42d809-52ac-4f13-aa1f-9a000e17b880",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:57:14Z",
+              "reason": "InSync",
+              "message": ""
+            },
+            {
+              "type": "InSync",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:57:14Z",
+              "reason": "ScopedConverged",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:57:14Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:57:14.768248547Z",
+          "resourceVersion": "32245",
+          "namespace": "ptah-capacity-bbe8803caf-a",
+          "name": "capacity-schema-008",
+          "uid": "1c42d809-52ac-4f13-aa1f-9a000e17b880",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:57:14Z",
+              "reason": "InSync",
+              "message": ""
+            },
+            {
+              "type": "InSync",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:57:14Z",
+              "reason": "ScopedConverged",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:57:14Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:57:19.059119091Z",
+          "resourceVersion": "32324",
+          "namespace": "ptah-capacity-bbe8803caf-a",
+          "name": "capacity-schema-006",
+          "uid": "626042ef-ba42-412b-9e20-b4fadb53cab0",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:57:18Z",
+              "reason": "InSync",
+              "message": ""
+            },
+            {
+              "type": "InSync",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:57:18Z",
+              "reason": "ScopedConverged",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:57:18Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:57:19.138327501Z",
+          "resourceVersion": "32326",
+          "namespace": "ptah-capacity-bbe8803caf-a",
+          "name": "capacity-schema-006",
+          "uid": "626042ef-ba42-412b-9e20-b4fadb53cab0",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:57:18Z",
+              "reason": "InSync",
+              "message": ""
+            },
+            {
+              "type": "InSync",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:57:18Z",
+              "reason": "ScopedConverged",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:57:18Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:57:49.014175069Z",
+          "resourceVersion": "32579",
+          "namespace": "ptah-capacity-bbe8803caf-a",
+          "name": "capacity-schema-002",
+          "uid": "3aa59a70-aa3f-4688-a625-9b7d70313375",
+          "createdAt": "2026-10-01T11:38:05Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:55:49Z",
+              "reason": "InSync",
+              "message": ""
+            },
+            {
+              "type": "InSync",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:55:49Z",
+              "reason": "ScopedConverged",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:55:49Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:57:51.030702975Z",
+          "resourceVersion": "32622",
+          "namespace": "ptah-capacity-bbe8803caf-a",
+          "name": "capacity-schema-004",
+          "uid": "baad125a-74ee-4297-b3cc-9cf02d09f2ba",
+          "createdAt": "2026-10-01T11:38:06Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:55:51Z",
+              "reason": "InSync",
+              "message": ""
+            },
+            {
+              "type": "InSync",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:55:51Z",
+              "reason": "ScopedConverged",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:55:51Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:58:07.915320922Z",
+          "resourceVersion": "33316",
+          "namespace": "ptah-capacity-bbe8803caf-a",
+          "name": "capacity-schema-002",
+          "uid": "3aa59a70-aa3f-4688-a625-9b7d70313375",
+          "createdAt": "2026-10-01T11:38:05Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "operation": {
+            "type": "Plan",
+            "id": "sha256:43ec67ae0fc9219751c371f75d039a6df8fea1e0212df9b52a0af87266154982",
+            "jobName": "ptah-plan-capacity-schema-002-a3eb54baaddaabe0",
+            "jobUID": "cd57a50f-1587-49d8-98b7-bba87d277ca8",
+            "startedAt": "2026-10-01T11:58:06Z"
+          },
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "False",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:57:49Z",
+              "reason": "OperationInProgress",
+              "message": ""
+            },
+            {
+              "type": "InSync",
+              "status": "Unknown",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:57:49Z",
+              "reason": "ScopedPlanPending",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:55:49Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:58:09.613821638Z",
+          "resourceVersion": "33388",
+          "namespace": "ptah-capacity-bbe8803caf-a",
+          "name": "capacity-schema-004",
+          "uid": "baad125a-74ee-4297-b3cc-9cf02d09f2ba",
+          "createdAt": "2026-10-01T11:38:06Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "operation": {
+            "type": "Plan",
+            "id": "sha256:c7168b873b492cd521f1f3f0a685e67415bdeaa1f6e9c53fde2e0d9b6bc6a677",
+            "jobName": "ptah-plan-capacity-schema-004-390195468f1247dd",
+            "jobUID": "5514cb52-11a7-4988-9a89-ba6f386e0ec5",
+            "startedAt": "2026-10-01T11:58:08Z"
+          },
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "False",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:57:51Z",
+              "reason": "OperationInProgress",
+              "message": ""
+            },
+            {
+              "type": "InSync",
+              "status": "Unknown",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:57:51Z",
+              "reason": "ScopedPlanPending",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:55:51Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:58:15.785795423Z",
+          "resourceVersion": "33668",
+          "namespace": "ptah-capacity-bbe8803caf-a",
+          "name": "capacity-schema-002",
+          "uid": "3aa59a70-aa3f-4688-a625-9b7d70313375",
+          "createdAt": "2026-10-01T11:38:05Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:58:15Z",
+              "reason": "InSync",
+              "message": ""
+            },
+            {
+              "type": "InSync",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:58:15Z",
+              "reason": "ScopedConverged",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:58:15Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:58:15.800521762Z",
+          "resourceVersion": "33669",
+          "namespace": "ptah-capacity-bbe8803caf-a",
+          "name": "capacity-schema-002",
+          "uid": "3aa59a70-aa3f-4688-a625-9b7d70313375",
+          "createdAt": "2026-10-01T11:38:05Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:58:15Z",
+              "reason": "InSync",
+              "message": ""
+            },
+            {
+              "type": "InSync",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:58:15Z",
+              "reason": "ScopedConverged",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:58:15Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:58:17.795140795Z",
+          "resourceVersion": "33746",
+          "namespace": "ptah-capacity-bbe8803caf-a",
+          "name": "capacity-schema-004",
+          "uid": "baad125a-74ee-4297-b3cc-9cf02d09f2ba",
+          "createdAt": "2026-10-01T11:38:06Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:58:17Z",
+              "reason": "InSync",
+              "message": ""
+            },
+            {
+              "type": "InSync",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:58:17Z",
+              "reason": "ScopedConverged",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:58:17Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:58:17.809255328Z",
+          "resourceVersion": "33747",
+          "namespace": "ptah-capacity-bbe8803caf-a",
+          "name": "capacity-schema-004",
+          "uid": "baad125a-74ee-4297-b3cc-9cf02d09f2ba",
+          "createdAt": "2026-10-01T11:38:06Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:58:17Z",
+              "reason": "InSync",
+              "message": ""
+            },
+            {
+              "type": "InSync",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:58:17Z",
+              "reason": "ScopedConverged",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:58:17Z",
+          "pendingRelease": false,
+          "unsafe": false
+        }
+      ]
+    },
+    {
+      "family": "migration",
+      "namespace": "ptah-capacity-bbe8803caf-a",
+      "selector": "operator.ptah.run/capacity=lab-20",
+      "startedAt": "2026-10-01T11:38:05.5742939Z",
+      "endedAt": "2026-10-01T12:06:29.303791333Z",
+      "cursor": "46040",
+      "readings": [
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:53:29.060161588Z",
+          "resourceVersion": "26702",
+          "namespace": "ptah-capacity-bbe8803caf-a",
+          "name": "capacity-migration-006",
+          "uid": "189a21d1-7e14-44c1-a18c-6c4b1be19a67",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:39:18Z",
+              "reason": "HistoryMatched",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:53:28Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:53:46.579229755Z",
+          "resourceVersion": "27359",
+          "namespace": "ptah-capacity-bbe8803caf-a",
+          "name": "capacity-migration-000",
+          "uid": "03ea4c4d-d750-4abe-ae1f-506c60306393",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:39:19Z",
+              "reason": "HistoryMatched",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:53:46Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:53:51.562071994Z",
+          "resourceVersion": "27490",
+          "namespace": "ptah-capacity-bbe8803caf-a",
+          "name": "capacity-migration-004",
+          "uid": "9c033c1d-d44f-4afc-a1dc-fcb49fe9a927",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:39:28Z",
+              "reason": "HistoryMatched",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:53:51Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:53:51.578918513Z",
+          "resourceVersion": "27491",
+          "namespace": "ptah-capacity-bbe8803caf-a",
+          "name": "capacity-migration-008",
+          "uid": "7390718c-0786-4703-b9b4-00e584be71bd",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:39:24Z",
+              "reason": "HistoryMatched",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:53:51Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:53:53.781481631Z",
+          "resourceVersion": "27517",
+          "namespace": "ptah-capacity-bbe8803caf-a",
+          "name": "capacity-migration-002",
+          "uid": "94cf37fa-a761-44b5-9d02-afa48b5e76a4",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:39:27Z",
+              "reason": "HistoryMatched",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:53:53Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:55:28.168222357Z",
+          "resourceVersion": "29755",
+          "namespace": "ptah-capacity-bbe8803caf-a",
+          "name": "capacity-migration-006",
+          "uid": "189a21d1-7e14-44c1-a18c-6c4b1be19a67",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:39:18Z",
+              "reason": "HistoryMatched",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:53:28Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:55:49.641986453Z",
+          "resourceVersion": "29990",
+          "namespace": "ptah-capacity-bbe8803caf-a",
+          "name": "capacity-migration-000",
+          "uid": "03ea4c4d-d750-4abe-ae1f-506c60306393",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:39:19Z",
+              "reason": "HistoryMatched",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:53:46Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:55:52.399483268Z",
+          "resourceVersion": "30168",
+          "namespace": "ptah-capacity-bbe8803caf-a",
+          "name": "capacity-migration-004",
+          "uid": "9c033c1d-d44f-4afc-a1dc-fcb49fe9a927",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:39:28Z",
+              "reason": "HistoryMatched",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:53:51Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:55:52.458209282Z",
+          "resourceVersion": "30174",
+          "namespace": "ptah-capacity-bbe8803caf-a",
+          "name": "capacity-migration-008",
+          "uid": "7390718c-0786-4703-b9b4-00e584be71bd",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:39:24Z",
+              "reason": "HistoryMatched",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:53:51Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:55:53.567083829Z",
+          "resourceVersion": "30269",
+          "namespace": "ptah-capacity-bbe8803caf-a",
+          "name": "capacity-migration-002",
+          "uid": "94cf37fa-a761-44b5-9d02-afa48b5e76a4",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:39:27Z",
+              "reason": "HistoryMatched",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:53:53Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:56:12.857877939Z",
+          "resourceVersion": "30963",
+          "namespace": "ptah-capacity-bbe8803caf-a",
+          "name": "capacity-migration-000",
+          "uid": "03ea4c4d-d750-4abe-ae1f-506c60306393",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "operation": {
+            "type": "History",
+            "id": "sha256:424d7d6798c54317794a0d8d3947d01eba939aefe9308f650b0da1fc31944ff3",
+            "jobName": "ptah-m-history-capacity-migration-000-eb1322b2629ad7f7",
+            "jobUID": "e892b461-0771-42ad-8678-2e344cb5aa6b",
+            "startedAt": "2026-10-01T11:56:12Z"
+          },
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:39:19Z",
+              "reason": "HistoryMatched",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:53:46Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:56:15.891417265Z",
+          "resourceVersion": "31083",
+          "namespace": "ptah-capacity-bbe8803caf-a",
+          "name": "capacity-migration-006",
+          "uid": "189a21d1-7e14-44c1-a18c-6c4b1be19a67",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "operation": {
+            "type": "History",
+            "id": "sha256:82627d108145702d9e2af8bcce68e88a86b9d87a1904691a71047d7294e587f6",
+            "jobName": "ptah-m-history-capacity-migration-006-38bfca1e64641948",
+            "jobUID": "31aa65ec-4738-447f-b475-567e84d22b9f",
+            "startedAt": "2026-10-01T11:56:14Z"
+          },
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:39:18Z",
+              "reason": "HistoryMatched",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:53:28Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:56:18.822537672Z",
+          "resourceVersion": "31207",
+          "namespace": "ptah-capacity-bbe8803caf-a",
+          "name": "capacity-migration-008",
+          "uid": "7390718c-0786-4703-b9b4-00e584be71bd",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "operation": {
+            "type": "History",
+            "id": "sha256:067abf2b99dcaa0bff63d6753dd13402cf97e805f1842857b121295a6c5f4efd",
+            "jobName": "ptah-m-history-capacity-migration-008-263c60554cbfbcb7",
+            "jobUID": "b8ed6fbc-d29e-410d-9170-20ade3706c9d",
+            "startedAt": "2026-10-01T11:56:16Z"
+          },
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:39:24Z",
+              "reason": "HistoryMatched",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:53:51Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:56:19.271991942Z",
+          "resourceVersion": "31225",
+          "namespace": "ptah-capacity-bbe8803caf-a",
+          "name": "capacity-migration-004",
+          "uid": "9c033c1d-d44f-4afc-a1dc-fcb49fe9a927",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "operation": {
+            "type": "History",
+            "id": "sha256:9137d6f402989f3e5d27e3f832b5060cf8ccf1b7a5fc2bb28e3beb2db931b9e0",
+            "jobName": "ptah-m-history-capacity-migration-004-26269002ad92ce7d",
+            "jobUID": "40f98d82-ccff-4bf3-8f70-bb000af89f99",
+            "startedAt": "2026-10-01T11:56:17Z"
+          },
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:39:28Z",
+              "reason": "HistoryMatched",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:53:51Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:56:19.456430589Z",
+          "resourceVersion": "31239",
+          "namespace": "ptah-capacity-bbe8803caf-a",
+          "name": "capacity-migration-002",
+          "uid": "94cf37fa-a761-44b5-9d02-afa48b5e76a4",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "operation": {
+            "type": "History",
+            "id": "sha256:9be8d8bac5e42a30a7ef467659029a4653b406fa9e453db91f384af1e2549f8e",
+            "jobName": "ptah-m-history-capacity-migration-002-316c09934b7520e3",
+            "jobUID": "01a6d66e-bafd-426e-b5cd-ba35b84968a7",
+            "startedAt": "2026-10-01T11:56:17Z"
+          },
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:39:27Z",
+              "reason": "HistoryMatched",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:53:53Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:56:20.322598726Z",
+          "resourceVersion": "31272",
+          "namespace": "ptah-capacity-bbe8803caf-a",
+          "name": "capacity-migration-000",
+          "uid": "03ea4c4d-d750-4abe-ae1f-506c60306393",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:39:19Z",
+              "reason": "HistoryMatched",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:56:20Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:56:24.261462956Z",
+          "resourceVersion": "31386",
+          "namespace": "ptah-capacity-bbe8803caf-a",
+          "name": "capacity-migration-006",
+          "uid": "189a21d1-7e14-44c1-a18c-6c4b1be19a67",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:39:18Z",
+              "reason": "HistoryMatched",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:56:23Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:56:27.235607658Z",
+          "resourceVersion": "31468",
+          "namespace": "ptah-capacity-bbe8803caf-a",
+          "name": "capacity-migration-002",
+          "uid": "94cf37fa-a761-44b5-9d02-afa48b5e76a4",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:39:27Z",
+              "reason": "HistoryMatched",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:56:27Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:56:27.284481052Z",
+          "resourceVersion": "31473",
+          "namespace": "ptah-capacity-bbe8803caf-a",
+          "name": "capacity-migration-008",
+          "uid": "7390718c-0786-4703-b9b4-00e584be71bd",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:39:24Z",
+              "reason": "HistoryMatched",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:56:27Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:56:27.396102217Z",
+          "resourceVersion": "31482",
+          "namespace": "ptah-capacity-bbe8803caf-a",
+          "name": "capacity-migration-004",
+          "uid": "9c033c1d-d44f-4afc-a1dc-fcb49fe9a927",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:39:28Z",
+              "reason": "HistoryMatched",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:56:27Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:56:27.404373382Z",
+          "resourceVersion": "31483",
+          "namespace": "ptah-capacity-bbe8803caf-a",
+          "name": "capacity-migration-002",
+          "uid": "94cf37fa-a761-44b5-9d02-afa48b5e76a4",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:39:27Z",
+              "reason": "HistoryMatched",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:56:27Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:56:27.418199124Z",
+          "resourceVersion": "31484",
+          "namespace": "ptah-capacity-bbe8803caf-a",
+          "name": "capacity-migration-008",
+          "uid": "7390718c-0786-4703-b9b4-00e584be71bd",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:39:24Z",
+              "reason": "HistoryMatched",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:56:27Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:58:20.16960378Z",
+          "resourceVersion": "33832",
+          "namespace": "ptah-capacity-bbe8803caf-a",
+          "name": "capacity-migration-000",
+          "uid": "03ea4c4d-d750-4abe-ae1f-506c60306393",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "operation": {
+            "type": "Resolve",
+            "id": "sha256:6d058432e0737f553368b042c7e86d7ac41b750d8e018edaa3fd8e6a73216940",
+            "jobName": "ptah-m-resolve-capacity-migration-000-50bdffc4579ee913",
+            "jobUID": "",
+            "startedAt": "2026-10-01T11:58:20Z"
+          },
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:39:19Z",
+              "reason": "HistoryMatched",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:56:20Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:58:21.130957114Z",
+          "resourceVersion": "33854",
+          "namespace": "ptah-capacity-bbe8803caf-a",
+          "name": "capacity-migration-000",
+          "uid": "03ea4c4d-d750-4abe-ae1f-506c60306393",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "operation": {
+            "type": "Resolve",
+            "id": "sha256:6d058432e0737f553368b042c7e86d7ac41b750d8e018edaa3fd8e6a73216940",
+            "jobName": "ptah-m-resolve-capacity-migration-000-50bdffc4579ee913",
+            "jobUID": "a6292ce8-da13-40b4-8ac7-7387d60ad68f",
+            "startedAt": "2026-10-01T11:58:20Z"
+          },
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:39:19Z",
+              "reason": "HistoryMatched",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:56:20Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:58:23.025239907Z",
+          "resourceVersion": "33907",
+          "namespace": "ptah-capacity-bbe8803caf-a",
+          "name": "capacity-migration-006",
+          "uid": "189a21d1-7e14-44c1-a18c-6c4b1be19a67",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "operation": {
+            "type": "Resolve",
+            "id": "sha256:dce02a91a43091ca88d9a20a7e7b0d96d932f4fb156cdb0f2c8085eaf8ea219e",
+            "jobName": "ptah-m-resolve-capacity-migration-006-7758872d03a5ee31",
+            "jobUID": "",
+            "startedAt": "2026-10-01T11:58:23Z"
+          },
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:39:18Z",
+              "reason": "HistoryMatched",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:56:23Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:58:23.284202701Z",
+          "resourceVersion": "33916",
+          "namespace": "ptah-capacity-bbe8803caf-a",
+          "name": "capacity-migration-006",
+          "uid": "189a21d1-7e14-44c1-a18c-6c4b1be19a67",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "operation": {
+            "type": "Resolve",
+            "id": "sha256:dce02a91a43091ca88d9a20a7e7b0d96d932f4fb156cdb0f2c8085eaf8ea219e",
+            "jobName": "ptah-m-resolve-capacity-migration-006-7758872d03a5ee31",
+            "jobUID": "06a77f9f-dc29-45a8-9a09-c86ae7924553",
+            "startedAt": "2026-10-01T11:58:23Z"
+          },
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:39:18Z",
+              "reason": "HistoryMatched",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:56:23Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:58:27.166237015Z",
+          "resourceVersion": "34063",
+          "namespace": "ptah-capacity-bbe8803caf-a",
+          "name": "capacity-migration-004",
+          "uid": "9c033c1d-d44f-4afc-a1dc-fcb49fe9a927",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "operation": {
+            "type": "Resolve",
+            "id": "sha256:59f0d26e17e9f13fc0aadc4721a56ec872e7d0e1cd2ba0509910c352a75d2b1a",
+            "jobName": "ptah-m-resolve-capacity-migration-004-4a050824dce2878a",
+            "jobUID": "",
+            "startedAt": "2026-10-01T11:58:27Z"
+          },
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:39:28Z",
+              "reason": "HistoryMatched",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:56:27Z",
+          "pendingRelease": false,
+          "unsafe": false
+        }
+      ]
+    },
+    {
+      "family": "schema",
+      "namespace": "ptah-capacity-bbe8803caf-b",
+      "selector": "operator.ptah.run/capacity=lab-20",
+      "startedAt": "2026-10-01T11:38:05.574295363Z",
+      "endedAt": "2026-10-01T12:06:29.303806254Z",
+      "cursor": "46646",
+      "readings": [
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:55:06.998159597Z",
+          "resourceVersion": "28842",
+          "namespace": "ptah-capacity-bbe8803caf-b",
+          "name": "capacity-schema-007",
+          "uid": "351600fb-8a3b-457e-a24e-da5542ce18ed",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:55:06Z",
+              "reason": "InSync",
+              "message": ""
+            },
+            {
+              "type": "InSync",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:55:06Z",
+              "reason": "ScopedConverged",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:55:06Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:55:20.749110124Z",
+          "resourceVersion": "29387",
+          "namespace": "ptah-capacity-bbe8803caf-b",
+          "name": "capacity-schema-005",
+          "uid": "919adf2e-d593-4477-aa1c-2b98776612dd",
+          "createdAt": "2026-10-01T11:38:06Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "operation": {
+            "type": "Plan",
+            "id": "sha256:82221b3fbffbde44b993361b3082528ce962606380018d958b9eed2e31b972b9",
+            "jobName": "ptah-plan-capacity-schema-005-3a544cfdd7db9b31",
+            "jobUID": "b92475c1-006d-4ee1-a55b-d1e01a0fb036",
+            "startedAt": "2026-10-01T11:55:18Z"
+          },
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "False",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:54:57Z",
+              "reason": "OperationInProgress",
+              "message": ""
+            },
+            {
+              "type": "InSync",
+              "status": "Unknown",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:54:57Z",
+              "reason": "ScopedPlanPending",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:52:57Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:55:21.372758891Z",
+          "resourceVersion": "29415",
+          "namespace": "ptah-capacity-bbe8803caf-b",
+          "name": "capacity-schema-001",
+          "uid": "1c9dfeb6-6474-4c2e-8a1c-89bedf04dfe0",
+          "createdAt": "2026-10-01T11:38:05Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "operation": {
+            "type": "Observe",
+            "id": "sha256:c4b76f4d9f624fdf928a70a40e18ea0d3dada4c35f7ecfcab9d950c6ea86de75",
+            "jobName": "ptah-observe-capacity-schema-001-2f065ce93bc8b861",
+            "jobUID": "d4f1079c-d89d-4c50-8dd9-e7572b1fe038",
+            "startedAt": "2026-10-01T11:55:20Z"
+          },
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "False",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:55:05Z",
+              "reason": "OperationInProgress",
+              "message": ""
+            },
+            {
+              "type": "InSync",
+              "status": "Unknown",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:55:05Z",
+              "reason": "SourceRefreshPending",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:53:05Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:55:21.788392111Z",
+          "resourceVersion": "29438",
+          "namespace": "ptah-capacity-bbe8803caf-b",
+          "name": "capacity-schema-003",
+          "uid": "db6b34b0-c9dc-4abd-961a-e1fbc3aa51eb",
+          "createdAt": "2026-10-01T11:38:06Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "operation": {
+            "type": "Observe",
+            "id": "sha256:08d29184cec16069952fbc4f07974f10020b4e9340a347cbc9f02692e7a8fde6",
+            "jobName": "ptah-observe-capacity-schema-003-0b2cc2c0d1f694a4",
+            "jobUID": "d8dfbf03-3f5f-40c2-8152-cc118891ca68",
+            "startedAt": "2026-10-01T11:55:20Z"
+          },
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "False",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:55:04Z",
+              "reason": "OperationInProgress",
+              "message": ""
+            },
+            {
+              "type": "InSync",
+              "status": "Unknown",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:55:04Z",
+              "reason": "SourceRefreshPending",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:53:04Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:55:25.319312141Z",
+          "resourceVersion": "29597",
+          "namespace": "ptah-capacity-bbe8803caf-b",
+          "name": "capacity-schema-009",
+          "uid": "0cd33838-b2d6-416a-aee6-61c540cb5b0e",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "operation": {
+            "type": "Plan",
+            "id": "sha256:a7bac620c4414f9de530c4750e77851ff7bab998ffcce95ba944f48045ea3edc",
+            "jobName": "ptah-plan-capacity-schema-009-1132de708ac4a400",
+            "jobUID": "c2070d77-db2d-4c30-a4ca-61b16b938aaa",
+            "startedAt": "2026-10-01T11:55:24Z"
+          },
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "False",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:55:02Z",
+              "reason": "OperationInProgress",
+              "message": ""
+            },
+            {
+              "type": "InSync",
+              "status": "Unknown",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:55:02Z",
+              "reason": "ScopedPlanPending",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:53:02Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:55:49.793084584Z",
+          "resourceVersion": "29999",
+          "namespace": "ptah-capacity-bbe8803caf-b",
+          "name": "capacity-schema-009",
+          "uid": "0cd33838-b2d6-416a-aee6-61c540cb5b0e",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:55:49Z",
+              "reason": "InSync",
+              "message": ""
+            },
+            {
+              "type": "InSync",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:55:49Z",
+              "reason": "ScopedConverged",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:55:49Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:55:49.819801258Z",
+          "resourceVersion": "30001",
+          "namespace": "ptah-capacity-bbe8803caf-b",
+          "name": "capacity-schema-009",
+          "uid": "0cd33838-b2d6-416a-aee6-61c540cb5b0e",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:55:49Z",
+              "reason": "InSync",
+              "message": ""
+            },
+            {
+              "type": "InSync",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:55:49Z",
+              "reason": "ScopedConverged",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:55:49Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:55:50.741571946Z",
+          "resourceVersion": "30067",
+          "namespace": "ptah-capacity-bbe8803caf-b",
+          "name": "capacity-schema-001",
+          "uid": "1c9dfeb6-6474-4c2e-8a1c-89bedf04dfe0",
+          "createdAt": "2026-10-01T11:38:05Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "operation": {
+            "type": "Plan",
+            "id": "sha256:365c6f9d8cd3cb35804175ab582422248e3ce5540e12eae8f48e540ea093558b",
+            "jobName": "ptah-plan-capacity-schema-001-0e7eef7494a0cf57",
+            "jobUID": "fb46f1cc-35bd-4d08-b833-9ab893e41bfb",
+            "startedAt": "2026-10-01T11:55:50Z"
+          },
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "False",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:55:05Z",
+              "reason": "OperationInProgress",
+              "message": ""
+            },
+            {
+              "type": "InSync",
+              "status": "Unknown",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:55:05Z",
+              "reason": "ScopedPlanPending",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:53:05Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:55:51.080824338Z",
+          "resourceVersion": "30103",
+          "namespace": "ptah-capacity-bbe8803caf-b",
+          "name": "capacity-schema-003",
+          "uid": "db6b34b0-c9dc-4abd-961a-e1fbc3aa51eb",
+          "createdAt": "2026-10-01T11:38:06Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "operation": {
+            "type": "Plan",
+            "id": "sha256:6be34c94e369ea3812b7d26c7928ae8c01f586ea3f260c6a08510d6e4a035d3d",
+            "jobName": "ptah-plan-capacity-schema-003-284d65af6f267f1f",
+            "jobUID": "53cec769-a33d-4ce8-927e-3cc81837c15f",
+            "startedAt": "2026-10-01T11:55:50Z"
+          },
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "False",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:55:04Z",
+              "reason": "OperationInProgress",
+              "message": ""
+            },
+            {
+              "type": "InSync",
+              "status": "Unknown",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:55:04Z",
+              "reason": "ScopedPlanPending",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:53:04Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:55:52.603862557Z",
+          "resourceVersion": "30189",
+          "namespace": "ptah-capacity-bbe8803caf-b",
+          "name": "capacity-schema-005",
+          "uid": "919adf2e-d593-4477-aa1c-2b98776612dd",
+          "createdAt": "2026-10-01T11:38:06Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:55:52Z",
+              "reason": "InSync",
+              "message": ""
+            },
+            {
+              "type": "InSync",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:55:52Z",
+              "reason": "ScopedConverged",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:55:52Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:55:52.64676798Z",
+          "resourceVersion": "30194",
+          "namespace": "ptah-capacity-bbe8803caf-b",
+          "name": "capacity-schema-005",
+          "uid": "919adf2e-d593-4477-aa1c-2b98776612dd",
+          "createdAt": "2026-10-01T11:38:06Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:55:52Z",
+              "reason": "InSync",
+              "message": ""
+            },
+            {
+              "type": "InSync",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:55:52Z",
+              "reason": "ScopedConverged",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:55:52Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:56:03.315168811Z",
+          "resourceVersion": "30599",
+          "namespace": "ptah-capacity-bbe8803caf-b",
+          "name": "capacity-schema-003",
+          "uid": "db6b34b0-c9dc-4abd-961a-e1fbc3aa51eb",
+          "createdAt": "2026-10-01T11:38:06Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:56:03Z",
+              "reason": "InSync",
+              "message": ""
+            },
+            {
+              "type": "InSync",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:56:03Z",
+              "reason": "ScopedConverged",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:56:03Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:56:03.935408027Z",
+          "resourceVersion": "30611",
+          "namespace": "ptah-capacity-bbe8803caf-b",
+          "name": "capacity-schema-001",
+          "uid": "1c9dfeb6-6474-4c2e-8a1c-89bedf04dfe0",
+          "createdAt": "2026-10-01T11:38:05Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:56:03Z",
+              "reason": "InSync",
+              "message": ""
+            },
+            {
+              "type": "InSync",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:56:03Z",
+              "reason": "ScopedConverged",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:56:03Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:57:06.054891812Z",
+          "resourceVersion": "32019",
+          "namespace": "ptah-capacity-bbe8803caf-b",
+          "name": "capacity-schema-007",
+          "uid": "351600fb-8a3b-457e-a24e-da5542ce18ed",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:55:06Z",
+              "reason": "InSync",
+              "message": ""
+            },
+            {
+              "type": "InSync",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:55:06Z",
+              "reason": "ScopedConverged",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:55:06Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:57:23.802690507Z",
+          "resourceVersion": "32380",
+          "namespace": "ptah-capacity-bbe8803caf-b",
+          "name": "capacity-schema-007",
+          "uid": "351600fb-8a3b-457e-a24e-da5542ce18ed",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "operation": {
+            "type": "Plan",
+            "id": "sha256:5bd2a80239b0a6043440c988eb4df6c9a4dd66336ced3d6f4039c1652d8de18a",
+            "jobName": "ptah-plan-capacity-schema-007-0c17175297f673ff",
+            "jobUID": "813caa65-37c9-4245-b4c1-d965d1b2c6ad",
+            "startedAt": "2026-10-01T11:57:23Z"
+          },
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "False",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:57:06Z",
+              "reason": "OperationInProgress",
+              "message": ""
+            },
+            {
+              "type": "InSync",
+              "status": "Unknown",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:57:06Z",
+              "reason": "ScopedPlanPending",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:55:06Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:57:32.867855536Z",
+          "resourceVersion": "32474",
+          "namespace": "ptah-capacity-bbe8803caf-b",
+          "name": "capacity-schema-007",
+          "uid": "351600fb-8a3b-457e-a24e-da5542ce18ed",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:57:32Z",
+              "reason": "InSync",
+              "message": ""
+            },
+            {
+              "type": "InSync",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:57:32Z",
+              "reason": "ScopedConverged",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:57:32Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:57:33.186415868Z",
+          "resourceVersion": "32475",
+          "namespace": "ptah-capacity-bbe8803caf-b",
+          "name": "capacity-schema-007",
+          "uid": "351600fb-8a3b-457e-a24e-da5542ce18ed",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:57:32Z",
+              "reason": "InSync",
+              "message": ""
+            },
+            {
+              "type": "InSync",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:57:32Z",
+              "reason": "ScopedConverged",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:57:32Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:57:49.035464553Z",
+          "resourceVersion": "32581",
+          "namespace": "ptah-capacity-bbe8803caf-b",
+          "name": "capacity-schema-009",
+          "uid": "0cd33838-b2d6-416a-aee6-61c540cb5b0e",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:55:49Z",
+              "reason": "InSync",
+              "message": ""
+            },
+            {
+              "type": "InSync",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:55:49Z",
+              "reason": "ScopedConverged",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:55:49Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:57:52.073738781Z",
+          "resourceVersion": "32659",
+          "namespace": "ptah-capacity-bbe8803caf-b",
+          "name": "capacity-schema-005",
+          "uid": "919adf2e-d593-4477-aa1c-2b98776612dd",
+          "createdAt": "2026-10-01T11:38:06Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:55:52Z",
+              "reason": "InSync",
+              "message": ""
+            },
+            {
+              "type": "InSync",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:55:52Z",
+              "reason": "ScopedConverged",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:55:52Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:58:03.115597293Z",
+          "resourceVersion": "33091",
+          "namespace": "ptah-capacity-bbe8803caf-b",
+          "name": "capacity-schema-003",
+          "uid": "db6b34b0-c9dc-4abd-961a-e1fbc3aa51eb",
+          "createdAt": "2026-10-01T11:38:06Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "operation": {
+            "type": "Resolve",
+            "id": "sha256:f401b343df6dcaa75ae8897f8dc60f0f3f1ebb32e4d5ad87fb32f558a72fea0e",
+            "jobName": "ptah-resolve-capacity-schema-003-a12f54e5b7b1d292",
+            "jobUID": "",
+            "startedAt": "2026-10-01T11:58:03Z"
+          },
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "False",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:58:03Z",
+              "reason": "OperationInProgress",
+              "message": ""
+            },
+            {
+              "type": "InSync",
+              "status": "Unknown",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:58:03Z",
+              "reason": "SourceRefreshPending",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:56:03Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:58:03.36977367Z",
+          "resourceVersion": "33105",
+          "namespace": "ptah-capacity-bbe8803caf-b",
+          "name": "capacity-schema-001",
+          "uid": "1c9dfeb6-6474-4c2e-8a1c-89bedf04dfe0",
+          "createdAt": "2026-10-01T11:38:05Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "operation": {
+            "type": "Resolve",
+            "id": "sha256:305318d453c11ab8b0f668db20e04a13f2299ee69f08193405579c2e4b532e5f",
+            "jobName": "ptah-resolve-capacity-schema-001-e173b478bc068355",
+            "jobUID": "",
+            "startedAt": "2026-10-01T11:58:03Z"
+          },
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "False",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:58:03Z",
+              "reason": "OperationInProgress",
+              "message": ""
+            },
+            {
+              "type": "InSync",
+              "status": "Unknown",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:58:03Z",
+              "reason": "SourceRefreshPending",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:56:03Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:58:05.899701194Z",
+          "resourceVersion": "33251",
+          "namespace": "ptah-capacity-bbe8803caf-b",
+          "name": "capacity-schema-009",
+          "uid": "0cd33838-b2d6-416a-aee6-61c540cb5b0e",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "operation": {
+            "type": "Plan",
+            "id": "sha256:57f2a7b32eca3ef514a5299eb854db5d3bc876514fac3f393a6663f55302678b",
+            "jobName": "ptah-plan-capacity-schema-009-e5e2d22385f4aa02",
+            "jobUID": "e9145d61-481f-4ef6-aaf4-d3ee05b2031d",
+            "startedAt": "2026-10-01T11:58:05Z"
+          },
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "False",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:57:49Z",
+              "reason": "OperationInProgress",
+              "message": ""
+            },
+            {
+              "type": "InSync",
+              "status": "Unknown",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:57:49Z",
+              "reason": "ScopedPlanPending",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:55:49Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:58:12.39784074Z",
+          "resourceVersion": "33541",
+          "namespace": "ptah-capacity-bbe8803caf-b",
+          "name": "capacity-schema-005",
+          "uid": "919adf2e-d593-4477-aa1c-2b98776612dd",
+          "createdAt": "2026-10-01T11:38:06Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "operation": {
+            "type": "Plan",
+            "id": "sha256:52bb416c72a623fbbb5cd2b7c0f1a3dcf4c708d8c7d5fdb75deff378fa643185",
+            "jobName": "ptah-plan-capacity-schema-005-507ef16065a0565d",
+            "jobUID": "d0674513-d5e8-495c-aefb-277e5c0445db",
+            "startedAt": "2026-10-01T11:58:11Z"
+          },
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "False",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:57:52Z",
+              "reason": "OperationInProgress",
+              "message": ""
+            },
+            {
+              "type": "InSync",
+              "status": "Unknown",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:57:52Z",
+              "reason": "ScopedPlanPending",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:55:52Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:58:14.908775574Z",
+          "resourceVersion": "33627",
+          "namespace": "ptah-capacity-bbe8803caf-b",
+          "name": "capacity-schema-009",
+          "uid": "0cd33838-b2d6-416a-aee6-61c540cb5b0e",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:58:14Z",
+              "reason": "InSync",
+              "message": ""
+            },
+            {
+              "type": "InSync",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:58:14Z",
+              "reason": "ScopedConverged",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:58:14Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:58:14.921670009Z",
+          "resourceVersion": "33628",
+          "namespace": "ptah-capacity-bbe8803caf-b",
+          "name": "capacity-schema-009",
+          "uid": "0cd33838-b2d6-416a-aee6-61c540cb5b0e",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:58:14Z",
+              "reason": "InSync",
+              "message": ""
+            },
+            {
+              "type": "InSync",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:58:14Z",
+              "reason": "ScopedConverged",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:58:14Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:58:19.249250038Z",
+          "resourceVersion": "33803",
+          "namespace": "ptah-capacity-bbe8803caf-b",
+          "name": "capacity-schema-003",
+          "uid": "db6b34b0-c9dc-4abd-961a-e1fbc3aa51eb",
+          "createdAt": "2026-10-01T11:38:06Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "operation": {
+            "type": "Observe",
+            "id": "sha256:8c7592a0dee9519b7a21ba1a801432c37c5c9462f91ad08670d2c439afa2e5a8",
+            "jobName": "ptah-observe-capacity-schema-003-4960d653b417927d",
+            "jobUID": "ca634962-4747-44a6-85bf-a85bff76bb21",
+            "startedAt": "2026-10-01T11:58:18Z"
+          },
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "False",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:58:03Z",
+              "reason": "OperationInProgress",
+              "message": ""
+            },
+            {
+              "type": "InSync",
+              "status": "Unknown",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:58:03Z",
+              "reason": "SourceRefreshPending",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:56:03Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:58:19.692743667Z",
+          "resourceVersion": "33820",
+          "namespace": "ptah-capacity-bbe8803caf-b",
+          "name": "capacity-schema-001",
+          "uid": "1c9dfeb6-6474-4c2e-8a1c-89bedf04dfe0",
+          "createdAt": "2026-10-01T11:38:05Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "operation": {
+            "type": "Observe",
+            "id": "sha256:71dd501fde86b19ce0c4fd7053d08e03d1e300d7d1ed17c5073e494cdf9da0e1",
+            "jobName": "ptah-observe-capacity-schema-001-8a8d76d5b9b7ac1e",
+            "jobUID": "fde8ed76-b88e-4954-9134-c6a71daf6fe4",
+            "startedAt": "2026-10-01T11:58:19Z"
+          },
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "False",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:58:03Z",
+              "reason": "OperationInProgress",
+              "message": ""
+            },
+            {
+              "type": "InSync",
+              "status": "Unknown",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:58:03Z",
+              "reason": "SourceRefreshPending",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:56:03Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:58:22.296765818Z",
+          "resourceVersion": "33887",
+          "namespace": "ptah-capacity-bbe8803caf-b",
+          "name": "capacity-schema-005",
+          "uid": "919adf2e-d593-4477-aa1c-2b98776612dd",
+          "createdAt": "2026-10-01T11:38:06Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:58:22Z",
+              "reason": "InSync",
+              "message": ""
+            },
+            {
+              "type": "InSync",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:58:22Z",
+              "reason": "ScopedConverged",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:58:22Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:58:22.494287503Z",
+          "resourceVersion": "33891",
+          "namespace": "ptah-capacity-bbe8803caf-b",
+          "name": "capacity-schema-005",
+          "uid": "919adf2e-d593-4477-aa1c-2b98776612dd",
+          "createdAt": "2026-10-01T11:38:06Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:58:22Z",
+              "reason": "InSync",
+              "message": ""
+            },
+            {
+              "type": "InSync",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:58:22Z",
+              "reason": "ScopedConverged",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:58:22Z",
+          "pendingRelease": false,
+          "unsafe": false
+        }
+      ]
+    },
+    {
+      "family": "migration",
+      "namespace": "ptah-capacity-bbe8803caf-b",
+      "selector": "operator.ptah.run/capacity=lab-20",
+      "startedAt": "2026-10-01T11:38:05.574298281Z",
+      "endedAt": "2026-10-01T12:06:29.303780609Z",
+      "cursor": "46091",
+      "readings": [
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:53:45.957666911Z",
+          "resourceVersion": "27334",
+          "namespace": "ptah-capacity-bbe8803caf-b",
+          "name": "capacity-migration-009",
+          "uid": "60c229dd-5997-4a17-9a70-b4cd3dec5707",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:39:22Z",
+              "reason": "HistoryMatched",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:53:45Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:53:46.874977536Z",
+          "resourceVersion": "27373",
+          "namespace": "ptah-capacity-bbe8803caf-b",
+          "name": "capacity-migration-005",
+          "uid": "1a6a9b75-a62c-4d89-9fda-ba480b5dcdfe",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:39:18Z",
+              "reason": "HistoryMatched",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:53:46Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:53:51.551521597Z",
+          "resourceVersion": "27489",
+          "namespace": "ptah-capacity-bbe8803caf-b",
+          "name": "capacity-migration-003",
+          "uid": "83c3b0a8-ee72-4f4a-a974-bf6675c6d765",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:39:27Z",
+              "reason": "HistoryMatched",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:53:51Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:55:25.298239423Z",
+          "resourceVersion": "29592",
+          "namespace": "ptah-capacity-bbe8803caf-b",
+          "name": "capacity-migration-001",
+          "uid": "d0367942-124c-43b3-94a7-f281e23c643a",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "operation": {
+            "type": "Verify",
+            "id": "sha256:2fabc646097ac901d999dce191aa2e515aeb76dbb789858df5111756f45739b1",
+            "jobName": "ptah-m-verify-capacity-migration-001-965a9ad3fa3498bf",
+            "jobUID": "1bf39b37-f1fe-49a2-ace0-20f793065452",
+            "startedAt": "2026-10-01T11:55:24Z"
+          },
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:39:15Z",
+              "reason": "HistoryMatched",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:53:17Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:55:25.921672602Z",
+          "resourceVersion": "29646",
+          "namespace": "ptah-capacity-bbe8803caf-b",
+          "name": "capacity-migration-007",
+          "uid": "5f150a89-e917-44e9-af11-1ce572a8e10c",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "operation": {
+            "type": "Verify",
+            "id": "sha256:535a4ce8fd85b29ceada5f28f5ed8c19d13a0b389f0edd85a7020832e2237a37",
+            "jobName": "ptah-m-verify-capacity-migration-007-d0f471c1dad5e2c6",
+            "jobUID": "6f0dd694-2d44-41b3-81a2-4bbeca5c08b0",
+            "startedAt": "2026-10-01T11:55:25Z"
+          },
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:39:13Z",
+              "reason": "HistoryMatched",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:53:17Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:55:49.393896522Z",
+          "resourceVersion": "29972",
+          "namespace": "ptah-capacity-bbe8803caf-b",
+          "name": "capacity-migration-001",
+          "uid": "d0367942-124c-43b3-94a7-f281e23c643a",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:39:15Z",
+              "reason": "HistoryMatched",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:53:17Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:55:49.412488241Z",
+          "resourceVersion": "29973",
+          "namespace": "ptah-capacity-bbe8803caf-b",
+          "name": "capacity-migration-001",
+          "uid": "d0367942-124c-43b3-94a7-f281e23c643a",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:39:15Z",
+              "reason": "HistoryMatched",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:53:17Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:55:49.442486039Z",
+          "resourceVersion": "29974",
+          "namespace": "ptah-capacity-bbe8803caf-b",
+          "name": "capacity-migration-001",
+          "uid": "d0367942-124c-43b3-94a7-f281e23c643a",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:39:15Z",
+              "reason": "HistoryMatched",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:53:17Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:55:49.469924443Z",
+          "resourceVersion": "29979",
+          "namespace": "ptah-capacity-bbe8803caf-b",
+          "name": "capacity-migration-005",
+          "uid": "1a6a9b75-a62c-4d89-9fda-ba480b5dcdfe",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:39:18Z",
+              "reason": "HistoryMatched",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:53:46Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:55:49.71508516Z",
+          "resourceVersion": "29996",
+          "namespace": "ptah-capacity-bbe8803caf-b",
+          "name": "capacity-migration-001",
+          "uid": "d0367942-124c-43b3-94a7-f281e23c643a",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "operation": {
+            "type": "History",
+            "id": "sha256:d1322147158b2d201f8115e0d417c494320c33e2a77bbca160ac302e8bdf341a",
+            "jobName": "ptah-m-history-capacity-migration-001-f6d9f4afde9dc11d",
+            "jobUID": "97888556-fe7e-4dcd-a993-f550adbabe3f",
+            "startedAt": "2026-10-01T11:55:49Z"
+          },
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:39:15Z",
+              "reason": "HistoryMatched",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:53:17Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:55:50.105483154Z",
+          "resourceVersion": "30022",
+          "namespace": "ptah-capacity-bbe8803caf-b",
+          "name": "capacity-migration-007",
+          "uid": "5f150a89-e917-44e9-af11-1ce572a8e10c",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:39:13Z",
+              "reason": "HistoryMatched",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:53:17Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:55:50.126276177Z",
+          "resourceVersion": "30024",
+          "namespace": "ptah-capacity-bbe8803caf-b",
+          "name": "capacity-migration-007",
+          "uid": "5f150a89-e917-44e9-af11-1ce572a8e10c",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:39:13Z",
+              "reason": "HistoryMatched",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:53:17Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:55:50.129805906Z",
+          "resourceVersion": "30025",
+          "namespace": "ptah-capacity-bbe8803caf-b",
+          "name": "capacity-migration-007",
+          "uid": "5f150a89-e917-44e9-af11-1ce572a8e10c",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:39:13Z",
+              "reason": "HistoryMatched",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:53:17Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:55:50.279322161Z",
+          "resourceVersion": "30034",
+          "namespace": "ptah-capacity-bbe8803caf-b",
+          "name": "capacity-migration-009",
+          "uid": "60c229dd-5997-4a17-9a70-b4cd3dec5707",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:39:22Z",
+              "reason": "HistoryMatched",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:53:45Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:55:50.513870932Z",
+          "resourceVersion": "30045",
+          "namespace": "ptah-capacity-bbe8803caf-b",
+          "name": "capacity-migration-007",
+          "uid": "5f150a89-e917-44e9-af11-1ce572a8e10c",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "operation": {
+            "type": "History",
+            "id": "sha256:ce9a6420e5495bd35100ec8e18a1bfdc3a329f205038aa444d55b7047610a7d4",
+            "jobName": "ptah-m-history-capacity-migration-007-9d3278a8c544022f",
+            "jobUID": "cdeea831-bc36-48cd-a301-d95aded6430d",
+            "startedAt": "2026-10-01T11:55:50Z"
+          },
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:39:13Z",
+              "reason": "HistoryMatched",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:53:17Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:55:52.542497975Z",
+          "resourceVersion": "30178",
+          "namespace": "ptah-capacity-bbe8803caf-b",
+          "name": "capacity-migration-003",
+          "uid": "83c3b0a8-ee72-4f4a-a974-bf6675c6d765",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:39:27Z",
+              "reason": "HistoryMatched",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:53:51Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:56:03.261771275Z",
+          "resourceVersion": "30593",
+          "namespace": "ptah-capacity-bbe8803caf-b",
+          "name": "capacity-migration-001",
+          "uid": "d0367942-124c-43b3-94a7-f281e23c643a",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:39:15Z",
+              "reason": "HistoryMatched",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:55:57Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:56:04.195312703Z",
+          "resourceVersion": "30623",
+          "namespace": "ptah-capacity-bbe8803caf-b",
+          "name": "capacity-migration-007",
+          "uid": "5f150a89-e917-44e9-af11-1ce572a8e10c",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:39:13Z",
+              "reason": "HistoryMatched",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:56:04Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:56:14.85351658Z",
+          "resourceVersion": "31041",
+          "namespace": "ptah-capacity-bbe8803caf-b",
+          "name": "capacity-migration-005",
+          "uid": "1a6a9b75-a62c-4d89-9fda-ba480b5dcdfe",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "operation": {
+            "type": "History",
+            "id": "sha256:7d2145ab6c22146d3e369e1b2c38650774745f3cda7765af1b7d5626aaf2a743",
+            "jobName": "ptah-m-history-capacity-migration-005-1a548fd2f72807b0",
+            "jobUID": "e15d6389-df7a-4adb-8e90-01dfd9951c20",
+            "startedAt": "2026-10-01T11:56:13Z"
+          },
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:39:18Z",
+              "reason": "HistoryMatched",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:53:46Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:56:15.433368242Z",
+          "resourceVersion": "31064",
+          "namespace": "ptah-capacity-bbe8803caf-b",
+          "name": "capacity-migration-009",
+          "uid": "60c229dd-5997-4a17-9a70-b4cd3dec5707",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "operation": {
+            "type": "History",
+            "id": "sha256:b50c205d22899818ecb9b8f5584e424fb31cd483d7c7254b12ec8b950fee922a",
+            "jobName": "ptah-m-history-capacity-migration-009-c5c92cb1352b2f32",
+            "jobUID": "f1f71ba8-f362-45d2-90bb-6aab597606ed",
+            "startedAt": "2026-10-01T11:56:14Z"
+          },
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:39:22Z",
+              "reason": "HistoryMatched",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:53:45Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:56:19.970283451Z",
+          "resourceVersion": "31254",
+          "namespace": "ptah-capacity-bbe8803caf-b",
+          "name": "capacity-migration-003",
+          "uid": "83c3b0a8-ee72-4f4a-a974-bf6675c6d765",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "operation": {
+            "type": "History",
+            "id": "sha256:7d2d9171d72e1df2987c2785ad6016fe60c3070c084997a391c091afda253281",
+            "jobName": "ptah-m-history-capacity-migration-003-c719d7b2b72ebb7f",
+            "jobUID": "bcb5289c-dfd6-4133-b2de-91b0bd6df592",
+            "startedAt": "2026-10-01T11:56:17Z"
+          },
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:39:27Z",
+              "reason": "HistoryMatched",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:53:51Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:56:23.629253715Z",
+          "resourceVersion": "31361",
+          "namespace": "ptah-capacity-bbe8803caf-b",
+          "name": "capacity-migration-009",
+          "uid": "60c229dd-5997-4a17-9a70-b4cd3dec5707",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:39:22Z",
+              "reason": "HistoryMatched",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:56:23Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:56:25.253319826Z",
+          "resourceVersion": "31410",
+          "namespace": "ptah-capacity-bbe8803caf-b",
+          "name": "capacity-migration-005",
+          "uid": "1a6a9b75-a62c-4d89-9fda-ba480b5dcdfe",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:39:18Z",
+              "reason": "HistoryMatched",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:56:25Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:56:28.910954354Z",
+          "resourceVersion": "31514",
+          "namespace": "ptah-capacity-bbe8803caf-b",
+          "name": "capacity-migration-003",
+          "uid": "83c3b0a8-ee72-4f4a-a974-bf6675c6d765",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:39:27Z",
+              "reason": "HistoryMatched",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:56:28Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:56:28.937189867Z",
+          "resourceVersion": "31515",
+          "namespace": "ptah-capacity-bbe8803caf-b",
+          "name": "capacity-migration-003",
+          "uid": "83c3b0a8-ee72-4f4a-a974-bf6675c6d765",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:39:27Z",
+              "reason": "HistoryMatched",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:56:28Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:57:57.242287729Z",
+          "resourceVersion": "32849",
+          "namespace": "ptah-capacity-bbe8803caf-b",
+          "name": "capacity-migration-001",
+          "uid": "d0367942-124c-43b3-94a7-f281e23c643a",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "operation": {
+            "type": "Resolve",
+            "id": "sha256:07310fe3bede122b9dc001676069b1cd526c6e0a4d94d0b96445a9a677138572",
+            "jobName": "ptah-m-resolve-capacity-migration-001-d529d566c6f122ee",
+            "jobUID": "",
+            "startedAt": "2026-10-01T11:57:57Z"
+          },
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:39:15Z",
+              "reason": "HistoryMatched",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:55:57Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:58:04.146401993Z",
+          "resourceVersion": "33149",
+          "namespace": "ptah-capacity-bbe8803caf-b",
+          "name": "capacity-migration-007",
+          "uid": "5f150a89-e917-44e9-af11-1ce572a8e10c",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "operation": {
+            "type": "Resolve",
+            "id": "sha256:652a7f0adba6a919afb61d225ceda1fbd76e94902f8e89387a32380859f71578",
+            "jobName": "ptah-m-resolve-capacity-migration-007-f85dad0966dd2a24",
+            "jobUID": "",
+            "startedAt": "2026-10-01T11:58:04Z"
+          },
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:39:13Z",
+              "reason": "HistoryMatched",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:56:04Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:58:19.049544582Z",
+          "resourceVersion": "33789",
+          "namespace": "ptah-capacity-bbe8803caf-b",
+          "name": "capacity-migration-001",
+          "uid": "d0367942-124c-43b3-94a7-f281e23c643a",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:39:15Z",
+              "reason": "HistoryMatched",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:58:18Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:58:23.049518334Z",
+          "resourceVersion": "33909",
+          "namespace": "ptah-capacity-bbe8803caf-b",
+          "name": "capacity-migration-009",
+          "uid": "60c229dd-5997-4a17-9a70-b4cd3dec5707",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "operation": {
+            "type": "Resolve",
+            "id": "sha256:495c82f765f437ac32d097e52da70bb537527fe27699ab61bdff97cfd714a800",
+            "jobName": "ptah-m-resolve-capacity-migration-009-2990af707b6633d7",
+            "jobUID": "",
+            "startedAt": "2026-10-01T11:58:23Z"
+          },
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:39:22Z",
+              "reason": "HistoryMatched",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:56:23Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:58:23.371229295Z",
+          "resourceVersion": "33928",
+          "namespace": "ptah-capacity-bbe8803caf-b",
+          "name": "capacity-migration-009",
+          "uid": "60c229dd-5997-4a17-9a70-b4cd3dec5707",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "operation": {
+            "type": "Resolve",
+            "id": "sha256:495c82f765f437ac32d097e52da70bb537527fe27699ab61bdff97cfd714a800",
+            "jobName": "ptah-m-resolve-capacity-migration-009-2990af707b6633d7",
+            "jobUID": "f084575b-3dbb-498b-a8ef-154b768d4b08",
+            "startedAt": "2026-10-01T11:58:23Z"
+          },
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:39:22Z",
+              "reason": "HistoryMatched",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:56:23Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:58:25.405795978Z",
+          "resourceVersion": "34004",
+          "namespace": "ptah-capacity-bbe8803caf-b",
+          "name": "capacity-migration-005",
+          "uid": "1a6a9b75-a62c-4d89-9fda-ba480b5dcdfe",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "operation": {
+            "type": "Resolve",
+            "id": "sha256:10659ef7c172f71939187df5feb7f2a8a3f4397f456f7242c0a2fc08589f01c8",
+            "jobName": "ptah-m-resolve-capacity-migration-005-66da1423a11fbf38",
+            "jobUID": "",
+            "startedAt": "2026-10-01T11:58:25Z"
+          },
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:39:18Z",
+              "reason": "HistoryMatched",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:56:25Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:58:26.003978054Z",
+          "resourceVersion": "34027",
+          "namespace": "ptah-capacity-bbe8803caf-b",
+          "name": "capacity-migration-005",
+          "uid": "1a6a9b75-a62c-4d89-9fda-ba480b5dcdfe",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "operation": {
+            "type": "Resolve",
+            "id": "sha256:10659ef7c172f71939187df5feb7f2a8a3f4397f456f7242c0a2fc08589f01c8",
+            "jobName": "ptah-m-resolve-capacity-migration-005-66da1423a11fbf38",
+            "jobUID": "d1674d7a-90be-4681-9eb5-c6d2cfc9ea2c",
+            "startedAt": "2026-10-01T11:58:25Z"
+          },
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:39:18Z",
+              "reason": "HistoryMatched",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:56:25Z",
+          "pendingRelease": false,
+          "unsafe": false
+        },
+        {
+          "event": "MODIFIED",
+          "receivedAt": "2026-10-01T11:58:27.642209912Z",
+          "resourceVersion": "34088",
+          "namespace": "ptah-capacity-bbe8803caf-b",
+          "name": "capacity-migration-007",
+          "uid": "5f150a89-e917-44e9-af11-1ce572a8e10c",
+          "createdAt": "2026-10-01T11:38:07Z",
+          "generation": 1,
+          "observedGeneration": 1,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "observedGeneration": 1,
+              "lastTransitionTime": "2026-10-01T11:39:13Z",
+              "reason": "HistoryMatched",
+              "message": ""
+            }
+          ],
+          "completedAt": "2026-10-01T11:58:27Z",
+          "pendingRelease": false,
+          "unsafe": false
+        }
+      ]
+    }
+  ]
+}

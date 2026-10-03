@@ -1,0 +1,48 @@
+{
+  "status": "passed",
+  "operatorRevision": "b0a51ff740784beaf6cd1ebb2fe8c2715583e1b5",
+  "fixtureRevision": "5cf47289dfe6cce29b699108dfcdb0f5b6ac116a",
+  "runnerRevision": "b2576f9bbbe72979ba392456846fb16da1f0f03a",
+  "procedures": {
+    "result_first_publication.py": "3dfcb6ee99fe9e3ea2f2ce84ec630a7ee21efc4ec3cb803d3d2c0d3dfb0c3b9b",
+    "result_concurrent.py": "fa2da7e6489865d5bda04963452955dafbb30e8e8ddc2d6beb558077d69ecdee",
+    "result_lost_ack.py": "895daf23ddb9da5af898825e5663be3bbadeb35fd19e7082f68063bdafbf6c88"
+  },
+  "engines": {
+    "PostgreSQL": {
+      "directory": "pg",
+      "databaseVersion": "PostgreSQL 17.11 on x86_64-pc-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit",
+      "verification": {
+        "simultaneousIntentCreates": 2,
+        "receiptUID": "033ab4dc-900b-4987-8f4a-83ef45bef2cc"
+      },
+      "files": {
+        "first-publication.json": "81a2d2a5efaf1c352c608b2b3a51c409c0241820c433639fd8f5f85a048eb88a",
+        "before-first-publication.json": "7384d6881f5d8ff4c99b5da1d6725d4563bdc76e3b66118a0a2b32db7259e893",
+        "concurrent.json": "01bd74aacbe84652d1af2eba552afac8c93864e7d9a28642e3db689fb2d8c898",
+        "lost-ack.json": "d33a21e6c6ecd0ec6a0ad5b63fcd34028bd165582b7af553d12b745fd17e1946",
+        "held-retry.json": "f6abf4f3b481e36a8fbd2c744b99ec6bb4f5f40fe8687cb37d5d6362c4f795f4",
+        "publication.json": "f974bfaeb2ccdef3feb07453cd2c2f1be858efd1e091ffc5e4f37f85936fa272",
+        "installation.json": "ab40dd6c921504d66e93e3a4aab68a4ce7798ffe4728e7d9644daa143599f4b5"
+      }
+    },
+    "MySQL": {
+      "directory": "mysql",
+      "databaseVersion": "8.4.11",
+      "verification": {
+        "simultaneousIntentCreates": 2,
+        "receiptUID": "f3814547-1be3-4bf4-a4e6-e58dab664cad"
+      },
+      "files": {
+        "first-publication.json": "c73a3c39aed3209312557f8293c71082f59b1e85180a6cd266a7400b381ab7ea",
+        "before-first-publication.json": "0f55c15f8775030b0a91261984f5fec6b09724bc2bb2bf81fe529333e67951cb",
+        "concurrent.json": "76b8d30d626932938f3a26b6d43d43fdf20516571c4d8d97d933659316ebbe59",
+        "lost-ack.json": "8292a0ca182c4f3c2f104f455422d841105a00ca969e4068b90a5922492d9116",
+        "held-retry.json": "e1db3fca8a1f10cd97664c957f08fb3702ee805448bd4c2795e06fe3084e80d3",
+        "publication.json": "72bc22f12e9a7e1a9239be528ed097ac535e568f3cfb25a5e30ed77e47b08ec4",
+        "installation.json": "4911a844282823bae1408d6b4bfd27b056fe011a648429e9f4ee7c34cb7ee049"
+      }
+    }
+  },
+  "scope": "Native PostgreSQL and MySQL migration Apply on Kubernetes 1.37 with two manager replicas and default 10Mi kubelet logs. Before any original intent exists, the proxy holds the original authenticated runner upload. Two direct receiver uploads enter intent CREATE together; a namespace-only admission barrier releases neither until both distinct manager Pod identities arrive. Both receive one durable receipt. Conflicting and mixed redelivery pairs preserve that receipt and refuse changed canonical bytes with 409. The original runner then receives its receipt after one lost acknowledgment and completes its original Job/Pod with one calibrated SQL effect. This forces identical first publication; different first payloads racing to choose a winner, single-receiver saturation, NetworkPolicy, and the full supported matrix remain separate."
+}

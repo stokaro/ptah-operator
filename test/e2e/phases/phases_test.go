@@ -192,6 +192,21 @@ func TestValidateRefusesMalformedDeclarations(t *testing.T) {
 			p.Preparation = len(p.Scenarios)
 			return withInputs(p, reflect.TypeFor[wellFormed]())
 		}(), refuse: "leaves none of its own acceptance"},
+		{name: "prerequisite name", phase: func() Phase {
+			p := base
+			p.RequiresFull = []string{"Assert"}
+			return withInputs(p, reflect.TypeFor[wellFormed]())
+		}(), refuse: "invalid or repeated prerequisite"},
+		{name: "self prerequisite", phase: func() Phase {
+			p := base
+			p.RequiresFull = []string{p.Name}
+			return withInputs(p, reflect.TypeFor[wellFormed]())
+		}(), refuse: "invalid or repeated prerequisite"},
+		{name: "prerequisite twice", phase: func() Phase {
+			p := base
+			p.RequiresFull = []string{"assert", "assert"}
+			return withInputs(p, reflect.TypeFor[wellFormed]())
+		}(), refuse: "invalid or repeated prerequisite"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()

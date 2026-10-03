@@ -41,8 +41,8 @@ type restartSchema struct {
 // plan CRD's spec shaped by schema and every other CRD left alike.
 func restartFixtureSet(t *testing.T, version uint64, schema restartSchema) documentSet {
 	t.Helper()
-	documents := make(map[string][]byte, len(requiredCRDNames()))
-	for index, name := range requiredCRDNames() {
+	documents := make(map[string][]byte, len(restartCRDNames()))
+	for index, name := range restartCRDNames() {
 		crd := fixtureCRD(name, "same")
 		if name == restartPlanCRD {
 			spec := object(field("contractVersion", enum(schema.contracts...)), field("dialect", text()))
@@ -58,7 +58,7 @@ func restartFixtureSet(t *testing.T, version uint64, schema restartSchema) docum
 		stampFixtureIdentity(t, crd, version)
 		documents[fmt.Sprintf("crd-%d.yaml", index)] = marshalFixtureCRD(t, crd)
 	}
-	set, err := decodeSet("fixture", documents)
+	set, err := decodeSetAllowingSubset("historical fixture", documents)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,8 +175,8 @@ func TestHistoryRestartsAreWellFormed(t *testing.T) {
 	t.Parallel()
 
 	complete := func() historyRestart {
-		digests := make(map[string]string, len(requiredCRDNames()))
-		for _, name := range requiredCRDNames() {
+		digests := make(map[string]string, len(restartCRDNames()))
+		for _, name := range restartCRDNames() {
 			digests[name] = "sha256:" + strings.Repeat("a", 64)
 		}
 		return historyRestart{fromVersion: 32, fromDigests: digests, reason: "why", transitions: []string{lostContract}}

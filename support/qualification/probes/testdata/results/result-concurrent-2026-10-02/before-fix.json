@@ -1,0 +1,101 @@
+{
+  "evidenceVersion": 1,
+  "receipt": {
+    "Name": "ptah-result-9279043d8b18b67a6c25145e61feeb6577daa8bd93c8eb977843fd495a5d2993-complete",
+    "UID": "f6157a65-e26a-44eb-ae40-b139972039d4",
+    "Digest": "sha256:73a07c20245ad0a67439a9bb52b131a7a4c3da2dfc2cae89003a9bde6895525e",
+    "Size": 873
+  },
+  "originalDigest": "sha256:73a07c20245ad0a67439a9bb52b131a7a4c3da2dfc2cae89003a9bde6895525e",
+  "changedDigest": "sha256:41cc0b35e5bf17150e886c0a32a250f65582f575fc01095a1107664d6b9ac908",
+  "receivers": [
+    "6556c045-1d34-4971-9cbe-77fcdba8e073",
+    "7a3d74cb-6bb9-470f-b862-0ba282ba07b7"
+  ],
+  "rounds": [
+    {
+      "name": "identical",
+      "requests": [
+        {
+          "receiverUID": "6556c045-1d34-4971-9cbe-77fcdba8e073",
+          "digest": "sha256:73a07c20245ad0a67439a9bb52b131a7a4c3da2dfc2cae89003a9bde6895525e",
+          "headersSentNs": 2870513092162291,
+          "bodySentNs": 2870513114204208,
+          "responseReadNs": 2870513226465083,
+          "status": 200,
+          "receipt": {
+            "Name": "ptah-result-9279043d8b18b67a6c25145e61feeb6577daa8bd93c8eb977843fd495a5d2993-complete",
+            "UID": "f6157a65-e26a-44eb-ae40-b139972039d4",
+            "Digest": "sha256:73a07c20245ad0a67439a9bb52b131a7a4c3da2dfc2cae89003a9bde6895525e",
+            "Size": 873
+          }
+        },
+        {
+          "receiverUID": "7a3d74cb-6bb9-470f-b862-0ba282ba07b7",
+          "digest": "sha256:73a07c20245ad0a67439a9bb52b131a7a4c3da2dfc2cae89003a9bde6895525e",
+          "headersSentNs": 2870513114100458,
+          "bodySentNs": 2870513114142291,
+          "responseReadNs": 2870513247726125,
+          "status": 200,
+          "receipt": {
+            "Name": "ptah-result-9279043d8b18b67a6c25145e61feeb6577daa8bd93c8eb977843fd495a5d2993-complete",
+            "UID": "f6157a65-e26a-44eb-ae40-b139972039d4",
+            "Digest": "sha256:73a07c20245ad0a67439a9bb52b131a7a4c3da2dfc2cae89003a9bde6895525e",
+            "Size": 873
+          }
+        }
+      ]
+    },
+    {
+      "name": "conflicting",
+      "requests": [
+        {
+          "receiverUID": "6556c045-1d34-4971-9cbe-77fcdba8e073",
+          "digest": "sha256:41cc0b35e5bf17150e886c0a32a250f65582f575fc01095a1107664d6b9ac908",
+          "headersSentNs": 2870513360509500,
+          "bodySentNs": 2870513381500375,
+          "responseReadNs": 2870513444361666,
+          "status": 503
+        },
+        {
+          "receiverUID": "7a3d74cb-6bb9-470f-b862-0ba282ba07b7",
+          "digest": "sha256:41cc0b35e5bf17150e886c0a32a250f65582f575fc01095a1107664d6b9ac908",
+          "headersSentNs": 2870513381409000,
+          "bodySentNs": 2870513381434416,
+          "responseReadNs": 2870513466188125,
+          "status": 503
+        }
+      ]
+    },
+    {
+      "name": "mixed",
+      "requests": [
+        {
+          "receiverUID": "6556c045-1d34-4971-9cbe-77fcdba8e073",
+          "digest": "sha256:73a07c20245ad0a67439a9bb52b131a7a4c3da2dfc2cae89003a9bde6895525e",
+          "headersSentNs": 2870513581801625,
+          "bodySentNs": 2870513603490041,
+          "responseReadNs": 2870513721141458,
+          "status": 200,
+          "receipt": {
+            "Name": "ptah-result-9279043d8b18b67a6c25145e61feeb6577daa8bd93c8eb977843fd495a5d2993-complete",
+            "UID": "f6157a65-e26a-44eb-ae40-b139972039d4",
+            "Digest": "sha256:73a07c20245ad0a67439a9bb52b131a7a4c3da2dfc2cae89003a9bde6895525e",
+            "Size": 873
+          }
+        },
+        {
+          "receiverUID": "7a3d74cb-6bb9-470f-b862-0ba282ba07b7",
+          "digest": "sha256:41cc0b35e5bf17150e886c0a32a250f65582f575fc01095a1107664d6b9ac908",
+          "headersSentNs": 2870513603319583,
+          "bodySentNs": 2870513603340958,
+          "responseReadNs": 2870513674354208,
+          "status": 503
+        }
+      ]
+    }
+  ],
+  "observedAt": "2026-10-02T13:23:38.390720+00:00",
+  "procedureSHA256": "3fc4500163742849995dea1478ede51b4ed46db6673834ea117bd95a9035065f",
+  "publicationUnchanged": true
+}

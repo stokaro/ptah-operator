@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -108,5 +109,92 @@ func TestAuditParserErrorsDoNotQuoteSQL(t *testing.T) {
 		if err == nil || strings.Contains(err.Error(), secret) {
 			t.Fatalf("audit parser did not safely reject malformed data: %v", err)
 		}
+	}
+}
+
+func TestPostgresAuditPrefixDiagnosticsRetainTheRefusalWithoutSQL(t *testing.T) {
+	const secret = "private-fixture-password"
+	before := []byte(`{"message":"statement: SELECT '` + secret + `'"}` + "\n")
+	for name, after := range map[string][]byte{
+		"identical": append([]byte(nil), before...),
+		"append":    append(append([]byte(nil), before...), []byte(`{"message":"checkpoint complete"}`)...),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := postgresAuditPrefixError(before, after); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+	if err := postgresAuditPrefixError(nil, before); err != nil {
+		t.Fatal(err)
+	}
+	for name, row := range map[string]struct {
+		after  []byte
+		offset string
+	}{
+		"empty read":              {nil, "firstMismatchOffset=0"},
+		"short read":              {before[:7], "firstMismatchOffset=7"},
+		"replaced first byte":     {append([]byte("X"), before[1:]...), "firstMismatchOffset=0"},
+		"changed middle":          {append(append(append([]byte(nil), before[:12]...), 'X'), before[13:]...), "firstMismatchOffset=12"},
+		"replacement then growth": {append([]byte("X"), before...), "firstMismatchOffset=0"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := postgresAuditPrefixError(before, row.after)
+			if err == nil {
+				t.Fatal("lost journal evidence was accepted")
+			}
+			message := err.Error()
+			for _, required := range []string{row.offset, "previousBytes=", "currentBytes=", "previousSHA256=", "currentPrefixSHA256="} {
+				if !strings.Contains(message, required) {
+					t.Fatalf("missing safe diagnostic %s", required)
+				}
+			}
+			for _, forbidden := range []string{secret, "SELECT", "statement:", string(before)} {
+				if strings.Contains(message, forbidden) {
+					t.Fatal("SQL or a fixture credential reached the diagnostic")
+				}
+			}
+		})
+	}
+}
+
+func TestSQLAuditEvidenceRetainsNativeCounts(t *testing.T) {
+	for _, engine := range []string{"postgresql", "mysql"} {
+		t.Run(engine, func(t *testing.T) {
+			raw, err := os.ReadFile(filepath.Join("..", "..", "testdata", "e2e", "readings", engine+"-sql-audit.jsonl"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var counts sqlAuditCounts
+			if engine == "postgresql" {
+				counts, _, err = postgresAuditCounts(raw, "unused")
+			} else {
+				counts, err = mysqlAuditCounts(raw)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			body, err := json.Marshal(map[string]any{"sqlBefore": counts})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var proof struct {
+				Before struct {
+					Clients map[string]int64 `json:"clients"`
+					Records *int64           `json:"records"`
+				} `json:"sqlBefore"`
+			}
+			if err := json.Unmarshal(body, &proof); err != nil {
+				t.Fatal(err)
+			}
+			if proof.Before.Records == nil || *proof.Before.Records != counts.records || len(proof.Before.Clients) != len(counts.clients) || len(proof.Before.Clients) == 0 {
+				t.Fatalf("native audit counts disappeared from retained evidence: %s", body)
+			}
+			for client, want := range counts.clients {
+				if got, ok := proof.Before.Clients[client]; !ok || got != want {
+					t.Fatalf("client %s lost its exact count", client)
+				}
+			}
+		})
 	}
 }

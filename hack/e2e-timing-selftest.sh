@@ -162,6 +162,90 @@ status=0
 grep -q '"name":"open-at-exit","outcome":"pass"' "$WORK_DIR/handler-open.jsonl" ||
 	fail "the stage open at exit was not recorded"
 
+# Exercise the driver's actual EXIT handler. Testing timing_abandon alone
+# missed a teardown that called timing_begin and then exited without closing
+# its stage. These probes never contact Docker or create a cluster.
+sed -n '/^cleanup() {$/,/^}$/p' "$ROOT_DIR/hack/e2e-kind.sh" >"$WORK_DIR/cleanup.sh"
+grep -q '^cleanup() {$' "$WORK_DIR/cleanup.sh" || fail "no driver cleanup handler was extracted"
+printf '%s\n' '#!/bin/sh' 'set -eu' >"$WORK_DIR/cleanup-probe.sh"
+cat >>"$WORK_DIR/cleanup-probe.sh" <<'PROBE'
+probe_root=$1
+probe_case=$2
+probe_status=$3
+probe_cleanup_failure=$4
+E2E_KEEP_ON_FAILURE=$5
+E2E_TIMING_LEDGER=$6
+probe_source=$7
+TMPDIR=$probe_root
+WORK_DIR=$(mktemp -d "$TMPDIR/ptah-operator-e2e.XXXXXX")
+printf '%s\n' "$WORK_DIR" >"$probe_root/$probe_case.workdir"
+# shellcheck disable=SC1091 # Supplied by the self-test from this checkout.
+. "$probe_source/hack/e2e-timing.sh"
+PHASE_COMPLETED=1
+RELEASE_CHART_OUTPUT_TEMP=
+EXTERNAL_PG_CREATED=0
+REGISTRY_CREATED=0
+IMAGE_AUDIT_CONTAINER_CREATED=0
+CLUSTER_CREATED=$probe_cleanup_failure
+KIND_NODE_IMAGE_CREATED=0
+KIND_NETWORK_CREATED=0
+TUNNEL_PID=
+IMAGE_CREATED=0
+CREATED_IMAGE_REFS=
+TASK_CLAIM_CREATE_STARTED=0
+CLUSTER_NAME=timing-probe
+KUBECONFIG_FILE=$WORK_DIR/kubeconfig
+REGISTRY_CONTAINER=timing-probe-registry
+EXTERNAL_PG_CONTAINER=timing-probe-database
+collect_diagnostics() { :; }
+debug_logs_stop_following() { :; }
+kind() { return "$probe_cleanup_failure"; }
+docker() { printf 'unexpected Docker call\n' >>"$probe_root/unexpected-docker"; return 1; }
+# shellcheck disable=SC1091 # The actual handler extracted above.
+. "$probe_root/cleanup.sh"
+PROBE
+# The handler belongs to the driver, not this file. Emit the trap as data so
+# the static source check looks for its completion latch in the driver.
+# shellcheck disable=SC2016 # The probe expands this when it runs.
+printf '%s\n' 'trap cleanup EXIT' 'exit "$probe_status"' >>"$WORK_DIR/cleanup-probe.sh"
+for probe_case in success failed-phase failed-cleanup both-failed retained unwritable; do
+	probe_status=0
+	probe_cleanup_failure=0
+	probe_keep=0
+	probe_want_status=0
+	probe_outcome=pass
+	probe_ledger=$WORK_DIR/$probe_case.jsonl
+	case "$probe_case" in
+		failed-phase) probe_status=23; probe_want_status=23 ;;
+		failed-cleanup) probe_cleanup_failure=1; probe_want_status=1; probe_outcome=fail ;;
+		both-failed) probe_status=23; probe_cleanup_failure=1; probe_want_status=23; probe_outcome=fail ;;
+		retained) probe_status=23; probe_keep=1; probe_want_status=23; probe_outcome=retained ;;
+		unwritable) probe_ledger=$WORK_DIR/missing-directory/ledger.jsonl ;;
+	esac
+	probe_actual_status=0
+	sh "$WORK_DIR/cleanup-probe.sh" "$WORK_DIR" "$probe_case" "$probe_status" \
+		"$probe_cleanup_failure" "$probe_keep" "$probe_ledger" "$ROOT_DIR" \
+		>"$WORK_DIR/$probe_case.out" 2>"$WORK_DIR/$probe_case.err" || probe_actual_status=$?
+	[ "$probe_actual_status" -eq "$probe_want_status" ] ||
+		fail "$probe_case cleanup returned $probe_actual_status, want $probe_want_status"
+	if [ "$probe_case" = unwritable ]; then
+		grep -q 'cannot be appended to' "$WORK_DIR/$probe_case.err" ||
+			fail "the unwritable teardown ledger was not reported"
+	else
+		[ "$(wc -l <"$probe_ledger" | tr -d ' ')" -eq 1 ] ||
+			fail "$probe_case teardown did not write exactly one row"
+		grep -q '"kind":"bootstrap","name":"teardown","outcome":"'"$probe_outcome"'"' "$probe_ledger" ||
+			fail "$probe_case teardown did not record $probe_outcome"
+	fi
+	probe_workdir=$(cat "$WORK_DIR/$probe_case.workdir")
+	if [ "$probe_keep" -eq 1 ]; then
+		[ -d "$probe_workdir" ] || fail "the retained cleanup probe deleted its work directory"
+	else
+		[ ! -e "$probe_workdir" ] || fail "$probe_case cleanup did not remove its work directory"
+	fi
+done
+[ ! -e "$WORK_DIR/unexpected-docker" ] || fail "a cleanup timing probe tried to use Docker"
+
 # A phase run by hand names no ledger. Every call is then a no-op, and the
 # phase behaves as it did before there was a stopwatch.
 status=0

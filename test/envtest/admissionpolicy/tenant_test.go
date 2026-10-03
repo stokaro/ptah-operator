@@ -248,6 +248,10 @@ func resolveJobDeclaring(metadata *operatorv1alpha1.PodMetadataSpec) (*batchv1.J
 
 // migrationResolveJob is the migration family's Job for the same step.
 func migrationResolveJob() (*batchv1.Job, error) {
+	return migrationResolveJobBuiltBy(managerBuilder())
+}
+
+func migrationResolveJobBuiltBy(builder workload.Builder) (*batchv1.Job, error) {
 	migration := tenantMigration.DeepCopy()
 	operation := operatorv1alpha1.MigrationOperationStatus{
 		Type:               operatorv1alpha1.MigrationOperationResolve,
@@ -271,7 +275,7 @@ func migrationResolveJob() (*batchv1.Job, error) {
 		return nil, err
 	}
 	operation.JobName = name
-	return managerBuilder().BuildMigration(migration, operation, nil)
+	return builder.BuildMigration(migration, operation, nil)
 }
 
 // stored reads the current form of object into a fresh copy, so a row edits

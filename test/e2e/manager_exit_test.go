@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -78,6 +79,7 @@ func TestReadManagerExit(t *testing.T) {
 		logStatus   int
 		want        managerExitDiagnostic
 		logRequests int32
+		honorLimits bool
 	}{
 		"exact previous run":   {body: stopped, want: managerExitDiagnostic{Read: "read", Signals: []string{"leader_election_lost", "manager_stopped"}}, logRequests: 1},
 		"replaced before read": {change: func(p *corev1.Pod, _ int32) { p.UID = "replacement" }, want: managerExitDiagnostic{Read: "identity_changed"}},
@@ -92,7 +94,8 @@ func TestReadManagerExit(t *testing.T) {
 			}
 		}, body: stopped, want: managerExitDiagnostic{Read: "identity_changed"}, logRequests: 1},
 		"secret in API error":       {body: "error contains secret-value", logStatus: http.StatusForbidden, want: managerExitDiagnostic{Read: "unavailable"}, logRequests: 1},
-		"server ignores byte limit": {body: stopped + "\n" + strings.Repeat("secret-value", managerExitLogLimit), want: managerExitDiagnostic{Read: "read", Limited: true, Signals: []string{"leader_election_lost", "manager_stopped"}}, logRequests: 1},
+		"server ignores byte limit": {body: stopped + "\n" + strings.Repeat("secret-value", managerExitLogLimit), want: managerExitDiagnostic{Read: "read", Limited: true, Signals: []string{"leader_election_lost", "manager_stopped"}}, logRequests: 4},
+		"verbose tail hides exit":   {body: strings.Repeat(strings.Repeat("x", 2048)+"\n", 511) + stopped, honorLimits: true, want: managerExitDiagnostic{Read: "read", Limited: true, Signals: []string{"leader_election_lost", "manager_stopped"}}, logRequests: 2},
 	} {
 		t.Run(name, func(t *testing.T) {
 			snapshot := managerExitPod()
@@ -108,15 +111,27 @@ func TestReadManagerExit(t *testing.T) {
 					w.Header().Set("Content-Type", "application/json")
 					_ = json.NewEncoder(w).Encode(pod)
 				case "/api/v1/namespaces/operator/pods/manager/log":
-					logs.Add(1)
+					n := logs.Add(1)
 					q := r.URL.Query()
-					if q.Get("previous") != "true" || q.Get("container") != "manager" || q.Get("tailLines") != "512" || q.Get("limitBytes") != fmt.Sprint(managerExitLogLimit) {
+					tails := []string{"512", "64", "8", "1"}
+					if n > int32(len(tails)) || q.Get("previous") != "true" || q.Get("container") != "manager" || q.Get("tailLines") != tails[n-1] || q.Get("limitBytes") != fmt.Sprint(managerExitLogLimit) {
 						t.Errorf("log request was not bound to the previous container and limits: %v", q)
 					}
 					if row.logStatus != 0 {
 						w.WriteHeader(row.logStatus)
 					}
-					_, _ = w.Write([]byte(row.body))
+					body := row.body
+					if row.honorLimits {
+						count, _ := strconv.Atoi(q.Get("tailLines"))
+						lines := strings.Split(body, "\n")
+						if len(lines) > count {
+							body = strings.Join(lines[len(lines)-count:], "\n")
+						}
+						if len(body) > managerExitLogLimit {
+							body = body[:managerExitLogLimit]
+						}
+					}
+					_, _ = w.Write([]byte(body))
 				default:
 					t.Errorf("unexpected request %s", r.URL.Path)
 					w.WriteHeader(http.StatusNotFound)

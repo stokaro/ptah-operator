@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -61,19 +62,27 @@ func TestEveryGrantedStatusWriteIsUsed(t *testing.T) {
 	}
 }
 
-// The security model tells a reader the shipped ClusterRole contains no Secret
-// permission. That is the claim a deployment's whole credential separation
-// rests on, so it is measured rather than stated.
-func TestTheShippedRolesGrantNoSecretPermission(t *testing.T) {
+// Result delivery uses receiver-audience Pod tokens. Neither mode needs a
+// cluster-wide Secret grant for the manager or any of the shipped roles.
+func TestTheShippedRolesGrantOnlyDeclaredSecretPermission(t *testing.T) {
 	t.Parallel()
-	for index, line := range strings.Split(readDocumentationPage(t, chartRoles), "\n") {
-		match := ruleResources.FindStringSubmatch(line)
-		if match == nil {
-			continue
+	for _, enabled := range []bool{false, true} {
+		values := []string{"resultDelivery.enabled=" + strconv.FormatBool(enabled)}
+		roles := renderedClusterRoles(t, values...)
+		if len(roles) == 0 {
+			t.Fatal("no shipped roles were examined")
 		}
-		for _, item := range quotedItem.FindAllStringSubmatch(match[1], -1) {
-			if strings.HasPrefix(item[1], "secrets") {
-				t.Errorf("%s:%d grants %s", chartRoles, index+1, item[1])
+		for _, role := range roles {
+			for _, rule := range role.Rules {
+				for _, resource := range rule.Resources {
+					if resource == "*" {
+						t.Fatalf("%s grants every resource", role.Name)
+					}
+					if !strings.HasPrefix(resource, "secrets") {
+						continue
+					}
+					t.Fatalf("durable=%v: %s has an undeclared Secret grant: %#v", enabled, role.Name, rule)
+				}
 			}
 		}
 	}

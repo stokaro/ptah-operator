@@ -1,0 +1,223 @@
+{
+  "apiVersion": "operator.ptah.run/v1alpha1",
+  "kind": "PtahMigration",
+  "metadata": {
+    "creationTimestamp": "2026-10-01T21:36:44Z",
+    "finalizers": [
+      "operator.ptah.run/migration-operation"
+    ],
+    "generation": 8,
+    "labels": {
+      "operator.ptah.run/capacity": "capacity-soak"
+    },
+    "name": "capacity-migration-000",
+    "namespace": "ptah-capacity-46ce9f9c4d-a",
+    "resourceVersion": "45642",
+    "uid": "6e7de21d-7e66-4c14-bc84-8ee9272638d9"
+  },
+  "spec": {
+    "artifact": {
+      "ociRef": "oci://e2e-registry.ptah-test-a-1-37-0-soak90-5db6ef68-5190f1dd9b.svc.cluster.local:5000/migrations/capacity-inputs@sha256:288d9a19e04339beda2625e0cb958cc776fdee03de33d2744b02ccd446ff0b0b",
+      "registryAuthFrom": {
+        "dockerConfigJSONKey": ".dockerconfigjson",
+        "mode": "Environment",
+        "name": "demo-registry",
+        "passwordKey": "password",
+        "tokenKey": "token",
+        "usernameKey": "username"
+      },
+      "transport": {
+        "plainHTTP": true
+      },
+      "verificationPolicyFrom": {
+        "key": "policy.yaml",
+        "name": "demo-migration-verification-policy"
+      }
+    },
+    "execution": {
+      "activeDeadlineSeconds": 300,
+      "connectTimeout": "30s",
+      "failureRetryInterval": "10s"
+    },
+    "interval": "2m0s",
+    "policy": {
+      "apply": "Always",
+      "lockTimeout": "30s"
+    },
+    "suspend": false,
+    "target": {
+      "coordinationKey": "capacity/capacity-migration-000",
+      "engine": "PostgreSQL",
+      "sharedRealm": false,
+      "urlFrom": {
+        "key": "url",
+        "name": "capacity-db-10"
+      }
+    }
+  },
+  "status": {
+    "activeOperation": {
+      "admissionSnapshot": {
+        "alwaysPullImagesEnabled": false,
+        "defaultNotReadyTolerationSeconds": 300,
+        "defaultTolerationsEnabled": true,
+        "defaultUnreachableTolerationSeconds": 300,
+        "digest": "sha256:5b783b68ded61525b8be6e689738c98a4849fd783ea9fabc5d4ab6f0fe04eed3",
+        "extendedResourceTolerationEnabled": false,
+        "priorityClass": {
+          "preemptionPolicy": "PreemptLowerPriority",
+          "value": 0
+        },
+        "serviceAccount": {
+          "imagePullSecrets": [
+            {
+              "name": "demo-registry-pull"
+            }
+          ],
+          "object": {
+            "name": "default",
+            "resourceVersion": "1579",
+            "uid": "df4e151b-0d72-4227-ba88-84524d3fab49"
+          }
+        },
+        "templateDigest": "sha256:02e77936d8fc4103e816fa50526689c941405b3943f5184d71a6077f255cb8ec",
+        "version": "v1"
+      },
+      "attempt": 1,
+      "coordinationDigest": "sha256:26bb3c3b7ec5b1282118c18aa6abd69d2081b091e7c99fc40b13ee04c141390f",
+      "dispatchNotAfter": "2026-10-01T22:03:59Z",
+      "dispatchStarted": true,
+      "executionBindingID": "v1-5679513c35aaaa9eb6aff0cd938122d7",
+      "executionNotAfter": "2026-10-01T22:03:59Z",
+      "id": "sha256:5b6f51202806c5705e4830cb72bd97bb494f44fe20704fa1126f97c44de039aa",
+      "inputFingerprint": "sha256:e15044aa439aec48d35959d27fbcbbb78797ef0ac6b74d9fd35cb832d5752cc4",
+      "jobName": "ptah-m-apply-capacity-migration-000-fed8d28376ea3086",
+      "jobUID": "4746dacd-bb94-4abd-9142-00fe62a86b16",
+      "leaseDurationSeconds": 420,
+      "leaseEpoch": "v1-0bcc6b5024c14ecf7b010205e7b2297f",
+      "planRef": {
+        "name": "ptah-mplan-c743fe0bcb4386e6b7c9410c",
+        "uid": "2fa6200a-4cd8-4e1d-ba52-b9bafb8c183b"
+      },
+      "source": {
+        "digest": "sha256:288d9a19e04339beda2625e0cb958cc776fdee03de33d2744b02ccd446ff0b0b",
+        "registryAuthFrom": {
+          "dockerConfigJSONKey": ".dockerconfigjson",
+          "mode": "Environment",
+          "name": "demo-registry",
+          "passwordKey": "password",
+          "tokenKey": "token",
+          "usernameKey": "username"
+        },
+        "resolvedReference": "oci://e2e-registry.ptah-test-a-1-37-0-soak90-5db6ef68-5190f1dd9b.svc.cluster.local:5000/migrations/capacity-inputs@sha256:288d9a19e04339beda2625e0cb958cc776fdee03de33d2744b02ccd446ff0b0b",
+        "transport": {
+          "plainHTTP": true
+        }
+      },
+      "startedAt": "2026-10-01T21:58:59Z",
+      "target": {
+        "engine": "PostgreSQL",
+        "urlFrom": {
+          "key": "url",
+          "name": "capacity-db-10"
+        }
+      },
+      "type": "Apply"
+    },
+    "artifact": {
+      "digest": "sha256:288d9a19e04339beda2625e0cb958cc776fdee03de33d2744b02ccd446ff0b0b",
+      "registryAuthFrom": {
+        "dockerConfigJSONKey": ".dockerconfigjson",
+        "mode": "Environment",
+        "name": "demo-registry",
+        "passwordKey": "password",
+        "tokenKey": "token",
+        "usernameKey": "username"
+      },
+      "resolvedReference": "oci://e2e-registry.ptah-test-a-1-37-0-soak90-5db6ef68-5190f1dd9b.svc.cluster.local:5000/migrations/capacity-inputs@sha256:288d9a19e04339beda2625e0cb958cc776fdee03de33d2744b02ccd446ff0b0b",
+      "transport": {
+        "plainHTTP": true
+      }
+    },
+    "conditions": [
+      {
+        "lastTransitionTime": "2026-10-01T21:58:42Z",
+        "message": "Applying 1 planned migrations",
+        "observedGeneration": 8,
+        "reason": "ApprovedPlan",
+        "status": "True",
+        "type": "Progressing"
+      },
+      {
+        "lastTransitionTime": "2026-10-01T21:58:51Z",
+        "message": "The resolved artifact satisfied its verification policy",
+        "observedGeneration": 8,
+        "reason": "PolicySatisfied",
+        "status": "True",
+        "type": "ArtifactVerified"
+      },
+      {
+        "lastTransitionTime": "2026-10-01T21:37:07Z",
+        "message": "The history continues this artifact",
+        "observedGeneration": 8,
+        "reason": "HistoryMatched",
+        "status": "False",
+        "type": "Blocked"
+      },
+      {
+        "lastTransitionTime": "2026-10-01T21:58:58Z",
+        "message": "1 migrations are planned",
+        "observedGeneration": 8,
+        "reason": "ApplyPending",
+        "status": "False",
+        "type": "Ready"
+      },
+      {
+        "lastTransitionTime": "2026-10-01T21:37:07Z",
+        "message": "The plan's approval requirements are satisfied",
+        "observedGeneration": 8,
+        "reason": "Satisfied",
+        "status": "False",
+        "type": "ApprovalRequired"
+      }
+    ],
+    "executionBinding": {
+      "controllerStateVersion": 1,
+      "epoch": "v1-5679513c35aaaa9eb6aff0cd938122d7",
+      "executorImage": "e2e-registry.ptah-test-a-1-37-0-soak90-5db6ef68-5190f1dd9b.svc.cluster.local:5000/ptah-executor@sha256:f645352d29b28fb32d98e9597685b1650d3cbaf9e9004e4b5b6edf969fdd5278",
+      "ptahVersion": "v0.9.0-73-gf6e562c5b",
+      "runnerProtocolVersion": 1
+    },
+    "history": {
+      "appliedCount": 4,
+      "contractVersion": 1,
+      "currentVersion": 4,
+      "fingerprint": "sha256:5bca38f688c8d4ff1d5bf1cdb4414506d14d5943be8a983d6f96ccc011a46a93",
+      "observedAt": "2026-10-01T21:58:58Z",
+      "pendingCount": 1,
+      "targetIdentityDigest": "sha256:95a01413aa5dae47c850544a30ee03b92fe146672dc215804ea39a97f5464e24"
+    },
+    "lastRun": {
+      "appliedVersions": [
+        4
+      ],
+      "dispatchedBy": {
+        "controllerImage": "e2e-registry.ptah-test-a-1-37-0-soak90-5db6ef68-5190f1dd9b.svc.cluster.local:5000/ptah-operator@sha256:f49a0fdd648c593a8beb453f636500fa7e8418bd67e01961526fca39031b0b0c",
+        "controllerRevision": "5db6ef68b1827bdbb45f665ddecad2e3ebfa4af7",
+        "runnerImage": "e2e-registry.ptah-test-a-1-37-0-soak90-5db6ef68-5190f1dd9b.svc.cluster.local:5000/ptah-runner@sha256:f49a0fdd648c593a8beb453f636500fa7e8418bd67e01961526fca39031b0b0c"
+      },
+      "finishedAt": "2026-10-01T21:49:19Z",
+      "jobName": "ptah-m-apply-capacity-migration-000-b1215cc491f1d8ee",
+      "jobUID": "d5fdae60-d21b-41ce-949a-7c647876302b",
+      "message": "1 migrations are recorded applied",
+      "outcome": "Applied",
+      "startedAt": "2026-10-01T21:49:10Z"
+    },
+    "observedGeneration": 8,
+    "phase": "Applying",
+    "plan": {
+      "name": "ptah-mplan-c743fe0bcb4386e6b7c9410c",
+      "uid": "2fa6200a-4cd8-4e1d-ba52-b9bafb8c183b"
+    }
+  }
+}

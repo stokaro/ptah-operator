@@ -1,0 +1,51 @@
+[
+  {
+    "metadata": {
+      "creationTimestamp": "2026-10-02T17:21:27Z",
+      "generation": 1,
+      "labels": {
+        "operator.ptah.run/result-record": "retired"
+      },
+      "name": "ptah-result-8d1ad1a601d2cd8c5cac3e97b534170de16734abf7b8e30403b426db29e2e694-retired",
+      "namespace": "ptah-result-abandoned",
+      "ownerReferences": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "blockOwnerDeletion": false,
+          "controller": true,
+          "kind": "PtahSchema",
+          "name": "abandoned",
+          "uid": "da453b77-565c-4865-82ee-d59778fc7b15"
+        }
+      ],
+      "resourceVersion": "71080",
+      "uid": "f6706d46-1f26-4b05-83e4-26a60d34dfec"
+    },
+    "spec": {
+      "value": {
+        "version": 1,
+        "binding": {
+          "namespace": "ptah-result-abandoned",
+          "kind": "PtahSchema",
+          "name": "abandoned",
+          "uid": "da453b77-565c-4865-82ee-d59778fc7b15",
+          "generation": 1,
+          "executionBindingID": "v1-043652ea301a6e8dc6e29256bef4d0f6",
+          "inputFingerprint": "sha256:6f7737b222c186f36f9c4c4c289246c0974bb4a451425e034e5ecdaf08cd2a9f",
+          "operation": "resolve",
+          "operationID": "sha256:d2ff4a728426d6d148a8af68049d5ba51ea433b0b56bf814e746f56df4b1ebeb",
+          "jobName": "ptah-resolve-abandoned-a920219cb6aa7203",
+          "jobUID": "f0c765dc-883b-4417-8df4-a10b315343ff",
+          "podName": "ptah-resolve-abandoned-a920219cb6aa7203-qwlpk",
+          "podUID": "a47fedc0-db48-4a70-84b7-ec1d9082405e"
+        },
+        "source": {
+          "name": "ptah-result-key-8b435eacdac96caaf5817d8e342f1693",
+          "uid": "2020118d-6cdd-4c5a-9b9c-e9f9db2115a1",
+          "type": "credential"
+        },
+        "retentionSeconds": 3600
+      }
+    }
+  }
+]

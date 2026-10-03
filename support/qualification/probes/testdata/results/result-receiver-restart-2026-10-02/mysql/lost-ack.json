@@ -1,0 +1,137 @@
+{
+  "commit": "b2576f9bbbe72979ba392456846fb16da1f0f03a",
+  "fixtureImage": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/e2e-fixture@sha256:08c736d18946bc81eba84e9215da5776eaa89e55b22645c1951799b3d9bd878f",
+  "credentialCertificateDigest": "sha256:6a057b3769fc25355854d5b2308efcc04011923468beb3f9769324c2c24f8527",
+  "credentialUID": "590550d3-7b19-45b5-bc8c-464556541667",
+  "namespace": "ptah-result-restart-mysql",
+  "database": "result_restart_mysql",
+  "resourceUID": "4bfb8dd6-e7f8-49e5-8c71-1e79a7c63d35",
+  "binding": {
+    "namespace": "ptah-result-restart-mysql",
+    "kind": "PtahMigration",
+    "name": "lost-ack",
+    "uid": "4bfb8dd6-e7f8-49e5-8c71-1e79a7c63d35",
+    "generation": 1,
+    "executionBindingID": "v1-d1ff07bf72af7ca14291f279fc1d14e1",
+    "inputFingerprint": "sha256:091f77e70832c8fcd72964d46baa553113597b5b20b2fa2b469c5b33e64bfa46",
+    "operation": "migration-apply",
+    "operationID": "sha256:833e461cf9b217797bb724cdc08f68db0c801e489c1a5b363a354bf083516bf1",
+    "jobName": "ptah-m-apply-lost-ack-f46b2ee7572f5e00",
+    "jobUID": "9c8d14ab-a6bd-460a-947a-a39fe4274bec",
+    "podName": "ptah-m-apply-lost-ack-f46b2ee7572f5e00-h7xnk",
+    "podUID": "f74f7371-a45e-4421-a4c4-910259c7b26c"
+  },
+  "jobUID": "9c8d14ab-a6bd-460a-947a-a39fe4274bec",
+  "podUID": "f74f7371-a45e-4421-a4c4-910259c7b26c",
+  "intentUID": "e95030a4-70f6-45a2-93d2-55e623d089a2",
+  "receiptUID": "e6cab052-35b3-4b85-a8c3-a679ededf5c2",
+  "payloadDigest": "sha256:7b5d21c037922d66d1f95ecacf98af632856858909a252f7cdaf7167306b19fe",
+  "receiptName": "ptah-result-71ac42b930f8fc6d1b4175ed50dd21929dfa6f5dc7725d76866d88527b080a50-complete",
+  "payloadBytes": 873,
+  "proxy": {
+    "clientCertificateDigest": "sha256:6a057b3769fc25355854d5b2308efcc04011923468beb3f9769324c2c24f8527",
+    "preflights": 1,
+    "attempts": [
+      {
+        "receivedAt": "2026-10-02T12:37:32.923293908Z",
+        "receipt": {
+          "Name": "ptah-result-71ac42b930f8fc6d1b4175ed50dd21929dfa6f5dc7725d76866d88527b080a50-complete",
+          "UID": "e6cab052-35b3-4b85-a8c3-a679ededf5c2",
+          "Digest": "sha256:7b5d21c037922d66d1f95ecacf98af632856858909a252f7cdaf7167306b19fe",
+          "Size": 873
+        }
+      },
+      {
+        "receivedAt": "2026-10-02T12:37:49.007616682Z",
+        "receipt": {
+          "Name": "ptah-result-71ac42b930f8fc6d1b4175ed50dd21929dfa6f5dc7725d76866d88527b080a50-complete",
+          "UID": "e6cab052-35b3-4b85-a8c3-a679ededf5c2",
+          "Digest": "sha256:7b5d21c037922d66d1f95ecacf98af632856858909a252f7cdaf7167306b19fe",
+          "Size": 873
+        }
+      }
+    ],
+    "dropped": true,
+    "released": true,
+    "retryGateEnabled": true,
+    "retryWaits": 1,
+    "retryResumedAt": "2026-10-02T12:37:48.916683791Z"
+  },
+  "databaseBeforeRelease": "1:1:true",
+  "databaseAfterRelease": "1:1:true",
+  "databaseBeforeExecution": "0:1:false",
+  "applyJobs": 1,
+  "podRestarts": 0,
+  "podPhase": "Succeeded",
+  "executionPods": 1,
+  "runnerAPICredentials": false,
+  "converged": true,
+  "conditions": [
+    {
+      "lastTransitionTime": "2026-10-02T12:38:11Z",
+      "message": "Nothing is pending",
+      "observedGeneration": 1,
+      "reason": "HistoryMatched",
+      "status": "False",
+      "type": "Progressing"
+    },
+    {
+      "lastTransitionTime": "2026-10-02T12:37:09Z",
+      "message": "The resolved artifact satisfied its verification policy",
+      "observedGeneration": 1,
+      "reason": "PolicySatisfied",
+      "status": "True",
+      "type": "ArtifactVerified"
+    },
+    {
+      "lastTransitionTime": "2026-10-02T12:37:21Z",
+      "message": "The history continues this artifact",
+      "observedGeneration": 1,
+      "reason": "HistoryMatched",
+      "status": "False",
+      "type": "Blocked"
+    },
+    {
+      "lastTransitionTime": "2026-10-02T12:38:11Z",
+      "message": "The database has every migration this artifact carries",
+      "observedGeneration": 1,
+      "reason": "HistoryMatched",
+      "status": "True",
+      "type": "Ready"
+    },
+    {
+      "lastTransitionTime": "2026-10-02T12:37:21Z",
+      "message": "The plan's approval requirements are satisfied",
+      "observedGeneration": 1,
+      "reason": "Satisfied",
+      "status": "False",
+      "type": "ApprovalRequired"
+    }
+  ],
+  "procedureSHA256": "4e060e791e5b8ffc9dff6310fa41ce00171d56606d70dd66b6146e8ea4f3c6dc",
+  "completedAt": "2026-10-02T12:38:12.946358+00:00",
+  "evidenceVersion": 3,
+  "engine": "MySQL",
+  "rollbackCalibration": {
+    "storageEngine": "InnoDB",
+    "afterRollback": "0:1:true",
+    "afterReset": "0:1:false"
+  },
+  "databaseServerVersion": "8.4.11",
+  "receiverRestart": {
+    "before": [
+      "09c3e0f9-716e-42d4-a916-f2bdaa066a1a",
+      "a92aa6e6-3d11-493d-a5cd-83428eab1fd7"
+    ],
+    "after": [
+      "9f5c22ec-5707-4cd9-adf1-11c0e5cb7a45",
+      "db945d18-755c-45d4-860b-b9d42188584d"
+    ],
+    "oldPodsAbsent": true,
+    "newPodsReady": true,
+    "oldPodsAbsentAt": "2026-10-02T12:37:35.484456+00:00",
+    "newPodsReadyAt": "2026-10-02T12:37:48.765041+00:00",
+    "receiptUIDBeforeRestart": "e6cab052-35b3-4b85-a8c3-a679ededf5c2",
+    "databaseBeforeRestart": "1:1:true"
+  }
+}

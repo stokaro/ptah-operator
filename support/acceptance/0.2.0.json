@@ -1,0 +1,62 @@
+{
+  "managerImageDigest": "",
+  "runnerImageDigest": "",
+  "executorImageDigest": "",
+  "chartDigest": "",
+  "installationValues": "Qualification installation contract: support/qualification/0.2.0.md and monitoring values support/qualification/0.2.0-monitoring.yaml. Attach the actual rendered chart values, Pod Security/quota/admission settings, and runtime inventory before acceptance.",
+  "operatingTargets": "Predeclared workload, numerical operating and alert thresholds, 90-minute soak, fault and overload assertions: support/qualification/0.2.0.md. Required scenario/environment groups: support/qualification/0.2.0-coverage.md. Record both document hashes and the monitoring values hash before provisioning.",
+  "recoveryObjectives": "Predeclared operator-state and database RPO: 5 minutes each. Operator-state-only loss RTO: 15 minutes with the database available. Database or combined-loss RTO: 30 minutes through application-service restoration, including manual work and verification. Procedure and timing boundaries: support/qualification/0.2.0.md.",
+  "runEvidence": "No qualification run has yet been assessed against this profile. PR checks and the historical lab-20 reading do not fill the final runtime identities or acceptance evidence.",
+  "requirements": {
+    "PA-01": {
+      "disposition": "Not assessed",
+      "evidence": ""
+    },
+    "PA-02": {
+      "disposition": "Not assessed",
+      "evidence": ""
+    },
+    "PA-03": {
+      "disposition": "Not assessed",
+      "evidence": ""
+    },
+    "PA-04": {
+      "disposition": "Not assessed",
+      "evidence": ""
+    },
+    "PA-05": {
+      "disposition": "Not assessed",
+      "evidence": ""
+    },
+    "PA-06": {
+      "disposition": "Not assessed",
+      "evidence": ""
+    },
+    "PA-07": {
+      "disposition": "Not assessed",
+      "evidence": ""
+    },
+    "PA-08": {
+      "disposition": "Not assessed",
+      "evidence": ""
+    },
+    "PA-09": {
+      "disposition": "Not assessed",
+      "evidence": ""
+    },
+    "PA-10": {
+      "disposition": "Not assessed",
+      "evidence": ""
+    },
+    "PA-11": {
+      "disposition": "Not assessed",
+      "evidence": ""
+    },
+    "PA-12": {
+      "disposition": "Not assessed",
+      "evidence": ""
+    }
+  },
+  "exclusions": [],
+  "decision": "Not assessed"
+}
