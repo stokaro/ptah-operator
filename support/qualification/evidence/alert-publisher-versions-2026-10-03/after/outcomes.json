@@ -1,0 +1,12 @@
+[
+  {
+    "case": "postgresql-fixed",
+    "exitCode": 0,
+    "version": "alert-unresolved-postgresql"
+  },
+  {
+    "case": "mysql-fixed",
+    "exitCode": 0,
+    "version": "alert-unresolved-mysql"
+  }
+]

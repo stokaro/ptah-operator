@@ -1,0 +1,4 @@
+Pushed schema as oci://ptah-585-publisher-repro-registry:5000/e2e-alert-schema:postgresql
+Digest: sha256:7334941811cce5612b5193b36272597cbbc2a6584aa850107c2bf93382158757
+Version: alert-unresolved-postgresql
+Tags: [alert-unresolved-postgresql postgresql]
