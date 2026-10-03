@@ -1024,11 +1024,18 @@ for next_release_harness_marker in \
 	'--file "$NEXT_BUILD_CONTEXT/test/e2e/Dockerfile.operator"' \
 	'push_task_image "$NEXT_OPERATOR_IMAGE" ptah-operator-next' \
 	'"$NEXT_VALUES_FILE" "$NEXT_CONTROLLER_REPOSITORY" "$IMAGE_TAG"' \
-	'E2E_NEXT_CHART_PACKAGE=$NEXT_CHART_PACKAGE' \
-	'E2E_NEXT_VALUES_FILE=$NEXT_VALUES_FILE' \
 	'E2E_NEXT_CONTROLLER_IMAGE=$NEXT_CONTROLLER_IMAGE'; do
 	static_require_count "$next_release_harness_source" "$next_release_harness_marker" 1 \
 		'synthetic next-release harness'
+done
+# Uninstall and external upgrade-alert recovery use the same prepared successor.
+# The phase-input verifier checks each handoff's exact values separately.
+# shellcheck disable=SC2016 # Exact handoff markers retain shell variables literally.
+for next_release_handoff_marker in \
+	'E2E_NEXT_CHART_PACKAGE=$NEXT_CHART_PACKAGE' \
+	'E2E_NEXT_VALUES_FILE=$NEXT_VALUES_FILE'; do
+	static_require_count "$next_release_harness_source" "$next_release_handoff_marker" 2 \
+		'synthetic next-release handoff to uninstall and upgrade alerts'
 done
 # The same exact current-release values and image identity must reach both the
 # upgrade proof and the final fresh-install proof.

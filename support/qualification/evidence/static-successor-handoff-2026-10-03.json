@@ -1,0 +1,14 @@
+{
+  "requirement": "#584 source verification for the existing synthetic successor handoffs",
+  "failedRun": 37136661572,
+  "failedJob": 111242462555,
+  "sourceRevisionBefore": "c3c3b1fba64d1842ec6b3c9a37d9335eb3647799",
+  "failure": "synthetic next-release harness has 2 occurrences of E2E_NEXT_CHART_PACKAGE=$NEXT_CHART_PACKAGE, expected 1",
+  "correction": "Require two exact chart/values handoffs for uninstall and upgrade-alert recovery. Image build/push and next controller image remain single occurrences. Existing phase-input validation still checks the exact binding for each phase.",
+  "validation": {
+    "command": "GOFLAGS=-p=1 make e2e-static",
+    "exitCode": 0,
+    "logSHA256": "017725137716935b197d5655c2c7f76b6d15cfb60bb1b2b4e161202cc04ce47d"
+  },
+  "scope": "Static gate correction only; no runtime, scenario, acceptance bound or matrix change."
+}
