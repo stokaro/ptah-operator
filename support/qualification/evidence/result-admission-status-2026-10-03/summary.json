@@ -1,5 +1,5 @@
 {
-  "status": "local regression and controller checks passed; corrected native admission scenario pending",
+  "status": "local regression, controller checks and corrected native admission scenario passed; remaining data-plane scenarios pending",
   "baseCommit": "c14d41fe4c0a0ce59b204bfe70ee2943e29fc025",
   "scope": "Pod-admission refusal reporting with default durable delivery; final integration DoD in #586 and existing #578 operational status coverage.",
   "reproduction": "A Job whose Pod creation is refused cannot receive its Pod-bound result credential. Both controllers returned on pending issuance before reporting the FailedCreate Event. The native schema stayed Resolving/OperationInProgress until the audit rejected its no-Pod Job.",
@@ -7,7 +7,8 @@
   "sourceSHA256": {
     "internal/controller/schema_controller.go": "6a1a8d68d7b47465a436c41f52515c9e298055c909c69751b49e5e3a9ee5909e",
     "internal/controller/migration_controller.go": "fa5e209628310a0aa91ac6b15384e630feb78be8934c625f72a1233385305e1e",
-    "internal/controller/pod_admission_test.go": "613d59926214a61159d44c8dff21c0f4e504420dec64fd7ad98eefece40b1a0d"
+    "internal/controller/pod_admission_test.go": "613d59926214a61159d44c8dff21c0f4e504420dec64fd7ad98eefece40b1a0d",
+    "test/e2e/dataplane_admission_e2e_test.go": "be484ac04f696400cd5e02b538c0fb5b98ff04898224bab4a00eba963ff23823"
   },
   "checks": [
     {
@@ -35,8 +36,22 @@
     "lab": "Retained for focused verification of the correction. No native result is claimed for the corrected runtime."
   },
   "limits": [
-    "The full native data-plane suite did not pass.",
-    "Existing completed native cases include both blocked-refresh TTL gates, both hung-log independence rows, deadline recovery and fixture suspension, SQL history audits, and four-eyes approval.",
+    "The original full native data-plane run failed after 20 completed scenarios. The corrected isolated admission scenario now passes; the remaining five scenarios and the final CI matrix are not yet verified.",
+    "The original successful native rows retain their c14d41fe runtime identity; the correction was tested separately on a19ec584.",
+    "Migration admission refusal has local controller regression coverage; this native scenario covers PtahSchema.",
     "No current-head CI or release-readiness verdict is claimed."
-  ]
+  ],
+  "nativeCorrection": {
+    "runtimeCommit": "a19ec58463bb60ddf976ef8184c4048776760f91",
+    "operatorManifest": "sha256:79fba0957bb29d4d25a304fd208e9b79439fceb47afc88d94fbdc03046b43cd8",
+    "result": "passed",
+    "durationSeconds": 130.05,
+    "scenario": "pod-metadata-admission",
+    "operationJobs": 7,
+    "operationPods": 7,
+    "readyManagers": 2,
+    "scope": "The original scenario runs unchanged through native no-Pod refusal reporting, exact Job cleanup, Pod identity enforcement, all operation metadata and database convergence. The temporary overlay supplies diagnostic setup and TestMain only, without a full-phase completion record.",
+    "setup": "Retained Kubernetes 1.37 Linux amd64 installation; prior test schemas suspended before upgrade. Reset only the failed scenario resource, publisher, Secret and database. A new OCI repository preserves the original write-once version. Upgrade used the established lifecycle --force-conflicts flag after the first attempt hit Helm/CRD-manager replica ownership.",
+    "readback": "Current-generation InSync, two ready corrected manager Pods without restarts, seven operation Jobs/Pods, admission policy removed. Successful fixture suspension requested. The lab remains available for the five unexecuted scenarios."
+  }
 }
