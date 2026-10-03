@@ -1,0 +1,10 @@
+{
+  "controllerImage": "e2e-registry.ptah-test-a-1-37-0-pr585-alerts-diabolocom-3e6dd38e-25ec38ca61.svc.cluster.local:5000/ptah-operator@sha256:05fbe8e18119fed6baa2cb385399296810ac0a81bc9588f4ee7e4bee2f6e0b4b",
+  "controllerRevision": "3e6dd38e660b43a50c529f2045ee879fc72143b9",
+  "finishedAt": "2026-10-03T15:01:31.471044+02:00",
+  "passed": false,
+  "runnerImage": "e2e-registry.ptah-test-a-1-37-0-pr585-alerts-diabolocom-3e6dd38e-25ec38ca61.svc.cluster.local:5000/ptah-runner@sha256:05fbe8e18119fed6baa2cb385399296810ac0a81bc9588f4ee7e4bee2f6e0b4b",
+  "scenario": "plan-store-large",
+  "scope": "Individual existing scenario on retained Kubernetes 1.37 Linux amd64 lab; no full-phase completion record",
+  "startedAt": "2026-10-03T14:54:09.064095+02:00"
+}

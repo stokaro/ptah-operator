@@ -165,6 +165,7 @@ func (a *alertingRun) planStoreLarge() {
 		s := object.(*ptahv1.PtahSchema)
 		s.Spec.Target.URLFrom.Key = "url"
 		s.Spec.Target.CoordinationKey = "e2e/alert-plan-store"
+		s.Spec.Target.SharedRealm = true
 		s.Spec.Desired.OCIRef = reference
 		s.Spec.Interval.Duration = time.Hour
 		s.Spec.Execution.NodeSelector = nil
