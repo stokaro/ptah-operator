@@ -1,5 +1,5 @@
 {
-  "status": "local regression and complete affected package tests passed; corrected native verification pending",
+  "status": "local regression, complete affected package tests and corrected native executor-image scenario passed; remaining four scenarios pending",
   "baseCommit": "690b76805d3b583b2cc628f3402d893048762254",
   "requirement": "#586 final default integration; #578 executor binding after approval",
   "nativeFailure": {
@@ -39,7 +39,19 @@
     "test/e2e/executor_change_e2e_test.go": "e78f819ef886ddb6843c646ea6620b019aad55dd6a67efcaa867e7d44e8e8b83"
   },
   "limits": [
-    "The five remaining native data-plane scenarios are still incomplete.",
+    "Four remaining native data-plane scenarios are not yet complete. Original 20 scenario evidence remains at its original runtime identity.",
     "No assertion was relaxed and no current-head CI or release-readiness verdict is claimed."
-  ]
+  ],
+  "nativeCorrection": {
+    "result": "passed",
+    "scenario": "approval-executor-image-change",
+    "controllerCommit": "a19ec58463bb60ddf976ef8184c4048776760f91",
+    "runnerCommit": "46b512288e8a7abab0881f25bb071ca706af5e72",
+    "runnerManifest": "sha256:2b480a2c2d43a6bd3d8405b9f468b3a812efb7859982746a9a0c145495b40feb",
+    "startedAt": "2026-10-03T09:24:09.969778+02:00",
+    "finishedAt": "2026-10-03T09:29:39.753165+02:00",
+    "platform": "Kubernetes 1.37.0 linux/amd64",
+    "assertions": "Unchanged original scenario: obsolete approvals refused, exact original and replacement Observe/Plan SQL controls, no unauthorized SQL, fresh approved Apply exactly once on PostgreSQL and MySQL, preserved populated row, exact executor binding and credential audits.",
+    "scope": "Retained lab; previous test schemas suspended; only the failed scenario resources, publisher and databases reset. Same manager and executor; corrected runner built through existing Dockerfile from the pushed commit. No full-phase completion record."
+  }
 }
