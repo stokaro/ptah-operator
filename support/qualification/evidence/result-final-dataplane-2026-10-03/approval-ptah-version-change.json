@@ -1,0 +1,9 @@
+{
+  "controllerImage": "e2e-registry.ptah-test-a-1-37-0-pr585-durable-c14d41fe-84f1e3fb20.svc.cluster.local:5000/ptah-operator@sha256:79fba0957bb29d4d25a304fd208e9b79439fceb47afc88d94fbdc03046b43cd8",
+  "controllerRevision": "a19ec58463bb60ddf976ef8184c4048776760f91",
+  "finishedAt": "2026-10-03T09:35:11.005529+02:00",
+  "passed": true,
+  "scenario": "approval-ptah-version-change",
+  "scope": "original scenario in retained Kubernetes 1.37 Linux amd64 lab; previous fixtures suspended; no full-phase verdict",
+  "startedAt": "2026-10-03T09:29:39.755263+02:00"
+}
