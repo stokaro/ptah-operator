@@ -1,0 +1,7 @@
+=== RUN   TestResetFailedNegativeControls
+    main_e2e_test.go:338: Removed exact e2e-negative-schema-approval UID 60cc4fd5-4f52-4465-929f-9e81ebcb864c after normal finalization and database client absence
+    main_e2e_test.go:338: Removed exact e2e-negative-schema-refusal UID 6340d1e4-c1f7-4351-961c-2d802edf516e after normal finalization and database client absence
+    main_e2e_test.go:338: Removed exact e2e-negative-migration-approval UID 4f724de7-3023-4450-b925-175775c050fe after normal finalization and database client absence
+    main_e2e_test.go:338: Removed exact e2e-negative-migration-refusal UID af4b1e86-c25d-482f-9ac3-1f410d214264 after normal finalization and database client absence
+--- PASS: TestResetFailedNegativeControls (4.40s)
+PASS
