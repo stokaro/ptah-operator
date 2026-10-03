@@ -1,0 +1,5 @@
+--- FAIL: TestStoredStateBarrierRetriesConcurrentStatus (0.04s)
+    stored_state_barrier_test.go:54: Operation cannot be fulfilled on ptahschemas.operator.ptah.run "schema": object was modified
+FAIL
+FAIL	github.com/stokaro/ptah-operator/test/e2e	0.649s
+FAIL

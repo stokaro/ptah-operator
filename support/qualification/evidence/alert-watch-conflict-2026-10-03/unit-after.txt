@@ -1,0 +1,12 @@
+=== RUN   TestStoredStateBarrierRetriesConcurrentStatus
+--- PASS: TestStoredStateBarrierRetriesConcurrentStatus (0.05s)
+=== RUN   TestStoredStateBarrierRefusesReplacementAndOtherFailures
+=== RUN   TestStoredStateBarrierRefusesReplacementAndOtherFailures/replacement
+=== RUN   TestStoredStateBarrierRefusesReplacementAndOtherFailures/forbidden
+=== RUN   TestStoredStateBarrierRefusesReplacementAndOtherFailures/persistent_conflict
+--- PASS: TestStoredStateBarrierRefusesReplacementAndOtherFailures (0.06s)
+    --- PASS: TestStoredStateBarrierRefusesReplacementAndOtherFailures/replacement (0.01s)
+    --- PASS: TestStoredStateBarrierRefusesReplacementAndOtherFailures/forbidden (0.00s)
+    --- PASS: TestStoredStateBarrierRefusesReplacementAndOtherFailures/persistent_conflict (0.05s)
+PASS
+ok  	github.com/stokaro/ptah-operator/test/e2e	0.788s

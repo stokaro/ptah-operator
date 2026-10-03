@@ -2,9 +2,11 @@ package e2e
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 
@@ -14,11 +16,40 @@ import (
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/apimachinery/pkg/watch"
+	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 )
+
+func writeStoredStateWatchBarrier(ctx context.Context, c client.Client, object client.Object) error {
+	key, uid := client.ObjectKeyFromObject(object), object.GetUID()
+	marker := string(uuid.NewUUID())
+	// The controller can write status between this read and metadata patch.
+	// Retry only a refused write, rereading its version without following a
+	// replacement object. The caller still waits for the exact committed RV.
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		if err := c.Get(ctx, key, object); err != nil {
+			return err
+		}
+		if uid == "" {
+			uid = object.GetUID()
+		}
+		if uid == "" || object.GetUID() != uid {
+			return errors.New("stored-state watch sentinel changed identity")
+		}
+		before := object.DeepCopyObject().(client.Object)
+		annotations := maps.Clone(object.GetAnnotations())
+		if annotations == nil {
+			annotations = map[string]string{}
+		}
+		annotations[annotationWatchBarrier] = marker
+		object.SetAnnotations(annotations)
+		return c.Patch(ctx, object, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{}))
+	})
+}
 
 const storedStateStatusDenial = "Ptah status is written only by the operator's manager; settle an unresolved migration run with a PtahMigrationRunAcknowledgment"
 

@@ -55,15 +55,7 @@ func storedStateWatchBarrier[T client.Object](t *testing.T, ctx context.Context,
 	r *watchRecorder[T], object T,
 ) string {
 	t.Helper()
-	storedStateCheck(t, cluster.Client.Get(ctx, client.ObjectKeyFromObject(object), object), "read the "+r.name+" sentinel")
-	before := object.DeepCopyObject().(client.Object)
-	annotations := maps.Clone(object.GetAnnotations())
-	if annotations == nil {
-		annotations = map[string]string{}
-	}
-	annotations[annotationWatchBarrier] = string(uuid.NewUUID())
-	object.SetAnnotations(annotations)
-	storedStateCheck(t, cluster.Client.Patch(ctx, object, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})), "write the "+r.name+" sentinel")
+	storedStateCheck(t, writeStoredStateWatchBarrier(ctx, cluster.Client, object), "write the "+r.name+" sentinel")
 	version, uid := object.GetResourceVersion(), object.GetUID()
 	if version == "" || uid == "" {
 		t.Fatal("the stored-state watch sentinel has no exact API identity")
