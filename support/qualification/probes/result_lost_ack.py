@@ -111,8 +111,8 @@ def main():
     if authentication not in ('certificate', 'pod-token'):
         raise ValueError('RESULT_PROBE_AUTH must be certificate or pod-token')
     pod_token = authentication == 'pod-token'
-    if pod_token and (runner_loss or concurrent or upload_budget):
-        raise ValueError('Pod-token mode currently measures lost ACK and receiver replacement only')
+    if pod_token and (runner_loss or first_publication or upload_budget):
+        raise ValueError('Pod-token mode measures lost ACK, receiver replacement, and committed concurrent redelivery')
     apply_prefix = 'ptah-apply-' if schema_budget else 'ptah-m-apply-'
     empty_witness = {'columns': [], 'primaryKeyColumns': []} if schema_budget else '0:1:false'
     engine = E['RESULT_PROBE_ENGINE']
@@ -464,7 +464,8 @@ def main():
             spec['containers'][0]['args'].append('--pause-retry')
         if concurrent:
             from result_concurrent import Client
-            concurrent_client = Client(E, managers, host, dec(credential))
+            if not pod_token:
+                concurrent_client = Client(E, managers, host, dec(credential))
             spec['containers'][0]['args'].append('--pause-first-namespace=' + ns if first_publication else '--pause-retry')
         proxy = create({'apiVersion': 'v1', 'kind': 'Pod', 'metadata': {'name': proxy_name, 'namespace': opns, 'labels': {'acceptance-proxy': ns}}, 'spec': spec})
         proxy_created = True
@@ -570,11 +571,26 @@ def main():
                 value = admin('/evidence')
                 return value if value and value.get('retryWaits', 0) > 0 and value['dropped'] and len(value['attempts']) == 1 else None
             paused = wait(concurrent_retry_paused, 60)
+            if pod_token:
+                original = get('pod', pod_name)
+                assert original['metadata']['uid'] == pod['metadata']['uid'] and original['status']['phase'] == 'Running'
+                main = original['spec']['containers'][0]
+                mounts = [m for m in main['volumeMounts'] if m['name'] == 'result-credentials' and m.get('readOnly')]
+                assert len(mounts) == 1
+                # This is privileged test setup. Keep the original receiver-only
+                # token in memory; neither subprocess arguments nor reports carry it.
+                token = k('exec', 'pod/' + pod_name, '-c', main['name'], '--', '/bin/cat', mounts[0]['mountPath'] + '/token')
+                concurrent_client = Client(E, managers, host, {'ca.crt': trust['data']['ca.crt']}, pod_token=token,
+                                           identity=base64.b64decode(credential['spec']['data'], validate=True))
+                del token
             rs_before = {r['metadata']['name']: r for r in records()}
             saved_intent, saved_complete, saved_data = publication(rs_before, job_uid)
             receipt = paused['attempts'][0]['receipt']
             assert saved_complete['metadata']['uid'] == receipt['UID']
             concurrent_result = concurrent_client.run(saved_data, saved_intent['metadata']['name'], receipt)
+            if pod_token:
+                assert concurrent_result['binding'] == dec(saved_intent)['binding']
+                assert concurrent_result['identityDigest'] == paused['identityDigest']
             rs_after = {r['metadata']['name']: r for r in records()}
             after_intent, after_complete, after_data = publication(rs_after, job_uid)
             owned = {name: r for name, r in rs_before.items() if name == saved_intent['metadata']['name']

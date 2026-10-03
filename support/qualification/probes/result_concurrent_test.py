@@ -1,10 +1,11 @@
 import copy
+import base64
 import hashlib
 import json
 import pathlib
 import unittest
 
-from result_concurrent import changed_payload, digest, verify_evidence
+from result_concurrent import changed_payload, digest, pod_token_headers, verify_evidence
 from result_first_harvest import publication
 
 
@@ -33,9 +34,34 @@ class ConcurrentDeliveryTests(unittest.TestCase):
         self.assertEqual(verify_evidence(self.fixture()),
                          {'requests': 6, 'identicalReceipts': 3, 'conflicts': 3})
 
+    def test_pod_token_mode_requires_original_public_binding(self):
+        value = self.fixture()
+        value.update(evidenceVersion=2, authentication='pod-token', identityDigest='sha256:' + 'c' * 64,
+                     binding={'namespace': 'probe', 'jobUID': 'job', 'podUID': 'pod'})
+        self.assertEqual(verify_evidence(value)['conflicts'], 3)
+        for field, bad in [('authentication', 'certificate'), ('identityDigest', ''), ('binding', {})]:
+            changed = copy.deepcopy(value)
+            changed[field] = bad
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                verify_evidence(changed)
+
+    def test_token_headers_carry_exact_identity_and_reject_injection(self):
+        identity = b'{"binding":{"namespace":"probe","jobUID":"job","podUID":"pod"}}'
+        token = 'original.pod-token.signature'
+        headers = pod_token_headers(token, identity)
+        self.assertIn('\r\nAuthorization: Bearer ' + token, headers)
+        encoded = headers.split('\r\nX-Ptah-Result-Identity: ')[1]
+        self.assertEqual(base64.urlsafe_b64decode(encoded + '=' * (-len(encoded) % 4)), identity)
+        for bad in ('', token + '\n', token + '\r\nInjected: yes', 'a' * 8193):
+            with self.subTest(token_length=len(bad)), self.assertRaises(ValueError):
+                pod_token_headers(bad, identity)
+        for bad in (b'{}', b'{"binding":{"jobUID":"job","podUID":"pod"}}', identity * 100):
+            with self.assertRaises(ValueError):
+                pod_token_headers(token, bad)
+
     def test_refuses_serial_requests_wrong_errors_and_replacement(self):
         mutations = [
-            (['evidenceVersion'], 2), (['receipt', 'UID'], ''),
+            (['evidenceVersion'], 3), (['receipt', 'UID'], ''),
             (['changedDigest'], 'sha256:' + 'a' * 64),
             (['receivers'], ['receiver-0', 'receiver-0']),
             (['rounds'], []), (['rounds', 0, 'requests'], []),

@@ -93,9 +93,9 @@ restoring it. The namespace and database remain until the owning lab is removed.
 Pod-token evidence includes the manager-created public binding, the original
 Job and Pod UIDs, and the receiver-only token projection. Version 4 identifies
 Pod-token delivery; version 5 also requires receiver replacement. Certificate
-evidence cannot substitute for either version. Pod-token mode currently accepts
-only lost acknowledgment and receiver replacement; other fault modes retain
-their historical certificate setup.
+evidence cannot substitute for either version. Pod-token mode accepts lost
+acknowledgment, receiver replacement, and concurrent redelivery of a committed
+result; other fault modes retain their historical certificate setup.
 
 Each run proves a single lost acknowledgment for its recorded engine and
 Kubernetes minor. Concurrent duplicate delivery, receiver failure during retry,
@@ -371,9 +371,13 @@ Set `RESULT_PROBE_CONCURRENT=1` with both replacement and runner-loss modes off.
 The shared migration setup holds the runner's retry before forwarding it, after
 its first result has been durably accepted. `result_concurrent.py` opens a
 port forward to each manager Pod and verifies TLS against the receiver Service
-name. The privileged harness borrows the original Pod's client credential;
-0600 files live in a temporary directory removed in `finally`. The runner's
-permissions do not change. Both port forwards are also stopped in `finally`.
+name. With `RESULT_PROBE_AUTH=pod-token`, the privileged harness reads the
+original running Pod's projected receiver token and keeps it only in memory.
+It forwards the manager-created public identity with each request. Version 2
+evidence records that identity's digest and binding, which must match the
+original publication and proxy preflight; it contains no token. Historical
+certificate mode uses temporary 0600 key files removed in `finally`. The
+runner's permissions do not change. Both port forwards are stopped in `finally`.
 
 Each request pair waits at a barrier after TLS and HTTP headers, before sending
 its body. The evidence must show overlapping request intervals on distinct
