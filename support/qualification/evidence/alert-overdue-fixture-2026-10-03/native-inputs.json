@@ -1,0 +1,10 @@
+{
+  "testSourceRevision": "f4734d643f7e57fd6ead366388de4592022c2978",
+  "runtimeRevision": "3e6dd38e660b43a50c529f2045ee879fc72143b9",
+  "dockerContext": "diabolocom",
+  "scope": "Only corrected Migration overdue and later unexecuted scenarios; earlier completed cases not repeated.",
+  "preparation": "Recreate the deleted monitoring and held-fixture namespaces; create one suspended Migration sibling for the unchanged unrelated-resource write control. Its role is preparation, not stalled-operation coverage.",
+  "entrySHA256": "781d9619ab2f483922792ba9092ae492569681f02265bea562184cd82ab839c9",
+  "additionalPreparation": "Use ptah-e2e-alerting-stalled-overdue-fix instead of the original held-fixture namespace. The original namespace still contains protected result records within their one-hour retention; do not weaken retention or force deletion. The private alerting.go overlay changes only that namespace constant.",
+  "namespaceOverlaySHA256": "e56cea0774fb397a55647fd22429264a47d894d50a689b98747860789313050e"
+}

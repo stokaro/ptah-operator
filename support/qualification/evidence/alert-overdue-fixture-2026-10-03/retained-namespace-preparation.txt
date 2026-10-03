@@ -1,0 +1,10 @@
+=== RUN   TestRetainedAlertingAfterOverdueFix
+=== RUN   TestRetainedAlertingAfterOverdueFix/monitoring-path-overdue-fix
+    alerting_e2e_test.go:155: e2e alerting: namespace ptah-e2e-alerting-stalled already exists; this phase stands it up and removes it
+e2e alerting: receiver log:
+e2e alerting: Prometheus alerts:
+e2e alerting: Prometheus targets:
+e2e alerting: Alertmanager log:
+--- FAIL: TestRetainedAlertingAfterOverdueFix (0.37s)
+    --- FAIL: TestRetainedAlertingAfterOverdueFix/monitoring-path-overdue-fix (0.12s)
+FAIL
