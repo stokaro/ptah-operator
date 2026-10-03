@@ -116,7 +116,7 @@ func (o *observer) segment(ctx context.Context, stream watch.Interface) error {
 				continue
 			}
 			checkCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-			err := verifyRecovery(checkCtx, o.resources, s)
+			err := o.recovery.verify(checkCtx, o.resources, s)
 			cancel()
 			if err != nil {
 				continue

@@ -12,5 +12,5 @@
     "image": "e2e-registry.ptah-test-a-1-37-0-pr585-alerts-diabolocom-3e6dd38e-25ec38ca61.svc.cluster.local:5000/e2e-fixture@sha256:b6d890bef9f962912dd26c93082195120cc7ee231f47ee26f869997a8af88d3d",
     "scope": "Diagnostic layer replaces only /e2e-upgrade-observer in the existing fixture. Operator and runner bytes are unchanged."
   },
-  "status": "Native corrected watch and complete upgrade recovery pending."
+  "status": "The native corrected observer retains continuous history and advances its cursor through the full recovery wait. The remaining failure is the stateless requirement for all four probes to be idle together; see alert-upgrade-independent-recovery-2026-10-03. No full upgrade recovery pass is claimed."
 }

@@ -171,11 +171,107 @@ func TestRecoveryRefusesIncompleteOrSubstitutedInstallation(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			s, objects, scheme := recoveryFixture(t)
+			baseline := &admissionClient{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).Build()}
+			var verifier recoveryVerifier
+			if err := verifier.verify(context.Background(), baseline, s); err != nil {
+				t.Fatal(err)
+			}
 			mutate(&s, objects)
 			c := &admissionClient{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).Build()}
-			if err := verifyRecovery(context.Background(), c, s); err == nil {
+			if err := verifier.verify(context.Background(), c, s); err == nil {
 				t.Fatal("invalid recovery accepted")
 			}
 		})
+	}
+}
+
+func TestRecoveryRetainsEachProbesPostHookBoundary(t *testing.T) {
+	s, objects, scheme := recoveryFixture(t)
+	first := objects[len(objects)-1].(*ptahv1.PtahSchema)
+	second := first.DeepCopy()
+	second.Name, second.UID = "second", "second-uid"
+	s.Intent.Probes = append(s.Intent.Probes, Probe{Kind: "PtahSchema", Namespace: second.Namespace, Name: second.Name, UID: string(second.UID), Generation: second.Generation})
+	idle := first.Status.DeepCopy()
+	observing := idle.DeepCopy()
+	observing.ActiveOperation = &ptahv1.ActiveOperationStatus{Type: ptahv1.OperationObserve, Attempt: 1}
+	observing.Conditions = []metav1.Condition{{Type: ptahv1.ConditionReady, Status: metav1.ConditionFalse, Reason: "OperationInProgress", ObservedGeneration: first.Generation}}
+	second.Status = *observing.DeepCopy()
+	objects = append(objects, second)
+	c := &admissionClient{Client: fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(first, second).WithObjects(objects...).Build()}
+	var verifier recoveryVerifier
+	if err := verifier.verify(context.Background(), c, s); err == nil {
+		t.Fatal("probe with no post-hook boundary was accepted")
+	}
+	setStatus := func(v *ptahv1.PtahSchema, status *ptahv1.PtahSchemaStatus) {
+		t.Helper()
+		if err := c.Get(context.Background(), client.ObjectKeyFromObject(v), v); err != nil {
+			t.Fatal(err)
+		}
+		v.Status = *status.DeepCopy()
+		if err := c.Status().Update(context.Background(), v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The first resource starts its next ordinary read before the second one
+	// reaches its boundary. There is never a simultaneous idle snapshot.
+	setStatus(first, observing)
+	setStatus(second, idle)
+	if err := verifier.verify(context.Background(), c, s); err != nil {
+		t.Fatalf("independently recovered probes refused: %v", err)
+	}
+	if c.probes < 2 {
+		t.Fatal("recovery omitted live admission checks")
+	}
+	retried := s
+	retried.Attempts = append([]Attempt(nil), s.Attempts...)
+	retried.Attempts[len(retried.Attempts)-1].UID = "another-retry"
+	if err := verifier.verify(context.Background(), c, retried); err == nil {
+		t.Fatal("new retry borrowed previous probe progress")
+	}
+	setStatus(first, idle)
+	if err := verifier.verify(context.Background(), c, s); err != nil {
+		t.Fatal(err)
+	}
+	setStatus(first, observing)
+	// Current admission and execution authority still matter after a receipt.
+	c.fail = true
+	if err := verifier.verify(context.Background(), c, s); err == nil {
+		t.Fatal("cached progress hid failed admission")
+	}
+	c.fail = false
+	setStatus(first, idle)
+	if err := verifier.verify(context.Background(), c, s); err != nil {
+		t.Fatal(err)
+	}
+	applying := observing.DeepCopy()
+	applying.ActiveOperation.Type = ptahv1.OperationApply
+	setStatus(first, applying)
+	if err := verifier.verify(context.Background(), c, s); err == nil {
+		t.Fatal("cached progress hid Apply")
+	}
+
+}
+
+func TestVerifiedMigrationMayContinueHistoryButNotApplyOrRetry(t *testing.T) {
+	after := time.Now().Add(-time.Hour)
+	probe := Probe{Kind: "PtahMigration", Namespace: "workloads", Name: "migration", UID: "migration-uid", Generation: 1}
+	v := &ptahv1.PtahMigration{ObjectMeta: metav1.ObjectMeta{Namespace: probe.Namespace, Name: probe.Name, UID: types.UID(probe.UID), Generation: probe.Generation}}
+	v.Status.ObservedGeneration = 1
+	v.Status.History = &ptahv1.MigrationHistoryStatus{ObservedAt: metav1.NewTime(after.Add(time.Minute))}
+	v.Status.ActiveOperation = &ptahv1.MigrationOperationStatus{Type: ptahv1.MigrationOperationHistory, Attempt: 1}
+	if err := verifyProbeState(v, probe, after, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyProbe(v, probe, after); err == nil {
+		t.Fatal("unverified migration accepted during History")
+	}
+	v.Status.ActiveOperation.Type = ptahv1.MigrationOperationApply
+	if err := verifyProbeState(v, probe, after, true); err == nil {
+		t.Fatal("cached progress hid Apply")
+	}
+	v.Status.ActiveOperation.Type = ptahv1.MigrationOperationHistory
+	v.Status.ActiveOperation.RetryNotBefore = &metav1.Time{Time: time.Now().Add(time.Minute)}
+	if err := verifyProbeState(v, probe, after, true); err == nil {
+		t.Fatal("cached progress hid retry backoff")
 	}
 }

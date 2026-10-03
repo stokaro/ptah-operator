@@ -36,6 +36,7 @@ type observer struct {
 	watching  bool
 	jobs      kubernetes.Interface
 	resources client.Client
+	recovery  recoveryVerifier
 }
 
 func main() {
