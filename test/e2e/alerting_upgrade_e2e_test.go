@@ -146,8 +146,8 @@ func (a *alertingRun) upgradeCandidate() (alUpgradeIntent, string, []byte, []byt
 		}
 		intent.CRDDigests[crd.Name] = digest
 	}
-	if len(intent.CRDDigests) != 9 {
-		a.fatalf("candidate does not contain all nine CRDs")
+	if len(intent.CRDDigests) != len(crdupgrade.Names()) {
+		a.fatalf("candidate does not contain the complete CRD inventory")
 	}
 	return intent, hook.Spec.Template.Spec.ServiceAccountName, chart, values, valuesPath
 }

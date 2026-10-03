@@ -23,7 +23,7 @@ func alUpgradeFixture() (alUpgradeState, *batchv1.Job) {
 	start := time.Unix(1700000000, 0).UTC()
 	digest := "sha256:" + strings.Repeat("a", 64)
 	intent := alUpgradeIntent{Namespace: "operator", Release: "ptah", HookJob: "ptah-upgrade", Manager: "manager", Rotator: "rotator", Image: "example.invalid/operator@" + digest, HookArgs: []string{"reconcile"}, ChartDigest: alUpgradeDigest([]byte("chart")), ValuesDigest: alUpgradeDigest([]byte("values")), CRDDigests: map[string]string{}}
-	for _, name := range []string{crdupgrade.PtahSchemaCRDName, crdupgrade.PtahSchemaPlanCRDName, crdupgrade.PtahSchemaPlanChunkCRDName, crdupgrade.PtahSchemaApprovalCRDName, crdupgrade.PtahMigrationCRDName, crdupgrade.PtahMigrationPlanCRDName, crdupgrade.PtahMigrationApprovalCRDName, crdupgrade.PtahMigrationRunAcknowledgmentCRDName, crdupgrade.PtahRealmCRDName} {
+	for _, name := range crdupgrade.Names() {
 		intent.CRDDigests[name] = digest
 	}
 	for _, family := range []string{"PtahSchema", "PtahMigration"} {
@@ -166,7 +166,11 @@ func TestAlUpgradeRBACRefusesIncompleteInventory(t *testing.T) {
 	}
 	for name, mutate := range map[string]func(*alUpgradeIntent){
 		"no CRDs": func(i *alUpgradeIntent) { i.CRDDigests = nil },
-		"nine wrong CRDs": func(i *alUpgradeIntent) {
+		"missing result records": func(i *alUpgradeIntent) {
+			i.CRDDigests = maps.Clone(i.CRDDigests)
+			delete(i.CRDDigests, crdupgrade.PtahResultRecordCRDName)
+		},
+		"unknown CRD": func(i *alUpgradeIntent) {
 			i.CRDDigests = maps.Clone(i.CRDDigests)
 			delete(i.CRDDigests, crdupgrade.PtahSchemaCRDName)
 			i.CRDDigests["unrelated.example.com"] = "sha256:" + strings.Repeat("b", 64)
@@ -209,7 +213,7 @@ func TestAlUpgradeRBACRefusesIncompleteInventory(t *testing.T) {
 			}
 		}
 	}
-	if crds != 9 || probes != 4 || deployment == nil {
+	if crds != len(crdupgrade.Names()) || probes != 4 || deployment == nil {
 		t.Fatal("missing observer grant or workload")
 	}
 	pod := deployment.Spec.Template.Spec

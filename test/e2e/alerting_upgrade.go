@@ -252,10 +252,10 @@ func alUpgradeIntentValid(i alUpgradeIntent) error {
 			return errors.New("invalid observer resource name")
 		}
 	}
-	if len(validation.IsDNS1123Label(i.Namespace)) != 0 || i.Manager == i.Rotator || len(i.HookArgs) == 0 || !alUpgradePinnedImage.MatchString(i.Image) || len(i.CRDDigests) != 9 || len(i.Probes) != 4 {
+	if len(validation.IsDNS1123Label(i.Namespace)) != 0 || i.Manager == i.Rotator || len(i.HookArgs) == 0 || !alUpgradePinnedImage.MatchString(i.Image) || len(i.CRDDigests) != len(crdupgrade.Names()) || len(i.Probes) != 4 {
 		return errors.New("incomplete native observer inventory")
 	}
-	for _, name := range []string{crdupgrade.PtahSchemaCRDName, crdupgrade.PtahSchemaPlanCRDName, crdupgrade.PtahSchemaPlanChunkCRDName, crdupgrade.PtahSchemaApprovalCRDName, crdupgrade.PtahMigrationCRDName, crdupgrade.PtahMigrationPlanCRDName, crdupgrade.PtahMigrationApprovalCRDName, crdupgrade.PtahMigrationRunAcknowledgmentCRDName, crdupgrade.PtahRealmCRDName} {
+	for _, name := range crdupgrade.Names() {
 		if !sha256Pattern.MatchString(i.CRDDigests[name]) {
 			return errors.New("missing candidate CRD identity")
 		}

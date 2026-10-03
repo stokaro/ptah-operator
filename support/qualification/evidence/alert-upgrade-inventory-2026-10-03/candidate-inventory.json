@@ -1,0 +1,46 @@
+{
+  "chartSHA256": "e09b1f49bfb171ba875f32a5917ce246a88d4df1a507e25312bf62f424b43079",
+  "crdCount": 10,
+  "crds": [
+    {
+      "path": "ptah-operator/crds/operator.ptah.run_ptahmigrationapprovals.yaml",
+      "sha256": "52f63e5270d646ced6f63ebe2c2c5bfaab5aef684c2cac0c43b782bf9320a516"
+    },
+    {
+      "path": "ptah-operator/crds/operator.ptah.run_ptahmigrationplans.yaml",
+      "sha256": "7afe344295b790bc90bd601cc796a8ececdc800674a7cff6d73fb596fc452675"
+    },
+    {
+      "path": "ptah-operator/crds/operator.ptah.run_ptahmigrationrunacknowledgments.yaml",
+      "sha256": "30f7a08e3b673ec1a4b487eaa7c32e7e19dcf38049d2dffed3b18f074bf1d201"
+    },
+    {
+      "path": "ptah-operator/crds/operator.ptah.run_ptahmigrations.yaml",
+      "sha256": "8180948abdec4f4c987bab04c81109f67ba8ebb22cfe8788b158113b865518e8"
+    },
+    {
+      "path": "ptah-operator/crds/operator.ptah.run_ptahrealms.yaml",
+      "sha256": "7e41954bfd76ff9ab9aa58c763b864b9ea5f6f7d91404bdb3a4be13230ce501a"
+    },
+    {
+      "path": "ptah-operator/crds/operator.ptah.run_ptahresultrecords.yaml",
+      "sha256": "d77ad5a8cfbc72c28971c4aed757fcb02456533fc8379a2b100325909d5f603b"
+    },
+    {
+      "path": "ptah-operator/crds/operator.ptah.run_ptahschemaapprovals.yaml",
+      "sha256": "d16423a8265f8a5b32130a3e70385105dcf5b3fd142202885f9220892bac03e8"
+    },
+    {
+      "path": "ptah-operator/crds/operator.ptah.run_ptahschemaplanchunks.yaml",
+      "sha256": "9e60be2149ff2f89360765f85dbb7a45a17619fa126f5409c3adb12682ac029f"
+    },
+    {
+      "path": "ptah-operator/crds/operator.ptah.run_ptahschemaplans.yaml",
+      "sha256": "fbf0353cbd193edd1f1cdccfc86cb3b050677c3c3b63650dd3d7d6fae5b9dc66"
+    },
+    {
+      "path": "ptah-operator/crds/operator.ptah.run_ptahschemas.yaml",
+      "sha256": "e402b3de93de1690a354a8decd75071c80bd97597c2e4ab598bcfc4f961ccf91"
+    }
+  ]
+}
