@@ -107,16 +107,29 @@ func TestGeneratedCertificateLifecycleRender(t *testing.T) {
 		t.Fatalf("chart sets staging Secret immutable: found=%v value=%v err=%v", found, immutable, err)
 	}
 	managerRole := mustObject(t, objects, "ClusterRole", managerName)
+	secretRules := 0
 	for _, rule := range objectRules(t, managerRole) {
-		if slices.Contains(stringSlice(rule["resources"]), "secrets") {
-			t.Fatal("manager ClusterRole grants Secret access")
+		resources := stringSlice(rule["resources"])
+		if slices.Contains(resources, "secrets") || slices.Contains(resources, "*") {
+			secretRules++
+			if !slices.Equal(resources, []string{"secrets"}) ||
+				!slices.Equal(stringSlice(rule["apiGroups"]), []string{""}) ||
+				!slices.Equal(stringSlice(rule["verbs"]), []string{"create"}) {
+				t.Fatal("manager ClusterRole grants more than canonical credential creation")
+			}
 		}
+	}
+	if secretRules != 1 {
+		t.Fatalf("manager ClusterRole has %d Secret rules, want one create-only grant", secretRules)
 	}
 
 	role := mustNamespacedObject(t, objects, "Role", releaseNamespace, rotatorName)
-	assertExactRule(t, role, "", "secrets", []string{secretName, stagingSecretName}, []string{"get", "update"})
+	assertExactRule(t, role, "", "secrets", []string{
+		secretName, stagingSecretName, managerName + "-result-trust", managerName + "-result-journal",
+	}, []string{"get", "update"})
 	assertNoResourceVerb(t, role, "", "secrets", "create")
-	assertExactRule(t, role, "coordination.k8s.io", "leases", []string{leaseName}, []string{"get", "update"})
+	assertExactRule(t, role, "coordination.k8s.io", "leases", []string{leaseName, managerName + "-result-rotation"}, []string{"get", "update"})
+	assertExactRule(t, role, "", "configmaps", []string{managerName + "-result-enrollment"}, []string{"get", "update"})
 	assertExactRule(t, role, "discovery.k8s.io", "endpointslices", nil, []string{"list"})
 	// The rotator lists the webhook Service's EndpointSlices in the release
 	// namespace and nowhere else, and nothing in the release reaches into
@@ -415,6 +428,7 @@ func TestGeneratedCertificateRequiresRotation(t *testing.T) {
 func TestExistingSecretDisablesBuiltInLifecycle(t *testing.T) {
 	t.Parallel()
 	objects := renderChart(t,
+		"--set", "resultDelivery.enabled=false",
 		"--set-string", "webhook.existingSecret=external-webhook-cert",
 		"--set-string", "webhook.caBundle=external-ca",
 		"--set", "certificateRotation.recreateMissingSecret=true",
@@ -552,9 +566,10 @@ func TestCertificateRotationValueValidation(t *testing.T) {
 			t.Errorf("Helm rejected the boundary value %q: %v", setting, err)
 		}
 	}
-	// With the built-in lifecycle off there is no bootstrap CA to replace,
-	// so a short threshold is not the chart's concern.
+	// Legacy log delivery supports an external certificate. With the built-in
+	// lifecycle off there is no bootstrap CA whose threshold needs validating.
 	if _, err := renderChartCommand(t,
+		"--set", "resultDelivery.enabled=false",
 		"--set-string", "certificateRotation.renewalThreshold=24h",
 		"--set-string", "webhook.existingSecret=provided-webhook-cert",
 		"--set-string", "webhook.caBundle="+base64.StdEncoding.EncodeToString([]byte("provided-ca")),
