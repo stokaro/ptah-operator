@@ -26,6 +26,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/runner"
 )
 
 // The rows that reach a migration's Apply from outside while it runs: the
@@ -242,6 +243,20 @@ func (m *migrationRun) readStopRowPod(jobUID string) *corev1.Pod {
 	return &pods.Items[0]
 }
 
+func (m *migrationRun) readStopRowJob(pod *corev1.Pod, jobUID string) *batchv1.Job {
+	m.t.Helper()
+	owner := metav1.GetControllerOf(pod)
+	if owner == nil || owner.APIVersion != "batch/v1" || owner.Kind != "Job" || string(owner.UID) != jobUID {
+		m.fatalf("the Apply Pod does not belong to the original Job")
+	}
+	job := &batchv1.Job{}
+	m.check(m.get(owner.Name, job), "read the original Apply Job")
+	if string(job.UID) != jobUID {
+		m.fatalf("the Apply Job was replaced before its result was checked")
+	}
+	return job
+}
+
 // stopRowSleepingSessions counts the sessions in one database executing a
 // sleep, other than the one asking. Both fixtures the rows use end in a
 // migration that does nothing but sleep, and a session in it is the evidence
@@ -344,12 +359,10 @@ func (m *migrationRun) mfPrintLastRun(name string, migration *ptahv1alpha1.PtahM
 // stoppedApplyProof stops a migration Apply part way at the execution
 // deadline the runner imposes on Ptah whatever the Pod is doing, and holds
 // the record to the report Ptah wrote: Failed, with the first migration
-// applied (#452). A Pod deleted by an eviction is stopped with the same
-// SIGTERM, but its Job's controller removes the Pod's tracking finalizer
-// before it marks the Job finished, so the Pod and its log are gone by the
-// time a result is read, and that run is Unknown whatever the runner wrote.
-// The deadline is the stop whose Pod stays. The revision table has to say the
-// same, and the Pod's own record has to show the runner ended after the
+// applied (#452). The execution deadline keeps the Pod available so its
+// termination timestamp can prove that SIGTERM was handled within the grace.
+// An acknowledged durable result survives later Pod loss. The revision table
+// must say the same, and the Pod's own record must show the runner ended after the
 // deadline and inside the grace.
 func (m *migrationRun) stoppedApplyProof() {
 	m.t.Helper()
@@ -400,16 +413,16 @@ func (m *migrationRun) stoppedApplyProof() {
 		}
 		m.fatalf("the %s runner did not end between its deadline at %d and the end of its grace", m.engine.name, notAfter.Unix())
 	}
-	// The account came from the frame in the log. The lost-log row makes the
-	// same read of a log that is gone and has to find none.
+	// Read the transport selected by this exact Job. Durable delivery writes
+	// no result frame to stdout; its receipt must carry the same run report.
+	job := m.readStopRowJob(pod, jobUID)
 	logs, err := m.stopRowLog(pod.Name)
 	if err != nil {
 		m.fatalf("the stopped %s Apply Pod's log could not be read: %v", m.engine.name, err)
 	}
 	m.scan(logs, "the stopped Apply's log")
-	if !strings.Contains(string(logs), mfResultMarker) {
-		m.fatalf("the stopped %s runner wrote no frame", m.engine.name)
-	}
+	_, err = readRecordedMigrationApply(m.ctx, m.cluster.Client, job, pod, recorded.Status.LastRun, logs)
+	m.check(err, "the stopped %s Apply has no matching complete result", m.engine.name)
 	m.logf("PASS %s run stopped at its deadline reported what it applied", m.engine.kind)
 }
 
@@ -421,9 +434,9 @@ func (m *migrationRun) stopRowLog(pod string) ([]byte, error) {
 	return m.cluster.ContainerLog(ctx, m.in.TestNamespace, pod, "ptah")
 }
 
-// lostLogProof removes a running Apply's log and holds the run to being
-// settled from the termination summary the runner wrote beside its frame
-// (#453). The log directory is replaced with a file rather than removed: the
+// lostLogProof removes a running Apply's log and verifies its durable receipt
+// and termination summary. Legacy Jobs still use the summary fallback (#453).
+// The log directory is replaced with a file rather than removed: the
 // kubelet reopens a running container's missing log every ten seconds, and a
 // directory it could recreate would let the frame reach a new log. The run is
 // inside its last migration, which sleeps, when that happens, and the row
@@ -442,6 +455,7 @@ func (m *migrationRun) lostLogProof() {
 	m.waitForStopRowSleep(database, 3)
 
 	pod := m.readStopRowPod(jobUID)
+	job := m.readStopRowJob(pod, jobUID)
 	directory := "/var/log/pods/" + m.in.TestNamespace + "_" + pod.Name + "_" + string(pod.UID) + "/ptah"
 	if _, err := m.mfDocker("exec", pod.Spec.NodeName, "test", "-d", directory); err != nil {
 		m.fatalf("%s keeps no log directory for the %s Apply Pod at %s", pod.Spec.NodeName, m.engine.name, directory)
@@ -455,8 +469,11 @@ func (m *migrationRun) lostLogProof() {
 	}
 
 	recorded := m.waitForStopRowLastRun(name, jobUID)
-	// The log really is gone. The stopped row found a frame with this same
-	// read, so a read that finds none here is the log and not the check.
+	// The obstruction must still exist when the result is consumed. Absence
+	// of a frame alone proves nothing for a Job that never writes one.
+	if _, err := m.mfDocker("exec", pod.Spec.NodeName, "test", "-f", directory); err != nil {
+		m.fatalf("the removed Apply log directory was recreated before result consumption")
+	}
 	logs, err := m.stopRowLog(pod.Name)
 	if err != nil {
 		logs = append(logs, []byte(err.Error())...)
@@ -466,7 +483,8 @@ func (m *migrationRun) lostLogProof() {
 		m.fatalf("the %s Apply Pod's log still holds a frame, so the row lost nothing", m.engine.name)
 	}
 
-	// The summary the kubelet kept in Pod status, and the frame it names.
+	// The summary remains bound to the complete result even when stdout is
+	// diagnostic only. Durable Jobs must not settle from the summary alone.
 	pod = m.readStopRowPod(jobUID)
 	message, found := mfTerminationMessage(pod)
 	if !found {
@@ -477,14 +495,27 @@ func (m *migrationRun) lostLogProof() {
 	if err != nil {
 		m.fatalf("the %s Apply Pod's termination message is not a runner summary: %v", m.engine.name, err)
 	}
-	if !lostLogRunRecorded(recorded.Status, jobUID, digest, 3) {
+	if durableResultJob(job) {
+		result, err := readRecordedMigrationApply(m.ctx, m.cluster.Client, job, pod, recorded.Status.LastRun, nil)
+		m.check(err, "%s has no complete durable Apply result after log removal", name)
+		if recorded.Status.LastRun.Outcome != ptahv1alpha1.MigrationRunOutcomeApplied || !slices.Equal(recorded.Status.LastRun.AppliedVersions, []int64{1, 2, 3}) {
+			m.fatalf("%s did not record all three migrations from its durable result", name)
+		}
+		summary, err := runner.EncodeSummary(result)
+		m.check(err, "summarize the exact persisted Apply result")
+		bound, err := runner.ParseSummaryFor(string(summary), runner.OperationMigrationApply, job.Annotations[annotationOperationID])
+		m.check(err, "read the persisted Apply result's summary binding")
+		if digest != bound.FrameDigest {
+			m.fatalf("the termination summary differs from the persisted Apply result")
+		}
+	} else if !lostLogRunRecorded(recorded.Status, jobUID, digest, 3) {
 		m.mfPrintLastRun(name, recorded)
-		m.fatalf("%s did not settle its run from the termination summary", name)
+		m.fatalf("%s did not settle its legacy run from the termination summary", name)
 	}
 	if m.query("SELECT count(*) FROM schema_migrations WHERE state = 'applied'", database) != "3" {
 		m.fatalf("the %s database does not record the three migrations the summary reported", m.engine.name)
 	}
-	m.logf("PASS %s run whose log was lost was settled from its termination summary", m.engine.kind)
+	m.logf("PASS %s run whose log was lost retained its exact Apply outcome", m.engine.kind)
 }
 
 // docker runs the Docker CLI against the daemon the kind cluster runs on.

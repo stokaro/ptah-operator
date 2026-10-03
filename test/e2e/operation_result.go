@@ -11,6 +11,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	api "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/resultconsumer"
 	"github.com/stokaro/ptah-operator/internal/resultdelivery/jobconfig"
 	"github.com/stokaro/ptah-operator/internal/resultstore"
@@ -138,4 +139,24 @@ func readOperationResult(ctx context.Context, reader client.Reader, job *batchv1
 
 func operationResultPending(err error) bool {
 	return errors.Is(err, resultstore.ErrIncomplete) || resultframe.StillArriving(err)
+}
+
+// readRecordedMigrationApply compares the original runner's full result with
+// the controller's record. A diagnostic log without a frame is normal for a
+// durable Job; neither that absence nor a termination summary replaces its
+// receipt. readOperationResult checks the exact Job/Pod and operation binding.
+func readRecordedMigrationApply(ctx context.Context, reader client.Reader, job *batchv1.Job, pod *corev1.Pod,
+	run *api.MigrationRunStatus, logs []byte,
+) (runner.Result, error) {
+	if job == nil || job.UID == "" || job.Name == "" || run == nil || run.JobUID != job.UID || run.JobName != job.Name {
+		return runner.Result{}, resultconsumer.ErrBinding
+	}
+	result, err := readOperationResult(ctx, reader, job, pod, runner.OperationMigrationApply, job.Annotations[annotationOperationID], logs)
+	if err != nil {
+		return runner.Result{}, err
+	}
+	if result.MigrationRun == nil || result.MigrationRun.Outcome != strings.ToLower(string(run.Outcome)) || !slices.Equal(result.MigrationRun.Applied, run.AppliedVersions) {
+		return runner.Result{}, errors.New("migration Apply result differs from its recorded outcome or applied versions")
+	}
+	return result, nil
 }

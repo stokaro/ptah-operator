@@ -7,12 +7,14 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	api "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/resultdelivery/jobconfig"
 	"github.com/stokaro/ptah-operator/internal/resultdelivery/resulttest"
 	"github.com/stokaro/ptah-operator/internal/resultstore"
@@ -47,6 +49,47 @@ func publishOperationResult(t *testing.T, c *operationResultAPI, f *resulttest.F
 	if _, err := (resultstore.Store{Client: c, Reader: c}).Publish(t.Context(), f.Identity.Binding, payload,
 		fmt.Sprintf("sha256:%x", sha256.Sum256(payload))); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestRecordedMigrationApplyNeedsItsReceiptWithoutLogFrame(t *testing.T) {
+	for _, outcome := range []api.MigrationRunOutcome{api.MigrationRunOutcomeFailed, api.MigrationRunOutcomeApplied} {
+		t.Run(string(outcome), func(t *testing.T) {
+			f, c, value := operationResultFixture(t, "migration-apply-admitted-scheduling")
+			applied := []int64{1}
+			if outcome == api.MigrationRunOutcomeApplied {
+				applied = []int64{1, 2, 3}
+			}
+			value.MigrationRun = &dataplane.MigrationRunReport{ContractVersion: dataplane.SupportedMigrationRunContract,
+				Direction: "up", Outcome: strings.ToLower(string(outcome)), Planned: []int64{1, 2, 3}, Applied: applied}
+			run := &api.MigrationRunStatus{JobName: f.Job.Name, JobUID: f.Job.UID, Outcome: outcome, AppliedVersions: applied}
+			// The migration CI stopped here after all database/status checks had
+			// passed: durable Jobs intentionally emit no correctness frame.
+			logs := []byte("ptah-runner: diagnostic output only\n")
+			if _, err := readRecordedMigrationApply(t.Context(), c, f.Job, f.Pod, run, logs); !operationResultPending(err) {
+				t.Fatalf("absent receipt did not remain incomplete: %v", err)
+			}
+			publishOperationResult(t, c, f, value)
+			got, err := readRecordedMigrationApply(t.Context(), c, f.Job, f.Pod, run, logs)
+			if err != nil || !reflect.DeepEqual(got, value) {
+				t.Fatalf("complete result with no stdout frame was refused: %v", err)
+			}
+			for name, mutate := range map[string]func(*api.MigrationRunStatus){
+				"another Job UID":          func(r *api.MigrationRunStatus) { r.JobUID = "other" },
+				"another Job name":         func(r *api.MigrationRunStatus) { r.JobName = "other" },
+				"unknown outcome":          func(r *api.MigrationRunStatus) { r.Outcome = api.MigrationRunOutcomeUnknown },
+				"missing applied versions": func(r *api.MigrationRunStatus) { r.AppliedVersions = nil },
+				"another applied version":  func(r *api.MigrationRunStatus) { r.AppliedVersions = []int64{9} },
+			} {
+				t.Run(name, func(t *testing.T) {
+					changed := run.DeepCopy()
+					mutate(changed)
+					if _, err := readRecordedMigrationApply(t.Context(), c, f.Job, f.Pod, changed, logs); err == nil {
+						t.Fatal("receipt accepted a different recorded run")
+					}
+				})
+			}
+		})
 	}
 }
 
