@@ -9,6 +9,51 @@ render a receiver NetworkPolicy with explicit infrastructure peers. The linked
 qualification evidence records completed transport and lifecycle cases; final
 default-installation integration and the #242 acceptance decision remain open.
 
+## Authentication correction in progress
+
+The capacity failure in Actions run `37137154401` exposed a mismatch between
+short-lived delivery credentials and the retained operation evidence. Each
+operation creates a credential Secret, and admission retains that projection
+as long as its canonical record exists. Secret usage therefore follows operation
+rate times retention, even when few Jobs run concurrently. Raising the Secret
+quota does not correct that lifecycle. The implementation below still describes
+the current certificate transport; the replacement is not qualified yet.
+
+Replace each operation's client certificate Secret with an explicit projected
+ServiceAccount token. Kubelet obtains and rotates a token bound to the Pod, with
+`operator.ptah.run/results` as its sole audience. Keep default API-token
+mounting disabled and grant no resource permissions to the runner. The receiver
+alone gains permission to create TokenReviews. The receiver audience must not be
+an audience accepted for Kubernetes API authentication.
+
+Authenticate each request through TokenReview with that explicit audience. Check
+the authenticated ServiceAccount against the actual Pod and require the exact
+Pod name and UID from the review. A caller-provided operation identity is only a
+claim: retain the existing direct-read Job, resource, generation, epoch, and
+operation checks, plus the immutable first-Pod binding. Recheck authentication
+and authorization before durable completion, including on reused connections.
+TokenReview errors are temporary refusals, never permission to publish.
+
+Retain a non-secret immutable operation binding independently of the token.
+Neither token bytes nor client private keys belong in result records. Keep the
+existing result retention, publication, and unknown-outcome recovery rules.
+Server TLS remains mandatory. Its public trust bundle and the operation's public
+identity inputs must be fixed in the admitted Job template; only the main runner
+may mount the token. The runner rereads the projected token for each bounded
+preflight or delivery attempt so kubelet rotation does not require another SQL
+execution. No legacy-credential fallback is selected by an incoming request.
+
+The correction is complete only after the installed workflow proves unchanged
+Secret usage across successive operations at the original quota, exact identity
+refusals, lost-acknowledgment redelivery without repeated SQL, and result survival
+after Pod deletion and manager replacement. Local transport tests are component
+evidence only. Existing certificate-authentication evidence cannot qualify the
+new authentication mechanism. No new supported platform or failure matrix is
+introduced by this change.
+
+References: [projected tokens](https://kubernetes.io/docs/concepts/storage/projected-volumes/#serviceaccounttoken-projected-volumes)
+and [TokenReview authentication](https://kubernetes.io/docs/concepts/security/service-accounts/#authenticating-service-account-credentials-in-your-own-code).
+
 ## Storage boundary
 
 `internal/resultstore` implements the storage portion. A receiver must validate

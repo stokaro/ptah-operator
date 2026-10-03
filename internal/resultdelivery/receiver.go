@@ -29,9 +29,12 @@ type ReceiverConfig struct {
 	Authorize func(context.Context, Identity) error
 	// VerifyClient optionally adds a current-trust check to the mandatory mTLS
 	// identity check. Rotating receivers use it to revoke preexisting connections.
-	VerifyClient  func(*tls.ConnectionState) error
-	MaxConcurrent int
-	Timeout       time.Duration
+	VerifyClient func(*tls.ConnectionState) error
+	// AuthenticateToken selects Pod-bound tokens instead of mTLS. This is an
+	// installation choice, not a request-controlled authentication fallback.
+	AuthenticateToken AuthenticateToken
+	MaxConcurrent     int
+	Timeout           time.Duration
 }
 
 type Receiver struct {
@@ -41,23 +44,26 @@ type Receiver struct {
 
 func NewReceiver(config ReceiverConfig) (*Receiver, error) {
 	if config.Store == nil || config.Authorize == nil || config.MaxConcurrent < 1 || config.MaxConcurrent > 8 ||
-		config.Timeout <= 0 || config.Timeout > 5*time.Minute {
+		config.Timeout <= 0 || config.Timeout > 5*time.Minute || config.AuthenticateToken != nil && config.VerifyClient != nil {
 		return nil, errors.New("invalid result receiver configuration")
 	}
 	return &Receiver{config: config, slots: make(chan struct{}, config.MaxConcurrent)}, nil
 }
 
 // Server owns a dedicated listener; it is independent of reconcile workers.
-// Supply a dedicated client CA. Its issuance and rotation policy must enforce
-// the exact per-Pod certificate identity before enabling this listener.
+// A token-authenticated receiver accepts no client CA. The certificate transport
+// requires a dedicated client CA and exact per-Pod certificate issuance.
 func (r *Receiver) Server(certificate tls.Certificate, clientCAs *x509.CertPool) (*http.Server, error) {
-	if clientCAs == nil || len(certificate.Certificate) == 0 || certificate.PrivateKey == nil {
-		return nil, errors.New("receiver TLS certificate and client CA are required")
+	if len(certificate.Certificate) == 0 || certificate.PrivateKey == nil || (r.config.AuthenticateToken == nil) != (clientCAs != nil) {
+		return nil, errors.New("receiver TLS certificate and authentication configuration are inconsistent")
+	}
+	config := &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{certificate}}
+	if r.config.AuthenticateToken == nil {
+		config.ClientAuth, config.ClientCAs = tls.RequireAndVerifyClientCert, clientCAs.Clone()
 	}
 	return &http.Server{Handler: r, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: r.config.Timeout + 5*time.Second, IdleTimeout: 30 * time.Second,
 		MaxHeaderBytes: 16 << 10, WriteTimeout: r.config.Timeout + 5*time.Second,
-		TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{certificate},
-			ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: clientCAs.Clone()}}, nil
+		TLSConfig: config}, nil
 }
 
 func (r *Receiver) ServeHTTP(w http.ResponseWriter, request *http.Request) {
@@ -76,7 +82,16 @@ func (r *Receiver) ServeHTTP(w http.ResponseWriter, request *http.Request) {
 		refuse(http.StatusMethodNotAllowed)
 		return
 	}
-	identity, err := authenticatedIdentity(request.TLS, time.Now())
+	var identity Identity
+	var token string
+	var err error
+	if r.config.AuthenticateToken != nil {
+		// Parsing is bounded and grants no authority. The potentially blocking
+		// TokenReview runs inside the upload slot and its request deadline.
+		identity, token, err = tokenIdentity(request)
+	} else {
+		identity, err = authenticatedIdentity(request.TLS, time.Now())
+	}
 	if err != nil {
 		refuse(http.StatusUnauthorized)
 		return
@@ -131,13 +146,19 @@ func (r *Receiver) ServeHTTP(w http.ResponseWriter, request *http.Request) {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		current, err := authenticatedIdentity(request.TLS, time.Now())
-		if err != nil || current != identity {
-			return ErrAuthority
-		}
-		if r.config.VerifyClient != nil {
-			if err := r.config.VerifyClient(request.TLS); err != nil {
+		if r.config.AuthenticateToken != nil {
+			if err := r.config.AuthenticateToken(ctx, token, identity); err != nil {
+				return err
+			}
+		} else {
+			current, err := authenticatedIdentity(request.TLS, time.Now())
+			if err != nil || current != identity {
 				return ErrAuthority
+			}
+			if r.config.VerifyClient != nil {
+				if err := r.config.VerifyClient(request.TLS); err != nil {
+					return ErrAuthority
+				}
 			}
 		}
 		if err := r.config.Authorize(ctx, identity); err != nil {

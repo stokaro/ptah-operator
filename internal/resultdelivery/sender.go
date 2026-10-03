@@ -30,16 +30,33 @@ type Sender struct {
 	endpoint  string
 	identity  Identity
 	retry     RetryPolicy
+	token     TokenSource
 }
 
 // NewSender requires authenticated TLS in both directions and refuses redirects.
 // endpoint is the receiver origin, with no path, query, or user information.
 func NewSender(endpoint string, identity Identity, tlsConfig *tls.Config, retry RetryPolicy) (*Sender, error) {
+	return newSender(endpoint, identity, tlsConfig, retry, nil)
+}
+
+// NewTokenSender authenticates the server using TLS and sends a receiver-only
+// Pod-bound token. It never falls back to client certificates or follows a
+// redirect. The source is reread for preflight and each retransmission.
+func NewTokenSender(endpoint string, identity Identity, tlsConfig *tls.Config, retry RetryPolicy, source TokenSource) (*Sender, error) {
+	if source == nil || tlsConfig == nil || len(tlsConfig.Certificates) != 0 || tlsConfig.GetClientCertificate != nil {
+		return nil, errors.New("result token source and server-only TLS configuration are required")
+	}
+	if _, err := tokenIdentityHeader(identity); err != nil {
+		return nil, err
+	}
+	return newSender(endpoint, identity, tlsConfig, retry, source)
+}
+
+func newSender(endpoint string, identity Identity, tlsConfig *tls.Config, retry RetryPolicy, token TokenSource) (*Sender, error) {
 	parsed, err := url.Parse(endpoint)
 	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil ||
 		parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" || (parsed.Path != "" && parsed.Path != "/") ||
 		!identity.valid() || tlsConfig == nil || tlsConfig.InsecureSkipVerify || tlsConfig.RootCAs == nil ||
-		len(tlsConfig.Certificates) != 1 || tlsConfig.Certificates[0].PrivateKey == nil ||
 		retry.Attempts < 1 || retry.Attempts > 8 || retry.Interval <= 0 || retry.Interval > 30*time.Second ||
 		retry.AttemptTimeout <= 0 || retry.TotalTimeout < retry.AttemptTimeout || retry.TotalTimeout > 5*time.Minute {
 		return nil, errors.New("invalid result sender configuration")
@@ -50,9 +67,14 @@ func NewSender(endpoint string, identity Identity, tlsConfig *tls.Config, retry 
 	if tlsConfig.ServerName != "" && tlsConfig.ServerName != parsed.Hostname() {
 		return nil, ErrAuthority
 	}
-	bound, err := ClientIdentity(tlsConfig.Certificates[0])
-	if err != nil || bound != identity {
-		return nil, ErrAuthority
+	if token == nil {
+		if len(tlsConfig.Certificates) != 1 || tlsConfig.Certificates[0].PrivateKey == nil {
+			return nil, ErrAuthority
+		}
+		bound, err := ClientIdentity(tlsConfig.Certificates[0])
+		if err != nil || bound != identity {
+			return nil, ErrAuthority
+		}
 	}
 	config := tlsConfig.Clone()
 	config.MinVersion = tls.VersionTLS13
@@ -63,15 +85,15 @@ func NewSender(endpoint string, identity Identity, tlsConfig *tls.Config, retry 
 	name, _ := resultstore.Name(identity.Binding)
 	parsed.Path = PathPrefix + name
 	return &Sender{client: &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
-		transport: transport, endpoint: parsed.String(), identity: identity, retry: retry}, nil
+		transport: transport, endpoint: parsed.String(), identity: identity, retry: retry, token: token}, nil
 }
 
 func (s *Sender) Close() { s.transport.CloseIdleConnections() }
 
 // Check authenticates the projected credential with the configured receiver
-// before a runner starts its child. An existing Secret is not evidence that its
-// bytes match the canonical credential record. This bounded, read-only request
-// catches unusable projections without executing SQL or publishing a result.
+// before a runner starts its child. Having a projected credential does not prove
+// the runner's current authority. This bounded, read-only request catches
+// unusable projections without executing SQL or publishing a result.
 // A busy upload slot or a transient API/transport failure uses the same retry
 // bounds as delivery. A definitive authority refusal still stops immediately.
 func (s *Sender) Check(parent context.Context) error {
@@ -105,6 +127,9 @@ func (s *Sender) check(ctx context.Context) (bool, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodHead, s.endpoint, nil)
 	if err != nil {
 		return false, errors.New("cannot prepare receiver authentication")
+	}
+	if err := s.authenticate(request); err != nil {
+		return true, errors.New("result delivery credential is unavailable")
 	}
 	response, err := s.client.Do(request)
 	if err != nil {
@@ -168,6 +193,9 @@ func (s *Sender) send(ctx context.Context, payload []byte, digest string) (resul
 	}
 	request.Header.Set("Content-Type", ContentType)
 	request.Header.Set(DigestHeader, digest)
+	if err := s.authenticate(request); err != nil {
+		return resultstore.Receipt{}, true, errors.New("result delivery credential is unavailable")
+	}
 	response, err := s.client.Do(request)
 	if err != nil {
 		return resultstore.Receipt{}, true, errors.New("result receiver unavailable")
