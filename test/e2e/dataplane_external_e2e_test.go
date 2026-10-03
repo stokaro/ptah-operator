@@ -122,9 +122,8 @@ func (d *dataPlane) assertAutomaticExternalPostgresqlLifecycle(schemaName, secre
 	if err := automaticInitialPlanResult(initialPlan, realm, target.IdentityDigest); err != nil {
 		d.fatalf("%s initial Plan result did not describe a safe database change: %v", schemaName, err)
 	}
-	// The result's stdout is the plan sealed to the manager's key. The
-	// document is rebuilt below from the applied plan's own chunks, once that
-	// plan is found, and only then read for what it changed.
+	// Rebuild the document independently from the applied plan's chunks once
+	// that plan is found, then compare it with the original result.
 
 	plans := &ptahv1alpha1.PtahSchemaPlanList{}
 	d.mustList(plans)
@@ -156,10 +155,8 @@ func (d *dataPlane) assertAutomaticExternalPostgresqlLifecycle(schemaName, secre
 	}
 	d.assertPlanStorageImmutable(schemaName, plan.Name, string(plan.UID))
 	d.assertPlanProjected(plan)
-	if err := sealedPayloadLeak(initialPlan.Stdout, document); err != nil {
-		d.fatalf("%s automatic %v", schemaName, err)
-	}
-	d.logf("%s automatic Plan result is sealed, and its content digest covers the %d-chunk plan document", schemaName, chunks)
+	d.assertConfidentialPlan(initialPlan, document, schemaName+" automatic")
+	d.logf("%s automatic Plan result preserves confidentiality and the exact %d-chunk plan document", schemaName, chunks)
 
 	applyResult := d.captureSelectedJobResult(schemaName, "apply", applyUID)
 	if d.captured.jobUID != applyUID {

@@ -53,6 +53,7 @@ func (f *faultRun) captureExactJobResult(name, uid, operation string) exactResul
 	f.pollWithoutAudit(fmt.Sprintf("the exact %s result to be bound to the persisted active operation and ADDED Job", operation), func() bool {
 		return resultBoundInWatch(f.schemas.snapshot(), f.jobs.snapshot(), schema, operation, operationID, uid)
 	})
+	f.keepEvidence(job, pod, logs, result)
 	f.auditedJobs[uid] = true
 	f.auditedPods[string(pod.UID)] = true
 	f.audited.add(uid)
@@ -286,9 +287,8 @@ func (f *faultRun) waitForManualDriftContract(schema, approval, operationID, old
 }
 
 // freshPlanDocument reads a fresh plan back from its chunks, as the
-// controller does, scans it, and returns it with its content digest. A Plan
-// result's stdout carries the plan sealed to the manager's key, so the
-// chunks are where the plaintext a content digest covers can be read from.
+// controller does, scans it, and returns it with its content digest. The
+// independently persisted chunks must match the original Plan result.
 func (f *faultRun) freshPlanDocument(plan *ptahv1alpha1.PtahSchemaPlan, context string) ([]byte, planDocument, string, int) {
 	f.t.Helper()
 	document, chunks := f.rebuildPlanDocument(plan)
@@ -296,15 +296,6 @@ func (f *faultRun) freshPlanDocument(plan *ptahv1alpha1.PtahSchemaPlan, context 
 	parsed, err := parsePlanDocument(document)
 	f.check(err, "%s", context)
 	return document, parsed, sha256Digest(document), chunks
-}
-
-// assertSealed holds a Plan result's stdout to carrying its plan sealed
-// rather than in the clear.
-func (f *faultRun) assertSealed(result runner.Result, document []byte, context string) {
-	f.t.Helper()
-	if err := sealedPayloadLeak(result.Stdout, document); err != nil {
-		f.fatalf("%s %v", context, err)
-	}
 }
 
 // publishFaultSchema publishes the engine's fault fixture from a Job that

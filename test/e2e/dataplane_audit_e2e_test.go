@@ -417,6 +417,7 @@ func (d *dataPlane) captureOneNewJobResult(schema, operation string, before chec
 		result.OperationID != operationID || result.Truncation != nil {
 		d.fatalf("validated result lost its runner protocol binding or complete-output guarantee")
 	}
+	d.keepEvidence(job, pod, logs, result)
 	d.audited.add(jobUID)
 	d.captured = capturedJob{
 		jobName: jobName, jobUID: jobUID, operationID: operationID,

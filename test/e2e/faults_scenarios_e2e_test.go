@@ -465,8 +465,8 @@ func (f *faultRun) runnerTermination() {
 	if err := freshPlanBound(postfault, fresh, plan.result.result, parsed, contentDigest); err != nil {
 		f.fatalf("fresh MySQL plan is not bound to the exact recovery Plan result: %v", err)
 	}
-	f.assertSealed(plan.result.result, document, "the MySQL recovery")
-	f.logf("the MySQL recovery Plan result is sealed, and its content digest covers the %d-chunk plan document", chunks)
+	f.assertConfidentialPlan(plan.result.result, document, "the MySQL recovery")
+	f.logf("the MySQL recovery Plan result preserves confidentiality and the exact %d-chunk plan document", chunks)
 	f.assertApprovalConsumed(unknown.approval, unknown.originalPlanUID)
 	if f.addedJobCount(unknown.schema, "apply") != 1 {
 		f.fatalf("the uncertain MySQL Apply was replayed without a fresh approval")
@@ -971,8 +971,8 @@ func (f *faultRun) manualDrift() {
 	if err := freshPlanBound(current, fresh, plan.result.result, parsed, contentDigest); err != nil {
 		f.fatalf("manual-drift fresh plan is not bound to the exact Plan result: %v", err)
 	}
-	f.assertSealed(plan.result.result, document, "the manual-drift fresh")
-	f.logf("the manual-drift fresh Plan result is sealed, and its content digest covers the %d-chunk plan document", chunks)
+	f.assertConfidentialPlan(plan.result.result, document, "the manual-drift fresh")
+	f.logf("the manual-drift fresh Plan result preserves confidentiality and the exact %d-chunk plan document", chunks)
 	f.assertApprovalConsumed(manual.approval, manual.originalPlanUID)
 	if f.pgFingerprint(manual.database) != s.manualPrint {
 		f.fatalf("manual-drift read-only Observe or Plan changed the database schema")

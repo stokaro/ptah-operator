@@ -75,6 +75,29 @@ func sealedPayloadLeak(stdout string, document []byte) error {
 	return nil
 }
 
+// confidentialPlanDelivery distinguishes the private durable representation
+// from output written to container logs. Both transports must keep plan text
+// out of diagnostics; only the legacy representation is process-sealed.
+func confidentialPlanDelivery(result runner.Result, document, logs []byte, durable bool) error {
+	parsed, err := parsePlanDocument(document)
+	if err != nil || len(parsed.Statements) == 0 {
+		return errors.New("plan document has no statements to check delivery against")
+	}
+	if durable {
+		if result.Stdout != string(document) || result.PlanContentDigest != sha256Digest(document) {
+			return errors.New("durable result differs from the persisted plan bytes or digest")
+		}
+	} else if err := sealedPayloadLeak(result.Stdout, document); err != nil {
+		return err
+	}
+	for _, pattern := range planTextPatterns(parsed) {
+		if bytes.Contains(logs, []byte(pattern)) {
+			return errors.New("runner diagnostics disclose plan text")
+		}
+	}
+	return nil
+}
+
 func planTextPatterns(document planDocument) []string {
 	var patterns []string
 	for _, statement := range document.Statements {
