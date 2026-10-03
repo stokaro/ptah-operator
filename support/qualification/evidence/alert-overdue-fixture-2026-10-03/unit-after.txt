@@ -1,4 +1,0 @@
-=== RUN   TestAlOverdueMigrationFixtureFitsExecutionBudget
---- PASS: TestAlOverdueMigrationFixtureFitsExecutionBudget (0.01s)
-PASS
-ok  	github.com/stokaro/ptah-operator/test/e2e	0.635s

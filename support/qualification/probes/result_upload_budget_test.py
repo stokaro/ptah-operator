@@ -137,7 +137,7 @@ class UploadBudgetTests(unittest.TestCase):
             verify_evidence(value)
 
     def test_replays_native_engine_evidence_and_actual_publications(self):
-        root = pathlib.Path(__file__).resolve().parents[1] / 'evidence/result-upload-budget-2026-10-02'
+        root = pathlib.Path(__file__).resolve().parent / 'testdata/results/result-upload-budget-2026-10-02'
         summary = json.loads((root / 'summary.json').read_text())
         self.assertEqual(set(summary['engines']), {'PostgreSQL', 'MySQL'})
         for engine, entry in summary['engines'].items():
@@ -171,7 +171,7 @@ class UploadBudgetTests(unittest.TestCase):
                     self.assertEqual(json.loads(payload)['migrationRun']['outcome'], 'applied')
 
     def test_replays_both_schema_engine_cases(self):
-        root = pathlib.Path(__file__).resolve().parents[1] / 'evidence/result-schema-upload-budget-2026-10-02'
+        root = pathlib.Path(__file__).resolve().parent / 'testdata/results/result-schema-upload-budget-2026-10-02'
         summary = json.loads((root / 'summary.json').read_text())
         self.assertEqual(summary['family'], 'PtahSchema')
         self.assertEqual(set(summary['engines']), {'PostgreSQL', 'MySQL'})

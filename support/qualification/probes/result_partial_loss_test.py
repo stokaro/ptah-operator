@@ -62,7 +62,7 @@ class PartialLossEvidenceTests(unittest.TestCase):
 
     def test_replays_retained_native_engine_results(self):
         from result_first_harvest import publication
-        root = pathlib.Path(__file__).resolve().parents[1] / 'evidence/result-partial-loss-2026-10-02'
+        root = pathlib.Path(__file__).resolve().parent / 'testdata/results/result-partial-loss-2026-10-02'
         for suffix in ('pg', 'mysql'):
             with self.subTest(engine=suffix):
                 e = json.loads((root / suffix / 'partial-loss.json').read_text())

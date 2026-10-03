@@ -1,8 +1,0 @@
-{
-  "previousCluster": "ptah-e2e-1-37-0-result-restar-5a0ef2fe7d",
-  "teardownExitCode": 0,
-  "ownedContainersAbsent": true,
-  "namedClaimVolumesAbsent": true,
-  "previousEnvironmentRemoved": true,
-  "new135LabRetained": true
-}

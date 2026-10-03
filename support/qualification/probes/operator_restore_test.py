@@ -30,7 +30,7 @@ class ResultBackupInventoryTest(unittest.TestCase):
 
 class RecoveredDeliveryTest(unittest.TestCase):
     def test_fresh_apply_requires_receipt_and_declared_authority(self):
-        path = Path(__file__).resolve().parents[1] / 'evidence/result-network-2026-10-02/ptah-result-network-pg-migration-workflow.json'
+        path = Path(__file__).resolve().parent / 'testdata/results/result-network-2026-10-02/ptah-result-network-pg-migration-workflow.json'
         reading = json.loads(path.read_text())
         job_uid = reading['verification']['publications']['migration-apply']['jobUID']
         for replacement in (True, False):

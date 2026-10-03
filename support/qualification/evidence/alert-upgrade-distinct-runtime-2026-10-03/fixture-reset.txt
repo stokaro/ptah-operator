@@ -1,8 +1,0 @@
-=== RUN   TestResetFailedUpgradePreparation
-    main_e2e_test.go:618: Finalized exact failed PtahSchema e2e-upgrade-schema-mysql UID 9eed964d-da01-469f-b3d5-2e1bd5f038b0
-    main_e2e_test.go:618: Finalized exact failed PtahSchema e2e-upgrade-schema-postgresql UID 0e23807e-d87c-47e3-b8c4-812ba1a54f80
-    main_e2e_test.go:618: Finalized exact failed PtahMigration e2e-upgrade-migration-mysql UID fd662bdd-9465-49b4-8a78-9b0dd7cf6bf3
-    main_e2e_test.go:618: Finalized exact failed PtahMigration e2e-upgrade-migration-postgresql UID c7d855fb-1364-4605-b998-05a39f5652f4
-    main_e2e_test.go:634: Removed only failed upgrade preparation; no protected results or retained artifacts were removed
---- PASS: TestResetFailedUpgradePreparation (12.39s)
-PASS

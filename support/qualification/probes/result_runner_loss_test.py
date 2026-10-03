@@ -18,7 +18,7 @@ class RunnerLossEvidenceTests(unittest.TestCase):
         self.assertNotIn('annotations', value['metadata'])
 
     def test_replays_both_retained_native_recovery_readings(self):
-        root = pathlib.Path(__file__).parents[1] / 'evidence' / 'result-runner-loss-2026-10-02'
+        root = pathlib.Path(__file__).parent / 'testdata' / 'results' / 'result-runner-loss-2026-10-02'
         for name in ['pg', 'mysql']:
             with self.subTest(engine=name):
                 proof = json.loads((root / name / 'runner-loss.json').read_text())

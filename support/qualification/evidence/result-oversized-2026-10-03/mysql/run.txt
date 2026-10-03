@@ -1,5 +1,0 @@
-Plan held before execution: ptah-plan-first-harvest-62d51b335e870a0e
-Both fresh managers ready with leader Lease access removed
-Plan completed and receipt verified before any controller could harvest
-Producing Pod and logs removed and both manager processes restarted before first harvest
-PASS: exact 8 MiB + 1 native Plan refused after Pod/log loss and manager replacement; no plan, chunks, Apply, or database effects

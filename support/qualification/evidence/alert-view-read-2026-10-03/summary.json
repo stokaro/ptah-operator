@@ -1,8 +1,0 @@
-{
-  "requirement": "#581 UnresolvedViewReadFailures native delivery and recovery; #586 default alert integration",
-  "result": "PASS: deny and restore the original manager ClusterRole list grant separately for PtahSchema and PtahMigration. Real manager-identity list probes, unchanged manager/leader identities, healthy metrics endpoints, native failure counters, bounded receiver firing/resolution and exact grant restoration all pass.",
-  "scope": "Complete existing scenario on retained Kubernetes 1.37 Linux amd64 runtime, not a complete final-head alert phase or support matrix.",
-  "dockerContext": "diabolocom",
-  "runtimeRevision": "3e6dd38e660b43a50c529f2045ee879fc72143b9",
-  "testSourceRevision": "e3641a478b94ec705f87b0908fe51e0eadc482a9"
-}

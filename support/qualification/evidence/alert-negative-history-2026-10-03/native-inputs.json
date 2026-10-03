@@ -1,8 +1,0 @@
-{
-  "testSourceRevision": "6cede79817f07f3e879112a91961740ea024defc",
-  "runtimeRevision": "3e6dd38e660b43a50c529f2045ee879fc72143b9",
-  "dockerContext": "diabolocom",
-  "scope": "Individual native alert scenarios, not full phase completion",
-  "preparation": "Resume the exact failed PostgreSQL incident after verifying no executor/client and accounted effects. Remove only its old consumed predecessor acknowledgment by UID, use the normal operation-bound acknowledgment, and require real firing then resolved in the new receiver journal. Preserve both original failed attempts.",
-  "entrySHA256": "0eb9fc2bb5a33228b66805fde7d9104107f93603930443ff42ec09738a5384c7"
-}

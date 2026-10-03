@@ -62,11 +62,11 @@ class NetworkEvidenceTests(unittest.TestCase):
         self.assertFalse(selected({'manager': 'operator'}, selector))
 
     def test_replays_installed_network_evidence(self):
-        root = pathlib.Path(__file__).resolve().parents[1] / 'evidence/result-network-2026-10-02'
+        root = pathlib.Path(__file__).resolve().parent / 'testdata/results/result-network-2026-10-02'
         self.assertEqual(verify_archive(root)['familyOperationEnginePairs'], 18)
 
     def test_refuses_changed_api_documents(self):
-        original = pathlib.Path(__file__).resolve().parents[1] / 'evidence/result-network-2026-10-02'
+        original = pathlib.Path(__file__).resolve().parent / 'testdata/results/result-network-2026-10-02'
         for fault in ('receiver selector', 'probe reading', 'resource UID', 'Job selector', 'chunk bytes'):
             with self.subTest(fault=fault), tempfile.TemporaryDirectory() as temp:
                 root = pathlib.Path(temp) / 'evidence'

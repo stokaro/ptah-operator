@@ -1,3 +1,0 @@
-Hook ServiceAccount: ptah-runtime-generated-name-prefix-boundary-proof-2-crd-manager
-Before Helm installs its hook RBAC, can update deployments: no
-Exit code: 1

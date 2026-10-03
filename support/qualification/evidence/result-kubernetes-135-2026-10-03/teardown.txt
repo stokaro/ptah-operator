@@ -1,4 +1,0 @@
-lab: released the API tunnel on 127.0.0.1:30321:127.0.0.1:30321
-lab: removing cluster ptah-e2e-1-35-8-result-135-94-909f6c6617
-lab: /private/tmp is not the lab directory, so only the environment file is removed
-lab: removed

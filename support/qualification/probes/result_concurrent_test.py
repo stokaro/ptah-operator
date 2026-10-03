@@ -61,7 +61,7 @@ class ConcurrentDeliveryTests(unittest.TestCase):
                     verify_evidence(value)
 
     def test_replays_installed_native_results_and_previous_defect(self):
-        root = pathlib.Path(__file__).resolve().parents[1] / 'evidence/result-concurrent-2026-10-02'
+        root = pathlib.Path(__file__).resolve().parent / 'testdata/results/result-concurrent-2026-10-02'
         summary = json.loads((root / 'summary.json').read_text())
         self.assertEqual(set(summary['engines']), {'PostgreSQL', 'MySQL'})
         for engine, entry in summary['engines'].items():
@@ -84,7 +84,7 @@ class ConcurrentDeliveryTests(unittest.TestCase):
             verify_evidence(json.loads(before))
 
     def test_mutation_preserves_native_result_structure(self):
-        root = pathlib.Path(__file__).resolve().parents[1] / 'evidence/result-receiver-restart-2026-10-02'
+        root = pathlib.Path(__file__).resolve().parent / 'testdata/results/result-receiver-restart-2026-10-02'
         for engine in ('pg', 'mysql'):
             with self.subTest(engine=engine):
                 acknowledgment = json.loads((root / engine / 'lost-ack.json').read_text())

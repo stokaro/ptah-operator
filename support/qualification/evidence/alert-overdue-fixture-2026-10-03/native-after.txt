@@ -1,6 +1,0 @@
-=== RUN   TestRetainedAlertingAfterOverdueFix
-=== RUN   TestRetainedAlertingAfterOverdueFix/monitoring-path-overdue-fix
-    alerting_e2e_test.go:155: e2e alerting: standing up Prometheus, Alertmanager and a receiver in ptah-e2e-monitoring
-    alerting_e2e_test.go:155: e2e alerting: Prometheus scrapes all 2 manager replicas and loaded the chart rules
-=== RUN   TestRetainedAlertingAfterOverdueFix/resource-overdue-migration
-    main_e2e_test.go:407: e2e alerting: PASS migration overdue: resourceUID=07e2eb3c-e145-4368-91bd-d288f2598e8c persistedDeadline=2026-10-03 13:57:20 +0200 CEST firingReceived=2026-10-03 11:58:28.979102732 +0000 UTC recoveryClaim=sha256:5b113159e1c78f805ad0143df13cf6ab578b02557a7ac8bb8c15025bf27456bd recoveredAt=2026-10-03 13:59:51 +0200 CEST resolvedReceived=2026-10-03 11:59:58.985521476 +0000 UTC

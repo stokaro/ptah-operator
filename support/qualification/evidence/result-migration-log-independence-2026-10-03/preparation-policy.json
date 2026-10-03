@@ -1,7 +1,0 @@
-{
-  "createdAt": "2026-10-03T09:22:59.234288+00:00",
-  "cause": "The retained data-plane lab has not run the migration-policy phase. The temporary focused entry omitted that prerequisite. Both resources refused verification before planning or Apply.",
-  "action": "Created the exact immutable migration-policy ConfigMap from the existing fixture before either resource reached its plan or the diagnostic-log fault began. The same live attempt continued through ordinary retry; no assertions changed.",
-  "source": "testdata/e2e/verification-policy-migrations.yaml",
-  "sourceSHA256": "83917180587d7b0b152d193368742ff81ebeeb1aa1449d83f001c8717d06455e"
-}

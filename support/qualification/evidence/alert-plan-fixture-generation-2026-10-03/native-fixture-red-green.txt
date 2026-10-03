@@ -1,4 +1,0 @@
-=== RUN   TestRepairAdmissionPlanGeneration
-    main_e2e_test.go:577: Original fixture rejected; same plan UID 5950c666-680f-46e2-bfd7-5513fa813cc3 and original chunks reconstruct after adding Ready.observedGeneration=1 through its existing fixture status identity
---- PASS: TestRepairAdmissionPlanGeneration (0.17s)
-PASS

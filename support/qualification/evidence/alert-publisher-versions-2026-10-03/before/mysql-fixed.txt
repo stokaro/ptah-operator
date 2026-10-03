@@ -1,4 +1,0 @@
-Pushed schema as oci://ptah-585-publisher-repro-registry:5000/e2e-alert-schema:mysql
-Digest: sha256:ee2c448626770e21f88465e07087b89f5cc2bba2b05b2659c72055f5da7ac913
-Version: alert-unresolved-mysql
-Tags: [alert-unresolved-mysql mysql]

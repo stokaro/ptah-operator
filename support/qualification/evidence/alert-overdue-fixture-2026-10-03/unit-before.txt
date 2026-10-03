@@ -1,6 +1,0 @@
-=== RUN   TestAlOverdueMigrationFixtureFitsExecutionBudget
-    alerting_fixture_contract_test.go:125: overdue fixture rejected by the shipped CRD: [spec: Invalid value: policy.lockTimeout must not exceed execution.activeDeadlineSeconds]
---- FAIL: TestAlOverdueMigrationFixtureFitsExecutionBudget (0.01s)
-FAIL
-FAIL	github.com/stokaro/ptah-operator/test/e2e	0.667s
-FAIL

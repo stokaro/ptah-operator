@@ -1,6 +1,0 @@
-{
-  "RESULT_PROBE_NAMESPACE": "ptah-result-restored-state",
-  "RESULT_PROBE_DATABASE": "result_restored_state_020",
-  "E2E_CONTROLLER_REVISION": "7b21f8957bc1a266044008e1c9c0d2b5e6de18d6",
-  "RESULT_PROBE_FIXTURE_IMAGE": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/e2e-fixture@sha256:4fbd272f6da19fe11dd50b26018b3fad796470e201d3753a26ea3e9c2a0e32bc"
-}

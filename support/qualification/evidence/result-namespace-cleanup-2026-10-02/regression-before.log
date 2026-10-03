@@ -1,6 +1,0 @@
-=== RUN   TestResultCollectorInTerminatingNamespace
-    result_cleanup_test.go:38: retire existing records after namespace deletion: ptahresultrecords.operator.ptah.run "ptah-result-1556747f661af91f6b59ba371db8a206c94f7f9b80048d273069a209d8662eb3-retired" is forbidden: unable to create new content in namespace publication-fn6jf because it is being terminated
---- FAIL: TestResultCollectorInTerminatingNamespace (2.62s)
-FAIL
-FAIL	github.com/stokaro/ptah-operator/test/envtest/webhook	7.336s
-FAIL

@@ -1,5 +1,0 @@
---- FAIL: TestRecoveryRetainsEachProbesPostHookBoundary (0.08s)
-    recovery_test.go:215: independently recovered probes refused: schema probe is suspended or has unsettled work
-FAIL
-FAIL	github.com/stokaro/ptah-operator/hack/upgradealert	0.672s
-FAIL

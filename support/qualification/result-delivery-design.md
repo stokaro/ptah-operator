@@ -1,5 +1,10 @@
 # Durable runner result delivery
 
+Historical `evidence/` paths below identify members of the external development
+archive indexed in [evidence-index.json](evidence-index.json). Its original files
+remain browsable at the pinned source commit; execution artifacts are not shipped
+in the current source tree. Test inputs live under `probes/testdata/results/`.
+
 Implementation design for [#586](https://github.com/stokaro/ptah-operator/issues/586).
 The target is stable 0.2.0. This document does not authorize a release.
 The chart enables durable delivery by default: listener, Pod binding, admission
@@ -16,8 +21,13 @@ short-lived delivery credentials and the retained operation evidence. The certif
 implementation created a credential Secret for each operation, and admission retained that projection
 as long as its canonical record exists. Secret usage therefore followed operation
 rate times retention, even when few Jobs run concurrently. Raising the Secret
-quota does not correct that lifecycle. The manager now selects receiver-audience Pod tokens. Installed workflow and
-capacity evidence for this replacement are still required.
+quota does not correct that lifecycle. The manager now selects receiver-audience
+Pod tokens. Installed PostgreSQL and MySQL workflows each completed 22 Jobs with
+the original Secret quota already full at 128/128. Secret usage stayed at 128;
+the new immutable Pod bindings contain public identity only. The installed
+manager can create TokenReviews and cannot create or read Secrets. See
+`evidence-index.json` (`podTokenQuotaRegression`). This bounded regression
+does not replace the frozen capacity measurement or final transport qualification.
 
 Each operation uses an explicit projected ServiceAccount token. Kubelet obtains and rotates a token bound to the Pod, with
 `operator.ptah.run/results` as its sole audience. Keep default API-token
@@ -572,10 +582,9 @@ built-in certificate rotation with generated webhook trust. The manager mounts
 only the six-file projection, read-only with mode 0440 and its existing fsGroup;
 it does not mount the private journal or receive Secret-read permission. The
 rotator can GET/UPDATE only the named projection, journal, policy, and Leases.
-The manager receives result-record GET/LIST/CREATE/DELETE and Secret CREATE. Since RBAC cannot
-scope CREATE by name, every manager Secret request reaches the fail-closed
-controller-write webhook, which accepts only an exact canonical delivery
-credential. Other writers still cannot create reserved delivery credentials.
+The manager receives result-record GET/LIST/CREATE/DELETE and TokenReview CREATE.
+It receives no Secret permission. Admission validates immutable public Pod
+bindings and refuses new operation credential Secrets in token mode.
 The enabled manager ClusterRole has no `pods/log` permission.
 
 The ClusterIP Service uses port 443 and targets the manager's result listener on
@@ -597,14 +606,15 @@ from its journal, and loads the persisted projection through `resultservice.New`
 A manager Secret GET remains Forbidden. No Deployment, kubelet, or CNI runs in
 that test: copying the six files to disk is explicit, and an absent endpoint
 refuses rotation readiness. Separate admission tests prove that the real API
-server refuses arbitrary manager Secret creation while allowing canonical
-credentials and ordinary administrator Secrets.
+server refuses arbitrary manager Secret creation. Older certificate fixtures
+exercise the retained development credential format separately.
 
-This option is not yet a qualified installation mode. Installed retention and
-cleanup, backup/restore, resource bounds, HA, complete key rotation, and the full
-Job-to-controller acceptance matrix remain required before default activation. HA,
-key overlap, restore, and rollout must preserve acknowledged results and
-outstanding deliveries.
+The chart enables this transport by default, but that does not establish a
+qualified installation. Retained certificate-mode results below must be assessed
+against the changed authentication path before reuse. Final qualification must
+cover retention, restore, capacity, HA, trust rotation and the declared
+Job-to-controller matrix while preserving acknowledged results and outstanding
+deliveries.
 
 The implemented receiver rechecks live authority after upload; consumers retain
 their own epoch and provenance checks. Persistence is evidence, not permission

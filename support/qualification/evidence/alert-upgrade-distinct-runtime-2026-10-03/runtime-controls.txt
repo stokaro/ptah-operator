@@ -1,1 +1,0 @@
-ok  	github.com/stokaro/ptah-operator/internal/crdupgrade	0.550s

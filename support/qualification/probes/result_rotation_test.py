@@ -26,7 +26,7 @@ class RotationEvidenceTest(unittest.TestCase):
         }
 
     def test_retained_installed_reading(self):
-        source = pathlib.Path(__file__).parents[1] / 'evidence/result-leaf-rotation-2026-10-02/rotation.json'
+        source = pathlib.Path(__file__).parent / 'testdata/results/result-leaf-rotation-2026-10-02/rotation.json'
         evidence = json.loads(source.read_text())
         self.assertEqual(verify_evidence(evidence), evidence['verification'])
         evidence['candidateAfterRestart'] = evidence['leafBefore']

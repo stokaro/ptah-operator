@@ -86,7 +86,7 @@ class OversizedRefusalTests(unittest.TestCase):
                 oversized_refusal(schema, bad, identity, 'original-operation')
 
     def test_accepts_native_refusal_with_an_undispatched_retry_claim(self):
-        folder = pathlib.Path(__file__).resolve().parents[1] / 'evidence/result-oversized-2026-10-03/postgresql'
+        folder = pathlib.Path(__file__).resolve().parent / 'testdata/results/result-oversized-2026-10-03/postgresql'
         schema = json.loads((folder / 'refused-resource.json').read_text())
         payload = json.loads((folder / 'refused-result.json').read_text())
         manifest = json.loads((folder / 'manifest.json').read_text())

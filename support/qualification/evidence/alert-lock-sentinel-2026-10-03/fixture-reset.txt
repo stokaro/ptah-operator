@@ -1,6 +1,0 @@
-=== RUN   TestResetFailedLockControl
-    main_e2e_test.go:439: Removed e2e-alert-lock-postgresql-schema UID ad6c7025-ce31-4ffa-8d8e-66342182a401 with normal finalization
-    main_e2e_test.go:439: Removed e2e-alert-lock-postgresql-schema-sibling UID 97fd5984-705f-4c90-a694-414e9b747de2 with normal finalization
-    main_e2e_test.go:455: Removed only failed fixture objects and isolated database; protected results retain their normal window
---- PASS: TestResetFailedLockControl (2.78s)
-PASS

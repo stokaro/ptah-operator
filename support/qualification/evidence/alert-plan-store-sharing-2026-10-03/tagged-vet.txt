@@ -1,2 +1,0 @@
-GOFLAGS=-p=1 go vet -tags=e2e ./test/e2e
-Exit status: 0

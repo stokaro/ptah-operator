@@ -31,7 +31,7 @@ class FirstPublicationTests(unittest.TestCase):
                          {'simultaneousIntentCreates': 2, 'receiptUID': 'receipt'})
 
     def test_replays_both_installed_first_publications(self):
-        root = pathlib.Path(__file__).resolve().parents[1] / 'evidence/result-first-publication-2026-10-02'
+        root = pathlib.Path(__file__).resolve().parent / 'testdata/results/result-first-publication-2026-10-02'
         summary = json.loads((root / 'summary.json').read_text())
         self.assertEqual(set(summary['engines']), {'PostgreSQL', 'MySQL'})
         for engine, entry in summary['engines'].items():

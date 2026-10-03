@@ -20,7 +20,7 @@ class CARecoveryEvidenceTests(unittest.TestCase):
                           receiversReady=True, rotatorReady=True, temporaryGateRemoved=True, replicasRestored=True, argumentsUnchanged=True)
 
     def test_retained_installed_reading(self):
-        path = pathlib.Path(__file__).parents[1] / 'evidence/result-ca-rotation-2026-10-02/rotation.json'
+        path = pathlib.Path(__file__).parent / 'testdata/results/result-ca-rotation-2026-10-02/rotation.json'
         evidence = json.loads(path.read_text())
         self.assertEqual(verify_evidence(evidence), evidence['verification'])
         evidence['candidateAfterRestart']['ClientKey'] = evidence['expiredCandidate']['ClientKey']

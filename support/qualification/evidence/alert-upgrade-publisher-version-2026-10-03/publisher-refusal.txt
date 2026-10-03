@@ -1,1 +1,0 @@
-error: push oci://e2e-registry.ptah-test-a-1-37-0-pr585-alerts-diabolocom-3e6dd38e-25ec38ca61.svc.cluster.local:5000/e2e-alert-schema-barrier-fix:mysql: OCI write-once tag already exists: "alert-unresolved-mysql" resolves to sha256:b15d71f0a60491235302ffccd497237f022968a98300b139ae95187bc0a78dac instead of sha256:36a011684644cbda7510cadfd7be11251c7e708be553dee924922273e3ce8589

@@ -1,7 +1,0 @@
-{
-  "publisherJobUID": "2ffc9e70-7b4c-4800-8d77-0e4393823133",
-  "publisherPodUID": "20a4687e-865e-4304-9341-9a2d9590b3f6",
-  "dryRunAllowed": true,
-  "mutationPersisted": false,
-  "scope": "Admission control for the retained publisher sentinel; not a completed lock-release scenario."
-}

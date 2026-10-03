@@ -1,5 +1,0 @@
---- FAIL: TestAlUpgradeRBACRefusesIncompleteInventory (0.00s)
-    alerting_upgrade_test.go:165: incomplete native observer inventory
-FAIL
-FAIL	github.com/stokaro/ptah-operator/test/e2e	1.548s
-FAIL

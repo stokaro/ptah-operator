@@ -1,2 +1,0 @@
-ok  	github.com/stokaro/ptah-operator/internal/certrotation	8.431s
-ok  	github.com/stokaro/ptah-operator/hack/acceptancecoverage	0.328s

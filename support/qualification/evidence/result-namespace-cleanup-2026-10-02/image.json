@@ -1,5 +1,0 @@
-{
-  "sourceCommit": "7b21f8957bc1a266044008e1c9c0d2b5e6de18d6",
-  "localImage": "127.0.0.1:28879/operator-namespace-retirement:7b21f8957bc1",
-  "image": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/operator-namespace-retirement@sha256:8014beb573c192f435a456196921e334cf8ba6239956bdee9b93b89789462da3"
-}

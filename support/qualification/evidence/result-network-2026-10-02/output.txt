@@ -1,6 +1,0 @@
-Installed receiver policy blocks both Pod endpoints and the Service from an unselected Pod
-PASS under shipped network policies: PostgreSQL PtahSchema ['apply', 'observe', 'plan', 'resolve', 'verify']
-PASS under shipped network policies: PostgreSQL PtahMigration ['migration-apply', 'migration-history', 'resolve', 'verify']
-PASS under shipped network policies: MySQL PtahSchema ['apply', 'observe', 'plan', 'resolve', 'verify']
-PASS under shipped network policies: MySQL PtahMigration ['migration-apply', 'migration-history', 'resolve', 'verify']
-PASS: native durable delivery through enforced receiver ingress and task egress

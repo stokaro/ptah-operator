@@ -8,7 +8,7 @@ from result_backup_restore import verify_report
 class SnapshotRestoreEvidenceTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        path = Path(__file__).resolve().parents[1] / 'evidence/result-backup-restore-2026-10-02/report.json'
+        path = Path(__file__).resolve().parent / 'testdata/results/result-backup-restore-2026-10-02/report.json'
         cls.reading = json.loads(path.read_text())
 
     def test_replays_actual_encrypted_restore(self):

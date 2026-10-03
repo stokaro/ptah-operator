@@ -56,7 +56,7 @@ class AbandonedEvidenceTests(unittest.TestCase):
                     verify_abandoned(*args)
 
     def test_replays_retained_installed_cleanup(self):
-        root = pathlib.Path(__file__).resolve().parents[1] / 'evidence/result-abandoned-2026-10-02'
+        root = pathlib.Path(__file__).resolve().parent / 'testdata/results/result-abandoned-2026-10-02'
         names = ('interrupted.json', 'retention-before.json', 'retention-after.json',
                  'retention-markers.json', 'retention-delete-audit.json', 'quota-refusal-audit.json')
         report = verify_abandoned(*[json.loads((root / n).read_text()) for n in names])
