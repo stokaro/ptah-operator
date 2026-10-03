@@ -1,0 +1,12 @@
+{
+  "requirement": "#581 native upgrade alert preparation; #586 default alert integration",
+  "runtimeRevision": "3e6dd38e660b43a50c529f2045ee879fc72143b9",
+  "testSourceRevisionBefore": "9889e1ec",
+  "dockerContext": "diabolocom",
+  "kubernetesVersion": "1.37.0",
+  "platform": "linux/amd64",
+  "nativeBefore": "FAIL during MySQL schema probe publication, before upgrade fault injection. The shared schema publisher reuses alert-unresolved-mysql, already published by the unknown-Apply scenario. The pinned executor refuses the different content-addressed artifact under that write-once version. The original Job identity, command and exact OCI refusal are retained.",
+  "correction": "Use the existing fixture name as its write-once schema version. Names distinguish both scenario and database engine. Preserve the repository, digest-pinned consumer reference, original SQL fixture, write-once policy and all upgrade proof requirements.",
+  "validation": "Tagged E2E vet and native test compilation pass. Exact failed fixture cleanup passes without removing protected results or immutable artifacts. Complete native upgrade retest pending.",
+  "scope": "The candidate inventory fix passed. No upgrade-alert fault/recovery result is claimed yet."
+}

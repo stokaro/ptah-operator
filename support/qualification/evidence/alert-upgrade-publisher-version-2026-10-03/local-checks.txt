@@ -1,0 +1,2 @@
+PASS: GOFLAGS=-p=1 go vet -tags=e2e ./test/e2e
+PASS: GOFLAGS=-p=1 go test -c -tags=e2e -overlay=/private/tmp/ptah-585-diabolocom/overlay.json -o /private/tmp/ptah-585-diabolocom/alert-probe-next.test ./test/e2e

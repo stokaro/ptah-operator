@@ -370,9 +370,9 @@ func (a *alertingRun) publishUnresolvedSchema(m *migrationRun, name string) (str
 	if m.engine.name == "mysql" {
 		dialect = "mysql"
 	}
-	// Both engines share this repository; their write-once versions must differ.
+	// Each scenario and engine needs its own write-once version in this repository.
 	document := publisherJob(a.in.TestNamespace, name+"-publisher", map[string]any{"app.kubernetes.io/component": "e2e-schema-publisher"}, map[string]any{
-		"name": "publisher", "image": m.in.ExecutorImage, "imagePullPolicy": "IfNotPresent", "command": []any{"/usr/local/bin/ptah"}, "args": []any{"schema", "push", reference, "--schema-file", "/schema/schema.sql", "--dialect", dialect, "--version", "alert-unresolved-" + m.engine.name, "--plain-http"},
+		"name": "publisher", "image": m.in.ExecutorImage, "imagePullPolicy": "IfNotPresent", "command": []any{"/usr/local/bin/ptah"}, "args": []any{"schema", "push", reference, "--schema-file", "/schema/schema.sql", "--dialect", dialect, "--version", name, "--plain-http"},
 		"env": []any{map[string]any{"name": "HOME", "value": "/work"}, map[string]any{"name": "TMPDIR", "value": "/work"}, secretEnv("PTAH_OCI_USERNAME", registryAuthSecret, "username"), secretEnv("PTAH_OCI_PASSWORD", registryAuthSecret, "password"), secretEnv("PTAH_OCI_REGISTRY", registryAuthSecret, "registry")}, "securityContext": restrictedContainer(), "volumeMounts": []any{map[string]any{"name": "schema", "mountPath": "/schema", "readOnly": true}, map[string]any{"name": "work", "mountPath": "/work"}},
 	}, []any{map[string]any{"name": "schema", "configMap": map[string]any{"name": cm.Name}}, map[string]any{"name": "work", "emptyDir": map[string]any{"sizeLimit": "64Mi"}}})
 	m.mustCreate(document)
