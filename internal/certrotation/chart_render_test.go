@@ -107,21 +107,13 @@ func TestGeneratedCertificateLifecycleRender(t *testing.T) {
 		t.Fatalf("chart sets staging Secret immutable: found=%v value=%v err=%v", found, immutable, err)
 	}
 	managerRole := mustObject(t, objects, "ClusterRole", managerName)
-	secretRules := 0
 	for _, rule := range objectRules(t, managerRole) {
 		resources := stringSlice(rule["resources"])
 		if slices.Contains(resources, "secrets") || slices.Contains(resources, "*") {
-			secretRules++
-			if !slices.Equal(resources, []string{"secrets"}) ||
-				!slices.Equal(stringSlice(rule["apiGroups"]), []string{""}) ||
-				!slices.Equal(stringSlice(rule["verbs"]), []string{"create"}) {
-				t.Fatal("manager ClusterRole grants more than canonical credential creation")
-			}
+			t.Fatal("manager ClusterRole grants Secret access; result delivery uses Pod tokens")
 		}
 	}
-	if secretRules != 1 {
-		t.Fatalf("manager ClusterRole has %d Secret rules, want one create-only grant", secretRules)
-	}
+	assertExactRule(t, managerRole, "authentication.k8s.io", "tokenreviews", nil, []string{"create"})
 
 	role := mustNamespacedObject(t, objects, "Role", releaseNamespace, rotatorName)
 	assertExactRule(t, role, "", "secrets", []string{

@@ -16,6 +16,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/resultretention"
 	"github.com/stokaro/ptah-operator/internal/resultstore"
 	"github.com/stokaro/ptah-operator/internal/runner"
+	authorizationv1 "k8s.io/api/authorization/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -108,6 +109,26 @@ func publicationFixture(t *testing.T, issueCredential bool) (dispatchFixture, re
 		rbacv1.PolicyRule{APIGroups: []string{""}, Resources: []string{"pods"}, Verbs: []string{"get", "list"}},
 	)
 	apiClient := clientAs(t, manager.username)
+	// The authorizer observes RoleBindings asynchronously. Wait for this grant
+	// before enrollment so an RBAC setup race cannot stand in for the admission
+	// refusal being tested. Publication itself is never retried here.
+	if err := eventually(10*time.Second, func() error {
+		review := &authorizationv1.SubjectAccessReview{Spec: authorizationv1.SubjectAccessReviewSpec{
+			User: manager.username,
+			ResourceAttributes: &authorizationv1.ResourceAttributes{
+				Namespace: f.namespace, Group: "operator.ptah.run", Resource: "ptahresultrecords", Verb: "get",
+			},
+		}}
+		if err := admin.Create(t.Context(), review); err != nil {
+			return err
+		}
+		if !review.Status.Allowed {
+			return errors.New("publication RoleBinding is not effective yet")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 	op := f.schema.Status.ActiveOperation
 	identity := resultdelivery.Identity{Binding: resultstore.Binding{Namespace: f.namespace, Kind: "PtahSchema", Name: f.schema.Name, UID: f.schema.UID, Generation: f.schema.Generation, ExecutionBindingID: op.ExecutionBindingID, InputFingerprint: op.InputFingerprint, OperationID: op.ID, Operation: "resolve", JobName: job.Name, JobUID: job.UID, PodName: pod.Name, PodUID: pod.UID}}
 	if issueCredential {

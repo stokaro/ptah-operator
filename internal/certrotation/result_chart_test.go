@@ -98,7 +98,7 @@ func TestResultDeliveryChartWiresTrustAndScopedPermissions(t *testing.T) {
 		slices.Sort(verbs)
 		return slices.Compact(verbs)
 	}
-	if !slices.Equal(permissions("secrets"), []string{"create"}) || !slices.Equal(permissions("ptahresultrecords"), []string{"create", "delete", "get", "list"}) || len(permissions("pods/log")) != 0 {
+	if len(permissions("secrets")) != 0 || !slices.Equal(permissions("tokenreviews"), []string{"create"}) || !slices.Equal(permissions("ptahresultrecords"), []string{"create", "delete", "get", "list"}) || len(permissions("pods/log")) != 0 {
 		t.Fatal("manager grant widened or retained log dependence")
 	}
 	var rotatorRole rbacv1.Role

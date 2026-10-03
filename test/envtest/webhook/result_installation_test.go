@@ -88,8 +88,10 @@ func TestResultChartRBACAndTrustBootstrap(t *testing.T) {
 		allowed                           bool
 	}{
 		{managerUser, "", "secrets", "database", "get", false},
-		{managerUser, "", "secrets", "delivery", "create", true},
+		{managerUser, "", "secrets", "delivery", "create", false},
 		{managerUser, "", "secrets", "delivery", "update", false},
+		{managerUser, "authentication.k8s.io", "tokenreviews", "", "create", true},
+		{managerUser, "authentication.k8s.io", "tokenreviews", "", "get", false},
 		{managerUser, "", "pods/log", "runner", "get", false},
 		{managerUser, "operator.ptah.run", "ptahresultrecords", "receipt", "get", true},
 		{managerUser, "operator.ptah.run", "ptahresultrecords", "", "list", true},
@@ -108,7 +110,11 @@ func TestResultChartRBACAndTrustBootstrap(t *testing.T) {
 		{rotatorUser, "coordination.k8s.io", "leases", rargs["result-lease-name"], "update", true},
 	} {
 		resource, subresource, _ := strings.Cut(row.resource, "/")
-		review := &authorizationv1.SubjectAccessReview{Spec: authorizationv1.SubjectAccessReviewSpec{User: row.user, ResourceAttributes: &authorizationv1.ResourceAttributes{Namespace: release.Namespace, Group: row.group, Resource: resource, Subresource: subresource, Name: row.name, Verb: row.verb}}}
+		namespace := release.Namespace
+		if resource == "tokenreviews" {
+			namespace = ""
+		}
+		review := &authorizationv1.SubjectAccessReview{Spec: authorizationv1.SubjectAccessReviewSpec{User: row.user, ResourceAttributes: &authorizationv1.ResourceAttributes{Namespace: namespace, Group: row.group, Resource: resource, Subresource: subresource, Name: row.name, Verb: row.verb}}}
 		if err := admin.Create(t.Context(), review); err != nil {
 			t.Fatal(err)
 		}
@@ -158,7 +164,11 @@ func TestResultChartRBACAndTrustBootstrap(t *testing.T) {
 		}
 	}
 	managerAPI := clientAs(t, managerUser)
-	if _, err := resultservice.New(resultservice.Config{Endpoint: margs["result-endpoint"], Address: "127.0.0.1:0", CertificateDirectory: directory, EnrollmentPolicyNamespace: release.Namespace, EnrollmentPolicyName: config.PolicyName, Uploads: 1, UploadTimeout: time.Second, Consumer: resultconsumer.Options{Workers: 1, Entries: 1, Timeout: time.Second, Retention: time.Minute}}, managerAPI, managerAPI); err != nil {
+	managerKubernetes, err := kubernetes.NewForConfig(plane.Impersonate(managerUser))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := resultservice.New(resultservice.Config{Endpoint: margs["result-endpoint"], Address: "127.0.0.1:0", CertificateDirectory: directory, EnrollmentPolicyNamespace: release.Namespace, EnrollmentPolicyName: config.PolicyName, TokenReviews: managerKubernetes.AuthenticationV1().TokenReviews(), Uploads: 1, UploadTimeout: time.Second, Consumer: resultconsumer.Options{Workers: 1, Entries: 1, Timeout: time.Second, Retention: time.Minute}}, managerAPI, managerAPI); err != nil {
 		t.Fatalf("receiver rejects rotator projection: %v", err)
 	}
 	policy := &corev1.ConfigMap{}

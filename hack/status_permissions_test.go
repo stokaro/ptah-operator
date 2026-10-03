@@ -62,8 +62,8 @@ func TestEveryGrantedStatusWriteIsUsed(t *testing.T) {
 	}
 }
 
-// Durable delivery grants only CREATE for admission-validated projections;
-// neither mode may read credentials.
+// Result delivery uses receiver-audience Pod tokens. Neither mode needs a
+// cluster-wide Secret grant for the manager or any of the shipped roles.
 func TestTheShippedRolesGrantOnlyDeclaredSecretPermission(t *testing.T) {
 	t.Parallel()
 	for _, enabled := range []bool{false, true} {
@@ -72,7 +72,6 @@ func TestTheShippedRolesGrantOnlyDeclaredSecretPermission(t *testing.T) {
 		if len(roles) == 0 {
 			t.Fatal("no shipped roles were examined")
 		}
-		grants := 0
 		for _, role := range roles {
 			for _, rule := range role.Rules {
 				for _, resource := range rule.Resources {
@@ -82,21 +81,9 @@ func TestTheShippedRolesGrantOnlyDeclaredSecretPermission(t *testing.T) {
 					if !strings.HasPrefix(resource, "secrets") {
 						continue
 					}
-					grants++
-					if !enabled || role.Name != approverRelease+"-ptah-operator" || resource != "secrets" ||
-						len(rule.Verbs) != 1 || rule.Verbs[0] != "create" ||
-						len(rule.APIGroups) != 1 || rule.APIGroups[0] != "" {
-						t.Fatalf("durable=%v: %s has an undeclared Secret grant: %#v", enabled, role.Name, rule)
-					}
+					t.Fatalf("durable=%v: %s has an undeclared Secret grant: %#v", enabled, role.Name, rule)
 				}
 			}
-		}
-		want := 0
-		if enabled {
-			want = 1
-		}
-		if grants != want {
-			t.Fatalf("durable=%v: found %d Secret grants, want %d", enabled, grants, want)
 		}
 	}
 }
