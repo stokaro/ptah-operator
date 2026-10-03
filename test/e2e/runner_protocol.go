@@ -54,6 +54,13 @@ func runnerProtocolApplyInputs(job *batchv1.Job, kind string, resource metav1.Ob
 		job.Spec.Template.Spec.RestartPolicy != corev1.RestartPolicyNever || !jobUsesExecutor(job, binding.ExecutorImage) {
 		return errors.New("unsupported runner Apply lost its exact approved owner, execution binding or single-attempt workload")
 	}
+	if durableResultJob(job) {
+		var err error
+		job, err = resultJobWithoutProjection(job)
+		if err != nil {
+			return err
+		}
+	}
 	spec := job.Spec.Template.Spec
 	main := spec.Containers[0]
 	operation := runner.OperationApply
@@ -94,6 +101,17 @@ func unsupportedRunnerFrame(logs []byte, operation runner.Operation, id string) 
 	if !errors.As(err, &mismatch) || mismatch.RunnerVersion != runner.ProtocolVersion+1 || !reflect.DeepEqual(result, runner.Result{}) ||
 		mismatch.Message != fmt.Sprintf("the Job expects runner protocol %d; this runner speaks protocol %d", runner.ProtocolVersion, runner.ProtocolVersion+1) {
 		return errors.New("the exact Apply Pod did not return the complete bound unsupported-runner refusal")
+	}
+	return nil
+}
+
+// This diagnostic proves the fixture refused before dispatch. The controller
+// must still recover an unknown outcome from the database, never from logs.
+func unsupportedDurableRunnerRefusal(pod *corev1.Pod, logs []byte) error {
+	want := fmt.Sprintf("ptah-runner: runner_protocol_mismatch: the Job expects runner protocol %d; this runner speaks protocol %d\n", runner.ProtocolVersion, runner.ProtocolVersion+1)
+	if pod == nil || pod.Status.Phase != corev1.PodFailed || !noRestarts(pod) ||
+		!terminatedContainer(pod, "ptah", 2) || string(logs) != want {
+		return errors.New("the durable Apply did not return the exact pre-dispatch protocol refusal")
 	}
 	return nil
 }

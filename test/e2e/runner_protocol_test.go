@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"fmt"
 	"maps"
 	"os"
 	"strconv"
@@ -15,6 +16,7 @@ import (
 	"k8s.io/utils/ptr"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/resultdelivery/jobconfig"
 	"github.com/stokaro/ptah-operator/internal/runner"
 	"github.com/stokaro/ptah-operator/internal/workload"
 )
@@ -288,6 +290,68 @@ func TestTerminalLogCoverageAccountsForAnOrderedFailedInit(t *testing.T) {
 			mutate(changed)
 			if terminalPodLogsComplete(changed) {
 				t.Fatal("an incomplete or contradictory container history passed its credential log audit")
+			}
+		})
+	}
+}
+
+func TestUnsupportedRunnerApplyKeepsDurableProjection(t *testing.T) {
+	for _, kind := range []string{"PtahSchema", "PtahMigration"} {
+		t.Run(kind, func(t *testing.T) {
+			job, _, resource, binding, controller, image := runnerApplyFixture(kind)
+			job.Spec.Template.Spec.AutomountServiceAccountToken = ptr.To(false)
+			if err := jobconfig.Attach(job, resource.UID, 1, job.Annotations[annotationOperationID], "https://receiver.test:9444"); err != nil {
+				t.Fatal(err)
+			}
+			if err := runnerProtocolApplyInputs(job, kind, resource, binding, image, proofDigest("c"), controller); err != nil {
+				t.Fatal(err)
+			}
+			for name, mutate := range map[string]func(*batchv1.Job){
+				"writable credential": func(j *batchv1.Job) { j.Spec.Template.Spec.Containers[0].VolumeMounts[0].ReadOnly = false },
+				"foreign credential":  func(j *batchv1.Job) { j.Spec.Template.Spec.Volumes[0].Secret.SecretName = "other" },
+				"missing endpoint": func(j *batchv1.Job) {
+					j.Spec.Template.Spec.Containers[0].Args = j.Spec.Template.Spec.Containers[0].Args[:8]
+				},
+				"changed executable": func(j *batchv1.Job) { j.Spec.Template.Spec.Containers[0].Args[1] = "/other" },
+			} {
+				t.Run(name, func(t *testing.T) {
+					changed := job.DeepCopy()
+					mutate(changed)
+					if runnerProtocolApplyInputs(changed, kind, resource, binding, image, proofDigest("c"), controller) == nil {
+						t.Fatal("accepted damaged protocol or delivery inputs")
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestUnsupportedDurableRunnerRefusal(t *testing.T) {
+	_, pod, _, _, _, _ := runnerApplyFixture("PtahSchema")
+	pod.Status.ContainerStatuses = []corev1.ContainerStatus{{Name: "ptah", State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{
+		ExitCode: 2, StartedAt: metav1.NewTime(time.Unix(103, 0)), FinishedAt: metav1.NewTime(time.Unix(104, 0)),
+	}}}}
+	pod.Status.InitContainerStatuses = pod.Status.InitContainerStatuses[:1]
+	logs := []byte(fmt.Sprintf("ptah-runner: runner_protocol_mismatch: the Job expects runner protocol %d; this runner speaks protocol %d\n", runner.ProtocolVersion, runner.ProtocolVersion+1))
+	if err := unsupportedDurableRunnerRefusal(pod, logs); err != nil {
+		t.Fatal(err)
+	}
+	for _, changed := range [][]byte{nil, logs[:len(logs)/2], []byte("ptah-runner: durable result delivery failed\n"), []byte(strings.ReplaceAll(string(logs), "protocol 2", "protocol 1")), append(append([]byte{}, logs...), logs...)} {
+		if unsupportedDurableRunnerRefusal(pod, changed) == nil {
+			t.Fatal("accepted absent, incomplete, unrelated or duplicate protocol diagnostic")
+		}
+	}
+	for name, mutate := range map[string]func(*corev1.Pod){
+		"successful Pod":     func(p *corev1.Pod) { p.Status.Phase = corev1.PodSucceeded },
+		"successful runner":  func(p *corev1.Pod) { p.Status.ContainerStatuses[0].State.Terminated.ExitCode = 0 },
+		"restarted runner":   func(p *corev1.Pod) { p.Status.ContainerStatuses[0].RestartCount = 1 },
+		"missing timestamps": func(p *corev1.Pod) { p.Status.ContainerStatuses[0].State.Terminated.StartedAt = metav1.Time{} },
+	} {
+		t.Run(name, func(t *testing.T) {
+			changed := pod.DeepCopy()
+			mutate(changed)
+			if unsupportedDurableRunnerRefusal(changed, logs) == nil {
+				t.Fatal("accepted unrelated runner termination")
 			}
 		})
 	}

@@ -148,6 +148,12 @@ func run(ctx context.Context, arguments []string, stdout, stderr io.Writer, envi
 		}
 	})
 	if deliveryRequested {
+		// A foreign protocol cannot publish a receipt under this Job's contract.
+		// Refuse before contacting the receiver or starting the executor.
+		if err := runner.CheckProtocolBinding(environment); err != nil {
+			_, _ = fmt.Fprintln(stderr, "ptah-runner: "+runner.CodeRunnerProtocolMismatch+": "+err.Error())
+			return 2
+		}
 		var err error
 		delivery, err = prepareDelivery(*resultEndpoint, *resultCredentials, operation, environment)
 		if err != nil {

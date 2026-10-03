@@ -1,0 +1,7 @@
+{
+  "exitCode": 2,
+  "stdout": "",
+  "stderr": "ptah-runner: runner_protocol_mismatch: the Job expects runner protocol 1; this runner speaks protocol 2\n",
+  "expectedDiagnostic": "ptah-runner: runner_protocol_mismatch: the Job expects runner protocol 1; this runner speaks protocol 2\n",
+  "scope": "Real local protocol-2 runner binary; no cluster or SQL transaction."
+}

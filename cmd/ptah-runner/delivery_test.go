@@ -281,6 +281,36 @@ func TestRunnerDoesNotFallBackToLogsAfterDeliveryRefusal(t *testing.T) {
 
 }
 
+func TestRunnerRefusesDurableProtocolMismatchBeforeDelivery(t *testing.T) {
+	f := newDeliveryFixture(t, nil)
+	var requests atomic.Int64
+	server := f.server(t, func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requests.Add(1)
+			next.ServeHTTP(w, r)
+		})
+	})
+	executable, counter := applyExecutable(t)
+	env := f.environment(t)
+	for i, value := range env {
+		if strings.HasPrefix(value, runner.EnvRunnerProtocolVersion+"=") {
+			env[i] = fmt.Sprintf("%s=%d", runner.EnvRunnerProtocolVersion, runner.ProtocolVersion+1)
+		}
+	}
+	var stdout, stderr bytes.Buffer
+	code := run(t.Context(), []string{"--ptah-binary", executable, "--operation", "migration-apply", "--result-endpoint", server.URL, "--result-credentials", f.credentials}, &stdout, &stderr, append(env, "PTAH_TEST_INVOCATIONS="+counter), "")
+	want := fmt.Sprintf("ptah-runner: runner_protocol_mismatch: the Job expects runner protocol %d; this runner speaks protocol %d\n", runner.ProtocolVersion+1, runner.ProtocolVersion)
+	if code != 2 || stdout.Len() != 0 || stderr.String() != want || requests.Load() != 0 {
+		t.Errorf("exit=%d stdout=%q stderr=%q receiver requests=%d", code, stdout.String(), stderr.String(), requests.Load())
+	}
+	if _, err := os.Stat(counter); !os.IsNotExist(err) {
+		t.Fatalf("executor started under a foreign protocol: %v", err)
+	}
+	if _, _, err := f.store.Load(t.Context(), f.identity.Binding); err == nil {
+		t.Fatal("foreign protocol unexpectedly persisted a result")
+	}
+}
+
 func TestRunnerRefusesDeliveryMisconfigurationBeforeDispatch(t *testing.T) {
 	for _, name := range []string{"empty endpoint", "missing directory", "HTTP endpoint", "missing key", "key is a directory", "oversized CA", "Pod UID", "generation", "operation ID", "duplicate identity", "engine", "expired certificate", "server certificate"} {
 		t.Run(name, func(t *testing.T) {

@@ -67,6 +67,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:d40cd5ea8820fd8ff9a7a39ef7fbabeabe7306123bab7b1eaad7d8ef63939640",
       "reason": "Complete result redelivery before the first tagged 0.2.0 release. When admission refuses a CREATE of changed result bytes before storage returns AlreadyExists, the store now identifies the immutable content conflict by direct read and the receiver returns the existing HTTP 409 contract instead of a temporary 503. Identical-byte retries, wire encoding, result validation, SQL execution, and all other write errors are unchanged. No tagged release consumed this development transport; protocol counters remain 1."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:022df5333b094d80b4f721e709eb6965653991ae9c501cbc4000dfe6249cfece",
+      "reason": "Complete the initial durable protocol before the first tagged 0.2.0 release. A runner whose protocol differs from its Job now exits with code 2 and the bounded mismatch diagnostic before reading delivery credentials, contacting the receiver, or starting the executor. It does not attempt a receipt under a foreign contract. Legacy framed refusals and compatible durable results are unchanged. No tagged release consumed an earlier protocol-1 contract; development counters remain 1."
     }
   ]
 }

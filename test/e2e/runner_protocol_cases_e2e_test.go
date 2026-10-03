@@ -82,13 +82,17 @@ func (f *faultRun) unsupportedRunnerProtocols() {
 		r.refused = waitRunnerApply(f.t, f.ctx, f.cluster, f.in.TestNamespace, labelSchema, r.name, f.scan)
 		f.check(runnerProtocolApplyInputs(r.refused.job, "PtahSchema", r.before, r.before.Status.ExecutionBinding, replacement, r.plan.Spec.Fingerprint, f.controller),
 			"retain the supported contract in the actual incompatible-runner Job")
-		if !resultTransportPod(r.refused.pod) || !terminatedContainer(r.refused.pod, "ptah", 0) {
-			f.fatalf("the incompatible schema runner lost its successful refusal transport")
-		}
 		logs, err := f.cluster.ContainerLog(f.ctx, f.in.TestNamespace, r.refused.pod.Name, "ptah")
 		f.check(err, "read the exact foreign Apply result")
 		f.scan(logs, "the complete incompatible runner Apply result")
-		f.check(unsupportedRunnerFrame(logs, runner.OperationApply, r.refused.job.Annotations[annotationOperationID]), "receive the exact foreign protocol refusal")
+		if durableResultJob(r.refused.job) {
+			f.check(unsupportedDurableRunnerRefusal(r.refused.pod, logs), "receive the exact pre-delivery protocol refusal")
+		} else {
+			if !resultTransportPod(r.refused.pod) || !terminatedContainer(r.refused.pod, "ptah", 0) {
+				f.fatalf("the incompatible schema runner lost its successful refusal transport")
+			}
+			f.check(unsupportedRunnerFrame(logs, runner.OperationApply, r.refused.job.Annotations[annotationOperationID]), "receive the exact foreign protocol refusal")
+		}
 		r.window.waitForSchema("the refused Apply retained for read-only recovery", func(resource *ptahv1alpha1.PtahSchema) bool {
 			pending := resource.Status.PendingObservation
 			return pending != nil && pending.ApplyJobUID == r.refused.job.UID && pending.Outcome == ptahv1alpha1.PendingObservationOutcomeUnknown

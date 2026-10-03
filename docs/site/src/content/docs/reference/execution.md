@@ -202,12 +202,18 @@ The runner is installed from `execution.runnerImage`, and nothing but the
 installation ties that image to the manager. Every runner container of a Job --
 the one that starts the executor and the guard that authorizes OCI access --
 is told the protocol its manager speaks in `PTAH_RUNNER_PROTOCOL_VERSION`. A
-runner of another protocol refuses the Job before it reads anything else: the
-executor never starts, and the result frame carries only the operation, the
-error code `runner_protocol_mismatch` and the runner's own protocol version, a
-document every protocol writes and reads the same way. The manager reports the
-refusal as `RunnerProtocolMismatch` rather than as a failed operation. A guard
-that refuses stops the Pod before the fetch that uses the registry credentials.
+runner of another protocol refuses the Job before the executor starts.
+With durable delivery, it exits with code 2 and writes the diagnostic
+`runner_protocol_mismatch` before reading delivery credentials or contacting
+the receiver. It cannot publish a result under the Job's foreign protocol.
+Without a receipt, the manager treats an Apply outcome as unknown and uses
+read-only database recovery; it never uses diagnostic logs to authorize replay.
+A guard that refuses stops the Pod before the fetch that uses the registry
+credentials.
+
+In legacy log delivery, the refusal frame carries only the operation, the
+error code and the runner's own protocol version. The manager recognizes that
+bounded cross-version document as `RunnerProtocolMismatch`.
 
 ## Meshes and policy engines
 

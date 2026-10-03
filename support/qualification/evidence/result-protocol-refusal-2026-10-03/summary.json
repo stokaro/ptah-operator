@@ -1,0 +1,51 @@
+{
+  "status": "passed local checks; native Kubernetes recovery pending",
+  "baseCommit": "821e14dba9f012f6a0d8d9b6475af3b0bf02535d",
+  "scope": "Fix the incompatible-runner refusal and adapt its existing E2E assertions to default durable delivery for #586.",
+  "sourceSHA256": {
+    "cmd/ptah-runner/delivery_test.go": "10865e1c38821e5a079aaa3fa7015dd7a5cdcfe55e4abdc9143269abe3f92ffd",
+    "cmd/ptah-runner/main.go": "69720239eef354f4c76a41ba330e38fd57fa3ef6d695a6ec2e27a671140d092f",
+    "docs/site/src/content/docs/reference/execution.md": "7c4ec55aab92cf345582db62981366b55ffa3c274bfaa768d61152ef53ac0379",
+    "support/runner-protocol.json": "8c0eccf7e347c4a56c55a27446b3302c024035408ddca599d354daa8c8d578a9",
+    "test/e2e/runner_protocol.go": "79b44724b698e77c1af8f72e6f22b9432994c069dcffb4b791d0a8afe4d6807d",
+    "test/e2e/runner_protocol_cases_e2e_test.go": "e5cd01f79f5e91ab76eb356f373be345f741357487cb61db925d2f158ce86c52",
+    "test/e2e/runner_protocol_test.go": "733c026c41cc6c7d9fb349918128a57ec90d4534061aab82f13bf041de6af4da"
+  },
+  "reproduction": {
+    "command": "GOFLAGS=-p=1 go test ./cmd/ptah-runner -run ^TestRunnerRefusesDurableProtocolMismatchBeforeDelivery$ -count=1 -v",
+    "exitCode": 1,
+    "observation": "Before the fix, mismatched Job protocol produced exit 0, two receiver requests and a stored refusal. The executor did not start."
+  },
+  "checks": [
+    {
+      "command": "GOFLAGS=-p=1 go test ./cmd/ptah-runner -count=1 -v",
+      "exitCode": 0
+    },
+    {
+      "command": "GOFLAGS=-p=1 go test ./test/e2e -run 'Test(Unsupported|RunnerSQLAttribution|RunnerRefusal)' -count=1 -v",
+      "exitCode": 0
+    },
+    {
+      "command": "GOFLAGS=-p=1 go test -tags=e2e -c ./test/e2e",
+      "exitCode": 0
+    },
+    {
+      "command": "GOFLAGS=-p=1 go vet -tags=e2e ./cmd/ptah-runner ./test/e2e",
+      "exitCode": 0
+    },
+    {
+      "command": "GOFLAGS=-p=1 make verify-runner-protocol",
+      "exitCode": 0
+    }
+  ],
+  "binaryProof": "The existing runnerprotocolfixture overlay built a real local protocol-2 binary. With Job protocol 1 and durable flags it exited 2 with the exact mismatch diagnostic, no stdout, before attempting to read absent credentials. This is not a cluster or SQL recovery proof.",
+  "changes": [
+    "Durable mode checks protocol before delivery preflight or executor dispatch. Compatible delivery and legacy framed refusals remain unchanged.",
+    "The E2E workload predicate validates then removes only the exact credential projection before checking the existing supported operation arguments.",
+    "The durable schema refusal expects failed ptah exit 2 and the exact diagnostic. Existing unknown-outcome recovery, fresh approval, SQL audit and no-replay assertions remain."
+  ],
+  "limits": [
+    "The updated native Kubernetes recovery scenario has not yet run.",
+    "No CI verdict exists for this change; final #586 DoD and #242 remain open."
+  ]
+}
