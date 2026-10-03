@@ -59,7 +59,10 @@ const (
 // on every scrape, and the counters that say a scrape could not read it. They
 // are named here rather than allowed by prefix, so a family added without a
 // decision still fails.
+// The result cleanup counter is also allowed when durable delivery is enabled;
+// its background activity does not supply the required operation evidence.
 var haAlwaysPresent = map[string]string{
+	"ptah_operator_result_cleanup_operations_total":              "counter",
 	"ptah_operator_unresolved_attempts":                          "gauge",
 	"ptah_operator_unresolved_owed_seconds":                      "gauge",
 	"ptah_operator_unresolved_view_synced":                       "gauge",

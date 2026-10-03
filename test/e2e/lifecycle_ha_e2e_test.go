@@ -516,7 +516,11 @@ func (h *haRun) operationAfterFailover() {
 	if err := h.cluster.Client.Delete(h.ctx, namespace); client.IgnoreNotFound(err) != nil {
 		h.fatalf("namespace %s could not be deleted: %v", h.in.HATestNamespace, err)
 	}
-	h.waitForGone(&corev1.Namespace{}, types.NamespacedName{Name: h.in.HATestNamespace}, 120*time.Second)
+	// Durable receipts and their credentials outlive the workload through the
+	// recovery window. Namespace deletion is asynchronous for that reason; the
+	// schema, Job and Pods above must still be gone before this phase passes.
+	// The retention and namespace-cleanup proofs measure their later collection.
+	h.logf("operation workload removed; namespace deletion requested with result retention intact")
 }
 
 // create creates one object the operation needs, as kubectl create did.

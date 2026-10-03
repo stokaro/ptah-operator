@@ -1,0 +1,15 @@
+=== RUN   TestHA
+=== RUN   TestHA/lease-authorization
+    lifecycle_ha_e2e_test.go:137: e2e HA: verifying namespace-scoped Lease authorization
+=== RUN   TestHA/leader-failover
+    lifecycle_ha_e2e_test.go:137: e2e HA: deleting leader Pod ptah-system-1-37-0-result-lifecycle-b503-60a21ba63c/ptah-runtime-generated-name-prefix-boundary-proof-60a21ba6bpss8
+=== RUN   TestHA/operation-after-failover
+    lifecycle_ha_e2e_test.go:137: e2e HA: creating a real operation after leader failover
+    lifecycle_ha_e2e_test.go:137: e2e HA: operation workload removed; namespace deletion requested with result retention intact
+=== NAME  TestHA
+    lifecycle_ha_e2e_test.go:51: e2e HA: PASS one Lease, exact RBAC, Pod failover, admitted operation, and custom metrics
+--- PASS: TestHA (32.73s)
+    --- PASS: TestHA/lease-authorization (1.90s)
+    --- PASS: TestHA/leader-failover (20.41s)
+    --- PASS: TestHA/operation-after-failover (10.19s)
+PASS

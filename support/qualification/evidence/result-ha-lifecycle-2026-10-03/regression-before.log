@@ -1,0 +1,19 @@
+=== RUN   TestHAResultCleanupMetrics
+=== PAUSE TestHAResultCleanupMetrics
+=== CONT  TestHAResultCleanupMetrics
+=== RUN   TestHAResultCleanupMetrics/installed_cleanup_samples
+    ha_test.go:215: verdict = malformed, want complete
+=== RUN   TestHAResultCleanupMetrics/cleanup_alone
+    ha_test.go:215: verdict = malformed, want waiting
+=== RUN   TestHAResultCleanupMetrics/wrong_cleanup_type
+=== RUN   TestHAResultCleanupMetrics/invalid_cleanup_value
+=== RUN   TestHAResultCleanupMetrics/unknown_cleanup_family
+--- FAIL: TestHAResultCleanupMetrics (0.00s)
+    --- FAIL: TestHAResultCleanupMetrics/installed_cleanup_samples (0.00s)
+    --- FAIL: TestHAResultCleanupMetrics/cleanup_alone (0.00s)
+    --- PASS: TestHAResultCleanupMetrics/wrong_cleanup_type (0.00s)
+    --- PASS: TestHAResultCleanupMetrics/invalid_cleanup_value (0.00s)
+    --- PASS: TestHAResultCleanupMetrics/unknown_cleanup_family (0.00s)
+FAIL
+FAIL	github.com/stokaro/ptah-operator/test/e2e	0.667s
+FAIL
