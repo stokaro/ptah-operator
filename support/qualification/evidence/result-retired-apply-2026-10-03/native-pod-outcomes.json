@@ -1,0 +1,44 @@
+[
+  {
+    "name": "ptah-apply-e2e-running-executor-mysql-fcf417980204d67b-9qsgc",
+    "uid": "0943da34-a20b-41aa-8b63-636deec9652d",
+    "phase": "Failed",
+    "containers": [
+      {
+        "name": "ptah",
+        "restartCount": 0,
+        "state": {
+          "terminated": {
+            "containerID": "containerd://7327f37f3f2878e1e253cb608e6dffdc852fc221c747c0603f314303dd852269",
+            "exitCode": 2,
+            "finishedAt": "2026-10-03T08:36:42Z",
+            "message": "PTAH_RUNNER_SUMMARY_V1 {\"protocolVersion\":1,\"operation\":\"apply\",\"operationId\":\"sha256:2770345f3378cf3eac2d5b93332eec5f1719b30bf67523a108f8fe1cb5542d13\",\"frameDigest\":\"sha256:a08818cb8c3d784b817a6ef3b65a300b9982653da8042c79c10e06fea9229a1b\",\"mutationStarted\":true,\"coordinationDigest\":\"sha256:af3198e003bcde9536d44a279ee08824775d18711739d49f99be9d30ff66d9a8\",\"targetIdentityDigest\":\"sha256:a711e2df7127710123ad89730226074e3cfb44d8ca2c723a119e2e2e36822ab4\"}\n",
+            "reason": "Error",
+            "startedAt": "2026-10-03T08:35:58Z"
+          }
+        }
+      }
+    ]
+  },
+  {
+    "name": "ptah-apply-e2e-running-executor-postgresql-a48bf34b0058a57qvrxh",
+    "uid": "6f00b060-e03e-48ee-964e-552174810cd6",
+    "phase": "Failed",
+    "containers": [
+      {
+        "name": "ptah",
+        "restartCount": 0,
+        "state": {
+          "terminated": {
+            "containerID": "containerd://b8873262d6617cfdc16b00d9eccf388a1ae90fc370722ad4786aebbccd487fc8",
+            "exitCode": 2,
+            "finishedAt": "2026-10-03T08:36:41Z",
+            "message": "PTAH_RUNNER_SUMMARY_V1 {\"protocolVersion\":1,\"operation\":\"apply\",\"operationId\":\"sha256:dea8236a2c548e00cf2fc144bb7c5b0e61e7304c45563eafce527c13a3ca8631\",\"frameDigest\":\"sha256:4e3bc1558d3d3de14bd12d6dc2ea52c7f874b4ddda08e9b78a03e828f4562256\",\"mutationStarted\":true,\"coordinationDigest\":\"sha256:fbc77c8186d5b858d939d6f9ec9995014cccfb7f33c0fab2939750eb16f8c3d9\",\"targetIdentityDigest\":\"sha256:bd67ac7a8c5c394afac56a61138418c3b10c09170e4a91fd877f8dc089d4d45f\"}\n",
+            "reason": "Error",
+            "startedAt": "2026-10-03T08:35:51Z"
+          }
+        }
+      }
+    ]
+  }
+]

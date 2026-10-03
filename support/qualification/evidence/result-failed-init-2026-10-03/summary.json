@@ -35,7 +35,7 @@
     "internal/controller/durable_results_test.go": "658e1e6f39acdbb0da1f72c312ce41b5c9ee271fd69eae7ee3cc8a4c31df2535"
   },
   "limits": [
-    "The final running-Apply executor-change scenario is still running. This report does not claim the complete data-plane phase.",
+    "The final running-Apply executor-change scenario failed result delivery after binding rotation. ../result-retired-apply-2026-10-03/summary.json retains the failure and focused fix. This report does not claim the complete data-plane phase.",
     "No current-head CI or release-readiness verdict."
   ],
   "correctedRecovery": {

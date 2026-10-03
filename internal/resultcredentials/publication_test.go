@@ -1,11 +1,48 @@
 package resultcredentials
 
 import (
+	"strings"
 	"testing"
 
+	operatorapi "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/resultdelivery/resulttest"
 	"github.com/stokaro/ptah-operator/internal/resultstore"
+	"k8s.io/apimachinery/pkg/types"
 )
+
+func TestIssuedCredentialPublishesTheOriginalRetiringApply(t *testing.T) {
+	f := resulttest.New(t, "schema-apply-admitted-scheduling")
+	api := &credentialAPI{Client: f.Client(t)}
+	issuer, _, _, _ := testIssuer(t, api)
+	issued, err := issuer.Ensure(t.Context(), f.Identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema := f.Subject.(*operatorapi.PtahSchema)
+	op := schema.Status.ActiveOperation
+	schema.Status.PendingObservation = &operatorapi.PendingObservationStatus{
+		Outcome: operatorapi.PendingObservationOutcomeUnknown, ApplyOperationID: op.ID,
+		ApplyJobName: op.JobName, ApplyJobUID: op.JobUID, ApplyGeneration: schema.Generation,
+		ApplyPodCount: 1, ApplyPodUIDs: []types.UID{f.Pod.UID},
+		AdmissionSnapshot: op.AdmissionSnapshot, Plan: *schema.Status.Plan, Target: *op.Target,
+	}
+	schema.Status.PendingBindingRetirement = &operatorapi.BindingRetirementStatus{
+		RetiredEpoch: op.ExecutionBindingID,
+		Job:          &operatorapi.RetiredJobStatus{Operation: operatorapi.OperationApply, Name: op.JobName, UID: op.JobUID},
+	}
+	schema.Status.ActiveOperation, schema.Status.Plan = nil, nil
+	schema.Status.ExecutionBinding.Epoch = "v1-" + strings.Repeat("4", 32)
+	if err := api.Update(t.Context(), schema); err != nil {
+		t.Fatal(err)
+	}
+	if identity, err := issuer.AuthorizePublication(t.Context(), f.Identity.Binding); err != nil || identity != f.Identity {
+		t.Fatalf("original credential could not publish after binding rotation: %v", err)
+	}
+	retained, err := issuer.Ensure(t.Context(), f.Identity)
+	if err != nil || retained != issued {
+		t.Fatalf("retiring Apply did not retain its original credential: %v", err)
+	}
+}
 
 func TestPublicationRequiresCanonicalCredentialAndLiveAuthority(t *testing.T) {
 	f := resulttest.New(t, "schema-observe")

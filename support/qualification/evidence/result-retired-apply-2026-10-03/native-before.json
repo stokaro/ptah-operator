@@ -1,0 +1,10 @@
+{
+  "controllerImage": "e2e-registry.ptah-test-a-1-37-0-pr585-durable-c14d41fe-84f1e3fb20.svc.cluster.local:5000/ptah-operator@sha256:3b6ccbd388d4e2894121c7b46e04867b7e37d2f60dc130831a68e947370091b5",
+  "controllerRevision": "d3084d03ef32434563ea629ef1b1b1c461fed0d4",
+  "finishedAt": "2026-10-03T10:36:59.063574+02:00",
+  "passed": false,
+  "runnerImage": "e2e-registry.ptah-test-a-1-37-0-pr585-durable-c14d41fe-84f1e3fb20.svc.cluster.local:5000/ptah-runner@sha256:2b480a2c2d43a6bd3d8405b9f468b3a812efb7859982746a9a0c145495b40feb",
+  "scenario": "running-apply-executor-image-change",
+  "scope": "original scenario in retained Kubernetes 1.37 Linux amd64 lab; previous fixtures suspended; no full-phase verdict",
+  "startedAt": "2026-10-03T10:33:44.081336+02:00"
+}

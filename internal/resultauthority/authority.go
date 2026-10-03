@@ -112,8 +112,11 @@ func (a Authorizer) claim(ctx context.Context, identity resultdelivery.Identity)
 			return claim, readError(err)
 		}
 		op := schema.Status.ActiveOperation
-		if schema.UID != b.UID || op == nil || schema.Status.ExecutionBinding == nil {
+		if schema.UID != b.UID || schema.Status.ExecutionBinding == nil {
 			return claim, resultdelivery.ErrAuthority
+		}
+		if op == nil {
+			return retiringSchemaApply(schema, identity)
 		}
 		generation = schema.Generation
 		claim = jobclaim.SchemaOperation(schema, op)
@@ -162,7 +165,34 @@ func (a Authorizer) claim(ctx context.Context, identity resultdelivery.Identity)
 	// Do not reject merely because executionNotAfter passed, the original Pod
 	// is terminating, or the resource is suspended. Those states may be when
 	// an already dispatched runner reports its outcome. No result is permission
-	// to start or replay SQL; retirement or a changed epoch still refuses it.
+	// to start or replay SQL.
+	return claim, nil
+}
+
+// A schema binding rotation moves a dispatched Apply to pending observation
+// while its original Pod may still write. That exact retired claim can deliver
+// its outcome until cleanup, even though it is no longer the active operation.
+// The consumer still requires fresh observation under the new binding.
+func retiringSchemaApply(schema *operatorv1alpha1.PtahSchema, identity resultdelivery.Identity) (jobclaim.Claim, error) {
+	b := identity.Binding
+	pending, retired := schema.Status.PendingObservation, schema.Status.PendingBindingRetirement
+	if b.Operation != "apply" || pending == nil || retired == nil || retired.Job == nil ||
+		schema.Generation != b.Generation || pending.ApplyGeneration != b.Generation ||
+		pending.Outcome != operatorv1alpha1.PendingObservationOutcomeUnknown ||
+		pending.ApplyOperationID != b.OperationID || pending.ApplyJobName != b.JobName || pending.ApplyJobUID != b.JobUID ||
+		pending.ApplyPodCount != 1 || len(pending.ApplyPodUIDs) != 1 || pending.ApplyPodUIDs[0] != b.PodUID ||
+		strings.ToLower(string(pending.Target.Engine)) != identity.Engine ||
+		pending.Plan.ExecutionBindingID != b.ExecutionBindingID || retired.RetiredEpoch != b.ExecutionBindingID ||
+		schema.Status.ExecutionBinding.Epoch == "" || schema.Status.ExecutionBinding.Epoch == retired.RetiredEpoch ||
+		retired.Job.Operation != operatorv1alpha1.OperationApply || retired.Job.Name != b.JobName || retired.Job.UID != b.JobUID {
+		return jobclaim.Claim{}, resultdelivery.ErrAuthority
+	}
+	claim := jobclaim.PendingApply(schema, pending)
+	// The pending snapshot does not copy the input fingerprint. Match still
+	// holds the certificate's fingerprint to the original Job and its pinned
+	// template, along with the complete retired plan and admission snapshot.
+	claim.InputFingerprint = b.InputFingerprint
+	claim.Stored = true
 	return claim, nil
 }
 

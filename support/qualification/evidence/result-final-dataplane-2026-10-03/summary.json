@@ -1,5 +1,5 @@
 {
-  "status": "partial native integration; remaining scenarios running",
+  "status": "partial native integration; final running-Apply scenario failed, local correction passed",
   "requirement": "#586 final default integration and existing #578 execution-binding boundary cases",
   "runtime": {
     "platform": "Kubernetes 1.37.0 linux/amd64",
@@ -49,6 +49,7 @@
     "Previous successes retain their original source/artifact identities. This is not a complete current-head CI or #242 readiness verdict."
   ],
   "subsequentEvidence": {
-    "unsupported-runner-protocol-after-approval": "../result-failed-init-2026-10-03/summary.json: passed on both engines with manager d3084d03 and runner 46b51228; exact original failure and corrected identities retained"
+    "unsupported-runner-protocol-after-approval": "../result-failed-init-2026-10-03/summary.json: passed on both engines with manager d3084d03 and runner 46b51228; exact original failure and corrected identities retained",
+    "running-apply-executor-image-change": "../result-retired-apply-2026-10-03/summary.json: native failure retained; exact retired-claim delivery correction passes local regression and refusal controls; corrected native run pending"
   }
 }
