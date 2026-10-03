@@ -323,8 +323,9 @@ func (a *alertingRun) lockReleaseCase(m *migrationRun, schemaTemplate *ptahv1.Pt
 	if family == "migration" {
 		op = runner.OperationMigrationApply
 	}
-	result, err := runner.ParseResultFor(logs, op, claimed.claim.id)
+	result, err := readOperationResult(a.ctx, a.cluster.Client, job, pod, op, claimed.claim.id, logs)
 	a.check(err, "bind the Apply result to its exact operation")
+	m.scanObject(result, "lock alert durable Apply result")
 	if result.Error != nil || result.ChildExitCode != 0 || result.Uncertain || result.Truncation != nil {
 		a.fatalf("the lock alert Apply did not finish with complete success")
 	}

@@ -146,14 +146,20 @@ func (a *alertingRun) stalledFamily(family string) {
 			finished, err = alStalledFinished(pod, claim, podUID)
 			return err == nil && alStalledAccounted(object, claim, finished), "the original attempt has not been accounted for with its next retry deferred", err
 		}), "observe the original %s Resolve outcome", family)
-	_, terminalPod, _ := a.heldWorkload(claim, podUID)
+	terminalJob, terminalPod, found := a.heldWorkload(claim, podUID)
+	if !found {
+		a.fatalf("the held Resolve lost its original workload before result capture")
+	}
 	logs, err := a.cluster.ContainerLog(a.ctx, claim.namespace, terminalPod.Name, "ptah")
 	a.check(err, "read the exact held Resolve result")
 	if a.credentials.Password != "" && bytes.Contains(logs, []byte(a.credentials.Password)) {
 		a.fatalf("the held Resolve result exposed a registry credential")
 	}
-	result, err := runner.ParseResultFor(logs, runner.OperationResolve, claim.id)
+	result, err := readOperationResult(a.ctx, a.cluster.Client, terminalJob, terminalPod, runner.OperationResolve, claim.id, logs)
 	a.check(err, "bind the held Resolve result to its original operation")
+	if a.credentials.Password != "" && bytes.Contains(mustJSONBytes(result), []byte(a.credentials.Password)) {
+		a.fatalf("the held Resolve receipt exposed a registry credential")
+	}
 	if result.Error == nil || result.Error.Code != "child_exit" || result.ChildExitCode <= 0 || result.Uncertain || result.Truncation != nil {
 		a.fatalf("the released Resolve did not report the expected failed OCI child through successful transport")
 	}

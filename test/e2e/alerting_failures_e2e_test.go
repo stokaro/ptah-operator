@@ -244,8 +244,9 @@ func (a *alertingRun) operationsFailingFamily(family string) {
 			logs, e := a.cluster.ContainerLog(a.ctx, pod.Namespace, pod.Name, "ptah")
 			a.check(e, "retain Resolve before TTL collection")
 			m.scan(logs, "operation-failure Resolve")
-			result, e := runner.ParseResultFor(logs, runner.OperationResolve, c.id)
+			result, e := readOperationResult(a.ctx, a.cluster.Client, &job, pod, runner.OperationResolve, c.id, logs)
 			a.check(e, "bind the exact Resolve result")
+			m.scanObject(result, "operation-failure durable Resolve result")
 			if result.Uncertain || result.Truncation != nil {
 				a.fatalf("Resolve returned incomplete evidence")
 			}

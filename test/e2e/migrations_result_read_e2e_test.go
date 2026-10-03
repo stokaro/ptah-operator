@@ -9,7 +9,6 @@ import (
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
-	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -66,7 +65,7 @@ func (m *migrationRun) hungResultReadProof() {
 	audit := &databaseSQLAudit{t: m.t, ctx: m.ctx, cluster: m.cluster, namespace: m.in.TestNamespace, engine: m.engine.name}
 	beforeSQL := audit.snapshot()
 	m.closeApplyGate()
-	m.check(m.approve("e2e-migration-hung-approval-"+m.engine.name, r.name, plan.Name, string(plan.UID), plan.Spec.Fingerprint), "approve the operation whose result will hang")
+	m.check(m.approve("e2e-migration-hung-approval-"+m.engine.name, r.name, plan.Name, string(plan.UID), plan.Spec.Fingerprint), "approve the operation whose diagnostic log will be unavailable")
 	r.waitForClaim()
 	r.findLease()
 	m.poll("the Apply Pod held off every node", time.Second, func() bool {
@@ -84,58 +83,49 @@ func (m *migrationRun) hungResultReadProof() {
 	fault := (&logStall{t: m.t, ctx: m.ctx, cluster: m.cluster, dockerContext: m.in.DockerContext,
 		node: m.miIsolatedNode(), workDir: m.workDir, namespace: m.in.TestNamespace, suffix: m.engine.name}).start(r.pod)
 	m.openApplyGate()
-	m.poll("a completed Apply and an unfinished result read", time.Second, func() bool {
+	m.poll("the original durable migration Apply to complete", time.Second, func() bool {
 		job := &batchv1.Job{}
 		m.check(m.get(r.claim.job, job), "read Apply Job")
-		return string(job.UID) == r.claim.jobUID && jobComplete(job) && slices.ContainsFunc(fault.readings(),
-			func(reading logStallReading) bool { return reading.State == "started" })
+		if !durableResultJob(job) {
+			m.fatalf("log independence requires durable result delivery")
+		}
+		return string(job.UID) == r.claim.jobUID && jobComplete(job)
 	})
-	// Approve the independent resource only after the controller is blocked
-	// in the result stream. Its database must converge while that fault remains.
+	assertHeld, releaseDiagnostic := fault.holdDiagnostic(r.pod)
+	// The log endpoint was replaced before scheduling and remains unavailable
+	// throughout convergence of both the original and independent resource.
 	m.check(m.approve(healthy+"-approval", healthy, healthyPlan.Name, string(healthyPlan.UID), healthyPlan.Spec.Fingerprint), "approve independent work during the stalled read")
 	approval := &ptahv1alpha1.PtahMigrationApproval{}
 	m.check(m.get(healthy+"-approval", approval), "read the independent approval timestamp")
 	deadline := approval.CreationTimestamp.Add(180 * time.Second)
-	timedOut, progressed := false, false
+	progressed, originalConverged := false, false
 	for time.Now().Before(deadline) {
 		m.captureMigrationSQLInventory(r.name, inventory)
-		if !isolatedApplyHeld(m.migration(r.name), r.claim.jobUID, r.claim.epoch) {
-			m.fatalf("%s discarded its claim while its result was unread", r.name)
-		}
-		lease := &coordinationv1.Lease{}
-		m.check(m.cluster.Client.Get(m.ctx, types.NamespacedName{Namespace: r.leaseNamespace, Name: r.lease}, lease), "read the retained Apply Lease")
-		if !heldAs(lease, r.holder, r.claim.epoch) {
-			m.fatalf("the stalled Apply lost its Lease")
-		}
-		m.assertNoNewApplyJob([]string{r.claim.jobUID}, "while its result read hangs", r.name)
-		events := &corev1.EventList{}
-		m.check(m.list(events), "read result-read timeout Events")
-		uid := m.migration(r.name).UID
-		timedOut = timedOut || slices.ContainsFunc(events.Items, func(event corev1.Event) bool {
-			return event.InvolvedObject.UID == uid && event.Reason == "ResultReadTimedOut"
-		})
+		m.assertNoNewApplyJob([]string{r.claim.jobUID}, "while diagnostic logs are unavailable", r.name)
+		original := m.migration(r.name)
+		originalConverged = original.Status.Phase == ptahv1alpha1.MigrationPhaseInSync &&
+			original.Status.ObservedGeneration == original.Generation && original.Status.ActiveOperation == nil &&
+			original.Status.LastRun != nil && string(original.Status.LastRun.JobUID) == r.claim.jobUID
 		current := m.migration(healthy)
 		progressed = current.Status.Phase == ptahv1alpha1.MigrationPhaseInSync && current.Status.ObservedGeneration == current.Generation && current.Status.ActiveOperation == nil &&
 			current.Status.LastRun != nil && current.Status.LastRun.FinishedAt != nil &&
 			!current.Status.LastRun.FinishedAt.Time.Before(approval.CreationTimestamp.Time) &&
 			!current.Status.LastRun.FinishedAt.Time.After(deadline)
-		if timedOut && progressed {
+		if originalConverged && progressed {
 			break
 		}
 		m.sleep(2 * time.Second)
 	}
-	if !timedOut || !progressed {
-		m.fatalf("hung result read did not release the worker within 180s: timeout=%t independent convergence=%t", timedOut, progressed)
+	if !originalConverged || !progressed {
+		m.fatalf("durable results depended on unavailable logs: original convergence=%t independent convergence=%t within 180s", originalConverged, progressed)
 	}
-	duration, bounded := logReadDuration(fault.readings())
-	if !bounded {
-		m.fatalf("the deliberately unfinished response was not canceled inside its 75s acceptance bound: %s", duration)
-	}
+	assertHeld()
 	for _, database := range []string{r.database, healthyDB} {
 		if count := m.query("SELECT count(*) FROM e2e_migration_widgets", database); count != "3" {
-			m.fatalf("%s contains %s seeded rows while the result is unread", database, count)
+			m.fatalf("%s contains %s seeded rows while the diagnostic log is unavailable", database, count)
 		}
 	}
+	releaseDiagnostic()
 	m.check(fault.stop(m.ctx), "restore real kubelet log reads")
 	settled := m.waitForGenerationInSync(r.name)
 	m.closeApplyGate()
@@ -178,6 +168,6 @@ func (m *migrationRun) hungResultReadProof() {
 		m.query("SELECT color FROM e2e_migration_widgets WHERE id = 1", r.database) != "blue" {
 		m.fatalf("maximum-name migration recovery lost its expected database history or rows")
 	}
-	m.logf("PASS %s 63-byte migration name: unfinished result read canceled in %s; independent work converged within 180s; original Apply recovered without replay", m.engine.kind, duration)
+	m.logf("PASS %s 63-byte migration name: durable original and independent convergence within 180s while diagnostic log stays unfinished; no replay", m.engine.kind)
 	m.logf("PASS %s migration name boundary: 64 bytes refused at its CEL rule; every 63-byte operation retained its complete workload name; original Apply SQL and database history verified", m.engine.kind)
 }
