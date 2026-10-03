@@ -19,11 +19,20 @@
       "assertions": "Old version-bound approval refused; diagnostic SQL only before fresh authorization; fresh exact-plan approval executes once; populated row preserved; original version restored; credential audits completed.",
       "startedAt": "2026-10-03T09:29:39.755263+02:00",
       "finishedAt": "2026-10-03T09:35:11.005529+02:00"
+    },
+    "unsupported-controller-state-after-approval": {
+      "result": "passed",
+      "engines": [
+        "PostgreSQL",
+        "MySQL"
+      ],
+      "assertions": "Unsupported controller-state version 2 refused in two reconciliation attempts per engine; exact stored state retained, no new workload or unauthorized SQL; restored supported version 1 requires fresh approval before exactly one Apply and preserves the populated row. Temporary authority removed.",
+      "startedAt": "2026-10-03T09:35:11.006942+02:00",
+      "finishedAt": "2026-10-03T09:39:50.960286+02:00"
     }
   },
   "alreadyRetained": "../result-preflight-retry-2026-10-03/summary.json retains the passed executor-image scenario and corrected runner build. ../result-admission-status-2026-10-03/summary.json retains the passed native admission scenario and original 20 successful scenarios.",
   "remaining": [
-    "unsupported-controller-state-after-approval",
     "unsupported-runner-protocol-after-approval",
     "running-apply-executor-image-change"
   ],
