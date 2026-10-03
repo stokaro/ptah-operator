@@ -493,8 +493,22 @@ func (a *alertingRun) lockReleaseCase(m *migrationRun, schemaTemplate *ptahv1.Pt
 		storedStateWatchBarrier(a.t, a.ctx, a.cluster, migrations, v)
 	}
 	storedStateWatchBarrier(a.t, a.ctx, a.cluster, schemas, sibling)
-	storedStateWatchBarrier(a.t, a.ctx, a.cluster, jobs, siblingJob)
-	storedStateWatchBarrier(a.t, a.ctx, a.cluster, pods, siblingPod)
+	// The completed runner's Job may already carry its cleanup TTL. Use the
+	// retained unmanaged publisher to close these collection watches without
+	// requiring another admission write to the retired executor.
+	publisher := &batchv1.Job{}
+	a.check(m.get("e2e-push-migrations-"+m.engine.name+"-alerts-lock", publisher), "read the retained lock publisher sentinel")
+	if publisher.UID == "" || len(publisher.OwnerReferences) != 0 || publisher.Labels[labelManagedBy] == managedByOperator || publisher.Spec.TTLSecondsAfterFinished != nil || !jobComplete(publisher) {
+		a.fatalf("the lock publisher is not a retained unmanaged completed sentinel")
+	}
+	publisherPods := &corev1.PodList{}
+	a.check(m.list(publisherPods), "read the lock publisher Pod sentinel")
+	owned := ownedPods(publisherPods.Items, publisher.UID)
+	if len(owned) != 1 || owned[0].Status.Phase != corev1.PodSucceeded {
+		a.fatalf("the lock publisher has no unique successful Pod sentinel")
+	}
+	storedStateWatchBarrier(a.t, a.ctx, a.cluster, jobs, publisher)
+	storedStateWatchBarrier(a.t, a.ctx, a.cluster, pods, &owned[0])
 	currentLease := &coordinationv1.Lease{}
 	a.check(a.cluster.Client.Get(a.ctx, client.ObjectKeyFromObject(originalLease), currentLease), "read the final realm Lease")
 	storedStateWatchBarrier(a.t, a.ctx, a.cluster, leases, currentLease)
