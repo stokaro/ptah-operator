@@ -1,0 +1,15 @@
+import os,subprocess
+from pathlib import Path
+out=Path('/private/tmp/ptah-585-migration-log-native')
+identity=Path('/private/tmp/ptah-585-running-executor')
+work=Path('/private/var/folders/6s/s6tvscqx5j72rcd2jbxdfvrm0000gn/T/ptah-operator-e2e.NsBNwQ')
+env=os.environ.copy()
+env.update(dict(line.split('=',1) for line in (work/'phase-dataplane.env').read_text().splitlines()))
+env['E2E_CONTROLLER_REVISION']=(identity/'revision.txt').read_text().strip()
+env['E2E_CONTROLLER_IMAGE']=env['E2E_CONTROLLER_IMAGE'].split('@')[0]+'@'+(identity/'manifest.txt').read_text().strip()
+env['E2E_DOCKER_CONTEXT']='remote-dev-container'
+env['GOFLAGS']='-p=1'
+env['E2E_REGISTRY_HOST_ADDRESS']='127.0.0.1:22386'
+env['E2E_KIND_CLUSTER_NAME']='ptah-e2e-1-37-0-pr585-durable-84f1e3fb20'
+env['E2E_RUNNER_IMAGE']=env['E2E_RUNNER_IMAGE'].split('@')[0]+'@sha256:2b480a2c2d43a6bd3d8405b9f468b3a812efb7859982746a9a0c145495b40feb'
+raise SystemExit(subprocess.run([str(out/'probe.test'),'-test.run=^TestRetainedMigrationLogIndependence$','-test.v','-test.timeout=90m'],cwd='/private/tmp/ptah-operator-020-profile/test/e2e',env=env).returncode)

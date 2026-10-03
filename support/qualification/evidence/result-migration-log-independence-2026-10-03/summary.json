@@ -1,0 +1,53 @@
+{
+  "status": "PostgreSQL and MySQL native scenarios passed; independent API readback passed",
+  "requirement": "#586 final default integration: existing migration hung-result-read scenarios",
+  "runtime": {
+    "controllerCommit": "a60fb251b144a86a7032fef7deacbadde2a53e9d",
+    "controllerImage": "e2e-registry.ptah-test-a-1-37-0-pr585-durable-c14d41fe-84f1e3fb20.svc.cluster.local:5000/ptah-operator@sha256:a239c4d7c9da41a0f2f864132697a610a1456105c13c9158afc7de5dadd4d2ff",
+    "runnerCommit": "46b512288e8a7abab0881f25bb071ca706af5e72",
+    "runnerImage": "e2e-registry.ptah-test-a-1-37-0-pr585-durable-c14d41fe-84f1e3fb20.svc.cluster.local:5000/ptah-runner@sha256:2b480a2c2d43a6bd3d8405b9f468b3a812efb7859982746a9a0c145495b40feb",
+    "platform": "Kubernetes 1.37.0 linux/amd64",
+    "testSourceCommit": "a60fb251b144a86a7032fef7deacbadde2a53e9d"
+  },
+  "assertions": "Original and independent migration converge within the existing 180-second bound while a verified diagnostic-log request remains unfinished; exact original Apply identity, no replay, complete SQL audit, versions 1/2/3 and seeded rows; admitted 63-byte name works through all operation workloads, 64-byte name is refused.",
+  "cases": {
+    "postgresql": {
+      "controllerImage": "e2e-registry.ptah-test-a-1-37-0-pr585-durable-c14d41fe-84f1e3fb20.svc.cluster.local:5000/ptah-operator@sha256:a239c4d7c9da41a0f2f864132697a610a1456105c13c9158afc7de5dadd4d2ff",
+      "controllerRevision": "a60fb251b144a86a7032fef7deacbadde2a53e9d",
+      "engine": "postgresql",
+      "finishedAt": "2026-10-03T11:25:07.271297+02:00",
+      "passed": true,
+      "runnerImage": "e2e-registry.ptah-test-a-1-37-0-pr585-durable-c14d41fe-84f1e3fb20.svc.cluster.local:5000/ptah-runner@sha256:2b480a2c2d43a6bd3d8405b9f468b3a812efb7859982746a9a0c145495b40feb",
+      "scenario": "hung-result-read",
+      "scope": "Unchanged migration log-independence scenario on retained Kubernetes 1.37 Linux amd64 installation; individual diagnostic only",
+      "startedAt": "2026-10-03T11:19:25.090999+02:00"
+    },
+    "mysql": {
+      "controllerImage": "e2e-registry.ptah-test-a-1-37-0-pr585-durable-c14d41fe-84f1e3fb20.svc.cluster.local:5000/ptah-operator@sha256:a239c4d7c9da41a0f2f864132697a610a1456105c13c9158afc7de5dadd4d2ff",
+      "controllerRevision": "a60fb251b144a86a7032fef7deacbadde2a53e9d",
+      "engine": "mysql",
+      "finishedAt": "2026-10-03T11:27:19.644288+02:00",
+      "passed": true,
+      "runnerImage": "e2e-registry.ptah-test-a-1-37-0-pr585-durable-c14d41fe-84f1e3fb20.svc.cluster.local:5000/ptah-runner@sha256:2b480a2c2d43a6bd3d8405b9f468b3a812efb7859982746a9a0c145495b40feb",
+      "scenario": "hung-result-read",
+      "scope": "Unchanged migration log-independence scenario on retained Kubernetes 1.37 Linux amd64 installation; individual diagnostic only",
+      "startedAt": "2026-10-03T11:25:07.271715+02:00"
+    }
+  },
+  "sourceSHA256": {
+    "test/e2e/migrations_result_read_e2e_test.go": "207d3cff6dabd5bc6ae31c99651dabe1b25992e53eff2b8077bf7b58da239071",
+    "test/e2e/migrations_e2e_test.go": "8b26bb138b7d6112ba3726bd513ae650cf006b6a8a87eb22a3dca3486d3a4ea6",
+    "testdata/e2e/verification-policy-migrations.yaml": "83917180587d7b0b152d193368742ff81ebeeb1aa1449d83f001c8717d06455e"
+  },
+  "preparation": "The first invocation refused missing phase-only registry/cluster environment inputs before cluster changes. The live PostgreSQL invocation then waited for a policy omitted by the focused entry. The exact immutable fixture was supplied before any plan or Apply; the same attempt continued through ordinary retry. Both preparation observations are retained. The original scenario and assertions are unchanged.",
+  "limits": [
+    "Individual native scenarios on a retained lab; no full migration-phase or CI verdict.",
+    "Alert integration and other #242 DoDs remain open."
+  ],
+  "durationSeconds": {
+    "total": 474.55,
+    "postgresqlScenario": 304.8,
+    "mysqlScenario": 122.54
+  },
+  "readback": "readback.json confirms all four current-generation resources are InSync with no active operation and an Applied original lastRun."
+}
