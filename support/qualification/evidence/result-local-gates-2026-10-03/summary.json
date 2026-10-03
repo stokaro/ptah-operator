@@ -1,0 +1,14 @@
+{
+  "requirement": "#586 integrated source validation",
+  "initialSource": "3e6dd38e660b43a50c529f2045ee879fc72143b9",
+  "sourceRemainder": "GOFLAGS=-p=1 make verify-release verify-demo-recording verify-go-mod test-qualification-probes e2e-static vet build test test-envtest",
+  "initialResult": "Failed in make test: three certificate render tests and TestQualificationFreezeMatchesCurrentInputs. All other unit packages passed. test-envtest was not reached.",
+  "correction": "Certificate render expectations match the unchanged durable permission contract. Qualification freeze revision 28 records the standard-log durable profile, preserves revision 27 by immutable commit and hash, and keeps Not assessed and all targets.",
+  "correctedCommand": "GOFLAGS=-p=1 go test ./internal/certrotation ./hack/acceptancecoverage",
+  "correctedResult": "PASS for both complete packages",
+  "remaining": [
+    "Required envtest and race checks.",
+    "Native alert integration and the previously retained SQL-lifetime CI failure remain separate gates.",
+    "No complete CI or production acceptance verdict."
+  ]
+}
