@@ -34,52 +34,38 @@ func (l *lifecycleRun) quiesceCompletedApply() {
 	l.t.Helper()
 	l.mustKubectl("-n", l.in.proofNamespace, "patch", "ptahschema", predecessorApplySchema,
 		"--type=merge", "-p", `{"spec":{"suspend":true}}`)
-	uid := types.UID(lifecycleRuntimeString(l.runningApply.stagedGap, "metadata", "uid"))
+	var lastErr error
 	for deadline := time.Now().Add(90 * time.Second); time.Now().Before(deadline); {
-		schema := &ptahv1alpha1.PtahSchema{}
-		l.check(l.cluster.Client.Get(l.ctx, types.NamespacedName{Namespace: l.in.proofNamespace, Name: predecessorApplySchema}, schema),
-			"read the completed lifecycle Apply's resource")
-		if _, err := lifecycleQuiescentSchemaState(schema, uid); err == nil {
-			l.quiescentApplyState()
+		// A stored result can clear the claim before kubelet reports Pod
+		// termination. Suspension and terminal workloads form one barrier.
+		if _, lastErr = l.quiescentApplyState(); lastErr == nil {
 			return
 		}
 		l.sleep(time.Second)
 	}
-	l.fatalf("the original completed Apply did not reach a current suspended verdict without an active claim")
+	l.fatalf("the original completed Apply did not become quiescent: %v", lastErr)
 }
 
-func (l *lifecycleRun) quiescentApplyState() []byte {
+func (l *lifecycleRun) quiescentApplyState() ([]byte, error) {
 	l.t.Helper()
 	uid := types.UID(lifecycleRuntimeString(l.runningApply.stagedGap, "metadata", "uid"))
 	schema := &ptahv1alpha1.PtahSchema{}
 	l.check(l.cluster.Client.Get(l.ctx, types.NamespacedName{Namespace: l.in.proofNamespace, Name: predecessorApplySchema}, schema),
 		"read the quiescent lifecycle target")
 	state, err := lifecycleQuiescentSchemaState(schema, uid)
-	l.check(err, "capture the quiescent target's retained claim evidence")
+	if err != nil {
+		return nil, err
+	}
 	jobs, pods := &batchv1.JobList{}, &corev1.PodList{}
 	l.check(l.cluster.Client.List(l.ctx, jobs, client.InNamespace(l.in.proofNamespace)), "list lifecycle target Jobs")
 	l.check(l.cluster.Client.List(l.ctx, pods, client.InNamespace(l.in.proofNamespace)), "list lifecycle target Pods")
-	ownedJobs := map[types.UID]bool{types.UID(l.runningApply.jobUID): true}
-	for _, job := range jobs.Items {
-		if ownedExactlyOnce(job.OwnerReferences, ptahSchemaAPIVersion, "PtahSchema", predecessorApplySchema, uid) {
-			ownedJobs[job.UID] = true
-		}
-	}
-	for _, pod := range pods.Items {
-		owned := pod.UID == l.runningApply.podUID
-		for jobUID := range ownedJobs {
-			owned = owned || podControlledByJobUID(pod.OwnerReferences, jobUID)
-		}
-		if owned && !terminalPodLogsComplete(&pod) {
-			l.fatalf("quiescent lifecycle target retains a nonterminal workload: Pod %s", pod.UID)
-		}
-	}
-	return state
+	return state, lifecycleQuiescentWorkloads(uid, types.UID(l.runningApply.jobUID), l.runningApply.podUID, jobs.Items, pods.Items)
 }
 
 func (l *lifecycleRun) auditQuiescentTransition(boundary string, transition func()) {
 	l.t.Helper()
-	beforeState := l.quiescentApplyState()
+	beforeState, err := l.quiescentApplyState()
+	l.check(err, "%s requires a quiescent target before transition", boundary)
 	audit := l.externalPostgresAudit()
 	beforeSQL := audit.snapshot()
 	if len(l.runningApply.sqlJournal) == 0 || !bytes.HasPrefix(audit.pgPrefix, l.runningApply.sqlJournal) {
@@ -88,7 +74,9 @@ func (l *lifecycleRun) auditQuiescentTransition(boundary string, transition func
 	l.check(lifecycleSQLBackendControl(l.runningApply.sqlJournal, l.runningApply.sqlBackend),
 		"retain the original lifecycle SQL control")
 	transition()
-	if !bytes.Equal(beforeState, l.quiescentApplyState()) {
+	afterState, err := l.quiescentApplyState()
+	l.check(err, "%s requires a quiescent target after transition", boundary)
+	if !bytes.Equal(beforeState, afterState) {
 		l.fatalf("%s changed the suspended target's spec, finalizers, execution binding or pending proof", boundary)
 	}
 	afterSQL := audit.snapshot()

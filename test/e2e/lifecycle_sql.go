@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -35,6 +36,25 @@ func lifecycleQuiescentSchemaState(schema *ptahv1alpha1.PtahSchema, uid types.UI
 	return json.Marshal(map[string]any{"uid": schema.UID, "generation": schema.Generation, "spec": schema.Spec,
 		"finalizers": schema.Finalizers, "executionBinding": schema.Status.ExecutionBinding,
 		"pendingObservation": schema.Status.PendingObservation})
+}
+
+func lifecycleQuiescentWorkloads(uid, originalJob, originalPod types.UID, jobs []batchv1.Job, pods []corev1.Pod) error {
+	ownedJobs := map[types.UID]bool{originalJob: true}
+	for _, job := range jobs {
+		if ownedExactlyOnce(job.OwnerReferences, ptahSchemaAPIVersion, "PtahSchema", predecessorApplySchema, uid) {
+			ownedJobs[job.UID] = true
+		}
+	}
+	for _, pod := range pods {
+		owned := pod.UID == originalPod
+		for _, owner := range pod.OwnerReferences {
+			owned = owned || (owner.Kind == "Job" && ownedJobs[owner.UID] && isController(owner))
+		}
+		if owned && !terminalPodLogsComplete(&pod) {
+			return fmt.Errorf("quiescent lifecycle target retains a nonterminal workload: Pod %s", pod.UID)
+		}
+	}
+	return nil
 }
 
 type lifecycleSQLBackend struct {

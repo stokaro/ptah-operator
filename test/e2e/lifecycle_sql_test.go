@@ -8,11 +8,50 @@ import (
 	"strings"
 	"testing"
 
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 )
+
+func TestLifecycleQuiescenceWaitsForOwnedPods(t *testing.T) {
+	t.Parallel()
+	controller := true
+	job := batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "followup", UID: "followup-job",
+		OwnerReferences: []metav1.OwnerReference{{APIVersion: ptahSchemaAPIVersion, Kind: "PtahSchema",
+			Name: predecessorApplySchema, UID: "schema", Controller: &controller}}}}
+	for _, origin := range []string{"original Pod", "original Job", "followup Job"} {
+		t.Run(origin, func(t *testing.T) {
+			pod := corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "finishing", UID: "followup-pod",
+				OwnerReferences: []metav1.OwnerReference{{APIVersion: "batch/v1", Kind: "Job", Name: job.Name,
+					UID: job.UID, Controller: &controller}}},
+				Spec:   corev1.PodSpec{Containers: []corev1.Container{{Name: "runner"}}},
+				Status: corev1.PodStatus{Phase: corev1.PodRunning}}
+			switch origin {
+			case "original Pod":
+				pod.UID, pod.OwnerReferences = "original-pod", nil
+			case "original Job":
+				pod.OwnerReferences[0].UID = "original-job"
+			}
+			check := func() error {
+				return lifecycleQuiescentWorkloads("schema", "original-job", "original-pod", []batchv1.Job{job}, []corev1.Pod{pod})
+			}
+			if err := check(); err == nil {
+				t.Fatal("suspension must wait while an owned Pod is still running")
+			}
+			pod.Status.Phase = corev1.PodSucceeded
+			if err := check(); err == nil {
+				t.Fatal("terminal phase hid incomplete container termination")
+			}
+			pod.Status.ContainerStatuses = []corev1.ContainerStatus{{Name: "runner",
+				State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{}}}}
+			if err := check(); err != nil {
+				t.Fatalf("completed workload did not release the barrier: %v", err)
+			}
+		})
+	}
+}
 
 func TestLifecycleSQLControlReadsTheNativeBarrierStatement(t *testing.T) {
 	t.Parallel()
