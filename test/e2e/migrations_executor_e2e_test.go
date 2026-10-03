@@ -20,7 +20,6 @@ import (
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/runner"
-	"github.com/stokaro/ptah-operator/test/e2e/resultframe"
 )
 
 // Use the driver's host-side address of the same task registry. The publisher
@@ -88,8 +87,8 @@ func (m *migrationRun) executorHistoryControl(resource *ptahv1alpha1.PtahMigrati
 		logs, err := m.cluster.ContainerLog(m.ctx, m.in.TestNamespace, pod.Name, "ptah")
 		m.check(err, "read the exact executor History result")
 		m.scan(logs, "executor History result")
-		result, err := resultframe.Parse(logs, runner.OperationMigrationHistory, job.Annotations[annotationOperationID])
-		if resultframe.StillArriving(err) {
+		result, err := readOperationResult(m.ctx, m.cluster.Client, job, pod, runner.OperationMigrationHistory, job.Annotations[annotationOperationID], logs)
+		if operationResultPending(err) {
 			return false
 		}
 		m.check(err, "parse the executor History result")

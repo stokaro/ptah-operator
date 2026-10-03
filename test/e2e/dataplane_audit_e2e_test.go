@@ -26,7 +26,6 @@ import (
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/runner"
 	"github.com/stokaro/ptah-operator/test/e2e/harness"
-	"github.com/stokaro/ptah-operator/test/e2e/resultframe"
 )
 
 // recordObservedJobs adds every Job the namespace holds now to the ledger.
@@ -132,28 +131,24 @@ func (d *dataPlane) allNewJobsComplete(schema, operation string, before checkpoi
 	return true
 }
 
-// readResultTransport reads a finished runner container's log and parses its
-// result frame. The frame is the runner's last output, and the container
-// runtime copies output into the log asynchronously, so a read right after the
-// container terminates can end inside the frame or before it. Such a read is
-// repeated for a bounded time, the same window the controller allows; a frame
-// that is present and wrong is refused at once, and either refusal names its
-// reason (#154).
-func (d *dataPlane) readResultTransport(pod, operation, operationID string) ([]byte, runner.Result) {
+// readResultTransport reads diagnostic output and the result selected by the
+// immutable Job. Legacy frames may still be arriving in the container log;
+// durable receipts must be complete and bound to this exact Job and Pod.
+func (d *dataPlane) readResultTransport(job *batchv1.Job, pod *corev1.Pod, operation, operationID string) ([]byte, runner.Result) {
 	d.t.Helper()
 	deadline := time.Now().Add(30 * time.Second)
 	for {
-		logs, err := d.cluster.ContainerLog(d.ctx, d.in.TestNamespace, pod, "ptah")
+		logs, err := d.cluster.ContainerLog(d.ctx, d.in.TestNamespace, pod.Name, "ptah")
 		if err != nil {
-			d.fatalf("could not read the %s result transport from %s: %v", operation, pod, err)
+			d.fatalf("could not read the %s result transport from %s: %v", operation, pod.Name, err)
 		}
-		result, err := resultframe.Parse(logs, runner.Operation(operation), operationID)
+		result, err := readOperationResult(d.ctx, d.cluster.Client, job, pod, runner.Operation(operation), operationID, logs)
 		if err == nil {
 			return logs, result
 		}
-		if !resultframe.StillArriving(err) || !time.Now().Before(deadline) {
+		if !operationResultPending(err) || !time.Now().Before(deadline) {
 			_, _ = fmt.Fprintf(os.Stderr, "e2e data plane:   %v\n", err)
-			d.fatalf("the %s result frame from %s could not be read", operation, pod)
+			d.fatalf("the %s result from %s could not be read", operation, pod.Name)
 		}
 		d.sleep(2 * time.Second)
 	}
@@ -231,6 +226,8 @@ func (d *dataPlane) auditTerminalJob(name string, uid types.UID) {
 	}
 	var evidencePod *corev1.Pod
 	var evidenceLog []byte
+	var evidenceResult runner.Result
+	var resultRead bool
 	for ownedIndex := range owned {
 		podName, podUID := owned[ownedIndex].Name, owned[ownedIndex].UID
 		if podName == "" || podUID == "" {
@@ -256,17 +253,13 @@ func (d *dataPlane) auditTerminalJob(name string, uid types.UID) {
 				d.fatalf("could not audit %s logs for exact Pod %s UID %s: %v", container, podName, podUID, err)
 			}
 			d.scan(logs, fmt.Sprintf("%s logs for exact Pod %s UID %s", container, podName, podUID))
-			// The read above is one read, and the runner's result frame is its
-			// last output, so it can land in the window where the container
-			// runtime has not finished copying that write. Nothing is retained
-			// from that read: the transport is settled first, which reads the
-			// log again while the frame may still be arriving and refuses a
-			// frame that is present and wrong at once, by its reason.
+			// Retain the validated result independently of the diagnostic log.
+			// A durable result is read from storage even if this log is empty.
 			if managedComplete && container == "ptah" {
-				settled, result := d.readResultTransport(podName, operation, operationID)
+				settled, result := d.readResultTransport(job, pod, operation, operationID)
 				d.scan(settled, fmt.Sprintf("the settled ptah transport for exact Pod %s UID %s", podName, podUID))
 				d.scan(d.jsonBytes(result), fmt.Sprintf("the validated %s result for exact Pod %s UID %s", operation, podName, podUID))
-				evidenceLog = settled
+				evidenceLog, evidenceResult, resultRead = settled, result, true
 			}
 		}
 		after := &corev1.Pod{}
@@ -291,10 +284,10 @@ func (d *dataPlane) auditTerminalJob(name string, uid types.UID) {
 		if evidencePod == nil {
 			d.fatalf("completed managed Job %s lost its exact Pod evidence", name)
 		}
-		if evidenceLog == nil {
-			d.fatalf("completed managed Job %s UID %s has no UID-bounded ptah log evidence", name, uid)
+		if !resultRead {
+			d.fatalf("completed managed Job %s UID %s has no UID-bounded result evidence", name, uid)
 		}
-		d.keepEvidence(jobAfter, evidencePod, evidenceLog)
+		d.keepEvidence(jobAfter, evidencePod, evidenceLog, evidenceResult)
 	}
 	d.audited.add(string(uid))
 	d.fullyAudited.add(string(uid))
@@ -303,7 +296,7 @@ func (d *dataPlane) auditTerminalJob(name string, uid types.UID) {
 // keepEvidence files a completed operation Job's evidence under its UID. The
 // same Job offered twice must be the same Job, and anything else is a
 // collision.
-func (d *dataPlane) keepEvidence(job *batchv1.Job, pod *corev1.Pod, logs []byte) {
+func (d *dataPlane) keepEvidence(job *batchv1.Job, pod *corev1.Pod, logs []byte, result runner.Result) {
 	d.t.Helper()
 	schema, operation := job.Labels[labelSchema], job.Labels[labelOperation]
 	operationID := job.Annotations[annotationOperationID]
@@ -324,14 +317,8 @@ func (d *dataPlane) keepEvidence(job *batchv1.Job, pod *corev1.Pod, logs []byte)
 		}
 		return
 	}
-	// This holds bytes, not a Pod, so it cannot wait for a frame: the
-	// transport was settled where it was captured. What it can do is say which
-	// frame it refused and why.
-	result, err := resultframe.Parse(logs, runner.Operation(operation), operationID)
-	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "e2e data plane:   %v\n", err)
-		d.fatalf("the %s result frame for Job UID %s cannot be archived", operation, job.UID)
-	}
+	// The result was validated against this workload where it was captured.
+	// Diagnostic logs are retained and scanned without becoming its transport.
 	supplied.result = result
 	d.scan(d.jsonBytes(job), "staged exact Job JSON")
 	d.scan(d.jsonBytes(pod), "staged exact Pod JSON")
@@ -423,7 +410,7 @@ func (d *dataPlane) captureOneNewJobResult(schema, operation string, before chec
 	if !resultTransportPod(pod) {
 		d.fatalf("%s did not preserve one zero-restart result transport", pod.Name)
 	}
-	logs, result := d.readResultTransport(pod.Name, operation, operationID)
+	logs, result := d.readResultTransport(job, pod, operation, operationID)
 	d.scan(logs, fmt.Sprintf("the exact %s result transport", operation))
 	d.scan(d.jsonBytes(result), fmt.Sprintf("the validated %s result", operation))
 	if int64(result.ProtocolVersion) != d.runnerProtocol || string(result.Operation) != operation ||

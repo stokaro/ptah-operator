@@ -367,7 +367,7 @@ func (d *dataPlane) mysqlDSNRefusal() {
 		if len(owned) != 1 {
 			d.fatalf("invalid-DSN Job %s does not own one Pod", name)
 		}
-		transport, result := d.readResultTransport(owned[0].Name, operation, operationID)
+		transport, result := d.readResultTransport(job, &owned[0], operation, operationID)
 		d.scan(transport, "the "+operation+" invalid-DSN runner transport")
 		if disclosesSessionPayload(transport) {
 			d.fatalf("%s invalid-DSN result disclosed the encoded server-session payload", operation)

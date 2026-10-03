@@ -43,7 +43,7 @@ func (f *faultRun) captureExactJobResult(name, uid, operation string) exactResul
 	if err != nil {
 		f.fatalf("%s: %v", name, err)
 	}
-	logs, result := f.readResultTransport(pod.Name, operation, operationID)
+	logs, result := f.readResultTransport(job, pod, operation, operationID)
 	f.scan(logs, fmt.Sprintf("the exact %s runner transport", operation))
 	f.scanObject(result, fmt.Sprintf("the validated %s runner result", operation))
 	if !resultBinding(result, f.runnerProtocol, operation, operationID) {

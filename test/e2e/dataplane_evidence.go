@@ -45,8 +45,9 @@ func operationLabel(operationID string) string {
 
 // jobEvidence is what the phase keeps of one completed operation Job: the Job
 // and its one Pod as they were read when the Job was audited, the ptah
-// container's log settled to a complete result frame, and that frame. The
-// controller stamps a TTL on every Job it finished reading, and a lifecycle
+// container's diagnostic log, and the validated result read through the Job's
+// selected transport. The controller stamps a TTL on every Job it finished
+// reading, and a lifecycle
 // outlasts it, so a proof about a Job's history reads this rather than the API.
 type jobEvidence struct {
 	job    *batchv1.Job

@@ -21,7 +21,6 @@ import (
 	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/migrationplan"
 	"github.com/stokaro/ptah-operator/internal/runner"
-	"github.com/stokaro/ptah-operator/test/e2e/resultframe"
 )
 
 func migrationExecutorRecorder[T client.Object](m *migrationRun, watcher client.WithWatch, name, namespace string,
@@ -284,8 +283,8 @@ func (m *migrationRun) runningExecutorImageChange() {
 		logs, err := m.cluster.ContainerLog(m.ctx, m.in.TestNamespace, pod.Name, "ptah")
 		m.check(err, "read the exact old executor's result")
 		m.scan(logs, "the old migration executor's result")
-		result, err := resultframe.Parse(logs, runner.OperationMigrationApply, operation.ID)
-		if resultframe.StillArriving(err) {
+		result, err := readOperationResult(m.ctx, m.cluster.Client, liveJob, livePod, runner.OperationMigrationApply, operation.ID, logs)
+		if operationResultPending(err) {
 			return false
 		}
 		m.check(err, "parse the old migration executor's complete result")
@@ -301,9 +300,9 @@ func (m *migrationRun) runningExecutorImageChange() {
 	current := m.waitForMigration(name, "fresh History accounting for Unknown under the replacement executor", time.Second, func(resource *ptahv1alpha1.PtahMigration) bool {
 		return migrationExecutorHistoryRecovery(before, held, resource, replacement) == nil
 	})
-	// Read the successful new-epoch History frame itself, not only the status
+	// Read the successful new-epoch History result itself, not only the status
 	// the manager derived from it. Repeated diagnostics may produce more than
-	// one frame; at least one must equal the final retained history.
+	// one result; at least one must equal the final retained history.
 	m.poll("the new executor's exact converged History result", time.Second, func() bool {
 		for _, event := range jobs.snapshot() {
 			historyJob := event.Object
@@ -313,13 +312,13 @@ func (m *migrationRun) runningExecutorImageChange() {
 			}
 			historyPod := audit.terminalPod(map[string]string{"job-name": historyJob.Name}, string(historyJob.UID))
 			logs, err := m.cluster.ContainerLog(m.ctx, m.in.TestNamespace, historyPod.Name, "ptah")
-			m.check(err, "read the replacement executor's exact History frame")
+			m.check(err, "read the replacement executor's exact History result")
 			m.scan(logs, "replacement migration History result")
-			result, err := resultframe.Parse(logs, runner.OperationMigrationHistory, historyJob.Annotations[annotationOperationID])
-			if resultframe.StillArriving(err) {
+			result, err := readOperationResult(m.ctx, m.cluster.Client, historyJob, historyPod, runner.OperationMigrationHistory, historyJob.Annotations[annotationOperationID], logs)
+			if operationResultPending(err) {
 				continue
 			}
-			m.check(err, "parse the replacement migration History frame")
+			m.check(err, "parse the replacement migration History result")
 			if result.ChildExitCode != 0 || result.Error != nil || result.CoordinationDigest != operation.CoordinationDigest ||
 				result.TargetIdentityDigest != current.Status.History.TargetIdentityDigest || result.MigrationHistory == nil {
 				m.fatalf("the replacement executor's History lost its original database binding")

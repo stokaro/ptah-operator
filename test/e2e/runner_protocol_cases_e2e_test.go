@@ -20,7 +20,6 @@ import (
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/runner"
 	"github.com/stokaro/ptah-operator/test/e2e/harness"
-	"github.com/stokaro/ptah-operator/test/e2e/resultframe"
 )
 
 func (f *faultRun) unsupportedRunnerProtocols() {
@@ -343,7 +342,7 @@ func (m *migrationRun) unsupportedRunnerProtocol() {
 	logs, err := m.cluster.ContainerLog(m.ctx, m.in.TestNamespace, freshPod.Name, "ptah")
 	m.check(err, "read the restored runner's exact successful result")
 	m.scan(logs, "the complete supported migration Apply result")
-	result, err := resultframe.Parse(logs, runner.OperationMigrationApply, freshJob.Annotations[annotationOperationID])
+	result, err := readOperationResult(m.ctx, m.cluster.Client, freshJob, freshPod, runner.OperationMigrationApply, freshJob.Annotations[annotationOperationID], logs)
 	m.check(err, "parse the actual restored runner result under protocol 1")
 	if result.Error != nil || result.ChildExitCode != 0 || result.Truncation != nil || result.MigrationRun == nil || result.MigrationRun.ContractVersion != 1 ||
 		result.MigrationRun.Outcome != "applied" || !slices.Equal(result.MigrationRun.Applied, []int64{1, 2, 3}) || result.MigrationRun.Error != "" {
@@ -399,7 +398,7 @@ func (m *migrationRun) runnerRecoveryHistoryControl(resource *ptahv1alpha1.PtahM
 	logs, err := m.cluster.ContainerLog(m.ctx, m.in.TestNamespace, pod.Name, "ptah")
 	m.check(err, "read the actual supported recovery History result")
 	m.scan(logs, "the complete supported recovery History result")
-	result, err := resultframe.Parse(logs, runner.OperationMigrationHistory, selected.Annotations[annotationOperationID])
+	result, err := readOperationResult(m.ctx, m.cluster.Client, selected, pod, runner.OperationMigrationHistory, selected.Annotations[annotationOperationID], logs)
 	m.check(err, "parse the supported recovery History under protocol 1")
 	m.check(migrationHistoryMatchesExecutorPlan(result, plan), "bind the actual recovery reading to the untouched target and pristine selected sequence")
 	return operationSQLClient{resourceUID: string(resource.UID), jobUID: string(selected.UID), podUID: string(pod.UID), operation: "history"}
