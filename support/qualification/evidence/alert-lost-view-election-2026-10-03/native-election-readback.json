@@ -1,0 +1,105 @@
+{
+  "lease": {
+    "name": "ptah-operator.operator.ptah.run",
+    "uid": "5fa12737-5c87-4f26-b782-7940dc423566",
+    "spec": {
+      "acquireTime": "2026-10-03T14:07:23.890670Z",
+      "holderIdentity": "ptah-runtime-generated-name-prefix-boundary-proof-25ec38caqts6f_13fc33cd-b71d-478c-ac99-9f445c273421",
+      "leaseDurationSeconds": 15,
+      "leaseTransitions": 2,
+      "renewTime": "2026-10-03T14:09:40.378756Z"
+    }
+  },
+  "pods": [
+    {
+      "name": "ptah-runtime-generated-name-prefix-boundary-proof-25ec38caqts6f",
+      "uid": "7ca052e9-2101-416c-8204-a75922956ac6",
+      "createdAt": "2026-10-03T14:05:42Z",
+      "conditions": [
+        {
+          "lastProbeTime": null,
+          "lastTransitionTime": "2026-10-03T14:07:06Z",
+          "observedGeneration": 1,
+          "status": "True",
+          "type": "PodReadyToStartContainers"
+        },
+        {
+          "lastProbeTime": null,
+          "lastTransitionTime": "2026-10-03T14:07:07Z",
+          "observedGeneration": 1,
+          "status": "True",
+          "type": "Initialized"
+        },
+        {
+          "lastProbeTime": null,
+          "lastTransitionTime": "2026-10-03T14:07:18Z",
+          "observedGeneration": 1,
+          "status": "True",
+          "type": "Ready"
+        },
+        {
+          "lastProbeTime": null,
+          "lastTransitionTime": "2026-10-03T14:07:18Z",
+          "observedGeneration": 1,
+          "status": "True",
+          "type": "ContainersReady"
+        },
+        {
+          "lastProbeTime": null,
+          "lastTransitionTime": "2026-10-03T14:07:06Z",
+          "observedGeneration": 1,
+          "status": "True",
+          "type": "PodScheduled"
+        }
+      ],
+      "containerRestartCounts": {
+        "manager": 0
+      }
+    },
+    {
+      "name": "ptah-runtime-generated-name-prefix-boundary-proof-25ec38carlf7d",
+      "uid": "67100550-c18b-47d7-b503-0cafd2c138e8",
+      "createdAt": "2026-10-03T14:05:42Z",
+      "conditions": [
+        {
+          "lastProbeTime": null,
+          "lastTransitionTime": "2026-10-03T14:07:06Z",
+          "observedGeneration": 1,
+          "status": "True",
+          "type": "PodReadyToStartContainers"
+        },
+        {
+          "lastProbeTime": null,
+          "lastTransitionTime": "2026-10-03T14:07:07Z",
+          "observedGeneration": 1,
+          "status": "True",
+          "type": "Initialized"
+        },
+        {
+          "lastProbeTime": null,
+          "lastTransitionTime": "2026-10-03T14:07:18Z",
+          "observedGeneration": 1,
+          "status": "True",
+          "type": "Ready"
+        },
+        {
+          "lastProbeTime": null,
+          "lastTransitionTime": "2026-10-03T14:07:18Z",
+          "observedGeneration": 1,
+          "status": "True",
+          "type": "ContainersReady"
+        },
+        {
+          "lastProbeTime": null,
+          "lastTransitionTime": "2026-10-03T14:07:06Z",
+          "observedGeneration": 1,
+          "status": "True",
+          "type": "PodScheduled"
+        }
+      ],
+      "containerRestartCounts": {
+        "manager": 0
+      }
+    }
+  ]
+}

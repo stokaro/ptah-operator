@@ -123,6 +123,14 @@ func (a *alertingRun) lostView() {
 	a.check(a.cluster.WaitForRollout(a.ctx, a.in.OperatorNamespace, a.manager, alTimeout), "restore the manager rollout")
 	a.waitForTargets()
 	newLease, replacements := a.managerSnapshot()
+	// Pod readiness and successful scrapes can precede leader election. Freeze
+	// recovery identity only after the Lease names a ready replacement. Native
+	// scrape timestamps below still determine the original recovery deadline.
+	a.check(harness.Wait(a.ctx, "a ready replacement to acquire leadership", alTimeout, alDeliveryPoll, func(context.Context) (bool, string, error) {
+		checkMonitor()
+		newLease, replacements = a.managerSnapshot()
+		return alSameManagers(newLease, replacements, newLease, replacements), "waiting for the elected replacement leader", nil
+	}), "establish replacement leadership before checking its stability")
 	newLeader := haLeaderPodName(haLeaseHolder(newLease))
 	var names []string
 	for _, pod := range replacements {

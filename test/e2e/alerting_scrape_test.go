@@ -142,6 +142,11 @@ func TestAlSameManagers(t *testing.T) {
 	if !alSameManagers(lease, pods, lease, pods) {
 		t.Fatal("unchanged ready managers were refused")
 	}
+	beforeElection := lease.DeepCopy()
+	beforeElection.Spec.HolderIdentity = ptr.To("retired_unique")
+	if alSameManagers(beforeElection, pods, beforeElection, pods) {
+		t.Fatal("ready replacements with a retired Lease holder passed as elected")
+	}
 	if !alSameManagers(lease, []corev1.Pod{pods[1], pods[0]}, lease, pods) {
 		t.Fatal("Pod list order changed identity")
 	}
