@@ -123,6 +123,8 @@ type isolatedNodeRow struct {
 	applied                       int
 	lastLease                     *coordinationv1.Lease
 	lastPods                      []corev1.Pod
+	applyJob                      *batchv1.Job
+	applyPod                      *corev1.Pod
 }
 
 // miIsolatedNode is the worker hack/e2e-kind.sh provisions for the row.
@@ -293,6 +295,9 @@ func (r *isolatedNodeRow) waitForPod() {
 				m.fatalf("the %s Apply Job carries no deadline the hold can be measured against: %v", m.engine.name, err)
 			}
 			r.jobDeadlineAt = deadline
+			// The node fault removes the Pod before settlement. Keep its
+			// exact identity for independent receipt verification afterward.
+			r.applyJob, r.applyPod = job.DeepCopy(), pod.DeepCopy()
 			return true
 		}
 		// A Pod placed anywhere else is not something waiting longer fixes.
@@ -561,7 +566,7 @@ func (r *isolatedNodeRow) rejoin() {
 }
 
 // assertSettles holds the end state the code defines, in the order it writes
-// it: the run recorded Unknown against its own Job, the Lease handed back once
+// it: the run recorded against its own Job, the Lease handed back once
 // no Pod of that Job is left, and the record settled by a reading of the same
 // database. Across all of it, no second Apply and nothing run twice.
 func (r *isolatedNodeRow) assertSettles() {
@@ -582,7 +587,14 @@ func (r *isolatedNodeRow) assertSettles() {
 		r.report()
 		m.fatalf("%s did not record its isolated Apply within %s of the node rejoining", r.name, waitTimeout)
 	}
-	if !isolatedRunUnknown(recorded.Status, r.claim.jobUID) {
+	if durableResultJob(r.applyJob) {
+		_, err := readRecordedMigrationApply(m.ctx, m.cluster.Client, r.applyJob, r.applyPod, recorded.Status.LastRun, nil)
+		m.check(err, "%s has no exact durable receipt for its isolated Apply", r.name)
+		if !isolatedRunApplied(recorded.Status, r.claim.jobUID) {
+			r.report()
+			m.fatalf("%s did not preserve the three applied versions from its isolated Apply receipt", r.name)
+		}
+	} else if !isolatedRunUnknown(recorded.Status, r.claim.jobUID) {
 		r.report()
 		m.fatalf("%s did not record its isolated Apply as a run nobody accounted for", r.name)
 	}
@@ -612,7 +624,7 @@ func (r *isolatedNodeRow) assertSettles() {
 		migration := m.migration(r.name)
 		m.assertNoNewApplyJob(r.seen, "after its isolated Apply", r.name)
 		r.assertRanOnce()
-		return isolatedRunSettled(migration.Status, r.claim.jobUID)
+		return isolatedRunSettled(migration.Status, r.claim.jobUID, recorded.Status.LastRun.Outcome)
 	}) {
 		r.report()
 		m.fatalf("%s did not settle its isolated Apply by reading the database within %s", r.name, waitTimeout)

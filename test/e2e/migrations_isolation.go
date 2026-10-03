@@ -74,7 +74,7 @@ func isolatedApplyHeld(migration *ptahv1alpha1.PtahMigration, job, epoch string)
 // isolatedRunUnknown is the first
 // reading after an isolated Apply's claim is retired, the run recorded
 // against its own Job as one nobody accounted for. Applied is refused on
-// purpose: it would mean the controller read a log the row expects to be gone.
+// purpose for legacy Jobs, whose result lived in the removed Pod's log.
 func isolatedRunUnknown(status ptahv1alpha1.PtahMigrationStatus, job string) bool {
 	return status.ActiveOperation == nil &&
 		status.LastRun != nil &&
@@ -86,18 +86,26 @@ func isolatedRunUnknown(status ptahv1alpha1.PtahMigrationStatus, job string) boo
 		conditionWithReason(status.Conditions, ptahv1alpha1.ConditionMigrationBlocked, "ApplyOutcomeUnknown")
 }
 
-// isolatedRunSettled is the unresolved
-// record removed by a history read taken after the run ended, with nothing
-// pending, and the run still named as the one never accounted for. The jq
+// isolatedRunApplied is the durable run recorded against the original Job.
+// The caller also verifies its receipt against the original Job and Pod.
+func isolatedRunApplied(status ptahv1alpha1.PtahMigrationStatus, job string) bool {
+	return status.ActiveOperation == nil && status.UnresolvedRun == nil &&
+		status.LastRun != nil && presentIs(string(status.LastRun.JobUID), job) &&
+		status.LastRun.Outcome == ptahv1alpha1.MigrationRunOutcomeApplied &&
+		slices.Equal(status.LastRun.AppliedVersions, []int64{1, 2, 3})
+}
+
+// isolatedRunSettled is a history read taken after the run ended, with no
+// unresolved record or pending work and the recorded outcome unchanged. The jq
 // dropped the fraction before comparing, so the two instants are compared to
 // the second: a reading in the same second as the run's end is not after it.
-func isolatedRunSettled(status ptahv1alpha1.PtahMigrationStatus, job string) bool {
+func isolatedRunSettled(status ptahv1alpha1.PtahMigrationStatus, job string, outcome ptahv1alpha1.MigrationRunOutcome) bool {
 	if status.ActiveOperation != nil || status.UnresolvedRun != nil || status.LastRun == nil || status.History == nil {
 		return false
 	}
 	run, history := status.LastRun, status.History
-	return presentIs(string(run.JobUID), job) &&
-		run.Outcome == ptahv1alpha1.MigrationRunOutcomeUnknown &&
+	return (outcome == ptahv1alpha1.MigrationRunOutcomeUnknown || outcome == ptahv1alpha1.MigrationRunOutcomeApplied) &&
+		presentIs(string(run.JobUID), job) && run.Outcome == outcome &&
 		history.PendingCount == 0 &&
 		!history.ObservedAt.IsZero() && run.FinishedAt != nil && !run.FinishedAt.IsZero() &&
 		history.ObservedAt.Unix() > run.FinishedAt.Unix()

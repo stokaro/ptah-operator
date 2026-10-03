@@ -208,8 +208,45 @@ func TestIsolatedRunSettled(t *testing.T) {
  "history":{"observedAt":"2026-09-26T10:08:31Z","pendingCount":0}}}`, false},
 		{"no run at all", `{"status":{"history":{"observedAt":"2026-09-26T10:08:31Z","pendingCount":0}}}`, false},
 	}, func(migration *ptahv1alpha1.PtahMigration) bool {
-		return isolatedRunSettled(migration.Status, miJob)
+		return isolatedRunSettled(migration.Status, miJob, ptahv1alpha1.MigrationRunOutcomeUnknown)
 	})
+}
+
+func TestIsolatedDurableRunCIReading(t *testing.T) {
+	// CI run 37154162826, job 111295506918: the Apply receipt survived
+	// node isolation even though the original Pod and its logs were gone.
+	data, err := os.ReadFile(filepath.Join("../..", "testdata/e2e/readings/isolated-node-durable-migration.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	status := miMigration(t, string(data)).Status
+	job := string(status.LastRun.JobUID)
+	if !isolatedRunApplied(status, job) || !isolatedRunSettled(status, job, ptahv1alpha1.MigrationRunOutcomeApplied) {
+		t.Fatal("the original Apply and its later converged history were refused")
+	}
+	if isolatedRunUnknown(status, job) || isolatedRunSettled(status, job, ptahv1alpha1.MigrationRunOutcomeUnknown) {
+		t.Fatal("a durable Applied result was accepted as an unknown legacy result")
+	}
+	for name, mutate := range map[string]func(*ptahv1alpha1.PtahMigrationStatus){
+		"another Job":      func(s *ptahv1alpha1.PtahMigrationStatus) { s.LastRun.JobUID = "replacement" },
+		"unknown outcome":  func(s *ptahv1alpha1.PtahMigrationStatus) { s.LastRun.Outcome = ptahv1alpha1.MigrationRunOutcomeUnknown },
+		"missing versions": func(s *ptahv1alpha1.PtahMigrationStatus) { s.LastRun.AppliedVersions = nil },
+		"another version":  func(s *ptahv1alpha1.PtahMigrationStatus) { s.LastRun.AppliedVersions = []int64{1, 2, 4} },
+		"unresolved run": func(s *ptahv1alpha1.PtahMigrationStatus) {
+			s.UnresolvedRun = &ptahv1alpha1.UnresolvedMigrationRunStatus{}
+		},
+		"active operation": func(s *ptahv1alpha1.PtahMigrationStatus) {
+			s.ActiveOperation = &ptahv1alpha1.MigrationOperationStatus{}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			changed := status.DeepCopy()
+			mutate(changed)
+			if isolatedRunApplied(*changed, job) {
+				t.Fatal("accepted an incomplete or replaced isolated run")
+			}
+		})
+	}
 }
 
 func TestRefusedAtBoundary(t *testing.T) {

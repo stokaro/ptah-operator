@@ -1,0 +1,98 @@
+{
+  "status": {
+    "observedGeneration": 1,
+    "phase": "InSync",
+    "conditions": [
+      {
+        "type": "Progressing",
+        "status": "False",
+        "observedGeneration": 1,
+        "lastTransitionTime": "2026-10-03T22:35:29Z",
+        "reason": "HistoryMatched",
+        "message": "Nothing is pending"
+      },
+      {
+        "type": "ArtifactVerified",
+        "status": "True",
+        "observedGeneration": 1,
+        "lastTransitionTime": "2026-10-03T22:29:26Z",
+        "reason": "PolicySatisfied",
+        "message": "The resolved artifact satisfied its verification policy"
+      },
+      {
+        "type": "Blocked",
+        "status": "False",
+        "observedGeneration": 1,
+        "lastTransitionTime": "2026-10-03T22:29:41Z",
+        "reason": "HistoryMatched",
+        "message": "The history continues this artifact"
+      },
+      {
+        "type": "Ready",
+        "status": "True",
+        "observedGeneration": 1,
+        "lastTransitionTime": "2026-10-03T22:35:29Z",
+        "reason": "HistoryMatched",
+        "message": "The database has every migration this artifact carries"
+      },
+      {
+        "type": "ApprovalRequired",
+        "status": "False",
+        "observedGeneration": 1,
+        "lastTransitionTime": "2026-10-03T22:29:41Z",
+        "reason": "Satisfied",
+        "message": "The plan's approval requirements are satisfied"
+      }
+    ],
+    "artifact": {
+      "resolvedReference": "oci://e2e-registry.ptah-test-a-1-37-0-ci-37154162826-1-1-37-migrations-a5dd11db68.svc.cluster.local:5000/migrations/postgresql-uncertain@sha256:256ad7f18b5da5d4b118bee249daabf507a1d42eae17f880a17ce743616d5498",
+      "digest": "sha256:256ad7f18b5da5d4b118bee249daabf507a1d42eae17f880a17ce743616d5498",
+      "registryAuthFrom": {
+        "name": "e2e-registry-auth",
+        "mode": "Environment",
+        "usernameKey": "username",
+        "passwordKey": "password",
+        "tokenKey": "token",
+        "dockerConfigJSONKey": ".dockerconfigjson"
+      },
+      "transport": {
+        "plainHTTP": true
+      }
+    },
+    "executionBinding": {
+      "epoch": "v1-6efba0790f83db0d65c74b38134fa85b",
+      "controllerStateVersion": 1,
+      "ptahVersion": "f6e562c",
+      "executorImage": "e2e-registry.ptah-test-a-1-37-0-ci-37154162826-1-1-37-migrations-a5dd11db68.svc.cluster.local:5000/ptah-executor@sha256:1c3285babea31d2e1a303a00fa8c2e586c84b1f005561312e0bc48c13e7d5504",
+      "runnerProtocolVersion": 1
+    },
+    "history": {
+      "observedAt": "2026-10-03T22:35:29Z",
+      "contractVersion": 1,
+      "currentVersion": 3,
+      "appliedCount": 3,
+      "pendingCount": 0,
+      "fingerprint": "sha256:94ade4630b1cbb88d1f38183deff4d5a6d0ad30e19052bb5c0dbbb02eadc0d71",
+      "targetIdentityDigest": "sha256:63a7462ae05ee92cbdb6f121560563d0857577b4c99111b898fe1e8c7b85bd63"
+    },
+    "lastRun": {
+      "outcome": "Applied",
+      "jobName": "ptah-m-apply-e2e-isolated-node-postgresql-170e4f5607192611",
+      "jobUID": "c77f2c0b-225b-4e69-920a-48031b44a498",
+      "startedAt": "2026-10-03T22:29:41Z",
+      "finishedAt": "2026-10-03T22:35:11Z",
+      "appliedVersions": [
+        1,
+        2,
+        3
+      ],
+      "dispatchedBy": {
+        "controllerImage": "e2e-registry.ptah-test-a-1-37-0-ci-37154162826-1-1-37-migrations-a5dd11db68.svc.cluster.local:5000/ptah-operator@sha256:322d011bf416903ffcb31b387f2edce551c133d1c577f85f79e8198685a1ed28",
+        "controllerRevision": "0c2b9cc3ddb4c55f8a8fcd7abd48e5cf3fb06c23",
+        "runnerImage": "e2e-registry.ptah-test-a-1-37-0-ci-37154162826-1-1-37-migrations-a5dd11db68.svc.cluster.local:5000/ptah-runner@sha256:322d011bf416903ffcb31b387f2edce551c133d1c577f85f79e8198685a1ed28"
+      },
+      "message": "3 migrations are recorded applied"
+    },
+    "nextReconciliationTime": "2026-10-03T22:37:29Z"
+  }
+}
