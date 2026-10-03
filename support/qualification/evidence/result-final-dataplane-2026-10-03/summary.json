@@ -33,7 +33,6 @@
   },
   "alreadyRetained": "../result-preflight-retry-2026-10-03/summary.json retains the passed executor-image scenario and corrected runner build. ../result-admission-status-2026-10-03/summary.json retains the passed native admission scenario and original 20 successful scenarios.",
   "remaining": [
-    "unsupported-runner-protocol-after-approval",
     "running-apply-executor-image-change"
   ],
   "sourceSHA256": {
@@ -48,5 +47,8 @@
     "The original scenario methods and assertions run unchanged through a temporary retained-lab entry point. It writes individual outcomes, never a full-phase completion record.",
     "The initial 44 schema fixtures were suspended before the corrected manager was installed; the failed executor scenario was reset before its corrected runner proof.",
     "Previous successes retain their original source/artifact identities. This is not a complete current-head CI or #242 readiness verdict."
-  ]
+  ],
+  "subsequentEvidence": {
+    "unsupported-runner-protocol-after-approval": "../result-failed-init-2026-10-03/summary.json: passed on both engines with manager d3084d03 and runner 46b51228; exact original failure and corrected identities retained"
+  }
 }

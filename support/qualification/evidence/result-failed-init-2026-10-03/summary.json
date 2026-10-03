@@ -1,5 +1,5 @@
 {
-  "status": "controller tests and original stalled-resource recovery passed; complete scenario interrupted by manager leader-election loss",
+  "status": "local controller checks, original stalled-resource recovery and complete corrected unsupported-runner scenario passed",
   "baseCommit": "45e33ba06932361cdf8923a77c9dbc9c2fe77395",
   "requirement": "#586 unknown-outcome recovery and final integration; existing #578 unsupported-runner refusal/recovery",
   "native": {
@@ -35,7 +35,7 @@
     "internal/controller/durable_results_test.go": "658e1e6f39acdbb0da1f72c312ce41b5c9ee271fd69eae7ee3cc8a4c31df2535"
   },
   "limits": [
-    "Complete unsupported-runner acceptance failed at the manager restart audit; running-Apply scenario did not run.",
+    "The final running-Apply executor-change scenario is still running. This report does not claim the complete data-plane phase.",
     "No current-head CI or release-readiness verdict."
   ],
   "correctedRecovery": {
@@ -54,6 +54,26 @@
     "scenario": "unsupported-runner-protocol-after-approval",
     "scope": "original scenario in retained Kubernetes 1.37 Linux amd64 lab; previous fixtures suspended; no full-phase verdict",
     "startedAt": "2026-10-03T10:05:58.308474+02:00",
-    "failure": "Manager exited after lease read/renew timeout and leader-election loss; complete-log credential audit refused the restarted manager. The original recovery defect did not recur before this audit failure."
+    "failure": "Manager exited after lease read/renew timeout and leader-election loss; complete-log credential audit refused the restarted manager. The original recovery defect did not recur before this audit failure.",
+    "infrastructureReadback": [
+      "native-fixture-oom.json",
+      "native-lease-timeouts.json"
+    ],
+    "followUp": "The same host later returned a ready API and no current memory pressure. Manager Pods and the three OOM-affected disposable fixture Deployments were replaced before retry. Database Pods were recreated before restoring the original LimitRange spec, matching initial fixture creation order. The temporary reset now tolerates absent fixture resources. Original scenario methods and assertions remain unchanged."
+  },
+  "correctedScenario": {
+    "controllerImage": "e2e-registry.ptah-test-a-1-37-0-pr585-durable-c14d41fe-84f1e3fb20.svc.cluster.local:5000/ptah-operator@sha256:3b6ccbd388d4e2894121c7b46e04867b7e37d2f60dc130831a68e947370091b5",
+    "controllerRevision": "d3084d03ef32434563ea629ef1b1b1c461fed0d4",
+    "finishedAt": "2026-10-03T10:33:44.0794+02:00",
+    "passed": true,
+    "runnerImage": "e2e-registry.ptah-test-a-1-37-0-pr585-durable-c14d41fe-84f1e3fb20.svc.cluster.local:5000/ptah-runner@sha256:2b480a2c2d43a6bd3d8405b9f468b3a812efb7859982746a9a0c145495b40feb",
+    "scenario": "unsupported-runner-protocol-after-approval",
+    "scope": "original scenario in retained Kubernetes 1.37 Linux amd64 lab; previous fixtures suspended; no full-phase verdict",
+    "startedAt": "2026-10-03T10:27:40.976484+02:00",
+    "engines": [
+      "PostgreSQL",
+      "MySQL"
+    ],
+    "assertions": "Exact protocol refusal before SQL; original unknown outcome recovered; no unauthorized SQL or replay; original row preserved; one fresh approved Apply on each engine; complete watch and credential audits. Independent readback confirms current-generation InSync without active operation or pending observation."
   }
 }
