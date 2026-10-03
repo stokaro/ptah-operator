@@ -177,6 +177,11 @@
         "name": "pod-token-receiver-restart-2026-10-03.tar.gz",
         "sha256": "0c0c6fc11b5f47701d99486b3d15b7238ac1f1fc68ae9e858a2d21555f696b7c",
         "downloadVerified": true
+      },
+      {
+        "name": "pod-token-concurrent-2026-10-03.tar.gz",
+        "sha256": "9c16df834b39fb9d77cbac76213e8b48e105016248ebde4fd6c95ba17a61be81",
+        "downloadVerified": true
       }
     ],
     "scope": "Development evidence copy. Final #584 custody, retention policy and owner acceptance remain unassessed."
@@ -256,5 +261,55 @@
     },
     "preparationFailure": "The first PostgreSQL attempt used migration-apply instead of the actual apply Pod label. Its missing-Pod assertion failed before proxy routing; the migration was suspended. The corrected gate and dry-run control use the actual label and both complete native proofs pass. The failed attempt is retained in the external archive.",
     "scope": "Lost acknowledgment and replacement of both receiving managers, both native engines, original projected Pod tokens. This does not qualify concurrent conflicting uploads, all authority refusals, other minors, final artifacts, or #242 as a whole."
+  },
+  "podTokenConcurrentRedelivery": {
+    "requirement": "#586 identical and conflicting concurrent redelivery through both receivers with the original Pod token",
+    "conclusion": "passed",
+    "source": "866125a1737bcc2b3d890387da4fbcd7f9a8e786",
+    "procedureSource": "e5374646ce4a8eb5690241dc0e559b239ec71553",
+    "fixtureImage": "e2e-registry.ptah-test-a-1-37-0-pr585-soak-b9409060-59e0909df3.svc.cluster.local:5000/e2e-fixture@sha256:883a3fab26f4224c334eef32ef1e9d8d0f915110e2ed5e3b5f57ac83b41625b9",
+    "platform": "Kubernetes 1.37.0, linux/amd64, diabolocom",
+    "runs": [
+      {
+        "engine": "PostgreSQL",
+        "report": "concurrent-postgresql/concurrent.json",
+        "reportSHA256": "5aa9c6e07ffcd4a3196bd5f48ee42902c6c0f7404f705d39181621ddd2fc169a",
+        "ackReport": "concurrent-postgresql/lost-ack.json",
+        "ackReportSHA256": "ee1b79650d04052f1aa5e810d018dd63ab33dcc7644b7c2288ea2ec2a7be1b94",
+        "completedAt": "2026-10-03T21:54:25.953392+00:00",
+        "verification": {
+          "requests": 6,
+          "identicalReceipts": 3,
+          "conflicts": 3
+        },
+        "receiptUID": "a694b4b9-78c9-49ca-9b85-8e2b2d25634a",
+        "applyJobs": 1,
+        "podRestarts": 0,
+        "converged": true
+      },
+      {
+        "engine": "MySQL",
+        "report": "concurrent-mysql/concurrent.json",
+        "reportSHA256": "73050686b19b90d24e8657fa608cfc74555d7cf3d3571d882d896e56df7f2b5b",
+        "ackReport": "concurrent-mysql/lost-ack.json",
+        "ackReportSHA256": "2d0ef7d821a8cba3da54802f6830f301e01070c74b3c18d652635db35ecf12b0",
+        "completedAt": "2026-10-03T21:55:58.716078+00:00",
+        "verification": {
+          "requests": 6,
+          "identicalReceipts": 3,
+          "conflicts": 3
+        },
+        "receiptUID": "729b3178-5f84-4f0b-9000-a57d6ba817d0",
+        "applyJobs": 1,
+        "podRestarts": 0,
+        "converged": true
+      }
+    ],
+    "archive": {
+      "name": "pod-token-concurrent-2026-10-03.tar.gz",
+      "sha256": "9c16df834b39fb9d77cbac76213e8b48e105016248ebde4fd6c95ba17a61be81",
+      "downloadVerified": true
+    },
+    "scope": "Three overlapping request pairs per engine on two distinct receiving managers. Identical requests return the original receipt, changed canonical bytes receive 409, every immutable publication record is unchanged, and the original runner finishes with one calibrated SQL effect. This row covers redelivery after publication; the historical synchronized first-publication storage proof retains its original source identity."
   }
 }
