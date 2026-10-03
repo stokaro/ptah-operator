@@ -404,11 +404,14 @@ modes off. This uses the same held original runner and exercises authority
 refusals instead of the concurrent request pairs. Each manager must accept the
 original HEAD and PUT before and after the refusals, returning the same receipt.
 
-The probe sends HEAD and PUT with an untrusted token, then with the original
-token and forged namespace, resource, generation, epoch, operation attempt,
+The probe sends HEAD and PUT with a receiver-audience token bound to the
+publisher Pod, after a real TokenReview confirms that token is authenticated.
+It then uses the original token with forged namespace, resource, generation, epoch, operation attempt,
 Job UID, or Pod UID. Every forged claim uses its own correctly derived route;
 a route mismatch cannot substitute for an authority refusal. Each request must
-return 403. A parse failure, payload refusal, unavailable receiver, or successful
+return 403 before an unauthorized PUT body is sent. Connections complete TLS
+shutdown so an early refusal cannot reset their shared port forward. A parse
+failure, payload refusal, unavailable receiver, or successful
 request fails the row. The original publication must remain byte-for-byte
 unchanged, no forged attempt may appear, and the original runner must finish
 with one calibrated SQL effect. `authority.json` records only public claims,

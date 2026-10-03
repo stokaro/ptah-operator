@@ -25,22 +25,26 @@ class ConcurrentDeliveryTests(unittest.TestCase):
                     row = {'receiverUID': uid, 'method': method, 'status': 403 if refused else (204 if method == 'HEAD' else 200),
                            'path': '/v1/results/' + attempt_name(claim),
                            'identityDigest': digest(json.dumps(claim, separators=(',', ':')).encode()),
-                           'credential': 'untrusted-token' if untrusted else 'original-pod-token'}
+                           'credential': 'foreign-pod-token' if untrusted else 'original-pod-token',
+                           'bodyWithheld': refused and method == 'PUT'}
                     if not refused and method == 'PUT':
                         row['receipt'] = copy.deepcopy(receipt)
                     rows.append(row)
             return rows
 
         return {'evidenceVersion': 1, 'authentication': 'pod-token', 'identity': identity, 'receipt': receipt,
-                'receivers': receivers, 'publicationUnchanged': True, 'before': requests(identity), 'after': requests(identity),
-                'cases': [{'name': label, 'identity': claim, 'requests': requests(claim, True, label == 'unauthenticated-token')}
+                'receivers': receivers, 'foreignPod': {'uid': 'publisher-pod', 'namespace': 'probe',
+                    'tokenReviewAuthenticated': True, 'audiences': ['operator.ptah.run/results']}, 'publicationUnchanged': True, 'before': requests(identity), 'after': requests(identity),
+                'cases': [{'name': label, 'identity': claim, 'requests': requests(claim, True, label == 'foreign-pod-token')}
                           for label, claim in authority_cases(identity)]}
 
     def test_authority_refusals_require_each_claim_on_its_own_route(self):
         value = self.authority_fixture()
         self.assertEqual(verify_authority_evidence(value), {'refusedRequests': 32, 'positiveControls': 8})
         changes = [(['cases'], []), (['cases', 0, 'requests'], []),
+                   (['foreignPod', 'uid'], 'pod'), (['foreignPod', 'tokenReviewAuthenticated'], False),
                    (['cases', 0, 'requests', 0, 'credential'], 'original-pod-token'),
+                   (['cases', 0, 'requests', 1, 'bodyWithheld'], False),
                    (['cases', 1, 'requests', 0, 'path'], value['before'][0]['path']),
                    (['cases', 1, 'requests', 0, 'identityDigest'], value['before'][0]['identityDigest']),
                    (['cases', 1, 'requests', 0, 'status'], 401),

@@ -594,7 +594,25 @@ def main():
             receipt = paused['attempts'][0]['receipt']
             assert saved_complete['metadata']['uid'] == receipt['UID']
             if authority:
-                concurrent_result = concurrent_client.run_authority(saved_data, saved_intent['metadata']['name'], receipt)
+                publishers = [p for p in get('pods')['items'] if p['metadata'].get('labels', {}).get('job-name') == 'ack-publish']
+                assert len(publishers) == 1 and publishers[0]['metadata']['uid'] != pod['metadata']['uid']
+                foreign = publishers[0]
+                request = {'apiVersion': 'authentication.k8s.io/v1', 'kind': 'TokenRequest', 'spec': {
+                    'audiences': ['operator.ptah.run/results'], 'expirationSeconds': 600,
+                    'boundObjectRef': {'apiVersion': 'v1', 'kind': 'Pod', 'name': foreign['metadata']['name'],
+                                       'uid': foreign['metadata']['uid']}}}
+                issued = json.loads(k('create', '--raw', '/api/v1/namespaces/' + ns + '/serviceaccounts/' +
+                                     foreign['spec']['serviceAccountName'] + '/token', '-f', '-', data=json.dumps(request)))
+                review = json.loads(k('create', '--raw', '/apis/authentication.k8s.io/v1/tokenreviews', '-f', '-',
+                    data=json.dumps({'apiVersion': 'authentication.k8s.io/v1', 'kind': 'TokenReview',
+                                     'spec': {'token': issued['status']['token'], 'audiences': ['operator.ptah.run/results']}})))['status']
+                assert review['authenticated'] and review['audiences'] == ['operator.ptah.run/results']
+                assert review['user']['extra']['authentication.kubernetes.io/pod-uid'] == [foreign['metadata']['uid']]
+                foreign_control = {'uid': foreign['metadata']['uid'], 'namespace': ns,
+                                   'tokenReviewAuthenticated': True, 'audiences': review['audiences']}
+                concurrent_result = concurrent_client.run_authority(saved_data, saved_intent['metadata']['name'], receipt,
+                                                                     issued['status']['token'], foreign_control)
+                del issued, review
                 assert concurrent_result['identity'] == dec(credential)
             else:
                 concurrent_result = concurrent_client.run(saved_data, saved_intent['metadata']['name'], receipt)
