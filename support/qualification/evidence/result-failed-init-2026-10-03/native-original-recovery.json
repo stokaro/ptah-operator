@@ -1,0 +1,499 @@
+{
+  "controllerRevision": "d3084d03ef32434563ea629ef1b1b1c461fed0d4",
+  "controllerManifest": "sha256:3b6ccbd388d4e2894121c7b46e04867b7e37d2f60dc130831a68e947370091b5",
+  "schemas": [
+    {
+      "name": "e2e-runner-protocol-mysql",
+      "uid": "89583233-8d97-4ecf-83f4-646b27ac0ff2",
+      "generation": 1,
+      "specUnchanged": true,
+      "before": {
+        "phase": "VerifyingConvergence",
+        "activeOperation": {
+          "admissionSnapshot": {
+            "alwaysPullImagesEnabled": false,
+            "defaultNotReadyTolerationSeconds": 300,
+            "defaultTolerationsEnabled": true,
+            "defaultUnreachableTolerationSeconds": 300,
+            "digest": "sha256:daee2e025f37d628e03f6ab6addf1c965a224797279316a3353bf577001dfe86",
+            "extendedResourceTolerationEnabled": false,
+            "limitRanges": [
+              {
+                "defaultLimits": {
+                  "cpu": "100m",
+                  "memory": "64Mi"
+                },
+                "defaultRequests": {
+                  "cpu": "10m",
+                  "memory": "16Mi"
+                },
+                "object": {
+                  "name": "ptah-operation-defaults",
+                  "resourceVersion": "1982",
+                  "uid": "d01c9773-9a3e-45cc-a781-9ceaeac3274d"
+                }
+              }
+            ],
+            "priorityClass": {
+              "preemptionPolicy": "PreemptLowerPriority",
+              "value": 0
+            },
+            "serviceAccount": {
+              "imagePullSecrets": [
+                {
+                  "name": "e2e-registry-pull"
+                }
+              ],
+              "object": {
+                "name": "default",
+                "resourceVersion": "1984",
+                "uid": "b400dbc3-85df-486a-84f8-13d7759d2ed0"
+              }
+            },
+            "templateDigest": "sha256:cc0d90b59f1aa2e23ba3b327b463849b7b10f5f452593ee86b400e07dbb7a031",
+            "version": "v1"
+          },
+          "attempt": 1,
+          "coordinationDigest": "sha256:1d897c6524cd3cf8314f4a98c1bfaaa88142435cd7445d06f0ae85c4e0887347",
+          "dispatchStarted": true,
+          "executionBindingID": "v1-b52a93aa346d59321f00e28effb8adb1",
+          "id": "sha256:ee3311790084037d965d75a1b7babd799a5444e7228eeeabe23f7334fda3ab63",
+          "inputFingerprint": "sha256:317f0aaa166177a93b51fc25639233569ddddf8ce53ceddd1456dee3e4949544",
+          "jobName": "ptah-observe-e2e-runner-protocol-mysql-2bc72b685c8c14ae",
+          "jobUID": "8909623e-427e-447b-88a0-654d5fb5a738",
+          "leaseDurationSeconds": 180,
+          "leaseEpoch": "v1-bbbc701a9c958c2112fb185021aa5e0e",
+          "observationConnectTimeout": "30s",
+          "observationLockTimeout": "1m0s",
+          "observationSeverity": "all",
+          "source": {
+            "digest": "sha256:fc0d65c1db8bcaa7773d1d9b7b1013443698dd03d923cbb73ef921f1e2594f9f",
+            "registryAuthFrom": {
+              "dockerConfigJSONKey": ".dockerconfigjson",
+              "mode": "Environment",
+              "name": "e2e-registry-auth",
+              "passwordKey": "password",
+              "tokenKey": "token",
+              "usernameKey": "username"
+            },
+            "resolvedReference": "oci://e2e-registry.ptah-test-a-1-37-0-pr585-durable-c14d41fe-84f1e3fb20.svc.cluster.local:5000/schemas/fault-mysql@sha256:fc0d65c1db8bcaa7773d1d9b7b1013443698dd03d923cbb73ef921f1e2594f9f",
+            "transport": {
+              "plainHTTP": true
+            }
+          },
+          "startedAt": "2026-10-03T07:42:59Z",
+          "target": {
+            "engine": "MySQL",
+            "urlFrom": {
+              "key": "url",
+              "name": "e2e-runner-protocol-mysql-db"
+            }
+          },
+          "targetIdentityDigest": "sha256:70c3a04b706b9ffb2f03d04768a5b1242c31230b5bd46f0d807a0303b9669578",
+          "type": "Observe"
+        },
+        "pendingObservation": {
+          "admissionSnapshot": {
+            "alwaysPullImagesEnabled": false,
+            "defaultNotReadyTolerationSeconds": 300,
+            "defaultTolerationsEnabled": true,
+            "defaultUnreachableTolerationSeconds": 300,
+            "digest": "sha256:ffd6a6fe05f806e95759ee341b823c9ae2484a98e9518dd90e66c6c403d60bd3",
+            "extendedResourceTolerationEnabled": false,
+            "limitRanges": [
+              {
+                "defaultLimits": {
+                  "cpu": "100m",
+                  "memory": "64Mi"
+                },
+                "defaultRequests": {
+                  "cpu": "10m",
+                  "memory": "16Mi"
+                },
+                "object": {
+                  "name": "ptah-operation-defaults",
+                  "resourceVersion": "1982",
+                  "uid": "d01c9773-9a3e-45cc-a781-9ceaeac3274d"
+                }
+              }
+            ],
+            "priorityClass": {
+              "preemptionPolicy": "PreemptLowerPriority",
+              "value": 0
+            },
+            "serviceAccount": {
+              "imagePullSecrets": [
+                {
+                  "name": "e2e-registry-pull"
+                }
+              ],
+              "object": {
+                "name": "default",
+                "resourceVersion": "1984",
+                "uid": "b400dbc3-85df-486a-84f8-13d7759d2ed0"
+              }
+            },
+            "templateDigest": "sha256:49cf094319e0b22eb206d6db6b9fdb0982c25adbc09eabc4be629ce70330fec2",
+            "version": "v1"
+          },
+          "applyGeneration": 1,
+          "applyJobName": "ptah-apply-e2e-runner-protocol-mysql-26fe79f1ec95fbe1",
+          "applyJobUID": "a970e853-5a57-4f6a-9f84-8f328e7ec36b",
+          "applyOperationID": "sha256:49ca59b4ee25494370d371cfb660f43c3b82045b4010abd52b1b850ebe867e44",
+          "applyPodCount": 1,
+          "applyPodUIDs": [
+            "785219a7-1161-4153-b780-b2f18051d8c0"
+          ],
+          "connectTimeout": "30s",
+          "coordinationDigest": "sha256:1d897c6524cd3cf8314f4a98c1bfaaa88142435cd7445d06f0ae85c4e0887347",
+          "dispatchedBy": {
+            "controllerImage": "e2e-registry.ptah-test-a-1-37-0-pr585-durable-c14d41fe-84f1e3fb20.svc.cluster.local:5000/ptah-operator@sha256:79fba0957bb29d4d25a304fd208e9b79439fceb47afc88d94fbdc03046b43cd8",
+            "controllerRevision": "a19ec58463bb60ddf976ef8184c4048776760f91",
+            "runnerImage": "e2e-registry.ptah-test-a-1-37-0-pr585-durable-c14d41fe-84f1e3fb20.svc.cluster.local:5000/ptah-runner@sha256:7243140e7aa2b64d2254c859d266f390fc177a8b610d59cbf5c590e8e0f56f4c"
+          },
+          "driftSeverity": "all",
+          "leaseDurationSeconds": 180,
+          "leaseEpoch": "v1-bbbc701a9c958c2112fb185021aa5e0e",
+          "lockTimeout": "1m0s",
+          "outcome": "OutcomeUnknown",
+          "plan": {
+            "actualStateFingerprint": "sha256:4d2b692c77ae10fee48ee9b25916caddd98fc2a2a6c85178969360ffc7d76787",
+            "approval": {
+              "approvedAt": "2026-10-03T07:41:52Z",
+              "approver": {
+                "groups": [
+                  "kubeadm:cluster-admins",
+                  "system:authenticated"
+                ],
+                "username": "kubernetes-admin"
+              },
+              "name": "e2e-runner-protocol-mysql-old",
+              "uid": "251967a0-525e-4ce9-8472-c9a58492e46e"
+            },
+            "artifactDigest": "sha256:fc0d65c1db8bcaa7773d1d9b7b1013443698dd03d923cbb73ef921f1e2594f9f",
+            "contentDigest": "sha256:d85cf37285930b5668c12638ff019c374083b100b151721282a043d7bfd583bd",
+            "controllerImage": "e2e-registry.ptah-test-a-1-37-0-pr585-durable-c14d41fe-84f1e3fb20.svc.cluster.local:5000/ptah-operator@sha256:79fba0957bb29d4d25a304fd208e9b79439fceb47afc88d94fbdc03046b43cd8",
+            "controllerRevision": "a19ec58463bb60ddf976ef8184c4048776760f91",
+            "controllerStateVersion": 1,
+            "coordinationDigest": "sha256:1d897c6524cd3cf8314f4a98c1bfaaa88142435cd7445d06f0ae85c4e0887347",
+            "createdAt": "2026-10-03T07:41:51Z",
+            "desiredStateFingerprint": "sha256:c6e8f8ec11d9d1a4c4e61c7439dd65d6a2220ac1d7847618f4e46356bb0acb91",
+            "destructive": false,
+            "executionBindingID": "v1-b52a93aa346d59321f00e28effb8adb1",
+            "executorImage": "e2e-registry.ptah-test-a-1-37-0-pr585-durable-c14d41fe-84f1e3fb20.svc.cluster.local:5000/ptah-executor@sha256:0bd7933fcbaa4c6ca873ec5f55a95a836c7f0e370db1b720887417fec615e8a8",
+            "fingerprint": "sha256:0226937f871c244851d8c2887c5f826a5778534212e8778ad3029a137b8866f7",
+            "name": "ptah-plan-0226937f871c244851d8c288",
+            "policyFingerprint": "sha256:db66f0d3fd70b99101c89c3fe18bbaa7b241f83f9a824387a6d55653af62421c",
+            "ptahVersion": "v0.9.0-73-gf6e562c5b",
+            "runnerImage": "e2e-registry.ptah-test-a-1-37-0-pr585-durable-c14d41fe-84f1e3fb20.svc.cluster.local:5000/ptah-runner@sha256:2b480a2c2d43a6bd3d8405b9f468b3a812efb7859982746a9a0c145495b40feb",
+            "runnerProtocolVersion": 1,
+            "statementCount": 1,
+            "targetIdentityDigest": "sha256:70c3a04b706b9ffb2f03d04768a5b1242c31230b5bd46f0d807a0303b9669578",
+            "uid": "8edf6431-f9f8-472d-bc2f-aef4b6bdfd69",
+            "verificationPolicyDigest": "sha256:c84039b250125e32f0d51caea6afd1d13ebe4e5e0f90d382ee3be2c027574007",
+            "verificationPolicyUID": "7e44f73c-a410-41f7-a9d9-c3d4d391ffa6"
+          },
+          "source": {
+            "digest": "sha256:fc0d65c1db8bcaa7773d1d9b7b1013443698dd03d923cbb73ef921f1e2594f9f",
+            "registryAuthFrom": {
+              "dockerConfigJSONKey": ".dockerconfigjson",
+              "mode": "Environment",
+              "name": "e2e-registry-auth",
+              "passwordKey": "password",
+              "tokenKey": "token",
+              "usernameKey": "username"
+            },
+            "resolvedReference": "oci://e2e-registry.ptah-test-a-1-37-0-pr585-durable-c14d41fe-84f1e3fb20.svc.cluster.local:5000/schemas/fault-mysql@sha256:fc0d65c1db8bcaa7773d1d9b7b1013443698dd03d923cbb73ef921f1e2594f9f",
+            "transport": {
+              "plainHTTP": true
+            }
+          },
+          "target": {
+            "engine": "MySQL",
+            "urlFrom": {
+              "key": "url",
+              "name": "e2e-runner-protocol-mysql-db"
+            }
+          }
+        }
+      },
+      "after": {
+        "phase": "AwaitingApproval",
+        "activeOperation": null,
+        "pendingObservation": null,
+        "plan": {
+          "actualStateFingerprint": "sha256:4d2b692c77ae10fee48ee9b25916caddd98fc2a2a6c85178969360ffc7d76787",
+          "artifactDigest": "sha256:fc0d65c1db8bcaa7773d1d9b7b1013443698dd03d923cbb73ef921f1e2594f9f",
+          "contentDigest": "sha256:d85cf37285930b5668c12638ff019c374083b100b151721282a043d7bfd583bd",
+          "controllerImage": "e2e-registry.ptah-test-a-1-37-0-pr585-durable-c14d41fe-84f1e3fb20.svc.cluster.local:5000/ptah-operator@sha256:79fba0957bb29d4d25a304fd208e9b79439fceb47afc88d94fbdc03046b43cd8",
+          "controllerRevision": "a19ec58463bb60ddf976ef8184c4048776760f91",
+          "controllerStateVersion": 1,
+          "coordinationDigest": "sha256:1d897c6524cd3cf8314f4a98c1bfaaa88142435cd7445d06f0ae85c4e0887347",
+          "createdAt": "2026-10-03T07:41:51Z",
+          "desiredStateFingerprint": "sha256:c6e8f8ec11d9d1a4c4e61c7439dd65d6a2220ac1d7847618f4e46356bb0acb91",
+          "destructive": false,
+          "executionBindingID": "v1-b52a93aa346d59321f00e28effb8adb1",
+          "executorImage": "e2e-registry.ptah-test-a-1-37-0-pr585-durable-c14d41fe-84f1e3fb20.svc.cluster.local:5000/ptah-executor@sha256:0bd7933fcbaa4c6ca873ec5f55a95a836c7f0e370db1b720887417fec615e8a8",
+          "fingerprint": "sha256:0226937f871c244851d8c2887c5f826a5778534212e8778ad3029a137b8866f7",
+          "name": "ptah-plan-0226937f871c244851d8c288",
+          "policyFingerprint": "sha256:db66f0d3fd70b99101c89c3fe18bbaa7b241f83f9a824387a6d55653af62421c",
+          "ptahVersion": "v0.9.0-73-gf6e562c5b",
+          "runnerImage": "e2e-registry.ptah-test-a-1-37-0-pr585-durable-c14d41fe-84f1e3fb20.svc.cluster.local:5000/ptah-runner@sha256:2b480a2c2d43a6bd3d8405b9f468b3a812efb7859982746a9a0c145495b40feb",
+          "runnerProtocolVersion": 1,
+          "statementCount": 1,
+          "targetIdentityDigest": "sha256:70c3a04b706b9ffb2f03d04768a5b1242c31230b5bd46f0d807a0303b9669578",
+          "uid": "8edf6431-f9f8-472d-bc2f-aef4b6bdfd69",
+          "verificationPolicyDigest": "sha256:c84039b250125e32f0d51caea6afd1d13ebe4e5e0f90d382ee3be2c027574007",
+          "verificationPolicyUID": "7e44f73c-a410-41f7-a9d9-c3d4d391ffa6"
+        }
+      }
+    },
+    {
+      "name": "e2e-runner-protocol-postgresql",
+      "uid": "b7f36345-6de7-43db-bccc-9f01fff68b38",
+      "generation": 1,
+      "specUnchanged": true,
+      "before": {
+        "phase": "VerifyingConvergence",
+        "activeOperation": {
+          "admissionSnapshot": {
+            "alwaysPullImagesEnabled": false,
+            "defaultNotReadyTolerationSeconds": 300,
+            "defaultTolerationsEnabled": true,
+            "defaultUnreachableTolerationSeconds": 300,
+            "digest": "sha256:cb4a72c56d95d9b41923cac06bdae97796e568f77d042211a3e62d1ada9047a6",
+            "extendedResourceTolerationEnabled": false,
+            "limitRanges": [
+              {
+                "defaultLimits": {
+                  "cpu": "100m",
+                  "memory": "64Mi"
+                },
+                "defaultRequests": {
+                  "cpu": "10m",
+                  "memory": "16Mi"
+                },
+                "object": {
+                  "name": "ptah-operation-defaults",
+                  "resourceVersion": "1982",
+                  "uid": "d01c9773-9a3e-45cc-a781-9ceaeac3274d"
+                }
+              }
+            ],
+            "priorityClass": {
+              "preemptionPolicy": "PreemptLowerPriority",
+              "value": 0
+            },
+            "serviceAccount": {
+              "imagePullSecrets": [
+                {
+                  "name": "e2e-registry-pull"
+                }
+              ],
+              "object": {
+                "name": "default",
+                "resourceVersion": "1984",
+                "uid": "b400dbc3-85df-486a-84f8-13d7759d2ed0"
+              }
+            },
+            "templateDigest": "sha256:331a317de50ce54645a53a4754431195716a323e433e400f2a7b15d385328f6b",
+            "version": "v1"
+          },
+          "attempt": 1,
+          "coordinationDigest": "sha256:6b46ffb54152dc9307b3033dd97ee5fd06821088fa9c115c34de42a2ddd01d3b",
+          "dispatchStarted": true,
+          "executionBindingID": "v1-4006a2f48d7f13751670601b387d7694",
+          "id": "sha256:bc9b00c80fed4c77269cf200cbfcafb7a7cb1149e830fc01e7f8ca923fc76e34",
+          "inputFingerprint": "sha256:832ed40866bcb707b64fa6cbe74131dff343da94da444ea9d3cbd599c607987c",
+          "jobName": "ptah-observe-e2e-runner-protocol-postgresql-8f2517fdd184ecfb",
+          "jobUID": "3d7a9f4b-f459-4881-82be-9efb713a9e65",
+          "leaseDurationSeconds": 180,
+          "leaseEpoch": "v1-582004abda5b7f18d62e9668dc0f837f",
+          "observationConnectTimeout": "30s",
+          "observationLockTimeout": "1m0s",
+          "observationSeverity": "all",
+          "source": {
+            "digest": "sha256:39e50e101df04459c1b261a134717de50e2dfe8831d68656c009365858dd8eac",
+            "registryAuthFrom": {
+              "dockerConfigJSONKey": ".dockerconfigjson",
+              "mode": "Environment",
+              "name": "e2e-registry-auth",
+              "passwordKey": "password",
+              "tokenKey": "token",
+              "usernameKey": "username"
+            },
+            "resolvedReference": "oci://e2e-registry.ptah-test-a-1-37-0-pr585-durable-c14d41fe-84f1e3fb20.svc.cluster.local:5000/schemas/fault-postgresql@sha256:39e50e101df04459c1b261a134717de50e2dfe8831d68656c009365858dd8eac",
+            "transport": {
+              "plainHTTP": true
+            }
+          },
+          "startedAt": "2026-10-03T07:42:59Z",
+          "target": {
+            "engine": "PostgreSQL",
+            "urlFrom": {
+              "key": "url",
+              "name": "e2e-runner-protocol-postgresql-db"
+            }
+          },
+          "targetIdentityDigest": "sha256:520b59b55b2347d0274fff6b5de70269458cfcb3ff5a4ec53ce165144ae90345",
+          "type": "Observe"
+        },
+        "pendingObservation": {
+          "admissionSnapshot": {
+            "alwaysPullImagesEnabled": false,
+            "defaultNotReadyTolerationSeconds": 300,
+            "defaultTolerationsEnabled": true,
+            "defaultUnreachableTolerationSeconds": 300,
+            "digest": "sha256:43a9dc4ec0d55683ec74b3ffc9cf22554f034563f3bddb1e1e3e29b3c8c042ce",
+            "extendedResourceTolerationEnabled": false,
+            "limitRanges": [
+              {
+                "defaultLimits": {
+                  "cpu": "100m",
+                  "memory": "64Mi"
+                },
+                "defaultRequests": {
+                  "cpu": "10m",
+                  "memory": "16Mi"
+                },
+                "object": {
+                  "name": "ptah-operation-defaults",
+                  "resourceVersion": "1982",
+                  "uid": "d01c9773-9a3e-45cc-a781-9ceaeac3274d"
+                }
+              }
+            ],
+            "priorityClass": {
+              "preemptionPolicy": "PreemptLowerPriority",
+              "value": 0
+            },
+            "serviceAccount": {
+              "imagePullSecrets": [
+                {
+                  "name": "e2e-registry-pull"
+                }
+              ],
+              "object": {
+                "name": "default",
+                "resourceVersion": "1984",
+                "uid": "b400dbc3-85df-486a-84f8-13d7759d2ed0"
+              }
+            },
+            "templateDigest": "sha256:c05fcb47d54fe615b8e68713617254e64c8330522c7e8266f58fe94d978e8b40",
+            "version": "v1"
+          },
+          "applyGeneration": 1,
+          "applyJobName": "ptah-apply-e2e-runner-protocol-postgresql-eafa22dc6bf2b2ba",
+          "applyJobUID": "b7dbbfc7-7fc1-4c1f-9650-281d4bcc6a4d",
+          "applyOperationID": "sha256:834df7295c12c634ab2a1b348225589efb29db9a320801fea55e2f4d008393f4",
+          "applyPodCount": 1,
+          "applyPodUIDs": [
+            "55b47205-7494-41ce-bd64-005252f29fbb"
+          ],
+          "connectTimeout": "30s",
+          "coordinationDigest": "sha256:6b46ffb54152dc9307b3033dd97ee5fd06821088fa9c115c34de42a2ddd01d3b",
+          "dispatchedBy": {
+            "controllerImage": "e2e-registry.ptah-test-a-1-37-0-pr585-durable-c14d41fe-84f1e3fb20.svc.cluster.local:5000/ptah-operator@sha256:79fba0957bb29d4d25a304fd208e9b79439fceb47afc88d94fbdc03046b43cd8",
+            "controllerRevision": "a19ec58463bb60ddf976ef8184c4048776760f91",
+            "runnerImage": "e2e-registry.ptah-test-a-1-37-0-pr585-durable-c14d41fe-84f1e3fb20.svc.cluster.local:5000/ptah-runner@sha256:7243140e7aa2b64d2254c859d266f390fc177a8b610d59cbf5c590e8e0f56f4c"
+          },
+          "driftSeverity": "all",
+          "leaseDurationSeconds": 180,
+          "leaseEpoch": "v1-582004abda5b7f18d62e9668dc0f837f",
+          "lockTimeout": "1m0s",
+          "outcome": "OutcomeUnknown",
+          "plan": {
+            "actualStateFingerprint": "sha256:0b474b8d2de1db4ec74dcb9f8a70a99e2fb470d05388db099e5ecaea1141b98a",
+            "approval": {
+              "approvedAt": "2026-10-03T07:41:52Z",
+              "approver": {
+                "groups": [
+                  "kubeadm:cluster-admins",
+                  "system:authenticated"
+                ],
+                "username": "kubernetes-admin"
+              },
+              "name": "e2e-runner-protocol-postgresql-old",
+              "uid": "76196127-7899-4bc7-9e54-d10af5c487b2"
+            },
+            "artifactDigest": "sha256:39e50e101df04459c1b261a134717de50e2dfe8831d68656c009365858dd8eac",
+            "contentDigest": "sha256:b472165ca1b93d800b1c9b5ebd36550ef5d513077536f5fa63dcc0e7f2d91b4d",
+            "controllerImage": "e2e-registry.ptah-test-a-1-37-0-pr585-durable-c14d41fe-84f1e3fb20.svc.cluster.local:5000/ptah-operator@sha256:79fba0957bb29d4d25a304fd208e9b79439fceb47afc88d94fbdc03046b43cd8",
+            "controllerRevision": "a19ec58463bb60ddf976ef8184c4048776760f91",
+            "controllerStateVersion": 1,
+            "coordinationDigest": "sha256:6b46ffb54152dc9307b3033dd97ee5fd06821088fa9c115c34de42a2ddd01d3b",
+            "createdAt": "2026-10-03T07:40:52Z",
+            "desiredStateFingerprint": "sha256:0f3d48ec90edb54f8b96c29f8310fbda05ebae5c364c18eacf4f659771bf5681",
+            "destructive": false,
+            "executionBindingID": "v1-4006a2f48d7f13751670601b387d7694",
+            "executorImage": "e2e-registry.ptah-test-a-1-37-0-pr585-durable-c14d41fe-84f1e3fb20.svc.cluster.local:5000/ptah-executor@sha256:0bd7933fcbaa4c6ca873ec5f55a95a836c7f0e370db1b720887417fec615e8a8",
+            "fingerprint": "sha256:8e9ffec449e3a34adf50165fd7c29abb60267c3b1e192ef56e8621f4f1804a09",
+            "name": "ptah-plan-8e9ffec449e3a34adf50165f",
+            "policyFingerprint": "sha256:d29ae20d2d0417a105b5ec84a6b430d51507ee5be6a369410db62b1c066a197c",
+            "ptahVersion": "v0.9.0-73-gf6e562c5b",
+            "runnerImage": "e2e-registry.ptah-test-a-1-37-0-pr585-durable-c14d41fe-84f1e3fb20.svc.cluster.local:5000/ptah-runner@sha256:2b480a2c2d43a6bd3d8405b9f468b3a812efb7859982746a9a0c145495b40feb",
+            "runnerProtocolVersion": 1,
+            "statementCount": 1,
+            "targetIdentityDigest": "sha256:520b59b55b2347d0274fff6b5de70269458cfcb3ff5a4ec53ce165144ae90345",
+            "uid": "77c52d82-1211-4f9e-999d-dc8cb6a3b504",
+            "verificationPolicyDigest": "sha256:c84039b250125e32f0d51caea6afd1d13ebe4e5e0f90d382ee3be2c027574007",
+            "verificationPolicyUID": "7e44f73c-a410-41f7-a9d9-c3d4d391ffa6"
+          },
+          "source": {
+            "digest": "sha256:39e50e101df04459c1b261a134717de50e2dfe8831d68656c009365858dd8eac",
+            "registryAuthFrom": {
+              "dockerConfigJSONKey": ".dockerconfigjson",
+              "mode": "Environment",
+              "name": "e2e-registry-auth",
+              "passwordKey": "password",
+              "tokenKey": "token",
+              "usernameKey": "username"
+            },
+            "resolvedReference": "oci://e2e-registry.ptah-test-a-1-37-0-pr585-durable-c14d41fe-84f1e3fb20.svc.cluster.local:5000/schemas/fault-postgresql@sha256:39e50e101df04459c1b261a134717de50e2dfe8831d68656c009365858dd8eac",
+            "transport": {
+              "plainHTTP": true
+            }
+          },
+          "target": {
+            "engine": "PostgreSQL",
+            "urlFrom": {
+              "key": "url",
+              "name": "e2e-runner-protocol-postgresql-db"
+            }
+          }
+        }
+      },
+      "after": {
+        "phase": "AwaitingApproval",
+        "activeOperation": null,
+        "pendingObservation": null,
+        "plan": {
+          "actualStateFingerprint": "sha256:0b474b8d2de1db4ec74dcb9f8a70a99e2fb470d05388db099e5ecaea1141b98a",
+          "artifactDigest": "sha256:39e50e101df04459c1b261a134717de50e2dfe8831d68656c009365858dd8eac",
+          "contentDigest": "sha256:b472165ca1b93d800b1c9b5ebd36550ef5d513077536f5fa63dcc0e7f2d91b4d",
+          "controllerImage": "e2e-registry.ptah-test-a-1-37-0-pr585-durable-c14d41fe-84f1e3fb20.svc.cluster.local:5000/ptah-operator@sha256:79fba0957bb29d4d25a304fd208e9b79439fceb47afc88d94fbdc03046b43cd8",
+          "controllerRevision": "a19ec58463bb60ddf976ef8184c4048776760f91",
+          "controllerStateVersion": 1,
+          "coordinationDigest": "sha256:6b46ffb54152dc9307b3033dd97ee5fd06821088fa9c115c34de42a2ddd01d3b",
+          "createdAt": "2026-10-03T07:40:52Z",
+          "desiredStateFingerprint": "sha256:0f3d48ec90edb54f8b96c29f8310fbda05ebae5c364c18eacf4f659771bf5681",
+          "destructive": false,
+          "executionBindingID": "v1-4006a2f48d7f13751670601b387d7694",
+          "executorImage": "e2e-registry.ptah-test-a-1-37-0-pr585-durable-c14d41fe-84f1e3fb20.svc.cluster.local:5000/ptah-executor@sha256:0bd7933fcbaa4c6ca873ec5f55a95a836c7f0e370db1b720887417fec615e8a8",
+          "fingerprint": "sha256:8e9ffec449e3a34adf50165fd7c29abb60267c3b1e192ef56e8621f4f1804a09",
+          "name": "ptah-plan-8e9ffec449e3a34adf50165f",
+          "policyFingerprint": "sha256:d29ae20d2d0417a105b5ec84a6b430d51507ee5be6a369410db62b1c066a197c",
+          "ptahVersion": "v0.9.0-73-gf6e562c5b",
+          "runnerImage": "e2e-registry.ptah-test-a-1-37-0-pr585-durable-c14d41fe-84f1e3fb20.svc.cluster.local:5000/ptah-runner@sha256:2b480a2c2d43a6bd3d8405b9f468b3a812efb7859982746a9a0c145495b40feb",
+          "runnerProtocolVersion": 1,
+          "statementCount": 1,
+          "targetIdentityDigest": "sha256:520b59b55b2347d0274fff6b5de70269458cfcb3ff5a4ec53ce165144ae90345",
+          "uid": "77c52d82-1211-4f9e-999d-dc8cb6a3b504",
+          "verificationPolicyDigest": "sha256:c84039b250125e32f0d51caea6afd1d13ebe4e5e0f90d382ee3be2c027574007",
+          "verificationPolicyUID": "7e44f73c-a410-41f7-a9d9-c3d4d391ffa6"
+        }
+      }
+    }
+  ],
+  "limit": "Original stalled resources reached fresh approval gates after manager replacement; the complete no-replay scenario is separately verified."
+}
