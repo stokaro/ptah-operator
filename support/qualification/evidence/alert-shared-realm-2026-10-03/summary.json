@@ -8,6 +8,7 @@
   "nativeBefore": "FAIL: the first PostgreSQL Schema case timed out waiting for a sibling Plan. Both exact resources claimed the same coordination key without sharedRealm, and the sibling correctly reported RealmConflict. The native readback retains both identities and the actual condition. No later lock case or alert scenario executed.",
   "correction": "Set sharedRealm=true on both owner families and the Schema sibling before creation. This supplies the existing explicit sharing contract. No production ownership, Lease, deadline, notification or no-overlap assertion changes.",
   "localValidation": "Tagged E2E vet passes. The existing complete native scenario is the regression; no mirrored static assertion is substituted for its runtime behavior.",
-  "nativeAfter": "Pending. The failed pair is removed through normal finalization only after verifying exact identity and no live executor; database removal requires no remaining clients. The next run uses a fresh private artifact repository and fixture namespace to preserve earlier immutable artifacts and result retention.",
-  "scope": "One Kubernetes 1.37 Linux amd64 native run, not a final support-matrix or issue-closure verdict."
+  "nativeAfter": "PASS: all four PostgreSQL/MySQL Schema/Migration cases in the complete lock-release-owed scenario. Each retains the exact operation, Job, Lease and epoch, receiver firing and resolution, nonoverlapping sibling progress, completed collection watches and credential audit. The run started at 12:23:20Z and finished at 12:41:06Z. Evidence is retained in alert-lock-sentinel-2026-10-03/native-after.txt and native-after-result.json. Seven later alert scenarios remain separate.",
+  "scope": "One Kubernetes 1.37 Linux amd64 native run, not a final support-matrix or issue-closure verdict.",
+  "testSourceRevisionAfter": "5e7f05da7819605b1123324c085ea1634974a632"
 }

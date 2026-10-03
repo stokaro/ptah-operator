@@ -8,6 +8,7 @@
   "nativeBefore": "FAIL after the PostgreSQL Schema owner released its Lease, the alert resolved and the sibling Plan completed. The end-of-watch annotation on the retired sibling executor Pod was refused because its Job already carried the cleanup TTL. Complete watch audit and later cases did not finish, so this is not a passed scenario.",
   "correction": "Use the exact retained unmanaged publisher Job and its unique successful Pod as collection sentinels, matching the existing unresolved-Apply and operations-failing proofs. Require a completed publisher with no TTL or owner reference. Keep all original workload, Lease handoff, SQL, no-replay and watch EOF assertions. No admission or runtime policy changes.",
   "validation": "Tagged E2E vet passes. A server-side dry run accepts the marker on the actual publisher Pod selected by owner UID; this is admission evidence only.",
-  "nativeAfter": "Pending. Rerun the complete corrected lock scenario after UID-bound fixture cleanup; earlier completed scenarios are not repeated.",
-  "scope": "No final support-matrix or issue-closure verdict."
+  "nativeAfter": "PASS: all four PostgreSQL/MySQL Schema/Migration cases in the complete lock-release-owed scenario. Each retains the exact operation, Job, Lease and epoch, receiver firing and resolution, nonoverlapping sibling progress, completed collection watches and credential audit. The run started at 12:23:20Z and finished at 12:41:06Z. Evidence is retained in alert-lock-sentinel-2026-10-03/native-after.txt and native-after-result.json. Seven later alert scenarios remain separate.",
+  "scope": "No final support-matrix or issue-closure verdict.",
+  "testSourceRevisionAfter": "5e7f05da7819605b1123324c085ea1634974a632"
 }
