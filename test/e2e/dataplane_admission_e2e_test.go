@@ -181,6 +181,7 @@ func (d *dataPlane) assertCustomCACompletedPods(schema, resolved string) {
 	pods := &corev1.PodList{}
 	d.mustList(pods, client.MatchingLabels{labelSchema: schema})
 	if !customCAPodIsolation(pods.Items, customCAPodIsolationInputs{
+		jobs:           jobs.Items,
 		databaseSecret: customCAPGSecret, registrySecret: tlsProxyGoodAuthSecret,
 		registryAuthority: d.tlsProxy.authority, caConfigMap: tlsProxyCAConfigMap, resolvedReference: resolved,
 	}) {

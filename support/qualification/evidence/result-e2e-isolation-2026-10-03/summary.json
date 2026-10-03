@@ -1,0 +1,39 @@
+{
+  "status": "passed local checks; native default integration pending",
+  "baseCommit": "470d3074059b833c5b929f24f2ae94d9232bfa43",
+  "scope": "Adapt existing source Job, custom-CA Pod, and standalone invalid-DSN E2E assertions for #586 default delivery.",
+  "sourceSHA256": {
+    "test/e2e/dataplane_admission.go": "40562aff6fa97cfee8d003a98406ee4ce8b417ecc1d0d985b7b577ad6ad5fb9a",
+    "test/e2e/dataplane_admission_e2e_test.go": "be484ac04f696400cd5e02b538c0fb5b98ff04898224bab4a00eba963ff23823",
+    "test/e2e/dataplane_admission_test.go": "c3c836d37645daaffe745ca5f7c045722484b9aefb6c94f87ec97bdb2c43334d",
+    "test/e2e/dataplane_filters.go": "8cf040965fccb7de2bf16fe0cea8a2e5729e937e1a167d55ae14be63fd760029",
+    "test/e2e/operation_result.go": "198fcfb89dc62ac3572dd77507a4a4f1d0346747d087addae675868aa09e6ac3",
+    "test/e2e/result_isolation_test.go": "16a28a2991fec554f1d2abd34813c185a5977228db1d9ee0da69610b001db3b5"
+  },
+  "checks": {
+    "unit": {
+      "command": "GOFLAGS=-p=1 go test ./test/e2e -run 'Test(SourceJobIsolation|CustomCAPodIsolation|ReadOperationResult|RewriteMySQLRefusal)' -count=1 -v",
+      "exitCode": 0,
+      "passedTestsAndSubtests": 154,
+      "skippedTests": 0
+    },
+    "compile": {
+      "command": "GOFLAGS=-p=1 go test -tags=e2e -c ./test/e2e",
+      "exitCode": 0
+    },
+    "vet": {
+      "command": "GOFLAGS=-p=1 go vet -tags=e2e ./test/e2e",
+      "exitCode": 0
+    }
+  },
+  "observedLocalProperties": [
+    "Source and custom-CA isolation predicates validate the entire operation credential projection before checking all existing workload restrictions.",
+    "Custom-CA Pod projection must match its exact original Job, including receiver and frozen generation.",
+    "Mutation rows refuse writable credentials, helper access, wrong credentials, partial projections, wrong Job identity and endpoint changes. Existing database, registry and service-account restrictions still hold.",
+    "The standalone invalid-DSN fixture removes validated original result authority before changing operation identity; unrelated executor inputs are preserved and malformed projections are refused."
+  ],
+  "limits": [
+    "These are local E2E assertion checks, not native default-installation proof.",
+    "Chart default and log-size override remain unchanged. #586 final DoD and #242 remain open."
+  ]
+}

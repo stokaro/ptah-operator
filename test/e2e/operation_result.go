@@ -3,6 +3,7 @@ package e2e
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -39,6 +40,37 @@ func durableResultJob(job *batchv1.Job) bool {
 		}
 	}
 	return false
+}
+
+// resultJobWithoutProjection first validates the complete, isolated delivery
+// projection, then removes only that projection from a copy. Existing exact
+// workload-isolation checks can inspect the rest without accepting extra
+// credentials, mounts, or result inputs.
+func resultJobWithoutProjection(job *batchv1.Job) (*batchv1.Job, error) {
+	owner := metav1.GetControllerOf(job)
+	if owner == nil || owner.APIVersion != ptahSchemaAPIVersion ||
+		(owner.Kind != "PtahSchema" && owner.Kind != "PtahMigration") {
+		return nil, errors.New("result projection has no resource owner")
+	}
+	if _, err := jobconfig.Read(job, owner.UID, job.Annotations[annotationOperationID]); err != nil {
+		return nil, err
+	}
+	copy := job.DeepCopy()
+	spec := &copy.Spec.Template.Spec
+	main := &spec.Containers[0]
+	var args []string
+	for i := 0; i < len(main.Args); i++ {
+		if main.Args[i] == "--result-endpoint" || main.Args[i] == "--result-credentials" {
+			i++ // Read already required each flag's exact value.
+			continue
+		}
+		args = append(args, main.Args[i])
+	}
+	main.Args = args
+	main.Env = slices.DeleteFunc(main.Env, func(env corev1.EnvVar) bool { return strings.HasPrefix(env.Name, "PTAH_RESULT_") })
+	main.VolumeMounts = slices.DeleteFunc(main.VolumeMounts, func(mount corev1.VolumeMount) bool { return mount.Name == jobconfig.VolumeName })
+	spec.Volumes = slices.DeleteFunc(spec.Volumes, func(volume corev1.Volume) bool { return volume.Name == jobconfig.VolumeName })
+	return copy, nil
 }
 
 // readOperationResult follows the transport the immutable Job selected. Logs
