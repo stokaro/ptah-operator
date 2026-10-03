@@ -15,6 +15,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/resultdelivery/jobconfig"
 )
 
 // A Job whose Pod the API server refuses -- a namespace policy, a mutating
@@ -53,10 +54,31 @@ func failedCreateEvent(job *batchv1.Job, name, message string, at time.Time) *co
 }
 
 func TestASchemaReportsAPodTheAPIServerRefused(t *testing.T) {
+	for _, transport := range []string{"logs", "durable"} {
+		t.Run(transport, func(t *testing.T) { testSchemaPodAdmissionRefusal(t, transport == "durable") })
+	}
+}
+
+func testSchemaPodAdmissionRefusal(t *testing.T, durable bool) {
 	t.Parallel()
 
 	ctx := context.Background()
 	reconciler, api, schema, jobName := dispatchableApply(t, false)
+	issuer := &issuanceProbe{}
+	if durable {
+		reconciler.Jobs = durablePodAdmissionJobs{}
+		reconciler.ResultCredentials = issuer
+		stored := safetyGetSchema(t, api, schema)
+		stored.Status.ActiveOperation.AdmissionSnapshot = nil
+		if err := api.Status().Update(ctx, stored); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() {
+		if issuer.calls != 0 {
+			t.Errorf("issued %d credentials without an admitted Pod", issuer.calls)
+		}
+	})
 	recorder := record.NewFakeRecorder(10)
 	reconciler.Recorder = recorder
 	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}
@@ -176,6 +198,12 @@ func TestAYoungJobWithoutAPodIsNotARefusal(t *testing.T) {
 }
 
 func TestAMigrationReportsAPodTheAPIServerRefused(t *testing.T) {
+	for _, transport := range []string{"logs", "durable"} {
+		t.Run(transport, func(t *testing.T) { testMigrationPodAdmissionRefusal(t, transport == "durable") })
+	}
+}
+
+func testMigrationPodAdmissionRefusal(t *testing.T, durable bool) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -186,7 +214,18 @@ func TestAMigrationReportsAPodTheAPIServerRefused(t *testing.T) {
 	operation := migrationClaim(t, migration, operatorv1alpha1.MigrationOperationResolve)
 	operation.AdmissionSnapshot = nil
 	reconciler, api := fakeMigrationReconciler(t, staticLogs{}, migration)
-	reconciler.Jobs = workloadBuilderForMigrations()
+	builder := workloadBuilderForMigrations()
+	issuer := &issuanceProbe{}
+	if durable {
+		builder.ResultEndpoint = "https://receiver.operator.svc:9444"
+		reconciler.ResultCredentials = issuer
+	}
+	reconciler.Jobs = builder
+	t.Cleanup(func() {
+		if issuer.calls != 0 {
+			t.Errorf("issued %d credentials without an admitted Pod", issuer.calls)
+		}
+	})
 	recorder := record.NewFakeRecorder(10)
 	reconciler.Recorder = recorder
 
@@ -258,4 +297,21 @@ func TestPodCreationRefusalMessageIsBoundedAndPlain(t *testing.T) {
 	if !strings.HasSuffix(message, "...") {
 		t.Fatalf("a truncated message does not say so: %q", message)
 	}
+}
+
+// Carry a valid durable projection through the schema fixture's dispatch and
+// admission snapshot, while deliberately leaving the Job without a Pod.
+type durablePodAdmissionJobs struct{ fakeJobs }
+
+func (durablePodAdmissionJobs) Build(schema *operatorv1alpha1.PtahSchema, operation operatorv1alpha1.ActiveOperationStatus, plan *operatorv1alpha1.PtahSchemaPlan) (*batchv1.Job, error) {
+	job, err := (fakeJobs{}).Build(schema, operation, plan)
+	if err != nil {
+		return nil, err
+	}
+	job.Spec.Template.Spec.Containers = []corev1.Container{{Name: executorContainerName}}
+	job.Spec.Template.Spec.AutomountServiceAccountToken = ptr(false)
+	if err := jobconfig.Attach(job, schema.UID, schema.Generation, operation.ID, "https://receiver.operator.svc:9444"); err != nil {
+		return nil, err
+	}
+	return job, nil
 }

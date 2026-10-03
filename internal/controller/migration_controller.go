@@ -727,6 +727,9 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 		}
 	}
 	if !jobTerminal(job) {
+		if err := r.reportMigrationPodAdmission(ctx, migration, job); err != nil {
+			return ctrl.Result{}, err
+		}
 		if durableDeliveryRequested(job) {
 			engine := ""
 			if operation.Target != nil {
@@ -739,9 +742,6 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 			if issueErr != nil || !issued {
 				return ctrl.Result{RequeueAfter: resultReadRetryInterval}, nil
 			}
-		}
-		if err := r.reportMigrationPodAdmission(ctx, migration, job); err != nil {
-			return ctrl.Result{}, err
 		}
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}

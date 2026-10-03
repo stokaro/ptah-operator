@@ -1,0 +1,42 @@
+{
+  "status": "local regression and controller checks passed; corrected native admission scenario pending",
+  "baseCommit": "c14d41fe4c0a0ce59b204bfe70ee2943e29fc025",
+  "scope": "Pod-admission refusal reporting with default durable delivery; final integration DoD in #586 and existing #578 operational status coverage.",
+  "reproduction": "A Job whose Pod creation is refused cannot receive its Pod-bound result credential. Both controllers returned on pending issuance before reporting the FailedCreate Event. The native schema stayed Resolving/OperationInProgress until the audit rejected its no-Pod Job.",
+  "change": "Report Pod admission before attempting result credential issuance. Pending credentials still requeue; no authority or retry bound changes.",
+  "sourceSHA256": {
+    "internal/controller/schema_controller.go": "6a1a8d68d7b47465a436c41f52515c9e298055c909c69751b49e5e3a9ee5909e",
+    "internal/controller/migration_controller.go": "fa5e209628310a0aa91ac6b15384e630feb78be8934c625f72a1233385305e1e",
+    "internal/controller/pod_admission_test.go": "613d59926214a61159d44c8dff21c0f4e504420dec64fd7ad98eefece40b1a0d"
+  },
+  "checks": [
+    {
+      "command": "GOFLAGS=-p=1 go test -overlay <overlay mapping both controller source files to baseCommit> ./internal/controller -run 'TestA(Schema|Migration)ReportsAPodTheAPIServerRefused' -count=1 -v",
+      "exitCode": 1,
+      "expected": "Both durable rows fail at the missing refusal condition; both legacy rows pass. Tests are the corrected source in this evidence commit."
+    },
+    {
+      "command": "GOFLAGS=-p=1 go test ./internal/controller -count=1",
+      "exitCode": 0
+    },
+    {
+      "command": "GOFLAGS=-p=1 go vet ./internal/controller",
+      "exitCode": 0
+    }
+  ],
+  "native": {
+    "runtimeCommit": "c14d41fe4c0a0ce59b204bfe70ee2943e29fc025",
+    "kubernetes": "1.37.0",
+    "platform": "linux/amd64",
+    "completedScenarios": 20,
+    "failedScenario": "pod-metadata-admission",
+    "unexecutedScenarios": 5,
+    "outcome": "failed",
+    "lab": "Retained for focused verification of the correction. No native result is claimed for the corrected runtime."
+  },
+  "limits": [
+    "The full native data-plane suite did not pass.",
+    "Existing completed native cases include both blocked-refresh TTL gates, both hung-log independence rows, deadline recovery and fixture suspension, SQL history audits, and four-eyes approval.",
+    "No current-head CI or release-readiness verdict is claimed."
+  ]
+}

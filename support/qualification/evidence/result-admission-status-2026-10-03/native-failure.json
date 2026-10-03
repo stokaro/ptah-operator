@@ -1,0 +1,215 @@
+{
+  "originalLogSHA256": "80074c3c271b32709b78a5ac66bedf33223a83ed5fc857048866e9ec57241db6",
+  "lines": [
+    {
+      "line": 608,
+      "text": "=== RUN   TestDataPlane"
+    },
+    {
+      "line": 609,
+      "text": "=== RUN   TestDataPlane/databases-and-fixtures"
+    },
+    {
+      "line": 615,
+      "text": "=== RUN   TestDataPlane/postgresql-lifecycle"
+    },
+    {
+      "line": 706,
+      "text": "=== RUN   TestDataPlane/external-postgresql-lifecycle"
+    },
+    {
+      "line": 717,
+      "text": "=== RUN   TestDataPlane/mysql-lifecycle"
+    },
+    {
+      "line": 754,
+      "text": "=== RUN   TestDataPlane/mysql-dsn-refusal"
+    },
+    {
+      "line": 755,
+      "text": "=== RUN   TestDataPlane/native-plan-size-boundary"
+    },
+    {
+      "line": 808,
+      "text": "=== RUN   TestDataPlane/watches"
+    },
+    {
+      "line": 810,
+      "text": "=== RUN   TestDataPlane/approval-resource-replacement"
+    },
+    {
+      "line": 829,
+      "text": "=== RUN   TestDataPlane/approval-target-secret-change"
+    },
+    {
+      "line": 838,
+      "text": "=== RUN   TestDataPlane/approval-destructive-policy-change"
+    },
+    {
+      "line": 855,
+      "text": "=== RUN   TestDataPlane/approval-exclusion-policy-change"
+    },
+    {
+      "line": 868,
+      "text": "=== RUN   TestDataPlane/approval-verification-policy-change"
+    },
+    {
+      "line": 893,
+      "text": "=== RUN   TestDataPlane/mysql-drift-before-dispatch"
+    },
+    {
+      "line": 899,
+      "text": "=== RUN   TestDataPlane/hung-schema-result-read"
+    },
+    {
+      "line": 906,
+      "text": "=== RUN   TestDataPlane/job-deadline"
+    },
+    {
+      "line": 908,
+      "text": "=== RUN   TestDataPlane/manager-restart"
+    },
+    {
+      "line": 910,
+      "text": "=== RUN   TestDataPlane/runner-termination"
+    },
+    {
+      "line": 913,
+      "text": "=== RUN   TestDataPlane/job-deletion"
+    },
+    {
+      "line": 923,
+      "text": "=== RUN   TestDataPlane/closing-audits"
+    },
+    {
+      "line": 924,
+      "text": "=== RUN   TestDataPlane/four-eyes-distinct-approver"
+    },
+    {
+      "line": 928,
+      "text": "=== RUN   TestDataPlane/pod-metadata-admission"
+    },
+    {
+      "line": 931,
+      "text": "    dataplane_e2e_test.go:167: e2e data plane: terminal Job ptah-resolve-e2e-pod-metadata-refused-postgres-8233dead9eb4e270 UID 0ec469df-be4e-4872-b854-cf82dcdb6e1b has no exact owned Pod to audit"
+    },
+    {
+      "line": 1183,
+      "text": "--- FAIL: TestDataPlane (8453.64s)"
+    },
+    {
+      "line": 1184,
+      "text": "    --- PASS: TestDataPlane/databases-and-fixtures (35.67s)"
+    },
+    {
+      "line": 1185,
+      "text": "    --- PASS: TestDataPlane/postgresql-lifecycle (1605.90s)"
+    },
+    {
+      "line": 1186,
+      "text": "    --- PASS: TestDataPlane/external-postgresql-lifecycle (548.98s)"
+    },
+    {
+      "line": 1187,
+      "text": "    --- PASS: TestDataPlane/mysql-lifecycle (1308.32s)"
+    },
+    {
+      "line": 1188,
+      "text": "    --- PASS: TestDataPlane/mysql-dsn-refusal (25.47s)"
+    },
+    {
+      "line": 1189,
+      "text": "    --- PASS: TestDataPlane/native-plan-size-boundary (658.97s)"
+    },
+    {
+      "line": 1190,
+      "text": "    --- PASS: TestDataPlane/watches (310.91s)"
+    },
+    {
+      "line": 1191,
+      "text": "    --- PASS: TestDataPlane/approval-resource-replacement (337.38s)"
+    },
+    {
+      "line": 1192,
+      "text": "    --- PASS: TestDataPlane/approval-target-secret-change (409.92s)"
+    },
+    {
+      "line": 1193,
+      "text": "    --- PASS: TestDataPlane/approval-destructive-policy-change (439.00s)"
+    },
+    {
+      "line": 1194,
+      "text": "    --- PASS: TestDataPlane/approval-exclusion-policy-change (323.33s)"
+    },
+    {
+      "line": 1195,
+      "text": "    --- PASS: TestDataPlane/approval-verification-policy-change (633.79s)"
+    },
+    {
+      "line": 1196,
+      "text": "    --- PASS: TestDataPlane/mysql-drift-before-dispatch (146.44s)"
+    },
+    {
+      "line": 1197,
+      "text": "    --- PASS: TestDataPlane/hung-schema-result-read (307.01s)"
+    },
+    {
+      "line": 1198,
+      "text": "    --- PASS: TestDataPlane/job-deadline (103.13s)"
+    },
+    {
+      "line": 1199,
+      "text": "    --- PASS: TestDataPlane/manager-restart (44.69s)"
+    },
+    {
+      "line": 1200,
+      "text": "    --- PASS: TestDataPlane/runner-termination (456.42s)"
+    },
+    {
+      "line": 1201,
+      "text": "    --- PASS: TestDataPlane/job-deletion (272.15s)"
+    },
+    {
+      "line": 1202,
+      "text": "    --- PASS: TestDataPlane/closing-audits (12.86s)"
+    },
+    {
+      "line": 1203,
+      "text": "    --- PASS: TestDataPlane/four-eyes-distinct-approver (162.54s)"
+    },
+    {
+      "line": 1204,
+      "text": "    --- FAIL: TestDataPlane/pod-metadata-admission (309.58s)"
+    }
+  ],
+  "refusedSchema": {
+    "name": "e2e-pod-metadata-refused-postgresql",
+    "uid": "b9ebd458-ad9b-4bb8-b379-5ba1d0738613",
+    "generation": 1,
+    "observedGeneration": 1,
+    "phase": "Resolving",
+    "nextReconciliationTime": null,
+    "failure": null,
+    "expectedEpochs": {
+      "activeOperation": null,
+      "pendingObservation": null,
+      "pendingLockRelease": null
+    },
+    "leaseContinuityLost": false,
+    "events": [],
+    "jobs": [
+      {
+        "name": "ptah-resolve-e2e-pod-metadata-refused-postgres-8233dead9eb4e270",
+        "uid": "0ec469df-be4e-4872-b854-cf82dcdb6e1b",
+        "operation": "resolve",
+        "created": "2026-10-03T06:27:54Z",
+        "started": "2026-10-03T06:27:54Z",
+        "completed": null,
+        "complete": false,
+        "failed": true,
+        "operationIDHashShape": true,
+        "inputFingerprint": "sha256:d626c2855b22f9a4257aca0f3648e5e9432b590630c9aeb21d84a5239cd7321a"
+      }
+    ]
+  }
+}

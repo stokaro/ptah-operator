@@ -980,6 +980,9 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 		}
 	}
 	if !jobTerminal(job) {
+		if err := r.reportPodAdmission(ctx, schema, job); err != nil {
+			return ctrl.Result{}, err
+		}
 		if durableDeliveryRequested(job) {
 			engine := ""
 			if operation.Target != nil {
@@ -992,9 +995,6 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 			if issueErr != nil || !issued {
 				return ctrl.Result{RequeueAfter: resultReadRetryInterval}, nil
 			}
-		}
-		if err := r.reportPodAdmission(ctx, schema, job); err != nil {
-			return ctrl.Result{}, err
 		}
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}
