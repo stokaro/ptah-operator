@@ -419,6 +419,9 @@ type AlertingInputs struct {
 	HelmRelease string `env:"E2E_HELM_RELEASE"`
 	// ChartPackage is the chart the release was installed from.
 	ChartPackage string `env:"E2E_CHART_PACKAGE"`
+	// The existing synthetic next release gives upgrade faults a distinct runtime.
+	NextChartPackage string `env:"E2E_NEXT_CHART_PACKAGE"`
+	NextValuesFile   string `env:"E2E_NEXT_VALUES_FILE"`
 	// FixtureImage carries the alert receiver.
 	FixtureImage string `env:"E2E_FIXTURE_IMAGE"`
 	// PrometheusImage and AlertmanagerImage are the monitoring path, mirrored

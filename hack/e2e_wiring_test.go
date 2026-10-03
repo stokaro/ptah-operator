@@ -2396,8 +2396,8 @@ func TestVerifyE2EHarnessRejectsCriticalMutations(t *testing.T) {
 		},
 		{
 			name:        "synthetic next chart handoff omitted",
-			old:         "E2E_NEXT_CHART_PACKAGE=$NEXT_CHART_PACKAGE \\\n",
-			replacement: "E2E_NEXT_CHART_PACKAGE= \\\n",
+			old:         "E2E_CONTROLLER_IMAGE=$CANDIDATE_OPERATOR_IMAGE \\\n" + "E2E_NEXT_CHART_PACKAGE=$NEXT_CHART_PACKAGE \\\n",
+			replacement: "E2E_CONTROLLER_IMAGE=$CANDIDATE_OPERATOR_IMAGE \\\n" + "E2E_NEXT_CHART_PACKAGE= \\\n",
 			wantError:   `uninstall phase must bind E2E_NEXT_CHART_PACKAGE to "$NEXT_CHART_PACKAGE", and binds ""`,
 		},
 		{
@@ -2959,8 +2959,8 @@ func TestPhaseEnvironmentContractsRejectCriticalMutations(t *testing.T) {
 		},
 		{
 			name:        "uninstall phase handed a synthetic next chart it cannot trust",
-			old:         "E2E_NEXT_CHART_PACKAGE=$NEXT_CHART_PACKAGE \\\n",
-			replacement: "E2E_NEXT_CHART_PACKAGE=$CHART_PACKAGE \\\n",
+			old:         "E2E_CONTROLLER_IMAGE=$CANDIDATE_OPERATOR_IMAGE \\\n" + "E2E_NEXT_CHART_PACKAGE=$NEXT_CHART_PACKAGE \\\n",
+			replacement: "E2E_CONTROLLER_IMAGE=$CANDIDATE_OPERATOR_IMAGE \\\n" + "E2E_NEXT_CHART_PACKAGE=$CHART_PACKAGE \\\n",
 			wantError:   `uninstall phase must bind E2E_NEXT_CHART_PACKAGE to "$NEXT_CHART_PACKAGE", and binds "$CHART_PACKAGE"`,
 		},
 		{

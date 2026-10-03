@@ -1,0 +1,1 @@
+ok  	github.com/stokaro/ptah-operator/hack	16.958s

@@ -18,7 +18,6 @@ import (
 	ptahv1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/crdupgrade"
 	"github.com/stokaro/ptah-operator/test/e2e/harness"
-	admissionv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -28,17 +27,19 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
+	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
 )
 
 func (a *alertingRun) upgradeAlerts() {
-	intent, hookAccount, chart, values, valuesPath := a.upgradeCandidate()
+	originalValues, err := a.cluster.Helm(a.ctx, "-n", a.in.OperatorNamespace, "get", "values", a.in.HelmRelease, "-o", "yaml")
+	a.check(err, "retain the installed values before both upgrade cases")
+	nextValues, err := os.ReadFile(a.in.NextValuesFile)
+	a.check(err, "read the existing synthetic next-release values")
 	evidence, err := os.MkdirTemp("", "ptah-e2e-upgrade-evidence.")
 	a.check(err, "create private retained upgrade evidence")
 	a.logf("retained private upgrade evidence: %s", evidence)
-	a.check(os.WriteFile(filepath.Join(evidence, "candidate.tgz"), chart, 0600), "retain exact candidate bytes")
-	a.check(os.WriteFile(filepath.Join(evidence, "values.yaml"), values, 0600), "retain exact values bytes")
 	probes, checkProbes, recoveryBoundary, cleanup := a.upgradeProbes(evidence)
 	defer func() {
 		cleanup()
@@ -63,28 +64,36 @@ func (a *alertingRun) upgradeAlerts() {
 		}), "checksum the complete private upgrade evidence")
 		a.retainUpgradeEvidence(evidence, "manifest.json", mustJSONBytes(hashes))
 	}()
-	for _, object := range probes {
-		kind := "PtahSchema"
-		if _, ok := object.(*ptahv1.PtahMigration); ok {
-			kind = "PtahMigration"
+	// The installed image is deliberately left running by a same-image hook.
+	// Upgrade to the existing synthetic next release, then back to the original
+	// candidate so both faults cross a real runtime transition.
+	for _, candidate := range []struct {
+		mode, chartPath string
+		values          []byte
+	}{
+		{"failed", a.in.NextChartPackage, nextValues},
+		{"deadline", a.in.ChartPackage, originalValues},
+	} {
+		intent, hookAccount, chart, valuesPath := a.upgradeCandidate(candidate.chartPath, candidate.values, candidate.mode)
+		for _, object := range probes {
+			kind := "PtahSchema"
+			if _, ok := object.(*ptahv1.PtahMigration); ok {
+				kind = "PtahMigration"
+			}
+			intent.Probes = append(intent.Probes, alUpgradeProbe{Kind: kind, Namespace: object.GetNamespace(), Name: object.GetName(), UID: string(object.GetUID()), Generation: object.GetGeneration()})
 		}
-		intent.Probes = append(intent.Probes, alUpgradeProbe{Kind: kind, Namespace: object.GetNamespace(), Name: object.GetName(), UID: string(object.GetUID()), Generation: object.GetGeneration()})
-	}
-	for _, mode := range []string{"failed", "deadline"} {
-		a.upgradeAlertCase(intent, hookAccount, chart, values, valuesPath, mode, probes, checkProbes, recoveryBoundary, evidence)
+		a.upgradeAlertCase(intent, hookAccount, candidate.chartPath, chart, candidate.values, valuesPath, candidate.mode, probes, checkProbes, recoveryBoundary, evidence)
 	}
 }
 
-func (a *alertingRun) upgradeCandidate() (alUpgradeIntent, string, []byte, []byte, string) {
+func (a *alertingRun) upgradeCandidate(chartPath string, values []byte, mode string) (alUpgradeIntent, string, []byte, string) {
 	intent := alUpgradeIntent{Namespace: a.in.OperatorNamespace, Release: a.in.HelmRelease, Manager: a.manager, CRDDigests: map[string]string{}}
-	chart, err := os.ReadFile(a.in.ChartPackage)
+	chart, err := os.ReadFile(chartPath)
 	a.check(err, "retain the exact upgrade chart")
-	values, err := a.cluster.Helm(a.ctx, "-n", a.in.OperatorNamespace, "get", "values", a.in.HelmRelease, "-o", "yaml")
-	a.check(err, "retain the actual installed upgrade values")
-	valuesPath := filepath.Join(a.workDir, "upgrade-alert-values.yaml")
+	valuesPath := filepath.Join(a.workDir, "upgrade-alert-"+mode+"-values.yaml")
 	a.check(os.WriteFile(valuesPath, values, 0600), "retain byte-identical retry values")
 	intent.ChartDigest, intent.ValuesDigest = alUpgradeDigest(chart), alUpgradeDigest(values)
-	render, err := a.cluster.Helm(a.ctx, "template", a.in.HelmRelease, a.in.ChartPackage, "--namespace", a.in.OperatorNamespace, "--values", valuesPath, "--show-only", "templates/crd-upgrade.yaml")
+	render, err := a.cluster.Helm(a.ctx, "template", a.in.HelmRelease, chartPath, "--namespace", a.in.OperatorNamespace, "--values", valuesPath, "--show-only", "templates/crd-upgrade.yaml")
 	a.check(err, "render the candidate hook")
 	name, err := lifecycleReconcileHookName(render)
 	a.check(err, "identify exactly one reconcile hook")
@@ -113,6 +122,11 @@ func (a *alertingRun) upgradeCandidate() (alUpgradeIntent, string, []byte, []byt
 		a.fatalf("candidate hook has no exact runtime")
 	}
 	intent.HookJob, intent.Image, intent.HookArgs = hook.Name, hook.Spec.Template.Spec.Containers[0].Image, hook.Spec.Template.Spec.Containers[0].Args
+	installed := &appsv1.Deployment{}
+	a.check(a.cluster.Client.Get(a.ctx, types.NamespacedName{Namespace: intent.Namespace, Name: intent.Manager}, installed), "read the predecessor runtime")
+	if len(installed.Spec.Template.Spec.Containers) != 1 || installed.Spec.Template.Spec.Containers[0].Image == intent.Image {
+		a.fatalf("upgrade fault needs a candidate distinct from the installed runtime")
+	}
 	list := &appsv1.DeploymentList{}
 	a.check(a.cluster.Client.List(a.ctx, list, client.InNamespace(intent.Namespace)), "read upgrade runtime identities")
 	for _, d := range list.Items {
@@ -126,7 +140,7 @@ func (a *alertingRun) upgradeCandidate() (alUpgradeIntent, string, []byte, []byt
 	if intent.Rotator == "" {
 		a.fatalf("no candidate rotator")
 	}
-	crds, err := a.cluster.Helm(a.ctx, "show", "crds", a.in.ChartPackage)
+	crds, err := a.cluster.Helm(a.ctx, "show", "crds", chartPath)
 	a.check(err, "read the packaged candidate CRDs")
 	decode = utilyaml.NewYAMLOrJSONDecoder(bytes.NewReader(crds), 4096)
 	for {
@@ -149,10 +163,10 @@ func (a *alertingRun) upgradeCandidate() (alUpgradeIntent, string, []byte, []byt
 	if len(intent.CRDDigests) != len(crdupgrade.Names()) {
 		a.fatalf("candidate does not contain the complete CRD inventory")
 	}
-	return intent, hook.Spec.Template.Spec.ServiceAccountName, chart, values, valuesPath
+	return intent, hook.Spec.Template.Spec.ServiceAccountName, chart, valuesPath
 }
 
-func (a *alertingRun) upgradeAlertCase(intent alUpgradeIntent, hookAccount string, chart, values []byte, valuesPath, mode string, probes []client.Object, checkProbes func(), recoveryBoundary func(time.Time) time.Time, evidence string) {
+func (a *alertingRun) upgradeAlertCase(intent alUpgradeIntent, hookAccount, chartPath string, chart, values []byte, valuesPath, mode string, probes []client.Object, checkProbes func(), recoveryBoundary func(time.Time) time.Time, evidence string) {
 	directory := filepath.Join(evidence, mode)
 	a.check(os.Mkdir(directory, 0700), "create unique fault evidence directory")
 	hashes := map[string]string{}
@@ -160,6 +174,8 @@ func (a *alertingRun) upgradeAlertCase(intent alUpgradeIntent, hookAccount strin
 		a.retainUpgradeEvidence(directory, name, body)
 		hashes[name] = alUpgradeDigest(body)
 	}
+	retain("candidate.tgz", chart)
+	retain("values.yaml", values)
 	retain("intent.json", mustJSONBytes(intent))
 	kubeconfig := []byte("apiVersion: v1\nkind: Config\ncurrent-context: observer\nclusters:\n- name: cluster\n  cluster:\n    server: https://kubernetes.default.svc\n    certificate-authority: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt\nusers:\n- name: observer\n  user:\n    tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token\ncontexts:\n- name: observer\n  context:\n    cluster: cluster\n    user: observer\n")
 	objects, err := alUpgradeObserverObjects(intent, a.in.FixtureImage, chart, values, kubeconfig)
@@ -241,7 +257,7 @@ func (a *alertingRun) upgradeAlertCase(intent alUpgradeIntent, hookAccount strin
 	attempt := 0
 	helm := func() ([]byte, error) {
 		attempt++
-		gotChart, err := os.ReadFile(a.in.ChartPackage)
+		gotChart, err := os.ReadFile(chartPath)
 		a.check(err, "read retry chart")
 		gotValues, err := os.ReadFile(valuesPath)
 		a.check(err, "read retry values")
@@ -250,7 +266,7 @@ func (a *alertingRun) upgradeAlertCase(intent alUpgradeIntent, hookAccount strin
 		}
 		ctx, cancel := context.WithTimeout(a.ctx, 8*time.Minute)
 		defer cancel()
-		cmd := exec.CommandContext(ctx, "helm", "--kubeconfig", a.cluster.Kubeconfig, "upgrade", intent.Release, a.in.ChartPackage, "--namespace", intent.Namespace, "--values", valuesPath, "--force-conflicts", "--wait", "--timeout", "7m")
+		cmd := exec.CommandContext(ctx, "helm", "--kubeconfig", a.cluster.Kubeconfig, "upgrade", intent.Release, chartPath, "--namespace", intent.Namespace, "--values", valuesPath, "--force-conflicts", "--wait", "--timeout", "7m")
 		a.logf("upgrade command: argv=%s chart=%s values=%s", mustJSONBytes(cmd.Args), intent.ChartDigest, intent.ValuesDigest)
 		output, err := cmd.CombinedOutput()
 		retain(fmt.Sprintf("helm-attempt-%d.log", attempt), output)
@@ -358,25 +374,20 @@ func (a *alertingRun) confirmUpgradeFault(name, mode string, intent alUpgradeInt
 	ctx, cancel := context.WithTimeout(a.ctx, time.Minute)
 	defer cancel()
 	a.check(harness.Wait(ctx, "the upgrade policy to enforce its own refusal", time.Minute, time.Second, func(context.Context) (bool, string, error) {
-		if mode == "deadline" {
-			d := &appsv1.Deployment{}
-			if err := a.cluster.Client.Get(ctx, types.NamespacedName{Namespace: intent.Namespace, Name: intent.Manager}, d); err != nil {
-				return false, "", err
-			}
-			err := a.cluster.Client.Update(ctx, d, client.DryRunAll)
-			return err != nil && strings.Contains(err.Error(), name), "waiting for Deployment refusal", nil
-		}
-		current := &admissionv1.ValidatingAdmissionPolicy{}
-		if err := a.cluster.Client.Get(ctx, client.ObjectKey{Name: name}, current); err != nil {
+		d := &appsv1.Deployment{}
+		if err := a.cluster.Client.Get(ctx, types.NamespacedName{Namespace: intent.Namespace, Name: intent.Manager}, d); err != nil {
 			return false, "", err
 		}
-		if current.Status.ObservedGeneration != current.Generation {
-			return false, "waiting for policy observation", nil
+		actor := a.cluster.Client
+		if mode == "failed" {
+			var err error
+			actor, err = a.cluster.As(rest.ImpersonationConfig{UserName: "system:serviceaccount:" + intent.Namespace + ":" + hookAccount})
+			if err != nil {
+				return false, "", err
+			}
 		}
-		if current.Status.TypeChecking != nil && len(current.Status.TypeChecking.ExpressionWarnings) != 0 {
-			return false, "", fmt.Errorf("upgrade fault policy has expression warnings")
-		}
-		return true, "", nil
+		err := actor.Update(ctx, d, client.DryRunAll)
+		return err != nil && strings.Contains(err.Error(), name), "waiting for the exact Deployment refusal", nil
 	}), "prove the exact upgrade fault is active")
 }
 
