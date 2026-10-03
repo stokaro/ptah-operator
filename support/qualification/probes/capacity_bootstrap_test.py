@@ -190,12 +190,31 @@ class BootstrapTests(unittest.TestCase):
     def test_cleanup_waits_for_workload_finalizers_before_removing_database(self):
         b = self.bootstrap
         namespaces = b.prepare({'schemas': 1, 'migrations': 1})
+        b.commands.clear()
         b.cleanup()
         self.assertEqual(b.deleted, [namespaces[1], namespaces[0], b.state['fixtureNamespace']])
+        actions = [args for args, _ in b.commands if args[0] in ('delete', 'wait')]
+        self.assertEqual([args[0] for args in actions], ['delete', 'delete', 'wait', 'wait', 'delete', 'wait'])
         self.assertTrue(b.state['cleaned'])
         self.assertEqual(b.state['namespaces'], [])
         b.cleanup()  # A terminal cleanup is safe to retry.
         self.assertEqual(len(b.deleted), 3)
+
+    def test_retention_window_fits_inside_cleanup_wait(self):
+        b = self.bootstrap
+        b.prepare({'schemas': 1, 'migrations': 1})
+        command = b.command
+
+        def retained(args, value=None, timeout=45):
+            if args[0] == 'wait' and args[2] != 'namespace/' + b.state['fixtureNamespace']:
+                seconds = int(next(arg for arg in args if arg.startswith('--timeout=')).split('=')[1][:-1])
+                if seconds <= 3600 or timeout <= seconds:
+                    raise RuntimeError('cleanup expires before result retention and collection')
+            return command(args, value, timeout)
+
+        b.command = retained
+        b.cleanup()
+        self.assertTrue(b.state['cleaned'])
 
     def test_partial_preparation_cleans_only_created_namespace_uids(self):
         b = self.bootstrap

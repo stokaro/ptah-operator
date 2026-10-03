@@ -226,24 +226,34 @@ class Bootstrap:
                 self.state['namespaces'].append({'name': pending, 'uid': meta['uid']})
             self.state.pop('pendingNamespace')
             self.save()
-        # Workload namespaces must finish deletion while their database is alive:
-        # finalizers may need it to settle an operation. Never force finalizers.
-        for owned in reversed(self.state['namespaces']):
-            raw = self.command(['get', 'namespace', owned['name'], '--ignore-not-found', '-o', 'json'])
-            if not raw.strip():
+        # Start all workload deletions together so their one-hour result
+        # retention windows overlap. Keep the database alive until they finish.
+        # The manager uses resultretention.MinimumWindow (one hour); allow five
+        # more minutes for retirement marking and namespace garbage collection.
+        fixture = self.state.get('fixtureNamespace')
+        groups = ([owned for owned in reversed(self.state['namespaces']) if owned['name'] != fixture],
+                  [owned for owned in self.state['namespaces'] if owned['name'] == fixture])
+        for group, timeout in zip(groups, (3900, 180)):
+            pending = []
+            for owned in group:
+                raw = self.command(['get', 'namespace', owned['name'], '--ignore-not-found', '-o', 'json'])
+                if not raw.strip():
+                    self.state['namespaces'].remove(owned)
+                    self.save()
+                    continue
+                if json.loads(raw)['metadata'].get('uid') != owned['uid']:
+                    raise RuntimeError('namespace was replaced; refusing cleanup: ' + owned['name'])
+                options = {'apiVersion': 'v1', 'kind': 'DeleteOptions',
+                           'preconditions': {'uid': owned['uid']}}
+                path = self.path.with_suffix('.delete.json')
+                path.write_text(json.dumps(options))
+                self.command(['delete', '--raw', '/api/v1/namespaces/' + owned['name'], '-f', str(path)])
+                pending.append(owned)
+            for owned in pending:
+                self.command(['wait', '--for=delete', 'namespace/' + owned['name'],
+                              f'--timeout={timeout}s'], timeout=timeout + 30)
                 self.state['namespaces'].remove(owned)
                 self.save()
-                continue
-            if json.loads(raw)['metadata'].get('uid') != owned['uid']:
-                raise RuntimeError('namespace was replaced; refusing cleanup: ' + owned['name'])
-            options = {'apiVersion': 'v1', 'kind': 'DeleteOptions',
-                       'preconditions': {'uid': owned['uid']}}
-            path = self.path.with_suffix('.delete.json')
-            path.write_text(json.dumps(options))
-            self.command(['delete', '--raw', '/api/v1/namespaces/' + owned['name'], '-f', str(path)])
-            self.command(['wait', '--for=delete', 'namespace/' + owned['name'], '--timeout=180s'], timeout=210)
-            self.state['namespaces'].remove(owned)
-            self.save()
         self.state['cleaned'] = True
         self.save()
 
