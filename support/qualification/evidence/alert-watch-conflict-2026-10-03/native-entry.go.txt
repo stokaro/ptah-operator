@@ -1,0 +1,309 @@
+//go:build e2e
+package e2e
+import (
+ "encoding/json"
+ "context"
+ "net/url"
+ apierrors "k8s.io/apimachinery/pkg/api/errors"
+ metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+ "sigs.k8s.io/controller-runtime/pkg/client"
+ "os"
+ "os/exec"
+ "path/filepath"
+ "strconv"
+ "testing"
+ "time"
+ batchv1 "k8s.io/api/batch/v1"
+ corev1 "k8s.io/api/core/v1"
+ "k8s.io/apimachinery/pkg/types"
+ api "github.com/stokaro/ptah-operator/api/v1alpha1"
+ "github.com/stokaro/ptah-operator/test/e2e/harness"
+ "github.com/stokaro/ptah-operator/test/e2e/phases"
+ "sigs.k8s.io/controller-runtime/pkg/log"
+ "github.com/go-logr/logr"
+)
+// Retained-lab diagnostics emit individual outcomes, not full-phase records.
+func TestMain(m *testing.M) { log.SetLogger(logr.Discard()); os.Exit(m.Run()) }
+func phasePG(key string) (string,bool) { if key=="E2E_ENGINE" { return "postgresql",true };return os.LookupEnv(key) }
+func retainAlertRow(t *testing.T, name string, started time.Time, passed bool) {
+ t.Helper()
+ raw,err:=json.MarshalIndent(map[string]any{"scenario":name,"passed":passed,"startedAt":started,"finishedAt":time.Now(),"controllerRevision":os.Getenv("E2E_CONTROLLER_REVISION"),"controllerImage":os.Getenv("E2E_CONTROLLER_IMAGE"),"runnerImage":os.Getenv("E2E_RUNNER_IMAGE"),"scope":"Individual existing scenario on retained Kubernetes 1.37 Linux amd64 lab; no full-phase completion record"},"","  ")
+ if err!=nil {t.Fatal(err)}
+ if err=os.WriteFile("/private/tmp/ptah-585-diabolocom/"+name+".json",raw,0600);err!=nil {t.Fatal(err)}
+}
+func TestRetainedAlertPreparation(t *testing.T) {
+ started:=time.Now()
+ passed:=t.Run("native-migration-producer",func(t *testing.T){
+  in,err:=phases.Load(phases.MigrationsPostgreSQL,phasePG);if err!=nil{t.Fatal(err)}
+  m:=newRetainedMigrationRun(t,in,"postgresql")
+  m.migrationPolicy()
+  m.createDatabase(m.migrationDatabase())
+  m.createDatabaseSecret(m.migrationSecret(),m.migrationDatabase(),m.databaseURL(m.migrationDatabase(),""))
+  m.publish("v1",m.fixtureDir(""),m.reference(""))
+  m.createMigrationRealm();m.createMigrationResource()
+  m.waitForPhase(api.MigrationPhaseAwaitingApproval);m.assertAwaitingApproval();m.assertPlanSequence()
+  plan:=m.planOf(m.plan);m.planUID,m.planFingerprint=string(plan.UID),plan.Spec.Fingerprint
+  approval:="e2e-migrations-postgresql-approval";m.check(m.approve(approval,m.migrationName(),m.plan,m.planUID,m.planFingerprint),"approve native producer")
+  m.assertApprovalStamped(approval);m.waitForPhase(api.MigrationPhaseInSync);m.assertInSync();m.assertDatabaseMigrated()
+ })
+ retainAlertRow(t,"prepare-native-migration-producer",started,passed);if !passed{return}
+ started=time.Now()
+ passed=t.Run("native-reference-producer",func(t *testing.T){
+  in,err:=phases.Load(phases.ReferenceDataPostgreSQL,phasePG);if err!=nil{t.Fatal(err)}
+  r:=newRetainedReferenceRun(t,in,"postgresql")
+  r.declaredRowValues();r.createReferenceDatabase();r.publish("v1");r.createReferenceResource()
+  r.waitForPhase(api.PhaseAwaitingApproval);r.waitForPlan();r.check(r.approve(r.names.approval,r.plan),"approve native reference producer")
+  r.waitForPhase(api.PhaseInSync);r.assertDeclaredRows("2","0","")
+ })
+ retainAlertRow(t,"prepare-native-reference-producer",started,passed)
+}
+func TestRetainedAlerting(t *testing.T) {
+ in,err:=phases.Load(phases.Alerting,os.LookupEnv);if err!=nil{t.Fatal(err)}
+ a:=newRetainedAlertingRun(t,in)
+ for _,row:=range []struct{name string;run func()}{
+ {"monitoring-path",a.monitoringPath},{"unresolved-apply",a.unresolvedApply},
+ {"ordinary-policy-waits",a.negativeControls},{"stalled-operation",a.stalledOperation},
+ {"resource-overdue",a.resourceOverdue},{"lock-release-owed",a.lockReleaseOwed},
+ {"operations-failing",a.operationsFailing},{"plan-store-large",a.planStoreLarge},
+ {"unresolved-view-read-failures",a.viewReadFailures},{"lost-scrape-target",a.lostScrapeTarget},
+ {"certificate-expiry",a.certificateExpiry},{"lost-view",a.lostView},{"upgrade-alerts",a.upgradeAlerts},
+ } {
+  started:=time.Now();passed:=t.Run(row.name,a.scenario(row.run));retainAlertRow(t,row.name,started,passed);if !passed{return}
+ }
+}
+
+func newRetainedMigrationRun(t *testing.T, in phases.MigrationsInputs, engine string) *migrationRun {
+	t.Helper()
+	m := &migrationRun{t: t, parent: t, ctx: t.Context(), in: in, jobs: map[types.UID]batchv1.Job{}}
+	// Registered before anything is created, so a setup that fails part way
+	// still removes what it made.
+	t.Cleanup(m.cleanup)
+	for _, command := range []string{"kubectl", "go", "docker"} {
+		if _, err := exec.LookPath(command); err != nil {
+			m.fatalf("required command is not installed: %s", command)
+		}
+	}
+	if err := migrationInputsOK(in.Engine, engine, in.ExecutorImage, in.RunnerImage, in.ControllerImage); err != nil {
+		m.fatalf("%v", err)
+	}
+	if err := validKindCluster(in.KindClusterName); err != nil {
+		m.fatalf("%v", err)
+	}
+	if info, err := os.Stat(in.Kubeconfig); err != nil || !info.Mode().IsRegular() {
+		m.fatalf("E2E_KUBECONFIG does not name a file")
+	}
+	version, err := strconv.ParseInt(in.ControllerStateVersion, 10, 32)
+	if err != nil || version <= 0 {
+		m.fatalf("E2E_CONTROLLER_STATE_VERSION must be a positive integer")
+	}
+	m.stateVersion = int32(version)
+	m.controller = controllerIdentity{image: in.ControllerImage, revision: in.ControllerRevision, stateVersion: in.ControllerStateVersion}
+	if m.engine, err = migrationEngineFor(engine); err != nil {
+		m.fatalf("%v", err)
+	}
+	// The fixtures the rows publish are checked before any cluster work, so
+	// a missing one is refused now rather than an hour into the phase.
+	for _, suffix := range []string{"", "-branch", "-partial", "-older", "-checkpoint", "-uncertain", "-stopped"} {
+		if info, err := os.Stat(m.fixtureDir(suffix)); err != nil || !info.IsDir() {
+			m.fatalf("migration fixtures are missing: %s", m.fixtureDir(suffix))
+		}
+	}
+	// E2E_PHASE_RERUN is not a driver input: hack/e2e-rerun-phase.sh sets it
+	// when it puts this phase back on a lab an earlier run left behind, and
+	// the phase then clears what that run created before it starts.
+	m.rerun = os.Getenv("E2E_PHASE_RERUN")
+	if m.repository, err = migrationRepository(m.rerun); err != nil {
+		m.fatalf("%v", err)
+	}
+	m.registryHost = in.RegistryService + "." + in.TestNamespace + ".svc.cluster.local:5000"
+	if m.cluster, err = harness.Connect(in.Kubeconfig); err != nil {
+		m.fatalf("%v", err)
+	}
+	m.workDir, err = os.MkdirTemp("", "ptah-operator-migrations-e2e.")
+	m.check(err, "create the work directory")
+	m.check(os.Chmod(m.workDir, 0o700), "make the work directory private")
+	// The plan-inspection surface is proved from the same build a user
+	// installs, against the live resource, rather than from a golden file.
+	m.kubectlPtah = filepath.Join(m.workDir, "kubectl-ptah")
+	build := exec.CommandContext(m.ctx, "go", "build", "-trimpath", "-o", m.kubectlPtah, "./cmd/kubectl-ptah") //nolint:gosec // Arguments, not a shell.
+	build.Dir = repositoryRoot
+	build.Env = os.Environ()
+	build.Stdout, build.Stderr = os.Stderr, os.Stderr
+	m.check(build.Run(), "build kubectl-ptah")
+
+	// The password is read back from the Secret the data plane created rather
+	// than derived a second time here: a second derivation is a second
+	// definition, and the two would part company the moment either moved.
+	secret := &corev1.Secret{}
+	m.check(m.get(m.engine.sourceSecret, secret), "the data plane %s Secret %s could not be read", engine, m.engine.sourceSecret)
+	m.password = string(secret.Data["password"])
+	if m.password == "" {
+		m.fatalf("%v", errNoPassword)
+	}
+	m.protect(m.password, m.databaseURL(m.migrationDatabase(), ""))
+	return m
+}
+
+func newRetainedReferenceRun(t *testing.T, in phases.ReferenceDataInputs, engine string) *referenceRun {
+	t.Helper()
+	r := &referenceRun{t: t, parent: t, ctx: t.Context(), in: in}
+	// Registered before anything is created, so a setup that fails part way
+	// still reports and removes what it made.
+	t.Cleanup(r.cleanup)
+	for _, command := range []string{"kubectl", "go"} {
+		if _, err := exec.LookPath(command); err != nil {
+			r.fatalf("required command is not installed: %s", command)
+		}
+	}
+	if info, err := os.Stat(in.Kubeconfig); err != nil || !info.Mode().IsRegular() {
+		r.fatalf("E2E_KUBECONFIG does not name a file")
+	}
+	// The suite a phase runs in names one engine, and this phase runs that
+	// one. The value is checked rather than defaulted: a phase that silently
+	// ran one engine because the driver forgot to name it is coverage nobody
+	// would notice was gone.
+	if err := referenceInputsOK(in.Engine, engine, in.ExecutorImage, in.RunnerImage); err != nil {
+		r.fatalf("%v", err)
+	}
+	var err error
+	if r.engine, err = migrationEngineFor(engine); err != nil {
+		r.fatalf("%v", err)
+	}
+	// E2E_PHASE_RERUN is not a driver input: hack/e2e-rerun-phase.sh sets it
+	// when it puts this phase back on a lab an earlier run left behind.
+	r.rerun = os.Getenv("E2E_PHASE_RERUN")
+	if r.repository, err = referenceRepository(r.rerun); err != nil {
+		r.fatalf("%v", err)
+	}
+	registryHost := in.RegistryService + "." + in.TestNamespace + ".svc.cluster.local:5000"
+	r.names = referenceNamesFor(engine, registryHost, r.repository)
+	if info, err := os.Stat(r.policyFile()); err != nil || !info.Mode().IsRegular() {
+		r.fatalf("verification policy fixture is missing")
+	}
+	if r.cluster, err = harness.Connect(in.Kubeconfig); err != nil {
+		r.fatalf("%v", err)
+	}
+	r.workDir, err = os.MkdirTemp("", "ptah-operator-reference-data-e2e.")
+	r.check(err, "create the work directory")
+	r.check(os.Chmod(r.workDir, 0o700), "make the work directory private")
+	// The reference-data view is proved from the same build a user installs,
+	// against the live resource, rather than from a golden file.
+	r.kubectlPtah = filepath.Join(r.workDir, "kubectl-ptah")
+	build := exec.CommandContext(r.ctx, "go", "build", "-trimpath", "-o", r.kubectlPtah, "./cmd/kubectl-ptah") //nolint:gosec // Arguments, not a shell.
+	build.Dir = repositoryRoot
+	build.Env = os.Environ()
+	build.Stdout, build.Stderr = os.Stderr, os.Stderr
+	r.check(build.Run(), "build kubectl-ptah")
+
+	// The password is read back from the Secret the data plane created rather
+	// than derived a second time here. A second derivation is a second
+	// definition, and the two would part company the moment either moved.
+	secret := &corev1.Secret{}
+	if err := r.get(r.engine.sourceSecret, secret); err != nil {
+		r.fatalf("the data plane %s Secret %s could not be read", engine, r.engine.sourceSecret)
+	}
+	r.password = string(secret.Data["password"])
+	if r.password == "" {
+		r.fatalf("the data plane %s Secret carries no password", engine)
+	}
+	r.url = r.engine.databaseURL(in.TestNamespace, migrationDatabaseUser, r.password, referenceDatabase)
+	r.scanner, err = newCredentialScanner(r.password, r.url)
+	r.check(err, "build the credential scanner")
+	return r
+}
+
+func newRetainedAlertingRun(t *testing.T, in phases.AlertingInputs) *alertingRun {
+	t.Helper()
+	a := &alertingRun{t: t, parent: t, ctx: t.Context(), in: in}
+	// Registered before anything is created, so a phase that fails part way
+	// still releases the nodes and removes what it stood up.
+	t.Cleanup(a.cleanup)
+	for _, command := range []string{"kubectl", "helm"} {
+		if _, err := exec.LookPath(command); err != nil {
+			a.fatalf("required command is not installed: %s", command)
+		}
+	}
+	if info, err := os.Stat(in.Kubeconfig); err != nil || !info.Mode().IsRegular() {
+		a.fatalf("E2E_KUBECONFIG does not name a file")
+	}
+	if info, err := os.Stat(in.ChartPackage); err != nil || !info.Mode().IsRegular() {
+		a.fatalf("E2E_CHART_PACKAGE does not name a file")
+	}
+	for _, image := range []string{in.FixtureImage, in.PrometheusImage, in.AlertmanagerImage} {
+		if !alPinnedImage.MatchString(image) {
+			a.fatalf("image %s is not pinned by digest", image)
+		}
+	}
+	content, err := os.ReadFile(in.RegistryCredentialsFile)
+	a.check(err, "read E2E_REGISTRY_CREDENTIALS_FILE")
+	if a.credentials, err = parseRegistryCredentials(content); err != nil {
+		a.fatalf("%v", err)
+	}
+	a.workDir, err = os.MkdirTemp("", "ptah-e2e-alerting.")
+	a.check(err, "create the work directory")
+	a.check(os.Chmod(a.workDir, 0o700), "make the work directory private")
+	if a.cluster, err = harness.Connect(in.Kubeconfig); err != nil {
+		a.fatalf("%v", err)
+	}
+	return a
+}
+
+func TestResetFailedMySQLSchema(t *testing.T) {
+ in,err:=phases.Load(phases.Alerting,os.LookupEnv);if err!=nil{t.Fatal(err)}
+ cluster,err:=harness.Connect(in.Kubeconfig);if err!=nil{t.Fatal(err)}
+ name:="e2e-alert-schema-mysql"
+ resource:=&api.PtahSchema{}
+ key:=types.NamespacedName{Namespace:in.TestNamespace,Name:name}
+ if err=cluster.Client.Get(t.Context(),key,resource);err!=nil{t.Fatal(err)}
+ if !resource.Spec.Suspend || resource.Spec.Target.Engine!=api.DatabaseEngine("MySQL") || resource.Status.ActiveOperation!=nil {t.Fatal("failed fixture is not suspended and idle")}
+ raw,err:=json.MarshalIndent(resource,"","  ");if err!=nil{t.Fatal(err)}
+ if err=os.WriteFile("/private/tmp/ptah-585-diabolocom/alert-attempt-1/failed-mysql-schema.json",raw,0600);err!=nil{t.Fatal(err)}
+ pods:=&corev1.PodList{};if err=cluster.Client.List(t.Context(),pods,client.InNamespace(in.TestNamespace));err!=nil{t.Fatal(err)}
+ for _,pod:=range pods.Items {
+  if pod.Labels[labelSchema]==name && pod.Status.Phase!=corev1.PodSucceeded && pod.Status.Phase!=corev1.PodFailed {t.Fatal("owned schema executor is still live")}
+ }
+ engine,err:=migrationEngineFor("mysql");if err!=nil{t.Fatal(err)}
+ count,err:=serverSQL(t.Context(),cluster,in.TestNamespace,engine,"SELECT count(*) FROM information_schema.processlist WHERE DB='ptah_alert_schema_mysql'")
+ if err!=nil || trimmedSQL(count)!="0" {t.Fatalf("old database writer remains: %v",err)}
+ uid:=resource.UID
+ if err=cluster.Client.Delete(t.Context(),resource,client.Preconditions{UID:&uid});err!=nil{t.Fatal(err)}
+ if err=harness.Wait(t.Context(),"failed schema finalization",10*time.Minute,time.Second,func(ctx context.Context)(bool,string,error){
+  obj:=&api.PtahSchema{};e:=cluster.Client.Get(ctx,key,obj);return apierrors.IsNotFound(e),"waiting for normal finalization",client.IgnoreNotFound(e)
+ });err!=nil{t.Fatal(err)}
+ for _,object:=range []client.Object{
+  &api.PtahSchemaApproval{ObjectMeta:metav1.ObjectMeta{Namespace:in.TestNamespace,Name:name+"-original"}},
+  &batchv1.Job{ObjectMeta:metav1.ObjectMeta{Namespace:in.TestNamespace,Name:name+"-publisher"}},
+  &corev1.ConfigMap{ObjectMeta:metav1.ObjectMeta{Namespace:in.TestNamespace,Name:name+"-source"}},
+  &corev1.Secret{ObjectMeta:metav1.ObjectMeta{Namespace:in.TestNamespace,Name:name+"-db"}},
+ } {
+  if err=cluster.Client.Get(t.Context(),client.ObjectKeyFromObject(object),object);err!=nil{t.Fatal(err)}
+  if err=storedStateDeleteExact(t.Context(),cluster,object);err!=nil{t.Fatal(err)}
+ }
+ if _,err=serverSQL(t.Context(),cluster,in.TestNamespace,engine,"DROP DATABASE ptah_alert_schema_mysql");err!=nil{t.Fatal(err)}
+ t.Log("Removed only failed MySQL schema fixtures by UID after executor and database writer absence; normal finalizers completed")
+}
+
+func TestRetainedAlertingRemaining(t *testing.T) {
+ in,err:=phases.Load(phases.Alerting,os.LookupEnv);if err!=nil{t.Fatal(err)}
+ a:=newRetainedAlertingRun(t,in)
+ mysqlSchema:=func(){
+  template:=&api.PtahMigration{};a.check(a.cluster.Client.Get(a.ctx,types.NamespacedName{Namespace:in.TestNamespace,Name:"e2e-migrations-postgresql"},template),"read native producer")
+  registry,err:=url.Parse(template.Spec.Artifact.OCIRef);a.check(err,"read artifact registry")
+  if registry.Scheme!="oci" || registry.Host=="" || template.Status.ExecutionBinding==nil {a.fatalf("missing exact native producer")}
+  engine,err:=migrationEngineFor("mysql");a.check(err,"select MySQL")
+  m:=&migrationRun{t:a.t,parent:a.t,ctx:a.ctx,cluster:a.cluster,engine:engine,workDir:a.workDir,registryHost:registry.Host,repository:"e2e-alert-unresolved",in:phases.MigrationsInputs{TestNamespace:in.TestNamespace,ExecutorImage:template.Status.ExecutionBinding.ExecutorImage}}
+  credential:=&corev1.Secret{};a.check(m.get(engine.sourceSecret,credential),"read fixture credential")
+  m.password=string(credential.Data["password"]);if m.password==""{a.fatalf("missing fixture credential")};m.protect(m.password,a.credentials.Password)
+  a.unresolvedSchemaCase(m)
+ }
+ for _,row:=range []struct{name string;run func()}{
+ {"monitoring-path-rerun",a.monitoringPath},{"unresolved-mysql-schema",mysqlSchema},
+ {"ordinary-policy-waits",a.negativeControls},{"stalled-operation",a.stalledOperation},
+ {"resource-overdue",a.resourceOverdue},{"lock-release-owed",a.lockReleaseOwed},
+ {"operations-failing",a.operationsFailing},{"plan-store-large",a.planStoreLarge},
+ {"unresolved-view-read-failures",a.viewReadFailures},{"lost-scrape-target",a.lostScrapeTarget},
+ {"certificate-expiry",a.certificateExpiry},{"lost-view",a.lostView},{"upgrade-alerts",a.upgradeAlerts},
+ } {
+  started:=time.Now();passed:=t.Run(row.name,a.scenario(row.run));retainAlertRow(t,row.name,started,passed);if !passed{return}
+ }
+}

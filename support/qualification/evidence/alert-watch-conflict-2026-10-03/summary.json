@@ -14,9 +14,20 @@
     "race": "The complete test/e2e helper unit package passes with -race.",
     "compile": "Tagged E2E vet passes."
   },
-  "nativeRetest": "Pending: rerun only the failed MySQL schema case, then the unexecuted alert scenarios. Previously successful incident cases remain retained.",
+  "nativeRetest": {
+    "result": "PASS for the unchanged complete MySQL schema incident after the barrier fix. Original Job/Pod identity retained, firing and resolved notifications within their original bounds, retained rows unchanged, no replay, only a fresh approval adds fault_token.",
+    "testSourceRevision": "77f36d3d73a76ea9e2dae242f0142bacb046f66a",
+    "evidence": "native-mysql-after.txt and native-mysql-result.json",
+    "fixturePreparation": "UID-bound removal of the failed suspended fixture after confirming no live executor or database writer. Normal finalizers completed. The rerun publishes identical fixture SQL into a fresh private OCI repository to preserve the original write-once artifact.",
+    "aggregation": "Together with the first attempt, PostgreSQL and MySQL migration/schema incidents all pass individually. The original combined attempt still failed; this is not a complete current-head alert phase."
+  },
   "limits": [
     "This is not a complete alert-phase, current-head CI, or production acceptance verdict.",
     "The separate previously retained SQL-lifetime CI failure remains unresolved."
-  ]
+  ],
+  "nativeLogNormalization": {
+    "change": "Remove trailing whitespace from display-only log lines. The private original remains retained.",
+    "originalSHA256": "6b30263e56572d3c7db18c574398f76e06ef81088d9bb6bf589684b6b25b4808"
+  },
+  "remainingAlertScenarios": "The native process continues with the previously unexecuted scenarios. Their outcomes are not included in this checkpoint."
 }

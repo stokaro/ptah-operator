@@ -31,11 +31,11 @@ e2e alerting: receiver log:
   {"receiver":"sink","status":"resolved","alertname":"PtahOperatorUnresolvedApply","labels":{"alertname":"PtahOperatorUnresolvedApply","family":"migration","operator_metrics_service":"ptah-runtime-generated-name-prefix-boundary-proof-25ec3-metrics","operator_namespace":"ptah-system-1-37-0-pr585-alerts-diabolocom-3e6dd38e-25ec38ca61","severity":"critical"},"annotations":{"description":"Nothing retries these and nothing clears them except a reading of the database. The runbook lists them.","runbook_url":"https://operator.ptah.run/edge/use/operations/#unresolved-gauges","summary":"1 migration resources carry an Apply nobody accounted for"},"startsAt":"2026-10-03T10:25:46.024Z","endsAt":"2026-10-03T10:26:01.024Z","receivedAt":"2026-10-03T10:26:01.026503541Z"}
 e2e alerting: Prometheus alerts:
 e2e alerting: Prometheus targets:
-  https://172.19.0.3:6443/metrics up 
-  https://172.19.0.5:6443/metrics up 
-  https://172.19.0.6:6443/metrics up 
-  ptah-runtime-generated-name-prefix-boundary-proof-25ec38cakfztp up 
-  ptah-runtime-generated-name-prefix-boundary-proof-25ec38cabgbsw up 
+  https://172.19.0.3:6443/metrics up
+  https://172.19.0.5:6443/metrics up
+  https://172.19.0.6:6443/metrics up
+  ptah-runtime-generated-name-prefix-boundary-proof-25ec38cakfztp up
+  ptah-runtime-generated-name-prefix-boundary-proof-25ec38cabgbsw up
 e2e alerting: Alertmanager log:
   time=2026-10-03T10:11:52.875Z level=INFO source=app.go:194 msg="Starting Alertmanager" version="(version=0.34.1, branch=HEAD, revision=73c6bfe7393929211294c1954f30d8ed78e4d0ad)"
   time=2026-10-03T10:11:52.875Z level=INFO source=app.go:196 msg="Build context" build_context="(go=go1.26.8, platform=linux/amd64, user=root@68a5f2da6323, date=20260917-07:53:02, tags=netgo)"

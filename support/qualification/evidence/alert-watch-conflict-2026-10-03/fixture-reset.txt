@@ -1,0 +1,4 @@
+=== RUN   TestResetFailedMySQLSchema
+    main_e2e_test.go:283: Removed only failed MySQL schema fixtures by UID after executor and database writer absence; normal finalizers completed
+--- PASS: TestResetFailedMySQLSchema (3.80s)
+PASS

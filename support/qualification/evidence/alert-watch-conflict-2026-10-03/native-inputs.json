@@ -1,0 +1,8 @@
+{
+  "testSourceRevision": "77f36d3d73a76ea9e2dae242f0142bacb046f66a",
+  "runtimeRevision": "3e6dd38e660b43a50c529f2045ee879fc72143b9",
+  "command": "python3 /private/tmp/ptah-585-diabolocom/run.py TestRetainedAlertingRemaining",
+  "scope": "Repeat only monitoring prerequisites and the failed native MySQL schema incident, followed by previously unexecuted alert scenarios. Successful PostgreSQL migration/schema and MySQL migration incidents are not repeated.",
+  "fixtureDifference": "Only the private schema artifact repository changes to e2e-alert-schema-barrier-fix so the original write-once version remains intact. SQL, incident, alert bounds, runtime identity and all original assertions are unchanged.",
+  "overlaySHA256": "e9678e0569d74b0b2ddc8a31e6c93c3e910536c482d796f88e984bd433fe5c86"
+}
