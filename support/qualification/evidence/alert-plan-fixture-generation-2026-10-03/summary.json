@@ -1,0 +1,12 @@
+{
+  "requirement": "#581 pinned-plan preservation during PlanStoreLarge recovery; #586 default alert integration",
+  "runtimeRevision": "3e6dd38e660b43a50c529f2045ee879fc72143b9",
+  "testSourceRevisionBefore": "d5f1326cf3beac828ed747e344939f6f4d669bce",
+  "dockerContext": "diabolocom",
+  "kubernetesVersion": "1.37.0",
+  "platform": "linux/amd64",
+  "nativeBefore": "FAIL after creating all 17 native 8 MiB plans, receiving the threshold alert and replacing each current plan with a small one. Before export/pruning, the pin census rejects the admission fixture e2e-plan: its Ready condition omits observedGeneration. All actual controller-produced plans have current publication status. No historical plan was deleted and no resolved notification is claimed.",
+  "correction": "The existing admission fixture now copies the created plan generation into Ready.observedGeneration, matching its status.observedGeneration. Strict export validation is unchanged.",
+  "localValidation": "The existing exact-chunk export test passes, including stale status and stale Ready refusal controls. Tagged E2E vet and the native probe compilation pass. The real admission fixture reproduces the exact failure; setting only Ready.observedGeneration through its existing fixture identity makes the same plan UID and original chunks reconstruct the original byte x. No export requirement was relaxed. The failed consumers were removed by exact UID through normal finalization; protected results retain their normal window. Full corrected scenario remains pending.",
+  "scope": "Failure retained, not a completed native scenario or issue closure."
+}

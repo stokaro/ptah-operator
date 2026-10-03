@@ -1148,6 +1148,7 @@ func (p *controlPlanePhase) suspendedSchemaFixture(t *testing.T) {
 			"publishedChunks":    []any{map[string]any{"name": fixturePlanChunkName, "uid": string(chunk.GetUID()), "index": int64(0)}},
 			"conditions": []any{map[string]any{
 				"type": "Ready", "status": "True", "reason": "E2EFixture",
+				"observedGeneration": planGeneration,
 				"message":            "Plan fixture is committed for admission testing",
 				"lastTransitionTime": createdAt,
 			}},

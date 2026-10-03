@@ -1,0 +1,223 @@
+{
+  "plan": {
+    "metadata": {
+      "name": "e2e-plan",
+      "namespace": "ptah-test-a-1-37-0-pr585-alerts-diabolocom-3e6dd38e-25ec38ca61",
+      "uid": "5950c666-680f-46e2-bfd7-5513fa813cc3",
+      "resourceVersion": "103478",
+      "generation": 1,
+      "creationTimestamp": "2026-10-03T10:00:38Z",
+      "labels": {
+        "operator.ptah.run/schema": "e2e-suspended-schema"
+      },
+      "ownerReferences": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "kind": "PtahSchema",
+          "name": "e2e-suspended-schema",
+          "uid": "057c3752-f9b9-4c13-9e2e-86061699c583",
+          "controller": true,
+          "blockOwnerDeletion": true
+        }
+      ],
+      "managedFields": [
+        {
+          "manager": "ptah-e2e",
+          "operation": "Update",
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "time": "2026-10-03T10:00:38Z",
+          "fieldsType": "FieldsV1",
+          "fieldsV1": {
+            "f:metadata": {
+              "f:labels": {
+                ".": {},
+                "f:operator.ptah.run/schema": {}
+              },
+              "f:ownerReferences": {
+                ".": {},
+                "k:{\"uid\":\"057c3752-f9b9-4c13-9e2e-86061699c583\"}": {}
+              }
+            },
+            "f:spec": {
+              ".": {},
+              "f:actualStateFingerprint": {},
+              "f:artifactDigest": {},
+              "f:chunks": {
+                ".": {},
+                "k:{\"index\":0}": {
+                  ".": {},
+                  "f:digest": {},
+                  "f:index": {},
+                  "f:name": {},
+                  "f:size": {}
+                }
+              },
+              "f:contentDigest": {},
+              "f:contractVersion": {},
+              "f:controllerImage": {},
+              "f:controllerRevision": {},
+              "f:controllerStateVersion": {},
+              "f:coordinationDigest": {},
+              "f:desiredStateFingerprint": {},
+              "f:destructive": {},
+              "f:dialect": {},
+              "f:executionBindingID": {},
+              "f:executorImage": {},
+              "f:fingerprint": {},
+              "f:policyFingerprint": {},
+              "f:ptahVersion": {},
+              "f:runnerImage": {},
+              "f:runnerProtocolVersion": {},
+              "f:schemaRef": {
+                ".": {},
+                "f:name": {},
+                "f:uid": {}
+              },
+              "f:size": {},
+              "f:statementCount": {},
+              "f:targetIdentityDigest": {},
+              "f:verificationPolicyDigest": {},
+              "f:verificationPolicyUID": {}
+            }
+          }
+        },
+        {
+          "manager": "ptah-e2e",
+          "operation": "Update",
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "time": "2026-10-03T13:26:29Z",
+          "fieldsType": "FieldsV1",
+          "fieldsV1": {
+            "f:status": {
+              ".": {},
+              "f:conditions": {},
+              "f:observedGeneration": {},
+              "f:publishedChunks": {
+                ".": {},
+                "k:{\"index\":0}": {
+                  ".": {},
+                  "f:index": {},
+                  "f:name": {},
+                  "f:uid": {}
+                }
+              }
+            }
+          },
+          "subresource": "status"
+        }
+      ]
+    },
+    "spec": {
+      "contractVersion": 1,
+      "schemaRef": {
+        "name": "e2e-suspended-schema",
+        "uid": "057c3752-f9b9-4c13-9e2e-86061699c583"
+      },
+      "fingerprint": "sha256:839931332a292d6707098fecc80a1945f92a3daf2bfbd42b8c4940a13f23e525",
+      "contentDigest": "sha256:2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881",
+      "size": 1,
+      "artifactDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "coordinationDigest": "sha256:68c75b6f799e62b7e83b7faa832750b589e65c5b419353b6b5753f12db70f569",
+      "targetIdentityDigest": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+      "actualStateFingerprint": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+      "desiredStateFingerprint": "sha256:6666666666666666666666666666666666666666666666666666666666666666",
+      "policyFingerprint": "sha256:7777777777777777777777777777777777777777777777777777777777777777",
+      "verificationPolicyUID": "dd8255ec-11c0-4f20-b153-2990f5a4f9d7",
+      "verificationPolicyDigest": "sha256:c84039b250125e32f0d51caea6afd1d13ebe4e5e0f90d382ee3be2c027574007",
+      "executionBindingID": "v1-85e0ea1f5e3d0de6fbd793f948908501",
+      "controllerImage": "e2e-registry.ptah-test-a-1-37-0-pr585-alerts-diabolocom-3e6dd38e-25ec38ca61.svc.cluster.local:5000/ptah-operator@sha256:05fbe8e18119fed6baa2cb385399296810ac0a81bc9588f4ee7e4bee2f6e0b4b",
+      "controllerRevision": "3e6dd38e660b43a50c529f2045ee879fc72143b9",
+      "controllerStateVersion": 1,
+      "ptahVersion": "v0.9.0-73-gf6e562c5b",
+      "executorImage": "e2e-registry.ptah-test-a-1-37-0-pr585-alerts-diabolocom-3e6dd38e-25ec38ca61.svc.cluster.local:5000/ptah-executor@sha256:42c0e973d463b88a19b06a5ec11dbef072a5fc83c6ae8af81d75355777a99778",
+      "runnerImage": "e2e-registry.ptah-test-a-1-37-0-pr585-alerts-diabolocom-3e6dd38e-25ec38ca61.svc.cluster.local:5000/ptah-runner@sha256:05fbe8e18119fed6baa2cb385399296810ac0a81bc9588f4ee7e4bee2f6e0b4b",
+      "runnerProtocolVersion": 1,
+      "dialect": "postgres",
+      "destructive": false,
+      "statementCount": 1,
+      "chunks": [
+        {
+          "name": "e2e-plan-chunk-0",
+          "index": 0,
+          "digest": "sha256:2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881",
+          "size": 1
+        }
+      ]
+    },
+    "status": {
+      "observedGeneration": 1,
+      "publishedChunks": [
+        {
+          "name": "e2e-plan-chunk-0",
+          "uid": "b825732c-6bb5-4792-b1f4-a2fb29ae0a46",
+          "index": 0
+        }
+      ],
+      "conditions": [
+        {
+          "type": "Ready",
+          "status": "True",
+          "observedGeneration": 1,
+          "lastTransitionTime": "2026-10-03T10:00:38Z",
+          "reason": "E2EFixture",
+          "message": "Plan fixture is committed for admission testing"
+        }
+      ]
+    }
+  },
+  "chunks": [
+    {
+      "metadata": {
+        "name": "e2e-plan-chunk-0",
+        "namespace": "ptah-test-a-1-37-0-pr585-alerts-diabolocom-3e6dd38e-25ec38ca61",
+        "uid": "b825732c-6bb5-4792-b1f4-a2fb29ae0a46",
+        "resourceVersion": "2006",
+        "generation": 1,
+        "creationTimestamp": "2026-10-03T10:00:38Z",
+        "labels": {
+          "operator.ptah.run/plan": "e2e-plan",
+          "operator.ptah.run/schema": "e2e-suspended-schema"
+        },
+        "ownerReferences": [
+          {
+            "apiVersion": "operator.ptah.run/v1alpha1",
+            "kind": "PtahSchemaPlan",
+            "name": "e2e-plan",
+            "uid": "5950c666-680f-46e2-bfd7-5513fa813cc3",
+            "controller": true,
+            "blockOwnerDeletion": true
+          }
+        ],
+        "managedFields": [
+          {
+            "manager": "ptah-e2e",
+            "operation": "Update",
+            "apiVersion": "operator.ptah.run/v1alpha1",
+            "time": "2026-10-03T10:00:38Z",
+            "fieldsType": "FieldsV1",
+            "fieldsV1": {
+              "f:metadata": {
+                "f:labels": {
+                  ".": {},
+                  "f:operator.ptah.run/plan": {},
+                  "f:operator.ptah.run/schema": {}
+                },
+                "f:ownerReferences": {
+                  ".": {},
+                  "k:{\"uid\":\"5950c666-680f-46e2-bfd7-5513fa813cc3\"}": {}
+                }
+              },
+              "f:spec": {
+                ".": {},
+                "f:data": {}
+              }
+            }
+          }
+        ]
+      },
+      "spec": {
+        "data": "eA=="
+      }
+    }
+  ]
+}
