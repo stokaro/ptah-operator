@@ -7,8 +7,11 @@
   "correctedCommand": "GOFLAGS=-p=1 go test ./internal/certrotation ./hack/acceptancecoverage",
   "correctedResult": "PASS for both complete packages",
   "remaining": [
-    "Required envtest and race checks.",
     "Native alert integration and the previously retained SQL-lifetime CI failure remain separate gates.",
     "No complete CI or production acceptance verdict."
-  ]
+  ],
+  "remainingValidationSource": "275e69c8e0c3e96f41dc2d6a5d0ad40af39fab60",
+  "remainingValidationCommand": "GOFLAGS=-p=1 make test-envtest test-race",
+  "remainingValidationResult": "PASS, terminal exit 0. Required envtest used Kubernetes 1.37.0 assets with PTAH_REQUIRE_ENVTEST=1. Race testing passed with the repository-declared mutation exclusions; those mutation suites passed in the original non-race source run.",
+  "sourceGateDisposition": "All required local source checks passed across the retained initial run, the corrected runner-protocol check, the repaired unit packages, and the envtest/race continuation. No unchanged successful stage was rerun to manufacture a single-run verdict."
 }

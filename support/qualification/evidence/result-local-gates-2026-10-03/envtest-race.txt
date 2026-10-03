@@ -1,0 +1,89 @@
+ok  	github.com/stokaro/ptah-operator/test/envtest/admissionpolicy	102.284s
+ok  	github.com/stokaro/ptah-operator/test/envtest/crd	10.114s
+?   	github.com/stokaro/ptah-operator/test/envtest/internal/harness	[no test files]
+ok  	github.com/stokaro/ptah-operator/test/envtest/internal/policyenv	0.481s
+ok  	github.com/stokaro/ptah-operator/test/envtest/resultstore	20.585s
+ok  	github.com/stokaro/ptah-operator/test/envtest/webhook	16.226s
+go test -race -count=1 -timeout=10m -skip '^(TestVerifyE2EHarnessRejectsCriticalMutations|TestVerifyFailedUpgradeEvidenceRejectsCriticalMutations|TestVerifyE2EChildScriptsRejectCriticalMutations)$' ./...
+ok  	github.com/stokaro/ptah-operator/api/v1alpha1	1.964s
+ok  	github.com/stokaro/ptah-operator/cmd/kubectl-ptah	1.573s
+?   	github.com/stokaro/ptah-operator/cmd/manager	[no test files]
+ok  	github.com/stokaro/ptah-operator/cmd/ptah-cert-rotator	1.640s
+ok  	github.com/stokaro/ptah-operator/cmd/ptah-crd-manager	1.693s
+ok  	github.com/stokaro/ptah-operator/cmd/ptah-runner	19.184s
+ok  	github.com/stokaro/ptah-operator/demo/cmd/record	1.940s
+?   	github.com/stokaro/ptah-operator/demo/reference/v1	[no test files]
+?   	github.com/stokaro/ptah-operator/demo/reference/v2	[no test files]
+?   	github.com/stokaro/ptah-operator/demo/reference/v3	[no test files]
+ok  	github.com/stokaro/ptah-operator/examples	1.741s
+ok  	github.com/stokaro/ptah-operator/hack	15.171s
+ok  	github.com/stokaro/ptah-operator/hack/acceptancecoverage	1.419s
+ok  	github.com/stokaro/ptah-operator/hack/capacity	10.149s
+ok  	github.com/stokaro/ptah-operator/hack/capacityplancheck	1.331s
+ok  	github.com/stokaro/ptah-operator/hack/chartpackage	2.454s
+ok  	github.com/stokaro/ptah-operator/hack/chartpolicies	2.052s
+ok  	github.com/stokaro/ptah-operator/hack/crdreference	1.367s
+?   	github.com/stokaro/ptah-operator/hack/crdschemadigest	[no test files]
+ok  	github.com/stokaro/ptah-operator/hack/crdschemahistory	4.612s
+ok  	github.com/stokaro/ptah-operator/hack/e2etiming	1.537s
+ok  	github.com/stokaro/ptah-operator/hack/ptahdriftcategories	1.557s
+ok  	github.com/stokaro/ptah-operator/hack/releasenamespace	2.736s
+ok  	github.com/stokaro/ptah-operator/hack/releaseverify	9.741s
+?   	github.com/stokaro/ptah-operator/hack/unknownlayerfixture	[no test files]
+ok  	github.com/stokaro/ptah-operator/hack/updatekubernetessupport	1.333s
+ok  	github.com/stokaro/ptah-operator/hack/upgradealert	6.216s
+ok  	github.com/stokaro/ptah-operator/hack/verifycrdschemahistory	1.373s
+ok  	github.com/stokaro/ptah-operator/hack/verifyptahsupport	1.342s
+ok  	github.com/stokaro/ptah-operator/hack/verifyrunnerprotocol	2.393s
+ok  	github.com/stokaro/ptah-operator/internal/admission	2.348s
+ok  	github.com/stokaro/ptah-operator/internal/certrotation	15.039s
+ok  	github.com/stokaro/ptah-operator/internal/controller	9.641s
+ok  	github.com/stokaro/ptah-operator/internal/controllerstate	1.316s
+ok  	github.com/stokaro/ptah-operator/internal/controllerwrite	3.206s
+?   	github.com/stokaro/ptah-operator/internal/coordination	[no test files]
+ok  	github.com/stokaro/ptah-operator/internal/crdupgrade	36.776s
+ok  	github.com/stokaro/ptah-operator/internal/dataplane	1.415s
+ok  	github.com/stokaro/ptah-operator/internal/fingerprint	1.325s
+ok  	github.com/stokaro/ptah-operator/internal/jobclaim	1.667s
+ok  	github.com/stokaro/ptah-operator/internal/managercache	1.538s
+ok  	github.com/stokaro/ptah-operator/internal/migrationplan	1.542s
+ok  	github.com/stokaro/ptah-operator/internal/migrationview	2.085s
+ok  	github.com/stokaro/ptah-operator/internal/mutationlifecycle	1.552s
+ok  	github.com/stokaro/ptah-operator/internal/ocireference	1.325s
+?   	github.com/stokaro/ptah-operator/internal/plancontract	[no test files]
+ok  	github.com/stokaro/ptah-operator/internal/planseal	1.334s
+ok  	github.com/stokaro/ptah-operator/internal/planstore	3.372s
+ok  	github.com/stokaro/ptah-operator/internal/planview	2.296s
+ok  	github.com/stokaro/ptah-operator/internal/podintent	2.532s
+ok  	github.com/stokaro/ptah-operator/internal/policy	2.048s
+ok  	github.com/stokaro/ptah-operator/internal/resultauthority	3.203s
+ok  	github.com/stokaro/ptah-operator/internal/resultcleanup	12.494s
+ok  	github.com/stokaro/ptah-operator/internal/resultconsumer	24.830s
+ok  	github.com/stokaro/ptah-operator/internal/resultcredentials	7.326s
+?   	github.com/stokaro/ptah-operator/internal/resultcredentials/binding	[no test files]
+ok  	github.com/stokaro/ptah-operator/internal/resultdelivery	37.128s
+ok  	github.com/stokaro/ptah-operator/internal/resultdelivery/jobconfig	1.668s
+?   	github.com/stokaro/ptah-operator/internal/resultdelivery/resulttest	[no test files]
+ok  	github.com/stokaro/ptah-operator/internal/resultretention	2.403s
+ok  	github.com/stokaro/ptah-operator/internal/resultservice	2.806s
+ok  	github.com/stokaro/ptah-operator/internal/resultstore	32.739s
+ok  	github.com/stokaro/ptah-operator/internal/runner	17.607s
+ok  	github.com/stokaro/ptah-operator/internal/schemaselector	1.310s
+ok  	github.com/stokaro/ptah-operator/internal/schemaview	2.103s
+ok  	github.com/stokaro/ptah-operator/internal/targetlock	2.116s
+ok  	github.com/stokaro/ptah-operator/internal/telemetry	4.540s
+ok  	github.com/stokaro/ptah-operator/internal/workload	2.362s
+ok  	github.com/stokaro/ptah-operator/test/e2e	5.403s
+ok  	github.com/stokaro/ptah-operator/test/e2e/alertsink	1.360s
+ok  	github.com/stokaro/ptah-operator/test/e2e/handcraftoci	1.811s
+ok  	github.com/stokaro/ptah-operator/test/e2e/harness	2.564s
+ok  	github.com/stokaro/ptah-operator/test/e2e/logstall	2.363s
+ok  	github.com/stokaro/ptah-operator/test/e2e/phases	1.319s
+ok  	github.com/stokaro/ptah-operator/test/e2e/resultframe	1.317s
+ok  	github.com/stokaro/ptah-operator/test/e2e/runnerprotocolfixture	5.236s
+ok  	github.com/stokaro/ptah-operator/test/envtest/admissionpolicy	1.673s
+ok  	github.com/stokaro/ptah-operator/test/envtest/crd	1.666s
+?   	github.com/stokaro/ptah-operator/test/envtest/internal/harness	[no test files]
+ok  	github.com/stokaro/ptah-operator/test/envtest/internal/policyenv	1.555s
+ok  	github.com/stokaro/ptah-operator/test/envtest/resultstore	1.692s
+ok  	github.com/stokaro/ptah-operator/test/envtest/webhook	1.808s
