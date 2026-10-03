@@ -1,0 +1,10 @@
+{
+  "testSourceRevision": "5e7f05da7819605b1123324c085ea1634974a632",
+  "runtimeRevision": "3e6dd38e660b43a50c529f2045ee879fc72143b9",
+  "dockerContext": "diabolocom",
+  "scope": "The four corrected lock cases and seven later scenarios; prior native passes not repeated.",
+  "preparation": "Remove only the failed PostgreSQL Schema owner/sibling by retained UID through normal finalization, then verify no database clients before dropping the isolated DB. Use a fresh artifact repository e2e-alert-lock-sentinel-fix and fresh held-fixture namespace name ptah-e2e-alerting-stalled-lock-fix. Preserve protected result objects under normal retention.",
+  "entrySHA256": "8c74c5092fd7303de4479194bd965b7212ea846941231e7295b79af14e3642f1",
+  "namespaceOverlaySHA256": "3c5d812c5fcc85a15218d24e23de44b4d29dc374f4eec295c5e3ab3ccb1576b9",
+  "repositoryOverlaySHA256": "4c35eab676c7056c8d40f6595a49b7985a8e1a01125e58109c31da2f078e96b2"
+}

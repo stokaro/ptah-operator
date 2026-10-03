@@ -1,0 +1,20 @@
+{
+  "requirement": "#581 OperationsFailing delivery and recovery; #586 default alert integration",
+  "runtimeRevision": "3e6dd38e660b43a50c529f2045ee879fc72143b9",
+  "testSourceRevision": "5e7f05da7819605b1123324c085ea1634974a632",
+  "dockerContext": "diabolocom",
+  "kubernetesVersion": "1.37.0",
+  "platform": "linux/amd64",
+  "result": "PASS: the unchanged operations-failing native scenario completed for both Schema and Migration. Each consumer retains its UID, generation, policy, source reference and cadence through four failed Resolve Jobs, publication of the missing artifact and successful recovery. Native counter/scrape histories, firing and resolved receiver timestamps, the full five-minute quiet window, closed watches and credential audit pass. No Apply occurs.",
+  "schema": {
+    "uid": "3c9189e1-3a43-4a63-989f-f791f728cff3",
+    "firingReceived": "2026-10-03T12:42:08.979073584Z",
+    "resolvedReceived": "2026-10-03T12:46:38.997644113Z"
+  },
+  "migration": {
+    "uid": "3c9f9d2e-4d6a-4beb-9c50-366c54ce7448",
+    "firingReceived": "2026-10-03T12:48:43.97906036Z",
+    "resolvedReceived": "2026-10-03T12:53:14.000053077Z"
+  },
+  "scope": "Individual scenario on the retained runtime, not a complete final-head phase or support matrix. Six later alert scenarios remain separate."
+}
