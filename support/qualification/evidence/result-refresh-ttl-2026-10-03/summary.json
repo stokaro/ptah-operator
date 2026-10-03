@@ -1,5 +1,5 @@
 {
-  "status": "local checks passed; corrected native gate pending",
+  "status": "passed local regression and retained native blocked-refresh gate; complete data-plane pending",
   "baseCommit": "060a04cf211f6cbef659a4c47fef31a184899583",
   "scope": "Existing blocked-refresh gate in the default durable data-plane suite; final acceptance integration DoD in #586.",
   "sourceSHA256": {
@@ -24,8 +24,23 @@
   ],
   "limits": [
     "No controller behavior, TTL, refresh interval, exact chain count or Apply prohibition changed.",
-    "Synthetic archive regression does not establish a passing native gate.",
-    "The retained native timeline is a failed-run diagnostic, not a complete terminal workload archive.",
-    "The native suite stopped before later scenarios; no full data-plane or CI verdict is claimed."
-  ]
+    "The native diagnostic covers the original failed gate, not the complete data-plane suite or later scenarios.",
+    "The prior failed-run timeline and corrected terminal Job/Pod/result archives are retained separately.",
+    "No current-head CI or release-readiness verdict is claimed."
+  ],
+  "native": {
+    "testCommit": "70b8cb34c7db7e125d809eb634c9ece5341319a2",
+    "runtimeCommit": "060a04cf211f6cbef659a4c47fef31a184899583",
+    "kubernetes": "1.37.0",
+    "platform": "linux/amd64",
+    "durationSeconds": 552.99,
+    "readOnlyJobs": 12,
+    "collectedJobCount": 3,
+    "intervalSeconds": 90,
+    "applyJobs": 0,
+    "result": "passed",
+    "scope": "The original gate, its archive validation, exact counts, interval ordering, plan retention and quiet-cadence restoration ran unchanged on the retained default installation. A temporary Go overlay supplies only diagnostic setup and TestMain; it does not emit a full phase-completion record. The final schema is suspended.",
+    "sourceComparison": "Only test and qualification evidence files changed between the runtime and diagnostic source revisions.",
+    "cleanup": "Removed the six cluster containers, registry, external PostgreSQL, four task image tags and exact claim volume; filtered Docker readback is empty. The diagnostic SSH tunnel is stopped. The pre-existing kind network and shared resources are retained."
+  }
 }
