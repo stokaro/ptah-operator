@@ -1,0 +1,91 @@
+{
+  "sourceCommit": "060a04cf211f6cbef659a4c47fef31a184899583",
+  "suite": "data-plane",
+  "kubernetes": "1.37.0",
+  "platform": "linux/amd64",
+  "outcome": "failed",
+  "failure": "e2e-postgresql created work beyond three exact blocked refresh chains",
+  "timeline": {
+    "kind": "ObservedJobTimelineDiagnostic",
+    "jobs": [
+      {
+        "name": "ptah-resolve-e2e-postgresql-1acbb2defe3cf054",
+        "uid": "04157026-b81b-4ae3-bd67-5499eddede1d",
+        "operation": "resolve",
+        "created": "2026-10-03T03:23:05Z"
+      },
+      {
+        "name": "ptah-verify-e2e-postgresql-95e7b1c9aeb63d96",
+        "uid": "87f593b1-2241-4ab6-a437-6b6cff270a63",
+        "operation": "verify",
+        "created": "2026-10-03T03:23:16Z"
+      },
+      {
+        "name": "ptah-observe-e2e-postgresql-5ab81cd388d1998d",
+        "uid": "ae77d957-dce3-4beb-b3fe-d15139321790",
+        "operation": "observe",
+        "created": "2026-10-03T03:23:28Z"
+      },
+      {
+        "name": "ptah-plan-e2e-postgresql-b69ba1d40f964921",
+        "uid": "04771418-d038-42dd-aabb-e5059cf59153",
+        "operation": "plan",
+        "created": "2026-10-03T03:23:40Z"
+      },
+      {
+        "name": "ptah-resolve-e2e-postgresql-04c50869a6bdcb7a",
+        "uid": "ca3bbe6f-8197-4d94-9583-6859a805dc63",
+        "operation": "resolve",
+        "created": "2026-10-03T03:25:26Z"
+      },
+      {
+        "name": "ptah-verify-e2e-postgresql-4523efd135aaedd5",
+        "uid": "d3b516ca-e554-42f5-92bb-574724dd589c",
+        "operation": "verify",
+        "created": "2026-10-03T03:25:36Z"
+      },
+      {
+        "name": "ptah-observe-e2e-postgresql-274ed93b5eefd80a",
+        "uid": "8ad0d07d-9ed7-4978-a24d-1071fd092120",
+        "operation": "observe",
+        "created": "2026-10-03T03:25:48Z"
+      },
+      {
+        "name": "ptah-plan-e2e-postgresql-ba47856378fe944f",
+        "uid": "063a22cf-4137-4da7-8f4b-af0decd886b7",
+        "operation": "plan",
+        "created": "2026-10-03T03:26:00Z"
+      },
+      {
+        "name": "ptah-resolve-e2e-postgresql-da8936a401f9a123",
+        "uid": "91e5822c-6d12-44e1-bdcf-fede6dcf7578",
+        "operation": "resolve",
+        "created": "2026-10-03T03:27:43Z"
+      },
+      {
+        "name": "ptah-verify-e2e-postgresql-92647fab0e4a3640",
+        "uid": "9060acb5-d4ce-4ac2-8216-bae11ace0019",
+        "operation": "verify",
+        "created": "2026-10-03T03:27:53Z"
+      },
+      {
+        "name": "ptah-observe-e2e-postgresql-0335929a25e1798b",
+        "uid": "e34a1c41-fb35-4bfa-9944-c3d4bc26e83c",
+        "operation": "observe",
+        "created": "2026-10-03T03:28:06Z"
+      },
+      {
+        "name": "ptah-plan-e2e-postgresql-5772cb1cf3ba84eb",
+        "uid": "cd4d7e28-dadd-4908-a9bf-053036b75988",
+        "operation": "plan",
+        "created": "2026-10-03T03:28:19Z"
+      },
+      {
+        "name": "ptah-resolve-e2e-postgresql-3878e19473c3a3a6",
+        "uid": "0b99ed86-9c5b-429f-ad09-abd827aa198a",
+        "operation": "resolve",
+        "created": "2026-10-03T03:30:06Z"
+      }
+    ]
+  }
+}

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -446,4 +447,34 @@ func admittedContainerResources(actual, declared []corev1.Container) bool {
 		delete(expected, container.Name)
 	}
 	return len(expected) == 0
+}
+
+// archivedJobsComplete uses the terminal evidence captured before Job TTL
+// collection. A missing API object is not completion; only the full validated
+// Job, Pod and result archive can prove it after collection.
+func archivedJobsComplete(records []observedJob, schema, operation string, minimum int, protocol int64, archive map[string]*jobEvidence) (bool, error) {
+	if minimum <= 0 || len(records) < minimum {
+		return false, nil
+	}
+	seen := map[string]bool{}
+	for _, record := range records {
+		if record.Name == "" || record.UID == "" || record.Schema != schema || record.Operation != operation || seen[record.UID] {
+			return false, errors.New("completed Job ledger has missing, repeated or mismatched identities")
+		}
+		seen[record.UID] = true
+		evidence := archive[record.UID]
+		if evidence == nil {
+			return false, nil
+		}
+		if evidence.job == nil || evidence.pod == nil {
+			return false, errors.New("completed Job archive has missing workload evidence")
+		}
+		if evidence.job.Name != record.Name || record.Created == "" || evidence.job.CreationTimestamp.UTC().Format(time.RFC3339) != record.Created {
+			return false, errors.New("completed Job archive disagrees with the recorded workload")
+		}
+		if err := validateJobEvidence(evidence, schema, operation, types.UID(record.UID), "", protocol); err != nil {
+			return false, err
+		}
+	}
+	return true, nil
 }

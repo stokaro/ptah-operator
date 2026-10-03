@@ -1,0 +1,31 @@
+{
+  "status": "local checks passed; corrected native gate pending",
+  "baseCommit": "060a04cf211f6cbef659a4c47fef31a184899583",
+  "scope": "Existing blocked-refresh gate in the default durable data-plane suite; final acceptance integration DoD in #586.",
+  "sourceSHA256": {
+    "test/e2e/dataplane_audit_e2e_test.go": "3b7a7f085c63da7bbe34be1b4ebc9eb13ab70e1bb37cc42add3d2a5188affbfd",
+    "test/e2e/dataplane_evidence.go": "82e7b8b199ad1d91363dbe67274658c00f31fb8401654ed2de705912803c35a0",
+    "test/e2e/dataplane_evidence_test.go": "b05590873828a1c59ad42c5fe0855aed03d871276db0003f89c18123f228dc9a"
+  },
+  "reproduction": "The native data-plane run completed three interval-spaced read-only chains. The first Jobs expired before the third completed; live completion lookups never accepted the archived completion, so the next scheduled Resolve exceeded the exact three-chain boundary.",
+  "checks": [
+    {
+      "command": "GOFLAGS=-p=1 go test ./test/e2e -run 'TestArchivedJobsCompleteAfterTTLCollection|TestValidateJobEvidence|Test.*RefreshChains' -count=1 -v",
+      "exitCode": 0
+    },
+    {
+      "command": "GOFLAGS=-p=1 go test -tags=e2e ./test/e2e -c",
+      "exitCode": 0
+    },
+    {
+      "command": "GOFLAGS=-p=1 go vet -tags=e2e ./test/e2e",
+      "exitCode": 0
+    }
+  ],
+  "limits": [
+    "No controller behavior, TTL, refresh interval, exact chain count or Apply prohibition changed.",
+    "Synthetic archive regression does not establish a passing native gate.",
+    "The retained native timeline is a failed-run diagnostic, not a complete terminal workload archive.",
+    "The native suite stopped before later scenarios; no full data-plane or CI verdict is claimed."
+  ]
+}

@@ -106,29 +106,14 @@ func (d *dataPlane) assertNoNewJobs(schema, operation string, before checkpoint)
 	}
 }
 
-// allNewJobsComplete reports whether at least minimum Jobs of the operation
-// appeared since the checkpoint and every one of them, read live, completed.
+// allNewJobsComplete reads the completed evidence already captured by the
+// preceding audit, so Job TTL collection cannot undo a verified completion.
 func (d *dataPlane) allNewJobsComplete(schema, operation string, before checkpoint, minimum int) bool {
 	d.t.Helper()
 	d.recordObservedJobs()
-	records := d.observed.since(schema, operation, before)
-	if len(records) < minimum {
-		return false
-	}
-	for _, record := range records {
-		if record.Name == "" || record.UID == "" {
-			d.fatalf("could not validate new %s Job identities for %s", operation, schema)
-		}
-		job := &batchv1.Job{}
-		if err := d.get(record.Name, job); err != nil {
-			return false
-		}
-		if string(job.UID) != record.UID || job.Labels[labelSchema] != schema ||
-			job.Labels[labelOperation] != operation || !jobComplete(job) {
-			return false
-		}
-	}
-	return true
+	complete, err := archivedJobsComplete(d.observed.since(schema, operation, before), schema, operation, minimum, d.runnerProtocol, d.evidence)
+	d.check(err, "validate completed %s Job archives for %s", operation, schema)
+	return complete
 }
 
 // readResultTransport reads diagnostic output and the result selected by the

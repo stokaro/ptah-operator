@@ -2,8 +2,10 @@ package e2e
 
 import (
 	"cmp"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -432,5 +434,78 @@ func TestOperationLabelIsTheOperationIDsDigestPrefix(t *testing.T) {
 	// printf '%s' "$id" | sha256sum | cut -c1-16, for the fixture's ID.
 	if got := operationLabel("abc"); got != "ba7816bf8f01cfea" {
 		t.Fatalf("operationLabel(abc) = %s", got)
+	}
+}
+
+// The first refresh can be TTL-collected before the third completes. These
+// checks deliberately have no live Job client: only captured terminal evidence
+// can establish completion once Kubernetes removes the original workloads.
+func TestArchivedJobsCompleteAfterTTLCollection(t *testing.T) {
+	t.Parallel()
+	fixture := func() ([]observedJob, map[string]*jobEvidence) {
+		var records []observedJob
+		archive := map[string]*jobEvidence{}
+		for index := range 3 {
+			evidence := validEvidence()
+			name := fmt.Sprintf("refresh-plan-%d", index)
+			uid := types.UID(fmt.Sprintf("refresh-uid-%d", index))
+			evidence.job.Name, evidence.job.UID = name, uid
+			evidence.job.CreationTimestamp = metav1.NewTime(time.Date(2026, 10, 3, 3, 23+index*2, 0, 0, time.UTC))
+			evidence.pod.Name, evidence.pod.UID = name+"-pod", types.UID(name+"-pod-uid")
+			evidence.pod.GenerateName = name + "-"
+			evidence.pod.OwnerReferences[0].Name, evidence.pod.OwnerReferences[0].UID = name, uid
+			records = append(records, observedJob{Name: name, UID: string(uid), Schema: evidenceSchema,
+				Operation: evidenceOperation, Created: evidence.job.CreationTimestamp.UTC().Format(time.RFC3339)})
+			archive[string(uid)] = evidence
+		}
+		return records, archive
+	}
+	records, archive := fixture()
+	if complete, err := archivedJobsComplete(records, evidenceSchema, evidenceOperation, 3, evidenceProtocol, archive); err != nil || !complete {
+		t.Fatalf("complete archived refreshes were refused: complete=%t, err=%v", complete, err)
+	}
+	for _, test := range []struct {
+		name      string
+		edit      func([]observedJob, map[string]*jobEvidence)
+		wantError bool
+	}{
+		{name: "no archive", edit: func(records []observedJob, archive map[string]*jobEvidence) { delete(archive, records[0].UID) }},
+		{name: "nil archive", edit: func(records []observedJob, archive map[string]*jobEvidence) { archive[records[0].UID] = nil }},
+		{name: "missing Job", wantError: true, edit: func(records []observedJob, archive map[string]*jobEvidence) { archive[records[0].UID].job = nil }},
+		{name: "missing Pod", wantError: true, edit: func(records []observedJob, archive map[string]*jobEvidence) { archive[records[0].UID].pod = nil }},
+		{name: "incomplete Job", wantError: true, edit: func(records []observedJob, archive map[string]*jobEvidence) {
+			archive[records[0].UID].job.Status.Conditions = nil
+		}},
+		{name: "replacement Job", wantError: true, edit: func(records []observedJob, archive map[string]*jobEvidence) {
+			archive[records[0].UID].job.UID = "replacement"
+		}},
+		{name: "renamed Job", wantError: true, edit: func(records []observedJob, archive map[string]*jobEvidence) {
+			archive[records[0].UID].job.Name = "other"
+		}},
+		{name: "changed creation time", wantError: true, edit: func(records []observedJob, archive map[string]*jobEvidence) { records[0].Created = records[1].Created }},
+		{name: "missing creation time", wantError: true, edit: func(records []observedJob, archive map[string]*jobEvidence) { records[0].Created = "" }},
+		{name: "duplicate UID", wantError: true, edit: func(records []observedJob, archive map[string]*jobEvidence) { records[1] = records[0] }},
+		{name: "wrong schema", wantError: true, edit: func(records []observedJob, archive map[string]*jobEvidence) { records[0].Schema = "other" }},
+		{name: "wrong operation", wantError: true, edit: func(records []observedJob, archive map[string]*jobEvidence) { records[0].Operation = "apply" }},
+		{name: "foreign Pod", wantError: true, edit: func(records []observedJob, archive map[string]*jobEvidence) {
+			archive[records[0].UID].pod.OwnerReferences[0].UID = "other"
+		}},
+		{name: "foreign result", wantError: true, edit: func(records []observedJob, archive map[string]*jobEvidence) {
+			archive[records[0].UID].result.OperationID = "other"
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			records, archive := fixture()
+			test.edit(records, archive)
+			complete, err := archivedJobsComplete(records, evidenceSchema, evidenceOperation, 3, evidenceProtocol, archive)
+			if complete || (err != nil) != test.wantError {
+				t.Fatalf("complete=%t, err=%v; want complete=false, error=%t", complete, err, test.wantError)
+			}
+		})
+	}
+	for _, count := range []int{0, 2} {
+		if complete, err := archivedJobsComplete(records[:count], evidenceSchema, evidenceOperation, 3, evidenceProtocol, archive); complete || err != nil {
+			t.Fatalf("%d refreshes accepted or failed unexpectedly: complete=%t, err=%v", count, complete, err)
+		}
 	}
 }
