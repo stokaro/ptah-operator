@@ -1,0 +1,14 @@
+{
+  "testSourceRevision": "e3641a478b94ec705f87b0908fe51e0eadc482a9",
+  "runtimeRevision": "3e6dd38e660b43a50c529f2045ee879fc72143b9",
+  "dockerContext": "diabolocom",
+  "scope": "Complete plan-store scenario with corrected sharing and admission fixture generation; five later existing scenarios. Prior successful scenarios are not repeated.",
+  "preparation": "Correct only the exact admission fixture Ready.observedGeneration through its original fixture status identity; red/green reconstructs unchanged bytes. Remove twenty failed consumers by UID with normal finalization, completed publishers and unused isolated database/Secret. Preserve protected result retention. Use fresh repository e2e-alert-plan-store-generation-fix.",
+  "overlayHashes": {
+    "main_e2e_test.go": "34ecd6c957614a556376e0f6931fecebac7fd166a9e91af9346ac430f7ee11b6",
+    "alerting.go": "3c5d812c5fcc85a15218d24e23de44b4d29dc374f4eec295c5e3ab3ccb1576b9",
+    "alerting_lock_e2e_test.go": "4c35eab676c7056c8d40f6595a49b7985a8e1a01125e58109c31da2f078e96b2",
+    "alerting_plan_store_e2e_test.go": "10275b92b009c9589238a54ed7f609ef206223f50fbcba08fb3396c7be23b83d",
+    "alerting_unresolved_schema_e2e_test.go": "f6586a4b509c6b0f7bc4b8b19cac7910798d8e3f9246a537ff70219daf8ef504"
+  }
+}
