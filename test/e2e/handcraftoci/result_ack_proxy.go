@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -19,6 +20,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/stokaro/ptah-operator/internal/resultdelivery"
 )
 
 const resultDigestHeader = "X-Ptah-Result-Digest"
@@ -38,7 +41,11 @@ type ackEvidence struct {
 	FirstWaits              int              `json:"firstWaits,omitempty"`
 	FirstResumedAt          *time.Time       `json:"firstResumedAt,omitempty"`
 	FirstAdmissions         []firstAdmission `json:"firstAdmissions,omitempty"`
-	ClientCertificateDigest string           `json:"clientCertificateDigest"`
+	ClientCertificateDigest string           `json:"clientCertificateDigest,omitempty"`
+	Authentication          string           `json:"authentication,omitempty"`
+	IdentityDigest          string           `json:"identityDigest,omitempty"`
+	JobUID                  string           `json:"jobUID,omitempty"`
+	PodUID                  string           `json:"podUID,omitempty"`
 	Preflights              int              `json:"preflights"`
 	Attempts                []ackAttempt     `json:"attempts"`
 	Dropped                 bool             `json:"dropped"`
@@ -60,6 +67,7 @@ type resultACKProxy struct {
 	client          *http.Client
 	origin          string
 	clientLeaf      []byte
+	jobUID          string
 	mu              sync.Mutex
 	evidence        ackEvidence
 	slot            chan struct{}
@@ -71,8 +79,50 @@ func newResultACKProxy(client *http.Client, origin string, clientLeaf []byte) *r
 	return &resultACKProxy{resumeFirst: make(chan struct{}), firstAdmissions: make(chan struct{}), client: client, origin: origin, clientLeaf: bytes.Clone(clientLeaf), slot: make(chan struct{}, 1), release: make(chan struct{}), resumeRetry: make(chan struct{}), evidence: ackEvidence{ClientCertificateDigest: digest(clientLeaf), Attempts: []ackAttempt{}}}
 }
 
+func newResultACKTokenProxy(client *http.Client, origin, jobUID string) *resultACKProxy {
+	p := newResultACKProxy(client, origin, nil)
+	p.jobUID = jobUID
+	p.evidence.ClientCertificateDigest = ""
+	p.evidence.Authentication = "pod-token"
+	return p
+}
+
+// This only restricts the fixture to the intended Job. The real receiver must
+// authenticate the forwarded token before any preflight or receipt is counted.
+func (p *resultACKProxy) tokenClaim(r *http.Request) (string, string, bool) {
+	if r.TLS == nil || r.TLS.Version < tls.VersionTLS13 {
+		return "", "", false
+	}
+	authorization := r.Header.Values("Authorization")
+	identity := r.Header.Values("X-Ptah-Result-Identity")
+	if len(authorization) != 1 || !strings.HasPrefix(authorization[0], "Bearer ") ||
+		!resultdelivery.ValidToken(strings.TrimPrefix(authorization[0], "Bearer ")) ||
+		len(identity) != 1 || len(identity[0]) > 4<<10 {
+		return "", "", false
+	}
+	raw, err := base64.RawURLEncoding.Strict().DecodeString(identity[0])
+	var claim struct {
+		Binding struct{ JobUID, PodUID string } `json:"binding"`
+	}
+	if err != nil || json.Unmarshal(raw, &claim) != nil || claim.Binding.JobUID != p.jobUID || claim.Binding.PodUID == "" {
+		return "", "", false
+	}
+	identityDigest := digest(raw)
+	p.mu.Lock()
+	pinned := p.evidence.IdentityDigest
+	p.mu.Unlock()
+	return claim.Binding.PodUID, identityDigest, (pinned == "" && r.Method == http.MethodHead) || pinned == identityDigest
+}
+
 func (p *resultACKProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.TLS == nil || len(r.TLS.VerifiedChains) == 0 || len(r.TLS.PeerCertificates) != 1 || !bytes.Equal(r.TLS.PeerCertificates[0].Raw, p.clientLeaf) {
+	var podUID, identityDigest string
+	valid := false
+	if p.jobUID != "" {
+		podUID, identityDigest, valid = p.tokenClaim(r)
+	} else {
+		valid = r.TLS != nil && len(r.TLS.VerifiedChains) > 0 && len(r.TLS.PeerCertificates) == 1 && bytes.Equal(r.TLS.PeerCertificates[0].Raw, p.clientLeaf)
+	}
+	if !valid {
 		http.Error(w, "wrong fixture identity", http.StatusForbidden)
 		return
 	}
@@ -143,6 +193,10 @@ func (p *resultACKProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	request.Header.Set("Content-Type", r.Header.Get("Content-Type"))
 	request.Header.Set(resultDigestHeader, r.Header.Get(resultDigestHeader))
+	if p.jobUID != "" {
+		request.Header.Set("Authorization", r.Header.Get("Authorization"))
+		request.Header.Set("X-Ptah-Result-Identity", r.Header.Get("X-Ptah-Result-Identity"))
+	}
 	response, err := p.client.Do(request)
 	if err != nil {
 		http.Error(w, "fixture upstream failed", http.StatusBadGateway)
@@ -152,6 +206,9 @@ func (p *resultACKProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodHead {
 		if response.StatusCode == http.StatusNoContent {
 			p.mu.Lock()
+			if p.jobUID != "" {
+				p.evidence.JobUID, p.evidence.PodUID, p.evidence.IdentityDigest = p.jobUID, podUID, identityDigest
+			}
 			p.evidence.Preflights++
 			p.mu.Unlock()
 		}
@@ -264,9 +321,11 @@ func runResultACKProxy(args []string) error {
 	serverName := flags.String("server-name", "", "")
 	trustDir := flags.String("trust-directory", "", "")
 	credentialDir := flags.String("credential-directory", "", "")
+	jobUID := flags.String("job-uid", "", "")
 	pauseRetry := flags.Bool("pause-retry", false, "")
 	pauseFirst := flags.String("pause-first-namespace", "", "")
-	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || *serverName == "" || strings.ContainsAny(*serverName, "/:@?#") || !filepath.IsAbs(*trustDir) || !filepath.IsAbs(*credentialDir) {
+	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || *serverName == "" || strings.ContainsAny(*serverName, "/:@?#") || !filepath.IsAbs(*trustDir) ||
+		(*jobUID == "" && !filepath.IsAbs(*credentialDir)) || (*jobUID != "" && (*credentialDir != "" || *pauseFirst != "" || len(*jobUID) > 128 || strings.ContainsAny(*jobUID, " \t\r\n"))) {
 		return errors.New("invalid result ACK proxy configuration")
 	}
 	if _, _, err := net.SplitHostPort(*backend); err != nil {
@@ -276,10 +335,6 @@ func runResultACKProxy(args []string) error {
 	if err != nil {
 		return errors.New("cannot load result ACK proxy server certificate")
 	}
-	credential, err := tls.LoadX509KeyPair(filepath.Join(*credentialDir, "tls.crt"), filepath.Join(*credentialDir, "tls.key"))
-	if err != nil {
-		return errors.New("cannot load result ACK proxy client certificate")
-	}
 	readPool := func(path string) (*x509.CertPool, error) {
 		data, err := os.ReadFile(path)
 		pool := x509.NewCertPool()
@@ -288,24 +343,42 @@ func runResultACKProxy(args []string) error {
 		}
 		return pool, nil
 	}
-	clientRoots, err := readPool(filepath.Join(*trustDir, "client-trust.crt"))
+	clientTLS := &tls.Config{MinVersion: tls.VersionTLS13, ServerName: *serverName}
+	serverTLS := &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{server}, NextProtos: []string{"http/1.1"}}
+	var clientLeaf []byte
+	caDirectory := *trustDir
+	if *jobUID == "" {
+		credential, err := tls.LoadX509KeyPair(filepath.Join(*credentialDir, "tls.crt"), filepath.Join(*credentialDir, "tls.key"))
+		if err != nil {
+			return errors.New("cannot load result ACK proxy client certificate")
+		}
+		clientRoots, err := readPool(filepath.Join(*trustDir, "client-trust.crt"))
+		if err != nil {
+			return err
+		}
+		clientLeaf = credential.Certificate[0]
+		clientTLS.Certificates = []tls.Certificate{credential}
+		serverTLS.ClientAuth, serverTLS.ClientCAs = tls.RequireAndVerifyClientCert, clientRoots
+		caDirectory = *credentialDir
+	}
+	serverRoots, err := readPool(filepath.Join(caDirectory, "ca.crt"))
 	if err != nil {
 		return err
 	}
-	serverRoots, err := readPool(filepath.Join(*credentialDir, "ca.crt"))
-	if err != nil {
-		return err
-	}
-	transport := &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS13, ServerName: *serverName, RootCAs: serverRoots, Certificates: []tls.Certificate{credential}}, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+	clientTLS.RootCAs = serverRoots
+	transport := &http.Transport{TLSClientConfig: clientTLS, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, "tcp", *backend)
 	}, TLSHandshakeTimeout: 5 * time.Second, ResponseHeaderTimeout: 20 * time.Second, DisableKeepAlives: true}
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport, Timeout: 25 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("fixture refuses redirects") }}
-	proxy := newResultACKProxy(client, "https://"+*serverName, credential.Certificate[0])
+	proxy := newResultACKProxy(client, "https://"+*serverName, clientLeaf)
+	if *jobUID != "" {
+		proxy = newResultACKTokenProxy(client, "https://"+*serverName, *jobUID)
+	}
 	proxy.evidence.RetryGateEnabled = *pauseRetry
 	proxy.evidence.FirstGateEnabled = *pauseFirst != ""
 	proxy.firstNamespace = *pauseFirst
-	dataServer := &http.Server{Handler: proxy, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 35 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10, ErrorLog: log.New(io.Discard, "", 0), TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{server}, ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: clientRoots, NextProtos: []string{"http/1.1"}}}
+	dataServer := &http.Server{Handler: proxy, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 35 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10, ErrorLog: log.New(io.Discard, "", 0), TLSConfig: serverTLS}
 	adminServer := &http.Server{Handler: http.HandlerFunc(proxy.admin), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: 5 * time.Second, MaxHeaderBytes: 4 << 10}
 	dataListener, err := net.Listen("tcp", ":9444")
 	if err != nil {

@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"io"
@@ -21,13 +22,119 @@ import (
 )
 
 type ackFixture struct {
-	proxy  *resultACKProxy
-	client *http.Client
-	url    string
-	calls  atomic.Int32
-	body   []byte
-	status int
-	change func(int32, *ackReceipt)
+	proxy    *resultACKProxy
+	client   *http.Client
+	url      string
+	calls    atomic.Int32
+	body     []byte
+	status   int
+	change   func(int32, *ackReceipt)
+	token    string
+	identity string
+}
+
+func TestResultACKProxyForwardsRotatedPodTokensWithoutRetainingThem(t *testing.T) {
+	const originalToken, rotatedToken = "original.bound.token", "rotated.bound.token"
+	identity := []byte(`{"binding":{"jobUID":"original-job","podUID":"original-pod"},"engine":"postgresql"}`)
+	f := &ackFixture{body: []byte("private operation bytes"), token: originalToken,
+		identity: base64.RawURLEncoding.EncodeToString(identity)}
+	var expectedToken atomic.Value
+	expectedToken.Store(originalToken)
+	backend := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+expectedToken.Load().(string) ||
+			r.Header.Get("X-Ptah-Result-Identity") != f.identity {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		if r.Method == http.MethodHead {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		f.calls.Add(1)
+		data, err := io.ReadAll(r.Body)
+		if err != nil || !bytes.Equal(data, f.body) || r.Header.Get(resultDigestHeader) != digest(data) {
+			t.Error("proxy changed the original bytes or digest")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(ackReceipt{Name: "original-complete", UID: "receipt", Digest: digest(data), Size: int64(len(data))})
+	}))
+	t.Cleanup(backend.Close)
+	f.proxy = newResultACKTokenProxy(backend.Client(), backend.URL, "original-job")
+	frontend := httptest.NewTLSServer(f.proxy)
+	t.Cleanup(frontend.Close)
+	f.url, f.client = frontend.URL, frontend.Client()
+	// A plausible identity claim alone must not become successful evidence.
+	head := func(token, claim string) int {
+		t.Helper()
+		r, _ := http.NewRequest(http.MethodHead, f.url+"/v1/results/original", nil)
+		r.Header.Set("Authorization", "Bearer "+token)
+		r.Header.Set("X-Ptah-Result-Identity", claim)
+		res, err := f.client.Do(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		return res.StatusCode
+	}
+	untrustedStatus := head("untrusted.token", f.identity)
+	var untrustedEvidence ackEvidence
+	if err := json.Unmarshal(f.admin(http.MethodGet, "/evidence").Body.Bytes(), &untrustedEvidence); err != nil {
+		t.Fatal(err)
+	}
+	if untrustedStatus != http.StatusUnauthorized || untrustedEvidence.Preflights != 0 || untrustedEvidence.IdentityDigest != "" {
+		t.Fatal("an unauthenticated claim counted as a preflight")
+	}
+	if head(originalToken, f.identity) != http.StatusNoContent {
+		t.Fatal("the original token did not reach the receiver")
+	}
+	foreign := base64.RawURLEncoding.EncodeToString(bytes.ReplaceAll(identity, []byte("original-pod"), []byte("replacement-pod")))
+	if head(originalToken, foreign) != http.StatusForbidden {
+		t.Fatal("the fixture accepted a changed Pod identity")
+	}
+	if res, err := f.put(f.body); err == nil || res != nil || f.calls.Load() != 1 {
+		t.Fatal("the original successful receipt was not dropped")
+	}
+	f.token = rotatedToken
+	expectedToken.Store(rotatedToken)
+	type result struct {
+		response *http.Response
+		err      error
+	}
+	done := make(chan result, 1)
+	go func() { r, err := f.put(f.body); done <- result{r, err} }()
+	var evidence ackEvidence
+	for deadline := time.Now().Add(3 * time.Second); time.Now().Before(deadline); {
+		if err := json.Unmarshal(f.admin(http.MethodGet, "/evidence").Body.Bytes(), &evidence); err != nil {
+			t.Fatal(err)
+		}
+		if len(evidence.Attempts) == 2 {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if !evidence.Dropped || evidence.Preflights != 1 || len(evidence.Attempts) != 2 ||
+		evidence.Attempts[0].Receipt != evidence.Attempts[1].Receipt || evidence.Authentication != "pod-token" ||
+		evidence.JobUID != "original-job" || evidence.PodUID != "original-pod" || evidence.IdentityDigest != digest(identity) ||
+		evidence.ClientCertificateDigest != "" {
+		t.Fatal("token rotation lost the original identity or durable receipt")
+	}
+	if f.admin(http.MethodPost, "/release").Code != http.StatusNoContent {
+		t.Fatal("retry was not ready")
+	}
+	got := <-done
+	if got.err != nil {
+		t.Fatal(got.err)
+	}
+	defer got.response.Body.Close()
+	if got.response.StatusCode != http.StatusOK || f.calls.Load() != 2 {
+		t.Fatal("retry did not complete")
+	}
+	encoded := f.admin(http.MethodGet, "/evidence").Body.String()
+	for _, private := range []string{originalToken, rotatedToken, string(f.body)} {
+		if strings.Contains(encoded, private) {
+			t.Fatal("fixture evidence retained a token or payload")
+		}
+	}
 }
 
 func newACKFixture(t *testing.T) *ackFixture {
@@ -117,6 +224,10 @@ func (f *ackFixture) put(body []byte) (*http.Response, error) {
 	req, _ := http.NewRequest(http.MethodPut, f.url+"/v1/results/original", bytes.NewReader(body))
 	req.Header.Set(resultDigestHeader, digest(body))
 	req.Header.Set("Content-Type", "application/vnd.ptah.result.v1+json")
+	if f.identity != "" {
+		req.Header.Set("Authorization", "Bearer "+f.token)
+		req.Header.Set("X-Ptah-Result-Identity", f.identity)
+	}
 	return f.client.Do(req)
 }
 

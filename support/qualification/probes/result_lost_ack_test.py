@@ -38,6 +38,47 @@ class LostAcknowledgmentEvidenceTests(unittest.TestCase):
         self.assertEqual(verify_evidence(self.fixture()), {
             'deliveries': 2, 'sqlExecutions': 1, 'receiptUID': 'receipt'})
 
+    def test_pod_token_evidence_binds_the_authenticated_pod_and_public_record(self):
+        value = self.fixture()
+        value.pop('credentialCertificateDigest')
+        value['proxy'].pop('clientCertificateDigest')
+        value.update(evidenceVersion=4, authentication='pod-token', engine='PostgreSQL',
+                     rollbackCalibration={'afterRollback': '0:1:true', 'afterReset': '0:1:false'},
+                     credentialUID='binding-record', credentialIdentityDigest='sha256:' + 'e' * 64,
+                     tokenProjection={'audience': 'operator.ptah.run/results', 'expirationSeconds': 3600, 'path': 'token'})
+        value['proxy'].update(authentication='pod-token', jobUID='job', podUID='pod', identityDigest='sha256:' + 'e' * 64)
+        self.assertEqual(verify_evidence(value)['sqlExecutions'], 1)
+        mutations = [
+            ('authentication', 'certificate'), ('credentialUID', ''),
+            ('credentialCertificateDigest', 'sha256:' + 'e' * 64),
+            ('credentialIdentityDigest', 'sha256:' + 'f' * 64),
+            ('tokenProjection', {'audience': 'https://kubernetes.default.svc', 'expirationSeconds': 3600, 'path': 'token'}),
+            ('receiverRestart', {}),
+        ]
+        for field, replacement in mutations:
+            with self.subTest(field=field):
+                bad = copy.deepcopy(value)
+                bad[field] = replacement
+                with self.assertRaises(ValueError):
+                    verify_evidence(bad)
+        for field in ('authentication', 'jobUID', 'podUID', 'identityDigest'):
+            with self.subTest(proxy_field=field):
+                bad = copy.deepcopy(value)
+                bad['proxy'][field] = 'other'
+                with self.assertRaises(ValueError):
+                    verify_evidence(bad)
+        value.update(evidenceVersion=5, receiverRestart={
+            'before': ['old-a', 'old-b'], 'after': ['new-a', 'new-b'],
+            'oldPodsAbsent': True, 'newPodsReady': True,
+            'oldPodsAbsentAt': '2026-10-02T11:00:01.1+00:00',
+            'newPodsReadyAt': '2026-10-02T11:00:01.2+00:00',
+            'receiptUIDBeforeRestart': 'receipt', 'databaseBeforeRestart': '1:1:true'})
+        value['proxy'].update(retryGateEnabled=True, retryWaits=1, retryResumedAt='2026-10-02T11:00:01.3Z')
+        self.assertEqual(verify_evidence(value)['sqlExecutions'], 1)
+        value['receiverRestart']['after'] = value['receiverRestart']['before']
+        with self.assertRaises(ValueError):
+            verify_evidence(value)
+
     def test_requires_calibrated_witness_for_each_explicit_engine(self):
         for engine, expected, storage in [
                 ('PostgreSQL', '0:1:true', 'PostgreSQL sequence'),

@@ -2,9 +2,12 @@
 
 ## Lost acknowledgment fixture
 
-The isolated fixture image provides `result-ack-proxy`. It accepts only one
-original Pod's mTLS certificate and forwards that same credential to the real
-receiver. After a valid successful receipt, it closes the downstream connection
+The isolated fixture image provides `result-ack-proxy`. In Pod-token mode, it
+forwards the runner's original bearer token and public operation identity to the
+real receiver, which authenticates them. The fixture pins the public identity
+after a successful preflight and retains no token. Historical certificate mode
+accepts one original Pod's mTLS certificate and forwards that credential.
+After a valid successful receipt, it closes the downstream connection
 without sending an HTTP status. It forwards one identical retry and holds that
 response while the harness restores the ordinary receiver Service route.
 Conflicting payloads, changed receipt UIDs, invalid receipts, and upstream
@@ -12,17 +15,22 @@ refusals cannot count as successful redelivery.
 
 The command takes `--backend-address=<manager-pod-ip>:9444`,
 `--server-name=<receiver-service>.<operator-namespace>.svc`,
-`--trust-directory=/trust`, and `--credential-directory=/credential`.
-The trust mount contains only `tls.crt`, `tls.key`, and `client-trust.crt` from
+`--trust-directory=/trust`, and `--job-uid=<original-job-uid>` for Pod-token mode.
+Its trust mount contains `tls.crt`, `tls.key`, and `ca.crt` from the installed
+receiver projection. It uses server-authenticated TLS on port 9444 and forwards
+each request's token, including a rotated token, without copying a runner Secret.
+
+Historical certificate mode uses `--credential-directory=/credential` instead
+of `--job-uid`. Its trust mount contains `tls.crt`, `tls.key`, and `client-trust.crt` from
 the installed receiver projection. The credential mount contains the original
 operation Pod's `tls.crt`, `tls.key`, and `ca.crt`. Copying that credential into
 the fixture is privileged test setup; runner permissions remain unchanged.
 Use this fixture only in an owned disposable installation with other operations
 idle. Remove its Pod and copied Secret when the probe ends.
 
-The data listener uses mTLS on port 9444. The control listener binds only
+The certificate-mode data listener uses mTLS on port 9444. The control listener binds only
 `127.0.0.1:8081`; access it through a Pod port-forward. `GET /evidence` returns
-receipt metadata, timestamps, counters, and the client certificate digest,
+receipt metadata, timestamps, counters, and the public identity or certificate digest,
 without payload or credential bytes. Once it reports two identical receipts,
 restore the Service selector and confirm its normal endpoints before sending
 `POST /release`. A premature release is refused. The process is limited to ten
@@ -37,12 +45,14 @@ showing one execution before and after redelivery.
 
 `result_lost_ack.py` runs that installed PostgreSQL or MySQL migration proof. Use the
 owned bootstrap environment and fixture digest described below, with the lab's
-`demo-migration-verification-policy` and completed `result-schema-publish` Job
-available in the source namespace. Choose a fresh namespace and database:
+registry credentials and `demo-migration-verification-policy` available in the
+source namespace. Historical certificate mode also needs a completed
+`result-schema-publish` Job. Choose a fresh namespace and database:
 
 ```sh
 export LAB_ENVIRONMENT=/path/to/owned-bootstrap.env
 export LAB_WORK=/path/to/owned-lab-work
+export RESULT_PROBE_AUTH=pod-token
 export RESULT_PROBE_ENGINE=PostgreSQL  # Or MySQL; the engine is required.
 export RESULT_PROBE_NAMESPACE=ptah-result-lost-ack
 export RESULT_PROBE_DATABASE=result_lost_ack
@@ -50,7 +60,8 @@ export RESULT_PROBE_EVIDENCE_DIR=/path/to/lost-ack-evidence
 python3 support/qualification/probes/result_lost_ack.py
 ```
 
-The probe gates Apply credentials before execution, creates the test proxy,
+Pod-token mode gates Apply Pod creation before execution; historical certificate
+mode gates credential creation. The probe creates the test proxy,
 and moves only the receiver Service selector. It checks two identical receipts
 while the original runner is still running. A migration inserts a row using a
 PostgreSQL sequence or an InnoDB `AUTO_INCREMENT` column. A committed replay
@@ -79,6 +90,13 @@ The Service selector is restored and the proxy Pod and copied credential are
 removed in `finally`. `receiver-service-before.json` retains the original
 selector for recovery after a killed probe process; verify its UID before
 restoring it. The namespace and database remain until the owning lab is removed.
+Pod-token evidence includes the manager-created public binding, the original
+Job and Pod UIDs, and the receiver-only token projection. Version 4 identifies
+Pod-token delivery; version 5 also requires receiver replacement. Certificate
+evidence cannot substitute for either version. Pod-token mode currently accepts
+only lost acknowledgment and receiver replacement; other fault modes retain
+their historical certificate setup.
+
 Each run proves a single lost acknowledgment for its recorded engine and
 Kubernetes minor. Concurrent duplicate delivery, receiver failure during retry,
 and the other engine/minor combinations remain separate requirements.
@@ -103,7 +121,7 @@ the ordinary result Service and releasing the held response then permits the
 original runner to finish. The backend Service is removed in `finally`.
 
 `receiver-restart.json` records the old and new UID sets, readiness observation,
-and persisted receipt identity. Version 3 evidence rejects overlapping or
+and persisted receipt identity. Versions 3 and 5 reject overlapping or
 missing replicas, an absent retry gate, or a second receipt obtained before
 replacement. This row does not prove certificate rotation, concurrent duplicate
 requests, or behavior after the runner exhausts its delivery deadline.

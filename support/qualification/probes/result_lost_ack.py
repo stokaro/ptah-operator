@@ -4,7 +4,7 @@ Run only against an owned disposable lab. The fixture temporarily replaces the
 receiver Service route. It retains evidence and restores that route in finally.
 """
 import base64, copy, datetime as dt, hashlib, json, os, pathlib, re, socket, ssl, subprocess, time, urllib.parse, urllib.request
-from result_first_harvest import publication
+from result_first_harvest import publication, pod_binding_record
 
 def verify_evidence(value):
     """Reject evidence that could pass without a lost ACK or a single SQL effect."""
@@ -15,7 +15,7 @@ def verify_evidence(value):
     binding = value['binding']
     proxy = value['proxy']
     version = value.get('evidenceVersion', 1)
-    require(version in (1, 2, 3), 'Unknown evidence version')
+    require(version in (1, 2, 3, 4, 5), 'Unknown evidence version')
     # Version 1 was the PostgreSQL-only probe. New executions name their engine.
     if version >= 2:
         require(value.get('engine') in ('PostgreSQL', 'MySQL'), 'Missing supported engine')
@@ -36,7 +36,18 @@ def verify_evidence(value):
     require(value['databaseBeforeExecution'] == '0:1:false', 'Database witness was not empty')
     require(value['databaseBeforeRelease'] == '1:1:true' and value['databaseAfterRelease'] == '1:1:true', 'SQL was absent, repeated, or retried and rolled back')
     require(proxy['dropped'] is True and proxy['released'] is True and proxy['preflights'] == 1, 'No single-execution acknowledgment-loss fault')
-    require(re.fullmatch('sha256:[0-9a-f]{64}', proxy['clientCertificateDigest']) and proxy['clientCertificateDigest'] == value['credentialCertificateDigest'], 'Missing or changed original client certificate identity')
+    if version >= 4:
+        require(version == 5 or 'receiverRestart' not in value, 'Receiver restart needs version 5 evidence')
+        require(value.get('authentication') == proxy.get('authentication') == 'pod-token', 'Missing Pod-token authentication')
+        require(not proxy.get('clientCertificateDigest') and not value.get('credentialCertificateDigest'), 'Certificate evidence substituted for Pod-token authority')
+        require(bool(value.get('credentialUID')) and proxy.get('jobUID') == binding['jobUID']
+                and proxy.get('podUID') == binding['podUID'], 'Original authenticated Job or Pod changed')
+        require(re.fullmatch('sha256:[0-9a-f]{64}', value.get('credentialIdentityDigest', ''))
+                and proxy.get('identityDigest') == value['credentialIdentityDigest'], 'Public Pod binding changed')
+        require(value.get('tokenProjection') == {'audience': 'operator.ptah.run/results', 'expirationSeconds': 3600,
+                                                'path': 'token'}, 'Runner token is not receiver-only')
+    else:
+        require(re.fullmatch('sha256:[0-9a-f]{64}', proxy['clientCertificateDigest']) and proxy['clientCertificateDigest'] == value['credentialCertificateDigest'], 'Missing or changed original client certificate identity')
     attempts = proxy['attempts']
     require(len(attempts) == 2, 'Expected the original delivery and one retry')
     receipt = attempts[0]['receipt']
@@ -44,7 +55,7 @@ def verify_evidence(value):
     require(receipt['Name'] == value['receiptName'] and receipt['UID'] == value['receiptUID'] and (receipt['Digest'] == value['payloadDigest']) and (receipt['Size'] == value['payloadBytes'] > 0), 'Proxy evidence does not match persisted publication')
     times = [dt.datetime.fromisoformat(a['receivedAt'].replace('Z', '+00:00')) for a in attempts]
     require(times[0] < times[1] <= dt.datetime.fromisoformat(value['completedAt']), 'Retry timing does not precede completed acceptance')
-    if version == 3:
+    if version in (3, 5):
         restart = value['receiverRestart']
         old, new = restart['before'], restart['after']
         require(len(old) == len(new) == 2 and len(set(old)) == len(set(new)) == 2
@@ -96,6 +107,12 @@ def main():
     if family not in ('PtahMigration', 'PtahSchema') or (family == 'PtahSchema' and not upload_budget):
         raise ValueError('Schema probes require the upload-budget case')
     schema_budget = family == 'PtahSchema'
+    authentication = E.get('RESULT_PROBE_AUTH', 'certificate')
+    if authentication not in ('certificate', 'pod-token'):
+        raise ValueError('RESULT_PROBE_AUTH must be certificate or pod-token')
+    pod_token = authentication == 'pod-token'
+    if pod_token and (runner_loss or concurrent or upload_budget):
+        raise ValueError('Pod-token mode currently measures lost ACK and receiver replacement only')
     apply_prefix = 'ptah-apply-' if schema_budget else 'ptah-m-apply-'
     empty_witness = {'columns': [], 'primaryKeyColumns': []} if schema_budget else '0:1:false'
     engine = E['RESULT_PROBE_ENGINE']
@@ -252,10 +269,29 @@ def main():
     create({'apiVersion': 'v1', 'kind': 'Secret', 'metadata': {'name': 'ack-database', 'namespace': ns}, 'stringData': {'url': url}})
     artifact_sql = ('-- +ptah no_transaction\n' + migration_sql + '\nINSERT INTO qualification_missing_table VALUES (1);\n') if partial_loss else migration_sql + '\n'
     create({'apiVersion': 'v1', 'kind': 'ConfigMap', 'metadata': {'name': 'ack-migrations', 'namespace': ns}, 'data': ({'schema.sql': 'CREATE TABLE qualification_probe (id bigint NOT NULL PRIMARY KEY, email text NOT NULL);\n'} if schema_budget else {'0000000001_record_delivery.up.sql': artifact_sql, '0000000001_record_delivery.down.sql': 'DELETE FROM delivery_probe_calls;\n'})})
-    original = get('job', 'result-schema-publish', source)
-    template = copy.deepcopy(original['spec']['template'])
-    template['metadata'] = {}
-    container = template['spec']['containers'][0]
+    if pod_token:
+        security = {'allowPrivilegeEscalation': False, 'readOnlyRootFilesystem': True,
+                    'capabilities': {'drop': ['ALL']}}
+        container = {'name': 'publisher', 'image': E['E2E_EXECUTOR_IMAGE'], 'securityContext': security,
+                     'resources': {'requests': {'cpu': '100m', 'memory': '32Mi'},
+                                   'limits': {'cpu': '1', 'memory': '256Mi'}},
+                     'env': [{'name': 'HOME', 'value': '/work'}, {'name': 'TMPDIR', 'value': '/work'}] + [
+                         {'name': 'PTAH_OCI_' + name.upper(), 'valueFrom': {'secretKeyRef': {
+                         'name': 'demo-registry', 'key': name}}} for name in ('registry', 'username', 'password')],
+                     'volumeMounts': [{'name': 'schema', 'mountPath': '/schema', 'readOnly': True},
+                                      {'name': 'work', 'mountPath': '/work'}]}
+        template = {'spec': {'restartPolicy': 'Never', 'automountServiceAccountToken': False,
+                    'imagePullSecrets': [{'name': 'demo-registry-pull'}],
+                    'securityContext': {'runAsNonRoot': True, 'runAsUser': 65532, 'runAsGroup': 65532,
+                                        'fsGroup': 65532, 'seccompProfile': {'type': 'RuntimeDefault'}},
+                    'containers': [container], 'volumes': [
+                        {'name': 'schema', 'configMap': {'name': 'ack-migrations'}},
+                        {'name': 'work', 'emptyDir': {'sizeLimit': '64Mi'}}]}}
+    else:
+        original = get('job', 'result-schema-publish', source)
+        template = copy.deepcopy(original['spec']['template'])
+        template['metadata'] = {}
+        container = template['spec']['containers'][0]
     container['command'] = ['/bin/sh', '-ec']
     container['args'] = ['mkdir -p /work/migrations; cp -L /schema/*.sql /work/migrations/; exec /usr/local/bin/ptah "$@"', 'publisher', 'migrations', 'push', 'oci://' + E['E2E_REGISTRY_HOST'] + '/migrations/demo:' + ns, '--migrations-dir', '/work/migrations', '--dir-format', 'ptah', '--version', ns, '--plain-http']
     if schema_budget:
@@ -290,19 +326,51 @@ def main():
         uids = {e.get('targetRef', {}).get('uid') for s in slices for e in s.get('endpoints', []) if e.get('conditions', {}).get('ready')}
         return uids == expected
     try:
-        create({'apiVersion': 'admissionregistration.k8s.io/v1', 'kind': 'ValidatingAdmissionPolicy', 'metadata': {'name': gate}, 'spec': {'failurePolicy': 'Fail', 'matchConstraints': {'resourceRules': [{'apiGroups': [''], 'apiVersions': ['v1'], 'operations': ['CREATE'], 'resources': ['secrets']}]}, 'validations': [{'expression': "!has(object.metadata.annotations) || !('operator.ptah.run/result-pod-name' in object.metadata.annotations) || !object.metadata.annotations['operator.ptah.run/result-pod-name'].startsWith('" + apply_prefix + "')", 'message': 'Acceptance probe holds migration Apply credentials'}]}})
+        gate_message = 'Acceptance probe holds migration Apply credentials'
+        gate_resource = 'secrets'
+        gate_expression = ("!has(object.metadata.annotations) || !('operator.ptah.run/result-pod-name' in object.metadata.annotations) || "
+                           "!object.metadata.annotations['operator.ptah.run/result-pod-name'].startsWith('" + apply_prefix + "')")
+        if pod_token:
+            gate_resource = 'pods'
+            gate_message = 'Acceptance probe holds migration Apply Pods'
+            gate_expression = ("!has(object.metadata.labels) || !("
+                               "('operator.ptah.run/operation' in object.metadata.labels && "
+                               "object.metadata.labels['operator.ptah.run/operation'] == 'migration-apply') || "
+                               "('operator.ptah.run/acceptance-gate-probe' in object.metadata.labels))")
+        create({'apiVersion': 'admissionregistration.k8s.io/v1', 'kind': 'ValidatingAdmissionPolicy',
+                'metadata': {'name': gate}, 'spec': {'failurePolicy': 'Fail', 'matchConstraints': {
+                    'resourceRules': [{'apiGroups': [''], 'apiVersions': ['v1'], 'operations': ['CREATE'],
+                                       'resources': [gate_resource]}]},
+                    'validations': [{'expression': gate_expression, 'message': gate_message}]}})
         gated = True
         create({'apiVersion': 'admissionregistration.k8s.io/v1', 'kind': 'ValidatingAdmissionPolicyBinding', 'metadata': {'name': gate}, 'spec': {'policyName': gate, 'validationActions': ['Deny'], 'matchResources': {'namespaceSelector': {'matchLabels': {'kubernetes.io/metadata.name': ns}}}}})
 
         def gate_ready():
             o = {'apiVersion': 'v1', 'kind': 'Secret', 'metadata': {'name': 'gate-probe', 'namespace': ns, 'annotations': {'operator.ptah.run/result-pod-name': apply_prefix + 'probe'}}}
-            p = subprocess.run(['kubectl', '--kubeconfig', E['E2E_KUBECONFIG'], 'create', '--dry-run=server', '-f', '-'], input=json.dumps(o), text=True, capture_output=True)
-            return p.returncode and 'Acceptance probe holds migration Apply credentials' in p.stderr
+            if pod_token:
+                o = {'apiVersion': 'v1', 'kind': 'Pod', 'metadata': {'name': 'gate-probe', 'namespace': ns,
+                     'labels': {'operator.ptah.run/acceptance-gate-probe': 'true'}},
+                     'spec': {'automountServiceAccountToken': False, 'restartPolicy': 'Never',
+                              'containers': [{'name': 'probe', 'image': fixture}]}}
+            p = subprocess.run(['kubectl', '--kubeconfig', E['E2E_KUBECONFIG'], 'create', '--dry-run=server', '-f', '-'], input=json.dumps(o), text=True, capture_output=True, timeout=30)
+            return p.returncode and gate_message in p.stderr
         wait(gate_ready, 30)
-        env = E.copy()
-        env.update(APPLY='OnApproval' if partial_loss else 'Always', INTERVAL='30s' if runner_loss else '2h')
-        manifest = subprocess.run(['demo/bin/lab', 'manifest', 'shipments', digest], env=env, text=True, capture_output=True, check=True).stdout
-        migration = json.loads(k('create', '--dry-run=client', '--validate=false', '-f', '-', '-o', 'json', data=manifest, namespace=source))
+        if pod_token:
+            migration = {'apiVersion': 'operator.ptah.run/v1alpha1', 'kind': 'PtahMigration', 'spec': {
+                'target': {'engine': engine, 'coordinationKey': 'acceptance/' + ns,
+                           'urlFrom': {'name': 'ack-database', 'key': 'url'}},
+                'artifact': {'ociRef': 'oci://' + E['E2E_REGISTRY_HOST'] + '/migrations/demo@' + digest,
+                             'registryAuthFrom': {'name': 'demo-registry', 'mode': 'Environment',
+                                                  'usernameKey': 'username', 'passwordKey': 'password'},
+                             'verificationPolicyFrom': {'name': 'demo-migration-verification-policy', 'key': 'policy.yaml'},
+                             'transport': {'plainHTTP': True}},
+                'policy': {'apply': 'Always', 'lockTimeout': '30s'}, 'interval': '2h',
+                'execution': {'activeDeadlineSeconds': 900, 'failureRetryInterval': '10s', 'connectTimeout': '30s'}}}
+        else:
+            env = E.copy()
+            env.update(APPLY='OnApproval' if partial_loss else 'Always', INTERVAL='30s' if runner_loss else '2h')
+            manifest = subprocess.run(['demo/bin/lab', 'manifest', 'shipments', digest], env=env, text=True, capture_output=True, check=True).stdout
+            migration = json.loads(k('create', '--dry-run=client', '--validate=false', '-f', '-', '-o', 'json', data=manifest, namespace=source))
         if schema_budget:
             original_schema = get('ptahschema', 'storefront', source)
             migration = {'apiVersion': original_schema['apiVersion'], 'kind': 'PtahSchema', 'spec': copy.deepcopy(original_schema['spec'])}
@@ -320,20 +388,34 @@ def main():
             from result_partial_loss import authorize_initial
             initial_authorization = authorize_initial(k, get, create, wait, resource)
 
-        def held():
-            matches = [r for r in records() if r['spec']['type'] == 'credential' and r['metadata'].get('annotations', {}).get('operator.ptah.run/result-pod-name', '').startswith(apply_prefix)]
-            return matches[0] if len(matches) == 1 else None
-        credential = wait(held, 300)
-        certificate_der = ssl.PEM_cert_to_DER_cert(base64.b64decode(dec(credential)['tls.crt']).decode())
-        certificate_digest = 'sha256:' + hashlib.sha256(certificate_der).hexdigest()
-        pod_name = credential['metadata']['annotations']['operator.ptah.run/result-pod-name']
-        pod = get('pod', pod_name)
-        assert pod['status']['phase'] == 'Pending'
-        assert pod['spec']['automountServiceAccountToken'] is False
-        assert not any('serviceAccountToken' in source for volume in pod['spec'].get('volumes', []) for source in volume.get('projected', {}).get('sources', []))
-        operation = get(family.lower(), 'lost-ack')['status']['activeOperation']
-        job_name = operation['jobName']
-        job_uid = operation['jobUID']
+        if pod_token:
+            def held_job():
+                op = get(family.lower(), 'lost-ack').get('status', {}).get('activeOperation') or {}
+                if op.get('jobName', '').startswith(apply_prefix) and op.get('jobUID'):
+                    return op
+                return None
+            operation = wait(held_job, 300)
+            job_name, job_uid = operation['jobName'], operation['jobUID']
+            job = get('job', job_name)
+            assert job['metadata']['uid'] == job_uid
+            assert not any(any(o['uid'] == job_uid for o in p['metadata'].get('ownerReferences', []))
+                           for p in get('pods')['items']), 'Apply Pod escaped the gate'
+            credential, certificate_digest = None, None
+        else:
+            def held():
+                matches = [r for r in records() if r['spec']['type'] == 'credential' and r['metadata'].get('annotations', {}).get('operator.ptah.run/result-pod-name', '').startswith(apply_prefix)]
+                return matches[0] if len(matches) == 1 else None
+            credential = wait(held, 300)
+            certificate_der = ssl.PEM_cert_to_DER_cert(base64.b64decode(dec(credential)['tls.crt']).decode())
+            certificate_digest = 'sha256:' + hashlib.sha256(certificate_der).hexdigest()
+            pod_name = credential['metadata']['annotations']['operator.ptah.run/result-pod-name']
+            pod = get('pod', pod_name)
+            assert pod['status']['phase'] == 'Pending'
+            assert pod['spec']['automountServiceAccountToken'] is False
+            assert not any('serviceAccountToken' in source for volume in pod['spec'].get('volumes', []) for source in volume.get('projected', {}).get('sources', []))
+            operation = get(family.lower(), 'lost-ack')['status']['activeOperation']
+            job_name = operation['jobName']
+            job_uid = operation['jobUID']
         assert witness() == empty_witness
         def open_execution_gate():
             nonlocal gated
@@ -364,9 +446,15 @@ def main():
                      records=records, open_gate=open_execution_gate, resource=resource, pod=pod,
                      operation=operation, engine=engine, environment=E, calibration=calibration)
             return
-        create({'apiVersion': 'v1', 'kind': 'Secret', 'metadata': {'name': client_secret, 'namespace': opns}, 'type': 'kubernetes.io/tls', 'immutable': True, 'data': dec(credential)})
-        copied = True
+        if not pod_token:
+            create({'apiVersion': 'v1', 'kind': 'Secret', 'metadata': {'name': client_secret, 'namespace': opns}, 'type': 'kubernetes.io/tls', 'immutable': True, 'data': dec(credential)})
+            copied = True
         spec = {'restartPolicy': 'Never', 'automountServiceAccountToken': False, 'securityContext': {'runAsNonRoot': True, 'runAsUser': 65532, 'runAsGroup': 65532, 'fsGroup': 65532, 'seccompProfile': {'type': 'RuntimeDefault'}}, 'imagePullSecrets': manager['spec']['template']['spec'].get('imagePullSecrets', []), 'containers': [{'name': 'proxy', 'image': fixture, 'command': ['/e2e-handcraft-oci'], 'args': ['result-ack-proxy', '--backend-address=' + backend['status']['podIP'] + ':9444', '--server-name=' + host, '--trust-directory=/trust', '--credential-directory=/credential'], 'ports': [{'name': 'results', 'containerPort': 9444}], 'securityContext': {'allowPrivilegeEscalation': False, 'readOnlyRootFilesystem': True, 'capabilities': {'drop': ['ALL']}}, 'resources': {'requests': {'cpu': '20m', 'memory': '32Mi'}, 'limits': {'cpu': '500m', 'memory': '256Mi'}}, 'volumeMounts': [{'name': 'trust', 'mountPath': '/trust', 'readOnly': True}, {'name': 'credential', 'mountPath': '/credential', 'readOnly': True}]}], 'volumes': [{'name': 'trust', 'secret': {'secretName': trust['metadata']['name'], 'defaultMode': 288, 'items': [{'key': key, 'path': key} for key in ['tls.crt', 'tls.key', 'client-trust.crt']]}}, {'name': 'credential', 'secret': {'secretName': client_secret, 'defaultMode': 288}}]}
+        if pod_token:
+            spec['containers'][0]['args'][-1] = '--job-uid=' + job_uid
+            spec['containers'][0]['volumeMounts'] = [m for m in spec['containers'][0]['volumeMounts'] if m['name'] == 'trust']
+            spec['volumes'] = [v for v in spec['volumes'] if v['name'] == 'trust']
+            spec['volumes'][0]['secret']['items'] = [{'key': key, 'path': key} for key in ('tls.crt', 'tls.key', 'ca.crt')]
         if restart_receiver:
             backend_service = create({'apiVersion': 'v1', 'kind': 'Service',
                                       'metadata': {'name': ns + '-backend', 'namespace': opns},
@@ -426,6 +514,20 @@ def main():
             wait(publication_barrier_ready, 30)
         open_execution_gate()
         print('Apply released through the ACK-loss proxy:', job_name, flush=True)
+        if pod_token:
+            def original_pod_and_binding():
+                pods = [p for p in get('pods')['items'] if any(o['uid'] == job_uid for o in p['metadata'].get('ownerReferences', []))]
+                assert len(pods) <= 1, 'Apply created a replacement Pod'
+                bindings = [r for r in records() if r['spec']['type'] == 'credential'
+                            and r['metadata'].get('annotations', {}).get('operator.ptah.run/result-job-uid') == job_uid]
+                assert len(bindings) <= 1
+                return (pods[0], bindings[0]) if pods and bindings else None
+            pod, credential = wait(original_pod_and_binding, 60)
+            expected = pod_binding_record(job, pod)
+            assert credential['spec'] == expected['spec'], 'Stored Pod binding differs from the admitted original Pod'
+            assert credential['metadata']['name'] not in {s['metadata']['name'] for s in get('secrets')['items']}
+            pod_name = pod['metadata']['name']
+            save('pod-binding.json', credential)
 
         if restart_receiver:
             def retry_paused():
@@ -527,6 +629,11 @@ def main():
         result.update(evidenceVersion=2, engine=engine, rollbackCalibration=calibration, databaseServerVersion=server_version)
         if restart_receiver:
             result.update(evidenceVersion=3, receiverRestart=receiver_restart)
+        if pod_token:
+            result.pop('credentialCertificateDigest')
+            result.update(evidenceVersion=5 if restart_receiver else 4, authentication='pod-token',
+                          credentialIdentityDigest='sha256:' + hashlib.sha256(base64.b64decode(credential['spec']['data'], validate=True)).hexdigest(),
+                          tokenProjection={'audience': 'operator.ptah.run/results', 'expirationSeconds': 3600, 'path': 'token'})
         verify_evidence(result)
         save('lost-ack.json', result)
         print('PASS: identical receipt redelivered after lost ACK; one native migration SQL execution', flush=True)
