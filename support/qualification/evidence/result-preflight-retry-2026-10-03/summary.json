@@ -1,0 +1,45 @@
+{
+  "status": "local regression and complete affected package tests passed; corrected native verification pending",
+  "baseCommit": "690b76805d3b583b2cc628f3402d893048762254",
+  "requirement": "#586 final default integration; #578 executor binding after approval",
+  "nativeFailure": {
+    "controllerCommit": "a19ec58463bb60ddf976ef8184c4048776760f91",
+    "runnerCommit": "c14d41fe4c0a0ce59b204bfe70ee2943e29fc025",
+    "platform": "Kubernetes 1.37.0 linux/amd64",
+    "scenario": "approval-executor-image-change",
+    "durationSeconds": 274.3,
+    "postgresql": "passed",
+    "mysql": "failed: two new Observe Jobs instead of one; first runner exited 2 with result receiver preflight failed, read-only retry succeeded",
+    "failedJobUID": "45007777-36f7-45ad-8bb0-bb73ebb61e97",
+    "failedPodUID": "af646a7f-24fa-466d-a2d7-eec51547d05d",
+    "limits": "The original diagnostic suppresses the underlying HTTP/transport error. Upload contention is locally reproduced, but is not established as the exact cause of this native refusal."
+  },
+  "reproduction": "The real TLS receiver returns HTTP 503 while its only upload slot is occupied. Previous Sender.Check aborts on that first response even when the slot is released before the next attempt. The new regression fails against the original sender.",
+  "change": "Preflight retries transient HTTP and transport failures under existing attempt/interval/attempt-timeout/total-timeout settings. Definitive refusals are not retried. Requests remain HEAD without publication or executor execution.",
+  "checks": [
+    {
+      "command": "GOFLAGS=-p=1 go test ./internal/resultdelivery -run ^TestPreflight(RetriesOccupied|RetryHonors) -count=1 -v",
+      "exitCode": 1,
+      "expected": "old sender fails both new regression tests"
+    },
+    {
+      "command": "GOFLAGS=-p=1 go test ./internal/resultdelivery ./cmd/ptah-runner -count=1",
+      "exitCode": 0,
+      "coverage": "real occupied slot, deadline/cancellation, authority refusal, wrong trust, no execution before authentication, one Apply after transient refusal, existing delivery tests"
+    },
+    {
+      "command": "GOFLAGS=-p=1 go vet ./internal/resultdelivery ./cmd/ptah-runner",
+      "exitCode": 0
+    }
+  ],
+  "sourceSHA256": {
+    "internal/resultdelivery/sender.go": "ff5f2a5c8bfbfbe781867e5d635848efc6f9399ea08d5ff07a66385c2c9ca6b0",
+    "internal/resultdelivery/preflight_retry_test.go": "cb7f027acc8ecf3da130e8be9018087af55b2c8bf8896d206e3554f731fcaf5b",
+    "cmd/ptah-runner/delivery_test.go": "0de73626ca5877fa1082a1f8902df9b776aeaf0a9536f5b1dc440fb18a8cd8a7",
+    "test/e2e/executor_change_e2e_test.go": "e78f819ef886ddb6843c646ea6620b019aad55dd6a67efcaa867e7d44e8e8b83"
+  },
+  "limits": [
+    "The five remaining native data-plane scenarios are still incomplete.",
+    "No assertion was relaxed and no current-head CI or release-readiness verdict is claimed."
+  ]
+}

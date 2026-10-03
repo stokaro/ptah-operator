@@ -389,6 +389,43 @@ func TestRunnerRefusesDeliveryMisconfigurationBeforeDispatch(t *testing.T) {
 	}
 }
 
+func TestRunnerRetriesPreflightBeforeExecutingApplyOnce(t *testing.T) {
+	f := newDeliveryFixture(t, nil)
+	executable, counter := applyExecutable(t)
+	var checks atomic.Int32
+	server := f.server(t, func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodHead {
+				if _, err := os.Stat(counter); !os.IsNotExist(err) {
+					t.Errorf("Apply started before successful authentication: %v", err)
+				}
+				if checks.Add(1) == 1 {
+					http.Error(w, "busy", http.StatusServiceUnavailable)
+					return
+				}
+			}
+			next.ServeHTTP(w, r)
+		})
+	})
+	var stdout, stderr bytes.Buffer
+	code := run(t.Context(), []string{"--ptah-binary", executable, "--operation", "migration-apply", "--result-endpoint", server.URL, "--result-credentials", f.credentials}, &stdout, &stderr, append(f.environment(t), "PTAH_TEST_INVOCATIONS="+counter), "")
+	if code != 0 || stdout.Len() != 0 || checks.Load() != 2 {
+		t.Fatalf("exit=%d stdout=%q stderr=%q preflights=%d", code, stdout.String(), stderr.String(), checks.Load())
+	}
+	invocations, err := os.ReadFile(counter)
+	if err != nil || string(invocations) != "run\n" {
+		t.Fatalf("Apply dispatches %q, %v", invocations, err)
+	}
+	payload, _, err := f.store.Load(t.Context(), f.identity.Binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := resultdelivery.Decode(f.identity, payload)
+	if err != nil || !result.MutationStarted || result.Uncertain || result.Error != nil {
+		t.Fatalf("the one Apply did not persist a successful result: %#v, %v", result, err)
+	}
+}
+
 func TestRunnerAuthenticatesProjectionBeforeStartingSQL(t *testing.T) {
 	for _, name := range []string{"foreign client key", "foreign server trust", "authority refused", "receiver unavailable"} {
 		t.Run(name, func(t *testing.T) {

@@ -72,22 +72,52 @@ func (s *Sender) Close() { s.transport.CloseIdleConnections() }
 // before a runner starts its child. An existing Secret is not evidence that its
 // bytes match the canonical credential record. This bounded, read-only request
 // catches unusable projections without executing SQL or publishing a result.
+// A busy upload slot or a transient API/transport failure uses the same retry
+// bounds as delivery. A definitive authority refusal still stops immediately.
 func (s *Sender) Check(parent context.Context) error {
-	ctx, cancel := context.WithTimeout(parent, s.retry.AttemptTimeout)
+	ctx, cancel := context.WithTimeout(parent, s.retry.TotalTimeout)
 	defer cancel()
+	for attempt := 0; attempt < s.retry.Attempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		attemptCtx, stop := context.WithTimeout(ctx, s.retry.AttemptTimeout)
+		retry, err := s.check(attemptCtx)
+		stop()
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if err == nil || !retry || attempt+1 == s.retry.Attempts {
+			return err
+		}
+		timer := time.NewTimer(s.retry.Interval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return errors.New("result receiver authentication attempts exhausted")
+}
+
+func (s *Sender) check(ctx context.Context) (bool, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodHead, s.endpoint, nil)
 	if err != nil {
-		return errors.New("cannot prepare receiver authentication")
+		return false, errors.New("cannot prepare receiver authentication")
 	}
 	response, err := s.client.Do(request)
 	if err != nil {
-		return errors.New("result receiver authentication failed")
+		return true, errors.New("result receiver authentication failed")
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusNoContent {
-		return fmt.Errorf("result receiver preflight returned HTTP %d", response.StatusCode)
+		retry := response.StatusCode == http.StatusRequestTimeout || response.StatusCode == http.StatusTooManyRequests ||
+			response.StatusCode == http.StatusInternalServerError || response.StatusCode == http.StatusBadGateway ||
+			response.StatusCode == http.StatusServiceUnavailable || response.StatusCode == http.StatusGatewayTimeout
+		return retry, fmt.Errorf("result receiver preflight returned HTTP %d", response.StatusCode)
 	}
-	return ctx.Err()
+	return false, ctx.Err()
 }
 
 // Send never changes bytes between attempts, never follows a redirect, and
