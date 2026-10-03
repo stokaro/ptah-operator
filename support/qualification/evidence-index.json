@@ -182,6 +182,11 @@
         "name": "pod-token-concurrent-2026-10-03.tar.gz",
         "sha256": "9c16df834b39fb9d77cbac76213e8b48e105016248ebde4fd6c95ba17a61be81",
         "downloadVerified": true
+      },
+      {
+        "name": "pod-token-authority-2026-10-04.tar.gz",
+        "sha256": "e958dda8eb463bf2d84d07297fc6d403cc3ca69b8744611ba65f24dd1f3a21c1",
+        "downloadVerified": true
       }
     ],
     "scope": "Development evidence copy. Final #584 custody, retention policy and owner acceptance remain unassessed."
@@ -311,5 +316,61 @@
       "downloadVerified": true
     },
     "scope": "Three overlapping request pairs per engine on two distinct receiving managers. Identical requests return the original receipt, changed canonical bytes receive 409, every immutable publication record is unchanged, and the original runner finishes with one calibrated SQL effect. This row covers redelivery after publication; the historical synchronized first-publication storage proof retains its original source identity."
+  },
+  "podTokenAuthorityRefusals": {
+    "requirement": "#586 exact Pod-token operation authority and bounded retry classification",
+    "conclusion": "passed",
+    "source": "8dc493f10628503a9ce75f77fa03cc775cd8f2fc",
+    "image": "e2e-registry.ptah-test-a-1-37-0-pr585-soak-b9409060-59e0909df3.svc.cluster.local:5000/ptah-operator@sha256:3774e8289f1735d677298f94a5400729403b93b18a97bd76f0d4d66a07aa1582",
+    "platform": "Kubernetes 1.37.0, linux/amd64, diabolocom",
+    "runs": [
+      {
+        "engine": "PostgreSQL",
+        "report": "authority-postgresql/authority.json",
+        "reportSHA256": "5a334f39f5698afb4a56aab6e1fe6f73b256049d34ce1bbd6cc628b9953d2709",
+        "ackReport": "authority-postgresql/lost-ack.json",
+        "ackReportSHA256": "9501854ec7f3fe257d9dbbb4595292be72dd7c3f437b0afc3437245319551c8a",
+        "completedAt": "2026-10-03T22:41:54.277350+00:00",
+        "verification": {
+          "refusedRequests": 32,
+          "positiveControls": 8
+        },
+        "deliveryVerification": {
+          "deliveries": 2,
+          "sqlExecutions": 1,
+          "receiptUID": "bb637010-012b-4c73-97f3-bca1b934f82e"
+        },
+        "applyJobs": 1,
+        "podRestarts": 0,
+        "converged": true
+      },
+      {
+        "engine": "MySQL",
+        "report": "authority-mysql/authority.json",
+        "reportSHA256": "ec4792cb3fdf3eaa4a38c402a7d7da30fd87f29fa9bf8e6b7170809057db2fbe",
+        "ackReport": "authority-mysql/lost-ack.json",
+        "ackReportSHA256": "7a8063eb1c74c1b2c5176348d2fcd92226fe4552c48021203867f92837cb1ffb",
+        "completedAt": "2026-10-03T22:43:30.659367+00:00",
+        "verification": {
+          "refusedRequests": 32,
+          "positiveControls": 8
+        },
+        "deliveryVerification": {
+          "deliveries": 2,
+          "sqlExecutions": 1,
+          "receiptUID": "1781f9a5-d85a-4118-a0a6-b7f5a430d449"
+        },
+        "applyJobs": 1,
+        "podRestarts": 0,
+        "converged": true
+      }
+    ],
+    "defect": "Before the fix, five immutable claim mutations returned temporary 503 responses. The fixed service returns permanent 403; an actual current claim still waiting for its enrollment keeps bounded 503 retries. Original publications were unchanged before and after the fix.",
+    "scope": "Eight refusal cases across HEAD and PUT on each of two live receivers per native engine, with authenticated foreign-Pod and original-token controls. This does not close the full CI matrix, final artifact verification, or #242.",
+    "archive": {
+      "name": "pod-token-authority-2026-10-04.tar.gz",
+      "sha256": "e958dda8eb463bf2d84d07297fc6d403cc3ca69b8744611ba65f24dd1f3a21c1",
+      "downloadVerified": true
+    }
   }
 }
