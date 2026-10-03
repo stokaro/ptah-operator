@@ -18,6 +18,7 @@ import (
 	ptahv1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/crdupgrade"
 	"github.com/stokaro/ptah-operator/test/e2e/harness"
+	admissionv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -27,7 +28,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
-	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
 )
@@ -374,20 +374,25 @@ func (a *alertingRun) confirmUpgradeFault(name, mode string, intent alUpgradeInt
 	ctx, cancel := context.WithTimeout(a.ctx, time.Minute)
 	defer cancel()
 	a.check(harness.Wait(ctx, "the upgrade policy to enforce its own refusal", time.Minute, time.Second, func(context.Context) (bool, string, error) {
-		d := &appsv1.Deployment{}
-		if err := a.cluster.Client.Get(ctx, types.NamespacedName{Namespace: intent.Namespace, Name: intent.Manager}, d); err != nil {
-			return false, "", err
-		}
-		actor := a.cluster.Client
-		if mode == "failed" {
-			var err error
-			actor, err = a.cluster.As(rest.ImpersonationConfig{UserName: "system:serviceaccount:" + intent.Namespace + ":" + hookAccount})
-			if err != nil {
+		if mode == "deadline" {
+			d := &appsv1.Deployment{}
+			if err := a.cluster.Client.Get(ctx, types.NamespacedName{Namespace: intent.Namespace, Name: intent.Manager}, d); err != nil {
 				return false, "", err
 			}
+			err := a.cluster.Client.Update(ctx, d, client.DryRunAll)
+			return err != nil && strings.Contains(err.Error(), name), "waiting for Deployment refusal", nil
 		}
-		err := actor.Update(ctx, d, client.DryRunAll)
-		return err != nil && strings.Contains(err.Error(), name), "waiting for the exact Deployment refusal", nil
+		current := &admissionv1.ValidatingAdmissionPolicy{}
+		if err := a.cluster.Client.Get(ctx, client.ObjectKey{Name: name}, current); err != nil {
+			return false, "", err
+		}
+		if current.Status.ObservedGeneration != current.Generation {
+			return false, "waiting for policy observation", nil
+		}
+		if current.Status.TypeChecking != nil && len(current.Status.TypeChecking.ExpressionWarnings) != 0 {
+			return false, "", fmt.Errorf("upgrade fault policy has expression warnings")
+		}
+		return true, "", nil
 	}), "prove the exact upgrade fault is active")
 }
 
