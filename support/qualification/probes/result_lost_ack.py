@@ -333,10 +333,9 @@ def main():
         if pod_token:
             gate_resource = 'pods'
             gate_message = 'Acceptance probe holds migration Apply Pods'
-            gate_expression = ("!has(object.metadata.labels) || !("
-                               "('operator.ptah.run/operation' in object.metadata.labels && "
-                               "object.metadata.labels['operator.ptah.run/operation'] == 'migration-apply') || "
-                               "('operator.ptah.run/acceptance-gate-probe' in object.metadata.labels))")
+            gate_expression = ("!has(object.metadata.labels) || "
+                               "!('operator.ptah.run/operation' in object.metadata.labels) || "
+                               "object.metadata.labels['operator.ptah.run/operation'] != 'apply'")
         create({'apiVersion': 'admissionregistration.k8s.io/v1', 'kind': 'ValidatingAdmissionPolicy',
                 'metadata': {'name': gate}, 'spec': {'failurePolicy': 'Fail', 'matchConstraints': {
                     'resourceRules': [{'apiGroups': [''], 'apiVersions': ['v1'], 'operations': ['CREATE'],
@@ -349,7 +348,7 @@ def main():
             o = {'apiVersion': 'v1', 'kind': 'Secret', 'metadata': {'name': 'gate-probe', 'namespace': ns, 'annotations': {'operator.ptah.run/result-pod-name': apply_prefix + 'probe'}}}
             if pod_token:
                 o = {'apiVersion': 'v1', 'kind': 'Pod', 'metadata': {'name': 'gate-probe', 'namespace': ns,
-                     'labels': {'operator.ptah.run/acceptance-gate-probe': 'true'}},
+                     'labels': {'operator.ptah.run/operation': 'apply'}},
                      'spec': {'automountServiceAccountToken': False, 'restartPolicy': 'Never',
                               'containers': [{'name': 'probe', 'image': fixture}]}}
             p = subprocess.run(['kubectl', '--kubeconfig', E['E2E_KUBECONFIG'], 'create', '--dry-run=server', '-f', '-'], input=json.dumps(o), text=True, capture_output=True, timeout=30)
