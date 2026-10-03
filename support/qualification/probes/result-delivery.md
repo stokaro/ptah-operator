@@ -396,6 +396,29 @@ request timestamps, receipt, and procedure hash, including on verdict failure.
 This tests overlapping redelivery after publication. A race between first
 publishers of an absent intent and single-replica saturation need separate rows.
 
+## Installed Pod-token authority refusals
+
+Set `RESULT_PROBE_AUTHORITY=1`, `RESULT_PROBE_CONCURRENT=1`, and
+`RESULT_PROBE_AUTH=pod-token`, with replacement, runner-loss, and first-publication
+modes off. This uses the same held original runner and exercises authority
+refusals instead of the concurrent request pairs. Each manager must accept the
+original HEAD and PUT before and after the refusals, returning the same receipt.
+
+The probe sends HEAD and PUT with an untrusted token, then with the original
+token and forged namespace, resource, generation, epoch, operation attempt,
+Job UID, or Pod UID. Every forged claim uses its own correctly derived route;
+a route mismatch cannot substitute for an authority refusal. Each request must
+return 403. A parse failure, payload refusal, unavailable receiver, or successful
+request fails the row. The original publication must remain byte-for-byte
+unchanged, no forged attempt may appear, and the original runner must finish
+with one calibrated SQL effect. `authority.json` records only public claims,
+statuses, receiver identities, and receipt metadata.
+
+These are installed forged-claim refusals. Real API tests separately prove
+receiver-only audience, unbound tokens, and actual Pod deletion/replacement;
+transport tests prove revocation is rechecked before completion. Their existing
+results retain their own scope and are not rerun by this probe.
+
 ## First-publication race
 
 Set `RESULT_PROBE_FIRST_PUBLICATION=1`; leave the replacement and runner-loss

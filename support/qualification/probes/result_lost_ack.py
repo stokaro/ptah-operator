@@ -97,6 +97,10 @@ def main():
     if concurrent not in ('0', '1') or (concurrent == '1' and (runner_loss or restart_receiver)):
         raise ValueError('Concurrent delivery must run separately from replacement or loss')
     concurrent = concurrent == '1'
+    authority = E.get('RESULT_PROBE_AUTHORITY', '0')
+    if authority not in ('0', '1') or (authority == '1' and (not concurrent or first_publication)):
+        raise ValueError('Authority refusals require committed concurrent setup without first-publication mode')
+    authority = authority == '1'
     if first_publication and not concurrent:
         raise ValueError('First publication requires concurrent delivery')
     upload_budget = E.get('RESULT_PROBE_UPLOAD_BUDGET', '0')
@@ -111,6 +115,8 @@ def main():
     if authentication not in ('certificate', 'pod-token'):
         raise ValueError('RESULT_PROBE_AUTH must be certificate or pod-token')
     pod_token = authentication == 'pod-token'
+    if authority and not pod_token:
+        raise ValueError('Authority refusals require Pod-token authentication')
     if pod_token and (runner_loss or first_publication or upload_budget):
         raise ValueError('Pod-token mode measures lost ACK, receiver replacement, and committed concurrent redelivery')
     apply_prefix = 'ptah-apply-' if schema_budget else 'ptah-m-apply-'
@@ -566,7 +572,7 @@ def main():
             assert admin('/resume-first', True) == 204
 
         if concurrent and not first_publication:
-            from result_concurrent import verify_evidence as verify_concurrent
+            from result_concurrent import verify_evidence as verify_concurrent, verify_authority_evidence, authority_cases, attempt_name
             def concurrent_retry_paused():
                 value = admin('/evidence')
                 return value if value and value.get('retryWaits', 0) > 0 and value['dropped'] and len(value['attempts']) == 1 else None
@@ -587,8 +593,12 @@ def main():
             saved_intent, saved_complete, saved_data = publication(rs_before, job_uid)
             receipt = paused['attempts'][0]['receipt']
             assert saved_complete['metadata']['uid'] == receipt['UID']
-            concurrent_result = concurrent_client.run(saved_data, saved_intent['metadata']['name'], receipt)
-            if pod_token:
+            if authority:
+                concurrent_result = concurrent_client.run_authority(saved_data, saved_intent['metadata']['name'], receipt)
+                assert concurrent_result['identity'] == dec(credential)
+            else:
+                concurrent_result = concurrent_client.run(saved_data, saved_intent['metadata']['name'], receipt)
+            if pod_token and not authority:
                 assert concurrent_result['binding'] == dec(saved_intent)['binding']
                 assert concurrent_result['identityDigest'] == paused['identityDigest']
             rs_after = {r['metadata']['name']: r for r in records()}
@@ -598,10 +608,17 @@ def main():
             assert owned and all(rs_after[name] == r for name, r in owned.items())
             assert after_intent == saved_intent and after_complete == saved_complete and after_data == saved_data
             concurrent_result['publicationUnchanged'] = True
-            save('concurrent.json', concurrent_result)
-            verify_concurrent(concurrent_result)
+            if authority:
+                assert all(attempt_name(claim) == saved_intent['metadata']['name'] or attempt_name(claim) not in rs_after
+                           for _, claim in authority_cases(concurrent_result['identity']))
+                save('authority.json', concurrent_result)
+                verify_authority_evidence(concurrent_result)
+            else:
+                save('concurrent.json', concurrent_result)
+                verify_concurrent(concurrent_result)
             assert admin('/resume-retry', True) == 204
-            print('PASS: concurrent identical and conflicting redeliveries through both receivers', flush=True)
+            print('PASS: installed Pod-token authority refusals' if authority else
+                  'PASS: concurrent identical and conflicting redeliveries through both receivers', flush=True)
 
         def retry_saved():
             value = admin('/evidence')

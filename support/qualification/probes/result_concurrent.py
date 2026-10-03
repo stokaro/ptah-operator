@@ -8,6 +8,7 @@ This proves concurrent redelivery, not a race to publish an absent intent.
 import base64
 import concurrent.futures
 import contextlib
+import copy
 import datetime as dt
 import hashlib
 import http.client
@@ -25,6 +26,31 @@ import time
 
 def digest(data):
     return 'sha256:' + hashlib.sha256(data).hexdigest()
+
+
+def attempt_name(identity):
+    b = identity['binding']
+    key = [b['namespace'], b['uid'], b['operationID'], b['jobName']]
+    return 'ptah-result-' + hashlib.sha256(json.dumps(key, separators=(',', ':')).encode()).hexdigest()
+
+
+def authority_cases(identity):
+    """The changed-authentication boundaries already required by #586."""
+    b = identity['binding']
+    changes = [('unauthenticated-token', {}), ('namespace', {'namespace': 'foreign-namespace'}),
+               ('resource', {'name': 'foreign-resource', 'uid': 'foreign-resource-uid'}),
+               ('generation', {'generation': b['generation'] + 1}),
+               ('epoch', {'executionBindingID': 'v1-' + '0' * 32}),
+               ('operation-attempt', {'operationID': 'sha256:' + '0' * 64}),
+               ('job', {'jobUID': 'replacement-job-uid'}), ('pod', {'podUID': 'replacement-pod-uid'})]
+    cases = []
+    for label, change in changes:
+        other = copy.deepcopy(identity)
+        other['binding'].update(change)
+        if label != 'unauthenticated-token' and other == identity:
+            raise ValueError('Authority mutation did not change its claim')
+        cases.append((label, other))
+    return cases
 
 
 def pod_token_headers(token, identity):
@@ -87,6 +113,39 @@ def verify_evidence(value):
     return {'requests': 6, 'identicalReceipts': 3, 'conflicts': 3}
 
 
+def verify_authority_evidence(value):
+    def require(condition, message):
+        if not condition:
+            raise ValueError(message)
+    require(value['evidenceVersion'] == 1 and value['authentication'] == 'pod-token', 'Missing token authority evidence')
+    identity, receivers, receipt = value['identity'], value['receivers'], value['receipt']
+    require(len(receivers) == 2 and len(set(receivers)) == 2 and all(receivers), 'Missing distinct receivers')
+    require(bool(receipt['UID']) and receipt['Name'] == attempt_name(identity) + '-complete', 'Missing original receipt')
+    expected = authority_cases(identity)
+    require([c['name'] for c in value['cases']] == [label for label, _ in expected], 'Missing authority refusal case')
+    for case, (label, claim) in zip(value['cases'], expected):
+        require(case['identity'] == claim, 'Wrong authority mutation')
+        require([(r['receiverUID'], r['method']) for r in case['requests']]
+                == [(uid, method) for uid in receivers for method in ('HEAD', 'PUT')], 'Missing receiver or submission method')
+        for row in case['requests']:
+            require(row['status'] == 403 and row['path'] == '/v1/results/' + attempt_name(claim), 'Expected authority refusal on the claimed route')
+            require(row['identityDigest'] == digest(json.dumps(claim, separators=(',', ':')).encode()), 'Wrong transmitted claim')
+            require(row['credential'] == ('untrusted-token' if label == 'unauthenticated-token' else 'original-pod-token'), 'Wrong credential control')
+    for stage in ('before', 'after'):
+        rows = value[stage]
+        require([(r['receiverUID'], r['method']) for r in rows]
+                == [(uid, method) for uid in receivers for method in ('HEAD', 'PUT')], 'Missing positive control')
+        for row in rows:
+            require(row['status'] == (204 if row['method'] == 'HEAD' else 200), 'Original authority stopped working')
+            require(row['path'] == '/v1/results/' + attempt_name(identity)
+                    and row['identityDigest'] == digest(json.dumps(identity, separators=(',', ':')).encode())
+                    and row['credential'] == 'original-pod-token', 'Wrong positive-control authority')
+            if row['method'] == 'PUT':
+                require(row['receipt'] == receipt, 'Positive control changed the receipt')
+    require(value['publicationUnchanged'] is True, 'Refusal changed the publication')
+    return {'refusedRequests': len(expected) * 4, 'positiveControls': 8}
+
+
 class Client:
     """Bounded TLS connections through owned per-Pod port forwards."""
     def __init__(self, environment, managers, host, credential, *, pod_token=None, identity=None):
@@ -146,21 +205,28 @@ class Client:
         self.stack.close()
         self.token_headers = ''
 
-    def request(self, index, payload, name, barrier):
+    def request(self, index, payload, name, barrier=None, *, identity=None, untrusted=False, method='PUT'):
+        auth = self.token_headers
+        if identity is not None:
+            token = ('untrusted.token.bytes' if untrusted else
+                     self.token_headers.split('\r\n')[1].removeprefix('Authorization: Bearer '))
+            auth = pod_token_headers(token, identity)
+        body = b'' if method == 'HEAD' else payload
         connection = socket.create_connection(('127.0.0.1', self.ports[index]), timeout=10)
         with connection, self.tls.wrap_socket(connection, server_hostname=self.host) as tls:
-            headers = ('PUT /v1/results/' + name + ' HTTP/1.1\r\nHost: ' + self.host
+            headers = (method + ' /v1/results/' + name + ' HTTP/1.1\r\nHost: ' + self.host
                 + '\r\nContent-Type: application/vnd.ptah.result.v1+json\r\nContent-Length: '
-                + str(len(payload)) + '\r\nX-Ptah-Result-Digest: ' + digest(payload)
-                + self.token_headers
+                + str(len(body)) + '\r\nX-Ptah-Result-Digest: ' + digest(payload)
+                + auth
                 + '\r\nConnection: close\r\n\r\n')
             tls.sendall(headers.encode('ascii'))
             row = {'receiverUID': self.managers[index]['metadata']['uid'],
                    'digest': digest(payload), 'headersSentNs': time.monotonic_ns()}
-            barrier.wait(timeout=10)
-            tls.sendall(payload)
+            if barrier is not None:
+                barrier.wait(timeout=10)
+            tls.sendall(body)
             row['bodySentNs'] = time.monotonic_ns()
-            response = http.client.HTTPResponse(tls)
+            response = http.client.HTTPResponse(tls, method=method)
             response.begin()
             body = response.read(4097)
             if len(body) > 4096:
@@ -168,7 +234,29 @@ class Client:
             row.update(responseReadNs=time.monotonic_ns(), status=response.status)
             if response.status == 200:
                 row['receipt'] = json.loads(body)
+            if identity is not None:
+                row.update(method=method, path='/v1/results/' + name, identityDigest=digest(identity),
+                           credential='untrusted-token' if untrusted else 'original-pod-token')
             return row
+
+    def run_authority(self, payload, name, receipt):
+        identity = json.loads(self.identity)
+        if attempt_name(identity) != name:
+            raise ValueError('Claimed-route calculation differs from the real publication')
+
+        def requests(claim, untrusted=False):
+            raw = json.dumps(claim, separators=(',', ':')).encode()
+            return [self.request(index, payload, attempt_name(claim), identity=raw, untrusted=untrusted, method=method)
+                    for index in range(2) for method in ('HEAD', 'PUT')]
+
+        before = requests(identity)
+        cases = [{'name': label, 'identity': claim, 'requests': requests(claim, label == 'unauthenticated-token')}
+                 for label, claim in authority_cases(identity)]
+        return {'evidenceVersion': 1, 'authentication': 'pod-token', 'identity': identity,
+                'receivers': [m['metadata']['uid'] for m in self.managers], 'receipt': receipt,
+                'before': before, 'cases': cases, 'after': requests(identity),
+                'observedAt': dt.datetime.now(dt.timezone.utc).isoformat(),
+                'procedureSHA256': hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest()}
 
     def run(self, payload, name, receipt):
         changed = changed_payload(payload)

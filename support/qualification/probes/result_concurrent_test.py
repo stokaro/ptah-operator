@@ -5,11 +5,59 @@ import json
 import pathlib
 import unittest
 
-from result_concurrent import changed_payload, digest, pod_token_headers, verify_evidence
+from result_concurrent import (attempt_name, authority_cases, changed_payload, digest,
+                               pod_token_headers, verify_authority_evidence, verify_evidence)
 from result_first_harvest import publication
 
 
 class ConcurrentDeliveryTests(unittest.TestCase):
+    def authority_fixture(self):
+        identity = {'binding': {'namespace': 'probe', 'name': 'migration', 'uid': 'resource', 'generation': 1,
+                    'executionBindingID': 'v1-' + '1' * 32, 'operationID': 'sha256:' + '2' * 64,
+                    'jobName': 'original-job', 'jobUID': 'job', 'podUID': 'pod'}, 'engine': 'postgresql'}
+        receipt = {'Name': attempt_name(identity) + '-complete', 'UID': 'receipt'}
+        receivers = ['receiver-0', 'receiver-1']
+
+        def requests(claim, refused=False, untrusted=False):
+            rows = []
+            for uid in receivers:
+                for method in ('HEAD', 'PUT'):
+                    row = {'receiverUID': uid, 'method': method, 'status': 403 if refused else (204 if method == 'HEAD' else 200),
+                           'path': '/v1/results/' + attempt_name(claim),
+                           'identityDigest': digest(json.dumps(claim, separators=(',', ':')).encode()),
+                           'credential': 'untrusted-token' if untrusted else 'original-pod-token'}
+                    if not refused and method == 'PUT':
+                        row['receipt'] = copy.deepcopy(receipt)
+                    rows.append(row)
+            return rows
+
+        return {'evidenceVersion': 1, 'authentication': 'pod-token', 'identity': identity, 'receipt': receipt,
+                'receivers': receivers, 'publicationUnchanged': True, 'before': requests(identity), 'after': requests(identity),
+                'cases': [{'name': label, 'identity': claim, 'requests': requests(claim, True, label == 'unauthenticated-token')}
+                          for label, claim in authority_cases(identity)]}
+
+    def test_authority_refusals_require_each_claim_on_its_own_route(self):
+        value = self.authority_fixture()
+        self.assertEqual(verify_authority_evidence(value), {'refusedRequests': 32, 'positiveControls': 8})
+        changes = [(['cases'], []), (['cases', 0, 'requests'], []),
+                   (['cases', 0, 'requests', 0, 'credential'], 'original-pod-token'),
+                   (['cases', 1, 'requests', 0, 'path'], value['before'][0]['path']),
+                   (['cases', 1, 'requests', 0, 'identityDigest'], value['before'][0]['identityDigest']),
+                   (['cases', 1, 'requests', 0, 'status'], 401),
+                   (['cases', 1, 'requests', 0, 'status'], 422),
+                   (['cases', 1, 'requests', 0, 'status'], 503),
+                   (['cases', 1, 'requests', 0, 'status'], 204),
+                   (['before'], []), (['after', 0, 'status'], 403),
+                   (['after', 1, 'receipt', 'UID'], 'replacement'), (['publicationUnchanged'], False)]
+        for path, replacement in changes:
+            bad = copy.deepcopy(value)
+            target = bad
+            for key in path[:-1]:
+                target = target[key]
+            target[path[-1]] = replacement
+            with self.subTest(path=path, replacement=replacement), self.assertRaises(ValueError):
+                verify_authority_evidence(bad)
+
     def fixture(self):
         receipt = {'Name': 'intent-complete', 'UID': 'receipt',
                    'Size': 12, 'Digest': 'sha256:' + 'a' * 64}
