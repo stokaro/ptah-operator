@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -45,7 +46,9 @@ func TestPodTokenServicePinsPublishesAndRestartsWithoutSecrets(t *testing.T) {
 	}
 	f := resulttest.NewPodToken(t, "schema-observe", trust)
 	c := withoutSecretWrites{&identifyingAPI{Client: f.Client(t)}}
+	var reviews atomic.Int64
 	config.TokenReviews = tokenReviewFunc(func(_ context.Context, review *authenticationv1.TokenReview, _ metav1.CreateOptions) (*authenticationv1.TokenReview, error) {
+		reviews.Add(1)
 		if review.Spec.Token != "bound.pod.token" || len(review.Spec.Audiences) != 1 || review.Spec.Audiences[0] != resultdelivery.TokenAudience {
 			return nil, errors.New("wrong token request")
 		}
@@ -82,15 +85,15 @@ func TestPodTokenServicePinsPublishesAndRestartsWithoutSecrets(t *testing.T) {
 	roots := x509.NewCertPool()
 	roots.AppendCertsFromPEM(s.ServerTrust())
 	policy := resultdelivery.RetryPolicy{Attempts: 2, Interval: time.Millisecond, AttemptTimeout: time.Second, TotalTimeout: 2 * time.Second}
-	newSender := func() *resultdelivery.Sender {
-		sender, err := resultdelivery.NewTokenSender("https://"+s.address, f.Identity, &tls.Config{RootCAs: roots}, policy, func() (string, error) { return "bound.pod.token", nil })
+	newSender := func(identity resultdelivery.Identity) *resultdelivery.Sender {
+		sender, err := resultdelivery.NewTokenSender("https://"+s.address, identity, &tls.Config{RootCAs: roots}, policy, func() (string, error) { return "bound.pod.token", nil })
 		if err != nil {
 			t.Fatal(err)
 		}
 		t.Cleanup(sender.Close)
 		return sender
 	}
-	sender := newSender()
+	sender := newSender(f.Identity)
 	if err := sender.Check(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +117,7 @@ func TestPodTokenServicePinsPublishesAndRestartsWithoutSecrets(t *testing.T) {
 	if err != nil || again != issued {
 		t.Fatalf("restart replaced Pod pin: %v", err)
 	}
-	second, err := newSender().Send(t.Context(), payload)
+	second, err := newSender(f.Identity).Send(t.Context(), payload)
 	if err != nil || second != first {
 		t.Fatalf("restart changed durable receipt: %v", err)
 	}
@@ -126,4 +129,37 @@ func TestPodTokenServicePinsPublishesAndRestartsWithoutSecrets(t *testing.T) {
 	if err := c.List(t.Context(), secrets); err != nil || len(secrets.Items) != 0 {
 		t.Fatalf("operations created Secrets: %d, %v", len(secrets.Items), err)
 	}
+	for name, mutate := range map[string]func(*resultdelivery.Identity){
+		"foreign resource": func(i *resultdelivery.Identity) { i.Binding.UID = "foreign-resource-uid" },
+		"generation":       func(i *resultdelivery.Identity) { i.Binding.Generation++ },
+		"epoch": func(i *resultdelivery.Identity) {
+			i.Binding.ExecutionBindingID = "v1-00000000000000000000000000000000"
+		},
+		"operation attempt": func(i *resultdelivery.Identity) { i.Binding.OperationID = "foreign-attempt" },
+		"replaced Job":      func(i *resultdelivery.Identity) { i.Binding.JobUID = "replacement-job-uid" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			identity := f.Identity
+			mutate(&identity)
+			before := reviews.Load()
+			if err := newSender(identity).Check(t.Context()); err == nil || err.Error() != "result receiver preflight returned HTTP 403" {
+				t.Fatalf("changed operation claim was not a terminal authority refusal: %v", err)
+			}
+			if got := reviews.Load() - before; got != 1 {
+				t.Fatalf("invalid immutable claim was retried %d times", got)
+			}
+		})
+	}
+	t.Run("valid claim still waits for its pin", func(t *testing.T) {
+		if err := c.Delete(t.Context(), record); err != nil {
+			t.Fatal(err)
+		}
+		before := reviews.Load()
+		if err := newSender(f.Identity).Check(t.Context()); err == nil || err.Error() != "result receiver preflight returned HTTP 503" {
+			t.Fatalf("enrollment delay lost its temporary refusal: %v", err)
+		}
+		if got := reviews.Load() - before; got != 2 {
+			t.Fatalf("valid unpinned claim did not use its bounded retry: %d reviews", got)
+		}
+	})
 }

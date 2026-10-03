@@ -15,6 +15,7 @@ import (
 
 	"github.com/stokaro/ptah-operator/internal/resultauthority"
 	"github.com/stokaro/ptah-operator/internal/resultconsumer"
+	"github.com/stokaro/ptah-operator/internal/resultcredentials"
 	"github.com/stokaro/ptah-operator/internal/resultdelivery"
 	"github.com/stokaro/ptah-operator/internal/resultdelivery/jobconfig"
 	"github.com/stokaro/ptah-operator/internal/resultstore"
@@ -81,6 +82,16 @@ func New(config Config, writer client.Client, reader client.Reader) (*Service, e
 		receiverConfig.AuthenticateToken = (resultauthority.TokenVerifier{Reviews: config.TokenReviews, Reader: reader}).Verify
 		receiverConfig.Authorize = func(ctx context.Context, identity resultdelivery.Identity) error {
 			pinned, err := service.AuthorizePublication(ctx, identity.Binding)
+			if errors.Is(err, resultcredentials.ErrCredential) {
+				return resultdelivery.ErrAuthority
+			}
+			if errors.Is(err, resultauthority.ErrNotReady) {
+				// Only a valid current claim may wait for enrollment. A forged
+				// attempt also has no pin, but retrying cannot make it valid.
+				if liveErr := (resultauthority.Authorizer{Reader: reader}).Check(ctx, identity); liveErr != nil {
+					return liveErr
+				}
+			}
 			if err != nil {
 				return err
 			}
