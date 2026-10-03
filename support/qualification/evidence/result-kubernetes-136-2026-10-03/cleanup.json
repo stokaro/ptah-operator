@@ -1,0 +1,9 @@
+{
+  "cluster": "ptah-e2e-1-36-4-result-136-94-c9bafe1f6d",
+  "teardownExitCode": 0,
+  "ownedContainersAbsent": true,
+  "namedClaimVolumesAbsent": true,
+  "environmentRemoved": true,
+  "scope": "The completed disposable cluster and its owned databases/registry are removed. This is lab teardown, not the Helm uninstall acceptance case.",
+  "checkedAt": "2026-10-03T00:16:50.645072+00:00"
+}

@@ -1,0 +1,11 @@
+{
+  "controllerRevision": "942f5704ad1777bb81990062e51e5c6f7a43dc2c",
+  "controllerImage": "e2e-registry.ptah-test-a-1-36-4-result-136-942f5704-c9bafe1f6d.svc.cluster.local:5000/ptah-operator@sha256:7c73f5e224736de446b30a08a70ea94f7f7528bac0660ab7068e8d79a089a4ab",
+  "runnerImage": "e2e-registry.ptah-test-a-1-36-4-result-136-942f5704-c9bafe1f6d.svc.cluster.local:5000/ptah-runner@sha256:7c73f5e224736de446b30a08a70ea94f7f7528bac0660ab7068e8d79a089a4ab",
+  "executorImage": "e2e-registry.ptah-test-a-1-36-4-result-136-942f5704-c9bafe1f6d.svc.cluster.local:5000/ptah-executor@sha256:3d18e248044ea10b8ce4eecb67f658c5cbdecd62cda058748431ebc6d54ef173",
+  "fixtureImage": "e2e-registry.ptah-test-a-1-36-4-result-136-942f5704-c9bafe1f6d.svc.cluster.local:5000/e2e-fixture@sha256:09ebfa253d4e2eaa7a47da0c81e067c6d31c956cb6281ccf267081ebdd896e04",
+  "ptahCommit": "f6e562c5b0986cd29a53a5cc01938827336b780a",
+  "kubernetes": "1.36.4",
+  "chartSHA256": "23122e67dcc7a5aa17462d8226eb6e273c1c92ba929d50a3e40da682c5fd9e10",
+  "procedureSHA256": "0150aee11a55cafcd67e2cff298eaffff11db6aacab42daff7d4740a3e2df5da"
+}

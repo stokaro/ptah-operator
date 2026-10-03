@@ -1,0 +1,34 @@
+{
+  "apiVersion": "rbac.authorization.k8s.io/v1",
+  "kind": "RoleBinding",
+  "metadata": {
+    "annotations": {
+      "meta.helm.sh/release-name": "ptah-1-36-4-result-136-9-c9bafe1f6d",
+      "meta.helm.sh/release-namespace": "ptah-system-1-36-4-result-136-942f5704-c9bafe1f6d"
+    },
+    "creationTimestamp": "2026-10-02T23:57:16Z",
+    "labels": {
+      "app.kubernetes.io/instance": "ptah-1-36-4-result-136-9-c9bafe1f6d",
+      "app.kubernetes.io/managed-by": "Helm",
+      "app.kubernetes.io/name": "ptah-operator",
+      "app.kubernetes.io/version": "0.2.0",
+      "helm.sh/chart": "ptah-operator-0.2.0"
+    },
+    "name": "ptah-runtime-generated-name-prefix-boundary-proof-c9bafe1f6d",
+    "namespace": "ptah-system-1-36-4-result-136-942f5704-c9bafe1f6d",
+    "resourceVersion": "4834",
+    "uid": "60c4265b-4851-4e74-910c-c6e6f0239ba0"
+  },
+  "roleRef": {
+    "apiGroup": "rbac.authorization.k8s.io",
+    "kind": "Role",
+    "name": "ptah-runtime-generated-name-prefix-boundary-proof-c9bafe1f6d"
+  },
+  "subjects": [
+    {
+      "kind": "ServiceAccount",
+      "name": "ptah-runtime-generated-name-prefix-boundary-proof-c9bafe1f6d",
+      "namespace": "ptah-system-1-36-4-result-136-942f5704-c9bafe1f6d"
+    }
+  ]
+}

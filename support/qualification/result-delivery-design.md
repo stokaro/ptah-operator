@@ -1183,5 +1183,32 @@ All four kubelets report `10Mi` and have no explicit log-size setting.
 The completed 1.35 cluster, registry and databases are removed after evidence
 capture. The older completed 1.37 lab was also removed to avoid shared-host
 contention during preparation. Cluster deletion is not Helm uninstall
-qualification. Kubernetes 1.36 remains the missing minor for this boundary DoD;
-full lifecycle and final-profile acceptance remain separate requirements.
+qualification. The remaining Kubernetes 1.36 rows are recorded below; full lifecycle and
+final-profile acceptance remain separate requirements.
+
+
+### Kubernetes 1.36 and completed default-log boundary inventory
+
+[Installed Kubernetes 1.36.4 evidence](evidence/result-kubernetes-136-2026-10-03/summary.json)
+passes all four PostgreSQL/MySQL exact-maximum and maximum-plus-one cases.
+The native probes and independent API/database readback exit zero. Every
+original receipt remains readable after its producing Pod/logs are removed
+and both managers replaced before first consumption. Each 8 MiB plan has
+16 full chunks, exact escaping-heavy SQL, one approved Apply and verified
+native database defaults. Each 8 MiB plus one result reports the unchanged
+limit and leaves no plan, chunks, Apply or database tables. Every kubelet has
+no explicit log-size setting and reports the standard `10Mi` configuration.
+The completed cluster and its owned registry/databases are removed.
+
+Together with the retained Kubernetes 1.35 rows, the Kubernetes 1.37
+[PostgreSQL maximum](evidence/result-control-plane-restore-2026-10-03/summary.json),
+[MySQL maximum](evidence/result-mysql-maximum-2026-10-03/summary.json), and
+[both oversized refusals](evidence/result-oversized-2026-10-03/summary.json),
+this completes the default-logging DoD's supported-minor boundary inventory.
+The 1.35 and 1.36 images are built from `942f5704`; their protocol, controller,
+runner and chart sources have no changes from manager revision `7b21f895`
+used in those 1.37 rows. The archived runtime identities remain distinct;
+these are functional Linux amd64 proofs, not a final artifact or architecture
+matrix verdict. Lifecycle qualification and enabling the transport by default
+remain open. The shipped `64Mi` workaround is unchanged until that integration
+is complete.
