@@ -2,25 +2,24 @@
 
 Implementation design for [#586](https://github.com/stokaro/ptah-operator/issues/586).
 The target is stable 0.2.0. This document does not authorize a release.
-The chart enables durable delivery by default: listener, issuer, admission
+The chart enables durable delivery by default: listener, Pod binding, admission
 validator, background consumer, and independent certificate rotation. It
 provisions trust objects and a Service, grants scoped permissions, and can
 render a receiver NetworkPolicy with explicit infrastructure peers. The linked
 qualification evidence records completed transport and lifecycle cases; final
 default-installation integration and the #242 acceptance decision remain open.
 
-## Authentication correction in progress
+## Pod-token authentication
 
 The capacity failure in Actions run `37137154401` exposed a mismatch between
-short-lived delivery credentials and the retained operation evidence. Each
-operation creates a credential Secret, and admission retains that projection
-as long as its canonical record exists. Secret usage therefore follows operation
+short-lived delivery credentials and the retained operation evidence. The certificate
+implementation created a credential Secret for each operation, and admission retained that projection
+as long as its canonical record exists. Secret usage therefore followed operation
 rate times retention, even when few Jobs run concurrently. Raising the Secret
-quota does not correct that lifecycle. The implementation below still describes
-the current certificate transport; the replacement is not qualified yet.
+quota does not correct that lifecycle. The manager now selects receiver-audience Pod tokens. Installed workflow and
+capacity evidence for this replacement are still required.
 
-Replace each operation's client certificate Secret with an explicit projected
-ServiceAccount token. Kubelet obtains and rotates a token bound to the Pod, with
+Each operation uses an explicit projected ServiceAccount token. Kubelet obtains and rotates a token bound to the Pod, with
 `operator.ptah.run/results` as its sole audience. Keep default API-token
 mounting disabled and grant no resource permissions to the runner. The receiver
 alone gains permission to create TokenReviews. The receiver audience must not be
@@ -35,7 +34,9 @@ and authorization before durable completion, including on reused connections.
 TokenReview errors are temporary refusals, never permission to publish.
 
 Retain a non-secret immutable operation binding independently of the token.
-Neither token bytes nor client private keys belong in result records. Keep the
+New binding records contain only the canonical public identity; neither token
+bytes nor client private keys are written. The existing credential record role
+and retention guard also read old development certificate records for cleanup. Keep the
 existing result retention, publication, and unknown-outcome recovery rules.
 Server TLS remains mandatory. Its public trust bundle and the operation's public
 identity inputs must be fixed in the admitted Job template; only the main runner
@@ -64,8 +65,9 @@ Use immutable `PtahResultRecord` objects in the resource's namespace for the
 upload intent, payload chunks, and completion record. This dedicated RBAC
 resource lets the receiver read results without permission to read database
 Secrets. Ordinary ConfigMap readers must not gain access to plans. Record read
-access exposes confidential operation data and, for the credential role, private
-delivery keys: encryption at rest and backups must explicitly cover this CRD.
+access exposes confidential operation data. Old development credential records
+can contain private delivery keys; new Pod bindings contain only public identity.
+Encryption at rest and backups must explicitly cover this CRD.
 
 The schema requires the role and bounded payload, freezes the whole spec, and
 has no default or status. The reader independently checks decoded byte limits,
@@ -117,9 +119,9 @@ controllers does not prove that lifecycle.
 ## Publication admission
 
 Only the configured manager may create result records. For every intent, chunk,
-and completion, admission reads the canonical credential, verifies its trusted
-certificate and exact publication binding, and checks current Job/Pod and
-operation authority. A missing issuer or credential refuses publication.
+and completion, admission reads the canonical original-Pod binding and checks current Job/Pod
+and operation authority. A missing binding refuses publication. TokenReview
+authenticates the runner request at the receiver; it grants no direct API write.
 
 Intent bytes must encode a canonical versioned manifest with the complete size,
 digest, bounded chunk geometry, exact name, and resource owner. A chunk must
@@ -154,11 +156,12 @@ publication to both accepted and refused inputs.
 
 `internal/resultdelivery` implements a dedicated HTTP receiver and a sender
 that accepts already executed result bytes. The receiver requires TLS 1.3 and
-a verified client certificate. The certificate's single URI SAN encodes the
-complete publication binding and target engine. The route must name that
-binding's deterministic publication name; the result must name its operation
-and operation ID. Certificates are checked again on every request and before
-publication, including their validity on reused TLS connections.
+an authenticated Pod-bound token with the receiver audience. A canonical public
+identity header names the complete binding and target engine; the direct API
+checks and immutable first-Pod record establish its authority. The route must
+name that binding's deterministic publication name; the result must name its
+operation and operation ID. TokenReview is repeated before publication, including
+on reused TLS connections.
 
 The receiver requires an explicit live-authorizer callback. No callback that
 permits arbitrary requests is supplied by production code. The Kubernetes
@@ -190,8 +193,8 @@ HTTP server cannot indefinitely drain them after releasing an upload slot.
 Installation sizing must account for concurrent decoded and encoded payload
 buffers; the package's configurable bound is not a resource-budget qualification.
 
-The sender requires server certificate verification and a client certificate
-whose identity matches the supplied binding. It refuses redirects and validates
+The sender requires server certificate verification and rereads the projected
+Pod token for each request. It refuses redirects and validates
 the returned receipt name, UID, length, and digest. Network failures and explicit
 transient statuses retry the same copied bytes within bounded attempts and an
 overall deadline. Definitive refusals stop delivery. The sender has no SQL or
@@ -210,7 +213,7 @@ Neither is a complete Job-to-controller acceptance run.
 
 ## Live result authority
 
-`internal/resultauthority` holds a certificate identity to the current schema or
+`internal/resultauthority` holds an authenticated identity to the current schema or
 migration UID, generation, active operation, input fingerprint, and execution
 epoch. It verifies the exact recorded Job UID through `jobclaim.Match`, then
 holds the Pod UID, owner, generated name, metadata, and workload to the persisted
@@ -231,7 +234,7 @@ to deliver evidence, never permission to execute SQL.
 The authorizer does not issue credentials, install admission, or establish a
 transaction across its reads and the completion write. The issuer reads
 the original generation from the Job template, covered by its admission
-snapshot. The authorizer refuses a certificate whose generation differs from
+snapshot. The authorizer refuses an identity whose generation differs from
 that value even if the live resource now has that generation. Consumers still decide whether evidence is
 current and whether the SQL process has stopped under the existing Lease and
 unknown-outcome rules. Tests cover all nine operation types using the golden
@@ -241,22 +244,23 @@ predicate tests, not installed certificate or cluster acceptance evidence.
 
 ## Runner delivery path
 
-The runner accepts `--result-endpoint` and `--result-credentials` together. The
-credentials directory contains `tls.crt`, `tls.key`, and `ca.crt`; each file is
-bounded to 64 KiB. The command verifies the key pair, client certificate lifetime
-and usage, receiver configuration, and the certificate's operation, operation
-ID, target engine, and actual Pod namespace/name/UID before starting a child.
-The Pod identity must come from downward API values `PTAH_RESULT_POD_NAMESPACE`,
-`PTAH_RESULT_POD_NAME`, and `PTAH_RESULT_POD_UID`. The original resource
-generation is the literal `PTAH_RESULT_GENERATION` in the Job template. Duplicate binding variables
-are refused. These are delivery credentials, not Kubernetes API credentials.
-The receiver remains responsible for authenticating the issuer and current
-claim. After local validation, the runner makes one authenticated HEAD request,
-bounded to 30 seconds, before starting its child. Invalid trust, revoked
-authority, or an unavailable receiver stops the command without SQL or a log
-fallback. Existing execution guards still apply after this preflight. A receiver
-can fail after the check, so result delivery and unknown-outcome recovery remain
-necessary.
+The installed runner accepts `--result-endpoint` and `--result-token` together.
+The token is read from a bounded 8 KiB regular file on every preflight and
+publication attempt. The main container alone mounts the `0440` projection;
+its sole audience is `operator.ptah.run/results` and requested lifetime is one
+hour. Automatic API-token mounting stays disabled.
+
+The admitted template fixes the public server CA bundle and operation identity.
+Downward API fields supply the actual Pod namespace/name/UID and owning Job UID;
+the template cannot substitute literal values. The runner verifies these inputs,
+the operation, engine, original generation, and server trust before starting a
+child. Duplicate binding variables are refused. A bounded HEAD preflight must
+succeed before execution. The receiver still checks the live operation and its
+immutable first-Pod binding, and execution guards still apply after preflight.
+
+The certificate command path remains available for earlier development fixtures.
+Combining token and certificate arguments is refused. The installed manager
+selects only token authentication; no failed request can choose another mode.
 
 After execution, the runner encodes one immutable result, writes a bounded
 termination summary, and sends the payload. The summary's existing
@@ -282,103 +286,41 @@ first persistence. The API client in this test is fake; it does not prove a real
 database commit, installed admission, or a Job lifecycle. Plan tests exercise
 exact-limit and maximum-plus-one output without a process key.
 
-## Credential issuance and Job projection
+## Pod binding and Job projection
 
-`workload.Builder.ResultEndpoint` selects the durable runner arguments and
-credential projection for every schema and migration operation. It remains
-empty unless the manager receives `--result-endpoint`. The common
-`jobconfig` package fixes the Secret name from resource UID, operation ID, and
-Job name, the original resource generation, the actual-Pod downward API fields,
-and a read-only `0440` Secret mount in the main runner container. Admission
-snapshots cover this complete template. Readback refuses credential aliases,
-mounts in init or ephemeral containers, credential environment references,
-image-pull use, and automatic Kubernetes API token mounting.
+The manager sets `workload.Builder.ResultServerTrust` to the service's current
+public bundle. The builder captures it with the operation identity in the
+admission snapshot and adds the exact receiver-audience projection. Later trust
+rotation does not rewrite the Job or its snapshot. Job matching accepts the
+original public bundle only while the full template matches the persisted digest.
+The existing server CA overlap must cover the maximum Job and delivery horizon.
 
-`internal/resultcredentials` uses a dedicated client CA and an uncached reader.
-It validates live authority before generating a key, before creating a canonical
-credential-role `PtahResultRecord`, and after direct record readback. The record
-holds the private key, certificate, trust bundle, and original-Pod binding.
-Concurrent issuers converge on the persisted winner; a lost record-write response
-is retried by reading that winner. The certificate carries the exact identity in
-one URI SAN and permits client authentication only. Its lifetime covers the
-supported Job horizon plus ten minutes for grace and reporting, and must fit
-within the signer's remaining lifetime.
+`resultcredentials.PodBindings` reads live authority, creates an immutable public
+`PtahResultRecord`, reads back the persisted winner, and rechecks live authority.
+Its deterministic name fixes the resource UID, operation ID, and Job name. The
+record fixes the original Job/Pod UIDs, generation, epoch, input fingerprint,
+operation, and engine. Repeated enrollment returns the same record. A replacement
+Pod cannot change the pin even after the original Pod disappears.
 
-The issuer then creates an immutable TLS Secret from the exact recorded bytes.
-It never reads, patches, or updates Secrets. Its returned UID identifies the
-canonical record, not the Secret. A lost projection-write response preserves the
-same canonical key on retry. `AlreadyExists` does not prove the projection's
-contents: the mandatory runner preflight authenticates the mounted credential
-before SQL starts. A preexisting unusable projection can prevent progress, but
-must not let the child start with unverified delivery credentials.
+No operation creates a Secret. New bindings preserve the existing retention
+window and all active-operation, pending-observation, Lease-release, unresolved
+migration, and restore pins. Retired records are collected only after the exact
+Job is absent and the persisted window has elapsed. The collector still reads
+older development certificate records and their owned Secret projections.
 
-The credential record belongs to the schema or migration. A new Secret
-projection belongs to that exact record by UID, with `blockOwnerDeletion: false`.
-Neither is owned by the Job or Pod. Removing an eligible record lets Kubernetes
-collect its projection without giving the manager Secret GET or DELETE.
-Existing development projections owned directly by the resource remain readable;
-new CREATEs must use the canonical record owner. The canonical record fixes the original Pod identity even after that Pod disappears: a replacement
-Pod cannot overwrite or reuse the same attempt's credential. A Job from an older
-generation cannot be reissued under the new generation. The configured client
-trust pool may include the previous signer; an existing credential is preserved
-during that overlap. This is not proof of installed CA rotation. Server trust
-is immutable in the credential: installation rotation must preserve old runners'
-trust until their bounded attempts finish, rather than rewriting their Secrets.
+The Pod webhook checks the pin for token Jobs even though they reference no
+credential Secret. It admits the first Pod before enrollment, refuses another
+CREATE after enrollment, and permits updates only for the recorded Pod UID.
+The runner waits at receiver preflight until the controller has pinned the Pod;
+this wait grants no SQL authority. Concurrent admission and enrollment are not
+a cross-object transaction, so receiver and consumer checks remain mandatory.
 
-The chart routes reserved credential Secret names to the controller-write
-webhook for CREATE, UPDATE, and DELETE, regardless of the writer's identity.
-CREATE requires the configured manager, trusted certificate bytes, exact public
-binding metadata, and current operation authority. Secret creation also requires
-its bytes and binding to match the canonical record. Credential-record creation
-authenticates the same certificate and live binding; record UPDATE freezes its
-spec and metadata, and record DELETE preserves execution and recovery pins. Without an issuer configured
-in the manager, creation is refused. UPDATE preserves data, ownership, labels,
-annotations, and finalizers, except removal of the API's sole `foregroundDeletion`
-finalizer from an already-deleting object. Orphan deletion is refused because it
-would require rewriting immutable owner references. DELETE reads the owner directly and refuses while
-that exact operation ID remains active, including after Pod loss, generation
-changes, Lease loss, or the start of resource deletion. Pending schema observation,
-pending Lease release, migration unresolved/resolved-run evidence, and the most
-recent migration run also retain their attempt. An unresolved-run annotation
-keeps that protection when restore omits status; an unreadable annotation refuses
-cleanup. The enabled collector also requires the persisted retirement window
-and original Job absence before credential-record deletion. A projection whose exact
-canonical record still exists cannot be deleted, even after retirement. After
-record removal or replacement, projection DELETE decodes the immutable
-certificate's recorded binding and rechecks the original resource directly.
-Expiry and CA retirement do not prevent this cleanup, but never restore delivery
-authority. API failures refuse deletion. Legacy resource-owned projections keep
-the original active-operation deletion guard. Resource ownership and
-`immutable: true` alone do not preserve this first-Pod pin.
-
-The collector applies this deletion boundary after the persisted retention
-window. Its installed garbage-collection and recovery proofs remain required
-before default activation.
-
-The Pod webhook also receives direct references to reserved credential names,
-including unlabeled Pods, environment sources, image-pull credentials, projected
-volumes, inline CSI, and legacy storage sources. It refuses them outside the
-exact admitted operation workload. The first Pod can precede its credential record;
-later CREATEs cannot reuse an existing credential. An UPDATE verifies the
-original Pod identity through a metadata-only GET on `PtahResultRecord`, never
-on Secrets. The runner independently checks its downward-API UID against the
-certificate and authenticates delivery before executing anything, including when
-a second Pod races the first credential publication.
-
-Local API-server tests use the actual issuer, chart routing, and admission
-handlers. An impersonated issuer identity has record GET/CREATE and Secret
-CREATE, while GET on both the credential projection and a database Secret is
-forbidden. Issuance and repeated issuance succeed under those permissions. The
-tests also prove canonical-record and projection metadata protection, active
-DELETE and DeleteCollection refusal, original-Pod updates, replacement refusal,
-and retirement cleanup. Removing the webhook admits its otherwise-refused
-record deletion; restoring it restores the refusal.
-
-These tests run no kubelet or garbage collector. The admission handlers still
-use an administrator as their API reader, so these tests do not prove installed
-webhook RBAC, kubelet projection, garbage collection, or backup. Restore and
-retention must preserve active pins. Issuance and authority reads are not a
-cross-object transaction, so consumer and receiver checks remain required.
+Local tests cover all nine operation projections, original-Pod replacement,
+public-record retention, a receiver restart without Secret access, and runner
+token rotation after a lost acknowledgment without repeated execution. Real API
+admission tests accept both resource families and refuse API audience, enlarged
+token lifetime, additional projection, and init-container access. These checks
+do not replace installed workflow or capacity qualification.
 
 ## Controller consumption
 
@@ -444,18 +386,16 @@ through one immutable snapshot. Invalid material preserves the last validated
 snapshot, fails readiness, and pauses issuance until a valid projection returns.
 The background consumer remains independent of certificate state.
 
-Reconciliation and admission retain a stable service reference and select its
-current issuer per call. New handshakes use the current serving certificate and
-client roots. Every receiver authority check also verifies the peer against
-current client roots, including after upload and at the publication boundary;
-a keep-alive connection cannot preserve trust in a removed CA.
+Reconciliation and admission retain a stable service reference. Installed
+receivers authenticate through TokenReview and the public Pod binding. New
+handshakes use the current serving certificate. The existing certificate
+provisioning and enrollment policy fence remain shared by the replicas; the
+client signer files support the earlier development certificate path only.
 
-Existing canonical credentials retain their original server bundle. Expanding
-the bundle for new Jobs does not rewrite or invalidate those records. Admission
-requires the current bundle for a new credential record and exact canonical bytes
-for every Secret projection. Client CA overlap permits existing credentials;
-removing their signer refuses further delivery but does not affect reading
-already acknowledged records.
+Existing Jobs retain their original public server bundle. Expanding the bundle
+for new Jobs does not rewrite or invalidate existing snapshots. Already
+acknowledged result records remain readable independently of token or
+certificate validity.
 
 Automatic provisioning and coordinated rotation are implemented in the rotator
 loop described below and wired by the development chart option. The

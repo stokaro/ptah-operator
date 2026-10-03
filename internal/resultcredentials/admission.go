@@ -112,6 +112,12 @@ func ValidateRecordUpdate(old, next *api.PtahResultRecord) error {
 	if old == nil || next == nil || !reflect.DeepEqual(old.Spec, next.Spec) {
 		return ErrCredential
 	}
+	if _, err := decodePodBinding(old, true); err == nil {
+		if _, err := decodePodBinding(next, true); err != nil {
+			return err
+		}
+		return ValidateUpdate(&corev1.Secret{ObjectMeta: *old.ObjectMeta.DeepCopy()}, &corev1.Secret{ObjectMeta: *next.ObjectMeta.DeepCopy()})
+	}
 	a, err := recordSecret(old)
 	if err != nil {
 		return err
@@ -124,6 +130,9 @@ func ValidateRecordUpdate(old, next *api.PtahResultRecord) error {
 }
 
 func ValidateRecordDelete(ctx context.Context, reader client.Reader, record *api.PtahResultRecord) error {
+	if _, err := decodePodBinding(record, true); err == nil {
+		return validatePodBindingDelete(ctx, reader, record)
+	}
 	secret, err := recordSecret(record)
 	if err != nil {
 		return err
@@ -203,6 +212,9 @@ func ValidateDelete(ctx context.Context, reader client.Reader, secret *corev1.Se
 // authority. Cleanup uses it after certificate or CA expiry. The caller must
 // read the persisted, admission-protected record directly from the API.
 func StoredRecordIdentity(record *api.PtahResultRecord) (resultdelivery.Identity, error) {
+	if identity, err := decodePodBinding(record, true); err == nil {
+		return identity, nil
+	}
 	secret, err := recordSecret(record)
 	if err != nil || record.UID == "" {
 		return resultdelivery.Identity{}, ErrCredential

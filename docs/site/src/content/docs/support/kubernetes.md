@@ -69,7 +69,7 @@ therefore cannot change the artifacts attributed to the tested commit.
 
 ## Result delivery {#result-log-retention}
 
-The default installation sends runner results over mTLS to the manager's
+The default installation sends runner results over TLS with a receiver-audience Pod token to the manager's
 result Service. It acknowledges only after validating and storing the complete
 result in immutable `PtahResultRecord` objects. Container logs are diagnostic
 output; rotating or deleting them cannot remove an acknowledged result.

@@ -2,8 +2,15 @@ package podintent
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
+	"math/big"
+	"strings"
 	"testing"
+	"time"
 
 	admissionv1 "k8s.io/api/admission/v1"
 	batchv1 "k8s.io/api/batch/v1"
@@ -95,6 +102,45 @@ func TestResultCredentialPodMetadataGuard(t *testing.T) {
 			}
 			if row.name == "API unavailable" && (response == nil || response.Result.Code != 503) {
 				t.Fatal("API failure did not fail closed with retryable status")
+			}
+		})
+	}
+}
+
+func TestResultPodTokenStillGuardsTheOriginalPod(t *testing.T) {
+	public, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ca := &x509.Certificate{SerialNumber: big.NewInt(1), IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour)}
+	der, err := x509.CreateCertificate(rand.Reader, ca, ca, public, private)
+	if err != nil {
+		t.Fatal(err)
+	}
+	trust := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "job", Namespace: "team", UID: "job-uid", OwnerReferences: []metav1.OwnerReference{{APIVersion: "operator.ptah.run/v1alpha1", Kind: "PtahSchema", Name: "schema", UID: "subject-uid", Controller: ptr.To(true)}}, Annotations: map[string]string{"operator.ptah.run/operation-id": "operation", "operator.ptah.run/execution-binding-id": "v1-" + strings.Repeat("a", 32), "operator.ptah.run/input-fingerprint": "sha256:" + strings.Repeat("b", 64)}}, Spec: batchv1.JobSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{AutomountServiceAccountToken: ptr.To(false), Containers: []corev1.Container{{Name: "ptah", Args: []string{"--operation", "resolve"}}}}}}}
+	if err := jobconfig.AttachPodToken(job, "subject-uid", 1, "operation", "https://receiver.test", trust); err != nil {
+		t.Fatal(err)
+	}
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod", Namespace: "team", UID: "pod-uid"}, Spec: *job.Spec.Template.Spec.DeepCopy()}
+	for _, row := range []struct {
+		name  string
+		op    admissionv1.Operation
+		allow bool
+	}{{"first", admissionv1.Create, true}, {"original", admissionv1.Update, true}, {"replacement", admissionv1.Create, false}, {"changed UID", admissionv1.Update, false}, {"API failure", admissionv1.Create, false}} {
+		t.Run(row.name, func(t *testing.T) {
+			reader := &credentialMetadataReader{metadata: metav1.PartialObjectMetadata{ObjectMeta: metav1.ObjectMeta{Namespace: pod.Namespace, Name: jobconfig.CredentialName("subject-uid", "operation", job.Name), Annotations: map[string]string{binding.PodUID: string(pod.UID), binding.PodName: pod.Name, binding.JobUID: string(job.UID), binding.OperationID: "operation"}}}}
+			switch row.name {
+			case "first":
+				reader.failure = apierrors.NewNotFound(schema.GroupResource{Group: "operator.ptah.run", Resource: "ptahresultrecords"}, reader.metadata.Name)
+			case "changed UID":
+				reader.metadata.Annotations[binding.PodUID] = "replaced-pod"
+			case "API failure":
+				reader.failure = errors.New("unavailable")
+			}
+			response := (&ValidationHandler{Reader: reader}).validateResultCredential(t.Context(), row.op, pod, job, "operation")
+			if (response == nil) != row.allow || reader.reads != 1 {
+				t.Fatalf("allow=%v, response=%#v, reads=%d", row.allow, response, reader.reads)
 			}
 		})
 	}

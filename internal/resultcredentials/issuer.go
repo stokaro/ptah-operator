@@ -1,5 +1,5 @@
-// Package resultcredentials issues one immutable delivery credential per
-// operation attempt. It never grants Kubernetes API access or permission to SQL.
+// Package resultcredentials binds delivery to an operation's first Pod. It
+// never grants Kubernetes API access or permission to SQL.
 package resultcredentials
 
 import (

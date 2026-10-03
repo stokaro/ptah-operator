@@ -289,7 +289,13 @@ func (b Builder) buildOperationJob(spec operationJob) (*batchv1.Job, error) {
 		},
 	}
 	if b.ResultEndpoint != "" {
-		if err := jobconfig.Attach(job, spec.owner.GetUID(), spec.owner.GetGeneration(), spec.operationID, b.ResultEndpoint); err != nil {
+		var err error
+		if b.ResultServerTrust != nil {
+			err = jobconfig.AttachPodToken(job, spec.owner.GetUID(), spec.owner.GetGeneration(), spec.operationID, b.ResultEndpoint, b.ResultServerTrust())
+		} else {
+			err = jobconfig.Attach(job, spec.owner.GetUID(), spec.owner.GetGeneration(), spec.operationID, b.ResultEndpoint)
+		}
+		if err != nil {
 			return nil, err
 		}
 	}

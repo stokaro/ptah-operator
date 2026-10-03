@@ -22,7 +22,7 @@ import (
 // and record webhook protect the canonical original-Pod pin.
 func (h *ValidationHandler) validateResultCredential(ctx context.Context, operation admissionv1.Operation, pod *corev1.Pod, job *batchv1.Job, operationID string) *cradmission.Response {
 	refs := binding.References(pod)
-	if len(refs) == 0 {
+	if len(refs) == 0 && !jobconfig.UsesPodToken(job) {
 		return nil
 	}
 	deny := func(message string) *cradmission.Response { r := cradmission.Denied(message); return &r }
@@ -30,14 +30,14 @@ func (h *ValidationHandler) validateResultCredential(ctx context.Context, operat
 		return deny("result credential requires one operation owner")
 	}
 	projection, err := jobconfig.Read(job, job.OwnerReferences[0].UID, operationID)
-	if err != nil || len(refs) != 1 || refs[0] != projection.SecretName {
+	if err != nil || projection.PodToken && len(refs) != 0 || !projection.PodToken && (len(refs) != 1 || refs[0] != projection.SecretName) {
 		return deny("Pod does not have the exact result credential projection")
 	}
 	metadata := &metav1.PartialObjectMetadata{TypeMeta: metav1.TypeMeta{APIVersion: api.GroupVersion.String(), Kind: "PtahResultRecord"}}
 	err = h.Reader.Get(ctx, client.ObjectKey{Namespace: pod.Namespace, Name: projection.SecretName}, metadata)
 	if apierrors.IsNotFound(err) {
-		// The Job's first Pod must exist before its exact UID can be certified.
-		// The missing Secret keeps it pending; the issuer rejects multiple Pods.
+		// The first Pod must exist before its UID can be pinned. Token runners
+		// wait at receiver preflight; legacy runners wait for their Secret.
 		return nil
 	}
 	if err != nil {

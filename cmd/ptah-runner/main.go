@@ -46,6 +46,7 @@ func run(ctx context.Context, arguments []string, stdout, stderr io.Writer, envi
 	validateOCISource := flags.String("validate-oci-source", "", "validate OCI source authority grants without network access")
 	resultEndpoint := flags.String("result-endpoint", "", "HTTPS origin for durable result delivery")
 	resultCredentials := flags.String("result-credentials", "", "directory containing result-delivery tls.crt, tls.key, and ca.crt")
+	resultToken := flags.String("result-token", "", "path to the projected receiver-audience Pod token")
 	snapshotOCICATo := flags.String("snapshot-oci-ca-to", "", "copy a validated OCI CA to an exclusive snapshot path")
 	if err := flags.Parse(arguments); err != nil {
 		return 2
@@ -143,7 +144,7 @@ func run(ctx context.Context, arguments []string, stdout, stderr io.Writer, envi
 	var delivery *runnerDelivery
 	deliveryRequested := false
 	flags.Visit(func(current *flag.Flag) {
-		if current.Name == "result-endpoint" || current.Name == "result-credentials" {
+		if current.Name == "result-endpoint" || current.Name == "result-credentials" || current.Name == "result-token" {
 			deliveryRequested = true
 		}
 	})
@@ -155,7 +156,20 @@ func run(ctx context.Context, arguments []string, stdout, stderr io.Writer, envi
 			return 2
 		}
 		var err error
-		delivery, err = prepareDelivery(*resultEndpoint, *resultCredentials, operation, environment)
+		tokenRequested, certificateRequested := false, false
+		flags.Visit(func(current *flag.Flag) {
+			tokenRequested = tokenRequested || current.Name == "result-token"
+			certificateRequested = certificateRequested || current.Name == "result-credentials"
+		})
+		if tokenRequested && certificateRequested {
+			_, _ = fmt.Fprintln(stderr, "ptah-runner: result authentication modes cannot be combined")
+			return 2
+		}
+		if tokenRequested {
+			delivery, err = prepareTokenDelivery(*resultEndpoint, *resultToken, operation, environment)
+		} else {
+			delivery, err = prepareDelivery(*resultEndpoint, *resultCredentials, operation, environment)
+		}
 		if err != nil {
 			_, _ = fmt.Fprintln(stderr, "ptah-runner: invalid result delivery configuration")
 			return 2

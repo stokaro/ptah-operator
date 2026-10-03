@@ -185,14 +185,20 @@ func main() {
 		log.Error(fmt.Errorf("result-endpoint, result-cert-dir, and result-enrollment-policy must be configured together"), "invalid result delivery configuration")
 		os.Exit(1)
 	}
+	clientset, err := kubernetes.NewForConfig(manager.GetConfig())
+	if err != nil {
+		log.Error(err, "create Kubernetes clientset")
+		os.Exit(1)
+	}
 	var results *resultservice.Service
 	var cleanupPolicy *resultcleanup.Policy
 	if resultEndpoint != "" {
-		results, err = resultservice.New(resultservice.Config{Endpoint: resultEndpoint, Address: resultAddress, CertificateDirectory: resultCertDir, EnrollmentPolicyNamespace: managerIdentity[2], EnrollmentPolicyName: resultEnrollmentPolicy, Uploads: 1, UploadTimeout: 2 * time.Minute, Consumer: resultconsumer.Options{Workers: 1, Entries: 4, Timeout: 30 * time.Second, Retention: time.Minute}}, manager.GetClient(), manager.GetAPIReader())
+		results, err = resultservice.New(resultservice.Config{TokenReviews: clientset.AuthenticationV1().TokenReviews(), Endpoint: resultEndpoint, Address: resultAddress, CertificateDirectory: resultCertDir, EnrollmentPolicyNamespace: managerIdentity[2], EnrollmentPolicyName: resultEnrollmentPolicy, Uploads: 1, UploadTimeout: 2 * time.Minute, Consumer: resultconsumer.Options{Workers: 1, Entries: 4, Timeout: 30 * time.Second, Retention: time.Minute}}, manager.GetClient(), manager.GetAPIReader())
 		if err != nil {
 			log.Error(err, "configure durable result service")
 			os.Exit(1)
 		}
+		builder.ResultServerTrust = results.ServerTrust
 		if err := manager.Add(results); err != nil {
 			log.Error(err, "register durable result service")
 			os.Exit(1)
@@ -213,11 +219,6 @@ func main() {
 		}
 	}
 
-	clientset, err := kubernetes.NewForConfig(manager.GetConfig())
-	if err != nil {
-		log.Error(err, "create Kubernetes clientset")
-		os.Exit(1)
-	}
 	operatorMetrics := telemetry.New(ctrlmetrics.Registry)
 	// Read alert state directly from the API once per leader scrape. A warm
 	// controller cache can keep serving stale state after API access fails.

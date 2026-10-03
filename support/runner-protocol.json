@@ -82,6 +82,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:5ce1aac3021a2e65b1a0231d10ab0994f80620c0da6a0b682a02e9910ce1cda3",
       "reason": "Add bounded Pod-token transport components before the first tagged 0.2.0 release. Token authentication requires explicit receiver configuration, server TLS validation, a receiver-only audience, and a refreshed token for each request. Existing runner and manager entrypoints still select mTLS; their accepted flags, result payload, execution checks, SQL behavior, and retry bounds are unchanged. The token components are not yet connected to operation Jobs or the installed receiver. No tagged release consumed an earlier protocol-1 contract; development counters remain 1."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:205667eea4697a8bb97b336da89730d7eb90ff53461f8ab12c94afefcdbb9dea",
+      "reason": "Complete receiver-audience Pod-token delivery before the first tagged 0.2.0 release. The installed runner now uses --result-token, verified server TLS, and a token reread on every bounded preflight or delivery attempt. Public template inputs bind the operation and downward API Job/Pod identities; the receiver rechecks TokenReview, immutable first-Pod binding, and live authority. Per-operation Secret creation is removed. Payloads, size limits, SQL execution guards, same-byte retries, and unknown-outcome recovery are unchanged. No tagged release consumed this development transport; protocol counters remain 1."
     }
   ]
 }

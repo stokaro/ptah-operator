@@ -90,10 +90,10 @@ rules:
   - apiGroups: ["operator.ptah.run"]
     resources: ["ptahresultrecords"]
     verbs: ["get", "list", "create", "delete"]
-  # RBAC cannot constrain CREATE by name. The controller-write webhook checks
-  # every manager Secret request and allows only exact canonical credentials.
-  - apiGroups: [""]
-    resources: ["secrets"]
+  # Only the receiver authenticates projected Pod tokens. Runners have no
+  # Kubernetes API audience or API permissions; no operation Secret is issued.
+  - apiGroups: ["authentication.k8s.io"]
+    resources: ["tokenreviews"]
     verbs: ["create"]
   {{- else }}
   - apiGroups: [""]
@@ -116,7 +116,7 @@ rules:
     verbs: ["get", "list"]
   # get, list and watch read the verification policies resources name, and
   # wake them when one changes. create is for one thing: an Apply Pod holds no
-  # Kubernetes credential and the kubelet projects no custom resource, so the
+  # Kubernetes API credential and the kubelet projects no custom resource, so the
   # manager writes the plan an Apply runs into immutable ConfigMaps the Pod
   # mounts, just before it creates the Job. They are deleted with the plan.
   - apiGroups: [""]

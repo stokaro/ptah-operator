@@ -15,6 +15,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
+	"github.com/stokaro/ptah-operator/internal/resultdelivery/jobconfig"
 	"github.com/stokaro/ptah-operator/internal/runner"
 )
 
@@ -374,7 +375,29 @@ func podAdmissionApplied(job *batchv1.Job, pod *corev1.Pod, identity controllerI
 		!ownedExactlyOnce(pod.OwnerReferences, "batch/v1", "Job", job.Name, job.UID) {
 		return false
 	}
-	spec := pod.Spec
+	spec := *pod.Spec.DeepCopy()
+	if jobconfig.UsesPodToken(job) {
+		// Validate the declared token and the actual admitted projection before
+		// excluding that one volume from the no-extra-token assertion below.
+		if len(job.OwnerReferences) != 1 {
+			return false
+		}
+		if _, err := jobconfig.Read(job, job.OwnerReferences[0].UID, job.Annotations[annotationOperationID]); err != nil {
+			return false
+		}
+		actual := job.DeepCopy()
+		actual.Spec.Template.Spec = spec
+		if _, err := jobconfig.Read(actual, job.OwnerReferences[0].UID, job.Annotations[annotationOperationID]); err != nil {
+			return false
+		}
+		filtered := make([]corev1.Volume, 0, len(spec.Volumes))
+		for _, volume := range spec.Volumes {
+			if volume.Name != jobconfig.VolumeName {
+				filtered = append(filtered, volume)
+			}
+		}
+		spec.Volumes = filtered
+	}
 	if !sha256Pattern.MatchString(pod.Annotations[annotationAdmissionDigest]) || !identity.stampedOn(pod.Annotations) ||
 		spec.RuntimeClassName == nil || *spec.RuntimeClassName != admissionRuntimeClass ||
 		spec.ServiceAccountName != "default" ||

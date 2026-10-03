@@ -1,6 +1,7 @@
 package resultservice
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"crypto/tls"
@@ -24,10 +25,11 @@ import (
 var trustFiles = []string{"tls.crt", "tls.key", "ca.crt", "client-ca.crt", "client-ca.key", "client-trust.crt"}
 
 type trustSnapshot struct {
-	tls      *tls.Config
-	issuer   *resultcredentials.Issuer
-	notAfter time.Time
-	digest   [32]byte
+	tls         *tls.Config
+	issuer      *resultcredentials.Issuer
+	notAfter    time.Time
+	digest      [32]byte
+	serverTrust []byte
 }
 
 // A projected Secret switches the ..data symlink atomically. Resolve it once,
@@ -129,7 +131,11 @@ func loadTrust(config Config, writer client.Client, reader client.Reader, previo
 	if signerLeaf.NotAfter.Before(expires) {
 		expires = signerLeaf.NotAfter
 	}
-	return &trustSnapshot{tls: &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{serving}, ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: clientTrust}, issuer: issuer, notAfter: expires, digest: digest}, nil
+	transport := &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{serving}, ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: clientTrust}
+	if config.TokenReviews != nil {
+		transport.ClientAuth, transport.ClientCAs = tls.NoClientCert, nil
+	}
+	return &trustSnapshot{tls: transport, issuer: issuer, notAfter: expires, digest: digest, serverTrust: bytes.Clone(material["ca.crt"])}, nil
 }
 
 func readTrustFile(directory, name string) ([]byte, error) {
@@ -190,17 +196,39 @@ func (s *Service) Ensure(ctx context.Context, identity resultdelivery.Identity) 
 	if s.reloadFailed.Load() {
 		return resultcredentials.Credential{}, resultcredentials.ErrCredential
 	}
+	if s.config.TokenReviews != nil {
+		if err := s.trust.Load().issuer.CheckEnrollment(ctx); err != nil {
+			return resultcredentials.Credential{}, err
+		}
+		return (resultcredentials.PodBindings{Writer: s.writer, Reader: s.reader}).Ensure(ctx, identity)
+	}
 	return s.trust.Load().issuer.Ensure(ctx, identity)
 }
 func (s *Service) ValidateCreate(ctx context.Context, secret *corev1.Secret) error {
+	if s.config.TokenReviews != nil {
+		return resultcredentials.ErrCredential
+	}
 	return s.trust.Load().issuer.ValidateCreate(ctx, secret)
 }
 func (s *Service) ValidateRecordCreate(ctx context.Context, record *api.PtahResultRecord) error {
+	if s.config.TokenReviews != nil {
+		if err := s.trust.Load().issuer.CheckEnrollment(ctx); err != nil {
+			return err
+		}
+		return (resultcredentials.PodBindings{Writer: s.writer, Reader: s.reader}).ValidateRecordCreate(ctx, record)
+	}
 	return s.trust.Load().issuer.ValidateRecordCreate(ctx, record)
 }
 func (s *Service) AuthorizePublication(ctx context.Context, binding resultstore.Binding) (resultdelivery.Identity, error) {
+	if s.config.TokenReviews != nil {
+		return (resultcredentials.PodBindings{Writer: s.writer, Reader: s.reader}).AuthorizePublication(ctx, binding)
+	}
 	return s.trust.Load().issuer.AuthorizePublication(ctx, binding)
 }
+
+// ServerTrust returns only the public bundle for a new Job's immutable
+// admission snapshot. A projection reload never rewrites an existing Job.
+func (s *Service) ServerTrust() []byte { return bytes.Clone(s.trust.Load().serverTrust) }
 
 // Readiness is a cached, bounded observation. Admission still reads the policy
 // on each enrollment, so this polling interval cannot grant a stale signer

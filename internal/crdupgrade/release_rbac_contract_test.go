@@ -166,7 +166,7 @@ func controllerClusterRoleRules(durable bool) []rbacv1.PolicyRule {
 			if slices.Equal(rule.Resources, []string{"pods/log"}) {
 				rules = slices.Replace(rules, i, i+1,
 					privilegePolicyRule([]string{"operator.ptah.run"}, []string{"ptahresultrecords"}, nil, []string{"get", "list", "create", "delete"}),
-					privilegePolicyRule([]string{""}, []string{"secrets"}, nil, []string{"create"}))
+					privilegePolicyRule([]string{"authentication.k8s.io"}, []string{"tokenreviews"}, nil, []string{"create"}))
 				break
 			}
 		}

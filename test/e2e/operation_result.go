@@ -61,7 +61,7 @@ func resultJobWithoutProjection(job *batchv1.Job) (*batchv1.Job, error) {
 	main := &spec.Containers[0]
 	var args []string
 	for i := 0; i < len(main.Args); i++ {
-		if main.Args[i] == "--result-endpoint" || main.Args[i] == "--result-credentials" {
+		if main.Args[i] == "--result-endpoint" || main.Args[i] == "--result-credentials" || main.Args[i] == "--result-token" {
 			i++ // Read already required each flag's exact value.
 			continue
 		}

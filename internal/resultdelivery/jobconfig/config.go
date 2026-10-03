@@ -79,13 +79,18 @@ func Attach(job *batchv1.Job, ownerUID types.UID, generation int64, operationID,
 type Config struct {
 	Endpoint   string
 	Generation int64
+	// SecretName also names the immutable public Pod pin for token delivery.
 	SecretName string
+	PodToken   bool
 }
 
 // Read holds the delivery flags, frozen generation, actual-Pod downward API,
 // and isolated credential projection to the shape Attach writes. The caller
 // separately holds the whole template to the claim's admission snapshot.
 func Read(job *batchv1.Job, ownerUID types.UID, operationID string) (Config, error) {
+	if UsesPodToken(job) {
+		return readPodToken(job, ownerUID, operationID)
+	}
 	invalid := errors.New("Job has no exact durable result credential projection")
 	if job == nil || ownerUID == "" || operationID == "" {
 		return Config{}, invalid

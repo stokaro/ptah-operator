@@ -142,7 +142,10 @@ var (
 type Builder struct {
 	// ResultEndpoint selects durable delivery when installation wiring is ready.
 	// Empty retains the legacy log path during development integration.
-	ResultEndpoint         string
+	ResultEndpoint string
+	// ResultServerTrust supplies the current public CA bundle for a new Job.
+	// When set, durable delivery uses the explicit receiver-audience Pod token.
+	ResultServerTrust      func() []byte
 	ExecutorImage          string
 	RunnerImage            string
 	PtahVersion            string

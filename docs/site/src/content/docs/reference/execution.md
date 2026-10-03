@@ -32,7 +32,7 @@ sequenceDiagram
   Note over J: webhook compares the post-mutation<br/>Pod against the snapshot
   J->>P: runner starts Ptah
   P-->>J: machine-readable output
-  J->>R: operation-bound result over mTLS
+  J->>R: operation-bound result over TLS with Pod token
   R->>K: persist intent, chunks, completion
   R->>K: validate persisted result
   R-->>J: durable receipt

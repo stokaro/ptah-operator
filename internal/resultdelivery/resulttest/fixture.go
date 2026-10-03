@@ -40,6 +40,21 @@ type Fixture struct {
 // admission defaults are added here, not a second executable Job definition.
 func New(t *testing.T, name string) *Fixture {
 	t.Helper()
+	return newFixture(t, name, nil)
+}
+
+// NewPodToken uses the same production Job and admission fixture with the
+// receiver-audience projection instead of the certificate Secret projection.
+func NewPodToken(t *testing.T, name string, serverTrust []byte) *Fixture {
+	t.Helper()
+	if len(serverTrust) == 0 {
+		t.Fatal("token fixture requires public server trust")
+	}
+	return newFixture(t, name, serverTrust)
+}
+
+func newFixture(t *testing.T, name string, serverTrust []byte) *Fixture {
+	t.Helper()
 	directory, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
@@ -60,7 +75,12 @@ func New(t *testing.T, name string) *Fixture {
 	if err := json.Unmarshal(data, job); err != nil {
 		t.Fatal(err)
 	}
-	if err := jobconfig.Attach(job, job.OwnerReferences[0].UID, 2, job.Annotations[workload.AnnotationOperationID], "https://receiver.operator.svc:9444"); err != nil {
+	if serverTrust == nil {
+		err = jobconfig.Attach(job, job.OwnerReferences[0].UID, 2, job.Annotations[workload.AnnotationOperationID], "https://receiver.operator.svc:9444")
+	} else {
+		err = jobconfig.AttachPodToken(job, job.OwnerReferences[0].UID, 2, job.Annotations[workload.AnnotationOperationID], "https://receiver.operator.svc:9444", serverTrust)
+	}
+	if err != nil {
 		t.Fatal(err)
 	}
 	job.UID = "job-uid"

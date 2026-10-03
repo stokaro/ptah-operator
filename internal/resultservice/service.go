@@ -28,6 +28,9 @@ type Config struct {
 	Consumer                                        resultconsumer.Options
 	ReloadInterval                                  time.Duration
 	EnrollmentPolicyNamespace, EnrollmentPolicyName string
+	// TokenReviews selects receiver-audience Pod authentication. The manager
+	// supplies its API client; runners receive no API permissions.
+	TokenReviews resultauthority.TokenReviewer
 }
 
 type Service struct {
@@ -72,7 +75,22 @@ func New(config Config, writer client.Client, reader client.Reader) (*Service, e
 	service.enrollmentReady.Store(config.EnrollmentPolicyName == "")
 	trust := service.trust.Load()
 	store := resultstore.Store{Client: writer, Reader: reader}
-	receiver, err := resultdelivery.NewReceiver(resultdelivery.ReceiverConfig{Store: store, Authorize: (resultauthority.Authorizer{Reader: reader}).Check, VerifyClient: service.verifyClient, MaxConcurrent: config.Uploads, Timeout: config.UploadTimeout})
+	receiverConfig := resultdelivery.ReceiverConfig{Store: store, Authorize: (resultauthority.Authorizer{Reader: reader}).Check, VerifyClient: service.verifyClient, MaxConcurrent: config.Uploads, Timeout: config.UploadTimeout}
+	if config.TokenReviews != nil {
+		receiverConfig.VerifyClient = nil
+		receiverConfig.AuthenticateToken = (resultauthority.TokenVerifier{Reviews: config.TokenReviews, Reader: reader}).Verify
+		receiverConfig.Authorize = func(ctx context.Context, identity resultdelivery.Identity) error {
+			pinned, err := service.AuthorizePublication(ctx, identity.Binding)
+			if err != nil {
+				return err
+			}
+			if pinned != identity {
+				return resultdelivery.ErrAuthority
+			}
+			return nil
+		}
+	}
+	receiver, err := resultdelivery.NewReceiver(receiverConfig)
 	if err != nil {
 		return nil, err
 	}

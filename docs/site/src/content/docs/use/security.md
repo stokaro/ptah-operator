@@ -525,7 +525,7 @@ on the schema, the plan and its chunks and nothing else;
 [install](../read-a-plan/#install).
 
 A plan that reached an Apply has one more copy. The Apply Pod holds no
-Kubernetes credential and the kubelet mounts no custom resource, so the
+Kubernetes API credential and the kubelet mounts no custom resource, so the
 operator writes the plan into immutable ConfigMaps of its chunks' names, owned
 by the plan, just before it creates the Apply Job, and they are deleted with
 the plan. Whoever may read ConfigMaps in the namespace reads the plans that
@@ -534,19 +534,23 @@ applied, has no ConfigMap.
 
 ### Plan results stay out of logs {#pod-logs-carry-plans}
 
-The default runner sends its result to the authenticated receiver over mTLS.
+The default runner sends its result over TLS with a Pod-bound token whose sole
+audience is `operator.ptah.run/results`.
 The exact plan is stored in confidential `PtahResultRecord` payloads before
 acknowledgment, then independently validated and published into immutable plan
 chunks. Neither SQL nor reusable delivery credentials belong in diagnostic
-logs, Events, or ordinary status. Access to result records exposes plans and,
-for credential records, private delivery keys; exclude them from ordinary
+logs, Events, or ordinary status. Access to result records exposes plans; old development credential records
+can also contain private delivery keys. Exclude result records from ordinary
 reader and author roles and cover them with encryption at rest and restricted
 backups. The diagnostic reader example grants no result-record access.
 
-A runner mounts an operation-scoped credential, not a Kubernetes API token.
-Admission limits the projection to that operation and keeps it out of helper
-containers. Receiver and sender authenticate each other; a body that claims
-another resource, Job or Pod cannot acquire that identity. A manager restart
+Kubelet rotates the explicit projected token. Automatic API-token mounting stays
+disabled, and the runner receives no API permissions. The receiver audience must
+not be configured as an accepted Kubernetes API audience. Admission keeps the
+projection out of helper containers. The receiver verifies TokenReview, the
+immutable original-Pod binding, and the live operation; a body that claims
+another resource, Job or Pod cannot acquire that identity. No per-operation
+Secret is created. A manager restart
 does not discard the stored result or require its original process key.
 
 When `resultDelivery.enabled=false`, legacy Jobs instead write one frame to
