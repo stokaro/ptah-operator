@@ -1,0 +1,74 @@
+{
+  "status": "passed",
+  "expectedResultRuntimeCount": 5,
+  "resultRuntime": [
+    {
+      "kind": "secret",
+      "name": "ptah-runtime-generated-name-prefix-boundary-proo-result-journal",
+      "present": false
+    },
+    {
+      "kind": "secret",
+      "name": "ptah-runtime-generated-name-prefix-boundary-proof-result-trust",
+      "present": false
+    },
+    {
+      "kind": "service",
+      "name": "ptah-runtime-generated-name-prefix-boundary-proof-60a21-results",
+      "present": false
+    },
+    {
+      "kind": "configmap",
+      "name": "ptah-runtime-generated-name-prefix-boundary-p-result-enrollment",
+      "present": false
+    },
+    {
+      "kind": "lease",
+      "name": "ptah-runtime-generated-name-prefix-boundary-pro-result-rotation",
+      "present": false
+    }
+  ],
+  "resultTrustSecretCount": 0,
+  "resultTrustConfigMapCount": 0,
+  "retainedProofObjects": [
+    {
+      "kind": "PtahSchema",
+      "name": "crd-upgrade-proof",
+      "uid": "231b080e-12d9-4db5-8ca4-1684b0a7f2a3"
+    },
+    {
+      "kind": "PtahSchema",
+      "name": "read-only-job-current",
+      "uid": "ba37ad61-1ae4-4b69-b3c6-7cd20b2a6441"
+    },
+    {
+      "kind": "PtahSchema",
+      "name": "read-only-job-successor",
+      "uid": "b1f31bf2-778e-4307-a245-3b08039d6d4d"
+    },
+    {
+      "kind": "PtahSchema",
+      "name": "running-apply-across-upgrade",
+      "uid": "dcba374a-5e52-44e3-9d99-3cb73f394adb"
+    },
+    {
+      "kind": "PtahSchemaPlan",
+      "name": "crd-upgrade-proof",
+      "uid": "91cce523-dc33-4f86-9242-c4d23a24064b"
+    },
+    {
+      "kind": "PtahSchemaPlan",
+      "name": "ptah-plan-796f7497e1f01f1f802b1d0f",
+      "uid": "df9a69b8-4cc0-4201-b81f-901a0b22ef4f"
+    },
+    {
+      "kind": "PtahSchemaApproval",
+      "name": "crd-upgrade-proof",
+      "uid": "3f50033b-e528-4a22-aded-0899839f9666"
+    }
+  ],
+  "enabledValuesSHA256": {
+    "candidate-values-enabled.json": "3f69702127444d6f8814eec84f8d4c84a4cb2fc89f3ad2cba6c018ae5b043258",
+    "next-values-enabled.json": "34b22b674b8293f74d58e00aa0ba3fd682f27b9952f0e1b3be768e56f92b229f"
+  }
+}

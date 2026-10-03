@@ -1,5 +1,5 @@
 {
-  "scope": "Durable-result upgrade and HA integration checkpoint for issue #586; uninstall/reinstall remains pending.",
+  "scope": "Enabled durable-result install, upgrade, HA, rollback and uninstall integration for issue #586.",
   "runtimeSource": "b5036d4adb0c632d06712a32692be8e90d7229b5",
   "runtimeInputs": "inputs.json",
   "haTestSourcesSHA256": {
@@ -45,6 +45,22 @@
     "haAfter": {
       "exitCode": 0,
       "scenarios": 3
+    },
+    "uninstall": {
+      "exitCode": 0,
+      "scenarios": 5
+    },
+    "resultRuntimeReadback": {
+      "status": "passed",
+      "expectedObjects": 5,
+      "remaining": 0,
+      "retainedProofObjects": 7
+    },
+    "ownedLabCleanup": {
+      "exitCode": 0,
+      "ownedContainers": 0,
+      "ownedVolumes": 0,
+      "kindNodes": 0
     }
   },
   "metricsReading": {
@@ -54,10 +70,30 @@
   },
   "retentionEvidence": "../result-namespace-cleanup-2026-10-02/summary.json",
   "limits": [
-    "This checkpoint does not complete #586 lifecycle: native uninstall/reinstall is still running.",
-    "Runtime images are unchanged b5036d4a; test source hashes identify the local acceptance correction.",
+    "The runtime is built from b5036d4a; the corrected HA tests are committed at the recorded testSourceCommit. Runtime sources are unchanged.",
     "The lifecycle bootstrap retains the existing 64Mi log setting. Default-10Mi boundaries on all supported minors are separate retained evidence.",
     "One development Kubernetes 1.37 Linux amd64 environment; not the final capacity or functional matrix.",
-    "The owned lab remains active for the following uninstall phase. No CI verdict for the new head."
-  ]
+    "The owned lab is removed. Default transport activation and documentation integration remain open. No CI verdict for the new head."
+  ],
+  "status": "passed",
+  "testSourceCommit": "fe9148ad2ef107d9459f14e1bf58017da56bdb87",
+  "existingLifecycleEvidence": {
+    "certificates": [
+      "../result-ca-rotation-2026-10-02/summary.json",
+      "../result-leaf-rotation-2026-10-02/summary.json"
+    ],
+    "networkPolicy": "../result-network-2026-10-02/summary.json",
+    "pinnedRetentionQuotaAndMetrics": "../result-retention-2026-10-02/summary.json",
+    "partialCleanup": "../result-abandoned-2026-10-02/summary.json",
+    "terminatingNamespaceFullWindow": "../result-namespace-cleanup-2026-10-02/summary.json",
+    "recordAndKeyRestore": [
+      "../result-backup-restore-2026-10-02/summary.json",
+      "../result-control-plane-restore-2026-10-03/summary.json"
+    ]
+  },
+  "sourceReuse": {
+    "runtimeDiffFromNamespaceCleanup": "No changes under api, internal, cmd, charts, config, go.mod or go.sum from 7b21f895 to the recorded testSourceCommit.",
+    "runtimeDiffFromNetworkAndAbandonedCleanup": "Only result-record foreground deletion admission and the cleanup collector/policy changed since b0a51ff7. The retained namespace-cleanup proof covers that change; network configuration, certificates, protocol and restore representation are unchanged.",
+    "artifactIdentity": "Original runtime digests remain distinct; source reuse does not claim rebuilt artifact byte equivalence."
+  }
 }

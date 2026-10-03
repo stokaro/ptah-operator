@@ -1212,3 +1212,30 @@ these are functional Linux amd64 proofs, not a final artifact or architecture
 matrix verdict. Lifecycle qualification and enabling the transport by default
 remain open. The shipped `64Mi` workaround is unchanged until that integration
 is complete.
+
+
+### Enabled receiver lifecycle
+
+[Installed lifecycle evidence](evidence/result-ha-lifecycle-2026-10-03/summary.json)
+passes the existing six upgrade, three HA, and five uninstall scenarios with
+`resultDelivery.enabled=true` in both current and synthetic-next release values.
+The native running Apply remains exclusive across late upgrade failure and retry;
+rollback and uninstall add no SQL. Reinstallation preserves live CRD objects,
+and the exported chart recovers from quota refusal under restricted Pod Security.
+Final API readback finds no receiver Service, trust/journal Secret, enrollment
+ConfigMap, or rotation Lease, while seven proof objects remain. The owned lab
+and its resources are removed.
+
+HA acceptance now recognizes the declared cleanup counter without allowing it
+to replace the required operation failure delta. Its schema, Job and Pods must
+still be removed. Namespace deletion respects the durable result window; the
+already completed API-timed one-hour namespace cleanup supplies that proof.
+Original failures, native metric lines, regression results and corrected native
+execution are retained in the report.
+
+The report joins this installation evidence to the existing certificate,
+NetworkPolicy, pinned retention, quota, partial cleanup, and result/key restore
+proofs. This completes #586's lifecycle and bounded-storage DoD. The remaining
+#579 loss/timing matrix is a separate #242 requirement. Default activation,
+removal of the shipped log-size workaround, documentation integration, and final
+acceptance remain open.

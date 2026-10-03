@@ -25,5 +25,18 @@ Use a new HA namespace for a retry while the preceding namespace retains its
 records. The source and image identities are recorded in `inputs.json`; the
 changed test sources and validation outcomes are in `summary.json`.
 
-This checkpoint covers upgrade and HA only. Uninstall/reinstall, default
-activation, and the remaining #586 documentation integration are not complete.
+All six upgrade, three HA, and five uninstall phase scenarios passed. The
+uninstall phase holds a native Apply across a late upgrade failure and retry,
+checks SQL non-repetition, exercises rollback, reinstalls over retained CRDs,
+and recovers the exported chart installation from quota refusal under restricted
+Pod Security. After its final uninstall, independent API reads find no receiver
+Service, projection or journal Secret, enrollment ConfigMap, or rotation Lease.
+Seven proof objects remain. The owned cluster, containers, volumes, images and
+API tunnel were removed by the normal lab teardown; the independent ownership
+census is empty.
+
+Together with the linked certificate, network, one-hour retention, quota,
+partial cleanup, and record/key restore reports in `summary.json`, this completes
+#586's lifecycle and bounded-storage inventory. It does not complete #579's
+loss/timing matrix or final production acceptance. Default activation and the
+remaining #586 documentation integration are still open.

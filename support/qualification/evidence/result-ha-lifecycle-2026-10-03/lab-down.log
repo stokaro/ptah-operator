@@ -1,0 +1,4 @@
+lab: released the API tunnel on 127.0.0.1:31087:127.0.0.1:31087
+lab: removing cluster ptah-e2e-1-37-0-result-lifecy-60a21ba63c
+lab: /private/tmp is not the lab directory, so only the environment file is removed
+lab: removed
