@@ -84,6 +84,7 @@ func (a *alertingRun) lockReleaseCase(m *migrationRun, schemaTemplate *ptahv1.Pt
 		v.Spec.Target.URLFrom.Key = "url"
 		v.Spec.Target.Engine = ptahv1.DatabaseEngine(m.engine.kind)
 		v.Spec.Target.CoordinationKey = coordination
+		v.Spec.Target.SharedRealm = true
 		v.Spec.Interval.Duration = time.Hour
 		v.Spec.Execution.NodeSelector = map[string]string{alGateLabel: "open"}
 		v.Spec.Execution.ActiveDeadlineSeconds = 300
@@ -91,6 +92,7 @@ func (a *alertingRun) lockReleaseCase(m *migrationRun, schemaTemplate *ptahv1.Pt
 		v.Spec.Target.URLFrom.Key = "url"
 		v.Spec.Target.Engine = ptahv1.DatabaseEngine(m.engine.kind)
 		v.Spec.Target.CoordinationKey = coordination
+		v.Spec.Target.SharedRealm = true
 		v.Spec.Interval.Duration = time.Hour
 		v.Spec.Artifact.OCIRef = m.reference("")
 		v.Spec.Execution.NodeSelector = map[string]string{alGateLabel: "open"}
@@ -102,6 +104,7 @@ func (a *alertingRun) lockReleaseCase(m *migrationRun, schemaTemplate *ptahv1.Pt
 	sibling.Spec.Target.URLFrom.Key = "url"
 	sibling.Spec.Target.Engine = ptahv1.DatabaseEngine(m.engine.kind)
 	sibling.Spec.Target.CoordinationKey = coordination
+	sibling.Spec.Target.SharedRealm = true
 	sibling.Spec.Interval.Duration = time.Hour
 	sibling.Spec.Execution.NodeSelector = nil
 	watcher, err := client.NewWithWatch(a.cluster.Config, client.Options{Scheme: a.cluster.Scheme})
