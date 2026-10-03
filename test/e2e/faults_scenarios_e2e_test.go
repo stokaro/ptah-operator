@@ -775,6 +775,12 @@ func (f *faultRun) jobDeletion() {
 	f.deletionLeavesTheDatabase()
 	f.manualDrift()
 	f.closingHistory()
+	// The complete history above closes the deadline recovery and no-replay
+	// proof. Later executor changes would otherwise start unrelated reads
+	// with this fixture's 45-second deadline, after its Pod/log watch closed.
+	// Suspend only now, so the measured recovery window remains unchanged.
+	f.suspend(f.state.mysqlTimeout.schema, true)
+	f.waitForSchema(f.state.mysqlTimeout.schema, "the completed deadline fixture to stop creating workloads", quiescentlySuspended)
 	f.manualDriftRecovery()
 }
 

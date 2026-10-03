@@ -1,0 +1,1 @@
+ok  	github.com/stokaro/ptah-operator/test/e2e	0.698s

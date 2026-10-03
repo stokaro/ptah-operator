@@ -1,0 +1,2 @@
+2026-10-03T00:11:49.0533196Z     dataplane_e2e_test.go:77: controller-state runtime refusal: kind=PtahSchema namespace=ptah-test-a-1-36-4-ci-37070040160-1-1-36-data-plane-7dbbf0e600 name=e2e-stored-state-postgresql supported=1 refused=2 reconciliationIDs=2; no new workload; original state retained; temporary Role/RoleBinding removed
+2026-10-03T00:12:10.9669010Z     dataplane_e2e_test.go:77: e2e data plane: terminal Job ptah-observe-e2e-fault-my-timeout-a4418c87476867f3 UID 5e443b39-01d5-4918-b684-85c2fa9362ba has no exact owned Pod to audit

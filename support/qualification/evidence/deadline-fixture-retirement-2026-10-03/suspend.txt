@@ -1,0 +1,1 @@
+ok  	github.com/stokaro/ptah-operator/internal/controller	0.655s
