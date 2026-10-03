@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"maps"
 	"net/url"
-	"strings"
 	"time"
 
 	ptahv1 "github.com/stokaro/ptah-operator/api/v1alpha1"
@@ -267,11 +266,18 @@ func (a *alertingRun) negativeControls() {
 		case *ptahv1.PtahMigration:
 			storedStateWatchBarrier(a.t, a.ctx, a.cluster, migrations, v)
 		}
-		count, err := databaseSQL(a.ctx, a.cluster, a.in.TestNamespace, engine, f.database, "SELECT count(*) FROM information_schema.tables WHERE table_schema='public'")
-		a.check(err, "read the isolated negative-control database")
-		if strings.TrimSpace(count) != "0" {
-			a.fatalf("%s changed its empty database without approval", f.object.GetName())
+		tables, err := databaseSQL(a.ctx, a.cluster, a.in.TestNamespace, engine, f.database, "SELECT table_name, table_type FROM information_schema.tables WHERE table_schema='public' ORDER BY table_name")
+		a.check(err, "read the isolated negative-control tables")
+		family := f.initial.claim.family
+		var historyRows string
+		if family == "migration" {
+			historyRows, err = databaseSQL(a.ctx, a.cluster, a.in.TestNamespace, engine, f.database, "SELECT count(*) FROM public.schema_migrations")
+			a.check(err, "read the negative-control revision count")
 		}
+		if !alNegativeDatabaseUnchanged(family, tables, historyRows) {
+			a.fatalf("%s has application tables or revision rows without approval", f.object.GetName())
+		}
+		a.logf("negative-control database: resource=%s family=%s tables=%q historyRows=%q", f.object.GetName(), family, tables, historyRows)
 	}
 	// A retained unmanaged publisher supplies the Jobs collection's EOF barrier.
 	existing := &batchv1.JobList{}

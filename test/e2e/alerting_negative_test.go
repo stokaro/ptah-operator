@@ -1,9 +1,13 @@
 package e2e
 
 import (
+	"encoding/json"
 	ptahv1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"os"
+	"path/filepath"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"strings"
 	"testing"
 	"time"
 )
@@ -217,5 +221,46 @@ func TestAlNegativeWindowDoesNotReopenAResolvedIncident(t *testing.T) {
 		if alNegativeRepeat(d, baseline) {
 			t.Errorf("%s accepted", name)
 		}
+	}
+}
+
+func TestAlNegativeDatabaseAllowsOnlyEmptyHistory(t *testing.T) {
+	t.Parallel()
+	raw, err := os.ReadFile(filepath.Join("..", "..", "testdata", "e2e", "readings", "alert-negative-databases.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var readings []struct{ Database, Tables, HistoryRows string }
+	if err := json.Unmarshal(raw, &readings); err != nil {
+		t.Fatal(err)
+	}
+	if len(readings) != 4 {
+		t.Fatalf("want all four native controls, got %d", len(readings))
+	}
+	for _, reading := range readings {
+		family := "schema"
+		if strings.HasPrefix(reading.Database, "ptah_negative_migration_") {
+			family = "migration"
+		}
+		if !alNegativeDatabaseUnchanged(family, reading.Tables, reading.HistoryRows) {
+			t.Errorf("native reading %s rejected", reading.Database)
+		}
+	}
+	for _, row := range []struct{ name, family, tables, historyRows string }{
+		{"schema application table", "schema", "widgets|BASE TABLE", ""},
+		{"schema history table", "schema", "schema_migrations|BASE TABLE", "0"},
+		{"migration application table", "migration", "schema_migrations|BASE TABLE\nwidgets|BASE TABLE", "0"},
+		{"migration application view", "migration", "schema_migrations|BASE TABLE\nwidgets|VIEW", "0"},
+		{"revision recorded", "migration", "schema_migrations|BASE TABLE", "1"},
+		{"history not read", "migration", "schema_migrations|BASE TABLE", ""},
+		{"history absent", "migration", "", "0"},
+		{"history replaced by view", "migration", "schema_migrations|VIEW", "0"},
+		{"unknown family", "", "", ""},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			if alNegativeDatabaseUnchanged(row.family, row.tables, row.historyRows) {
+				t.Fatal("unauthorized or incomplete database state accepted")
+			}
+		})
 	}
 }

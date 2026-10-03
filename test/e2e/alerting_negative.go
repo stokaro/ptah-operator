@@ -3,6 +3,7 @@ package e2e
 import (
 	"errors"
 	"maps"
+	"strings"
 	"time"
 
 	ptahv1 "github.com/stokaro/ptah-operator/api/v1alpha1"
@@ -147,4 +148,18 @@ func alNegativeFixture(template client.Object, name, secret string, policy ptahv
 		return r, nil
 	}
 	return nil, errors.New("unsupported negative-control family")
+}
+
+// History initializes the empty default revision table at the pinned Ptah
+// version. That effect is permitted without Apply; revision rows and every
+// application table remain forbidden. Schema controls have no such exception.
+func alNegativeDatabaseUnchanged(family, tables, historyRows string) bool {
+	switch family {
+	case "schema":
+		return strings.TrimSpace(tables) == "" && historyRows == ""
+	case "migration":
+		return strings.TrimSpace(tables) == "schema_migrations|BASE TABLE" && strings.TrimSpace(historyRows) == "0"
+	default:
+		return false
+	}
 }
