@@ -135,13 +135,13 @@ statements a plan holds, and for a data change those statements carry the
 values. Access to a plan is access to data. Treat it that way when you decide
 who may read plans.
 
-That access no longer includes the Plan Pod's log. The runner seals the plan
-to the manager's own key before writing it there, so the log, the node's copy
-of it, and any store the cluster ships container logs to all hold ciphertext.
-[Pod logs carry a sealed plan](../security/#pod-logs-carry-plans) says how.
-The plan's chunks still carry it in the clear to whoever may read them, and so
-do the ConfigMaps an Apply mounts an applied plan through, to whoever may read
-ConfigMaps in the namespace.
+That access does not include the Plan Pod's diagnostic log. The default runner
+sends the plan to the authenticated receiver, which stores it in confidential
+result records before acknowledgment. See
+[Plan results stay out of logs](../security/#pod-logs-carry-plans).
+The result records and plan chunks carry plaintext SQL to authorized readers,
+as do the ConfigMaps an Apply mounts its plan through. Treat access to any of
+these as access to the declared data.
 
 ## Order between tables
 

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -61,15 +62,12 @@ func TestEveryGrantedStatusWriteIsUsed(t *testing.T) {
 	}
 }
 
-// Default installations grant no Secret access. Durable delivery adds only
-// CREATE for admission-validated projections; neither mode may read credentials.
+// Durable delivery grants only CREATE for admission-validated projections;
+// neither mode may read credentials.
 func TestTheShippedRolesGrantOnlyDeclaredSecretPermission(t *testing.T) {
 	t.Parallel()
 	for _, enabled := range []bool{false, true} {
-		values := []string{}
-		if enabled {
-			values = append(values, "resultDelivery.enabled=true")
-		}
+		values := []string{"resultDelivery.enabled=" + strconv.FormatBool(enabled)}
 		roles := renderedClusterRoles(t, values...)
 		if len(roles) == 0 {
 			t.Fatal("no shipped roles were examined")

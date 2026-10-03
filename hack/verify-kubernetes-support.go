@@ -2486,14 +2486,14 @@ const kubeletLogBudgetContract = `assert_kubelet_log_budget() {
 			--raw "/api/v1/nodes/$kubelet_budget_node/proxy/configz" \
 			>"$WORK_DIR/kubelet-log-config-$kubelet_budget_node.json" ||
 			fail "could not read the effective kubelet log budget on $kubelet_budget_node"
-		jq -e '.kubeletconfig.containerLogMaxSize == "64Mi"' \
+		jq -e '.kubeletconfig.containerLogMaxSize == "10Mi"' \
 			"$WORK_DIR/kubelet-log-config-$kubelet_budget_node.json" >/dev/null ||
-			fail "kubelet $kubelet_budget_node must retain 64Mi per container log file for complete runner results"
+			fail "kubelet $kubelet_budget_node must use the standard 10Mi container log size for durable-result acceptance"
 		kubelet_budget_count=$((kubelet_budget_count + 1))
 	done <"$WORK_DIR/kubelet-log-nodes.txt"
 	[ "$kubelet_budget_count" -eq "$kubelet_budget_expected" ] ||
 		fail "kubelet log budget was not verified on every declared node"
-	printf 'e2e: verified 64Mi container log files on %s kubelets\n' "$kubelet_budget_count"
+	printf 'e2e: verified default 10Mi container log files on %s kubelets\n' "$kubelet_budget_count"
 }`
 
 const apiServerEndpointInventoryContract = `assert_api_server_endpoint_inventory() {
@@ -3532,7 +3532,6 @@ const isolationNodeKeyDeclaration = "ISOLATION_NODE_KEY=operator.ptah.run/e2e-is
 
 const kindKubeletPatch = `kind: KubeletConfiguration
 apiVersion: kubelet.config.k8s.io/v1beta1
-containerLogMaxSize: 64Mi
 featureGates:
   KubeletInUserNamespace: true`
 

@@ -3,7 +3,7 @@ title: Execution and coordination
 description: One operation from claim to evidence, and how resources addressing one database take turns.
 ---
 
-An operation is a durable claim, a Job, a framed result and an outcome
+An operation is a durable claim, a Job, a persisted result and an outcome
 somebody can account for. This page follows one from end to end, then says
 how two resources addressing the same database avoid each other. The
 lifecycles that decide which operation runs next are
@@ -18,6 +18,7 @@ sequenceDiagram
   participant K as Kubernetes API
   participant J as operation Job
   participant P as Ptah in the Pod
+  participant R as result receiver
 
   C->>S: write the operation claim
   Note over S: named before the Job exists
@@ -31,7 +32,11 @@ sequenceDiagram
   Note over J: webhook compares the post-mutation<br/>Pod against the snapshot
   J->>P: runner starts Ptah
   P-->>J: machine-readable output
-  J-->>C: framed result
+  J->>R: operation-bound result over mTLS
+  R->>K: persist intent, chunks, completion
+  R->>K: validate persisted result
+  R-->>J: durable receipt
+  C->>K: background consumer reads result
   C->>S: record the outcome
   C->>K: schedule the cleanup TTL
 ```
@@ -81,6 +86,32 @@ its result and scheduled its bounded cleanup TTL, so a transient API or RBAC
 failure retries the transition instead of orphaning the Job. That TTL is the
 one field the manager may add to a Job it already created, and no result is
 read before the Job carries its terminal condition.
+
+### Durable result protocol
+
+Each Job fixes the result endpoint, operation generation, and credential
+projection before admission. The runner uploads one bounded canonical result;
+the receiver authenticates its operation, Job and Pod rather than trusting
+identity fields in the body. It validates length, digest, protocol and every
+chunk, then commits and reads back the complete publication before acknowledging.
+An interrupted publication is incomplete until that boundary. Identical retries
+return the same receipt; conflicting bytes are refused. A lost acknowledgment
+causes delivery retry, never another Ptah execution.
+
+Both controllers use bounded background readers for these records. Payload
+upload and result loading do not occupy their reconcile workers. The accepted
+record survives removal of the producing Pod and logs, manager replacement,
+and process-key loss. There is no fallback to logs or a termination summary
+when a durable receipt is missing or invalid.
+
+SQL execution and result persistence are separate transactions. If a runner
+dies after mutation and before publication, the outcome can still be unknown.
+The existing observation/history recovery and fresh-approval rules apply.
+
+### Legacy result reads
+
+The following log-read behavior applies only when durable delivery is disabled
+for a Job. It is outside the default 0.2.0 qualification profile.
 
 Reading that result is the one blocking call a reconciliation makes against
 something other than the API server's own store: a pod/log request the API
@@ -253,13 +284,13 @@ Pod the way Kubernetes stops any Pod: SIGTERM to the container, then SIGKILL
 once `terminationGracePeriodSeconds` has passed. The runner is the container's
 first process, so the signal reaches the runner rather than Ptah. It passes
 SIGTERM on, gives Ptah two thirds of the grace to stop, kills it if it has not,
-and keeps the last third to write the result frame. Every operation Pod gets
+and keeps the last third to deliver the result. Every operation Pod gets
 thirty seconds. A schema Apply records its grace on the claim, and every
 mutating Pod is told its grace in `PTAH_TERMINATION_GRACE_PERIOD_SECONDS`, so
 the runner never sizes the wait against a grace its Pod does not have; a
 mutating Pod that is not told is refused before Ptah starts.
 
-Ptah answers SIGTERM by cancelling the statement it is running, which rolls
+Ptah answers SIGTERM by canceling the statement it is running, which rolls
 back a migration it runs in a transaction, and then reads the history and
 writes its account of the run. A run stopped between two files, or inside one
 that rolled back, reports a failed run with the versions it applied, which the
@@ -274,14 +305,18 @@ Mutating Pods carry `cluster-autoscaler.kubernetes.io/safe-to-evict: "false"`,
 so the cluster autoscaler does not remove their node while they run. Nothing
 else reads that annotation: a drain, a preemption and node-pressure eviction
 still stop the Pod. Whatever stops it with less than its own grace can kill the
-runner before its frame is written, and that run is unknown as it always was:
+runner before its result is persisted, and that run is unknown as it always was:
 hard node-pressure eviction gives the Pod the kubelet's minimum of two
 seconds, soft eviction caps the grace at the kubelet's
 `evictionMaxPodGracePeriod`, and a deletion can ask for a shorter one.
 
 ### The termination summary
 
-The frame lives only in the container log on the node, and that log can be gone
+Durable Jobs retain the bounded termination summary for diagnosis. It cannot
+replace a missing durable receipt. The fallback below applies only to legacy
+Jobs that deliver results through logs.
+
+The legacy frame lives only in the container log on the node, and that log can be gone
 before the manager reads it. So the runner also writes a summary of the frame,
 at most 2 KiB, to `/dev/termination-log`, which the kubelet copies into the
 Pod's status: the operation id, whether a mutation started and whether its

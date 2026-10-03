@@ -67,36 +67,27 @@ into an isolated directory. Chart packaging, image builds, and child test script
 consume that snapshot. Ignored files or later edits in the original checkout
 therefore cannot change the artifacts attributed to the tested commit.
 
-## Result log retention
+## Result delivery {#result-log-retention}
 
-The current log-based result transport requires the workaround below.
-[Durable result delivery for 0.2.0](https://github.com/stokaro/ptah-operator/issues/586)
-must remove this prerequisite before qualification can accept installation
-with default kubelet logging. Increasing log retention does not make result
-delivery durable.
+The default installation sends runner results over mTLS to the manager's
+result Service. It acknowledges only after validating and storing the complete
+result in immutable `PtahResultRecord` objects. Container logs are diagnostic
+output; rotating or deleting them cannot remove an acknowledged result.
 
-Set kubelet `containerLogMaxSize` to at least `64Mi` on every node that can
-run operation Pods. This is a node configuration requirement; Helm cannot
-change it. Keep container logs available until the operator has collected the
-result, and do not truncate or rewrite the runner's output.
+No operator-specific kubelet log-size setting is required. The acceptance
+cluster leaves `containerLogMaxSize` unset and verifies the effective standard
+`10Mi` value on every node. The executable-plan limit remains 8 MiB; it is not
+reduced to fit a container log.
 
-An executable plan can contain 8 MiB. Sealing and base64 encoding already
-make its result larger than the default 10 MiB container log file. Other valid
-result payloads can be larger; 64 MiB leaves room for the supported frame and
-CRI record overhead. The
-[Kubernetes log API returns only the latest file](https://kubernetes.io/docs/concepts/cluster-administration/logging/#log-rotation),
-so increasing the number of rotated files does not preserve a readable result.
-A Job can exit successfully while its result header has rotated out of reach.
+Allow operation Pods to reach the result Service on port 443 (manager port
+9444), including any namespace egress restrictions. Durable delivery requires
+the chart's built-in certificate rotator and generated webhook trust. See
+[Result confidentiality](../../use/security/#pod-logs-carry-plans) and
+[Backup and recovery](../../use/recovery/#what-to-preserve) for the stored
+records and keys.
 
-Ask the cluster administrator to configure this before installing. Where the
-administrator can read node configuration through the API, verify the effective
-value for each eligible node:
-
-```sh
-kubectl get --raw "/api/v1/nodes/<node>/proxy/configz" \
-  | jq '.kubeletconfig.containerLogMaxSize'
-```
-
-The acceptance cluster uses 64 MiB files and checks every node's effective
-configuration before running a phase. Its maximum-plan rows still require
-exact 8 MiB plans to be read, stored, approved and applied on both engines.
+Explicitly setting `resultDelivery.enabled=false` selects the legacy log
+transport for new Jobs. That mode still needs `containerLogMaxSize: 64Mi` or
+larger and intact logs until collection. It does not provide the default
+installation's acknowledged-result durability and is outside the stable 0.2.0
+qualification profile.

@@ -1,0 +1,84 @@
+{
+  "status": "passed local default integration; native suite pending",
+  "baseCommit": "4bd970738df8d55c7650a9ad00dfcc2bc8a9a89c",
+  "scope": "Enable durable result delivery by default, remove the kubelet logging override, and update public protocol, architecture, operations and qualification documentation for #586.",
+  "sourceSHA256": {
+    "charts/ptah-operator/values.yaml": "0cb70fcab867563cacafbc50bcac709ef542c11ceb4757050d5ad1376cbb0f4e",
+    "docs/site/src/content/docs/reference/architecture.md": "493c4cfdaa9278515189f50e373c1f4e507c14ee94bbd1f32f38b6b2a6f26715",
+    "docs/site/src/content/docs/reference/execution.md": "eb176961601ef6173537affaeeb0c4466e42c13cc769f80bc18678cdf7631ab5",
+    "docs/site/src/content/docs/start/install.md": "c0c9f07226157c0b6eab114f53f32960e06963ea961d8b921ce2ff908c3a8986",
+    "docs/site/src/content/docs/support/kubernetes.md": "1f49dd0c1f6aa7bd199a23bf8f0d8307377b832a3c49a24d07c12b9521352b08",
+    "docs/site/src/content/docs/troubleshoot/conditions.md": "c6d39df10cf75be166629c55117cf5419957d6a2c5943565cb0582a614325880",
+    "docs/site/src/content/docs/use/configuration.md": "74e64df4f384418e6f48f1b687558551f11ed49b96353e84785e992e91bde71d",
+    "docs/site/src/content/docs/use/reference-data.md": "66a8ca14adb387bd30199fef130722eb495f37692be2123d5c3f2487b0ef6d6a",
+    "docs/site/src/content/docs/use/security.md": "b008b5b2bd54d812b23c4b0832ce4ee1967afb946d1d700347b02b7bfe318fa4",
+    "hack/e2e-kind.sh": "ba4b5d0298a22f123ccbd0813228b58de06b5abf1aa0ff2d20fa6a266f82b28f",
+    "hack/e2e-static.sh": "e25e18ae20da142f9ba589ed647a423fce7fee6997c5d75d05381d0053b80003",
+    "hack/e2e_wiring_test.go": "ad8e6f3f8b276f3f46d387546c21e0e6bd7dc9e949b89d7a64c78842c3837171",
+    "hack/kubelet_log_budget_test.go": "b17dd7a8ffe8c17a1f84a9c518f04118b04402b964f458b0763c7ec6c8020b2c",
+    "hack/status_permissions_test.go": "d3955e8447996a178dccfeb140ea82d16e3dc01a26733034260128cb4991a548",
+    "hack/verify-kubernetes-support.go": "15160b35d24a7213f3730ecef97d18d49cd5c7ee37ab9014744b6a5acdea65a8",
+    "internal/crdupgrade/release_rbac_contract_test.go": "3d6c5487eea2e610b55e79737e8985f5ef30c2a4a8139cbb94b1da2c268ecab7",
+    "support/qualification/0.2.0.md": "b140736ec3851d16467f96f56b0ac35eeea2e9f46ffa5415cfdc71ac9a77a5a4",
+    "support/qualification/result-delivery-design.md": "b450d6993d8aa7680c853251bfee15e72400be140823780cdb25627b0305062a",
+    "testdata/e2e/kind-isolation-worker.yaml.tmpl": "f4f82e5aa6cd1518b750a76fb2b035a296152d7819ae6a84ba2204db88e99789",
+    "testdata/e2e/kind.yaml.tmpl": "d091b66a75e32a062b2ff6adfaaa5b3f3c440a1cc83599e4b9103920a755e9bd"
+  },
+  "checks": {
+    "static": {
+      "command": "GOFLAGS=-p=1 GOCACHE=<existing Go cache> make e2e-static",
+      "exitCode": 0
+    },
+    "envtest": {
+      "command": "GOFLAGS=-p=1 make test-envtest",
+      "exitCode": 0,
+      "required": true,
+      "passedPackages": [
+        "admissionpolicy",
+        "crd",
+        "internal/policyenv",
+        "resultstore",
+        "webhook"
+      ]
+    },
+    "hack-tests": {
+      "command": "GOFLAGS=-p=1 go test ./hack -count=1",
+      "exitCode": 0
+    },
+    "support": {
+      "command": "GOFLAGS=-p=1 make verify-kubernetes-support",
+      "exitCode": 0
+    },
+    "rbac-settings": {
+      "command": "GOFLAGS=-p=1 go test ./internal/crdupgrade -run TestRenderedRBACSettingsFromEnvironment -count=1",
+      "exitCode": 0
+    },
+    "docs": {
+      "commands": [
+        "node scripts/build-values-reference.mjs",
+        "node scripts/check-heading-anchors.mjs",
+        "node scripts/check-navigation.mjs"
+      ],
+      "exitCodes": [
+        0,
+        0,
+        0
+      ],
+      "values": 108,
+      "anchors": 121,
+      "pages": 57
+    }
+  },
+  "changes": [
+    "Default chart delivers results through the authenticated receiver; legacy mode requires explicit disabling.",
+    "Kind node templates do not set containerLogMaxSize. The harness retains and requires effective 10Mi settings on every node. A mutation proves an added size override is rejected.",
+    "Exact manager and rotator RBAC contracts include default durable delivery. External-certificate tests explicitly retain legacy mode.",
+    "Public documentation describes durable confidentiality, receipt semantics, recovery, network requirements and diagnostic-only logs. The qualification profile no longer requires 64Mi.",
+    "Contract counters are unchanged under the pre-first-release policy."
+  ],
+  "limits": [
+    "Native data-plane integration on this default chart remains pending; local tests do not close the final #586 DoD.",
+    "Existing native transport and enabled lifecycle evidence retain their original source and artifact identities.",
+    "Final CI matrix, remaining #578\u2013584 requirements and #242 acceptance are not completed by these local checks."
+  ]
+}

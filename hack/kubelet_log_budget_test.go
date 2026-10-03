@@ -8,36 +8,23 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/stokaro/ptah-operator/internal/runner"
-	"gopkg.in/yaml.v3"
-	"k8s.io/apimachinery/pkg/api/resource"
 )
 
-func TestKindLogFileHoldsSupportedRunnerFrame(t *testing.T) {
-	var patch struct {
-		Size string `yaml:"containerLogMaxSize"`
-	}
-	if err := yaml.Unmarshal([]byte(kindKubeletPatch), &patch); err != nil {
-		t.Fatal(err)
-	}
-	size, err := resource.ParseQuantity(patch.Size)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Reserve a quarter of the parser's maximum tail for CRI record prefixes
-	// and runner diagnostics, independently of the ordinary plan's smaller size.
-	minimum := runner.MaxResultLogBytes + runner.MaxResultLogBytes/4
-	if size.Value() < minimum {
-		t.Fatalf("log file %s cannot retain supported result plus transport headroom (%d bytes)", patch.Size, minimum)
+func TestKindUsesDefaultLogRotation(t *testing.T) {
+	if strings.Contains(kindKubeletPatch, "containerLogMaxSize") {
+		t.Fatal("kind overrides the standard kubelet log size")
 	}
 	source := readE2ESource(t, repositoryE2EWiringFiles().kindConfig)
 	path := filepath.Join(t.TempDir(), "kind.yaml.tmpl")
-	if err := os.WriteFile(path, []byte(strings.Replace(source, "containerLogMaxSize: 64Mi", "containerLogMaxSize: 10Mi", 1)), 0600); err != nil {
+	modified := strings.Replace(source, "kind: KubeletConfiguration", "kind: KubeletConfiguration\n        containerLogMaxSize: 64Mi", 1)
+	if modified == source {
+		t.Fatal("mutation found no kubelet patch")
+	}
+	if err := os.WriteFile(path, []byte(modified), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if err := verifyKindHAConfig(path, repositoryE2EWiringFiles().kindIsolationWorker); err == nil {
-		t.Fatal("default rotation threshold accepted")
+		t.Fatal("operator-specific log-size override accepted")
 	}
 }
 
@@ -49,13 +36,13 @@ func TestLiveKubeletLogBudgetRequiresEveryNode(t *testing.T) {
 		isolation, value, failure string
 		pass                      bool
 	}{
-		{"four nodes", 4, "false", "64Mi", "", true},
-		{"isolation worker", 5, "true", "64Mi", "", true},
-		{"one default kubelet", 4, "false", "10Mi", "", false},
+		{"four nodes", 4, "false", "10Mi", "", true},
+		{"isolation worker", 5, "true", "10Mi", "", true},
+		{"one overridden kubelet", 4, "false", "64Mi", "", false},
 		{"missing value", 4, "false", "", "", false},
-		{"config read failed", 4, "false", "64Mi", "yes", false},
-		{"empty inventory", 0, "false", "64Mi", "", false},
-		{"missing isolation worker", 4, "true", "64Mi", "", false},
+		{"config read failed", 4, "false", "10Mi", "yes", false},
+		{"empty inventory", 0, "false", "10Mi", "", false},
+		{"missing isolation worker", 4, "true", "10Mi", "", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -88,7 +75,7 @@ kubectl() {
   */node-2/*)
    [ -z "$MOCK_FAILURE" ] || return 1
    printf '{"kubeletconfig":{"containerLogMaxSize":"%s"}}\n' "$MOCK_VALUE" ;;
-  *) printf '{"kubeletconfig":{"containerLogMaxSize":"64Mi"}}\n' ;;
+  *) printf '{"kubeletconfig":{"containerLogMaxSize":"10Mi"}}\n' ;;
  esac
 }
 ` + extractE2EShellFunction(t, source, "fail") + "\n" + extractE2EShellFunction(t, source, "assert_kubelet_log_budget") + "\nassert_kubelet_log_budget\n"

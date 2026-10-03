@@ -769,7 +769,6 @@ func TestVerifyKindHAConfig(t *testing.T) {
       - |
         kind: KubeletConfiguration
         apiVersion: kubelet.config.k8s.io/v1beta1
-        containerLogMaxSize: 64Mi
         featureGates:
           KubeletInUserNamespace: true`
 	for _, test := range []struct {
@@ -847,7 +846,6 @@ func TestVerifyKindHAConfigRefusesAnIsolationWorkerThatIsNotIsolated(t *testing.
 	kubeletPatch := `      - |
         kind: KubeletConfiguration
         apiVersion: kubelet.config.k8s.io/v1beta1
-        containerLogMaxSize: 64Mi
         featureGates:
           KubeletInUserNamespace: true
 `

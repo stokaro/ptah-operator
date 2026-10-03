@@ -1,15 +1,13 @@
 # Durable runner result delivery
 
 Implementation design for [#586](https://github.com/stokaro/ptah-operator/issues/586).
-The target is stable 0.2.0. This document does not qualify the transport or
-authorize a release. Default installations still use log frames. The storage,
-TLS delivery, live authorization, credential issuer, runner command, and workload
-projection are implemented. The chart can enable the listener, issuer, admission
-validator, background consumer, and independent certificate rotation through
-`resultDelivery.enabled`. That development path is disabled by default until
-retention, restore, and installed acceptance are complete. It provisions trust
-objects and a Service, grants scoped permissions, and can render a receiver
-NetworkPolicy with explicit infrastructure peers.
+The target is stable 0.2.0. This document does not authorize a release.
+The chart enables durable delivery by default: listener, issuer, admission
+validator, background consumer, and independent certificate rotation. It
+provisions trust objects and a Service, grants scoped permissions, and can
+render a receiver NetworkPolicy with explicit infrastructure peers. The linked
+qualification evidence records completed transport and lifecycle cases; final
+default-installation integration and the #242 acceptance decision remain open.
 
 ## Storage boundary
 

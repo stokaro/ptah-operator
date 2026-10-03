@@ -1226,9 +1226,8 @@ assert_kind_ha_topology() {
 		fail "Kubernetes node inventory does not match the ready HA kind topology $KIND_ISOLATION_TOPOLOGY"
 }
 
-# A sealed 8 MiB plan exceeds the kubelet's default 10 MiB rotation
-# threshold. The Pod log API serves only the current file. Keep the complete
-# supported frame in one file and verify the running kubelet, not only YAML.
+# Durable results must work with standard Kubernetes logging. Verify the
+# running kubelets, not only the absence of an override in the kind template.
 assert_kubelet_log_budget() {
 	kubelet_budget_expected=4
 	if [ "$ISOLATION_WORKER" = true ]; then kubelet_budget_expected=5; fi
@@ -1241,14 +1240,14 @@ assert_kubelet_log_budget() {
 			--raw "/api/v1/nodes/$kubelet_budget_node/proxy/configz" \
 			>"$WORK_DIR/kubelet-log-config-$kubelet_budget_node.json" ||
 			fail "could not read the effective kubelet log budget on $kubelet_budget_node"
-		jq -e '.kubeletconfig.containerLogMaxSize == "64Mi"' \
+		jq -e '.kubeletconfig.containerLogMaxSize == "10Mi"' \
 			"$WORK_DIR/kubelet-log-config-$kubelet_budget_node.json" >/dev/null ||
-			fail "kubelet $kubelet_budget_node must retain 64Mi per container log file for complete runner results"
+			fail "kubelet $kubelet_budget_node must use the standard 10Mi container log size for durable-result acceptance"
 		kubelet_budget_count=$((kubelet_budget_count + 1))
 	done <"$WORK_DIR/kubelet-log-nodes.txt"
 	[ "$kubelet_budget_count" -eq "$kubelet_budget_expected" ] ||
 		fail "kubelet log budget was not verified on every declared node"
-	printf 'e2e: verified 64Mi container log files on %s kubelets\n' "$kubelet_budget_count"
+	printf 'e2e: verified default 10Mi container log files on %s kubelets\n' "$kubelet_budget_count"
 }
 
 assert_api_server_endpoint_inventory() {
