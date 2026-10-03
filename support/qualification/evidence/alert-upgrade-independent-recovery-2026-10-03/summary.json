@@ -6,7 +6,7 @@
   "reproducedDefect": "The stateless verifier requires every resource to be idle at the same polling instant. A local regression alternates healthy boundaries and ordinary reads so each resource recovers but no common idle snapshot exists; the original verifier refuses it.",
   "correction": "Keep per-probe receipts within one completed hook while inspecting every current resource and executing real admission dry-runs. A verified resource may continue its first-attempt ordinary reads. Identity/generation change, stale or future readings, failures, pending outcomes, Apply, retry backoff and admission refusal still block recovery. A new hook or observer restart discards receipts. Poll and alert deadlines are unchanged.",
   "localValidation": "The staggered regression passes; existing identity/availability refusal cases now also run after cached progress. Fresh admission and current Apply controls, new-hook isolation and Migration History versus Apply/backoff controls pass. Full observer package passes with race detector. Observer vet and Linux amd64 compilation pass.",
-  "status": "Failed-hook subcase passes natively. Deadline subcase and final closure of the shared four-probe histories remain pending. This focused continuation is not a full phase or #581 DoD closure.",
+  "status": "PASS: both native upgrade alert subcases and closed shared probe histories. Focused retained-lab continuation on Kubernetes 1.37 Linux amd64, with exact original prepared probe UIDs/specs. Not a full fresh phase or #581 DoD closure.",
   "fixtureImage": "e2e-registry.ptah-test-a-1-37-0-pr585-alerts-diabolocom-3e6dd38e-25ec38ca61.svc.cluster.local:5000/e2e-fixture@sha256:6a413325cc59297fa641958ee51337d8b56f76a87ede5ef1c9134c967928510e",
   "observerBinarySHA256": "d337b3b154e83e6916f97ea5e47a9ddf3a63183a893e03e71b802ba7d8808100",
   "nativeAfter": {
@@ -17,6 +17,18 @@
     "firingReceivedAt": "2026-10-03T15:46:38.540801979Z",
     "healthyBoundary": "2026-10-03T15:48:42Z",
     "resolvedReceivedAt": "2026-10-03T15:48:58.546806268Z",
-    "checks": "Exact candidate retry, original failed and distinct completed hook identities, continuous watch history, actual admission, both families on both engines, bounded firing and resolution."
+    "checks": "Exact candidate retry, original failed and distinct completed hook identities, continuous watch history, actual admission, both families on both engines, bounded firing and resolution.",
+    "deadlineCase": {
+      "result": "PASS",
+      "deadline": "2026-10-03T16:04:50.366447168Z",
+      "firingReceivedAt": "2026-10-03T16:04:58.538765587Z",
+      "healthyBoundary": "2026-10-03T16:06:50Z",
+      "resolvedReceivedAt": "2026-10-03T16:06:58.545931029Z",
+      "initialHookUID": "bbcabbd1-a0f3-4f15-8a5b-8dac370f8ec9",
+      "retryHookUID": "37f883f1-c056-4a0b-912b-8f48b6ae15f3"
+    },
+    "sharedHistory": "PASS: original four probe identities/specs, closed Schema/Migration/Job watch histories, no Apply; full private manifest verified for all 86 files.",
+    "durationSeconds": 1456.19,
+    "evidenceCustody": "Complete raw probe histories and runtime snapshots remain in the private local evidence directory. The public report includes their SHA-256 manifest and bounded state/notification records. Durable external custody remains part of final acceptance."
   }
 }
