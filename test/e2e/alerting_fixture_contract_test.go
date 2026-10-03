@@ -90,3 +90,46 @@ func TestAlFixtureLockTimeoutSurvivesPolicyReplacement(t *testing.T) {
 		})
 	}
 }
+
+// Validate the fixture after API defaults, including the cross-field CEL rule
+// that rejects a lock budget longer than the operation deadline.
+func TestAlOverdueMigrationFixtureFitsExecutionBudget(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", "config", "crd", "bases", "operator.ptah.run_ptahmigrations.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var crd apiextensionsv1.CustomResourceDefinition
+	if err := yaml.Unmarshal(body, &crd); err != nil {
+		t.Fatal(err)
+	}
+	rule := crd.Spec.Versions[0].Schema.OpenAPIV3Schema.Properties["spec"]
+	var internal apiextensions.JSONSchemaProps
+	if err := apiextensionsv1.Convert_v1_JSONSchemaProps_To_apiextensions_JSONSchemaProps(&rule, &internal, nil); err != nil {
+		t.Fatal(err)
+	}
+	schema, err := structuralschema.NewStructural(&internal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	validator := structuralcel.NewValidator(schema, false, celconfig.PerCallLimit)
+	if validator == nil {
+		t.Fatal("migration spec has no CEL validation")
+	}
+	validate := func(spec map[string]any) validationfield.ErrorList {
+		structuraldefaulting.Default(spec, schema)
+		errs, _ := validator.Validate(context.Background(), validationfield.NewPath("spec"), schema, spec, nil, celconfig.RuntimeCELCostBudget)
+		return errs
+	}
+	spec := alOverdueResource("migration")["spec"].(map[string]any)
+	if errs := validate(spec); len(errs) != 0 {
+		t.Fatalf("overdue fixture rejected by the shipped CRD: %v", errs)
+	}
+	// Omitting the override must reproduce the native failure after the API
+	// supplies its longer lock timeout. This guards against a vacuous validator.
+	bad := alOverdueResource("migration")["spec"].(map[string]any)
+	delete(bad["policy"].(map[string]any), "lockTimeout")
+	errs := validate(bad)
+	if len(errs) != 1 || errs[0].Field != "spec" || !strings.Contains(errs[0].Error(), "policy.lockTimeout must not exceed execution.activeDeadlineSeconds") {
+		t.Fatalf("missing the original cross-field refusal: %v", errs)
+	}
+}

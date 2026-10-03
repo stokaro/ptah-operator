@@ -128,6 +128,15 @@ func alOverdueResource(family string) map[string]any {
 	delete(execution, "nodeSelector")
 	execution["failureRetryInterval"] = "1h"
 	execution["activeDeadlineSeconds"] = int64(30)
+	if family == "migration" {
+		// Migration requires the lock budget to fit the shortened operation.
+		policy, _ := spec["policy"].(map[string]any)
+		if policy == nil {
+			policy = map[string]any{}
+			spec["policy"] = policy
+		}
+		policy["lockTimeout"] = "30s"
+	}
 	return object
 }
 

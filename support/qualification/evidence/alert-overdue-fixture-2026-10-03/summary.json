@@ -1,0 +1,13 @@
+{
+  "requirement": "#581 native overdue-resource alert and recovery; #586 default integration",
+  "dockerContext": "diabolocom",
+  "runtimeRevision": "3e6dd38e660b43a50c529f2045ee879fc72143b9",
+  "testSourceRevisionBefore": "6cede79817f07f3e879112a91961740ea024defc",
+  "kubernetesVersion": "1.37.0",
+  "platform": "linux/amd64",
+  "nativeBefore": "The complete stalled-operation scenario passed on both families. Schema overdue firing and recovery passed. Migration overdue was refused at CREATE: the fixture shortened activeDeadlineSeconds to 30 but inherited the CRD default lockTimeout of 5m. The combined run failed; later scenarios did not execute.",
+  "correction": "Set only the overdue migration fixture lockTimeout to 30s while preserving all incident timing, production defaults and acceptance assertions. No runtime or API changes.",
+  "localValidation": "The new regression evaluates the shipped CRD defaults and full spec CEL. The old fixture fails with the exact native error. The corrected fixture passes; removing its override reproduces the cross-field refusal. The complete helper package passes with -race and tagged E2E vet passes.",
+  "nativeAfter": "Pending. The unchanged passing Schema case and earlier completed scenarios will not be repeated.",
+  "scope": "Individual Linux amd64 Kubernetes 1.37 native proofs; no complete final-identity phase, matrix or DoD closure."
+}
