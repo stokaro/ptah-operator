@@ -1,5 +1,5 @@
 {
-  "status": "partial native integration; final running-Apply scenario failed, local correction passed",
+  "status": "remaining native data-plane scenarios passed individually across retained runtime versions",
   "requirement": "#586 final default integration and existing #578 execution-binding boundary cases",
   "runtime": {
     "platform": "Kubernetes 1.37.0 linux/amd64",
@@ -32,9 +32,7 @@
     }
   },
   "alreadyRetained": "../result-preflight-retry-2026-10-03/summary.json retains the passed executor-image scenario and corrected runner build. ../result-admission-status-2026-10-03/summary.json retains the passed native admission scenario and original 20 successful scenarios.",
-  "remaining": [
-    "running-apply-executor-image-change"
-  ],
+  "remaining": [],
   "sourceSHA256": {
     "test/e2e/executor_change_e2e_test.go": "e78f819ef886ddb6843c646ea6620b019aad55dd6a67efcaa867e7d44e8e8b83",
     "test/e2e/stored_state_cases_e2e_test.go": "fb20b824a6d1760f0e9b15913fd0343df36dd01cf0c661a3e452df6ed8691f8a",
@@ -50,6 +48,6 @@
   ],
   "subsequentEvidence": {
     "unsupported-runner-protocol-after-approval": "../result-failed-init-2026-10-03/summary.json: passed on both engines with manager d3084d03 and runner 46b51228; exact original failure and corrected identities retained",
-    "running-apply-executor-image-change": "../result-retired-apply-2026-10-03/summary.json: native failure retained; exact retired-claim delivery correction passes local regression and refusal controls; corrected native run pending"
+    "running-apply-executor-image-change": "../result-retired-apply-2026-10-03/summary.json: original failed delivery, focused authorization regression and corrected full scenario retained; both engines pass on manager a60fb251 and runner 46b51228"
   }
 }

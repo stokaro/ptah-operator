@@ -1,0 +1,7 @@
+{
+  "status": "interrupted before any Apply",
+  "exitCode": 254,
+  "cause": "The temporary retained-lab reset removed schema fixtures but left their released coordination Leases. The original scenario requires a newly created Plan Lease and waited at loadNewReleasedLease. PostgreSQL was AwaitingApproval and MySQL schema creation had not started.",
+  "correction": "Before running the unchanged scenario, delete only its two exact coordination Leases after asserting empty holderIdentity; read and UID-precondition deletion use the original fixture coordination keys.",
+  "limits": "No corrected runtime verdict in this attempt."
+}
