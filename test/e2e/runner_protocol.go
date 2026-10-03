@@ -237,12 +237,45 @@ func runnerGuardRefused(job *batchv1.Job, pod *corev1.Pod, fetchName string) boo
 		neverStartedContainer(pod, fetchName) && neverStartedContainer(pod, "ptah")
 }
 
+// Durable schema Apply refuses in the main runner before it contacts the
+// receiver or executor. Keep the exact Job/Pod inputs and failed client in the
+// audit instead of weakening the common successful-Pod SQL contract.
+func durableRunnerApplyRefused(job *batchv1.Job, pod *corev1.Pod) bool {
+	if job == nil || pod == nil || job.UID == "" || pod.UID == "" || pod.Namespace != job.Namespace ||
+		pod.Status.Phase != corev1.PodFailed || !noRestarts(pod) ||
+		!ownedExactlyOnce(pod.OwnerReferences, "batch/v1", "Job", job.Name, job.UID) ||
+		job.Labels[labelOperation] != "apply" || pod.Annotations[annotationOperationID] == "" ||
+		pod.Annotations[annotationOperationID] != job.Annotations[annotationOperationID] ||
+		len(pod.Spec.InitContainers) != 1 || len(pod.Spec.Containers) != 1 || len(pod.Spec.EphemeralContainers) != 0 ||
+		len(job.Spec.Template.Spec.InitContainers) != 1 || len(job.Spec.Template.Spec.Containers) != 1 {
+		return false
+	}
+	if _, err := resultJobWithoutProjection(job); err != nil {
+		return false
+	}
+	podJob := job.DeepCopy()
+	podJob.Spec.Template.Spec = *pod.Spec.DeepCopy()
+	if _, err := resultJobWithoutProjection(podJob); err != nil {
+		return false
+	}
+	actual := []corev1.Container{pod.Spec.InitContainers[0], pod.Spec.Containers[0]}
+	expected := []corev1.Container{job.Spec.Template.Spec.InitContainers[0], job.Spec.Template.Spec.Containers[0]}
+	for i := range expected {
+		if actual[i].Name != expected[i].Name || actual[i].Image != expected[i].Image || !slices.Equal(actual[i].Command, expected[i].Command) ||
+			!slices.Equal(actual[i].Args, expected[i].Args) || !equality.Semantic.DeepEqual(actual[i].Env, expected[i].Env) {
+			return false
+		}
+	}
+	return actual[0].Name == "install-runner" && actual[1].Name == "ptah" &&
+		terminatedContainer(pod, "install-runner", 0) && terminatedContainer(pod, "ptah", 2)
+}
+
 // Keep the shared SQL contract's successful-Pod requirement. This one exact
-// failed guard keeps its actual operation and client identity. Its caller
-// refuses all SQL from that exact Job instead of dropping the failed Pod.
+// failed guard or durable runner keeps its actual operation and client identity.
+// Its caller refuses all SQL from that Job instead of dropping the failed Pod.
 func addRefusedRunnerSQLClient(clients map[string]operationSQLClient, resourceUID types.UID, job *batchv1.Job, pod *corev1.Pod, fetchName string) (map[string]operationSQLClient, error) {
-	if resourceUID == "" || len(clients) == 0 || !runnerGuardRefused(job, pod, fetchName) || job.Labels[labelOperation] == "" {
-		return nil, errors.New("failed runner SQL attribution has no positive History control and exact refused guard")
+	if resourceUID == "" || len(clients) == 0 || (!runnerGuardRefused(job, pod, fetchName) && !durableRunnerApplyRefused(job, pod)) || job.Labels[labelOperation] == "" {
+		return nil, errors.New("failed runner SQL attribution has no positive read control and exact refused runner")
 	}
 	address, err := netip.ParseAddr(pod.Status.PodIP)
 	if err != nil {
@@ -379,8 +412,8 @@ func runnerProtocolNoReplay(jobs []batchv1.Job, pods []corev1.Pod, kind, name, n
 }
 
 // Successful diagnostics still use the common SQL attribution contract.
-// An exact failed init is a separate, fully inspected client, and its actual
-// operation is retained. Callers refuse all SQL from the returned Job set.
+// An exact refused init or durable runner is a fully inspected client, and its
+// actual operation is retained. Callers refuse all SQL from the returned Job set.
 func runnerRefusalSQLClients(resource metav1.Object, kind string,
 	binding *ptahv1alpha1.ExecutionBindingStatus, controller controllerIdentity, image string,
 	jobs map[types.UID]batchv1.Job, pods map[types.UID]corev1.Pod, logs map[types.UID]runnerRefusalLogs,
@@ -406,13 +439,19 @@ func runnerRefusalSQLClients(resource metav1.Object, kind string,
 			return nil, nil, fmt.Errorf("the refused runner SQL client has no controller owner")
 		}
 		job, exists := jobs[owner.UID]
-		if !exists || !runnerGuardRefused(&job, &pod, fetch) || !executionIdentityOnJob(&job, controller) ||
+		durableApply := kind == "PtahSchema" && durableRunnerApplyRefused(&job, &pod)
+		if !exists || (!runnerGuardRefused(&job, &pod, fetch) && !durableApply) || !executionIdentityOnJob(&job, controller) ||
 			!ownedExactlyOnce(job.OwnerReferences, ptahSchemaAPIVersion, kind, resource.GetName(), resource.GetUID()) ||
 			job.Annotations[annotationBindingID] != binding.Epoch || job.Spec.Template.Spec.InitContainers[0].Image != image ||
 			!jobUsesExecutor(&job, binding.ExecutorImage) ||
 			!exactLiteralEnv(viewContainers(job.Spec.Template.Spec.Containers)[0], runner.EnvRunnerProtocolVersion, strconv.Itoa(runner.ProtocolVersion)) ||
-			!exactLiteralEnv(viewContainers(job.Spec.Template.Spec.InitContainers)[1], runner.EnvRunnerProtocolVersion, strconv.Itoa(runner.ProtocolVersion)) {
-			return nil, nil, fmt.Errorf("a failed Pod was not the exact unsupported runner's pre-fetch refusal")
+			(!durableApply && !exactLiteralEnv(viewContainers(job.Spec.Template.Spec.InitContainers)[1], runner.EnvRunnerProtocolVersion, strconv.Itoa(runner.ProtocolVersion))) {
+			return nil, nil, fmt.Errorf("a failed Pod was not the exact unsupported runner's pre-dispatch refusal")
+		}
+		if durableApply {
+			if err := runnerProtocolApplyInputs(&job, kind, resource, binding, image, job.Annotations[workload.AnnotationPlanFingerprint], controller); err != nil {
+				return nil, nil, err
+			}
 		}
 		if err := logs[pod.UID].matches(&pod); err != nil {
 			return nil, nil, err

@@ -3,6 +3,8 @@ package e2e
 import (
 	"bytes"
 	"errors"
+	"github.com/stokaro/ptah-operator/internal/resultdelivery/jobconfig"
+	"k8s.io/utils/ptr"
 	"os"
 	"testing"
 
@@ -195,5 +197,71 @@ func TestRunnerSQLAttributionRequiresTheRetainedRefusalLogs(t *testing.T) {
 				t.Fatal("unproven refusal was silently admitted into SQL attribution")
 			}
 		})
+	}
+}
+
+func TestDurableRunnerRefusalKeepsCompleteLogsAndSQLAttribution(t *testing.T) {
+	job, pod, resource, binding, controller, image := runnerApplyFixture("PtahSchema")
+	job.Spec.Template.Spec.AutomountServiceAccountToken = ptr.To(false)
+	if err := jobconfig.Attach(job, resource.UID, 1, job.Annotations[annotationOperationID], "https://receiver.test:9444"); err != nil {
+		t.Fatal(err)
+	}
+	pod.Spec = *job.Spec.Template.Spec.DeepCopy()
+	pod.Status.ContainerStatuses = []corev1.ContainerStatus{pod.Status.InitContainerStatuses[1]}
+	pod.Status.ContainerStatuses[0].Name = "ptah"
+	pod.Status.InitContainerStatuses = pod.Status.InitContainerStatuses[:1]
+	diagnostic, err := os.ReadFile("../../testdata/e2e/readings/unsupported-runner-native-guard.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence, err := captureRunnerRefusalLogs(pod, func() (*corev1.Pod, error) { return pod.DeepCopy(), nil }, func(name string) ([]byte, error) {
+		if name == "ptah" {
+			return diagnostic, nil
+		}
+		return nil, nil
+	}, func([]byte, string) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	observe, control := job.DeepCopy(), pod.DeepCopy()
+	observe.UID, observe.Name, observe.Labels[labelOperation] = "observe-job", "observe", "observe"
+	control.UID, control.Name, control.Labels[labelOperation] = "observe-pod", "observe-pod", "observe"
+	control.OwnerReferences[0].UID, control.OwnerReferences[0].Name = observe.UID, observe.Name
+	control.Status.Phase, control.Status.PodIP = corev1.PodSucceeded, "10.0.0.1"
+	control.Status.ContainerStatuses[0].State.Terminated.ExitCode = 0
+	jobs := map[types.UID]batchv1.Job{job.UID: *job, observe.UID: *observe}
+	pods := map[types.UID]corev1.Pod{pod.UID: *pod, control.UID: *control}
+	logs := map[types.UID]runnerRefusalLogs{pod.UID: evidence}
+	clients, refused, err := runnerRefusalSQLClients(resource, "PtahSchema", binding, controller, image, jobs, pods, logs)
+	if err != nil || len(clients) != 2 || len(refused) != 1 || !refused[job.UID] || clients[pod.Status.PodIP].operation != "apply" || clients[control.Status.PodIP].operation != "observe" {
+		t.Fatal("durable refusal lost complete log or SQL attribution", err)
+	}
+	for name, mutate := range map[string]func(*corev1.Pod){
+		"replaced Job":       func(p *corev1.Pod) { p.OwnerReferences[0].UID = "other" },
+		"different exit":     func(p *corev1.Pod) { p.Status.ContainerStatuses[0].State.Terminated.ExitCode = 1 },
+		"restarted runner":   func(p *corev1.Pod) { p.Status.ContainerStatuses[0].RestartCount = 1 },
+		"changed executable": func(p *corev1.Pod) { p.Spec.Containers[0].Args[1] = "/other" },
+		"foreign credential": func(p *corev1.Pod) { p.Spec.Volumes[0].Secret.SecretName = "other" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			changed := pod.DeepCopy()
+			mutate(changed)
+			if durableRunnerApplyRefused(job, changed) {
+				t.Fatal("accepted unrelated failed workload")
+			}
+			changedPods := map[types.UID]corev1.Pod{changed.UID: *changed, control.UID: *control}
+			if _, _, err := runnerRefusalSQLClients(resource, "PtahSchema", binding, controller, image, jobs, changedPods, logs); err == nil {
+				t.Fatal("accepted unrelated SQL client")
+			}
+		})
+	}
+	for _, retained := range []map[types.UID]runnerRefusalLogs{
+		{},
+		{pod.UID: {pod: pod, logs: map[string][]byte{"ptah": diagnostic}}},
+		{pod.UID: {pod: pod, logs: map[string][]byte{"install-runner": nil, "ptah": []byte("another failure\n")}}},
+	} {
+		if _, _, err := runnerRefusalSQLClients(resource, "PtahSchema", binding, controller, image, jobs, pods, retained); err == nil {
+			t.Fatal("accepted absent or incomplete refusal audit")
+		}
 	}
 }

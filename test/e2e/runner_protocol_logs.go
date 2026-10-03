@@ -54,12 +54,23 @@ func captureRunnerRefusalLogs(pod *corev1.Pod, get func() (*corev1.Pod, error), 
 
 func (e runnerRefusalLogs) matches(pod *corev1.Pod) error {
 	if !runnerLogPodMatches(e.pod, pod) || len(e.logs) != 2 ||
-		!slices.Contains(startedContainers(pod), "install-runner") || !slices.Contains(startedContainers(pod), "validate-source-authority") ||
+		!slices.Contains(startedContainers(pod), "install-runner") ||
 		len(startedContainers(pod)) != len(e.logs) {
 		return errors.New("the refused runner has no complete logs bound to its terminal Pod")
 	}
 	if _, found := e.logs["install-runner"]; !found {
 		return errors.New("the refused runner installer log was not retained")
+	}
+	if logs, found := e.logs["ptah"]; found {
+		if len(pod.Spec.InitContainers) != 1 || len(pod.Spec.Containers) != 1 ||
+			len(pod.Spec.EphemeralContainers) != 0 || !slices.Contains(startedContainers(pod), "ptah") ||
+			!terminatedContainer(pod, "install-runner", 0) {
+			return errors.New("the durable refusal has no exact installer and runner log inventory")
+		}
+		return unsupportedDurableRunnerRefusal(pod, logs)
+	}
+	if !slices.Contains(startedContainers(pod), "validate-source-authority") {
+		return errors.New("the refused runner has no authority guard diagnostic")
 	}
 	want := fmt.Sprintf("ptah-runner: runner_protocol_mismatch: the Job expects runner protocol %d; this runner speaks protocol %d\n", runner.ProtocolVersion, runner.ProtocolVersion+1)
 	if string(e.logs["validate-source-authority"]) != want {
