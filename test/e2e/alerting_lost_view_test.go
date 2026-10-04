@@ -3,6 +3,7 @@ package e2e
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"testing"
 	"time"
 )
@@ -211,6 +212,51 @@ func TestAlLostViewRecoveryUsesFirstSynchronizedReplacementScrape(t *testing.T) 
 			mutate(&bad)
 			if _, err := bad.read(t); err == nil {
 				t.Fatal("invalid native recovery accepted")
+			}
+		})
+	}
+}
+
+func TestAlLostViewRecoveryAfterReplacementEndpointStarts(t *testing.T) {
+	t.Parallel()
+	body, err := os.ReadFile("../../testdata/e2e/readings/lost-view-recovery-startup.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var captured struct{ View, Up, Durations json.RawMessage }
+	if err := json.Unmarshal(body, &captured); err != nil {
+		t.Fatal(err)
+	}
+	view, err := alAdmissionNativeMatrix(captured.View)
+	if err != nil || len(view) != 2 {
+		t.Fatalf("missing recorded replacement metrics: %v", err)
+	}
+	pods := []string{view[0].Metric["pod"], view[1].Metric["pod"]}
+	restored := time.Unix(1791152620, 0).UTC()
+	queried := time.Unix(1791152647, 651674000).UTC()
+	r, err := alLostViewRecovery(captured.View, captured.Up, captured.Durations, pods, pods[0], restored, queried)
+	if err != nil || !r.recovered.Equal(time.Unix(1791152642, 900000095).UTC()) || !r.scrapedThrough.Equal(r.recovered) {
+		t.Fatalf("initial failed scrape hid the recorded synchronized recovery: %+v %v", r, err)
+	}
+	// The same missing gauge after a successful scrape is a real coverage gap.
+	up, err := alAdmissionNativeMatrix(captured.Up)
+	if err != nil {
+		t.Fatal(err)
+	}
+	up[0].Values[0][1] = json.RawMessage(`"1"`)
+	if _, err := alLostViewRecovery(captured.View, alAdmissionHistoryBodyForTest(t, up), captured.Durations, pods, pods[0], restored, queried); err == nil {
+		t.Fatal("a missing metric from a healthy initial scrape was ignored")
+	}
+	for name, mutate := range map[string]func(*alLostRecoveryFixture){
+		"missing initial gauge":          func(f *alLostRecoveryFixture) { f.view[0].Values = f.view[0].Values[1:] },
+		"missing final gauge":            func(f *alLostRecoveryFixture) { f.view[0].Values = f.view[0].Values[:len(f.view[0].Values)-1] },
+		"failure after publishing began": func(f *alLostRecoveryFixture) { f.up[0].Values[1][1] = json.RawMessage(`"0"`) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := alLostRecoveryFixtureForTest()
+			mutate(&f)
+			if _, err := f.read(t); err == nil {
+				t.Fatal("incomplete recovery accepted")
 			}
 		})
 	}

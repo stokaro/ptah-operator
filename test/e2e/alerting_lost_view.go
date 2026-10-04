@@ -206,11 +206,21 @@ func alLostViewRecovery(viewBody, upBody, durationBody []byte, pods []string, le
 	}
 	for pod, gauge := range view {
 		health, duration := up[pod], durations[pod]
-		if health.instance != gauge.instance || duration.instance != gauge.instance || len(health.samples) != len(gauge.samples) || len(duration.samples) != len(gauge.samples) {
+		if health.instance != gauge.instance || duration.instance != gauge.instance || len(health.samples) != len(duration.samples) || len(health.samples) < len(gauge.samples) {
 			return r, errors.New("lost-view recovery lost matching native scrapes")
 		}
+		// Discovery can see a replacement before its metrics endpoint starts.
+		// Such failed scrapes have up/duration but no exported view metric.
+		// Only that initial failed prefix may precede the complete gauge history.
+		offset := len(health.samples) - len(gauge.samples)
+		for i := range offset {
+			if !health.samples[i].at.Before(gauge.samples[0].at) || health.samples[i].value != 0 ||
+				!duration.samples[i].at.Equal(health.samples[i].at) || duration.samples[i].value > alScrapeTimeout.Seconds() {
+				return r, errors.New("lost-view recovery omitted an exported metric or mismatched its initial failed scrape")
+			}
+		}
 		for i, sample := range gauge.samples {
-			if !health.samples[i].at.Equal(sample.at) || !duration.samples[i].at.Equal(sample.at) || health.samples[i].value != 1 || duration.samples[i].value > alScrapeTimeout.Seconds() || (sample.value != 0 && sample.value != 1) {
+			if !health.samples[i+offset].at.Equal(sample.at) || !duration.samples[i+offset].at.Equal(sample.at) || health.samples[i+offset].value != 1 || duration.samples[i+offset].value > alScrapeTimeout.Seconds() || (sample.value != 0 && sample.value != 1) {
 				return r, errors.New("lost-view recovery has an unhealthy or mismatched scrape")
 			}
 			if pod != leader && sample.value != 0 {
