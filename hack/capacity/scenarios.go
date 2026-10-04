@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -178,68 +177,67 @@ func (s *scenarios) create(ctx context.Context) error {
 	return s.verifyInputPlans(ctx, 0)
 }
 
-// waitConverged waits until every workload resource is InSync, read after
-// `after` when that is set, and satisfies `extra` for the ones it names. It
-// returns how long that took, or the budget if it never did.
-func (s *scenarios) waitConverged(ctx context.Context, after time.Time, extra func(unstructured.Unstructured) bool) (string, error) {
+// waitConverged remembers each resource's fresh accepted result. Periodic
+// refreshes need not leave the whole workload idle at the same instant.
+func (s *scenarios) waitConverged(ctx context.Context, after time.Time, references map[string]string) (string, error) {
 	start := after
 	if start.IsZero() {
 		start = time.Now()
 	}
-	deadline := start.Add(s.load.Settle.Duration)
-	for time.Now().Before(deadline) {
-		done, err := s.allConverged(ctx, after, extra)
-		if err != nil {
-			slog.Warn("read the workload", "error", err)
-		} else if done {
-			return time.Since(start).Round(time.Second).String(), nil
-		}
-		select {
-		case <-ctx.Done():
-			return "", ctx.Err()
-		case <-time.After(pollEvery):
-		}
+	ctx, cancel := context.WithDeadline(ctx, start.Add(s.load.Settle.Duration))
+	defer cancel()
+	targets, err := s.convergenceTargets(ctx, references)
+	if err != nil {
+		return "", err
 	}
-	return "not within " + s.load.Settle.String(), fmt.Errorf("the workload did not converge within %s", s.load.Settle)
+	if err := s.waitBatch(ctx, targets, start); err != nil {
+		return "not within " + s.load.Settle.String(), err
+	}
+	return time.Since(start).Round(time.Second).String(), nil
 }
 
-func (s *scenarios) allConverged(ctx context.Context, after time.Time, extra func(unstructured.Unstructured) bool) (bool, error) {
+func (s *scenarios) convergenceTargets(ctx context.Context, references map[string]string) ([]batchTarget, error) {
 	selector := capacityLabel + "=" + s.load.Name
-	total := 0
+	var targets []batchTarget
+	seen := map[string]bool{}
 	for _, namespace := range workloadNamespaces(s.in.namespace, s.in.namespaces) {
 		for _, family := range []struct {
 			resource schema.GroupVersionResource
-			observed []string
+			name     string
+			field    string
 		}{
-			{schemaResource, []string{"status", "target", "lastObservedAt"}},
-			{migrationResource, []string{"status", "history", "observedAt"}},
+			{schemaResource, "schema", "desired"},
+			{migrationResource, "migration", "artifact"},
 		} {
 			list, err := s.dynamic.Resource(family.resource).Namespace(namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
 			if err != nil {
-				return false, err
+				return nil, err
 			}
 			for _, item := range list.Items {
 				wantNamespace, err := s.resourceNamespace(family.resource, item.GetName())
-				if err != nil || wantNamespace != namespace {
-					return false, fmt.Errorf("unexpected workload resource %s/%s", namespace, item.GetName())
+				key := item.GetKind() + "/" + item.GetName()
+				if err != nil || wantNamespace != namespace || item.GetNamespace() != namespace || seen[key] || item.GetUID() == "" || item.GetGeneration() < 1 || item.GetDeletionTimestamp() != nil {
+					return nil, fmt.Errorf("unexpected workload identity %s/%s", namespace, item.GetName())
 				}
-				total++
-				if phase, _, _ := unstructured.NestedString(item.Object, "status", "phase"); phase != "InSync" {
-					return false, nil
+				seen[key] = true
+				reference, _, err := unstructured.NestedString(item.Object, "spec", family.field, "ociRef")
+				want, changed := references[key]
+				if err != nil || digestOf(reference) == "" || changed && reference != want {
+					return nil, fmt.Errorf("workload input does not match the requested artifact: %s/%s", namespace, item.GetName())
 				}
-				if !after.IsZero() {
-					observed, ok := timestampAt(item.Object, family.observed...)
-					if !ok || observed.Before(after.Truncate(time.Second)) {
-						return false, nil
-					}
-				}
-				if extra != nil && !extra(item) {
-					return false, nil
-				}
+				targets = append(targets, batchTarget{family: family.name, resource: family.resource, namespace: namespace, name: item.GetName(), uid: item.GetUID(), generation: item.GetGeneration(), reference: reference, applied: family.name == "schema"})
 			}
 		}
 	}
-	return total == s.load.Schemas+s.load.Migrations, nil
+	if len(targets) == 0 || len(targets) != s.load.Schemas+s.load.Migrations {
+		return nil, fmt.Errorf("convergence inventory has %d resources, require %d", len(targets), s.load.Schemas+s.load.Migrations)
+	}
+	for key := range references {
+		if !seen[key] {
+			return nil, fmt.Errorf("changed workload resource is missing: %s", key)
+		}
+	}
+	return targets, nil
 }
 
 // steady watches the converged workload with nothing changing.
@@ -315,28 +313,16 @@ func (s *scenarios) change(ctx context.Context) error {
 		if err := s.patchReference(ctx, schemaResource, name, "desired", s.schemaReference(index, 1)); err != nil {
 			return err
 		}
-		moved["PtahSchema/"+name] = digestOf(s.schemaReference(index, 1))
+		moved["PtahSchema/"+name] = s.schemaReference(index, 1)
 	}
 	for index := range min(s.load.ChangeBatch, s.load.Migrations) {
 		name := s.migrationName(index)
 		if err := s.patchReference(ctx, migrationResource, name, "artifact", s.migrationReference(index, 1)); err != nil {
 			return err
 		}
-		moved["PtahMigration/"+name] = digestOf(s.migrationReference(index, 1))
+		moved["PtahMigration/"+name] = s.migrationReference(index, 1)
 	}
-	converged, err := s.waitConverged(ctx, start, func(item unstructured.Unstructured) bool {
-		want, ok := moved[item.GetKind()+"/"+item.GetName()]
-		if !ok {
-			return true
-		}
-		var got string
-		if item.GetKind() == "PtahSchema" {
-			got, _, _ = unstructured.NestedString(item.Object, "status", "applied", "artifactDigest")
-		} else {
-			got, _, _ = unstructured.NestedString(item.Object, "status", "artifact", "digest")
-		}
-		return got == want
-	})
+	converged, err := s.waitConverged(ctx, start, moved)
 	s.mark("change batch", start, map[string]string{"converged": converged, "moved": fmt.Sprint(len(moved))})
 	if err != nil {
 		return err

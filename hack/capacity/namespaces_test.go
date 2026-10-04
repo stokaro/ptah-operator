@@ -100,17 +100,20 @@ func TestSamplerReadsBothNamespacesAndRetainsJobIdentities(t *testing.T) {
 func TestConvergenceAndPatchesUseDeclaredNamespace(t *testing.T) {
 	s := twoNamespaceScenarios()
 	s.in.databaseSecret = "db-%d"
+	s.in.schemaRefs[0] = "oci://registry/schema@sha256:" + strings.Repeat("a", 64)
+	s.in.migrationRefs[0] = "oci://registry/migration@sha256:" + strings.Repeat("b", 64)
 	objects := []runtime.Object{}
 	for i := range 10 {
 		for _, obj := range []*unstructured.Unstructured{s.schemaObject(i), s.migrationObject(s.migrationName(i), 10+i, "Always", true)} {
-			obj.Object["status"] = map[string]any{"phase": "InSync"}
+			obj.SetUID(types.UID(obj.GetKind() + obj.GetName()))
+			obj.SetGeneration(1)
 			objects = append(objects, obj)
 		}
 	}
 	client := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{schemaResource: "PtahSchemaList", migrationResource: "PtahMigrationList"}, objects...)
 	s.dynamic = client
-	if ok, err := s.allConverged(context.Background(), time.Time{}, nil); err != nil || !ok {
-		t.Fatal("complete fleet refused", ok, err)
+	if targets, err := s.convergenceTargets(context.Background(), nil); err != nil || len(targets) != 20 {
+		t.Fatal("complete fleet refused", len(targets), err)
 	}
 	if err := s.patchReference(context.Background(), schemaResource, s.schemaName(1), "desired", "oci://registry/new@sha256:test"); err != nil {
 		t.Fatal(err)
@@ -131,7 +134,7 @@ func TestConvergenceAndPatchesUseDeclaredNamespace(t *testing.T) {
 	if _, err := client.Resource(schemaResource).Namespace("work-a").Create(context.Background(), obj, metav1.CreateOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	if ok, err := s.allConverged(context.Background(), time.Time{}, nil); err == nil || ok {
+	if _, err := s.convergenceTargets(context.Background(), nil); err == nil {
 		t.Fatal("right total in the wrong namespace passed convergence")
 	}
 }
