@@ -133,6 +133,7 @@ func (m *migrationRun) applyPolicyGuardProof() {
 	migration := &ptahv1alpha1.PtahMigration{}
 	migration.Namespace, migration.Name = m.in.TestNamespace, g.migration
 	m.deleteAndWait(migration, g.migration)
+	m.retireFixtureApproval(approval.Name, approval.Spec.MigrationRef.UID)
 	for _, name := range []string{g.authorRole, g.approverRole} {
 		binding := &rbacv1.RoleBinding{}
 		binding.Namespace, binding.Name = m.in.TestNamespace, name

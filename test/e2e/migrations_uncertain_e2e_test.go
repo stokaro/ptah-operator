@@ -666,6 +666,7 @@ func (m *migrationRun) lateDispatchProof() {
 	m.check(storedStateDeleteExact(m.ctx, m.cluster, retired), "finalize only the proved late-dispatch fixture")
 	m.assertNoNewApplyJob([]string{claim.jobUID}, "while retiring the late-dispatch fixture", name)
 	audit.assertRecords(beforeRefusal, audit.snapshot(), pod, false)
+	m.retireFixtureApproval(name+"-approval", retired.UID)
 	m.logf("PASS %s refused an Apply Pod that started after its window closed; exact fixture finalized", m.engine.kind)
 	audit.close()
 }
@@ -829,6 +830,8 @@ func (m *migrationRun) restoredHistoryProof() {
 	m.check(m.get(run.JobName, proofJob), "retain the completed restored-history Job")
 	m.retainMigrationFixture(converged, proofJob, proofPod, beforeApply, afterApply)
 	m.check(storedStateDeleteExact(m.ctx, m.cluster, converged), "finalize only the proved restored-history fixture")
+	m.retireFixtureApproval(name+"-approval", converged.UID)
+	m.retireFixtureApproval(name+"-current", converged.UID)
 	m.closeApplyGate()
 	m.logf("PASS %s refused the stale [3] decision, then applied [2 3] only after fresh approval of the restored history; exact fixture finalized", m.engine.kind)
 }

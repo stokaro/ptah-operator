@@ -1044,6 +1044,19 @@ func (m *migrationRun) collectDiagnostics(ctx context.Context) {
 	_, _ = fmt.Fprintln(os.Stderr, "e2e migrations: raw Job logs are suppressed to protect credential-isolation failures")
 }
 
+// retireFixtureApproval removes a completed proof's approval when that proof
+// deletes or replaces its migration. Approvals have no owner reference; leaving
+// one behind pins a plan that Kubernetes garbage-collects with the old owner.
+func (m *migrationRun) retireFixtureApproval(name string, migrationUID types.UID) {
+	m.t.Helper()
+	approval := &ptahv1alpha1.PtahMigrationApproval{}
+	m.check(m.get(name, approval), "read the completed fixture approval")
+	if migrationUID == "" || approval.Spec.MigrationRef.UID != migrationUID {
+		m.fatalf("approval %s does not belong to the completed fixture", name)
+	}
+	m.check(storedStateDeleteExact(m.ctx, m.cluster, approval), "remove only the completed fixture approval")
+}
+
 // deleteAndWait deletes an object and waits until it is gone, as kubectl
 // delete --wait=true did. The propagation is kubectl's too: in the
 // background, where the API's own default for a Job orphans its Pods.

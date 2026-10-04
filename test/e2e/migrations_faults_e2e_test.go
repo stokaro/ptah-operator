@@ -885,6 +885,7 @@ func (m *migrationRun) lockReleaseFaultProof() {
 		last = m.migration(name)
 		if holder, err := m.releaseFaultHolder(&fault); err == nil && last.Status.PendingLockRelease == nil && holder == "" {
 			m.mfDeleteMigration(name)
+			m.retireFixtureApproval(name+"-approval", last.UID)
 			m.logf("PASS %s kept owing a refused realm release and handed it back once it could", m.engine.kind)
 			return
 		}
