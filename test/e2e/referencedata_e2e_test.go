@@ -21,6 +21,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
@@ -56,7 +57,35 @@ func runReferenceDataPhase(t *testing.T, phase phases.Of[phases.ReferenceDataInp
 			return
 		}
 	}
+	r.finishFixture()
 	run.Logf("e2e reference data: PASS %s declared rows, with no row value in status, Events, or logs", r.engine.kind)
+}
+
+// Keep the proven source available for alerting's independent fixtures, but
+// stop periodic reads from moving its plan pins during later acceptance.
+func (r *referenceRun) finishFixture() {
+	r.t.Helper()
+	uid := r.status().UID
+	r.check(retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		current := r.status()
+		if current.UID != uid {
+			return fmt.Errorf("completed reference fixture was replaced")
+		}
+		before := current.DeepCopy()
+		current.Spec.Suspend = true
+		return r.cluster.Client.Patch(r.ctx, current,
+			client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{}))
+	}), "suspend the completed reference fixture")
+	r.check(harness.Wait(r.ctx, "the completed reference fixture to stop reconciling", waitTimeout, time.Second,
+		func(context.Context) (bool, string, error) {
+			current := r.status()
+			if current.UID != uid {
+				return false, "", fmt.Errorf("completed reference fixture was replaced")
+			}
+			return current.Spec.Suspend && current.Status.ObservedGeneration == current.Generation &&
+				current.Status.Phase == ptahv1alpha1.PhaseSuspended && current.Status.ActiveOperation == nil &&
+				current.Status.PendingLockRelease == nil, "waiting for the original reference fixture to suspend", nil
+		}), "retire the completed reference fixture")
 }
 
 // referenceRun is what the reference-data proofs share. Each scenario runs as
