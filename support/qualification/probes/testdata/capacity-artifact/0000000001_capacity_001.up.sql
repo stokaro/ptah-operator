@@ -1,0 +1,1 @@
+CREATE TABLE capacity_rows (id BIGINT NOT NULL PRIMARY KEY, payload VARCHAR(64) NOT NULL);

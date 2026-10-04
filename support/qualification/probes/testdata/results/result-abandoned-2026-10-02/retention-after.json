@@ -1,0 +1,90 @@
+{
+  "remainingPinned": [
+    {
+      "name": "ptah-result-5e76275a43c211c24a23b3ad997433d5fbf2562f46adb2cdb5db4eb0a2f41b27",
+      "uid": "2c7fd33c-f854-4f6a-90ee-93477344582d",
+      "createdAt": "2026-10-02T16:54:19Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "controller": true,
+          "kind": "PtahMigration",
+          "name": "lost-ack",
+          "uid": "62c9f247-ecdf-4164-89f0-4b43cb5e6304"
+        }
+      ],
+      "type": "intent",
+      "dataDigest": "sha256:8358f0b1d848d9b8fc5f5d993e556cb841265cf954fed1e6b8db338f4abc49b0",
+      "binding": {
+        "namespace": "ptah-result-partial-mysql",
+        "kind": "PtahMigration",
+        "name": "lost-ack",
+        "uid": "62c9f247-ecdf-4164-89f0-4b43cb5e6304",
+        "generation": 2,
+        "executionBindingID": "v1-8a24b2fd86676034a93f3c5cfbf7ac16",
+        "inputFingerprint": "sha256:d01d6008474e91c7e454c11e01457e51632af1bb43b8dfa750e30c18b6b2fa88",
+        "operation": "migration-apply",
+        "operationID": "sha256:aedf1f9bc5b8be056b771ae8608c3adcc3516edc339534d3b5dae88bd34a77cb",
+        "jobName": "ptah-m-apply-lost-ack-929688cd3166bfa9",
+        "jobUID": "b880d19b-eaf4-41ca-baf2-53d56f2f1e3c",
+        "podName": "ptah-m-apply-lost-ack-929688cd3166bfa9-nr4mq",
+        "podUID": "8f510be7-1d36-4dac-bfa2-e4e80b830366"
+      }
+    },
+    {
+      "name": "ptah-result-5e76275a43c211c24a23b3ad997433d5fbf2562f46adb2cdb5db4eb0a2f41b27-000",
+      "uid": "f8478efa-4228-45ed-92ee-ea9520a0daf2",
+      "createdAt": "2026-10-02T16:54:20Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "controller": true,
+          "kind": "PtahResultRecord",
+          "name": "ptah-result-5e76275a43c211c24a23b3ad997433d5fbf2562f46adb2cdb5db4eb0a2f41b27",
+          "uid": "2c7fd33c-f854-4f6a-90ee-93477344582d"
+        }
+      ],
+      "type": "chunk",
+      "dataDigest": "sha256:a8829665d9ad722af10a16ddf8e2a8639e6a51081e7face5ebce71a3bd065e7e"
+    },
+    {
+      "name": "ptah-result-5e76275a43c211c24a23b3ad997433d5fbf2562f46adb2cdb5db4eb0a2f41b27-complete",
+      "uid": "06d84a2e-90cd-4c76-a0de-d5a96584a633",
+      "createdAt": "2026-10-02T16:54:20Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "controller": true,
+          "kind": "PtahResultRecord",
+          "name": "ptah-result-5e76275a43c211c24a23b3ad997433d5fbf2562f46adb2cdb5db4eb0a2f41b27",
+          "uid": "2c7fd33c-f854-4f6a-90ee-93477344582d"
+        }
+      ],
+      "type": "complete",
+      "dataDigest": "sha256:68b9e3ff6723eaa5c34ddb738738f4ed5e016163df96ec9008aff5f13f3ed986"
+    },
+    {
+      "name": "ptah-result-key-58e4145f22de7d9a40dd2be007ca6176",
+      "uid": "1ce902bb-5259-4205-8dc9-22aa929bbc86",
+      "createdAt": "2026-10-02T16:54:15Z",
+      "owners": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "blockOwnerDeletion": true,
+          "controller": true,
+          "kind": "PtahMigration",
+          "name": "lost-ack",
+          "uid": "62c9f247-ecdf-4164-89f0-4b43cb5e6304"
+        }
+      ],
+      "type": "credential",
+      "dataDigest": "sha256:e64703dd5749f9be096df56054cc9a24690f8eaedb215118f9e0417b969182b2"
+    }
+  ],
+  "planDigests": {
+    "d51a4a2e-fe28-45ed-a74c-a53af41fe51b": "7fc92becdd5957811e6879405959eadaf7886d9cd409f70b3d0e0746608ab710",
+    "294e1c7d-9c9e-45c8-a9ea-0c4d665656c7": "0bb6e88b970de50e27ac412cc695a8fee2584e4f5894940a812adbd77cc3e028"
+  },
+  "eligibleRecordsCollected": 3,
+  "eligibleSecretProjectionsCollected": 1
+}

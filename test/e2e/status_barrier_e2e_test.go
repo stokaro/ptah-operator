@@ -19,11 +19,21 @@ import (
 
 // controllerStatusBarrier keeps admission available while the controller
 // cannot persist an Apply claim. A row can approve a plan, change an input,
-// and then let reconciliation resume without racing Job creation.
+// and then let reconciliation resume without racing Job creation. The stored-
+// state injection also holds metadata so finalizer writes cannot invalidate its
+// resourceVersion precondition before the request reaches admission.
 type controllerStatusBarrier struct {
 	rbacPause
 	cluster                         *harness.Cluster
 	role, user, namespace, resource string
+	metadataOnly                    bool
+}
+
+func (b *controllerStatusBarrier) target() (string, string) {
+	if b.metadataOnly {
+		return b.resource, ""
+	}
+	return b.resource + "/status", "status"
 }
 
 func (b *controllerStatusBarrier) readRole(ctx context.Context) (*rbacv1.ClusterRole, error) {
@@ -40,14 +50,21 @@ func (b *controllerStatusBarrier) pause(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	index, err := statusRuleIndex(role, b.resource+"/status")
+	target, _ := b.target()
+	index, err := statusRuleIndex(role, target)
 	if err != nil {
 		return err
 	}
 	rule := role.Rules[index]
 	saved := rbacPause{paused: true, apiGroups: slices.Clone(rule.APIGroups),
-		resources: slices.Clone(rule.Resources), verbs: slices.Clone(rule.Verbs)}
-	patch, err := ruleVerbsPatch(index, rule.APIGroups, rule.Resources, rule.Verbs, []string{"get"})
+		resources: slices.Clone(rule.Resources), verbs: slices.Clone(rule.Verbs), heldVerbs: []string{"get"}}
+	if b.metadataOnly {
+		saved.heldVerbs, err = metadataBarrierVerbs(rule.Verbs)
+		if err != nil {
+			return err
+		}
+	}
+	patch, err := ruleVerbsPatch(index, rule.APIGroups, rule.Resources, rule.Verbs, saved.heldVerbs)
 	if err != nil {
 		return err
 	}
@@ -61,7 +78,7 @@ func (b *controllerStatusBarrier) pause(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if len(live.Rules) <= index || !slices.Equal(live.Rules[index].Verbs, []string{"get"}) {
+	if len(live.Rules) <= index || !slices.Equal(live.Rules[index].Verbs, b.heldVerbs) {
 		return errors.New("controller status-write rule did not enter the barrier")
 	}
 	return b.waitForAuthorization(ctx, false)
@@ -75,7 +92,8 @@ func (b *controllerStatusBarrier) resume(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	index, err := statusRuleIndex(role, b.resource+"/status")
+	target, _ := b.target()
+	index, err := statusRuleIndex(role, target)
 	if err != nil {
 		return err
 	}
@@ -83,13 +101,13 @@ func (b *controllerStatusBarrier) resume(ctx context.Context) error {
 	if !slices.Equal(rule.APIGroups, b.apiGroups) || !slices.Equal(rule.Resources, b.resources) {
 		return errors.New("status rule identity changed while writes were paused")
 	}
-	if !slices.Equal(rule.Verbs, []string{"get"}) && !slices.Equal(rule.Verbs, b.verbs) {
-		return fmt.Errorf("paused status rule grants %v, want get alone", rule.Verbs)
+	if !slices.Equal(rule.Verbs, b.heldVerbs) && !slices.Equal(rule.Verbs, b.verbs) {
+		return fmt.Errorf("paused status rule grants %v, want %v", rule.Verbs, b.heldVerbs)
 	}
 	// A previous restore may have succeeded before its read-back or
 	// authorization probe failed. Cleanup can finish that restore safely.
 	if !slices.Equal(rule.Verbs, b.verbs) {
-		patch, err := ruleVerbsPatch(index, b.apiGroups, b.resources, []string{"get"}, b.verbs)
+		patch, err := ruleVerbsPatch(index, b.apiGroups, b.resources, b.heldVerbs, b.verbs)
 		if err != nil {
 			return err
 		}
@@ -112,11 +130,12 @@ func (b *controllerStatusBarrier) resume(ctx context.Context) error {
 }
 
 func (b *controllerStatusBarrier) waitForAuthorization(ctx context.Context, expected bool) error {
-	return harness.Wait(ctx, fmt.Sprintf("%s status patch authorization to be %t", b.resource, expected),
+	target, subresource := b.target()
+	return harness.Wait(ctx, fmt.Sprintf("%s patch authorization to be %t", target, expected),
 		30*time.Second, time.Second, func(ctx context.Context) (bool, string, error) {
 			allowed, err := b.cluster.CanI(ctx, b.user, authorizationv1.ResourceAttributes{
 				Namespace: b.namespace, Verb: "patch", Group: "operator.ptah.run",
-				Resource: b.resource, Subresource: "status",
+				Resource: b.resource, Subresource: subresource,
 			})
 			if err != nil {
 				return false, err.Error(), nil

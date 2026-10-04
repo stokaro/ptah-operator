@@ -82,10 +82,20 @@ func main() {
 func run(args []string) error {
 	if len(args) > 0 {
 		switch args[0] {
+		case "result-expired-trust":
+			return runExpiredResultTrust(args[1:])
+		case "result-ack-proxy":
+			return runResultACKProxy(args[1:])
 		case "tls-proxy":
 			return runTLSProxy(args[1:])
 		case "verify-certificate":
 			return runVerifyCertificate(args[1:])
+		case "executor-variant":
+			return runExecutorVariant(args[1:])
+		case "runner-protocol-variant":
+			return runRunnerVariant(args[1:])
+		case "plan-size-schema":
+			return runPlanSizeSchema(args[1:])
 		}
 	}
 	if len(args) != 2 {

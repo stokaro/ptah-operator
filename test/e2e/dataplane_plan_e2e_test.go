@@ -20,7 +20,23 @@ import (
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
+	"github.com/stokaro/ptah-operator/internal/runner"
 )
+
+func (d *dataPlane) assertConfidentialPlan(result runner.Result, document []byte, description string) {
+	d.t.Helper()
+	var matches []*jobEvidence
+	for _, evidence := range d.evidence {
+		if evidence.result.Operation == runner.OperationPlan && evidence.result.OperationID == result.OperationID {
+			matches = append(matches, evidence)
+		}
+	}
+	if len(matches) != 1 || !reflect.DeepEqual(matches[0].result, result) {
+		d.fatalf("%s lacks one exact archived Plan result and diagnostic log", description)
+	}
+	evidence := matches[0]
+	d.check(confidentialPlanDelivery(result, document, evidence.log, durableResultJob(evidence.job)), "%s", description)
+}
 
 // stateVersion is the controller-state version as the API stores it.
 func (d *dataPlane) stateVersion() int32 {
@@ -156,6 +172,9 @@ type schemaResource struct {
 	// podMetadata is spec.execution.podMetadata, or nil for none: what a mesh
 	// or a policy engine asks the operation Pods to carry.
 	podMetadata map[string]any
+	// resources is an explicit task budget for operational boundary rows.
+	resources       *corev1.ResourceRequirements
+	transactionMode string
 }
 
 // createSchemaResource creates the schema through both admission webhooks, and
@@ -182,7 +201,7 @@ func (d *dataPlane) createSchemaResource(resource schemaResource) {
 	default:
 		d.fatalf("unsupported explicit E2E apply policy %s", resource.apply)
 	}
-	schemaPolicy := map[string]any{"driftSeverity": "all", "lockTimeout": "30s", "transactionMode": "file"}
+	schemaPolicy := map[string]any{"driftSeverity": "all", "lockTimeout": "30s", "transactionMode": cmp.Or(resource.transactionMode, "file")}
 	if resource.apply != "" {
 		schemaPolicy["apply"] = resource.apply
 	}
@@ -192,6 +211,9 @@ func (d *dataPlane) createSchemaResource(resource schemaResource) {
 	}
 	if resource.podMetadata != nil {
 		execution["podMetadata"] = resource.podMetadata
+	}
+	if resource.resources != nil {
+		execution["resources"] = resource.resources
 	}
 	d.mustCreate(map[string]any{
 		"apiVersion": ptahSchemaAPIVersion, "kind": "PtahSchema",
@@ -291,10 +313,8 @@ func (d *dataPlane) assertPlan(schema, reference, digest, dialect string, destru
 	if err := changedPlanBound(planned, status.Plan); err != nil {
 		d.fatalf("%s Plan result is not bound to its published immutable plan: %v", schema, err)
 	}
-	// The result's stdout is the plan sealed to the manager's key, so the
-	// document the content digest covers is read back from the plan's own
-	// immutable chunks, and the same digest has to name it in the result, on
-	// the schema and on the plan.
+	// Rebuild the document independently from the plan's immutable chunks.
+	// Its digest must agree with the result, the schema and the plan.
 	plan := d.schemaPlan(current.name)
 	document, chunks := d.rebuildPlanDocument(plan)
 	d.scan(document, schema+" native plan document")
@@ -310,11 +330,9 @@ func (d *dataPlane) assertPlan(schema, reference, digest, dialect string, destru
 	if err := planBoundToDocument(plan, parsed, digestOfDocument); err != nil {
 		d.fatalf("%s is not bound to the exact native Plan result: %v", current.name, err)
 	}
-	if err := sealedPayloadLeak(planned.Stdout, document); err != nil {
-		d.fatalf("%s %v", schema, err)
-	}
+	d.assertConfidentialPlan(planned, document, schema)
 	d.planDocument = document
-	d.logf("%s Plan result is sealed, and its content digest covers the %d-chunk plan document", schema, chunks)
+	d.logf("%s Plan result preserves confidentiality and the exact %d-chunk plan document", schema, chunks)
 	return after
 }
 

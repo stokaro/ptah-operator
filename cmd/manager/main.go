@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	coordinationv1 "k8s.io/api/coordination/v1"
@@ -17,7 +18,6 @@ import (
 	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	ctrlmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
@@ -34,6 +34,10 @@ import (
 	"github.com/stokaro/ptah-operator/internal/planseal"
 	"github.com/stokaro/ptah-operator/internal/planstore"
 	"github.com/stokaro/ptah-operator/internal/podintent"
+	"github.com/stokaro/ptah-operator/internal/resultcleanup"
+	"github.com/stokaro/ptah-operator/internal/resultconsumer"
+	"github.com/stokaro/ptah-operator/internal/resultretention"
+	"github.com/stokaro/ptah-operator/internal/resultservice"
 	"github.com/stokaro/ptah-operator/internal/targetlock"
 	"github.com/stokaro/ptah-operator/internal/telemetry"
 	"github.com/stokaro/ptah-operator/internal/workload"
@@ -70,6 +74,7 @@ func main() {
 	var controllerServiceAccountUsername string
 	var webhookCertDir string
 	var webhookPort int
+	var resultEndpoint, resultCertDir, resultAddress, resultEnrollmentPolicy string
 	var defaultTolerationsEnabled bool
 	var defaultNotReadyTolerationSeconds int64
 	var defaultUnreachableTolerationSeconds int64
@@ -88,6 +93,10 @@ func main() {
 	flag.StringVar(&controllerServiceAccountUsername, "controller-service-account-username", "", "exact Kubernetes username of the operator manager ServiceAccount")
 	flag.StringVar(&webhookCertDir, "webhook-cert-dir", "/tmp/k8s-webhook-server/serving-certs", "directory containing tls.crt and tls.key")
 	flag.IntVar(&webhookPort, "webhook-port", 9443, "approval webhook TLS port")
+	flag.StringVar(&resultEndpoint, "result-endpoint", "", "HTTPS origin for durable runner results; requires result-cert-dir")
+	flag.StringVar(&resultCertDir, "result-cert-dir", "", "directory containing dedicated result server and client-signing trust")
+	flag.StringVar(&resultEnrollmentPolicy, "result-enrollment-policy", "", "public credential enrollment ConfigMap in the manager ServiceAccount namespace")
+	flag.StringVar(&resultAddress, "result-bind-address", ":9444", "listen address for the durable result receiver")
 	flag.BoolVar(&defaultTolerationsEnabled, "default-tolerations-enabled", true, "whether kube-apiserver enables DefaultTolerationSeconds admission")
 	flag.Int64Var(&defaultNotReadyTolerationSeconds, "default-not-ready-toleration-seconds", 300, "expected kube-apiserver not-ready NoExecute toleration seconds")
 	flag.Int64Var(&defaultUnreachableTolerationSeconds, "default-unreachable-toleration-seconds", 300, "expected kube-apiserver unreachable NoExecute toleration seconds")
@@ -118,6 +127,7 @@ func main() {
 		ControllerRevision:     controllerRevision,
 		ControllerStateVersion: controllerstate.CurrentVersion,
 		PlanSealPublicKey:      sealKey.PublicKey(),
+		ResultEndpoint:         resultEndpoint,
 	}
 	if err := builder.Validate(); err != nil {
 		log.Error(err, "invalid immutable execution configuration")
@@ -171,39 +181,53 @@ func main() {
 		os.Exit(1)
 	}
 
+	if (resultEndpoint == "") != (resultCertDir == "") || (resultEndpoint == "") != (resultEnrollmentPolicy == "") {
+		log.Error(fmt.Errorf("result-endpoint, result-cert-dir, and result-enrollment-policy must be configured together"), "invalid result delivery configuration")
+		os.Exit(1)
+	}
 	clientset, err := kubernetes.NewForConfig(manager.GetConfig())
 	if err != nil {
 		log.Error(err, "create Kubernetes clientset")
 		os.Exit(1)
 	}
-	operatorMetrics := telemetry.New(ctrlmetrics.Registry)
-	// The population of mutations nobody accounted for, rebuilt from durable
-	// status on every scrape so it survives this process. The view reports
-	// itself unusable until the manager starts it, which happens only after
-	// the cache has synced: an empty list from a cold cache would otherwise be
-	// published as proof that nothing is unresolved.
-	unresolvedView := telemetry.NewCachedUnresolvedView(manager.GetClient())
-	telemetry.NewUnresolvedCollector(ctrlmetrics.Registry, unresolvedView, nil)
-	// The fleet by phase, what is overdue for its own next reconciliation, and
-	// what is in flight, read through the same view and published under the
-	// same synchronized guard.
-	telemetry.NewStateCollector(ctrlmetrics.Registry, unresolvedView, nil)
-	telemetry.NewCertificateCollector(ctrlmetrics.Registry, filepath.Join(webhookCertDir, "tls.crt"))
-	// The retained plans, read through the same view. Nothing else in the
-	// manager lists plans from the cache, so their informers are registered here,
-	// before the manager starts, and the cache syncs them with the rest instead
-	// of a first scrape waiting for them.
-	for _, plan := range []client.Object{&operatorv1alpha1.PtahSchemaPlan{}, &operatorv1alpha1.PtahMigrationPlan{}} {
-		if _, err := manager.GetCache().GetInformer(context.Background(), plan); err != nil {
-			log.Error(err, "register the plan informers the store gauges read")
+	var results *resultservice.Service
+	var cleanupPolicy *resultcleanup.Policy
+	if resultEndpoint != "" {
+		results, err = resultservice.New(resultservice.Config{TokenReviews: clientset.AuthenticationV1().TokenReviews(), Endpoint: resultEndpoint, Address: resultAddress, CertificateDirectory: resultCertDir, EnrollmentPolicyNamespace: managerIdentity[2], EnrollmentPolicyName: resultEnrollmentPolicy, Uploads: 1, UploadTimeout: 2 * time.Minute, Consumer: resultconsumer.Options{Workers: 1, Entries: 4, Timeout: 30 * time.Second, Retention: time.Minute}}, manager.GetClient(), manager.GetAPIReader())
+		if err != nil {
+			log.Error(err, "configure durable result service")
+			os.Exit(1)
+		}
+		builder.ResultServerTrust = results.ServerTrust
+		if err := manager.Add(results); err != nil {
+			log.Error(err, "register durable result service")
+			os.Exit(1)
+		}
+		cleanupPolicy = &resultcleanup.Policy{Reader: manager.GetAPIReader(), Window: resultretention.MinimumWindow}
+		collector, err := resultcleanup.New(manager.GetClient(), *cleanupPolicy, ctrlmetrics.Registry)
+		if err != nil {
+			log.Error(err, "configure result cleanup")
+			os.Exit(1)
+		}
+		if err := manager.Add(collector); err != nil {
+			log.Error(err, "register result cleanup")
+			os.Exit(1)
+		}
+		if err := manager.AddReadyzCheck("result-service", results.Ready); err != nil {
+			log.Error(err, "register result service readiness")
 			os.Exit(1)
 		}
 	}
-	telemetry.NewPlanStoreCollector(ctrlmetrics.Registry, unresolvedView)
-	if err := manager.Add(unresolvedView); err != nil {
-		log.Error(err, "register the unresolved-work view")
+
+	operatorMetrics := telemetry.New(ctrlmetrics.Registry)
+	// Read alert state directly from the API once per leader scrape. A warm
+	// controller cache can keep serving stale state after API access fails.
+	stateMetrics := telemetry.NewSnapshotCollector(ctrlmetrics.Registry, manager.GetAPIReader(), nil)
+	if err := manager.Add(stateMetrics); err != nil {
+		log.Error(err, "register the leader's state metrics")
 		os.Exit(1)
 	}
+	telemetry.NewCertificateCollector(ctrlmetrics.Registry, filepath.Join(webhookCertDir, "tls.crt"))
 	// Both families are indexed by coordination realm before either controller
 	// is registered. The realm census reads both kinds whichever controller
 	// asks for it, so neither can own the registration on its own.
@@ -223,6 +247,10 @@ func main() {
 		Telemetry:        operatorMetrics,
 		AdmissionOptions: admissionOptions,
 	}
+	if results != nil {
+		reconciler.Results = results.Consumer
+		reconciler.ResultCredentials = results
+	}
 	if err := reconciler.SetupWithManager(manager); err != nil {
 		log.Error(err, "register PtahSchema controller")
 		os.Exit(1)
@@ -236,6 +264,10 @@ func main() {
 		LockNamespace:    targetLockNamespace,
 		Telemetry:        operatorMetrics,
 		AdmissionOptions: admissionOptions,
+	}
+	if results != nil {
+		migrations.Results = results.Consumer
+		migrations.ResultCredentials = results
 	}
 	if err := migrations.SetupWithManager(manager); err != nil {
 		log.Error(err, "register PtahMigration controller")
@@ -283,12 +315,12 @@ func main() {
 	manager.GetWebhookServer().Register(validatePodIntentPath, &cradmission.Webhook{Handler: &podintent.ValidationHandler{
 		Reader: manager.GetAPIReader(), Decoder: decoder,
 	}})
-	manager.GetWebhookServer().Register(validateControllerWritePath, &cradmission.Webhook{Handler: &controllerwrite.ValidationHandler{
-		Validator: &controllerwrite.Validator{
-			Reader: manager.GetAPIReader(), Jobs: builder,
-			ManagerUsername: controllerServiceAccountUsername,
-		},
-	}})
+	writeValidator := &controllerwrite.Validator{Reader: manager.GetAPIReader(), Jobs: builder, ManagerUsername: controllerServiceAccountUsername}
+	if results != nil {
+		writeValidator.ResultCredentials = results
+		writeValidator.ResultCleanup = cleanupPolicy
+	}
+	manager.GetWebhookServer().Register(validateControllerWritePath, &cradmission.Webhook{Handler: &controllerwrite.ValidationHandler{Validator: writeValidator}})
 
 	if err := manager.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		log.Error(err, "register health check")

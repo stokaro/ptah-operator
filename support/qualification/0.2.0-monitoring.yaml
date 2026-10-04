@@ -1,0 +1,23 @@
+# Qualification thresholds for support/qualification/0.2.0.md.
+# Supply the actual image/executor identities in a separate values file.
+monitoring:
+  serviceMonitor:
+    enabled: true
+    labels:
+      qualification: "0.2.0"
+    interval: 5s
+    scrapeTimeout: 4s
+  prometheusRule:
+    enabled: true
+    labels:
+      qualification: "0.2.0"
+    viewUnsyncedFor: 60s
+    overdueAfterSeconds: 60
+    operationStalledAfterSeconds: 60
+    lockReleaseOwedFor: 60s
+    certificateExpiresWithinSeconds: 86400
+    planStoreBytesAbove: 134217728
+    failures:
+      window: 5m
+      count: 3
+    admissionFailingFor: 5m

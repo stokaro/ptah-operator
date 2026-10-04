@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"time"
 )
@@ -14,8 +15,11 @@ import (
 // page names is either a field here or held fixed by the lab, and the report
 // says which.
 type workload struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
+	ApprovalBacklog  bool   `json:"approvalBacklog,omitempty"`
+	UnrelatedObjects bool   `json:"unrelatedObjects,omitempty"`
+	Name             string `json:"name"`
+	Description      string `json:"description"`
+	Engine           string `json:"engine"`
 	// Schemas and Migrations are how many resources of each family run at
 	// once, each against a database of its own, so each is its own realm.
 	Schemas    int `json:"schemas"`
@@ -32,7 +36,8 @@ type workload struct {
 	// artifact at once.
 	ChangeBatch int `json:"changeBatch"`
 	// Outage is how long operation Pods cannot reach the registry.
-	Outage duration `json:"outage"`
+	Outage duration      `json:"outage"`
+	Soak   *soakWorkload `json:"soak,omitempty"`
 }
 
 // duration reads a Go duration string from JSON.
@@ -64,11 +69,25 @@ func loadWorkload(path string) (workload, error) {
 	if err := decoder.Decode(&w); err != nil {
 		return workload{}, fmt.Errorf("parse %s: %w", path, err)
 	}
+	if err := decoder.Decode(new(any)); err != io.EOF {
+		return workload{}, fmt.Errorf("workload has trailing data")
+	}
+	w.Engine = w.engine()
 	return w, w.validate()
+}
+
+func (w workload) engine() string {
+	if w.Engine == "" {
+		return "PostgreSQL"
+	}
+	return w.Engine
 }
 
 func (w workload) validate() error {
 	var problems []error
+	if w.engine() != "PostgreSQL" && w.engine() != "MySQL" {
+		problems = append(problems, fmt.Errorf("unsupported workload engine %q", w.Engine))
+	}
 	if w.Name == "" {
 		problems = append(problems, errors.New("name is empty"))
 	}
@@ -88,6 +107,12 @@ func (w workload) validate() error {
 	}
 	if w.Outage.Duration < 0 {
 		problems = append(problems, errors.New("outage cannot be negative"))
+	}
+	if w.ApprovalBacklog && (w.Soak != nil || w.Schemas != 10 || w.Migrations != 10 || w.ChangeBatch != 5) {
+		problems = append(problems, errors.New("approval backlog requires a separate populated 10+10 workload and changeBatch five"))
+	}
+	if w.Soak != nil {
+		problems = append(problems, w.Soak.validate(w))
 	}
 	return errors.Join(problems...)
 }

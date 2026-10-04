@@ -184,6 +184,8 @@ type Release struct {
 	Namespace string
 	// Values are passed to helm as --set-string pairs, in order.
 	Values [][2]string
+	// TypedValues use Helm --set for booleans and numbers.
+	TypedValues [][2]string
 }
 
 // The release the suites render. The images are content-addressed and never
@@ -231,6 +233,9 @@ func RenderChart(ctx context.Context, release Release) ([]*unstructured.Unstruct
 	}
 	for _, value := range release.Values {
 		args = append(args, "--set-string", value[0]+"="+value[1])
+	}
+	for _, value := range release.TypedValues {
+		args = append(args, "--set", value[0]+"="+value[1])
 	}
 	home, err := os.MkdirTemp("", "ptah-envtest-helm-")
 	if err != nil {

@@ -58,11 +58,17 @@ func run(ctx context.Context, args []string, logger *slog.Logger) error {
 		probes,
 		logger.With("secret", config.SecretName, "namespace", config.Namespace),
 	)
-	return runService(ctx, serviceRuntimeConfig{
-		HealthBindAddress: healthBindAddress,
-		HealthHandler:     probes.handler(),
-		Supervisor:        supervisor,
-	})
+	runtime := serviceRuntimeConfig{HealthBindAddress: healthBindAddress, HealthHandler: probes.handler(), Supervisor: supervisor}
+	if supervisorConfig.ResultRotation.enabled() {
+		resultRotator, err := certrotation.NewResultRotator(client, supervisorConfig.ResultRotation.config(config))
+		if err != nil {
+			return fmt.Errorf("validate result rotation configuration: %w", err)
+		}
+		resultProbes := &probeState{}
+		runtime.ResultSupervisor = newSupervisor(resultRotator, supervisorConfig, resultProbes, logger.With("trust", "result", "namespace", config.Namespace))
+		runtime.HealthHandler = probes.handler(resultProbes)
+	}
+	return runService(ctx, runtime)
 }
 
 func parseFlags(args []string) (certrotation.Config, supervisorConfig, string, error) {
@@ -76,6 +82,12 @@ func parseFlags(args []string) (certrotation.Config, supervisorConfig, string, e
 	var retryInitial time.Duration
 	var retryMax time.Duration
 	var healthBindAddress string
+	var resultOptions resultRotationOptions
+	flags.StringVar(&resultOptions.SecretName, "result-secret-name", "", "precreated result TLS projection Secret")
+	flags.StringVar(&resultOptions.JournalName, "result-journal-secret-name", "", "precreated private result rotation journal Secret")
+	flags.StringVar(&resultOptions.PolicyName, "result-enrollment-policy", "", "precreated public result enrollment ConfigMap")
+	flags.StringVar(&resultOptions.ServiceName, "result-service-name", "", "result receiver Service with an https endpoint port")
+	flags.StringVar(&resultOptions.LeaseName, "result-lease-name", "", "precreated Lease dedicated to result trust rotation")
 	flags.StringVar(&config.Namespace, "namespace", "", "namespace containing the generated TLS Secret and Lease")
 	flags.StringVar(&config.ReleaseName, "release-name", "", "owning Helm release name used for exact Secret metadata")
 	flags.StringVar(&config.SecretName, "secret-name", "", "exact generated TLS Secret name")
@@ -119,11 +131,15 @@ func parseFlags(args []string) (certrotation.Config, supervisorConfig, string, e
 		OperationTimeout: operationTimeout,
 		RetryInitial:     retryInitial,
 		RetryMax:         retryMax,
+		ResultRotation:   resultOptions,
 	}
 	if err := supervisor.validate(); err != nil {
 		return certrotation.Config{}, supervisorConfig{}, "", err
 	}
 	if err := validateRuntimeRelationships(supervisor, config); err != nil {
+		return certrotation.Config{}, supervisorConfig{}, "", err
+	}
+	if err := resultOptions.validate(config, supervisor); err != nil {
 		return certrotation.Config{}, supervisorConfig{}, "", err
 	}
 	return config, supervisor, healthBindAddress, nil

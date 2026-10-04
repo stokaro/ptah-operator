@@ -7,6 +7,9 @@ import (
 	"strings"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 )
 
@@ -15,7 +18,14 @@ func (d *dataPlane) postgresqlLifecycle() {
 }
 
 func (d *dataPlane) mysqlLifecycle() {
-	d.runEngineLifecycle("mysql", "MySQL", "mysql", mysqlSecret)
+	// The audit account can access only this lifecycle's database. Keep the
+	// shared fixture credential intact for later isolated database scenarios.
+	const secret = "e2e-mysql-lifecycle-db"
+	d.check(d.cluster.Client.Create(d.ctx, &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: secret, Namespace: d.in.TestNamespace},
+		Data:       map[string][]byte{"url": []byte(d.credentials.mysqlURL)},
+	}), "create the isolated MySQL lifecycle target Secret")
+	d.runEngineLifecycle("mysql", "MySQL", "mysql", secret)
 }
 
 var dropIndexStatement = regexp.MustCompile(`(?i)\bDROP[[:space:]]+INDEX\b`)
@@ -57,20 +67,34 @@ func (d *dataPlane) runEngineLifecycle(slug, engine, dialect, secret string) {
 	if slug == "postgresql" {
 		resource.failureRetry, resource.interval = "45s", quiescentInterval
 	}
+	database := pgDatabase
+	if slug == "mysql" {
+		database = mysqlDatabase
+	}
+	sqlWindow := d.startSchemaRefusalWindow(schema, slug, database, secret)
 	d.createSchemaResource(resource)
 	d.assertPlan(schema, reference, digestV1, dialect, false, v1Observe, v1Plan, false)
+	initial := d.schema(schema)
+	controls := []operationSQLClient{
+		sqlWindow.resultControl(initial, "observe", v1Observe),
+		sqlWindow.resultControl(initial, "plan", v1Plan),
+	}
 	d.assertCoordinationBoundary(schema, key, realm)
-	d.changeApprovedSchemaInputs(schema, slug, key, realm)
+	controls = append(controls, d.changeApprovedSchemaInputs(schema, key, realm, sqlWindow)...)
+	sqlWindow.assert(d.schema(schema), controls...)
+	d.assertDatabaseColumn(slug, "name", 0)
 	planV1 := d.plan
 	assertAppliedSQLReadAuthorization := d.pendingSQLReadAuthorization(schema)
 	d.assertJobIsolation(schema, secret, false, nil)
 	d.assertNoNewJobs(schema, "apply", v1Apply)
 	v1PostObserve := d.checkpointJobs(schema, "observe")
 	v1PostPlan := d.checkpointJobs(schema, "plan")
+	assertV1SQL := d.approvedSchemaSQLControl(schema, slug, planV1, v1Apply)
 	d.createExactApproval(schema, planV1.name, schema+"-v1", key, realm)
 	d.waitForOneNewJob(schema, "apply", v1Apply)
 	d.waitForInSync(schema, digestV1, v1PostObserve, v1PostPlan)
 	d.assertApprovalConsumed(schema+"-v1", planV1.uid)
+	assertV1SQL()
 	assertAppliedSQLReadAuthorization()
 	d.assertOneNewJob(schema, "apply", v1Apply)
 	d.assertCoordinationLeaseBoundary(key, leases)
@@ -93,6 +117,7 @@ func (d *dataPlane) runEngineLifecycle(slug, engine, dialect, secret string) {
 	if !d.rbac.paused {
 		d.fatalf("scheduled tag proof lacks a status-write barrier")
 	}
+	sqlWindow.reopen()
 	generation := d.schema(schema).Generation
 	digestV2 := d.publishSchema(slug, "v2", dialect, reference, "")
 	if digestV2 == digestV1 {
@@ -107,6 +132,9 @@ func (d *dataPlane) runEngineLifecycle(slug, engine, dialect, secret string) {
 	v2 := d.checkpointJobs(schema, "")
 	d.mustResumeStatusWrites("could not restore controller status-write RBAC")
 	v2After := d.assertPlan(schema, reference, digestV2, dialect, false, v2, v2, true)
+	second := d.schema(schema)
+	secondObserve := sqlWindow.resultControl(second, "observe", v2)
+	secondPlan := sqlWindow.resultControl(second, "plan", v2)
 	d.assertReadOnlyCycleBetween(schema, v2, *v2After)
 	if moved := d.schema(schema); moved.Generation != generation || moved.Status.ObservedGeneration != generation {
 		d.fatalf("%s scheduled tag refresh depended on a spec generation change", schema)
@@ -129,6 +157,9 @@ func (d *dataPlane) runEngineLifecycle(slug, engine, dialect, secret string) {
 	d.patchSchema(schema, map[string]any{"spec": map[string]any{"interval": staleApprovalInterval}})
 	d.mustResumeStatusWrites("could not restore controller status-write RBAC")
 	v3After := d.assertPlan(schema, reference, digestV3, dialect, false, stale, stale, true)
+	third := d.schema(schema)
+	thirdObserve := sqlWindow.resultControl(third, "observe", stale)
+	thirdPlan := sqlWindow.resultControl(third, "plan", stale)
 	planV3 := d.plan
 	d.assertDistinctPlan(schema, "v2", planV2, planV3)
 	d.assertNoJobBetween(schema, "apply", stale, *v3After)
@@ -137,11 +168,14 @@ func (d *dataPlane) runEngineLifecycle(slug, engine, dialect, secret string) {
 		return conditionIs(approval.Status.Conditions, "Stale", "True", "PlanNoLongerCurrent")
 	})
 	d.assertNoNewJobs(schema, "apply", stale)
+	sqlWindow.assert(third, secondObserve, secondPlan, thirdObserve, thirdPlan)
 	v3Apply := d.checkpointJobs(schema, "")
+	assertV3SQL := d.approvedSchemaSQLControl(schema, slug, planV3, v3Apply)
 	d.createExactApproval(schema, planV3.name, schema+"-v3", key, realm)
 	d.waitForOneNewJob(schema, "apply", v3Apply)
 	d.waitForInSync(schema, digestV3, v3Apply, v3Apply)
 	d.assertApprovalConsumed(schema+"-v3", planV3.uid)
+	assertV3SQL()
 	d.assertOneNewJob(schema, "apply", v3Apply)
 	d.assertCoordinationLeaseBoundary(key, leases)
 	d.assertDatabaseColumn(slug, "note", 1)

@@ -20,10 +20,11 @@ import (
 
 // planDocument is the native plan Ptah writes, as the plan's chunks hold it.
 type planDocument struct {
-	FormatVersion   int    `json:"format_version"`
-	Dialect         string `json:"dialect"`
-	FromFingerprint string `json:"from_fingerprint"`
-	ToFingerprint   string `json:"to_fingerprint"`
+	FormatVersion   int      `json:"format_version"`
+	Dialect         string   `json:"dialect"`
+	FromFingerprint string   `json:"from_fingerprint"`
+	ToFingerprint   string   `json:"to_fingerprint"`
+	Exclude         []string `json:"exclude,omitempty"`
 	// Destructive is nil when the document carries no destructive key,
 	// which a check for false has to refuse as jq's `== false` did.
 	Destructive *bool           `json:"destructive"`
@@ -69,6 +70,29 @@ func sealedPayloadLeak(stdout string, document []byte) error {
 	for _, pattern := range planTextPatterns(parsed) {
 		if strings.Contains(stdout, pattern) {
 			return errors.New("plan result stdout carries plan text in the clear")
+		}
+	}
+	return nil
+}
+
+// confidentialPlanDelivery distinguishes the private durable representation
+// from output written to container logs. Both transports must keep plan text
+// out of diagnostics; only the legacy representation is process-sealed.
+func confidentialPlanDelivery(result runner.Result, document, logs []byte, durable bool) error {
+	parsed, err := parsePlanDocument(document)
+	if err != nil || len(parsed.Statements) == 0 {
+		return errors.New("plan document has no statements to check delivery against")
+	}
+	if durable {
+		if result.Stdout != string(document) || result.PlanContentDigest != sha256Digest(document) {
+			return errors.New("durable result differs from the persisted plan bytes or digest")
+		}
+	} else if err := sealedPayloadLeak(result.Stdout, document); err != nil {
+		return err
+	}
+	for _, pattern := range planTextPatterns(parsed) {
+		if bytes.Contains(logs, []byte(pattern)) {
+			return errors.New("runner diagnostics disclose plan text")
 		}
 	}
 	return nil

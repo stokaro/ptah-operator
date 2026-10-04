@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"reflect"
 	"strconv"
+	"strings"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -36,6 +37,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/ocireference"
 	"github.com/stokaro/ptah-operator/internal/podintent"
 	"github.com/stokaro/ptah-operator/internal/policy"
+	"github.com/stokaro/ptah-operator/internal/resultconsumer"
 	"github.com/stokaro/ptah-operator/internal/runner"
 	"github.com/stokaro/ptah-operator/internal/targetlock"
 	"github.com/stokaro/ptah-operator/internal/telemetry"
@@ -84,10 +86,12 @@ type MigrationJobBuilder interface {
 // authorized.
 type MigrationReconciler struct {
 	client.Client
-	APIReader client.Reader
-	Scheme    *runtime.Scheme
-	Recorder  record.EventRecorder
-	Logs      PodLogReader
+	APIReader         client.Reader
+	Scheme            *runtime.Scheme
+	Recorder          record.EventRecorder
+	Logs              PodLogReader
+	Results           OperationResults
+	ResultCredentials ResultCredentialIssuer
 	// ResultReadTimeout bounds the pod/log read of one terminal operation.
 	// Zero means defaultResultReadTimeout, which is what the manager runs.
 	ResultReadTimeout time.Duration
@@ -147,6 +151,12 @@ func (r *MigrationReconciler) reconcile(ctx context.Context, request ctrl.Reques
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
+	}
+	// An unknown result does not stop the executor. Keep the original claim
+	// ahead of deletion, suspension and component rotation until its workload
+	// is terminal; otherwise the finalizer and the renewable realm go with it.
+	if operation, unresolved := migration.Status.ActiveOperation, migration.Status.UnresolvedRun; migrationOperation(operation).Mutating && unresolved != nil && unresolved.OperationID == operation.ID {
+		return r.reconcileUnaccountedMigrationApply(ctx, migration)
 	}
 	if migration.DeletionTimestamp != nil {
 		return r.reconcileMigrationDeletion(ctx, migration)
@@ -720,6 +730,19 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 		if err := r.reportMigrationPodAdmission(ctx, migration, job); err != nil {
 			return ctrl.Result{}, err
 		}
+		if durableDeliveryRequested(job) {
+			engine := ""
+			if operation.Target != nil {
+				engine = string(operation.Target.Engine)
+			}
+			issued, issueErr := issueResultCredential(ctx, r.directReader(), r.ResultCredentials, migration, "PtahMigration", job, operation.AdmissionSnapshot, operation.ExecutionBindingID, operation.InputFingerprint, string(migrationOperation(operation).Runner), operation.ID, engine)
+			if issueErr != nil {
+				r.event(migration, corev1.EventTypeWarning, "ResultCredentialFailed", "Result delivery credential is not ready; issuance will be retried")
+			}
+			if issueErr != nil || !issued {
+				return ctrl.Result{RequeueAfter: resultReadRetryInterval}, nil
+			}
+		}
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}
 	current, currentErr := r.migrationInputFingerprint(ctx, migration, operation.Type)
@@ -769,10 +792,7 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 		}
 		return ctrl.Result{}, err
 	}
-	result, parseErr := runner.ParseResultFor(evidence.Logs, kind.Runner, operation.ID)
-	if evidence.LogLost != nil {
-		parseErr = evidence.LogLost
-	}
+	result, parseErr := evidence.parseResult(kind.Runner, operation.ID)
 	if requeue, wait := awaitFrameArrival(job, parseErr, r.now()); wait {
 		return ctrl.Result{RequeueAfter: requeue}, nil
 	}
@@ -1642,6 +1662,13 @@ func (r *MigrationReconciler) migrationTerminalLogs(
 	if operation == nil {
 		return terminalEvidence{}, errors.New("the active migration operation is missing")
 	}
+	if durableDeliveryRequested(job) {
+		engine := ""
+		if operation.Target != nil {
+			engine = strings.ToLower(string(operation.Target.Engine))
+		}
+		return durableTerminalResult(ctx, r.directReader(), r.Results, migration, "PtahMigration", job, operation.AdmissionSnapshot, resultconsumer.Request{ExecutionBindingID: operation.ExecutionBindingID, InputFingerprint: operation.InputFingerprint, Operation: string(migrationOperation(operation).Runner), OperationID: operation.ID, JobUID: operation.JobUID, Engine: engine})
+	}
 	evidence, selected, err := collectTerminalPodEvidence(
 		ctx, r.directReader(), migration.Namespace, job, operation.AdmissionSnapshot,
 	)
@@ -1715,9 +1742,9 @@ func (r *MigrationReconciler) removeMigrationFinalizer(
 	// Apply still dispatched. The contract is cheap to state here and the
 	// schema family states it, so state it.
 	//
-	// status.unresolvedRun deliberately does not appear: only a person clears
-	// that record, and a finalizer that waited for one would hold the
-	// resource for as long as nobody looked.
+	// An unresolved result may outlive every workload. Its retained active
+	// claim protects a live executor; the record alone cannot hold deletion
+	// indefinitely while waiting for a History reading or acknowledgment.
 	if migration.Status.ActiveOperation != nil {
 		return fmt.Errorf("the migration operation finalizer still protects a live %s claim",
 			migration.Status.ActiveOperation.Type)

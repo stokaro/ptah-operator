@@ -124,8 +124,12 @@ func (f *faultRun) mysqlDriftBeforeDispatch() {
 	f.t.Helper()
 	const name, database, secret = "e2e-mysql-approved-drift", "e2e_mysql_approved_drift", "e2e-mysql-approved-drift-db"
 	f.createDatabase("mysql", database, secret)
+	f.query("mysql", database, "INSERT INTO e2e_widgets (id, name, note) VALUES (701, 'drift-control', 'preserve-this-row')")
+	audit := &databaseSQLAudit{t: f.t, ctx: f.ctx, cluster: f.cluster, namespace: f.in.TestNamespace, engine: "mysql"}
+	user := f.schemaMySQLAuditAccount(audit, database, secret)
 	f.createSchema(faultSchema{name: name, engine: "MySQL", reference: f.mysqlReference, secret: secret, coordinationKey: "e2e/mysql-approved-drift"})
 	old := f.schemaPlan(f.waitForPlan(name))
+	observeBefore, planBefore := f.checkpointJobs(name, "observe"), f.checkpointJobs(name, "plan")
 	f.startReadBarrier()
 	f.createApproval(name, name+"-original")
 	active := f.waitForSchema(name, "the approved Apply behind the scheduling barrier", applyDispatched).Status.ActiveOperation
@@ -135,6 +139,7 @@ func (f *faultRun) mysqlDriftBeforeDispatch() {
 	f.assertColumn("mysql", database, "enabled", 0)
 	changed := f.fingerprint("mysql", database, "MySQL after external drift")
 	f.pauseStatusWrites()
+	window := f.startSchemaDriftWindow(name, database, user, audit, jobUID)
 	f.stopReadBarrier()
 	refused := f.captureExactJobResult(jobName, jobUID, "apply")
 	if err := stalePlanResult(refused.result, old.Spec.ContentDigest, old.Spec.CoordinationDigest, old.Spec.TargetIdentityDigest); err != nil {
@@ -145,7 +150,7 @@ func (f *faultRun) mysqlDriftBeforeDispatch() {
 	}
 	f.assertColumn("mysql", database, "fault_token", 0)
 	f.mustResumeStatusWrites("restore status writes after the MySQL stale-plan refusal")
-	current := f.waitForSchema(name, "a fresh plan after MySQL drift", func(resource *ptahv1alpha1.PtahSchema) bool {
+	current := window.waitForSchema("a fresh plan after MySQL drift", func(resource *ptahv1alpha1.PtahSchema) bool {
 		return planAwaitingApproval(resource) && resource.Status.Plan.UID != old.UID
 	})
 	fresh := f.schemaPlan(current.Status.Plan.Name)
@@ -155,14 +160,38 @@ func (f *faultRun) mysqlDriftBeforeDispatch() {
 	if f.addedJobCount(name, "apply") != 1 {
 		f.fatalf("the stale MySQL Apply was replayed")
 	}
+	f.assertApprovalConsumed(name+"-original", string(old.UID))
 	if f.fingerprint("mysql", database, "MySQL after recovery observations") != changed {
 		f.fatalf("MySQL recovery observations changed the database")
 	}
+	observe := window.resultControl(current, "observe", observeBefore)
+	plan := window.resultControl(current, "plan", planBefore)
+	f.retainSchemaSQLWatch(window)
+	window.assertStale(current, operationSQLClient{
+		resourceUID: string(current.UID), jobUID: jobUID, podUID: refused.podUID, operation: "apply",
+	}, observe, plan)
+	beforeSQL, beforeApply := audit.snapshot(), f.checkpointJobs(name, "apply")
 	f.createApproval(name, name+"-current")
-	f.waitForSchema(name, "the fresh MySQL approval to converge", freshApprovalConverged)
+	f.waitForApprovedPlanConverged(name, fresh.Spec.ArtifactDigest, fresh.Spec.Fingerprint,
+		string(fresh.UID), "the freshly approved MySQL drift plan to converge")
+	result := f.captureOneNewJobResult(name, "apply", beforeApply, nil)
+	f.check(automaticApplyResult(result, fresh.Spec.ContentDigest, fresh.Spec.CoordinationDigest, fresh.Spec.TargetIdentityDigest),
+		"bind MySQL drift recovery to its exact approved plan")
+	completed := f.captured
+	if completed.jobUID == jobUID || completed.podUID == refused.podUID {
+		f.fatalf("MySQL drift recovery reused the refused Apply identity")
+	}
+	audit.assertRecords(beforeSQL, audit.snapshot(), audit.terminalPod(map[string]string{"job-name": completed.jobName}, completed.jobUID), true)
+	audit.close()
+	f.dataPlane.assertApprovalConsumed(name+"-current", string(fresh.UID))
 	f.waitForWatchCountAbove(name, "apply", 1, "the fresh MySQL Apply to enter the retained watch")
 	f.assertColumn("mysql", database, "enabled", 1)
 	f.assertColumn("mysql", database, "fault_token", 1)
+	if f.query("mysql", database, "SELECT count(*) FROM e2e_widgets WHERE id=701 AND name='drift-control' AND note='preserve-this-row'") != "1" ||
+		f.query("mysql", database, "SELECT count(*) FROM e2e_widgets") != "1" {
+		f.fatalf("MySQL drift recovery changed the preserved row")
+	}
+	f.assertOneNewJob(name, "apply", beforeApply)
 	if f.addedJobCount(name, "apply") != 2 {
 		f.fatalf("MySQL did not run exactly the refused and freshly approved Jobs")
 	}

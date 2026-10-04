@@ -7,30 +7,38 @@ import (
 )
 
 const (
-	sourcePods      = "pods"
-	sourceResources = "resources"
-	sourceRetained  = "retained-objects"
-	sourceManagers  = "manager-metrics"
-	sourceAPI       = "api-server-metrics"
-	sourceJobs      = "jobs"
+	sourcePods              = "pods"
+	sourceResources         = "resources"
+	sourceRetained          = "retained-objects"
+	sourceManagers          = "manager-metrics"
+	sourceManagerContinuity = "manager-counter-continuity"
+	sourceAPI               = "api-server-metrics"
+	sourceAPIContinuity     = "api-server-counter-continuity"
+	sourceJobs              = "jobs"
+	sourceCycles            = "refresh-cycles"
 )
 
 var sampleFields = map[string][]string{
 	sourcePods:      {"podsPending", "podsRunning"},
-	sourceResources: {"resources", "converged", "observationAgeMax", "overdueMax"},
+	sourceResources: {"resources", "converged", "observationAgeMax", "overdueMax", "resourceFreshness"},
 	sourceRetained:  {"plans", "chunks", "chunkBytes"},
 	sourceManagers:  {"managers"},
-	sourceAPI:       {"apiServer"},
+	sourceAPI:       {"apiServers"},
 	sourceJobs:      {}, // Job readings are retained separately; preserve the failed source.
 }
 
+// eligibleFreshness validates its own per-resource read window and population.
+// Sample-start completeness below describes the original aggregate fields.
 var scenarioFields = map[string][]string{
-	sourcePods:      {"podsPendingMax", "podsRunningMax"},
-	sourceResources: {"observationAgeMaxSeconds", "overdueMaxSeconds"},
-	sourceRetained:  {"plansAtEnd", "chunkBytesAtEnd"},
-	sourceManagers:  {"managerRSSMaxBytes", "managerCPUCoresAverage", "workqueueDepthMax", "queueWaitSeconds", "clientThrottleSeconds", "requests429"},
-	sourceAPI:       {"admissionSeconds", "apiRejected"},
-	sourceJobs:      {"jobsCreated", "jobsFailed", "jobsPerMinuteAverage", "jobsPerMinutePeak", "jobStartSeconds", "jobCompletionSeconds"},
+	sourceCycles:            {"refreshCycles"},
+	sourceAPIContinuity:     {"apiServers", "apiRejected"},
+	sourceManagerContinuity: {"managerCPUCoresAverage", "queueWaitSeconds", "clientThrottleSeconds", "requests429"},
+	sourcePods:              {"podsPendingMax", "podsRunningMax"},
+	sourceResources:         {"observationAgeMaxSeconds", "overdueMaxSeconds"},
+	sourceRetained:          {"plansAtEnd", "chunkBytesAtEnd"},
+	sourceManagers:          {"managerRSSMaxBytes", "managerCPUCoresAverage", "workqueueDepthMax", "queueWaitSeconds", "clientThrottleSeconds", "requests429"},
+	sourceAPI:               {"apiServers", "apiRejected"},
+	sourceJobs:              {"jobsCreated", "jobsFailed", "jobsPerMinuteAverage", "jobsPerMinutePeak", "jobStartSeconds", "jobCompletionSeconds"},
 }
 
 // JSON null makes missing evidence distinct from a measured zero, including
@@ -62,7 +70,7 @@ func (s sample) MarshalJSON() ([]byte, error) {
 }
 
 func (s scenarioCost) missing(source string) bool {
-	return s.Samples == 0 || s.Incomplete[source] > 0
+	return s.Samples == 0 || s.Incomplete[source] > 0 || source == sourceManagerContinuity && s.Incomplete[sourceManagers] > 0 || source == sourceAPI && s.Incomplete[sourceAPIContinuity] > 0
 }
 
 func (s scenarioCost) MarshalJSON() ([]byte, error) {

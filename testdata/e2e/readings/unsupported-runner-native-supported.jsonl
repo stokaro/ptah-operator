@@ -1,0 +1,3 @@
+PTAH_RUNNER_RESULT_V1 202 9feab6ec9c5e81654f6dbfe03a3235e1bc4567c6c143fe6aaf47f02db50b34cd
+{"protocolVersion":1,"operation":"apply","operationId":"native-supported","childExitCode":-1,"stdout":"","error":{"code":"missing_coordination_binding","message":"PTAH_COORDINATION_DIGEST is required"}}
+PTAH_RUNNER_RESULT_END_V1

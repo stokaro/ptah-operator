@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -122,6 +123,8 @@ type isolatedNodeRow struct {
 	applied                       int
 	lastLease                     *coordinationv1.Lease
 	lastPods                      []corev1.Pod
+	applyJob                      *batchv1.Job
+	applyPod                      *corev1.Pod
 }
 
 // miIsolatedNode is the worker hack/e2e-kind.sh provisions for the row.
@@ -292,6 +295,9 @@ func (r *isolatedNodeRow) waitForPod() {
 				m.fatalf("the %s Apply Job carries no deadline the hold can be measured against: %v", m.engine.name, err)
 			}
 			r.jobDeadlineAt = deadline
+			// The node fault removes the Pod before settlement. Keep its
+			// exact identity for independent receipt verification afterward.
+			r.applyJob, r.applyPod = job.DeepCopy(), pod.DeepCopy()
 			return true
 		}
 		// A Pod placed anywhere else is not something waiting longer fixes.
@@ -560,7 +566,7 @@ func (r *isolatedNodeRow) rejoin() {
 }
 
 // assertSettles holds the end state the code defines, in the order it writes
-// it: the run recorded Unknown against its own Job, the Lease handed back once
+// it: the run recorded against its own Job, the Lease handed back once
 // no Pod of that Job is left, and the record settled by a reading of the same
 // database. Across all of it, no second Apply and nothing run twice.
 func (r *isolatedNodeRow) assertSettles() {
@@ -581,7 +587,14 @@ func (r *isolatedNodeRow) assertSettles() {
 		r.report()
 		m.fatalf("%s did not record its isolated Apply within %s of the node rejoining", r.name, waitTimeout)
 	}
-	if !isolatedRunUnknown(recorded.Status, r.claim.jobUID) {
+	if durableResultJob(r.applyJob) {
+		_, err := readRecordedMigrationApply(m.ctx, m.cluster.Client, r.applyJob, r.applyPod, recorded.Status.LastRun, nil)
+		m.check(err, "%s has no exact durable receipt for its isolated Apply", r.name)
+		if !isolatedRunApplied(recorded.Status, r.claim.jobUID) {
+			r.report()
+			m.fatalf("%s did not preserve the three applied versions from its isolated Apply receipt", r.name)
+		}
+	} else if !isolatedRunUnknown(recorded.Status, r.claim.jobUID) {
 		r.report()
 		m.fatalf("%s did not record its isolated Apply as a run nobody accounted for", r.name)
 	}
@@ -611,7 +624,7 @@ func (r *isolatedNodeRow) assertSettles() {
 		migration := m.migration(r.name)
 		m.assertNoNewApplyJob(r.seen, "after its isolated Apply", r.name)
 		r.assertRanOnce()
-		return isolatedRunSettled(migration.Status, r.claim.jobUID)
+		return isolatedRunSettled(migration.Status, r.claim.jobUID, recorded.Status.LastRun.Outcome)
 	}) {
 		r.report()
 		m.fatalf("%s did not settle its isolated Apply by reading the database within %s", r.name, waitTimeout)
@@ -927,7 +940,13 @@ func (r *egressRow) render() {
 	}
 	port, err := strconv.ParseInt(m.engine.port, 10, 64)
 	m.check(err, "read the %s port", m.engine.kind)
-	r.policies, err = renderEgressPolicies(example, m.in.TestNamespace, r.target.registry, m.engine.service, port)
+	deployments := &appsv1.DeploymentList{}
+	m.check(m.cluster.Client.List(m.ctx, deployments, client.MatchingLabels{"app.kubernetes.io/component": "controller"}), "find the result receiver Deployment")
+	if len(deployments.Items) != 1 || len(deployments.Items[0].Spec.Selector.MatchExpressions) != 0 {
+		m.fatalf("egress rendering needs one manager Deployment with an exact label selector")
+	}
+	receiver := deployments.Items[0]
+	r.policies, err = renderEgressPolicies(example, m.in.TestNamespace, r.target.registry, m.engine.service, port, receiver.Namespace, receiver.Spec.Selector.MatchLabels)
 	m.check(err, "render the egress example")
 	// What the row is about has to be the example's, byte for byte.
 	if !egressSelectorsKept(example, r.policies) {
@@ -1139,6 +1158,7 @@ func (m *migrationRun) retargetBeforeDispatchProof() {
 		},
 	}))
 	r.waitForPlan()
+	originalPlan := m.planOf(r.plan)
 	planned := audit.snapshot()
 	audit.assertRecords(initial, planned, audit.terminalPod(map[string]string{labelMigration: r.name, labelOperation: "history"}, ""), true)
 	m.logf("closing the gate before approving the %s plan", m.engine.kind)
@@ -1172,7 +1192,60 @@ func (m *migrationRun) retargetBeforeDispatchProof() {
 	r.assertUntouched(r.database)
 	r.assertUntouched(r.other)
 	m.logf("PASS %s refused an Apply whose target was repointed after approval", m.engine.kind)
+	r.recoverWithFreshApproval(audit, originalPlan)
 	audit.close()
+}
+
+// recoverWithFreshApproval proves the matching allowed path, using the same
+// resource, artifact, executor and repointed Secret. The completed refused Pod
+// and both database inventories were checked before this acknowledgment. The
+// original approval cannot authorize the new target; only a fresh decision can.
+func (r *retargetRow) recoverWithFreshApproval(audit *databaseSQLAudit, originalPlan *ptahv1alpha1.PtahMigrationPlan) {
+	m := r.m
+	m.t.Helper()
+	refused := m.migration(r.name)
+	unresolved := refused.Status.UnresolvedRun
+	if unresolved == nil || string(unresolved.JobUID) != r.jobUID || unresolved.PlanRef.UID != originalPlan.UID ||
+		!sha256Pattern.MatchString(unresolved.OperationID) {
+		m.fatalf("%s lost the refused run before recovery", r.name)
+	}
+	operation := unresolved.OperationID
+	m.openApplyGate()
+	m.acknowledgeUnresolvedRun(r.name, operation)
+	fresh := m.waitForMigration(r.name, "a new approval gate for the repointed target after acknowledgment", migrationPoll,
+		func(resource *ptahv1alpha1.PtahMigration) bool {
+			return changedMigrationApprovalRefused(resource, originalPlan.UID, refused.Generation, false)
+		})
+	plan := m.planOf(fresh.Status.Plan.Name)
+	if err := retargetRecoveryPlan(fresh, plan, originalPlan, operation); err != nil {
+		m.fatalf("%s did not bind its recovery plan to the changed target: %v", r.name, err)
+	}
+	m.assertNoNewApplyJob([]string{r.jobUID}, "before fresh authorization of the repointed target", r.name)
+	r.assertUntouched(r.database)
+	r.assertUntouched(r.other)
+	beforeApply := audit.snapshot()
+	m.check(m.approve(r.name+"-current", r.name, plan.Name, string(plan.UID), plan.Spec.Fingerprint),
+		"approve the recovered target")
+	converged := m.waitForGenerationInSync(r.name)
+	if converged.Status.LastRun == nil || converged.Status.LastRun.JobUID == "" ||
+		string(converged.Status.LastRun.JobUID) == r.jobUID ||
+		converged.Status.LastRun.Outcome != ptahv1alpha1.MigrationRunOutcomeApplied {
+		m.fatalf("%s did not record a fresh successful Apply after recovery", r.name)
+	}
+	run := converged.Status.LastRun
+	audit.assertRecords(beforeApply, audit.snapshot(), audit.terminalPod(map[string]string{"job-name": run.JobName}, string(run.JobUID)), true)
+	m.assertNoNewApplyJob([]string{r.jobUID, string(run.JobUID)}, "after the recovered target converged", r.name)
+	if revisions := m.query(restoreRevisionsQuery(m.engine.name), r.other); revisions != "1,2,3" {
+		m.fatalf("%s did not apply the approved versions to the recovered target", r.name)
+	}
+	if rows := m.query("SELECT count(*) FROM e2e_migration_widgets", r.other); rows != "3" {
+		m.fatalf("%s recovered target does not have the three approved rows", r.name)
+	}
+	if color := m.query("SELECT color FROM e2e_migration_widgets WHERE id=1", r.other); color != "blue" {
+		m.fatalf("%s recovered target does not carry the final approved migration", r.name)
+	}
+	r.assertUntouched(r.database)
+	m.logf("PASS %s target recovery: fresh approval migrated the changed target after acknowledgment; the original database stayed unmigrated", m.engine.kind)
 }
 
 // retargetRow is what the retarget row reads once.

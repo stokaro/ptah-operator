@@ -108,6 +108,9 @@ type claimRetirement struct {
 	// an obligation unconditionally would name an empty epoch, which is a
 	// release no later pass can perform.
 	leased bool
+	// retained says a live executor still needs its claim and realm. There is
+	// no retirement write until the workload stops.
+	retained bool
 	// owes is what the retirement must record. It is not always `leased`: a
 	// claim can hold a Lease it does not owe back, because an outstanding
 	// post-Apply proof inherited the epoch and still needs the realm.
@@ -225,7 +228,7 @@ func migrationClaimRetirements() []claimRetirement {
 		{family: "PtahMigration", name: "a claim that cannot dispatch, holding no Lease", leased: false, owes: false, retire: cannotDispatch},
 		{family: "PtahMigration", name: "a claim whose dispatch deadline passed", leased: true, owes: true, retire: wentStale},
 		{family: "PtahMigration", name: "a run nobody accounted for, that nothing can still write for", leased: true, owes: true, retire: unaccountedStopped},
-		{family: "PtahMigration", name: "a run nobody accounted for, whose Job is still running", leased: true, owes: false, retire: unaccountedRunning},
+		{family: "PtahMigration", name: "a run nobody accounted for, whose Job is still running", leased: true, retained: true, owes: false, retire: unaccountedRunning},
 		{family: "PtahMigration", name: "an undispatched claim under a changed execution binding", leased: true, owes: true, retire: bindingChanged},
 		{family: "PtahMigration", name: "an undispatched claim on a deleting resource", leased: true, owes: true, retire: deleted(false)},
 		{family: "PtahMigration", name: "a stopped run on a deleting resource", leased: true, owes: true, retire: deleted(true)},
@@ -405,6 +408,17 @@ func TestRetiringAClaimRecordsTheReleaseItOwes(t *testing.T) {
 			writes := row.retire(t, row.leased)
 
 			retirement, reached := firstRetirement(writes)
+			if row.retained {
+				if reached || len(writes) == 0 {
+					t.Fatalf("the live executor lost its claim or produced no recorded status write: %#v", writes)
+				}
+				for _, write := range writes {
+					if write.owed {
+						t.Fatalf("the live executor recorded a premature realm release: %#v", writes)
+					}
+				}
+				return
+			}
 			if !reached {
 				t.Fatalf("the fixture never gave the claim up, so nothing here was measured: %#v", writes)
 			}

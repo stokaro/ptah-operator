@@ -74,7 +74,7 @@ func isolatedApplyHeld(migration *ptahv1alpha1.PtahMigration, job, epoch string)
 // isolatedRunUnknown is the first
 // reading after an isolated Apply's claim is retired, the run recorded
 // against its own Job as one nobody accounted for. Applied is refused on
-// purpose: it would mean the controller read a log the row expects to be gone.
+// purpose for legacy Jobs, whose result lived in the removed Pod's log.
 func isolatedRunUnknown(status ptahv1alpha1.PtahMigrationStatus, job string) bool {
 	return status.ActiveOperation == nil &&
 		status.LastRun != nil &&
@@ -86,18 +86,26 @@ func isolatedRunUnknown(status ptahv1alpha1.PtahMigrationStatus, job string) boo
 		conditionWithReason(status.Conditions, ptahv1alpha1.ConditionMigrationBlocked, "ApplyOutcomeUnknown")
 }
 
-// isolatedRunSettled is the unresolved
-// record removed by a history read taken after the run ended, with nothing
-// pending, and the run still named as the one never accounted for. The jq
+// isolatedRunApplied is the durable run recorded against the original Job.
+// The caller also verifies its receipt against the original Job and Pod.
+func isolatedRunApplied(status ptahv1alpha1.PtahMigrationStatus, job string) bool {
+	return status.ActiveOperation == nil && status.UnresolvedRun == nil &&
+		status.LastRun != nil && presentIs(string(status.LastRun.JobUID), job) &&
+		status.LastRun.Outcome == ptahv1alpha1.MigrationRunOutcomeApplied &&
+		slices.Equal(status.LastRun.AppliedVersions, []int64{1, 2, 3})
+}
+
+// isolatedRunSettled is a history read taken after the run ended, with no
+// unresolved record or pending work and the recorded outcome unchanged. The jq
 // dropped the fraction before comparing, so the two instants are compared to
 // the second: a reading in the same second as the run's end is not after it.
-func isolatedRunSettled(status ptahv1alpha1.PtahMigrationStatus, job string) bool {
+func isolatedRunSettled(status ptahv1alpha1.PtahMigrationStatus, job string, outcome ptahv1alpha1.MigrationRunOutcome) bool {
 	if status.ActiveOperation != nil || status.UnresolvedRun != nil || status.LastRun == nil || status.History == nil {
 		return false
 	}
 	run, history := status.LastRun, status.History
-	return presentIs(string(run.JobUID), job) &&
-		run.Outcome == ptahv1alpha1.MigrationRunOutcomeUnknown &&
+	return (outcome == ptahv1alpha1.MigrationRunOutcomeUnknown || outcome == ptahv1alpha1.MigrationRunOutcomeApplied) &&
+		presentIs(string(run.JobUID), job) && run.Outcome == outcome &&
 		history.PendingCount == 0 &&
 		!history.ObservedAt.IsZero() && run.FinishedAt != nil && !run.FinishedAt.IsZero() &&
 		history.ObservedAt.Unix() > run.FinishedAt.Unix()
@@ -668,12 +676,12 @@ func miObjectName(object map[string]any) string {
 	return name
 }
 
-// egressExampleShaped is the example the row adapts: seven NetworkPolicies,
-// two each named for the default deny, the registry and the database. The
+// egressExampleShaped holds the complete policy set: two each for default
+// deny, the registry and the database, plus DNS and durable result delivery. The
 // policies are found by the suffix the example names them with, so a renamed
 // one fails here rather than keeping its in-cluster selector.
 func egressExampleShaped(items []map[string]any) bool {
-	if len(items) != 7 {
+	if len(items) != 8 {
 		return false
 	}
 	counts := map[string]int{}
@@ -681,13 +689,13 @@ func egressExampleShaped(items []map[string]any) bool {
 		if item["kind"] != "NetworkPolicy" {
 			return false
 		}
-		for _, suffix := range []string{"-registry", "-database", "-default-deny"} {
+		for _, suffix := range []string{"-registry", "-database", "-default-deny", "-dns", "-results"} {
 			if strings.HasSuffix(miObjectName(item), suffix) {
 				counts[suffix]++
 			}
 		}
 	}
-	return counts["-registry"] == 2 && counts["-database"] == 2 && counts["-default-deny"] == 2
+	return counts["-registry"] == 2 && counts["-database"] == 2 && counts["-default-deny"] == 2 && counts["-dns"] == 1 && counts["-results"] == 1
 }
 
 // renderEgressPolicies is the example with what it tells a reader to replace
@@ -696,7 +704,10 @@ func egressExampleShaped(items []map[string]any) bool {
 // the database, which runs in the namespace under the suite's own labels and
 // port. Every policy carries the proof label, so removing them does not depend
 // on a name list that could fall behind the example.
-func renderEgressPolicies(items []map[string]any, namespace, registry, database string, databasePort int64) ([]map[string]any, error) {
+func renderEgressPolicies(items []map[string]any, namespace, registry, database string, databasePort int64, receiverNamespace string, receiverLabels map[string]string) ([]map[string]any, error) {
+	if receiverNamespace == "" || len(receiverLabels) == 0 {
+		return nil, errors.New("receiver namespace and Pod selector are required")
+	}
 	rendered := make([]map[string]any, 0, len(items))
 	for _, item := range items {
 		policy := runtime.DeepCopyJSON(item)
@@ -715,6 +726,17 @@ func renderEgressPolicies(items []map[string]any, namespace, registry, database 
 		name := miObjectName(policy)
 		var rewrite func(rule map[string]any)
 		switch {
+		case strings.HasSuffix(name, "-results"):
+			rewrite = func(rule map[string]any) {
+				labels := map[string]any{}
+				for key, value := range receiverLabels {
+					labels[key] = value
+				}
+				rule["to"] = []any{map[string]any{
+					"namespaceSelector": map[string]any{"matchLabels": map[string]any{"kubernetes.io/metadata.name": receiverNamespace}},
+					"podSelector":       map[string]any{"matchLabels": labels},
+				}}
+			}
 		case strings.HasSuffix(name, "-registry"):
 			rewrite = func(rule map[string]any) {
 				rule["to"] = []any{map[string]any{"ipBlock": map[string]any{"cidr": registry + "/32"}}}
@@ -870,6 +892,46 @@ func retargetRefused(status ptahv1alpha1.PtahMigrationStatus, jobUID string) boo
 			return condition.Type == ptahv1alpha1.ConditionMigrationBlocked && condition.Status == metav1.ConditionTrue &&
 				condition.Reason == "ApplyOutcomeUnknown" && strings.Contains(condition.Message, "target_binding_mismatch")
 		})
+}
+
+// retargetRecoveryPlan is the fresh decision after a person accounted for
+// the refused run. The target changes; the resource and selected artifact do
+// not. A plan from the old target, a stale history, or a different resource
+// cannot serve as the allowed control for this refusal.
+func retargetRecoveryPlan(resource *ptahv1alpha1.PtahMigration, plan, original *ptahv1alpha1.PtahMigrationPlan, operation string) error {
+	if resource == nil || plan == nil || original == nil || resource.UID == "" ||
+		!changedMigrationApprovalRefused(resource, original.UID, resource.Generation, false) {
+		return errors.New("the recovered migration is not waiting for a fresh approval")
+	}
+	status := resource.Status
+	if plan.UID != status.Plan.UID || plan.Name != status.Plan.Name || plan.Namespace != resource.Namespace ||
+		plan.Spec.MigrationRef.Name != resource.Name || plan.Spec.MigrationRef.UID != resource.UID ||
+		original.Spec.MigrationRef != plan.Spec.MigrationRef ||
+		plan.Spec.Fingerprint == "" || plan.Spec.Fingerprint == original.Spec.Fingerprint {
+		return errors.New("the recovery plan has no new binding to this migration")
+	}
+	resolved := status.ResolvedRun
+	if operation == "" || resolved == nil || resolved.OperationID != operation ||
+		resolved.Resolution != ptahv1alpha1.MigrationRunResolvedByAcknowledgment ||
+		resolved.AcknowledgmentRef == nil || resolved.AcknowledgmentRef.UID == "" ||
+		resolved.AcknowledgedBy == nil || resolved.AcknowledgedBy.Username == "" || resolved.ResolvedAt.IsZero() ||
+		resource.Annotations[ptahv1alpha1.UnresolvedRunAnnotation] != "" {
+		return errors.New("the refused run was not accounted for by its acknowledgment")
+	}
+	history := status.History
+	if history == nil || !history.ObservedAt.After(resolved.ResolvedAt.Time) ||
+		!sha256Pattern.MatchString(history.Fingerprint) || plan.Spec.HistoryFingerprint != history.Fingerprint ||
+		!sha256Pattern.MatchString(plan.Spec.TargetIdentityDigest) ||
+		plan.Spec.TargetIdentityDigest != history.TargetIdentityDigest ||
+		plan.Spec.TargetIdentityDigest == original.Spec.TargetIdentityDigest {
+		return errors.New("the recovery plan does not name fresh history from the changed target")
+	}
+	if status.Artifact == nil || !sha256Pattern.MatchString(plan.Spec.ArtifactDigest) ||
+		plan.Spec.ArtifactDigest != original.Spec.ArtifactDigest || plan.Spec.ArtifactDigest != status.Artifact.Digest ||
+		len(plan.Spec.Migrations) == 0 || !reflect.DeepEqual(plan.Spec.Migrations, original.Spec.Migrations) {
+		return errors.New("the recovery plan changed the selected artifact or sequence")
+	}
+	return nil
 }
 
 // drillConverged is a database that holds every migration the artifact

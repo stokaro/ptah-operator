@@ -488,6 +488,7 @@ func requiredCRDNames() []string {
 		"ptahmigrationrunacknowledgments.operator.ptah.run",
 		"ptahmigrations.operator.ptah.run",
 		"ptahrealms.operator.ptah.run",
+		"ptahresultrecords.operator.ptah.run",
 		"ptahschemaapprovals.operator.ptah.run",
 		"ptahschemaplanchunks.operator.ptah.run",
 		"ptahschemaplans.operator.ptah.run",
@@ -561,6 +562,12 @@ func evaluateTransitionWith(
 		}
 	}
 	if changed {
+		if resultRecordDevelopmentAddition(baseline, candidate) {
+			if err := verifyStoredObjectCompatibility(baseline, candidate, candidateIdentity.version, declared); err != nil {
+				return Result{}, err
+			}
+			return result, nil
+		}
 		if candidateIdentity.version <= baselineIdentity.version {
 			return Result{}, fmt.Errorf(
 				"normalized CRD specs changed, so candidate %s=%d must strictly increase baseline version %d",

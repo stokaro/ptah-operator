@@ -87,6 +87,11 @@ controller runs there, so what they prove is the API server's own verdict:
   without a refusal row and a mutation fails the suite.
 - `webhook` serves the manager's admission handlers in-process behind the
   chart's own webhook configurations, which envtest points at this process.
+- `resultstore` publishes immutable result Secrets against the API server and
+  tests interrupted writes, concurrent redelivery, payload limits, and readback
+  after explicit Job/Pod deletion. It runs as the test administrator, so it
+  proves storage semantics, not receiver authorization, RBAC, or garbage
+  collection. The result receiver is not yet connected to the operator.
 
 The API server reports only the first policy that refused a request, in no
 fixed order, so a refusal row is shaped so that one policy refuses it.

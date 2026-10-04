@@ -23,6 +23,38 @@ const rebuildDocument = `{"format_version":1,"dialect":"postgres","from_fingerpr
 
 const rebuildSplitAt = 60
 
+func TestConfidentialPlanDelivery(t *testing.T) {
+	document := []byte(rebuildDocument)
+	durable := runner.Result{Stdout: rebuildDocument, PlanContentDigest: sha256Digest(document)}
+	legacy := runner.Result{Stdout: "process-sealed-payload", PlanContentDigest: durable.PlanContentDigest}
+	for _, test := range []struct {
+		name    string
+		result  runner.Result
+		logs    string
+		durable bool
+		wantErr bool
+	}{
+		{"durable receipt with empty diagnostics", durable, "", true, false},
+		{"legacy sealed result", legacy, "runner finished", false, false},
+		{"legacy plaintext result", durable, "", false, true},
+		{"durable receipt with different bytes", legacy, "", true, true},
+		{"durable receipt with different digest", runner.Result{Stdout: rebuildDocument}, "", true, true},
+		{"durable raw SQL in diagnostics", durable, `CREATE TABLE "widgets" (id integer PRIMARY KEY)`, true, true},
+		{"durable JSON-escaped SQL in diagnostics", durable, `CREATE TABLE \"widgets\" (id integer PRIMARY KEY)`, true, true},
+		{"legacy SQL in diagnostics", legacy, `CREATE TABLE "widgets" (id integer PRIMARY KEY)`, false, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := confidentialPlanDelivery(test.result, document, []byte(test.logs), test.durable)
+			if (err != nil) != test.wantErr {
+				t.Fatalf("confidentiality error = %v, want error=%v", err, test.wantErr)
+			}
+		})
+	}
+	if err := confidentialPlanDelivery(durable, []byte(`{"format_version":1,"statements":[]}`), nil, true); err == nil {
+		t.Fatal("accepted a vacuous plan confidentiality check")
+	}
+}
+
 func rebuildFixture() (*ptahv1alpha1.PtahSchemaPlan, map[string]*ptahv1alpha1.PtahSchemaPlanChunk) {
 	first, second := []byte(rebuildDocument[:rebuildSplitAt]), []byte(rebuildDocument[rebuildSplitAt:])
 	plan := &ptahv1alpha1.PtahSchemaPlan{

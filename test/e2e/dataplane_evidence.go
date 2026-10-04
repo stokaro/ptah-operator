@@ -6,12 +6,16 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
+	"github.com/stokaro/ptah-operator/internal/resultdelivery/jobconfig"
 	"github.com/stokaro/ptah-operator/internal/runner"
 )
 
@@ -43,8 +47,9 @@ func operationLabel(operationID string) string {
 
 // jobEvidence is what the phase keeps of one completed operation Job: the Job
 // and its one Pod as they were read when the Job was audited, the ptah
-// container's log settled to a complete result frame, and that frame. The
-// controller stamps a TTL on every Job it finished reading, and a lifecycle
+// container's diagnostic log, and the validated result read through the Job's
+// selected transport. The controller stamps a TTL on every Job it finished
+// reading, and a lifecycle
 // outlasts it, so a proof about a Job's history reads this rather than the API.
 type jobEvidence struct {
 	job    *batchv1.Job
@@ -359,13 +364,40 @@ func hasToleration(tolerations []corev1.Toleration, key string, effect corev1.Ta
 }
 
 // podAdmissionApplied holds a Pod admitted under the runtime class to what
-// admission added to it: the LimitRange's defaults on every container, the
+// admission added to it: the LimitRange's defaults for resources the Job left
+// unset, the exact declared resources on every other container, the
 // default ServiceAccount with no token and the pull Secret it names, the
 // RuntimeClass's overhead, node selector and toleration, and the default
 // not-ready and unreachable tolerations. The manager's identity and the
 // admission snapshot digest are on the Pod as they were on the Job.
-func podAdmissionApplied(pod *corev1.Pod, identity controllerIdentity, pullSecret string) bool {
-	spec := pod.Spec
+func podAdmissionApplied(job *batchv1.Job, pod *corev1.Pod, identity controllerIdentity, pullSecret string) bool {
+	if job == nil || pod == nil || job.UID == "" || pod.Namespace != job.Namespace ||
+		!ownedExactlyOnce(pod.OwnerReferences, "batch/v1", "Job", job.Name, job.UID) {
+		return false
+	}
+	spec := *pod.Spec.DeepCopy()
+	if jobconfig.UsesPodToken(job) {
+		// Validate the declared token and the actual admitted projection before
+		// excluding that one volume from the no-extra-token assertion below.
+		if len(job.OwnerReferences) != 1 {
+			return false
+		}
+		if _, err := jobconfig.Read(job, job.OwnerReferences[0].UID, job.Annotations[annotationOperationID]); err != nil {
+			return false
+		}
+		actual := job.DeepCopy()
+		actual.Spec.Template.Spec = spec
+		if _, err := jobconfig.Read(actual, job.OwnerReferences[0].UID, job.Annotations[annotationOperationID]); err != nil {
+			return false
+		}
+		filtered := make([]corev1.Volume, 0, len(spec.Volumes))
+		for _, volume := range spec.Volumes {
+			if volume.Name != jobconfig.VolumeName {
+				filtered = append(filtered, volume)
+			}
+		}
+		spec.Volumes = filtered
+	}
 	if !sha256Pattern.MatchString(pod.Annotations[annotationAdmissionDigest]) || !identity.stampedOn(pod.Annotations) ||
 		spec.RuntimeClassName == nil || *spec.RuntimeClassName != admissionRuntimeClass ||
 		spec.ServiceAccountName != "default" ||
@@ -385,16 +417,87 @@ func podAdmissionApplied(pod *corev1.Pod, identity controllerIdentity, pullSecre
 			}
 		}
 	}
-	for _, container := range slices.Concat(spec.Containers, spec.InitContainers) {
-		if !quantityIs(container.Resources.Requests, corev1.ResourceCPU, "10m") ||
-			!quantityIs(container.Resources.Requests, corev1.ResourceMemory, "16Mi") ||
-			!quantityIs(container.Resources.Limits, corev1.ResourceCPU, "100m") ||
-			!quantityIs(container.Resources.Limits, corev1.ResourceMemory, "64Mi") {
-			return false
-		}
+	if len(spec.Containers) == 0 || !admittedContainerResources(spec.Containers, job.Spec.Template.Spec.Containers) ||
+		!admittedContainerResources(spec.InitContainers, job.Spec.Template.Spec.InitContainers) {
+		return false
 	}
 	defaultSeconds := int64(300)
 	return hasToleration(spec.Tolerations, "node.kubernetes.io/not-ready", corev1.TaintEffectNoExecute, &defaultSeconds) &&
 		hasToleration(spec.Tolerations, "node.kubernetes.io/unreachable", corev1.TaintEffectNoExecute, &defaultSeconds) &&
 		hasToleration(spec.Tolerations, admissionRuntimeTaint, corev1.TaintEffectNoSchedule, nil)
+}
+
+func admittedContainerResources(actual, declared []corev1.Container) bool {
+	if len(actual) != len(declared) {
+		return false
+	}
+	defaults := corev1.ResourceRequirements{
+		Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("10m"), corev1.ResourceMemory: resource.MustParse("16Mi")},
+		Limits:   corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("100m"), corev1.ResourceMemory: resource.MustParse("64Mi")},
+	}
+	expected := map[string]corev1.ResourceRequirements{}
+	for _, container := range declared {
+		if container.Name == "" {
+			return false
+		}
+		if _, duplicate := expected[container.Name]; duplicate {
+			return false
+		}
+		want := container.Resources.DeepCopy()
+		if want.Requests == nil {
+			want.Requests = corev1.ResourceList{}
+		}
+		if want.Limits == nil {
+			want.Limits = corev1.ResourceList{}
+		}
+		for name, value := range defaults.Requests {
+			if _, set := want.Requests[name]; !set {
+				want.Requests[name] = value.DeepCopy()
+			}
+		}
+		for name, value := range defaults.Limits {
+			if _, set := want.Limits[name]; !set {
+				want.Limits[name] = value.DeepCopy()
+			}
+		}
+		expected[container.Name] = *want
+	}
+	for _, container := range actual {
+		want, found := expected[container.Name]
+		if !found || !equality.Semantic.DeepEqual(container.Resources, want) {
+			return false
+		}
+		delete(expected, container.Name)
+	}
+	return len(expected) == 0
+}
+
+// archivedJobsComplete uses the terminal evidence captured before Job TTL
+// collection. A missing API object is not completion; only the full validated
+// Job, Pod and result archive can prove it after collection.
+func archivedJobsComplete(records []observedJob, schema, operation string, minimum int, protocol int64, archive map[string]*jobEvidence) (bool, error) {
+	if minimum <= 0 || len(records) < minimum {
+		return false, nil
+	}
+	seen := map[string]bool{}
+	for _, record := range records {
+		if record.Name == "" || record.UID == "" || record.Schema != schema || record.Operation != operation || seen[record.UID] {
+			return false, errors.New("completed Job ledger has missing, repeated or mismatched identities")
+		}
+		seen[record.UID] = true
+		evidence := archive[record.UID]
+		if evidence == nil {
+			return false, nil
+		}
+		if evidence.job == nil || evidence.pod == nil {
+			return false, errors.New("completed Job archive has missing workload evidence")
+		}
+		if evidence.job.Name != record.Name || record.Created == "" || evidence.job.CreationTimestamp.UTC().Format(time.RFC3339) != record.Created {
+			return false, errors.New("completed Job archive disagrees with the recorded workload")
+		}
+		if err := validateJobEvidence(evidence, schema, operation, types.UID(record.UID), "", protocol); err != nil {
+			return false, err
+		}
+	}
+	return true, nil
 }

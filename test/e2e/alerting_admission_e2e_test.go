@@ -4,6 +4,7 @@ package e2e
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -56,7 +57,7 @@ func (a *alertingRun) requireAPIServerTargets() {
 // absent series was previously zero. The detection target starts at the signed
 // certificate expiry, including propagation delay in the webhook configuration.
 // Background admission calls may encounter expiry before the first probe.
-func (a *alertingRun) admissionFailureDelivered(from int, started time.Time) int {
+func (a *alertingRun) admissionFailureDelivered(from int, started time.Time) (int, alAdmissionHistory) {
 	a.t.Helper()
 	delivery, index := a.waitForDeliveryWithCheck(alMatch{status: "firing", alertName: alAdmissionAlert},
 		"the admission failure alert", time.Until(started.Add(alDetectionSlack)), from, func() {
@@ -77,20 +78,81 @@ func (a *alertingRun) admissionFailureDelivered(from int, started time.Time) int
 	if !alAdmissionCounterIncreased(body) {
 		a.fatalf("the approval webhook's calling_webhook_error counter did not increase")
 	}
+	reading := a.readAdmissionHistory(a.ctx, started, nil, "firing")
+	if !reading.approvalIncreased || reading.lastLower.IsZero() {
+		a.fatalf("the admission fault has no native approval-counter increase")
+	}
 	a.logf("PASS admission alert: certificateExpired=%s receivedAt=%s, with %d healthy API server scrapes and an increased approval rejection counter",
 		started.Format(time.RFC3339Nano), delivery.ReceivedAt.Format(time.RFC3339Nano), len(a.apiServerTargets))
-	return index
+	return index, reading
 }
 
-func (a *alertingRun) admissionRecovered(from int, restored time.Time) {
+func (a *alertingRun) readAdmissionHistory(ctx context.Context, started time.Time, previous *alAdmissionHistory, label string) alAdmissionHistory {
 	a.t.Helper()
-	delivery, _ := a.waitForDeliveryWithCheck(alMatch{status: "resolved", alertName: alAdmissionAlert},
-		"the admission failure alert's resolution", time.Until(restored.Add(alAdmissionRecovery)), from, func() {
-			a.requireAPIServerTargets()
-			a.check(a.approvalCertificateProbe(a.ctx), "admission must stay healthy while its alert resolves")
-		})
-	if elapsed := delivery.ReceivedAt.Sub(restored); elapsed < 0 || elapsed > alAdmissionRecovery {
-		a.fatalf("the admission alert resolved after %s; want at most %s from certificate restoration", elapsed, alAdmissionRecovery)
+	a.requireAPIServerTargets()
+	at := time.Now().UTC()
+	// Empty label alternatives keep the scrape health series in this selector.
+	matchers := `,name=~".*operator\\.ptah\\.run|",error_type=~"calling_webhook_error|"`
+	groups, body := a.historySnapshot(ctx, at, alAPIServerJob, matchers, alAdmissionCounterMetric, "up", "scrape_duration_seconds")
+	reading, err := alReadAdmissionHistory(groups[alAdmissionCounterMetric], groups["up"], groups["scrape_duration_seconds"], a.apiServerTargets, started, at, previous)
+	if label != "" || err != nil {
+		a.logf("admission native history %s: queriedAt=%s snapshot=%s", label, at.Format(time.RFC3339Nano), body)
 	}
-	a.logf("PASS admission alert resolved %s after certificate restoration", delivery.ReceivedAt.Sub(restored))
+	a.check(err, "validate the API servers' native admission history")
+	return reading
+}
+
+func (a *alertingRun) admissionRecovered(from int, started, restored, healthyAt time.Time, previous alAdmissionHistory) {
+	a.t.Helper()
+	reading := a.readAdmissionHistory(a.ctx, started, &previous, "restored")
+	var delivery alDelivery
+	// The outer bound allows the evidence scrape after a delivered resolution.
+	// The actual pass/fail deadline comes only from the native increment below.
+	a.check(harness.Wait(a.ctx, "the five-minute admission window to resolve at the receiver",
+		time.Until(healthyAt.Add(alAdmissionRecovery+alAdmissionSampleGap)), alDeliveryPoll,
+		func(ctx context.Context) (bool, string, error) {
+			if err := a.approvalCertificateProbe(ctx); err != nil {
+				return false, "", fmt.Errorf("admission failed again during recovery: %w", err)
+			}
+			reading = a.readAdmissionHistory(ctx, started, &reading, "")
+			if reading.lastLower.After(healthyAt) {
+				return false, "", fmt.Errorf("a native calling-webhook rejection occurred after verified admission recovery")
+			}
+			log, err := a.deploymentLog(ctx, "alert-sink")
+			if err != nil {
+				return false, "", err
+			}
+			deliveries, err := alDeliveries(log)
+			if err != nil {
+				return false, "", err
+			}
+			candidate, _, found := alFirstDelivery(deliveries, from, alMatch{status: "resolved", alertName: alAdmissionAlert})
+			if found {
+				if candidate.ReceivedAt.Before(restored) || candidate.ReceivedAt.Before(reading.lastLower.Add(alAdmissionWindow)) ||
+					candidate.ReceivedAt.After(reading.lastLower.Add(alAdmissionRecovery)) {
+					return false, "", fmt.Errorf("admission resolved at %s outside the native last-rejection window [%s, %s]",
+						candidate.ReceivedAt.Format(time.RFC3339Nano), reading.lastLower.Add(alAdmissionWindow).Format(time.RFC3339Nano),
+						reading.lastLower.Add(alAdmissionRecovery).Format(time.RFC3339Nano))
+				}
+				if !alAdmissionResolutionWithinBounds(reading, candidate.ReceivedAt, restored) {
+					return false, "not every API server has scraped through the delivered resolution", nil
+				}
+				if !a.noActiveAlerts(`ALERTS{alertname="` + alAdmissionAlert + `"}`) {
+					return false, "Prometheus still has an active admission incident", nil
+				}
+				delivery = candidate
+				return true, "", nil
+			}
+			if time.Now().After(reading.lastLower.Add(alAdmissionRecovery)) {
+				return false, "", fmt.Errorf("the admission resolution missed its native last-rejection deadline")
+			}
+			return false, "the receiver has not resolved the five-minute admission window", nil
+		}), "verify the admission alert's complete resolution interval")
+	reading = a.readAdmissionHistory(a.ctx, started, &reading, "resolved")
+	if reading.lastLower.After(healthyAt) || !alAdmissionResolutionWithinBounds(reading, delivery.ReceivedAt, restored) {
+		a.fatalf("the final admission history invalidated the delivered recovery")
+	}
+	a.logf("PASS admission recovery: native last rejection lies in (%s, %s]; resolvedAt=%s; upper elapsed bound=%s, limit=%s",
+		reading.lastLower.Format(time.RFC3339Nano), reading.lastUpper.Format(time.RFC3339Nano),
+		delivery.ReceivedAt.Format(time.RFC3339Nano), delivery.ReceivedAt.Sub(reading.lastLower), alAdmissionRecovery)
 }

@@ -1,0 +1,49 @@
+{
+  "status": "passed",
+  "operatorRevision": "b0a51ff740784beaf6cd1ebb2fe8c2715583e1b5",
+  "fixtureAndRunnerRevision": "b2576f9bbbe72979ba392456846fb16da1f0f03a",
+  "procedureSHA256": "3fc4500163742849995dea1478ede51b4ed46db6673834ea117bd95a9035065f",
+  "sharedProcedureSHA256": "69d1c02caf1b4c2e1abcff3757ea73e3ac005a563bef6c95ecbd09cab3d12579",
+  "engines": {
+    "PostgreSQL": {
+      "directory": "pg",
+      "databaseVersion": "PostgreSQL 17.11 on x86_64-pc-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit",
+      "verification": {
+        "requests": 6,
+        "identicalReceipts": 3,
+        "conflicts": 3
+      },
+      "files": {
+        "concurrent.json": "f436c65b9d179035d60b37026ed6ef190181f632562f7bbcf0c2efde3ba39afb",
+        "lost-ack.json": "b2377c19901e3e7565367f5ca6e04c56c2050af6a66449dcc8da98d2c8f20457",
+        "held-retry.json": "36ad4efbce2ada37e2cb62157be6685360edcb73c6e34915edd2d7cc935af474",
+        "publication.json": "4e567f9f2ba884185eacb605ba2ea53fab2a5633bf545006c6bf9bbc8747c5ad",
+        "installation.json": "310b586dfa70175c40839e69d8b2dc24a158a0974094b13c5aa2ad5a30c750d5"
+      }
+    },
+    "MySQL": {
+      "directory": "mysql",
+      "databaseVersion": "8.4.11",
+      "verification": {
+        "requests": 6,
+        "identicalReceipts": 3,
+        "conflicts": 3
+      },
+      "files": {
+        "concurrent.json": "1d7a775484435daed7c28952ac9f61a3e6e0ff1d326688c50192b84351147109",
+        "lost-ack.json": "b9067e1dc24d0ac0bca1809a82676b5a478bf93dac0a6f8dd3a6b54fdf8a3819",
+        "held-retry.json": "311eeb90a6763ff8b3b6e04e83d136fbd0fa9fc7a14f80175bfcc4c8659a47ec",
+        "publication.json": "90f7ac1047d685e75cbd3abaf713814c8577a7d6c6ffec5c19a9c239a98bb96a",
+        "installation.json": "f9cfceab74dfde853e2783461687738c66b7c54882522aaa930bcb61e6b2a2c6"
+      }
+    }
+  },
+  "regression": {
+    "file": "before-fix.json",
+    "sha256": "1115f559cbdcb32ecb1b2097d945594c5c0935ea0d1d75737c8f6eb052080538",
+    "operatorRevision": "b2576f9bbbe72979ba392456846fb16da1f0f03a",
+    "previousInstallation": "../result-receiver-restart-2026-10-02/pg/installation.json",
+    "expectedRefusal": "conflicting 6556c045-1d34-4971-9cbe-77fcdba8e073: expected 409, received 503"
+  },
+  "scope": "Native PostgreSQL and MySQL migration Apply on Kubernetes 1.37, two receiving manager replicas, default 10Mi kubelet logs. After durable publication and a lost HTTP acknowledgment, six privileged-harness requests overlap in pairs across distinct receivers: identical, conflicting, and mixed. Three identical requests return the original receipt and three changed canonical documents return HTTP 409. Every stored publication member remains unchanged. The original runner then receives its receipt, completes the same Job/Pod without restarts, and converges with one calibrated SQL effect. This is committed-result redelivery, not a race between first publishers, same-replica saturation, enforced NetworkPolicy, or complete matrix proof."
+}

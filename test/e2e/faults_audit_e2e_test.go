@@ -5,7 +5,6 @@ package e2e
 import (
 	"bytes"
 	"fmt"
-	"slices"
 	"strings"
 	"time"
 
@@ -192,9 +191,7 @@ func (f *faultRun) auditTestPod(name, uid string) {
 		f.fatalf("unaudited fault-test Pod %s changed identity during its log audit", name)
 	}
 	if pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed {
-		terminated := terminatedInStatusOrder(pod)
-		slices.Sort(terminated)
-		if !slices.Equal(declaredContainers(pod), terminated) {
+		if !terminalPodLogsComplete(pod) {
 			f.fatalf("terminal fault-test Pod %s has unaudited nonterminal containers", name)
 		}
 		f.auditedPods[uid] = true

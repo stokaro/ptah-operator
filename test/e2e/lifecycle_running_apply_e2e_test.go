@@ -62,6 +62,10 @@ type lifecycleRunningApply struct {
 	// evidence at the upgrade boundary.
 	stagedGap        map[string]any
 	jobBeforeCleanup []byte
+	// Retain the executed SQL control across the later stopped-workload
+	// boundaries. Each new window must still contain this journal prefix.
+	sqlBackend lifecycleSQLBackend
+	sqlJournal []byte
 }
 
 // predecessorApplySQL is running_apply_postgres_query: one statement in the

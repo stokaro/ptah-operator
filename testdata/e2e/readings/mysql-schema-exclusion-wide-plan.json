@@ -1,0 +1,20 @@
+{
+  "format_version": 1,
+  "name": "plan_d26fcd9f445a",
+  "dialect": "mysql",
+  "from_fingerprint": "sha256:4a871fcca73ca649929d352c020fb93a670126a25fc0d8434cfc25c02922aac3",
+  "to_fingerprint": "sha256:d234ab4e92a03f6fce7d61f6b6d562ea2852d430d3737a08857dc30af00ade01",
+  "destructive": true,
+  "statements": [
+    {
+      "sql": "-- Modify table: e2e_widgets --\n-- ALTER statements: --\nALTER TABLE `e2e_widgets` ADD COLUMN `fault_token` varchar(255)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- WARNING: This will delete all data!\nDROP TABLE IF EXISTS `e2e_excluded_policy_keep`",
+      "severity": "destructive",
+      "reason": "DROP TABLE removes the table and all rows"
+    }
+  ]
+}

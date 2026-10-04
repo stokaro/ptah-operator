@@ -1,0 +1,2293 @@
+{
+  "manager": {
+    "apiVersion": "apps/v1",
+    "kind": "Deployment",
+    "metadata": {
+      "annotations": {
+        "deployment.kubernetes.io/revision": "8",
+        "meta.helm.sh/release-name": "ptah-1-37-0-result-resta-5a0ef2fe7d",
+        "meta.helm.sh/release-namespace": "ptah-system-1-37-0-result-restart-b2576f9b-5a0ef2fe7d"
+      },
+      "creationTimestamp": "2026-10-02T12:31:58Z",
+      "generation": 9,
+      "labels": {
+        "app.kubernetes.io/component": "controller",
+        "app.kubernetes.io/instance": "ptah-1-37-0-result-resta-5a0ef2fe7d",
+        "app.kubernetes.io/managed-by": "Helm",
+        "app.kubernetes.io/name": "ptah-operator",
+        "app.kubernetes.io/version": "0.2.0",
+        "helm.sh/chart": "ptah-operator-0.2.0"
+      },
+      "name": "ptah-runtime-generated-name-prefix-boundary-proof-5a0ef2fe7d",
+      "namespace": "ptah-system-1-37-0-result-restart-b2576f9b-5a0ef2fe7d",
+      "resourceVersion": "54423",
+      "uid": "3707c80d-ac80-4bc8-84ae-cd347c94942d"
+    },
+    "spec": {
+      "progressDeadlineSeconds": 600,
+      "replicas": 2,
+      "revisionHistoryLimit": 10,
+      "selector": {
+        "matchLabels": {
+          "app.kubernetes.io/component": "controller",
+          "app.kubernetes.io/instance": "ptah-1-37-0-result-resta-5a0ef2fe7d",
+          "app.kubernetes.io/name": "ptah-operator"
+        }
+      },
+      "strategy": {
+        "type": "Recreate"
+      },
+      "template": {
+        "metadata": {
+          "annotations": {
+            "kubectl.kubernetes.io/restartedAt": "2026-10-02T18:16:19+02:00"
+          },
+          "labels": {
+            "app.kubernetes.io/component": "controller",
+            "app.kubernetes.io/instance": "ptah-1-37-0-result-resta-5a0ef2fe7d",
+            "app.kubernetes.io/name": "ptah-operator"
+          }
+        },
+        "spec": {
+          "automountServiceAccountToken": false,
+          "containers": [
+            {
+              "args": [
+                "--leader-elect=true",
+                "--metrics-bind-address=:8080",
+                "--health-probe-bind-address=:8081",
+                "--webhook-port=9443",
+                "--webhook-cert-dir=/certs",
+                "--controller-image=e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/operator@sha256:f338a4c98d77e4908426d0c4b45a1b177ffc8c2916cae3029217b9ec12cd6f36",
+                "--executor-image=e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-executor@sha256:45530f0f2c41f4d649c207fe8221dad268946ca8da13b503244805c016f3c9dd",
+                "--runner-image=e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-runner@sha256:7e2199f5c03660f094244b00962ec7e222f752f9cfc86276ac7cea296ce5d4b6",
+                "--ptah-version=v0.9.0-73-gf6e562c5b",
+                "--target-lock-namespace=ptah-system-1-37-0-result-restart-b2576f9b-5a0ef2fe7d",
+                "--controller-service-account-username=system:serviceaccount:ptah-system-1-37-0-result-restart-b2576f9b-5a0ef2fe7d:ptah-runtime-generated-name-prefix-boundary-proof-5a0ef2fe7d",
+                "--default-tolerations-enabled=true",
+                "--default-not-ready-toleration-seconds=300",
+                "--default-unreachable-toleration-seconds=300",
+                "--extended-resource-toleration-enabled=false",
+                "--always-pull-images-enabled=false",
+                "--require-distinct-approver=false",
+                "--result-endpoint=https://ptah-runtime-generated-name-prefix-boundary-proof-5a0ef-results.ptah-system-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc",
+                "--result-cert-dir=/result-certs",
+                "--result-bind-address=:9444",
+                "--result-enrollment-policy=ptah-runtime-generated-name-prefix-boundary-p-result-enrollment"
+              ],
+              "command": [
+                "/manager"
+              ],
+              "image": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/operator@sha256:f338a4c98d77e4908426d0c4b45a1b177ffc8c2916cae3029217b9ec12cd6f36",
+              "imagePullPolicy": "IfNotPresent",
+              "livenessProbe": {
+                "failureThreshold": 3,
+                "httpGet": {
+                  "path": "/healthz",
+                  "port": "health",
+                  "scheme": "HTTP"
+                },
+                "initialDelaySeconds": 10,
+                "periodSeconds": 20,
+                "successThreshold": 1,
+                "timeoutSeconds": 1
+              },
+              "name": "manager",
+              "ports": [
+                {
+                  "containerPort": 8080,
+                  "name": "metrics",
+                  "protocol": "TCP"
+                },
+                {
+                  "containerPort": 8081,
+                  "name": "health",
+                  "protocol": "TCP"
+                },
+                {
+                  "containerPort": 9443,
+                  "name": "webhook",
+                  "protocol": "TCP"
+                },
+                {
+                  "containerPort": 9444,
+                  "name": "results",
+                  "protocol": "TCP"
+                }
+              ],
+              "readinessProbe": {
+                "failureThreshold": 3,
+                "httpGet": {
+                  "path": "/readyz",
+                  "port": "health",
+                  "scheme": "HTTP"
+                },
+                "initialDelaySeconds": 5,
+                "periodSeconds": 10,
+                "successThreshold": 1,
+                "timeoutSeconds": 1
+              },
+              "resources": {
+                "limits": {
+                  "memory": "256Mi"
+                },
+                "requests": {
+                  "cpu": "50m",
+                  "memory": "96Mi"
+                }
+              },
+              "securityContext": {
+                "allowPrivilegeEscalation": false,
+                "capabilities": {
+                  "drop": [
+                    "ALL"
+                  ]
+                },
+                "readOnlyRootFilesystem": true
+              },
+              "terminationMessagePath": "/dev/termination-log",
+              "terminationMessagePolicy": "File",
+              "volumeMounts": [
+                {
+                  "mountPath": "/result-certs",
+                  "name": "result-cert",
+                  "readOnly": true
+                },
+                {
+                  "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                  "name": "api-access",
+                  "readOnly": true
+                },
+                {
+                  "mountPath": "/certs",
+                  "name": "webhook-cert",
+                  "readOnly": true
+                },
+                {
+                  "mountPath": "/tmp",
+                  "name": "tmp"
+                }
+              ]
+            }
+          ],
+          "dnsPolicy": "ClusterFirst",
+          "enableServiceLinks": false,
+          "imagePullSecrets": [
+            {
+              "name": "ptah-manager-pull-1-37-0-result-restart-b2576f9b-5a0ef2fe7d"
+            }
+          ],
+          "initContainers": [
+            {
+              "args": [
+                "runtime-verify",
+                "--timeout=60s",
+                "--release-name=ptah-1-37-0-result-resta-5a0ef2fe7d",
+                "--release-namespace=ptah-system-1-37-0-result-restart-b2576f9b-5a0ef2fe7d",
+                "--coordination-namespace=ptah-system-1-37-0-result-restart-b2576f9b-5a0ef2fe7d",
+                "--leader-election=true",
+                "--leader-election-id=ptah-operator.operator.ptah.run",
+                "--webhook-service-name=ptah-runtime-generated-name-prefix-boundary-proof-5a0ef-webhook",
+                "--webhook-timeout-seconds=5",
+                "--hook-service-account-name=ptah-runtime-generated-name-prefix-boundary-proof-5-crd-manager",
+                "--controller-service-account-name=ptah-runtime-generated-name-prefix-boundary-proof-5a0ef2fe7d",
+                "--controller-deployment-name=ptah-runtime-generated-name-prefix-boundary-proof-5a0ef2fe7d",
+                "--certificate-deployment-name=ptah-runtime-generated-name-prefix-boun-cert-rotator",
+                "--require-distinct-approver=false",
+                "--verify-controller-state=true"
+              ],
+              "command": [
+                "/ptah-crd-manager"
+              ],
+              "image": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/operator@sha256:f338a4c98d77e4908426d0c4b45a1b177ffc8c2916cae3029217b9ec12cd6f36",
+              "imagePullPolicy": "IfNotPresent",
+              "name": "verify-candidate-runtime",
+              "resources": {
+                "limits": {
+                  "memory": "32Mi"
+                },
+                "requests": {
+                  "cpu": "5m",
+                  "memory": "16Mi"
+                }
+              },
+              "securityContext": {
+                "allowPrivilegeEscalation": false,
+                "capabilities": {
+                  "drop": [
+                    "ALL"
+                  ]
+                },
+                "readOnlyRootFilesystem": true
+              },
+              "terminationMessagePath": "/dev/termination-log",
+              "terminationMessagePolicy": "File",
+              "volumeMounts": [
+                {
+                  "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                  "name": "api-access",
+                  "readOnly": true
+                }
+              ]
+            }
+          ],
+          "restartPolicy": "Always",
+          "schedulerName": "default-scheduler",
+          "securityContext": {
+            "fsGroup": 65532,
+            "runAsGroup": 65532,
+            "runAsNonRoot": true,
+            "runAsUser": 65532,
+            "seccompProfile": {
+              "type": "RuntimeDefault"
+            }
+          },
+          "serviceAccount": "ptah-runtime-generated-name-prefix-boundary-proof-5a0ef2fe7d",
+          "serviceAccountName": "ptah-runtime-generated-name-prefix-boundary-proof-5a0ef2fe7d",
+          "terminationGracePeriodSeconds": 30,
+          "volumes": [
+            {
+              "name": "api-access",
+              "projected": {
+                "defaultMode": 420,
+                "sources": [
+                  {
+                    "serviceAccountToken": {
+                      "expirationSeconds": 3600,
+                      "path": "token"
+                    }
+                  },
+                  {
+                    "configMap": {
+                      "items": [
+                        {
+                          "key": "ca.crt",
+                          "path": "ca.crt"
+                        }
+                      ],
+                      "name": "kube-root-ca.crt"
+                    }
+                  },
+                  {
+                    "downwardAPI": {
+                      "items": [
+                        {
+                          "fieldRef": {
+                            "apiVersion": "v1",
+                            "fieldPath": "metadata.namespace"
+                          },
+                          "path": "namespace"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "name": "webhook-cert",
+              "secret": {
+                "defaultMode": 420,
+                "items": [
+                  {
+                    "key": "tls.crt",
+                    "path": "tls.crt"
+                  },
+                  {
+                    "key": "tls.key",
+                    "path": "tls.key"
+                  }
+                ],
+                "secretName": "ptah-runtime-generated-name-prefix-boundary-proof-webhook-cert"
+              }
+            },
+            {
+              "name": "result-cert",
+              "secret": {
+                "defaultMode": 288,
+                "items": [
+                  {
+                    "key": "tls.crt",
+                    "path": "tls.crt"
+                  },
+                  {
+                    "key": "tls.key",
+                    "path": "tls.key"
+                  },
+                  {
+                    "key": "ca.crt",
+                    "path": "ca.crt"
+                  },
+                  {
+                    "key": "client-ca.crt",
+                    "path": "client-ca.crt"
+                  },
+                  {
+                    "key": "client-ca.key",
+                    "path": "client-ca.key"
+                  },
+                  {
+                    "key": "client-trust.crt",
+                    "path": "client-trust.crt"
+                  }
+                ],
+                "secretName": "ptah-runtime-generated-name-prefix-boundary-proof-result-trust"
+              }
+            },
+            {
+              "emptyDir": {
+                "sizeLimit": "32Mi"
+              },
+              "name": "tmp"
+            }
+          ]
+        }
+      }
+    },
+    "status": {
+      "availableReplicas": 2,
+      "conditions": [
+        {
+          "lastTransitionTime": "2026-10-02T16:16:33Z",
+          "lastUpdateTime": "2026-10-02T16:16:33Z",
+          "message": "Deployment has minimum availability.",
+          "reason": "MinimumReplicasAvailable",
+          "status": "True",
+          "type": "Available"
+        },
+        {
+          "lastTransitionTime": "2026-10-02T12:31:58Z",
+          "lastUpdateTime": "2026-10-02T16:16:33Z",
+          "message": "ReplicaSet \"ptah-runtime-generated-name-prefix-boundary-proof-5a0ef2fe7d-66c5547b8c\" has successfully progressed.",
+          "reason": "NewReplicaSetAvailable",
+          "status": "True",
+          "type": "Progressing"
+        }
+      ],
+      "observedGeneration": 9,
+      "readyReplicas": 2,
+      "replicas": 2,
+      "terminatingReplicas": 0,
+      "updatedReplicas": 2
+    }
+  },
+  "pods": {
+    "apiVersion": "v1",
+    "items": [
+      {
+        "apiVersion": "v1",
+        "kind": "Pod",
+        "metadata": {
+          "creationTimestamp": "2026-10-02T16:15:25Z",
+          "generateName": "ptah-runtime-generated-name-prefix-boun-cert-rotator-8464875ff7-",
+          "generation": 1,
+          "labels": {
+            "app.kubernetes.io/component": "certificate-rotation",
+            "app.kubernetes.io/instance": "ptah-1-37-0-result-resta-5a0ef2fe7d",
+            "app.kubernetes.io/managed-by": "Helm",
+            "app.kubernetes.io/name": "ptah-operator",
+            "app.kubernetes.io/version": "0.2.0",
+            "helm.sh/chart": "ptah-operator-0.2.0",
+            "pod-template-hash": "8464875ff7"
+          },
+          "name": "ptah-runtime-generated-name-prefix-boun-cert-rotator-84648zcpp4",
+          "namespace": "ptah-system-1-37-0-result-restart-b2576f9b-5a0ef2fe7d",
+          "ownerReferences": [
+            {
+              "apiVersion": "apps/v1",
+              "blockOwnerDeletion": true,
+              "controller": true,
+              "kind": "ReplicaSet",
+              "name": "ptah-runtime-generated-name-prefix-boun-cert-rotator-8464875ff7",
+              "uid": "8526d16f-cc5a-435d-aca9-b18b72eaccf9"
+            }
+          ],
+          "resourceVersion": "54273",
+          "uid": "5de618fa-3fe2-4fd1-8737-c8120a4878e3"
+        },
+        "spec": {
+          "automountServiceAccountToken": false,
+          "containers": [
+            {
+              "args": [
+                "--namespace=ptah-system-1-37-0-result-restart-b2576f9b-5a0ef2fe7d",
+                "--release-name=ptah-1-37-0-result-resta-5a0ef2fe7d",
+                "--secret-name=ptah-runtime-generated-name-prefix-boundary-proof-webhook-cert",
+                "--staging-secret-name=ptah-runtime-generated-name-prefix-boundary-cert-rotation-stage",
+                "--recreate-missing-secret=true",
+                "--lease-name=ptah-runtime-generated-name-prefix-boundary-proof-cert-rotation",
+                "--mutating-webhook-configuration=ptah-operator-admission",
+                "--mutating-webhook-names=mapproval.operator.ptah.run,mmigrationapproval.operator.ptah.run,mmigrationrunacknowledgment.operator.ptah.run",
+                "--validating-webhook-configuration=ptah-operator-admission",
+                "--validating-webhook-names=vapproval.operator.ptah.run,vmigrationapproval.operator.ptah.run,vmigrationrunacknowledgment.operator.ptah.run,vpodintent.operator.ptah.run,vcontrollerwrite.operator.ptah.run",
+                "--service-name=ptah-runtime-generated-name-prefix-boundary-proof-5a0ef-webhook",
+                "--service-namespace=ptah-system-1-37-0-result-restart-b2576f9b-5a0ef2fe7d",
+                "--endpoint-port-name=https",
+                "--holder-identity=$(POD_NAME)/$(POD_UID)",
+                "--run-interval=168h",
+                "--ca-switch-delay=60s",
+                "--operation-timeout=15m",
+                "--retry-initial=5s",
+                "--retry-max=5m",
+                "--health-bind-address=:8081",
+                "--renewal-threshold=720h",
+                "--serving-certificate-validity=2160h",
+                "--ca-certificate-validity=26280h",
+                "--probe-timeout=5m",
+                "--probe-interval=2s",
+                "--lease-duration=10m",
+                "--lease-acquire-timeout=30s",
+                "--result-secret-name=ptah-runtime-generated-name-prefix-boundary-proof-result-trust",
+                "--result-journal-secret-name=ptah-runtime-generated-name-prefix-boundary-proo-result-journal",
+                "--result-enrollment-policy=ptah-runtime-generated-name-prefix-boundary-p-result-enrollment",
+                "--result-service-name=ptah-runtime-generated-name-prefix-boundary-proof-5a0ef-results",
+                "--result-lease-name=ptah-runtime-generated-name-prefix-boundary-pro-result-rotation"
+              ],
+              "command": [
+                "/ptah-cert-rotator"
+              ],
+              "env": [
+                {
+                  "name": "POD_NAME",
+                  "valueFrom": {
+                    "fieldRef": {
+                      "apiVersion": "v1",
+                      "fieldPath": "metadata.name"
+                    }
+                  }
+                },
+                {
+                  "name": "POD_UID",
+                  "valueFrom": {
+                    "fieldRef": {
+                      "apiVersion": "v1",
+                      "fieldPath": "metadata.uid"
+                    }
+                  }
+                }
+              ],
+              "image": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/operator@sha256:f338a4c98d77e4908426d0c4b45a1b177ffc8c2916cae3029217b9ec12cd6f36",
+              "imagePullPolicy": "IfNotPresent",
+              "livenessProbe": {
+                "failureThreshold": 3,
+                "httpGet": {
+                  "path": "/healthz",
+                  "port": "health",
+                  "scheme": "HTTP"
+                },
+                "initialDelaySeconds": 5,
+                "periodSeconds": 10,
+                "successThreshold": 1,
+                "timeoutSeconds": 1
+              },
+              "name": "certificate-rotator",
+              "ports": [
+                {
+                  "containerPort": 8081,
+                  "name": "health",
+                  "protocol": "TCP"
+                }
+              ],
+              "readinessProbe": {
+                "failureThreshold": 1,
+                "httpGet": {
+                  "path": "/readyz",
+                  "port": "health",
+                  "scheme": "HTTP"
+                },
+                "periodSeconds": 5,
+                "successThreshold": 1,
+                "timeoutSeconds": 1
+              },
+              "resources": {
+                "limits": {
+                  "memory": "64Mi"
+                },
+                "requests": {
+                  "cpu": "10m",
+                  "memory": "32Mi"
+                }
+              },
+              "securityContext": {
+                "allowPrivilegeEscalation": false,
+                "capabilities": {
+                  "drop": [
+                    "ALL"
+                  ]
+                },
+                "readOnlyRootFilesystem": true
+              },
+              "terminationMessagePath": "/dev/termination-log",
+              "terminationMessagePolicy": "File",
+              "volumeMounts": [
+                {
+                  "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                  "name": "api-access",
+                  "readOnly": true
+                }
+              ]
+            }
+          ],
+          "dnsPolicy": "ClusterFirst",
+          "enableServiceLinks": false,
+          "imagePullSecrets": [
+            {
+              "name": "ptah-manager-pull-1-37-0-result-restart-b2576f9b-5a0ef2fe7d"
+            }
+          ],
+          "initContainers": [
+            {
+              "args": [
+                "runtime-verify",
+                "--timeout=60s",
+                "--release-name=ptah-1-37-0-result-resta-5a0ef2fe7d",
+                "--release-namespace=ptah-system-1-37-0-result-restart-b2576f9b-5a0ef2fe7d",
+                "--coordination-namespace=ptah-system-1-37-0-result-restart-b2576f9b-5a0ef2fe7d",
+                "--leader-election=true",
+                "--leader-election-id=ptah-operator.operator.ptah.run",
+                "--webhook-service-name=ptah-runtime-generated-name-prefix-boundary-proof-5a0ef-webhook",
+                "--webhook-timeout-seconds=5",
+                "--hook-service-account-name=ptah-runtime-generated-name-prefix-boundary-proof-5-crd-manager",
+                "--controller-service-account-name=ptah-runtime-generated-name-prefix-boundary-proof-5a0ef2fe7d",
+                "--controller-deployment-name=ptah-runtime-generated-name-prefix-boundary-proof-5a0ef2fe7d",
+                "--certificate-deployment-name=ptah-runtime-generated-name-prefix-boun-cert-rotator",
+                "--require-distinct-approver=false"
+              ],
+              "command": [
+                "/ptah-crd-manager"
+              ],
+              "image": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/operator@sha256:f338a4c98d77e4908426d0c4b45a1b177ffc8c2916cae3029217b9ec12cd6f36",
+              "imagePullPolicy": "IfNotPresent",
+              "name": "verify-candidate-runtime",
+              "resources": {
+                "limits": {
+                  "memory": "32Mi"
+                },
+                "requests": {
+                  "cpu": "5m",
+                  "memory": "16Mi"
+                }
+              },
+              "securityContext": {
+                "allowPrivilegeEscalation": false,
+                "capabilities": {
+                  "drop": [
+                    "ALL"
+                  ]
+                },
+                "readOnlyRootFilesystem": true
+              },
+              "terminationMessagePath": "/dev/termination-log",
+              "terminationMessagePolicy": "File",
+              "volumeMounts": [
+                {
+                  "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                  "name": "api-access",
+                  "readOnly": true
+                }
+              ]
+            }
+          ],
+          "nodeName": "ptah-e2e-1-37-0-result-restar-5a0ef2fe7d-worker",
+          "preemptionPolicy": "PreemptLowerPriority",
+          "priority": 0,
+          "restartPolicy": "Always",
+          "schedulerName": "default-scheduler",
+          "securityContext": {
+            "runAsGroup": 65532,
+            "runAsNonRoot": true,
+            "runAsUser": 65532,
+            "seccompProfile": {
+              "type": "RuntimeDefault"
+            }
+          },
+          "serviceAccount": "ptah-runtime-generated-name-prefix-boun-cert-rotator",
+          "serviceAccountName": "ptah-runtime-generated-name-prefix-boun-cert-rotator",
+          "terminationGracePeriodSeconds": 30,
+          "tolerations": [
+            {
+              "effect": "NoExecute",
+              "key": "node.kubernetes.io/not-ready",
+              "operator": "Exists",
+              "tolerationSeconds": 300
+            },
+            {
+              "effect": "NoExecute",
+              "key": "node.kubernetes.io/unreachable",
+              "operator": "Exists",
+              "tolerationSeconds": 300
+            }
+          ],
+          "volumes": [
+            {
+              "name": "api-access",
+              "projected": {
+                "defaultMode": 420,
+                "sources": [
+                  {
+                    "serviceAccountToken": {
+                      "expirationSeconds": 3600,
+                      "path": "token"
+                    }
+                  },
+                  {
+                    "configMap": {
+                      "items": [
+                        {
+                          "key": "ca.crt",
+                          "path": "ca.crt"
+                        }
+                      ],
+                      "name": "kube-root-ca.crt"
+                    }
+                  },
+                  {
+                    "downwardAPI": {
+                      "items": [
+                        {
+                          "fieldRef": {
+                            "apiVersion": "v1",
+                            "fieldPath": "metadata.namespace"
+                          },
+                          "path": "namespace"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "status": {
+          "allocatedResources": {
+            "cpu": "10m",
+            "memory": "32Mi"
+          },
+          "conditions": [
+            {
+              "lastProbeTime": null,
+              "lastTransitionTime": "2026-10-02T16:15:26Z",
+              "observedGeneration": 1,
+              "status": "True",
+              "type": "PodReadyToStartContainers"
+            },
+            {
+              "lastProbeTime": null,
+              "lastTransitionTime": "2026-10-02T16:15:27Z",
+              "observedGeneration": 1,
+              "status": "True",
+              "type": "Initialized"
+            },
+            {
+              "lastProbeTime": null,
+              "lastTransitionTime": "2026-10-02T16:16:18Z",
+              "observedGeneration": 1,
+              "status": "True",
+              "type": "Ready"
+            },
+            {
+              "lastProbeTime": null,
+              "lastTransitionTime": "2026-10-02T16:16:18Z",
+              "observedGeneration": 1,
+              "status": "True",
+              "type": "ContainersReady"
+            },
+            {
+              "lastProbeTime": null,
+              "lastTransitionTime": "2026-10-02T16:15:25Z",
+              "observedGeneration": 1,
+              "status": "True",
+              "type": "PodScheduled"
+            }
+          ],
+          "containerStatuses": [
+            {
+              "allocatedResources": {
+                "cpu": "10m",
+                "memory": "32Mi"
+              },
+              "containerID": "containerd://4c9c45427b3f8a8c9c055ccadcd20cbad07dadd2bc4201dc83232d72b3d29fba",
+              "image": "sha256:314f4329ac66afea31e189577c4aaa97c387458c9ded660ce1eec0910e59fde5",
+              "imageID": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/operator@sha256:f338a4c98d77e4908426d0c4b45a1b177ffc8c2916cae3029217b9ec12cd6f36",
+              "lastState": {},
+              "name": "certificate-rotator",
+              "ready": true,
+              "resources": {
+                "limits": {
+                  "memory": "64Mi"
+                },
+                "requests": {
+                  "cpu": "10m",
+                  "memory": "32Mi"
+                }
+              },
+              "restartCount": 0,
+              "started": true,
+              "state": {
+                "running": {
+                  "startedAt": "2026-10-02T16:15:27Z"
+                }
+              },
+              "user": {
+                "linux": {
+                  "gid": 65532,
+                  "supplementalGroups": [
+                    65532
+                  ],
+                  "uid": 65532
+                }
+              },
+              "volumeMounts": [
+                {
+                  "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                  "name": "api-access",
+                  "readOnly": true,
+                  "recursiveReadOnly": "Disabled"
+                }
+              ]
+            }
+          ],
+          "hostIP": "172.18.0.6",
+          "hostIPs": [
+            {
+              "ip": "172.18.0.6"
+            }
+          ],
+          "initContainerStatuses": [
+            {
+              "allocatedResources": {
+                "cpu": "5m",
+                "memory": "16Mi"
+              },
+              "containerID": "containerd://4d1f9f286d5d25d2b13ca1b1951827c808d4c42e9cf833c62df8e2b7907b7997",
+              "image": "sha256:314f4329ac66afea31e189577c4aaa97c387458c9ded660ce1eec0910e59fde5",
+              "imageID": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/operator@sha256:f338a4c98d77e4908426d0c4b45a1b177ffc8c2916cae3029217b9ec12cd6f36",
+              "lastState": {},
+              "name": "verify-candidate-runtime",
+              "ready": true,
+              "resources": {
+                "limits": {
+                  "memory": "32Mi"
+                },
+                "requests": {
+                  "cpu": "5m",
+                  "memory": "16Mi"
+                }
+              },
+              "restartCount": 0,
+              "started": false,
+              "state": {
+                "terminated": {
+                  "containerID": "containerd://4d1f9f286d5d25d2b13ca1b1951827c808d4c42e9cf833c62df8e2b7907b7997",
+                  "exitCode": 0,
+                  "finishedAt": "2026-10-02T16:15:26Z",
+                  "reason": "Completed",
+                  "startedAt": "2026-10-02T16:15:26Z"
+                }
+              },
+              "user": {
+                "linux": {
+                  "gid": 65532,
+                  "supplementalGroups": [
+                    65532
+                  ],
+                  "uid": 65532
+                }
+              },
+              "volumeMounts": [
+                {
+                  "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                  "name": "api-access",
+                  "readOnly": true,
+                  "recursiveReadOnly": "Disabled"
+                }
+              ]
+            }
+          ],
+          "observedGeneration": 1,
+          "phase": "Running",
+          "podIP": "10.244.4.32",
+          "podIPs": [
+            {
+              "ip": "10.244.4.32"
+            }
+          ],
+          "qosClass": "Burstable",
+          "resources": {
+            "limits": {
+              "memory": "64Mi"
+            },
+            "requests": {
+              "memory": "32Mi"
+            }
+          },
+          "startTime": "2026-10-02T16:15:25Z"
+        }
+      },
+      {
+        "apiVersion": "v1",
+        "kind": "Pod",
+        "metadata": {
+          "annotations": {
+            "kubectl.kubernetes.io/restartedAt": "2026-10-02T18:16:19+02:00"
+          },
+          "creationTimestamp": "2026-10-02T16:16:19Z",
+          "generateName": "ptah-runtime-generated-name-prefix-boundary-proof-5a0ef2fe7d-66c5547b8c-",
+          "generation": 1,
+          "labels": {
+            "app.kubernetes.io/component": "controller",
+            "app.kubernetes.io/instance": "ptah-1-37-0-result-resta-5a0ef2fe7d",
+            "app.kubernetes.io/name": "ptah-operator",
+            "pod-template-hash": "66c5547b8c"
+          },
+          "name": "ptah-runtime-generated-name-prefix-boundary-proof-5a0ef2fezb7rj",
+          "namespace": "ptah-system-1-37-0-result-restart-b2576f9b-5a0ef2fe7d",
+          "ownerReferences": [
+            {
+              "apiVersion": "apps/v1",
+              "blockOwnerDeletion": true,
+              "controller": true,
+              "kind": "ReplicaSet",
+              "name": "ptah-runtime-generated-name-prefix-boundary-proof-5a0ef2fe7d-66c5547b8c",
+              "uid": "cd3f0222-dc14-403f-ae57-c2cf448c9774"
+            }
+          ],
+          "resourceVersion": "54420",
+          "uid": "94ca2cc7-f383-440e-b5a2-d919e600f279"
+        },
+        "spec": {
+          "automountServiceAccountToken": false,
+          "containers": [
+            {
+              "args": [
+                "--leader-elect=true",
+                "--metrics-bind-address=:8080",
+                "--health-probe-bind-address=:8081",
+                "--webhook-port=9443",
+                "--webhook-cert-dir=/certs",
+                "--controller-image=e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/operator@sha256:f338a4c98d77e4908426d0c4b45a1b177ffc8c2916cae3029217b9ec12cd6f36",
+                "--executor-image=e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-executor@sha256:45530f0f2c41f4d649c207fe8221dad268946ca8da13b503244805c016f3c9dd",
+                "--runner-image=e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-runner@sha256:7e2199f5c03660f094244b00962ec7e222f752f9cfc86276ac7cea296ce5d4b6",
+                "--ptah-version=v0.9.0-73-gf6e562c5b",
+                "--target-lock-namespace=ptah-system-1-37-0-result-restart-b2576f9b-5a0ef2fe7d",
+                "--controller-service-account-username=system:serviceaccount:ptah-system-1-37-0-result-restart-b2576f9b-5a0ef2fe7d:ptah-runtime-generated-name-prefix-boundary-proof-5a0ef2fe7d",
+                "--default-tolerations-enabled=true",
+                "--default-not-ready-toleration-seconds=300",
+                "--default-unreachable-toleration-seconds=300",
+                "--extended-resource-toleration-enabled=false",
+                "--always-pull-images-enabled=false",
+                "--require-distinct-approver=false",
+                "--result-endpoint=https://ptah-runtime-generated-name-prefix-boundary-proof-5a0ef-results.ptah-system-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc",
+                "--result-cert-dir=/result-certs",
+                "--result-bind-address=:9444",
+                "--result-enrollment-policy=ptah-runtime-generated-name-prefix-boundary-p-result-enrollment"
+              ],
+              "command": [
+                "/manager"
+              ],
+              "image": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/operator@sha256:f338a4c98d77e4908426d0c4b45a1b177ffc8c2916cae3029217b9ec12cd6f36",
+              "imagePullPolicy": "IfNotPresent",
+              "livenessProbe": {
+                "failureThreshold": 3,
+                "httpGet": {
+                  "path": "/healthz",
+                  "port": "health",
+                  "scheme": "HTTP"
+                },
+                "initialDelaySeconds": 10,
+                "periodSeconds": 20,
+                "successThreshold": 1,
+                "timeoutSeconds": 1
+              },
+              "name": "manager",
+              "ports": [
+                {
+                  "containerPort": 8080,
+                  "name": "metrics",
+                  "protocol": "TCP"
+                },
+                {
+                  "containerPort": 8081,
+                  "name": "health",
+                  "protocol": "TCP"
+                },
+                {
+                  "containerPort": 9443,
+                  "name": "webhook",
+                  "protocol": "TCP"
+                },
+                {
+                  "containerPort": 9444,
+                  "name": "results",
+                  "protocol": "TCP"
+                }
+              ],
+              "readinessProbe": {
+                "failureThreshold": 3,
+                "httpGet": {
+                  "path": "/readyz",
+                  "port": "health",
+                  "scheme": "HTTP"
+                },
+                "initialDelaySeconds": 5,
+                "periodSeconds": 10,
+                "successThreshold": 1,
+                "timeoutSeconds": 1
+              },
+              "resources": {
+                "limits": {
+                  "memory": "256Mi"
+                },
+                "requests": {
+                  "cpu": "50m",
+                  "memory": "96Mi"
+                }
+              },
+              "securityContext": {
+                "allowPrivilegeEscalation": false,
+                "capabilities": {
+                  "drop": [
+                    "ALL"
+                  ]
+                },
+                "readOnlyRootFilesystem": true
+              },
+              "terminationMessagePath": "/dev/termination-log",
+              "terminationMessagePolicy": "File",
+              "volumeMounts": [
+                {
+                  "mountPath": "/result-certs",
+                  "name": "result-cert",
+                  "readOnly": true
+                },
+                {
+                  "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                  "name": "api-access",
+                  "readOnly": true
+                },
+                {
+                  "mountPath": "/certs",
+                  "name": "webhook-cert",
+                  "readOnly": true
+                },
+                {
+                  "mountPath": "/tmp",
+                  "name": "tmp"
+                }
+              ]
+            }
+          ],
+          "dnsPolicy": "ClusterFirst",
+          "enableServiceLinks": false,
+          "imagePullSecrets": [
+            {
+              "name": "ptah-manager-pull-1-37-0-result-restart-b2576f9b-5a0ef2fe7d"
+            }
+          ],
+          "initContainers": [
+            {
+              "args": [
+                "runtime-verify",
+                "--timeout=60s",
+                "--release-name=ptah-1-37-0-result-resta-5a0ef2fe7d",
+                "--release-namespace=ptah-system-1-37-0-result-restart-b2576f9b-5a0ef2fe7d",
+                "--coordination-namespace=ptah-system-1-37-0-result-restart-b2576f9b-5a0ef2fe7d",
+                "--leader-election=true",
+                "--leader-election-id=ptah-operator.operator.ptah.run",
+                "--webhook-service-name=ptah-runtime-generated-name-prefix-boundary-proof-5a0ef-webhook",
+                "--webhook-timeout-seconds=5",
+                "--hook-service-account-name=ptah-runtime-generated-name-prefix-boundary-proof-5-crd-manager",
+                "--controller-service-account-name=ptah-runtime-generated-name-prefix-boundary-proof-5a0ef2fe7d",
+                "--controller-deployment-name=ptah-runtime-generated-name-prefix-boundary-proof-5a0ef2fe7d",
+                "--certificate-deployment-name=ptah-runtime-generated-name-prefix-boun-cert-rotator",
+                "--require-distinct-approver=false",
+                "--verify-controller-state=true"
+              ],
+              "command": [
+                "/ptah-crd-manager"
+              ],
+              "image": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/operator@sha256:f338a4c98d77e4908426d0c4b45a1b177ffc8c2916cae3029217b9ec12cd6f36",
+              "imagePullPolicy": "IfNotPresent",
+              "name": "verify-candidate-runtime",
+              "resources": {
+                "limits": {
+                  "memory": "32Mi"
+                },
+                "requests": {
+                  "cpu": "5m",
+                  "memory": "16Mi"
+                }
+              },
+              "securityContext": {
+                "allowPrivilegeEscalation": false,
+                "capabilities": {
+                  "drop": [
+                    "ALL"
+                  ]
+                },
+                "readOnlyRootFilesystem": true
+              },
+              "terminationMessagePath": "/dev/termination-log",
+              "terminationMessagePolicy": "File",
+              "volumeMounts": [
+                {
+                  "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                  "name": "api-access",
+                  "readOnly": true
+                }
+              ]
+            }
+          ],
+          "nodeName": "ptah-e2e-1-37-0-result-restar-5a0ef2fe7d-worker",
+          "preemptionPolicy": "PreemptLowerPriority",
+          "priority": 0,
+          "restartPolicy": "Always",
+          "schedulerName": "default-scheduler",
+          "securityContext": {
+            "fsGroup": 65532,
+            "runAsGroup": 65532,
+            "runAsNonRoot": true,
+            "runAsUser": 65532,
+            "seccompProfile": {
+              "type": "RuntimeDefault"
+            }
+          },
+          "serviceAccount": "ptah-runtime-generated-name-prefix-boundary-proof-5a0ef2fe7d",
+          "serviceAccountName": "ptah-runtime-generated-name-prefix-boundary-proof-5a0ef2fe7d",
+          "terminationGracePeriodSeconds": 30,
+          "tolerations": [
+            {
+              "effect": "NoExecute",
+              "key": "node.kubernetes.io/not-ready",
+              "operator": "Exists",
+              "tolerationSeconds": 300
+            },
+            {
+              "effect": "NoExecute",
+              "key": "node.kubernetes.io/unreachable",
+              "operator": "Exists",
+              "tolerationSeconds": 300
+            }
+          ],
+          "volumes": [
+            {
+              "name": "api-access",
+              "projected": {
+                "defaultMode": 420,
+                "sources": [
+                  {
+                    "serviceAccountToken": {
+                      "expirationSeconds": 3600,
+                      "path": "token"
+                    }
+                  },
+                  {
+                    "configMap": {
+                      "items": [
+                        {
+                          "key": "ca.crt",
+                          "path": "ca.crt"
+                        }
+                      ],
+                      "name": "kube-root-ca.crt"
+                    }
+                  },
+                  {
+                    "downwardAPI": {
+                      "items": [
+                        {
+                          "fieldRef": {
+                            "apiVersion": "v1",
+                            "fieldPath": "metadata.namespace"
+                          },
+                          "path": "namespace"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "name": "webhook-cert",
+              "secret": {
+                "defaultMode": 420,
+                "items": [
+                  {
+                    "key": "tls.crt",
+                    "path": "tls.crt"
+                  },
+                  {
+                    "key": "tls.key",
+                    "path": "tls.key"
+                  }
+                ],
+                "secretName": "ptah-runtime-generated-name-prefix-boundary-proof-webhook-cert"
+              }
+            },
+            {
+              "name": "result-cert",
+              "secret": {
+                "defaultMode": 288,
+                "items": [
+                  {
+                    "key": "tls.crt",
+                    "path": "tls.crt"
+                  },
+                  {
+                    "key": "tls.key",
+                    "path": "tls.key"
+                  },
+                  {
+                    "key": "ca.crt",
+                    "path": "ca.crt"
+                  },
+                  {
+                    "key": "client-ca.crt",
+                    "path": "client-ca.crt"
+                  },
+                  {
+                    "key": "client-ca.key",
+                    "path": "client-ca.key"
+                  },
+                  {
+                    "key": "client-trust.crt",
+                    "path": "client-trust.crt"
+                  }
+                ],
+                "secretName": "ptah-runtime-generated-name-prefix-boundary-proof-result-trust"
+              }
+            },
+            {
+              "emptyDir": {
+                "sizeLimit": "32Mi"
+              },
+              "name": "tmp"
+            }
+          ]
+        },
+        "status": {
+          "allocatedResources": {
+            "cpu": "50m",
+            "memory": "96Mi"
+          },
+          "conditions": [
+            {
+              "lastProbeTime": null,
+              "lastTransitionTime": "2026-10-02T16:16:20Z",
+              "observedGeneration": 1,
+              "status": "True",
+              "type": "PodReadyToStartContainers"
+            },
+            {
+              "lastProbeTime": null,
+              "lastTransitionTime": "2026-10-02T16:16:21Z",
+              "observedGeneration": 1,
+              "status": "True",
+              "type": "Initialized"
+            },
+            {
+              "lastProbeTime": null,
+              "lastTransitionTime": "2026-10-02T16:16:33Z",
+              "observedGeneration": 1,
+              "status": "True",
+              "type": "Ready"
+            },
+            {
+              "lastProbeTime": null,
+              "lastTransitionTime": "2026-10-02T16:16:33Z",
+              "observedGeneration": 1,
+              "status": "True",
+              "type": "ContainersReady"
+            },
+            {
+              "lastProbeTime": null,
+              "lastTransitionTime": "2026-10-02T16:16:19Z",
+              "observedGeneration": 1,
+              "status": "True",
+              "type": "PodScheduled"
+            }
+          ],
+          "containerStatuses": [
+            {
+              "allocatedResources": {
+                "cpu": "50m",
+                "memory": "96Mi"
+              },
+              "containerID": "containerd://e86e6e9fbb063e4b5f55b1a363bb89de971391ac1d1f87e23d8377f04660e69a",
+              "image": "sha256:314f4329ac66afea31e189577c4aaa97c387458c9ded660ce1eec0910e59fde5",
+              "imageID": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/operator@sha256:f338a4c98d77e4908426d0c4b45a1b177ffc8c2916cae3029217b9ec12cd6f36",
+              "lastState": {},
+              "name": "manager",
+              "ready": true,
+              "resources": {
+                "limits": {
+                  "memory": "256Mi"
+                },
+                "requests": {
+                  "cpu": "50m",
+                  "memory": "96Mi"
+                }
+              },
+              "restartCount": 0,
+              "started": true,
+              "state": {
+                "running": {
+                  "startedAt": "2026-10-02T16:16:21Z"
+                }
+              },
+              "user": {
+                "linux": {
+                  "gid": 65532,
+                  "supplementalGroups": [
+                    65532
+                  ],
+                  "uid": 65532
+                }
+              },
+              "volumeMounts": [
+                {
+                  "mountPath": "/result-certs",
+                  "name": "result-cert",
+                  "readOnly": true,
+                  "recursiveReadOnly": "Disabled"
+                },
+                {
+                  "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                  "name": "api-access",
+                  "readOnly": true,
+                  "recursiveReadOnly": "Disabled"
+                },
+                {
+                  "mountPath": "/certs",
+                  "name": "webhook-cert",
+                  "readOnly": true,
+                  "recursiveReadOnly": "Disabled"
+                },
+                {
+                  "mountPath": "/tmp",
+                  "name": "tmp"
+                }
+              ]
+            }
+          ],
+          "hostIP": "172.18.0.6",
+          "hostIPs": [
+            {
+              "ip": "172.18.0.6"
+            }
+          ],
+          "initContainerStatuses": [
+            {
+              "allocatedResources": {
+                "cpu": "5m",
+                "memory": "16Mi"
+              },
+              "containerID": "containerd://11674a7607ec0389aa95e8fc1a6981a102efe86a9ce5aa7e1924226ef0d7feb5",
+              "image": "sha256:314f4329ac66afea31e189577c4aaa97c387458c9ded660ce1eec0910e59fde5",
+              "imageID": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/operator@sha256:f338a4c98d77e4908426d0c4b45a1b177ffc8c2916cae3029217b9ec12cd6f36",
+              "lastState": {},
+              "name": "verify-candidate-runtime",
+              "ready": true,
+              "resources": {
+                "limits": {
+                  "memory": "32Mi"
+                },
+                "requests": {
+                  "cpu": "5m",
+                  "memory": "16Mi"
+                }
+              },
+              "restartCount": 0,
+              "started": false,
+              "state": {
+                "terminated": {
+                  "containerID": "containerd://11674a7607ec0389aa95e8fc1a6981a102efe86a9ce5aa7e1924226ef0d7feb5",
+                  "exitCode": 0,
+                  "finishedAt": "2026-10-02T16:16:20Z",
+                  "reason": "Completed",
+                  "startedAt": "2026-10-02T16:16:20Z"
+                }
+              },
+              "user": {
+                "linux": {
+                  "gid": 65532,
+                  "supplementalGroups": [
+                    65532
+                  ],
+                  "uid": 65532
+                }
+              },
+              "volumeMounts": [
+                {
+                  "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                  "name": "api-access",
+                  "readOnly": true,
+                  "recursiveReadOnly": "Disabled"
+                }
+              ]
+            }
+          ],
+          "observedGeneration": 1,
+          "phase": "Running",
+          "podIP": "10.244.4.33",
+          "podIPs": [
+            {
+              "ip": "10.244.4.33"
+            }
+          ],
+          "qosClass": "Burstable",
+          "resources": {
+            "limits": {
+              "memory": "256Mi"
+            },
+            "requests": {
+              "cpu": "28m",
+              "memory": "96Mi"
+            }
+          },
+          "startTime": "2026-10-02T16:16:19Z"
+        }
+      },
+      {
+        "apiVersion": "v1",
+        "kind": "Pod",
+        "metadata": {
+          "annotations": {
+            "kubectl.kubernetes.io/restartedAt": "2026-10-02T18:16:19+02:00"
+          },
+          "creationTimestamp": "2026-10-02T16:16:19Z",
+          "generateName": "ptah-runtime-generated-name-prefix-boundary-proof-5a0ef2fe7d-66c5547b8c-",
+          "generation": 1,
+          "labels": {
+            "app.kubernetes.io/component": "controller",
+            "app.kubernetes.io/instance": "ptah-1-37-0-result-resta-5a0ef2fe7d",
+            "app.kubernetes.io/name": "ptah-operator",
+            "pod-template-hash": "66c5547b8c"
+          },
+          "name": "ptah-runtime-generated-name-prefix-boundary-proof-5a0ef2fezmsgm",
+          "namespace": "ptah-system-1-37-0-result-restart-b2576f9b-5a0ef2fe7d",
+          "ownerReferences": [
+            {
+              "apiVersion": "apps/v1",
+              "blockOwnerDeletion": true,
+              "controller": true,
+              "kind": "ReplicaSet",
+              "name": "ptah-runtime-generated-name-prefix-boundary-proof-5a0ef2fe7d-66c5547b8c",
+              "uid": "cd3f0222-dc14-403f-ae57-c2cf448c9774"
+            }
+          ],
+          "resourceVersion": "54411",
+          "uid": "8cfe6173-7210-4f55-a824-ae0c3e96b79f"
+        },
+        "spec": {
+          "automountServiceAccountToken": false,
+          "containers": [
+            {
+              "args": [
+                "--leader-elect=true",
+                "--metrics-bind-address=:8080",
+                "--health-probe-bind-address=:8081",
+                "--webhook-port=9443",
+                "--webhook-cert-dir=/certs",
+                "--controller-image=e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/operator@sha256:f338a4c98d77e4908426d0c4b45a1b177ffc8c2916cae3029217b9ec12cd6f36",
+                "--executor-image=e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-executor@sha256:45530f0f2c41f4d649c207fe8221dad268946ca8da13b503244805c016f3c9dd",
+                "--runner-image=e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-runner@sha256:7e2199f5c03660f094244b00962ec7e222f752f9cfc86276ac7cea296ce5d4b6",
+                "--ptah-version=v0.9.0-73-gf6e562c5b",
+                "--target-lock-namespace=ptah-system-1-37-0-result-restart-b2576f9b-5a0ef2fe7d",
+                "--controller-service-account-username=system:serviceaccount:ptah-system-1-37-0-result-restart-b2576f9b-5a0ef2fe7d:ptah-runtime-generated-name-prefix-boundary-proof-5a0ef2fe7d",
+                "--default-tolerations-enabled=true",
+                "--default-not-ready-toleration-seconds=300",
+                "--default-unreachable-toleration-seconds=300",
+                "--extended-resource-toleration-enabled=false",
+                "--always-pull-images-enabled=false",
+                "--require-distinct-approver=false",
+                "--result-endpoint=https://ptah-runtime-generated-name-prefix-boundary-proof-5a0ef-results.ptah-system-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc",
+                "--result-cert-dir=/result-certs",
+                "--result-bind-address=:9444",
+                "--result-enrollment-policy=ptah-runtime-generated-name-prefix-boundary-p-result-enrollment"
+              ],
+              "command": [
+                "/manager"
+              ],
+              "image": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/operator@sha256:f338a4c98d77e4908426d0c4b45a1b177ffc8c2916cae3029217b9ec12cd6f36",
+              "imagePullPolicy": "IfNotPresent",
+              "livenessProbe": {
+                "failureThreshold": 3,
+                "httpGet": {
+                  "path": "/healthz",
+                  "port": "health",
+                  "scheme": "HTTP"
+                },
+                "initialDelaySeconds": 10,
+                "periodSeconds": 20,
+                "successThreshold": 1,
+                "timeoutSeconds": 1
+              },
+              "name": "manager",
+              "ports": [
+                {
+                  "containerPort": 8080,
+                  "name": "metrics",
+                  "protocol": "TCP"
+                },
+                {
+                  "containerPort": 8081,
+                  "name": "health",
+                  "protocol": "TCP"
+                },
+                {
+                  "containerPort": 9443,
+                  "name": "webhook",
+                  "protocol": "TCP"
+                },
+                {
+                  "containerPort": 9444,
+                  "name": "results",
+                  "protocol": "TCP"
+                }
+              ],
+              "readinessProbe": {
+                "failureThreshold": 3,
+                "httpGet": {
+                  "path": "/readyz",
+                  "port": "health",
+                  "scheme": "HTTP"
+                },
+                "initialDelaySeconds": 5,
+                "periodSeconds": 10,
+                "successThreshold": 1,
+                "timeoutSeconds": 1
+              },
+              "resources": {
+                "limits": {
+                  "memory": "256Mi"
+                },
+                "requests": {
+                  "cpu": "50m",
+                  "memory": "96Mi"
+                }
+              },
+              "securityContext": {
+                "allowPrivilegeEscalation": false,
+                "capabilities": {
+                  "drop": [
+                    "ALL"
+                  ]
+                },
+                "readOnlyRootFilesystem": true
+              },
+              "terminationMessagePath": "/dev/termination-log",
+              "terminationMessagePolicy": "File",
+              "volumeMounts": [
+                {
+                  "mountPath": "/result-certs",
+                  "name": "result-cert",
+                  "readOnly": true
+                },
+                {
+                  "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                  "name": "api-access",
+                  "readOnly": true
+                },
+                {
+                  "mountPath": "/certs",
+                  "name": "webhook-cert",
+                  "readOnly": true
+                },
+                {
+                  "mountPath": "/tmp",
+                  "name": "tmp"
+                }
+              ]
+            }
+          ],
+          "dnsPolicy": "ClusterFirst",
+          "enableServiceLinks": false,
+          "imagePullSecrets": [
+            {
+              "name": "ptah-manager-pull-1-37-0-result-restart-b2576f9b-5a0ef2fe7d"
+            }
+          ],
+          "initContainers": [
+            {
+              "args": [
+                "runtime-verify",
+                "--timeout=60s",
+                "--release-name=ptah-1-37-0-result-resta-5a0ef2fe7d",
+                "--release-namespace=ptah-system-1-37-0-result-restart-b2576f9b-5a0ef2fe7d",
+                "--coordination-namespace=ptah-system-1-37-0-result-restart-b2576f9b-5a0ef2fe7d",
+                "--leader-election=true",
+                "--leader-election-id=ptah-operator.operator.ptah.run",
+                "--webhook-service-name=ptah-runtime-generated-name-prefix-boundary-proof-5a0ef-webhook",
+                "--webhook-timeout-seconds=5",
+                "--hook-service-account-name=ptah-runtime-generated-name-prefix-boundary-proof-5-crd-manager",
+                "--controller-service-account-name=ptah-runtime-generated-name-prefix-boundary-proof-5a0ef2fe7d",
+                "--controller-deployment-name=ptah-runtime-generated-name-prefix-boundary-proof-5a0ef2fe7d",
+                "--certificate-deployment-name=ptah-runtime-generated-name-prefix-boun-cert-rotator",
+                "--require-distinct-approver=false",
+                "--verify-controller-state=true"
+              ],
+              "command": [
+                "/ptah-crd-manager"
+              ],
+              "image": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/operator@sha256:f338a4c98d77e4908426d0c4b45a1b177ffc8c2916cae3029217b9ec12cd6f36",
+              "imagePullPolicy": "IfNotPresent",
+              "name": "verify-candidate-runtime",
+              "resources": {
+                "limits": {
+                  "memory": "32Mi"
+                },
+                "requests": {
+                  "cpu": "5m",
+                  "memory": "16Mi"
+                }
+              },
+              "securityContext": {
+                "allowPrivilegeEscalation": false,
+                "capabilities": {
+                  "drop": [
+                    "ALL"
+                  ]
+                },
+                "readOnlyRootFilesystem": true
+              },
+              "terminationMessagePath": "/dev/termination-log",
+              "terminationMessagePolicy": "File",
+              "volumeMounts": [
+                {
+                  "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                  "name": "api-access",
+                  "readOnly": true
+                }
+              ]
+            }
+          ],
+          "nodeName": "ptah-e2e-1-37-0-result-restar-5a0ef2fe7d-worker",
+          "preemptionPolicy": "PreemptLowerPriority",
+          "priority": 0,
+          "restartPolicy": "Always",
+          "schedulerName": "default-scheduler",
+          "securityContext": {
+            "fsGroup": 65532,
+            "runAsGroup": 65532,
+            "runAsNonRoot": true,
+            "runAsUser": 65532,
+            "seccompProfile": {
+              "type": "RuntimeDefault"
+            }
+          },
+          "serviceAccount": "ptah-runtime-generated-name-prefix-boundary-proof-5a0ef2fe7d",
+          "serviceAccountName": "ptah-runtime-generated-name-prefix-boundary-proof-5a0ef2fe7d",
+          "terminationGracePeriodSeconds": 30,
+          "tolerations": [
+            {
+              "effect": "NoExecute",
+              "key": "node.kubernetes.io/not-ready",
+              "operator": "Exists",
+              "tolerationSeconds": 300
+            },
+            {
+              "effect": "NoExecute",
+              "key": "node.kubernetes.io/unreachable",
+              "operator": "Exists",
+              "tolerationSeconds": 300
+            }
+          ],
+          "volumes": [
+            {
+              "name": "api-access",
+              "projected": {
+                "defaultMode": 420,
+                "sources": [
+                  {
+                    "serviceAccountToken": {
+                      "expirationSeconds": 3600,
+                      "path": "token"
+                    }
+                  },
+                  {
+                    "configMap": {
+                      "items": [
+                        {
+                          "key": "ca.crt",
+                          "path": "ca.crt"
+                        }
+                      ],
+                      "name": "kube-root-ca.crt"
+                    }
+                  },
+                  {
+                    "downwardAPI": {
+                      "items": [
+                        {
+                          "fieldRef": {
+                            "apiVersion": "v1",
+                            "fieldPath": "metadata.namespace"
+                          },
+                          "path": "namespace"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "name": "webhook-cert",
+              "secret": {
+                "defaultMode": 420,
+                "items": [
+                  {
+                    "key": "tls.crt",
+                    "path": "tls.crt"
+                  },
+                  {
+                    "key": "tls.key",
+                    "path": "tls.key"
+                  }
+                ],
+                "secretName": "ptah-runtime-generated-name-prefix-boundary-proof-webhook-cert"
+              }
+            },
+            {
+              "name": "result-cert",
+              "secret": {
+                "defaultMode": 288,
+                "items": [
+                  {
+                    "key": "tls.crt",
+                    "path": "tls.crt"
+                  },
+                  {
+                    "key": "tls.key",
+                    "path": "tls.key"
+                  },
+                  {
+                    "key": "ca.crt",
+                    "path": "ca.crt"
+                  },
+                  {
+                    "key": "client-ca.crt",
+                    "path": "client-ca.crt"
+                  },
+                  {
+                    "key": "client-ca.key",
+                    "path": "client-ca.key"
+                  },
+                  {
+                    "key": "client-trust.crt",
+                    "path": "client-trust.crt"
+                  }
+                ],
+                "secretName": "ptah-runtime-generated-name-prefix-boundary-proof-result-trust"
+              }
+            },
+            {
+              "emptyDir": {
+                "sizeLimit": "32Mi"
+              },
+              "name": "tmp"
+            }
+          ]
+        },
+        "status": {
+          "allocatedResources": {
+            "cpu": "50m",
+            "memory": "96Mi"
+          },
+          "conditions": [
+            {
+              "lastProbeTime": null,
+              "lastTransitionTime": "2026-10-02T16:16:20Z",
+              "observedGeneration": 1,
+              "status": "True",
+              "type": "PodReadyToStartContainers"
+            },
+            {
+              "lastProbeTime": null,
+              "lastTransitionTime": "2026-10-02T16:16:21Z",
+              "observedGeneration": 1,
+              "status": "True",
+              "type": "Initialized"
+            },
+            {
+              "lastProbeTime": null,
+              "lastTransitionTime": "2026-10-02T16:16:32Z",
+              "observedGeneration": 1,
+              "status": "True",
+              "type": "Ready"
+            },
+            {
+              "lastProbeTime": null,
+              "lastTransitionTime": "2026-10-02T16:16:32Z",
+              "observedGeneration": 1,
+              "status": "True",
+              "type": "ContainersReady"
+            },
+            {
+              "lastProbeTime": null,
+              "lastTransitionTime": "2026-10-02T16:16:19Z",
+              "observedGeneration": 1,
+              "status": "True",
+              "type": "PodScheduled"
+            }
+          ],
+          "containerStatuses": [
+            {
+              "allocatedResources": {
+                "cpu": "50m",
+                "memory": "96Mi"
+              },
+              "containerID": "containerd://495f463b649b2153a6fb09dfc8e24897e6ae94879b84309125e87aab445b0092",
+              "image": "sha256:314f4329ac66afea31e189577c4aaa97c387458c9ded660ce1eec0910e59fde5",
+              "imageID": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/operator@sha256:f338a4c98d77e4908426d0c4b45a1b177ffc8c2916cae3029217b9ec12cd6f36",
+              "lastState": {},
+              "name": "manager",
+              "ready": true,
+              "resources": {
+                "limits": {
+                  "memory": "256Mi"
+                },
+                "requests": {
+                  "cpu": "50m",
+                  "memory": "96Mi"
+                }
+              },
+              "restartCount": 0,
+              "started": true,
+              "state": {
+                "running": {
+                  "startedAt": "2026-10-02T16:16:21Z"
+                }
+              },
+              "user": {
+                "linux": {
+                  "gid": 65532,
+                  "supplementalGroups": [
+                    65532
+                  ],
+                  "uid": 65532
+                }
+              },
+              "volumeMounts": [
+                {
+                  "mountPath": "/result-certs",
+                  "name": "result-cert",
+                  "readOnly": true,
+                  "recursiveReadOnly": "Disabled"
+                },
+                {
+                  "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                  "name": "api-access",
+                  "readOnly": true,
+                  "recursiveReadOnly": "Disabled"
+                },
+                {
+                  "mountPath": "/certs",
+                  "name": "webhook-cert",
+                  "readOnly": true,
+                  "recursiveReadOnly": "Disabled"
+                },
+                {
+                  "mountPath": "/tmp",
+                  "name": "tmp"
+                }
+              ]
+            }
+          ],
+          "hostIP": "172.18.0.6",
+          "hostIPs": [
+            {
+              "ip": "172.18.0.6"
+            }
+          ],
+          "initContainerStatuses": [
+            {
+              "allocatedResources": {
+                "cpu": "5m",
+                "memory": "16Mi"
+              },
+              "containerID": "containerd://fb57b8c861d2f7aab5ac1ec656b54c0b90a3bd4a9b6bf9f3c800e0e0603f1216",
+              "image": "sha256:314f4329ac66afea31e189577c4aaa97c387458c9ded660ce1eec0910e59fde5",
+              "imageID": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/operator@sha256:f338a4c98d77e4908426d0c4b45a1b177ffc8c2916cae3029217b9ec12cd6f36",
+              "lastState": {},
+              "name": "verify-candidate-runtime",
+              "ready": true,
+              "resources": {
+                "limits": {
+                  "memory": "32Mi"
+                },
+                "requests": {
+                  "cpu": "5m",
+                  "memory": "16Mi"
+                }
+              },
+              "restartCount": 0,
+              "started": false,
+              "state": {
+                "terminated": {
+                  "containerID": "containerd://fb57b8c861d2f7aab5ac1ec656b54c0b90a3bd4a9b6bf9f3c800e0e0603f1216",
+                  "exitCode": 0,
+                  "finishedAt": "2026-10-02T16:16:20Z",
+                  "reason": "Completed",
+                  "startedAt": "2026-10-02T16:16:20Z"
+                }
+              },
+              "user": {
+                "linux": {
+                  "gid": 65532,
+                  "supplementalGroups": [
+                    65532
+                  ],
+                  "uid": 65532
+                }
+              },
+              "volumeMounts": [
+                {
+                  "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                  "name": "api-access",
+                  "readOnly": true,
+                  "recursiveReadOnly": "Disabled"
+                }
+              ]
+            }
+          ],
+          "observedGeneration": 1,
+          "phase": "Running",
+          "podIP": "10.244.4.34",
+          "podIPs": [
+            {
+              "ip": "10.244.4.34"
+            }
+          ],
+          "qosClass": "Burstable",
+          "resources": {
+            "limits": {
+              "memory": "256Mi"
+            },
+            "requests": {
+              "cpu": "28m",
+              "memory": "96Mi"
+            }
+          },
+          "startTime": "2026-10-02T16:16:19Z"
+        }
+      }
+    ],
+    "kind": "List",
+    "metadata": {
+      "resourceVersion": ""
+    }
+  },
+  "services": {
+    "apiVersion": "v1",
+    "items": [
+      {
+        "apiVersion": "v1",
+        "kind": "Service",
+        "metadata": {
+          "annotations": {
+            "meta.helm.sh/release-name": "ptah-1-37-0-result-resta-5a0ef2fe7d",
+            "meta.helm.sh/release-namespace": "ptah-system-1-37-0-result-restart-b2576f9b-5a0ef2fe7d"
+          },
+          "creationTimestamp": "2026-10-02T12:31:58Z",
+          "labels": {
+            "app.kubernetes.io/instance": "ptah-1-37-0-result-resta-5a0ef2fe7d",
+            "app.kubernetes.io/managed-by": "Helm",
+            "app.kubernetes.io/name": "ptah-operator",
+            "app.kubernetes.io/version": "0.2.0",
+            "helm.sh/chart": "ptah-operator-0.2.0"
+          },
+          "name": "ptah-runtime-generated-name-prefix-boundary-proof-5a0ef-metrics",
+          "namespace": "ptah-system-1-37-0-result-restart-b2576f9b-5a0ef2fe7d",
+          "resourceVersion": "1265",
+          "uid": "ed289c03-53a4-4e26-8723-88bb1463b430"
+        },
+        "spec": {
+          "clusterIP": "10.96.92.153",
+          "clusterIPs": [
+            "10.96.92.153"
+          ],
+          "internalTrafficPolicy": "Cluster",
+          "ipFamilies": [
+            "IPv4"
+          ],
+          "ipFamilyPolicy": "SingleStack",
+          "ports": [
+            {
+              "name": "metrics",
+              "port": 8080,
+              "protocol": "TCP",
+              "targetPort": "metrics"
+            }
+          ],
+          "selector": {
+            "app.kubernetes.io/component": "controller",
+            "app.kubernetes.io/instance": "ptah-1-37-0-result-resta-5a0ef2fe7d",
+            "app.kubernetes.io/name": "ptah-operator"
+          },
+          "sessionAffinity": "None",
+          "type": "ClusterIP"
+        },
+        "status": {
+          "loadBalancer": {}
+        }
+      },
+      {
+        "apiVersion": "v1",
+        "kind": "Service",
+        "metadata": {
+          "annotations": {
+            "meta.helm.sh/release-name": "ptah-1-37-0-result-resta-5a0ef2fe7d",
+            "meta.helm.sh/release-namespace": "ptah-system-1-37-0-result-restart-b2576f9b-5a0ef2fe7d"
+          },
+          "creationTimestamp": "2026-10-02T12:33:50Z",
+          "labels": {
+            "app.kubernetes.io/instance": "ptah-1-37-0-result-resta-5a0ef2fe7d",
+            "app.kubernetes.io/managed-by": "Helm",
+            "app.kubernetes.io/name": "ptah-operator",
+            "app.kubernetes.io/version": "0.2.0",
+            "helm.sh/chart": "ptah-operator-0.2.0"
+          },
+          "name": "ptah-runtime-generated-name-prefix-boundary-proof-5a0ef-results",
+          "namespace": "ptah-system-1-37-0-result-restart-b2576f9b-5a0ef2fe7d",
+          "resourceVersion": "41449",
+          "uid": "8904fa43-ab19-4edb-a46c-c7706c53d5f6"
+        },
+        "spec": {
+          "clusterIP": "10.96.249.133",
+          "clusterIPs": [
+            "10.96.249.133"
+          ],
+          "internalTrafficPolicy": "Cluster",
+          "ipFamilies": [
+            "IPv4"
+          ],
+          "ipFamilyPolicy": "SingleStack",
+          "ports": [
+            {
+              "name": "https",
+              "port": 443,
+              "protocol": "TCP",
+              "targetPort": "results"
+            }
+          ],
+          "selector": {
+            "app.kubernetes.io/component": "controller",
+            "app.kubernetes.io/instance": "ptah-1-37-0-result-resta-5a0ef2fe7d",
+            "app.kubernetes.io/name": "ptah-operator"
+          },
+          "sessionAffinity": "None",
+          "type": "ClusterIP"
+        },
+        "status": {
+          "loadBalancer": {}
+        }
+      },
+      {
+        "apiVersion": "v1",
+        "kind": "Service",
+        "metadata": {
+          "annotations": {
+            "meta.helm.sh/release-name": "ptah-1-37-0-result-resta-5a0ef2fe7d",
+            "meta.helm.sh/release-namespace": "ptah-system-1-37-0-result-restart-b2576f9b-5a0ef2fe7d"
+          },
+          "creationTimestamp": "2026-10-02T12:31:58Z",
+          "labels": {
+            "app.kubernetes.io/instance": "ptah-1-37-0-result-resta-5a0ef2fe7d",
+            "app.kubernetes.io/managed-by": "Helm",
+            "app.kubernetes.io/name": "ptah-operator",
+            "app.kubernetes.io/version": "0.2.0",
+            "helm.sh/chart": "ptah-operator-0.2.0"
+          },
+          "name": "ptah-runtime-generated-name-prefix-boundary-proof-5a0ef-webhook",
+          "namespace": "ptah-system-1-37-0-result-restart-b2576f9b-5a0ef2fe7d",
+          "resourceVersion": "1261",
+          "uid": "434f6957-732d-4ba1-a9aa-ba70877f209d"
+        },
+        "spec": {
+          "clusterIP": "10.96.119.49",
+          "clusterIPs": [
+            "10.96.119.49"
+          ],
+          "internalTrafficPolicy": "Cluster",
+          "ipFamilies": [
+            "IPv4"
+          ],
+          "ipFamilyPolicy": "SingleStack",
+          "ports": [
+            {
+              "name": "https",
+              "port": 443,
+              "protocol": "TCP",
+              "targetPort": "webhook"
+            }
+          ],
+          "selector": {
+            "app.kubernetes.io/component": "controller",
+            "app.kubernetes.io/instance": "ptah-1-37-0-result-resta-5a0ef2fe7d",
+            "app.kubernetes.io/name": "ptah-operator"
+          },
+          "sessionAffinity": "None",
+          "type": "ClusterIP"
+        },
+        "status": {
+          "loadBalancer": {}
+        }
+      }
+    ],
+    "kind": "List",
+    "metadata": {
+      "resourceVersion": ""
+    }
+  },
+  "endpoints": {
+    "apiVersion": "v1",
+    "items": [
+      {
+        "addressType": "IPv4",
+        "apiVersion": "discovery.k8s.io/v1",
+        "endpoints": [
+          {
+            "addresses": [
+              "10.244.4.33"
+            ],
+            "conditions": {
+              "ready": true,
+              "serving": true,
+              "terminating": false
+            },
+            "nodeName": "ptah-e2e-1-37-0-result-restar-5a0ef2fe7d-worker",
+            "targetRef": {
+              "kind": "Pod",
+              "name": "ptah-runtime-generated-name-prefix-boundary-proof-5a0ef2fezb7rj",
+              "namespace": "ptah-system-1-37-0-result-restart-b2576f9b-5a0ef2fe7d",
+              "uid": "94ca2cc7-f383-440e-b5a2-d919e600f279"
+            }
+          },
+          {
+            "addresses": [
+              "10.244.4.34"
+            ],
+            "conditions": {
+              "ready": true,
+              "serving": true,
+              "terminating": false
+            },
+            "nodeName": "ptah-e2e-1-37-0-result-restar-5a0ef2fe7d-worker",
+            "targetRef": {
+              "kind": "Pod",
+              "name": "ptah-runtime-generated-name-prefix-boundary-proof-5a0ef2fezmsgm",
+              "namespace": "ptah-system-1-37-0-result-restart-b2576f9b-5a0ef2fe7d",
+              "uid": "8cfe6173-7210-4f55-a824-ae0c3e96b79f"
+            }
+          }
+        ],
+        "kind": "EndpointSlice",
+        "metadata": {
+          "annotations": {
+            "endpoints.kubernetes.io/last-change-trigger-time": "2026-10-02T16:16:33Z"
+          },
+          "creationTimestamp": "2026-10-02T12:31:58Z",
+          "generateName": "ptah-runtime-generated-name-prefix-boundary-proof-5a0ef-metrics-",
+          "generation": 84,
+          "labels": {
+            "app.kubernetes.io/instance": "ptah-1-37-0-result-resta-5a0ef2fe7d",
+            "app.kubernetes.io/managed-by": "Helm",
+            "app.kubernetes.io/name": "ptah-operator",
+            "app.kubernetes.io/version": "0.2.0",
+            "endpointslice.kubernetes.io/managed-by": "endpointslice-controller.k8s.io",
+            "helm.sh/chart": "ptah-operator-0.2.0",
+            "kubernetes.io/service-name": "ptah-runtime-generated-name-prefix-boundary-proof-5a0ef-metrics"
+          },
+          "name": "ptah-runtime-generated-name-prefix-boundary-proof-5a0ef-me9ds5w",
+          "namespace": "ptah-system-1-37-0-result-restart-b2576f9b-5a0ef2fe7d",
+          "ownerReferences": [
+            {
+              "apiVersion": "v1",
+              "blockOwnerDeletion": true,
+              "controller": true,
+              "kind": "Service",
+              "name": "ptah-runtime-generated-name-prefix-boundary-proof-5a0ef-metrics",
+              "uid": "ed289c03-53a4-4e26-8723-88bb1463b430"
+            }
+          ],
+          "resourceVersion": "54417",
+          "uid": "617abc69-e836-48cd-bde6-a9fdd4689756"
+        },
+        "ports": [
+          {
+            "name": "metrics",
+            "port": 8080,
+            "protocol": "TCP"
+          }
+        ]
+      },
+      {
+        "addressType": "IPv4",
+        "apiVersion": "discovery.k8s.io/v1",
+        "endpoints": [
+          {
+            "addresses": [
+              "10.244.4.33"
+            ],
+            "conditions": {
+              "ready": true,
+              "serving": true,
+              "terminating": false
+            },
+            "nodeName": "ptah-e2e-1-37-0-result-restar-5a0ef2fe7d-worker",
+            "targetRef": {
+              "kind": "Pod",
+              "name": "ptah-runtime-generated-name-prefix-boundary-proof-5a0ef2fezb7rj",
+              "namespace": "ptah-system-1-37-0-result-restart-b2576f9b-5a0ef2fe7d",
+              "uid": "94ca2cc7-f383-440e-b5a2-d919e600f279"
+            }
+          },
+          {
+            "addresses": [
+              "10.244.4.34"
+            ],
+            "conditions": {
+              "ready": true,
+              "serving": true,
+              "terminating": false
+            },
+            "nodeName": "ptah-e2e-1-37-0-result-restar-5a0ef2fe7d-worker",
+            "targetRef": {
+              "kind": "Pod",
+              "name": "ptah-runtime-generated-name-prefix-boundary-proof-5a0ef2fezmsgm",
+              "namespace": "ptah-system-1-37-0-result-restart-b2576f9b-5a0ef2fe7d",
+              "uid": "8cfe6173-7210-4f55-a824-ae0c3e96b79f"
+            }
+          }
+        ],
+        "kind": "EndpointSlice",
+        "metadata": {
+          "annotations": {
+            "endpoints.kubernetes.io/last-change-trigger-time": "2026-10-02T16:16:33Z"
+          },
+          "creationTimestamp": "2026-10-02T12:33:50Z",
+          "generateName": "ptah-runtime-generated-name-prefix-boundary-proof-5a0ef-results-",
+          "generation": 91,
+          "labels": {
+            "app.kubernetes.io/instance": "ptah-1-37-0-result-resta-5a0ef2fe7d",
+            "app.kubernetes.io/managed-by": "Helm",
+            "app.kubernetes.io/name": "ptah-operator",
+            "app.kubernetes.io/version": "0.2.0",
+            "endpointslice.kubernetes.io/managed-by": "endpointslice-controller.k8s.io",
+            "helm.sh/chart": "ptah-operator-0.2.0",
+            "kubernetes.io/service-name": "ptah-runtime-generated-name-prefix-boundary-proof-5a0ef-results"
+          },
+          "name": "ptah-runtime-generated-name-prefix-boundary-proof-5a0ef-retd5xm",
+          "namespace": "ptah-system-1-37-0-result-restart-b2576f9b-5a0ef2fe7d",
+          "ownerReferences": [
+            {
+              "apiVersion": "v1",
+              "blockOwnerDeletion": true,
+              "controller": true,
+              "kind": "Service",
+              "name": "ptah-runtime-generated-name-prefix-boundary-proof-5a0ef-results",
+              "uid": "8904fa43-ab19-4edb-a46c-c7706c53d5f6"
+            }
+          ],
+          "resourceVersion": "54418",
+          "uid": "46306d9f-aaca-462f-a625-7cf799026cb5"
+        },
+        "ports": [
+          {
+            "name": "https",
+            "port": 9444,
+            "protocol": "TCP"
+          }
+        ]
+      },
+      {
+        "addressType": "IPv4",
+        "apiVersion": "discovery.k8s.io/v1",
+        "endpoints": [
+          {
+            "addresses": [
+              "10.244.4.33"
+            ],
+            "conditions": {
+              "ready": true,
+              "serving": true,
+              "terminating": false
+            },
+            "nodeName": "ptah-e2e-1-37-0-result-restar-5a0ef2fe7d-worker",
+            "targetRef": {
+              "kind": "Pod",
+              "name": "ptah-runtime-generated-name-prefix-boundary-proof-5a0ef2fezb7rj",
+              "namespace": "ptah-system-1-37-0-result-restart-b2576f9b-5a0ef2fe7d",
+              "uid": "94ca2cc7-f383-440e-b5a2-d919e600f279"
+            }
+          },
+          {
+            "addresses": [
+              "10.244.4.34"
+            ],
+            "conditions": {
+              "ready": true,
+              "serving": true,
+              "terminating": false
+            },
+            "nodeName": "ptah-e2e-1-37-0-result-restar-5a0ef2fe7d-worker",
+            "targetRef": {
+              "kind": "Pod",
+              "name": "ptah-runtime-generated-name-prefix-boundary-proof-5a0ef2fezmsgm",
+              "namespace": "ptah-system-1-37-0-result-restart-b2576f9b-5a0ef2fe7d",
+              "uid": "8cfe6173-7210-4f55-a824-ae0c3e96b79f"
+            }
+          }
+        ],
+        "kind": "EndpointSlice",
+        "metadata": {
+          "annotations": {
+            "endpoints.kubernetes.io/last-change-trigger-time": "2026-10-02T16:16:33Z"
+          },
+          "creationTimestamp": "2026-10-02T12:31:58Z",
+          "generateName": "ptah-runtime-generated-name-prefix-boundary-proof-5a0ef-webhook-",
+          "generation": 85,
+          "labels": {
+            "app.kubernetes.io/instance": "ptah-1-37-0-result-resta-5a0ef2fe7d",
+            "app.kubernetes.io/managed-by": "Helm",
+            "app.kubernetes.io/name": "ptah-operator",
+            "app.kubernetes.io/version": "0.2.0",
+            "endpointslice.kubernetes.io/managed-by": "endpointslice-controller.k8s.io",
+            "helm.sh/chart": "ptah-operator-0.2.0",
+            "kubernetes.io/service-name": "ptah-runtime-generated-name-prefix-boundary-proof-5a0ef-webhook"
+          },
+          "name": "ptah-runtime-generated-name-prefix-boundary-proof-5a0ef-wecm2p9",
+          "namespace": "ptah-system-1-37-0-result-restart-b2576f9b-5a0ef2fe7d",
+          "ownerReferences": [
+            {
+              "apiVersion": "v1",
+              "blockOwnerDeletion": true,
+              "controller": true,
+              "kind": "Service",
+              "name": "ptah-runtime-generated-name-prefix-boundary-proof-5a0ef-webhook",
+              "uid": "434f6957-732d-4ba1-a9aa-ba70877f209d"
+            }
+          ],
+          "resourceVersion": "54419",
+          "uid": "c7c9b64a-4e2f-4fe5-9a20-6db0dc0ea118"
+        },
+        "ports": [
+          {
+            "name": "https",
+            "port": 9443,
+            "protocol": "TCP"
+          }
+        ]
+      }
+    ],
+    "kind": "List",
+    "metadata": {
+      "resourceVersion": ""
+    }
+  },
+  "chartSHA256": "43c718af58a8ef74824b1081917d431290ea985e99fb99ba94efa2997de2260e"
+}

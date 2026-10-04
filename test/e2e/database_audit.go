@@ -2,8 +2,10 @@ package e2e
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/netip"
 	"strings"
@@ -17,7 +19,7 @@ func databaseAuditArgs(engine string) []any {
 		return []any{"-c", "logging_collector=on", "-c", "log_destination=jsonlog",
 			"-c", "log_directory=/tmp/ptah-sql-audit", "-c", "log_filename=statements.log",
 			"-c", "log_rotation_age=0", "-c", "log_rotation_size=0",
-			"-c", "log_min_error_statement=error", "-c", "log_hostname=off"}
+			"-c", "log_min_error_statement=error", "-c", "log_hostname=off", "-c", "log_timezone=UTC"}
 	case "mysql":
 		// log-raw also records statements the password rewriter cannot parse.
 		return []any{"--log-output=TABLE", "--log-raw"}
@@ -33,6 +35,31 @@ func databaseAuditArgs(engine string) []any {
 type sqlAuditCounts struct {
 	clients map[string]int64
 	records int64
+}
+
+// The in-memory fields stay private, but retained evidence must carry the
+// actual counts rather than the empty object encoding/json otherwise emits.
+func (counts sqlAuditCounts) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Clients map[string]int64 `json:"clients"`
+		Records int64            `json:"records"`
+	}{Clients: counts.clients, Records: counts.records})
+}
+
+// Keep the refusal strict while distinguishing a shorter read from a
+// changed prefix. SQL journals can contain credentials, so diagnostics expose
+// only lengths, the first differing offset and digests, never journal bytes.
+func postgresAuditPrefixError(before, after []byte) error {
+	if bytes.HasPrefix(after, before) {
+		return nil
+	}
+	compared := min(len(before), len(after))
+	mismatch := 0
+	for mismatch < compared && before[mismatch] == after[mismatch] {
+		mismatch++
+	}
+	return fmt.Errorf("PostgreSQL SQL audit was truncated or replaced: previousBytes=%d currentBytes=%d firstMismatchOffset=%d previousSHA256=%x currentPrefixSHA256=%x",
+		len(before), len(after), mismatch, sha256.Sum256(before), sha256.Sum256(after[:compared]))
 }
 
 func postgresAuditCounts(raw []byte, marker string) (sqlAuditCounts, bool, error) {

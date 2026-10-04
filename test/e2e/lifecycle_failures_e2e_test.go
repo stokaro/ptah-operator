@@ -63,6 +63,7 @@ func (l *lifecycleRun) expectUpgradeFailureWithoutDeploymentChange(description s
 	}
 	failedRevision := l.helmRevision() + 1
 	before := l.deploymentEvidence()
+	privileges := l.snapshotRuntimePrivileges()
 	_, stderr, err := l.helm(append([]string{"upgrade", l.in.helmRelease, l.in.chartPackage,
 		"--namespace", l.in.operatorNamespace, "--values", l.upgradeValuesFile, "--wait", "--timeout", "2m"}, extra...)...)
 	l.failedUpgradeStderr = stderr
@@ -85,6 +86,7 @@ func (l *lifecycleRun) expectUpgradeFailureWithoutDeploymentChange(description s
 	if after := l.deploymentEvidence(); !bytes.Equal(before, after) {
 		l.fatalf("%s mutated runtime Deployments", description)
 	}
+	l.assertRuntimePrivilegesUnchanged(privileges, description)
 }
 
 // expectUpgradeRenderFailureWithoutDeploymentChange is
@@ -99,6 +101,7 @@ func (l *lifecycleRun) expectUpgradeRenderFailureWithoutDeploymentChange(descrip
 	}
 	beforeRevision := l.helmRevision()
 	before := l.deploymentEvidence()
+	privileges := l.snapshotRuntimePrivileges()
 	_, stderr, err := l.helm(append([]string{"upgrade", l.in.helmRelease, l.in.chartPackage,
 		"--namespace", l.in.operatorNamespace, "--values", l.upgradeValuesFile, "--wait", "--timeout", "2m"}, extra...)...)
 	l.failedUpgradeStderr = stderr
@@ -111,6 +114,7 @@ func (l *lifecycleRun) expectUpgradeRenderFailureWithoutDeploymentChange(descrip
 	if after := l.deploymentEvidence(); !bytes.Equal(before, after) {
 		l.fatalf("%s mutated runtime Deployments", description)
 	}
+	l.assertRuntimePrivilegesUnchanged(privileges, description)
 }
 
 // proveSharedReleaseNamespaceRefusal: the release namespace is part of the
@@ -214,6 +218,7 @@ func (l *lifecycleRun) proveLateFailureRecovery(currentImage string) {
 		l.fatalf("the current release's controller ServiceAccount was not captured before the late failure")
 	}
 	l.lateRevision = l.helmRevision() + 1
+	privileges := l.snapshotRuntimePrivileges()
 	l.createLateFailureBlocker()
 	// Helm 4 applies server-side, and a conflict is raised for a field whose
 	// value this apply changes while another manager owns it. The hook stops
@@ -250,6 +255,7 @@ func (l *lifecycleRun) proveLateFailureRecovery(currentImage string) {
 		!lifecycleFailureRuntimePodsGone(pods.Items, controllerAccount, l.rotatorDeployment) {
 		l.fatalf("the late failure left a runtime Pod after the runtime stop")
 	}
+	l.assertRuntimePrivilegesUnchanged(privileges, "late upgrade failure")
 	l.logf("the late failure left the runtime stopped on the predecessor template")
 }
 
@@ -258,11 +264,13 @@ func (l *lifecycleRun) proveLateFailureRecovery(currentImage string) {
 // changes nothing, and Helm applies the candidate over them.
 func (l *lifecycleRun) retrySameCandidate() {
 	l.t.Helper()
+	privileges := l.snapshotRuntimePrivileges()
 	if _, stderr, err := l.helm("upgrade", l.in.helmRelease, l.in.nextChartPackage, "--namespace", l.in.operatorNamespace,
 		"--values", l.in.nextValuesFile, "--force-conflicts", "--wait", "--timeout", "7m"); err != nil {
 		l.printDebug(stderr)
 		l.fatalf("the same-candidate retry did not complete the upgrade")
 	}
+	l.assertRuntimePrivilegesUnchanged(privileges, "same-candidate upgrade retry")
 }
 
 // proofSchemaStatus is the proof schema's status as the API server stores it,
@@ -298,6 +306,7 @@ func (l *lifecycleRun) proveRollbackRefusedOverFutureState(revision int) {
 	l.patchExecutionBindingStateVersion(l.newerControllerStateVersion)
 	futureState := l.proofSchemaStatus()
 	before := l.deploymentEvidence()
+	privileges := l.snapshotRuntimePrivileges()
 	_, stderr, err := l.helm("rollback", l.in.helmRelease, strconv.Itoa(revision), "--namespace", l.in.operatorNamespace,
 		"--force-conflicts", "--wait", "--timeout", "3m")
 	if err == nil {
@@ -315,6 +324,7 @@ func (l *lifecycleRun) proveRollbackRefusedOverFutureState(revision int) {
 	if after := l.deploymentEvidence(); !bytes.Equal(before, after) {
 		l.fatalf("the refused rollback changed a runtime Deployment")
 	}
+	l.assertRuntimePrivilegesUnchanged(privileges, "refused downgrade")
 	if after := l.proofSchemaStatus(); !bytes.Equal(futureState, after) {
 		l.fatalf("the refused rollback rewrote the future PtahSchema state")
 	}

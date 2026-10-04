@@ -71,11 +71,47 @@ func runMigrationPhase(t *testing.T, phase phases.Of[phases.MigrationsInputs], e
 		struct {
 			name string
 			body func()
+		}{"approval-resource-replacement", m.approvalIdentityReplacement},
+		struct {
+			name string
+			body func()
 		}{"approval-policy-change", func() { m.approvalInputChange("policy") }},
 		struct {
 			name string
 			body func()
-		}{"approval-transaction-mode-change", func() { m.approvalInputChange("transaction-mode") }})
+		}{"approval-transaction-mode-change", func() { m.approvalInputChange("transaction-mode") }},
+		struct {
+			name string
+			body func()
+		}{"approval-artifact-change", func() { m.approvalInputChange("artifact") }},
+		struct {
+			name string
+			body func()
+		}{"approval-verification-policy-uid-change", func() { m.approvalInputChange("verification-policy-uid") }},
+		struct {
+			name string
+			body func()
+		}{"approval-verification-policy-content-change", func() { m.approvalInputChange("verification-policy-content") }},
+		struct {
+			name string
+			body func()
+		}{"approval-executor-image-change", m.executorImageChange},
+		struct {
+			name string
+			body func()
+		}{"approval-ptah-version-change", m.ptahVersionChange},
+		struct {
+			name string
+			body func()
+		}{"unsupported-controller-state-after-approval", m.unsupportedControllerState},
+		struct {
+			name string
+			body func()
+		}{"unsupported-runner-protocol-after-approval", m.unsupportedRunnerProtocol},
+		struct {
+			name string
+			body func()
+		}{"running-apply-executor-image-change", m.runningExecutorImageChange})
 	for _, scenario := range scenarios {
 		if !run.Scenario(scenario.name, m.scenario(scenario.body)) {
 			return
@@ -540,6 +576,10 @@ func (m *migrationRun) reportMigration(migration *ptahv1alpha1.PtahMigration) {
 		"observedGeneration": status.ObservedGeneration, "phase": status.Phase,
 		"activeOperation": status.ActiveOperation, "plan": status.Plan,
 		"unresolvedRun": status.UnresolvedRun != nil, "conditions": conditionSummary(status.Conditions),
+		"nextReconciliationTime": status.NextReconciliationTime,
+	}
+	if status.History != nil {
+		report["historyObservedAt"] = status.History.ObservedAt
 	}
 	content, err := json.Marshal(report)
 	if err != nil || m.scanner.leaks(content) {

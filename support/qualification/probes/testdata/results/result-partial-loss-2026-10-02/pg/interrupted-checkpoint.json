@@ -1,0 +1,444 @@
+{
+  "engine": "PostgreSQL",
+  "commit": "b0a51ff740784beaf6cd1ebb2fe8c2715583e1b5",
+  "namespace": "ptah-result-partial-pg",
+  "resourceUID": "f29748bf-2996-472e-81bd-6eb8bb02cd68",
+  "jobUID": "3ee2111f-d266-43ee-860e-a018372b1b8d",
+  "podUID": "fb5d97e1-d4db-4ff9-b163-41fcc6867070",
+  "operationID": "sha256:bd36a92be300aff8b5741a6c42caabf97665489f4ce4974b51274a03f410b7ac",
+  "policy": "OnApproval",
+  "calibration": {
+    "storageEngine": "PostgreSQL sequence",
+    "afterRollback": "0:1:true",
+    "afterReset": "0:1:false"
+  },
+  "initial": {
+    "identity": {
+      "person": "qualification-approver@example.test",
+      "group": "qualification:partial-result"
+    },
+    "plan": {
+      "apiVersion": "operator.ptah.run/v1alpha1",
+      "kind": "PtahMigrationPlan",
+      "metadata": {
+        "creationTimestamp": "2026-10-02T16:35:34Z",
+        "generation": 1,
+        "labels": {
+          "operator.ptah.run/migration": "lost-ack"
+        },
+        "name": "ptah-mplan-f602f71efa2a9daae9cfaf23",
+        "namespace": "ptah-result-partial-pg",
+        "ownerReferences": [
+          {
+            "apiVersion": "operator.ptah.run/v1alpha1",
+            "blockOwnerDeletion": true,
+            "controller": true,
+            "kind": "PtahMigration",
+            "name": "lost-ack",
+            "uid": "f29748bf-2996-472e-81bd-6eb8bb02cd68"
+          }
+        ],
+        "resourceVersion": "58058",
+        "uid": "a1f37af2-050e-4a5b-9b61-cfa69925ffad"
+      },
+      "spec": {
+        "artifactDigest": "sha256:93c00c727c4ab76816d8b6d9a004b134232b4f08651aba64fe5166e2fd2ee07e",
+        "contractVersion": 1,
+        "controllerImage": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/operator@sha256:f338a4c98d77e4908426d0c4b45a1b177ffc8c2916cae3029217b9ec12cd6f36",
+        "controllerRevision": "b0a51ff740784beaf6cd1ebb2fe8c2715583e1b5",
+        "controllerStateVersion": 1,
+        "coordinationDigest": "sha256:63b817e81beefde14b5f4175255459ff1f1c14c90df24e45106de8dcd05bc3bb",
+        "createdAt": "2026-10-02T16:35:34Z",
+        "currentVersion": 0,
+        "executionBindingID": "v1-21782ba339fc01047d5059887be09451",
+        "executorImage": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-executor@sha256:45530f0f2c41f4d649c207fe8221dad268946ca8da13b503244805c016f3c9dd",
+        "fingerprint": "sha256:f602f71efa2a9daae9cfaf23e045f90bf87db5c0337ff32d1d77e7115c68b219",
+        "historyFingerprint": "sha256:35d1f75176f3f8a93ed055186b9d8649cda232d3c6f07c4fc3d92a13c5f258b9",
+        "migrationRef": {
+          "name": "lost-ack",
+          "uid": "f29748bf-2996-472e-81bd-6eb8bb02cd68"
+        },
+        "migrations": [
+          {
+            "checksum": "85201f3a2182e8965dbfc51940b8a9b4bb10007eb9c60436a21be616196a9058",
+            "description": "Record Delivery",
+            "transactionMode": "none",
+            "version": 1,
+            "versionKey": "1"
+          }
+        ],
+        "policyFingerprint": "sha256:ef471bfdf386e1fdcf3af8eeed7f8509895387e5f79615f431d2524eb79047cd",
+        "ptahVersion": "v0.9.0-73-gf6e562c5b",
+        "runnerImage": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-runner@sha256:7e2199f5c03660f094244b00962ec7e222f752f9cfc86276ac7cea296ce5d4b6",
+        "runnerProtocolVersion": 1,
+        "targetIdentityDigest": "sha256:a2c19804a6164fe1747f2a409e6a1810f20515bd3addeadecbf50b2a7253e480",
+        "verificationPolicyDigest": "sha256:6115db38c28b242ff9a6934d1b5a4658d23615ceaed595a8c716a7431f2ad5ed",
+        "verificationPolicyUID": "7542efac-ae02-4315-8e43-998cd4f0c086"
+      }
+    },
+    "approval": {
+      "apiVersion": "operator.ptah.run/v1alpha1",
+      "kind": "PtahMigrationApproval",
+      "metadata": {
+        "creationTimestamp": "2026-10-02T16:35:34Z",
+        "generation": 1,
+        "name": "authorize-original",
+        "namespace": "ptah-result-partial-pg",
+        "resourceVersion": "58066",
+        "uid": "7fa118dc-84f0-4642-a3b8-f4e6b0542f99"
+      },
+      "spec": {
+        "approvedAt": "2026-10-02T16:35:34Z",
+        "approver": {
+          "groups": [
+            "qualification:partial-result",
+            "system:authenticated"
+          ],
+          "username": "qualification-approver@example.test"
+        },
+        "migrationRef": {
+          "name": "lost-ack",
+          "uid": "f29748bf-2996-472e-81bd-6eb8bb02cd68"
+        },
+        "mutationRequestUID": "02287075-892c-4c99-84d6-b84d9217f9ad",
+        "planFingerprint": "sha256:f602f71efa2a9daae9cfaf23e045f90bf87db5c0337ff32d1d77e7115c68b219",
+        "planRef": {
+          "name": "ptah-mplan-f602f71efa2a9daae9cfaf23",
+          "uid": "a1f37af2-050e-4a5b-9b61-cfa69925ffad"
+        }
+      }
+    },
+    "approverRole": "ptah-runtime-generated-name-prefix-boundary-proof-5a0ef2fe7d-approver"
+  },
+  "procedureSHA256": {
+    "result_partial_loss.py": "a9de59141af58a9bfe57b361c8cd4575a93d4aaa6865d75e3d1b767124e4f082",
+    "result_lost_ack.py": "a8d35f53c13fc8cd222bfb699fd7a4d483a3d510646fe63fa461a99cdba9e88d"
+  },
+  "quota": {
+    "uid": "d2453218-17fb-4bf8-a25e-27fdcb6db2b5",
+    "hard": 13
+  },
+  "beforeLoss": {
+    "witness": "1:1:true",
+    "dirtyRevisions": 1,
+    "podPhase": "Running",
+    "publications": 0
+  },
+  "originalJobAbsent": true,
+  "originalPodAbsent": true,
+  "unknown": {
+    "metadata": {
+      "name": "lost-ack",
+      "namespace": "ptah-result-partial-pg",
+      "uid": "f29748bf-2996-472e-81bd-6eb8bb02cd68",
+      "generation": 1,
+      "annotations": {
+        "operator.ptah.run/unresolved-run": "{\"outcome\":\"Unknown\",\"operationID\":\"sha256:bd36a92be300aff8b5741a6c42caabf97665489f4ce4974b51274a03f410b7ac\",\"jobName\":\"ptah-m-apply-lost-ack-b6fdb4594f7cbe18\",\"jobUID\":\"3ee2111f-d266-43ee-860e-a018372b1b8d\",\"planRef\":{\"name\":\"ptah-mplan-f602f71efa2a9daae9cfaf23\",\"uid\":\"a1f37af2-050e-4a5b-9b61-cfa69925ffad\"},\"targetIdentityDigest\":\"sha256:a2c19804a6164fe1747f2a409e6a1810f20515bd3addeadecbf50b2a7253e480\",\"recordedAt\":\"2026-10-02T16:35:51Z\"}"
+      }
+    },
+    "status": {
+      "artifact": {
+        "digest": "sha256:93c00c727c4ab76816d8b6d9a004b134232b4f08651aba64fe5166e2fd2ee07e",
+        "registryAuthFrom": {
+          "dockerConfigJSONKey": ".dockerconfigjson",
+          "mode": "Environment",
+          "name": "demo-registry",
+          "passwordKey": "password",
+          "tokenKey": "token",
+          "usernameKey": "username"
+        },
+        "resolvedReference": "oci://e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/migrations/demo@sha256:93c00c727c4ab76816d8b6d9a004b134232b4f08651aba64fe5166e2fd2ee07e",
+        "transport": {
+          "plainHTTP": true
+        }
+      },
+      "conditions": [
+        {
+          "lastTransitionTime": "2026-10-02T16:35:51Z",
+          "message": "The dispatched run's outcome is unknown and may not be retried",
+          "observedGeneration": 1,
+          "reason": "ApplyOutcomeUnknown",
+          "status": "False",
+          "type": "Progressing"
+        },
+        {
+          "lastTransitionTime": "2026-10-02T16:35:23Z",
+          "message": "The resolved artifact satisfied its verification policy",
+          "observedGeneration": 1,
+          "reason": "PolicySatisfied",
+          "status": "True",
+          "type": "ArtifactVerified"
+        },
+        {
+          "lastTransitionTime": "2026-10-02T16:35:51Z",
+          "message": "the dispatched Apply Job is missing and will not be recreated",
+          "observedGeneration": 1,
+          "reason": "ApplyOutcomeUnknown",
+          "status": "True",
+          "type": "Blocked"
+        },
+        {
+          "lastTransitionTime": "2026-10-02T16:35:34Z",
+          "message": "What the dispatched run did is unknown until the database is read",
+          "observedGeneration": 1,
+          "reason": "ApplyOutcomeUnknown",
+          "status": "False",
+          "type": "Ready"
+        },
+        {
+          "lastTransitionTime": "2026-10-02T16:35:34Z",
+          "message": "The plan's approval requirements are satisfied",
+          "observedGeneration": 1,
+          "reason": "Satisfied",
+          "status": "False",
+          "type": "ApprovalRequired"
+        }
+      ],
+      "executionBinding": {
+        "controllerStateVersion": 1,
+        "epoch": "v1-21782ba339fc01047d5059887be09451",
+        "executorImage": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-executor@sha256:45530f0f2c41f4d649c207fe8221dad268946ca8da13b503244805c016f3c9dd",
+        "ptahVersion": "v0.9.0-73-gf6e562c5b",
+        "runnerProtocolVersion": 1
+      },
+      "history": {
+        "appliedCount": 0,
+        "contractVersion": 1,
+        "currentVersion": 0,
+        "fingerprint": "sha256:35d1f75176f3f8a93ed055186b9d8649cda232d3c6f07c4fc3d92a13c5f258b9",
+        "observedAt": "2026-10-02T16:35:34Z",
+        "pendingCount": 1,
+        "targetIdentityDigest": "sha256:a2c19804a6164fe1747f2a409e6a1810f20515bd3addeadecbf50b2a7253e480"
+      },
+      "lastRun": {
+        "finishedAt": "2026-10-02T16:35:51Z",
+        "jobName": "ptah-m-apply-lost-ack-b6fdb4594f7cbe18",
+        "jobUID": "3ee2111f-d266-43ee-860e-a018372b1b8d",
+        "message": "the dispatched Apply Job is missing and will not be recreated",
+        "outcome": "Unknown",
+        "startedAt": "2026-10-02T16:35:34Z"
+      },
+      "nextReconciliationTime": "2026-10-02T16:36:21Z",
+      "observedGeneration": 1,
+      "phase": "Blocked",
+      "unresolvedRun": {
+        "jobName": "ptah-m-apply-lost-ack-b6fdb4594f7cbe18",
+        "jobUID": "3ee2111f-d266-43ee-860e-a018372b1b8d",
+        "operationID": "sha256:bd36a92be300aff8b5741a6c42caabf97665489f4ce4974b51274a03f410b7ac",
+        "outcome": "Unknown",
+        "planRef": {
+          "name": "ptah-mplan-f602f71efa2a9daae9cfaf23",
+          "uid": "a1f37af2-050e-4a5b-9b61-cfa69925ffad"
+        },
+        "recordedAt": "2026-10-02T16:35:51Z",
+        "targetIdentityDigest": "sha256:a2c19804a6164fe1747f2a409e6a1810f20515bd3addeadecbf50b2a7253e480"
+      }
+    }
+  },
+  "beforeAcknowledgment": [
+    {
+      "at": 2882107.199020666,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:bd36a92be300aff8b5741a6c42caabf97665489f4ce4974b51274a03f410b7ac",
+      "dirty": true
+    },
+    {
+      "at": 2882110.69489175,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:bd36a92be300aff8b5741a6c42caabf97665489f4ce4974b51274a03f410b7ac",
+      "dirty": true
+    },
+    {
+      "at": 2882114.042847708,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:bd36a92be300aff8b5741a6c42caabf97665489f4ce4974b51274a03f410b7ac",
+      "dirty": true
+    },
+    {
+      "at": 2882117.368289833,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:bd36a92be300aff8b5741a6c42caabf97665489f4ce4974b51274a03f410b7ac",
+      "dirty": true
+    },
+    {
+      "at": 2882120.706372375,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:bd36a92be300aff8b5741a6c42caabf97665489f4ce4974b51274a03f410b7ac",
+      "dirty": true
+    },
+    {
+      "at": 2882124.020157416,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:bd36a92be300aff8b5741a6c42caabf97665489f4ce4974b51274a03f410b7ac",
+      "dirty": true
+    },
+    {
+      "at": 2882127.345389791,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:bd36a92be300aff8b5741a6c42caabf97665489f4ce4974b51274a03f410b7ac",
+      "dirty": true
+    },
+    {
+      "at": 2882130.689295833,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:bd36a92be300aff8b5741a6c42caabf97665489f4ce4974b51274a03f410b7ac",
+      "dirty": true
+    },
+    {
+      "at": 2882134.004241875,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:bd36a92be300aff8b5741a6c42caabf97665489f4ce4974b51274a03f410b7ac",
+      "dirty": true
+    },
+    {
+      "at": 2882137.358588875,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:bd36a92be300aff8b5741a6c42caabf97665489f4ce4974b51274a03f410b7ac",
+      "dirty": true
+    },
+    {
+      "at": 2882140.683371125,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:bd36a92be300aff8b5741a6c42caabf97665489f4ce4974b51274a03f410b7ac",
+      "dirty": true
+    },
+    {
+      "at": 2882144.012559291,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:bd36a92be300aff8b5741a6c42caabf97665489f4ce4974b51274a03f410b7ac",
+      "dirty": true
+    },
+    {
+      "at": 2882147.32795,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:bd36a92be300aff8b5741a6c42caabf97665489f4ce4974b51274a03f410b7ac",
+      "dirty": true
+    },
+    {
+      "at": 2882150.638612666,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:bd36a92be300aff8b5741a6c42caabf97665489f4ce4974b51274a03f410b7ac",
+      "dirty": true
+    },
+    {
+      "at": 2882153.96963325,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:bd36a92be300aff8b5741a6c42caabf97665489f4ce4974b51274a03f410b7ac",
+      "dirty": true
+    },
+    {
+      "at": 2882157.319977833,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:bd36a92be300aff8b5741a6c42caabf97665489f4ce4974b51274a03f410b7ac",
+      "dirty": true
+    },
+    {
+      "at": 2882160.611533625,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:bd36a92be300aff8b5741a6c42caabf97665489f4ce4974b51274a03f410b7ac",
+      "dirty": true
+    },
+    {
+      "at": 2882163.904628791,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:bd36a92be300aff8b5741a6c42caabf97665489f4ce4974b51274a03f410b7ac",
+      "dirty": true
+    },
+    {
+      "at": 2882167.148475916,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:bd36a92be300aff8b5741a6c42caabf97665489f4ce4974b51274a03f410b7ac",
+      "dirty": true
+    },
+    {
+      "at": 2882170.381951875,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:bd36a92be300aff8b5741a6c42caabf97665489f4ce4974b51274a03f410b7ac",
+      "dirty": true
+    },
+    {
+      "at": 2882173.622702375,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:bd36a92be300aff8b5741a6c42caabf97665489f4ce4974b51274a03f410b7ac",
+      "dirty": true
+    },
+    {
+      "at": 2882176.887865583,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:bd36a92be300aff8b5741a6c42caabf97665489f4ce4974b51274a03f410b7ac",
+      "dirty": true
+    },
+    {
+      "at": 2882180.168643416,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:bd36a92be300aff8b5741a6c42caabf97665489f4ce4974b51274a03f410b7ac",
+      "dirty": true
+    },
+    {
+      "at": 2882183.411870166,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:bd36a92be300aff8b5741a6c42caabf97665489f4ce4974b51274a03f410b7ac",
+      "dirty": true
+    },
+    {
+      "at": 2882186.666212416,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:bd36a92be300aff8b5741a6c42caabf97665489f4ce4974b51274a03f410b7ac",
+      "dirty": true
+    },
+    {
+      "at": 2882189.950594791,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:bd36a92be300aff8b5741a6c42caabf97665489f4ce4974b51274a03f410b7ac",
+      "dirty": true
+    },
+    {
+      "at": 2882193.245301041,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:bd36a92be300aff8b5741a6c42caabf97665489f4ce4974b51274a03f410b7ac",
+      "dirty": true
+    },
+    {
+      "at": 2882196.51611725,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:bd36a92be300aff8b5741a6c42caabf97665489f4ce4974b51274a03f410b7ac",
+      "dirty": true
+    },
+    {
+      "at": 2882199.774534833,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:bd36a92be300aff8b5741a6c42caabf97665489f4ce4974b51274a03f410b7ac",
+      "dirty": true
+    }
+  ],
+  "afterManualRepair": "0:1:true"
+}

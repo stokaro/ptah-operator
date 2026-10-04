@@ -1,0 +1,4262 @@
+{
+  "resource": {
+    "apiVersion": "operator.ptah.run/v1alpha1",
+    "kind": "PtahSchema",
+    "metadata": {
+      "creationTimestamp": "2026-10-02T18:50:46Z",
+      "generation": 1,
+      "name": "network-proof",
+      "namespace": "ptah-result-network-pg-schema",
+      "resourceVersion": "87756",
+      "uid": "7fffc957-c94b-4829-8c13-85560c720a9d"
+    },
+    "spec": {
+      "desired": {
+        "ociRef": "oci://e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/schemas/demo@sha256:89b65571ead9b99d830da96fe1d1f455fb00fc0a4138b73e9654113be6ed0dad",
+        "registryAuthFrom": {
+          "dockerConfigJSONKey": ".dockerconfigjson",
+          "mode": "Environment",
+          "name": "demo-registry",
+          "passwordKey": "password",
+          "tokenKey": "token",
+          "usernameKey": "username"
+        },
+        "transport": {
+          "plainHTTP": true
+        },
+        "verificationPolicyFrom": {
+          "key": "policy.yaml",
+          "name": "demo-verification-policy"
+        }
+      },
+      "execution": {
+        "activeDeadlineSeconds": 900,
+        "connectTimeout": "30s",
+        "failureRetryInterval": "10s"
+      },
+      "interval": "2h",
+      "policy": {
+        "allowDestructive": false,
+        "apply": "Always",
+        "driftSeverity": "all",
+        "lockTimeout": "30s",
+        "transactionMode": "file"
+      },
+      "suspend": false,
+      "target": {
+        "coordinationKey": "qualification/ptah-result-network-pg-schema",
+        "engine": "PostgreSQL",
+        "sharedRealm": false,
+        "urlFrom": {
+          "key": "url",
+          "name": "network-database"
+        }
+      }
+    },
+    "status": {
+      "applied": {
+        "artifactDigest": "sha256:89b65571ead9b99d830da96fe1d1f455fb00fc0a4138b73e9654113be6ed0dad",
+        "completedAt": "2026-10-02T18:52:06Z",
+        "controllerImage": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/operator@sha256:f338a4c98d77e4908426d0c4b45a1b177ffc8c2916cae3029217b9ec12cd6f36",
+        "controllerRevision": "b0a51ff740784beaf6cd1ebb2fe8c2715583e1b5",
+        "controllerStateVersion": 1,
+        "coordinationDigest": "sha256:8a50996e42108b772c4cbdc265232c67584b2cfde6b9f0d5b20439398d4d166b",
+        "dispatchedBy": {
+          "controllerImage": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/operator@sha256:f338a4c98d77e4908426d0c4b45a1b177ffc8c2916cae3029217b9ec12cd6f36",
+          "controllerRevision": "b0a51ff740784beaf6cd1ebb2fe8c2715583e1b5",
+          "runnerImage": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-runner@sha256:7e2199f5c03660f094244b00962ec7e222f752f9cfc86276ac7cea296ce5d4b6"
+        },
+        "executionBindingID": "v1-4c10e9fa5b17c841ff1d69c8c0e1f1c9",
+        "executorImage": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-executor@sha256:45530f0f2c41f4d649c207fe8221dad268946ca8da13b503244805c016f3c9dd",
+        "planFingerprint": "sha256:b594f4a6e5934d6aae64773f3f9c6a380504e5fca2cf8d52d15c0b027e9f48b0",
+        "planRef": {
+          "name": "ptah-plan-b594f4a6e5934d6aae64773f",
+          "uid": "b8d1d286-7efe-47bf-a470-f1b783cf6ccc"
+        },
+        "ptahVersion": "v0.9.0-73-gf6e562c5b",
+        "runnerImage": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-runner@sha256:7e2199f5c03660f094244b00962ec7e222f752f9cfc86276ac7cea296ce5d4b6",
+        "runnerProtocolVersion": 1,
+        "targetIdentityDigest": "sha256:c1cce44cd3b29ec660067af5314236cd9efad877af67fed17f8c3cef389835c1"
+      },
+      "conditions": [
+        {
+          "lastTransitionTime": "2026-10-02T18:50:46Z",
+          "message": "Database engine \"PostgreSQL\" is supported",
+          "observedGeneration": 1,
+          "reason": "SupportedEngine",
+          "status": "True",
+          "type": "EngineSupported"
+        },
+        {
+          "lastTransitionTime": "2026-10-02T18:52:06Z",
+          "message": "Schema is in sync",
+          "observedGeneration": 1,
+          "reason": "InSync",
+          "status": "True",
+          "type": "Ready"
+        },
+        {
+          "lastTransitionTime": "2026-10-02T18:50:56Z",
+          "message": "The latest operation completed",
+          "observedGeneration": 1,
+          "reason": "Succeeded",
+          "status": "False",
+          "type": "ReconciliationFailed"
+        },
+        {
+          "lastTransitionTime": "2026-10-02T18:50:56Z",
+          "message": "Desired OCI reference resolved to immutable content",
+          "observedGeneration": 1,
+          "reason": "DigestPinned",
+          "status": "True",
+          "type": "ArtifactResolved"
+        },
+        {
+          "lastTransitionTime": "2026-10-02T18:51:04Z",
+          "message": "Artifact type and verification policy were satisfied",
+          "observedGeneration": 1,
+          "reason": "PolicySatisfied",
+          "status": "True",
+          "type": "ArtifactVerified"
+        },
+        {
+          "lastTransitionTime": "2026-10-02T18:51:16Z",
+          "message": "Database schema was observed",
+          "observedGeneration": 1,
+          "reason": "Observed",
+          "status": "True",
+          "type": "DatabaseReachable"
+        },
+        {
+          "lastTransitionTime": "2026-10-02T18:52:06Z",
+          "message": "The authoritative managed scope has no changes",
+          "observedGeneration": 1,
+          "reason": "ScopedConverged",
+          "status": "False",
+          "type": "DriftDetected"
+        },
+        {
+          "lastTransitionTime": "2026-10-02T18:52:06Z",
+          "message": "A stable scoped plan proves convergence",
+          "observedGeneration": 1,
+          "reason": "ScopedConverged",
+          "status": "True",
+          "type": "InSync"
+        },
+        {
+          "lastTransitionTime": "2026-10-02T18:51:30Z",
+          "message": "Current plan approval requirements are satisfied",
+          "observedGeneration": 1,
+          "reason": "Satisfied",
+          "status": "False",
+          "type": "ApprovalRequired"
+        },
+        {
+          "lastTransitionTime": "2026-10-02T18:52:06Z",
+          "message": "No executable plan is required",
+          "observedGeneration": 1,
+          "reason": "NoChanges",
+          "status": "False",
+          "type": "PlanReady"
+        },
+        {
+          "lastTransitionTime": "2026-10-02T18:51:40Z",
+          "message": "Apply Job completed; convergence observation is pending",
+          "observedGeneration": 1,
+          "reason": "JobCompleted",
+          "status": "False",
+          "type": "Applying"
+        },
+        {
+          "lastTransitionTime": "2026-10-02T18:51:40Z",
+          "message": "Reconciliation is active",
+          "observedGeneration": 1,
+          "reason": "Active",
+          "status": "False",
+          "type": "Suspended"
+        }
+      ],
+      "executionBinding": {
+        "controllerStateVersion": 1,
+        "epoch": "v1-4c10e9fa5b17c841ff1d69c8c0e1f1c9",
+        "executorImage": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-executor@sha256:45530f0f2c41f4d649c207fe8221dad268946ca8da13b503244805c016f3c9dd",
+        "ptahVersion": "v0.9.0-73-gf6e562c5b",
+        "runnerProtocolVersion": 1
+      },
+      "lastAttemptTime": "2026-10-02T18:52:06Z",
+      "lastSuccessfulReconciliation": "2026-10-02T18:52:06Z",
+      "nextReconciliationTime": "2026-10-02T20:52:06Z",
+      "observedGeneration": 1,
+      "phase": "InSync",
+      "source": {
+        "artifactType": "application/vnd.stokaro.ptah.schema.v1",
+        "digest": "sha256:89b65571ead9b99d830da96fe1d1f455fb00fc0a4138b73e9654113be6ed0dad",
+        "mediaType": "application/vnd.oci.image.manifest.v1+json",
+        "requestedReference": "oci://e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/schemas/demo@sha256:89b65571ead9b99d830da96fe1d1f455fb00fc0a4138b73e9654113be6ed0dad",
+        "resolvedAt": "2026-10-02T18:50:56Z",
+        "resolvedReference": "oci://e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/schemas/demo@sha256:89b65571ead9b99d830da96fe1d1f455fb00fc0a4138b73e9654113be6ed0dad",
+        "size": 799,
+        "verificationPolicyDigest": "sha256:e6fd539e50737a7554662ef60342989c5f4590530a602f8716380a209a510065",
+        "verificationPolicyUID": "b8751d21-bb6b-4f67-b608-0c5d6ad92d6f",
+        "verified": true,
+        "verifiedAt": "2026-10-02T18:51:04Z"
+      },
+      "target": {
+        "coordinationDigest": "sha256:8a50996e42108b772c4cbdc265232c67584b2cfde6b9f0d5b20439398d4d166b",
+        "driftReportDigest": "sha256:1b98c82e390191ff2c0ab6a9d87730d24bf51187476a8c91a929773f231c9ac7",
+        "engine": "PostgreSQL",
+        "identityDigest": "sha256:c1cce44cd3b29ec660067af5314236cd9efad877af67fed17f8c3cef389835c1",
+        "lastObservedAt": "2026-10-02T18:51:52Z"
+      }
+    }
+  },
+  "jobs": [
+    {
+      "apiVersion": "batch/v1",
+      "kind": "Job",
+      "metadata": {
+        "annotations": {
+          "operator.ptah.run/admission-snapshot-digest": "sha256:2ff74114fdf0c727b02bee15479bf05cd63d8d09fae54c4e9e30f5182f217472",
+          "operator.ptah.run/controller-image": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/operator@sha256:f338a4c98d77e4908426d0c4b45a1b177ffc8c2916cae3029217b9ec12cd6f36",
+          "operator.ptah.run/controller-revision": "b0a51ff740784beaf6cd1ebb2fe8c2715583e1b5",
+          "operator.ptah.run/controller-state-version": "1",
+          "operator.ptah.run/execution-binding-id": "v1-4c10e9fa5b17c841ff1d69c8c0e1f1c9",
+          "operator.ptah.run/input-fingerprint": "sha256:7f1606c113fe1bdd539a0651bbc394bb19d0d5209bcfb41b296efac272c90fb0",
+          "operator.ptah.run/operation-id": "sha256:9bca999226f168852d37e8db0c9e4579dc0c00d7e3abb7ac38bf46dcf33b13b2",
+          "operator.ptah.run/ptah-version": "v0.9.0-73-gf6e562c5b"
+        },
+        "creationTimestamp": "2026-10-02T18:50:46Z",
+        "generation": 2,
+        "labels": {
+          "app.kubernetes.io/component": "schema-operation",
+          "app.kubernetes.io/managed-by": "ptah-operator",
+          "operator.ptah.run/operation": "resolve",
+          "operator.ptah.run/operation-id": "ad3f4bc33f1e2b0f",
+          "operator.ptah.run/schema": "network-proof"
+        },
+        "name": "ptah-resolve-network-proof-d2b7dd924a214f52",
+        "namespace": "ptah-result-network-pg-schema",
+        "ownerReferences": [
+          {
+            "apiVersion": "operator.ptah.run/v1alpha1",
+            "blockOwnerDeletion": true,
+            "controller": true,
+            "kind": "PtahSchema",
+            "name": "network-proof",
+            "uid": "7fffc957-c94b-4829-8c13-85560c720a9d"
+          }
+        ],
+        "resourceVersion": "87212",
+        "uid": "a32e7b3e-341e-4157-b517-ed526eaa2fa1"
+      },
+      "spec": {
+        "activeDeadlineSeconds": 900,
+        "backoffLimit": 0,
+        "completionMode": "NonIndexed",
+        "completions": 1,
+        "manualSelector": false,
+        "parallelism": 1,
+        "podReplacementPolicy": "Failed",
+        "selector": {
+          "matchLabels": {
+            "batch.kubernetes.io/controller-uid": "a32e7b3e-341e-4157-b517-ed526eaa2fa1"
+          }
+        },
+        "suspend": false,
+        "template": {
+          "metadata": {
+            "annotations": {
+              "operator.ptah.run/admission-snapshot-digest": "sha256:2ff74114fdf0c727b02bee15479bf05cd63d8d09fae54c4e9e30f5182f217472",
+              "operator.ptah.run/controller-image": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/operator@sha256:f338a4c98d77e4908426d0c4b45a1b177ffc8c2916cae3029217b9ec12cd6f36",
+              "operator.ptah.run/controller-revision": "b0a51ff740784beaf6cd1ebb2fe8c2715583e1b5",
+              "operator.ptah.run/controller-state-version": "1",
+              "operator.ptah.run/execution-binding-id": "v1-4c10e9fa5b17c841ff1d69c8c0e1f1c9",
+              "operator.ptah.run/input-fingerprint": "sha256:7f1606c113fe1bdd539a0651bbc394bb19d0d5209bcfb41b296efac272c90fb0",
+              "operator.ptah.run/operation-id": "sha256:9bca999226f168852d37e8db0c9e4579dc0c00d7e3abb7ac38bf46dcf33b13b2",
+              "operator.ptah.run/ptah-version": "v0.9.0-73-gf6e562c5b"
+            },
+            "labels": {
+              "app.kubernetes.io/component": "schema-operation",
+              "app.kubernetes.io/managed-by": "ptah-operator",
+              "batch.kubernetes.io/controller-uid": "a32e7b3e-341e-4157-b517-ed526eaa2fa1",
+              "batch.kubernetes.io/job-name": "ptah-resolve-network-proof-d2b7dd924a214f52",
+              "controller-uid": "a32e7b3e-341e-4157-b517-ed526eaa2fa1",
+              "job-name": "ptah-resolve-network-proof-d2b7dd924a214f52",
+              "operator.ptah.run/operation": "resolve",
+              "operator.ptah.run/operation-id": "ad3f4bc33f1e2b0f",
+              "operator.ptah.run/schema": "network-proof"
+            }
+          },
+          "spec": {
+            "activeDeadlineSeconds": 900,
+            "automountServiceAccountToken": false,
+            "containers": [
+              {
+                "args": [
+                  "--ptah-binary",
+                  "/usr/local/bin/ptah",
+                  "--max-result-bytes",
+                  "8388608",
+                  "--max-plan-bytes",
+                  "8388608",
+                  "--operation",
+                  "resolve",
+                  "--result-endpoint",
+                  "https://ptah-runtime-generated-name-prefix-boundary-proof-5a0ef-results.ptah-system-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc",
+                  "--result-credentials",
+                  "/credentials/result"
+                ],
+                "command": [
+                  "/runner/ptah-runner"
+                ],
+                "env": [
+                  {
+                    "name": "HOME",
+                    "value": "/work"
+                  },
+                  {
+                    "name": "PTAH_OCI_PASSWORD",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "key": "password",
+                        "name": "demo-registry",
+                        "optional": true
+                      }
+                    }
+                  },
+                  {
+                    "name": "PTAH_OCI_REGISTRY",
+                    "value": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000"
+                  },
+                  {
+                    "name": "PTAH_OCI_TOKEN",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "key": "token",
+                        "name": "demo-registry",
+                        "optional": true
+                      }
+                    }
+                  },
+                  {
+                    "name": "PTAH_OCI_USERNAME",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "key": "username",
+                        "name": "demo-registry",
+                        "optional": true
+                      }
+                    }
+                  },
+                  {
+                    "name": "PTAH_OPERATION_ID",
+                    "value": "sha256:9bca999226f168852d37e8db0c9e4579dc0c00d7e3abb7ac38bf46dcf33b13b2"
+                  },
+                  {
+                    "name": "PTAH_OPERATOR_OCI_ALLOW_PLAIN_HTTP",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "key": "allowPlainHTTP",
+                        "name": "demo-registry"
+                      }
+                    }
+                  },
+                  {
+                    "name": "PTAH_OPERATOR_OCI_AUTH_MODE",
+                    "value": "Environment"
+                  },
+                  {
+                    "name": "PTAH_OPERATOR_OCI_AUTH_REGISTRY_GRANT",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "key": "registry",
+                        "name": "demo-registry"
+                      }
+                    }
+                  },
+                  {
+                    "name": "PTAH_PLAIN_HTTP",
+                    "value": "true"
+                  },
+                  {
+                    "name": "PTAH_REQUESTED_REFERENCE",
+                    "value": "oci://e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/schemas/demo@sha256:89b65571ead9b99d830da96fe1d1f455fb00fc0a4138b73e9654113be6ed0dad"
+                  },
+                  {
+                    "name": "PTAH_RESULT_GENERATION",
+                    "value": "1"
+                  },
+                  {
+                    "name": "PTAH_RESULT_POD_NAME",
+                    "valueFrom": {
+                      "fieldRef": {
+                        "apiVersion": "v1",
+                        "fieldPath": "metadata.name"
+                      }
+                    }
+                  },
+                  {
+                    "name": "PTAH_RESULT_POD_NAMESPACE",
+                    "valueFrom": {
+                      "fieldRef": {
+                        "apiVersion": "v1",
+                        "fieldPath": "metadata.namespace"
+                      }
+                    }
+                  },
+                  {
+                    "name": "PTAH_RESULT_POD_UID",
+                    "valueFrom": {
+                      "fieldRef": {
+                        "apiVersion": "v1",
+                        "fieldPath": "metadata.uid"
+                      }
+                    }
+                  },
+                  {
+                    "name": "PTAH_RUNNER_PROTOCOL_VERSION",
+                    "value": "1"
+                  },
+                  {
+                    "name": "TMPDIR",
+                    "value": "/work"
+                  }
+                ],
+                "image": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-executor@sha256:45530f0f2c41f4d649c207fe8221dad268946ca8da13b503244805c016f3c9dd",
+                "imagePullPolicy": "IfNotPresent",
+                "name": "ptah",
+                "resources": {},
+                "securityContext": {
+                  "allowPrivilegeEscalation": false,
+                  "capabilities": {
+                    "drop": [
+                      "ALL"
+                    ]
+                  },
+                  "readOnlyRootFilesystem": true,
+                  "runAsGroup": 65532,
+                  "runAsNonRoot": true,
+                  "runAsUser": 65532,
+                  "seccompProfile": {
+                    "type": "RuntimeDefault"
+                  }
+                },
+                "terminationMessagePath": "/dev/termination-log",
+                "terminationMessagePolicy": "File",
+                "volumeMounts": [
+                  {
+                    "mountPath": "/runner",
+                    "name": "runner",
+                    "readOnly": true
+                  },
+                  {
+                    "mountPath": "/work",
+                    "name": "work"
+                  },
+                  {
+                    "mountPath": "/credentials/result",
+                    "name": "result-credentials",
+                    "readOnly": true
+                  }
+                ],
+                "workingDir": "/work"
+              }
+            ],
+            "dnsPolicy": "ClusterFirst",
+            "enableServiceLinks": false,
+            "initContainers": [
+              {
+                "args": [
+                  "--install-to",
+                  "/runner/ptah-runner"
+                ],
+                "command": [
+                  "/ptah-runner"
+                ],
+                "image": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-runner@sha256:7e2199f5c03660f094244b00962ec7e222f752f9cfc86276ac7cea296ce5d4b6",
+                "imagePullPolicy": "IfNotPresent",
+                "name": "install-runner",
+                "resources": {},
+                "securityContext": {
+                  "allowPrivilegeEscalation": false,
+                  "capabilities": {
+                    "drop": [
+                      "ALL"
+                    ]
+                  },
+                  "readOnlyRootFilesystem": true,
+                  "runAsGroup": 65532,
+                  "runAsNonRoot": true,
+                  "runAsUser": 65532,
+                  "seccompProfile": {
+                    "type": "RuntimeDefault"
+                  }
+                },
+                "terminationMessagePath": "/dev/termination-log",
+                "terminationMessagePolicy": "File",
+                "volumeMounts": [
+                  {
+                    "mountPath": "/runner",
+                    "name": "runner"
+                  }
+                ]
+              }
+            ],
+            "restartPolicy": "Never",
+            "schedulerName": "default-scheduler",
+            "securityContext": {
+              "fsGroup": 65532,
+              "fsGroupChangePolicy": "OnRootMismatch",
+              "runAsGroup": 65532,
+              "runAsNonRoot": true,
+              "runAsUser": 65532,
+              "seccompProfile": {
+                "type": "RuntimeDefault"
+              }
+            },
+            "serviceAccount": "default",
+            "serviceAccountName": "default",
+            "terminationGracePeriodSeconds": 30,
+            "volumes": [
+              {
+                "emptyDir": {
+                  "medium": "Memory",
+                  "sizeLimit": "64Mi"
+                },
+                "name": "runner"
+              },
+              {
+                "emptyDir": {
+                  "medium": "Memory",
+                  "sizeLimit": "128Mi"
+                },
+                "name": "work"
+              },
+              {
+                "name": "result-credentials",
+                "secret": {
+                  "defaultMode": 288,
+                  "items": [
+                    {
+                      "key": "tls.crt",
+                      "path": "tls.crt"
+                    },
+                    {
+                      "key": "tls.key",
+                      "path": "tls.key"
+                    },
+                    {
+                      "key": "ca.crt",
+                      "path": "ca.crt"
+                    }
+                  ],
+                  "secretName": "ptah-result-key-7f187817553d435afdbb5c61ed5bc452"
+                }
+              }
+            ]
+          }
+        },
+        "ttlSecondsAfterFinished": 300
+      },
+      "status": {
+        "completionTime": "2026-10-02T18:50:51Z",
+        "conditions": [
+          {
+            "lastProbeTime": "2026-10-02T18:50:51Z",
+            "lastTransitionTime": "2026-10-02T18:50:51Z",
+            "message": "Reached expected number of succeeded pods",
+            "reason": "CompletionsReached",
+            "status": "True",
+            "type": "SuccessCriteriaMet"
+          },
+          {
+            "lastProbeTime": "2026-10-02T18:50:51Z",
+            "lastTransitionTime": "2026-10-02T18:50:51Z",
+            "message": "Reached expected number of succeeded pods",
+            "reason": "CompletionsReached",
+            "status": "True",
+            "type": "Complete"
+          }
+        ],
+        "ready": 0,
+        "startTime": "2026-10-02T18:50:46Z",
+        "succeeded": 1,
+        "terminating": 0,
+        "uncountedTerminatedPods": {}
+      }
+    },
+    {
+      "apiVersion": "batch/v1",
+      "kind": "Job",
+      "metadata": {
+        "annotations": {
+          "operator.ptah.run/admission-snapshot-digest": "sha256:c475371383464f3e4fa49097e837e29ef07332cf1d5a86394b16e9ae606990da",
+          "operator.ptah.run/controller-image": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/operator@sha256:f338a4c98d77e4908426d0c4b45a1b177ffc8c2916cae3029217b9ec12cd6f36",
+          "operator.ptah.run/controller-revision": "b0a51ff740784beaf6cd1ebb2fe8c2715583e1b5",
+          "operator.ptah.run/controller-state-version": "1",
+          "operator.ptah.run/execution-binding-id": "v1-4c10e9fa5b17c841ff1d69c8c0e1f1c9",
+          "operator.ptah.run/input-fingerprint": "sha256:82f6b5c47acfd79dde500e6e5cb7d90e55f962b7cf12f8ba41c4f1798a17f4d7",
+          "operator.ptah.run/operation-id": "sha256:3866adb8bd8aab97de36b98df1c44384ee4ff5c784e171c09216d915a61c8566",
+          "operator.ptah.run/ptah-version": "v0.9.0-73-gf6e562c5b"
+        },
+        "creationTimestamp": "2026-10-02T18:50:56Z",
+        "generation": 2,
+        "labels": {
+          "app.kubernetes.io/component": "schema-operation",
+          "app.kubernetes.io/managed-by": "ptah-operator",
+          "operator.ptah.run/operation": "verify",
+          "operator.ptah.run/operation-id": "b62d654460b770f9",
+          "operator.ptah.run/schema": "network-proof"
+        },
+        "name": "ptah-verify-network-proof-1d8665f63fad2db6",
+        "namespace": "ptah-result-network-pg-schema",
+        "ownerReferences": [
+          {
+            "apiVersion": "operator.ptah.run/v1alpha1",
+            "blockOwnerDeletion": true,
+            "controller": true,
+            "kind": "PtahSchema",
+            "name": "network-proof",
+            "uid": "7fffc957-c94b-4829-8c13-85560c720a9d"
+          }
+        ],
+        "resourceVersion": "87274",
+        "uid": "1d5b08f8-04a3-4566-9243-4fc4e6b06064"
+      },
+      "spec": {
+        "activeDeadlineSeconds": 900,
+        "backoffLimit": 0,
+        "completionMode": "NonIndexed",
+        "completions": 1,
+        "manualSelector": false,
+        "parallelism": 1,
+        "podReplacementPolicy": "Failed",
+        "selector": {
+          "matchLabels": {
+            "batch.kubernetes.io/controller-uid": "1d5b08f8-04a3-4566-9243-4fc4e6b06064"
+          }
+        },
+        "suspend": false,
+        "template": {
+          "metadata": {
+            "annotations": {
+              "operator.ptah.run/admission-snapshot-digest": "sha256:c475371383464f3e4fa49097e837e29ef07332cf1d5a86394b16e9ae606990da",
+              "operator.ptah.run/controller-image": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/operator@sha256:f338a4c98d77e4908426d0c4b45a1b177ffc8c2916cae3029217b9ec12cd6f36",
+              "operator.ptah.run/controller-revision": "b0a51ff740784beaf6cd1ebb2fe8c2715583e1b5",
+              "operator.ptah.run/controller-state-version": "1",
+              "operator.ptah.run/execution-binding-id": "v1-4c10e9fa5b17c841ff1d69c8c0e1f1c9",
+              "operator.ptah.run/input-fingerprint": "sha256:82f6b5c47acfd79dde500e6e5cb7d90e55f962b7cf12f8ba41c4f1798a17f4d7",
+              "operator.ptah.run/operation-id": "sha256:3866adb8bd8aab97de36b98df1c44384ee4ff5c784e171c09216d915a61c8566",
+              "operator.ptah.run/ptah-version": "v0.9.0-73-gf6e562c5b"
+            },
+            "labels": {
+              "app.kubernetes.io/component": "schema-operation",
+              "app.kubernetes.io/managed-by": "ptah-operator",
+              "batch.kubernetes.io/controller-uid": "1d5b08f8-04a3-4566-9243-4fc4e6b06064",
+              "batch.kubernetes.io/job-name": "ptah-verify-network-proof-1d8665f63fad2db6",
+              "controller-uid": "1d5b08f8-04a3-4566-9243-4fc4e6b06064",
+              "job-name": "ptah-verify-network-proof-1d8665f63fad2db6",
+              "operator.ptah.run/operation": "verify",
+              "operator.ptah.run/operation-id": "b62d654460b770f9",
+              "operator.ptah.run/schema": "network-proof"
+            }
+          },
+          "spec": {
+            "activeDeadlineSeconds": 900,
+            "automountServiceAccountToken": false,
+            "containers": [
+              {
+                "args": [
+                  "--ptah-binary",
+                  "/usr/local/bin/ptah",
+                  "--max-result-bytes",
+                  "8388608",
+                  "--max-plan-bytes",
+                  "8388608",
+                  "--operation",
+                  "verify",
+                  "--result-endpoint",
+                  "https://ptah-runtime-generated-name-prefix-boundary-proof-5a0ef-results.ptah-system-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc",
+                  "--result-credentials",
+                  "/credentials/result"
+                ],
+                "command": [
+                  "/runner/ptah-runner"
+                ],
+                "env": [
+                  {
+                    "name": "HOME",
+                    "value": "/work"
+                  },
+                  {
+                    "name": "PTAH_EXPECTED_ARTIFACT_TYPE",
+                    "value": "application/vnd.stokaro.ptah.schema.v1"
+                  },
+                  {
+                    "name": "PTAH_OCI_PASSWORD",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "key": "password",
+                        "name": "demo-registry",
+                        "optional": true
+                      }
+                    }
+                  },
+                  {
+                    "name": "PTAH_OCI_REGISTRY",
+                    "value": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000"
+                  },
+                  {
+                    "name": "PTAH_OCI_TOKEN",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "key": "token",
+                        "name": "demo-registry",
+                        "optional": true
+                      }
+                    }
+                  },
+                  {
+                    "name": "PTAH_OCI_USERNAME",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "key": "username",
+                        "name": "demo-registry",
+                        "optional": true
+                      }
+                    }
+                  },
+                  {
+                    "name": "PTAH_OPERATION_ID",
+                    "value": "sha256:3866adb8bd8aab97de36b98df1c44384ee4ff5c784e171c09216d915a61c8566"
+                  },
+                  {
+                    "name": "PTAH_OPERATOR_OCI_ALLOW_PLAIN_HTTP",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "key": "allowPlainHTTP",
+                        "name": "demo-registry"
+                      }
+                    }
+                  },
+                  {
+                    "name": "PTAH_OPERATOR_OCI_AUTH_MODE",
+                    "value": "Environment"
+                  },
+                  {
+                    "name": "PTAH_OPERATOR_OCI_AUTH_REGISTRY_GRANT",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "key": "registry",
+                        "name": "demo-registry"
+                      }
+                    }
+                  },
+                  {
+                    "name": "PTAH_PLAIN_HTTP",
+                    "value": "true"
+                  },
+                  {
+                    "name": "PTAH_REQUESTED_REFERENCE",
+                    "value": "oci://e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/schemas/demo@sha256:89b65571ead9b99d830da96fe1d1f455fb00fc0a4138b73e9654113be6ed0dad"
+                  },
+                  {
+                    "name": "PTAH_RESOLVED_REFERENCE",
+                    "value": "oci://e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/schemas/demo@sha256:89b65571ead9b99d830da96fe1d1f455fb00fc0a4138b73e9654113be6ed0dad"
+                  },
+                  {
+                    "name": "PTAH_RESULT_GENERATION",
+                    "value": "1"
+                  },
+                  {
+                    "name": "PTAH_RESULT_POD_NAME",
+                    "valueFrom": {
+                      "fieldRef": {
+                        "apiVersion": "v1",
+                        "fieldPath": "metadata.name"
+                      }
+                    }
+                  },
+                  {
+                    "name": "PTAH_RESULT_POD_NAMESPACE",
+                    "valueFrom": {
+                      "fieldRef": {
+                        "apiVersion": "v1",
+                        "fieldPath": "metadata.namespace"
+                      }
+                    }
+                  },
+                  {
+                    "name": "PTAH_RESULT_POD_UID",
+                    "valueFrom": {
+                      "fieldRef": {
+                        "apiVersion": "v1",
+                        "fieldPath": "metadata.uid"
+                      }
+                    }
+                  },
+                  {
+                    "name": "PTAH_RUNNER_PROTOCOL_VERSION",
+                    "value": "1"
+                  },
+                  {
+                    "name": "PTAH_VERIFICATION_POLICY",
+                    "value": "/verification/policy.yaml"
+                  },
+                  {
+                    "name": "TMPDIR",
+                    "value": "/work"
+                  }
+                ],
+                "image": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-executor@sha256:45530f0f2c41f4d649c207fe8221dad268946ca8da13b503244805c016f3c9dd",
+                "imagePullPolicy": "IfNotPresent",
+                "name": "ptah",
+                "resources": {},
+                "securityContext": {
+                  "allowPrivilegeEscalation": false,
+                  "capabilities": {
+                    "drop": [
+                      "ALL"
+                    ]
+                  },
+                  "readOnlyRootFilesystem": true,
+                  "runAsGroup": 65532,
+                  "runAsNonRoot": true,
+                  "runAsUser": 65532,
+                  "seccompProfile": {
+                    "type": "RuntimeDefault"
+                  }
+                },
+                "terminationMessagePath": "/dev/termination-log",
+                "terminationMessagePolicy": "File",
+                "volumeMounts": [
+                  {
+                    "mountPath": "/runner",
+                    "name": "runner",
+                    "readOnly": true
+                  },
+                  {
+                    "mountPath": "/work",
+                    "name": "work"
+                  },
+                  {
+                    "mountPath": "/verification",
+                    "name": "verification-policy",
+                    "readOnly": true
+                  },
+                  {
+                    "mountPath": "/credentials/result",
+                    "name": "result-credentials",
+                    "readOnly": true
+                  }
+                ],
+                "workingDir": "/work"
+              }
+            ],
+            "dnsPolicy": "ClusterFirst",
+            "enableServiceLinks": false,
+            "initContainers": [
+              {
+                "args": [
+                  "--install-to",
+                  "/runner/ptah-runner"
+                ],
+                "command": [
+                  "/ptah-runner"
+                ],
+                "image": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-runner@sha256:7e2199f5c03660f094244b00962ec7e222f752f9cfc86276ac7cea296ce5d4b6",
+                "imagePullPolicy": "IfNotPresent",
+                "name": "install-runner",
+                "resources": {},
+                "securityContext": {
+                  "allowPrivilegeEscalation": false,
+                  "capabilities": {
+                    "drop": [
+                      "ALL"
+                    ]
+                  },
+                  "readOnlyRootFilesystem": true,
+                  "runAsGroup": 65532,
+                  "runAsNonRoot": true,
+                  "runAsUser": 65532,
+                  "seccompProfile": {
+                    "type": "RuntimeDefault"
+                  }
+                },
+                "terminationMessagePath": "/dev/termination-log",
+                "terminationMessagePolicy": "File",
+                "volumeMounts": [
+                  {
+                    "mountPath": "/runner",
+                    "name": "runner"
+                  }
+                ]
+              }
+            ],
+            "restartPolicy": "Never",
+            "schedulerName": "default-scheduler",
+            "securityContext": {
+              "fsGroup": 65532,
+              "fsGroupChangePolicy": "OnRootMismatch",
+              "runAsGroup": 65532,
+              "runAsNonRoot": true,
+              "runAsUser": 65532,
+              "seccompProfile": {
+                "type": "RuntimeDefault"
+              }
+            },
+            "serviceAccount": "default",
+            "serviceAccountName": "default",
+            "terminationGracePeriodSeconds": 30,
+            "volumes": [
+              {
+                "emptyDir": {
+                  "medium": "Memory",
+                  "sizeLimit": "64Mi"
+                },
+                "name": "runner"
+              },
+              {
+                "emptyDir": {
+                  "medium": "Memory",
+                  "sizeLimit": "128Mi"
+                },
+                "name": "work"
+              },
+              {
+                "configMap": {
+                  "defaultMode": 420,
+                  "items": [
+                    {
+                      "key": "policy.yaml",
+                      "mode": 288,
+                      "path": "policy.yaml"
+                    }
+                  ],
+                  "name": "demo-verification-policy"
+                },
+                "name": "verification-policy"
+              },
+              {
+                "name": "result-credentials",
+                "secret": {
+                  "defaultMode": 288,
+                  "items": [
+                    {
+                      "key": "tls.crt",
+                      "path": "tls.crt"
+                    },
+                    {
+                      "key": "tls.key",
+                      "path": "tls.key"
+                    },
+                    {
+                      "key": "ca.crt",
+                      "path": "ca.crt"
+                    }
+                  ],
+                  "secretName": "ptah-result-key-59b20390ff5659d7c9c0542accc660c1"
+                }
+              }
+            ]
+          }
+        },
+        "ttlSecondsAfterFinished": 300
+      },
+      "status": {
+        "completionTime": "2026-10-02T18:50:59Z",
+        "conditions": [
+          {
+            "lastProbeTime": "2026-10-02T18:50:59Z",
+            "lastTransitionTime": "2026-10-02T18:50:59Z",
+            "message": "Reached expected number of succeeded pods",
+            "reason": "CompletionsReached",
+            "status": "True",
+            "type": "SuccessCriteriaMet"
+          },
+          {
+            "lastProbeTime": "2026-10-02T18:50:59Z",
+            "lastTransitionTime": "2026-10-02T18:50:59Z",
+            "message": "Reached expected number of succeeded pods",
+            "reason": "CompletionsReached",
+            "status": "True",
+            "type": "Complete"
+          }
+        ],
+        "ready": 0,
+        "startTime": "2026-10-02T18:50:56Z",
+        "succeeded": 1,
+        "terminating": 0,
+        "uncountedTerminatedPods": {}
+      }
+    },
+    {
+      "apiVersion": "batch/v1",
+      "kind": "Job",
+      "metadata": {
+        "annotations": {
+          "operator.ptah.run/admission-snapshot-digest": "sha256:4ccb7f984dcb79c8aafd528238d8b6a5590b8d6c5080a83a1b0b10bae1cc612e",
+          "operator.ptah.run/controller-image": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/operator@sha256:f338a4c98d77e4908426d0c4b45a1b177ffc8c2916cae3029217b9ec12cd6f36",
+          "operator.ptah.run/controller-revision": "b0a51ff740784beaf6cd1ebb2fe8c2715583e1b5",
+          "operator.ptah.run/controller-state-version": "1",
+          "operator.ptah.run/execution-binding-id": "v1-4c10e9fa5b17c841ff1d69c8c0e1f1c9",
+          "operator.ptah.run/input-fingerprint": "sha256:dc33854aafe8a800086edd09a5dccb4605e72eff689cbfb6d36eb6531428623f",
+          "operator.ptah.run/operation-id": "sha256:de71bf8c5a88e9e7f1e0a7286ea3b82c0a7fb0a3d027a9df653c90d48756301c",
+          "operator.ptah.run/ptah-version": "v0.9.0-73-gf6e562c5b"
+        },
+        "creationTimestamp": "2026-10-02T18:51:04Z",
+        "generation": 2,
+        "labels": {
+          "app.kubernetes.io/component": "schema-operation",
+          "app.kubernetes.io/managed-by": "ptah-operator",
+          "operator.ptah.run/operation": "observe",
+          "operator.ptah.run/operation-id": "dda11bdb42cc3984",
+          "operator.ptah.run/schema": "network-proof"
+        },
+        "name": "ptah-observe-network-proof-568d1e2d01c4eaa5",
+        "namespace": "ptah-result-network-pg-schema",
+        "ownerReferences": [
+          {
+            "apiVersion": "operator.ptah.run/v1alpha1",
+            "blockOwnerDeletion": true,
+            "controller": true,
+            "kind": "PtahSchema",
+            "name": "network-proof",
+            "uid": "7fffc957-c94b-4829-8c13-85560c720a9d"
+          }
+        ],
+        "resourceVersion": "87356",
+        "uid": "061ad461-afc5-4eaf-87ff-d01c7dd3f1d3"
+      },
+      "spec": {
+        "activeDeadlineSeconds": 900,
+        "backoffLimit": 0,
+        "completionMode": "NonIndexed",
+        "completions": 1,
+        "manualSelector": false,
+        "parallelism": 1,
+        "podReplacementPolicy": "Failed",
+        "selector": {
+          "matchLabels": {
+            "batch.kubernetes.io/controller-uid": "061ad461-afc5-4eaf-87ff-d01c7dd3f1d3"
+          }
+        },
+        "suspend": false,
+        "template": {
+          "metadata": {
+            "annotations": {
+              "operator.ptah.run/admission-snapshot-digest": "sha256:4ccb7f984dcb79c8aafd528238d8b6a5590b8d6c5080a83a1b0b10bae1cc612e",
+              "operator.ptah.run/controller-image": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/operator@sha256:f338a4c98d77e4908426d0c4b45a1b177ffc8c2916cae3029217b9ec12cd6f36",
+              "operator.ptah.run/controller-revision": "b0a51ff740784beaf6cd1ebb2fe8c2715583e1b5",
+              "operator.ptah.run/controller-state-version": "1",
+              "operator.ptah.run/execution-binding-id": "v1-4c10e9fa5b17c841ff1d69c8c0e1f1c9",
+              "operator.ptah.run/input-fingerprint": "sha256:dc33854aafe8a800086edd09a5dccb4605e72eff689cbfb6d36eb6531428623f",
+              "operator.ptah.run/operation-id": "sha256:de71bf8c5a88e9e7f1e0a7286ea3b82c0a7fb0a3d027a9df653c90d48756301c",
+              "operator.ptah.run/ptah-version": "v0.9.0-73-gf6e562c5b"
+            },
+            "labels": {
+              "app.kubernetes.io/component": "schema-operation",
+              "app.kubernetes.io/managed-by": "ptah-operator",
+              "batch.kubernetes.io/controller-uid": "061ad461-afc5-4eaf-87ff-d01c7dd3f1d3",
+              "batch.kubernetes.io/job-name": "ptah-observe-network-proof-568d1e2d01c4eaa5",
+              "controller-uid": "061ad461-afc5-4eaf-87ff-d01c7dd3f1d3",
+              "job-name": "ptah-observe-network-proof-568d1e2d01c4eaa5",
+              "operator.ptah.run/operation": "observe",
+              "operator.ptah.run/operation-id": "dda11bdb42cc3984",
+              "operator.ptah.run/schema": "network-proof"
+            }
+          },
+          "spec": {
+            "activeDeadlineSeconds": 900,
+            "automountServiceAccountToken": false,
+            "containers": [
+              {
+                "args": [
+                  "--ptah-binary",
+                  "/usr/local/bin/ptah",
+                  "--max-result-bytes",
+                  "8388608",
+                  "--max-plan-bytes",
+                  "8388608",
+                  "--operation",
+                  "observe",
+                  "--result-endpoint",
+                  "https://ptah-runtime-generated-name-prefix-boundary-proof-5a0ef-results.ptah-system-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc",
+                  "--result-credentials",
+                  "/credentials/result"
+                ],
+                "command": [
+                  "/runner/ptah-runner"
+                ],
+                "env": [
+                  {
+                    "name": "HOME",
+                    "value": "/work"
+                  },
+                  {
+                    "name": "PTAH_CONNECT_TIMEOUT",
+                    "value": "30s"
+                  },
+                  {
+                    "name": "PTAH_COORDINATION_DIGEST",
+                    "value": "sha256:8a50996e42108b772c4cbdc265232c67584b2cfde6b9f0d5b20439398d4d166b"
+                  },
+                  {
+                    "name": "PTAH_DB_URL",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "key": "url",
+                        "name": "network-database"
+                      }
+                    }
+                  },
+                  {
+                    "name": "PTAH_EXPECTED_DATABASE_ENGINE",
+                    "value": "PostgreSQL"
+                  },
+                  {
+                    "name": "PTAH_LOCK_TIMEOUT",
+                    "value": "30s"
+                  },
+                  {
+                    "name": "PTAH_OPERATION_ID",
+                    "value": "sha256:de71bf8c5a88e9e7f1e0a7286ea3b82c0a7fb0a3d027a9df653c90d48756301c"
+                  },
+                  {
+                    "name": "PTAH_RESULT_GENERATION",
+                    "value": "1"
+                  },
+                  {
+                    "name": "PTAH_RESULT_POD_NAME",
+                    "valueFrom": {
+                      "fieldRef": {
+                        "apiVersion": "v1",
+                        "fieldPath": "metadata.name"
+                      }
+                    }
+                  },
+                  {
+                    "name": "PTAH_RESULT_POD_NAMESPACE",
+                    "valueFrom": {
+                      "fieldRef": {
+                        "apiVersion": "v1",
+                        "fieldPath": "metadata.namespace"
+                      }
+                    }
+                  },
+                  {
+                    "name": "PTAH_RESULT_POD_UID",
+                    "valueFrom": {
+                      "fieldRef": {
+                        "apiVersion": "v1",
+                        "fieldPath": "metadata.uid"
+                      }
+                    }
+                  },
+                  {
+                    "name": "PTAH_RUNNER_PROTOCOL_VERSION",
+                    "value": "1"
+                  },
+                  {
+                    "name": "PTAH_SCHEMA_FILE",
+                    "value": "/source/schema.hcl"
+                  },
+                  {
+                    "name": "PTAH_SEVERITY",
+                    "value": "all"
+                  },
+                  {
+                    "name": "TMPDIR",
+                    "value": "/work"
+                  }
+                ],
+                "image": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-executor@sha256:45530f0f2c41f4d649c207fe8221dad268946ca8da13b503244805c016f3c9dd",
+                "imagePullPolicy": "IfNotPresent",
+                "name": "ptah",
+                "resources": {},
+                "securityContext": {
+                  "allowPrivilegeEscalation": false,
+                  "capabilities": {
+                    "drop": [
+                      "ALL"
+                    ]
+                  },
+                  "readOnlyRootFilesystem": true,
+                  "runAsGroup": 65532,
+                  "runAsNonRoot": true,
+                  "runAsUser": 65532,
+                  "seccompProfile": {
+                    "type": "RuntimeDefault"
+                  }
+                },
+                "terminationMessagePath": "/dev/termination-log",
+                "terminationMessagePolicy": "File",
+                "volumeMounts": [
+                  {
+                    "mountPath": "/runner",
+                    "name": "runner",
+                    "readOnly": true
+                  },
+                  {
+                    "mountPath": "/work",
+                    "name": "work"
+                  },
+                  {
+                    "mountPath": "/source",
+                    "name": "schema-source",
+                    "readOnly": true
+                  },
+                  {
+                    "mountPath": "/credentials/result",
+                    "name": "result-credentials",
+                    "readOnly": true
+                  }
+                ],
+                "workingDir": "/work"
+              }
+            ],
+            "dnsPolicy": "ClusterFirst",
+            "enableServiceLinks": false,
+            "initContainers": [
+              {
+                "args": [
+                  "--install-to",
+                  "/runner/ptah-runner"
+                ],
+                "command": [
+                  "/ptah-runner"
+                ],
+                "image": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-runner@sha256:7e2199f5c03660f094244b00962ec7e222f752f9cfc86276ac7cea296ce5d4b6",
+                "imagePullPolicy": "IfNotPresent",
+                "name": "install-runner",
+                "resources": {},
+                "securityContext": {
+                  "allowPrivilegeEscalation": false,
+                  "capabilities": {
+                    "drop": [
+                      "ALL"
+                    ]
+                  },
+                  "readOnlyRootFilesystem": true,
+                  "runAsGroup": 65532,
+                  "runAsNonRoot": true,
+                  "runAsUser": 65532,
+                  "seccompProfile": {
+                    "type": "RuntimeDefault"
+                  }
+                },
+                "terminationMessagePath": "/dev/termination-log",
+                "terminationMessagePolicy": "File",
+                "volumeMounts": [
+                  {
+                    "mountPath": "/runner",
+                    "name": "runner"
+                  }
+                ]
+              },
+              {
+                "args": [
+                  "--validate-oci-source",
+                  "oci://e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/schemas/demo@sha256:89b65571ead9b99d830da96fe1d1f455fb00fc0a4138b73e9654113be6ed0dad"
+                ],
+                "command": [
+                  "/runner/ptah-runner"
+                ],
+                "env": [
+                  {
+                    "name": "PTAH_OCI_REGISTRY",
+                    "value": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000"
+                  },
+                  {
+                    "name": "PTAH_OPERATOR_OCI_ALLOW_PLAIN_HTTP",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "key": "allowPlainHTTP",
+                        "name": "demo-registry"
+                      }
+                    }
+                  },
+                  {
+                    "name": "PTAH_OPERATOR_OCI_AUTH_MODE",
+                    "value": "Environment"
+                  },
+                  {
+                    "name": "PTAH_OPERATOR_OCI_AUTH_REGISTRY_GRANT",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "key": "registry",
+                        "name": "demo-registry"
+                      }
+                    }
+                  },
+                  {
+                    "name": "PTAH_PLAIN_HTTP",
+                    "value": "true"
+                  },
+                  {
+                    "name": "PTAH_RUNNER_PROTOCOL_VERSION",
+                    "value": "1"
+                  }
+                ],
+                "image": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-executor@sha256:45530f0f2c41f4d649c207fe8221dad268946ca8da13b503244805c016f3c9dd",
+                "imagePullPolicy": "IfNotPresent",
+                "name": "validate-source-authority",
+                "resources": {},
+                "securityContext": {
+                  "allowPrivilegeEscalation": false,
+                  "capabilities": {
+                    "drop": [
+                      "ALL"
+                    ]
+                  },
+                  "readOnlyRootFilesystem": true,
+                  "runAsGroup": 65532,
+                  "runAsNonRoot": true,
+                  "runAsUser": 65532,
+                  "seccompProfile": {
+                    "type": "RuntimeDefault"
+                  }
+                },
+                "terminationMessagePath": "/dev/termination-log",
+                "terminationMessagePolicy": "File",
+                "volumeMounts": [
+                  {
+                    "mountPath": "/runner",
+                    "name": "runner",
+                    "readOnly": true
+                  }
+                ]
+              },
+              {
+                "args": [
+                  "schema",
+                  "pull",
+                  "oci://e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/schemas/demo@sha256:89b65571ead9b99d830da96fe1d1f455fb00fc0a4138b73e9654113be6ed0dad",
+                  "--out",
+                  "/source/schema.hcl"
+                ],
+                "command": [
+                  "/usr/local/bin/ptah"
+                ],
+                "env": [
+                  {
+                    "name": "HOME",
+                    "value": "/fetch-work"
+                  },
+                  {
+                    "name": "PTAH_OCI_PASSWORD",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "key": "password",
+                        "name": "demo-registry",
+                        "optional": true
+                      }
+                    }
+                  },
+                  {
+                    "name": "PTAH_OCI_REGISTRY",
+                    "value": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000"
+                  },
+                  {
+                    "name": "PTAH_OCI_TOKEN",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "key": "token",
+                        "name": "demo-registry",
+                        "optional": true
+                      }
+                    }
+                  },
+                  {
+                    "name": "PTAH_OCI_USERNAME",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "key": "username",
+                        "name": "demo-registry",
+                        "optional": true
+                      }
+                    }
+                  },
+                  {
+                    "name": "PTAH_PLAIN_HTTP",
+                    "value": "true"
+                  },
+                  {
+                    "name": "TMPDIR",
+                    "value": "/fetch-work"
+                  }
+                ],
+                "image": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-executor@sha256:45530f0f2c41f4d649c207fe8221dad268946ca8da13b503244805c016f3c9dd",
+                "imagePullPolicy": "IfNotPresent",
+                "name": "fetch-schema",
+                "resources": {},
+                "securityContext": {
+                  "allowPrivilegeEscalation": false,
+                  "capabilities": {
+                    "drop": [
+                      "ALL"
+                    ]
+                  },
+                  "readOnlyRootFilesystem": true,
+                  "runAsGroup": 65532,
+                  "runAsNonRoot": true,
+                  "runAsUser": 65532,
+                  "seccompProfile": {
+                    "type": "RuntimeDefault"
+                  }
+                },
+                "terminationMessagePath": "/dev/termination-log",
+                "terminationMessagePolicy": "File",
+                "volumeMounts": [
+                  {
+                    "mountPath": "/source",
+                    "name": "schema-source"
+                  },
+                  {
+                    "mountPath": "/fetch-work",
+                    "name": "fetch-work"
+                  }
+                ],
+                "workingDir": "/fetch-work"
+              }
+            ],
+            "restartPolicy": "Never",
+            "schedulerName": "default-scheduler",
+            "securityContext": {
+              "fsGroup": 65532,
+              "fsGroupChangePolicy": "OnRootMismatch",
+              "runAsGroup": 65532,
+              "runAsNonRoot": true,
+              "runAsUser": 65532,
+              "seccompProfile": {
+                "type": "RuntimeDefault"
+              }
+            },
+            "serviceAccount": "default",
+            "serviceAccountName": "default",
+            "terminationGracePeriodSeconds": 30,
+            "volumes": [
+              {
+                "emptyDir": {
+                  "medium": "Memory",
+                  "sizeLimit": "64Mi"
+                },
+                "name": "runner"
+              },
+              {
+                "emptyDir": {
+                  "medium": "Memory",
+                  "sizeLimit": "128Mi"
+                },
+                "name": "work"
+              },
+              {
+                "emptyDir": {
+                  "medium": "Memory",
+                  "sizeLimit": "64Mi"
+                },
+                "name": "schema-source"
+              },
+              {
+                "emptyDir": {
+                  "medium": "Memory",
+                  "sizeLimit": "64Mi"
+                },
+                "name": "fetch-work"
+              },
+              {
+                "name": "result-credentials",
+                "secret": {
+                  "defaultMode": 288,
+                  "items": [
+                    {
+                      "key": "tls.crt",
+                      "path": "tls.crt"
+                    },
+                    {
+                      "key": "tls.key",
+                      "path": "tls.key"
+                    },
+                    {
+                      "key": "ca.crt",
+                      "path": "ca.crt"
+                    }
+                  ],
+                  "secretName": "ptah-result-key-6d457753144d6c3db50c9c38f6492a53"
+                }
+              }
+            ]
+          }
+        },
+        "ttlSecondsAfterFinished": 300
+      },
+      "status": {
+        "completionTime": "2026-10-02T18:51:11Z",
+        "conditions": [
+          {
+            "lastProbeTime": "2026-10-02T18:51:11Z",
+            "lastTransitionTime": "2026-10-02T18:51:11Z",
+            "message": "Reached expected number of succeeded pods",
+            "reason": "CompletionsReached",
+            "status": "True",
+            "type": "SuccessCriteriaMet"
+          },
+          {
+            "lastProbeTime": "2026-10-02T18:51:11Z",
+            "lastTransitionTime": "2026-10-02T18:51:11Z",
+            "message": "Reached expected number of succeeded pods",
+            "reason": "CompletionsReached",
+            "status": "True",
+            "type": "Complete"
+          }
+        ],
+        "ready": 0,
+        "startTime": "2026-10-02T18:51:04Z",
+        "succeeded": 1,
+        "terminating": 0,
+        "uncountedTerminatedPods": {}
+      }
+    },
+    {
+      "apiVersion": "batch/v1",
+      "kind": "Job",
+      "metadata": {
+        "annotations": {
+          "operator.ptah.run/admission-snapshot-digest": "sha256:d6406abb5caebe1861e06ec72cc9897481c121b97a24115e3fcfad9a8011ef72",
+          "operator.ptah.run/controller-image": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/operator@sha256:f338a4c98d77e4908426d0c4b45a1b177ffc8c2916cae3029217b9ec12cd6f36",
+          "operator.ptah.run/controller-revision": "b0a51ff740784beaf6cd1ebb2fe8c2715583e1b5",
+          "operator.ptah.run/controller-state-version": "1",
+          "operator.ptah.run/execution-binding-id": "v1-4c10e9fa5b17c841ff1d69c8c0e1f1c9",
+          "operator.ptah.run/input-fingerprint": "sha256:5325332d437875110cfc2b32c510464152531c0b411d9ec4becb31edba04c815",
+          "operator.ptah.run/operation-id": "sha256:5fb9074822f869aec76011c1ae8855b4389c3d6117686c20cf28988423141f3f",
+          "operator.ptah.run/ptah-version": "v0.9.0-73-gf6e562c5b"
+        },
+        "creationTimestamp": "2026-10-02T18:51:16Z",
+        "generation": 2,
+        "labels": {
+          "app.kubernetes.io/component": "schema-operation",
+          "app.kubernetes.io/managed-by": "ptah-operator",
+          "operator.ptah.run/operation": "plan",
+          "operator.ptah.run/operation-id": "8abb744dcc50fb90",
+          "operator.ptah.run/schema": "network-proof"
+        },
+        "name": "ptah-plan-network-proof-5f22e0ecdbd18a83",
+        "namespace": "ptah-result-network-pg-schema",
+        "ownerReferences": [
+          {
+            "apiVersion": "operator.ptah.run/v1alpha1",
+            "blockOwnerDeletion": true,
+            "controller": true,
+            "kind": "PtahSchema",
+            "name": "network-proof",
+            "uid": "7fffc957-c94b-4829-8c13-85560c720a9d"
+          }
+        ],
+        "resourceVersion": "87456",
+        "uid": "e2934778-2511-4ecd-9e1f-37ded3942f7d"
+      },
+      "spec": {
+        "activeDeadlineSeconds": 900,
+        "backoffLimit": 0,
+        "completionMode": "NonIndexed",
+        "completions": 1,
+        "manualSelector": false,
+        "parallelism": 1,
+        "podReplacementPolicy": "Failed",
+        "selector": {
+          "matchLabels": {
+            "batch.kubernetes.io/controller-uid": "e2934778-2511-4ecd-9e1f-37ded3942f7d"
+          }
+        },
+        "suspend": false,
+        "template": {
+          "metadata": {
+            "annotations": {
+              "operator.ptah.run/admission-snapshot-digest": "sha256:d6406abb5caebe1861e06ec72cc9897481c121b97a24115e3fcfad9a8011ef72",
+              "operator.ptah.run/controller-image": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/operator@sha256:f338a4c98d77e4908426d0c4b45a1b177ffc8c2916cae3029217b9ec12cd6f36",
+              "operator.ptah.run/controller-revision": "b0a51ff740784beaf6cd1ebb2fe8c2715583e1b5",
+              "operator.ptah.run/controller-state-version": "1",
+              "operator.ptah.run/execution-binding-id": "v1-4c10e9fa5b17c841ff1d69c8c0e1f1c9",
+              "operator.ptah.run/input-fingerprint": "sha256:5325332d437875110cfc2b32c510464152531c0b411d9ec4becb31edba04c815",
+              "operator.ptah.run/operation-id": "sha256:5fb9074822f869aec76011c1ae8855b4389c3d6117686c20cf28988423141f3f",
+              "operator.ptah.run/ptah-version": "v0.9.0-73-gf6e562c5b"
+            },
+            "labels": {
+              "app.kubernetes.io/component": "schema-operation",
+              "app.kubernetes.io/managed-by": "ptah-operator",
+              "batch.kubernetes.io/controller-uid": "e2934778-2511-4ecd-9e1f-37ded3942f7d",
+              "batch.kubernetes.io/job-name": "ptah-plan-network-proof-5f22e0ecdbd18a83",
+              "controller-uid": "e2934778-2511-4ecd-9e1f-37ded3942f7d",
+              "job-name": "ptah-plan-network-proof-5f22e0ecdbd18a83",
+              "operator.ptah.run/operation": "plan",
+              "operator.ptah.run/operation-id": "8abb744dcc50fb90",
+              "operator.ptah.run/schema": "network-proof"
+            }
+          },
+          "spec": {
+            "activeDeadlineSeconds": 900,
+            "automountServiceAccountToken": false,
+            "containers": [
+              {
+                "args": [
+                  "--ptah-binary",
+                  "/usr/local/bin/ptah",
+                  "--max-result-bytes",
+                  "8388608",
+                  "--max-plan-bytes",
+                  "8388608",
+                  "--operation",
+                  "plan",
+                  "--result-endpoint",
+                  "https://ptah-runtime-generated-name-prefix-boundary-proof-5a0ef-results.ptah-system-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc",
+                  "--result-credentials",
+                  "/credentials/result"
+                ],
+                "command": [
+                  "/runner/ptah-runner"
+                ],
+                "env": [
+                  {
+                    "name": "HOME",
+                    "value": "/work"
+                  },
+                  {
+                    "name": "PTAH_CONNECT_TIMEOUT",
+                    "value": "30s"
+                  },
+                  {
+                    "name": "PTAH_COORDINATION_DIGEST",
+                    "value": "sha256:8a50996e42108b772c4cbdc265232c67584b2cfde6b9f0d5b20439398d4d166b"
+                  },
+                  {
+                    "name": "PTAH_DB_URL",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "key": "url",
+                        "name": "network-database"
+                      }
+                    }
+                  },
+                  {
+                    "name": "PTAH_EXPECTED_DATABASE_ENGINE",
+                    "value": "PostgreSQL"
+                  },
+                  {
+                    "name": "PTAH_LOCK_TIMEOUT",
+                    "value": "30s"
+                  },
+                  {
+                    "name": "PTAH_OPERATION_ID",
+                    "value": "sha256:5fb9074822f869aec76011c1ae8855b4389c3d6117686c20cf28988423141f3f"
+                  },
+                  {
+                    "name": "PTAH_PLAN_SEAL_PUBLIC_KEY",
+                    "value": "heevtnOrdRK2kLR/VZFp4R8XWbHAycde6r96U7abBS0="
+                  },
+                  {
+                    "name": "PTAH_RESULT_GENERATION",
+                    "value": "1"
+                  },
+                  {
+                    "name": "PTAH_RESULT_POD_NAME",
+                    "valueFrom": {
+                      "fieldRef": {
+                        "apiVersion": "v1",
+                        "fieldPath": "metadata.name"
+                      }
+                    }
+                  },
+                  {
+                    "name": "PTAH_RESULT_POD_NAMESPACE",
+                    "valueFrom": {
+                      "fieldRef": {
+                        "apiVersion": "v1",
+                        "fieldPath": "metadata.namespace"
+                      }
+                    }
+                  },
+                  {
+                    "name": "PTAH_RESULT_POD_UID",
+                    "valueFrom": {
+                      "fieldRef": {
+                        "apiVersion": "v1",
+                        "fieldPath": "metadata.uid"
+                      }
+                    }
+                  },
+                  {
+                    "name": "PTAH_RUNNER_PROTOCOL_VERSION",
+                    "value": "1"
+                  },
+                  {
+                    "name": "PTAH_SCHEMA_FILE",
+                    "value": "/source/schema.hcl"
+                  },
+                  {
+                    "name": "PTAH_SEALED_PLAN_JOB_NAME",
+                    "value": "ptah-plan-network-proof-5f22e0ecdbd18a83"
+                  },
+                  {
+                    "name": "TMPDIR",
+                    "value": "/work"
+                  }
+                ],
+                "image": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-executor@sha256:45530f0f2c41f4d649c207fe8221dad268946ca8da13b503244805c016f3c9dd",
+                "imagePullPolicy": "IfNotPresent",
+                "name": "ptah",
+                "resources": {},
+                "securityContext": {
+                  "allowPrivilegeEscalation": false,
+                  "capabilities": {
+                    "drop": [
+                      "ALL"
+                    ]
+                  },
+                  "readOnlyRootFilesystem": true,
+                  "runAsGroup": 65532,
+                  "runAsNonRoot": true,
+                  "runAsUser": 65532,
+                  "seccompProfile": {
+                    "type": "RuntimeDefault"
+                  }
+                },
+                "terminationMessagePath": "/dev/termination-log",
+                "terminationMessagePolicy": "File",
+                "volumeMounts": [
+                  {
+                    "mountPath": "/runner",
+                    "name": "runner",
+                    "readOnly": true
+                  },
+                  {
+                    "mountPath": "/work",
+                    "name": "work"
+                  },
+                  {
+                    "mountPath": "/source",
+                    "name": "schema-source",
+                    "readOnly": true
+                  },
+                  {
+                    "mountPath": "/credentials/result",
+                    "name": "result-credentials",
+                    "readOnly": true
+                  }
+                ],
+                "workingDir": "/work"
+              }
+            ],
+            "dnsPolicy": "ClusterFirst",
+            "enableServiceLinks": false,
+            "initContainers": [
+              {
+                "args": [
+                  "--install-to",
+                  "/runner/ptah-runner"
+                ],
+                "command": [
+                  "/ptah-runner"
+                ],
+                "image": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-runner@sha256:7e2199f5c03660f094244b00962ec7e222f752f9cfc86276ac7cea296ce5d4b6",
+                "imagePullPolicy": "IfNotPresent",
+                "name": "install-runner",
+                "resources": {},
+                "securityContext": {
+                  "allowPrivilegeEscalation": false,
+                  "capabilities": {
+                    "drop": [
+                      "ALL"
+                    ]
+                  },
+                  "readOnlyRootFilesystem": true,
+                  "runAsGroup": 65532,
+                  "runAsNonRoot": true,
+                  "runAsUser": 65532,
+                  "seccompProfile": {
+                    "type": "RuntimeDefault"
+                  }
+                },
+                "terminationMessagePath": "/dev/termination-log",
+                "terminationMessagePolicy": "File",
+                "volumeMounts": [
+                  {
+                    "mountPath": "/runner",
+                    "name": "runner"
+                  }
+                ]
+              },
+              {
+                "args": [
+                  "--validate-oci-source",
+                  "oci://e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/schemas/demo@sha256:89b65571ead9b99d830da96fe1d1f455fb00fc0a4138b73e9654113be6ed0dad"
+                ],
+                "command": [
+                  "/runner/ptah-runner"
+                ],
+                "env": [
+                  {
+                    "name": "PTAH_OCI_REGISTRY",
+                    "value": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000"
+                  },
+                  {
+                    "name": "PTAH_OPERATOR_OCI_ALLOW_PLAIN_HTTP",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "key": "allowPlainHTTP",
+                        "name": "demo-registry"
+                      }
+                    }
+                  },
+                  {
+                    "name": "PTAH_OPERATOR_OCI_AUTH_MODE",
+                    "value": "Environment"
+                  },
+                  {
+                    "name": "PTAH_OPERATOR_OCI_AUTH_REGISTRY_GRANT",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "key": "registry",
+                        "name": "demo-registry"
+                      }
+                    }
+                  },
+                  {
+                    "name": "PTAH_PLAIN_HTTP",
+                    "value": "true"
+                  },
+                  {
+                    "name": "PTAH_RUNNER_PROTOCOL_VERSION",
+                    "value": "1"
+                  }
+                ],
+                "image": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-executor@sha256:45530f0f2c41f4d649c207fe8221dad268946ca8da13b503244805c016f3c9dd",
+                "imagePullPolicy": "IfNotPresent",
+                "name": "validate-source-authority",
+                "resources": {},
+                "securityContext": {
+                  "allowPrivilegeEscalation": false,
+                  "capabilities": {
+                    "drop": [
+                      "ALL"
+                    ]
+                  },
+                  "readOnlyRootFilesystem": true,
+                  "runAsGroup": 65532,
+                  "runAsNonRoot": true,
+                  "runAsUser": 65532,
+                  "seccompProfile": {
+                    "type": "RuntimeDefault"
+                  }
+                },
+                "terminationMessagePath": "/dev/termination-log",
+                "terminationMessagePolicy": "File",
+                "volumeMounts": [
+                  {
+                    "mountPath": "/runner",
+                    "name": "runner",
+                    "readOnly": true
+                  }
+                ]
+              },
+              {
+                "args": [
+                  "schema",
+                  "pull",
+                  "oci://e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/schemas/demo@sha256:89b65571ead9b99d830da96fe1d1f455fb00fc0a4138b73e9654113be6ed0dad",
+                  "--out",
+                  "/source/schema.hcl"
+                ],
+                "command": [
+                  "/usr/local/bin/ptah"
+                ],
+                "env": [
+                  {
+                    "name": "HOME",
+                    "value": "/fetch-work"
+                  },
+                  {
+                    "name": "PTAH_OCI_PASSWORD",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "key": "password",
+                        "name": "demo-registry",
+                        "optional": true
+                      }
+                    }
+                  },
+                  {
+                    "name": "PTAH_OCI_REGISTRY",
+                    "value": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000"
+                  },
+                  {
+                    "name": "PTAH_OCI_TOKEN",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "key": "token",
+                        "name": "demo-registry",
+                        "optional": true
+                      }
+                    }
+                  },
+                  {
+                    "name": "PTAH_OCI_USERNAME",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "key": "username",
+                        "name": "demo-registry",
+                        "optional": true
+                      }
+                    }
+                  },
+                  {
+                    "name": "PTAH_PLAIN_HTTP",
+                    "value": "true"
+                  },
+                  {
+                    "name": "TMPDIR",
+                    "value": "/fetch-work"
+                  }
+                ],
+                "image": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-executor@sha256:45530f0f2c41f4d649c207fe8221dad268946ca8da13b503244805c016f3c9dd",
+                "imagePullPolicy": "IfNotPresent",
+                "name": "fetch-schema",
+                "resources": {},
+                "securityContext": {
+                  "allowPrivilegeEscalation": false,
+                  "capabilities": {
+                    "drop": [
+                      "ALL"
+                    ]
+                  },
+                  "readOnlyRootFilesystem": true,
+                  "runAsGroup": 65532,
+                  "runAsNonRoot": true,
+                  "runAsUser": 65532,
+                  "seccompProfile": {
+                    "type": "RuntimeDefault"
+                  }
+                },
+                "terminationMessagePath": "/dev/termination-log",
+                "terminationMessagePolicy": "File",
+                "volumeMounts": [
+                  {
+                    "mountPath": "/source",
+                    "name": "schema-source"
+                  },
+                  {
+                    "mountPath": "/fetch-work",
+                    "name": "fetch-work"
+                  }
+                ],
+                "workingDir": "/fetch-work"
+              }
+            ],
+            "restartPolicy": "Never",
+            "schedulerName": "default-scheduler",
+            "securityContext": {
+              "fsGroup": 65532,
+              "fsGroupChangePolicy": "OnRootMismatch",
+              "runAsGroup": 65532,
+              "runAsNonRoot": true,
+              "runAsUser": 65532,
+              "seccompProfile": {
+                "type": "RuntimeDefault"
+              }
+            },
+            "serviceAccount": "default",
+            "serviceAccountName": "default",
+            "terminationGracePeriodSeconds": 30,
+            "volumes": [
+              {
+                "emptyDir": {
+                  "medium": "Memory",
+                  "sizeLimit": "64Mi"
+                },
+                "name": "runner"
+              },
+              {
+                "emptyDir": {
+                  "medium": "Memory",
+                  "sizeLimit": "128Mi"
+                },
+                "name": "work"
+              },
+              {
+                "emptyDir": {
+                  "medium": "Memory",
+                  "sizeLimit": "64Mi"
+                },
+                "name": "schema-source"
+              },
+              {
+                "emptyDir": {
+                  "medium": "Memory",
+                  "sizeLimit": "64Mi"
+                },
+                "name": "fetch-work"
+              },
+              {
+                "name": "result-credentials",
+                "secret": {
+                  "defaultMode": 288,
+                  "items": [
+                    {
+                      "key": "tls.crt",
+                      "path": "tls.crt"
+                    },
+                    {
+                      "key": "tls.key",
+                      "path": "tls.key"
+                    },
+                    {
+                      "key": "ca.crt",
+                      "path": "ca.crt"
+                    }
+                  ],
+                  "secretName": "ptah-result-key-711d00f4663edb71e75db0b063b20f82"
+                }
+              }
+            ]
+          }
+        },
+        "ttlSecondsAfterFinished": 300
+      },
+      "status": {
+        "completionTime": "2026-10-02T18:51:25Z",
+        "conditions": [
+          {
+            "lastProbeTime": "2026-10-02T18:51:25Z",
+            "lastTransitionTime": "2026-10-02T18:51:25Z",
+            "message": "Reached expected number of succeeded pods",
+            "reason": "CompletionsReached",
+            "status": "True",
+            "type": "SuccessCriteriaMet"
+          },
+          {
+            "lastProbeTime": "2026-10-02T18:51:25Z",
+            "lastTransitionTime": "2026-10-02T18:51:25Z",
+            "message": "Reached expected number of succeeded pods",
+            "reason": "CompletionsReached",
+            "status": "True",
+            "type": "Complete"
+          }
+        ],
+        "ready": 0,
+        "startTime": "2026-10-02T18:51:16Z",
+        "succeeded": 1,
+        "terminating": 0,
+        "uncountedTerminatedPods": {}
+      }
+    },
+    {
+      "apiVersion": "batch/v1",
+      "kind": "Job",
+      "metadata": {
+        "annotations": {
+          "cluster-autoscaler.kubernetes.io/safe-to-evict": "false",
+          "operator.ptah.run/admission-snapshot-digest": "sha256:2c8f6d0cda2fcc847a885b518e7c79e92245e550e66e13b1edc0acc2313906cb",
+          "operator.ptah.run/controller-image": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/operator@sha256:f338a4c98d77e4908426d0c4b45a1b177ffc8c2916cae3029217b9ec12cd6f36",
+          "operator.ptah.run/controller-revision": "b0a51ff740784beaf6cd1ebb2fe8c2715583e1b5",
+          "operator.ptah.run/controller-state-version": "1",
+          "operator.ptah.run/execution-binding-id": "v1-4c10e9fa5b17c841ff1d69c8c0e1f1c9",
+          "operator.ptah.run/input-fingerprint": "sha256:884049e293f58eb14fd87cab87af10e9f282779b2f217f55dd9ab7a6bb15d6c9",
+          "operator.ptah.run/operation-id": "sha256:ed360c52bba2022c9ac02d610cebee65d3e72ee253e256d65f468206a851a293",
+          "operator.ptah.run/plan-content-digest": "sha256:a842c32a0a8871468d71517423ab97ec485d84a0cad00c015ee32e5d3debdfee",
+          "operator.ptah.run/plan-fingerprint": "sha256:b594f4a6e5934d6aae64773f3f9c6a380504e5fca2cf8d52d15c0b027e9f48b0",
+          "operator.ptah.run/ptah-version": "v0.9.0-73-gf6e562c5b"
+        },
+        "creationTimestamp": "2026-10-02T18:51:30Z",
+        "generation": 2,
+        "labels": {
+          "app.kubernetes.io/component": "schema-operation",
+          "app.kubernetes.io/managed-by": "ptah-operator",
+          "operator.ptah.run/operation": "apply",
+          "operator.ptah.run/operation-id": "57245daa437d5567",
+          "operator.ptah.run/schema": "network-proof"
+        },
+        "name": "ptah-apply-network-proof-0eb5ac29ddc74ee2",
+        "namespace": "ptah-result-network-pg-schema",
+        "ownerReferences": [
+          {
+            "apiVersion": "operator.ptah.run/v1alpha1",
+            "blockOwnerDeletion": true,
+            "controller": true,
+            "kind": "PtahSchema",
+            "name": "network-proof",
+            "uid": "7fffc957-c94b-4829-8c13-85560c720a9d"
+          }
+        ],
+        "resourceVersion": "87541",
+        "uid": "03eb478a-9ecc-439f-81ad-b97639b7d772"
+      },
+      "spec": {
+        "activeDeadlineSeconds": 900,
+        "backoffLimit": 0,
+        "completionMode": "NonIndexed",
+        "completions": 1,
+        "manualSelector": false,
+        "parallelism": 1,
+        "podReplacementPolicy": "Failed",
+        "selector": {
+          "matchLabels": {
+            "batch.kubernetes.io/controller-uid": "03eb478a-9ecc-439f-81ad-b97639b7d772"
+          }
+        },
+        "suspend": false,
+        "template": {
+          "metadata": {
+            "annotations": {
+              "cluster-autoscaler.kubernetes.io/safe-to-evict": "false",
+              "operator.ptah.run/admission-snapshot-digest": "sha256:2c8f6d0cda2fcc847a885b518e7c79e92245e550e66e13b1edc0acc2313906cb",
+              "operator.ptah.run/controller-image": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/operator@sha256:f338a4c98d77e4908426d0c4b45a1b177ffc8c2916cae3029217b9ec12cd6f36",
+              "operator.ptah.run/controller-revision": "b0a51ff740784beaf6cd1ebb2fe8c2715583e1b5",
+              "operator.ptah.run/controller-state-version": "1",
+              "operator.ptah.run/execution-binding-id": "v1-4c10e9fa5b17c841ff1d69c8c0e1f1c9",
+              "operator.ptah.run/input-fingerprint": "sha256:884049e293f58eb14fd87cab87af10e9f282779b2f217f55dd9ab7a6bb15d6c9",
+              "operator.ptah.run/operation-id": "sha256:ed360c52bba2022c9ac02d610cebee65d3e72ee253e256d65f468206a851a293",
+              "operator.ptah.run/plan-content-digest": "sha256:a842c32a0a8871468d71517423ab97ec485d84a0cad00c015ee32e5d3debdfee",
+              "operator.ptah.run/plan-fingerprint": "sha256:b594f4a6e5934d6aae64773f3f9c6a380504e5fca2cf8d52d15c0b027e9f48b0",
+              "operator.ptah.run/ptah-version": "v0.9.0-73-gf6e562c5b"
+            },
+            "labels": {
+              "app.kubernetes.io/component": "schema-operation",
+              "app.kubernetes.io/managed-by": "ptah-operator",
+              "batch.kubernetes.io/controller-uid": "03eb478a-9ecc-439f-81ad-b97639b7d772",
+              "batch.kubernetes.io/job-name": "ptah-apply-network-proof-0eb5ac29ddc74ee2",
+              "controller-uid": "03eb478a-9ecc-439f-81ad-b97639b7d772",
+              "job-name": "ptah-apply-network-proof-0eb5ac29ddc74ee2",
+              "operator.ptah.run/operation": "apply",
+              "operator.ptah.run/operation-id": "57245daa437d5567",
+              "operator.ptah.run/schema": "network-proof"
+            }
+          },
+          "spec": {
+            "activeDeadlineSeconds": 900,
+            "automountServiceAccountToken": false,
+            "containers": [
+              {
+                "args": [
+                  "--ptah-binary",
+                  "/usr/local/bin/ptah",
+                  "--max-result-bytes",
+                  "8388608",
+                  "--max-plan-bytes",
+                  "8388608",
+                  "--operation",
+                  "apply",
+                  "--result-endpoint",
+                  "https://ptah-runtime-generated-name-prefix-boundary-proof-5a0ef-results.ptah-system-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc",
+                  "--result-credentials",
+                  "/credentials/result"
+                ],
+                "command": [
+                  "/runner/ptah-runner"
+                ],
+                "env": [
+                  {
+                    "name": "HOME",
+                    "value": "/work"
+                  },
+                  {
+                    "name": "PTAH_CONNECT_TIMEOUT",
+                    "value": "30s"
+                  },
+                  {
+                    "name": "PTAH_COORDINATION_DIGEST",
+                    "value": "sha256:8a50996e42108b772c4cbdc265232c67584b2cfde6b9f0d5b20439398d4d166b"
+                  },
+                  {
+                    "name": "PTAH_DB_URL",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "key": "url",
+                        "name": "network-database"
+                      }
+                    }
+                  },
+                  {
+                    "name": "PTAH_DISPATCH_NOT_AFTER",
+                    "value": "2026-10-02T19:06:30Z"
+                  },
+                  {
+                    "name": "PTAH_EXECUTION_NOT_AFTER",
+                    "value": "2026-10-02T19:06:30Z"
+                  },
+                  {
+                    "name": "PTAH_EXPECTED_COORDINATION_DIGEST",
+                    "value": "sha256:8a50996e42108b772c4cbdc265232c67584b2cfde6b9f0d5b20439398d4d166b"
+                  },
+                  {
+                    "name": "PTAH_EXPECTED_DATABASE_ENGINE",
+                    "value": "PostgreSQL"
+                  },
+                  {
+                    "name": "PTAH_EXPECTED_PLAN_CONTENT_DIGEST",
+                    "value": "sha256:a842c32a0a8871468d71517423ab97ec485d84a0cad00c015ee32e5d3debdfee"
+                  },
+                  {
+                    "name": "PTAH_EXPECTED_TARGET_IDENTITY_DIGEST",
+                    "value": "sha256:c1cce44cd3b29ec660067af5314236cd9efad877af67fed17f8c3cef389835c1"
+                  },
+                  {
+                    "name": "PTAH_LOCK_TIMEOUT",
+                    "value": "30s"
+                  },
+                  {
+                    "name": "PTAH_OPERATION_ID",
+                    "value": "sha256:ed360c52bba2022c9ac02d610cebee65d3e72ee253e256d65f468206a851a293"
+                  },
+                  {
+                    "name": "PTAH_PLAN_DIR",
+                    "value": "/plan"
+                  },
+                  {
+                    "name": "PTAH_RESULT_GENERATION",
+                    "value": "1"
+                  },
+                  {
+                    "name": "PTAH_RESULT_POD_NAME",
+                    "valueFrom": {
+                      "fieldRef": {
+                        "apiVersion": "v1",
+                        "fieldPath": "metadata.name"
+                      }
+                    }
+                  },
+                  {
+                    "name": "PTAH_RESULT_POD_NAMESPACE",
+                    "valueFrom": {
+                      "fieldRef": {
+                        "apiVersion": "v1",
+                        "fieldPath": "metadata.namespace"
+                      }
+                    }
+                  },
+                  {
+                    "name": "PTAH_RESULT_POD_UID",
+                    "valueFrom": {
+                      "fieldRef": {
+                        "apiVersion": "v1",
+                        "fieldPath": "metadata.uid"
+                      }
+                    }
+                  },
+                  {
+                    "name": "PTAH_RUNNER_PROTOCOL_VERSION",
+                    "value": "1"
+                  },
+                  {
+                    "name": "PTAH_TERMINATION_GRACE_PERIOD_SECONDS",
+                    "value": "30"
+                  },
+                  {
+                    "name": "PTAH_TX_MODE",
+                    "value": "file"
+                  },
+                  {
+                    "name": "TMPDIR",
+                    "value": "/work"
+                  }
+                ],
+                "image": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-executor@sha256:45530f0f2c41f4d649c207fe8221dad268946ca8da13b503244805c016f3c9dd",
+                "imagePullPolicy": "IfNotPresent",
+                "name": "ptah",
+                "resources": {},
+                "securityContext": {
+                  "allowPrivilegeEscalation": false,
+                  "capabilities": {
+                    "drop": [
+                      "ALL"
+                    ]
+                  },
+                  "readOnlyRootFilesystem": true,
+                  "runAsGroup": 65532,
+                  "runAsNonRoot": true,
+                  "runAsUser": 65532,
+                  "seccompProfile": {
+                    "type": "RuntimeDefault"
+                  }
+                },
+                "terminationMessagePath": "/dev/termination-log",
+                "terminationMessagePolicy": "File",
+                "volumeMounts": [
+                  {
+                    "mountPath": "/runner",
+                    "name": "runner",
+                    "readOnly": true
+                  },
+                  {
+                    "mountPath": "/work",
+                    "name": "work"
+                  },
+                  {
+                    "mountPath": "/plan",
+                    "name": "plan",
+                    "readOnly": true
+                  },
+                  {
+                    "mountPath": "/credentials/result",
+                    "name": "result-credentials",
+                    "readOnly": true
+                  }
+                ],
+                "workingDir": "/work"
+              }
+            ],
+            "dnsPolicy": "ClusterFirst",
+            "enableServiceLinks": false,
+            "initContainers": [
+              {
+                "args": [
+                  "--install-to",
+                  "/runner/ptah-runner"
+                ],
+                "command": [
+                  "/ptah-runner"
+                ],
+                "image": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-runner@sha256:7e2199f5c03660f094244b00962ec7e222f752f9cfc86276ac7cea296ce5d4b6",
+                "imagePullPolicy": "IfNotPresent",
+                "name": "install-runner",
+                "resources": {},
+                "securityContext": {
+                  "allowPrivilegeEscalation": false,
+                  "capabilities": {
+                    "drop": [
+                      "ALL"
+                    ]
+                  },
+                  "readOnlyRootFilesystem": true,
+                  "runAsGroup": 65532,
+                  "runAsNonRoot": true,
+                  "runAsUser": 65532,
+                  "seccompProfile": {
+                    "type": "RuntimeDefault"
+                  }
+                },
+                "terminationMessagePath": "/dev/termination-log",
+                "terminationMessagePolicy": "File",
+                "volumeMounts": [
+                  {
+                    "mountPath": "/runner",
+                    "name": "runner"
+                  }
+                ]
+              }
+            ],
+            "restartPolicy": "Never",
+            "schedulerName": "default-scheduler",
+            "securityContext": {
+              "fsGroup": 65532,
+              "fsGroupChangePolicy": "OnRootMismatch",
+              "runAsGroup": 65532,
+              "runAsNonRoot": true,
+              "runAsUser": 65532,
+              "seccompProfile": {
+                "type": "RuntimeDefault"
+              }
+            },
+            "serviceAccount": "default",
+            "serviceAccountName": "default",
+            "terminationGracePeriodSeconds": 30,
+            "volumes": [
+              {
+                "emptyDir": {
+                  "medium": "Memory",
+                  "sizeLimit": "64Mi"
+                },
+                "name": "runner"
+              },
+              {
+                "emptyDir": {
+                  "medium": "Memory",
+                  "sizeLimit": "128Mi"
+                },
+                "name": "work"
+              },
+              {
+                "name": "plan",
+                "projected": {
+                  "defaultMode": 288,
+                  "sources": [
+                    {
+                      "configMap": {
+                        "items": [
+                          {
+                            "key": "chunk",
+                            "mode": 288,
+                            "path": "000.plan"
+                          }
+                        ],
+                        "name": "ptah-plan-b594f4a6e5934d6aae64773f-000"
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "result-credentials",
+                "secret": {
+                  "defaultMode": 288,
+                  "items": [
+                    {
+                      "key": "tls.crt",
+                      "path": "tls.crt"
+                    },
+                    {
+                      "key": "tls.key",
+                      "path": "tls.key"
+                    },
+                    {
+                      "key": "ca.crt",
+                      "path": "ca.crt"
+                    }
+                  ],
+                  "secretName": "ptah-result-key-a411c94a04379ea623900dba6b8add93"
+                }
+              }
+            ]
+          }
+        },
+        "ttlSecondsAfterFinished": 300
+      },
+      "status": {
+        "completionTime": "2026-10-02T18:51:35Z",
+        "conditions": [
+          {
+            "lastProbeTime": "2026-10-02T18:51:35Z",
+            "lastTransitionTime": "2026-10-02T18:51:35Z",
+            "message": "Reached expected number of succeeded pods",
+            "reason": "CompletionsReached",
+            "status": "True",
+            "type": "SuccessCriteriaMet"
+          },
+          {
+            "lastProbeTime": "2026-10-02T18:51:35Z",
+            "lastTransitionTime": "2026-10-02T18:51:35Z",
+            "message": "Reached expected number of succeeded pods",
+            "reason": "CompletionsReached",
+            "status": "True",
+            "type": "Complete"
+          }
+        ],
+        "ready": 0,
+        "startTime": "2026-10-02T18:51:30Z",
+        "succeeded": 1,
+        "terminating": 0,
+        "uncountedTerminatedPods": {}
+      }
+    },
+    {
+      "apiVersion": "batch/v1",
+      "kind": "Job",
+      "metadata": {
+        "annotations": {
+          "operator.ptah.run/admission-snapshot-digest": "sha256:f0388b65b38dd2b220918985390754356c479210bc9bd52f4d554c7316118406",
+          "operator.ptah.run/controller-image": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/operator@sha256:f338a4c98d77e4908426d0c4b45a1b177ffc8c2916cae3029217b9ec12cd6f36",
+          "operator.ptah.run/controller-revision": "b0a51ff740784beaf6cd1ebb2fe8c2715583e1b5",
+          "operator.ptah.run/controller-state-version": "1",
+          "operator.ptah.run/execution-binding-id": "v1-4c10e9fa5b17c841ff1d69c8c0e1f1c9",
+          "operator.ptah.run/input-fingerprint": "sha256:4e7a67da443ac5c623f46bf81b1ef94103b4afe04cd49a54518703eb19ff5622",
+          "operator.ptah.run/operation-id": "sha256:97b905c0b957b5a3fdb6afde965fbe8aa6f752b3e7da281632d377e074565f3d",
+          "operator.ptah.run/ptah-version": "v0.9.0-73-gf6e562c5b"
+        },
+        "creationTimestamp": "2026-10-02T18:51:41Z",
+        "generation": 2,
+        "labels": {
+          "app.kubernetes.io/component": "schema-operation",
+          "app.kubernetes.io/managed-by": "ptah-operator",
+          "operator.ptah.run/operation": "observe",
+          "operator.ptah.run/operation-id": "e0fe4ac1cd2cce6a",
+          "operator.ptah.run/schema": "network-proof"
+        },
+        "name": "ptah-observe-network-proof-6bb13523ef12ceef",
+        "namespace": "ptah-result-network-pg-schema",
+        "ownerReferences": [
+          {
+            "apiVersion": "operator.ptah.run/v1alpha1",
+            "blockOwnerDeletion": true,
+            "controller": true,
+            "kind": "PtahSchema",
+            "name": "network-proof",
+            "uid": "7fffc957-c94b-4829-8c13-85560c720a9d"
+          }
+        ],
+        "resourceVersion": "87644",
+        "uid": "4b2e1958-a128-4382-850f-489f2f1c07f7"
+      },
+      "spec": {
+        "activeDeadlineSeconds": 900,
+        "backoffLimit": 0,
+        "completionMode": "NonIndexed",
+        "completions": 1,
+        "manualSelector": false,
+        "parallelism": 1,
+        "podReplacementPolicy": "Failed",
+        "selector": {
+          "matchLabels": {
+            "batch.kubernetes.io/controller-uid": "4b2e1958-a128-4382-850f-489f2f1c07f7"
+          }
+        },
+        "suspend": false,
+        "template": {
+          "metadata": {
+            "annotations": {
+              "operator.ptah.run/admission-snapshot-digest": "sha256:f0388b65b38dd2b220918985390754356c479210bc9bd52f4d554c7316118406",
+              "operator.ptah.run/controller-image": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/operator@sha256:f338a4c98d77e4908426d0c4b45a1b177ffc8c2916cae3029217b9ec12cd6f36",
+              "operator.ptah.run/controller-revision": "b0a51ff740784beaf6cd1ebb2fe8c2715583e1b5",
+              "operator.ptah.run/controller-state-version": "1",
+              "operator.ptah.run/execution-binding-id": "v1-4c10e9fa5b17c841ff1d69c8c0e1f1c9",
+              "operator.ptah.run/input-fingerprint": "sha256:4e7a67da443ac5c623f46bf81b1ef94103b4afe04cd49a54518703eb19ff5622",
+              "operator.ptah.run/operation-id": "sha256:97b905c0b957b5a3fdb6afde965fbe8aa6f752b3e7da281632d377e074565f3d",
+              "operator.ptah.run/ptah-version": "v0.9.0-73-gf6e562c5b"
+            },
+            "labels": {
+              "app.kubernetes.io/component": "schema-operation",
+              "app.kubernetes.io/managed-by": "ptah-operator",
+              "batch.kubernetes.io/controller-uid": "4b2e1958-a128-4382-850f-489f2f1c07f7",
+              "batch.kubernetes.io/job-name": "ptah-observe-network-proof-6bb13523ef12ceef",
+              "controller-uid": "4b2e1958-a128-4382-850f-489f2f1c07f7",
+              "job-name": "ptah-observe-network-proof-6bb13523ef12ceef",
+              "operator.ptah.run/operation": "observe",
+              "operator.ptah.run/operation-id": "e0fe4ac1cd2cce6a",
+              "operator.ptah.run/schema": "network-proof"
+            }
+          },
+          "spec": {
+            "activeDeadlineSeconds": 900,
+            "automountServiceAccountToken": false,
+            "containers": [
+              {
+                "args": [
+                  "--ptah-binary",
+                  "/usr/local/bin/ptah",
+                  "--max-result-bytes",
+                  "8388608",
+                  "--max-plan-bytes",
+                  "8388608",
+                  "--operation",
+                  "observe",
+                  "--result-endpoint",
+                  "https://ptah-runtime-generated-name-prefix-boundary-proof-5a0ef-results.ptah-system-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc",
+                  "--result-credentials",
+                  "/credentials/result"
+                ],
+                "command": [
+                  "/runner/ptah-runner"
+                ],
+                "env": [
+                  {
+                    "name": "HOME",
+                    "value": "/work"
+                  },
+                  {
+                    "name": "PTAH_CONNECT_TIMEOUT",
+                    "value": "30s"
+                  },
+                  {
+                    "name": "PTAH_COORDINATION_DIGEST",
+                    "value": "sha256:8a50996e42108b772c4cbdc265232c67584b2cfde6b9f0d5b20439398d4d166b"
+                  },
+                  {
+                    "name": "PTAH_DB_URL",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "key": "url",
+                        "name": "network-database"
+                      }
+                    }
+                  },
+                  {
+                    "name": "PTAH_EXPECTED_DATABASE_ENGINE",
+                    "value": "PostgreSQL"
+                  },
+                  {
+                    "name": "PTAH_LOCK_TIMEOUT",
+                    "value": "30s"
+                  },
+                  {
+                    "name": "PTAH_OPERATION_ID",
+                    "value": "sha256:97b905c0b957b5a3fdb6afde965fbe8aa6f752b3e7da281632d377e074565f3d"
+                  },
+                  {
+                    "name": "PTAH_RESULT_GENERATION",
+                    "value": "1"
+                  },
+                  {
+                    "name": "PTAH_RESULT_POD_NAME",
+                    "valueFrom": {
+                      "fieldRef": {
+                        "apiVersion": "v1",
+                        "fieldPath": "metadata.name"
+                      }
+                    }
+                  },
+                  {
+                    "name": "PTAH_RESULT_POD_NAMESPACE",
+                    "valueFrom": {
+                      "fieldRef": {
+                        "apiVersion": "v1",
+                        "fieldPath": "metadata.namespace"
+                      }
+                    }
+                  },
+                  {
+                    "name": "PTAH_RESULT_POD_UID",
+                    "valueFrom": {
+                      "fieldRef": {
+                        "apiVersion": "v1",
+                        "fieldPath": "metadata.uid"
+                      }
+                    }
+                  },
+                  {
+                    "name": "PTAH_RUNNER_PROTOCOL_VERSION",
+                    "value": "1"
+                  },
+                  {
+                    "name": "PTAH_SCHEMA_FILE",
+                    "value": "/source/schema.hcl"
+                  },
+                  {
+                    "name": "PTAH_SEVERITY",
+                    "value": "all"
+                  },
+                  {
+                    "name": "TMPDIR",
+                    "value": "/work"
+                  }
+                ],
+                "image": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-executor@sha256:45530f0f2c41f4d649c207fe8221dad268946ca8da13b503244805c016f3c9dd",
+                "imagePullPolicy": "IfNotPresent",
+                "name": "ptah",
+                "resources": {},
+                "securityContext": {
+                  "allowPrivilegeEscalation": false,
+                  "capabilities": {
+                    "drop": [
+                      "ALL"
+                    ]
+                  },
+                  "readOnlyRootFilesystem": true,
+                  "runAsGroup": 65532,
+                  "runAsNonRoot": true,
+                  "runAsUser": 65532,
+                  "seccompProfile": {
+                    "type": "RuntimeDefault"
+                  }
+                },
+                "terminationMessagePath": "/dev/termination-log",
+                "terminationMessagePolicy": "File",
+                "volumeMounts": [
+                  {
+                    "mountPath": "/runner",
+                    "name": "runner",
+                    "readOnly": true
+                  },
+                  {
+                    "mountPath": "/work",
+                    "name": "work"
+                  },
+                  {
+                    "mountPath": "/source",
+                    "name": "schema-source",
+                    "readOnly": true
+                  },
+                  {
+                    "mountPath": "/credentials/result",
+                    "name": "result-credentials",
+                    "readOnly": true
+                  }
+                ],
+                "workingDir": "/work"
+              }
+            ],
+            "dnsPolicy": "ClusterFirst",
+            "enableServiceLinks": false,
+            "initContainers": [
+              {
+                "args": [
+                  "--install-to",
+                  "/runner/ptah-runner"
+                ],
+                "command": [
+                  "/ptah-runner"
+                ],
+                "image": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-runner@sha256:7e2199f5c03660f094244b00962ec7e222f752f9cfc86276ac7cea296ce5d4b6",
+                "imagePullPolicy": "IfNotPresent",
+                "name": "install-runner",
+                "resources": {},
+                "securityContext": {
+                  "allowPrivilegeEscalation": false,
+                  "capabilities": {
+                    "drop": [
+                      "ALL"
+                    ]
+                  },
+                  "readOnlyRootFilesystem": true,
+                  "runAsGroup": 65532,
+                  "runAsNonRoot": true,
+                  "runAsUser": 65532,
+                  "seccompProfile": {
+                    "type": "RuntimeDefault"
+                  }
+                },
+                "terminationMessagePath": "/dev/termination-log",
+                "terminationMessagePolicy": "File",
+                "volumeMounts": [
+                  {
+                    "mountPath": "/runner",
+                    "name": "runner"
+                  }
+                ]
+              },
+              {
+                "args": [
+                  "--validate-oci-source",
+                  "oci://e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/schemas/demo@sha256:89b65571ead9b99d830da96fe1d1f455fb00fc0a4138b73e9654113be6ed0dad"
+                ],
+                "command": [
+                  "/runner/ptah-runner"
+                ],
+                "env": [
+                  {
+                    "name": "PTAH_OCI_REGISTRY",
+                    "value": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000"
+                  },
+                  {
+                    "name": "PTAH_OPERATOR_OCI_ALLOW_PLAIN_HTTP",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "key": "allowPlainHTTP",
+                        "name": "demo-registry"
+                      }
+                    }
+                  },
+                  {
+                    "name": "PTAH_OPERATOR_OCI_AUTH_MODE",
+                    "value": "Environment"
+                  },
+                  {
+                    "name": "PTAH_OPERATOR_OCI_AUTH_REGISTRY_GRANT",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "key": "registry",
+                        "name": "demo-registry"
+                      }
+                    }
+                  },
+                  {
+                    "name": "PTAH_PLAIN_HTTP",
+                    "value": "true"
+                  },
+                  {
+                    "name": "PTAH_RUNNER_PROTOCOL_VERSION",
+                    "value": "1"
+                  }
+                ],
+                "image": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-executor@sha256:45530f0f2c41f4d649c207fe8221dad268946ca8da13b503244805c016f3c9dd",
+                "imagePullPolicy": "IfNotPresent",
+                "name": "validate-source-authority",
+                "resources": {},
+                "securityContext": {
+                  "allowPrivilegeEscalation": false,
+                  "capabilities": {
+                    "drop": [
+                      "ALL"
+                    ]
+                  },
+                  "readOnlyRootFilesystem": true,
+                  "runAsGroup": 65532,
+                  "runAsNonRoot": true,
+                  "runAsUser": 65532,
+                  "seccompProfile": {
+                    "type": "RuntimeDefault"
+                  }
+                },
+                "terminationMessagePath": "/dev/termination-log",
+                "terminationMessagePolicy": "File",
+                "volumeMounts": [
+                  {
+                    "mountPath": "/runner",
+                    "name": "runner",
+                    "readOnly": true
+                  }
+                ]
+              },
+              {
+                "args": [
+                  "schema",
+                  "pull",
+                  "oci://e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/schemas/demo@sha256:89b65571ead9b99d830da96fe1d1f455fb00fc0a4138b73e9654113be6ed0dad",
+                  "--out",
+                  "/source/schema.hcl"
+                ],
+                "command": [
+                  "/usr/local/bin/ptah"
+                ],
+                "env": [
+                  {
+                    "name": "HOME",
+                    "value": "/fetch-work"
+                  },
+                  {
+                    "name": "PTAH_OCI_PASSWORD",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "key": "password",
+                        "name": "demo-registry",
+                        "optional": true
+                      }
+                    }
+                  },
+                  {
+                    "name": "PTAH_OCI_REGISTRY",
+                    "value": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000"
+                  },
+                  {
+                    "name": "PTAH_OCI_TOKEN",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "key": "token",
+                        "name": "demo-registry",
+                        "optional": true
+                      }
+                    }
+                  },
+                  {
+                    "name": "PTAH_OCI_USERNAME",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "key": "username",
+                        "name": "demo-registry",
+                        "optional": true
+                      }
+                    }
+                  },
+                  {
+                    "name": "PTAH_PLAIN_HTTP",
+                    "value": "true"
+                  },
+                  {
+                    "name": "TMPDIR",
+                    "value": "/fetch-work"
+                  }
+                ],
+                "image": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-executor@sha256:45530f0f2c41f4d649c207fe8221dad268946ca8da13b503244805c016f3c9dd",
+                "imagePullPolicy": "IfNotPresent",
+                "name": "fetch-schema",
+                "resources": {},
+                "securityContext": {
+                  "allowPrivilegeEscalation": false,
+                  "capabilities": {
+                    "drop": [
+                      "ALL"
+                    ]
+                  },
+                  "readOnlyRootFilesystem": true,
+                  "runAsGroup": 65532,
+                  "runAsNonRoot": true,
+                  "runAsUser": 65532,
+                  "seccompProfile": {
+                    "type": "RuntimeDefault"
+                  }
+                },
+                "terminationMessagePath": "/dev/termination-log",
+                "terminationMessagePolicy": "File",
+                "volumeMounts": [
+                  {
+                    "mountPath": "/source",
+                    "name": "schema-source"
+                  },
+                  {
+                    "mountPath": "/fetch-work",
+                    "name": "fetch-work"
+                  }
+                ],
+                "workingDir": "/fetch-work"
+              }
+            ],
+            "restartPolicy": "Never",
+            "schedulerName": "default-scheduler",
+            "securityContext": {
+              "fsGroup": 65532,
+              "fsGroupChangePolicy": "OnRootMismatch",
+              "runAsGroup": 65532,
+              "runAsNonRoot": true,
+              "runAsUser": 65532,
+              "seccompProfile": {
+                "type": "RuntimeDefault"
+              }
+            },
+            "serviceAccount": "default",
+            "serviceAccountName": "default",
+            "terminationGracePeriodSeconds": 30,
+            "volumes": [
+              {
+                "emptyDir": {
+                  "medium": "Memory",
+                  "sizeLimit": "64Mi"
+                },
+                "name": "runner"
+              },
+              {
+                "emptyDir": {
+                  "medium": "Memory",
+                  "sizeLimit": "128Mi"
+                },
+                "name": "work"
+              },
+              {
+                "emptyDir": {
+                  "medium": "Memory",
+                  "sizeLimit": "64Mi"
+                },
+                "name": "schema-source"
+              },
+              {
+                "emptyDir": {
+                  "medium": "Memory",
+                  "sizeLimit": "64Mi"
+                },
+                "name": "fetch-work"
+              },
+              {
+                "name": "result-credentials",
+                "secret": {
+                  "defaultMode": 288,
+                  "items": [
+                    {
+                      "key": "tls.crt",
+                      "path": "tls.crt"
+                    },
+                    {
+                      "key": "tls.key",
+                      "path": "tls.key"
+                    },
+                    {
+                      "key": "ca.crt",
+                      "path": "ca.crt"
+                    }
+                  ],
+                  "secretName": "ptah-result-key-c726961ab113bb0ca43389a1a2745600"
+                }
+              }
+            ]
+          }
+        },
+        "ttlSecondsAfterFinished": 300
+      },
+      "status": {
+        "completionTime": "2026-10-02T18:51:47Z",
+        "conditions": [
+          {
+            "lastProbeTime": "2026-10-02T18:51:47Z",
+            "lastTransitionTime": "2026-10-02T18:51:47Z",
+            "message": "Reached expected number of succeeded pods",
+            "reason": "CompletionsReached",
+            "status": "True",
+            "type": "SuccessCriteriaMet"
+          },
+          {
+            "lastProbeTime": "2026-10-02T18:51:47Z",
+            "lastTransitionTime": "2026-10-02T18:51:47Z",
+            "message": "Reached expected number of succeeded pods",
+            "reason": "CompletionsReached",
+            "status": "True",
+            "type": "Complete"
+          }
+        ],
+        "ready": 0,
+        "startTime": "2026-10-02T18:51:41Z",
+        "succeeded": 1,
+        "terminating": 0,
+        "uncountedTerminatedPods": {}
+      }
+    },
+    {
+      "apiVersion": "batch/v1",
+      "kind": "Job",
+      "metadata": {
+        "annotations": {
+          "operator.ptah.run/admission-snapshot-digest": "sha256:4a5c13589863a02245f4c303e10f0471e126bb67fdb366f765148d467f0316a3",
+          "operator.ptah.run/controller-image": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/operator@sha256:f338a4c98d77e4908426d0c4b45a1b177ffc8c2916cae3029217b9ec12cd6f36",
+          "operator.ptah.run/controller-revision": "b0a51ff740784beaf6cd1ebb2fe8c2715583e1b5",
+          "operator.ptah.run/controller-state-version": "1",
+          "operator.ptah.run/execution-binding-id": "v1-4c10e9fa5b17c841ff1d69c8c0e1f1c9",
+          "operator.ptah.run/input-fingerprint": "sha256:38b9ffe000d670034bd495e4886cc407f13980f0f571edc4c442adaeb552edd2",
+          "operator.ptah.run/operation-id": "sha256:f4d7771a0c88009880f0b17c6eb6c5ba8f3aac8bfec190b149c92ad4403436d1",
+          "operator.ptah.run/ptah-version": "v0.9.0-73-gf6e562c5b"
+        },
+        "creationTimestamp": "2026-10-02T18:51:53Z",
+        "generation": 1,
+        "labels": {
+          "app.kubernetes.io/component": "schema-operation",
+          "app.kubernetes.io/managed-by": "ptah-operator",
+          "operator.ptah.run/operation": "plan",
+          "operator.ptah.run/operation-id": "3393934a8cdbec73",
+          "operator.ptah.run/schema": "network-proof"
+        },
+        "name": "ptah-plan-network-proof-a325a5d96f6609bc",
+        "namespace": "ptah-result-network-pg-schema",
+        "ownerReferences": [
+          {
+            "apiVersion": "operator.ptah.run/v1alpha1",
+            "blockOwnerDeletion": true,
+            "controller": true,
+            "kind": "PtahSchema",
+            "name": "network-proof",
+            "uid": "7fffc957-c94b-4829-8c13-85560c720a9d"
+          }
+        ],
+        "resourceVersion": "87727",
+        "uid": "409d1cb3-447f-45f8-ab6d-a933f817903c"
+      },
+      "spec": {
+        "activeDeadlineSeconds": 900,
+        "backoffLimit": 0,
+        "completionMode": "NonIndexed",
+        "completions": 1,
+        "manualSelector": false,
+        "parallelism": 1,
+        "podReplacementPolicy": "Failed",
+        "selector": {
+          "matchLabels": {
+            "batch.kubernetes.io/controller-uid": "409d1cb3-447f-45f8-ab6d-a933f817903c"
+          }
+        },
+        "suspend": false,
+        "template": {
+          "metadata": {
+            "annotations": {
+              "operator.ptah.run/admission-snapshot-digest": "sha256:4a5c13589863a02245f4c303e10f0471e126bb67fdb366f765148d467f0316a3",
+              "operator.ptah.run/controller-image": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/operator@sha256:f338a4c98d77e4908426d0c4b45a1b177ffc8c2916cae3029217b9ec12cd6f36",
+              "operator.ptah.run/controller-revision": "b0a51ff740784beaf6cd1ebb2fe8c2715583e1b5",
+              "operator.ptah.run/controller-state-version": "1",
+              "operator.ptah.run/execution-binding-id": "v1-4c10e9fa5b17c841ff1d69c8c0e1f1c9",
+              "operator.ptah.run/input-fingerprint": "sha256:38b9ffe000d670034bd495e4886cc407f13980f0f571edc4c442adaeb552edd2",
+              "operator.ptah.run/operation-id": "sha256:f4d7771a0c88009880f0b17c6eb6c5ba8f3aac8bfec190b149c92ad4403436d1",
+              "operator.ptah.run/ptah-version": "v0.9.0-73-gf6e562c5b"
+            },
+            "labels": {
+              "app.kubernetes.io/component": "schema-operation",
+              "app.kubernetes.io/managed-by": "ptah-operator",
+              "batch.kubernetes.io/controller-uid": "409d1cb3-447f-45f8-ab6d-a933f817903c",
+              "batch.kubernetes.io/job-name": "ptah-plan-network-proof-a325a5d96f6609bc",
+              "controller-uid": "409d1cb3-447f-45f8-ab6d-a933f817903c",
+              "job-name": "ptah-plan-network-proof-a325a5d96f6609bc",
+              "operator.ptah.run/operation": "plan",
+              "operator.ptah.run/operation-id": "3393934a8cdbec73",
+              "operator.ptah.run/schema": "network-proof"
+            }
+          },
+          "spec": {
+            "activeDeadlineSeconds": 900,
+            "automountServiceAccountToken": false,
+            "containers": [
+              {
+                "args": [
+                  "--ptah-binary",
+                  "/usr/local/bin/ptah",
+                  "--max-result-bytes",
+                  "8388608",
+                  "--max-plan-bytes",
+                  "8388608",
+                  "--operation",
+                  "plan",
+                  "--result-endpoint",
+                  "https://ptah-runtime-generated-name-prefix-boundary-proof-5a0ef-results.ptah-system-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc",
+                  "--result-credentials",
+                  "/credentials/result"
+                ],
+                "command": [
+                  "/runner/ptah-runner"
+                ],
+                "env": [
+                  {
+                    "name": "HOME",
+                    "value": "/work"
+                  },
+                  {
+                    "name": "PTAH_CONNECT_TIMEOUT",
+                    "value": "30s"
+                  },
+                  {
+                    "name": "PTAH_COORDINATION_DIGEST",
+                    "value": "sha256:8a50996e42108b772c4cbdc265232c67584b2cfde6b9f0d5b20439398d4d166b"
+                  },
+                  {
+                    "name": "PTAH_DB_URL",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "key": "url",
+                        "name": "network-database"
+                      }
+                    }
+                  },
+                  {
+                    "name": "PTAH_EXPECTED_DATABASE_ENGINE",
+                    "value": "PostgreSQL"
+                  },
+                  {
+                    "name": "PTAH_LOCK_TIMEOUT",
+                    "value": "30s"
+                  },
+                  {
+                    "name": "PTAH_OPERATION_ID",
+                    "value": "sha256:f4d7771a0c88009880f0b17c6eb6c5ba8f3aac8bfec190b149c92ad4403436d1"
+                  },
+                  {
+                    "name": "PTAH_PLAN_SEAL_PUBLIC_KEY",
+                    "value": "heevtnOrdRK2kLR/VZFp4R8XWbHAycde6r96U7abBS0="
+                  },
+                  {
+                    "name": "PTAH_RESULT_GENERATION",
+                    "value": "1"
+                  },
+                  {
+                    "name": "PTAH_RESULT_POD_NAME",
+                    "valueFrom": {
+                      "fieldRef": {
+                        "apiVersion": "v1",
+                        "fieldPath": "metadata.name"
+                      }
+                    }
+                  },
+                  {
+                    "name": "PTAH_RESULT_POD_NAMESPACE",
+                    "valueFrom": {
+                      "fieldRef": {
+                        "apiVersion": "v1",
+                        "fieldPath": "metadata.namespace"
+                      }
+                    }
+                  },
+                  {
+                    "name": "PTAH_RESULT_POD_UID",
+                    "valueFrom": {
+                      "fieldRef": {
+                        "apiVersion": "v1",
+                        "fieldPath": "metadata.uid"
+                      }
+                    }
+                  },
+                  {
+                    "name": "PTAH_RUNNER_PROTOCOL_VERSION",
+                    "value": "1"
+                  },
+                  {
+                    "name": "PTAH_SCHEMA_FILE",
+                    "value": "/source/schema.hcl"
+                  },
+                  {
+                    "name": "PTAH_SEALED_PLAN_JOB_NAME",
+                    "value": "ptah-plan-network-proof-a325a5d96f6609bc"
+                  },
+                  {
+                    "name": "TMPDIR",
+                    "value": "/work"
+                  }
+                ],
+                "image": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-executor@sha256:45530f0f2c41f4d649c207fe8221dad268946ca8da13b503244805c016f3c9dd",
+                "imagePullPolicy": "IfNotPresent",
+                "name": "ptah",
+                "resources": {},
+                "securityContext": {
+                  "allowPrivilegeEscalation": false,
+                  "capabilities": {
+                    "drop": [
+                      "ALL"
+                    ]
+                  },
+                  "readOnlyRootFilesystem": true,
+                  "runAsGroup": 65532,
+                  "runAsNonRoot": true,
+                  "runAsUser": 65532,
+                  "seccompProfile": {
+                    "type": "RuntimeDefault"
+                  }
+                },
+                "terminationMessagePath": "/dev/termination-log",
+                "terminationMessagePolicy": "File",
+                "volumeMounts": [
+                  {
+                    "mountPath": "/runner",
+                    "name": "runner",
+                    "readOnly": true
+                  },
+                  {
+                    "mountPath": "/work",
+                    "name": "work"
+                  },
+                  {
+                    "mountPath": "/source",
+                    "name": "schema-source",
+                    "readOnly": true
+                  },
+                  {
+                    "mountPath": "/credentials/result",
+                    "name": "result-credentials",
+                    "readOnly": true
+                  }
+                ],
+                "workingDir": "/work"
+              }
+            ],
+            "dnsPolicy": "ClusterFirst",
+            "enableServiceLinks": false,
+            "initContainers": [
+              {
+                "args": [
+                  "--install-to",
+                  "/runner/ptah-runner"
+                ],
+                "command": [
+                  "/ptah-runner"
+                ],
+                "image": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-runner@sha256:7e2199f5c03660f094244b00962ec7e222f752f9cfc86276ac7cea296ce5d4b6",
+                "imagePullPolicy": "IfNotPresent",
+                "name": "install-runner",
+                "resources": {},
+                "securityContext": {
+                  "allowPrivilegeEscalation": false,
+                  "capabilities": {
+                    "drop": [
+                      "ALL"
+                    ]
+                  },
+                  "readOnlyRootFilesystem": true,
+                  "runAsGroup": 65532,
+                  "runAsNonRoot": true,
+                  "runAsUser": 65532,
+                  "seccompProfile": {
+                    "type": "RuntimeDefault"
+                  }
+                },
+                "terminationMessagePath": "/dev/termination-log",
+                "terminationMessagePolicy": "File",
+                "volumeMounts": [
+                  {
+                    "mountPath": "/runner",
+                    "name": "runner"
+                  }
+                ]
+              },
+              {
+                "args": [
+                  "--validate-oci-source",
+                  "oci://e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/schemas/demo@sha256:89b65571ead9b99d830da96fe1d1f455fb00fc0a4138b73e9654113be6ed0dad"
+                ],
+                "command": [
+                  "/runner/ptah-runner"
+                ],
+                "env": [
+                  {
+                    "name": "PTAH_OCI_REGISTRY",
+                    "value": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000"
+                  },
+                  {
+                    "name": "PTAH_OPERATOR_OCI_ALLOW_PLAIN_HTTP",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "key": "allowPlainHTTP",
+                        "name": "demo-registry"
+                      }
+                    }
+                  },
+                  {
+                    "name": "PTAH_OPERATOR_OCI_AUTH_MODE",
+                    "value": "Environment"
+                  },
+                  {
+                    "name": "PTAH_OPERATOR_OCI_AUTH_REGISTRY_GRANT",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "key": "registry",
+                        "name": "demo-registry"
+                      }
+                    }
+                  },
+                  {
+                    "name": "PTAH_PLAIN_HTTP",
+                    "value": "true"
+                  },
+                  {
+                    "name": "PTAH_RUNNER_PROTOCOL_VERSION",
+                    "value": "1"
+                  }
+                ],
+                "image": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-executor@sha256:45530f0f2c41f4d649c207fe8221dad268946ca8da13b503244805c016f3c9dd",
+                "imagePullPolicy": "IfNotPresent",
+                "name": "validate-source-authority",
+                "resources": {},
+                "securityContext": {
+                  "allowPrivilegeEscalation": false,
+                  "capabilities": {
+                    "drop": [
+                      "ALL"
+                    ]
+                  },
+                  "readOnlyRootFilesystem": true,
+                  "runAsGroup": 65532,
+                  "runAsNonRoot": true,
+                  "runAsUser": 65532,
+                  "seccompProfile": {
+                    "type": "RuntimeDefault"
+                  }
+                },
+                "terminationMessagePath": "/dev/termination-log",
+                "terminationMessagePolicy": "File",
+                "volumeMounts": [
+                  {
+                    "mountPath": "/runner",
+                    "name": "runner",
+                    "readOnly": true
+                  }
+                ]
+              },
+              {
+                "args": [
+                  "schema",
+                  "pull",
+                  "oci://e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/schemas/demo@sha256:89b65571ead9b99d830da96fe1d1f455fb00fc0a4138b73e9654113be6ed0dad",
+                  "--out",
+                  "/source/schema.hcl"
+                ],
+                "command": [
+                  "/usr/local/bin/ptah"
+                ],
+                "env": [
+                  {
+                    "name": "HOME",
+                    "value": "/fetch-work"
+                  },
+                  {
+                    "name": "PTAH_OCI_PASSWORD",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "key": "password",
+                        "name": "demo-registry",
+                        "optional": true
+                      }
+                    }
+                  },
+                  {
+                    "name": "PTAH_OCI_REGISTRY",
+                    "value": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000"
+                  },
+                  {
+                    "name": "PTAH_OCI_TOKEN",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "key": "token",
+                        "name": "demo-registry",
+                        "optional": true
+                      }
+                    }
+                  },
+                  {
+                    "name": "PTAH_OCI_USERNAME",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "key": "username",
+                        "name": "demo-registry",
+                        "optional": true
+                      }
+                    }
+                  },
+                  {
+                    "name": "PTAH_PLAIN_HTTP",
+                    "value": "true"
+                  },
+                  {
+                    "name": "TMPDIR",
+                    "value": "/fetch-work"
+                  }
+                ],
+                "image": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-executor@sha256:45530f0f2c41f4d649c207fe8221dad268946ca8da13b503244805c016f3c9dd",
+                "imagePullPolicy": "IfNotPresent",
+                "name": "fetch-schema",
+                "resources": {},
+                "securityContext": {
+                  "allowPrivilegeEscalation": false,
+                  "capabilities": {
+                    "drop": [
+                      "ALL"
+                    ]
+                  },
+                  "readOnlyRootFilesystem": true,
+                  "runAsGroup": 65532,
+                  "runAsNonRoot": true,
+                  "runAsUser": 65532,
+                  "seccompProfile": {
+                    "type": "RuntimeDefault"
+                  }
+                },
+                "terminationMessagePath": "/dev/termination-log",
+                "terminationMessagePolicy": "File",
+                "volumeMounts": [
+                  {
+                    "mountPath": "/source",
+                    "name": "schema-source"
+                  },
+                  {
+                    "mountPath": "/fetch-work",
+                    "name": "fetch-work"
+                  }
+                ],
+                "workingDir": "/fetch-work"
+              }
+            ],
+            "restartPolicy": "Never",
+            "schedulerName": "default-scheduler",
+            "securityContext": {
+              "fsGroup": 65532,
+              "fsGroupChangePolicy": "OnRootMismatch",
+              "runAsGroup": 65532,
+              "runAsNonRoot": true,
+              "runAsUser": 65532,
+              "seccompProfile": {
+                "type": "RuntimeDefault"
+              }
+            },
+            "serviceAccount": "default",
+            "serviceAccountName": "default",
+            "terminationGracePeriodSeconds": 30,
+            "volumes": [
+              {
+                "emptyDir": {
+                  "medium": "Memory",
+                  "sizeLimit": "64Mi"
+                },
+                "name": "runner"
+              },
+              {
+                "emptyDir": {
+                  "medium": "Memory",
+                  "sizeLimit": "128Mi"
+                },
+                "name": "work"
+              },
+              {
+                "emptyDir": {
+                  "medium": "Memory",
+                  "sizeLimit": "64Mi"
+                },
+                "name": "schema-source"
+              },
+              {
+                "emptyDir": {
+                  "medium": "Memory",
+                  "sizeLimit": "64Mi"
+                },
+                "name": "fetch-work"
+              },
+              {
+                "name": "result-credentials",
+                "secret": {
+                  "defaultMode": 288,
+                  "items": [
+                    {
+                      "key": "tls.crt",
+                      "path": "tls.crt"
+                    },
+                    {
+                      "key": "tls.key",
+                      "path": "tls.key"
+                    },
+                    {
+                      "key": "ca.crt",
+                      "path": "ca.crt"
+                    }
+                  ],
+                  "secretName": "ptah-result-key-09fdc848bbd095a58076670b0f4aa749"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "status": {
+        "completionTime": "2026-10-02T18:52:00Z",
+        "conditions": [
+          {
+            "lastProbeTime": "2026-10-02T18:52:00Z",
+            "lastTransitionTime": "2026-10-02T18:52:00Z",
+            "message": "Reached expected number of succeeded pods",
+            "reason": "CompletionsReached",
+            "status": "True",
+            "type": "SuccessCriteriaMet"
+          },
+          {
+            "lastProbeTime": "2026-10-02T18:52:00Z",
+            "lastTransitionTime": "2026-10-02T18:52:00Z",
+            "message": "Reached expected number of succeeded pods",
+            "reason": "CompletionsReached",
+            "status": "True",
+            "type": "Complete"
+          }
+        ],
+        "ready": 0,
+        "startTime": "2026-10-02T18:51:53Z",
+        "succeeded": 1,
+        "terminating": 0,
+        "uncountedTerminatedPods": {}
+      }
+    }
+  ],
+  "publications": {
+    "ptah-result-15d5c46c39996c11fea8e7bb1463dae5f36683e2a38b138d2738881b3821395b": {
+      "apiVersion": "operator.ptah.run/v1alpha1",
+      "kind": "PtahResultRecord",
+      "metadata": {
+        "creationTimestamp": "2026-10-02T18:51:32Z",
+        "generation": 1,
+        "labels": {
+          "operator.ptah.run/result-attempt": "rqxLtKPy0J1wX9Cpod3zCx4jD1vUbCd6u8SsJFkkBCMAr",
+          "operator.ptah.run/result-record": "intent"
+        },
+        "name": "ptah-result-15d5c46c39996c11fea8e7bb1463dae5f36683e2a38b138d2738881b3821395b",
+        "namespace": "ptah-result-network-pg-schema",
+        "ownerReferences": [
+          {
+            "apiVersion": "operator.ptah.run/v1alpha1",
+            "controller": true,
+            "kind": "PtahSchema",
+            "name": "network-proof",
+            "uid": "7fffc957-c94b-4829-8c13-85560c720a9d"
+          }
+        ],
+        "resourceVersion": "87504",
+        "uid": "16d57e2d-262b-4727-a925-bd6dbdb4a280"
+      },
+      "spec": {
+        "data": "eyJ2ZXJzaW9uIjoxLCJiaW5kaW5nIjp7Im5hbWVzcGFjZSI6InB0YWgtcmVzdWx0LW5ldHdvcmstcGctc2NoZW1hIiwia2luZCI6IlB0YWhTY2hlbWEiLCJuYW1lIjoibmV0d29yay1wcm9vZiIsInVpZCI6IjdmZmZjOTU3LWM5NGItNDgyOS04YzEzLTg1NTYwYzcyMGE5ZCIsImdlbmVyYXRpb24iOjEsImV4ZWN1dGlvbkJpbmRpbmdJRCI6InYxLTRjMTBlOWZhNWIxN2M4NDFmZjFkNjljOGMwZTFmMWM5IiwiaW5wdXRGaW5nZXJwcmludCI6InNoYTI1Njo4ODQwNDllMjkzZjU4ZWIxNGZkODdjYWI4N2FmMTBlOWYyODI3NzliMmYyMTdmNTVkZDlhYjdhNmJiMTVkNmM5Iiwib3BlcmF0aW9uIjoiYXBwbHkiLCJvcGVyYXRpb25JRCI6InNoYTI1NjplZDM2MGM1MmJiYTIwMjJjOWFjMDJkNjEwY2ViZWU2NWQzZTcyZWUyNTNlMjU2ZDY1ZjQ2ODIwNmE4NTFhMjkzIiwiam9iTmFtZSI6InB0YWgtYXBwbHktbmV0d29yay1wcm9vZi0wZWI1YWMyOWRkYzc0ZWUyIiwiam9iVUlEIjoiMDNlYjQ3OGEtOWVjYy00MzlmLTgxYWQtYjk3NjM5YjdkNzcyIiwicG9kTmFtZSI6InB0YWgtYXBwbHktbmV0d29yay1wcm9vZi0wZWI1YWMyOWRkYzc0ZWUyLW5ncGhkIiwicG9kVUlEIjoiYjJkMmM1ZTAtZTlmMy00OGY2LTlhZmItYzljMTU4NzhkYzUyIn0sImRpZ2VzdCI6InNoYTI1NjphNzA2YTM2YzBkYTY2Zjk4ZmZiNWEzODY4MTg5ZDczYzE2YTNjZDhhMWQ3ZDlhYzBlYmU5YTNjMmJlYjBhYTA2Iiwic2l6ZSI6NDY4LCJjaHVua3MiOlt7ImRpZ2VzdCI6InNoYTI1NjphNzA2YTM2YzBkYTY2Zjk4ZmZiNWEzODY4MTg5ZDczYzE2YTNjZDhhMWQ3ZDlhYzBlYmU5YTNjMmJlYjBhYTA2Iiwic2l6ZSI6NDY4fV19",
+        "type": "intent"
+      }
+    },
+    "ptah-result-15d5c46c39996c11fea8e7bb1463dae5f36683e2a38b138d2738881b3821395b-000": {
+      "apiVersion": "operator.ptah.run/v1alpha1",
+      "kind": "PtahResultRecord",
+      "metadata": {
+        "creationTimestamp": "2026-10-02T18:51:32Z",
+        "generation": 1,
+        "labels": {
+          "operator.ptah.run/result-attempt": "rqxLtKPy0J1wX9Cpod3zCx4jD1vUbCd6u8SsJFkkBCMAr",
+          "operator.ptah.run/result-record": "chunk"
+        },
+        "name": "ptah-result-15d5c46c39996c11fea8e7bb1463dae5f36683e2a38b138d2738881b3821395b-000",
+        "namespace": "ptah-result-network-pg-schema",
+        "ownerReferences": [
+          {
+            "apiVersion": "operator.ptah.run/v1alpha1",
+            "controller": true,
+            "kind": "PtahResultRecord",
+            "name": "ptah-result-15d5c46c39996c11fea8e7bb1463dae5f36683e2a38b138d2738881b3821395b",
+            "uid": "16d57e2d-262b-4727-a925-bd6dbdb4a280"
+          }
+        ],
+        "resourceVersion": "87505",
+        "uid": "b455fa87-3bf5-4ddf-a999-c3b3170ddec0"
+      },
+      "spec": {
+        "data": "eyJwcm90b2NvbFZlcnNpb24iOjEsIm9wZXJhdGlvbiI6ImFwcGx5Iiwib3BlcmF0aW9uSWQiOiJzaGEyNTY6ZWQzNjBjNTJiYmEyMDIyYzlhYzAyZDYxMGNlYmVlNjVkM2U3MmVlMjUzZTI1NmQ2NWY0NjgyMDZhODUxYTI5MyIsImNoaWxkRXhpdENvZGUiOjAsInN0ZG91dCI6IiIsImNvb3JkaW5hdGlvbkRpZ2VzdCI6InNoYTI1Njo4YTUwOTk2ZTQyMTA4Yjc3MmM0Y2JkYzI2NTIzMmM2NzU4NGIyY2ZkZTZiOWYwZDViMjA0MzkzOThkNGQxNjZiIiwidGFyZ2V0SWRlbnRpdHlEaWdlc3QiOiJzaGEyNTY6YzFjY2U0NGNkM2IyOWVjNjYwMDY3YWY1MzE0MjM2Y2Q5ZWZhZDg3N2FmNjdmZWQxN2Y4YzNjZWYzODk4MzVjMSIsInBsYW5Db250ZW50RGlnZXN0Ijoic2hhMjU2OmE4NDJjMzJhMGE4ODcxNDY4ZDcxNTE3NDIzYWI5N2VjNDg1ZDg0YTBjYWQwMGMwMTVlZTMyZTVkM2RlYmRmZWUiLCJtdXRhdGlvblN0YXJ0ZWQiOnRydWV9",
+        "type": "chunk"
+      }
+    },
+    "ptah-result-15d5c46c39996c11fea8e7bb1463dae5f36683e2a38b138d2738881b3821395b-complete": {
+      "apiVersion": "operator.ptah.run/v1alpha1",
+      "kind": "PtahResultRecord",
+      "metadata": {
+        "creationTimestamp": "2026-10-02T18:51:32Z",
+        "generation": 1,
+        "labels": {
+          "operator.ptah.run/result-attempt": "rqxLtKPy0J1wX9Cpod3zCx4jD1vUbCd6u8SsJFkkBCMAr",
+          "operator.ptah.run/result-record": "complete"
+        },
+        "name": "ptah-result-15d5c46c39996c11fea8e7bb1463dae5f36683e2a38b138d2738881b3821395b-complete",
+        "namespace": "ptah-result-network-pg-schema",
+        "ownerReferences": [
+          {
+            "apiVersion": "operator.ptah.run/v1alpha1",
+            "controller": true,
+            "kind": "PtahResultRecord",
+            "name": "ptah-result-15d5c46c39996c11fea8e7bb1463dae5f36683e2a38b138d2738881b3821395b",
+            "uid": "16d57e2d-262b-4727-a925-bd6dbdb4a280"
+          }
+        ],
+        "resourceVersion": "87506",
+        "uid": "84ec1905-12c3-4431-88a0-8b564711f61d"
+      },
+      "spec": {
+        "data": "eyJtYW5pZmVzdFVJRCI6IjE2ZDU3ZTJkLTI2MmItNDcyNy1hOTI1LWJkNmRiZGI0YTI4MCIsIm1hbmlmZXN0RGlnZXN0Ijoic2hhMjU2OmYyOWZjZjliODVjOWEwM2RhMmQ5ZGIwMzZhYjRmZWY0NDEwMmZjMTM2NmFkMDE1YWQwMGEzMTBhMGQzYzgyY2EiLCJjaHVua1VJRHMiOlsiYjQ1NWZhODctM2JmNS00ZGRmLWE5OTktYzNiMzE3MGRkZWMwIl19",
+        "type": "complete"
+      }
+    },
+    "ptah-result-37df86abc317e7f3936c2af8e7738eee18844cd6f2621eb861de515699213731": {
+      "apiVersion": "operator.ptah.run/v1alpha1",
+      "kind": "PtahResultRecord",
+      "metadata": {
+        "creationTimestamp": "2026-10-02T18:51:22Z",
+        "generation": 1,
+        "labels": {
+          "operator.ptah.run/result-attempt": "rJ7ntVsfR2ZDuncwDVNDDrAgtLrJFpyMkZZLgPFpNXT8r",
+          "operator.ptah.run/result-record": "intent"
+        },
+        "name": "ptah-result-37df86abc317e7f3936c2af8e7738eee18844cd6f2621eb861de515699213731",
+        "namespace": "ptah-result-network-pg-schema",
+        "ownerReferences": [
+          {
+            "apiVersion": "operator.ptah.run/v1alpha1",
+            "controller": true,
+            "kind": "PtahSchema",
+            "name": "network-proof",
+            "uid": "7fffc957-c94b-4829-8c13-85560c720a9d"
+          }
+        ],
+        "resourceVersion": "87420",
+        "uid": "ddc6a91d-eb91-44a1-8824-66aec3477da3"
+      },
+      "spec": {
+        "data": "eyJ2ZXJzaW9uIjoxLCJiaW5kaW5nIjp7Im5hbWVzcGFjZSI6InB0YWgtcmVzdWx0LW5ldHdvcmstcGctc2NoZW1hIiwia2luZCI6IlB0YWhTY2hlbWEiLCJuYW1lIjoibmV0d29yay1wcm9vZiIsInVpZCI6IjdmZmZjOTU3LWM5NGItNDgyOS04YzEzLTg1NTYwYzcyMGE5ZCIsImdlbmVyYXRpb24iOjEsImV4ZWN1dGlvbkJpbmRpbmdJRCI6InYxLTRjMTBlOWZhNWIxN2M4NDFmZjFkNjljOGMwZTFmMWM5IiwiaW5wdXRGaW5nZXJwcmludCI6InNoYTI1Njo1MzI1MzMyZDQzNzg3NTExMGNmYzJiMzJjNTEwNDY0MTUyNTMxYzBiNDExZDllYzRiZWNiMzFlZGJhMDRjODE1Iiwib3BlcmF0aW9uIjoicGxhbiIsIm9wZXJhdGlvbklEIjoic2hhMjU2OjVmYjkwNzQ4MjJmODY5YWVjNzYwMTFjMWFlODg1NWI0Mzg5YzNkNjExNzY4NmMyMGNmMjg5ODg0MjMxNDFmM2YiLCJqb2JOYW1lIjoicHRhaC1wbGFuLW5ldHdvcmstcHJvb2YtNWYyMmUwZWNkYmQxOGE4MyIsImpvYlVJRCI6ImUyOTM0Nzc4LTI1MTEtNGVjZC05ZTFmLTM3ZGVkMzk0MmY3ZCIsInBvZE5hbWUiOiJwdGFoLXBsYW4tbmV0d29yay1wcm9vZi01ZjIyZTBlY2RiZDE4YTgzLWhrbnR2IiwicG9kVUlEIjoiNzljOWExMjItMDcwOC00NTUwLWI0NTEtNWZhNDJmZWQ4YzE2In0sImRpZ2VzdCI6InNoYTI1Njo2MDAwMTgyMmFlNTQ5N2U3MmI1YjcxNWU4ZGNmMDJlZTZlZTlkOGVlMWY2YTkzYjJlZTlmYmM0YzVhYmVmMWE5Iiwic2l6ZSI6MTEyMSwiY2h1bmtzIjpbeyJkaWdlc3QiOiJzaGEyNTY6NjAwMDE4MjJhZTU0OTdlNzJiNWI3MTVlOGRjZjAyZWU2ZWU5ZDhlZTFmNmE5M2IyZWU5ZmJjNGM1YWJlZjFhOSIsInNpemUiOjExMjF9XX0=",
+        "type": "intent"
+      }
+    },
+    "ptah-result-37df86abc317e7f3936c2af8e7738eee18844cd6f2621eb861de515699213731-000": {
+      "apiVersion": "operator.ptah.run/v1alpha1",
+      "kind": "PtahResultRecord",
+      "metadata": {
+        "creationTimestamp": "2026-10-02T18:51:22Z",
+        "generation": 1,
+        "labels": {
+          "operator.ptah.run/result-attempt": "rJ7ntVsfR2ZDuncwDVNDDrAgtLrJFpyMkZZLgPFpNXT8r",
+          "operator.ptah.run/result-record": "chunk"
+        },
+        "name": "ptah-result-37df86abc317e7f3936c2af8e7738eee18844cd6f2621eb861de515699213731-000",
+        "namespace": "ptah-result-network-pg-schema",
+        "ownerReferences": [
+          {
+            "apiVersion": "operator.ptah.run/v1alpha1",
+            "controller": true,
+            "kind": "PtahResultRecord",
+            "name": "ptah-result-37df86abc317e7f3936c2af8e7738eee18844cd6f2621eb861de515699213731",
+            "uid": "ddc6a91d-eb91-44a1-8824-66aec3477da3"
+          }
+        ],
+        "resourceVersion": "87421",
+        "uid": "144b43a1-3b0b-4ddc-99b0-aa85885b7c83"
+      },
+      "spec": {
+        "data": "eyJwcm90b2NvbFZlcnNpb24iOjEsIm9wZXJhdGlvbiI6InBsYW4iLCJvcGVyYXRpb25JZCI6InNoYTI1Njo1ZmI5MDc0ODIyZjg2OWFlYzc2MDExYzFhZTg4NTViNDM4OWMzZDYxMTc2ODZjMjBjZjI4OTg4NDIzMTQxZjNmIiwiY2hpbGRFeGl0Q29kZSI6MCwic3Rkb3V0Ijoie1xuICBcImZvcm1hdF92ZXJzaW9uXCI6IDEsXG4gIFwibmFtZVwiOiBcInBsYW5fZTliYjg4YTMyNzc2XCIsXG4gIFwiZGlhbGVjdFwiOiBcInBvc3RncmVzXCIsXG4gIFwiZnJvbV9maW5nZXJwcmludFwiOiBcInNoYTI1Njo1Y2FjNTI1MzU1NjlhOWI0MDlhYjY5ZjQ3YjY1OTJiMThhMmY3N2IyZjA2MDc1YzBlNzI4NDZiYjhiMTg5MjQyXCIsXG4gIFwidG9fZmluZ2VycHJpbnRcIjogXCJzaGEyNTY6NGEzMTFiNjE3ZDg0YzU3YzVjNDhmYzQ5NTJhMjc0OWU1ZTUwMTAwNjQyNjRiN2YzNjkyYzY4NmJmZjlhZmJhZlwiLFxuICBcImRlc3RydWN0aXZlXCI6IGZhbHNlLFxuICBcInN0YXRlbWVudHNcIjogW1xuICAgIHtcbiAgICAgIFwic3FsXCI6IFwiLS0gUE9TVEdSRVMgVEFCTEU6IHF1YWxpZmljYXRpb25fcHJvYmUgLS1cXG5DUkVBVEUgVEFCTEUgXFxcInF1YWxpZmljYXRpb25fcHJvYmVcXFwiIChcXG4gIFxcXCJpZFxcXCIgYmlnaW50IFBSSU1BUlkgS0VZIE5PVCBOVUxMLFxcbiAgXFxcImVtYWlsXFxcIiB0ZXh0IE5PVCBOVUxMXFxuKVwiLFxuICAgICAgXCJzZXZlcml0eVwiOiBcInNhZmVcIixcbiAgICAgIFwicmVhc29uXCI6IFwiZG9lcyBub3QgcmVtb3ZlIGRhdGEgb3IgdGlnaHRlbiBjb25zdHJhaW50c1wiXG4gICAgfVxuICBdXG59XG4iLCJjb29yZGluYXRpb25EaWdlc3QiOiJzaGEyNTY6OGE1MDk5NmU0MjEwOGI3NzJjNGNiZGMyNjUyMzJjNjc1ODRiMmNmZGU2YjlmMGQ1YjIwNDM5Mzk4ZDRkMTY2YiIsInRhcmdldElkZW50aXR5RGlnZXN0Ijoic2hhMjU2OmMxY2NlNDRjZDNiMjllYzY2MDA2N2FmNTMxNDIzNmNkOWVmYWQ4NzdhZjY3ZmVkMTdmOGMzY2VmMzg5ODM1YzEiLCJwbGFuQ29udGVudERpZ2VzdCI6InNoYTI1NjphODQyYzMyYTBhODg3MTQ2OGQ3MTUxNzQyM2FiOTdlYzQ4NWQ4NGEwY2FkMDBjMDE1ZWUzMmU1ZDNkZWJkZmVlIiwicGxhbk91dGNvbWUiOiJDaGFuZ2VzIn0=",
+        "type": "chunk"
+      }
+    },
+    "ptah-result-37df86abc317e7f3936c2af8e7738eee18844cd6f2621eb861de515699213731-complete": {
+      "apiVersion": "operator.ptah.run/v1alpha1",
+      "kind": "PtahResultRecord",
+      "metadata": {
+        "creationTimestamp": "2026-10-02T18:51:22Z",
+        "generation": 1,
+        "labels": {
+          "operator.ptah.run/result-attempt": "rJ7ntVsfR2ZDuncwDVNDDrAgtLrJFpyMkZZLgPFpNXT8r",
+          "operator.ptah.run/result-record": "complete"
+        },
+        "name": "ptah-result-37df86abc317e7f3936c2af8e7738eee18844cd6f2621eb861de515699213731-complete",
+        "namespace": "ptah-result-network-pg-schema",
+        "ownerReferences": [
+          {
+            "apiVersion": "operator.ptah.run/v1alpha1",
+            "controller": true,
+            "kind": "PtahResultRecord",
+            "name": "ptah-result-37df86abc317e7f3936c2af8e7738eee18844cd6f2621eb861de515699213731",
+            "uid": "ddc6a91d-eb91-44a1-8824-66aec3477da3"
+          }
+        ],
+        "resourceVersion": "87422",
+        "uid": "9e29e6b6-2f89-4ed3-967a-b13eaa44218a"
+      },
+      "spec": {
+        "data": "eyJtYW5pZmVzdFVJRCI6ImRkYzZhOTFkLWViOTEtNDRhMS04ODI0LTY2YWVjMzQ3N2RhMyIsIm1hbmlmZXN0RGlnZXN0Ijoic2hhMjU2OmYyMjk1ZmU2OGZkNmZkMWM0NmRkMGExNTM1MmIzMDBkZGIyNWI4ZTJlN2UwODczOTMzNTIzZGRlMTQ3ZjdlN2EiLCJjaHVua1VJRHMiOlsiMTQ0YjQzYTEtM2IwYi00ZGRjLTk5YjAtYWE4NTg4NWI3YzgzIl19",
+        "type": "complete"
+      }
+    },
+    "ptah-result-92c49df0e8913e10f315fca411b6a8a84a3dc7180bcdb2ce6d29f97658c537cc": {
+      "apiVersion": "operator.ptah.run/v1alpha1",
+      "kind": "PtahResultRecord",
+      "metadata": {
+        "creationTimestamp": "2026-10-02T18:51:44Z",
+        "generation": 1,
+        "labels": {
+          "operator.ptah.run/result-attempt": "rfg9euFRICYUsVNRV7x-K4s5Cy8SVlXgO8BlzgW_m7ncr",
+          "operator.ptah.run/result-record": "intent"
+        },
+        "name": "ptah-result-92c49df0e8913e10f315fca411b6a8a84a3dc7180bcdb2ce6d29f97658c537cc",
+        "namespace": "ptah-result-network-pg-schema",
+        "ownerReferences": [
+          {
+            "apiVersion": "operator.ptah.run/v1alpha1",
+            "controller": true,
+            "kind": "PtahSchema",
+            "name": "network-proof",
+            "uid": "7fffc957-c94b-4829-8c13-85560c720a9d"
+          }
+        ],
+        "resourceVersion": "87600",
+        "uid": "44e0c59d-22eb-4b25-944e-2e39941f2943"
+      },
+      "spec": {
+        "data": "eyJ2ZXJzaW9uIjoxLCJiaW5kaW5nIjp7Im5hbWVzcGFjZSI6InB0YWgtcmVzdWx0LW5ldHdvcmstcGctc2NoZW1hIiwia2luZCI6IlB0YWhTY2hlbWEiLCJuYW1lIjoibmV0d29yay1wcm9vZiIsInVpZCI6IjdmZmZjOTU3LWM5NGItNDgyOS04YzEzLTg1NTYwYzcyMGE5ZCIsImdlbmVyYXRpb24iOjEsImV4ZWN1dGlvbkJpbmRpbmdJRCI6InYxLTRjMTBlOWZhNWIxN2M4NDFmZjFkNjljOGMwZTFmMWM5IiwiaW5wdXRGaW5nZXJwcmludCI6InNoYTI1Njo0ZTdhNjdkYTQ0M2FjNWM2MjNmNDZiZjgxYjFlZjk0MTAzYjRhZmUwNGNkNDlhNTQ1MTg3MDNlYjE5ZmY1NjIyIiwib3BlcmF0aW9uIjoib2JzZXJ2ZSIsIm9wZXJhdGlvbklEIjoic2hhMjU2Ojk3YjkwNWMwYjk1N2I1YTNmZGI2YWZkZTk2NWZiZThhYTZmNzUyYjNlN2RhMjgxNjMyZDM3N2UwNzQ1NjVmM2QiLCJqb2JOYW1lIjoicHRhaC1vYnNlcnZlLW5ldHdvcmstcHJvb2YtNmJiMTM1MjNlZjEyY2VlZiIsImpvYlVJRCI6IjRiMmUxOTU4LWExMjgtNDM4Mi04NTBmLTQ4OWYyZjFjMDdmNyIsInBvZE5hbWUiOiJwdGFoLW9ic2VydmUtbmV0d29yay1wcm9vZi02YmIxMzUyM2VmMTJjZWVmLTVmeHF6IiwicG9kVUlEIjoiMTJmY2UwNzAtNDE5MS00MGYwLTk3OWItZGNmNTc5NjRlNWU5In0sImRpZ2VzdCI6InNoYTI1Njo3NzFiNjE3Y2FiYmVlMTMxNzBhNWI2MzhiNDE4YThiZDY2N2U4NDExYzMwZTk3OGQ2ZDVkZjJmZDAwOTFkZmZkIiwic2l6ZSI6NDc2LCJjaHVua3MiOlt7ImRpZ2VzdCI6InNoYTI1Njo3NzFiNjE3Y2FiYmVlMTMxNzBhNWI2MzhiNDE4YThiZDY2N2U4NDExYzMwZTk3OGQ2ZDVkZjJmZDAwOTFkZmZkIiwic2l6ZSI6NDc2fV19",
+        "type": "intent"
+      }
+    },
+    "ptah-result-92c49df0e8913e10f315fca411b6a8a84a3dc7180bcdb2ce6d29f97658c537cc-000": {
+      "apiVersion": "operator.ptah.run/v1alpha1",
+      "kind": "PtahResultRecord",
+      "metadata": {
+        "creationTimestamp": "2026-10-02T18:51:44Z",
+        "generation": 1,
+        "labels": {
+          "operator.ptah.run/result-attempt": "rfg9euFRICYUsVNRV7x-K4s5Cy8SVlXgO8BlzgW_m7ncr",
+          "operator.ptah.run/result-record": "chunk"
+        },
+        "name": "ptah-result-92c49df0e8913e10f315fca411b6a8a84a3dc7180bcdb2ce6d29f97658c537cc-000",
+        "namespace": "ptah-result-network-pg-schema",
+        "ownerReferences": [
+          {
+            "apiVersion": "operator.ptah.run/v1alpha1",
+            "controller": true,
+            "kind": "PtahResultRecord",
+            "name": "ptah-result-92c49df0e8913e10f315fca411b6a8a84a3dc7180bcdb2ce6d29f97658c537cc",
+            "uid": "44e0c59d-22eb-4b25-944e-2e39941f2943"
+          }
+        ],
+        "resourceVersion": "87601",
+        "uid": "679bdb0c-9459-4d5b-b9df-f18ddc898d25"
+      },
+      "spec": {
+        "data": "eyJwcm90b2NvbFZlcnNpb24iOjEsIm9wZXJhdGlvbiI6Im9ic2VydmUiLCJvcGVyYXRpb25JZCI6InNoYTI1Njo5N2I5MDVjMGI5NTdiNWEzZmRiNmFmZGU5NjVmYmU4YWE2Zjc1MmIzZTdkYTI4MTYzMmQzNzdlMDc0NTY1ZjNkIiwiY2hpbGRFeGl0Q29kZSI6MCwic3Rkb3V0IjoiIiwiY29vcmRpbmF0aW9uRGlnZXN0Ijoic2hhMjU2OjhhNTA5OTZlNDIxMDhiNzcyYzRjYmRjMjY1MjMyYzY3NTg0YjJjZmRlNmI5ZjBkNWIyMDQzOTM5OGQ0ZDE2NmIiLCJ0YXJnZXRJZGVudGl0eURpZ2VzdCI6InNoYTI1NjpjMWNjZTQ0Y2QzYjI5ZWM2NjAwNjdhZjUzMTQyMzZjZDllZmFkODc3YWY2N2ZlZDE3ZjhjM2NlZjM4OTgzNWMxIiwiZHJpZnRSZXBvcnREaWdlc3QiOiJzaGEyNTY6MWI5OGM4MmUzOTAxOTFmZjJjMGFiNmE5ZDg3NzMwZDI0YmY1MTE4NzQ3NmE4YzkxYTkyOTc3M2YyMzFjOWFjNyIsIm9ic2VydmVkRGlhbGVjdCI6InBvc3RncmVzIn0=",
+        "type": "chunk"
+      }
+    },
+    "ptah-result-92c49df0e8913e10f315fca411b6a8a84a3dc7180bcdb2ce6d29f97658c537cc-complete": {
+      "apiVersion": "operator.ptah.run/v1alpha1",
+      "kind": "PtahResultRecord",
+      "metadata": {
+        "creationTimestamp": "2026-10-02T18:51:45Z",
+        "generation": 1,
+        "labels": {
+          "operator.ptah.run/result-attempt": "rfg9euFRICYUsVNRV7x-K4s5Cy8SVlXgO8BlzgW_m7ncr",
+          "operator.ptah.run/result-record": "complete"
+        },
+        "name": "ptah-result-92c49df0e8913e10f315fca411b6a8a84a3dc7180bcdb2ce6d29f97658c537cc-complete",
+        "namespace": "ptah-result-network-pg-schema",
+        "ownerReferences": [
+          {
+            "apiVersion": "operator.ptah.run/v1alpha1",
+            "controller": true,
+            "kind": "PtahResultRecord",
+            "name": "ptah-result-92c49df0e8913e10f315fca411b6a8a84a3dc7180bcdb2ce6d29f97658c537cc",
+            "uid": "44e0c59d-22eb-4b25-944e-2e39941f2943"
+          }
+        ],
+        "resourceVersion": "87604",
+        "uid": "0beab886-3ae8-490e-b76e-9f643113bc9e"
+      },
+      "spec": {
+        "data": "eyJtYW5pZmVzdFVJRCI6IjQ0ZTBjNTlkLTIyZWItNGIyNS05NDRlLTJlMzk5NDFmMjk0MyIsIm1hbmlmZXN0RGlnZXN0Ijoic2hhMjU2OmIzNzNhZGM0MTg0NzFmYTRlOTNiMjRhNGU0Yzc2MDJmMDFhMThkNjhiZGRjMTYyNGI1OWE0MGMwYzdhNDZjMzMiLCJjaHVua1VJRHMiOlsiNjc5YmRiMGMtOTQ1OS00ZDViLWI5ZGYtZjE4ZGRjODk4ZDI1Il19",
+        "type": "complete"
+      }
+    },
+    "ptah-result-99017063b6920c50f2e3818f2f14d86d04c8c472ca34ac37abf37d61c82f44c0": {
+      "apiVersion": "operator.ptah.run/v1alpha1",
+      "kind": "PtahResultRecord",
+      "metadata": {
+        "creationTimestamp": "2026-10-02T18:51:57Z",
+        "generation": 1,
+        "labels": {
+          "operator.ptah.run/result-attempt": "rEdvDgiA5_Gx1u855phH7H8eKyGP2mbR6kiJOECoeBR0r",
+          "operator.ptah.run/result-record": "intent"
+        },
+        "name": "ptah-result-99017063b6920c50f2e3818f2f14d86d04c8c472ca34ac37abf37d61c82f44c0",
+        "namespace": "ptah-result-network-pg-schema",
+        "ownerReferences": [
+          {
+            "apiVersion": "operator.ptah.run/v1alpha1",
+            "controller": true,
+            "kind": "PtahSchema",
+            "name": "network-proof",
+            "uid": "7fffc957-c94b-4829-8c13-85560c720a9d"
+          }
+        ],
+        "resourceVersion": "87706",
+        "uid": "f21f7dda-e11c-43a9-9192-5d5bf89b1c99"
+      },
+      "spec": {
+        "data": "eyJ2ZXJzaW9uIjoxLCJiaW5kaW5nIjp7Im5hbWVzcGFjZSI6InB0YWgtcmVzdWx0LW5ldHdvcmstcGctc2NoZW1hIiwia2luZCI6IlB0YWhTY2hlbWEiLCJuYW1lIjoibmV0d29yay1wcm9vZiIsInVpZCI6IjdmZmZjOTU3LWM5NGItNDgyOS04YzEzLTg1NTYwYzcyMGE5ZCIsImdlbmVyYXRpb24iOjEsImV4ZWN1dGlvbkJpbmRpbmdJRCI6InYxLTRjMTBlOWZhNWIxN2M4NDFmZjFkNjljOGMwZTFmMWM5IiwiaW5wdXRGaW5nZXJwcmludCI6InNoYTI1NjozOGI5ZmZlMDAwZDY3MDAzNGJkNDk1ZTQ4ODZjYzQwN2YxMzk4MGYwZjU3MWVkYzRjNDQyYWRhZWI1NTJlZGQyIiwib3BlcmF0aW9uIjoicGxhbiIsIm9wZXJhdGlvbklEIjoic2hhMjU2OmY0ZDc3NzFhMGM4ODAwOTg4MGYwYjE3YzZlYjZjNWJhOGYzYWFjOGJmZWMxOTBiMTQ5YzkyYWQ0NDAzNDM2ZDEiLCJqb2JOYW1lIjoicHRhaC1wbGFuLW5ldHdvcmstcHJvb2YtYTMyNWE1ZDk2ZjY2MDliYyIsImpvYlVJRCI6IjQwOWQxY2IzLTQ0N2YtNDVmOC1hYjZkLWE5MzNmODE3OTAzYyIsInBvZE5hbWUiOiJwdGFoLXBsYW4tbmV0d29yay1wcm9vZi1hMzI1YTVkOTZmNjYwOWJjLXI4c21oIiwicG9kVUlEIjoiMGM5NTBjMzAtMDg0OS00YzVkLTg4MWMtMTE4YjM5OTViNTU1In0sImRpZ2VzdCI6InNoYTI1NjpmZWMyZTg3ZjIxYjY1MzMzMjg3ZDU0ZWI3N2NiYWEwM2EwZGUwOWVlYjI5ZTE0YzQ0NjRkZWZmOWU2NTFlZTJmIiwic2l6ZSI6Mzc2LCJjaHVua3MiOlt7ImRpZ2VzdCI6InNoYTI1NjpmZWMyZTg3ZjIxYjY1MzMzMjg3ZDU0ZWI3N2NiYWEwM2EwZGUwOWVlYjI5ZTE0YzQ0NjRkZWZmOWU2NTFlZTJmIiwic2l6ZSI6Mzc2fV19",
+        "type": "intent"
+      }
+    },
+    "ptah-result-99017063b6920c50f2e3818f2f14d86d04c8c472ca34ac37abf37d61c82f44c0-000": {
+      "apiVersion": "operator.ptah.run/v1alpha1",
+      "kind": "PtahResultRecord",
+      "metadata": {
+        "creationTimestamp": "2026-10-02T18:51:57Z",
+        "generation": 1,
+        "labels": {
+          "operator.ptah.run/result-attempt": "rEdvDgiA5_Gx1u855phH7H8eKyGP2mbR6kiJOECoeBR0r",
+          "operator.ptah.run/result-record": "chunk"
+        },
+        "name": "ptah-result-99017063b6920c50f2e3818f2f14d86d04c8c472ca34ac37abf37d61c82f44c0-000",
+        "namespace": "ptah-result-network-pg-schema",
+        "ownerReferences": [
+          {
+            "apiVersion": "operator.ptah.run/v1alpha1",
+            "controller": true,
+            "kind": "PtahResultRecord",
+            "name": "ptah-result-99017063b6920c50f2e3818f2f14d86d04c8c472ca34ac37abf37d61c82f44c0",
+            "uid": "f21f7dda-e11c-43a9-9192-5d5bf89b1c99"
+          }
+        ],
+        "resourceVersion": "87708",
+        "uid": "0dac6917-9308-4d32-b64a-e506f0e78a5a"
+      },
+      "spec": {
+        "data": "eyJwcm90b2NvbFZlcnNpb24iOjEsIm9wZXJhdGlvbiI6InBsYW4iLCJvcGVyYXRpb25JZCI6InNoYTI1NjpmNGQ3NzcxYTBjODgwMDk4ODBmMGIxN2M2ZWI2YzViYThmM2FhYzhiZmVjMTkwYjE0OWM5MmFkNDQwMzQzNmQxIiwiY2hpbGRFeGl0Q29kZSI6MCwic3Rkb3V0IjoiIiwiY29vcmRpbmF0aW9uRGlnZXN0Ijoic2hhMjU2OjhhNTA5OTZlNDIxMDhiNzcyYzRjYmRjMjY1MjMyYzY3NTg0YjJjZmRlNmI5ZjBkNWIyMDQzOTM5OGQ0ZDE2NmIiLCJ0YXJnZXRJZGVudGl0eURpZ2VzdCI6InNoYTI1NjpjMWNjZTQ0Y2QzYjI5ZWM2NjAwNjdhZjUzMTQyMzZjZDllZmFkODc3YWY2N2ZlZDE3ZjhjM2NlZjM4OTgzNWMxIiwicGxhbk91dGNvbWUiOiJOb0NoYW5nZXMifQ==",
+        "type": "chunk"
+      }
+    },
+    "ptah-result-99017063b6920c50f2e3818f2f14d86d04c8c472ca34ac37abf37d61c82f44c0-complete": {
+      "apiVersion": "operator.ptah.run/v1alpha1",
+      "kind": "PtahResultRecord",
+      "metadata": {
+        "creationTimestamp": "2026-10-02T18:51:57Z",
+        "generation": 1,
+        "labels": {
+          "operator.ptah.run/result-attempt": "rEdvDgiA5_Gx1u855phH7H8eKyGP2mbR6kiJOECoeBR0r",
+          "operator.ptah.run/result-record": "complete"
+        },
+        "name": "ptah-result-99017063b6920c50f2e3818f2f14d86d04c8c472ca34ac37abf37d61c82f44c0-complete",
+        "namespace": "ptah-result-network-pg-schema",
+        "ownerReferences": [
+          {
+            "apiVersion": "operator.ptah.run/v1alpha1",
+            "controller": true,
+            "kind": "PtahResultRecord",
+            "name": "ptah-result-99017063b6920c50f2e3818f2f14d86d04c8c472ca34ac37abf37d61c82f44c0",
+            "uid": "f21f7dda-e11c-43a9-9192-5d5bf89b1c99"
+          }
+        ],
+        "resourceVersion": "87713",
+        "uid": "b80a4471-a259-4042-b1c5-9e6e36bff622"
+      },
+      "spec": {
+        "data": "eyJtYW5pZmVzdFVJRCI6ImYyMWY3ZGRhLWUxMWMtNDNhOS05MTkyLTVkNWJmODliMWM5OSIsIm1hbmlmZXN0RGlnZXN0Ijoic2hhMjU2OjA2YWRkYWM5ZTg2ZGRkNWRiYmQ5NzMwMjg0NzFmN2VkOWM1ZTIzNzRkMDJkODMzZGNkMTMwN2U4M2FkYzhkNmQiLCJjaHVua1VJRHMiOlsiMGRhYzY5MTctOTMwOC00ZDMyLWI2NGEtZTUwNmYwZTc4YTVhIl19",
+        "type": "complete"
+      }
+    },
+    "ptah-result-b19b51e3fd2928ae973913dccdaf8483958da279568616ab8d2691b9d9c9f201": {
+      "apiVersion": "operator.ptah.run/v1alpha1",
+      "kind": "PtahResultRecord",
+      "metadata": {
+        "creationTimestamp": "2026-10-02T18:50:57Z",
+        "generation": 1,
+        "labels": {
+          "operator.ptah.run/result-attempt": "rbCxoO4AvksUGJKxIPczXrvij0VjZL3mE4o321h17UYAr",
+          "operator.ptah.run/result-record": "intent"
+        },
+        "name": "ptah-result-b19b51e3fd2928ae973913dccdaf8483958da279568616ab8d2691b9d9c9f201",
+        "namespace": "ptah-result-network-pg-schema",
+        "ownerReferences": [
+          {
+            "apiVersion": "operator.ptah.run/v1alpha1",
+            "controller": true,
+            "kind": "PtahSchema",
+            "name": "network-proof",
+            "uid": "7fffc957-c94b-4829-8c13-85560c720a9d"
+          }
+        ],
+        "resourceVersion": "87242",
+        "uid": "8d9bda55-cd3c-4dd4-9ee6-109c7aeefdad"
+      },
+      "spec": {
+        "data": "eyJ2ZXJzaW9uIjoxLCJiaW5kaW5nIjp7Im5hbWVzcGFjZSI6InB0YWgtcmVzdWx0LW5ldHdvcmstcGctc2NoZW1hIiwia2luZCI6IlB0YWhTY2hlbWEiLCJuYW1lIjoibmV0d29yay1wcm9vZiIsInVpZCI6IjdmZmZjOTU3LWM5NGItNDgyOS04YzEzLTg1NTYwYzcyMGE5ZCIsImdlbmVyYXRpb24iOjEsImV4ZWN1dGlvbkJpbmRpbmdJRCI6InYxLTRjMTBlOWZhNWIxN2M4NDFmZjFkNjljOGMwZTFmMWM5IiwiaW5wdXRGaW5nZXJwcmludCI6InNoYTI1Njo4MmY2YjVjNDdhY2ZkNzlkZGU1MDBlNmU1Y2I3ZDkwZTU1Zjk2MmI3Y2YxMmY4YmE0MWM0ZjE3OThhMTdmNGQ3Iiwib3BlcmF0aW9uIjoidmVyaWZ5Iiwib3BlcmF0aW9uSUQiOiJzaGEyNTY6Mzg2NmFkYjhiZDhhYWI5N2RlMzZiOThkZjFjNDQzODRlZTRmZjVjNzg0ZTE3MWMwOTIxNmQ5MTVhNjFjODU2NiIsImpvYk5hbWUiOiJwdGFoLXZlcmlmeS1uZXR3b3JrLXByb29mLTFkODY2NWY2M2ZhZDJkYjYiLCJqb2JVSUQiOiIxZDViMDhmOC0wNGEzLTQ1NjYtOTI0My00ZmM0ZTZiMDYwNjQiLCJwb2ROYW1lIjoicHRhaC12ZXJpZnktbmV0d29yay1wcm9vZi0xZDg2NjVmNjNmYWQyZGI2LWRoOW5mIiwicG9kVUlEIjoiNzZlYzY4YTktZTdjNS00OTRlLWJjZGMtNTFlMDBjZTk4YTRkIn0sImRpZ2VzdCI6InNoYTI1NjpmMzM3MTc4MzM1NTI4NmE2NDNlNmY5MmFhN2FmODViNWE3YTlmYTIwMTkxYmM0OGYzYjZjYzc3YTQ5ZmIwODY1Iiwic2l6ZSI6NDE2LCJjaHVua3MiOlt7ImRpZ2VzdCI6InNoYTI1NjpmMzM3MTc4MzM1NTI4NmE2NDNlNmY5MmFhN2FmODViNWE3YTlmYTIwMTkxYmM0OGYzYjZjYzc3YTQ5ZmIwODY1Iiwic2l6ZSI6NDE2fV19",
+        "type": "intent"
+      }
+    },
+    "ptah-result-b19b51e3fd2928ae973913dccdaf8483958da279568616ab8d2691b9d9c9f201-000": {
+      "apiVersion": "operator.ptah.run/v1alpha1",
+      "kind": "PtahResultRecord",
+      "metadata": {
+        "creationTimestamp": "2026-10-02T18:50:57Z",
+        "generation": 1,
+        "labels": {
+          "operator.ptah.run/result-attempt": "rbCxoO4AvksUGJKxIPczXrvij0VjZL3mE4o321h17UYAr",
+          "operator.ptah.run/result-record": "chunk"
+        },
+        "name": "ptah-result-b19b51e3fd2928ae973913dccdaf8483958da279568616ab8d2691b9d9c9f201-000",
+        "namespace": "ptah-result-network-pg-schema",
+        "ownerReferences": [
+          {
+            "apiVersion": "operator.ptah.run/v1alpha1",
+            "controller": true,
+            "kind": "PtahResultRecord",
+            "name": "ptah-result-b19b51e3fd2928ae973913dccdaf8483958da279568616ab8d2691b9d9c9f201",
+            "uid": "8d9bda55-cd3c-4dd4-9ee6-109c7aeefdad"
+          }
+        ],
+        "resourceVersion": "87244",
+        "uid": "280c17da-8b5d-4679-83c5-1d667d668113"
+      },
+      "spec": {
+        "data": "eyJwcm90b2NvbFZlcnNpb24iOjEsIm9wZXJhdGlvbiI6InZlcmlmeSIsIm9wZXJhdGlvbklkIjoic2hhMjU2OjM4NjZhZGI4YmQ4YWFiOTdkZTM2Yjk4ZGYxYzQ0Mzg0ZWU0ZmY1Yzc4NGUxNzFjMDkyMTZkOTE1YTYxYzg1NjYiLCJjaGlsZEV4aXRDb2RlIjowLCJzdGRvdXQiOiIiLCJ2ZXJpZmljYXRpb25Qb2xpY3lEaWdlc3QiOiJzaGEyNTY6ZTZmZDUzOWU1MDczN2E3NTU0NjYyZWY2MDM0Mjk4OWM1ZjQ1OTA1MzBhNjAyZjg3MTYzODBhMjA5YTUxMDA2NSIsIm9ic2VydmVkQXJ0aWZhY3RUeXBlIjoiYXBwbGljYXRpb24vdm5kLnN0b2thcm8ucHRhaC5zY2hlbWEudjEiLCJyZXNvbHZlZERpZ2VzdCI6InNoYTI1Njo4OWI2NTU3MWVhZDliOTlkODMwZGE5NmZlMWQxZjQ1NWZiMDBmYzBhNDEzOGI3M2U5NjU0MTEzYmU2ZWQwZGFkIn0=",
+        "type": "chunk"
+      }
+    },
+    "ptah-result-b19b51e3fd2928ae973913dccdaf8483958da279568616ab8d2691b9d9c9f201-complete": {
+      "apiVersion": "operator.ptah.run/v1alpha1",
+      "kind": "PtahResultRecord",
+      "metadata": {
+        "creationTimestamp": "2026-10-02T18:50:57Z",
+        "generation": 1,
+        "labels": {
+          "operator.ptah.run/result-attempt": "rbCxoO4AvksUGJKxIPczXrvij0VjZL3mE4o321h17UYAr",
+          "operator.ptah.run/result-record": "complete"
+        },
+        "name": "ptah-result-b19b51e3fd2928ae973913dccdaf8483958da279568616ab8d2691b9d9c9f201-complete",
+        "namespace": "ptah-result-network-pg-schema",
+        "ownerReferences": [
+          {
+            "apiVersion": "operator.ptah.run/v1alpha1",
+            "controller": true,
+            "kind": "PtahResultRecord",
+            "name": "ptah-result-b19b51e3fd2928ae973913dccdaf8483958da279568616ab8d2691b9d9c9f201",
+            "uid": "8d9bda55-cd3c-4dd4-9ee6-109c7aeefdad"
+          }
+        ],
+        "resourceVersion": "87246",
+        "uid": "39f82426-5c11-4927-8c2b-488888b7eeb8"
+      },
+      "spec": {
+        "data": "eyJtYW5pZmVzdFVJRCI6IjhkOWJkYTU1LWNkM2MtNGRkNC05ZWU2LTEwOWM3YWVlZmRhZCIsIm1hbmlmZXN0RGlnZXN0Ijoic2hhMjU2OmQxYmNhMzE0NDNmODNmNWEwOTAzNzkyYjY3NWZhNDAyNWIwYjE0YWNjZDg5MzRlYjA1Mzk3YTBhNmIxYmQ5OGIiLCJjaHVua1VJRHMiOlsiMjgwYzE3ZGEtOGI1ZC00Njc5LTgzYzUtMWQ2NjdkNjY4MTEzIl19",
+        "type": "complete"
+      }
+    },
+    "ptah-result-b4a0a08b9974d7fb398c5c0950b8118e60f94dcf5917d1b65c6c1ecc583af67a": {
+      "apiVersion": "operator.ptah.run/v1alpha1",
+      "kind": "PtahResultRecord",
+      "metadata": {
+        "creationTimestamp": "2026-10-02T18:50:48Z",
+        "generation": 1,
+        "labels": {
+          "operator.ptah.run/result-attempt": "rZpPXRXvkTWSbspI5i9o9G-ezDe7b3DP00gbE8wZPAwcr",
+          "operator.ptah.run/result-record": "intent"
+        },
+        "name": "ptah-result-b4a0a08b9974d7fb398c5c0950b8118e60f94dcf5917d1b65c6c1ecc583af67a",
+        "namespace": "ptah-result-network-pg-schema",
+        "ownerReferences": [
+          {
+            "apiVersion": "operator.ptah.run/v1alpha1",
+            "controller": true,
+            "kind": "PtahSchema",
+            "name": "network-proof",
+            "uid": "7fffc957-c94b-4829-8c13-85560c720a9d"
+          }
+        ],
+        "resourceVersion": "87176",
+        "uid": "0a65e61f-1c1a-4e30-9bfc-2465d803ea5b"
+      },
+      "spec": {
+        "data": "eyJ2ZXJzaW9uIjoxLCJiaW5kaW5nIjp7Im5hbWVzcGFjZSI6InB0YWgtcmVzdWx0LW5ldHdvcmstcGctc2NoZW1hIiwia2luZCI6IlB0YWhTY2hlbWEiLCJuYW1lIjoibmV0d29yay1wcm9vZiIsInVpZCI6IjdmZmZjOTU3LWM5NGItNDgyOS04YzEzLTg1NTYwYzcyMGE5ZCIsImdlbmVyYXRpb24iOjEsImV4ZWN1dGlvbkJpbmRpbmdJRCI6InYxLTRjMTBlOWZhNWIxN2M4NDFmZjFkNjljOGMwZTFmMWM5IiwiaW5wdXRGaW5nZXJwcmludCI6InNoYTI1Njo3ZjE2MDZjMTEzZmUxYmRkNTM5YTA2NTFiYmMzOTRiYjE5ZDBkNTIwOWJjZmI0MWIyOTZlZmFjMjcyYzkwZmIwIiwib3BlcmF0aW9uIjoicmVzb2x2ZSIsIm9wZXJhdGlvbklEIjoic2hhMjU2OjliY2E5OTkyMjZmMTY4ODUyZDM3ZThkYjBjOWU0NTc5ZGMwYzAwZDdlM2FiYjdhYzM4YmY0NmRjZjMzYjEzYjIiLCJqb2JOYW1lIjoicHRhaC1yZXNvbHZlLW5ldHdvcmstcHJvb2YtZDJiN2RkOTI0YTIxNGY1MiIsImpvYlVJRCI6ImEzMmU3YjNlLTM0MWUtNDE1Ny1iNTE3LWVkNTI2ZWFhMmZhMSIsInBvZE5hbWUiOiJwdGFoLXJlc29sdmUtbmV0d29yay1wcm9vZi1kMmI3ZGQ5MjRhMjE0ZjUyLXI5dnRxIiwicG9kVUlEIjoiMDkzZTRkNjYtMTUwNS00MjkwLWFjNTUtNGZhZTZmYzY1YzIxIn0sImRpZ2VzdCI6InNoYTI1NjpmY2M3ZDNkMDRkNjBjOTdmMDJmM2ZjMWZiYjg2ZWJmZjk5ZDU5MWNkMjJlMWQ4OWVlODA3MDM1ZmEyODcyMmRiIiwic2l6ZSI6NTM5LCJjaHVua3MiOlt7ImRpZ2VzdCI6InNoYTI1NjpmY2M3ZDNkMDRkNjBjOTdmMDJmM2ZjMWZiYjg2ZWJmZjk5ZDU5MWNkMjJlMWQ4OWVlODA3MDM1ZmEyODcyMmRiIiwic2l6ZSI6NTM5fV19",
+        "type": "intent"
+      }
+    },
+    "ptah-result-b4a0a08b9974d7fb398c5c0950b8118e60f94dcf5917d1b65c6c1ecc583af67a-000": {
+      "apiVersion": "operator.ptah.run/v1alpha1",
+      "kind": "PtahResultRecord",
+      "metadata": {
+        "creationTimestamp": "2026-10-02T18:50:48Z",
+        "generation": 1,
+        "labels": {
+          "operator.ptah.run/result-attempt": "rZpPXRXvkTWSbspI5i9o9G-ezDe7b3DP00gbE8wZPAwcr",
+          "operator.ptah.run/result-record": "chunk"
+        },
+        "name": "ptah-result-b4a0a08b9974d7fb398c5c0950b8118e60f94dcf5917d1b65c6c1ecc583af67a-000",
+        "namespace": "ptah-result-network-pg-schema",
+        "ownerReferences": [
+          {
+            "apiVersion": "operator.ptah.run/v1alpha1",
+            "controller": true,
+            "kind": "PtahResultRecord",
+            "name": "ptah-result-b4a0a08b9974d7fb398c5c0950b8118e60f94dcf5917d1b65c6c1ecc583af67a",
+            "uid": "0a65e61f-1c1a-4e30-9bfc-2465d803ea5b"
+          }
+        ],
+        "resourceVersion": "87177",
+        "uid": "43b723f3-352c-43ff-a600-08fb2bdce47e"
+      },
+      "spec": {
+        "data": "eyJwcm90b2NvbFZlcnNpb24iOjEsIm9wZXJhdGlvbiI6InJlc29sdmUiLCJvcGVyYXRpb25JZCI6InNoYTI1Njo5YmNhOTk5MjI2ZjE2ODg1MmQzN2U4ZGIwYzllNDU3OWRjMGMwMGQ3ZTNhYmI3YWMzOGJmNDZkY2YzM2IxM2IyIiwiY2hpbGRFeGl0Q29kZSI6MCwic3Rkb3V0IjoiIiwicmVzb2x2ZWREaWdlc3QiOiJzaGEyNTY6ODliNjU1NzFlYWQ5Yjk5ZDgzMGRhOTZmZTFkMWY0NTVmYjAwZmMwYTQxMzhiNzNlOTY1NDExM2JlNmVkMGRhZCIsInJlc29sdmVkUmVmZXJlbmNlIjoib2NpOi8vZTJlLXJlZ2lzdHJ5LnB0YWgtdGVzdC1hLTEtMzctMC1yZXN1bHQtcmVzdGFydC1iMjU3NmY5Yi01YTBlZjJmZTdkLnN2Yy5jbHVzdGVyLmxvY2FsOjUwMDAvc2NoZW1hcy9kZW1vQHNoYTI1Njo4OWI2NTU3MWVhZDliOTlkODMwZGE5NmZlMWQxZjQ1NWZiMDBmYzBhNDEzOGI3M2U5NjU0MTEzYmU2ZWQwZGFkIiwicmVzb2x2ZWRNZWRpYVR5cGUiOiJhcHBsaWNhdGlvbi92bmQub2NpLmltYWdlLm1hbmlmZXN0LnYxK2pzb24iLCJyZXNvbHZlZFNpemUiOjc5OX0=",
+        "type": "chunk"
+      }
+    },
+    "ptah-result-b4a0a08b9974d7fb398c5c0950b8118e60f94dcf5917d1b65c6c1ecc583af67a-complete": {
+      "apiVersion": "operator.ptah.run/v1alpha1",
+      "kind": "PtahResultRecord",
+      "metadata": {
+        "creationTimestamp": "2026-10-02T18:50:48Z",
+        "generation": 1,
+        "labels": {
+          "operator.ptah.run/result-attempt": "rZpPXRXvkTWSbspI5i9o9G-ezDe7b3DP00gbE8wZPAwcr",
+          "operator.ptah.run/result-record": "complete"
+        },
+        "name": "ptah-result-b4a0a08b9974d7fb398c5c0950b8118e60f94dcf5917d1b65c6c1ecc583af67a-complete",
+        "namespace": "ptah-result-network-pg-schema",
+        "ownerReferences": [
+          {
+            "apiVersion": "operator.ptah.run/v1alpha1",
+            "controller": true,
+            "kind": "PtahResultRecord",
+            "name": "ptah-result-b4a0a08b9974d7fb398c5c0950b8118e60f94dcf5917d1b65c6c1ecc583af67a",
+            "uid": "0a65e61f-1c1a-4e30-9bfc-2465d803ea5b"
+          }
+        ],
+        "resourceVersion": "87178",
+        "uid": "0eccd0f9-16c6-4711-975c-9c4cab84e334"
+      },
+      "spec": {
+        "data": "eyJtYW5pZmVzdFVJRCI6IjBhNjVlNjFmLTFjMWEtNGUzMC05YmZjLTI0NjVkODAzZWE1YiIsIm1hbmlmZXN0RGlnZXN0Ijoic2hhMjU2OmVkNGJiOTQ2MzcwMzlhMzQxN2RkZjAzYTBhZTBlZGZlZjcwMmVhYTY3ZjRkZWY3NjY4NGEyZDQ0MWFiODlkZTIiLCJjaHVua1VJRHMiOlsiNDNiNzIzZjMtMzUyYy00M2ZmLWE2MDAtMDhmYjJiZGNlNDdlIl19",
+        "type": "complete"
+      }
+    },
+    "ptah-result-c0d1b0acd7d8e273c83049013ecf915dc6d554f246e643b0c65d602fc8625f98": {
+      "apiVersion": "operator.ptah.run/v1alpha1",
+      "kind": "PtahResultRecord",
+      "metadata": {
+        "creationTimestamp": "2026-10-02T18:51:08Z",
+        "generation": 1,
+        "labels": {
+          "operator.ptah.run/result-attempt": "r3kNrhG96zJuaKExpRk819jSZxkZSTPCpOoMI0_Pna6Ar",
+          "operator.ptah.run/result-record": "intent"
+        },
+        "name": "ptah-result-c0d1b0acd7d8e273c83049013ecf915dc6d554f246e643b0c65d602fc8625f98",
+        "namespace": "ptah-result-network-pg-schema",
+        "ownerReferences": [
+          {
+            "apiVersion": "operator.ptah.run/v1alpha1",
+            "controller": true,
+            "kind": "PtahSchema",
+            "name": "network-proof",
+            "uid": "7fffc957-c94b-4829-8c13-85560c720a9d"
+          }
+        ],
+        "resourceVersion": "87322",
+        "uid": "1f2407c7-5af2-44b2-b06d-7133f63736bf"
+      },
+      "spec": {
+        "data": "eyJ2ZXJzaW9uIjoxLCJiaW5kaW5nIjp7Im5hbWVzcGFjZSI6InB0YWgtcmVzdWx0LW5ldHdvcmstcGctc2NoZW1hIiwia2luZCI6IlB0YWhTY2hlbWEiLCJuYW1lIjoibmV0d29yay1wcm9vZiIsInVpZCI6IjdmZmZjOTU3LWM5NGItNDgyOS04YzEzLTg1NTYwYzcyMGE5ZCIsImdlbmVyYXRpb24iOjEsImV4ZWN1dGlvbkJpbmRpbmdJRCI6InYxLTRjMTBlOWZhNWIxN2M4NDFmZjFkNjljOGMwZTFmMWM5IiwiaW5wdXRGaW5nZXJwcmludCI6InNoYTI1NjpkYzMzODU0YWFmZThhODAwMDg2ZWRkMDlhNWRjY2I0NjA1ZTcyZWZmNjg5Y2JmYjZkMzZlYjY1MzE0Mjg2MjNmIiwib3BlcmF0aW9uIjoib2JzZXJ2ZSIsIm9wZXJhdGlvbklEIjoic2hhMjU2OmRlNzFiZjhjNWE4OGU5ZTdmMWUwYTcyODZlYTNiODJjMGE3ZmIwYTNkMDI3YTlkZjY1M2M5MGQ0ODc1NjMwMWMiLCJqb2JOYW1lIjoicHRhaC1vYnNlcnZlLW5ldHdvcmstcHJvb2YtNTY4ZDFlMmQwMWM0ZWFhNSIsImpvYlVJRCI6IjA2MWFkNDYxLWFmYzUtNGVhZi04N2ZmLWQwMWM3ZGQzZjFkMyIsInBvZE5hbWUiOiJwdGFoLW9ic2VydmUtbmV0d29yay1wcm9vZi01NjhkMWUyZDAxYzRlYWE1LTQ1N2xnIiwicG9kVUlEIjoiNTJjODIyMWEtM2QyMi00MGU5LWIzY2YtMDI3YmNiOTZkOTdiIn0sImRpZ2VzdCI6InNoYTI1NjoyNTMzYzliMjQ4NjhiYjY5MTlmYTkwMDkzNzYxMDFmODUyY2JkOTgyMTA1ODUzYmJhNjdiNTQzOGZlYTIwNmMzIiwic2l6ZSI6NjIzLCJjaHVua3MiOlt7ImRpZ2VzdCI6InNoYTI1NjoyNTMzYzliMjQ4NjhiYjY5MTlmYTkwMDkzNzYxMDFmODUyY2JkOTgyMTA1ODUzYmJhNjdiNTQzOGZlYTIwNmMzIiwic2l6ZSI6NjIzfV19",
+        "type": "intent"
+      }
+    },
+    "ptah-result-c0d1b0acd7d8e273c83049013ecf915dc6d554f246e643b0c65d602fc8625f98-000": {
+      "apiVersion": "operator.ptah.run/v1alpha1",
+      "kind": "PtahResultRecord",
+      "metadata": {
+        "creationTimestamp": "2026-10-02T18:51:08Z",
+        "generation": 1,
+        "labels": {
+          "operator.ptah.run/result-attempt": "r3kNrhG96zJuaKExpRk819jSZxkZSTPCpOoMI0_Pna6Ar",
+          "operator.ptah.run/result-record": "chunk"
+        },
+        "name": "ptah-result-c0d1b0acd7d8e273c83049013ecf915dc6d554f246e643b0c65d602fc8625f98-000",
+        "namespace": "ptah-result-network-pg-schema",
+        "ownerReferences": [
+          {
+            "apiVersion": "operator.ptah.run/v1alpha1",
+            "controller": true,
+            "kind": "PtahResultRecord",
+            "name": "ptah-result-c0d1b0acd7d8e273c83049013ecf915dc6d554f246e643b0c65d602fc8625f98",
+            "uid": "1f2407c7-5af2-44b2-b06d-7133f63736bf"
+          }
+        ],
+        "resourceVersion": "87323",
+        "uid": "f0673175-22a9-4361-8d44-85ca68111c03"
+      },
+      "spec": {
+        "data": "eyJwcm90b2NvbFZlcnNpb24iOjEsIm9wZXJhdGlvbiI6Im9ic2VydmUiLCJvcGVyYXRpb25JZCI6InNoYTI1NjpkZTcxYmY4YzVhODhlOWU3ZjFlMGE3Mjg2ZWEzYjgyYzBhN2ZiMGEzZDAyN2E5ZGY2NTNjOTBkNDg3NTYzMDFjIiwiY2hpbGRFeGl0Q29kZSI6MCwic3Rkb3V0IjoiIiwiY29vcmRpbmF0aW9uRGlnZXN0Ijoic2hhMjU2OjhhNTA5OTZlNDIxMDhiNzcyYzRjYmRjMjY1MjMyYzY3NTg0YjJjZmRlNmI5ZjBkNWIyMDQzOTM5OGQ0ZDE2NmIiLCJ0YXJnZXRJZGVudGl0eURpZ2VzdCI6InNoYTI1NjpjMWNjZTQ0Y2QzYjI5ZWM2NjAwNjdhZjUzMTQyMzZjZDllZmFkODc3YWY2N2ZlZDE3ZjhjM2NlZjM4OTgzNWMxIiwiZHJpZnRSZXBvcnREaWdlc3QiOiJzaGEyNTY6NDQyZWIyYzRkYzVmMDEwZTU3ZTMxYjQ4NGYyMDcwMjM4M2NiNzE4NTUyZGM0MzIxZDM0YTUyMzI0MzZhYjc0MSIsIm9ic2VydmVkRGlhbGVjdCI6InBvc3RncmVzIiwib2JzZXJ2ZWREcmlmdCI6dHJ1ZSwiaGlnaGVzdERyaWZ0U2V2ZXJpdHkiOiJzYWZlIiwiZHJpZnRGaW5kaW5nQ291bnQiOjEsImRyaWZ0RmluZGluZ3MiOlt7ImNhdGVnb3J5IjoidGFibGVzX2FkZGVkIiwiY291bnQiOjEsInNldmVyaXR5Ijoic2FmZSJ9XX0=",
+        "type": "chunk"
+      }
+    },
+    "ptah-result-c0d1b0acd7d8e273c83049013ecf915dc6d554f246e643b0c65d602fc8625f98-complete": {
+      "apiVersion": "operator.ptah.run/v1alpha1",
+      "kind": "PtahResultRecord",
+      "metadata": {
+        "creationTimestamp": "2026-10-02T18:51:08Z",
+        "generation": 1,
+        "labels": {
+          "operator.ptah.run/result-attempt": "r3kNrhG96zJuaKExpRk819jSZxkZSTPCpOoMI0_Pna6Ar",
+          "operator.ptah.run/result-record": "complete"
+        },
+        "name": "ptah-result-c0d1b0acd7d8e273c83049013ecf915dc6d554f246e643b0c65d602fc8625f98-complete",
+        "namespace": "ptah-result-network-pg-schema",
+        "ownerReferences": [
+          {
+            "apiVersion": "operator.ptah.run/v1alpha1",
+            "controller": true,
+            "kind": "PtahResultRecord",
+            "name": "ptah-result-c0d1b0acd7d8e273c83049013ecf915dc6d554f246e643b0c65d602fc8625f98",
+            "uid": "1f2407c7-5af2-44b2-b06d-7133f63736bf"
+          }
+        ],
+        "resourceVersion": "87324",
+        "uid": "f6886e4b-f962-49be-b965-be6869652d5a"
+      },
+      "spec": {
+        "data": "eyJtYW5pZmVzdFVJRCI6IjFmMjQwN2M3LTVhZjItNDRiMi1iMDZkLTcxMzNmNjM3MzZiZiIsIm1hbmlmZXN0RGlnZXN0Ijoic2hhMjU2Ojg2NzY2NmFiZmNlMGMxY2NhYjFhYjVkZWMwMDQzMWI2MzM5YTM1ZDZkNjFiMTk0YWY2MWE5MGJiYTQyOTdhMGEiLCJjaHVua1VJRHMiOlsiZjA2NzMxNzUtMjJhOS00MzYxLThkNDQtODVjYTY4MTExYzAzIl19",
+        "type": "complete"
+      }
+    }
+  },
+  "verification": {
+    "family": "PtahSchema",
+    "engine": "PostgreSQL",
+    "resourceUID": "7fffc957-c94b-4829-8c13-85560c720a9d",
+    "namespace": "ptah-result-network-pg-schema",
+    "publications": {
+      "apply": {
+        "jobUID": "03eb478a-9ecc-439f-81ad-b97639b7d772",
+        "receiptUID": "84ec1905-12c3-4431-88a0-8b564711f61d",
+        "digest": "sha256:a706a36c0da66f98ffb5a3868189d73c16a3cd8a1d7d9ac0ebe9a3c2beb0aa06"
+      },
+      "plan": {
+        "jobUID": "409d1cb3-447f-45f8-ab6d-a933f817903c",
+        "receiptUID": "b80a4471-a259-4042-b1c5-9e6e36bff622",
+        "digest": "sha256:fec2e87f21b65333287d54eb77cbaa03a0de09eeb29e14c4464deff9e651ee2f"
+      },
+      "observe": {
+        "jobUID": "061ad461-afc5-4eaf-87ff-d01c7dd3f1d3",
+        "receiptUID": "f6886e4b-f962-49be-b965-be6869652d5a",
+        "digest": "sha256:2533c9b24868bb6919fa9009376101f852cbd982105853bba67b5438fea206c3"
+      },
+      "verify": {
+        "jobUID": "1d5b08f8-04a3-4566-9243-4fc4e6b06064",
+        "receiptUID": "39f82426-5c11-4927-8c2b-488888b7eeb8",
+        "digest": "sha256:f3371783355286a643e6f92aa7af85b5a7a9fa20191bc48f3b6cc77a49fb0865"
+      },
+      "resolve": {
+        "jobUID": "a32e7b3e-341e-4157-b517-ed526eaa2fa1",
+        "receiptUID": "0eccd0f9-16c6-4711-975c-9c4cab84e334",
+        "digest": "sha256:fcc7d3d04d60c97f02f3fc1fbb86ebff99d591cd22e1d89ee807035fa28722db"
+      }
+    },
+    "database": {
+      "columns": [
+        "id:bigint:NO",
+        "email:text:NO"
+      ],
+      "primaryKeyColumns": [
+        "id"
+      ]
+    },
+    "applyJobs": 1,
+    "conditions": [
+      {
+        "lastTransitionTime": "2026-10-02T18:50:46Z",
+        "message": "Database engine \"PostgreSQL\" is supported",
+        "observedGeneration": 1,
+        "reason": "SupportedEngine",
+        "status": "True",
+        "type": "EngineSupported"
+      },
+      {
+        "lastTransitionTime": "2026-10-02T18:52:06Z",
+        "message": "Schema is in sync",
+        "observedGeneration": 1,
+        "reason": "InSync",
+        "status": "True",
+        "type": "Ready"
+      },
+      {
+        "lastTransitionTime": "2026-10-02T18:50:56Z",
+        "message": "The latest operation completed",
+        "observedGeneration": 1,
+        "reason": "Succeeded",
+        "status": "False",
+        "type": "ReconciliationFailed"
+      },
+      {
+        "lastTransitionTime": "2026-10-02T18:50:56Z",
+        "message": "Desired OCI reference resolved to immutable content",
+        "observedGeneration": 1,
+        "reason": "DigestPinned",
+        "status": "True",
+        "type": "ArtifactResolved"
+      },
+      {
+        "lastTransitionTime": "2026-10-02T18:51:04Z",
+        "message": "Artifact type and verification policy were satisfied",
+        "observedGeneration": 1,
+        "reason": "PolicySatisfied",
+        "status": "True",
+        "type": "ArtifactVerified"
+      },
+      {
+        "lastTransitionTime": "2026-10-02T18:51:16Z",
+        "message": "Database schema was observed",
+        "observedGeneration": 1,
+        "reason": "Observed",
+        "status": "True",
+        "type": "DatabaseReachable"
+      },
+      {
+        "lastTransitionTime": "2026-10-02T18:52:06Z",
+        "message": "The authoritative managed scope has no changes",
+        "observedGeneration": 1,
+        "reason": "ScopedConverged",
+        "status": "False",
+        "type": "DriftDetected"
+      },
+      {
+        "lastTransitionTime": "2026-10-02T18:52:06Z",
+        "message": "A stable scoped plan proves convergence",
+        "observedGeneration": 1,
+        "reason": "ScopedConverged",
+        "status": "True",
+        "type": "InSync"
+      },
+      {
+        "lastTransitionTime": "2026-10-02T18:51:30Z",
+        "message": "Current plan approval requirements are satisfied",
+        "observedGeneration": 1,
+        "reason": "Satisfied",
+        "status": "False",
+        "type": "ApprovalRequired"
+      },
+      {
+        "lastTransitionTime": "2026-10-02T18:52:06Z",
+        "message": "No executable plan is required",
+        "observedGeneration": 1,
+        "reason": "NoChanges",
+        "status": "False",
+        "type": "PlanReady"
+      },
+      {
+        "lastTransitionTime": "2026-10-02T18:51:40Z",
+        "message": "Apply Job completed; convergence observation is pending",
+        "observedGeneration": 1,
+        "reason": "JobCompleted",
+        "status": "False",
+        "type": "Applying"
+      },
+      {
+        "lastTransitionTime": "2026-10-02T18:51:40Z",
+        "message": "Reconciliation is active",
+        "observedGeneration": 1,
+        "reason": "Active",
+        "status": "False",
+        "type": "Suspended"
+      }
+    ],
+    "generation": 1,
+    "resultPolicySelectedEveryJob": true,
+    "ingressSelectedReceivers": true
+  }
+}

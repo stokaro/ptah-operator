@@ -94,12 +94,22 @@ spec:
             - name: webhook
               containerPort: {{ .Values.webhook.port }}
               protocol: TCP
+          {{- if .Values.resultDelivery.enabled }}
+            - name: results
+              containerPort: 9444
+              protocol: TCP
+          {{- end }}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
           volumeMounts:
+            {{- if .Values.resultDelivery.enabled }}
+            - name: result-cert
+              mountPath: /result-certs
+              readOnly: true
+            {{- end }}
             - name: api-access
               mountPath: /var/run/secrets/kubernetes.io/serviceaccount
               readOnly: true
@@ -149,6 +159,17 @@ spec:
                 path: tls.crt
               - key: tls.key
                 path: tls.key
+        {{- if .Values.resultDelivery.enabled }}
+        - name: result-cert
+          secret:
+            secretName: {{ include "ptah-operator.resultSecretName" . }}
+            defaultMode: 288
+            items:
+              {{- range $key := list "tls.crt" "tls.key" "ca.crt" "client-ca.crt" "client-ca.key" "client-trust.crt" }}
+              - key: {{ $key }}
+                path: {{ $key }}
+              {{- end }}
+        {{- end }}
         - name: tmp
           emptyDir:
             sizeLimit: 32Mi

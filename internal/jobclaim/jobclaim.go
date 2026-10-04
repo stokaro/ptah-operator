@@ -30,6 +30,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/controllerstate"
 	"github.com/stokaro/ptah-operator/internal/mutationlifecycle"
 	"github.com/stokaro/ptah-operator/internal/podintent"
+	"github.com/stokaro/ptah-operator/internal/resultdelivery/jobconfig"
 	"github.com/stokaro/ptah-operator/internal/workload"
 )
 
@@ -297,6 +298,24 @@ func matchBuilt(job, normalized *batchv1.Job, claim Claim) error {
 	}
 	normalizeServiceAccountAlias(&actual.Spec.Template.Spec)
 	normalizeServiceAccountAlias(&expected.Spec.Template.Spec)
+	// A CA overlap can change after the claim captured its template. Preserve
+	// only that public bundle from the submitted Job; Match still checks the
+	// entire template against the claim's persisted digest below. Neither an
+	// arbitrary replacement bundle nor a changed token projection can pass it.
+	if jobconfig.UsesPodToken(actual) && jobconfig.UsesPodToken(expected) {
+		if _, err := jobconfig.Read(actual, claim.Owner.UID, claim.ID); err != nil {
+			return err
+		}
+		for _, env := range actual.Spec.Template.Spec.Containers[0].Env {
+			if env.Name == jobconfig.ServerTrust {
+				for index := range expected.Spec.Template.Spec.Containers[0].Env {
+					if expected.Spec.Template.Spec.Containers[0].Env[index].Name == jobconfig.ServerTrust {
+						expected.Spec.Template.Spec.Containers[0].Env[index] = env
+					}
+				}
+			}
+		}
+	}
 	if claim.Stored && actual.Spec.TTLSecondsAfterFinished != nil &&
 		*actual.Spec.TTLSecondsAfterFinished == CleanupTTLSeconds {
 		actual.Spec.TTLSecondsAfterFinished = expected.Spec.TTLSecondsAfterFinished

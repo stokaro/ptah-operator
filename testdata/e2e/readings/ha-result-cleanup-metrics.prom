@@ -1,0 +1,6 @@
+# HELP ptah_operator_result_cleanup_operations_total Result cleanup actions by bounded action and outcome.
+# TYPE ptah_operator_result_cleanup_operations_total counter
+ptah_operator_result_cleanup_operations_total{action="retire",outcome="error"} 2
+ptah_operator_result_cleanup_operations_total{action="retire",outcome="retained"} 2
+ptah_operator_result_cleanup_operations_total{action="retire",outcome="success"} 2
+ptah_operator_result_cleanup_operations_total{action="scan",outcome="success"} 14

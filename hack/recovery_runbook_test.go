@@ -28,7 +28,7 @@ var (
 //
 // A kind missing from the page is state a reader does not back up, which turns
 // a consistent restore into a rebuild without anybody deciding to. This reads
-// the CRDs the chart ships rather than a list beside them, so a ninth kind
+// the CRDs the chart ships rather than a list beside them, so a new kind
 // fails here instead of being discovered during a recovery. The PtahRealm
 // carries no controller state, and a restore without it still refuses every
 // resource that names it, so it is named all the same; the PtahSchemaPlanChunk
@@ -39,8 +39,8 @@ func TestTheRecoveryRunbookNamesEveryKindThatStoresState(t *testing.T) {
 	t.Parallel()
 	runbook := string(readRecoveryRunbook(t))
 	crds := shippedCRDs(t)
-	if len(crds) != 9 {
-		t.Fatalf("the chart ships %d CRDs; the runbook was written against nine", len(crds))
+	if len(crds) != 10 {
+		t.Fatalf("the chart ships %d CRDs; the runbook was written against ten", len(crds))
 	}
 	for _, crd := range crds {
 		kind := crd.Spec.Names.Kind

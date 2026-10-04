@@ -26,6 +26,9 @@ type databaseSQLAudit struct {
 	engine    string
 	pgPrefix  []byte
 	started   bool
+	// External lifecycle databases use Docker exec; data-plane databases use
+	// the cluster's Deployment. Both retain the same journal checks.
+	serverExec func(context.Context, ...string) ([]byte, error)
 }
 
 // Record only the controlled approval window; a multi-hour lifecycle does
@@ -50,11 +53,11 @@ func (a *databaseSQLAudit) close() {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	service, command := pgService, `PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRES_USER" -d postgres -v ON_ERROR_STOP=1 -Atq -c "ALTER SYSTEM RESET log_statement" -c "SELECT pg_reload_conf()"`
+	command := `PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRES_USER" -d postgres -v ON_ERROR_STOP=1 -Atq -c "ALTER SYSTEM RESET log_statement" -c "SELECT pg_reload_conf()"`
 	if a.engine == "mysql" {
-		service, command = mysqlService, `MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=tcp -h 127.0.0.1 -uroot -e "SET GLOBAL general_log=OFF"`
+		command = `MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=tcp -h 127.0.0.1 -uroot -e "SET GLOBAL general_log=OFF"`
 	}
-	if _, _, err := a.cluster.Kubectl(ctx, "-n", a.namespace, "exec", "deployment/"+service, "--", "sh", "-ec", command); err != nil {
+	if _, err := a.execute(ctx, "sh", "-ec", command); err != nil {
 		a.t.Errorf("could not stop %s SQL audit: %v", a.engine, err)
 		return
 	}
@@ -63,16 +66,24 @@ func (a *databaseSQLAudit) close() {
 
 func (a *databaseSQLAudit) exec(command ...string) []byte {
 	a.t.Helper()
-	service := pgService
-	if a.engine == "mysql" {
-		service = mysqlService
-	}
-	stdout, _, err := a.cluster.Kubectl(a.ctx, append([]string{"-n", a.namespace, "exec", "deployment/" + service, "--"}, command...)...)
+	stdout, err := a.execute(a.ctx, command...)
 	if err != nil {
 		// The SQL journal can carry credentials. Do not include command output.
 		a.t.Fatalf("%s SQL audit could not read its server: %v", a.engine, err)
 	}
 	return stdout
+}
+
+func (a *databaseSQLAudit) execute(ctx context.Context, command ...string) ([]byte, error) {
+	if a.serverExec != nil {
+		return a.serverExec(ctx, command...)
+	}
+	service := pgService
+	if a.engine == "mysql" {
+		service = mysqlService
+	}
+	stdout, _, err := a.cluster.Kubectl(ctx, append([]string{"-n", a.namespace, "exec", "deployment/" + service, "--"}, command...)...)
+	return stdout, err
 }
 
 func (a *databaseSQLAudit) snapshot() sqlAuditCounts {
@@ -99,9 +110,9 @@ SELECT JSON_OBJECT('client',user_host,'count',COUNT(*)) FROM mysql.general_log W
 	ready := false
 	for deadline := time.Now().Add(15 * time.Second); time.Now().Before(deadline); {
 		raw = a.exec("sh", "-ec", `PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRES_USER" -d postgres -Atq -c "$1" -c "$2"`, "sh",
-			`SELECT current_setting('logging_collector'),current_setting('log_destination'),current_setting('log_statement'),current_setting('log_min_error_statement'),current_setting('log_rotation_age'),current_setting('log_rotation_size')`,
+			`SELECT current_setting('logging_collector'),current_setting('log_destination'),current_setting('log_statement'),current_setting('log_min_error_statement'),current_setting('log_rotation_age'),current_setting('log_rotation_size'),current_setting('log_timezone')`,
 			"SELECT '"+marker+"'")
-		if string(raw) == "on|jsonlog|all|error|0|0\n"+marker+"\n" {
+		if string(raw) == "on|jsonlog|all|error|0|0|UTC\n"+marker+"\n" {
 			ready = true
 			break
 		}
@@ -115,8 +126,8 @@ SELECT JSON_OBJECT('client',user_host,'count',COUNT(*)) FROM mysql.general_log W
 	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		raw = a.exec("cat", "/tmp/ptah-sql-audit/statements.json")
-		if !bytes.HasPrefix(raw, a.pgPrefix) {
-			a.t.Fatal("PostgreSQL SQL audit was truncated or replaced")
+		if err := postgresAuditPrefixError(a.pgPrefix, raw); err != nil {
+			a.t.Fatal(err)
 		}
 		counts, found, err := postgresAuditCounts(raw, marker)
 		if err == nil && found {
@@ -131,6 +142,28 @@ SELECT JSON_OBJECT('client',user_host,'count',COUNT(*)) FROM mysql.general_log W
 	}
 	a.t.Fatal("PostgreSQL SQL audit did not produce a complete journal through its marker")
 	return sqlAuditCounts{}
+}
+
+// MySQL's general log records Prepare and Execute separately. Preserve both,
+// including exact bound argument bytes, so counts cannot hide unauthorized SQL.
+func (a *databaseSQLAudit) mysqlStatementSnapshot() []mysqlStatementRecord {
+	a.t.Helper()
+	if a.engine != "mysql" {
+		a.t.Fatal("MySQL statement snapshot requested for another engine")
+	}
+	a.start()
+	raw := a.exec("sh", "-ec", `MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=tcp -h 127.0.0.1 -uroot -NBr -e "$1"`, "sh",
+		`SELECT IF(@@general_log=1 AND FIND_IN_SET('TABLE',@@log_output)>0,1,0);
+SELECT JSON_OBJECT('time',DATE_FORMAT(event_time,'%Y-%m-%dT%H:%i:%s.%f'),'thread',thread_id,'client',user_host,'type',command_type,'argumentHex',HEX(argument))
+FROM mysql.general_log ORDER BY event_time,thread_id`)
+	if !bytes.HasPrefix(raw, []byte("1\n")) {
+		a.t.Fatal("MySQL statement journal logging is not enabled")
+	}
+	records, err := mysqlStatementJournal(raw[2:])
+	if err != nil {
+		a.t.Fatal(err)
+	}
+	return records
 }
 
 func (a *databaseSQLAudit) assertRecords(before, after sqlAuditCounts, pod *corev1.Pod, positive bool) {

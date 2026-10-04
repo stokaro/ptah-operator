@@ -365,7 +365,7 @@ write to status is not one: the chart refuses it to anyone but the manager.
 
 | | Enforcement |
 | --- | --- |
-| `PtahSchema` | a Plan whose target matches the pending snapshot and reports no changes, in `consumeResult` |
+| `PtahSchema` | a Plan whose target matches the pending snapshot and reports no changes, in `consumeResultWithTransport` |
 | `PtahMigration` | a History reading with nothing pending on the same database, in `migrationUnresolvedRunSettledBy` |
 
 Convergence is not attribution. A schema whose uncertain Apply converges is

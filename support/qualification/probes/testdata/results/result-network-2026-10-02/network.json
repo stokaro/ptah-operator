@@ -1,0 +1,658 @@
+{
+  "sourceRevision": "b0a51ff740784beaf6cd1ebb2fe8c2715583e1b5",
+  "workflows": [
+    {
+      "family": "PtahSchema",
+      "engine": "PostgreSQL",
+      "resourceUID": "7fffc957-c94b-4829-8c13-85560c720a9d",
+      "namespace": "ptah-result-network-pg-schema",
+      "publications": {
+        "apply": {
+          "jobUID": "03eb478a-9ecc-439f-81ad-b97639b7d772",
+          "receiptUID": "84ec1905-12c3-4431-88a0-8b564711f61d",
+          "digest": "sha256:a706a36c0da66f98ffb5a3868189d73c16a3cd8a1d7d9ac0ebe9a3c2beb0aa06"
+        },
+        "plan": {
+          "jobUID": "409d1cb3-447f-45f8-ab6d-a933f817903c",
+          "receiptUID": "b80a4471-a259-4042-b1c5-9e6e36bff622",
+          "digest": "sha256:fec2e87f21b65333287d54eb77cbaa03a0de09eeb29e14c4464deff9e651ee2f"
+        },
+        "observe": {
+          "jobUID": "061ad461-afc5-4eaf-87ff-d01c7dd3f1d3",
+          "receiptUID": "f6886e4b-f962-49be-b965-be6869652d5a",
+          "digest": "sha256:2533c9b24868bb6919fa9009376101f852cbd982105853bba67b5438fea206c3"
+        },
+        "verify": {
+          "jobUID": "1d5b08f8-04a3-4566-9243-4fc4e6b06064",
+          "receiptUID": "39f82426-5c11-4927-8c2b-488888b7eeb8",
+          "digest": "sha256:f3371783355286a643e6f92aa7af85b5a7a9fa20191bc48f3b6cc77a49fb0865"
+        },
+        "resolve": {
+          "jobUID": "a32e7b3e-341e-4157-b517-ed526eaa2fa1",
+          "receiptUID": "0eccd0f9-16c6-4711-975c-9c4cab84e334",
+          "digest": "sha256:fcc7d3d04d60c97f02f3fc1fbb86ebff99d591cd22e1d89ee807035fa28722db"
+        }
+      },
+      "database": {
+        "columns": [
+          "id:bigint:NO",
+          "email:text:NO"
+        ],
+        "primaryKeyColumns": [
+          "id"
+        ]
+      },
+      "applyJobs": 1,
+      "conditions": [
+        {
+          "lastTransitionTime": "2026-10-02T18:50:46Z",
+          "message": "Database engine \"PostgreSQL\" is supported",
+          "observedGeneration": 1,
+          "reason": "SupportedEngine",
+          "status": "True",
+          "type": "EngineSupported"
+        },
+        {
+          "lastTransitionTime": "2026-10-02T18:52:06Z",
+          "message": "Schema is in sync",
+          "observedGeneration": 1,
+          "reason": "InSync",
+          "status": "True",
+          "type": "Ready"
+        },
+        {
+          "lastTransitionTime": "2026-10-02T18:50:56Z",
+          "message": "The latest operation completed",
+          "observedGeneration": 1,
+          "reason": "Succeeded",
+          "status": "False",
+          "type": "ReconciliationFailed"
+        },
+        {
+          "lastTransitionTime": "2026-10-02T18:50:56Z",
+          "message": "Desired OCI reference resolved to immutable content",
+          "observedGeneration": 1,
+          "reason": "DigestPinned",
+          "status": "True",
+          "type": "ArtifactResolved"
+        },
+        {
+          "lastTransitionTime": "2026-10-02T18:51:04Z",
+          "message": "Artifact type and verification policy were satisfied",
+          "observedGeneration": 1,
+          "reason": "PolicySatisfied",
+          "status": "True",
+          "type": "ArtifactVerified"
+        },
+        {
+          "lastTransitionTime": "2026-10-02T18:51:16Z",
+          "message": "Database schema was observed",
+          "observedGeneration": 1,
+          "reason": "Observed",
+          "status": "True",
+          "type": "DatabaseReachable"
+        },
+        {
+          "lastTransitionTime": "2026-10-02T18:52:06Z",
+          "message": "The authoritative managed scope has no changes",
+          "observedGeneration": 1,
+          "reason": "ScopedConverged",
+          "status": "False",
+          "type": "DriftDetected"
+        },
+        {
+          "lastTransitionTime": "2026-10-02T18:52:06Z",
+          "message": "A stable scoped plan proves convergence",
+          "observedGeneration": 1,
+          "reason": "ScopedConverged",
+          "status": "True",
+          "type": "InSync"
+        },
+        {
+          "lastTransitionTime": "2026-10-02T18:51:30Z",
+          "message": "Current plan approval requirements are satisfied",
+          "observedGeneration": 1,
+          "reason": "Satisfied",
+          "status": "False",
+          "type": "ApprovalRequired"
+        },
+        {
+          "lastTransitionTime": "2026-10-02T18:52:06Z",
+          "message": "No executable plan is required",
+          "observedGeneration": 1,
+          "reason": "NoChanges",
+          "status": "False",
+          "type": "PlanReady"
+        },
+        {
+          "lastTransitionTime": "2026-10-02T18:51:40Z",
+          "message": "Apply Job completed; convergence observation is pending",
+          "observedGeneration": 1,
+          "reason": "JobCompleted",
+          "status": "False",
+          "type": "Applying"
+        },
+        {
+          "lastTransitionTime": "2026-10-02T18:51:40Z",
+          "message": "Reconciliation is active",
+          "observedGeneration": 1,
+          "reason": "Active",
+          "status": "False",
+          "type": "Suspended"
+        }
+      ],
+      "generation": 1,
+      "resultPolicySelectedEveryJob": true,
+      "ingressSelectedReceivers": true
+    },
+    {
+      "family": "PtahMigration",
+      "engine": "PostgreSQL",
+      "resourceUID": "b0d0679c-62ad-4b0d-bf3e-35372a162adf",
+      "namespace": "ptah-result-network-pg-migration",
+      "publications": {
+        "resolve": {
+          "jobUID": "1bf7bc2e-7945-4f77-a3bc-83112da551af",
+          "receiptUID": "7e57977a-d255-4a31-9c5b-ef9a8578b6ef",
+          "digest": "sha256:7f9b0e8d64055823c41e358f56144426a48a40ca68b360f888413341a3a5727d"
+        },
+        "migration-apply": {
+          "jobUID": "c007c462-b9c3-4520-94c2-fc87a1c2d844",
+          "receiptUID": "809501a5-a827-4864-97a0-ed799a180741",
+          "digest": "sha256:4da4fc2effd0f2ee0a50209bfbca64597b06071ebe62cf0187d44fb1b5f10fc1"
+        },
+        "verify": {
+          "jobUID": "0d0b8ee5-7739-443a-a539-139771be0dd9",
+          "receiptUID": "7f0b4395-f2bf-4c4a-ac4c-8c5b0e0bae0f",
+          "digest": "sha256:6314b54c3e55f30118d335176e848a2a357b87d0982395e32c49581cf7e2b5d0"
+        },
+        "migration-history": {
+          "jobUID": "cc7a9cd1-b98c-4733-9b6d-662e642f8992",
+          "receiptUID": "f1f3bd95-1f92-4bd9-af8b-ef00b51706f6",
+          "digest": "sha256:1e9f2889ae88ac192d205a9d05e8636b2276ae93f885e5c655af1789d858f6f6"
+        }
+      },
+      "database": 1,
+      "applyJobs": 1,
+      "conditions": [
+        {
+          "lastTransitionTime": "2026-10-02T18:53:08Z",
+          "message": "Nothing is pending",
+          "observedGeneration": 1,
+          "reason": "HistoryMatched",
+          "status": "False",
+          "type": "Progressing"
+        },
+        {
+          "lastTransitionTime": "2026-10-02T18:52:32Z",
+          "message": "The resolved artifact satisfied its verification policy",
+          "observedGeneration": 1,
+          "reason": "PolicySatisfied",
+          "status": "True",
+          "type": "ArtifactVerified"
+        },
+        {
+          "lastTransitionTime": "2026-10-02T18:52:43Z",
+          "message": "The history continues this artifact",
+          "observedGeneration": 1,
+          "reason": "HistoryMatched",
+          "status": "False",
+          "type": "Blocked"
+        },
+        {
+          "lastTransitionTime": "2026-10-02T18:53:08Z",
+          "message": "The database has every migration this artifact carries",
+          "observedGeneration": 1,
+          "reason": "HistoryMatched",
+          "status": "True",
+          "type": "Ready"
+        },
+        {
+          "lastTransitionTime": "2026-10-02T18:52:44Z",
+          "message": "The plan's approval requirements are satisfied",
+          "observedGeneration": 1,
+          "reason": "Satisfied",
+          "status": "False",
+          "type": "ApprovalRequired"
+        }
+      ],
+      "generation": 1,
+      "resultPolicySelectedEveryJob": true,
+      "ingressSelectedReceivers": true
+    },
+    {
+      "family": "PtahSchema",
+      "engine": "MySQL",
+      "resourceUID": "23599a72-15c6-4185-979d-f860cdafce38",
+      "namespace": "ptah-result-network-mysql-schema",
+      "publications": {
+        "plan": {
+          "jobUID": "53da158a-3c3b-43ba-b1f7-73c550364630",
+          "receiptUID": "78498789-c9eb-4bbe-b52c-f0a718ef4cc4",
+          "digest": "sha256:bae6d51088b450d988d66e5dbbaa61a96b6340f814af736473f6a88c0247b235"
+        },
+        "resolve": {
+          "jobUID": "8a91f78c-b086-424c-b9c4-2fa7c9988272",
+          "receiptUID": "db5e1b75-92b5-4436-b739-d5f61e8d4111",
+          "digest": "sha256:d014264b856045acfdcc031a2329b8db810db0fa5c35b6cd75774107ca752ade"
+        },
+        "apply": {
+          "jobUID": "0536426f-d1b2-40a5-a80f-90f1a591fb9f",
+          "receiptUID": "3c248790-8c3d-47f3-a3bb-048f4713fb14",
+          "digest": "sha256:3ff4ed9b22875025be78a981ef08bcb79eb3699f029748c58a87288ee2d428ea"
+        },
+        "observe": {
+          "jobUID": "2c552e38-64f8-4a3a-bf79-38f70c6cc652",
+          "receiptUID": "78fd1d63-8405-473d-a15e-49ad08411961",
+          "digest": "sha256:5f392b7eaabab454a3ea0d4ea3e2c051933cc715730e4a079b776f67a8fdad5b"
+        },
+        "verify": {
+          "jobUID": "d68b6ab6-dce0-454f-a4b1-2547056e1e9f",
+          "receiptUID": "96b18d14-17ae-4367-9ff6-c742dedd0f72",
+          "digest": "sha256:287c097679c9b5c3a9c3256a473fd99eac681a0b0591ffff3a0bf7ced8c88e5e"
+        }
+      },
+      "database": {
+        "columns": [
+          "id:bigint:NO",
+          "email:text:NO"
+        ],
+        "primaryKeyColumns": [
+          "id"
+        ]
+      },
+      "applyJobs": 1,
+      "conditions": [
+        {
+          "lastTransitionTime": "2026-10-02T18:53:14Z",
+          "message": "Database engine \"MySQL\" is supported",
+          "observedGeneration": 1,
+          "reason": "SupportedEngine",
+          "status": "True",
+          "type": "EngineSupported"
+        },
+        {
+          "lastTransitionTime": "2026-10-02T18:54:31Z",
+          "message": "Schema is in sync",
+          "observedGeneration": 1,
+          "reason": "InSync",
+          "status": "True",
+          "type": "Ready"
+        },
+        {
+          "lastTransitionTime": "2026-10-02T18:53:24Z",
+          "message": "The latest operation completed",
+          "observedGeneration": 1,
+          "reason": "Succeeded",
+          "status": "False",
+          "type": "ReconciliationFailed"
+        },
+        {
+          "lastTransitionTime": "2026-10-02T18:53:24Z",
+          "message": "Desired OCI reference resolved to immutable content",
+          "observedGeneration": 1,
+          "reason": "DigestPinned",
+          "status": "True",
+          "type": "ArtifactResolved"
+        },
+        {
+          "lastTransitionTime": "2026-10-02T18:53:32Z",
+          "message": "Artifact type and verification policy were satisfied",
+          "observedGeneration": 1,
+          "reason": "PolicySatisfied",
+          "status": "True",
+          "type": "ArtifactVerified"
+        },
+        {
+          "lastTransitionTime": "2026-10-02T18:53:44Z",
+          "message": "Database schema was observed",
+          "observedGeneration": 1,
+          "reason": "Observed",
+          "status": "True",
+          "type": "DatabaseReachable"
+        },
+        {
+          "lastTransitionTime": "2026-10-02T18:54:31Z",
+          "message": "The authoritative managed scope has no changes",
+          "observedGeneration": 1,
+          "reason": "ScopedConverged",
+          "status": "False",
+          "type": "DriftDetected"
+        },
+        {
+          "lastTransitionTime": "2026-10-02T18:54:31Z",
+          "message": "A stable scoped plan proves convergence",
+          "observedGeneration": 1,
+          "reason": "ScopedConverged",
+          "status": "True",
+          "type": "InSync"
+        },
+        {
+          "lastTransitionTime": "2026-10-02T18:53:56Z",
+          "message": "Current plan approval requirements are satisfied",
+          "observedGeneration": 1,
+          "reason": "Satisfied",
+          "status": "False",
+          "type": "ApprovalRequired"
+        },
+        {
+          "lastTransitionTime": "2026-10-02T18:54:31Z",
+          "message": "No executable plan is required",
+          "observedGeneration": 1,
+          "reason": "NoChanges",
+          "status": "False",
+          "type": "PlanReady"
+        },
+        {
+          "lastTransitionTime": "2026-10-02T18:54:06Z",
+          "message": "Apply Job completed; convergence observation is pending",
+          "observedGeneration": 1,
+          "reason": "JobCompleted",
+          "status": "False",
+          "type": "Applying"
+        },
+        {
+          "lastTransitionTime": "2026-10-02T18:54:06Z",
+          "message": "Reconciliation is active",
+          "observedGeneration": 1,
+          "reason": "Active",
+          "status": "False",
+          "type": "Suspended"
+        }
+      ],
+      "generation": 1,
+      "resultPolicySelectedEveryJob": true,
+      "ingressSelectedReceivers": true
+    },
+    {
+      "family": "PtahMigration",
+      "engine": "MySQL",
+      "resourceUID": "7f8eeb3b-8a4a-42fa-a2fc-59392f72a7d3",
+      "namespace": "ptah-result-network-mysql-migration",
+      "publications": {
+        "migration-history": {
+          "jobUID": "e41e2028-1734-4045-9cbd-8d64c35d329e",
+          "receiptUID": "f5c5d8ba-457e-427c-896e-347e6f82716f",
+          "digest": "sha256:a7701d4913637c7b76fd06c5c0a10994b1704cbd05d1eda34376fd49e8eef156"
+        },
+        "verify": {
+          "jobUID": "b841b9fc-b581-437d-a64c-d9f262d461da",
+          "receiptUID": "8d733286-0f59-4871-8b16-745ec374bb78",
+          "digest": "sha256:70c8a2da6d05c8f64ab92a02e29bd391e634a2b4e4aa189af4d7b4d71e6998cb"
+        },
+        "migration-apply": {
+          "jobUID": "293f6ce4-260b-44b3-85fa-fc40752a550d",
+          "receiptUID": "bbbdb0fd-9eab-4951-964a-a5f9f95de248",
+          "digest": "sha256:19bdd6dfd0f60a42ecf7119d8bf5625ca59e7029c617ffe2534179a667f19ae4"
+        },
+        "resolve": {
+          "jobUID": "db483c04-6d0b-4ea1-8aa7-cbadaad21ec3",
+          "receiptUID": "144c2b8e-0329-4631-a0a9-fa4b81e85f86",
+          "digest": "sha256:1797c94f2792554764e6cfddfe04cd162d25137bd8a06f10977e43ceef3a51fb"
+        }
+      },
+      "database": 1,
+      "applyJobs": 1,
+      "conditions": [
+        {
+          "lastTransitionTime": "2026-10-02T18:55:29Z",
+          "message": "Nothing is pending",
+          "observedGeneration": 1,
+          "reason": "HistoryMatched",
+          "status": "False",
+          "type": "Progressing"
+        },
+        {
+          "lastTransitionTime": "2026-10-02T18:54:54Z",
+          "message": "The resolved artifact satisfied its verification policy",
+          "observedGeneration": 1,
+          "reason": "PolicySatisfied",
+          "status": "True",
+          "type": "ArtifactVerified"
+        },
+        {
+          "lastTransitionTime": "2026-10-02T18:55:06Z",
+          "message": "The history continues this artifact",
+          "observedGeneration": 1,
+          "reason": "HistoryMatched",
+          "status": "False",
+          "type": "Blocked"
+        },
+        {
+          "lastTransitionTime": "2026-10-02T18:55:29Z",
+          "message": "The database has every migration this artifact carries",
+          "observedGeneration": 1,
+          "reason": "HistoryMatched",
+          "status": "True",
+          "type": "Ready"
+        },
+        {
+          "lastTransitionTime": "2026-10-02T18:55:06Z",
+          "message": "The plan's approval requirements are satisfied",
+          "observedGeneration": 1,
+          "reason": "Satisfied",
+          "status": "False",
+          "type": "ApprovalRequired"
+        }
+      ],
+      "generation": 1,
+      "resultPolicySelectedEveryJob": true,
+      "ingressSelectedReceivers": true
+    }
+  ],
+  "nodes": [
+    {
+      "name": "ptah-e2e-1-37-0-result-restar-5a0ef2fe7d-control-plane",
+      "version": "v1.37.0",
+      "architecture": "amd64",
+      "containerLogMaxSize": "10Mi"
+    },
+    {
+      "name": "ptah-e2e-1-37-0-result-restar-5a0ef2fe7d-control-plane2",
+      "version": "v1.37.0",
+      "architecture": "amd64",
+      "containerLogMaxSize": "10Mi"
+    },
+    {
+      "name": "ptah-e2e-1-37-0-result-restar-5a0ef2fe7d-control-plane3",
+      "version": "v1.37.0",
+      "architecture": "amd64",
+      "containerLogMaxSize": "10Mi"
+    },
+    {
+      "name": "ptah-e2e-1-37-0-result-restar-5a0ef2fe7d-worker",
+      "version": "v1.37.0",
+      "architecture": "amd64",
+      "containerLogMaxSize": "10Mi"
+    }
+  ],
+  "procedureSHA256": "d3311e51f34b271caa7347cd992f3862f9a1038a0c2b419a1c1e32f50f771e29",
+  "receiverUIDs": [
+    "94ca2cc7-f383-440e-b5a2-d919e600f279",
+    "8cfe6173-7210-4f55-a824-ae0c3e96b79f"
+  ],
+  "operatorImage": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/operator@sha256:f338a4c98d77e4908426d0c4b45a1b177ffc8c2916cae3029217b9ec12cd6f36",
+  "kindnet": {
+    "apiVersion": "apps/v1",
+    "kind": "DaemonSet",
+    "metadata": {
+      "annotations": {
+        "deprecated.daemonset.template.generation": "1"
+      },
+      "creationTimestamp": "2026-10-02T12:28:43Z",
+      "generation": 1,
+      "labels": {
+        "app": "kindnet",
+        "k8s-app": "kindnet",
+        "tier": "node"
+      },
+      "name": "kindnet",
+      "namespace": "kube-system",
+      "resourceVersion": "885",
+      "uid": "ce5678e1-507e-41c3-8971-3297949ed0fb"
+    },
+    "spec": {
+      "revisionHistoryLimit": 10,
+      "selector": {
+        "matchLabels": {
+          "app": "kindnet"
+        }
+      },
+      "template": {
+        "metadata": {
+          "labels": {
+            "app": "kindnet",
+            "k8s-app": "kindnet",
+            "tier": "node"
+          }
+        },
+        "spec": {
+          "containers": [
+            {
+              "env": [
+                {
+                  "name": "HOST_IP",
+                  "valueFrom": {
+                    "fieldRef": {
+                      "apiVersion": "v1",
+                      "fieldPath": "status.hostIP"
+                    }
+                  }
+                },
+                {
+                  "name": "POD_IP",
+                  "valueFrom": {
+                    "fieldRef": {
+                      "apiVersion": "v1",
+                      "fieldPath": "status.podIP"
+                    }
+                  }
+                },
+                {
+                  "name": "POD_SUBNET",
+                  "value": "10.244.0.0/16"
+                },
+                {
+                  "name": "CONTROL_PLANE_ENDPOINT",
+                  "value": "ptah-e2e-1-37-0-result-restar-5a0ef2fe7d-external-load-balancer:6443"
+                }
+              ],
+              "image": "docker.io/kindest/kindnetd:v20260820-69b56db7",
+              "imagePullPolicy": "IfNotPresent",
+              "name": "kindnet-cni",
+              "resources": {
+                "requests": {
+                  "cpu": "100m",
+                  "memory": "50Mi"
+                }
+              },
+              "securityContext": {
+                "capabilities": {
+                  "add": [
+                    "NET_RAW",
+                    "NET_ADMIN"
+                  ]
+                },
+                "privileged": false
+              },
+              "terminationMessagePath": "/dev/termination-log",
+              "terminationMessagePolicy": "File",
+              "volumeMounts": [
+                {
+                  "mountPath": "/etc/cni/net.d",
+                  "name": "cni-cfg"
+                },
+                {
+                  "mountPath": "/run/xtables.lock",
+                  "name": "xtables-lock"
+                },
+                {
+                  "mountPath": "/lib/modules",
+                  "name": "lib-modules",
+                  "readOnly": true
+                },
+                {
+                  "mountPath": "/var/run/nri",
+                  "name": "nri-plugin"
+                }
+              ]
+            }
+          ],
+          "dnsPolicy": "ClusterFirst",
+          "hostNetwork": true,
+          "nodeSelector": {
+            "kubernetes.io/os": "linux"
+          },
+          "priorityClassName": "system-node-critical",
+          "restartPolicy": "Always",
+          "schedulerName": "default-scheduler",
+          "securityContext": {},
+          "serviceAccount": "kindnet",
+          "serviceAccountName": "kindnet",
+          "terminationGracePeriodSeconds": 30,
+          "tolerations": [
+            {
+              "operator": "Exists"
+            }
+          ],
+          "volumes": [
+            {
+              "hostPath": {
+                "path": "/etc/cni/net.d",
+                "type": ""
+              },
+              "name": "cni-cfg"
+            },
+            {
+              "hostPath": {
+                "path": "/run/xtables.lock",
+                "type": "FileOrCreate"
+              },
+              "name": "xtables-lock"
+            },
+            {
+              "hostPath": {
+                "path": "/lib/modules",
+                "type": ""
+              },
+              "name": "lib-modules"
+            },
+            {
+              "hostPath": {
+                "path": "/var/run/nri",
+                "type": ""
+              },
+              "name": "nri-plugin"
+            }
+          ]
+        }
+      },
+      "updateStrategy": {
+        "rollingUpdate": {
+          "maxSurge": 0,
+          "maxUnavailable": 1
+        },
+        "type": "RollingUpdate"
+      }
+    },
+    "status": {
+      "currentNumberScheduled": 4,
+      "desiredNumberScheduled": 4,
+      "numberAvailable": 4,
+      "numberMisscheduled": 0,
+      "numberReady": 4,
+      "observedGeneration": 1,
+      "updatedNumberScheduled": 4
+    }
+  },
+  "beforeIngress": "open open open",
+  "afterIngress": "closed closed closed",
+  "policiesRemoved": true,
+  "afterRemoval": "open open open",
+  "probesRemoved": true,
+  "verification": {
+    "nativeWorkflows": 4,
+    "familyOperationEnginePairs": 18,
+    "deniedReceiverPaths": 3
+  }
+}

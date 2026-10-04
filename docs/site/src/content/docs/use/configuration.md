@@ -140,6 +140,11 @@ reader of a converged schema can see exactly what produced it.
 | `podDisruptionBudget` |  | A PodDisruptionBudget for the manager, so a drain cannot take every replica at once. |
 | `podDisruptionBudget.enabled` | `true` | Whether to create the PodDisruptionBudget. |
 | `podDisruptionBudget.minAvailable` | `1` | Replicas that must stay available during a voluntary disruption. |
+| `resultDelivery` |  | Durable runner results are persisted independently of container logs. Requires the built-in certificate rotator and generated webhook trust. |
+| `resultDelivery.enabled` | `true` | Send new runner results to the authenticated receiver instead of container logs. |
+| `resultDelivery.networkPolicy` |  | Ingress restrictions for receiver, webhook, health, and metrics ports. |
+| `resultDelivery.networkPolicy.enabled` | `false` | Requires a CNI that enforces NetworkPolicy. Supply peers allowed to reach webhook, health, and metrics ports; the chart cannot infer API server source addresses. Empty peers are refused when this policy is enabled. |
+| `resultDelivery.networkPolicy.infrastructurePeers` | `[]` | Kubernetes NetworkPolicy peers allowed to reach the manager infrastructure ports. |
 <!-- END GENERATED VALUES -->
 
 The table is generated from `charts/ptah-operator/values.yaml`, which is where

@@ -30,6 +30,17 @@ import (
 func alCertificateFixture(t *testing.T, now time.Time) map[string][]byte {
 	t.Helper()
 	ca := sameSubjectCA(t, 1)
+	caTemplate := *ca.certificate
+	caTemplate.NotBefore, caTemplate.NotAfter = now.Add(-time.Minute), now.Add(72*time.Hour)
+	caDER, err := x509.CreateCertificate(rand.Reader, &caTemplate, &caTemplate, ca.key.Public(), ca.key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ca.encoded = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER})
+	ca.certificate, err = x509.ParseCertificate(caDER)
+	if err != nil {
+		t.Fatal(err)
+	}
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -37,7 +48,7 @@ func alCertificateFixture(t *testing.T, now time.Time) map[string][]byte {
 	certificate := &x509.Certificate{
 		SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: "webhook.operator.svc"},
 		DNSNames:  []string{"webhook.operator.svc", "webhook.operator.svc.cluster.local"},
-		NotBefore: now.Add(-time.Minute), NotAfter: now.Add(time.Hour),
+		NotBefore: now.Add(-time.Minute), NotAfter: now.Add(48 * time.Hour),
 		KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	}
 	der, err := x509.CreateCertificate(rand.Reader, certificate, ca.certificate, key.Public(), ca.key)
@@ -65,7 +76,7 @@ func TestAlShortCertificateKeepsServingIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	short, expiry, err := alShortServingCertificate(data, now)
+	short, expiry, err := alServingCertificate(data, now, alCertificateLifetime)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +105,7 @@ func TestAlShortCertificateKeepsServingIdentity(t *testing.T) {
 	if !errors.As(err, &invalid) || invalid.Reason != x509.Expired {
 		t.Fatalf("the expired leaf was not refused specifically for expiry: %v", err)
 	}
-	for generation := range 4 {
+	for generation := range 5 {
 		bundle := alFreshCertificateBundle(data["ca.crt"], generation)
 		certs, err := certificates(bundle)
 		if err != nil || len(certs) != 1 || !bytes.Equal(certs[0].Raw, rootsCertificate(t, data["ca.crt"]).Raw) {
@@ -130,7 +141,7 @@ func TestAlShortCertificateRefusesInvalidIdentity(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			data := maps.Clone(valid)
 			change(data)
-			encoded, _, err := alShortServingCertificate(data, now)
+			encoded, _, err := alServingCertificate(data, now, alCertificateLifetime)
 			if err == nil || len(encoded) != 0 {
 				t.Fatal("issued a serving certificate under an invalid identity")
 			}
@@ -139,9 +150,44 @@ func TestAlShortCertificateRefusesInvalidIdentity(t *testing.T) {
 			}
 		})
 	}
-	for _, date := range []time.Time{now.Add(-time.Hour), now.Add(24 * time.Hour), now.Add(time.Hour)} {
-		if _, _, err := alShortServingCertificate(valid, date); err == nil {
+	for _, date := range []time.Time{now.Add(-time.Hour), now.Add(72 * time.Hour), now.Add(48 * time.Hour)} {
+		if _, _, err := alServingCertificate(valid, date, alCertificateLifetime); err == nil {
 			t.Fatal("issued a certificate outside the installed authority or leaf's validity")
+		}
+	}
+}
+
+func TestAlCertificateWarningUsesTheFrozenDay(t *testing.T) {
+	t.Parallel()
+	now := time.Now().UTC().Truncate(time.Second)
+	data := alCertificateFixture(t, now)
+	encoded, expiry, err := alServingCertificate(data, now, alCertificateWarning+alCertificateLifetime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leaf, err := firstCertificate(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !expiry.Equal(now.Add(24*time.Hour + alCertificateLifetime)) {
+		t.Fatal("the warning fixture shortened the frozen 24-hour threshold")
+	}
+	threshold := leaf.NotAfter.Add(-24 * time.Hour)
+	if threshold.Sub(now) <= alCertificateProjection || threshold.Sub(now) != alCertificateLifetime {
+		t.Fatal("the signed warning threshold leaves no time to observe every manager before it crosses")
+	}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(data["ca.crt"]) {
+		t.Fatal("the fixture authority is unreadable")
+	}
+	for _, at := range []time.Time{threshold.Add(-time.Second), threshold.Add(time.Second)} {
+		if _, err := leaf.Verify(x509.VerifyOptions{Roots: roots, DNSName: leaf.DNSNames[0], CurrentTime: at}); err != nil {
+			t.Fatal("the warning threshold introduced an admission certificate fault")
+		}
+	}
+	for _, lifetime := range []time.Duration{0, -time.Second, 49 * time.Hour, 73 * time.Hour} {
+		if value, _, err := alServingCertificate(data, now, lifetime); err == nil || len(value) != 0 {
+			t.Fatal("issued an invalid or unbounded serving certificate")
 		}
 	}
 }

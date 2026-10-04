@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -14,6 +13,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const (
@@ -26,7 +26,9 @@ const (
 
 // inputs are what the harness prepared on the lab before the tool runs.
 type inputs struct {
+	catalog           *inputCatalog
 	namespace         string
+	namespaces        []string
 	operatorNamespace string
 	managerSelector   string
 	registrySecret    string
@@ -39,11 +41,27 @@ type inputs struct {
 }
 
 type scenarios struct {
-	in        inputs
-	load      workload
-	clientset kubernetes.Interface
-	dynamic   dynamic.Interface
-	windows   []window
+	backlogProof        *approvalBacklogProof
+	faultBaseline       *retentionInventory
+	faultProbe          func(context.Context, string, int, string) error
+	retentionFaultProof *retentionFaultProof
+	checkpoint          func(context.Context, int, string) (databaseCheckpoint, error)
+	databaseCheckpoints []databaseCheckpoint
+	churnProofs         []churnProof
+	retentionProofs     []retentionProof
+	sampleSnapshot      func() []sample
+	soakWindow          *window
+	evidenceDir         string
+
+	restartJobs func() []jobRecord
+	inputReader client.Reader
+	inputPlans  []inputPlanProof
+	in          inputs
+	load        workload
+	clientset   kubernetes.Interface
+	dynamic     dynamic.Interface
+	windows     []window
+	recorders   []*cycleRecorder
 }
 
 func (s *scenarios) mark(name string, start time.Time, outcome map[string]string) {
@@ -78,7 +96,7 @@ func (s *scenarios) artifactSource(reference, policy string) map[string]any {
 
 func (s *scenarios) target(name string, database int) map[string]any {
 	return map[string]any{
-		"engine":          "PostgreSQL",
+		"engine":          s.load.engine(),
 		"coordinationKey": "capacity/" + name,
 		"urlFrom":         map[string]any{"name": s.secretFor(database), "key": "url"},
 	}
@@ -88,10 +106,10 @@ func (s *scenarios) schemaObject(index int) *unstructured.Unstructured {
 	name := s.schemaName(index)
 	return &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "operator.ptah.run/v1alpha1", "kind": "PtahSchema",
-		"metadata": map[string]any{"name": name, "namespace": s.in.namespace, "labels": map[string]any{capacityLabel: s.load.Name}},
+		"metadata": map[string]any{"name": name, "namespace": s.in.namespaceFor(index), "labels": map[string]any{capacityLabel: s.load.Name}},
 		"spec": map[string]any{
 			"target":    s.target(name, index),
-			"desired":   s.artifactSource(s.in.schemaRefs[0], s.in.schemaPolicy),
+			"desired":   s.artifactSource(s.schemaReference(index, 0), s.in.schemaPolicy),
 			"policy":    map[string]any{"apply": "Always", "allowDestructive": false, "driftSeverity": "all"},
 			"interval":  s.load.Interval.String(),
 			"execution": s.execution(),
@@ -100,8 +118,13 @@ func (s *scenarios) schemaObject(index int) *unstructured.Unstructured {
 }
 
 func (s *scenarios) migrationObject(name string, database int, apply string, labelled bool) *unstructured.Unstructured {
+	migrationIndex := 0
+	if labelled {
+		migrationIndex = database - s.load.Schemas
+	}
 	metadata := map[string]any{"name": name, "namespace": s.in.namespace}
 	if labelled {
+		metadata["namespace"] = s.in.namespaceFor(database - s.load.Schemas)
 		metadata["labels"] = map[string]any{capacityLabel: s.load.Name}
 	}
 	return &unstructured.Unstructured{Object: map[string]any{
@@ -109,7 +132,7 @@ func (s *scenarios) migrationObject(name string, database int, apply string, lab
 		"metadata": metadata,
 		"spec": map[string]any{
 			"target":    s.target(name, database),
-			"artifact":  s.artifactSource(s.in.migrationRefs[0], s.in.migrationPolicy),
+			"artifact":  s.artifactSource(s.migrationReference(migrationIndex, 0), s.in.migrationPolicy),
 			"policy":    map[string]any{"apply": apply, "lockTimeout": "30s"},
 			"interval":  s.load.Interval.String(),
 			"execution": s.execution(),
@@ -121,75 +144,100 @@ func (s *scenarios) migrationObject(name string, database int, apply string, lab
 // first time, which is the cold start every installation goes through once.
 func (s *scenarios) create(ctx context.Context) error {
 	start := time.Now().UTC()
+	var targets []batchTarget
 	for index := range s.load.Schemas {
-		if _, err := s.dynamic.Resource(schemaResource).Namespace(s.in.namespace).Create(ctx, s.schemaObject(index), metav1.CreateOptions{}); err != nil {
+		object, err := s.dynamic.Resource(schemaResource).Namespace(s.in.namespaceFor(index)).Create(ctx, s.schemaObject(index), metav1.CreateOptions{})
+		if err != nil {
 			return fmt.Errorf("create %s: %w", s.schemaName(index), err)
 		}
+		targets = append(targets, batchTarget{family: "schema", resource: schemaResource, namespace: object.GetNamespace(), name: object.GetName(), uid: object.GetUID(), generation: object.GetGeneration(), reference: s.schemaReference(index, 0), applied: true})
 	}
 	for index := range s.load.Migrations {
-		object := s.migrationObject(s.migrationName(index), s.load.Schemas+index, "Always", true)
-		if _, err := s.dynamic.Resource(migrationResource).Namespace(s.in.namespace).Create(ctx, object, metav1.CreateOptions{}); err != nil {
+		desired := s.migrationObject(s.migrationName(index), s.load.Schemas+index, "Always", true)
+		object, err := s.dynamic.Resource(migrationResource).Namespace(desired.GetNamespace()).Create(ctx, desired, metav1.CreateOptions{})
+		if err != nil {
 			return fmt.Errorf("create %s: %w", s.migrationName(index), err)
 		}
+		targets = append(targets, batchTarget{family: "migration", resource: migrationResource, namespace: object.GetNamespace(), name: object.GetName(), uid: object.GetUID(), generation: object.GetGeneration(), reference: s.migrationReference(index, 0)})
 	}
-	converged, err := s.waitConverged(ctx, start, nil)
+	var converged string
+	var err error
+	if s.load.Soak != nil || s.load.ApprovalBacklog {
+		err = s.waitBatch(ctx, targets, start)
+		if err == nil {
+			converged = time.Since(start).String()
+		}
+	} else {
+		converged, err = s.waitConverged(ctx, start, nil)
+	}
 	s.mark("cold start", start, map[string]string{"converged": converged})
-	return err
-}
-
-// waitConverged waits until every workload resource is InSync, read after
-// `after` when that is set, and satisfies `extra` for the ones it names. It
-// returns how long that took, or the budget if it never did.
-func (s *scenarios) waitConverged(ctx context.Context, after time.Time, extra func(unstructured.Unstructured) bool) (string, error) {
-	start := time.Now()
-	deadline := start.Add(s.load.Settle.Duration)
-	for time.Now().Before(deadline) {
-		done, err := s.allConverged(ctx, after, extra)
-		if err != nil {
-			slog.Warn("read the workload", "error", err)
-		} else if done {
-			return time.Since(start).Round(time.Second).String(), nil
-		}
-		select {
-		case <-ctx.Done():
-			return "", ctx.Err()
-		case <-time.After(pollEvery):
-		}
+	if err != nil {
+		return err
 	}
-	return "not within " + s.load.Settle.String(), fmt.Errorf("the workload did not converge within %s", s.load.Settle)
+	return s.verifyInputPlans(ctx, 0)
 }
 
-func (s *scenarios) allConverged(ctx context.Context, after time.Time, extra func(unstructured.Unstructured) bool) (bool, error) {
+// waitConverged remembers each resource's fresh accepted result. Periodic
+// refreshes need not leave the whole workload idle at the same instant.
+func (s *scenarios) waitConverged(ctx context.Context, after time.Time, references map[string]string) (string, error) {
+	start := after
+	if start.IsZero() {
+		start = time.Now()
+	}
+	ctx, cancel := context.WithDeadline(ctx, start.Add(s.load.Settle.Duration))
+	defer cancel()
+	targets, err := s.convergenceTargets(ctx, references)
+	if err != nil {
+		return "", err
+	}
+	if err := s.waitBatch(ctx, targets, start); err != nil {
+		return "not within " + s.load.Settle.String(), err
+	}
+	return time.Since(start).Round(time.Second).String(), nil
+}
+
+func (s *scenarios) convergenceTargets(ctx context.Context, references map[string]string) ([]batchTarget, error) {
 	selector := capacityLabel + "=" + s.load.Name
-	total := 0
-	for _, family := range []struct {
-		resource schema.GroupVersionResource
-		observed []string
-	}{
-		{schemaResource, []string{"status", "target", "lastObservedAt"}},
-		{migrationResource, []string{"status", "history", "observedAt"}},
-	} {
-		list, err := s.dynamic.Resource(family.resource).Namespace(s.in.namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
-		if err != nil {
-			return false, err
-		}
-		for _, item := range list.Items {
-			total++
-			if phase, _, _ := unstructured.NestedString(item.Object, "status", "phase"); phase != "InSync" {
-				return false, nil
+	var targets []batchTarget
+	seen := map[string]bool{}
+	for _, namespace := range workloadNamespaces(s.in.namespace, s.in.namespaces) {
+		for _, family := range []struct {
+			resource schema.GroupVersionResource
+			name     string
+			field    string
+		}{
+			{schemaResource, "schema", "desired"},
+			{migrationResource, "migration", "artifact"},
+		} {
+			list, err := s.dynamic.Resource(family.resource).Namespace(namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
+			if err != nil {
+				return nil, err
 			}
-			if !after.IsZero() {
-				observed, ok := timestampAt(item.Object, family.observed...)
-				if !ok || observed.Before(after.Truncate(time.Second)) {
-					return false, nil
+			for _, item := range list.Items {
+				wantNamespace, err := s.resourceNamespace(family.resource, item.GetName())
+				key := item.GetKind() + "/" + item.GetName()
+				if err != nil || wantNamespace != namespace || item.GetNamespace() != namespace || seen[key] || item.GetUID() == "" || item.GetGeneration() < 1 || item.GetDeletionTimestamp() != nil {
+					return nil, fmt.Errorf("unexpected workload identity %s/%s", namespace, item.GetName())
 				}
-			}
-			if extra != nil && !extra(item) {
-				return false, nil
+				seen[key] = true
+				reference, _, err := unstructured.NestedString(item.Object, "spec", family.field, "ociRef")
+				want, changed := references[key]
+				if err != nil || digestOf(reference) == "" || changed && reference != want {
+					return nil, fmt.Errorf("workload input does not match the requested artifact: %s/%s", namespace, item.GetName())
+				}
+				targets = append(targets, batchTarget{family: family.name, resource: family.resource, namespace: namespace, name: item.GetName(), uid: item.GetUID(), generation: item.GetGeneration(), reference: reference, applied: family.name == "schema"})
 			}
 		}
 	}
-	return total == s.load.Schemas+s.load.Migrations, nil
+	if len(targets) == 0 || len(targets) != s.load.Schemas+s.load.Migrations {
+		return nil, fmt.Errorf("convergence inventory has %d resources, require %d", len(targets), s.load.Schemas+s.load.Migrations)
+	}
+	for key := range references {
+		if !seen[key] {
+			return nil, fmt.Errorf("changed workload resource is missing: %s", key)
+		}
+	}
+	return targets, nil
 }
 
 // steady watches the converged workload with nothing changing.
@@ -208,18 +256,18 @@ func (s *scenarios) steady(ctx context.Context) error {
 // the burst can be measured against the one piece of work a person asked for.
 func (s *scenarios) prepareApproval(ctx context.Context) error {
 	object := s.migrationObject(approvalResource, s.load.Schemas+s.load.Migrations, "OnApproval", false)
-	if _, err := s.dynamic.Resource(migrationResource).Namespace(s.in.namespace).Create(ctx, object, metav1.CreateOptions{}); err != nil {
+	if _, err := s.dynamic.Resource(migrationResource).Namespace(object.GetNamespace()).Create(ctx, object, metav1.CreateOptions{}); err != nil {
 		return fmt.Errorf("create %s: %w", approvalResource, err)
 	}
 	deadline := time.Now().Add(s.load.Settle.Duration)
 	for time.Now().Before(deadline) {
 		item, err := s.dynamic.Resource(migrationResource).Namespace(s.in.namespace).Get(ctx, approvalResource, metav1.GetOptions{})
-		if err == nil {
-			if plan, _, _ := unstructured.NestedString(item.Object, "status", "plan", "name"); plan != "" {
-				return nil
-			}
+		if err == nil && approvalGateReady(item) {
+			return nil
 		}
-		time.Sleep(pollEvery)
+		if err := waitCapacityPoll(ctx); err != nil {
+			return err
+		}
 	}
 	return fmt.Errorf("%s published no plan within %s", approvalResource, s.load.Settle)
 }
@@ -237,76 +285,20 @@ func (s *scenarios) restart(ctx context.Context) error {
 	}
 	start := time.Now().UTC()
 	for _, pod := range pods.Items {
-		if err := s.clientset.CoreV1().Pods(s.in.operatorNamespace).Delete(ctx, pod.Name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+		if err := s.clientset.CoreV1().Pods(s.in.operatorNamespace).Delete(ctx, pod.Name, metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &pod.UID}}); err != nil && !apierrors.IsNotFound(err) {
 			return fmt.Errorf("delete manager Pod %s: %w", pod.Name, err)
 		}
 	}
-	admitted, dispatched := s.approveAndWait(ctx, start)
-	converged, err := s.waitConverged(ctx, start, nil)
-	s.mark("restart burst", start, map[string]string{
-		"converged":          converged,
-		"approvalAdmitted":   admitted,
-		"approvalDispatched": dispatched,
-		"managerPods":        fmt.Sprint(len(pods.Items)),
-	})
+	outcome, err := s.approveAndWait(ctx, start)
+	outcome["managerPods"] = fmt.Sprint(len(pods.Items))
+	if err == nil {
+		outcome["converged"], err = s.waitRestartConverged(ctx, start)
+	}
+	if err != nil {
+		outcome["error"] = err.Error()
+	}
+	s.mark("restart burst", start, outcome)
 	return err
-}
-
-// approveAndWait creates the approval as soon as admission takes it -- the
-// managers serve admission, so it is refused until one is back -- and reports
-// how long after the restart it was admitted and how long until its Apply Job
-// existed.
-func (s *scenarios) approveAndWait(ctx context.Context, start time.Time) (string, string) {
-	approval, err := s.approvalObject(ctx)
-	if err != nil {
-		slog.Warn("build the approval", "error", err)
-		return "not built", "not built"
-	}
-	admitted := "not within " + restartReadyBudget.String()
-	deadline := start.Add(restartReadyBudget)
-	for time.Now().Before(deadline) {
-		_, err := s.dynamic.Resource(approvalGVR).Namespace(s.in.namespace).Create(ctx, approval, metav1.CreateOptions{})
-		if err == nil || apierrors.IsAlreadyExists(err) {
-			admitted = time.Since(start).Round(time.Second).String()
-			break
-		}
-		time.Sleep(pollEvery)
-	}
-	dispatched := "not within " + s.load.Settle.String()
-	deadline = time.Now().Add(s.load.Settle.Duration)
-	for time.Now().Before(deadline) {
-		jobs, err := s.clientset.BatchV1().Jobs(s.in.namespace).List(ctx, metav1.ListOptions{
-			LabelSelector: "operator.ptah.run/migration=" + approvalResource + ",operator.ptah.run/operation=apply",
-		})
-		if err == nil && len(jobs.Items) > 0 {
-			dispatched = jobs.Items[0].CreationTimestamp.Sub(start).Round(time.Second).String()
-			break
-		}
-		time.Sleep(pollEvery)
-	}
-	return admitted, dispatched
-}
-
-func (s *scenarios) approvalObject(ctx context.Context) (*unstructured.Unstructured, error) {
-	migration, err := s.dynamic.Resource(migrationResource).Namespace(s.in.namespace).Get(ctx, approvalResource, metav1.GetOptions{})
-	if err != nil {
-		return nil, err
-	}
-	planName, _, _ := unstructured.NestedString(migration.Object, "status", "plan", "name")
-	plan, err := s.dynamic.Resource(migrationPlanResource).Namespace(s.in.namespace).Get(ctx, planName, metav1.GetOptions{})
-	if err != nil {
-		return nil, err
-	}
-	fingerprint, _, _ := unstructured.NestedString(plan.Object, "spec", "fingerprint")
-	return &unstructured.Unstructured{Object: map[string]any{
-		"apiVersion": "operator.ptah.run/v1alpha1", "kind": "PtahMigrationApproval",
-		"metadata": map[string]any{"name": approvalResource, "namespace": s.in.namespace},
-		"spec": map[string]any{
-			"migrationRef":    map[string]any{"name": approvalResource, "uid": string(migration.GetUID())},
-			"planRef":         map[string]any{"name": planName, "uid": string(plan.GetUID())},
-			"planFingerprint": fingerprint,
-		},
-	}}, nil
 }
 
 // change moves a batch of each family to its second artifact at once.
@@ -318,38 +310,33 @@ func (s *scenarios) change(ctx context.Context) error {
 	moved := map[string]string{}
 	for index := range min(s.load.ChangeBatch, s.load.Schemas) {
 		name := s.schemaName(index)
-		if err := s.patchReference(ctx, schemaResource, name, "desired", s.in.schemaRefs[1]); err != nil {
+		if err := s.patchReference(ctx, schemaResource, name, "desired", s.schemaReference(index, 1)); err != nil {
 			return err
 		}
-		moved["PtahSchema/"+name] = digestOf(s.in.schemaRefs[1])
+		moved["PtahSchema/"+name] = s.schemaReference(index, 1)
 	}
 	for index := range min(s.load.ChangeBatch, s.load.Migrations) {
 		name := s.migrationName(index)
-		if err := s.patchReference(ctx, migrationResource, name, "artifact", s.in.migrationRefs[1]); err != nil {
+		if err := s.patchReference(ctx, migrationResource, name, "artifact", s.migrationReference(index, 1)); err != nil {
 			return err
 		}
-		moved["PtahMigration/"+name] = digestOf(s.in.migrationRefs[1])
+		moved["PtahMigration/"+name] = s.migrationReference(index, 1)
 	}
-	converged, err := s.waitConverged(ctx, start, func(item unstructured.Unstructured) bool {
-		want, ok := moved[item.GetKind()+"/"+item.GetName()]
-		if !ok {
-			return true
-		}
-		var got string
-		if item.GetKind() == "PtahSchema" {
-			got, _, _ = unstructured.NestedString(item.Object, "status", "applied", "artifactDigest")
-		} else {
-			got, _, _ = unstructured.NestedString(item.Object, "status", "artifact", "digest")
-		}
-		return got == want
-	})
+	converged, err := s.waitConverged(ctx, start, moved)
 	s.mark("change batch", start, map[string]string{"converged": converged, "moved": fmt.Sprint(len(moved))})
-	return err
+	if err != nil {
+		return err
+	}
+	return s.verifyInputPlans(ctx, 1)
 }
 
 func (s *scenarios) patchReference(ctx context.Context, resource schema.GroupVersionResource, name, field, reference string) error {
+	namespace, err := s.resourceNamespace(resource, name)
+	if err != nil {
+		return err
+	}
 	patch := fmt.Sprintf(`{"spec":{%q:{"ociRef":%q}}}`, field, reference)
-	_, err := s.dynamic.Resource(resource).Namespace(s.in.namespace).Patch(ctx, name, types.MergePatchType, []byte(patch), metav1.PatchOptions{})
+	_, err = s.dynamic.Resource(resource).Namespace(namespace).Patch(ctx, name, types.MergePatchType, []byte(patch), metav1.PatchOptions{})
 	if err != nil {
 		return fmt.Errorf("move %s to %s: %w", name, reference, err)
 	}

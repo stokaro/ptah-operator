@@ -90,7 +90,7 @@ const (
 	// control plane. Both took under a minute; this is twice that.
 	ciEnvtestFetchMinutes             = 2
 	ciRaceTimeoutMinutes              = 20
-	ciKubernetesE2ETimeoutMinutes     = 180
+	ciKubernetesE2ETimeoutMinutes     = 270
 	ciPrepareImagesTimeoutMinutes     = 45
 	ciKubernetesSupportTimeoutMinutes = 5
 	ciLifecycleTimingsTimeoutMinutes  = 10
@@ -2474,6 +2474,28 @@ const kindHATopologyContract = `assert_kind_ha_topology() {
 		fail "Kubernetes node inventory does not match the ready HA kind topology $KIND_ISOLATION_TOPOLOGY"
 }`
 
+const kubeletLogBudgetContract = `assert_kubelet_log_budget() {
+	kubelet_budget_expected=4
+	if [ "$ISOLATION_WORKER" = true ]; then kubelet_budget_expected=5; fi
+	jq -er '.items[].metadata.name' "$NODE_READINESS_FILE" >"$WORK_DIR/kubelet-log-nodes.txt" ||
+		fail "could not enumerate Kubernetes nodes for the kubelet log budget"
+	kubelet_budget_count=0
+	while IFS= read -r kubelet_budget_node; do
+		[ -n "$kubelet_budget_node" ] || continue
+		kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=15s get \
+			--raw "/api/v1/nodes/$kubelet_budget_node/proxy/configz" \
+			>"$WORK_DIR/kubelet-log-config-$kubelet_budget_node.json" ||
+			fail "could not read the effective kubelet log budget on $kubelet_budget_node"
+		jq -e '.kubeletconfig.containerLogMaxSize == "10Mi"' \
+			"$WORK_DIR/kubelet-log-config-$kubelet_budget_node.json" >/dev/null ||
+			fail "kubelet $kubelet_budget_node must use the standard 10Mi container log size for durable-result acceptance"
+		kubelet_budget_count=$((kubelet_budget_count + 1))
+	done <"$WORK_DIR/kubelet-log-nodes.txt"
+	[ "$kubelet_budget_count" -eq "$kubelet_budget_expected" ] ||
+		fail "kubelet log budget was not verified on every declared node"
+	printf 'e2e: verified default 10Mi container log files on %s kubelets\n' "$kubelet_budget_count"
+}`
+
 const apiServerEndpointInventoryContract = `assert_api_server_endpoint_inventory() {
 	api_endpoint_deadline=$(($(date +%s) + 60))
 	while [ "$(date +%s)" -lt "$api_endpoint_deadline" ]; do
@@ -3184,6 +3206,7 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 			`--wait 5m`,
 			`require_ready_nodes "after kind cluster creation"`,
 			`assert_kind_ha_topology`,
+			`assert_kubelet_log_budget`,
 			`assert_api_server_endpoint_inventory`,
 		}),
 		exactSourceLine("live API-server-only feature gate contract", `assert_api_server_feature_gate_scope "$EXPECTED_API_SERVER_FEATURE_GATES"`),
@@ -3356,6 +3379,10 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 	); err != nil {
 		return err
 	}
+	if err := verifyExactShellFunctionContract(harness, harnessContents,
+		"assert_kubelet_log_budget", kubeletLogBudgetContract, "kubelet log retention contract"); err != nil {
+		return err
+	}
 	if err := verifyExactShellFunctionContract(
 		harness,
 		harnessContents,
@@ -3416,6 +3443,7 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 		"wait_for_ready_nodes",
 		"nodes_ready_now",
 		"assert_kind_ha_topology",
+		"assert_kubelet_log_budget",
 		"assert_api_server_endpoint_inventory",
 		"probe_api_server_endpoints",
 		"configure_registry_hosts_on_kind_nodes",
@@ -5239,8 +5267,10 @@ func verifyE2ESuiteCoverage(catalog e2eSuiteCatalog, driverPath string) error {
 		return fmt.Errorf("read %s: %w", driverPath, err)
 	}
 	driverPhases := map[string]bool{}
-	for _, match := range e2eDriverPhase.FindAllSubmatch(contents, -1) {
+	driverOrder := map[string]int{}
+	for index, match := range e2eDriverPhase.FindAllSubmatch(contents, -1) {
 		driverPhases[string(match[1])] = true
+		driverOrder[string(match[1])] = index
 	}
 	if len(driverPhases) == 0 {
 		return fmt.Errorf("%s: no lifecycle phase invocation was found, so coverage cannot be checked", driverPath)
@@ -5272,6 +5302,42 @@ func verifyE2ESuiteCoverage(catalog e2eSuiteCatalog, driverPath string) error {
 	if len(unknown) > 0 {
 		sort.Strings(unknown)
 		return fmt.Errorf("%s: claims phases the driver does not run: %s", e2eSuitesPath, strings.Join(unknown, ", "))
+	}
+	return verifyE2ESuitePrerequisites(catalog, phases.All(), driverOrder)
+}
+
+// A phase can be selected while its fixtures are absent. Require each full
+// phase's declared prerequisites to run in full and earlier in the driver,
+// including phases borrowed for preparation that have no shorter mode.
+func verifyE2ESuitePrerequisites(catalog e2eSuiteCatalog, declared []phases.Phase, order map[string]int) error {
+	definitions := map[string]phases.Phase{}
+	for _, phase := range declared {
+		definitions[phase.Name] = phase
+	}
+	for _, suite := range catalog.Suites {
+		full := map[string]bool{}
+		for _, phase := range suite.Phases {
+			full[phase] = true
+		}
+		for _, name := range suite.Prepare {
+			phase, found := definitions[name]
+			if found && phase.Preparation == 0 {
+				full[name] = true
+			}
+		}
+		for name := range full {
+			phase, found := definitions[name]
+			if !found {
+				return fmt.Errorf("suite %q runs undeclared phase %q", suite.Name, name)
+			}
+			for _, required := range phase.RequiresFull {
+				before, predecessorFound := order[required]
+				after, consumerFound := order[name]
+				if !full[required] || !predecessorFound || !consumerFound || before >= after {
+					return fmt.Errorf("suite %q phase %q requires full phase %q earlier in the driver", suite.Name, name, required)
+				}
+			}
+		}
 	}
 	return nil
 }

@@ -21,7 +21,7 @@ import (
 // receiver must warn within the usual detection target, measured from the
 // signed expiry minus the warning threshold, not from a poll that noticed it.
 const (
-	alCertificateWarning    = 60 * time.Second
+	alCertificateWarning    = 24 * time.Hour
 	alCertificateLifetime   = 5 * time.Minute
 	alCertificateProjection = 3 * time.Minute
 	alCertificateAlert      = "PtahOperatorWebhookCertificateExpiring"
@@ -54,7 +54,10 @@ func alApprovalProbeWebhook(hook admissionregistrationv1.ValidatingWebhook) bool
 // Reissue the installed leaf under its own CA and key. Only its validity and
 // serial change; the fault must not introduce a different trust or DNS error.
 // Private keys stay in memory, and errors never include their input bytes.
-func alShortServingCertificate(data map[string][]byte, now time.Time) ([]byte, time.Time, error) {
+func alServingCertificate(data map[string][]byte, now time.Time, lifetime time.Duration) ([]byte, time.Time, error) {
+	if lifetime <= 0 {
+		return nil, time.Time{}, errors.New("the serving certificate lifetime must be positive")
+	}
 	caPair, err := tls.X509KeyPair(data["ca.crt"], data["ca.key"])
 	if err != nil {
 		return nil, time.Time{}, errors.New("the installed certificate authority and key do not form a pair")
@@ -64,7 +67,7 @@ func alShortServingCertificate(data map[string][]byte, now time.Time) ([]byte, t
 		return nil, time.Time{}, errors.New("the installed serving certificate and key do not form a pair")
 	}
 	ca, leaf := caPair.Leaf, leafPair.Leaf
-	expires := now.Add(alCertificateLifetime).UTC().Truncate(time.Second)
+	expires := now.Add(lifetime).UTC().Truncate(time.Second)
 	if ca == nil || leaf == nil || leaf.CheckSignatureFrom(ca) != nil || leaf.IsCA ||
 		now.Before(ca.NotBefore) || now.Before(leaf.NotBefore) || !ca.NotAfter.After(expires) || !leaf.NotAfter.After(expires) {
 		return nil, time.Time{}, errors.New("the installed authority cannot issue the short-lived serving certificate")

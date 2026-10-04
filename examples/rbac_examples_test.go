@@ -73,6 +73,7 @@ func TestTheDiagnosticReaderCheckRefusesPlanAndCredentialAccess(t *testing.T) {
 		"Pod exec":            {APIGroups: []string{""}, Resources: []string{"pods/exec"}, Verbs: []string{"get"}},
 		"every Pod resource":  {APIGroups: []string{""}, Resources: []string{"pods/*"}, Verbs: read},
 		"plan chunks":         {APIGroups: []string{"operator.ptah.run"}, Resources: []string{"ptahschemaplanchunks"}, Verbs: read},
+		"result records":      {APIGroups: []string{"operator.ptah.run"}, Resources: []string{"ptahresultrecords"}, Verbs: read},
 		"plan projections":    {APIGroups: []string{""}, Resources: []string{"configmaps"}, Verbs: read},
 		"credentials":         {APIGroups: []string{""}, Resources: []string{"secrets"}, Verbs: []string{"get"}},
 		"every resource":      {APIGroups: []string{""}, Resources: []string{"*"}, Verbs: read},
@@ -97,6 +98,7 @@ func TestTheDiagnosticReaderCheckRefusesPlanAndCredentialAccess(t *testing.T) {
 // which sealing the plan payload does not change.
 var diagnosticReaderRefuses = map[string]string{
 	"secrets":              "database and registry credentials",
+	"ptahresultrecords":    "operation SQL and private delivery keys",
 	"ptahschemaplanchunks": "a plan's SQL",
 	"configmaps":           "the plan an Apply projects into its Pod",
 	"pods/attach":          "a live Pod's database credential",

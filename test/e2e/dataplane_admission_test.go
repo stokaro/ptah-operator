@@ -15,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/resultdelivery/resulttest"
 	"github.com/stokaro/ptah-operator/internal/runner"
 )
 
@@ -899,5 +900,47 @@ func TestDeclaredAnnotationOnPods(t *testing.T) {
 		if declaredAnnotationOnPods([]corev1.Pod{admitted, pod}, podMetadataAnnotation) {
 			t.Errorf("a Pod with %s passed", name)
 		}
+	}
+}
+
+// A copied refusal Job has its own identity. It must not mount or reuse the
+// original operation's credential, even when all operator Jobs use receipts.
+func TestRewriteMySQLRefusalJobDetachesOriginalResultCredential(t *testing.T) {
+	f := resulttest.New(t, "schema-plan-dev-fence-scheduling")
+	original := f.Job.DeepCopy()
+	source, err := runtime.DefaultUnstructuredConverter.ToUnstructured(f.Job)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rewritten := rewriteTestJob(t, source)
+	var got batchv1.Job
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(rewritten, &got); err != nil {
+		t.Fatal(err)
+	}
+	if durableResultJob(&got) {
+		t.Fatal("standalone refusal retained original result delivery authority")
+	}
+	normalized, err := resultJobWithoutProjection(original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := runtime.DefaultUnstructuredConverter.ToUnstructured(normalized)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(rewritten, rewriteTestJob(t, legacy)) {
+		t.Fatal("detaching delivery changed unrelated executor inputs")
+	}
+	if !reflect.DeepEqual(original, f.Job) {
+		t.Fatal("rewrite mutated the source Job")
+	}
+	// A broken projection cannot be silently stripped and accepted.
+	f.Job.Spec.Template.Spec.Containers[0].Args = []string{"--result-endpoint"}
+	source, err = runtime.DefaultUnstructuredConverter.ToUnstructured(f.Job)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rewriteMySQLRefusalJob(source, "n", "j", "s", "plan", "id", "secret"); err == nil {
+		t.Fatal("accepted a malformed result projection")
 	}
 }

@@ -221,12 +221,7 @@ func (f *faultRun) assertColumn(engine, database, column string, expected int) {
 // nullability.
 func (f *faultRun) pgFingerprint(database string) string {
 	f.t.Helper()
-	return f.query("postgresql", database, `
-    SELECT md5(COALESCE(string_agg(
-      table_schema || '.' || table_name || '.' || column_name || ':' || data_type || ':' || is_nullable,
-      ',' ORDER BY table_schema, table_name, ordinal_position), ''))
-    FROM information_schema.columns
-    WHERE table_schema = 'public'`)
+	return f.query("postgresql", database, postgresSchemaFingerprintSQL)
 }
 
 // mysqlFingerprint is an MD5 of every column and index of the database.
@@ -353,6 +348,17 @@ func (f *faultRun) stopMySQLBarrier() {
 		if decimalCount.MatchString(thread) && thread != "0" {
 			_, _ = f.mysqlRootWith(f.ctx, "mysql", "KILL "+thread)
 		}
+	}
+	f.releaseMySQLBarrier()
+}
+
+// A running-Apply rollout keeps the original client alive. Release only the
+// barrier so that client can complete its already authorized DDL.
+func (f *faultRun) releaseMySQLBarrier() {
+	f.t.Helper()
+	barrier := f.mysqlBarrier
+	if barrier == nil {
+		f.fatalf("no MySQL metadata barrier is active")
 	}
 	id := f.query("mysql", "mysql", "SELECT IS_USED_LOCK('"+barrier.ready+"')")
 	if !decimalCount.MatchString(id) || id == "0" {
@@ -489,6 +495,8 @@ func (f *faultRun) assertReadBlocked(jobUID, description string) {
 // ones most proofs use.
 type faultSchema struct {
 	name, engine, secret, reference, coordinationKey string
+	verificationPolicy                               string
+	allowDestructive                                 bool
 	// failureRetry is 5s, activeDeadline faultActiveDeadlineSeconds and
 	// lockTimeout 60s when unset.
 	failureRetry   string
@@ -534,11 +542,11 @@ func (f *faultRun) createSchema(schema faultSchema) {
 					"name": registryAuthSecret, "mode": "Environment",
 					"usernameKey": "username", "passwordKey": "password",
 				},
-				"verificationPolicyFrom": map[string]any{"name": "e2e-verification-policy", "key": "policy.yaml"},
+				"verificationPolicyFrom": map[string]any{"name": cmp.Or(schema.verificationPolicy, verificationPolicyName), "key": verificationPolicyKey},
 				"transport":              map[string]any{"plainHTTP": true},
 			},
 			"policy": map[string]any{
-				"apply": "OnApproval", "allowDestructive": false, "driftSeverity": "all",
+				"apply": "OnApproval", "allowDestructive": schema.allowDestructive, "driftSeverity": "all",
 				"lockTimeout": lockTimeout, "transactionMode": "file",
 			},
 			"interval":  "1h",
@@ -675,13 +683,13 @@ func (f *faultRun) loadNewReleasedLease(before checkpoint, description string) l
 	f.t.Helper()
 	var found leaseIdentity
 	f.poll(description, func() bool {
-		identity, count, err := newReleasedLease(f.coordinationLeases(), before)
+		identity, count, released, err := newReleasedLease(f.coordinationLeases(), before)
 		switch {
 		case count > 1:
 			f.fatalf("%s created %d target Leases, expected exactly one", description, count)
 		case count == 1 && err != nil:
 			f.fatalf("%s %v", description, err)
-		case count == 1:
+		case count == 1 && released:
 			found = identity
 			return true
 		}

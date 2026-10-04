@@ -9,6 +9,7 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -211,7 +212,7 @@ func assertAdopted(t *testing.T, api client.Client, run dispatchedRun) {
 
 // assertRefused fails unless the pass settled the claim the way its operation
 // settles a Job it cannot confirm, for the reason want names: an Apply is
-// recorded as outcome unknown, naming the Job, and a read-only claim moves to
+// recorded as outcome unknown, retaining its running claim, and a read-only claim moves to
 // a new attempt under a new name, leaving the Job as it found it.
 func assertRefused(t *testing.T, api client.Client, run dispatchedRun, want string) {
 	t.Helper()
@@ -219,8 +220,8 @@ func assertRefused(t *testing.T, api client.Client, run dispatchedRun, want stri
 	claimed := run.migration.Status.ActiveOperation
 	actual := readMigration(t, api, run.migration)
 	if migrationOperation(claimed).Mutating {
-		if actual.Status.ActiveOperation != nil {
-			t.Fatalf("an Apply claim kept a Job it cannot confirm: operation=%#v", actual.Status.ActiveOperation)
+		if !equality.Semantic.DeepEqual(actual.Status.ActiveOperation, claimed) {
+			t.Fatalf("an unknown running Apply lost or changed its original claim: operation=%#v", actual.Status.ActiveOperation)
 		}
 		last := actual.Status.LastRun
 		if last == nil || last.Outcome != operatorv1alpha1.MigrationRunOutcomeUnknown {
@@ -495,9 +496,7 @@ func TestAnUnconfirmableMigrationApplyIsNeverDispatchedAgain(t *testing.T) {
 			})
 
 			// The first pass refuses the Job, and the rest must not dispatch
-			// beside it. An edit is a new generation, which the resource
-			// resolves again, so a moved row may create that read-only Job and
-			// nothing else.
+			// beside it. Changed inputs also wait for that executor to stop.
 			for pass := range 4 {
 				if _, err := reconciler.Reconcile(context.Background(), migrationRequest(run.migration)); err != nil {
 					t.Fatalf("Reconcile() pass %d error = %v", pass, err)
@@ -513,7 +512,7 @@ func TestAnUnconfirmableMigrationApplyIsNeverDispatchedAgain(t *testing.T) {
 			if created := applyCreates.Load(); created != 0 {
 				t.Fatalf("%d Apply Job creates were attempted after the claim could not confirm its Job, want none", created)
 			}
-			if created := creates.Load(); !row.moved && created != 0 {
+			if created := creates.Load(); created != 0 {
 				t.Fatalf("%d Job creates were attempted after the claim could not confirm its Job, want none", created)
 			}
 			jobs := &batchv1.JobList{}
@@ -526,7 +525,7 @@ func TestAnUnconfirmableMigrationApplyIsNeverDispatchedAgain(t *testing.T) {
 					applies = append(applies, jobs.Items[index].UID)
 				}
 			}
-			if len(applies) != 1 || applies[0] != run.job.UID || (!row.moved && len(jobs.Items) != 1) {
+			if len(applies) != 1 || applies[0] != run.job.UID || len(jobs.Items) != 1 {
 				t.Fatalf("the namespace holds %d Jobs (Apply Jobs %v), want only the one the claim could not confirm, %q",
 					len(jobs.Items), applies, run.job.UID)
 			}

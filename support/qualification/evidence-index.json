@@ -1,0 +1,376 @@
+{
+  "schemaVersion": 1,
+  "purpose": "Locate development evidence without storing execution artifacts in the source tree. This index is not the final #584 acceptance bundle.",
+  "developmentSnapshot": {
+    "sourceCommit": "b708df65f30e3f66b0ff16126fa83d61711df3dc",
+    "browserURL": "https://github.com/stokaro/ptah-operator/tree/b708df65f30e3f66b0ff16126fa83d61711df3dc/support/qualification/evidence",
+    "archive": "b708df65-development-evidence.tar.gz",
+    "sha256": "2b42ad769e755c7c45e0651fc840aade3ab648c6fe46484bd5cd63ff06b6b646",
+    "fileCount": 721,
+    "regressionInputs": "probes/testdata/results",
+    "regressionInputFiles": 94,
+    "finalDurableCustody": "Not assessed; the final location, access/retention policy and independent download verification remain required by #584."
+  },
+  "podTokenQuotaRegression": {
+    "schemaVersion": 1,
+    "source": "866125a1737bcc2b3d890387da4fbcd7f9a8e786",
+    "platform": {
+      "dockerContext": "diabolocom",
+      "kubernetes": "1.37.0",
+      "os": "linux",
+      "architecture": "amd64"
+    },
+    "conclusion": "passed",
+    "requirement": "Remove per-operation credential Secrets that exhaust the unchanged capacity namespace quota (#580, #586).",
+    "method": "Prepare one schema and one migration with separate native databases, fill their isolated workload namespace to 128/128 Secrets, then run normal Apply and successive reconciliation cycles with the installed manager, runner and chart. Require current-generation Ready for both resources, at least 16 completed Jobs, no failed Jobs, unchanged Secret count, receiver-only projected tokens and public first-Pod binding records.",
+    "runs": [
+      {
+        "engine": "PostgreSQL",
+        "revision": "866125a1737bcc2b3d890387da4fbcd7f9a8e786",
+        "image": "e2e-registry.ptah-test-a-1-37-0-pr585-soak-b9409060-59e0909df3.svc.cluster.local:5000/ptah-operator@sha256:885c1bc6f33f097c26b6c25d1052fc17cb09c3af724d76ac0fea2b99ca9e039d",
+        "namespace": "ptah-capacity-0ac4b96ab8-a",
+        "quota": 128,
+        "initialSecrets": 128,
+        "objects": [
+          [
+            "ptahschemas",
+            "quota-schema",
+            "a7ca361e-045a-4175-972c-a0e80b377b4e"
+          ],
+          [
+            "ptahmigrations",
+            "quota-migration",
+            "265462c8-4043-4fe2-88e6-321bdb059fcf"
+          ]
+        ],
+        "startedAt": 1791055920.6912022,
+        "conclusion": "passed",
+        "finishedAt": 1791056045.395071,
+        "completedJobs": 22,
+        "finalSecrets": 128,
+        "publicPodBindings": 22,
+        "operations": {
+          "apply": 1,
+          "migration-apply": 1,
+          "migration-history": 4,
+          "resolve": 5,
+          "verify": 5,
+          "observe": 3,
+          "plan": 3
+        },
+        "rawJobInventorySHA256": "f6bb3d9b1a2e18c3f5b643c0476ad89d020d67ea2d4e665669d3186752d43248",
+        "rawReadingsSHA256": "a81ce745c125a3ddcf4dc3338a10cd46fd56201c1fc1cddaccb8a1ecb2d67cb5"
+      },
+      {
+        "engine": "MySQL",
+        "revision": "866125a1737bcc2b3d890387da4fbcd7f9a8e786",
+        "image": "e2e-registry.ptah-test-a-1-37-0-pr585-soak-b9409060-59e0909df3.svc.cluster.local:5000/ptah-operator@sha256:885c1bc6f33f097c26b6c25d1052fc17cb09c3af724d76ac0fea2b99ca9e039d",
+        "namespace": "ptah-capacity-b4a520cb75-a",
+        "quota": 128,
+        "initialSecrets": 128,
+        "objects": [
+          [
+            "ptahschemas",
+            "quota-schema",
+            "68cb3b9b-a8c2-432d-921f-6264ed0b512d"
+          ],
+          [
+            "ptahmigrations",
+            "quota-migration",
+            "9267069d-bbb9-4ea0-8e3e-ea61ec2baab4"
+          ]
+        ],
+        "startedAt": 1791056308.537909,
+        "conclusion": "passed",
+        "finishedAt": 1791056442.036073,
+        "completedJobs": 22,
+        "finalSecrets": 128,
+        "publicPodBindings": 22,
+        "operations": {
+          "apply": 1,
+          "migration-apply": 1,
+          "migration-history": 4,
+          "resolve": 5,
+          "verify": 5,
+          "observe": 3,
+          "plan": 3
+        },
+        "rawJobInventorySHA256": "a7467ff8b9bc953b80b75d8ddabb1ea05e3de8e1c221eefe79a89598a6b6f503",
+        "rawReadingsSHA256": "c6ca22fe01d5f6c9daf58dfc95c35a6a71c7798605ac7964d2306a3c903eee9f"
+      }
+    ],
+    "assertions": [
+      "44 completed operation Jobs across both native engines",
+      "128 Secrets before and after each workflow; no ptah-result-key Secret",
+      "22 public first-Pod binding records per engine with only binding and engine fields",
+      "Live manager: TokenReview CREATE allowed; Secret CREATE and GET denied",
+      "Two ready manager replicas use the recorded immutable image digest"
+    ],
+    "scope": "A bounded quota regression on an existing task-owned lab, not the frozen 90-minute capacity profile, fresh full acceptance phases, terminal CI, or final production acceptance. Previous certificate-mode evidence does not qualify the changed authentication path.",
+    "preparationFailures": [
+      "The first Helm invocation conflicted with the CRD manager field owner; the standard E2E --force-conflicts upgrade succeeded.",
+      "The first local publisher was a Linux binary; the host binary was built from the same pinned source.",
+      "The next artifact push lacked the private registry port forward; the existing task registry was then forwarded and both workflows completed."
+    ],
+    "probeSHA256": "ce2b75f863143ab97b6333dd1c7a63324783429e201597ad4cfe10780d3847d8",
+    "files": [
+      "installation.json",
+      "postgresql.json",
+      "mysql.json"
+    ],
+    "cleanup": "Both workload namespaces and their database fixture namespaces were removed after the existing result retention deadlines.",
+    "archive": {
+      "name": "pod-token-2026-10-03.tar.gz",
+      "sha256": "6ab606d73142bf487f0c74d856f31a99561a8d300cfb4943112efd3b9dfad5d5"
+    }
+  },
+  "sourceFailureDiagnosis": {
+    "schemaVersion": 1,
+    "head": "b708df65f30e3f66b0ff16126fa83d61711df3dc",
+    "run": "https://github.com/stokaro/ptah-operator/actions/runs/37143952451",
+    "conclusion": "failure",
+    "failures": [
+      {
+        "job": "Race detector",
+        "url": "https://github.com/stokaro/ptah-operator/actions/runs/37143952451/job/111264130410",
+        "logSHA256": "712a536062179561d1dcef583d2743493537f2845600ecfafce9dbfeaa4b315e",
+        "cause": "The new runner source digest had no protocol declaration. No race report was found."
+      },
+      {
+        "job": "Verify source and generated files",
+        "url": "https://github.com/stokaro/ptah-operator/actions/runs/37143952451/job/111264130518",
+        "logSHA256": "d65f02bb7376696d443a412a6b0cc0de8ebc7ed7ede2cfe164325ef2b8ce5dda",
+        "cause": "The new runner source digest had no protocol declaration."
+      },
+      {
+        "job": "Kubernetes support gate",
+        "url": "https://github.com/stokaro/ptah-operator/actions/runs/37143952451/job/111265690053",
+        "logSHA256": "dac26c14b23ca6e278fca08732fdcd151dad1893fb740b0e16c261270c1615d3",
+        "cause": "Aggregate gate correctly refused failed source/race prerequisites and the skipped E2E matrix; no independent E2E failure."
+      }
+    ],
+    "otherChecks": "Documentation, Release, support matrix, and shared task image build passed. E2E matrix did not start after source verification failed. The unchanged Capacity run was explicitly canceled.",
+    "fixCommit": "926ba2089d1069298cf0041bdd1930f27271987d",
+    "followUp": "The wired Pod-token runner in 866125a1737bcc2b3d890387da4fbcd7f9a8e786 has its own updated source declaration. Its local protocol verification passes; terminal CI remains required."
+  },
+  "developmentStorage": {
+    "transport": "authenticated SSH",
+    "hostAlias": "diabolocom-buster",
+    "directory": "/home/buster/ptah-operator-evidence/020-development-2026-10-03",
+    "downloadVerification": [
+      {
+        "name": "b708df65-development-evidence.tar.gz",
+        "sha256": "2b42ad769e755c7c45e0651fc840aade3ab648c6fe46484bd5cd63ff06b6b646",
+        "downloadVerified": true
+      },
+      {
+        "name": "pod-token-2026-10-03.tar.gz",
+        "sha256": "6ab606d73142bf487f0c74d856f31a99561a8d300cfb4943112efd3b9dfad5d5",
+        "downloadVerified": true
+      },
+      {
+        "name": "pod-token-first-harvest-2026-10-03.tar.gz",
+        "sha256": "419bae7e5f8d724bc5139c8987af63d66f4a1d3276dd9132b16886eda005af90",
+        "downloadVerified": true
+      },
+      {
+        "name": "pod-token-receiver-restart-2026-10-03.tar.gz",
+        "sha256": "0c0c6fc11b5f47701d99486b3d15b7238ac1f1fc68ae9e858a2d21555f696b7c",
+        "downloadVerified": true
+      },
+      {
+        "name": "pod-token-concurrent-2026-10-03.tar.gz",
+        "sha256": "9c16df834b39fb9d77cbac76213e8b48e105016248ebde4fd6c95ba17a61be81",
+        "downloadVerified": true
+      },
+      {
+        "name": "pod-token-authority-2026-10-04.tar.gz",
+        "sha256": "e958dda8eb463bf2d84d07297fc6d403cc3ca69b8744611ba65f24dd1f3a21c1",
+        "downloadVerified": true
+      }
+    ],
+    "scope": "Development evidence copy. Final #584 custody, retention policy and owner acceptance remain unassessed."
+  },
+  "podTokenFirstHarvest": {
+    "requirement": "#586 acknowledged-result survival before first controller harvest",
+    "conclusion": "passed",
+    "source": "866125a1737bcc2b3d890387da4fbcd7f9a8e786",
+    "imageDigest": "sha256:885c1bc6f33f097c26b6c25d1052fc17cb09c3af724d76ac0fea2b99ca9e039d",
+    "procedureSHA256": "0c83d3efe6fd0e4ca5ea462559585715f162cfe392c2db9b0c8ae40f8e22f9f9",
+    "platform": "Kubernetes 1.37.0, linux/amd64, diabolocom",
+    "method": "Hold the original Plan Pod before execution, pause reconciliation, enroll only its public identity through manager admission, then let the original runner publish using its own Pod-bound token. Remove the producing Pod and logs and replace both managers before first consumption. Reconstruct the exact saved plan, approve it once and verify the native database result.",
+    "runs": [
+      {
+        "engine": "postgresql",
+        "report": "first-harvest-postgresql/first-harvest-maximum.json",
+        "reportSHA256": "f98ed6ceb6aa42c04897bac7b225b1e6d778ad8574aea83ad64be96c840330aa",
+        "completedAt": "2026-10-03T20:21:53.464567+00:00",
+        "planBytes": 8388608,
+        "planChunks": 16,
+        "approvedApplyJobs": 1,
+        "converged": true
+      },
+      {
+        "engine": "mysql",
+        "report": "first-harvest-mysql/first-harvest-maximum.json",
+        "reportSHA256": "7bdb5bb4253bb38d827af01be1b777b98d6363e3162dee7276c20afa6d1ee1b7",
+        "completedAt": "2026-10-03T20:25:38.779732+00:00",
+        "planBytes": 8388608,
+        "planChunks": 16,
+        "approvedApplyJobs": 1,
+        "converged": true
+      }
+    ],
+    "archive": {
+      "name": "pod-token-first-harvest-2026-10-03.tar.gz",
+      "sha256": "419bae7e5f8d724bc5139c8987af63d66f4a1d3276dd9132b16886eda005af90",
+      "downloadVerified": true
+    },
+    "scope": "Both native engines at the exact supported 8 MiB limit. This does not qualify lost-acknowledgment redelivery, other Kubernetes minors, final artifacts or #242 as a whole."
+  },
+  "podTokenReceiverRestart": {
+    "requirement": "#586 idempotent redelivery after lost acknowledgment and receiver replacement with Pod-token authentication",
+    "conclusion": "passed",
+    "source": "866125a1737bcc2b3d890387da4fbcd7f9a8e786",
+    "fixtureSource": "97053b41c5e720d5c8b4fddfbd19991ca994f67d",
+    "procedureSource": "1c72b1ce6aa2b05d30cfb28afaf4d57a32a47f73",
+    "fixtureImage": "e2e-registry.ptah-test-a-1-37-0-pr585-soak-b9409060-59e0909df3.svc.cluster.local:5000/e2e-fixture@sha256:883a3fab26f4224c334eef32ef1e9d8d0f915110e2ed5e3b5f57ac83b41625b9",
+    "procedureSHA256": "b9461c066488c71595a84c4293449fb63c3ac2a1b0619bd652930ba2c32bd18c",
+    "platform": "Kubernetes 1.37.0, linux/amd64, diabolocom",
+    "runs": [
+      {
+        "engine": "PostgreSQL",
+        "report": "receiver-restart-postgresql/lost-ack.json",
+        "reportSHA256": "c9f2ccc60ac8d2961cd8bfd3cc6da6e97b58b6a0f4e69515da3a15e6c0f43811",
+        "completedAt": "2026-10-03T21:39:17.054564+00:00",
+        "receiptUID": "436f3df9-c73c-40a1-9f0f-bd2458144fe9",
+        "applyJobs": 1,
+        "podRestarts": 0,
+        "converged": true
+      },
+      {
+        "engine": "MySQL",
+        "report": "receiver-restart-mysql/lost-ack.json",
+        "reportSHA256": "aa59438034eb69ed548fd77fe72030609f629f7f9d517459f1aacc8dc9b5dd46",
+        "completedAt": "2026-10-03T21:41:07.630567+00:00",
+        "receiptUID": "ae097fd7-c9e7-4bf2-b560-653df9fed236",
+        "applyJobs": 1,
+        "podRestarts": 0,
+        "converged": true
+      }
+    ],
+    "archive": {
+      "name": "pod-token-receiver-restart-2026-10-03.tar.gz",
+      "sha256": "0c0c6fc11b5f47701d99486b3d15b7238ac1f1fc68ae9e858a2d21555f696b7c",
+      "downloadVerified": true
+    },
+    "preparationFailure": "The first PostgreSQL attempt used migration-apply instead of the actual apply Pod label. Its missing-Pod assertion failed before proxy routing; the migration was suspended. The corrected gate and dry-run control use the actual label and both complete native proofs pass. The failed attempt is retained in the external archive.",
+    "scope": "Lost acknowledgment and replacement of both receiving managers, both native engines, original projected Pod tokens. This does not qualify concurrent conflicting uploads, all authority refusals, other minors, final artifacts, or #242 as a whole."
+  },
+  "podTokenConcurrentRedelivery": {
+    "requirement": "#586 identical and conflicting concurrent redelivery through both receivers with the original Pod token",
+    "conclusion": "passed",
+    "source": "866125a1737bcc2b3d890387da4fbcd7f9a8e786",
+    "procedureSource": "e5374646ce4a8eb5690241dc0e559b239ec71553",
+    "fixtureImage": "e2e-registry.ptah-test-a-1-37-0-pr585-soak-b9409060-59e0909df3.svc.cluster.local:5000/e2e-fixture@sha256:883a3fab26f4224c334eef32ef1e9d8d0f915110e2ed5e3b5f57ac83b41625b9",
+    "platform": "Kubernetes 1.37.0, linux/amd64, diabolocom",
+    "runs": [
+      {
+        "engine": "PostgreSQL",
+        "report": "concurrent-postgresql/concurrent.json",
+        "reportSHA256": "5aa9c6e07ffcd4a3196bd5f48ee42902c6c0f7404f705d39181621ddd2fc169a",
+        "ackReport": "concurrent-postgresql/lost-ack.json",
+        "ackReportSHA256": "ee1b79650d04052f1aa5e810d018dd63ab33dcc7644b7c2288ea2ec2a7be1b94",
+        "completedAt": "2026-10-03T21:54:25.953392+00:00",
+        "verification": {
+          "requests": 6,
+          "identicalReceipts": 3,
+          "conflicts": 3
+        },
+        "receiptUID": "a694b4b9-78c9-49ca-9b85-8e2b2d25634a",
+        "applyJobs": 1,
+        "podRestarts": 0,
+        "converged": true
+      },
+      {
+        "engine": "MySQL",
+        "report": "concurrent-mysql/concurrent.json",
+        "reportSHA256": "73050686b19b90d24e8657fa608cfc74555d7cf3d3571d882d896e56df7f2b5b",
+        "ackReport": "concurrent-mysql/lost-ack.json",
+        "ackReportSHA256": "2d0ef7d821a8cba3da54802f6830f301e01070c74b3c18d652635db35ecf12b0",
+        "completedAt": "2026-10-03T21:55:58.716078+00:00",
+        "verification": {
+          "requests": 6,
+          "identicalReceipts": 3,
+          "conflicts": 3
+        },
+        "receiptUID": "729b3178-5f84-4f0b-9000-a57d6ba817d0",
+        "applyJobs": 1,
+        "podRestarts": 0,
+        "converged": true
+      }
+    ],
+    "archive": {
+      "name": "pod-token-concurrent-2026-10-03.tar.gz",
+      "sha256": "9c16df834b39fb9d77cbac76213e8b48e105016248ebde4fd6c95ba17a61be81",
+      "downloadVerified": true
+    },
+    "scope": "Three overlapping request pairs per engine on two distinct receiving managers. Identical requests return the original receipt, changed canonical bytes receive 409, every immutable publication record is unchanged, and the original runner finishes with one calibrated SQL effect. This row covers redelivery after publication; the historical synchronized first-publication storage proof retains its original source identity."
+  },
+  "podTokenAuthorityRefusals": {
+    "requirement": "#586 exact Pod-token operation authority and bounded retry classification",
+    "conclusion": "passed",
+    "source": "8dc493f10628503a9ce75f77fa03cc775cd8f2fc",
+    "image": "e2e-registry.ptah-test-a-1-37-0-pr585-soak-b9409060-59e0909df3.svc.cluster.local:5000/ptah-operator@sha256:3774e8289f1735d677298f94a5400729403b93b18a97bd76f0d4d66a07aa1582",
+    "platform": "Kubernetes 1.37.0, linux/amd64, diabolocom",
+    "runs": [
+      {
+        "engine": "PostgreSQL",
+        "report": "authority-postgresql/authority.json",
+        "reportSHA256": "5a334f39f5698afb4a56aab6e1fe6f73b256049d34ce1bbd6cc628b9953d2709",
+        "ackReport": "authority-postgresql/lost-ack.json",
+        "ackReportSHA256": "9501854ec7f3fe257d9dbbb4595292be72dd7c3f437b0afc3437245319551c8a",
+        "completedAt": "2026-10-03T22:41:54.277350+00:00",
+        "verification": {
+          "refusedRequests": 32,
+          "positiveControls": 8
+        },
+        "deliveryVerification": {
+          "deliveries": 2,
+          "sqlExecutions": 1,
+          "receiptUID": "bb637010-012b-4c73-97f3-bca1b934f82e"
+        },
+        "applyJobs": 1,
+        "podRestarts": 0,
+        "converged": true
+      },
+      {
+        "engine": "MySQL",
+        "report": "authority-mysql/authority.json",
+        "reportSHA256": "ec4792cb3fdf3eaa4a38c402a7d7da30fd87f29fa9bf8e6b7170809057db2fbe",
+        "ackReport": "authority-mysql/lost-ack.json",
+        "ackReportSHA256": "7a8063eb1c74c1b2c5176348d2fcd92226fe4552c48021203867f92837cb1ffb",
+        "completedAt": "2026-10-03T22:43:30.659367+00:00",
+        "verification": {
+          "refusedRequests": 32,
+          "positiveControls": 8
+        },
+        "deliveryVerification": {
+          "deliveries": 2,
+          "sqlExecutions": 1,
+          "receiptUID": "1781f9a5-d85a-4118-a0a6-b7f5a430d449"
+        },
+        "applyJobs": 1,
+        "podRestarts": 0,
+        "converged": true
+      }
+    ],
+    "defect": "Before the fix, five immutable claim mutations returned temporary 503 responses. The fixed service returns permanent 403; an actual current claim still waiting for its enrollment keeps bounded 503 retries. Original publications were unchanged before and after the fix.",
+    "scope": "Eight refusal cases across HEAD and PUT on each of two live receivers per native engine, with authenticated foreign-Pod and original-token controls. This does not close the full CI matrix, final artifact verification, or #242.",
+    "archive": {
+      "name": "pod-token-authority-2026-10-04.tar.gz",
+      "sha256": "e958dda8eb463bf2d84d07297fc6d403cc3ca69b8744611ba65f24dd1f3a21c1",
+      "downloadVerified": true
+    }
+  }
+}

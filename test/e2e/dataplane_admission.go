@@ -23,13 +23,33 @@ import (
 // the phase runs itself against a Secret whose URL carries a server-session
 // payload: the same Pod template, with the database URL read from that
 // Secret, the operation ID a literal, and labels that keep the operator's
-// selectors and webhooks off it. Everything else in the template is the
+// selectors and webhooks off it. The original operation's result credential
+// is removed: this standalone refusal uses the legacy frame and cannot
+// publish as the original operation. The executor inputs remain the
 // operator's, so the refusal the row reads is the runner's own.
 //
 // It works on the Job as the API returned it, because it has to keep an
 // absent, a null and an empty initContainers apart, and an absent or null env
 // on a helper container, exactly as the source had them.
 func rewriteMySQLRefusalJob(source map[string]any, namespace, name, schema, operation, operationID, secret string) (map[string]any, error) {
+	var original batchv1.Job
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(source, &original); err != nil {
+		return nil, fmt.Errorf("decode source refusal Job: %w", err)
+	}
+	if durableResultJob(&original) {
+		normalized, err := resultJobWithoutProjection(&original)
+		if err != nil {
+			return nil, fmt.Errorf("detach original operation result credential: %w", err)
+		}
+		pod, err := runtime.DefaultUnstructuredConverter.ToUnstructured(&normalized.Spec.Template.Spec)
+		if err != nil {
+			return nil, err
+		}
+		source = runtime.DeepCopyJSON(source)
+		if err := unstructured.SetNestedMap(source, pod, "spec", "template", "spec"); err != nil {
+			return nil, err
+		}
+	}
 	spec, ok := runtime.DeepCopyJSONValue(source["spec"]).(map[string]any)
 	if !ok {
 		return nil, errors.New("the source Job has no spec object")
@@ -81,8 +101,8 @@ func rewriteMySQLRefusalJob(source map[string]any, namespace, name, schema, oper
 }
 
 // rewriteRefusalContainers points each container's database URL at the
-// Secret and fixes its operation ID. A container whose env is absent, null or
-// not a list keeps it as it is.
+// Secret and fixes its operation ID. A container whose env is absent or null
+// keeps it as it is.
 func rewriteRefusalContainers(containers []any, operationID, secret string) ([]any, error) {
 	for _, entry := range containers {
 		container, ok := entry.(map[string]any)

@@ -27,6 +27,8 @@ func init() {
 		&PtahSchemaPlanList{},
 		&PtahSchemaPlanChunk{},
 		&PtahSchemaPlanChunkList{},
+		&PtahResultRecord{},
+		&PtahResultRecordList{},
 		&PtahSchemaApproval{},
 		&PtahSchemaApprovalList{},
 		&PtahMigration{},

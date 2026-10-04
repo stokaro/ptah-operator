@@ -75,3 +75,19 @@ func TestStatusBarrierPatchRefusesConcurrentRoleEdits(t *testing.T) {
 		})
 	}
 }
+
+func TestMetadataBarrierPreservesReadsAndWithholdsFinalizerWrites(t *testing.T) {
+	verbs := []string{"get", "list", "watch", "create", "update", "patch", "delete"}
+	held, err := metadataBarrierVerbs(verbs)
+	if err != nil || !reflect.DeepEqual(held, []string{"get", "list", "watch", "create", "delete"}) {
+		t.Fatalf("held verbs=%v error=%v", held, err)
+	}
+	if !reflect.DeepEqual(verbs, []string{"get", "list", "watch", "create", "update", "patch", "delete"}) {
+		t.Fatal("barrier changed the saved grant it must restore")
+	}
+	for _, invalid := range [][]string{{"get", "*"}, {"get", "patch", "*"}, {"get"}, {"patch"}} {
+		if _, err := metadataBarrierVerbs(invalid); err == nil {
+			t.Fatalf("accepted a grant that cannot freeze metadata safely: %v", invalid)
+		}
+	}
+}

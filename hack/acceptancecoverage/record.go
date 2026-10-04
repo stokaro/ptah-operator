@@ -109,9 +109,12 @@ var requirements = []requirement{
 		"the upgrade and uninstall phases in `test/e2e/lifecycle_phases_e2e_test.go`, " +
 			"the refused upgrades, the late-failure recovery and the rollbacks in `test/e2e/lifecycle_failures_e2e_test.go`, " +
 			"the runtime they stop and restore in `test/e2e/lifecycle_runtime_e2e_test.go`, " +
+			"the quota-refused exported-chart install, unchanged-candidate recovery and uninstall under restricted Pod Security " +
+			"in `test/e2e/lifecycle_constraints_e2e_test.go`, " +
 			"leader failover in `test/e2e/lifecycle_ha_e2e_test.go`, " +
 			"and certificate recovery in `test/e2e/certrotation_e2e_test.go`, on every supported minor",
-		"an upgrade from a published release, since none exists yet; a cluster with a ResourceQuota or Pod Security admission; " +
+		"an upgrade from a published release, since none exists yet; the remaining lifecycle and certificate transitions " +
+			"under the profile's ResourceQuota and Pod Security settings; " +
 			"and a database audit after the lifecycle"},
 	{"PA-07", "Restore operator and database state safely",
 		"a restore drill with a database ahead of the restored Kubernetes state, proving no unapproved replay",

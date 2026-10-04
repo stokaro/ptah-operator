@@ -9,17 +9,18 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 )
 
-// rbacPause is the manager's status verb while a row holds it back: which
+// rbacPause is the manager's write grant while a row holds it back: which
 // rule of the ClusterRole it is, and what that rule granted before.
 type rbacPause struct {
 	paused    bool
 	apiGroups []string
 	resources []string
 	verbs     []string
+	heldVerbs []string
 }
 
 // statusRuleIndex is the one rule of the ClusterRole that grants the
-// requested status subresource.
+// requested resource or status subresource.
 func statusRuleIndex(role *rbacv1.ClusterRole, subresource string) (int, error) {
 	found := -1
 	for index, rule := range role.Rules {
@@ -47,4 +48,17 @@ func ruleVerbsPatch(index int, apiGroups, resources, from, to []string) ([]byte,
 		{"op": "test", "path": path + "/verbs", "value": from},
 		{"op": "replace", "path": path + "/verbs", "value": to},
 	})
+}
+
+// Metadata writes can advance resourceVersion even while status is held.
+// Preserve reads and unrelated verbs while withholding finalizer writes.
+func metadataBarrierVerbs(verbs []string) ([]string, error) {
+	if !slices.Contains(verbs, "patch") || slices.Contains(verbs, "*") {
+		return nil, errors.New("metadata barrier requires an explicit patch grant without wildcards")
+	}
+	held := slices.DeleteFunc(slices.Clone(verbs), func(verb string) bool { return verb == "patch" || verb == "update" })
+	if !slices.Contains(held, "get") {
+		return nil, errors.New("metadata barrier must preserve reads")
+	}
+	return held, nil
 }

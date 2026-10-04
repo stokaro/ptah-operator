@@ -33,6 +33,10 @@ var (
 )
 
 type Config struct {
+	// DurableResult returns plaintext Plan bytes for authenticated TLS delivery.
+	// The caller must validate delivery configuration before Run and must never
+	// write this result to diagnostic logs, including when delivery fails.
+	DurableResult  bool
 	Operation      Operation
 	PtahBinary     string
 	MaxResultBytes int64
@@ -525,20 +529,22 @@ func runPlan(
 		setResultError(&result, "invalid_input", errors.New("PTAH_EXPECTED_DATABASE_ENGINE is required"), redactor, config.Diagnostics)
 		return result
 	}
-	// A missing or malformed seal key refuses before the executor starts: a
-	// plan this runner could compute but could not seal is not worth the
-	// child dispatch it would take to find that out.
-	sealKey, err := planseal.DecodePublicKey(inputs.PlanSealPublicKey)
-	if err != nil {
-		setResultError(&result, "missing_plan_seal_key", fmt.Errorf("%s: %w", EnvPlanSealPublicKey, err), redactor, config.Diagnostics)
-		return result
+	var sealKey planseal.PublicKey
+	var sealEnvelope planseal.Envelope
+	if !config.DurableResult {
+		// Legacy log delivery requires a manager key before any child starts.
+		var err error
+		sealKey, err = planseal.DecodePublicKey(inputs.PlanSealPublicKey)
+		if err != nil {
+			setResultError(&result, "missing_plan_seal_key", fmt.Errorf("%s: %w", EnvPlanSealPublicKey, err), redactor, config.Diagnostics)
+			return result
+		}
+		if strings.TrimSpace(inputs.SealedPlanJobName) == "" {
+			setResultError(&result, "missing_plan_seal_key", fmt.Errorf("%s is required", EnvSealedPlanJobName), redactor, config.Diagnostics)
+			return result
+		}
+		sealEnvelope = planseal.Envelope{OperationID: inputs.OperationID, JobName: inputs.SealedPlanJobName}
 	}
-	if strings.TrimSpace(inputs.SealedPlanJobName) == "" {
-		setResultError(&result, "missing_plan_seal_key",
-			fmt.Errorf("%s is required", EnvSealedPlanJobName), redactor, config.Diagnostics)
-		return result
-	}
-	sealEnvelope := planseal.Envelope{OperationID: inputs.OperationID, JobName: inputs.SealedPlanJobName}
 
 	// Each read saves into a directory only this process writes, under a name
 	// no earlier read used, so a file found there after a read is that read's.
@@ -646,20 +652,19 @@ func runPlan(
 		return result
 	}
 
-	// The digest binds the approved plan to these exact plaintext bytes; the
-	// frame carries them sealed. A reader of the Pod log, or of anything that
-	// copies it, holds ciphertext -- only the manager that holds the matching
-	// private key, generated in memory and never persisted, can read the plan.
-	// The envelope binds the sealed bytes to this operation and this Job, so a
-	// validly sealed plan from a different operation or a different attempt
-	// of this one cannot be substituted for this result at harvest.
-	sealed, err := planseal.SealPlan(rawPlan, sealEnvelope, sealKey)
-	if err != nil {
-		setResultError(&result, "plan_seal_failed", err, redactor, config.Diagnostics)
-		return result
+	// Durable delivery persists these exact bytes under TLS, without a
+	// process key. Legacy frames retain their existing sealed-plan contract.
+	planOutput := string(rawPlan)
+	if !config.DurableResult {
+		sealed, err := planseal.SealPlan(rawPlan, sealEnvelope, sealKey)
+		if err != nil {
+			setResultError(&result, "plan_seal_failed", err, redactor, config.Diagnostics)
+			return result
+		}
+		planOutput = sealed
 	}
 	result.ChildExitCode = 0
-	result.Stdout = sealed
+	result.Stdout = planOutput
 	result.PlanContentDigest = contentDigest
 	result.PlanOutcome = PlanOutcomeChanges
 	return result
@@ -844,14 +849,14 @@ func readSavedPlan(path string, limit int64) ([]byte, error) {
 		return nil, errors.New("the saved plan is not a regular file")
 	}
 	if info.Size() > limit {
-		return nil, errors.New("plan output exceeds the configured plan limit")
+		return nil, fmt.Errorf("plan output exceeds the configured plan limit: saved file has %d bytes; limit is %d", info.Size(), limit)
 	}
 	document, err := io.ReadAll(io.LimitReader(file, limit+1))
 	if err != nil {
 		return nil, errors.New("the saved plan could not be read")
 	}
 	if int64(len(document)) > limit {
-		return nil, errors.New("plan output exceeds the configured plan limit")
+		return nil, fmt.Errorf("plan output exceeds the configured plan limit: read at least %d bytes; limit is %d", len(document), limit)
 	}
 	return document, nil
 }

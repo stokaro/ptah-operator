@@ -1,0 +1,8 @@
+{
+  "timestamp": "2026-09-30 16:50:19.705 UTC",
+  "dbname": "ptah_external",
+  "pid": 190,
+  "remote_host": "172.18.0.5",
+  "session_start": "2026-09-30 16:50:19 UTC",
+  "message": "statement: SELECT pg_advisory_lock(742019370001)"
+}

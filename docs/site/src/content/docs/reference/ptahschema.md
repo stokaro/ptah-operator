@@ -9,9 +9,9 @@ This page is generated from the API types by `make docs-reference`. The shipped 
 
 ## Examples
 
-Three shapes, from the least a cluster accepts to the one a shared production
-database needs. Every field not named here takes the default the table below
-records.
+These examples cover approved changes, unattended operation, shared databases,
+and workload admission. Every field not named here takes the default the table
+below records.
 
 ### The smallest resource that runs
 
@@ -41,6 +41,41 @@ spec:
     verificationPolicyFrom:
       name: ptah-verification-policy
       key: policy.yaml
+```
+
+### An approved change on MySQL
+
+Publish the desired schema with `ptah schema push --dialect mysql` and use
+the resulting artifact digest. The Secret must name the MySQL database; the
+operator account needs the [database-scoped privileges](../../support/databases/#mysql-authority)
+for the objects the schema manages. The plan review and `PtahSchemaApproval`
+flow are the same as for PostgreSQL.
+
+MySQL DDL can commit before a later statement fails. An approved plan can
+therefore leave partial effects; inspect the recorded outcome and the actual
+database before authorizing recovery. Approval does not make DDL atomic.
+
+```yaml
+apiVersion: operator.ptah.run/v1alpha1
+kind: PtahSchema
+metadata:
+  name: application-mysql
+  namespace: application
+spec:
+  target:
+    engine: MySQL
+    coordinationKey: production/application-mysql-primary
+    urlFrom:
+      name: application-mysql-database
+      key: url
+  desired:
+    ociRef: oci://ghcr.io/example/application-schema-mysql@sha256:3f79bb7b435b05321651daefd374cdc681dc06faa65e374e38337b88ca046dea
+    verificationPolicyFrom:
+      name: ptah-verification-policy
+      key: policy.yaml
+  policy:
+    apply: OnApproval
+    allowDestructive: false
 ```
 
 ### Unattended, where nobody is waiting to approve

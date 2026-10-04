@@ -13,6 +13,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/resultdelivery/jobconfig"
 	"github.com/stokaro/ptah-operator/internal/runner"
 )
 
@@ -286,6 +287,17 @@ func (b Builder) buildOperationJob(spec operationJob) (*batchv1.Job, error) {
 				},
 			},
 		},
+	}
+	if b.ResultEndpoint != "" {
+		var err error
+		if b.ResultServerTrust != nil {
+			err = jobconfig.AttachPodToken(job, spec.owner.GetUID(), spec.owner.GetGeneration(), spec.operationID, b.ResultEndpoint, b.ResultServerTrust())
+		} else {
+			err = jobconfig.Attach(job, spec.owner.GetUID(), spec.owner.GetGeneration(), spec.operationID, b.ResultEndpoint)
+		}
+		if err != nil {
+			return nil, err
+		}
 	}
 	bindStableAPIDefaults(job)
 	return job, nil

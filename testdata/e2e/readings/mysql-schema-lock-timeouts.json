@@ -1,0 +1,35 @@
+{
+  "sourceCommit": "49a5042334f309eb87fe56b746b675ed517cafbf",
+  "ptahCommit": "f6e562c5b0986cd29a53a5cc01938827336b780a",
+  "scope": "Controlled diagnostic follow-up after the full data-plane run failed; no replacement of that result or qualification claim. Both resources stayed OnApproval. Account, client address and database selectors were sanitized; SQL shape, timeout, session order and timestamps are unchanged.",
+  "readings": [
+    {
+      "timeoutSeconds": 45,
+      "jobName": "ptah-plan-e2e-mysql-4e8e0e215ae0e984",
+      "jobUID": "e06d464a-0f58-496b-b8fc-c16877b4f881",
+      "podUID": "74483ed8-9303-482c-8d24-6115e801faf9",
+      "client": "10.244.3.143",
+      "records": 182,
+      "queryExecuteCount": 71,
+      "file": "testdata/e2e/readings/mysql-schema-lock-45-plan.jsonl",
+      "sha256": "20c1abb87fcfab9f6b3285b28d1ecc1b6da1fe2eb3e9c22869ab9a565e518061",
+      "timeStart": "2026-09-30T00:41:51.339927",
+      "timeEnd": "2026-09-30T00:41:52.648273",
+      "runnerLockTimeout": "45s"
+    },
+    {
+      "timeoutSeconds": 60,
+      "jobName": "ptah-plan-e2e-mysql-75c9f843b74aafb3",
+      "jobUID": "6f9de562-cc30-4ca4-923a-5d5e22a167cd",
+      "podUID": "06caedbc-f4f2-45e1-b6c7-7f9dbcdc5e8e",
+      "client": "10.244.3.139",
+      "records": 182,
+      "queryExecuteCount": 71,
+      "file": "testdata/e2e/readings/mysql-schema-lock-60-plan.jsonl",
+      "sha256": "18e46703473e86bc7a0349ae72d97b61e68a2e3805969d5243d247abc022a886",
+      "timeStart": "2026-09-30T00:39:54.900725",
+      "timeEnd": "2026-09-30T00:39:56.213963",
+      "runnerLockTimeout": "1m0s"
+    }
+  ]
+}

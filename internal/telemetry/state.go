@@ -14,7 +14,7 @@ import (
 // need attention now, which ones have stopped being looked at, and which
 // operation has been running for longer than anyone expected. Like the
 // unresolved gauges they are rebuilt from durable status on every scrape, read
-// through the same cached view, and published only while that view is
+// through the same API reading, and published only while that view is
 // synchronized -- so ptah_operator_unresolved_view_synced is the guard an
 // alert on these requires as well, and an empty scrape is never a fleet of
 // zero.
@@ -72,7 +72,7 @@ func NewStateCollector(registerer prometheus.Registerer, view StateView, now fun
 			[]string{"family", "operation"}, nil),
 		activeSeconds: prometheus.NewDesc(
 			"ptah_operator_active_operation_seconds",
-			"Seconds since the oldest operation of a type started, by family and operation type.",
+			"Seconds since the oldest operation of a type became eligible to run, excluding a declared retry delay, by family and operation type.",
 			[]string{"family", "operation"}, nil),
 		lockReleases: prometheus.NewDesc(
 			"ptah_operator_pending_lock_releases",
@@ -101,12 +101,13 @@ type resourceState struct {
 	// attempt's claim in status.activeOperation until its retry, so the claim
 	// alone would count an ended operation as one still running and page as
 	// stalled for the whole failureRetryInterval.
-	failed           bool
-	suspended        bool
-	nextReconcile    *time.Time
-	operation        string
-	operationStarted time.Time
-	owesLockRelease  bool
+	failed             bool
+	suspended          bool
+	nextReconcile      *time.Time
+	operation          string
+	operationStarted   time.Time
+	operationNotBefore *time.Time
+	owesLockRelease    bool
 }
 
 // Collect rebuilds the gauges. A view that has not synchronized, or a read
@@ -140,10 +141,14 @@ func (c *StateCollector) emit(into chan<- prometheus.Metric, now time.Time, fami
 		if state.owesLockRelease {
 			lockReleases++
 		}
-		if state.operation != "" && !state.failed {
+		if state.operation != "" && !state.failed && (state.operationNotBefore == nil || !now.Before(*state.operationNotBefore)) {
+			started := state.operationStarted
+			if state.operationNotBefore != nil && state.operationNotBefore.After(started) {
+				started = *state.operationNotBefore
+			}
 			operations[state.operation]++
-			if oldest, seen := oldestOperation[state.operation]; !seen || state.operationStarted.Before(oldest) {
-				oldestOperation[state.operation] = state.operationStarted
+			if oldest, seen := oldestOperation[state.operation]; !seen || started.Before(oldest) {
+				oldestOperation[state.operation] = started
 			}
 		}
 		if !state.suspended && state.nextReconcile != nil && now.After(*state.nextReconcile) {
@@ -214,6 +219,13 @@ func migrationStates(migrations []operatorv1alpha1.PtahMigration) []resourceStat
 		}
 		if active := migration.Status.ActiveOperation; active != nil {
 			state.operation, state.operationStarted = string(active.Type), active.StartedAt.Time
+			// Read-only retries retain their phase and claim during backoff.
+			// They become eligible at RetryNotBefore; neither the wait nor
+			// its elapsed time is an operation stalled in flight.
+			if active.Type != operatorv1alpha1.MigrationOperationApply && active.RetryNotBefore != nil {
+				at := active.RetryNotBefore.Time
+				state.operationNotBefore = &at
+			}
 		}
 		states = append(states, state)
 	}

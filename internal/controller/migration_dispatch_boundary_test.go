@@ -72,9 +72,18 @@ func TestAnUnconfirmedMigrationApplyDispatchIsNeverRetried(t *testing.T) {
 			fault.Client = reconciler.Client
 			reconciler.Client = fault
 
-			actual := reconcileUntilTheApplyClaimIsGone(t, reconciler, api, migration)
-			if actual.Status.ActiveOperation != nil {
-				t.Fatalf("an unconfirmed Apply dispatch kept its claim: %#v", actual.Status.ActiveOperation)
+			// Repeated passes must preserve the reserved workload identity and
+			// wait for it, even when the create never confirmed its UID.
+			var actual *operatorv1alpha1.PtahMigration
+			for range 4 {
+				if _, err := reconciler.Reconcile(context.Background(), migrationRequest(migration)); err != nil {
+					t.Fatal(err)
+				}
+				actual = readMigration(t, api, migration)
+			}
+			if actual.Status.ActiveOperation == nil || actual.Status.ActiveOperation.ID != operation.ID ||
+				actual.Status.ActiveOperation.JobName != operation.JobName || actual.Status.ActiveOperation.JobUID != "" {
+				t.Fatalf("an unconfirmed running Apply lost or rebound its reserved claim: %#v", actual.Status.ActiveOperation)
 			}
 			if actual.Status.LastRun == nil ||
 				actual.Status.LastRun.Outcome != operatorv1alpha1.MigrationRunOutcomeUnknown {

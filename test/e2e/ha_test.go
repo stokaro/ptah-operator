@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -182,6 +183,34 @@ ptah_operator_failures_total{category="operation",family="schema",stage="resolve
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
+			if got := haValidateCustomOperatorMetrics([]byte(test.reading)); got != test.want {
+				t.Fatalf("verdict = %s, want %s", got, test.want)
+			}
+		})
+	}
+}
+
+func TestHAResultCleanupMetrics(t *testing.T) {
+	t.Parallel()
+	// These lines came from the leader that failed the durable-delivery HA
+	// run. Cleanup counters are background evidence, not a replacement for
+	// the operation failure and reconciliation counters this phase requires.
+	raw, err := os.ReadFile("../../testdata/e2e/readings/ha-result-cleanup-metrics.prom")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleanup := string(raw)
+	for _, test := range []struct {
+		name, reading string
+		want          haMetricVerdict
+	}{
+		{"installed cleanup samples", haTwoCounters + "\n" + cleanup, haMetricsComplete},
+		{"cleanup alone", cleanup, haMetricsWaiting},
+		{"wrong cleanup type", haTwoCounters + "\n" + strings.Replace(cleanup, " counter\n", " gauge\n", 1), haMetricsMalformed},
+		{"invalid cleanup value", haTwoCounters + "\n" + strings.Replace(cleanup, "} 2\n", "} NaN\n", 1), haMetricsMalformed},
+		{"unknown cleanup family", haTwoCounters + "\n" + strings.ReplaceAll(cleanup, "result_cleanup_operations_total", "result_unknown_total"), haMetricsMalformed},
+	} {
+		t.Run(test.name, func(t *testing.T) {
 			if got := haValidateCustomOperatorMetrics([]byte(test.reading)); got != test.want {
 				t.Fatalf("verdict = %s, want %s", got, test.want)
 			}

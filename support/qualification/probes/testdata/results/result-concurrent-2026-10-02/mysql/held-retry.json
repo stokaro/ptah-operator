@@ -1,0 +1,37 @@
+{
+  "proxy": {
+    "clientCertificateDigest": "sha256:ba110b1d0466ea452d6948c776a02d8f528cd9339b810a88f582c9d3adfb19b9",
+    "preflights": 1,
+    "attempts": [
+      {
+        "receivedAt": "2026-10-02T13:35:21.422400939Z",
+        "receipt": {
+          "Name": "ptah-result-4f3d97b50b967e78ecbacd662eb33c11daade3dffeaae0ed16307cfe208945da-complete",
+          "UID": "f12d6286-73f5-4595-89b8-ebc1a8116faa",
+          "Digest": "sha256:52c10ba1bcf33af9b90c5bd9e8633ccee8eff16c6fef975bda2cdb01f275d86c",
+          "Size": 873
+        }
+      },
+      {
+        "receivedAt": "2026-10-02T13:35:23.81731978Z",
+        "receipt": {
+          "Name": "ptah-result-4f3d97b50b967e78ecbacd662eb33c11daade3dffeaae0ed16307cfe208945da-complete",
+          "UID": "f12d6286-73f5-4595-89b8-ebc1a8116faa",
+          "Digest": "sha256:52c10ba1bcf33af9b90c5bd9e8633ccee8eff16c6fef975bda2cdb01f275d86c",
+          "Size": 873
+        }
+      }
+    ],
+    "dropped": true,
+    "released": false,
+    "retryGateEnabled": true,
+    "retryWaits": 1,
+    "retryResumedAt": "2026-10-02T13:35:23.703797655Z"
+  },
+  "jobUID": "72cbe044-1f63-4795-85e1-3497e4ce30cd",
+  "podUID": "3861f5be-d240-4191-aa7a-5557fb906fe1",
+  "intentUID": "aaaca983-5de9-4e8a-865b-8b5a3708a2a9",
+  "receiptUID": "f12d6286-73f5-4595-89b8-ebc1a8116faa",
+  "databaseWitness": "1:1:true",
+  "observedAt": "2026-10-02T13:35:24.750780+00:00"
+}

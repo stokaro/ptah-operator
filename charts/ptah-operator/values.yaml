@@ -342,3 +342,17 @@ podDisruptionBudget:
   enabled: true
   # Replicas that must stay available during a voluntary disruption.
   minAvailable: 1
+
+# Durable runner results are persisted independently of container logs.
+# Requires the built-in certificate rotator and generated webhook trust.
+resultDelivery:
+  # Send new runner results to the authenticated receiver instead of container logs.
+  enabled: true
+  # Ingress restrictions for receiver, webhook, health, and metrics ports.
+  networkPolicy:
+    # Requires a CNI that enforces NetworkPolicy. Supply peers allowed to reach
+    # webhook, health, and metrics ports; the chart cannot infer API server
+    # source addresses. Empty peers are refused when this policy is enabled.
+    enabled: false
+    # Kubernetes NetworkPolicy peers allowed to reach the manager infrastructure ports.
+    infrastructurePeers: []

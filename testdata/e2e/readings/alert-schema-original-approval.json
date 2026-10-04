@@ -1,0 +1,61 @@
+{
+    "apiVersion": "operator.ptah.run/v1alpha1",
+    "kind": "PtahSchemaApproval",
+    "metadata": {
+        "creationTimestamp": "2026-10-01T08:34:14Z",
+        "generation": 1,
+        "name": "e2e-alert-schema-postgresql-original",
+        "namespace": "ptah-test-a-1-37-0-020-baseline-5101109f-2c0c2ad35d",
+        "resourceVersion": "114935",
+        "uid": "c1d796a6-3682-4420-85da-97afc817b587"
+    },
+    "spec": {
+        "approvedAt": "2026-10-01T08:34:14Z",
+        "approver": {
+            "groups": [
+                "kubeadm:cluster-admins",
+                "system:authenticated"
+            ],
+            "username": "kubernetes-admin"
+        },
+        "mutationRequestUID": "3529312e-fc85-4fc4-bcd7-a5dc57e1e8af",
+        "planFingerprint": "sha256:9e719473095ef87d3e429aafbfa7785bc2b507f581dc2bb7a65b086c7fbe2cc0",
+        "planRef": {
+            "name": "ptah-plan-9e719473095ef87d3e429aaf",
+            "uid": "10ab7250-9169-40cf-990a-6fc478e744db"
+        },
+        "schemaRef": {
+            "name": "e2e-alert-schema-postgresql",
+            "uid": "95be094d-0ff0-45e1-bff2-37b8067ba546"
+        }
+    },
+    "status": {
+        "conditions": [
+            {
+                "lastTransitionTime": "2026-10-01T08:39:54Z",
+                "message": "The approved plan no longer matches the current database state",
+                "observedGeneration": 1,
+                "reason": "PlanNoLongerCurrent",
+                "status": "False",
+                "type": "Accepted"
+            },
+            {
+                "lastTransitionTime": "2026-10-01T08:39:54Z",
+                "message": "The approved plan no longer matches the current database state",
+                "observedGeneration": 1,
+                "reason": "PlanNoLongerCurrent",
+                "status": "True",
+                "type": "Stale"
+            },
+            {
+                "lastTransitionTime": "2026-10-01T08:34:14Z",
+                "message": "The exact plan was committed to one Apply Job dispatch",
+                "observedGeneration": 1,
+                "reason": "DispatchCommitted",
+                "status": "True",
+                "type": "Consumed"
+            }
+        ],
+        "observedGeneration": 1
+    }
+}

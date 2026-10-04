@@ -1,0 +1,30 @@
+apiVersion: operator.ptah.run/v1alpha1
+kind: PtahSchema
+metadata:
+  name: application
+  namespace: application
+spec:
+  target:
+    engine: MySQL
+    # Every resource in this namespace that writes to this physical database
+    # must use the same key, including through other aliases or credentials.
+    coordinationKey: production/application-mysql-primary
+    urlFrom:
+      name: application-database
+      key: url
+  desired:
+    # Publish the schema with --dialect mysql and replace <digest>.
+    ociRef: oci://ghcr.io/example/application-schema-mysql@sha256:<digest>
+    verificationPolicyFrom:
+      name: ptah-verification-policy
+      key: policy.yaml
+  policy:
+    apply: OnApproval
+    allowDestructive: false
+    driftSeverity: all
+  interval: 10m
+  execution:
+    activeDeadlineSeconds: 900
+    failureRetryInterval: 30s
+    connectTimeout: 10s
+  suspend: false

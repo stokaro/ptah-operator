@@ -1,7 +1,7 @@
 // Package resultframe extracts one exact, integrity-bound runner result from
 // an acceptance Pod's log. It reuses the production parser, so an acceptance
-// row cannot accept a frame the controller would reject. The data-plane phase
-// reads every result it asserts on through it.
+// row cannot accept a frame the controller would reject. Legacy acceptance
+// Jobs use this parser; durable Jobs are read from result storage.
 package resultframe
 
 import (

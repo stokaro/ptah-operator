@@ -1,0 +1,48 @@
+{
+  "scope": "Private Linux amd64 OCI index selection, immutable runner publication and protocol refusal; no Kubernetes acceptance.",
+  "sourceBaseCommit": "95e8b1e099d4a07f9b27033f59af13af1adbfb1b",
+  "sourceArchiveSHA256": "56ec9f739c06cfd291ed72a5cb8b070a060c7f4f3bcf1fb7b1b6137068783b73",
+  "sourceOverrides": [
+    {
+      "path": "test/e2e/handcraftoci/runner_variant.go",
+      "sha256": "dbee2f3b31cdc0368c9467b47d4273c3ee85a49637f44c01a284142962b8a87c"
+    },
+    {
+      "path": "test/e2e/handcraftoci/runner_variant_test.go",
+      "sha256": "2e849d88a97b5bb9b788172ec5c5cc2111f7e11a262638b1ae50bfcd5f6f94ab"
+    }
+  ],
+  "sourceIndexDigest": "sha256:55dd8efcd35c7d8d48962019265e404cd403eebfd964b855963d5135732d6971",
+  "sourceIndex": {
+    "schemaVersion": 2,
+    "mediaType": "application/vnd.oci.image.index.v1+json",
+    "manifests": [
+      {
+        "mediaType": "application/vnd.oci.image.manifest.v1+json",
+        "digest": "sha256:04d231c2537da1bd76ed4c9874b06eccef7ecb93e8d1902723b92192c33c6290",
+        "size": 3515,
+        "platform": {
+          "architecture": "amd64",
+          "os": "linux"
+        }
+      },
+      {
+        "mediaType": "application/vnd.oci.image.manifest.v1+json",
+        "digest": "sha256:53ca975a0627c9913eef2587b7252dda9f9b208e9d6e7fed53309c8b589af540",
+        "size": 837,
+        "annotations": {
+          "vnd.docker.reference.digest": "sha256:04d231c2537da1bd76ed4c9874b06eccef7ecb93e8d1902723b92192c33c6290",
+          "vnd.docker.reference.type": "attestation-manifest"
+        },
+        "platform": {
+          "architecture": "unknown",
+          "os": "unknown"
+        }
+      }
+    ]
+  },
+  "resultDigest": "sha256:b664ae0d719229aaf5794861a522659cc6add3c347b4967e8136715efa25666d",
+  "guardExitCode": 2,
+  "guardStdoutBytes": 0,
+  "receiptsMatchSavedReadings": true
+}

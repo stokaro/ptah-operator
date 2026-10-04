@@ -79,7 +79,7 @@ func desiredStateResources(t *testing.T) []string {
 	clusterScoped := clusterScopedResources(t)
 	var authored []string
 	for _, resource := range servedResources(t) {
-		if isDecisionOrPlan(resource) || clusterScoped[resource] {
+		if isDecisionOrPlan(resource) || resource == "ptahresultrecords" || clusterScoped[resource] {
 			continue
 		}
 		authored = append(authored, resource)
@@ -117,8 +117,9 @@ func TestTheDiagnosticReaderCoversEveryKindTheOperatorServes(t *testing.T) {
 		// namespace's on-call is not entitled to that list. A namespaced Role
 		// could not grant it anyway. A plan chunk is a plan's SQL, which is a
 		// reviewer's to read rather than on-call's; the plan manifest says what
-		// diagnosis needs about it.
-		if clusterScoped[resource] || strings.HasSuffix(resource, "planchunks") {
+		// diagnosis needs about it. Result records also contain confidential SQL
+		// and private delivery keys, not ordinary diagnostic state.
+		if clusterScoped[resource] || strings.HasSuffix(resource, "planchunks") || resource == "ptahresultrecords" {
 			if granted[resource] {
 				t.Fatalf("the diagnostic reader names %s, which a namespace's reader must not see", resource)
 			}
@@ -192,8 +193,8 @@ func TestTheDesiredStateAuthorCoversEveryFamilyAPersonWrites(t *testing.T) {
 	// chunks, an approval or a run acknowledgment would be the separation this
 	// example exists to start.
 	for resource := range granted {
-		if isDecisionOrPlan(resource) {
-			t.Fatalf("the desired-state author reaches %s, which belongs to the approver", resource)
+		if isDecisionOrPlan(resource) || resource == "ptahresultrecords" {
+			t.Fatalf("the desired-state author reaches %s, which is not desired state", resource)
 		}
 	}
 }

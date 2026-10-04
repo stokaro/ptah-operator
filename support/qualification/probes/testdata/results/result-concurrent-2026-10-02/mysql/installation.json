@@ -1,0 +1,173 @@
+{
+  "operatorRevision": "b0a51ff740784beaf6cd1ebb2fe8c2715583e1b5",
+  "operatorImage": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/operator@sha256:f338a4c98d77e4908426d0c4b45a1b177ffc8c2916cae3029217b9ec12cd6f36",
+  "executorImage": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-executor@sha256:45530f0f2c41f4d649c207fe8221dad268946ca8da13b503244805c016f3c9dd",
+  "runnerImage": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-runner@sha256:7e2199f5c03660f094244b00962ec7e222f752f9cfc86276ac7cea296ce5d4b6",
+  "ptahRevision": "f6e562c5b0986cd29a53a5cc01938827336b780a",
+  "chartSHA256": "43c718af58a8ef74824b1081917d431290ea985e99fb99ba94efa2997de2260e",
+  "nodes": [
+    {
+      "node": "ptah-e2e-1-37-0-result-restar-5a0ef2fe7d-control-plane",
+      "version": "v1.37.0",
+      "containerLogMaxSize": "10Mi"
+    },
+    {
+      "node": "ptah-e2e-1-37-0-result-restar-5a0ef2fe7d-control-plane2",
+      "version": "v1.37.0",
+      "containerLogMaxSize": "10Mi"
+    },
+    {
+      "node": "ptah-e2e-1-37-0-result-restar-5a0ef2fe7d-control-plane3",
+      "version": "v1.37.0",
+      "containerLogMaxSize": "10Mi"
+    },
+    {
+      "node": "ptah-e2e-1-37-0-result-restar-5a0ef2fe7d-worker",
+      "version": "v1.37.0",
+      "containerLogMaxSize": "10Mi"
+    }
+  ],
+  "managers": [
+    {
+      "uid": "28e464d4-c934-4040-a585-f886f8194da5",
+      "images": [
+        "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/operator@sha256:f338a4c98d77e4908426d0c4b45a1b177ffc8c2916cae3029217b9ec12cd6f36"
+      ],
+      "conditions": [
+        {
+          "lastProbeTime": null,
+          "lastTransitionTime": "2026-10-02T13:31:45Z",
+          "observedGeneration": 1,
+          "status": "True",
+          "type": "PodReadyToStartContainers"
+        },
+        {
+          "lastProbeTime": null,
+          "lastTransitionTime": "2026-10-02T13:31:47Z",
+          "observedGeneration": 1,
+          "status": "True",
+          "type": "Initialized"
+        },
+        {
+          "lastProbeTime": null,
+          "lastTransitionTime": "2026-10-02T13:31:57Z",
+          "observedGeneration": 1,
+          "status": "True",
+          "type": "Ready"
+        },
+        {
+          "lastProbeTime": null,
+          "lastTransitionTime": "2026-10-02T13:31:57Z",
+          "observedGeneration": 1,
+          "status": "True",
+          "type": "ContainersReady"
+        },
+        {
+          "lastProbeTime": null,
+          "lastTransitionTime": "2026-10-02T13:31:45Z",
+          "observedGeneration": 1,
+          "status": "True",
+          "type": "PodScheduled"
+        }
+      ]
+    },
+    {
+      "uid": "9f56f618-6da6-474d-a085-8822f875bb8f",
+      "images": [
+        "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/operator@sha256:f338a4c98d77e4908426d0c4b45a1b177ffc8c2916cae3029217b9ec12cd6f36"
+      ],
+      "conditions": [
+        {
+          "lastProbeTime": null,
+          "lastTransitionTime": "2026-10-02T13:31:45Z",
+          "observedGeneration": 1,
+          "status": "True",
+          "type": "PodReadyToStartContainers"
+        },
+        {
+          "lastProbeTime": null,
+          "lastTransitionTime": "2026-10-02T13:31:47Z",
+          "observedGeneration": 1,
+          "status": "True",
+          "type": "Initialized"
+        },
+        {
+          "lastProbeTime": null,
+          "lastTransitionTime": "2026-10-02T13:31:58Z",
+          "observedGeneration": 1,
+          "status": "True",
+          "type": "Ready"
+        },
+        {
+          "lastProbeTime": null,
+          "lastTransitionTime": "2026-10-02T13:31:58Z",
+          "observedGeneration": 1,
+          "status": "True",
+          "type": "ContainersReady"
+        },
+        {
+          "lastProbeTime": null,
+          "lastTransitionTime": "2026-10-02T13:31:45Z",
+          "observedGeneration": 1,
+          "status": "True",
+          "type": "PodScheduled"
+        }
+      ]
+    }
+  ],
+  "originalJob": {
+    "uid": "72cbe044-1f63-4795-85e1-3497e4ce30cd",
+    "status": {
+      "completionTime": "2026-10-02T13:35:27Z",
+      "conditions": [
+        {
+          "lastProbeTime": "2026-10-02T13:35:27Z",
+          "lastTransitionTime": "2026-10-02T13:35:27Z",
+          "message": "Reached expected number of succeeded pods",
+          "reason": "CompletionsReached",
+          "status": "True",
+          "type": "SuccessCriteriaMet"
+        },
+        {
+          "lastProbeTime": "2026-10-02T13:35:27Z",
+          "lastTransitionTime": "2026-10-02T13:35:27Z",
+          "message": "Reached expected number of succeeded pods",
+          "reason": "CompletionsReached",
+          "status": "True",
+          "type": "Complete"
+        }
+      ],
+      "ready": 0,
+      "startTime": "2026-10-02T13:35:10Z",
+      "succeeded": 1,
+      "terminating": 0,
+      "uncountedTerminatedPods": {}
+    },
+    "backoffLimit": 0
+  },
+  "originalPod": {
+    "uid": "3861f5be-d240-4191-aa7a-5557fb906fe1",
+    "phase": "Succeeded",
+    "automountServiceAccountToken": false,
+    "containers": [
+      {
+        "name": "ptah",
+        "restartCount": 0,
+        "state": {
+          "terminated": {
+            "containerID": "containerd://84b07f56cca9ede481a47c41f6b1533b94f0b383c08ff0bed17f13aa897d4ef1",
+            "exitCode": 0,
+            "finishedAt": "2026-10-02T13:35:25Z",
+            "message": "PTAH_RUNNER_SUMMARY_V1 {\"protocolVersion\":1,\"operation\":\"migration-apply\",\"operationId\":\"sha256:b5cecee8c0ad6d3617ebefaf4fa1c324e8ee5ae30e02837810c39bc94a6a6ad3\",\"frameDigest\":\"sha256:52c10ba1bcf33af9b90c5bd9e8633ccee8eff16c6fef975bda2cdb01f275d86c\",\"mutationStarted\":true,\"coordinationDigest\":\"sha256:4014a32d53b967d8b53c4d841ed86949cd65dabf33d576dda8f3bdd27e738191\",\"targetIdentityDigest\":\"sha256:103fe456dc066869d7be6e1da237b85490a5f899b72b43f7c3acd7042abb1ff5\",\"migration\":{\"outcome\":\"applied\",\"appliedCount\":1,\"firstApplied\":1,\"lastApplied\":1}}\n",
+            "reason": "Completed",
+            "startedAt": "2026-10-02T13:35:21Z"
+          }
+        }
+      }
+    ]
+  },
+  "serviceRestored": true,
+  "proxyAndCopiedCredentialRemoved": true,
+  "fixtureRevision": "b2576f9bbbe72979ba392456846fb16da1f0f03a",
+  "runnerRevision": "b2576f9bbbe72979ba392456846fb16da1f0f03a"
+}

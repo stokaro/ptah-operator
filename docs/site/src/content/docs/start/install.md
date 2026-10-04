@@ -11,6 +11,9 @@ digests to choose, read [Try it locally](../try-it/) instead.
 
 - A Kubernetes cluster in the supported window, and cluster-admin on it. The
   window is [Kubernetes support](../../support/kubernetes/).
+- Operation Pods must be able to reach the manager's result Service over HTTPS.
+  The default installation uses durable results and needs no kubelet log-size
+  change. See [Result delivery](../../support/kubernetes/#result-log-retention).
 - Helm 4 or newer. Helm 3 is not supported and is not tested: it reaches end of
   life before this operator's first release.
 - `kubectl`, and `jq` for the commands on the pages that follow.

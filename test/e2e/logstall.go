@@ -12,22 +12,6 @@ type logStallReading struct {
 	At    time.Time `json:"at"`
 }
 
-// logReadDuration uses the fixture's request timestamps, not when the
-// harness happened to notice them. The first read must have actually hung.
-func logReadDuration(readings []logStallReading) (time.Duration, bool) {
-	var started time.Time
-	for _, reading := range readings {
-		if reading.State == "started" && started.IsZero() {
-			started = reading.At
-		}
-		if reading.State == "canceled" && !started.IsZero() {
-			duration := reading.At.Sub(started)
-			return duration, duration >= 50*time.Second && duration <= 75*time.Second
-		}
-	}
-	return 0, false
-}
-
 // schemaReadProgress dates convergence by the persisted observation, with
 // the independent approval as its lower bound. A reading from before the
 // fault or after the progress deadline cannot satisfy the row.
@@ -35,4 +19,31 @@ func schemaReadProgress(schema *ptahv1alpha1.PtahSchema, approvedAt, deadline ti
 	return freshApprovalConverged(schema) && schema.Status.Applied != nil &&
 		!schema.Status.Applied.CompletedAt.Time.Before(approvedAt) &&
 		!schema.Status.Applied.CompletedAt.Time.After(deadline)
+}
+
+// diagnosticLogHeld proves a real diagnostic request reached the injected
+// endpoint and remains unfinished. Extra requests or a closed stream cannot
+// stand in for independence from one continuously unavailable log.
+func diagnosticLogHeld(readings []logStallReading) bool {
+	started := 0
+	for _, reading := range readings {
+		switch reading.State {
+		case "listening":
+		case "started":
+			started++
+		default:
+			return false
+		}
+	}
+	return started == 1
+}
+
+// Installing the fault resets pooled kubelet connections. An initial request
+// may fail before reaching the fixture; only that setup failure may reconnect.
+// Once a request reached the fixture, its uninterrupted lifetime is the proof.
+func diagnosticLogCanReconnect(readings []logStallReading, requestErr error) bool {
+	if requestErr == nil || len(readings) != 1 {
+		return false
+	}
+	return readings[0].State == "listening"
 }

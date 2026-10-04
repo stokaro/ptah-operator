@@ -17,8 +17,11 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/stokaro/ptah-operator/test/e2e/phases"
 )
 
 func repositoryFile(t *testing.T, path string) string {
@@ -110,10 +113,10 @@ func TestASuiteCatalogThatCannotBeExecutedIsRefused(t *testing.T) {
 		},
 		"an isolation worker that is not a yes or a no": {
 			old: `"alerting"],
-      "prepare": ["dataplane"],
+      "prepare": ["assert", "dataplane"],
       "isolationWorker": true`,
 			new: `"alerting"],
-      "prepare": ["dataplane"],
+      "prepare": ["assert", "dataplane"],
       "isolationWorker": "yes"`,
 			wantError: `isolationWorker`,
 		},
@@ -133,6 +136,73 @@ func TestASuiteCatalogThatCannotBeExecutedIsRefused(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSuitesCannotOmitOrRunFixturePrerequisitesTooLate(t *testing.T) {
+	t.Parallel()
+	for _, suiteName := range []string{"certificates", "data-plane", "migrations-postgresql"} {
+		t.Run(suiteName, func(t *testing.T) {
+			t.Parallel()
+			catalog, err := loadE2ESuites(repositoryFile(t, e2eSuitesPath))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for i := range catalog.Suites {
+				if catalog.Suites[i].Name == suiteName {
+					catalog.Suites[i].Phases = slices.DeleteFunc(catalog.Suites[i].Phases, func(name string) bool { return name == "assert" })
+					catalog.Suites[i].Prepare = slices.DeleteFunc(catalog.Suites[i].Prepare, func(name string) bool { return name == "assert" })
+				}
+			}
+			// Keep assert owned by a suite, so phase coverage still holds; the
+			// defect is that this consumer no longer has its fixture producer.
+			if suiteName == "data-plane" {
+				catalog.Suites = append(catalog.Suites, e2eSuite{Name: "control", Phases: []string{"assert"}})
+			}
+			err = verifyE2ESuiteCoverage(catalog, repositoryFile(t, e2eHarnessPath))
+			if err == nil || !strings.Contains(err.Error(), `suite "`+suiteName+`"`) ||
+				!strings.Contains(err.Error(), `requires full phase "assert" earlier`) {
+				t.Fatalf("missing approval fixture was not refused before execution: %v", err)
+			}
+		})
+	}
+	t.Run("producer scheduled after its consumer", func(t *testing.T) {
+		t.Parallel()
+		catalog, err := loadE2ESuites(repositoryFile(t, e2eSuitesPath))
+		if err != nil {
+			t.Fatal(err)
+		}
+		source, err := os.ReadFile(repositoryFile(t, e2eHarnessPath))
+		if err != nil {
+			t.Fatal(err)
+		}
+		call := "run_recorded_phase assert run_go_phase assert"
+		if strings.Count(string(source), call) != 1 {
+			t.Fatal("the driver does not invoke the approval fixture producer exactly once")
+		}
+		moved := strings.Replace(string(source), call, ":", 1) + "\n" + call + "\n"
+		path := filepath.Join(t.TempDir(), "e2e-kind.sh")
+		if err := os.WriteFile(path, []byte(moved), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		err = verifyE2ESuiteCoverage(catalog, path)
+		if err == nil || !strings.Contains(err.Error(), `requires full phase "assert" earlier`) {
+			t.Fatalf("late fixture creation was not refused: %v", err)
+		}
+	})
+	t.Run("preparation prefix does not supply full fixtures", func(t *testing.T) {
+		t.Parallel()
+		declared := phases.All()
+		for i := range declared {
+			if declared[i].Name == "assert" {
+				declared[i].Preparation = 1
+			}
+		}
+		catalog := e2eSuiteCatalog{Suites: []e2eSuite{{Name: "probe", Phases: []string{"alerting"}, Prepare: []string{"assert"}}}}
+		err := verifyE2ESuitePrerequisites(catalog, declared, map[string]int{"assert": 0, "alerting": 1})
+		if err == nil || !strings.Contains(err.Error(), `requires full phase "assert" earlier`) {
+			t.Fatalf("a partial producer was counted as its completed fixtures: %v", err)
+		}
+	})
 }
 
 // Sharding a suite is one edit away from a matrix that stopped running

@@ -1024,11 +1024,18 @@ for next_release_harness_marker in \
 	'--file "$NEXT_BUILD_CONTEXT/test/e2e/Dockerfile.operator"' \
 	'push_task_image "$NEXT_OPERATOR_IMAGE" ptah-operator-next' \
 	'"$NEXT_VALUES_FILE" "$NEXT_CONTROLLER_REPOSITORY" "$IMAGE_TAG"' \
-	'E2E_NEXT_CHART_PACKAGE=$NEXT_CHART_PACKAGE' \
-	'E2E_NEXT_VALUES_FILE=$NEXT_VALUES_FILE' \
 	'E2E_NEXT_CONTROLLER_IMAGE=$NEXT_CONTROLLER_IMAGE'; do
 	static_require_count "$next_release_harness_source" "$next_release_harness_marker" 1 \
 		'synthetic next-release harness'
+done
+# Uninstall and external upgrade-alert recovery use the same prepared successor.
+# The phase-input verifier checks each handoff's exact values separately.
+# shellcheck disable=SC2016 # Exact handoff markers retain shell variables literally.
+for next_release_handoff_marker in \
+	'E2E_NEXT_CHART_PACKAGE=$NEXT_CHART_PACKAGE' \
+	'E2E_NEXT_VALUES_FILE=$NEXT_VALUES_FILE'; do
+	static_require_count "$next_release_harness_source" "$next_release_handoff_marker" 2 \
+		'synthetic next-release handoff to uninstall and upgrade alerts'
 done
 # The same exact current-release values and image identity must reach both the
 # upgrade proof and the final fresh-install proof.
@@ -1113,16 +1120,16 @@ static_require_order "$(cat "$ROOT_DIR/hack/e2e-kind.sh")" \
 # shellcheck disable=SC2016 # Match the exact generated OpenAPI regular expression.
 controller_revision_pattern='pattern: ^[^[:space:][:cntrl:]]([^[:cntrl:]]*[^[:space:][:cntrl:]])?$'
 # The realm kind is an administrator's grant and carries no controller state,
-# and a plan chunk carries bytes and nothing about who wrote them, which its
-# plan records; so neither has to carry a controllerRevision. Neither is
-# skipped: a revision field added to one later is held to the exact pattern
+# plan chunks and result records carry immutable bytes, with provenance checked
+# by their readers. These kinds need no controllerRevision. None is skipped:
+# a revision field added to one later is held to the exact pattern
 # like the rest.
 for controller_revision_crd in "$ROOT_DIR"/config/crd/bases/*.yaml; do
 	controller_revision_fields=$(grep -c '^[[:space:]]*controllerRevision:' "$controller_revision_crd" || true)
 	controller_revision_patterns=$(grep -Fc "$controller_revision_pattern" "$controller_revision_crd" || true)
 	controller_revision_minimum=1
 	case "${controller_revision_crd##*/}" in
-	operator.ptah.run_ptahrealms.yaml | operator.ptah.run_ptahschemaplanchunks.yaml)
+	operator.ptah.run_ptahrealms.yaml | operator.ptah.run_ptahschemaplanchunks.yaml | operator.ptah.run_ptahresultrecords.yaml)
 		controller_revision_minimum=0
 		;;
 	*approvals.yaml | *acknowledgments.yaml)
@@ -1317,6 +1324,7 @@ if helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" \
 	--set-string image.digest=sha256:2222222222222222222222222222222222222222222222222222222222222222 \
 	--set-string execution.executorImage=e2e.invalid/executor@sha256:0000000000000000000000000000000000000000000000000000000000000000 \
 	--set-string execution.runnerImage=e2e.invalid/runner@sha256:1111111111111111111111111111111111111111111111111111111111111111 \
+	--set resultDelivery.enabled=false \
 	--set-string webhook.existingSecret=e2e-webhook-cert \
 	--set-string webhook.caBundle=e2e-ca \
 	>/dev/null 2>"$MISSING_PTAH_VERSION_ERROR"; then
@@ -1334,6 +1342,7 @@ if helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" \
 	--set-string image.digest=sha256:2222222222222222222222222222222222222222222222222222222222222222 \
 	--set-string execution.executorImage=e2e.invalid/executor@sha256:0000000000000000000000000000000000000000000000000000000000000000 \
 	--set-string execution.runnerImage=e2e.invalid/runner@sha256:1111111111111111111111111111111111111111111111111111111111111111 \
+	--set resultDelivery.enabled=false \
 	--set-string webhook.existingSecret=e2e-webhook-cert \
 	--set-string webhook.caBundle=e2e-ca \
 	>/dev/null 2>"$MISSING_PTAH_VERSION_TEMPLATE_ERROR"; then
@@ -1351,6 +1360,7 @@ if helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" \
 	--set-string execution.executorImage=e2e.invalid/executor@sha256:0000000000000000000000000000000000000000000000000000000000000000 \
 	--set-string execution.runnerImage=e2e.invalid/runner@sha256:1111111111111111111111111111111111111111111111111111111111111111 \
 	--set-string execution.ptahVersion="$STATIC_PTAH_VERSION" \
+	--set resultDelivery.enabled=false \
 	--set-string webhook.existingSecret=e2e-webhook-cert \
 	--set-string webhook.caBundle=e2e-ca \
 	>/dev/null 2>"$MUTABLE_MANAGER_ERROR"; then
@@ -1367,7 +1377,8 @@ assert_rejected_manager_image_values() {
 		--set-string execution.executorImage=e2e.invalid/executor@sha256:0000000000000000000000000000000000000000000000000000000000000000 \
 		--set-string execution.runnerImage=e2e.invalid/runner@sha256:1111111111111111111111111111111111111111111111111111111111111111 \
 		--set-string execution.ptahVersion="$STATIC_PTAH_VERSION" \
-		--set-string webhook.existingSecret=e2e-webhook-cert \
+		--set resultDelivery.enabled=false \
+	--set-string webhook.existingSecret=e2e-webhook-cert \
 		--set-string webhook.caBundle=e2e-ca \
 		"$@" >/dev/null 2>"$REJECTED_MANAGER_IMAGE_ERROR"; then
 		printf '%s\n' 'e2e static: chart accepted an unsupported manager image configuration' >&2
@@ -1443,6 +1454,7 @@ if helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" \
 	--set-string execution.executorImage=e2e.invalid/executor@sha256:0000000000000000000000000000000000000000000000000000000000000000 \
 	--set-string execution.runnerImage=e2e.invalid/runner@sha256:1111111111111111111111111111111111111111111111111111111111111111 \
 	--set-string execution.ptahVersion="$STATIC_PTAH_VERSION" \
+	--set resultDelivery.enabled=false \
 	--set-string webhook.existingSecret=e2e-webhook-cert \
 	--set-string webhook.caBundle=e2e-ca \
 	>/dev/null 2>"$LEADER_ELECTION_ERROR"; then
@@ -1460,6 +1472,7 @@ helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" \
 	--set-string execution.executorImage=e2e.invalid/executor@sha256:0000000000000000000000000000000000000000000000000000000000000000 \
 	--set-string execution.runnerImage=e2e.invalid/runner@sha256:1111111111111111111111111111111111111111111111111111111111111111 \
 	--set-string execution.ptahVersion="$STATIC_PTAH_VERSION" \
+	--set resultDelivery.enabled=false \
 	--set-string webhook.existingSecret=e2e-webhook-cert \
 	--set-string webhook.caBundle=e2e-ca >"$NO_ELECTION_DEPLOYMENT_RENDER"
 [ "$(grep -c '^    type: Recreate$' "$NO_ELECTION_DEPLOYMENT_RENDER")" -eq 1 ] || {
@@ -1481,6 +1494,7 @@ helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" \
 	--set-string execution.executorImage=e2e.invalid/executor@sha256:0000000000000000000000000000000000000000000000000000000000000000 \
 	--set-string execution.runnerImage=e2e.invalid/runner@sha256:1111111111111111111111111111111111111111111111111111111111111111 \
 	--set-string execution.ptahVersion="$STATIC_PTAH_VERSION" \
+	--set resultDelivery.enabled=false \
 	--set-string webhook.existingSecret=e2e-webhook-cert \
 	--set-string webhook.caBundle=e2e-ca >"$HA_DEPLOYMENT_RENDER"
 [ "$(grep -c '^    type: Recreate$' "$HA_DEPLOYMENT_RENDER")" -eq 1 ] || {
@@ -1500,6 +1514,7 @@ helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" \
 	--set-string execution.executorImage=e2e.invalid/executor@sha256:0000000000000000000000000000000000000000000000000000000000000000 \
 	--set-string execution.runnerImage=e2e.invalid/runner@sha256:1111111111111111111111111111111111111111111111111111111111111111 \
 	--set-string execution.ptahVersion="$STATIC_PTAH_VERSION" \
+	--set resultDelivery.enabled=false \
 	--set-string webhook.existingSecret=e2e-webhook-cert \
 	--set-string webhook.caBundle=e2e-ca >"$DEFAULT_RBAC_RENDER"
 
@@ -1511,6 +1526,7 @@ helm template ptah-e2e-ha "$ROOT_DIR/charts/ptah-operator" \
 	--set-string execution.executorImage=e2e.invalid/executor@sha256:0000000000000000000000000000000000000000000000000000000000000000 \
 	--set-string execution.runnerImage=e2e.invalid/runner@sha256:1111111111111111111111111111111111111111111111111111111111111111 \
 	--set-string execution.ptahVersion="$STATIC_PTAH_VERSION" \
+	--set resultDelivery.enabled=false \
 	--set-string webhook.existingSecret=e2e-webhook-cert \
 	--set-string webhook.caBundle=e2e-ca >"$SHARED_RBAC_RENDER"
 
@@ -1626,6 +1642,7 @@ helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" \
 		--set-string execution.executorImage=e2e.invalid/executor@sha256:0000000000000000000000000000000000000000000000000000000000000000 \
 	--set-string execution.runnerImage=e2e.invalid/runner@sha256:1111111111111111111111111111111111111111111111111111111111111111 \
 	--set-string execution.ptahVersion="$STATIC_PTAH_VERSION" \
+	--set resultDelivery.enabled=false \
 	--set-string webhook.existingSecret=e2e-webhook-cert \
 	--set-string webhook.caBundle=e2e-ca >"$RENDERED_WEBHOOKS"
 helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" \
@@ -1635,6 +1652,7 @@ helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" \
 	--set-string execution.executorImage=e2e.invalid/executor@sha256:0000000000000000000000000000000000000000000000000000000000000000 \
 	--set-string execution.runnerImage=e2e.invalid/runner@sha256:1111111111111111111111111111111111111111111111111111111111111111 \
 	--set-string execution.ptahVersion="$STATIC_PTAH_VERSION" \
+	--set resultDelivery.enabled=false \
 	--set-string webhook.existingSecret=e2e-webhook-cert \
 	--set-string webhook.caBundle=ZTJlLWNh >"$ADMISSION_RENDER"
 [ "$(grep -Fc 'resources: ["ptahschemas/finalizers", "ptahschemaplans/finalizers"]' \
@@ -1702,6 +1720,7 @@ helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" \
 	--set-string execution.executorImage=e2e.invalid/executor@sha256:0000000000000000000000000000000000000000000000000000000000000000 \
 	--set-string execution.runnerImage=e2e.invalid/runner@sha256:1111111111111111111111111111111111111111111111111111111111111111 \
 	--set-string execution.ptahVersion="$STATIC_PTAH_VERSION" \
+	--set resultDelivery.enabled=false \
 	--set-string webhook.existingSecret=e2e-webhook-cert \
 	--set-string webhook.caBundle=ZTJlLWNh \
 	--set approvals.requireDistinctApprover=true >"$DISTINCT_APPROVER_ON_ADMISSION_RENDER"
@@ -1873,6 +1892,17 @@ rotator_crd_verbs=$(awk '
 	printf '%s\n' 'e2e static: certificate rotator CRD verifier has mutation or list access' >&2
 	exit 1
 }
+# Durable delivery permits only the release's public enrollment ConfigMap.
+rotator_configmap_rule=$(awk '
+  /^  - apiGroups:/ { selected = 0 }
+  /resources: \["configmaps"\]/ { selected = 1 }
+  selected { print }
+' "$ROTATOR_RENDER" | tr -d '[:space:]')
+[ "$rotator_configmap_rule" = 'resources:["configmaps"]resourceNames:["ptah-e2e-ptah-operator-result-enrollment"]verbs:["get","update"]' ] || {
+	printf '%s\n' 'e2e static: result rotation ConfigMap access exceeds its exact enrollment object' >&2
+	exit 1
+}
+
 # The rotator reads no admission policy and no scheduling or quota object: the
 # verifier that needed them is gone.
 for default_forbidden_marker in \
@@ -1882,7 +1912,6 @@ for default_forbidden_marker in \
 		'priorityclasses' \
 		'limitranges' \
 		'resources: ["serviceaccounts"]' \
-		'resources: ["configmaps"]' \
 		'verbs: ["create"]' \
 		'--recreate-missing-secret'; do
 	if grep -F -- "$default_forbidden_marker" "$ROTATOR_RENDER" >/dev/null; then
@@ -1954,6 +1983,7 @@ if helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" \
 		--set-string execution.executorImage=e2e.invalid/executor@sha256:0000000000000000000000000000000000000000000000000000000000000000 \
 	--set-string execution.runnerImage=e2e.invalid/runner@sha256:1111111111111111111111111111111111111111111111111111111111111111 \
 	--set-string execution.ptahVersion="$STATIC_PTAH_VERSION" \
+	--set resultDelivery.enabled=false \
 	--set-string webhook.existingSecret=e2e-webhook-cert \
 	--set-string webhook.caBundle=e2e-ca \
 	--set-string webhook.failurePolicy=Ignore \
@@ -1993,8 +2023,8 @@ for crd_file in "$ROOT_DIR"/config/crd/bases/*.yaml; do
 	[ "$(grep -Fc "operator.ptah.run/crd-schema-version: \"$EXPECTED_CRD_SCHEMA_VERSION\"" "$crd_file")" -eq 1 ]
 	[ "$(grep -Ec 'operator[.]ptah[.]run/crd-schema-digest: "sha256:[0-9a-f]{64}"' "$crd_file")" -eq 1 ]
 done
-[ "$(find "$ROOT_DIR/config/crd/bases" -type f -name '*.yaml' | wc -l | tr -d '[:space:]')" = 9 ]
-[ "$(find "$ROOT_DIR/internal/crdupgrade/assets" -type f -name '*.yaml' | wc -l | tr -d '[:space:]')" = 9 ]
+[ "$(find "$ROOT_DIR/config/crd/bases" -type f -name '*.yaml' | wc -l | tr -d '[:space:]')" = 10 ]
+[ "$(find "$ROOT_DIR/internal/crdupgrade/assets" -type f -name '*.yaml' | wc -l | tr -d '[:space:]')" = 10 ]
 for crd_directory in \
 	"$ROOT_DIR/config/crd/bases" \
 	"$ROOT_DIR/charts/ptah-operator/crds" \
@@ -2091,6 +2121,7 @@ helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" --namespace ptah-e2e \
 	$crd_render_args >"$CRD_FULL_RENDER"
 # shellcheck disable=SC2086 # Static argument lines intentionally become separate Helm arguments.
 helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" --namespace ptah-e2e \
+	--set resultDelivery.enabled=false \
 	--set-string webhook.existingSecret=external-tls \
 	--set-string webhook.caBundle=Y2E= \
 	$crd_render_args >"$EXTERNAL_CERTIFICATE_RENDER"
@@ -2516,6 +2547,7 @@ done
 (cd "$ROOT_DIR" && \
 	PTAH_PRIVILEGE_RENDER="$EXTERNAL_CERTIFICATE_RENDER" \
 	PTAH_RBAC_CERTIFICATE_RUNTIME_ENABLED=false \
+	PTAH_RBAC_RESULT_DELIVERY_ENABLED=false \
 	GOCACHE="${GOCACHE:-$WORK_DIR/gocache}" \
 	go test ./internal/crdupgrade -run '^TestRenderedReleaseRBACMatchesCompiledContract$' -count=1)
 # Exercise each namespace merge branch in the release grants.

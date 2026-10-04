@@ -3,6 +3,7 @@ package e2e
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -16,8 +17,10 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/runner"
 )
 
 // The reference-data phase's own names and bounds. The fixtures the data
@@ -341,9 +344,37 @@ func referenceRefusalNamesWhatItRefused(message string) bool {
 }
 
 // referencePlanInTheClear reports whether a log carries the plan document's
-// own shape rather than the sealed box it should carry.
+// own shape, which neither result transport may write to diagnostics.
 func referencePlanInTheClear(log []byte) bool {
 	return bytes.Contains(log, []byte(referencePlanDocumentKey))
+}
+
+// referencePlanLogEvidence requires a successful Plan bound to this schema,
+// Job and Pod. A durable runner may produce no diagnostic text; its validated
+// receipt proves that the empty log belongs to an operation that ran.
+func referencePlanLogEvidence(ctx context.Context, reader client.Reader, schema *ptahv1alpha1.PtahSchema,
+	job *batchv1.Job, pod *corev1.Pod, logs []byte,
+) error {
+	if schema == nil || schema.UID == "" || job == nil || job.Namespace != schema.Namespace ||
+		!ownedExactlyOnce(job.OwnerReferences, ptahSchemaAPIVersion, "PtahSchema", schema.Name, schema.UID) {
+		return errors.New("Plan diagnostic evidence does not belong to the reference schema")
+	}
+	result, err := readOperationResult(ctx, reader, job, pod, runner.OperationPlan, job.Annotations[annotationOperationID], logs)
+	if err != nil {
+		return err
+	}
+	if result.Error != nil || result.ChildExitCode != 0 {
+		return errors.New("Plan diagnostic evidence does not prove a successful operation")
+	}
+	if durableResultJob(job) && result.PlanOutcome == runner.PlanOutcomeChanges {
+		if err := confidentialPlanDelivery(result, []byte(result.Stdout), logs, true); err != nil {
+			return err
+		}
+	}
+	if referencePlanInTheClear(logs) {
+		return errors.New("Plan diagnostics carry the plan document in the clear")
+	}
+	return nil
 }
 
 // referenceRowsMismatch compares what the database holds with what the

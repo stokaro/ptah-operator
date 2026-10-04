@@ -157,7 +157,9 @@ The operator separates five authorities:
    [Refusing a self-approval](#refusing-a-self-approval).
 3. The controller may manage plans and their chunks, Jobs, Leases, status, and
    Events, and create the ConfigMaps an Apply mounts its plan through. Its
-   shipped ClusterRole contains no Secret permission. Typed admission policies
+   default ClusterRole grants Secret CREATE only for operation-bound delivery
+   credentials, guarded by admission; it grants no Secret reads. Disabling
+   `resultDelivery.enabled` removes that CREATE grant. Typed admission policies
    that ship with the release constrain its main-resource writes to structural
    Job, immutable plan, immutable chunk and immutable projection shapes; a
    fail-closed webhook then reconstructs and compares the complete write
@@ -266,7 +268,7 @@ deliberately excludes Secrets, plan chunks and ConfigMaps: the chunks are a
 plan's SQL, and a ConfigMap may be the copy of it an Apply mounted. It reads
 the plan manifests, which carry the digests, the statement count and the
 privilege kinds, and operation Pod logs, since
-[Pod logs carry a sealed plan](#pod-logs-carry-plans). Grant the SQL to
+[Plan results stay out of logs](#pod-logs-carry-plans). Grant the SQL to
 reviewers, with the approver role or `examples/approver-plan-reader-role.yaml`.
 
 These write boundaries reduce the effect of controller bugs and prevent its
@@ -523,62 +525,42 @@ on the schema, the plan and its chunks and nothing else;
 [install](../read-a-plan/#install).
 
 A plan that reached an Apply has one more copy. The Apply Pod holds no
-Kubernetes credential and the kubelet mounts no custom resource, so the
+Kubernetes API credential and the kubelet mounts no custom resource, so the
 operator writes the plan into immutable ConfigMaps of its chunks' names, owned
 by the plan, just before it creates the Apply Job, and they are deleted with
 the plan. Whoever may read ConfigMaps in the namespace reads the plans that
 were applied there. A plan that is waiting for a person, or that was never
 applied, has no ConfigMap.
 
-### Pod logs carry a sealed plan {#pod-logs-carry-plans}
+### Plan results stay out of logs {#pod-logs-carry-plans}
 
-A Plan Job reports to the controller through its container log. The runner
-writes one framed result to stdout, and until
-[#449](https://github.com/stokaro/ptah-operator/issues/449) a successful Plan
-frame held the whole plan document in the clear: every statement, and for
-[declared reference data](../reference-data/) the row values in them. It no
-longer does. Before writing the frame, the runner seals the plan to a public
-key the manager generates fresh at process startup, using an anonymous NaCl
-sealed box: the frame carries ciphertext, and only the private half of that
-key -- held in the manager's memory, never written to a Secret, a ConfigMap,
-or disk -- can open it. The controller reads the same frame through the
-`pods/log` API it always has, opens the seal in memory, checks the plaintext,
-and only then commits it to the plan's chunks.
+The default runner sends its result over TLS with a Pod-bound token whose sole
+audience is `operator.ptah.run/results`.
+The exact plan is stored in confidential `PtahResultRecord` payloads before
+acknowledgment, then independently validated and published into immutable plan
+chunks. Neither SQL nor reusable delivery credentials belong in diagnostic
+logs, Events, or ordinary status. Access to result records exposes plans; old development credential records
+can also contain private delivery keys. Exclude result records from ordinary
+reader and author roles and cover them with encryption at rest and restricted
+backups. The diagnostic reader example grants no result-record access.
 
-That closes what used to be true of every copy of the frame:
+Kubelet rotates the explicit projected token. Automatic API-token mounting stays
+disabled, and the runner receives no API permissions. The receiver audience must
+not be configured as an accepted Kubernetes API audience. Admission keeps the
+projection out of helper containers. The receiver verifies TokenReview, the
+immutable original-Pod binding, and the live operation; a body that claims
+another resource, Job or Pod cannot acquire that identity. No per-operation
+Secret is created. A manager restart
+does not discard the stored result or require its original process key.
 
-- the Pod's log, readable by anyone with `get` on `pods/log` in the namespace
-  until the Job is removed, which is five minutes after it finished at the
-  earliest;
-- the container log file on the node, until the kubelet garbage-collects the
-  container;
-- any log store a node agent ships container logs to, with that store's
-  readers and its retention.
+When `resultDelivery.enabled=false`, legacy Jobs instead write one frame to
+stdout. A Plan payload in that frame is sealed to a manager process key;
+logs hold ciphertext. Loss of that key can require another read-only Plan.
+This legacy transport is outside the stable 0.2.0 qualification profile.
 
-Each of those now holds ciphertext. `pods/log` in an application namespace is
-no longer plan access, and the diagnostic reader
-(`examples/diagnostic-reader-role.yaml`) example grants it for that reason.
-
-The key is scoped to the process, not to any one Plan. A manager restart
-generates a new key pair, and each replica of the default two-replica install
-holds a key pair of its own, so a Plan Job dispatched before a restart or a
-leadership change is sealed to a key the process harvesting it does not hold.
-That process keeps the running Job rather than retire it, and once the Job
-finishes it retries the Plan under its current key rather than wait on a
-payload it cannot open. Plan is read-only, so that retry costs nothing the
-original attempt did not already cost. The claim a schema persists while a
-Plan Job runs records the digest of the key it was sealed to, so the mismatch
-is detected before the manager even attempts to open the payload.
-
-Sealing covers the plan payload specifically, because that is the one frame
-field that must round-trip byte for byte into an approval. Two more places
-Ptah's own free-text account of a failure can quote a database value --
-`migrations up`'s run error, and the error a dirty revision records -- are
-handled differently: the runner drops that text before it ever reaches the
-frame, because nothing this operator does with a migration result reads it.
-The controller's own account of a migration failure names the outcome and the
-affected version, never the database's sentence about either, so there was
-nothing to seal.
+Migration run error text that can disclose database values is removed from the
+structured result in both transports. Failure reports name the outcome and
+affected versions, not the database's free-text description.
 
 Approval admission fails closed. It binds names to UIDs, rejects a plan whose
 storage commit is incomplete, rejects changed policy bytes or target state, and
@@ -591,7 +573,7 @@ field-level authorization.
 
 The runner never invokes a shell. It checks command arguments against known
 credential values, derives and redacts standalone and escaped credentials from
-database URLs, bounds stdout and stderr, and validates a framed result containing
+database URLs, bounds stdout and stderr, and validates a structured result containing
 the operation ID, coordination digest, and protocol version. A target sets
 exactly one of `spec.target.coordinationKey` and `spec.target.realmRef`, and
 both are non-secret operator inputs. A key is hashed with the normalized engine
@@ -606,7 +588,7 @@ allowed when the non-secret route and certificate paths stay fixed, while a
 change to TLS verification, channel binding, authentication requirements, or
 plaintext fallback invalidates the plan before the mutating child dispatches.
 
-Raw drift details are parsed in memory and excluded from the framed result.
+Raw drift details are parsed in memory and excluded from the structured result.
 Observe exposes one canonical category aggregate for each category the report
 found, each containing only a category from the closed v1 machine vocabulary, a
 positive count, and a severity. A syntactically valid but unknown category fails the operation rather
@@ -623,7 +605,7 @@ Resolve and Verify follow the same boundary: native stdout is strictly decoded
 before a small typed descriptor or requirement-name set is emitted, arbitrary
 verification details and inspection metadata are discarded, and native stderr
 or executor errors can produce only generic typed failures. No Resolve,
-Verify, Observe, or Apply frame carries native stdout.
+Verify, Observe, or Apply result carries native stdout.
 Planning executes twice under the target Lease, reads each plan from the file
 `schema plan --output` saved, requires the two files to be byte-identical, and
 validates the accepted bytes through a native Apply dry-run before
@@ -637,7 +619,7 @@ credential-bearing principal DDL.
 
 Native stderr from Plan and Apply is discarded rather than forwarded: under
 `--json` it lists the planned statements, which can carry declared row values.
-Apply native stdout is never copied into the framed result or runner
+Apply native stdout is never copied into the structured result or runner
 diagnostics, including failure paths, and neither is the error sentence its
 report carries. Only generic typed failures leave the runner. A stale plan is
 reported as `stale_plan`, whether the schema or the declared rows moved, and
@@ -646,8 +628,8 @@ it: another Pod of the same Job may have run, so no one child's report proves
 that nothing was sent.
 
 A successful Plan frame is the one frame that carries the plan: it transports
-the exact plan bytes, sealed, to the controller before they are committed to
-immutable chunks. See [Pod logs carry a sealed plan](#pod-logs-carry-plans).
+the exact plan bytes through the authenticated receiver before they are
+committed to immutable chunks. See [Plan results stay out of logs](#pod-logs-carry-plans).
 Apply frames never contain native SQL output.
 
 The runner also writes a summary of each frame into its container's

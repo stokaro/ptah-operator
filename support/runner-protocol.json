@@ -1,5 +1,92 @@
 {
   "schemaVersion": 1,
   "protocolVersion": 1,
-  "sourceDigest": "sha256:86b3fcf9c9bcf868de82fb7e9d3c8f6ad8ec72128351ecdd16ce3e67d43041f4"
+  "sourceDigest": "sha256:86b3fcf9c9bcf868de82fb7e9d3c8f6ad8ec72128351ecdd16ce3e67d43041f4",
+  "declared": [
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:12780012a739674513f29ea61cf5f9b7bea8fefe966dec75a03645650b89e03b",
+      "reason": "Complete the initial protocol before the first tagged 0.2.0 release. The invalid_plan_output diagnostic now includes the measured saved-file size or an honest read lower bound and the unchanged 8 MiB limit. Its error code, result shape, refusal boundaries, payload handling, and execution behavior are unchanged. No tagged release could have stored or consumed an earlier protocol-1 contract; all development contract counters remain 1."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:b2da427538fa9ab6f68af5f253a739638d11d2306a4a43fb2c53f1d6800663d7",
+      "reason": "Expose the existing decoded-result validator for authenticated delivery without changing the runner command, execution checks, result fields, log framing, or acceptance rules. The new function requires an explicit operation and ID and delegates to the same validator used by the existing parser. The receiver and sender are not yet connected to the runner command; protocol version 1 remains unchanged."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:926c2691a4565b5f1e36248fa60e4137cb47bbd3aa829a446074782e5735c6f2",
+      "reason": "Complete the initial durable result transport before the first tagged 0.2.0 release. Explicit TLS delivery validates projected credentials and operation/Pod identity before child dispatch, sends the completed result with bounded retries, and never falls back to logs. Durable Plan results contain the exact validated plaintext bytes instead of process-key ciphertext; termination summaries retain their payload digest and do not claim acknowledgment. Jobs without delivery configuration retain their existing log protocol during integration. No tagged release could have stored or consumed an earlier protocol-1 contract; the development contract counters remain 1."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:736ab6547c32e0221ad22b557d562437f3343db5fffeb3877e339e97185de173",
+      "reason": "Complete the initial durable delivery identity before the first tagged 0.2.0 release. The runner now requires the original resource generation as a literal Job-template input and holds its client certificate to that generation as well as the operation and actual Pod identity. A shared Job projection fixes the TLS credential Secret, read-only mount, downward API identity, and absence of Kubernetes credentials; legacy Jobs without durable delivery flags retain their existing behavior. No tagged release could have stored or consumed an earlier protocol-1 contract; development contract counters remain 1."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:8d7ac632775915e913542724d62a07cb4a3403d9f966a9779ef390108ee59cee",
+      "reason": "Complete the initial 0.2.0 result transport before the first tagged release. Durable publication now uses the dedicated immutable PtahResultRecord API instead of workload Secrets, preserving digest reservation, chunk identity checks, completion readback, payload bounds, and TLS redelivery. The storage change grants no Kubernetes API credential to the runner and requires no database Secret reads. The log path and wire payload are unchanged; development protocol counters remain 1."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:832fe02102c0541f893b6f4a944553e75d3519e3393afcb0c59d7e52dd3fe913",
+      "reason": "Complete the initial durable transport before the first tagged 0.2.0 release. Before starting SQL, a configured runner authenticates its projected credential through a bounded mTLS HEAD request with live delivery-authority checks. This request publishes nothing and is neither execution permission nor a durable receipt. Failed authentication or receiver unavailability stops the child; completed results retain identical-byte redelivery. Legacy Jobs without delivery configuration are unchanged. No tagged release consumed an earlier protocol-1 contract; development counters remain 1."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:1311d92d6531c466e44a082281029681687c2d53803d215949745903b854a23e",
+      "reason": "Complete durable publication admission before the first tagged 0.2.0 release. Result records now share strict canonical manifest, metadata, owner, length, and digest checks between admission and readback. Completion validates every persisted chunk UID and the full protocol under the canonical credential and live operation authority. Identical concurrent writes remain idempotent; completed publications cannot be healed by recreating missing members. The wire payload and execution behavior are unchanged. No tagged release consumed an earlier protocol-1 contract; development counters remain 1."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:471a7a76576eccb0c9167abf79a724d60bb216569ade964c6abca083955452ee",
+      "reason": "Complete durable result consumption before the first tagged 0.2.0 release. The result store can locate and verify a publication by its immutable attempt without reading the producing Pod or Job. Consumers must check the returned full binding and protocol against the persisted operation. The runner wire payload and execution behavior are unchanged; development protocol counters remain 1."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:e268ff71d1e568283329ccea88d78528c4495e62611446f2da67554172139ec3",
+      "reason": "Complete receiver trust reload before the first tagged 0.2.0 release. Rotating receivers revalidate the current client CA at every authority check, including after upload and before durable completion, so an existing TLS connection cannot retain removed trust. Runner payload, execution checks, and bounded retries are unchanged. No tagged release consumed an earlier protocol-1 contract; development counters remain 1."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:068e789c7a05f206714d6bf83615e11070410ea1bbec96a0fcde8446c5b1798b",
+      "reason": "Separate immutable credential identity decoding for cleanup from live client authentication. Cleanup can read a retained expired certificate after its canonical record disappears, then check the original resource before deleting its Secret projection. ClientIdentity still rejects expired and not-yet-valid leaves; TLS, live authority, runner payload, execution, and retry behavior are unchanged. No tagged release consumed an earlier protocol-1 contract; development counters remain 1."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:5316c44fe37a4a8dc0262bc58c11f7f70839d2796278bb5a0e8959822a500830",
+      "reason": "Add the immutable retired result-record role and a cleanup-only intent binding reader before the first 0.2.0 tag. Retirement fences new delivery while existing receipts remain readable, and its API creation time starts the recovery window. Runner payloads, TLS identities, and SQL execution limits are unchanged. No tagged release consumed an earlier protocol-1 contract; development counters remain 1."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:6ba7d2c6dcfd643dffae5854fb88026e0eb155294656eb9da70d211c52a7f539",
+      "reason": "Add an immutable attempt index to new result publications before the first 0.2.0 tag. Previously persisted unindexed publications remain readable and retryable. Cleanup validates child ownership and permits finalizing foreground deletion without changing payloads, digests, delivery identity, or SQL execution. No tagged release consumed an earlier protocol-1 contract; development counters remain 1."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:d40cd5ea8820fd8ff9a7a39ef7fbabeabe7306123bab7b1eaad7d8ef63939640",
+      "reason": "Complete result redelivery before the first tagged 0.2.0 release. When admission refuses a CREATE of changed result bytes before storage returns AlreadyExists, the store now identifies the immutable content conflict by direct read and the receiver returns the existing HTTP 409 contract instead of a temporary 503. Identical-byte retries, wire encoding, result validation, SQL execution, and all other write errors are unchanged. No tagged release consumed this development transport; protocol counters remain 1."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:022df5333b094d80b4f721e709eb6965653991ae9c501cbc4000dfe6249cfece",
+      "reason": "Complete the initial durable protocol before the first tagged 0.2.0 release. A runner whose protocol differs from its Job now exits with code 2 and the bounded mismatch diagnostic before reading delivery credentials, contacting the receiver, or starting the executor. It does not attempt a receipt under a foreign contract. Legacy framed refusals and compatible durable results are unchanged. No tagged release consumed an earlier protocol-1 contract; development counters remain 1."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:9afdd1e8c0afed196f8d3a9128b6e8a7593301651140e16b0d453c460d8e59f3",
+      "reason": "Complete bounded receiver preflight retries before the first tagged 0.2.0 release. Temporary receiver or transport failures now retry the read-only authentication request within the existing attempt and total delivery limits. Definitive authority refusals remain immediate; the runner starts its child only after authentication succeeds and never repeats SQL during result redelivery. Wire fields, identities, payload bounds and legacy delivery are unchanged. No tagged release consumed this development transport; protocol counters remain 1."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:5ce1aac3021a2e65b1a0231d10ab0994f80620c0da6a0b682a02e9910ce1cda3",
+      "reason": "Add bounded Pod-token transport components before the first tagged 0.2.0 release. Token authentication requires explicit receiver configuration, server TLS validation, a receiver-only audience, and a refreshed token for each request. Existing runner and manager entrypoints still select mTLS; their accepted flags, result payload, execution checks, SQL behavior, and retry bounds are unchanged. The token components are not yet connected to operation Jobs or the installed receiver. No tagged release consumed an earlier protocol-1 contract; development counters remain 1."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:205667eea4697a8bb97b336da89730d7eb90ff53461f8ab12c94afefcdbb9dea",
+      "reason": "Complete receiver-audience Pod-token delivery before the first tagged 0.2.0 release. The installed runner now uses --result-token, verified server TLS, and a token reread on every bounded preflight or delivery attempt. Public template inputs bind the operation and downward API Job/Pod identities; the receiver rechecks TokenReview, immutable first-Pod binding, and live authority. Per-operation Secret creation is removed. Payloads, size limits, SQL execution guards, same-byte retries, and unknown-outcome recovery are unchanged. No tagged release consumed this development transport; protocol counters remain 1."
+    }
+  ]
 }

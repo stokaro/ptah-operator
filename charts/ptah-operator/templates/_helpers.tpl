@@ -199,6 +199,13 @@ app.kubernetes.io/component: controller
       (printf "--extended-resource-toleration-enabled=%t" .Values.admission.extendedResourceTolerationEnabled)
       (printf "--always-pull-images-enabled=%t" .Values.admission.alwaysPullImagesEnabled)
       (printf "--require-distinct-approver=%t" .Values.approvals.requireDistinctApprover) -}}
+{{- if .Values.resultDelivery.enabled -}}
+{{- $args = concat $args (list
+      (printf "--result-endpoint=https://%s.%s.svc" (include "ptah-operator.resultServiceName" .) .Release.Namespace)
+      "--result-cert-dir=/result-certs"
+      "--result-bind-address=:9444"
+      (printf "--result-enrollment-policy=%s" (include "ptah-operator.resultPolicyName" .))) -}}
+{{- end -}}
 {{- $args | toJson -}}
 {{- end -}}
 
@@ -242,6 +249,14 @@ app.kubernetes.io/component: controller
       (printf "--probe-interval=%s" .Values.certificateRotation.probeInterval)
       (printf "--lease-duration=%s" .Values.certificateRotation.leaseDuration)
       (printf "--lease-acquire-timeout=%s" .Values.certificateRotation.leaseAcquireTimeout)) -}}
+{{- if .Values.resultDelivery.enabled -}}
+{{- $args = concat $args (list
+      (printf "--result-secret-name=%s" (include "ptah-operator.resultSecretName" .))
+      (printf "--result-journal-secret-name=%s" (include "ptah-operator.resultJournalName" .))
+      (printf "--result-enrollment-policy=%s" (include "ptah-operator.resultPolicyName" .))
+      (printf "--result-service-name=%s" (include "ptah-operator.resultServiceName" .))
+      (printf "--result-lease-name=%s" (include "ptah-operator.resultLeaseName" .))) -}}
+{{- end -}}
 {{- $args | toJson -}}
 {{- end -}}
 
@@ -721,3 +736,28 @@ Secret it has to refuse.
 {{- end -}}
 {{- end -}}
 
+
+{{- define "ptah-operator.resultSecretName" -}}
+{{- $base := include "ptah-operator.fullname" . | trunc 50 | trimSuffix "-" -}}
+{{- printf "%s-result-trust" $base -}}
+{{- end -}}
+
+{{- define "ptah-operator.resultJournalName" -}}
+{{- $base := include "ptah-operator.fullname" . | trunc 48 | trimSuffix "-" -}}
+{{- printf "%s-result-journal" $base -}}
+{{- end -}}
+
+{{- define "ptah-operator.resultPolicyName" -}}
+{{- $base := include "ptah-operator.fullname" . | trunc 45 | trimSuffix "-" -}}
+{{- printf "%s-result-enrollment" $base -}}
+{{- end -}}
+
+{{- define "ptah-operator.resultServiceName" -}}
+{{- $base := include "ptah-operator.fullname" . | trunc 55 | trimSuffix "-" -}}
+{{- printf "%s-results" $base -}}
+{{- end -}}
+
+{{- define "ptah-operator.resultLeaseName" -}}
+{{- $base := include "ptah-operator.fullname" . | trunc 47 | trimSuffix "-" -}}
+{{- printf "%s-result-rotation" $base -}}
+{{- end -}}

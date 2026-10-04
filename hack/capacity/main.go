@@ -31,12 +31,15 @@ import (
 	"syscall"
 	"time"
 
+	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 func main() {
@@ -48,17 +51,24 @@ func main() {
 
 func run() error {
 	var (
-		kubeconfig   = flag.String("kubeconfig", os.Getenv("KUBECONFIG"), "kubeconfig of the lab cluster")
-		workloadPath = flag.String("workload", "support/capacity/workload.json", "the workload to run")
-		outDir       = flag.String("out", "", "directory to write report.json and summary.md into")
-		metricsPort  = flag.Int("metrics-port", 8080, "the manager's metrics port")
-		schemaV1     = flag.String("schema-v1", "", "the first schema artifact, as an oci:// reference by digest")
-		schemaV2     = flag.String("schema-v2", "", "the schema artifact the change batch moves to")
-		migrationV1  = flag.String("migration-v1", "", "the first migration artifact")
-		migrationV2  = flag.String("migration-v2", "", "the migration artifact the change batch moves to")
-		in           inputs
+		faultBaselinePath = flag.String("retention-fault-baseline", "", "run only the retention fault on the exact resumed fleet in a prior maintenance inventory; requires a fresh output and checkpoint directory")
+		kubeconfig        = flag.String("kubeconfig", os.Getenv("KUBECONFIG"), "kubeconfig of the lab cluster")
+		checkpointPath    = flag.String("checkpoint-probe", "", "Python database verifier for soak checkpoints")
+		checkpointState   = flag.String("checkpoint-state", "", "owned capacity database state for soak checkpoints")
+		catalogPath       = flag.String("inputs", "", "populated per-slot input catalog prepared by the capacity harness")
+		workloadPath      = flag.String("workload", "support/capacity/workload.json", "the workload to run")
+		outDir            = flag.String("out", "", "directory to write report.json and summary.md into")
+		hostPath          = flag.String("host-info", "", "JSON capacity reading from the Docker daemon hosting the lab")
+		apiCount          = flag.Int("expected-api-servers", 3, "required number of independently sampled control-plane API servers")
+		managerCount      = flag.Int("expected-managers", 2, "required number of independently sampled manager processes")
+		metricsPort       = flag.Int("metrics-port", 8080, "the manager's metrics port")
+		schemaV1          = flag.String("schema-v1", "", "the first schema artifact, as an oci:// reference by digest")
+		schemaV2          = flag.String("schema-v2", "", "the schema artifact the change batch moves to")
+		migrationV1       = flag.String("migration-v1", "", "the first migration artifact")
+		migrationV2       = flag.String("migration-v2", "", "the migration artifact the change batch moves to")
+		in                inputs
 	)
-	flag.StringVar(&in.namespace, "namespace", "", "the namespace the workload runs in")
+	flag.StringVar(&in.namespace, "namespace", "", "comma-separated workload namespaces; the first also holds the restart approval fixture")
 	flag.StringVar(&in.operatorNamespace, "operator-namespace", "", "the namespace the manager runs in")
 	flag.StringVar(&in.managerSelector, "manager-selector", "app.kubernetes.io/component=controller", "label selector for the manager Pods")
 	flag.StringVar(&in.registrySecret, "registry-secret", "demo-registry", "Secret holding the registry credentials")
@@ -67,14 +77,68 @@ func run() error {
 	flag.StringVar(&in.databaseSecret, "database-secret", "capacity-db-%d", "Secret name pattern, one database per resource")
 	flag.StringVar(&in.registryIP, "registry-ip", "", "the registry's address, for the outage")
 	flag.Parse()
+	if *apiCount < 1 {
+		return errors.New("expected-api-servers must be positive")
+	}
+	if *managerCount < 1 {
+		return errors.New("expected-managers must be positive")
+	}
 
 	in.schemaRefs = [2]string{*schemaV1, *schemaV2}
 	in.migrationRefs = [2]string{*migrationV1, *migrationV2}
+	var err error
+	in.namespaces, err = parseNamespaces(in.namespace)
+	if err != nil {
+		return err
+	}
+	in.namespace = in.namespaces[0]
 	load, err := loadWorkload(*workloadPath)
 	if err != nil {
 		return err
 	}
+	var baseline *retentionInventory
+	if *faultBaselinePath != "" {
+		if load.Soak == nil || !load.Soak.RetentionFault {
+			return fmt.Errorf("retention-fault-baseline requires a workload with the retention fault enabled")
+		}
+		inventory, e := readFaultInventory(*faultBaselinePath)
+		if e != nil {
+			return e
+		}
+		baseline = &inventory
+	}
+	var catalogDigest string
+	if *catalogPath != "" {
+		in.catalog, catalogDigest, err = readInputCatalog(*catalogPath, load, os.Getenv("E2E_PTAH_REVISION"))
+		if err != nil {
+			return err
+		}
+	}
 	if err := requireInputs(in, load, *outDir); err != nil {
+		return err
+	}
+	var checkpoint func(context.Context, int, string) (databaseCheckpoint, error)
+	var faultProbe func(context.Context, string, int, string) error
+	if load.Soak != nil || load.ApprovalBacklog {
+		checkpoint, err = checkpointProbe(*checkpointPath, *checkpointState, filepath.Dir(*catalogPath), in.catalog)
+		if err != nil {
+			return err
+		}
+	}
+	if load.Soak != nil && load.Soak.RetentionFault {
+		faultProbe = newRetentionFaultProbe(filepath.Join(filepath.Dir(*checkpointPath), "capacity_retention_fault.py"), *checkpointState, filepath.Dir(*catalogPath), *outDir)
+	}
+
+	var unrelated retentionArchive
+	if load.UnrelatedObjects {
+		unrelated, err = unrelatedEvidence(*checkpointState, *outDir, in.namespaces)
+		if err != nil {
+			return err
+		}
+	}
+
+	host, err := readHostCapacity(*hostPath)
+	if err != nil {
 		return err
 	}
 	config, err := clientcmd.BuildConfigFromFlags("", *kubeconfig)
@@ -93,32 +157,135 @@ func run() error {
 		return err
 	}
 
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		return err
+	}
+	if err := operatorv1alpha1.AddToScheme(scheme); err != nil {
+		return err
+	}
+	inputReader, err := client.New(config, client.Options{Scheme: scheme})
+	if err != nil {
+		return err
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	environment, err := describeEnvironment(ctx, clientset, in)
 	if err != nil {
 		return err
 	}
+	if in.catalog != nil {
+		environment["inputCatalogSHA256"] = catalogDigest
+		environment["inputCatalog"] = in.catalog
+	}
+	if load.UnrelatedObjects {
+		environment["unrelatedInventory"] = unrelated
+	}
+	environment["expectedAPIServers"] = *apiCount
+	recordHostCapacity(environment, host)
+	environment["expectedManagers"] = *managerCount
 	watch := &sampler{
+		expectedAPIServers: *apiCount,
+		expectedManagers:   *managerCount,
+		scrapeAPI: func(ctx context.Context, pod corev1.Pod) (scrape, error) {
+			return scrapeAPIPod(ctx, config, clientset, pod)
+		},
 		clientset: clientset, dynamic: dynamicClient,
-		namespace: in.namespace, operatorNamespace: in.operatorNamespace,
+		namespace: in.namespace, namespaces: in.namespaces, operatorNamespace: in.operatorNamespace,
 		selector: capacityLabel + "=" + load.Name, managerSelector: in.managerSelector,
 		metricsPort: *metricsPort, every: load.SampleEvery.Duration,
 		jobs: map[string]*jobRecord{},
 	}
+	workCtx, cancelWork := context.WithCancel(ctx)
+	defer cancelWork()
+	var recorders []*cycleRecorder
+	for _, namespace := range in.namespaces {
+		for _, family := range []struct {
+			name   string
+			client dynamic.ResourceInterface
+		}{
+			{"schema", dynamicClient.Resource(schemaResource).Namespace(namespace)},
+			{"migration", dynamicClient.Resource(migrationResource).Namespace(namespace)},
+		} {
+			recorder := newCycleRecorder(family.client, family.name, namespace, capacityLabel+"="+load.Name)
+			recorders = append(recorders, recorder)
+			go recorder.run(workCtx)
+			go func() {
+				<-recorder.done
+				if recorder.snapshot().Error != "" {
+					cancelWork()
+				}
+			}()
+		}
+	}
+	var setupErr error
+	for _, recorder := range recorders {
+		select {
+		case err := <-recorder.ready:
+			setupErr = errors.Join(setupErr, err)
+		case <-workCtx.Done():
+			setupErr = errors.Join(setupErr, workCtx.Err())
+		}
+	}
+	// Work may finish or fail while a sample is in flight. Keep collection
+	// under the parent cancellation signal and stop it through its finish
+	// channel, so normal scenario completion cannot truncate that sample.
 	sampling, stopSampling := context.WithCancel(ctx)
-	done := make(chan struct{})
-	go func() { watch.run(sampling); close(done) }()
+	defer stopSampling()
+	finishSampling := make(chan struct{})
+	done := make(chan error, 1)
+	go func() { done <- watch.run(sampling, finishSampling) }()
 
-	steps := &scenarios{in: in, load: load, clientset: clientset, dynamic: dynamicClient}
-	scenarioErr := runScenarios(ctx, steps)
-	stopSampling()
-	<-done
+	steps := &scenarios{faultBaseline: baseline, faultProbe: faultProbe, sampleSnapshot: func() []sample { samples, _ := watch.snapshot(); return samples }, checkpoint: checkpoint, evidenceDir: *outDir, restartJobs: func() []jobRecord {
+		_, jobs := watch.snapshot()
+		return jobs
+	}, inputReader: inputReader, in: in, load: load, clientset: clientset, dynamic: dynamicClient, recorders: recorders}
+	if baseline != nil {
+		archive, e := writeRetentionEvidence(*outDir, "retention-fault-baseline.json", baseline)
+		setupErr = errors.Join(setupErr, e)
+		environment["executionScope"] = "retention-fault-only"
+		environment["retentionFaultBaseline"] = archive
+	}
+	scenarioErr := setupErr
+	if scenarioErr == nil {
+		scenarioErr = runScenarios(workCtx, steps)
+	}
+	cancelWork()
+	for _, recorder := range recorders {
+		<-recorder.done
+	}
+	cycleProof := collectCycleEvidence(recorders)
+	if load.Soak != nil && steps.soakWindow != nil {
+		scenarioErr = errors.Join(scenarioErr, steps.validateSoakCycles(cycleProof), steps.validateRetentionPlateau())
+	}
+	environment["databaseCheckpoints"] = steps.databaseCheckpoints
+	environment["churn"] = steps.churnProofs
+	environment["retention"] = steps.retentionProofs
+	environment["retentionFault"] = steps.retentionFaultProof
+	environment["approvalBacklog"] = steps.backlogProof
+	for _, history := range cycleProof.Histories {
+		if history.Error != "" {
+			scenarioErr = errors.Join(scenarioErr, fmt.Errorf("%s cycles: %s", history.Family, history.Error))
+		}
+	}
+	close(finishSampling)
+	if err := <-done; err != nil {
+		scenarioErr = errors.Join(scenarioErr, fmt.Errorf("final capacity collection: %w", err))
+	}
 
+	if in.catalog != nil {
+		environment["inputPlans"] = steps.inputPlans
+	}
 	samples, jobs := watch.snapshot()
-	out := report{FormatVersion: 2, Workload: load, Environment: environment, Samples: samples, Jobs: jobs}
+	out := report{Cycles: cycleProof, FormatVersion: 3, Workload: load, Environment: environment, Samples: samples, Jobs: jobs}
 	for _, w := range steps.windows {
-		out.Scenarios = append(out.Scenarios, cost(w, samples, jobs))
+		reading := cost(w, samples, jobs)
+		reading.RefreshCycles, reading.CycleProblems = cyclesInWindow(w, cycleProof)
+		if len(reading.CycleProblems) > 0 {
+			reading.Incomplete[sourceCycles] = len(reading.CycleProblems)
+		}
+		out.Scenarios = append(out.Scenarios, reading)
 	}
 	if err := writeReport(*outDir, out); err != nil {
 		return errors.Join(scenarioErr, err)
@@ -130,6 +297,42 @@ func run() error {
 // that fails ends the run, and the report still carries every window measured
 // up to it: a workload that did not converge is itself a finding.
 func runScenarios(ctx context.Context, steps *scenarios) error {
+	if steps.faultBaseline != nil {
+		if err := steps.validateFaultBaseline(ctx); err != nil {
+			return err
+		}
+		slog.Info("scenario", "name", "retention fault", "scope", "existing fleet only")
+		if err := steps.retentionFault(ctx); err != nil {
+			return fmt.Errorf("retention fault: %w", err)
+		}
+		return nil
+	}
+	if steps.load.ApprovalBacklog {
+		for _, step := range []struct {
+			name string
+			run  func(context.Context) error
+		}{{"cold start", steps.create}, {"steady state", steps.steady}, {"approval backlog", steps.approvalBacklog}} {
+			slog.Info("scenario", "name", step.name)
+			if err := step.run(ctx); err != nil {
+				return fmt.Errorf("%s: %w", step.name, err)
+			}
+		}
+		return nil
+	}
+	if steps.load.Soak != nil {
+		for _, step := range []struct {
+			name string
+			run  func(context.Context) error
+		}{
+			{"cold start", steps.create}, {"soak", steps.soak}, {"retention fault", steps.retentionFault}, {"approval gate", steps.prepareApproval}, {"restart burst", steps.restart}, {"registry outage", steps.outage},
+		} {
+			slog.Info("scenario", "name", step.name)
+			if err := step.run(ctx); err != nil {
+				return fmt.Errorf("%s: %w", step.name, err)
+			}
+		}
+		return nil
+	}
 	for _, step := range []struct {
 		name string
 		run  func(context.Context) error
@@ -151,6 +354,9 @@ func runScenarios(ctx context.Context, steps *scenarios) error {
 
 func requireInputs(in inputs, load workload, outDir string) error {
 	var missing []string
+	if (load.Soak != nil || load.ApprovalBacklog) && in.catalog == nil {
+		missing = append(missing, "-inputs for soak or approval backlog")
+	}
 	for name, value := range map[string]string{
 		"-namespace": in.namespace, "-operator-namespace": in.operatorNamespace, "-out": outDir,
 	} {
@@ -158,10 +364,10 @@ func requireInputs(in inputs, load workload, outDir string) error {
 			missing = append(missing, name)
 		}
 	}
-	if load.Schemas > 0 && (in.schemaRefs[0] == "" || load.ChangeBatch > 0 && in.schemaRefs[1] == "") {
+	if in.catalog == nil && load.Schemas > 0 && (in.schemaRefs[0] == "" || load.ChangeBatch > 0 && in.schemaRefs[1] == "") {
 		missing = append(missing, "-schema-v1/-schema-v2")
 	}
-	if in.migrationRefs[0] == "" || load.ChangeBatch > 0 && in.migrationRefs[1] == "" {
+	if in.catalog == nil && (in.migrationRefs[0] == "" || load.ChangeBatch > 0 && in.migrationRefs[1] == "") {
 		missing = append(missing, "-migration-v1/-migration-v2")
 	}
 	if load.Outage.Duration > 0 && in.registryIP == "" {
@@ -182,7 +388,7 @@ func requireInputs(in inputs, load workload, outDir string) error {
 // describeEnvironment records what the figures were measured on: the cluster,
 // how much it could give, and the manager that ran.
 func describeEnvironment(ctx context.Context, clientset kubernetes.Interface, in inputs) (map[string]any, error) {
-	out := map[string]any{"measuredAt": time.Now().UTC().Format(time.RFC3339)}
+	out := map[string]any{"measuredAt": time.Now().UTC().Format(time.RFC3339), "workloadNamespaces": workloadNamespaces(in.namespace, in.namespaces)}
 	version, err := clientset.Discovery().ServerVersion()
 	if err != nil {
 		return nil, fmt.Errorf("read the server version: %w", err)

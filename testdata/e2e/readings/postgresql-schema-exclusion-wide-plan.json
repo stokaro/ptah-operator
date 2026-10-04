@@ -1,0 +1,25 @@
+{
+  "format_version": 1,
+  "name": "plan_de0c4773a46b",
+  "dialect": "postgres",
+  "from_fingerprint": "sha256:497f0c38d408fec0349efb0cfcf177cfb7faf10b209de04681e8785926e55228",
+  "to_fingerprint": "sha256:bf166af4731280f7e2c618f6362074b65e2fcff67e025da5015cb4a214aff3e3",
+  "destructive": true,
+  "statements": [
+    {
+      "sql": "-- Add/modify columns for table: e2e_widgets --\n-- ALTER statements: --\nALTER TABLE \"e2e_widgets\" ADD COLUMN \"fault_token\" text",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- ALTER statements: --\nALTER TABLE \"e2e_excluded_policy_keep\" DROP CONSTRAINT IF EXISTS \"e2e_excluded_policy_keep_pkey\"",
+      "severity": "destructive",
+      "reason": "DROP CONSTRAINT removes an existing data protection"
+    },
+    {
+      "sql": "-- WARNING: This will delete all data!\nDROP TABLE IF EXISTS \"e2e_excluded_policy_keep\" CASCADE",
+      "severity": "destructive",
+      "reason": "DROP TABLE removes the table and all rows"
+    }
+  ]
+}

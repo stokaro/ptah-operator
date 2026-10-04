@@ -79,3 +79,20 @@ approval, so a consumer waiting for a decision watches the migration.
 
 None. A migration plan is an immutable artifact, and whether it is still the
 plan to apply is reported on the `PtahMigration` that published it.
+
+## A Job finished but its result is unavailable
+
+With default durable delivery, a successful database operation and a stored
+result are separate facts. Check the runner's bounded diagnostic message, the
+manager and certificate-rotator health, the result Service endpoints, network
+policy from the operation namespace, and result-record quota or admission
+refusals. Do not dump result records or credential Secrets into tickets: they
+can contain SQL and private keys.
+
+Restoring receiver/API connectivity lets the original runner retry delivery
+within its bounds. It does not rerun SQL. If the Pod was lost before publishing,
+follow the resource's unknown-outcome recovery and inspect database history;
+do not recreate the Apply Job to obtain a result. An acknowledged result remains
+readable after Pod/log removal and manager restart, provided its persistent
+records are intact. Increasing kubelet log retention cannot repair a missing
+durable receipt. See [Backup and recovery](../../use/recovery/).

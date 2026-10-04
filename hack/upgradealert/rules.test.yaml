@@ -1,0 +1,140 @@
+rule_files:
+  - rules.yaml
+evaluation_interval: 5s
+tests:
+  - name: failed hook remains firing through retry and resolves only after verified recovery
+    interval: 5s
+    input_series:
+      - series: 'up{job="ptah-upgrade-observer"}'
+        values: '1x20'
+      - series: 'ptah_operator_upgrade_pending{operator_namespace="operator",release="ptah"}'
+        values: '1x5 0x15'
+      - series: 'ptah_operator_upgrade_failed{operator_namespace="operator",release="ptah"}'
+        values: '0 0 1x18'
+      - series: 'ptah_operator_upgrade_deadline_seconds{operator_namespace="operator",release="ptah"}'
+        values: '900x20'
+      - series: 'ptah_operator_upgrade_history_lost{operator_namespace="operator",release="ptah"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 5s
+        alertname: PtahOperatorUpgradeFailed
+        exp_alerts: []
+      - eval_time: 10s
+        alertname: PtahOperatorUpgradeFailed
+        exp_alerts:
+          - exp_labels: {operator_namespace: operator, release: ptah, severity: critical}
+            exp_annotations:
+              summary: 'Upgrade of operator/ptah has failed or has not reached verified recovery'
+              runbook_url: 'https://operator.ptah.run/use/operations/#retry-upgrade'
+      - eval_time: 25s
+        alertname: PtahOperatorUpgradeFailed
+        exp_alerts:
+          - exp_labels: {operator_namespace: operator, release: ptah, severity: critical}
+            exp_annotations:
+              summary: 'Upgrade of operator/ptah has failed or has not reached verified recovery'
+              runbook_url: 'https://operator.ptah.run/use/operations/#retry-upgrade'
+      - eval_time: 30s
+        alertname: PtahOperatorUpgradeFailed
+        exp_alerts: []
+  - name: no hook still reaches the original fifteen minute deadline
+    interval: 5s
+    input_series:
+      - series: 'up{job="ptah-upgrade-observer"}'
+        values: '1x200'
+      - series: 'ptah_operator_upgrade_pending{operator_namespace="operator",release="ptah"}'
+        values: '1x200'
+      - series: 'ptah_operator_upgrade_failed{operator_namespace="operator",release="ptah"}'
+        values: '0x200'
+      - series: 'ptah_operator_upgrade_deadline_seconds{operator_namespace="operator",release="ptah"}'
+        values: '900x200'
+    alert_rule_test:
+      - eval_time: 14m55s
+        alertname: PtahOperatorUpgradeFailed
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: PtahOperatorUpgradeFailed
+        exp_alerts:
+          - exp_labels: {operator_namespace: operator, release: ptah, severity: critical}
+            exp_annotations:
+              summary: 'Upgrade of operator/ptah has failed or has not reached verified recovery'
+              runbook_url: 'https://operator.ptah.run/use/operations/#retry-upgrade'
+  - name: a history gap is not a healthy upgrade
+    interval: 5s
+    input_series:
+      - series: 'up{job="ptah-upgrade-observer"}'
+        values: '1x5'
+      - series: 'ptah_operator_upgrade_pending{operator_namespace="operator",release="ptah"}'
+        values: '1x5'
+      - series: 'ptah_operator_upgrade_deadline_seconds{operator_namespace="operator",release="ptah"}'
+        values: '900x5'
+      - series: 'ptah_operator_upgrade_history_lost{operator_namespace="operator",release="ptah"}'
+        values: '0 1x4'
+    alert_rule_test:
+      - eval_time: 5s
+        alertname: PtahOperatorUpgradeFailed
+        exp_alerts:
+          - exp_labels: {operator_namespace: operator, release: ptah, severity: critical}
+            exp_annotations:
+              summary: 'Upgrade of operator/ptah has failed or has not reached verified recovery'
+              runbook_url: 'https://operator.ptah.run/use/operations/#retry-upgrade'
+  - name: missing observer is not success
+    alert_rule_test:
+      - eval_time: 15s
+        alertname: PtahOperatorUpgradeObserverUnavailable
+        exp_alerts:
+          - exp_labels: {job: ptah-upgrade-observer, severity: critical}
+            exp_annotations:
+              summary: 'The external Ptah upgrade observer is unavailable; upgrade evidence is incomplete'
+              runbook_url: 'https://operator.ptah.run/use/operations/#retry-upgrade'
+  - name: reachable observer with a denied watch alerts and recovers with observation
+    interval: 5s
+    input_series:
+      - series: 'up{job="ptah-upgrade-observer",instance="observer:9812"}'
+        values: '1x12'
+      - series: 'ptah_operator_upgrade_observer_ready{job="ptah-upgrade-observer",instance="observer:9812",operator_namespace="operator",release="ptah"}'
+        values: '1 0x4 1x6'
+    alert_rule_test:
+      - eval_time: 15s
+        alertname: PtahOperatorUpgradeObserverUnavailable
+        exp_alerts: []
+      - eval_time: 20s
+        alertname: PtahOperatorUpgradeObserverUnavailable
+        exp_alerts:
+          - exp_labels: {job: ptah-upgrade-observer, instance: 'observer:9812', severity: critical}
+            exp_annotations:
+              summary: 'The external Ptah upgrade observer is unavailable; upgrade evidence is incomplete'
+              runbook_url: 'https://operator.ptah.run/use/operations/#retry-upgrade'
+      - eval_time: 30s
+        alertname: PtahOperatorUpgradeObserverUnavailable
+        exp_alerts: []
+  - name: a normal watch reconnect does not page
+    interval: 5s
+    input_series:
+      - series: 'up{job="ptah-upgrade-observer",instance="observer:9812"}'
+        values: '1x12'
+      - series: 'ptah_operator_upgrade_observer_ready{job="ptah-upgrade-observer",instance="observer:9812"}'
+        values: '1 0 1x10'
+    alert_rule_test:
+      - eval_time: 5s
+        alertname: PtahOperatorUpgradeObserverUnavailable
+        exp_alerts: []
+      - eval_time: 20s
+        alertname: PtahOperatorUpgradeObserverUnavailable
+        exp_alerts: []
+  - name: one healthy target cannot hide another target without readiness
+    interval: 5s
+    input_series:
+      - series: 'up{job="ptah-upgrade-observer",instance="healthy:9812"}'
+        values: '1x8'
+      - series: 'ptah_operator_upgrade_observer_ready{job="ptah-upgrade-observer",instance="healthy:9812"}'
+        values: '1x8'
+      - series: 'up{job="ptah-upgrade-observer",instance="missing:9812"}'
+        values: '1x8'
+    alert_rule_test:
+      - eval_time: 15s
+        alertname: PtahOperatorUpgradeObserverUnavailable
+        exp_alerts:
+          - exp_labels: {job: ptah-upgrade-observer, instance: 'missing:9812', severity: critical}
+            exp_annotations:
+              summary: 'The external Ptah upgrade observer is unavailable; upgrade evidence is incomplete'
+              runbook_url: 'https://operator.ptah.run/use/operations/#retry-upgrade'
