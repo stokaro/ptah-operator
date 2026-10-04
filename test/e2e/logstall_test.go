@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -8,6 +9,33 @@ import (
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 )
+
+func TestDiagnosticLogReconnectIsOnlyAllowedBeforeTheFaultAcceptsARequest(t *testing.T) {
+	reset := errors.New("kubelet connection reset while installing the fault")
+	for _, test := range []struct {
+		name   string
+		states []string
+		err    error
+		want   bool
+	}{
+		{"pooled connection reset", []string{"listening"}, reset, true},
+		{"completed log", []string{"listening"}, nil, false},
+		{"no listener", nil, reset, false},
+		{"accepted request", []string{"listening", "started"}, reset, false},
+		{"closed held request", []string{"listening", "started", "canceled"}, reset, false},
+		{"failed held request", []string{"listening", "started", "flush-failed"}, reset, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var readings []logStallReading
+			for _, state := range test.states {
+				readings = append(readings, logStallReading{State: state})
+			}
+			if got := diagnosticLogCanReconnect(readings, test.err); got != test.want {
+				t.Fatalf("reconnect=%v want %v", got, test.want)
+			}
+		})
+	}
+}
 
 func TestSchemaProgressRequiresConvergenceInsideTheMeasuredWindow(t *testing.T) {
 	t.Parallel()

@@ -37,3 +37,13 @@ func diagnosticLogHeld(readings []logStallReading) bool {
 	}
 	return started == 1
 }
+
+// Installing the fault resets pooled kubelet connections. An initial request
+// may fail before reaching the fixture; only that setup failure may reconnect.
+// Once a request reached the fixture, its uninterrupted lifetime is the proof.
+func diagnosticLogCanReconnect(readings []logStallReading, requestErr error) bool {
+	if requestErr == nil || len(readings) != 1 {
+		return false
+	}
+	return readings[0].State == "listening"
+}

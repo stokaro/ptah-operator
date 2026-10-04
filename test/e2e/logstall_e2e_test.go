@@ -171,15 +171,23 @@ func (r *logStall) readings() []logStallReading {
 func (r *logStall) holdDiagnostic(pod string) (assertHeld, release func()) {
 	r.t.Helper()
 	ctx, cancel := context.WithTimeout(r.ctx, 5*time.Minute)
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		_, _ = r.cluster.ContainerLog(ctx, r.namespace, pod, "ptah")
-	}()
+	type diagnosticAttempt struct {
+		done chan struct{}
+		err  error
+	}
+	startRequest := func() *diagnosticAttempt {
+		attempt := &diagnosticAttempt{done: make(chan struct{})}
+		go func() {
+			defer close(attempt.done)
+			_, attempt.err = r.cluster.ContainerLog(ctx, r.namespace, pod, "ptah")
+		}()
+		return attempt
+	}
+	attempt := startRequest()
 	release = func() {
 		cancel()
 		select {
-		case <-done:
+		case <-attempt.done:
 		case <-time.After(5 * time.Second):
 			r.t.Error("diagnostic log client did not stop")
 		}
@@ -187,15 +195,20 @@ func (r *logStall) holdDiagnostic(pod string) (assertHeld, release func()) {
 	r.t.Cleanup(release)
 	r.check(harness.Wait(r.ctx, "one diagnostic request held at the log fault", 30*time.Second, time.Second, func(context.Context) (bool, string, error) {
 		select {
-		case <-done:
-			return false, "diagnostic request ended", errors.New("log fault did not hold the request")
+		case <-attempt.done:
+			if ctx.Err() == nil && diagnosticLogCanReconnect(r.readings(), attempt.err) {
+				r.t.Logf("diagnostic connection ended before the fault accepted a request: %v", attempt.err)
+				attempt = startRequest()
+				return false, "reconnecting after the pre-fault kubelet connection closed", nil
+			}
+			return false, "diagnostic request ended", errors.Join(errors.New("log fault did not hold the request"), attempt.err)
 		default:
 		}
 		return diagnosticLogHeld(r.readings()), "waiting for the exact log request", nil
 	}), "verify the diagnostic log is unavailable")
 	return func() {
 		select {
-		case <-done:
+		case <-attempt.done:
 			r.fatalf("diagnostic log recovered before durable convergence")
 		default:
 		}
