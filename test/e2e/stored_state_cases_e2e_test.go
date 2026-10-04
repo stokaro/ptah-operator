@@ -163,5 +163,6 @@ func (m *migrationRun) unsupportedControllerState() {
 		m.query("SELECT color FROM e2e_migration_widgets WHERE id=1", database) != "blue" {
 		m.fatalf("the supported-state migration lost its actual revisions, rows or schema effect")
 	}
+	m.finishFixture(name)
 	m.logf("PASS %s unsupported controller state after migration approval: runtime refusal retained exact state; no workload or unauthorized SQL; supported state applied once after a new approval", m.engine.kind)
 }

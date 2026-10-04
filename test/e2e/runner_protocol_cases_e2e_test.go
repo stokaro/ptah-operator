@@ -369,6 +369,7 @@ func (m *migrationRun) unsupportedRunnerProtocol() {
 		m.query("SELECT color FROM e2e_migration_widgets WHERE id=1", database) != "blue" {
 		m.fatalf("the freshly authorized supported runner lost its native revisions, rows or schema effect")
 	}
+	m.finishFixture(name)
 	m.logf("PASS %s unsupported runner after migration approval: exact pre-fetch refusal, no unauthorized SQL or replay; Unknown explicitly acknowledged; protocol 1 restored and fresh decision applied once", m.engine.kind)
 }
 

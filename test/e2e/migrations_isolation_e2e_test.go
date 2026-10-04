@@ -1128,6 +1128,7 @@ func (r *egressRow) assertAMigrationConverges() {
 	if !egressJobsSelected(jobs) {
 		m.fatalf("the Jobs that ran %s are not all ones the egress example selects, or none of them was the Apply", name)
 	}
+	m.finishFixture(name)
 }
 
 // retargetBeforeDispatchProof ports run_retarget_before_dispatch_proof: the

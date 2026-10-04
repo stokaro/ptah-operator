@@ -223,6 +223,7 @@ func (m *migrationRun) executionComponentChange(change executionComponentChange)
 		m.query("SELECT color FROM e2e_migration_widgets WHERE id = 1", database) != "blue" {
 		m.fatalf("the freshly approved executor did not converge from the database")
 	}
+	m.finishFixture(name)
 	rolloutExecutionManagers(m.t, m.ctx, m.cluster, key, change.reverse(), m.scan)
 	m.logf("PASS %s %s changed after migration approval: old decision refused; fresh decision applied once", m.engine.kind, change.argument)
 }
