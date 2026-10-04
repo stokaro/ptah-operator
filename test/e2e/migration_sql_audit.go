@@ -95,7 +95,9 @@ func operationSQLClientsForIdentities(namespace, name, kind, resourceLabel strin
 			continue // No address to attribute; any received SQL still needs a client below.
 		}
 		address, err := netip.ParseAddr(pod.Status.PodIP)
-		if err != nil || pod.Status.Phase != corev1.PodSucceeded {
+		// A failed attempt still owns its address and any SQL it sent. Keep it
+		// in the audit; operation-specific policies decide which SQL is allowed.
+		if err != nil || (pod.Status.Phase != corev1.PodSucceeded && pod.Status.Phase != corev1.PodFailed) {
 			return nil, errors.New("SQL audit needs terminal Pods with numeric addresses")
 		}
 		var owner *batchv1.Job

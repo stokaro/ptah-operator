@@ -65,6 +65,62 @@ func TestSchemaSQLInventorySeparatesWindowsByJobUID(t *testing.T) {
 	}
 }
 
+func TestSchemaSQLAuditRetainsFailedResolveWithoutAuthorizingSQL(t *testing.T) {
+	t.Parallel()
+	_, resource, _, _ := schemaReplacementFixture()
+	job := batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "resolve", Namespace: resource.Namespace, UID: "failed-resolve",
+		Labels: map[string]string{labelSchema: resource.Name, labelOperation: "resolve"},
+		OwnerReferences: []metav1.OwnerReference{{APIVersion: ptahSchemaAPIVersion, Kind: "PtahSchema", Name: resource.Name,
+			UID: resource.UID, Controller: ptr.To(true)}}}}
+	pod := corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "resolve-pod", Namespace: resource.Namespace, UID: "failed-resolve-pod",
+		Labels: map[string]string{labelSchema: resource.Name, labelOperation: "resolve"},
+		OwnerReferences: []metav1.OwnerReference{{APIVersion: "batch/v1", Kind: "Job", Name: job.Name,
+			UID: job.UID, Controller: ptr.To(true)}}},
+		Status: corev1.PodStatus{Phase: corev1.PodFailed, PodIP: "10.0.0.2"}}
+	inventory := &schemaSQLInventory{jobs: map[types.UID]batchv1.Job{}, pods: map[types.UID]corev1.Pod{}}
+	if err := inventory.record([]batchv1.Job{job}, []corev1.Pod{pod}); err != nil {
+		t.Fatal(err)
+	}
+	clients, err := inventory.clients(resource)
+	if err != nil {
+		t.Fatal("a failed initial Resolve must remain attributable after its retry succeeds:", err)
+	}
+	resolve := operationSQLClient{resourceUID: string(resource.UID), jobUID: string(job.UID), podUID: string(pod.UID), operation: "resolve"}
+	if len(clients) != 1 || clients[pod.Status.PodIP] != resolve {
+		t.Fatal("the failed Resolve lost its exact client identity")
+	}
+	// A successful diagnostic is still required. Keeping the failed client in
+	// the inventory grants it no SQL permission and cannot supply that control.
+	observe := schemaAuditActor("observe")
+	clients[mysqlAuditHost] = observe
+	policy, err := newSchemaSQLPolicy("postgresql", schemaAuditDatabase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := schemaAuditReading(t, "postgresql", "observe")
+	counts, err := postgresStatementRefusalSQL(raw, schemaAuditDatabase, clients, schemaDiagnosticActor, policy.postgres, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := schemaRequiredSQLControls(clients, counts, []operationSQLClient{observe}); err != nil {
+		t.Fatal(err)
+	}
+	if schemaRequiredSQLControls(clients, counts, []operationSQLClient{resolve}) == nil {
+		t.Fatal("failed Resolve replaced the required successful diagnostic")
+	}
+	resolveSQL := []byte(strings.ReplaceAll(string(raw), mysqlAuditHost, pod.Status.PodIP))
+	if _, err := postgresStatementRefusalSQL(append(slices.Clone(raw), resolveSQL...), schemaAuditDatabase, clients, schemaDiagnosticActor, policy.postgres, nil); err == nil {
+		t.Fatal("attributing a failed Resolve authorized its SQL")
+	}
+	for _, phase := range []corev1.PodPhase{corev1.PodPending, corev1.PodRunning, corev1.PodUnknown} {
+		changed := pod.DeepCopy()
+		changed.Status.Phase = phase
+		if _, err := schemaSQLClients(resource, []batchv1.Job{job}, []corev1.Pod{*changed}); err == nil {
+			t.Fatalf("unfinished %s Pod supplied a closed SQL audit", phase)
+		}
+	}
+}
+
 func TestSchemaMySQLAuditAfterACompletedEarlierWindow(t *testing.T) {
 	t.Parallel()
 	read := func(variant string) []mysqlStatementRecord {
