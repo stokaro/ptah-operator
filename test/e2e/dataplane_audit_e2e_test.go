@@ -349,7 +349,12 @@ func (d *dataPlane) captureOneNewJobResult(schema, operation string, before chec
 	if len(records) != 1 {
 		d.fatalf("%s has %d new %s Jobs, expected exactly one result", schema, len(records), operation)
 	}
-	jobName, jobUID := records[0].Name, records[0].UID
+	return d.captureExactJobResult(schema, operation, records[0])
+}
+
+func (d *dataPlane) captureExactJobResult(schema, operation string, record observedJob) runner.Result {
+	d.t.Helper()
+	jobName, jobUID := record.Name, record.UID
 
 	deadline := time.Now().Add(waitTimeout)
 	var job *batchv1.Job

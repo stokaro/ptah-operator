@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -157,6 +158,44 @@ type schemaSQLInventory struct {
 	jobs         map[types.UID]batchv1.Job
 	pods         map[types.UID]corev1.Pod
 	excludedJobs checkpoint
+}
+
+// A read-only diagnostic may retry after a terminal failure. Select its sole
+// successful result without removing failed attempts from the SQL inventory.
+// Apply callers keep the exact-one-Job boundary instead.
+func (inventory *schemaSQLInventory) diagnosticResult(schema *ptahv1alpha1.PtahSchema, operation string, records []observedJob) (observedJob, error) {
+	var selected observedJob
+	if schema == nil || schema.UID == "" || (operation != "observe" && operation != "plan") {
+		return selected, errors.New("result selection requires an exact schema and a read-only diagnostic")
+	}
+	fingerprint := ""
+	for _, record := range records {
+		job, found := inventory.jobs[types.UID(record.UID)]
+		if !found || job.UID == "" || string(job.UID) != record.UID || job.Name != record.Name || job.Namespace != schema.Namespace ||
+			record.Schema != schema.Name || record.Operation != operation || job.Labels[labelSchema] != schema.Name || job.Labels[labelOperation] != operation ||
+			!ownedExactlyOnce(job.OwnerReferences, ptahSchemaAPIVersion, "PtahSchema", schema.Name, schema.UID) {
+			return observedJob{}, fmt.Errorf("diagnostic Job %s lost its exact schema identity", record.Name)
+		}
+		input := job.Annotations["operator.ptah.run/input-fingerprint"]
+		if !sha256Pattern.MatchString(input) || (fingerprint != "" && input != fingerprint) {
+			return observedJob{}, fmt.Errorf("diagnostic Job %s has different or missing inputs", job.Name)
+		}
+		fingerprint = input
+		complete, failed := conditionTrue(job.Status.Conditions, batchv1.JobComplete), conditionTrue(job.Status.Conditions, batchv1.JobFailed)
+		if complete == failed {
+			return observedJob{}, fmt.Errorf("diagnostic Job %s has no unambiguous terminal outcome", job.Name)
+		}
+		if complete {
+			if selected.UID != "" {
+				return observedJob{}, errors.New("diagnostic has more than one successful Job")
+			}
+			selected = record
+		}
+	}
+	if selected.UID == "" {
+		return selected, errors.New("diagnostic has no successful Job")
+	}
+	return selected, nil
 }
 
 func (inventory *schemaSQLInventory) record(jobs []batchv1.Job, pods []corev1.Pod) error {
