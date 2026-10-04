@@ -1294,9 +1294,11 @@ for registry_cleanup_marker in \
 		"$registry_cleanup_marker" 1 'exact registry cleanup'
 done
 
+# Both schema phases receive the registry port. The Go phase-input verifier
+# checks each binding against its phase declaration.
 # shellcheck disable=SC2016 # The handoff marker intentionally retains the shell variable literally.
 static_require_count "$(cat "$ROOT_DIR/hack/e2e-kind.sh")" \
-	'E2E_REGISTRY_PORT=$E2E_REGISTRY_PORT' 1 'registry readiness port handoff'
+	'E2E_REGISTRY_PORT=$E2E_REGISTRY_PORT' 2 'registry readiness port handoff'
 
 # A loop that is an if condition runs in this shell, so an exit inside it ends
 # the phase rather than the loop, and the phase dies with no message at all.
@@ -2541,14 +2543,12 @@ done
 (cd "$ROOT_DIR" && \
 	PTAH_ADMISSION_RENDER="$ADMISSION_RENDER" \
 	PTAH_PRIVILEGE_RENDER="$CRD_FULL_RENDER" \
-	GOCACHE="${GOCACHE:-$WORK_DIR/gocache}" \
 	go test ./internal/crdupgrade \
 		-run '^(TestRenderedAdmissionSingletonMatchesRuntimeContract|TestRenderedReleaseRBACMatchesCompiledContract)$' -count=1)
 (cd "$ROOT_DIR" && \
 	PTAH_PRIVILEGE_RENDER="$EXTERNAL_CERTIFICATE_RENDER" \
 	PTAH_RBAC_CERTIFICATE_RUNTIME_ENABLED=false \
 	PTAH_RBAC_RESULT_DELIVERY_ENABLED=false \
-	GOCACHE="${GOCACHE:-$WORK_DIR/gocache}" \
 	go test ./internal/crdupgrade -run '^TestRenderedReleaseRBACMatchesCompiledContract$' -count=1)
 # Exercise each namespace merge branch in the release grants.
 for namespace_pair in default:ptah-coordination ptah-e2e:default; do
@@ -2564,7 +2564,6 @@ for namespace_pair in default:ptah-coordination ptah-e2e:default; do
 		PTAH_PRIVILEGE_RENDER="$merged_privilege_render" \
 		PTAH_RBAC_RELEASE_NAMESPACE="$release_namespace" \
 		PTAH_RBAC_COORDINATION_NAMESPACE="$coordination_namespace" \
-		GOCACHE="${GOCACHE:-$WORK_DIR/gocache}" \
 		go test ./internal/crdupgrade \
 			-run '^TestRenderedReleaseRBACMatchesCompiledContract$' -count=1)
 done
@@ -2673,17 +2672,17 @@ grep -F '| kubectl --kubeconfig "$KUBECONFIG_FILE" create -f - >/dev/null' \
 	exit 1
 }
 # Each phase that dispatches operations is handed the controller identity in
-# full, spelled the same way: the control-plane contract, the data plane and
-# the two migration paths -- one per engine. The upgrade and uninstall phases
+# full: the control-plane contract, both schema phases, and the two migration
+# paths -- one per engine. The upgrade and uninstall phases
 # are handed the image alone, which they hold the installed release to. The
 # counts are exact so a phase that stopped receiving one of the three is a
 # failure here rather than a Job the admission guards refuse in a cluster an
 # hour later.
 # shellcheck disable=SC2016 # Match literal runtime controller identity expressions.
 for controller_identity_assignment in \
-	'E2E_CONTROLLER_IMAGE=$CANDIDATE_OPERATOR_IMAGE 6' \
-	'E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION 4' \
-	'E2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION 4'; do
+	'E2E_CONTROLLER_IMAGE=$CANDIDATE_OPERATOR_IMAGE 7' \
+	'E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION 5' \
+	'E2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION 5'; do
 	controller_identity_expected=${controller_identity_assignment##* }
 	controller_identity_assignment=${controller_identity_assignment% *}
 	controller_identity_count=$(grep -Fc -- "$controller_identity_assignment" \
