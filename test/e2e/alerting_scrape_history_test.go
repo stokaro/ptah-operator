@@ -3,13 +3,33 @@ package e2e
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"testing"
 	"time"
 )
 
 type alScrapeHistoryFixture struct {
-	started, queried    time.Time
-	up, durations, view []alAdmissionSeries
+	started, restored, queried time.Time
+	up, durations, view        []alAdmissionSeries
+}
+
+func TestAlScrapeReloadHistoryFromPrometheus(t *testing.T) {
+	t.Parallel()
+	body, err := os.ReadFile("../../testdata/e2e/readings/prometheus-scrape-reload-history.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	groups, err := alSplitHistorySnapshot(body, alScrapeJob, []string{"up", "scrape_duration_seconds"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded := time.Date(2026, 10, 4, 14, 34, 55, 922214000, time.UTC)
+	queried := time.Date(2026, 10, 4, 14, 36, 16, 151037000, time.UTC)
+	history, err := alReadScrapeHistoryWithReloads(groups["up"], groups["scrape_duration_seconds"],
+		[]string{"leader", "follower"}, "leader", loaded, queried, loaded, time.Time{})
+	if err != nil || history.firstFailure.Sub(time.Date(2026, 10, 4, 14, 35, 0, 849000000, time.UTC)).Abs() > time.Microsecond {
+		t.Fatalf("lost the native failure after the old target's final in-flight scrape: %+v %v", history, err)
+	}
 }
 
 func alScrapeHistoryFixtureForTest(recovered bool) alScrapeHistoryFixture {
@@ -17,6 +37,7 @@ func alScrapeHistoryFixtureForTest(recovered bool) alScrapeHistoryFixture {
 	last := 90
 	if recovered {
 		last = 150
+		f.restored = f.started.Add(97 * time.Second)
 	}
 	f.queried = f.started.Add(time.Duration(last+1) * time.Second)
 	for index, pod := range []string{"leader", "follower"} {
@@ -46,8 +67,8 @@ func alScrapeHistoryFixtureForTest(recovered bool) alScrapeHistoryFixture {
 
 func (f alScrapeHistoryFixture) read(t *testing.T) (alScrapeHistory, error) {
 	t.Helper()
-	return alReadScrapeHistory(alAdmissionHistoryBodyForTest(t, f.up), alAdmissionHistoryBodyForTest(t, f.durations),
-		[]string{"leader", "follower"}, "leader", f.started, f.queried)
+	return alReadScrapeHistoryWithReloads(alAdmissionHistoryBodyForTest(t, f.up), alAdmissionHistoryBodyForTest(t, f.durations),
+		[]string{"leader", "follower"}, "leader", f.started, f.queried, f.started, f.restored)
 }
 
 func TestAlScrapeHistoryMeasuresNativeFailureAndSynchronizedRecovery(t *testing.T) {
@@ -168,5 +189,83 @@ func TestAlScrapeHistoryRefusesMissingOrDifferentFaults(t *testing.T) {
 				t.Fatal("healthy HTTP stood in for the exact synchronized leader scrape")
 			}
 		})
+	}
+}
+
+func TestAlScrapeHistoryBindsScheduleChangesToReloads(t *testing.T) {
+	t.Parallel()
+	fixture := func() alScrapeHistoryFixture {
+		f := alScrapeHistoryFixtureForTest(true)
+		base := f.started
+		// The observed URL change moved the leader's scrape offset by 1.18s.
+		// Restoration can choose another offset while the follower stays fixed.
+		for _, series := range []*alAdmissionSeries{&f.up[0], &f.durations[0], &f.view[0]} {
+			for _, raw := range series.Values {
+				var timestamp float64
+				if err := json.Unmarshal(raw[0], &timestamp); err != nil {
+					t.Fatal(err)
+				}
+				if timestamp >= float64(base.Add(100*time.Second).Unix()) {
+					timestamp += 2.5
+				} else if timestamp >= float64(base.Add(5*time.Second).Unix()) {
+					timestamp += 1.18
+				}
+				raw[0] = json.RawMessage(fmt.Sprintf("%.3f", timestamp))
+			}
+		}
+		f.started = base.Add(2 * time.Second)
+		f.restored = base.Add(98 * time.Second)
+		f.queried = base.Add(154 * time.Second)
+		return f
+	}
+	f := fixture()
+	history, err := f.read(t)
+	if err != nil {
+		t.Fatal("fresh observations on both sides of each reload were refused", err)
+	}
+	if err := alRecoveredScrapeSynced(alAdmissionHistoryBodyForTest(t, f.view), "leader", history, f.queried); err != nil {
+		t.Fatal("the native recovered view was lost", err)
+	}
+	if _, err := alReadScrapeHistory(alAdmissionHistoryBodyForTest(t, f.up), alAdmissionHistoryBodyForTest(t, f.durations),
+		[]string{"leader", "follower"}, "leader", f.started, f.queried); err == nil {
+		t.Fatal("a schedule change without a configuration reload passed")
+	}
+	t.Run("discovery applies the loaded configuration later", func(t *testing.T) {
+		f := fixture()
+		baseline := f.started.Add(-17 * time.Second)
+		for i := range f.up {
+			f.up[i].Values = append([][]json.RawMessage{alAdmissionHistorySampleForTest(baseline, "1")}, f.up[i].Values...)
+			f.durations[i].Values = append([][]json.RawMessage{alAdmissionHistorySampleForTest(baseline, "0.125")}, f.durations[i].Values...)
+		}
+		// The old target still scraped after the config reload; discovery
+		// applied the new URL on its next five-second refresh.
+		f.started = f.started.Add(-4 * time.Second)
+		if _, err := f.read(t); err != nil {
+			t.Fatal("a bounded discovery refresh was refused", err)
+		}
+	})
+	for name, mutate := range map[string]func(*alScrapeHistoryFixture){
+		"last healthy scrape": func(f *alScrapeHistoryFixture) { removeAlScrapeSample(f, 0, 2) },
+		"first failed scrape": func(f *alScrapeHistoryFixture) { removeAlScrapeSample(f, 0, 3) },
+		"during failure":      func(f *alScrapeHistoryFixture) { removeAlScrapeSample(f, 0, 4) },
+		"first recovery":      func(f *alScrapeHistoryFixture) { removeAlScrapeSample(f, 0, 22) },
+		"after recovery":      func(f *alScrapeHistoryFixture) { removeAlScrapeSample(f, 0, 23) },
+		"follower scrape":     func(f *alScrapeHistoryFixture) { removeAlScrapeSample(f, 1, 3) },
+		"unrecorded restore":  func(f *alScrapeHistoryFixture) { f.restored = time.Time{} },
+		"restore dated late":  func(f *alScrapeHistoryFixture) { f.restored = f.restored.Add(10 * time.Second) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := fixture()
+			mutate(&f)
+			if _, err := f.read(t); err == nil {
+				t.Fatal("missing observations or an unbound transition passed")
+			}
+		})
+	}
+}
+
+func removeAlScrapeSample(f *alScrapeHistoryFixture, pod, sample int) {
+	for _, series := range []*alAdmissionSeries{&f.up[pod], &f.durations[pod]} {
+		series.Values = append(series.Values[:sample], series.Values[sample+1:]...)
 	}
 }
