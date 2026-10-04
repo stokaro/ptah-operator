@@ -24,6 +24,7 @@ var phaseFamilies = map[string][]string{
 	"cert-rotation":             {},
 	"assert":                    {"PtahSchema"},
 	"dataplane":                 {"PtahSchema"},
+	"schema-faults":             {"PtahSchema"},
 	"migrations-postgresql":     {"PtahMigration"},
 	"migrations-mysql":          {"PtahMigration"},
 	"reference-data-postgresql": {"PtahSchema"},

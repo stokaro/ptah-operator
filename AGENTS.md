@@ -142,10 +142,13 @@ E2E_SUITE=data-plane make e2e              # one suite, against a cluster of its
 E2E_SUITE=migrations-postgresql make e2e   # one engine's migration rows and reference data
 ```
 
-The partition follows the dependencies rather than the clock, so phases that
-share mutable state stay in one suite: the CRD upgrade and the uninstall that
-follows it, the data plane and the fault injection inside it, the migration rows
-and the reference data that runs in the same namespace.
+Phases that share mutable state stay together: the CRD upgrade and the uninstall
+that follows it, the schema faults and their shared watches, and the migration
+rows and reference data in the same namespace. MySQL and external PostgreSQL
+stay with schema faults because their closing assertions must still hold after
+fault injection. They run in the existing certificates job, after rotation;
+the data-plane job runs the ordinary PostgreSQL lifecycle, plan-size boundaries,
+and admission rows. The matrix still has five suites.
 
 Where the clock decides is between engines, which share nothing but the
 namespace a suite stands up for itself. Both engines in one job made that suite
@@ -154,7 +157,7 @@ suite of their own and the two run at once. The engine is a phase input rather t
 and a phase asked to run with none refuses instead of covering one engine and
 reporting two.
 
-That last pair needs the namespace the data plane stands up — its registry
+The migration and certificates suites need the namespace the data plane stands up — its registry
 Service, its databases, its admission fixtures — so the migrations suite runs
 the data-plane phase in preparation mode (`E2E_DATAPLANE_MODE=prepare`), which
 creates those prerequisites and executes none of its own acceptance. Preparation

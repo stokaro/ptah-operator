@@ -93,7 +93,7 @@ func TestASuiteCatalogThatCannotBeExecutedIsRefused(t *testing.T) {
 			wantError: `a job, a run id and an artifact are named after the slug`,
 		},
 		"a suite that says nothing about itself": {
-			old:       `"summary": "The control-plane contract, both engines end to end, restart identity, and fault injection",`,
+			old:       `"summary": "The control-plane contract, PostgreSQL lifecycle, plan-size and admission boundaries",`,
 			new:       `"summary": "  ",`,
 			wantError: `says nothing about what it runs`,
 		},
@@ -228,8 +228,8 @@ func TestAPartitionThatLostAPhaseIsRefused(t *testing.T) {
 	t.Run("a phase the driver does not run", func(t *testing.T) {
 		t.Parallel()
 		path := writeSuiteCatalog(t,
-			`"phases": ["cert-rotation"],`,
-			`"phases": ["cert-rotation", "smoke"],`)
+			`"phases": ["cert-rotation", "schema-faults"],`,
+			`"phases": ["cert-rotation", "schema-faults", "smoke"],`)
 		catalog, err := loadE2ESuites(path)
 		if err != nil {
 			t.Fatalf("load the mutated catalog: %v", err)
@@ -312,22 +312,22 @@ func TestTheIsolationWorkerFollowsThePhasesThatIsolateANode(t *testing.T) {
 			wantError: `suite "migrations-mysql" runs migrations-mysql, which isolates a node, and does not declare isolationWorker`,
 		},
 		"a suite that pays for a node nothing isolates": {
-			old: `"phases": ["cert-rotation"],
-      "prepare": ["assert"]`,
-			new: `"phases": ["cert-rotation"],
-      "prepare": ["assert"],
+			old: `"phases": ["assert", "dataplane"],
+      "prepare": []`,
+			new: `"phases": ["assert", "dataplane"],
+      "prepare": [],
       "isolationWorker": true`,
-			wantError: `suite "certificates" declares isolationWorker and runs no phase that isolates a node`,
+			wantError: `suite "data-plane" declares isolationWorker and runs no phase that isolates a node`,
 		},
 		// Preparation runs the phase in full wherever it has no preparation
 		// mode, so a suite that prepares with a phase that isolates a node
 		// needs the node as much as the suite that covers it.
 		"a suite that prepares with a phase that isolates a node": {
-			old: `"phases": ["cert-rotation"],
-      "prepare": ["assert"]`,
-			new: `"phases": ["cert-rotation"],
-      "prepare": ["assert", "migrations-postgresql"]`,
-			wantError: `suite "certificates" runs migrations-postgresql, which isolates a node, and does not declare isolationWorker`,
+			old: `"phases": ["assert", "dataplane"],
+      "prepare": []`,
+			new: `"phases": ["assert", "dataplane"],
+      "prepare": ["migrations-postgresql"]`,
+			wantError: `suite "data-plane" runs migrations-postgresql, which isolates a node, and does not declare isolationWorker`,
 		},
 	}
 	for name, test := range tests {
@@ -347,7 +347,10 @@ func TestTheIsolationWorkerFollowsThePhasesThatIsolateANode(t *testing.T) {
 
 func TestDataPlanePreparationDoesNotRequireTheFaultWorker(t *testing.T) {
 	t.Parallel()
-	catalog, err := loadE2ESuites(writeSuiteCatalog(t, `"prepare": ["assert"]`, `"prepare": ["assert", "dataplane"]`))
+	catalog, err := loadE2ESuites(writeSuiteCatalog(t, `"phases": ["cert-rotation", "schema-faults"],
+      "prepare": ["assert", "dataplane"],
+      "isolationWorker": true`, `"phases": ["cert-rotation"],
+      "prepare": ["assert", "dataplane"]`))
 	if err != nil {
 		t.Fatal(err)
 	}

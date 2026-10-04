@@ -3295,6 +3295,7 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 		exactSourceLine("control-plane lifecycle", `run_recorded_phase assert run_go_phase assert`),
 		exactSourceLine("certificate lifecycle", `run_recorded_phase cert-rotation run_go_phase cert-rotation`),
 		exactSourceLine("data-plane and OCI lifecycle", `run_recorded_phase dataplane run_go_phase dataplane`),
+		exactSourceLine("schema fault recovery", `run_recorded_phase schema-faults run_go_phase schema-faults`),
 		exactSourceLine("PostgreSQL migration lifecycle", `run_recorded_phase migrations-postgresql run_go_phase migrations-postgresql`),
 		exactSourceLine("MySQL migration lifecycle", `run_recorded_phase migrations-mysql run_go_phase migrations-mysql`),
 		exactSourceLine("PostgreSQL reference-data lifecycle", `run_recorded_phase reference-data-postgresql run_go_phase reference-data-postgresql`),
@@ -4594,11 +4595,14 @@ func verifyPhaseEnvironmentContracts(files e2eWiringFiles) error {
 }
 
 // goPhaseBinding is what the driver binds one input of a Go phase to.
-// E2E_ENGINE is the one input whose value differs between the phases that read
-// it: each migration and reference-data phase runs the engine its name ends
+// E2E_ENGINE differs between the phases that read it: each migration and reference-data phase runs the engine its name ends
 // in, so a phase bound to the other engine would cover one engine twice and
 // leave the other unproven, with both jobs green.
 func goPhaseBinding(phase, input string) (string, bool) {
+	// Schema faults reuse the data-plane inputs but never stop at preparation.
+	if phase == "schema-faults" && input == "E2E_DATAPLANE_MODE" {
+		return "full", true
+	}
 	if input == engineInput {
 		for _, family := range []string{"migrations-", "reference-data-"} {
 			if engine, ok := strings.CutPrefix(phase, family); ok && (engine == "postgresql" || engine == "mysql") {

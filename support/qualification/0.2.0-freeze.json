@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-10-03T10:10:29.523944+00:00",
+  "frozenAt": "2026-10-04T09:14:31.414652+00:00",
   "profileSourceCommit": "b549924f777dadd2910b908a95acef4831ec0107",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
@@ -28,7 +28,7 @@
     },
     {
       "path": "support/e2e-suites.json",
-      "sha256": "2c616fbb705aeb930a06a5ed30516bd75ec00a001d94287f62f7eadb248a7134"
+      "sha256": "a45ec64beb6fbdbfa244a436407560995a4ae339ff5e67318d9d8fb1610303fa"
     },
     {
       "path": "support/ptah.json",
@@ -41,8 +41,8 @@
   ],
   "functionalMatrix": {
     "path": "support/qualification/0.2.0-functional-matrix.md",
-    "sha256": "7029224e90bb469dbb0c16e8883388dcfd6061d41f97a1069bb465ee7da72366",
-    "generatedFromCommit": "ff5cf00cec240141e87c12ebde4a09d66c88bca5",
+    "sha256": "66b286e10b258b31a6b42563e3b5c2db03e3b8de1da1eaf1262e400f0a502fdb",
+    "generatedFromCommit": "be106d8a16f495f9cd4a60f07e7c1096be2c1f9d",
     "command": "go run ./hack/acceptancecoverage",
     "kubernetesMinors": [
       "1.35",
@@ -55,7 +55,8 @@
     ],
     "cellsPerPlatform": 15,
     "requiredCells": 30,
-    "additionalRequirements": "Q-01 through Q-12 in support/qualification/0.2.0-coverage.md remain required; the functional matrix alone is insufficient."
+    "additionalRequirements": "Q-01 through Q-12 in support/qualification/0.2.0-coverage.md remain required; the functional matrix alone is insufficient.",
+    "sourceChanges": "Includes the suite and phase repartition recorded with this freeze revision."
   },
   "publishedPredecessors": {
     "checkedAt": "2026-09-29T19:00:03+00:00",
@@ -66,10 +67,10 @@
     "disposition": "No published predecessor. Synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 28,
+  "revision": 29,
   "supersedes": {
-    "freezeCommit": "3e6dd38e660b43a50c529f2045ee879fc72143b9",
-    "sha256": "53b9c851c1ad65a764d4bfbbbbfeb9828978787109db7c9621b4d2b622a6e729"
+    "freezeCommit": "b76933cfa3d56dbf788f2fdd42501373a0019103",
+    "sha256": "a77381d93bb4e2fab11a66842b36a9d2e57366e7df03017b9a5519ec5c307785"
   },
-  "revisionReason": "Record the default durable-delivery profile introduced in 7f4d71d5 and clarified in b549924f777dadd2910b908a95acef4831ec0107. Revision 27 remains preserved at the superseded commit. The baseline uses standard 10 MiB kubelet logs; the old stream-read bounds apply to legacy log delivery, while durable delivery must progress independently of diagnostic reads. This revision changes no payload limit, deadline, capacity target, required scenario, matrix denominator, or acceptance verdict. Earlier log-transport evidence does not qualify the durable baseline; acceptance remains Not assessed."
+  "revisionReason": "Repartition the same schema acceptance scenarios between the existing data-plane and certificates suites. MySQL and external PostgreSQL stay with schema faults so their closing assertions still follow fault injection. Revision 28 remains preserved at the superseded commit. No required assertion, Kubernetes minor, runtime platform, matrix denominator, capacity target, or acceptance verdict changes. This revision records no successful qualification run; acceptance remains Not assessed."
 }

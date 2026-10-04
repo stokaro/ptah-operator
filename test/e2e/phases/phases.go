@@ -222,25 +222,36 @@ type DataPlaneInputs struct {
 	Mode string `env:"E2E_DATAPLANE_MODE"`
 }
 
-// DataPlane proves both engines end to end: the registry, the databases and
-// the admission fixtures it stands up, the PostgreSQL, external PostgreSQL and
-// MySQL lifecycles, the refusals, the restart and fault injection, and the
-// four-eyes and Pod-metadata rows.
+// DataPlane proves the PostgreSQL lifecycle, both engines' size limits,
+// four-eyes approval, and Pod metadata. It also prepares the other suites.
 var DataPlane = define[DataPlaneInputs](Phase{
-	Name: "dataplane",
-	Test: "TestDataPlane",
-	// The complete sequential acceptance reached the last scenarios after
-	// 150 minutes in CI run 37160360553. Individual waits keep their bounds.
-	Timeout:      180 * time.Minute,
-	IsolatesNode: true,
+	Name:         "dataplane",
+	Test:         "TestDataPlane",
+	Timeout:      90 * time.Minute,
 	RequiresFull: []string{"assert"},
 	Scenarios: []string{
 		"databases-and-fixtures",
 		"postgresql-lifecycle",
+		"native-plan-size-boundary",
+		"closing-audits",
+		"four-eyes-distinct-approver",
+		"pod-metadata-admission",
+	},
+	Preparation: 1,
+})
+
+// SchemaFaults keeps the shared fault watches and cluster-wide barriers in
+// one phase, including the lifecycle assertions that must hold after faults.
+var SchemaFaults = define[DataPlaneInputs](Phase{
+	Name:         "schema-faults",
+	Test:         "TestSchemaFaults",
+	Timeout:      160 * time.Minute,
+	IsolatesNode: true,
+	RequiresFull: []string{"assert"},
+	Scenarios: []string{
 		"external-postgresql-lifecycle",
 		"mysql-lifecycle",
 		"mysql-dsn-refusal",
-		"native-plan-size-boundary",
 		"watches",
 		"approval-resource-replacement",
 		"approval-target-secret-change",
@@ -254,15 +265,12 @@ var DataPlane = define[DataPlaneInputs](Phase{
 		"runner-termination",
 		"job-deletion",
 		"closing-audits",
-		"four-eyes-distinct-approver",
-		"pod-metadata-admission",
 		"approval-executor-image-change",
 		"approval-ptah-version-change",
 		"unsupported-controller-state-after-approval",
 		"unsupported-runner-protocol-after-approval",
 		"running-apply-executor-image-change",
 	},
-	Preparation: 1,
 })
 
 // MigrationsInputs is what the driver hands the migration phases. Each phase
@@ -608,6 +616,7 @@ var all = []Phase{
 	ControlPlane.Phase,
 	CertRotation.Phase,
 	DataPlane.Phase,
+	SchemaFaults.Phase,
 	MigrationsPostgreSQL.Phase,
 	MigrationsMySQL.Phase,
 	ReferenceDataPostgreSQL.Phase,

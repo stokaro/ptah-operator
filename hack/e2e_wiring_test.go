@@ -2314,6 +2314,18 @@ func TestVerifyE2EHarnessRejectsCriticalMutations(t *testing.T) {
 			wantError:   "GO_PHASE_BINARY must appear exactly three times",
 		},
 		{
+			name:        "schema faults omitted",
+			old:         `run_recorded_phase schema-faults run_go_phase schema-faults`,
+			replacement: `true # schema faults omitted`,
+			wantError:   "schema fault recovery",
+		},
+		{
+			name:        "schema faults changed to preparation",
+			old:         "E2E_DATAPLANE_MODE=full \\\n\trun_recorded_phase schema-faults",
+			replacement: "E2E_DATAPLANE_MODE=prepare \\\n\trun_recorded_phase schema-faults",
+			wantError:   `schema-faults phase must bind E2E_DATAPLANE_MODE to "full", and binds "prepare"`,
+		},
+		{
 			name:        "data plane lifecycle omitted",
 			old:         `run_recorded_phase dataplane run_go_phase dataplane`,
 			replacement: `true # data plane lifecycle omitted`,

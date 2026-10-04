@@ -220,8 +220,8 @@ func TestValidateRefusesMalformedDeclarations(t *testing.T) {
 
 // The migration suites run the data plane for the namespace it stands up. The
 // boundary has to fall after the fixtures and before everything the phase
-// accepts on its own, or preparation would run the engine lifecycles and the
-// fault injection in a suite that does not claim them.
+// accepts on its own, or preparation would run the engine lifecycles in a
+// suite that does not claim them. Faults belong to their own phase.
 func TestDataPlanePreparesBeforeItsOwnAcceptance(t *testing.T) {
 	t.Parallel()
 	prepared := DataPlane.Scenarios[:DataPlane.Preparation]
@@ -229,14 +229,21 @@ func TestDataPlanePreparesBeforeItsOwnAcceptance(t *testing.T) {
 		t.Fatalf("the data plane prepares with %v, want the databases and fixtures alone", prepared)
 	}
 	for _, acceptance := range []string{
-		"postgresql-lifecycle", "mysql-lifecycle",
-		"watches", "job-deadline", "manager-restart", "runner-termination", "job-deletion",
+		"postgresql-lifecycle", "native-plan-size-boundary",
 	} {
 		if !slices.Contains(DataPlane.Scenarios, acceptance) {
 			t.Errorf("the data plane no longer runs %s", acceptance)
 		}
 		if slices.Contains(prepared, acceptance) {
 			t.Errorf("%s runs before the preparation boundary, so preparation would execute it", acceptance)
+		}
+	}
+	for _, fault := range SchemaFaults.Scenarios {
+		if slices.Contains(prepared, fault) {
+			t.Errorf("%s runs during preparation instead of its fault phase", fault)
+		}
+		if fault != "closing-audits" && slices.Contains(DataPlane.Scenarios, fault) {
+			t.Errorf("%s is duplicated across lifecycle and fault acceptance", fault)
 		}
 	}
 }

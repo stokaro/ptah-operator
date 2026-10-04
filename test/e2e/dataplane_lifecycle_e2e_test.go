@@ -274,6 +274,11 @@ func (d *dataPlane) closingAudits() {
 	d.t.Helper()
 	d.assertMySQLDestructiveRefusalDurable()
 	d.assertExternalPostgresqlCatalog()
+	d.closingCredentialAudits()
+}
+
+func (d *dataPlane) closingCredentialAudits() {
+	d.t.Helper()
 	d.auditRuntimeCredentials()
 	d.assertObservedJobsAudited()
 }
