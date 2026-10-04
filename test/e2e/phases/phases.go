@@ -227,9 +227,11 @@ type DataPlaneInputs struct {
 // MySQL lifecycles, the refusals, the restart and fault injection, and the
 // four-eyes and Pod-metadata rows.
 var DataPlane = define[DataPlaneInputs](Phase{
-	Name:         "dataplane",
-	Test:         "TestDataPlane",
-	Timeout:      150 * time.Minute,
+	Name: "dataplane",
+	Test: "TestDataPlane",
+	// The complete sequential acceptance reached the last scenarios after
+	// 150 minutes in CI run 37160360553. Individual waits keep their bounds.
+	Timeout:      180 * time.Minute,
 	IsolatesNode: true,
 	RequiresFull: []string{"assert"},
 	Scenarios: []string{
@@ -438,9 +440,11 @@ type AlertingInputs struct {
 // scrape, certificate expiry and admission failure, and every manager gone each reach a receiver.
 // Recoverable faults clear.
 var Alerting = define[AlertingInputs](Phase{
-	Name:         "alerting",
-	Test:         "TestAlerting",
-	Timeout:      105 * time.Minute,
+	Name: "alerting",
+	Test: "TestAlerting",
+	// Native scenario measurements exceed two hours in aggregate. This
+	// bounds the sequence; each alert still has its own delivery deadline.
+	Timeout:      150 * time.Minute,
 	RequiresFull: []string{"assert", "migrations-postgresql", "reference-data-postgresql"},
 	Scenarios: []string{
 		"monitoring-path",

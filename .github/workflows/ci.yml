@@ -481,10 +481,11 @@ jobs:
     permissions:
       contents: read
       actions: read
-    # Data-plane and fault acceptance already approach 90 minutes on hosted
-    # runners. Leave a bounded budget for the subsequent upgrade and uninstall
-    # proofs; their individual operation deadlines remain unchanged.
-    timeout-minutes: 180
+    # The data-plane phase has a 180-minute aggregate bound. The PostgreSQL
+    # suite also runs reference data and the full alerting sequence after its
+    # migration acceptance. Keep room for setup and diagnostic collection;
+    # individual operation and alert deadlines remain in their scenarios.
+    timeout-minutes: 270
     strategy:
       fail-fast: false
       matrix:
