@@ -218,7 +218,6 @@ func newMigrationRun(t *testing.T, run *harness.Run, in phases.MigrationsInputs,
 	m.kubectlPtah = filepath.Join(m.workDir, "kubectl-ptah")
 	build := exec.CommandContext(m.ctx, "go", "build", "-trimpath", "-o", m.kubectlPtah, "./cmd/kubectl-ptah") //nolint:gosec // Arguments, not a shell.
 	build.Dir = repositoryRoot
-	build.Env = append(os.Environ(), "GOCACHE="+filepath.Join(m.workDir, "go-cache"))
 	build.Stdout, build.Stderr = os.Stderr, os.Stderr
 	m.check(build.Run(), "build kubectl-ptah")
 

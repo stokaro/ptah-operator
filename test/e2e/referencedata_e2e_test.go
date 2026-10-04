@@ -133,7 +133,6 @@ func newReferenceRun(t *testing.T, run *harness.Run, in phases.ReferenceDataInpu
 	r.kubectlPtah = filepath.Join(r.workDir, "kubectl-ptah")
 	build := exec.CommandContext(r.ctx, "go", "build", "-trimpath", "-o", r.kubectlPtah, "./cmd/kubectl-ptah") //nolint:gosec // Arguments, not a shell.
 	build.Dir = repositoryRoot
-	build.Env = append(os.Environ(), "GOCACHE="+filepath.Join(r.workDir, "go-cache"))
 	build.Stdout, build.Stderr = os.Stderr, os.Stderr
 	r.check(build.Run(), "build kubectl-ptah")
 

@@ -343,6 +343,9 @@ func (m *migrationRun) existingSchemaAdoptionProof() {
 	m.publish("adopt", m.fixtureDir(""), a.reference)
 	m.mustCreate(m.migrationDocument(migrationSpec{
 		name: a.migration, secret: a.secret, reference: a.reference, coordinationKey: a.coordinationKey,
+		// This row waits for a history refresh after manual adoption; it does
+		// not measure the main lifecycle's five-minute refresh interval.
+		interval: "1m",
 	}))
 	held := m.waitForMigration(a.migration, string(ptahv1alpha1.MigrationPhaseAwaitingApproval), migrationPoll,
 		func(migration *ptahv1alpha1.PtahMigration) bool {
