@@ -596,6 +596,7 @@ func (m *migrationRun) branchOutOfOrderProof() {
 		m.fatalf("%s did not apply its spaced history", name)
 	}
 	m.assertLateBranchMigrationBlocks()
+	m.finishFixture(name)
 }
 
 // assertLateBranchMigrationBlocks is the row itself: the artifact gains a

@@ -127,6 +127,7 @@ func (m *migrationRun) uncertainApplyProof() {
 		m.fatalf("the interrupted %s Apply was replayed or overlapped another run in the complete Job/Pod history", m.engine.name)
 	}
 	m.assertUnresolvedRunAcknowledgedByAPerson()
+	m.finishFixture(m.uncertainMigration())
 	m.logf("PASS %s stopped on a run it could not read, and replayed nothing", m.engine.kind)
 }
 

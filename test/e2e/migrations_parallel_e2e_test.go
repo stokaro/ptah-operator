@@ -32,8 +32,8 @@ func (m *migrationRun) independentApplyFaults() {
 	})
 	// These rows retain their evidence. Stop their periodic reads before
 	// the later egress row isolates the original database server.
-	m.finishFaultFixture("e2e-lost-log-" + m.engine.name)
-	m.finishFaultFixture("e2e-stopped-" + m.engine.name)
+	m.finishFixture("e2e-lost-log-" + m.engine.name)
+	m.finishFixture("e2e-stopped-" + m.engine.name)
 }
 
 type migrationProofLane struct {

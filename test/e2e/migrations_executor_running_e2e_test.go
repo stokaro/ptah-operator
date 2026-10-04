@@ -357,6 +357,7 @@ func (m *migrationRun) runningExecutorImageChange() {
 		m.fatalf("the closed migration executor history contains a second Apply or overlapping work")
 	}
 	m.check(leaseHeldUntilRelease(leases.snapshot(), lease), "retain the original migration realm through its safe release")
+	m.finishFixture(name)
 	m.logf("PASS %s running Apply executor change: original Job=%s Pod=%s retained; fresh History settled Unknown without replay", m.engine.kind, jobUID, pod.UID)
 }
 

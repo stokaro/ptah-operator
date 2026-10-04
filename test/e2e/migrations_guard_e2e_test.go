@@ -365,6 +365,7 @@ func (m *migrationRun) existingSchemaAdoptionProof() {
 	m.logf("%s held an existing schema at the approval gate and recorded nothing", m.engine.kind)
 	m.runAdoptionBaseline(a)
 	m.assertAdoptedHistoryMatches(a, applies)
+	m.finishFixture(a.migration)
 	m.logf("PASS %s refuses to adopt an existing schema, and settles once a person does", m.engine.kind)
 }
 
@@ -662,6 +663,7 @@ func (m *migrationRun) checkpointBootstrapProof() {
 	m.assertCheckpointEqualsTheLongWay(name, database, settled)
 	m.patchMigration(name, map[string]any{"spec": map[string]any{"interval": "30s"}})
 	m.assertCheckpointBootstrapStaysSettled(name)
+	m.finishFixture(name)
 	m.logf("PASS %s bootstrapped from a checkpoint and matches the database that replayed everything", m.engine.kind)
 }
 

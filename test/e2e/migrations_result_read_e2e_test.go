@@ -168,7 +168,7 @@ func (m *migrationRun) hungResultReadProof() {
 		m.query("SELECT color FROM e2e_migration_widgets WHERE id = 1", r.database) != "blue" {
 		m.fatalf("maximum-name migration recovery lost its expected database history or rows")
 	}
-	m.finishFaultFixture(r.name)
+	m.finishFixture(r.name)
 	m.logf("PASS %s 63-byte migration name: durable original and independent convergence within 180s while diagnostic log stays unfinished; no replay", m.engine.kind)
 	m.logf("PASS %s migration name boundary: 64 bytes refused at its CEL rule; every 63-byte operation retained its complete workload name; original Apply SQL and database history verified", m.engine.kind)
 }
