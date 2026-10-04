@@ -133,6 +133,41 @@ func storedStateReady(object client.Object, supported int32) error {
 	return errors.New("the stored-state control did not settle before dispatch")
 }
 
+// Before the write barrier takes effect, a supported controller may refresh
+// its approval condition. The held reading must still name the same ready
+// plan, execution binding, resource, and inputs. It becomes the exact status
+// baseline before approval and unsupported-state injection.
+func storedStateSameApprovalBoundary(before, held client.Object, supported int32) error {
+	if err := storedStateReady(before, supported); err != nil {
+		return err
+	}
+	if err := storedStateReady(held, supported); err != nil {
+		return err
+	}
+	if before.GetName() != held.GetName() || before.GetNamespace() != held.GetNamespace() ||
+		before.GetUID() != held.GetUID() || before.GetGeneration() != held.GetGeneration() ||
+		!equality.Semantic.DeepEqual(before.GetOwnerReferences(), held.GetOwnerReferences()) {
+		return errors.New("the held approval boundary changed its resource identity")
+	}
+	switch original := before.(type) {
+	case *ptahv1alpha1.PtahSchema:
+		current, ok := held.(*ptahv1alpha1.PtahSchema)
+		if ok && equality.Semantic.DeepEqual(original.Spec, current.Spec) &&
+			equality.Semantic.DeepEqual(original.Status.Plan, current.Status.Plan) &&
+			equality.Semantic.DeepEqual(original.Status.ExecutionBinding, current.Status.ExecutionBinding) {
+			return nil
+		}
+	case *ptahv1alpha1.PtahMigration:
+		current, ok := held.(*ptahv1alpha1.PtahMigration)
+		if ok && equality.Semantic.DeepEqual(original.Spec, current.Spec) &&
+			equality.Semantic.DeepEqual(original.Status.Plan, current.Status.Plan) &&
+			equality.Semantic.DeepEqual(original.Status.ExecutionBinding, current.Status.ExecutionBinding) {
+			return nil
+		}
+	}
+	return errors.New("the held approval boundary changed its inputs, plan, or execution binding")
+}
+
 // The injected field is the only permitted state change. The current manager
 // must leave unsupported state uninterpreted, including claims and finalizers.
 func storedStateChangedOnlyByVersion(before, current client.Object, version int32) error {
