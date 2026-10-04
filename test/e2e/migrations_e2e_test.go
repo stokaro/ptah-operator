@@ -365,6 +365,34 @@ func (m *migrationRun) patchMigration(name string, patch map[string]any) {
 	m.check(m.mergePatch(migration, patch), "patch PtahMigration %s", name)
 }
 
+// finishFaultFixture stops a completed row from injecting faults into later
+// rows. Keep its resource and finished Jobs for diagnostics, but retire read-only work
+// before a scheduling gate closes or a rejected artifact is retried forever.
+// Call this only after every assertion about the row's behavior has passed.
+func (m *migrationRun) finishFaultFixture(name string) {
+	m.t.Helper()
+	resource := m.migration(name)
+	uid := resource.UID
+	m.check(retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		current := m.migration(name)
+		if current.UID != uid {
+			return fmt.Errorf("completed fault fixture %s was replaced before cleanup", name)
+		}
+		before := current.DeepCopy()
+		current.Spec.Suspend = true
+		return m.cluster.Client.Patch(m.ctx, current,
+			client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{}))
+	}), "suspend the completed fault fixture %s", name)
+	m.waitForMigration(name, "suspension of the completed fault fixture", time.Second,
+		func(current *ptahv1alpha1.PtahMigration) bool {
+			if current.UID != uid {
+				m.fatalf("completed fault fixture %s was replaced during cleanup", name)
+			}
+			return current.Spec.Suspend && current.Status.ObservedGeneration == current.Generation &&
+				current.Status.Phase == ptahv1alpha1.MigrationPhaseSuspended && current.Status.ActiveOperation == nil
+		})
+}
+
 // kubectl runs kubectl against the cluster and returns its standard output
 // and standard error.
 func (m *migrationRun) kubectl(arguments ...string) (stdout, stderr []byte, err error) {
