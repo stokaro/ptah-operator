@@ -135,7 +135,8 @@ func (a *alertingRun) negativeControls() {
 		}
 	}()
 	a.waitForTargets()
-	if !a.noActiveAlerts(`ALERTS`) {
+	// A transient pending condition has not crossed the rule's paging threshold.
+	if !a.noActiveAlerts(`ALERTS{alertstate="firing"}`) {
 		a.fatalf("an unrelated incident is active before the negative-control window")
 	}
 	baselineLog, err := a.deploymentLog(a.ctx, "alert-sink")
@@ -236,7 +237,7 @@ func (a *alertingRun) negativeControls() {
 		if !alRulesLoaded(body) {
 			a.fatalf("a rule disappeared or stopped evaluating during the quiet window")
 		}
-		if !a.noActiveAlerts(`ALERTS`) || !maps.Equal(unresolved, a.negativeUnresolvedIdentity()) {
+		if !a.noActiveAlerts(`ALERTS{alertstate="firing"}`) || !maps.Equal(unresolved, a.negativeUnresolvedIdentity()) {
 			a.fatalf("a new incident appeared during ordinary policy waiting")
 		}
 		log, err := a.deploymentLog(a.ctx, "alert-sink")
