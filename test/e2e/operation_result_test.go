@@ -157,6 +157,70 @@ func TestReadOperationResultPreservesPlanBytesAndEngine(t *testing.T) {
 	}
 }
 
+func TestReferencePlanLogEvidence(t *testing.T) {
+	for _, name := range []string{"empty diagnostics", "diagnostic text", "no changes", "absent receipt", "another schema", "another Job", "another Pod", "failed Plan", "wrong plan digest", "plaintext plan", "statement SQL", "legacy empty log", "legacy sealed frame"} {
+		t.Run(name, func(t *testing.T) {
+			f, c, _ := operationResultFixture(t, "schema-plan-dev-fence-scheduling")
+			schema := f.Subject.(*api.PtahSchema)
+			plan := `{"format_version":1,"name":"plan","dialect":"postgresql","from_fingerprint":"before","to_fingerprint":"after","statements":[{"sql":"INSERT INTO countries (name) VALUES ('Czechia')","severity":"safe"}]}`
+			value := runner.Result{ProtocolVersion: runner.ProtocolVersion, Operation: runner.OperationPlan,
+				OperationID: f.Identity.Binding.OperationID, PlanOutcome: runner.PlanOutcomeChanges,
+				Stdout: plan, PlanContentDigest: sha256Digest([]byte(plan)), CoordinationDigest: sha256Digest([]byte("realm"))}
+			// Reference-data CI completed its native row checks, then refused
+			// the real empty diagnostic log of a durably delivered Plan.
+			var logs []byte
+			wantErr := true
+			switch name {
+			case "empty diagnostics":
+				wantErr = false
+			case "diagnostic text":
+				logs, wantErr = []byte("result acknowledged\n"), false
+			case "no changes":
+				value.PlanOutcome, value.Stdout, value.PlanContentDigest = runner.PlanOutcomeNoChanges, "", ""
+				wantErr = false
+			case "failed Plan":
+				value.PlanOutcome, value.Stdout, value.PlanContentDigest = "", "", ""
+				value.ChildExitCode, value.Error = -1, &runner.ResultError{Code: "refused", Message: "refused"}
+			case "wrong plan digest":
+				value.PlanContentDigest = sha256Digest([]byte("another plan"))
+			case "plaintext plan":
+				logs = []byte(plan)
+			case "statement SQL":
+				logs = []byte("INSERT INTO countries (name) VALUES ('Czechia')")
+			}
+			if name != "absent receipt" {
+				publishOperationResult(t, c, f, value)
+			}
+			switch name {
+			case "another schema":
+				schema.UID = "replacement"
+			case "another Job":
+				f.Job.UID = "replacement"
+			case "another Pod":
+				f.Pod.UID = "replacement"
+			case "legacy empty log", "legacy sealed frame":
+				var err error
+				f.Job, err = resultJobWithoutProjection(f.Job)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if name == "legacy sealed frame" {
+					value.Stdout = "process-sealed-payload"
+					logs, err = runner.MarshalFrame(value)
+					if err != nil {
+						t.Fatal(err)
+					}
+					wantErr = false
+				}
+			}
+			err := referencePlanLogEvidence(t.Context(), c, schema, f.Job, f.Pod, logs)
+			if (err != nil) != wantErr {
+				t.Fatalf("reference Plan diagnostic evidence error = %v, want error=%v", err, wantErr)
+			}
+		})
+	}
+}
+
 func TestReadOperationResultRejectsForeignEvidence(t *testing.T) {
 	for _, field := range []string{"operation", "operation-id", "job-uid", "pod-uid", "generation", "binding", "payload-protocol", "projection"} {
 		t.Run(field, func(t *testing.T) {

@@ -944,12 +944,9 @@ func (r *referenceRun) assertAProtectedTableRefusesTheChange() {
 // every step above: no declared row value reaches status, an Event, the
 // controller's own log, or a Plan Pod's log.
 //
-// The log reads are not allowed to fail quietly. The row scan passes on
-// nothing, which is right for evidence that may legitimately carry nothing
-// and wrong here: a selector that matches no Pod or a read that errored would
-// report success about a log it never read. The controller has been
-// reconciling this schema through every step above, so it has logged
-// something, and so has the most recent Plan Job.
+// Log reads must succeed and select a real Pod. The controller has logged
+// reconciliation activity; a Plan Pod may have empty diagnostics when its
+// successful result was delivered through the durable receiver instead.
 func (r *referenceRun) assertRowsNeverLeftTheDatabase() {
 	r.t.Helper()
 	r.status()
@@ -1017,19 +1014,21 @@ func (r *referenceRun) assertPlanPodLogCarriesNoPlanText() {
 		"list the Plan Pods of %s", r.names.schema)
 	pod, found := referenceLatestPod(pods.Items)
 	if !found {
-		r.fatalf("no Plan Pod remained for %s, so its log could not be checked for a sealed payload", r.names.schema)
+		r.fatalf("no Plan Pod remained for %s, so its diagnostic log could not be checked", r.names.schema)
 	}
+	owner := metav1.GetControllerOf(&pod)
+	if owner == nil || owner.APIVersion != "batch/v1" || owner.Kind != "Job" {
+		r.fatalf("the Plan Pod has no owning Job")
+	}
+	job := &batchv1.Job{}
+	r.check(r.get(owner.Name, job), "read the Plan Pod's owning Job")
 	log, err := r.cluster.ContainerLog(r.ctx, r.in.TestNamespace, pod.Name, "ptah")
 	if err != nil {
 		r.fatalf("the Plan Pod log could not be read: %v", err)
 	}
-	if len(log) == 0 {
-		r.fatalf("the Plan Pod log is empty, so the row scan would have measured nothing")
-	}
+	r.check(referencePlanLogEvidence(r.ctx, r.cluster.Client, r.status(), job, &pod, log),
+		"validate the Plan result behind its diagnostic log")
 	r.scanBoth(log, "the Plan Pod log")
-	if referencePlanInTheClear(log) {
-		r.fatalf("the Plan Pod log carries the plan document's own shape in the clear, not sealed")
-	}
 }
 
 // engineReferenceData drives the engine from a database with no tables to a
