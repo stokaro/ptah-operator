@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "policy": "upstream-active-minors",
   "windowSize": 3,
-  "lastVerified": "2026-08-31",
+  "lastVerified": "2026-10-05",
   "kindVersion": "v0.33.0",
   "releases": [
     {

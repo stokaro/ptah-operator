@@ -542,6 +542,10 @@ func validationDate(value string) (time.Time, error) {
 }
 
 func loadAndValidateManifest(path string, now time.Time) (supportManifest, []parsedRelease, error) {
+	// The manifest records a UTC date, so every caller gets the same inclusive
+	// day boundary, even when it supplies a timestamp rather than midnight.
+	now = now.UTC()
+	now = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 	contents, err := os.ReadFile(path)
 	if err != nil {
 		return supportManifest{}, nil, fmt.Errorf("read %s: %w", path, err)

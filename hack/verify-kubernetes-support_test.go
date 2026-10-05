@@ -34,12 +34,19 @@ func TestLoadAndValidateManifestFreshness(t *testing.T) {
 		name         string
 		lastVerified string
 		now          string
+		timeOfDay    time.Duration
 		wantError    string
 	}{
 		{
 			name:         "exact maximum age is accepted",
 			lastVerified: "2026-08-31",
 			now:          "2026-10-05",
+		},
+		{
+			name:         "the entire last UTC day is accepted",
+			lastVerified: "2026-08-31",
+			now:          "2026-10-05",
+			timeOfDay:    24*time.Hour - time.Nanosecond,
 		},
 		{
 			name:         "older verification is stale",
@@ -80,7 +87,7 @@ func TestLoadAndValidateManifestFreshness(t *testing.T) {
 			if err != nil {
 				t.Fatalf("parse test date: %v", err)
 			}
-			_, _, err = loadAndValidateManifest(path, now)
+			_, _, err = loadAndValidateManifest(path, now.Add(test.timeOfDay))
 			if test.wantError == "" {
 				if err != nil {
 					t.Fatalf("loadAndValidateManifest() error = %v", err)
