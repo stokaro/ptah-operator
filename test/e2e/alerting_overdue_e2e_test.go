@@ -31,7 +31,7 @@ func (a *alertingRun) overdueFamily(family string) {
 		if family == "migration" {
 			object = &ptahv1.PtahMigration{}
 		}
-		err := a.cluster.Client.Get(ctx, types.NamespacedName{Namespace: alStalledNamespace, Name: name}, object)
+		err := a.cluster.Client.Get(ctx, types.NamespacedName{Namespace: a.scope.stalledNamespace, Name: name}, object)
 		return object, err
 	}
 	query := fmt.Sprintf(`ALERTS{alertname=%q,family=%q}`, alOverdueAlert, family)
@@ -51,11 +51,11 @@ func (a *alertingRun) overdueFamily(family string) {
 			a.fatalf("a manager scrape failed during the overdue fault")
 		}
 	}
-	realm := alOverdueRealm(family)
+	realm := alOverdueRealm(a.scope.stalledNamespace, family)
 	if err := a.cluster.Client.Get(a.ctx, client.ObjectKeyFromObject(realm), &ptahv1.PtahRealm{}); !apierrors.IsNotFound(err) {
 		a.fatalf("the overdue fixture's realm must be absent before its refusal")
 	}
-	a.check(a.cluster.Client.Create(a.ctx, &unstructured.Unstructured{Object: alOverdueResource(family)}, client.FieldOwner(harness.FieldOwner), client.FieldValidation("Strict")), "create the overdue %s fixture", family)
+	a.check(a.cluster.Client.Create(a.ctx, &unstructured.Unstructured{Object: alOverdueResource(a.scope.stalledNamespace, family)}, client.FieldOwner(harness.FieldOwner), client.FieldValidation("Strict")), "create the overdue %s fixture", family)
 	var before alOverdueState
 	a.check(harness.Wait(a.ctx, "a persisted eligible realm-recheck deadline", alTimeout, time.Second, func(ctx context.Context) (bool, string, error) {
 		object, err := read(ctx, name)
@@ -75,7 +75,7 @@ func (a *alertingRun) overdueFamily(family string) {
 		}
 	}
 	if family == "schema" {
-		r := newStoredStateRecorder[*ptahv1.PtahSchema](a.t, a.ctx, watcher, "overdue-schemas", alStalledNamespace, func() client.ObjectList { return &ptahv1.PtahSchemaList{} })
+		r := newStoredStateRecorder[*ptahv1.PtahSchema](a.t, a.ctx, watcher, "overdue-schemas", a.scope.stalledNamespace, func() client.ObjectList { return &ptahv1.PtahSchemaList{} })
 		history = func() []client.Object {
 			var objects []client.Object
 			for _, event := range r.snapshot() {
@@ -88,7 +88,7 @@ func (a *alertingRun) overdueFamily(family string) {
 			closeRunnerWatches(a.t, []recorder{r}, scan)
 		}
 	} else {
-		r := newStoredStateRecorder[*ptahv1.PtahMigration](a.t, a.ctx, watcher, "overdue-migrations", alStalledNamespace, func() client.ObjectList { return &ptahv1.PtahMigrationList{} })
+		r := newStoredStateRecorder[*ptahv1.PtahMigration](a.t, a.ctx, watcher, "overdue-migrations", a.scope.stalledNamespace, func() client.ObjectList { return &ptahv1.PtahMigrationList{} })
 		history = func() []client.Object {
 			var objects []client.Object
 			for _, event := range r.snapshot() {

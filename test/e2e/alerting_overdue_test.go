@@ -17,7 +17,7 @@ import (
 
 func overdueFixture(t *testing.T, family string) client.Object {
 	t.Helper()
-	raw, err := json.Marshal(alOverdueResource(family))
+	raw, err := json.Marshal(alOverdueResource(alStalledNamespace, family))
 	if err != nil {
 		t.Fatal(err)
 	}

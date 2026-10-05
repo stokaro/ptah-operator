@@ -113,8 +113,8 @@ func alOverduePolicy(before alOverdueState) (*admissionv1.ValidatingAdmissionPol
 	return policy, binding
 }
 
-func alOverdueResource(family string) map[string]any {
-	object := alHeldResource(alStalledNamespace, family)
+func alOverdueResource(namespace, family string) map[string]any {
+	object := alHeldResource(namespace, family)
 	if object == nil {
 		return nil
 	}
@@ -144,8 +144,8 @@ func alOverdueRealmName(family string) string { return "ptah-e2e-overdue-" + fam
 
 // An absent realm gives both controllers an eligible, persisted recheck
 // deadline without relying on their different failed-operation retry states.
-func alOverdueRealm(family string) *ptahv1.PtahRealm {
+func alOverdueRealm(namespace, family string) *ptahv1.PtahRealm {
 	return &ptahv1.PtahRealm{ObjectMeta: metav1.ObjectMeta{Name: alOverdueRealmName(family)}, Spec: ptahv1.PtahRealmSpec{
-		Engine: ptahv1.DatabaseEnginePostgreSQL, Namespaces: []string{alStalledNamespace}, Sharing: ptahv1.RealmSharingExclusive,
+		Engine: ptahv1.DatabaseEnginePostgreSQL, Namespaces: []string{namespace}, Sharing: ptahv1.RealmSharingExclusive,
 	}}
 }

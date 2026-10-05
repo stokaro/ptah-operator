@@ -32,7 +32,7 @@ func (a *alertingRun) heldResource(family string) (client.Object, error) {
 	if family == "migration" {
 		object = &ptahv1.PtahMigration{}
 	}
-	err := a.cluster.Client.Get(a.ctx, types.NamespacedName{Namespace: alStalledNamespace, Name: alStalledSchema}, object)
+	err := a.cluster.Client.Get(a.ctx, types.NamespacedName{Namespace: a.scope.stalledNamespace, Name: alStalledSchema}, object)
 	return object, err
 }
 
@@ -75,7 +75,7 @@ func (a *alertingRun) stalledFamily(family string) {
 		a.fatalf("a %s Resolve was already stalled before this fault", family)
 	}
 	from := a.deliveryCount()
-	a.check(a.cluster.Client.Create(a.ctx, &unstructured.Unstructured{Object: alHeldResource(alStalledNamespace, family)},
+	a.check(a.cluster.Client.Create(a.ctx, &unstructured.Unstructured{Object: alHeldResource(a.scope.stalledNamespace, family)},
 		client.FieldOwner(harness.FieldOwner), client.FieldValidation("Strict")), "create the held %s", family)
 	var claim alStalledClaim
 	var podUID types.UID

@@ -126,7 +126,7 @@ whose run finished, a bisect cannot assume a commit it lands on was ever built,
 and a change that needs its own verdict — a release candidate, or a change to
 the lifecycle path itself — goes through a pull request and is merged after its
 run finishes. The pull request fans out over the same three minors and the same
-five suites.
+six suites.
 
 ## The acceptance suites
 
@@ -151,7 +151,12 @@ and admission rows, followed by reference-data acceptance on both engines. Those
 rows use separate databases and need no migration acceptance. Alerting runs in lifecycle before the final next-release
 upgrade and uninstall. It publishes and plans its own schema and migration
 producers, then suspends them; it does not wait for either engine's migration
-or reference-data acceptance. The matrix still has five suites.
+or reference-data acceptance. Operation incidents run in `alerting-operations`;
+plan storage, scrape/admission loss, manager loss, and interrupted upgrades stay
+in `lifecycle`. Separate clusters let those groups overlap without global faults
+contaminating another incident's history. Each group owns its producer identities
+and monitoring namespace, so the unpartitioned driver also runs both safely.
+The matrix has six suites.
 
 The two migration engines run in separate suites. Reference data runs in the
 shorter data-plane suite so it adds no serial work to either migration suite.
@@ -159,7 +164,7 @@ The engine is a phase input rather than a default: the driver names it,
 and a phase asked to run with none refuses instead of covering one engine and
 reporting two.
 
-The migration, certificates, and lifecycle suites need the namespace the data plane stands up — its registry
+The migration, certificates, lifecycle, and alerting-operations suites need the namespace the data plane stands up — its registry
 Service, its databases, its admission fixtures — so those suites run
 the data-plane phase in preparation mode (`E2E_DATAPLANE_MODE=prepare`), which
 creates those prerequisites and executes none of its own acceptance. Preparation

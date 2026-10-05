@@ -447,17 +447,31 @@ type AlertingInputs struct {
 	RegistryCredentialsFile string `env:"E2E_REGISTRY_CREDENTIALS_FILE"`
 }
 
-// Alerting proves the path from a manager's metrics to a person: an Apply
-// nobody accounted for, an operation that stops moving, a failed leader
-// scrape, certificate expiry and admission failure, and every manager gone each reach a receiver.
-// Recoverable faults clear.
+// Alerting proves infrastructure alerts, including storage, scrape and
+// admission faults, lost managers, and interrupted upgrades.
 var Alerting = define[AlertingInputs](Phase{
-	Name: "alerting",
-	Test: "TestAlerting",
-	// Native scenario measurements exceed two hours in aggregate. This
-	// bounds the sequence; each alert still has its own delivery deadline.
-	Timeout:      150 * time.Minute,
+	Name:         "alerting",
+	Test:         "TestAlerting",
+	Timeout:      90 * time.Minute,
 	RequiresFull: []string{"assert"},
+	Scenarios: []string{
+		"native-producers",
+		"monitoring-path",
+		"plan-store-large",
+		"unresolved-view-read-failures",
+		"lost-scrape-target",
+		"certificate-expiry",
+		"lost-view",
+		"upgrade-alerts",
+	},
+})
+
+// AlertingOperations owns operation incidents and the full no-page windows.
+// It runs on another cluster so infrastructure faults cannot change its history.
+var AlertingOperations = define[AlertingInputs](Phase{
+	Name:    "alerting-operations",
+	Test:    "TestAlertingOperations",
+	Timeout: 90 * time.Minute,
 	Scenarios: []string{
 		"native-producers",
 		"monitoring-path",
@@ -467,12 +481,6 @@ var Alerting = define[AlertingInputs](Phase{
 		"resource-overdue",
 		"lock-release-owed",
 		"operations-failing",
-		"plan-store-large",
-		"unresolved-view-read-failures",
-		"lost-scrape-target",
-		"certificate-expiry",
-		"lost-view",
-		"upgrade-alerts",
 	},
 })
 
@@ -626,6 +634,7 @@ var all = []Phase{
 	MigrationsMySQL.Phase,
 	ReferenceDataPostgreSQL.Phase,
 	ReferenceDataMySQL.Phase,
+	AlertingOperations.Phase,
 	Alerting.Phase,
 	Uninstall.Phase,
 }

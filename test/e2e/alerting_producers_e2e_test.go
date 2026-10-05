@@ -5,6 +5,7 @@ package e2e
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	ptahv1 "github.com/stokaro/ptah-operator/api/v1alpha1"
@@ -24,7 +25,7 @@ func (a *alertingRun) nativeProducers() {
 	registry := a.in.RegistryService + "." + a.in.TestNamespace + ".svc.cluster.local:5000"
 	m := &migrationRun{
 		t: a.t, parent: a.t, ctx: a.ctx, cluster: a.cluster, engine: engine,
-		workDir: a.workDir, registryHost: registry, repository: "e2e-alert-producers",
+		workDir: a.workDir, registryHost: registry, repository: "e2e-alert-producers" + a.scope.suffix,
 		in: phases.MigrationsInputs{TestNamespace: a.in.TestNamespace, ExecutorImage: a.in.ExecutorImage},
 	}
 	credential := &corev1.Secret{}
@@ -34,35 +35,35 @@ func (a *alertingRun) nativeProducers() {
 		a.fatalf("native producers have no database credential")
 	}
 	m.protect(m.password, a.credentials.Password)
-	m.isolatedDatabase("ptah_alert_producer_migration", alMigrationProducer+"-db")
-	schemaURL := m.isolatedDatabase("ptah_alert_producer_schema", alSchemaProducer+"-db")
+	m.isolatedDatabase(strings.ReplaceAll(a.scope.migrationProducer, "-", "_"), a.scope.migrationProducer+"-db")
+	schemaURL := m.isolatedDatabase(strings.ReplaceAll(a.scope.schemaProducer, "-", "_"), a.scope.schemaProducer+"-db")
 	m.migrationPolicy()
-	migrationDigest := m.publish("alerts-producer", m.fixtureDir(""), m.reference(""))
+	migrationDigest := m.publish(a.scope.producerVersion, m.fixtureDir(""), m.reference(""))
 
 	r := &referenceRun{
 		t: a.t, parent: a.t, ctx: a.ctx, cluster: a.cluster, engine: engine,
 		workDir: a.workDir, scanner: m.scanner, password: m.password, url: schemaURL,
 		in: phases.ReferenceDataInputs{TestNamespace: a.in.TestNamespace, ExecutorImage: a.in.ExecutorImage},
 	}
-	r.names = referenceNamesFor("postgresql", registry, "e2e-alert-producers")
-	r.names.schema, r.names.secret = alSchemaProducer, alSchemaProducer+"-db"
-	r.names.coordinationKey = "e2e/alert-producer/schema"
-	r.names.configMapPrefix, r.names.jobPrefix = alSchemaProducer+"-", "e2e-push-alert-producer-schema-"
+	r.names = referenceNamesFor("postgresql", registry, "e2e-alert-producers"+a.scope.suffix)
+	r.names.schema, r.names.secret = a.scope.schemaProducer, a.scope.schemaProducer+"-db"
+	r.names.coordinationKey = "e2e/alert-producer/schema" + a.scope.suffix
+	r.names.configMapPrefix, r.names.jobPrefix = a.scope.schemaProducer+"-", "e2e-push-alert-producer-schema"+a.scope.suffix+"-"
 	r.declaredRowValues()
 	schemaDigest := r.publish("v1")
 	schemaDocument := referenceSchemaDocument(a.in.TestNamespace, engine.kind, r.names)
 	schemaDocument["spec"].(map[string]any)["interval"] = alNegativeInterval.String()
 	r.check(r.create(schemaDocument), "create the native schema producer")
 	m.mustCreate(m.migrationDocument(migrationSpec{
-		name: alMigrationProducer, secret: alMigrationProducer + "-db", reference: m.reference(""),
-		coordinationKey: "e2e/alert-producer/migration", apply: "OnApproval", interval: alNegativeInterval.String(),
+		name: a.scope.migrationProducer, secret: a.scope.migrationProducer + "-db", reference: m.reference(""),
+		coordinationKey: "e2e/alert-producer/migration" + a.scope.suffix, apply: "OnApproval", interval: alNegativeInterval.String(),
 	}))
 	for _, producer := range []struct {
 		name, digest string
 		object       client.Object
 	}{
-		{alSchemaProducer, schemaDigest, &ptahv1.PtahSchema{}},
-		{alMigrationProducer, migrationDigest, &ptahv1.PtahMigration{}},
+		{a.scope.schemaProducer, schemaDigest, &ptahv1.PtahSchema{}},
+		{a.scope.migrationProducer, migrationDigest, &ptahv1.PtahMigration{}},
 	} {
 		key := types.NamespacedName{Namespace: a.in.TestNamespace, Name: producer.name}
 		a.check(a.cluster.Client.Get(a.ctx, key, producer.object), "retain the producer identity")
@@ -82,6 +83,6 @@ func (a *alertingRun) nativeProducers() {
 	// Keep the verified specs and execution bindings available to every case,
 	// while preventing periodic reads from moving plan pins or emitting alerts.
 	r.finishFixture()
-	m.finishFixture(alMigrationProducer)
+	m.finishFixture(a.scope.migrationProducer)
 	a.logf("native schema and migration producers reached their exact approval gates and are suspended; neither received approval")
 }

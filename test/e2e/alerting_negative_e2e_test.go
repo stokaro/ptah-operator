@@ -32,8 +32,8 @@ func (a *alertingRun) negativeControls() {
 	a.check(err, "select the prepared PostgreSQL server")
 	schema := &ptahv1.PtahSchema{}
 	migration := &ptahv1.PtahMigration{}
-	a.check(a.cluster.Client.Get(a.ctx, types.NamespacedName{Namespace: a.in.TestNamespace, Name: alSchemaProducer}, schema), "read the real reference schema producer")
-	a.check(a.cluster.Client.Get(a.ctx, types.NamespacedName{Namespace: a.in.TestNamespace, Name: alMigrationProducer}, migration), "read the real migration producer")
+	a.check(a.cluster.Client.Get(a.ctx, types.NamespacedName{Namespace: a.in.TestNamespace, Name: a.scope.schemaProducer}, schema), "read the real reference schema producer")
+	a.check(a.cluster.Client.Get(a.ctx, types.NamespacedName{Namespace: a.in.TestNamespace, Name: a.scope.migrationProducer}, migration), "read the real migration producer")
 	watcher, err := client.NewWithWatch(a.cluster.Config, client.Options{Scheme: a.cluster.Scheme})
 	a.check(err, "open negative-control watches")
 	schemas := newStoredStateRecorder[*ptahv1.PtahSchema](a.t, a.ctx, watcher, "negative-schemas", a.in.TestNamespace, func() client.ObjectList { return &ptahv1.PtahSchemaList{} })
@@ -321,7 +321,7 @@ func (a *alertingRun) negativeUnresolvedIdentity() map[types.UID]string {
 
 func (a *alertingRun) negativeMonitorIdentity() map[string]string {
 	pods := &corev1.PodList{}
-	a.check(a.cluster.Client.List(a.ctx, pods, client.InNamespace(alMonitoringNamespace)), "read monitoring process identities")
+	a.check(a.cluster.Client.List(a.ctx, pods, client.InNamespace(a.scope.monitoringNamespace)), "read monitoring process identities")
 	result := map[string]string{}
 	for _, pod := range pods.Items {
 		name := pod.Labels["app"]

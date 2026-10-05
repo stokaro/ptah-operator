@@ -37,7 +37,7 @@ func (a *alertingRun) unresolvedSchemaCase(m *migrationRun) {
 	sql("INSERT INTO e2e_widgets (id,name,note) VALUES (701,'unresolved-control','preserve-this-row')")
 	reference, publisher, config := a.publishUnresolvedSchema(m, name)
 	template := &ptahv1.PtahSchema{}
-	a.check(m.get(alSchemaProducer, template), "read the original schema producer")
+	a.check(m.get(a.scope.schemaProducer, template), "read the original schema producer")
 	object, err := alNegativeFixture(template, name, secret.Name, ptahv1.ApplyPolicyOnApproval)
 	a.check(err, "build the independently authorized schema")
 	resource := object.(*ptahv1.PtahSchema)

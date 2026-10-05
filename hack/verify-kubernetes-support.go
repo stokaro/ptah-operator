@@ -3208,7 +3208,7 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 			`--config "$KIND_CONFIG" \`,
 			`--kubeconfig "$KUBECONFIG_FILE" \`,
 			`--wait 5m`,
-			`if suite_runs_phase alerting; then`,
+			`if suite_runs_phase alerting || suite_runs_phase alerting-operations; then`,
 			`configure_control_plane_memory`,
 			`fi`,
 			`require_ready_nodes "after kind cluster creation"`,

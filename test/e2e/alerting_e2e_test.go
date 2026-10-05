@@ -26,58 +26,48 @@ import (
 	"github.com/stokaro/ptah-operator/test/e2e/phases"
 )
 
-// TestAlerting is the alerting phase: the path from a manager's metrics to a
-// person, using independent native producers on the lifecycle cluster.
-//
-// hack/prometheus_rule_test.go runs the chart's rules through promtool against
-// synthetic series. That proves the expressions, and nothing about the path a
-// real alert takes: a Prometheus that has to find every manager Pod, rules
-// rendered exactly as the chart renders them, an Alertmanager that has to route
-// them, and a receiver that has to be told. The phase asserts at the receiver:
-//
-//   - independently interrupted PostgreSQL and MySQL Applies in both families
-//     reach the receiver within their persisted time bounds, then resolve after
-//     database inspection and either a migration acknowledgment or schema
-//     observation and planning; each requires fresh approval to mutate again;
-//   - an operation held off every node fires as stalled once its threshold has
-//     passed and not before, and resolves once the operation leaves flight;
-//   - every manager gone fires as a view nobody can read, and resolves once
-//     they are back.
-//   - a failed leader scrape does the same while the managers remain healthy
-//     and the follower remains a healthy scrape target.
-//   - a serving certificate approaching expiry alerts before admission fails,
-//     the expired certificate triggers the API server admission-failure alert,
-//     and restoring the certificate clears both alerts and restores admission.
-//
-// What the receiver logs is what Alertmanager delivered, which is the claim;
-// Alertmanager's own view of what it meant to send is not.
+// TestAlerting proves infrastructure alert delivery and recovery. Operation
+// incidents run in a separate cluster so manager and admission faults cannot
+// contaminate their native histories.
 func TestAlerting(t *testing.T) {
-	run, inputs := harness.Begin(t, phases.Alerting)
+	runAlertingPhase(t, phases.Alerting)
+}
+
+// TestAlertingOperations proves native operation incidents on both families.
+func TestAlertingOperations(t *testing.T) {
+	runAlertingPhase(t, phases.AlertingOperations)
+}
+
+func runAlertingPhase(t *testing.T, phase phases.Of[phases.AlertingInputs]) {
+	run, inputs := harness.Begin(t, phase)
 	a := newAlertingRun(t, run, inputs)
-	for _, scenario := range []struct {
-		name string
-		body func()
-	}{
-		{"native-producers", a.nativeProducers},
-		{"monitoring-path", a.monitoringPath},
-		{"unresolved-apply", a.unresolvedApply},
-		{"ordinary-policy-waits", a.negativeControls},
-		{"stalled-operation", a.stalledOperation},
-		{"resource-overdue", a.resourceOverdue},
-		{"lock-release-owed", a.lockReleaseOwed},
-		{"operations-failing", a.operationsFailing},
-		{"plan-store-large", a.planStoreLarge},
-		{"unresolved-view-read-failures", a.viewReadFailures},
-		{"lost-scrape-target", a.lostScrapeTarget},
-		{"certificate-expiry", a.certificateExpiry},
-		{"lost-view", a.lostView},
-		{"upgrade-alerts", a.upgradeAlerts},
-	} {
-		if !run.Scenario(scenario.name, a.scenario(scenario.body)) {
+	a.scope = alScopeFor(phase.Name)
+	bodies := map[string]func(){
+		"native-producers":              a.nativeProducers,
+		"monitoring-path":               a.monitoringPath,
+		"unresolved-apply":              a.unresolvedApply,
+		"ordinary-policy-waits":         a.negativeControls,
+		"stalled-operation":             a.stalledOperation,
+		"resource-overdue":              a.resourceOverdue,
+		"lock-release-owed":             a.lockReleaseOwed,
+		"operations-failing":            a.operationsFailing,
+		"plan-store-large":              a.planStoreLarge,
+		"unresolved-view-read-failures": a.viewReadFailures,
+		"lost-scrape-target":            a.lostScrapeTarget,
+		"certificate-expiry":            a.certificateExpiry,
+		"lost-view":                     a.lostView,
+		"upgrade-alerts":                a.upgradeAlerts,
+	}
+	for _, name := range phase.Scenarios {
+		body, ok := bodies[name]
+		if !ok {
+			t.Fatalf("alerting scenario %s has no implementation", name)
+		}
+		if !run.Scenario(name, a.scenario(body)) {
 			return
 		}
 	}
-	run.Logf("e2e alerting: PASS unresolved work, a stalled operation, an overdue resource, failed state reads, a failed leader scrape, certificate expiry, failed admission, a lost view and failed or interrupted upgrades reached the receiver; recoverable faults cleared")
+	run.Logf("e2e %s: PASS every declared native incident reached the receiver and recoverable faults cleared", phase.Name)
 }
 
 // alertingRun is what the alerting scenarios share. Each scenario runs as a
@@ -87,6 +77,7 @@ type alertingRun struct {
 	parent *testing.T
 	ctx    context.Context
 	in     phases.AlertingInputs
+	scope  alPhaseScope
 
 	cluster     *harness.Cluster
 	workDir     string
@@ -115,7 +106,7 @@ var alPinnedImage = regexp.MustCompile(`@sha256:[0-9a-f]{64}$`)
 
 func newAlertingRun(t *testing.T, run *harness.Run, in phases.AlertingInputs) *alertingRun {
 	t.Helper()
-	a := &alertingRun{t: t, parent: t, ctx: run.Context(), in: in}
+	a := &alertingRun{t: t, parent: t, ctx: run.Context(), in: in, scope: alScopeFor("alerting")}
 	// Registered before anything is created, so a phase that fails part way
 	// still releases the nodes and removes what it stood up.
 	t.Cleanup(a.cleanup)
@@ -199,7 +190,7 @@ func (a *alertingRun) mustCreate(object client.Object, what string) {
 // prometheus reads Prometheus's HTTP API through the API server's service
 // proxy, so the phase needs no port of its own on the cluster.
 func (a *alertingRun) prometheus(ctx context.Context, path string, parameters map[string]string) ([]byte, error) {
-	return a.cluster.Clientset.CoreV1().Services(alMonitoringNamespace).
+	return a.cluster.Clientset.CoreV1().Services(a.scope.monitoringNamespace).
 		ProxyGet("http", "prometheus", "9090", path, parameters).DoRaw(ctx)
 }
 
@@ -222,7 +213,7 @@ func (a *alertingRun) noActiveAlerts(selector string) bool {
 // monitoring namespace: the log of the Deployment's Pod, which is the one Pod
 // each monitoring Deployment runs.
 func (a *alertingRun) deploymentLog(ctx context.Context, name string, arguments ...string) ([]byte, error) {
-	stdout, stderr, err := a.cluster.Kubectl(ctx, append([]string{"-n", alMonitoringNamespace, "logs", "deployment/" + name}, arguments...)...)
+	stdout, stderr, err := a.cluster.Kubectl(ctx, append([]string{"-n", a.scope.monitoringNamespace, "logs", "deployment/" + name}, arguments...)...)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s", err, strings.TrimSpace(string(stderr)))
 	}
@@ -353,7 +344,7 @@ func (a *alertingRun) readManager() {
 // carrying the gate the held schema waits on.
 func (a *alertingRun) requireAFreshCluster() {
 	a.t.Helper()
-	for _, name := range []string{alMonitoringNamespace, alStalledNamespace} {
+	for _, name := range []string{a.scope.monitoringNamespace, a.scope.stalledNamespace} {
 		err := a.cluster.Client.Get(a.ctx, types.NamespacedName{Name: name}, &corev1.Namespace{})
 		switch {
 		case err == nil:
@@ -418,29 +409,29 @@ func (a *alertingRun) renderRules() string {
 // namespace, both configurations, and the three workloads.
 func (a *alertingRun) standUp(rules string) {
 	a.t.Helper()
-	a.logf("standing up Prometheus, Alertmanager and a receiver in %s", alMonitoringNamespace)
+	a.logf("standing up Prometheus, Alertmanager and a receiver in %s", a.scope.monitoringNamespace)
 	namespace := &corev1.Namespace{}
-	namespace.Name = alMonitoringNamespace
-	a.mustCreate(namespace, "namespace "+alMonitoringNamespace)
-	a.mustCreate(alPullSecretFor(alMonitoringNamespace, a.registryHost, a.credentials.Username, a.credentials.Password),
+	namespace.Name = a.scope.monitoringNamespace
+	a.mustCreate(namespace, "namespace "+a.scope.monitoringNamespace)
+	a.mustCreate(alPullSecretFor(a.scope.monitoringNamespace, a.registryHost, a.credentials.Username, a.credentials.Password),
 		"the monitoring pull Secret")
 	account := &corev1.ServiceAccount{}
-	account.Namespace, account.Name = alMonitoringNamespace, "prometheus"
+	account.Namespace, account.Name = a.scope.monitoringNamespace, "prometheus"
 	a.mustCreate(account, "the prometheus ServiceAccount")
 	a.apiServerMetrics()
-	role, binding := alDiscoveryRBAC(a.in.OperatorNamespace, alMonitoringNamespace)
+	role, binding := alDiscoveryRBAC(a.in.OperatorNamespace, a.scope.monitoringNamespace)
 	a.mustCreate(role, "the discovery Role")
 	a.mustCreate(binding, "the discovery RoleBinding")
 	a.mustCreate(&corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{Namespace: alMonitoringNamespace, Name: "prometheus"},
+		ObjectMeta: metav1.ObjectMeta{Namespace: a.scope.monitoringNamespace, Name: "prometheus"},
 		Data: map[string]string{
-			"prometheus.yml": alPrometheusConfig(alMonitoringNamespace, a.in.OperatorNamespace, a.metricsService, a.apiServerTargets...),
+			"prometheus.yml": alPrometheusConfig(a.scope.monitoringNamespace, a.in.OperatorNamespace, a.metricsService, a.apiServerTargets...),
 			"rules.yaml":     rules,
 		},
 	}, "the prometheus ConfigMap")
 	a.mustCreate(&corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{Namespace: alMonitoringNamespace, Name: "alertmanager"},
-		Data:       map[string]string{"alertmanager.yml": alAlertmanagerConfig(alMonitoringNamespace)},
+		ObjectMeta: metav1.ObjectMeta{Namespace: a.scope.monitoringNamespace, Name: "alertmanager"},
+		Data:       map[string]string{"alertmanager.yml": alAlertmanagerConfig(a.scope.monitoringNamespace)},
 	}, "the alertmanager ConfigMap")
 	for _, workload := range []alWorkload{
 		// The receiver comes from the isolated fixture image, whose entrypoint
@@ -454,13 +445,13 @@ func (a *alertingRun) standUp(rules string) {
 			args:           []string{"--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/data", "--web.enable-lifecycle", "--no-config.auto-reload"},
 			serviceAccount: "prometheus", configMap: "prometheus"},
 	} {
-		workload.namespace, workload.pullSecret = alMonitoringNamespace, alPullSecret
+		workload.namespace, workload.pullSecret = a.scope.monitoringNamespace, alPullSecret
 		deployment, service := workload.objects()
 		a.mustCreate(deployment, "Deployment "+workload.name)
 		a.mustCreate(service, "Service "+workload.name)
 	}
 	for _, name := range []string{"alert-sink", "alertmanager", "prometheus"} {
-		if err := a.cluster.WaitForRollout(a.ctx, alMonitoringNamespace, name, alTimeout); err != nil {
+		if err := a.cluster.WaitForRollout(a.ctx, a.scope.monitoringNamespace, name, alTimeout); err != nil {
 			a.fatalf("%s did not become ready: %v", name, err)
 		}
 	}
@@ -486,24 +477,24 @@ func (a *alertingRun) waitForTargets() {
 func (a *alertingRun) createHeldNamespace() {
 	a.t.Helper()
 	namespace := &corev1.Namespace{}
-	namespace.Name = alStalledNamespace
-	a.mustCreate(namespace, "namespace "+alStalledNamespace)
+	namespace.Name = a.scope.stalledNamespace
+	a.mustCreate(namespace, "namespace "+a.scope.stalledNamespace)
 	policy, err := os.ReadFile(filepath.Join(repositoryRoot, "testdata", "e2e", "verification-policy.yaml"))
 	a.check(err, "read the verification policy fixture")
 	a.mustCreate(&corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{Namespace: alStalledNamespace, Name: alPolicyConfigMap},
+		ObjectMeta: metav1.ObjectMeta{Namespace: a.scope.stalledNamespace, Name: alPolicyConfigMap},
 		Data:       map[string]string{"policy.yaml": string(policy)},
 	}, "the verification policy")
 	a.mustCreate(&corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Namespace: alStalledNamespace, Name: alDatabaseURLSecret},
+		ObjectMeta: metav1.ObjectMeta{Namespace: a.scope.stalledNamespace, Name: alDatabaseURLSecret},
 		Type:       corev1.SecretTypeOpaque,
 		Data:       map[string][]byte{"url": []byte("postgres://e2e:unused@database.invalid/e2e")},
 	}, "the database URL Secret")
 	pull := &corev1.Secret{}
-	a.check(a.cluster.Client.Get(a.ctx, types.NamespacedName{Namespace: alMonitoringNamespace, Name: alPullSecret}, pull),
+	a.check(a.cluster.Client.Get(a.ctx, types.NamespacedName{Namespace: a.scope.monitoringNamespace, Name: alPullSecret}, pull),
 		"read the monitoring pull Secret")
 	a.mustCreate(&corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Namespace: alStalledNamespace, Name: pull.Name},
+		ObjectMeta: metav1.ObjectMeta{Namespace: a.scope.stalledNamespace, Name: pull.Name},
 		Type:       pull.Type, Data: pull.Data,
 	}, "the held schema's pull Secret")
 }
@@ -667,14 +658,14 @@ func (a *alertingRun) cleanup() {
 			}
 		}
 		// Neither namespace is waited for: nothing after this phase reads them.
-		for _, name := range []string{alStalledNamespace, alMonitoringNamespace} {
+		for _, name := range []string{a.scope.stalledNamespace, a.scope.monitoringNamespace} {
 			namespace := &corev1.Namespace{}
 			namespace.Name = name
 			if err := a.cluster.Client.Delete(ctx, namespace); err != nil && !apierrors.IsNotFound(err) {
 				t.Errorf("e2e alerting: namespace %s could not be removed: %v", name, err)
 			}
 		}
-		role, binding := alDiscoveryRBAC(a.in.OperatorNamespace, alMonitoringNamespace)
+		role, binding := alDiscoveryRBAC(a.in.OperatorNamespace, a.scope.monitoringNamespace)
 		for _, object := range []client.Object{binding, role} {
 			if err := a.cluster.Client.Delete(ctx, object); err != nil && !apierrors.IsNotFound(err) {
 				t.Errorf("e2e alerting: %T %s could not be removed: %v", object, alDiscoveryRole, err)

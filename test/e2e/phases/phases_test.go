@@ -268,3 +268,25 @@ func lookupIn(environment map[string]string) func(string) (string, bool) {
 		return value, ok
 	}
 }
+
+// Partitioning must preserve every incident exactly once; only the native
+// producer and monitoring prerequisites run on both independent clusters.
+func TestAlertPartitionsRetainEveryIncident(t *testing.T) {
+	want := []string{
+		"certificate-expiry", "lock-release-owed", "lost-scrape-target", "lost-view",
+		"operations-failing", "ordinary-policy-waits", "plan-store-large",
+		"resource-overdue", "stalled-operation", "unresolved-apply",
+		"unresolved-view-read-failures", "upgrade-alerts",
+	}
+	var got []string
+	for _, phase := range []Phase{Alerting.Phase, AlertingOperations.Phase} {
+		if len(phase.Scenarios) < 3 || !slices.Equal(phase.Scenarios[:2], []string{"native-producers", "monitoring-path"}) {
+			t.Fatalf("%s omits native prerequisites or all incidents", phase.Name)
+		}
+		got = append(got, phase.Scenarios[2:]...)
+	}
+	slices.Sort(got)
+	if !slices.Equal(got, want) {
+		t.Fatalf("alert partitions changed incident coverage: got %v, want %v", got, want)
+	}
+}

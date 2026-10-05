@@ -24,7 +24,7 @@ func (a *alertingRun) apiServerMetrics() {
 	var err error
 	a.apiServerTargets, err = alControlPlaneTargets(nodes.Items, endpoints.Items)
 	a.check(err, "identify every API server metrics target")
-	role, binding := alAPIMetricsRBAC(alMonitoringNamespace)
+	role, binding := alAPIMetricsRBAC(a.scope.monitoringNamespace)
 	for _, object := range []client.Object{role, binding} {
 		a.mustCreate(object, "the API server metrics grant")
 		a.apiMetricsObjects = append(a.apiMetricsObjects, object)

@@ -2424,7 +2424,7 @@ kind create cluster \
 	--config "$KIND_CONFIG" \
 	--kubeconfig "$KUBECONFIG_FILE" \
 	--wait 5m
-if suite_runs_phase alerting; then
+if suite_runs_phase alerting || suite_runs_phase alerting-operations; then
 	configure_control_plane_memory
 fi
 require_ready_nodes "after kind cluster creation"
@@ -2564,7 +2564,7 @@ E2E_MYSQL_IMAGE=$PUSHED_IMAGE_REF
 # images from Docker Hub for nothing.
 E2E_PROMETHEUS_IMAGE=
 E2E_ALERTMANAGER_IMAGE=
-if suite_runs_phase alerting; then
+if suite_runs_phase alerting || suite_runs_phase alerting-operations; then
 	mirror_task_image "$E2E_PROMETHEUS_SOURCE_IMAGE" prometheus
 	E2E_PROMETHEUS_IMAGE=$PUSHED_IMAGE_REF
 	mirror_task_image "$E2E_ALERTMANAGER_SOURCE_IMAGE" alertmanager
@@ -3031,8 +3031,7 @@ E2E_KIND_CLUSTER_NAME=$CLUSTER_NAME \
 E2E_ENGINE=mysql \
 	run_recorded_phase migrations-mysql run_go_phase migrations-mysql
 
-# Reference data runs after the migration path and inside the same namespace, on
-# a database of its own, because "works on first creation of a database, when
+# Reference data uses the prepared namespace and a database of its own, because "works on first creation of a database, when
 # the target tables do not exist yet" is a scope line that needs tables which
 # really do not exist. Both are Go phases, and each runs the engine its name
 # ends in.
@@ -3055,7 +3054,23 @@ E2E_ENGINE=mysql \
 	run_recorded_phase reference-data-mysql run_go_phase reference-data-mysql
 
 # Alerting creates its own native producers from the prepared databases and
-# registry. It runs in the lifecycle suite before the final upgrade and uninstall.
+# registry. Operation incidents have their own suite; infrastructure faults run
+# in lifecycle before uninstall. Both run sequentially when no suite is selected.
+E2E_KUBECONFIG=$KUBECONFIG_FILE \
+E2E_OPERATOR_NAMESPACE=$OPERATOR_NAMESPACE \
+E2E_TEST_NAMESPACE=$TEST_NAMESPACE \
+E2E_EXECUTOR_IMAGE=$E2E_EXECUTOR_IMAGE \
+E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \
+E2E_HELM_RELEASE=$HELM_RELEASE \
+E2E_CHART_PACKAGE=$CHART_PACKAGE \
+E2E_NEXT_CHART_PACKAGE=$NEXT_CHART_PACKAGE \
+E2E_NEXT_VALUES_FILE=$NEXT_VALUES_FILE \
+E2E_FIXTURE_IMAGE=$E2E_FIXTURE_IMAGE \
+E2E_PROMETHEUS_IMAGE=$E2E_PROMETHEUS_IMAGE \
+E2E_ALERTMANAGER_IMAGE=$E2E_ALERTMANAGER_IMAGE \
+E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \
+	run_recorded_phase alerting-operations run_go_phase alerting-operations
+
 E2E_KUBECONFIG=$KUBECONFIG_FILE \
 E2E_OPERATOR_NAMESPACE=$OPERATOR_NAMESPACE \
 E2E_TEST_NAMESPACE=$TEST_NAMESPACE \

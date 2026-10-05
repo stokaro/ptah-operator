@@ -45,10 +45,10 @@ func (a *alertingRun) lostScrapeTarget() {
 		}
 	}
 	config := &corev1.ConfigMap{}
-	a.check(a.cluster.Client.Get(a.ctx, types.NamespacedName{Namespace: alMonitoringNamespace, Name: "prometheus"}, config),
+	a.check(a.cluster.Client.Get(a.ctx, types.NamespacedName{Namespace: a.scope.monitoringNamespace, Name: "prometheus"}, config),
 		"read the original Prometheus configuration")
 	original := config.Data["prometheus.yml"]
-	if original != alPrometheusConfig(alMonitoringNamespace, a.in.OperatorNamespace, a.metricsService, a.apiServerTargets...) {
+	if original != alPrometheusConfig(a.scope.monitoringNamespace, a.in.OperatorNamespace, a.metricsService, a.apiServerTargets...) {
 		a.fatalf("the Prometheus configuration changed before the scrape fault")
 	}
 	restored := false
@@ -151,7 +151,7 @@ func (a *alertingRun) managerSnapshot() (*coordinationv1.Lease, []corev1.Pod) {
 func (a *alertingRun) loadScrapeConfig(ctx context.Context, config, pod string) (time.Time, error) {
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		cm := &corev1.ConfigMap{}
-		if err := a.cluster.Client.Get(ctx, types.NamespacedName{Namespace: alMonitoringNamespace, Name: "prometheus"}, cm); err != nil {
+		if err := a.cluster.Client.Get(ctx, types.NamespacedName{Namespace: a.scope.monitoringNamespace, Name: "prometheus"}, cm); err != nil {
 			return err
 		}
 		cm.Data["prometheus.yml"] = config
@@ -164,7 +164,7 @@ func (a *alertingRun) loadScrapeConfig(ctx context.Context, config, pod string) 
 	err = harness.Wait(ctx, "Prometheus to load its updated scrape configuration", alTimeout, alDeliveryPoll,
 		func(ctx context.Context) (bool, string, error) {
 			before := time.Now()
-			_, err := a.cluster.Clientset.CoreV1().RESTClient().Post().Namespace(alMonitoringNamespace).
+			_, err := a.cluster.Clientset.CoreV1().RESTClient().Post().Namespace(a.scope.monitoringNamespace).
 				Resource("services").Name("http:prometheus:9090").SubResource("proxy").Suffix("-/reload").DoRaw(ctx)
 			if err != nil {
 				return false, "", fmt.Errorf("reload Prometheus: %w", err)

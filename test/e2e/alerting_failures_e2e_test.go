@@ -44,10 +44,10 @@ func (a *alertingRun) operationsFailing() {
 func (a *alertingRun) operationsFailingFamily(family string) {
 	name, database := "e2e-alert-failures-"+family, "ptah_alert_failures_"+family
 	var template client.Object = &ptahv1.PtahSchema{}
-	producer := alSchemaProducer
+	producer := a.scope.schemaProducer
 	if family == "migration" {
 		template = &ptahv1.PtahMigration{}
-		producer = alMigrationProducer
+		producer = a.scope.migrationProducer
 	}
 	a.check(a.cluster.Client.Get(a.ctx, types.NamespacedName{Namespace: a.in.TestNamespace, Name: producer}, template), "read the real operation-failure producer")
 	var source, executor string
