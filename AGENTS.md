@@ -139,24 +139,23 @@ unless every phase the driver runs belongs to exactly one suite.
 ```bash
 make e2e                                   # every phase, in the driver's order, as before
 E2E_SUITE=data-plane make e2e              # one suite, against a cluster of its own
-E2E_SUITE=migrations-postgresql make e2e   # one engine's migration rows and reference data
+E2E_SUITE=migrations-postgresql make e2e   # one engine's migration rows
 ```
 
 Phases that share mutable state stay together: the CRD upgrade and the uninstall
-that follows it, the schema faults and their shared watches, and the migration
-rows and reference data in the same namespace. MySQL and external PostgreSQL
+that follows it and the schema faults and their shared watches. MySQL and external PostgreSQL
 stay with schema faults because their closing assertions must still hold after
 fault injection. They run in the existing certificates job, after rotation;
 the data-plane job runs the ordinary PostgreSQL lifecycle, plan-size boundaries,
-and admission rows. Alerting runs in lifecycle before the final next-release
+and admission rows, followed by reference-data acceptance on both engines. Those
+rows use separate databases and need no migration acceptance. Alerting runs in lifecycle before the final next-release
 upgrade and uninstall. It publishes and plans its own schema and migration
 producers, then suspends them; it does not wait for either engine's migration
 or reference-data acceptance. The matrix still has five suites.
 
-Where the clock decides is between engines, which share nothing but the
-namespace a suite stands up for itself. Both engines in one job made that suite
-the longest stage of the matrix by a wide margin, so each engine's phases are a
-suite of their own and the two run at once. The engine is a phase input rather than a default: the driver names it,
+The two migration engines run in separate suites. Reference data runs in the
+shorter data-plane suite so it adds no serial work to either migration suite.
+The engine is a phase input rather than a default: the driver names it,
 and a phase asked to run with none refuses instead of covering one engine and
 reporting two.
 

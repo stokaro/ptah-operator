@@ -40,9 +40,8 @@ func TestReferenceDataMySQL(t *testing.T) {
 }
 
 // runReferenceDataPhase drives one engine from a database with no tables to a
-// declared schema and declared rows the database agrees with. It runs after
-// the migration path, in the namespace the data plane stood up, on a database
-// of its own.
+// declared schema and declared rows the database agrees with. It runs in the
+// data-plane namespace on a database of its own, without a migration prerequisite.
 func runReferenceDataPhase(t *testing.T, phase phases.Of[phases.ReferenceDataInputs], engine string) {
 	run, inputs := harness.Begin(t, phase)
 	r := newReferenceRun(t, run, inputs, engine)

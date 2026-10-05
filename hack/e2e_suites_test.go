@@ -73,12 +73,12 @@ func TestASuiteCatalogThatCannotBeExecutedIsRefused(t *testing.T) {
 		wantError string
 	}{
 		"a phase claimed by two suites": {
-			old:       `"phases": ["assert", "dataplane"],`,
-			new:       `"phases": ["assert", "dataplane", "migrations-mysql"],`,
+			old:       `"phases": ["assert", "dataplane", "reference-data-postgresql", "reference-data-mysql"],`,
+			new:       `"phases": ["assert", "dataplane", "reference-data-postgresql", "reference-data-mysql", "migrations-mysql"],`,
 			wantError: `phase "migrations-mysql" is claimed by both`,
 		},
 		"a suite that runs nothing": {
-			old:       `"phases": ["migrations-mysql", "reference-data-mysql"],`,
+			old:       `"phases": ["migrations-mysql"],`,
 			new:       `"phases": [],`,
 			wantError: `runs no phase`,
 		},
@@ -93,35 +93,35 @@ func TestASuiteCatalogThatCannotBeExecutedIsRefused(t *testing.T) {
 			wantError: `a job, a run id and an artifact are named after the slug`,
 		},
 		"a suite that says nothing about itself": {
-			old:       `"summary": "The control-plane contract, PostgreSQL lifecycle, plan-size and admission boundaries",`,
+			old:       `"summary": "The control-plane contract, PostgreSQL lifecycle, plan-size and admission boundaries, and reference data on both engines",`,
 			new:       `"summary": "  ",`,
 			wantError: `says nothing about what it runs`,
 		},
 		"preparation standing in for coverage": {
-			old: `"phases": ["migrations-mysql", "reference-data-mysql"],
+			old: `"phases": ["migrations-mysql"],
       "prepare": ["dataplane"]`,
-			new: `"phases": ["migrations-mysql", "reference-data-mysql"],
+			new: `"phases": ["migrations-mysql"],
       "prepare": ["smoke"]`,
 			wantError: `which no suite runs for its acceptance; preparation is not coverage`,
 		},
 		"a suite preparing with its own phase": {
-			old: `"phases": ["migrations-mysql", "reference-data-mysql"],
+			old: `"phases": ["migrations-mysql"],
       "prepare": ["dataplane"]`,
-			new: `"phases": ["migrations-mysql", "reference-data-mysql"],
+			new: `"phases": ["migrations-mysql"],
       "prepare": ["migrations-mysql"]`,
 			wantError: `both runs and prepares with phase "migrations-mysql"`,
 		},
 		"an isolation worker that is not a yes or a no": {
-			old: `"reference-data-postgresql"],
+			old: `"migrations-postgresql"],
       "prepare": ["dataplane"],
       "isolationWorker": true`,
-			new: `"reference-data-postgresql"],
+			new: `"migrations-postgresql"],
       "prepare": ["dataplane"],
       "isolationWorker": "yes"`,
 			wantError: `isolationWorker`,
 		},
 		"an unknown field": {
-			old:       `"summary": "The versioned migration rows and the declared reference data, on MySQL",`,
+			old:       `"summary": "The versioned migration rows on MySQL",`,
 			new:       `"shard": 2,`,
 			wantError: `unknown field "shard"`,
 		},
@@ -211,11 +211,11 @@ func TestSuitesCannotOmitOrRunFixturePrerequisitesTooLate(t *testing.T) {
 // claiming a phase the driver does not run is a catalog nobody can execute.
 func TestAPartitionThatLostAPhaseIsRefused(t *testing.T) {
 	t.Parallel()
-	t.Run("a mandatory suite removed", func(t *testing.T) {
+	t.Run("a mandatory phase removed", func(t *testing.T) {
 		t.Parallel()
 		path := writeSuiteCatalog(t,
-			`"phases": ["migrations-mysql", "reference-data-mysql"],`,
-			`"phases": ["migrations-mysql"],`)
+			`"phases": ["assert", "dataplane", "reference-data-postgresql", "reference-data-mysql"],`,
+			`"phases": ["assert", "dataplane", "reference-data-postgresql"],`)
 		catalog, err := loadE2ESuites(path)
 		if err != nil {
 			t.Fatalf("load the mutated catalog: %v", err)
@@ -304,17 +304,17 @@ func TestTheIsolationWorkerFollowsThePhasesThatIsolateANode(t *testing.T) {
 		wantError string
 	}{
 		"a suite that isolates a node on a cluster without one": {
-			old: `"phases": ["migrations-mysql", "reference-data-mysql"],
+			old: `"phases": ["migrations-mysql"],
       "prepare": ["dataplane"],
       "isolationWorker": true`,
-			new: `"phases": ["migrations-mysql", "reference-data-mysql"],
+			new: `"phases": ["migrations-mysql"],
       "prepare": ["dataplane"]`,
 			wantError: `suite "migrations-mysql" runs migrations-mysql, which isolates a node, and does not declare isolationWorker`,
 		},
 		"a suite that pays for a node nothing isolates": {
-			old: `"phases": ["assert", "dataplane"],
+			old: `"phases": ["assert", "dataplane", "reference-data-postgresql", "reference-data-mysql"],
       "prepare": []`,
-			new: `"phases": ["assert", "dataplane"],
+			new: `"phases": ["assert", "dataplane", "reference-data-postgresql", "reference-data-mysql"],
       "prepare": [],
       "isolationWorker": true`,
 			wantError: `suite "data-plane" declares isolationWorker and runs no phase that isolates a node`,
@@ -323,9 +323,9 @@ func TestTheIsolationWorkerFollowsThePhasesThatIsolateANode(t *testing.T) {
 		// mode, so a suite that prepares with a phase that isolates a node
 		// needs the node as much as the suite that covers it.
 		"a suite that prepares with a phase that isolates a node": {
-			old: `"phases": ["assert", "dataplane"],
+			old: `"phases": ["assert", "dataplane", "reference-data-postgresql", "reference-data-mysql"],
       "prepare": []`,
-			new: `"phases": ["assert", "dataplane"],
+			new: `"phases": ["assert", "dataplane", "reference-data-postgresql", "reference-data-mysql"],
       "prepare": ["migrations-postgresql"]`,
 			wantError: `suite "data-plane" runs migrations-postgresql, which isolates a node, and does not declare isolationWorker`,
 		},

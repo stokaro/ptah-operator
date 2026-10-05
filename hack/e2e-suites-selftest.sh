@@ -51,20 +51,20 @@ runs_phase() {
 	)
 }
 
-[ "$(runs_phase 'migrations-postgresql reference-data-postgresql' 'dataplane' migrations-postgresql)" = yes ] ||
+[ "$(runs_phase 'migrations-postgresql' 'dataplane' migrations-postgresql)" = yes ] ||
 	fail "a suite does not run a phase it claims"
-[ "$(runs_phase 'migrations-postgresql reference-data-postgresql' 'dataplane' dataplane)" = yes ] ||
+[ "$(runs_phase 'migrations-postgresql' 'dataplane' dataplane)" = yes ] ||
 	fail "a suite does not run the phase it prepares with"
-[ "$(runs_phase 'migrations-postgresql reference-data-postgresql' 'dataplane' assert)" = no ] ||
+[ "$(runs_phase 'migrations-postgresql' 'dataplane' assert)" = no ] ||
 	fail "a suite runs a phase that belongs to another suite"
-[ "$(runs_phase 'migrations-postgresql reference-data-postgresql' '' dataplane)" = no ] ||
+[ "$(runs_phase 'migrations-postgresql' '' dataplane)" = no ] ||
 	fail "a suite with no preparation runs another suite's phase"
-# The engine split is two suites over the same two scripts, so the phase names
-# are what keeps them apart. One engine's suite must not reach the other's.
-[ "$(runs_phase 'migrations-postgresql reference-data-postgresql' 'dataplane' migrations-mysql)" = no ] ||
+# Migration engines run in separate suites. Their phases must not reach the
+# other engine or the reference-data phases now owned by data-plane.
+[ "$(runs_phase 'migrations-postgresql' 'dataplane' migrations-mysql)" = no ] ||
 	fail "an engine's suite runs the other engine's migration phase"
-[ "$(runs_phase 'migrations-mysql reference-data-mysql' 'dataplane' reference-data-postgresql)" = no ] ||
-	fail "an engine's suite runs the other engine's reference-data phase"
+[ "$(runs_phase 'migrations-mysql' 'dataplane' reference-data-postgresql)" = no ] ||
+	fail "a migration suite runs a reference-data phase it does not own"
 # A phase whose name is a prefix or a suffix of a claimed one is not claimed:
 # the membership test is on whole words, and " $list " is what makes it so.
 [ "$(runs_phase 'reference-data' '' reference)" = no ] ||
