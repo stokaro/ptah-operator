@@ -481,10 +481,10 @@ jobs:
     permissions:
       contents: read
       actions: read
-    # Phase bounds are declared in test/e2e/phases. Keep room for setup,
-    # the lifecycle suite's alerting sequence, and diagnostic collection;
-    # individual operation and alert deadlines remain in their scenarios.
-    timeout-minutes: 270
+    # A regression must not occupy a runner for several hours. The successful
+    # full-pipeline target is 90 minutes; this job ceiling does not prove it.
+    # Individual operation and alert deadlines remain in their scenarios.
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:

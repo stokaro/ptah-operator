@@ -90,7 +90,7 @@ const (
 	// control plane. Both took under a minute; this is twice that.
 	ciEnvtestFetchMinutes             = 2
 	ciRaceTimeoutMinutes              = 20
-	ciKubernetesE2ETimeoutMinutes     = 270
+	ciKubernetesE2ETimeoutMinutes     = 90
 	ciPrepareImagesTimeoutMinutes     = 45
 	ciKubernetesSupportTimeoutMinutes = 5
 	ciLifecycleTimingsTimeoutMinutes  = 10
