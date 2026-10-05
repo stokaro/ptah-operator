@@ -1605,6 +1605,12 @@ func TestVerifyE2EHarnessRejectsCriticalMutations(t *testing.T) {
 			wantError:   "kind cluster creation",
 		},
 		{
+			name:        "control-plane memory setup omitted",
+			old:         "\tconfigure_control_plane_memory\n",
+			replacement: "\t: # control-plane memory setup omitted\n",
+			wantError:   "kind cluster creation",
+		},
+		{
 			name:        "kind cluster image binding omitted",
 			old:         "\t--image \"$KIND_NODE_IMAGE\" \\\n",
 			replacement: "\t--image kindest/node:latest \\\n",
