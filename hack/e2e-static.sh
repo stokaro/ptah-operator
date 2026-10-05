@@ -1028,14 +1028,14 @@ for next_release_harness_marker in \
 	static_require_count "$next_release_harness_source" "$next_release_harness_marker" 1 \
 		'synthetic next-release harness'
 done
-# Both alert phase invocations receive the same inputs; infrastructure alert
+# All three alert phase invocations receive the same inputs; infrastructure alert
 # recovery and uninstall use the prepared successor.
 # The phase-input verifier checks each handoff's exact values separately.
 # shellcheck disable=SC2016 # Exact handoff markers retain shell variables literally.
 for next_release_handoff_marker in \
 	'E2E_NEXT_CHART_PACKAGE=$NEXT_CHART_PACKAGE' \
 	'E2E_NEXT_VALUES_FILE=$NEXT_VALUES_FILE'; do
-	static_require_count "$next_release_harness_source" "$next_release_handoff_marker" 3 \
+	static_require_count "$next_release_harness_source" "$next_release_handoff_marker" 4 \
 		'synthetic next-release handoff to uninstall and upgrade alerts'
 done
 # The same exact current-release values and image identity must reach both the

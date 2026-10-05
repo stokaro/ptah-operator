@@ -32,7 +32,7 @@
     "phase's acceptance leaves behind -- the certificate rotation reaches the",
     "approval the control-plane contract creates, and repeating that phase for",
     "forty seconds is cheaper than either copying its fixtures or tying the two",
-    "suites together. The lifecycle suite also borrows assert for the approval",
+    "suites together. The certificates suite borrows assert for the approval",
     "that the alerting certificate-expiry probe updates. Alerting creates its",
     "own native producer resources, so it does not wait for full migration and",
     "reference-data acceptance. The migration phases run in the",
@@ -69,17 +69,24 @@
     {
       "name": "certificates",
       "slug": "certificates",
-      "summary": "Certificate rotation, MySQL and external PostgreSQL lifecycles, schema fault recovery, and MySQL migration runtime bindings",
-      "phases": ["cert-rotation", "schema-faults", "migration-runtime-mysql"],
+      "summary": "Certificate rotation and expiry alerts, MySQL and external PostgreSQL lifecycles, and schema fault recovery",
+      "phases": ["cert-rotation", "schema-faults", "alerting-certificates"],
       "prepare": ["assert", "dataplane"],
       "isolationWorker": true
     },
     {
       "name": "schema-approvals",
       "slug": "schema-approvals",
-      "summary": "Schema approval bindings on both engines and PostgreSQL migration runtime bindings",
-      "phases": ["schema-approvals", "migration-runtime-postgresql"],
+      "summary": "Schema approval bindings and runtime refusals on both engines",
+      "phases": ["schema-approvals"],
       "prepare": ["assert", "dataplane"]
+    },
+    {
+      "name": "migration-authority",
+      "slug": "migration-authority",
+      "summary": "Migration approval identities, input changes, and runtime bindings on both engines",
+      "phases": ["migration-runtime-postgresql", "migration-runtime-mysql"],
+      "prepare": ["dataplane"]
     },
     {
       "name": "data-plane",

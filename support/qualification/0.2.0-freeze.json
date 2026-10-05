@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-10-05T18:53:00.357542+00:00",
+  "frozenAt": "2026-10-05T19:34:04.434381+00:00",
   "profileSourceCommit": "b549924f777dadd2910b908a95acef4831ec0107",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
@@ -12,7 +12,7 @@
     },
     {
       "path": "support/qualification/0.2.0-coverage.md",
-      "sha256": "91852bc299ff3120f54162833ee54886f2e8326c235a82f0dd11c7379844e34a"
+      "sha256": "7dc2efb0a4c0c3e7c62c75d864099bb26a2c96472f144e71e736ba8317a5d480"
     },
     {
       "path": "support/qualification/0.2.0-monitoring.yaml",
@@ -28,7 +28,7 @@
     },
     {
       "path": "support/e2e-suites.json",
-      "sha256": "232e55d092eac5dce6e11e8d1381d5feb0adf223b9e24ce32d0c01b0c188e286"
+      "sha256": "d7a11a5e8da36ebdf33cfa204f48fe97d9770f1c328a319f7f7eeafaaaa7ea46"
     },
     {
       "path": "support/ptah.json",
@@ -41,8 +41,8 @@
   ],
   "functionalMatrix": {
     "path": "support/qualification/0.2.0-functional-matrix.md",
-    "sha256": "9f862c90eef2e9915e858854c6e8140660f1b36f6890eea26d43c280df935c36",
-    "generatedFromCommit": "9654a1ef365ef318978344c92d4b208691686250",
+    "sha256": "19708640955d3b3e14faccf4eea7ff4acaeefea9c8fbae2f8432daa028b5ea4c",
+    "generatedFromCommit": "f2b110e4844472e55a875b8b5458d1858861c892",
     "command": "go run ./hack/acceptancecoverage",
     "kubernetesMinors": [
       "1.35",
@@ -53,10 +53,10 @@
       "linux/amd64",
       "linux/arm64"
     ],
-    "cellsPerPlatform": 21,
-    "requiredCells": 42,
+    "cellsPerPlatform": 24,
+    "requiredCells": 48,
     "additionalRequirements": "Q-01 through Q-12 in support/qualification/0.2.0-coverage.md remain required; the functional matrix alone is insufficient.",
-    "sourceChanges": "Move the existing schema authority scenarios into schema-approvals; assign independent PostgreSQL migration runtime checks to that suite and MySQL runtime checks to certificates. All original incidents, engines, families, supported minors, architectures, and acceptance targets remain required."
+    "sourceChanges": "Move independent migration approval and runtime checks into migration-authority; assign certificate-expiry alerts to certificates. All original incidents, engines, families, supported minors, architectures, and acceptance targets remain required."
   },
   "publishedPredecessors": {
     "checkedAt": "2026-09-29T19:00:03+00:00",
@@ -67,10 +67,10 @@
     "disposition": "No published predecessor. Synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 34,
+  "revision": 35,
   "supersedes": {
-    "freezeCommit": "9654a1ef365ef318978344c92d4b208691686250",
-    "sha256": "4077d659282ffd321d72195208a3f411e0ae5785d9746739a471377489cc398b"
+    "freezeCommit": "f2b110e4844472e55a875b8b5458d1858861c892",
+    "sha256": "81c35950c17e3bbf70598014c2bac584d6069479590fc5a6ef574cebbbf598e3"
   },
-  "revisionReason": "Move the existing schema authority scenarios into schema-approvals; assign independent PostgreSQL migration runtime checks to that suite and MySQL runtime checks to certificates. All original incidents, engines, families, supported minors, architectures, and acceptance targets remain required. This revision records no acceptance result; preserve the prior freeze at the superseded commit."
+  "revisionReason": "Move independent migration approval and runtime checks into migration-authority; assign certificate-expiry alerts to certificates. All original incidents, engines, families, supported minors, architectures, and acceptance targets remain required. This revision records no acceptance result; preserve the prior freeze at the superseded commit."
 }

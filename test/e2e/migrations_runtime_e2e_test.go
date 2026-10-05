@@ -17,7 +17,7 @@ func TestMigrationRuntimeMySQL(t *testing.T) {
 	runMigrationRuntimePhase(t, phases.MigrationRuntimeMySQL, "mysql")
 }
 
-// These rows own their databases and decisions. They need an artifact and
+// These approval and runtime rows own their databases and decisions. They need an artifact and
 // verification policy, not a preceding run of migration lifecycle acceptance.
 func runMigrationRuntimePhase(t *testing.T, phase phases.Of[phases.MigrationsInputs], engine string) {
 	run, inputs := harness.Begin(t, phase)
@@ -31,6 +31,12 @@ func runMigrationRuntimePhase(t *testing.T, phase phases.Of[phases.MigrationsInp
 			m.migrationPolicy()
 			m.publish("runtime-source", m.fixtureDir(""), m.reference(""))
 		}},
+		{"approval-resource-replacement", m.approvalIdentityReplacement},
+		{"approval-policy-change", func() { m.approvalInputChange("policy") }},
+		{"approval-transaction-mode-change", func() { m.approvalInputChange("transaction-mode") }},
+		{"approval-artifact-change", func() { m.approvalInputChange("artifact") }},
+		{"approval-verification-policy-uid-change", func() { m.approvalInputChange("verification-policy-uid") }},
+		{"approval-verification-policy-content-change", func() { m.approvalInputChange("verification-policy-content") }},
 		{"approval-executor-image-change", m.executorImageChange},
 		{"approval-ptah-version-change", m.ptahVersionChange},
 		{"unsupported-controller-state-after-approval", m.unsupportedControllerState},

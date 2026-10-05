@@ -5,8 +5,9 @@ import "testing"
 func TestAlertPhasesDoNotReuseRetainedNames(t *testing.T) {
 	infrastructure := alScopeFor("alerting")
 	operations := alScopeFor("alerting-operations")
+	certificates := alScopeFor("alerting-certificates")
 	seen := map[string]bool{}
-	for _, scope := range []alPhaseScope{infrastructure, operations} {
+	for _, scope := range []alPhaseScope{infrastructure, operations, certificates} {
 		for _, name := range []string{scope.monitoringNamespace, scope.stalledNamespace, scope.schemaProducer, scope.migrationProducer, scope.producerVersion} {
 			if name == "" || seen[name] {
 				t.Fatalf("alert phases share or omit retained identity %q", name)

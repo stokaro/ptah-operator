@@ -2424,7 +2424,7 @@ kind create cluster \
 	--config "$KIND_CONFIG" \
 	--kubeconfig "$KUBECONFIG_FILE" \
 	--wait 5m
-if suite_runs_phase alerting || suite_runs_phase alerting-operations; then
+if suite_runs_phase alerting || suite_runs_phase alerting-operations || suite_runs_phase alerting-certificates; then
 	configure_control_plane_memory
 fi
 require_ready_nodes "after kind cluster creation"
@@ -2564,7 +2564,7 @@ E2E_MYSQL_IMAGE=$PUSHED_IMAGE_REF
 # images from Docker Hub for nothing.
 E2E_PROMETHEUS_IMAGE=
 E2E_ALERTMANAGER_IMAGE=
-if suite_runs_phase alerting || suite_runs_phase alerting-operations; then
+if suite_runs_phase alerting || suite_runs_phase alerting-operations || suite_runs_phase alerting-certificates; then
 	mirror_task_image "$E2E_PROMETHEUS_SOURCE_IMAGE" prometheus
 	E2E_PROMETHEUS_IMAGE=$PUSHED_IMAGE_REF
 	mirror_task_image "$E2E_ALERTMANAGER_SOURCE_IMAGE" alertmanager
@@ -3124,7 +3124,22 @@ E2E_ENGINE=mysql \
 
 # Alerting creates its own native producers from the prepared databases and
 # registry. Operation incidents have their own suite; infrastructure faults run
-# in lifecycle before uninstall. Both run sequentially when no suite is selected.
+# in lifecycle before uninstall. All alert phases run sequentially when no suite is selected.
+E2E_KUBECONFIG=$KUBECONFIG_FILE \
+E2E_OPERATOR_NAMESPACE=$OPERATOR_NAMESPACE \
+E2E_TEST_NAMESPACE=$TEST_NAMESPACE \
+E2E_EXECUTOR_IMAGE=$E2E_EXECUTOR_IMAGE \
+E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \
+E2E_HELM_RELEASE=$HELM_RELEASE \
+E2E_CHART_PACKAGE=$CHART_PACKAGE \
+E2E_NEXT_CHART_PACKAGE=$NEXT_CHART_PACKAGE \
+E2E_NEXT_VALUES_FILE=$NEXT_VALUES_FILE \
+E2E_FIXTURE_IMAGE=$E2E_FIXTURE_IMAGE \
+E2E_PROMETHEUS_IMAGE=$E2E_PROMETHEUS_IMAGE \
+E2E_ALERTMANAGER_IMAGE=$E2E_ALERTMANAGER_IMAGE \
+E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \
+	run_recorded_phase alerting-certificates run_go_phase alerting-certificates
+
 E2E_KUBECONFIG=$KUBECONFIG_FILE \
 E2E_OPERATOR_NAMESPACE=$OPERATOR_NAMESPACE \
 E2E_TEST_NAMESPACE=$TEST_NAMESPACE \

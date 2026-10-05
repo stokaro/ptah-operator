@@ -336,12 +336,6 @@ var MigrationsPostgreSQL = define[MigrationsInputs](Phase{
 	Scenarios: []string{
 		"migration-policy",
 		"postgresql-migrations",
-		"approval-resource-replacement",
-		"approval-policy-change",
-		"approval-transaction-mode-change",
-		"approval-artifact-change",
-		"approval-verification-policy-uid-change",
-		"approval-verification-policy-content-change",
 	},
 	// The isolated-node row cuts the isolation worker off from the API
 	// server, so only a suite that declares the worker may run the phase.
@@ -358,12 +352,6 @@ var MigrationsMySQL = define[MigrationsInputs](Phase{
 		"migration-policy",
 		"mysql-transaction-mode",
 		"mysql-migrations",
-		"approval-resource-replacement",
-		"approval-policy-change",
-		"approval-transaction-mode-change",
-		"approval-artifact-change",
-		"approval-verification-policy-uid-change",
-		"approval-verification-policy-content-change",
 	},
 	// The isolated-node row cuts the isolation worker off from the API
 	// server, so only a suite that declares the worker may run the phase.
@@ -378,6 +366,12 @@ var MigrationRuntimePostgreSQL = define[MigrationsInputs](Phase{
 	Timeout: 45 * time.Minute,
 	Scenarios: []string{
 		"runtime-artifact",
+		"approval-resource-replacement",
+		"approval-policy-change",
+		"approval-transaction-mode-change",
+		"approval-artifact-change",
+		"approval-verification-policy-uid-change",
+		"approval-verification-policy-content-change",
 		"approval-executor-image-change",
 		"approval-ptah-version-change",
 		"unsupported-controller-state-after-approval",
@@ -394,6 +388,12 @@ var MigrationRuntimeMySQL = define[MigrationsInputs](Phase{
 	Timeout: 45 * time.Minute,
 	Scenarios: []string{
 		"runtime-artifact",
+		"approval-resource-replacement",
+		"approval-policy-change",
+		"approval-transaction-mode-change",
+		"approval-artifact-change",
+		"approval-verification-policy-uid-change",
+		"approval-verification-policy-content-change",
 		"approval-executor-image-change",
 		"approval-ptah-version-change",
 		"unsupported-controller-state-after-approval",
@@ -495,10 +495,19 @@ var Alerting = define[AlertingInputs](Phase{
 		"plan-store-large",
 		"unresolved-view-read-failures",
 		"lost-scrape-target",
-		"certificate-expiry",
 		"lost-view",
 		"upgrade-alerts",
 	},
+})
+
+// AlertingCertificates proves expiry notification and recovery alongside
+// certificate rotation, with its own monitoring namespace and native producers.
+var AlertingCertificates = define[AlertingInputs](Phase{
+	Name:         "alerting-certificates",
+	Test:         "TestAlertingCertificates",
+	Timeout:      30 * time.Minute,
+	RequiresFull: []string{"assert"},
+	Scenarios:    []string{"native-producers", "monitoring-path", "certificate-expiry"},
 })
 
 // AlertingOperations owns operation incidents and the full no-page windows.
@@ -672,6 +681,7 @@ var all = []Phase{
 	MigrationRuntimeMySQL.Phase,
 	ReferenceDataPostgreSQL.Phase,
 	ReferenceDataMySQL.Phase,
+	AlertingCertificates.Phase,
 	AlertingOperations.Phase,
 	Alerting.Phase,
 	Uninstall.Phase,

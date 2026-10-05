@@ -33,6 +33,11 @@ func TestAlerting(t *testing.T) {
 	runAlertingPhase(t, phases.Alerting)
 }
 
+// TestAlertingCertificates owns the certificate expiry and recovery incident.
+func TestAlertingCertificates(t *testing.T) {
+	runAlertingPhase(t, phases.AlertingCertificates)
+}
+
 // TestAlertingOperations proves native operation incidents on both families.
 func TestAlertingOperations(t *testing.T) {
 	runAlertingPhase(t, phases.AlertingOperations)

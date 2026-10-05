@@ -34,8 +34,9 @@ var phaseFamilies = map[string][]string{
 	"reference-data-mysql":         {"PtahSchema"},
 	// The alerts it drives to a receiver are about both families: an Apply
 	// nobody accounted for is a migration's, the stalled operation a schema's.
-	"alerting-operations": {"PtahMigration", "PtahSchema"},
-	"alerting":            {"PtahMigration", "PtahSchema"},
+	"alerting-operations":   {"PtahMigration", "PtahSchema"},
+	"alerting-certificates": {"PtahMigration", "PtahSchema"},
+	"alerting":              {"PtahMigration", "PtahSchema"},
 }
 
 func main() {

@@ -46,7 +46,7 @@ const (
 )
 
 // alPhaseScope separates retained producer records and temporary namespaces
-// when make e2e executes both alert phases sequentially on one cluster.
+// when make e2e executes the alert phases sequentially on one cluster.
 // Infrastructure keeps the observer's fixed endpoint; operation incidents own
 // the suffixed namespace and producer identities.
 type alPhaseScope struct {
@@ -58,8 +58,11 @@ type alPhaseScope struct {
 
 func alScopeFor(phase string) alPhaseScope {
 	suffix := ""
-	if phase == "alerting-operations" {
+	switch phase {
+	case "alerting-operations":
 		suffix = "-operations"
+	case "alerting-certificates":
+		suffix = "-certificates"
 	}
 	return alPhaseScope{
 		monitoringNamespace: alMonitoringNamespace + suffix,
