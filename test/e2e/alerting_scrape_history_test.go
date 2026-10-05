@@ -32,6 +32,27 @@ func TestAlScrapeReloadHistoryFromPrometheus(t *testing.T) {
 	}
 }
 
+func TestAlScrapeReloadRequestPrecedesTheLastHealthyScrape(t *testing.T) {
+	t.Parallel()
+	// These native CI observations retain a healthy scrape after the reload
+	// request started. The target then changes its five-second scrape offset.
+	body, err := os.ReadFile("../../testdata/e2e/readings/prometheus-scrape-request-boundary.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	groups, err := alSplitHistorySnapshot(body, alScrapeJob, []string{"up", "scrape_duration_seconds"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded := time.Date(2026, 10, 5, 4, 57, 4, 156234648, time.UTC)
+	queried := time.Date(2026, 10, 5, 4, 57, 21, 403000000, time.UTC)
+	history, err := alReadScrapeHistoryWithReloads(groups["up"], groups["scrape_duration_seconds"],
+		[]string{"leader", "follower"}, "leader", loaded, queried, loaded, time.Time{})
+	if err != nil || history.firstFailure.Sub(time.Date(2026, 10, 5, 4, 57, 15, 403000000, time.UTC)).Abs() > time.Microsecond {
+		t.Fatalf("the reload request replaced the actual native transition: %+v %v", history, err)
+	}
+}
+
 func alScrapeHistoryFixtureForTest(recovered bool) alScrapeHistoryFixture {
 	f := alScrapeHistoryFixture{started: time.Unix(1800000000, 0).UTC()}
 	last := 90

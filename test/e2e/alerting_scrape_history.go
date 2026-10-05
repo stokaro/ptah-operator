@@ -99,14 +99,14 @@ func alReadScrapeHistoryWithReloads(upBody, durationBody []byte, pods []string, 
 					if sample.value == 1 {
 						reload = restored
 					}
-					// Each side of the reload has its own five-second schedule.
-					// Prometheus also batches discovery updates every five seconds;
-					// the old target keeps scraping until the new target is installed.
-					// Only this transition may span two scrape intervals. Every
-					// unchanged target and each side of the transition stay strict.
+					// Each target URL has its own five-second schedule. The reload
+					// instant dates the HTTP request, and the old target may still
+					// scrape afterward. Bound the transition between those native
+					// observations, not from the earlier request. Only this gap may
+					// span two intervals; each side and every follower stay strict.
 					transitionGap := alScrapeInterval + alAdmissionSampleGap
 					if reload.IsZero() || sample.at.Before(reload) ||
-						reload.Sub(previous.at) > alAdmissionSampleGap || sample.at.Sub(reload) > transitionGap ||
+						reload.Sub(previous.at) > alAdmissionSampleGap ||
 						sample.at.Sub(previous.at) > transitionGap {
 						return history, errors.New("scrape transition has no fresh observations around its configuration reload")
 					}
