@@ -268,6 +268,18 @@ func (a *alertingRun) planStoreLarge() {
 	if baseline.latest > alPlanStoreLimit || !baseline.crossedLower.IsZero() {
 		a.fatalf("no native below-threshold baseline")
 	}
+	// A missing sample cannot recover later. Check the measured history while
+	// waiting for plans, so an invalid proof stops before the remaining
+	// replacements and exports. Query at most once per scrape interval.
+	checkCluster := check
+	nextHistory := time.Now().Add(alScrapeInterval)
+	check = func() {
+		checkCluster()
+		if !time.Now().Before(nextHistory) {
+			a.planStoreHistory(names, leader, started, "")
+			nextHistory = time.Now().Add(alScrapeInterval)
+		}
+	}
 	allocate(15, alPlanStoreCount)
 	firing, index := a.waitForDeliveryWithCheck(alMatch{status: "firing", alertName: alPlanStoreAlert, labels: map[string]string{"operator_namespace": a.in.OperatorNamespace, "operator_metrics_service": a.metricsService}}, "the retained-plan notification", alDetectionSlack, from, check)
 	history := a.planStoreHistory(names, leader, started, "firing")
