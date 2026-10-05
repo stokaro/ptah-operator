@@ -112,11 +112,11 @@ func TestASuiteCatalogThatCannotBeExecutedIsRefused(t *testing.T) {
 			wantError: `both runs and prepares with phase "migrations-mysql"`,
 		},
 		"an isolation worker that is not a yes or a no": {
-			old: `"alerting"],
-      "prepare": ["assert", "dataplane"],
+			old: `"reference-data-postgresql"],
+      "prepare": ["dataplane"],
       "isolationWorker": true`,
-			new: `"alerting"],
-      "prepare": ["assert", "dataplane"],
+			new: `"reference-data-postgresql"],
+      "prepare": ["dataplane"],
       "isolationWorker": "yes"`,
 			wantError: `isolationWorker`,
 		},
@@ -140,7 +140,7 @@ func TestASuiteCatalogThatCannotBeExecutedIsRefused(t *testing.T) {
 
 func TestSuitesCannotOmitOrRunFixturePrerequisitesTooLate(t *testing.T) {
 	t.Parallel()
-	for _, suiteName := range []string{"certificates", "data-plane", "migrations-postgresql"} {
+	for _, suiteName := range []string{"certificates", "data-plane", "lifecycle"} {
 		t.Run(suiteName, func(t *testing.T) {
 			t.Parallel()
 			catalog, err := loadE2ESuites(repositoryFile(t, e2eSuitesPath))

@@ -26,7 +26,7 @@ import (
 // Each engine also proves Schema's distinct observation-based recovery.
 func (a *alertingRun) unresolvedApply() {
 	template := &ptahv1.PtahMigration{}
-	a.check(a.cluster.Client.Get(a.ctx, types.NamespacedName{Namespace: a.in.TestNamespace, Name: "e2e-migrations-postgresql"}, template), "read the native migration producer")
+	a.check(a.cluster.Client.Get(a.ctx, types.NamespacedName{Namespace: a.in.TestNamespace, Name: alMigrationProducer}, template), "read the native migration producer")
 	registry, err := url.Parse(template.Spec.Artifact.OCIRef)
 	a.check(err, "read the prepared migration registry")
 	if registry.Scheme != "oci" || registry.Host == "" || registry.User != nil || template.Status.ExecutionBinding == nil || !alPinnedImage.MatchString(template.Status.ExecutionBinding.ExecutorImage) {

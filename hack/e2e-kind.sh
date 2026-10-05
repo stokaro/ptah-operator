@@ -3054,13 +3054,13 @@ E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \
 E2E_ENGINE=mysql \
 	run_recorded_phase reference-data-mysql run_go_phase reference-data-mysql
 
-# The alerting path runs last in the PostgreSQL migrations suite, on the cluster
-# that suite leaves: the migration rows are what leave an Apply nobody accounted
-# for, which is the first thing the phase needs a receiver to be told about. It
-# is a Go phase too.
+# Alerting creates its own native producers from the prepared databases and
+# registry. It runs in the lifecycle suite before the final upgrade and uninstall.
 E2E_KUBECONFIG=$KUBECONFIG_FILE \
 E2E_OPERATOR_NAMESPACE=$OPERATOR_NAMESPACE \
 E2E_TEST_NAMESPACE=$TEST_NAMESPACE \
+E2E_EXECUTOR_IMAGE=$E2E_EXECUTOR_IMAGE \
+E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \
 E2E_HELM_RELEASE=$HELM_RELEASE \
 E2E_CHART_PACKAGE=$CHART_PACKAGE \
 E2E_NEXT_CHART_PACKAGE=$NEXT_CHART_PACKAGE \

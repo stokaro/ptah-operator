@@ -32,8 +32,8 @@ func (a *alertingRun) negativeControls() {
 	a.check(err, "select the prepared PostgreSQL server")
 	schema := &ptahv1.PtahSchema{}
 	migration := &ptahv1.PtahMigration{}
-	a.check(a.cluster.Client.Get(a.ctx, types.NamespacedName{Namespace: a.in.TestNamespace, Name: "e2e-reference-postgresql"}, schema), "read the real reference schema producer")
-	a.check(a.cluster.Client.Get(a.ctx, types.NamespacedName{Namespace: a.in.TestNamespace, Name: "e2e-migrations-postgresql"}, migration), "read the real migration producer")
+	a.check(a.cluster.Client.Get(a.ctx, types.NamespacedName{Namespace: a.in.TestNamespace, Name: alSchemaProducer}, schema), "read the real reference schema producer")
+	a.check(a.cluster.Client.Get(a.ctx, types.NamespacedName{Namespace: a.in.TestNamespace, Name: alMigrationProducer}, migration), "read the real migration producer")
 	watcher, err := client.NewWithWatch(a.cluster.Config, client.Options{Scheme: a.cluster.Scheme})
 	a.check(err, "open negative-control watches")
 	schemas := newStoredStateRecorder[*ptahv1.PtahSchema](a.t, a.ctx, watcher, "negative-schemas", a.in.TestNamespace, func() client.ObjectList { return &ptahv1.PtahSchemaList{} })

@@ -415,8 +415,8 @@ var ReferenceDataMySQL = define[ReferenceDataInputs](Phase{
 	},
 })
 
-// AlertingInputs is what the driver hands the alerting phase, which runs last
-// in the PostgreSQL migrations suite, on the cluster that suite leaves.
+// AlertingInputs is what the driver hands the alerting phase. The data-plane
+// preparation supplies databases and a registry; alerting creates its own producers.
 type AlertingInputs struct {
 	// Kubeconfig names the cluster the driver stood up.
 	Kubeconfig string `env:"E2E_KUBECONFIG"`
@@ -424,6 +424,10 @@ type AlertingInputs struct {
 	OperatorNamespace string `env:"E2E_OPERATOR_NAMESPACE"`
 	// TestNamespace holds the existing approval used for a dry-run admission probe.
 	TestNamespace string `env:"E2E_TEST_NAMESPACE"`
+	// ExecutorImage publishes the native producer artifacts.
+	ExecutorImage string `env:"E2E_EXECUTOR_IMAGE"`
+	// RegistryService is the prepared in-cluster artifact registry.
+	RegistryService string `env:"E2E_REGISTRY_SERVICE"`
 	// HelmRelease is the installed release, whose values the rules are
 	// rendered with.
 	HelmRelease string `env:"E2E_HELM_RELEASE"`
@@ -453,8 +457,9 @@ var Alerting = define[AlertingInputs](Phase{
 	// Native scenario measurements exceed two hours in aggregate. This
 	// bounds the sequence; each alert still has its own delivery deadline.
 	Timeout:      150 * time.Minute,
-	RequiresFull: []string{"assert", "migrations-postgresql", "reference-data-postgresql"},
+	RequiresFull: []string{"assert"},
 	Scenarios: []string{
+		"native-producers",
 		"monitoring-path",
 		"unresolved-apply",
 		"ordinary-policy-waits",

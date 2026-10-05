@@ -117,8 +117,8 @@ func runMigrationPhase(t *testing.T, phase phases.Of[phases.MigrationsInputs], e
 			return
 		}
 	}
-	// Alerting reuses the original inputs in independent resources. The
-	// completed producer must not keep refreshing its status and plan pins.
+	// Stop the completed fixture from refreshing status and plan pins during
+	// reference-data acceptance or later phases in an unpartitioned run.
 	m.finishFixture(m.migrationName())
 	run.Logf("e2e migrations: PASS %s approval gate, applied sequence, matching history, and credential isolation",
 		m.engine.kind)

@@ -27,7 +27,7 @@ import (
 )
 
 // TestAlerting is the alerting phase: the path from a manager's metrics to a
-// person, measured on the cluster the migrations suite leaves behind.
+// person, using independent native producers on the lifecycle cluster.
 //
 // hack/prometheus_rule_test.go runs the chart's rules through promtool against
 // synthetic series. That proves the expressions, and nothing about the path a
@@ -58,6 +58,7 @@ func TestAlerting(t *testing.T) {
 		name string
 		body func()
 	}{
+		{"native-producers", a.nativeProducers},
 		{"monitoring-path", a.monitoringPath},
 		{"unresolved-apply", a.unresolvedApply},
 		{"ordinary-policy-waits", a.negativeControls},
@@ -129,7 +130,7 @@ func newAlertingRun(t *testing.T, run *harness.Run, in phases.AlertingInputs) *a
 	if info, err := os.Stat(in.ChartPackage); err != nil || !info.Mode().IsRegular() {
 		a.fatalf("E2E_CHART_PACKAGE does not name a file")
 	}
-	for _, image := range []string{in.FixtureImage, in.PrometheusImage, in.AlertmanagerImage} {
+	for _, image := range []string{in.ExecutorImage, in.FixtureImage, in.PrometheusImage, in.AlertmanagerImage} {
 		if !alPinnedImage.MatchString(image) {
 			a.fatalf("image %s is not pinned by digest", image)
 		}

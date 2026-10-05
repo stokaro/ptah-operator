@@ -28,8 +28,8 @@ import (
 func (a *alertingRun) lockReleaseOwed() {
 	schema := &ptahv1.PtahSchema{}
 	migration := &ptahv1.PtahMigration{}
-	a.check(a.cluster.Client.Get(a.ctx, types.NamespacedName{Namespace: a.in.TestNamespace, Name: "e2e-reference-postgresql"}, schema), "read the real schema source for lock alerts")
-	a.check(a.cluster.Client.Get(a.ctx, types.NamespacedName{Namespace: a.in.TestNamespace, Name: "e2e-migrations-postgresql"}, migration), "read the real migration source for lock alerts")
+	a.check(a.cluster.Client.Get(a.ctx, types.NamespacedName{Namespace: a.in.TestNamespace, Name: alSchemaProducer}, schema), "read the real schema source for lock alerts")
+	a.check(a.cluster.Client.Get(a.ctx, types.NamespacedName{Namespace: a.in.TestNamespace, Name: alMigrationProducer}, migration), "read the real migration source for lock alerts")
 	if schema.Status.ExecutionBinding == nil || migration.Status.ExecutionBinding == nil || schema.Status.ExecutionBinding.ExecutorImage != migration.Status.ExecutionBinding.ExecutorImage || !alPinnedImage.MatchString(schema.Status.ExecutionBinding.ExecutorImage) {
 		a.fatalf("lock alert producers do not share an exact executor")
 	}

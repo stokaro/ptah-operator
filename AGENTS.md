@@ -148,7 +148,10 @@ rows and reference data in the same namespace. MySQL and external PostgreSQL
 stay with schema faults because their closing assertions must still hold after
 fault injection. They run in the existing certificates job, after rotation;
 the data-plane job runs the ordinary PostgreSQL lifecycle, plan-size boundaries,
-and admission rows. The matrix still has five suites.
+and admission rows. Alerting runs in lifecycle before the final next-release
+upgrade and uninstall. It publishes and plans its own schema and migration
+producers, then suspends them; it does not wait for either engine's migration
+or reference-data acceptance. The matrix still has five suites.
 
 Where the clock decides is between engines, which share nothing but the
 namespace a suite stands up for itself. Both engines in one job made that suite
@@ -157,8 +160,8 @@ suite of their own and the two run at once. The engine is a phase input rather t
 and a phase asked to run with none refuses instead of covering one engine and
 reporting two.
 
-The migration and certificates suites need the namespace the data plane stands up — its registry
-Service, its databases, its admission fixtures — so the migrations suite runs
+The migration, certificates, and lifecycle suites need the namespace the data plane stands up — its registry
+Service, its databases, its admission fixtures — so those suites run
 the data-plane phase in preparation mode (`E2E_DATAPLANE_MODE=prepare`), which
 creates those prerequisites and executes none of its own acceptance. Preparation
 is not coverage: a phase counts as covered only where a suite lists it under

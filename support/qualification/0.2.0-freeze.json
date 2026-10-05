@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-10-05T01:04:26.308692+00:00",
+  "frozenAt": "2026-10-05T16:17:50.424853+00:00",
   "profileSourceCommit": "b549924f777dadd2910b908a95acef4831ec0107",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
@@ -28,7 +28,7 @@
     },
     {
       "path": "support/e2e-suites.json",
-      "sha256": "a45ec64beb6fbdbfa244a436407560995a4ae339ff5e67318d9d8fb1610303fa"
+      "sha256": "cef6468d62d1ef986e1557f2234d7b84f5b1e88c8f69ec9b08dac50c358f937b"
     },
     {
       "path": "support/ptah.json",
@@ -41,8 +41,8 @@
   ],
   "functionalMatrix": {
     "path": "support/qualification/0.2.0-functional-matrix.md",
-    "sha256": "66b286e10b258b31a6b42563e3b5c2db03e3b8de1da1eaf1262e400f0a502fdb",
-    "generatedFromCommit": "be106d8a16f495f9cd4a60f07e7c1096be2c1f9d",
+    "sha256": "4489ec1b53e4f700639b8adec678b93f59bd3729891ca41a9b4cc39d02af28c7",
+    "generatedFromCommit": "e5a8039dee01d9dade70899a737bde22927951f2",
     "command": "go run ./hack/acceptancecoverage",
     "kubernetesMinors": [
       "1.35",
@@ -56,7 +56,7 @@
     "cellsPerPlatform": 15,
     "requiredCells": 30,
     "additionalRequirements": "Q-01 through Q-12 in support/qualification/0.2.0-coverage.md remain required; the functional matrix alone is insufficient.",
-    "sourceChanges": "Includes the suite and phase repartition recorded with this freeze revision."
+    "sourceChanges": "Includes native alert producer preparation and moving alerting from migrations-postgresql to lifecycle in this revision."
   },
   "publishedPredecessors": {
     "checkedAt": "2026-09-29T19:00:03+00:00",
@@ -67,10 +67,10 @@
     "disposition": "No published predecessor. Synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 30,
+  "revision": 31,
   "supersedes": {
-    "freezeCommit": "e483676e178b60b505321adcad1b1d71688bfe5c",
-    "sha256": "2d4d44d8ff37190620dfce42375ae92d955e71360b39078dd5ec89f04ba1bc42"
+    "freezeCommit": "e5a8039dee01d9dade70899a737bde22927951f2",
+    "sha256": "58de38ac4f7660ee7bd26d1b408dbb50773d802dbf861255fd20991de6178e8a"
   },
-  "revisionReason": "Refresh the Kubernetes catalog verification checkpoint after checking official Kubernetes and kind release metadata. Only lastVerified changes; kind, Kubernetes minors, patch versions, image digests, requirements, targets, and the functional matrix are unchanged. Revision 29 remains preserved at the superseded commit. This revision records no successful qualification run; acceptance remains Not assessed."
+  "revisionReason": "Move alerting to lifecycle with independent native producers, removing its dependency on complete PostgreSQL migration and reference-data acceptance. Preserve all existing scenarios, Kubernetes minors, five suites, runtime platforms, requirements, and targets. Revision 30 remains preserved at the superseded commit. This revision records no successful qualification run; acceptance remains Not assessed."
 }

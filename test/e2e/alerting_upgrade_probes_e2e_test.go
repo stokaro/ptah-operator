@@ -24,8 +24,8 @@ import (
 // apply. Collection histories cover their creation, both upgrades and recovery.
 func (a *alertingRun) upgradeProbes(evidence string) ([]client.Object, func(), func(time.Time) time.Time, func()) {
 	schema, migration := &ptahv1.PtahSchema{}, &ptahv1.PtahMigration{}
-	a.check(a.cluster.Client.Get(a.ctx, types.NamespacedName{Namespace: a.in.TestNamespace, Name: "e2e-reference-postgresql"}, schema), "read the native schema producer")
-	a.check(a.cluster.Client.Get(a.ctx, types.NamespacedName{Namespace: a.in.TestNamespace, Name: "e2e-migrations-postgresql"}, migration), "read the native migration producer")
+	a.check(a.cluster.Client.Get(a.ctx, types.NamespacedName{Namespace: a.in.TestNamespace, Name: alSchemaProducer}, schema), "read the native schema producer")
+	a.check(a.cluster.Client.Get(a.ctx, types.NamespacedName{Namespace: a.in.TestNamespace, Name: alMigrationProducer}, migration), "read the native migration producer")
 	registry, err := url.Parse(migration.Spec.Artifact.OCIRef)
 	a.check(err, "read the artifact registry")
 	if registry.Scheme != "oci" || registry.Host == "" || migration.Status.ExecutionBinding == nil {

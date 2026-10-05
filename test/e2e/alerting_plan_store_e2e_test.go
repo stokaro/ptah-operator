@@ -32,7 +32,7 @@ import (
 func (a *alertingRun) planStoreLarge() {
 	const database, secretName = "ptah_alert_plan_store", "e2e-alert-plan-store-db"
 	template := &ptahv1.PtahSchema{}
-	a.check(a.cluster.Client.Get(a.ctx, types.NamespacedName{Namespace: a.in.TestNamespace, Name: "e2e-reference-postgresql"}, template), "read the native plan producer")
+	a.check(a.cluster.Client.Get(a.ctx, types.NamespacedName{Namespace: a.in.TestNamespace, Name: alSchemaProducer}, template), "read the native plan producer")
 	registry, err := url.Parse(template.Spec.Desired.OCIRef)
 	a.check(err, "read the plan registry")
 	if registry.Scheme != "oci" || registry.Host == "" || registry.User != nil || template.Status.ExecutionBinding == nil || !alPinnedImage.MatchString(template.Status.ExecutionBinding.ExecutorImage) {

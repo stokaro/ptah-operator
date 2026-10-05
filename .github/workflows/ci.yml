@@ -481,9 +481,8 @@ jobs:
     permissions:
       contents: read
       actions: read
-    # Phase bounds are declared in test/e2e/phases. The PostgreSQL suite
-    # also runs reference data and the full alerting sequence after its
-    # migration acceptance. Keep room for setup and diagnostic collection;
+    # Phase bounds are declared in test/e2e/phases. Keep room for setup,
+    # the lifecycle suite's alerting sequence, and diagnostic collection;
     # individual operation and alert deadlines remain in their scenarios.
     timeout-minutes: 270
     strategy:

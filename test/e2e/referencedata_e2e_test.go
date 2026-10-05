@@ -61,8 +61,8 @@ func runReferenceDataPhase(t *testing.T, phase phases.Of[phases.ReferenceDataInp
 	run.Logf("e2e reference data: PASS %s declared rows, with no row value in status, Events, or logs", r.engine.kind)
 }
 
-// Keep the proven source available for alerting's independent fixtures, but
-// stop periodic reads from moving its plan pins during later acceptance.
+// Keep the proven source available, but stop periodic reads from moving its
+// plan pins during later acceptance. Alerting also uses this for its producers.
 func (r *referenceRun) finishFixture() {
 	r.t.Helper()
 	uid := r.status().UID
