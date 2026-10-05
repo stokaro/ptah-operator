@@ -153,7 +153,7 @@ func (m *migrationRun) runningMigrationBackend(database string) string {
 
 func (m *migrationRun) runningExecutorImageChange() {
 	m.t.Helper()
-	name, database := "e2e-running-executor-"+m.engine.name, "ptah_e2e_running_executor"
+	name, database := "e2e-migration-running-executor-"+m.engine.name, "ptah_e2e_running_executor"
 	secret, seedReference := name+"-db", m.reference("-running-executor-seed")
 	replacement, original := m.executorVariant(), m.in.ExecutorImage
 	deployments := &appsv1.DeploymentList{}

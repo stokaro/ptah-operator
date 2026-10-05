@@ -228,8 +228,8 @@ func TestAPartitionThatLostAPhaseIsRefused(t *testing.T) {
 	t.Run("a phase the driver does not run", func(t *testing.T) {
 		t.Parallel()
 		path := writeSuiteCatalog(t,
-			`"phases": ["cert-rotation", "schema-faults"],`,
-			`"phases": ["cert-rotation", "schema-faults", "smoke"],`)
+			`"phases": ["cert-rotation", "schema-faults", "migration-runtime-mysql"],`,
+			`"phases": ["cert-rotation", "schema-faults", "migration-runtime-mysql", "smoke"],`)
 		catalog, err := loadE2ESuites(path)
 		if err != nil {
 			t.Fatalf("load the mutated catalog: %v", err)
@@ -347,7 +347,7 @@ func TestTheIsolationWorkerFollowsThePhasesThatIsolateANode(t *testing.T) {
 
 func TestDataPlanePreparationDoesNotRequireTheFaultWorker(t *testing.T) {
 	t.Parallel()
-	catalog, err := loadE2ESuites(writeSuiteCatalog(t, `"phases": ["cert-rotation", "schema-faults"],
+	catalog, err := loadE2ESuites(writeSuiteCatalog(t, `"phases": ["cert-rotation", "schema-faults", "migration-runtime-mysql"],
       "prepare": ["assert", "dataplane"],
       "isolationWorker": true`, `"phases": ["cert-rotation"],
       "prepare": ["assert", "dataplane"]`))

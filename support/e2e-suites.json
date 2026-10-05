@@ -69,10 +69,17 @@
     {
       "name": "certificates",
       "slug": "certificates",
-      "summary": "Certificate rotation, MySQL and external PostgreSQL lifecycles, and schema fault recovery",
-      "phases": ["cert-rotation", "schema-faults"],
+      "summary": "Certificate rotation, MySQL and external PostgreSQL lifecycles, schema fault recovery, and MySQL migration runtime bindings",
+      "phases": ["cert-rotation", "schema-faults", "migration-runtime-mysql"],
       "prepare": ["assert", "dataplane"],
       "isolationWorker": true
+    },
+    {
+      "name": "schema-approvals",
+      "slug": "schema-approvals",
+      "summary": "Schema approval bindings on both engines and PostgreSQL migration runtime bindings",
+      "phases": ["schema-approvals", "migration-runtime-postgresql"],
+      "prepare": ["assert", "dataplane"]
     },
     {
       "name": "data-plane",

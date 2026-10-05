@@ -324,7 +324,7 @@ func establishBarrierWithPoll[T client.Object](f *faultRun, r *watchRecorder[T],
 // fault publisher Job, which no proof counts.
 func (f *faultRun) jobBarrier() {
 	f.t.Helper()
-	establishBarrier(f, f.jobs, &batchv1.Job{}, f.in.TestNamespace, faultHeartbeatJob)
+	establishBarrier(f, f.jobs, &batchv1.Job{}, f.in.TestNamespace, f.heartbeatJobName())
 }
 
 // heartbeat writes to one object of every watched kind every
@@ -376,7 +376,7 @@ func (h *heartbeat) await(timeout time.Duration) bool {
 func (f *faultRun) createHeartbeatLease() {
 	f.t.Helper()
 	lease := &coordinationv1.Lease{}
-	lease.Namespace, lease.Name = f.in.OperatorNamespace, watchHeartbeatLease
+	lease.Namespace, lease.Name = f.in.OperatorNamespace, f.heartbeatLeaseName()
 	lease.Labels = map[string]string{"operator.ptah.run/e2e-purpose": "watch-heartbeat"}
 	f.check(f.cluster.Client.Create(f.ctx, lease, client.FieldOwner(harness.FieldOwner)), "create the watch heartbeat Lease")
 }
@@ -395,12 +395,12 @@ func (f *faultRun) startHeartbeat() {
 	pod := f.databasePod()
 	test := f.in.TestNamespace
 	targets := []func() client.Object{
-		func() client.Object { return objectNamed(&batchv1.Job{}, test, faultHeartbeatJob) },
+		func() client.Object { return objectNamed(&batchv1.Job{}, test, f.heartbeatJobName()) },
 		func() client.Object { return objectNamed(&corev1.Pod{}, test, pod) },
 		func() client.Object { return objectNamed(&ptahv1alpha1.PtahSchema{}, test, heartbeatSchema) },
 		func() client.Object { return objectNamed(&ptahv1alpha1.PtahSchemaApproval{}, test, heartbeatApproval) },
 		func() client.Object {
-			return objectNamed(&coordinationv1.Lease{}, f.in.OperatorNamespace, watchHeartbeatLease)
+			return objectNamed(&coordinationv1.Lease{}, f.in.OperatorNamespace, f.heartbeatLeaseName())
 		},
 	}
 	for _, target := range targets {

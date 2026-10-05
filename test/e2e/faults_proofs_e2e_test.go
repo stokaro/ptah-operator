@@ -308,7 +308,7 @@ func (f *faultRun) publishFaultSchema(engine, dialect, reference string) {
 	if err != nil {
 		f.fatalf("fault schema fixture is missing: %s", file)
 	}
-	configMap, name := "e2e-fault-"+engine+"-source", "e2e-fault-push-"+engine
+	configMap, name := "e2e-fault-"+engine+"-source"+f.fixtureSuffix, "e2e-fault-push-"+engine+f.fixtureSuffix
 	f.check(f.create(map[string]any{
 		"apiVersion": "v1", "kind": "ConfigMap",
 		"metadata": map[string]any{"namespace": f.in.TestNamespace, "name": configMap},
@@ -364,11 +364,11 @@ func (f *faultRun) publishPrincipalArtifact(reference string) string {
 		"securityContext": restrictedContainer(),
 		"volumeMounts":    []any{map[string]any{"name": "schema", "mountPath": "/schema", "readOnly": true}},
 	}, []any{map[string]any{"name": "schema", "secret": map[string]any{
-		"secretName": principalSchemaSecret,
+		"secretName": f.principalSecretName(),
 		"items":      []any{map[string]any{"key": "schema.hcl", "path": "schema.hcl", "mode": int64(288)}},
 	}}})), "create Job %s", name)
 	job := f.waitForPublisherJob(name)
-	if !principalPublisherIsolated(job, f.in.FixtureImage, reference, principalSchemaSecret, registryAuthSecret) {
+	if !principalPublisherIsolated(job, f.in.FixtureImage, reference, f.principalSecretName(), registryAuthSecret) {
 		f.fatalf("handcrafted publisher crossed its schema/registry isolation boundary")
 	}
 	logs := f.jobLogs(job, "publisher")

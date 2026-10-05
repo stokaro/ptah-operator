@@ -188,7 +188,7 @@ func closeRunnerPodBoundary(t *testing.T, ctx context.Context, cluster *harness.
 
 func (m *migrationRun) unsupportedRunnerProtocol() {
 	m.t.Helper()
-	name, database := "e2e-runner-protocol-"+m.engine.name, "ptah_e2e_runner_protocol"
+	name, database := "e2e-migration-runner-protocol-"+m.engine.name, "ptah_e2e_runner_protocol"
 	secret := name + "-db"
 	watcher, err := client.NewWithWatch(m.cluster.Config, client.Options{Scheme: m.cluster.Scheme})
 	m.check(err, "open the unsupported migration runner's direct API watches")

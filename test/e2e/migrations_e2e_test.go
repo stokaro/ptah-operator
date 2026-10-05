@@ -91,27 +91,7 @@ func runMigrationPhase(t *testing.T, phase phases.Of[phases.MigrationsInputs], e
 		struct {
 			name string
 			body func()
-		}{"approval-verification-policy-content-change", func() { m.approvalInputChange("verification-policy-content") }},
-		struct {
-			name string
-			body func()
-		}{"approval-executor-image-change", m.executorImageChange},
-		struct {
-			name string
-			body func()
-		}{"approval-ptah-version-change", m.ptahVersionChange},
-		struct {
-			name string
-			body func()
-		}{"unsupported-controller-state-after-approval", m.unsupportedControllerState},
-		struct {
-			name string
-			body func()
-		}{"unsupported-runner-protocol-after-approval", m.unsupportedRunnerProtocol},
-		struct {
-			name string
-			body func()
-		}{"running-apply-executor-image-change", m.runningExecutorImageChange})
+		}{"approval-verification-policy-content-change", func() { m.approvalInputChange("verification-policy-content") }})
 	for _, scenario := range scenarios {
 		if !run.Scenario(scenario.name, m.scenario(scenario.body)) {
 			return

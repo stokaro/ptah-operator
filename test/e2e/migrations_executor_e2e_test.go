@@ -112,7 +112,7 @@ func (m *migrationRun) ptahVersionChange() {
 
 func (m *migrationRun) executionComponentChange(change executionComponentChange) {
 	m.t.Helper()
-	name := "e2e-" + change.argument + "-change-" + m.engine.name
+	name := "e2e-migration-" + change.argument + "-change-" + m.engine.name
 	database, secret := "ptah_e2e_"+strings.ReplaceAll(change.argument, "-", "_")+"_change", name+"-db"
 	deployments := &appsv1.DeploymentList{}
 	m.check(m.cluster.Client.List(m.ctx, deployments, client.MatchingLabels{"app.kubernetes.io/component": "controller"}), "find the executor rollout Deployment")

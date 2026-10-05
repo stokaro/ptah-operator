@@ -102,9 +102,9 @@ func (f *faultRun) createPrincipalSecret() {
 		"schema.hcl": principalSchemaHCL(f.principalRole, f.principalPassword),
 		"password":   f.principalPassword,
 	}}
-	secret.Namespace, secret.Name = f.in.TestNamespace, principalSchemaSecret
+	secret.Namespace, secret.Name = f.in.TestNamespace, f.principalSecretName()
 	f.check(f.cluster.Client.Create(f.ctx, secret, client.FieldOwner(harness.FieldOwner)),
-		"create Secret %s", principalSchemaSecret)
+		"create Secret %s", f.principalSecretName())
 }
 
 // buildScanner reads the credentials the fault injection protects from the
@@ -117,7 +117,7 @@ func (f *faultRun) buildScanner() {
 		{registryAuthSecret, "password"},
 		{pgSecret, "password"}, {pgSecret, "url"},
 		{mysqlSecret, "password"}, {mysqlSecret, "rootPassword"}, {mysqlSecret, "url"},
-		{principalSchemaSecret, "password"},
+		{f.principalSecretName(), "password"},
 	} {
 		value := f.secretValue(source[0], source[1])
 		if value == "" {

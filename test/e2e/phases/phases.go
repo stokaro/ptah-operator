@@ -253,11 +253,6 @@ var SchemaFaults = define[DataPlaneInputs](Phase{
 		"mysql-lifecycle",
 		"mysql-dsn-refusal",
 		"watches",
-		"approval-resource-replacement",
-		"approval-target-secret-change",
-		"approval-destructive-policy-change",
-		"approval-exclusion-policy-change",
-		"approval-verification-policy-change",
 		"mysql-drift-before-dispatch",
 		"hung-schema-result-read",
 		"job-deadline",
@@ -265,6 +260,24 @@ var SchemaFaults = define[DataPlaneInputs](Phase{
 		"runner-termination",
 		"job-deletion",
 		"closing-audits",
+	},
+})
+
+// SchemaApprovals proves independent approval and executor changes on both
+// engines, without waiting for the unrelated interruption sequence.
+var SchemaApprovals = define[DataPlaneInputs](Phase{
+	Name:         "schema-approvals",
+	Test:         "TestSchemaApprovals",
+	Timeout:      90 * time.Minute,
+	RequiresFull: []string{"assert"},
+	Scenarios: []string{
+		"watches",
+		"approval-resource-replacement",
+		"approval-target-secret-change",
+		"approval-destructive-policy-change",
+		"approval-exclusion-policy-change",
+		"approval-verification-policy-change",
+		"approval-history-audit",
 		"approval-executor-image-change",
 		"approval-ptah-version-change",
 		"unsupported-controller-state-after-approval",
@@ -329,11 +342,6 @@ var MigrationsPostgreSQL = define[MigrationsInputs](Phase{
 		"approval-artifact-change",
 		"approval-verification-policy-uid-change",
 		"approval-verification-policy-content-change",
-		"approval-executor-image-change",
-		"approval-ptah-version-change",
-		"unsupported-controller-state-after-approval",
-		"unsupported-runner-protocol-after-approval",
-		"running-apply-executor-image-change",
 	},
 	// The isolated-node row cuts the isolation worker off from the API
 	// server, so only a suite that declares the worker may run the phase.
@@ -356,15 +364,42 @@ var MigrationsMySQL = define[MigrationsInputs](Phase{
 		"approval-artifact-change",
 		"approval-verification-policy-uid-change",
 		"approval-verification-policy-content-change",
+	},
+	// The isolated-node row cuts the isolation worker off from the API
+	// server, so only a suite that declares the worker may run the phase.
+	IsolatesNode: true,
+})
+
+// MigrationRuntimePostgreSQL proves execution bindings and runtime refusals
+// against its own native artifact and isolated databases.
+var MigrationRuntimePostgreSQL = define[MigrationsInputs](Phase{
+	Name:    "migration-runtime-postgresql",
+	Test:    "TestMigrationRuntimePostgreSQL",
+	Timeout: 45 * time.Minute,
+	Scenarios: []string{
+		"runtime-artifact",
 		"approval-executor-image-change",
 		"approval-ptah-version-change",
 		"unsupported-controller-state-after-approval",
 		"unsupported-runner-protocol-after-approval",
 		"running-apply-executor-image-change",
 	},
-	// The isolated-node row cuts the isolation worker off from the API
-	// server, so only a suite that declares the worker may run the phase.
-	IsolatesNode: true,
+})
+
+// MigrationRuntimeMySQL proves execution bindings and runtime refusals
+// against its own native artifact and isolated databases.
+var MigrationRuntimeMySQL = define[MigrationsInputs](Phase{
+	Name:    "migration-runtime-mysql",
+	Test:    "TestMigrationRuntimeMySQL",
+	Timeout: 45 * time.Minute,
+	Scenarios: []string{
+		"runtime-artifact",
+		"approval-executor-image-change",
+		"approval-ptah-version-change",
+		"unsupported-controller-state-after-approval",
+		"unsupported-runner-protocol-after-approval",
+		"running-apply-executor-image-change",
+	},
 })
 
 // ReferenceDataInputs is what the driver hands the reference-data phases.
@@ -630,8 +665,11 @@ var all = []Phase{
 	CertRotation.Phase,
 	DataPlane.Phase,
 	SchemaFaults.Phase,
+	SchemaApprovals.Phase,
 	MigrationsPostgreSQL.Phase,
 	MigrationsMySQL.Phase,
+	MigrationRuntimePostgreSQL.Phase,
+	MigrationRuntimeMySQL.Phase,
 	ReferenceDataPostgreSQL.Phase,
 	ReferenceDataMySQL.Phase,
 	AlertingOperations.Phase,

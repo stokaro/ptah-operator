@@ -2388,8 +2388,8 @@ func TestVerifyE2EHarnessRejectsCriticalMutations(t *testing.T) {
 		},
 		{
 			name:        "migration lifecycle loses the controller identity",
-			old:         "E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION \\\nE2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION \\\nE2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \\\nE2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\nE2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\nE2E_DOCKER_CONTEXT=$DOCKER_CONTEXT \\\nE2E_KIND_CLUSTER_NAME=$CLUSTER_NAME \\\nE2E_ENGINE=postgresql \\\n",
-			replacement: "E2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION \\\nE2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \\\nE2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\nE2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\nE2E_DOCKER_CONTEXT=$DOCKER_CONTEXT \\\nE2E_KIND_CLUSTER_NAME=$CLUSTER_NAME \\\nE2E_ENGINE=postgresql \\\n",
+			old:         "E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION \\\nE2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION \\\nE2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \\\nE2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\nE2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\nE2E_DOCKER_CONTEXT=$DOCKER_CONTEXT \\\nE2E_KIND_CLUSTER_NAME=$CLUSTER_NAME \\\nE2E_ENGINE=postgresql \\\n\trun_recorded_phase migrations-postgresql run_go_phase migrations-postgresql\n",
+			replacement: "E2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION \\\nE2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \\\nE2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\nE2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\nE2E_DOCKER_CONTEXT=$DOCKER_CONTEXT \\\nE2E_KIND_CLUSTER_NAME=$CLUSTER_NAME \\\nE2E_ENGINE=postgresql \\\n\trun_recorded_phase migrations-postgresql run_go_phase migrations-postgresql\n",
 			wantError:   `migrations-postgresql phase must bind E2E_CONTROLLER_REVISION to "$CONTROLLER_REVISION", and binds nothing`,
 		},
 		{
@@ -2834,8 +2834,8 @@ func TestPhaseEnvironmentContractsRejectCriticalMutations(t *testing.T) {
 	}{
 		{
 			name:        "binding removed",
-			old:         "E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\nE2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\nE2E_DOCKER_CONTEXT=$DOCKER_CONTEXT \\\nE2E_KIND_CLUSTER_NAME=$CLUSTER_NAME \\\nE2E_ENGINE=postgresql \\\n",
-			replacement: "E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\n" + isolationBindings + "E2E_ENGINE=postgresql \\\n",
+			old:         "E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\nE2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\nE2E_DOCKER_CONTEXT=$DOCKER_CONTEXT \\\nE2E_KIND_CLUSTER_NAME=$CLUSTER_NAME \\\nE2E_ENGINE=postgresql \\\n\trun_recorded_phase migrations-postgresql run_go_phase migrations-postgresql\n",
+			replacement: "E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\n" + isolationBindings + "E2E_ENGINE=postgresql \\\n\trun_recorded_phase migrations-postgresql run_go_phase migrations-postgresql\n",
 			wantError:   `migrations-postgresql phase must bind E2E_REGISTRY_HOST_ADDRESS to "$REMOTE_REGISTRY", and binds nothing`,
 		},
 		{
@@ -2845,13 +2845,13 @@ func TestPhaseEnvironmentContractsRejectCriticalMutations(t *testing.T) {
 				"E2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION \\\n" +
 				"E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \\\n" +
 				"E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\n" +
-				"E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\n" + isolationBindings + "E2E_ENGINE=postgresql \\\n",
+				"E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\n" + isolationBindings + "E2E_ENGINE=postgresql \\\n\trun_recorded_phase migrations-postgresql run_go_phase migrations-postgresql\n",
 			replacement: "E2E_CONTROLLER_IMAGE=$PRODUCTION_OPERATOR_IMAGE \\\n" +
 				"E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION \\\n" +
 				"E2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION \\\n" +
 				"E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \\\n" +
 				"E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\n" +
-				"E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\n" + isolationBindings + "E2E_ENGINE=postgresql \\\n",
+				"E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\n" + isolationBindings + "E2E_ENGINE=postgresql \\\n\trun_recorded_phase migrations-postgresql run_go_phase migrations-postgresql\n",
 			wantError: `migrations-postgresql phase must bind E2E_CONTROLLER_IMAGE to "$CANDIDATE_OPERATOR_IMAGE", and binds "$PRODUCTION_OPERATOR_IMAGE"`,
 		},
 		{
@@ -2864,17 +2864,17 @@ func TestPhaseEnvironmentContractsRejectCriticalMutations(t *testing.T) {
 			old: "E2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION \\\n" +
 				"E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \\\n" +
 				"E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\n" +
-				"E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\n" + isolationBindings + "E2E_ENGINE=postgresql \\\n",
+				"E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\n" + isolationBindings + "E2E_ENGINE=postgresql \\\n\trun_recorded_phase migrations-postgresql run_go_phase migrations-postgresql\n",
 			replacement: "E2E_CONTROLLER_STATE_VERSION=1 \\\n" +
 				"E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \\\n" +
 				"E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\n" +
-				"E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\n" + isolationBindings + "E2E_ENGINE=postgresql \\\n",
+				"E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\n" + isolationBindings + "E2E_ENGINE=postgresql \\\n\trun_recorded_phase migrations-postgresql run_go_phase migrations-postgresql\n",
 			wantError: `migrations-postgresql phase must bind E2E_CONTROLLER_STATE_VERSION to "$CONTROLLER_STATE_VERSION", and binds "1"`,
 		},
 		{
 			name:        "undeclared binding added",
-			old:         "E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\nE2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\nE2E_DOCKER_CONTEXT=$DOCKER_CONTEXT \\\nE2E_KIND_CLUSTER_NAME=$CLUSTER_NAME \\\nE2E_ENGINE=postgresql \\\n",
-			replacement: "E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\nE2E_MIGRATION_INTERVAL=1s \\\n" + "E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\n" + isolationBindings + "E2E_ENGINE=postgresql \\\n",
+			old:         "E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\nE2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\nE2E_DOCKER_CONTEXT=$DOCKER_CONTEXT \\\nE2E_KIND_CLUSTER_NAME=$CLUSTER_NAME \\\nE2E_ENGINE=postgresql \\\n\trun_recorded_phase migrations-postgresql run_go_phase migrations-postgresql\n",
+			replacement: "E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\nE2E_MIGRATION_INTERVAL=1s \\\n" + "E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\n" + isolationBindings + "E2E_ENGINE=postgresql \\\n\trun_recorded_phase migrations-postgresql run_go_phase migrations-postgresql\n",
 			wantError:   "migrations-postgresql phase binds E2E_MIGRATION_INTERVAL, which test/e2e/phases does not declare it reads",
 		},
 		{
@@ -2997,25 +2997,25 @@ func TestPhaseEnvironmentContractsRejectCriticalMutations(t *testing.T) {
 			name: "bindings reordered",
 			old: "E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\n" +
 				"E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\n" +
-				isolationBindings + "E2E_ENGINE=postgresql \\\n",
+				isolationBindings + "E2E_ENGINE=postgresql \\\n\trun_recorded_phase migrations-postgresql run_go_phase migrations-postgresql\n",
 			replacement: "E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\n" +
 				"E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\n" +
 				"E2E_KIND_CLUSTER_NAME=$CLUSTER_NAME \\\nE2E_DOCKER_CONTEXT=$DOCKER_CONTEXT \\\n" +
-				"E2E_ENGINE=postgresql \\\n",
+				"E2E_ENGINE=postgresql \\\n\trun_recorded_phase migrations-postgresql run_go_phase migrations-postgresql\n",
 			wantError: "",
 		},
 		{
 			name:        "isolation worker container unbound",
-			old:         "E2E_KIND_CLUSTER_NAME=$CLUSTER_NAME \\\nE2E_ENGINE=mysql \\\n",
-			replacement: "E2E_ENGINE=mysql \\\n",
+			old:         "E2E_KIND_CLUSTER_NAME=$CLUSTER_NAME \\\nE2E_ENGINE=mysql \\\n\trun_recorded_phase migrations-mysql run_go_phase migrations-mysql\n",
+			replacement: "E2E_ENGINE=mysql \\\n\trun_recorded_phase migrations-mysql run_go_phase migrations-mysql\n",
 			wantError:   `migrations-mysql phase must bind E2E_KIND_CLUSTER_NAME to "$CLUSTER_NAME", and binds nothing`,
 		},
 		{
 			name: "isolation worker reached through another Docker daemon",
 			old: "E2E_DOCKER_CONTEXT=$DOCKER_CONTEXT \\\nE2E_KIND_CLUSTER_NAME=$CLUSTER_NAME \\\n" +
-				"E2E_ENGINE=postgresql \\\n",
+				"E2E_ENGINE=postgresql \\\n\trun_recorded_phase migrations-postgresql run_go_phase migrations-postgresql\n",
 			replacement: "E2E_DOCKER_CONTEXT=$SELECTED_DOCKER_CONTEXT \\\nE2E_KIND_CLUSTER_NAME=$CLUSTER_NAME \\\n" +
-				"E2E_ENGINE=postgresql \\\n",
+				"E2E_ENGINE=postgresql \\\n\trun_recorded_phase migrations-postgresql run_go_phase migrations-postgresql\n",
 			wantError: `migrations-postgresql phase must bind E2E_DOCKER_CONTEXT to "$DOCKER_CONTEXT", and binds "$SELECTED_DOCKER_CONTEXT"`,
 		},
 	}

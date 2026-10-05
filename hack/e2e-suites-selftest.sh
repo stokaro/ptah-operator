@@ -170,7 +170,7 @@ grep -Fq 'E2E_DATAPLANE_MODE=$DATAPLANE_MODE' "$ROOT_DIR/hack/e2e-kind.sh" ||
 # Every engine-named phase the driver runs binds the engine its name says. A
 # name and a binding that disagree would run one engine twice and skip the
 # other, and both jobs would pass.
-for engine_phase in migrations reference-data; do
+for engine_phase in migrations migration-runtime reference-data; do
 	for phase_engine in postgresql mysql; do
 		engine_binding=$(grep -B1 -E "^[[:space:]]*run_recorded_phase ${engine_phase}-${phase_engine} " \
 			"$ROOT_DIR/hack/e2e-kind.sh" | head -1)

@@ -27,11 +27,6 @@ func TestSchemaFaults(t *testing.T) {
 		{"mysql-lifecycle", d.mysqlLifecycle},
 		{"mysql-dsn-refusal", d.mysqlDSNRefusalScenario},
 		{"watches", f.watches},
-		{"approval-resource-replacement", func() { f.schemaIdentityReplacement() }},
-		{"approval-target-secret-change", func() { f.targetSecretChanges() }},
-		{"approval-destructive-policy-change", func() { f.destructivePolicyChanges() }},
-		{"approval-exclusion-policy-change", func() { f.exclusionPolicyChanges() }},
-		{"approval-verification-policy-change", func() { f.verificationPolicyChanges() }},
 		{"mysql-drift-before-dispatch", func() { f.mysqlDriftBeforeDispatch() }},
 		{"hung-schema-result-read", func() { f.hungResultReads() }},
 		{"job-deadline", func() { f.jobDeadline() }},
@@ -39,15 +34,10 @@ func TestSchemaFaults(t *testing.T) {
 		{"runner-termination", func() { f.runnerTermination() }},
 		{"job-deletion", func() { f.jobDeletion() }},
 		{"closing-audits", d.closingAudits},
-		{"approval-executor-image-change", func() { f.executorImageChanges() }},
-		{"approval-ptah-version-change", func() { f.ptahVersionChanges() }},
-		{"unsupported-controller-state-after-approval", func() { f.unsupportedControllerStates() }},
-		{"unsupported-runner-protocol-after-approval", func() { f.unsupportedRunnerProtocols() }},
-		{"running-apply-executor-image-change", func() { f.runningExecutorImageChanges() }},
 	} {
 		if !run.Scenario(scenario.name, d.scenario(scenario.body)) {
 			return
 		}
 	}
-	run.Logf("e2e schema faults: PASS approval bindings, restart identity, and fault recovery on both engines")
+	run.Logf("e2e schema faults: PASS restart identity and fault recovery on both engines")
 }

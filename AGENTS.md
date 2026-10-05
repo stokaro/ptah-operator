@@ -126,7 +126,7 @@ whose run finished, a bisect cannot assume a commit it lands on was ever built,
 and a change that needs its own verdict — a release candidate, or a change to
 the lifecycle path itself — goes through a pull request and is merged after its
 run finishes. The pull request fans out over the same three minors and the same
-six suites.
+seven suites.
 
 ## The acceptance suites
 
@@ -156,7 +156,14 @@ plan storage, scrape/admission loss, manager loss, and interrupted upgrades stay
 in `lifecycle`. Separate clusters let those groups overlap without global faults
 contaminating another incident's history. Each group owns its producer identities
 and monitoring namespace, so the unpartitioned driver also runs both safely.
-The matrix has six suites.
+The matrix has seven suites.
+
+The independent schema approval rows run in `schema-approvals`; deadline,
+restart, deletion, and shared-realm histories stay together in `certificates`.
+Migration executor/runner changes own their artifacts and databases, so their
+PostgreSQL phase runs after schema approvals and their MySQL phase after schema
+faults. Their Secret names include the resource family to prevent collisions.
+Neither runtime phase repeats the migration lifecycle.
 
 The two migration engines run in separate suites. Reference data runs in the
 shorter data-plane suite so it adds no serial work to either migration suite.
@@ -164,7 +171,7 @@ The engine is a phase input rather than a default: the driver names it,
 and a phase asked to run with none refuses instead of covering one engine and
 reporting two.
 
-The migration, certificates, lifecycle, and alerting-operations suites need the namespace the data plane stands up — its registry
+The migration, certificates, schema-approvals, lifecycle, and alerting-operations suites need the namespace the data plane stands up — its registry
 Service, its databases, its admission fixtures — so those suites run
 the data-plane phase in preparation mode (`E2E_DATAPLANE_MODE=prepare`), which
 creates those prerequisites and executes none of its own acceptance. Preparation

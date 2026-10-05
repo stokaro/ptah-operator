@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-10-05T18:39:45.436374+00:00",
+  "frozenAt": "2026-10-05T18:53:00.357542+00:00",
   "profileSourceCommit": "b549924f777dadd2910b908a95acef4831ec0107",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
@@ -12,7 +12,7 @@
     },
     {
       "path": "support/qualification/0.2.0-coverage.md",
-      "sha256": "679a8e362f744ed9e4a09db6962a95b1b6f23cd729a5a9017f0362e0e0d9a4f6"
+      "sha256": "91852bc299ff3120f54162833ee54886f2e8326c235a82f0dd11c7379844e34a"
     },
     {
       "path": "support/qualification/0.2.0-monitoring.yaml",
@@ -28,7 +28,7 @@
     },
     {
       "path": "support/e2e-suites.json",
-      "sha256": "fb735b4c5e0643e8886228d3a1587ffe966c62a5f83ef5723dddc032a7bd5ff8"
+      "sha256": "232e55d092eac5dce6e11e8d1381d5feb0adf223b9e24ce32d0c01b0c188e286"
     },
     {
       "path": "support/ptah.json",
@@ -41,8 +41,8 @@
   ],
   "functionalMatrix": {
     "path": "support/qualification/0.2.0-functional-matrix.md",
-    "sha256": "c35f4b1ed283c8c36d71e91d32c713cb6feac653182bb87cf64d8be785a71438",
-    "generatedFromCommit": "5be9d3b44a1bd2eaa0bcca90b023f6040df222aa",
+    "sha256": "9f862c90eef2e9915e858854c6e8140660f1b36f6890eea26d43c280df935c36",
+    "generatedFromCommit": "9654a1ef365ef318978344c92d4b208691686250",
     "command": "go run ./hack/acceptancecoverage",
     "kubernetesMinors": [
       "1.35",
@@ -53,10 +53,10 @@
       "linux/amd64",
       "linux/arm64"
     ],
-    "cellsPerPlatform": 18,
-    "requiredCells": 36,
+    "cellsPerPlatform": 21,
+    "requiredCells": 42,
     "additionalRequirements": "Q-01 through Q-12 in support/qualification/0.2.0-coverage.md remain required; the functional matrix alone is insufficient.",
-    "sourceChanges": "Partition the existing alert incidents between alerting-operations and lifecycle. Repeat only native producer and monitoring setup; preserve every incident, engine, family, supported minor, platform, and timing target."
+    "sourceChanges": "Move the existing schema authority scenarios into schema-approvals; assign independent PostgreSQL migration runtime checks to that suite and MySQL runtime checks to certificates. All original incidents, engines, families, supported minors, architectures, and acceptance targets remain required."
   },
   "publishedPredecessors": {
     "checkedAt": "2026-09-29T19:00:03+00:00",
@@ -67,10 +67,10 @@
     "disposition": "No published predecessor. Synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 33,
+  "revision": 34,
   "supersedes": {
-    "freezeCommit": "5be9d3b44a1bd2eaa0bcca90b023f6040df222aa",
-    "sha256": "6679009da82f4c4232c659889bf55ec84e74360f51a78593d5644139b8ac7a78"
+    "freezeCommit": "9654a1ef365ef318978344c92d4b208691686250",
+    "sha256": "4077d659282ffd321d72195208a3f411e0ae5785d9746739a471377489cc398b"
   },
-  "revisionReason": "Partition the existing alert incidents between alerting-operations and lifecycle. Repeat only native producer and monitoring setup; preserve every incident, engine, family, supported minor, platform, and timing target. This revision records no acceptance result; the prior freeze remains at the superseded commit."
+  "revisionReason": "Move the existing schema authority scenarios into schema-approvals; assign independent PostgreSQL migration runtime checks to that suite and MySQL runtime checks to certificates. All original incidents, engines, families, supported minors, architectures, and acceptance targets remain required. This revision records no acceptance result; preserve the prior freeze at the superseded commit."
 }

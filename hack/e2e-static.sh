@@ -1295,11 +1295,11 @@ for registry_cleanup_marker in \
 		"$registry_cleanup_marker" 1 'exact registry cleanup'
 done
 
-# Both schema phases receive the registry port. The Go phase-input verifier
+# All three schema phases receive the registry port. The Go phase-input verifier
 # checks each binding against its phase declaration.
 # shellcheck disable=SC2016 # The handoff marker intentionally retains the shell variable literally.
 static_require_count "$(cat "$ROOT_DIR/hack/e2e-kind.sh")" \
-	'E2E_REGISTRY_PORT=$E2E_REGISTRY_PORT' 2 'registry readiness port handoff'
+	'E2E_REGISTRY_PORT=$E2E_REGISTRY_PORT' 3 'registry readiness port handoff'
 
 # A loop that is an if condition runs in this shell, so an exit inside it ends
 # the phase rather than the loop, and the phase dies with no message at all.
@@ -2673,17 +2673,17 @@ grep -F '| kubectl --kubeconfig "$KUBECONFIG_FILE" create -f - >/dev/null' \
 	exit 1
 }
 # Each phase that dispatches operations is handed the controller identity in
-# full: the control-plane contract, both schema phases, and the two migration
-# paths -- one per engine. The upgrade and uninstall phases
+# full: the control-plane contract, all three schema phases, and the migration
+# lifecycle and runtime phases for both engines. The upgrade and uninstall phases
 # are handed the image alone, which they hold the installed release to. The
 # counts are exact so a phase that stopped receiving one of the three is a
 # failure here rather than a Job the admission guards refuse in a cluster an
 # hour later.
 # shellcheck disable=SC2016 # Match literal runtime controller identity expressions.
 for controller_identity_assignment in \
-	'E2E_CONTROLLER_IMAGE=$CANDIDATE_OPERATOR_IMAGE 7' \
-	'E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION 5' \
-	'E2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION 5'; do
+	'E2E_CONTROLLER_IMAGE=$CANDIDATE_OPERATOR_IMAGE 10' \
+	'E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION 8' \
+	'E2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION 8'; do
 	controller_identity_expected=${controller_identity_assignment##* }
 	controller_identity_assignment=${controller_identity_assignment% *}
 	controller_identity_count=$(grep -Fc -- "$controller_identity_assignment" \
