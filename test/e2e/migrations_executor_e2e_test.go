@@ -152,7 +152,7 @@ func (m *migrationRun) executionComponentChange(change executionComponentChange)
 		})
 	}
 	m.mustCreate(m.migrationDocument(migrationSpec{name: name, secret: secret, reference: m.reference(""),
-		coordinationKey: "e2e/" + change.argument + "/" + m.engine.name, apply: "OnApproval", interval: "1h"}))
+		coordinationKey: "e2e/migration/" + change.argument + "/" + m.engine.name, apply: "OnApproval", interval: "1h"}))
 	before := wait("the original executor's approval gate", func(resource *ptahv1alpha1.PtahMigration) bool {
 		return resource.Status.Phase == ptahv1alpha1.MigrationPhaseAwaitingApproval && resource.Status.Plan != nil && resource.Status.ActiveOperation == nil
 	})
