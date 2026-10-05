@@ -403,18 +403,15 @@ func (a *alertingRun) failureHistory(pods []string, leader, family string, start
 
 func (a *alertingRun) queryFailureHistory(pods []string, leader, family string, started time.Time, label string) (alFailuresHistory, error) {
 	queriedAt := time.Now().UTC()
-	query := func(expression string) []byte {
-		body, err := a.prometheus(a.ctx, "/api/v1/query", map[string]string{"query": expression, "time": queriedAt.Format(time.RFC3339Nano)})
-		a.check(err, "read native operation-failure history")
-		return body
+	var body []byte
+	query := func(expression string) ([]byte, error) {
+		var err error
+		body, err = a.prometheus(a.ctx, "/api/v1/query", map[string]string{"query": expression, "time": queriedAt.Format(time.RFC3339Nano)})
+		return body, err
 	}
-	scrapeHistory := func(metric string) string {
-		return fmt.Sprintf(`%s{job=%q}[%ds]`, metric, alScrapeJob, int(alFailuresHistoryWindow/time.Second))
-	}
-	counters, up, durations := query(alFailuresHistoryQuery(family)), query(scrapeHistory("up")), query(scrapeHistory("scrape_duration_seconds"))
-	history, err := alReadFailuresHistory(counters, up, durations, pods, leader, family, started, queriedAt)
-	if label != "" {
-		a.logf("operation-failure native history %s: queriedAt=%s counters=%s up=%s durations=%s", label, queriedAt.Format(time.RFC3339Nano), counters, up, durations)
+	history, err := alQueryFailuresHistory(query, pods, leader, family, started, queriedAt)
+	if label != "" || err != nil && !errors.Is(err, errAlFailuresBaseline) {
+		a.logf("operation-failure native history %s: queriedAt=%s snapshot=%s", label, queriedAt.Format(time.RFC3339Nano), body)
 	}
 	return history, err
 }

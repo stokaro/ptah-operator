@@ -55,7 +55,7 @@ func alFailureHistoryFixtureForTest() alFailureHistoryFixture {
 
 func (f alFailureHistoryFixture) read(t *testing.T) (alFailuresHistory, error) {
 	t.Helper()
-	return alReadFailuresHistory(alAdmissionHistoryBodyForTest(t, f.counters), alAdmissionHistoryBodyForTest(t, f.up), alAdmissionHistoryBodyForTest(t, f.durations), []string{"leader", "follower"}, "leader", "schema", f.started, f.queried)
+	return alReadFailuresHistory(f.counters, f.up, f.durations, []string{"leader", "follower"}, "leader", "schema", f.started, f.queried)
 }
 
 func TestAlFailuresHistoryRetainsQuietWindowAndNativeIncrements(t *testing.T) {
@@ -83,6 +83,9 @@ func TestAlFailuresHistoryRetainsQuietWindowAndNativeIncrements(t *testing.T) {
 		"scrape gap": func(f *alFailureHistoryFixture) {
 			v := f.counters[0].Values
 			f.counters[0].Values = append(v[:70], v[71:]...)
+		},
+		"missing latest counter sample": func(f *alFailureHistoryFixture) {
+			f.counters[0].Values = f.counters[0].Values[:len(f.counters[0].Values)-1]
 		},
 		"counter reset": func(f *alFailureHistoryFixture) {
 			f.counters[0].Values[80] = alAdmissionHistorySampleForTest(f.started.Add(95*time.Second), "0")
@@ -195,7 +198,7 @@ func TestAlFailuresSupportsBothFamiliesWithHealthyFollowers(t *testing.T) {
 		follower.Values = append(follower.Values[:0:0], f.up[1].Values...)
 		// A follower may have a previously instantiated, unchanged counter.
 		f.counters = append(f.counters, follower)
-		h, err := alReadFailuresHistory(alAdmissionHistoryBodyForTest(t, f.counters), alAdmissionHistoryBodyForTest(t, f.up), alAdmissionHistoryBodyForTest(t, f.durations), []string{"leader", "follower"}, "leader", family, f.started, f.queried)
+		h, err := alReadFailuresHistory(f.counters, f.up, f.durations, []string{"leader", "follower"}, "leader", family, f.started, f.queried)
 		if err != nil || h.increments != 5 {
 			t.Fatalf("%s healthy follower proof refused: %+v, %v", family, h, err)
 		}
