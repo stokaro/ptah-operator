@@ -256,6 +256,48 @@ func alFailuresUnchanged(initial, current client.Object) error {
 	return nil
 }
 
+func alFailuresSuspendedCopy(object client.Object) client.Object {
+	copy := object.DeepCopyObject().(client.Object)
+	switch v := copy.(type) {
+	case *ptahv1.PtahSchema:
+		v.Spec.Suspend = true
+	case *ptahv1.PtahMigration:
+		v.Spec.Suspend = true
+	}
+	return copy
+}
+
+// Recovery must finish without editing the consumer. Only the exact suspension
+// written afterward may change it while the test closes its workload journals.
+func alFailuresClosedResources(initial, retired client.Object, history []client.Object) error {
+	expectedRetired := alFailuresSuspendedCopy(initial)
+	expectedRetired.SetGeneration(initial.GetGeneration() + 1)
+	if retired.GetResourceVersion() == "" || retired.GetResourceVersion() == initial.GetResourceVersion() {
+		return errors.New("failure cleanup has no exact suspension write")
+	}
+	if err := alFailuresUnchanged(expectedRetired, retired); err != nil {
+		return err
+	}
+	expected := initial
+	sawOriginal, sawRetirement := false, false
+	for _, v := range history {
+		if client.ObjectKeyFromObject(v) != client.ObjectKeyFromObject(initial) {
+			continue
+		}
+		if v.GetResourceVersion() == retired.GetResourceVersion() {
+			expected, sawRetirement = retired, true
+		}
+		if err := alFailuresUnchanged(expected, v); err != nil {
+			return err
+		}
+		sawOriginal = sawOriginal || !sawRetirement
+	}
+	if !sawOriginal || !sawRetirement {
+		return errors.New("failure-consumer history omitted the proof or its cleanup boundary")
+	}
+	return nil
+}
+
 type alFailureResult struct {
 	pod      types.UID
 	finished time.Time

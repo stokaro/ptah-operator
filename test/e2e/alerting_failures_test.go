@@ -390,3 +390,61 @@ func TestAlFailuresAcceptsItsDeclaredThirtyMinuteHistory(t *testing.T) {
 		t.Fatal("sample outside the declared query window accepted")
 	}
 }
+
+func TestAlFailuresCleanupPreservesTheOriginalProofWindow(t *testing.T) {
+	t.Parallel()
+	for _, family := range []string{"schema", "migration"} {
+		t.Run(family, func(t *testing.T) {
+			initial := negativeFixtureState(t, family, ptahv1.ApplyPolicyNever)
+			initial.SetResourceVersion("original")
+			retired := alFailuresSuspendedCopy(initial)
+			retired.SetGeneration(initial.GetGeneration() + 1)
+			retired.SetResourceVersion("cleanup")
+			after := retired.DeepCopyObject().(client.Object)
+			after.SetResourceVersion("later")
+			if err := alFailuresClosedResources(initial, retired, []client.Object{initial, retired, after}); err != nil {
+				t.Fatal(err)
+			}
+			for _, mutation := range []string{"no original", "no cleanup", "early suspension", "changed input", "Apply after cleanup", "resumed after cleanup", "replaced consumer"} {
+				t.Run(mutation, func(t *testing.T) {
+					bad := after.DeepCopyObject().(client.Object)
+					rows := []client.Object{initial, retired, bad}
+					switch mutation {
+					case "no original":
+						rows = rows[1:]
+					case "no cleanup":
+						rows = []client.Object{initial, after}
+					case "early suspension":
+						rows = []client.Object{initial, after, retired}
+					case "changed input":
+						switch v := bad.(type) {
+						case *ptahv1.PtahSchema:
+							v.Spec.Interval.Duration += time.Second
+						case *ptahv1.PtahMigration:
+							v.Spec.Interval.Duration += time.Second
+						}
+					case "Apply after cleanup":
+						switch v := bad.(type) {
+						case *ptahv1.PtahSchema:
+							v.Status.ActiveOperation = &ptahv1.ActiveOperationStatus{Type: ptahv1.OperationApply}
+						case *ptahv1.PtahMigration:
+							v.Status.ActiveOperation = &ptahv1.MigrationOperationStatus{Type: ptahv1.MigrationOperationApply}
+						}
+					case "resumed after cleanup":
+						rows = append(rows, initial)
+					case "replaced consumer":
+						bad.SetUID("another")
+					}
+					if alFailuresClosedResources(initial, retired, rows) == nil {
+						t.Fatal("invalid cleanup history accepted")
+					}
+				})
+			}
+			changed := retired.DeepCopyObject().(client.Object)
+			changed.SetGeneration(retired.GetGeneration() + 1)
+			if alFailuresClosedResources(initial, changed, []client.Object{initial, changed}) == nil {
+				t.Fatal("cleanup concealed an extra generation change")
+			}
+		})
+	}
+}

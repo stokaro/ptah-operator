@@ -182,9 +182,10 @@ func (a *alertingRun) operationsFailingFamily(family string) {
 			a.t.Errorf("remove operation-failure Secret: %v", e)
 		}
 	}()
+	expected := initial
 	read := func() {
 		a.check(a.cluster.Client.Get(a.ctx, client.ObjectKeyFromObject(initial), object), "read the unchanged operation-failure fixture")
-		a.check(alFailuresUnchanged(initial, object), "retain the unchanged failure consumer")
+		a.check(alFailuresUnchanged(expected, object), "retain the unchanged failure consumer")
 	}
 	results := map[types.UID]alFailureResult{}
 	collect := func() {
@@ -339,6 +340,30 @@ func (a *alertingRun) operationsFailingFamily(family string) {
 	if !alFailuresCleared(firing, resolved, history) || !a.noActiveAlerts(query) || history.increments != failures() {
 		a.fatalf("failure resolution has a late incident, unexplained counter or unretained failed result")
 	}
+	// The proof is complete. Stop periodic reads before closing the journals:
+	// a new Resolve during watch shutdown would otherwise have no retained
+	// outcome. An optimistic patch from an idle reading cannot cancel a claim
+	// that raced this cleanup; collect that cycle and try again instead.
+	var retired client.Object
+	a.check(harness.Wait(a.ctx, "idle operation-failure fixture cleanup", alTimeout, time.Second, func(context.Context) (bool, string, error) {
+		collect()
+		if failures() != count {
+			return false, "", errors.New("a failure recurred while closing the recovered consumer")
+		}
+		if !alNegativeReading(object).gated() {
+			return false, "waiting for the current diagnostic cycle to finish", nil
+		}
+		candidate := alFailuresSuspendedCopy(object)
+		err := a.cluster.Client.Patch(a.ctx, candidate, client.MergeFromWithOptions(object, client.MergeFromWithOptimisticLock{}))
+		if apierrors.IsConflict(err) {
+			return false, "a resource write raced idle cleanup", nil
+		}
+		if err != nil {
+			return false, "suspend the completed consumer", err
+		}
+		retired, expected = candidate, candidate.DeepCopyObject().(client.Object)
+		return true, "completed consumer suspended without canceling work", nil
+	}), "stop the completed failure consumer before closing its histories")
 	read()
 	switch v := object.(type) {
 	case *ptahv1.PtahSchema:
@@ -363,28 +388,22 @@ func (a *alertingRun) operationsFailingFamily(family string) {
 	}
 	storedStateWatchBarrier(a.t, a.ctx, a.cluster, jobs, publisher)
 	storedStateWatchBarrier(a.t, a.ctx, a.cluster, pods, &owned[0])
+	// The resource sentinel delivered every claim preceding suspension. No
+	// new claim can start, so retain the final outcomes before closing watches.
+	collect()
 	closeRunnerWatches(a.t, []recorder{resources, jobs, pods}, m.scan)
 	// Validate changes received between direct polls and while closing watches.
-	seen := 0
-	validate := func(v client.Object) {
-		if client.ObjectKeyFromObject(v) != client.ObjectKeyFromObject(initial) {
-			return
-		}
-		seen++
-		a.check(alFailuresUnchanged(initial, v), "retain the closed failure-consumer history")
-	}
+	var resourceHistory []client.Object
 	if family == "schema" {
 		for _, event := range schemas.snapshot() {
-			validate(event.Object)
+			resourceHistory = append(resourceHistory, event.Object)
 		}
 	} else {
 		for _, event := range migrations.snapshot() {
-			validate(event.Object)
+			resourceHistory = append(resourceHistory, event.Object)
 		}
 	}
-	if seen == 0 {
-		a.fatalf("the closed history contains no original failure consumer")
-	}
+	a.check(alFailuresClosedResources(initial, retired, resourceHistory), "retain the unchanged consumer through recovery and its exact cleanup write afterward")
 	a.check(alFailuresWorkloads(initial.GetUID(), results, jobs.snapshot(), pods.snapshot()), "account for the closed Resolve workload histories")
 	// Publisher objects belong only to this case; remove their exact identities.
 	for _, v := range []client.Object{&batchv1.Job{ObjectMeta: metav1.ObjectMeta{Namespace: a.in.TestNamespace, Name: jobName}}, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Namespace: a.in.TestNamespace, Name: configName}}} {
