@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"maps"
 	"net/url"
+	"testing"
 	"time"
 
 	ptahv1 "github.com/stokaro/ptah-operator/api/v1alpha1"
@@ -24,8 +25,19 @@ import (
 )
 
 func (a *alertingRun) operationsFailing() {
-	for _, family := range []string{"schema", "migration"} {
-		a.operationsFailingFamily(family)
+	// The families have separate consumers, databases, published artifacts and
+	// counter series. Overlap their full quiet windows without changing shared
+	// cluster settings. Each lane owns its test handle and temporary files.
+	var cases [2]harness.ParallelCase
+	for i, family := range []string{"schema", "migration"} {
+		cases[i] = harness.ParallelCase{Name: family, Run: func(t *testing.T) {
+			local := *a
+			local.t, local.parent, local.workDir = t, t, t.TempDir()
+			local.operationsFailingFamily(family)
+		}}
+	}
+	if !harness.ParallelPair(a.t, "independent-families", cases) {
+		a.t.FailNow()
 	}
 }
 
