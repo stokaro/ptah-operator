@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-10-04T09:14:31.414652+00:00",
+  "frozenAt": "2026-10-05T01:04:26.308692+00:00",
   "profileSourceCommit": "b549924f777dadd2910b908a95acef4831ec0107",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
@@ -24,7 +24,7 @@
     },
     {
       "path": "support/kubernetes.json",
-      "sha256": "316c844dad7c04fb372b75fb9b3b9953b678bafaa944d79388cea3ca0bec0c18"
+      "sha256": "bf0d7b98a5ba4a7d102e3e28fd605a2b875aaadd5109fbfbecfdf712d68a3298"
     },
     {
       "path": "support/e2e-suites.json",
@@ -67,10 +67,10 @@
     "disposition": "No published predecessor. Synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 29,
+  "revision": 30,
   "supersedes": {
-    "freezeCommit": "b76933cfa3d56dbf788f2fdd42501373a0019103",
-    "sha256": "a77381d93bb4e2fab11a66842b36a9d2e57366e7df03017b9a5519ec5c307785"
+    "freezeCommit": "e483676e178b60b505321adcad1b1d71688bfe5c",
+    "sha256": "2d4d44d8ff37190620dfce42375ae92d955e71360b39078dd5ec89f04ba1bc42"
   },
-  "revisionReason": "Repartition the same schema acceptance scenarios between the existing data-plane and certificates suites. MySQL and external PostgreSQL stay with schema faults so their closing assertions still follow fault injection. Revision 28 remains preserved at the superseded commit. No required assertion, Kubernetes minor, runtime platform, matrix denominator, capacity target, or acceptance verdict changes. This revision records no successful qualification run; acceptance remains Not assessed."
+  "revisionReason": "Refresh the Kubernetes catalog verification checkpoint after checking official Kubernetes and kind release metadata. Only lastVerified changes; kind, Kubernetes minors, patch versions, image digests, requirements, targets, and the functional matrix are unchanged. Revision 29 remains preserved at the superseded commit. This revision records no successful qualification run; acceptance remains Not assessed."
 }
