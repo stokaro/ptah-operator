@@ -55,8 +55,8 @@
     {
       "name": "lifecycle",
       "slug": "lifecycle",
-      "summary": "Installation, the CRD upgrade path, leader failover, infrastructure alert delivery, and uninstall",
-      "phases": ["upgrade", "ha", "alerting", "uninstall"],
+      "summary": "Installation, the CRD upgrade path, leader failover, certificate rotation, infrastructure alert delivery, and uninstall",
+      "phases": ["upgrade", "ha", "cert-rotation", "alerting", "uninstall"],
       "prepare": ["assert", "dataplane"]
     },
     {
@@ -69,8 +69,8 @@
     {
       "name": "certificates",
       "slug": "certificates",
-      "summary": "Certificate rotation and expiry alerts, MySQL and external PostgreSQL lifecycles, and schema fault recovery",
-      "phases": ["cert-rotation", "schema-faults", "alerting-certificates"],
+      "summary": "Certificate expiry alerts, MySQL and external PostgreSQL lifecycles, and schema fault recovery",
+      "phases": ["schema-faults", "alerting-certificates"],
       "prepare": ["assert", "dataplane"],
       "isolationWorker": true
     },

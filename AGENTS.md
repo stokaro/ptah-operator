@@ -145,8 +145,8 @@ E2E_SUITE=migrations-postgresql make e2e   # one engine's migration rows
 Phases that share mutable state stay together: the CRD upgrade and the uninstall
 that follows it and the schema faults and their shared watches. MySQL and external PostgreSQL
 stay with schema faults because their closing assertions must still hold after
-fault injection. They run in the existing certificates job, after rotation;
-the data-plane job runs the ordinary PostgreSQL lifecycle, plan-size boundaries,
+fault injection. They run in the certificates job; rotation runs in lifecycle.
+The data-plane job runs the ordinary PostgreSQL lifecycle, plan-size boundaries,
 and admission rows, followed by reference-data acceptance on both engines. Those
 rows use separate databases and need no migration acceptance. Alerting runs in lifecycle before the final next-release
 upgrade and uninstall. It publishes and plans its own schema and migration

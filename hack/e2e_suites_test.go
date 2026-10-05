@@ -228,8 +228,8 @@ func TestAPartitionThatLostAPhaseIsRefused(t *testing.T) {
 	t.Run("a phase the driver does not run", func(t *testing.T) {
 		t.Parallel()
 		path := writeSuiteCatalog(t,
-			`"phases": ["cert-rotation", "schema-faults", "alerting-certificates"],`,
-			`"phases": ["cert-rotation", "schema-faults", "alerting-certificates", "smoke"],`)
+			`"phases": ["schema-faults", "alerting-certificates"],`,
+			`"phases": ["schema-faults", "alerting-certificates", "smoke"],`)
 		catalog, err := loadE2ESuites(path)
 		if err != nil {
 			t.Fatalf("load the mutated catalog: %v", err)
@@ -347,9 +347,9 @@ func TestTheIsolationWorkerFollowsThePhasesThatIsolateANode(t *testing.T) {
 
 func TestDataPlanePreparationDoesNotRequireTheFaultWorker(t *testing.T) {
 	t.Parallel()
-	catalog, err := loadE2ESuites(writeSuiteCatalog(t, `"phases": ["cert-rotation", "schema-faults", "alerting-certificates"],
+	catalog, err := loadE2ESuites(writeSuiteCatalog(t, `"phases": ["schema-faults", "alerting-certificates"],
       "prepare": ["assert", "dataplane"],
-      "isolationWorker": true`, `"phases": ["cert-rotation"],
+      "isolationWorker": true`, `"phases": ["alerting-certificates"],
       "prepare": ["assert", "dataplane"]`))
 	if err != nil {
 		t.Fatal(err)
