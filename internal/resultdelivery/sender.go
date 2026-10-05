@@ -96,6 +96,7 @@ func (s *Sender) Close() { s.transport.CloseIdleConnections() }
 // unusable projections without executing SQL or publishing a result.
 // A busy upload slot or a transient API/transport failure uses the same retry
 // bounds as delivery. A definitive authority refusal still stops immediately.
+// Returned errors omit credentials and receiver response bodies.
 func (s *Sender) Check(parent context.Context) error {
 	ctx, cancel := context.WithTimeout(parent, s.retry.TotalTimeout)
 	defer cancel()
@@ -173,7 +174,7 @@ func (s *Sender) Send(parent context.Context, payload []byte) (resultstore.Recei
 			return receipt, err
 		}
 		if attempt+1 == s.retry.Attempts {
-			return resultstore.Receipt{}, errors.New("result delivery attempts exhausted")
+			return resultstore.Receipt{}, fmt.Errorf("result delivery attempts exhausted: %w", err)
 		}
 		timer := time.NewTimer(s.retry.Interval)
 		select {
