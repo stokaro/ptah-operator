@@ -24,3 +24,10 @@ The schema has resumed after an interrupted Apply but must still wait until
 six-minute wait during the later Plan. The deadline regression reads this
 persisted horizon and places its test clock before it; it does not infer the
 resume time from the resource phase or claim this snapshot proves convergence.
+
+`prometheus-plan-store-export-gap.json` and
+`prometheus-plan-store-stale-gauge.json` contain time-cropped native Prometheus
+samples from CI jobs 111691203546 and 111785841643. Their timestamps, values and
+labels are unchanged. The plan-store interval tests require a complete, fresh
+baseline before pruning and reject a missing gauge inside either timing window.
+An earlier gap during export cannot invalidate a later complete baseline.

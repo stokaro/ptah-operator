@@ -268,9 +268,8 @@ func (a *alertingRun) planStoreLarge() {
 	if baseline.latest > alPlanStoreLimit || !baseline.crossedLower.IsZero() {
 		a.fatalf("no native below-threshold baseline")
 	}
-	// A missing sample cannot recover later. Check the measured history while
-	// waiting for plans, so an invalid proof stops before the remaining
-	// replacements and exports. Query at most once per scrape interval.
+	// A missing sample inside the crossing window cannot recover later. Check
+	// that window while waiting for plans, at most once per scrape interval.
 	checkCluster := check
 	nextHistory := time.Now().Add(alScrapeInterval)
 	check = func() {
@@ -305,6 +304,24 @@ func (a *alertingRun) planStoreLarge() {
 		h := a.planStoreHistory(names, leader, started, "")
 		return h.latest >= total, "waiting for the final retained manifest scrape", nil
 	}), "measure every owned payload in the native gauge")
+	// The delivery bound is now proven. Replacements and exports do not start
+	// a new timing window, but the receiver must retain the same incident until
+	// pruning. Fail immediately on an early resolution or a changed incident.
+	nextIncident := time.Now()
+	check = func() {
+		checkCluster()
+		if time.Now().Before(nextIncident) {
+			return
+		}
+		body, err := a.deploymentLog(a.ctx, "alert-sink")
+		a.check(err, "retain the plan-store incident history")
+		deliveries, err := alDeliveries(body)
+		a.check(err, "decode the plan-store incident history")
+		if !alPlanStoreIncidentHeld(deliveries, index, firing) {
+			a.fatalf("plan-store incident changed or resolved before safe pruning")
+		}
+		nextIncident = time.Now().Add(alScrapeInterval)
+	}
 	// Replace the current plan, then suspend each owner. Its old large plan
 	// stays retained but no longer has an active, pending or approval pin.
 	for start := 0; start < len(large); start += 4 {
@@ -328,6 +345,7 @@ func (a *alertingRun) planStoreLarge() {
 	// Export before any deletion. Archives are reconstructed from disk and
 	// retained in the phase log, so cleanup cannot erase the evidence.
 	for _, p := range large {
+		check()
 		s := read(&ptahv1.PtahSchema{ObjectMeta: metav1.ObjectMeta{Namespace: p.Namespace, Name: p.Spec.SchemaRef.Name, UID: p.Spec.SchemaRef.UID}})
 		a.check(alPlanMayPrune(p, s, pins), "refuse every pinned or active deletion")
 		e := a.readPlanStoreExport(p)
@@ -344,11 +362,33 @@ func (a *alertingRun) planStoreLarge() {
 		m.scan(raw, "plan-store export")
 		a.logf("plan-store export: plan=%s uid=%s size=%d contentDigest=%s archiveSHA256=%x gzipBase64=%s", p.Name, p.UID, p.Spec.Size, p.Spec.ContentDigest, sha256.Sum256(body), base64.StdEncoding.EncodeToString(body))
 	}
-	beforePrune := a.planStoreHistory(names, leader, started, "")
-	if !beforePrune.clearedLower.IsZero() {
-		a.fatalf("plan store cleared before safe pruning")
-	}
+	// Establish a complete healthy baseline before the next fault starts.
+	// Waiting here cannot extend recovery: no owned payload has been pruned.
+	var recoveryStarted time.Time
+	a.check(harness.Wait(a.ctx, "the native pre-pruning byte baseline", 2*alScrapeInterval+alScrapeTimeout, time.Second, func(context.Context) (bool, string, error) {
+		check()
+		at := time.Now().UTC()
+		h, err := a.readPlanStoreHistory(names, leader, at, "", true)
+		if err != nil {
+			return false, err.Error(), nil
+		}
+		if h.latest < total {
+			return false, "waiting for a complete above-threshold baseline", nil
+		}
+		recoveryStarted = at
+		return true, "", nil
+	}), "retain a fresh baseline before safe pruning")
+	nextIncident = time.Time{}
+	check()
 	pruningStarted := time.Now().UTC()
+	nextHistory = time.Now().Add(alScrapeInterval)
+	check = func() {
+		checkCluster()
+		if !time.Now().Before(nextHistory) {
+			a.planStoreRecoveryHistory(names, leader, recoveryStarted, "")
+			nextHistory = time.Now().Add(alScrapeInterval)
+		}
+	}
 	for _, p := range large {
 		check()
 		current := &ptahv1.PtahSchemaPlan{}
@@ -364,13 +404,14 @@ func (a *alertingRun) planStoreLarge() {
 	resolved, _ := a.waitForDeliveryWithCheck(alMatch{status: "resolved", alertName: alPlanStoreAlert, labels: map[string]string{"operator_namespace": a.in.OperatorNamespace, "operator_metrics_service": a.metricsService}}, "the plan-store recovery notification", alDetectionSlack, index+1, check)
 	a.check(harness.Wait(a.ctx, "native plan-store recovery samples", 2*alScrapeInterval+alScrapeTimeout, time.Second, func(context.Context) (bool, string, error) {
 		check()
-		history = a.planStoreHistory(names, leader, started, "")
+		history = a.planStoreRecoveryHistory(names, leader, recoveryStarted, "")
 		return !history.through.Before(resolved.ReceivedAt), "waiting for the native recovery scrape", nil
 	}), "retain the original recovery bound")
-	history = a.planStoreHistory(names, leader, started, "resolved")
+	history = a.planStoreRecoveryHistory(names, leader, recoveryStarted, "resolved")
 	if !alPlanStoreResolved(firing, resolved, history, pruningStarted) || !a.noActiveAlerts(query) {
 		a.fatalf("plan-store resolution missed safe pruning or its native bound")
 	}
+	check = checkCluster
 	a.check(harness.Wait(a.ctx, "plan and chunk garbage collection", alTimeout, time.Second, func(context.Context) (bool, string, error) {
 		check()
 		for _, p := range large {
@@ -484,12 +525,30 @@ func (a *alertingRun) planStorePinnedBytes(pins alPlanPinSet) map[alPlanKey]stri
 }
 func (a *alertingRun) planStoreHistory(pods []string, leader string, started time.Time, label string) alPlanStoreHistory {
 	a.t.Helper()
+	history, err := a.readPlanStoreHistory(pods, leader, started, label, false)
+	a.check(err, "validate complete plan-store crossing histories")
+	return history
+}
+
+func (a *alertingRun) planStoreRecoveryHistory(pods []string, leader string, started time.Time, label string) alPlanStoreHistory {
+	a.t.Helper()
+	history, err := a.readPlanStoreHistory(pods, leader, started, label, true)
+	a.check(err, "validate complete plan-store recovery histories")
+	return history
+}
+
+func (a *alertingRun) readPlanStoreHistory(pods []string, leader string, started time.Time, label string, recovery bool) (alPlanStoreHistory, error) {
+	a.t.Helper()
 	at := time.Now().UTC()
 	groups, body := a.historySnapshot(a.ctx, at, alScrapeJob, "", alPlanStoreMetric, "up", "scrape_duration_seconds")
-	history, err := alReadPlanStoreHistory(groups[alPlanStoreMetric], groups["up"], groups["scrape_duration_seconds"], pods, leader, started, at)
+	read := alReadPlanStoreHistory
+	if recovery {
+		read = alReadPlanStoreRecoveryHistory
+	}
+	history, err := read(groups[alPlanStoreMetric], groups["up"], groups["scrape_duration_seconds"], pods, leader, started, at)
 	if label != "" || err != nil {
+		a.logf("plan-store measurement window: started=%s recovery=%t", started.Format(time.RFC3339Nano), recovery)
 		a.logf("plan-store native history %s: queriedAt=%s snapshot=%s", label, at.Format(time.RFC3339Nano), body)
 	}
-	a.check(err, "validate complete plan-store histories")
-	return history
+	return history, err
 }
