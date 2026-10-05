@@ -160,15 +160,17 @@ type schemaSQLInventory struct {
 	excludedJobs checkpoint
 }
 
-// A read-only diagnostic may retry after a terminal failure. Select its sole
-// successful result without removing failed attempts from the SQL inventory.
-// Apply callers keep the exact-one-Job boundary instead.
+// A failed Plan can start a new Observe/Plan cycle. Select the latest successful
+// diagnostic with the same inputs, keeping every attempt in the SQL inventory.
+// The caller binds its result to the current drift report or published plan.
+// Apply callers keep the exact-one-Job boundary.
 func (inventory *schemaSQLInventory) diagnosticResult(schema *ptahv1alpha1.PtahSchema, operation string, records []observedJob) (observedJob, error) {
 	var selected observedJob
 	if schema == nil || schema.UID == "" || (operation != "observe" && operation != "plan") {
 		return selected, errors.New("result selection requires an exact schema and a read-only diagnostic")
 	}
 	fingerprint := ""
+	seen := map[string]bool{}
 	for _, record := range records {
 		job, found := inventory.jobs[types.UID(record.UID)]
 		if !found || job.UID == "" || string(job.UID) != record.UID || job.Name != record.Name || job.Namespace != schema.Namespace ||
@@ -176,6 +178,10 @@ func (inventory *schemaSQLInventory) diagnosticResult(schema *ptahv1alpha1.PtahS
 			!ownedExactlyOnce(job.OwnerReferences, ptahSchemaAPIVersion, "PtahSchema", schema.Name, schema.UID) {
 			return observedJob{}, fmt.Errorf("diagnostic Job %s lost its exact schema identity", record.Name)
 		}
+		if seen[record.UID] {
+			return observedJob{}, errors.New("diagnostic repeats a Job identity")
+		}
+		seen[record.UID] = true
 		input := job.Annotations["operator.ptah.run/input-fingerprint"]
 		if !sha256Pattern.MatchString(input) || (fingerprint != "" && input != fingerprint) {
 			return observedJob{}, fmt.Errorf("diagnostic Job %s has different or missing inputs", job.Name)
@@ -187,7 +193,13 @@ func (inventory *schemaSQLInventory) diagnosticResult(schema *ptahv1alpha1.PtahS
 		}
 		if complete {
 			if selected.UID != "" {
-				return observedJob{}, errors.New("diagnostic has more than one successful Job")
+				previous := inventory.jobs[types.UID(selected.UID)]
+				if previous.CreationTimestamp.IsZero() || job.CreationTimestamp.IsZero() || previous.CreationTimestamp.Equal(&job.CreationTimestamp) {
+					return observedJob{}, errors.New("successful diagnostics have no distinct creation order")
+				}
+				if job.CreationTimestamp.Before(&previous.CreationTimestamp) {
+					continue
+				}
 			}
 			selected = record
 		}

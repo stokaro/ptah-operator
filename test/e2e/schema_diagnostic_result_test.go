@@ -1,9 +1,12 @@
 package e2e
 
 import (
+	"encoding/json"
+	"os"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -11,6 +14,50 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
 )
+
+func TestSchemaDiagnosticResultAfterPlanFailure(t *testing.T) {
+	t.Parallel()
+	data, err := os.ReadFile("../../testdata/e2e/readings/repeated-observe-after-plan-failure.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reading struct {
+		Jobs []struct {
+			Name, UID, Created, InputFingerprint string
+		}
+	}
+	if err := json.Unmarshal(data, &reading); err != nil {
+		t.Fatal(err)
+	}
+	if len(reading.Jobs) != 2 {
+		t.Fatal("the captured retry must contain both successful Observe Jobs")
+	}
+	_, schema, _, _ := schemaReplacementFixture()
+	inventory := &schemaSQLInventory{jobs: map[types.UID]batchv1.Job{}}
+	var records []observedJob
+	for _, row := range reading.Jobs {
+		created, err := time.Parse(time.RFC3339, row.Created)
+		if err != nil {
+			t.Fatal(err)
+		}
+		job := batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: row.Name, Namespace: schema.Namespace, UID: types.UID(row.UID),
+			CreationTimestamp: metav1.NewTime(created),
+			Labels:            map[string]string{labelSchema: schema.Name, labelOperation: "observe"},
+			Annotations:       map[string]string{"operator.ptah.run/input-fingerprint": row.InputFingerprint},
+			OwnerReferences:   []metav1.OwnerReference{{APIVersion: ptahSchemaAPIVersion, Kind: "PtahSchema", Name: schema.Name, UID: schema.UID, Controller: ptr.To(true)}}},
+			Status: batchv1.JobStatus{Conditions: []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}}}}
+		inventory.jobs[job.UID] = job
+		records = append(records, observedJob{UID: row.UID, Name: row.Name, Created: row.Created, Schema: schema.Name, Operation: "observe"})
+	}
+	// A failed Plan caused the controller to observe again. List order is not
+	// execution order; select the later success and retain both SQL identities.
+	for _, order := range [][]observedJob{records, {records[1], records[0]}} {
+		selected, err := inventory.diagnosticResult(schema, "observe", order)
+		if err != nil || selected != records[0] || len(inventory.jobs) != 2 {
+			t.Fatalf("repeated Observe lost its latest result or SQL history: selected=%+v, error=%v", selected, err)
+		}
+	}
+}
 
 func TestSchemaDiagnosticResultAfterFailedAttempt(t *testing.T) {
 	t.Parallel()
