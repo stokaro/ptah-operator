@@ -653,5 +653,33 @@
     },
     "custody": "Private local development archive; no upload or final retention acceptance.",
     "scope": "Two fresh PostgreSQL databases and resources retain an explicit empty selector in API storage, complete 12 native Jobs from the fixed manager revision, execute one Apply each, and reach verified database state without Pod restarts. This closes the reproduced empty-selector defect, not the full issue 578 matrix or final artifact qualification."
+  },
+  "capacityDistinctApproverClient": {
+    "requirement": "Issue 580: capacity approval paths must work with the frozen distinct-approver control enabled.",
+    "sourceCommit": "9aaacb42ade3e77e73f4f5994eeeffa78db676ca",
+    "conclusion": "pass for client and bootstrap regression; full capacity qualification remains open",
+    "localChecks": {
+      "originalRetentionClient": "fails because the workload writer attempts self-approval",
+      "capacityRace": "pass",
+      "capacityVet": "pass",
+      "capacityProbeTests": 57
+    },
+    "realAPI": {
+      "kubernetesVersion": "1.37.0",
+      "hostArchitecture": "darwin/arm64",
+      "selfApproval": "refused by the actual distinct-approver webhook",
+      "separateApprover": "admitted with its API-confirmed identity",
+      "secretRead": "forbidden",
+      "summarySHA256": "06daa7ca353afe255bd4ff37227cea00514ee8c5c904aa7e2ef6b64e46e4ff09"
+    },
+    "bootstrap": "Only the two owned workload namespaces receive RoleBindings to the existing chart approver role. No cluster-wide binding is added; existing lab runs without a separate approver remain unchanged.",
+    "archive": {
+      "name": "capacity-distinct-approver-api-2026-10-06.tar.gz",
+      "sha256": "f789c45b7415438349f5a1fa06cdd0b67c2498a354914330d93faba90124af44",
+      "memberCount": 20,
+      "bytes": 5799
+    },
+    "custody": "Private local development archive; no final retention acceptance.",
+    "scope": "Real API-server admission with stored fixture objects; no controller, database execution, Linux arm64, soak, or complete frozen-profile proof. Temporary kubeconfigs were removed and the isolated API server stopped."
   }
 }
