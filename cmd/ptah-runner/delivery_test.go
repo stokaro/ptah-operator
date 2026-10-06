@@ -241,6 +241,11 @@ func TestRunnerRedeliversAfterLostAcknowledgmentWithoutReexecuting(t *testing.T)
 }
 
 func TestRunnerDoesNotFallBackToLogsAfterDeliveryRefusal(t *testing.T) {
+	// This serial test measures refusal and one-shot execution. The sender's
+	// deadline tests cover exhaustion; use a short retry window here.
+	originalRetry := deliveryRetry
+	deliveryRetry.Attempts, deliveryRetry.Interval = 4, time.Millisecond
+	t.Cleanup(func() { deliveryRetry = originalRetry })
 	for _, tc := range []struct {
 		name     string
 		status   int
@@ -438,6 +443,10 @@ func TestRunnerRetriesPreflightBeforeExecutingApplyOnce(t *testing.T) {
 }
 
 func TestRunnerAuthenticatesProjectionBeforeStartingSQL(t *testing.T) {
+	// These refusals must prevent dispatch regardless of the retry duration.
+	originalRetry := deliveryRetry
+	deliveryRetry.Attempts, deliveryRetry.Interval = 4, time.Millisecond
+	t.Cleanup(func() { deliveryRetry = originalRetry })
 	for _, name := range []string{"foreign client key", "foreign server trust", "authority refused", "receiver unavailable"} {
 		t.Run(name, func(t *testing.T) {
 			f := newDeliveryFixture(t, nil)
