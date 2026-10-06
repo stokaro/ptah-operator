@@ -470,5 +470,34 @@
     },
     "custody": "Private local development archive; not uploaded or accepted as final retention.",
     "scope": "All six native alerting scenarios completed, including both upgrade incidents and recovery. This fixes the missing pre-fault scrape baseline in CI run 37437296857. Independent schema-faults and certificate-suite failures in that run remain open; this is not a full CI duration or production acceptance."
+  },
+  "nativePlanStoreRecovery": {
+    "requirement": "Preserve the native plan-storage incident until a current below-threshold reading proves safe recovery",
+    "harnessSourceCommit": "1f09dfb92453c0629198f767bb4727069ffa1f40",
+    "chartSourceCommit": "1f09dfb92453c0629198f767bb4727069ffa1f40",
+    "runtimeSourceCommit": "630c4af8c4ca23e94710fc8353fbda85692f6700",
+    "runtimeArchitecture": "linux/amd64",
+    "kubernetesVersion": "1.37.0",
+    "conclusion": "pass",
+    "seconds": 2004.41,
+    "scenarios": {
+      "native-producers": 64,
+      "monitoring-path": 12,
+      "plan-store-large": 993,
+      "certificate-expiry": 936
+    },
+    "nativePlanStore": {
+      "planCount": 17,
+      "retainedBytes": 142606336,
+      "readablePins": 30
+    },
+    "archive": {
+      "name": "plan-store-recovery-native-2026-10-06.tar.gz",
+      "sha256": "ba57ee54c1305b2c1c9092d224fb5829c595e5853aaa8f0f6a606a4336298259",
+      "memberCount": 9,
+      "bytes": 248663
+    },
+    "custody": "Private local development archive; no upload or final retention acceptance.",
+    "scope": "All four native certificate/storage scenarios passed, including threshold crossing, a continuous storage incident, exact exports, safe pruning, and certificate failure/recovery. The original rule fails the pinned Prometheus regression when its gauge disappears; the corrected rule preserves the original firing state and clears on a fresh low reading. This addresses the certificates 1.36 failure in CI run 37437296857, but does not claim a new CI matrix or production acceptance."
   }
 }
