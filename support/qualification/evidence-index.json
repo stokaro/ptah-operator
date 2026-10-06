@@ -445,5 +445,30 @@
       "directory": "/home/buster/ptah-operator-evidence/020-qualification-2026-10-06"
     },
     "scope": "Moved reference-data and storage-alert scenarios passed with their native prerequisites. Preparation is not acceptance coverage. The retained cluster used the unchanged 630c4af8 product runtime and the regrouped test harness. Two preparation attempts refused existing demo or partially created fixtures; exact task-owned objects were cleaned by UID before the passing preparation. This is not a complete new suite run, a full CI duration, or production acceptance."
+  },
+  "nativeAlertingStartup": {
+    "requirement": "Locally validate the complete shortened alerting phase after removing its incidental Prometheus warm-up",
+    "harnessSourceCommit": "c9af0a0b394a3e0554922887e6259c3d51dd12d3",
+    "runtimeSourceCommit": "630c4af8c4ca23e94710fc8353fbda85692f6700",
+    "runtimeArchitecture": "linux/amd64",
+    "kubernetesVersion": "1.37.0",
+    "conclusion": "pass",
+    "seconds": 2141.63,
+    "scenarios": {
+      "native-producers": 62.71,
+      "monitoring-path": 12.39,
+      "unresolved-view-read-failures": 159.72,
+      "lost-scrape-target": 219.92,
+      "lost-view": 109.36,
+      "upgrade-alerts": 1577.45
+    },
+    "archive": {
+      "name": "alerting-startup-native-2026-10-06.tar.gz",
+      "sha256": "96dda47b64f64925e09cff92cd4f9695502421d5370c1dd51ea26f16e7b8c8ac",
+      "memberCount": 92,
+      "bytes": 1172056
+    },
+    "custody": "Private local development archive; not uploaded or accepted as final retention.",
+    "scope": "All six native alerting scenarios completed, including both upgrade incidents and recovery. This fixes the missing pre-fault scrape baseline in CI run 37437296857. Independent schema-faults and certificate-suite failures in that run remain open; this is not a full CI duration or production acceptance."
   }
 }
