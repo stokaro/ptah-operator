@@ -997,5 +997,81 @@
     },
     "scope": "The original failed run remains failed. The corrected CNI is a diagnostic, not the frozen installation baseline. A reproducible qualified CNI configuration and affected workload reruns are still required. No #580 or #242 completion is claimed. The twenty workload resources remain suspended and the owned cluster is retained.",
     "custody": "Private development copy with independently hash-verified download. Final encrypted custody, retention policy, and owner acceptance remain unassessed."
+  },
+  "capacityPinnedCNI": {
+    "requirement": "#580 enforcing network controls with the frozen retained background population",
+    "conclusion": "The pinned CNI recipe builds and passes the native network controls; capacity verdict remains separate.",
+    "profileRevision": 39,
+    "profileCommit": "8e244073eab40e2930e80cee3006cd895b193a86",
+    "recipeSourceCommit": "2fceaf524095df5ea1e126c5e3ef7f0e553607f1",
+    "runtime": "native Linux amd64, Kubernetes 1.37.0",
+    "image": {
+      "reference": "ptah-kindnet-qualification:242-20261006",
+      "dockerImageID": "sha256:ecfbdd9dca88763cbfa1cfe75a595588607364ede3b52425b32d9cb817bc59d8",
+      "architecture": "amd64"
+    },
+    "recipeSourceFiles": {
+      "Dockerfile": "6f5eaf1ab567804da95d13d9e5299f729810081703fa5ee8b0ca96177ae67b91",
+      "pending_pod_test.go.txt": "b5c89237ae7f0ca901618120870cb8b3fdbe8d13a05230f092b84e0f098ff06a",
+      "README.md": "8953635e6a1a0c2ab16fa174423aaa7333c6c22adb99048c6db2cc113cfa3929",
+      "pending-pod.patch": "3ba443fa13d416d0946a36c79b97ac4de26143de24062582ec3878979722c740"
+    },
+    "agentPods": [
+      {
+        "uid": "4101f00e-ed2e-4a33-9e60-d7723f9f882e",
+        "node": "ptah-e2e-1-37-0-242-profile-1-0026e8302c-control-plane",
+        "imageID": "docker.io/library/import-2026-10-06@sha256:bbd52fa8038be16babdf9fa84f80bbe0238724b83f2f64eaf922a0a173a0e665",
+        "ready": true
+      },
+      {
+        "uid": "b5a49fb3-0d1a-44c8-9ef5-55b387aec4ad",
+        "node": "ptah-e2e-1-37-0-242-profile-1-0026e8302c-control-plane3",
+        "imageID": "docker.io/library/import-2026-10-06@sha256:bbd52fa8038be16babdf9fa84f80bbe0238724b83f2f64eaf922a0a173a0e665",
+        "ready": true
+      },
+      {
+        "uid": "7bd5e3c7-3ce3-4e0f-888e-2bace694f82d",
+        "node": "ptah-e2e-1-37-0-242-profile-1-0026e8302c-control-plane2",
+        "imageID": "docker.io/library/import-2026-10-06@sha256:bbd52fa8038be16babdf9fa84f80bbe0238724b83f2f64eaf922a0a173a0e665",
+        "ready": true
+      },
+      {
+        "uid": "c4b3993c-8325-4f85-ae64-cb8820189f86",
+        "node": "ptah-e2e-1-37-0-242-profile-1-0026e8302c-worker",
+        "imageID": "docker.io/library/import-2026-10-06@sha256:bbd52fa8038be16babdf9fa84f80bbe0238724b83f2f64eaf922a0a173a0e665",
+        "ready": true
+      }
+    ],
+    "controls": {
+      "operationManagerAndDatabaseRows": 20,
+      "pendingInitRows": 2,
+      "pendingReuse": [
+        {
+          "namespace": "ptah-qualification-a",
+          "uid": "2a9d97ce-6df1-46ab-b09d-d10d7f5d1ab1",
+          "IP": "10.244.3.15",
+          "retainedTerminalPods": 4
+        },
+        {
+          "namespace": "ptah-qualification-b",
+          "uid": "86783d23-8926-44f3-9fd8-4a7b5044c89d",
+          "IP": "10.244.3.17",
+          "retainedTerminalPods": 5
+        }
+      ],
+      "result": "Every expected allowed and denied endpoint matched; all four replacement agents are Ready with zero restarts."
+    },
+    "archive": {
+      "name": "capacity-kindnet-profile-2026-10-06.tar.gz",
+      "sha256": "457754828068ec5f1dfd7b36a2eb5ef9a391d6f9e27ab1fa468da7145b719f90",
+      "bytes": 45263,
+      "memberCount": 291,
+      "downloadVerified": true,
+      "transport": "authenticated SSH",
+      "hostAlias": "diabolocom-buster",
+      "directory": "/home/buster/ptah-operator-evidence/020-qualification-2026-10-06"
+    },
+    "scope": "The original failed cold start and its evidence remain unchanged. This proves the CNI correction on the named platform only, not the capacity targets, other matrix cells, #580 completion, or #242 closure.",
+    "custody": "Private development copy with independently hash-verified download. Final encrypted custody, retention policy, and owner acceptance remain unassessed."
   }
 }
