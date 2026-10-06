@@ -192,6 +192,13 @@ class Bootstrap:
     def prepare(self, workload):
         if self.path.exists():
             raise RuntimeError('state file already exists; refusing to replace an ownership journal')
+        namespaces = None
+        if 'CAPACITY_WORKLOAD_NAMESPACES' in self.env:
+            namespaces = self.env['CAPACITY_WORKLOAD_NAMESPACES'].split(',')
+            if (len(namespaces) != 2 or len(set(namespaces)) != 2 or
+                    any(len(name) > 63 or not re.fullmatch(r'[a-z0-9](?:[-a-z0-9]*[a-z0-9])?', name)
+                        for name in namespaces)):
+                raise ValueError('CAPACITY_WORKLOAD_NAMESPACES requires two distinct DNS labels separated by a comma')
         if type(workload.get('unrelatedObjects', False)) is not bool:
             raise ValueError('unrelatedObjects must be boolean')
         engine = workload.get('engine', 'PostgreSQL')
@@ -224,7 +231,7 @@ class Bootstrap:
         self.state.update(runID=secrets.token_hex(5), kubernetes=version, engine=engine)
         prefix = 'ptah-capacity-' + self.state['runID']
         fixture = prefix + '-fixtures'
-        namespaces = [prefix + '-a', prefix + '-b']
+        namespaces = namespaces or [prefix + '-a', prefix + '-b']
         self.state.update(fixtureNamespace=fixture, workloadNamespaces=namespaces,
                           schemas=counts[0], migrations=counts[1])
         if approver:

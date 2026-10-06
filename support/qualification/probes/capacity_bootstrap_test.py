@@ -180,6 +180,45 @@ class BootstrapTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.bootstrap = FakeBootstrap(Path(self.temp.name) / 'state.json')
 
+    def test_explicit_workload_namespaces_keep_placement_and_ownership(self):
+        b = self.bootstrap
+        names = ['ptah-qualification-a', 'ptah-qualification-b']
+        b.env['CAPACITY_WORKLOAD_NAMESPACES'] = ','.join(names)
+        self.assertEqual(b.prepare({'schemas': 10, 'migrations': 10}), names)
+        self.assertEqual(b.state['workloadNamespaces'], names)
+        for name in names:
+            self.assertEqual(sum(row['namespace'] == name and row['family'] != 'approval-fixture'
+                                 for row in b.state['databases']), 10)
+            namespace = b.objects['Namespace', '', name]
+            self.assertEqual(namespace['metadata']['labels']['operator.ptah.run/capacity-bootstrap'], b.state['runID'])
+            self.assertIn({'name': name, 'uid': namespace['metadata']['uid']}, b.state['namespaces'])
+
+    def test_explicit_workload_namespaces_refuse_invalid_names_before_api_calls(self):
+        for names in ('', 'a', 'a,b,c', 'same,same', ',b', 'a,', 'a, b', 'a,b.c', 'a,Upper',
+                      'a,-b', 'a,b-', 'a,' + 'b' * 64):
+            with self.subTest(names=names):
+                b = self.bootstrap
+                b.env['CAPACITY_WORKLOAD_NAMESPACES'] = names
+                with self.assertRaisesRegex(ValueError, 'two distinct DNS labels'):
+                    b.prepare({'schemas': 1, 'migrations': 1})
+                self.assertFalse(b.commands)
+                self.assertFalse(b.shared)
+                self.assertFalse(b.objects)
+                self.assertFalse(b.path.exists())
+
+    def test_existing_explicit_namespace_is_not_adopted_or_deleted(self):
+        b = self.bootstrap
+        b.env['CAPACITY_WORKLOAD_NAMESPACES'] = 'ptah-qualification-a,ptah-qualification-b'
+        foreign = {'apiVersion': 'v1', 'kind': 'Namespace',
+                   'metadata': {'name': 'ptah-qualification-a', 'uid': 'foreign'}}
+        b.objects['Namespace', '', 'ptah-qualification-a'] = copy.deepcopy(foreign)
+        with self.assertRaisesRegex(RuntimeError, 'AlreadyExists'):
+            b.prepare({'schemas': 1, 'migrations': 1})
+        with self.assertRaisesRegex(RuntimeError, 'not owned by this run'):
+            b.cleanup()
+        self.assertEqual(b.objects['Namespace', '', 'ptah-qualification-a'], foreign)
+        self.assertNotIn('ptah-qualification-a', b.deleted)
+
     def test_https_registry_binds_the_copied_ca_and_requires_signed_digests(self):
         b = self.bootstrap
         b.env.update(CAPACITY_REGISTRY_HOST='tls.fixture.svc.cluster.local:5443',
