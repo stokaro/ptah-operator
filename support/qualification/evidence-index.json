@@ -1073,5 +1073,131 @@
     },
     "scope": "The original failed cold start and its evidence remain unchanged. This proves the CNI correction on the named platform only, not the capacity targets, other matrix cells, #580 completion, or #242 closure.",
     "custody": "Private development copy with independently hash-verified download. Final encrypted custody, retention policy, and owner acceptance remain unassessed."
+  },
+  "capacityProfileBacklog": {
+    "requirement": "#580 full-profile cold start, steady load and within-fleet approval backlog",
+    "conclusion": "Workflow and database checks passed on the named profile cell. Complete capacity threshold acceptance remains unproved.",
+    "runtimeSourceCommit": "1b5db851859cb72793f8169e0cbaef4ad7a24556",
+    "driverSourceCommit": "3d14baf3c37a739c2ae8d9f7c9f6403e92586a50",
+    "driverBinarySHA256": "4ff555c243202fca689ae5c6bc10f554f37d896fc19ea13a25ce2eafff959534",
+    "profileRevision": 39,
+    "profileDigests": {
+      "0.2.0.md": "0da8b2ffd36c9c00b3d37ec8e50e6eb5ac57f425e4e676bf69110ce76c6950b6",
+      "0.2.0-coverage.md": "2ba82aaf557ae9d5fc7824106347bb9a277fb54b50b7810530c47d7cb97fa7ad",
+      "0.2.0-monitoring.yaml": "464b4352a25ecb1ed41379034d056056bb3744ade566f4b1938558b3cbc8ae65",
+      "0.2.0-freeze.json": "694f660ad4acfd0712412378c9eee4d392939a5e3d2363f986cbca27f4f2c464"
+    },
+    "environment": {
+      "kubernetes": "1.37.0",
+      "platform": "native Linux amd64",
+      "engine": "PostgreSQL",
+      "schemas": 10,
+      "migrations": 10,
+      "rowsPerDatabase": 10000,
+      "backgroundConfigMaps": 1000,
+      "backgroundCompletedJobs": 1000,
+      "workloadNamespaces": [
+        "ptah-qualification-a",
+        "ptah-qualification-b"
+      ],
+      "kindnetImage": "sha256:ecfbdd9dca88763cbfa1cfe75a595588607364ede3b52425b32d9cb817bc59d8"
+    },
+    "measurements": {
+      "coldStatusConvergenceSeconds": 189.188932,
+      "coldDatabaseVerifiedSeconds": 273.859493,
+      "steadySeconds": 600.005836,
+      "approvalDatabaseVerifiedSeconds": 78.454406,
+      "samples": 232,
+      "incompleteMetricSamples": 0,
+      "jobs": 545,
+      "failedReadOnlyJobs": [
+        {
+          "jobUID": "0903f6d6-d03b-4758-bb15-259b13b5d923",
+          "operation": "observe",
+          "originalGeneration": 3,
+          "changedGeneration": 4,
+          "inputsChangedAt": "2026-10-06T20:19:02.343561Z",
+          "scope": "Continuous watch binds the read-only Job to the superseded generation and records InputsChanged at its terminal time. Job/Pod logs were already garbage-collected; no exit-log cause is invented."
+        },
+        {
+          "jobUID": "77716a43-67ef-476c-9c6a-73a1345410de",
+          "operation": "resolve",
+          "originalGeneration": 3,
+          "changedGeneration": 4,
+          "inputsChangedAt": "2026-10-06T20:19:03.29423Z",
+          "scope": "Continuous watch binds the read-only Job to the superseded generation and records InputsChanged at its terminal time. Job/Pod logs were already garbage-collected; no exit-log cause is invented."
+        }
+      ],
+      "appliedPlansVerified": 15,
+      "databaseCheckpoints": 5,
+      "completeRowInventories": 100,
+      "schemaBands": [
+        "small",
+        "medium",
+        "large"
+      ],
+      "migrationHistoryLengths": [
+        2,
+        32,
+        128
+      ],
+      "steady": {
+        "jobCompletionSeconds": {
+          "count": 249,
+          "p50": 5,
+          "p95": 8,
+          "max": 9
+        },
+        "podsPendingMax": 4,
+        "podsRunningMax": 4,
+        "managerRSSMaxBytes": 104050688,
+        "managerCPUCoresAverage": 0.10907501136598592,
+        "queueWaitSeconds": {
+          "count": 2883,
+          "p50": 9.999999999999999e-05,
+          "p95": 1
+        },
+        "clientThrottleSeconds": 0,
+        "requests429": 0,
+        "apiRejected": 0
+      },
+      "approvalExecution": {
+        "jobCompletionSeconds": {
+          "count": 34,
+          "p50": 6,
+          "p95": 9,
+          "max": 9
+        },
+        "podsPendingMax": 6,
+        "podsRunningMax": 3,
+        "managerRSSMaxBytes": 107446272,
+        "managerCPUCoresAverage": 0.16039912529010306,
+        "queueWaitSeconds": {
+          "count": 414,
+          "p50": 0.01,
+          "p95": 1
+        },
+        "clientThrottleSeconds": 0,
+        "requests429": 0,
+        "apiRejected": 0
+      }
+    },
+    "remainingMeasurementGaps": [
+      "The original driver did not retain total manager API requests; demand is not inferred from zero HTTP 429 responses. A separate read-only native measurement uses the subsequent collector fix.",
+      "One API server has zero matching operator webhook observations in every scenario. Its admission percentile is unavailable, not zero.",
+      "Three eligible steady-state readings have neither a next reconciliation deadline nor an active operation. The original overdue bound remains unavailable; they are not replaced with zero."
+    ],
+    "archive": {
+      "name": "capacity-profile-backlog-2026-10-06.tar.gz",
+      "sha256": "17bd063533cd3364afe8278358ca5d2f7026da156ce6e7ff66baf5da974b492b",
+      "bytes": 42027852,
+      "memberCount": 323,
+      "downloadVerified": true,
+      "transport": "authenticated SSH",
+      "hostAlias": "diabolocom-buster",
+      "directory": "/home/buster/ptah-operator-evidence/020-qualification-2026-10-06"
+    },
+    "scope": "This is one Kubernetes/engine/architecture cell. It does not establish soak, churn/retention plateau, overload, remaining fault/recovery cases, other cells, final artifact applicability or #580/#242 closure. Earlier failed attempts remain retained.",
+    "custody": "Private development copy with independently hash-verified download. Final encrypted custody, retention policy, and owner acceptance remain unassessed."
   }
 }
