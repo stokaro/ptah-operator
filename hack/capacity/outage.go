@@ -72,15 +72,16 @@ func (s *scenarios) outage(ctx context.Context) (resultErr error) {
 	for {
 		for _, namespace := range workloadNamespaces(s.in.namespace, s.in.namespaces) {
 			pods, err := s.clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
-				LabelSelector: "app.kubernetes.io/managed-by=ptah-operator,operator.ptah.run/operation=resolve",
+				LabelSelector: "app.kubernetes.io/managed-by=ptah-operator,operator.ptah.run/operation in (resolve,verify)",
 			})
 			if err != nil {
 				return fmt.Errorf("read the registry failure evidence: %w", err)
 			}
 			for _, pod := range pods.Items {
-				family, digest := s.failedResolve(pod, start)
+				family, digest := s.failedRegistryRead(pod, start)
 				if family != "" {
 					proof[namespace+"/"+family+"PodUID"], proof[namespace+"/"+family+"FrameDigest"] = string(pod.UID), digest
+					proof[namespace+"/"+family+"Operation"] = pod.Labels[operationworkload.LabelOperation]
 				}
 			}
 		}
@@ -101,7 +102,7 @@ func (s *scenarios) outage(ctx context.Context) (resultErr error) {
 		for i := range family.count {
 			namespace := s.in.namespaceFor(i)
 			if proof[namespace+"/"+family.name+"PodUID"] == "" {
-				return fmt.Errorf("the registry outage produced no fresh Resolve failure for %s in %s", family.name, namespace)
+				return fmt.Errorf("the registry outage produced no fresh registry-read failure for %s in %s", family.name, namespace)
 			}
 		}
 	}
@@ -118,8 +119,17 @@ func (s *scenarios) outage(ctx context.Context) (resultErr error) {
 
 // A successful Job only transports a runner result. Read that result's bounded
 // termination summary, bound to the Pod's operation ID, without retaining logs.
-func (s *scenarios) failedResolve(pod corev1.Pod, after time.Time) (family, digest string) {
-	if pod.UID == "" || !pod.CreationTimestamp.After(after) || pod.Labels[operationworkload.LabelOperation] != "resolve" ||
+// A refresh can fail at Verify after Resolve succeeded. Both read the registry,
+// so either stage's fresh child failure can prove the outage.
+// Verify reports invalid_verification_output when registry diagnostics replace
+// its JSON report. A policy refusal is not evidence of an unavailable registry.
+// Database operations and transport failures supply no such evidence.
+func (s *scenarios) failedRegistryRead(pod corev1.Pod, after time.Time) (family, digest string) {
+	operation := runner.Operation(pod.Labels[operationworkload.LabelOperation])
+	if operation != runner.OperationResolve && operation != runner.OperationVerify {
+		return "", ""
+	}
+	if pod.UID == "" || !pod.CreationTimestamp.After(after) ||
 		pod.Annotations[operationworkload.AnnotationOperationID] == "" {
 		return "", ""
 	}
@@ -141,8 +151,10 @@ func (s *scenarios) failedResolve(pod corev1.Pod, after time.Time) (family, dige
 		if container.Name != "ptah" || end == nil || end.ExitCode != 0 || !end.FinishedAt.After(after) {
 			continue
 		}
-		summary, err := runner.ParseSummaryFor(end.Message, runner.OperationResolve, pod.Annotations[operationworkload.AnnotationOperationID])
-		if err == nil && summary.ErrorCode == "child_exit" && !summary.MutationStarted && !summary.Uncertain {
+		summary, err := runner.ParseSummaryFor(end.Message, operation, pod.Annotations[operationworkload.AnnotationOperationID])
+		registryFailure := summary.ErrorCode == "child_exit" ||
+			(operation == runner.OperationVerify && summary.ErrorCode == "invalid_verification_output")
+		if err == nil && registryFailure && !summary.MutationStarted && !summary.Uncertain {
 			return family, summary.FrameDigest
 		}
 	}

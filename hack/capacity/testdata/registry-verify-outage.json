@@ -1,0 +1,67 @@
+{
+  "faultStartedAt": "2026-10-06T12:34:23.570401Z",
+  "pods": [
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "ptah-m-verify-capacity-migration-001-f24b8f58bce60bba-q2np2",
+        "namespace": "ptah-capacity-240960f064-b",
+        "uid": "29293da4-a512-4c04-9438-0dc6f7306b90",
+        "creationTimestamp": "2026-10-06T12:35:49Z",
+        "labels": {
+          "operator.ptah.run/operation": "verify",
+          "operator.ptah.run/migration": "capacity-migration-001"
+        },
+        "annotations": {
+          "operator.ptah.run/operation-id": "sha256:62336707abdd77b8d89044f02069123d1dd2cda644331a3ac2f93c9731cb82dc"
+        }
+      },
+      "status": {
+        "containerStatuses": [
+          {
+            "name": "ptah",
+            "state": {
+              "terminated": {
+                "exitCode": 0,
+                "finishedAt": "2026-10-06T12:36:59Z",
+                "message": "PTAH_RUNNER_SUMMARY_V1 {\"protocolVersion\":1,\"operation\":\"verify\",\"operationId\":\"sha256:62336707abdd77b8d89044f02069123d1dd2cda644331a3ac2f93c9731cb82dc\",\"frameDigest\":\"sha256:926515aba24eccabaf57b37b638d828b5a9884fd296d41a4e60666b1cb0245e4\",\"errorCode\":\"invalid_verification_output\"}\n"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "ptah-verify-capacity-schema-006-33f31743e5f538ac-cmq2l",
+        "namespace": "ptah-capacity-240960f064-a",
+        "uid": "20890942-bb77-4362-81cc-1a69afe997dc",
+        "creationTimestamp": "2026-10-06T12:35:54Z",
+        "labels": {
+          "operator.ptah.run/operation": "verify",
+          "operator.ptah.run/schema": "capacity-schema-006"
+        },
+        "annotations": {
+          "operator.ptah.run/operation-id": "sha256:c229bacc6edfaf4c41d9e77e4a3cb052e00c5a8b9d6f0646138a2436741f6026"
+        }
+      },
+      "status": {
+        "containerStatuses": [
+          {
+            "name": "ptah",
+            "state": {
+              "terminated": {
+                "exitCode": 0,
+                "finishedAt": "2026-10-06T12:37:03Z",
+                "message": "PTAH_RUNNER_SUMMARY_V1 {\"protocolVersion\":1,\"operation\":\"verify\",\"operationId\":\"sha256:c229bacc6edfaf4c41d9e77e4a3cb052e00c5a8b9d6f0646138a2436741f6026\",\"frameDigest\":\"sha256:9604888c98e4c7f0417063f86cc32feef27d3af5247e1b113f937b9f50b01f7d\",\"errorCode\":\"invalid_verification_output\"}\n"
+              }
+            }
+          }
+        ]
+      }
+    }
+  ]
+}
