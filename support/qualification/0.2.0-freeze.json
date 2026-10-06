@@ -1,14 +1,14 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-10-06T07:27:42.197931+00:00",
-  "profileSourceCommit": "a8b90b5816e9e45d6ba97a1bf006918896d892e3",
+  "frozenAt": "2026-10-06T19:59:26.998006+00:00",
+  "profileSourceCommit": "2fceaf524095df5ea1e126c5e3ef7f0e553607f1",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
   "sourceFiles": [
     {
       "path": "support/qualification/0.2.0.md",
-      "sha256": "ce11076cdcf45e94f19c705caf71903a58ce608ffa97ec3a9c63501d091739fa"
+      "sha256": "0da8b2ffd36c9c00b3d37ec8e50e6eb5ac57f425e4e676bf69110ce76c6950b6"
     },
     {
       "path": "support/qualification/0.2.0-coverage.md",
@@ -37,6 +37,22 @@
     {
       "path": "docs/site/src/content/docs/support/databases.md",
       "sha256": "20d5cff4c9a2f9b0905f08e37ffb18e7abc6e1555addf39359dbd94c832fef56"
+    },
+    {
+      "path": "support/qualification/kindnet/Dockerfile",
+      "sha256": "6f5eaf1ab567804da95d13d9e5299f729810081703fa5ee8b0ca96177ae67b91"
+    },
+    {
+      "path": "support/qualification/kindnet/pending-pod.patch",
+      "sha256": "3ba443fa13d416d0946a36c79b97ac4de26143de24062582ec3878979722c740"
+    },
+    {
+      "path": "support/qualification/kindnet/pending_pod_test.go.txt",
+      "sha256": "b5c89237ae7f0ca901618120870cb8b3fdbe8d13a05230f092b84e0f098ff06a"
+    },
+    {
+      "path": "support/qualification/kindnet/README.md",
+      "sha256": "8953635e6a1a0c2ab16fa174423aaa7333c6c22adb99048c6db2cc113cfa3929"
     }
   ],
   "functionalMatrix": {
@@ -67,10 +83,10 @@
     "disposition": "No published predecessor. Synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 38,
+  "revision": 39,
   "supersedes": {
-    "freezeCommit": "415d0ad348a2347ce8f5ed3ad151182f82585b21",
-    "sha256": "04f176aef55d102cc83f98268d040a75ef8d53ef037a681c98c8a7ae36cf6b3f"
+    "freezeCommit": "b1c35d6068e98301b9b7140f36e056138b00871b",
+    "sha256": "58dca1814b04172f0cfe0ef9cc263eda068e1a56169b6144f2e50877ccbe388f"
   },
-  "revisionReason": "Move plan-store alerting from lifecycle to certificates and PostgreSQL reference data from certificates to data-plane. Master CI run 37420035400 passed in 92m45s; its slowest lifecycle spent 20m02s on plan-store alerting before the upgrade fault window. Rebalance the existing nine suites without adding phases or scenarios. All 17 phases, 345 scenario/engine/family rows, supported minors and platforms, observation windows, and Q-01 through Q-12 targets remain unchanged. This revision records no acceptance result; preserve the prior freeze at the superseded commit."
+  "revisionReason": "Pin the minimal kindnet Pod resolver correction and its reproducible build inputs. The full-profile cold start failed because a Pending init-container Pod inherited a retained terminal Pod network policy after IP reuse. Prefer the live Pending Pod while preserving Running preference and terminal-only fallback. Keep all 1,000 completed background Jobs and Pods, network restrictions, capacity limits, cold-start deadline, matrix cells, and Q-01 through Q-12 targets unchanged. Preserve the original failed run and revision 38; this revision records no successful capacity or production acceptance result."
 }
