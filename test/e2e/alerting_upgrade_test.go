@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -236,8 +237,10 @@ func TestAlUpgradeProbeRecoveryRequiresCurrentReadOnlyProgress(t *testing.T) {
 			switch r := v.(type) {
 			case *ptahv1.PtahSchema:
 				r.Status.Target.LastObservedAt = &observed
+				r.Status.Conditions = append(r.Status.Conditions, metav1.Condition{Type: "PlanReady", Status: metav1.ConditionTrue, Reason: "Published", ObservedGeneration: r.Generation, LastTransitionTime: observed})
 			case *ptahv1.PtahMigration:
 				r.Status.History.ObservedAt = observed
+				r.Status.Conditions = append(r.Status.Conditions, metav1.Condition{Type: "Progressing", Status: metav1.ConditionFalse, Reason: "ApplyDisabled", ObservedGeneration: r.Generation, LastTransitionTime: observed})
 			}
 			original := v.DeepCopyObject().(client.Object)
 			if at, ok := alUpgradeProbeProgress(v, original, after); !ok || !at.Equal(observed.Time) {
@@ -310,5 +313,89 @@ func TestAlUpgradeRetryRequiresNativeCompletion(t *testing.T) {
 	j.Spec.Template.Spec.Containers[0].Image = "different"
 	if err := alUpgradeRetryEvidence(s, events); err == nil {
 		t.Fatal("changed retry candidate accepted")
+	}
+}
+
+// These native readings keep Ready=False across the read and its completed
+// plan. The read timestamp must not start the recovery deadline early.
+func TestAlUpgradeRecoveryDatesTheCompletedReadCycle(t *testing.T) {
+	body, err := os.ReadFile("../../testdata/e2e/readings/upgrade-recovery-boundaries.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rows []struct {
+		Kind        string          `json:"kind"`
+		AfterHook   time.Time       `json:"afterHook"`
+		CompletedAt time.Time       `json:"completedAt"`
+		Object      json.RawMessage `json:"object"`
+	}
+	if err := json.Unmarshal(body, &rows); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		"e2e-upgrade-schema-mysql":         "PtahSchema",
+		"e2e-upgrade-schema-postgresql":    "PtahSchema",
+		"e2e-upgrade-migration-mysql":      "PtahMigration",
+		"e2e-upgrade-migration-postgresql": "PtahMigration",
+	}
+	if len(rows) != len(want) {
+		t.Fatal("native recovery inventory must contain both families on both engines")
+	}
+	for _, row := range rows {
+		var v client.Object
+		switch row.Kind {
+		case "PtahSchema":
+			v = &ptahv1.PtahSchema{}
+		case "PtahMigration":
+			v = &ptahv1.PtahMigration{}
+		default:
+			t.Fatalf("unknown probe kind %q", row.Kind)
+		}
+		if err := json.Unmarshal(row.Object, v); err != nil {
+			t.Fatal(err)
+		}
+		if want[v.GetName()] != row.Kind {
+			t.Fatal("unexpected or repeated native recovery probe", v.GetName())
+		}
+		delete(want, v.GetName())
+		t.Run(v.GetName(), func(t *testing.T) {
+			original := v.DeepCopyObject().(client.Object)
+			if at, ok := alUpgradeProbeProgress(v, original, row.AfterHook); !ok || !at.Equal(row.CompletedAt) {
+				t.Fatalf("recovery was dated at %s (accepted=%t), want the completed read cycle at %s", at, ok, row.CompletedAt)
+			}
+			read := alNegativeReading(v).readAt
+			for name, mutate := range map[string]func(*metav1.Condition){
+				"missing":             func(c *metav1.Condition) { c.Type = "Unrelated" },
+				"zero timestamp":      func(c *metav1.Condition) { c.LastTransitionTime = metav1.Time{} },
+				"before current read": func(c *metav1.Condition) { c.LastTransitionTime = metav1.NewTime(read.Add(-time.Second)) },
+				"future":              func(c *metav1.Condition) { c.LastTransitionTime = metav1.NewTime(time.Now().Add(time.Hour)) },
+				"old generation":      func(c *metav1.Condition) { c.ObservedGeneration-- },
+				"unknown":             func(c *metav1.Condition) { c.Status = metav1.ConditionUnknown },
+				"other verdict":       func(c *metav1.Condition) { c.Reason = "OperationInProgress" },
+			} {
+				bad := v.DeepCopyObject().(client.Object)
+				var conditions []metav1.Condition
+				var kind string
+				switch r := bad.(type) {
+				case *ptahv1.PtahSchema:
+					conditions, kind = r.Status.Conditions, "PlanReady"
+				case *ptahv1.PtahMigration:
+					conditions, kind = r.Status.Conditions, "Progressing"
+				}
+				changed := false
+				for i := range conditions {
+					if conditions[i].Type == kind {
+						mutate(&conditions[i])
+						changed = true
+					}
+				}
+				if !changed {
+					t.Fatal("native reading omitted its completion condition")
+				}
+				if _, ok := alUpgradeProbeProgress(bad, original, row.AfterHook); ok {
+					t.Errorf("accepted %s recovery evidence", name)
+				}
+			}
+		})
 	}
 }

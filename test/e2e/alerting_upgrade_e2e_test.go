@@ -335,8 +335,9 @@ func (a *alertingRun) upgradeAlertCase(intent alUpgradeIntent, hookAccount, char
 		healthyAt = runtimeAt
 	}
 	resolved, _ := a.waitForDeliveryWithCheck(alMatch{status: "resolved", alertName: alUpgradeAlert, labels: labels}, "the external upgrade resolution", alDetectionSlack, index+1, checkHistory)
-	if !resolved.StartsAt.Equal(firing.StartsAt) || resolved.EndsAt.Before(healthyAt) || resolved.ReceivedAt.After(healthyAt.Add(alDetectionSlack)) || resolved.ReceivedAt.Before(resolved.EndsAt) || !a.upgradeGauge("ptah_operator_upgrade_pending", 0) {
-		a.fatalf("upgrade resolution missed verified recovery or its original bound")
+	pendingCleared := a.upgradeGauge("ptah_operator_upgrade_pending", 0)
+	if !resolved.StartsAt.Equal(firing.StartsAt) || resolved.EndsAt.Before(healthyAt) || resolved.ReceivedAt.After(healthyAt.Add(alDetectionSlack)) || resolved.ReceivedAt.Before(resolved.EndsAt) || !pendingCleared {
+		a.fatalf("upgrade resolution missed verified recovery or its original bound: mode=%s healthy=%s observed=%s ended=%s received=%s deadline=%s sameIncident=%t pendingCleared=%t", mode, healthyAt, recovered.RecoveredAt, resolved.EndsAt, resolved.ReceivedAt, healthyAt.Add(alDetectionSlack), resolved.StartsAt.Equal(firing.StartsAt), pendingCleared)
 	}
 	jobs.requestStop()
 	a.check(jobs.await(45*time.Second), "close the complete upgrade hook history")

@@ -31,3 +31,11 @@ samples from CI jobs 111691203546 and 111785841643. Their timestamps, values and
 labels are unchanged. The plan-store interval tests require a complete, fresh
 baseline before pruning and reject a missing gauge inside either timing window.
 An earlier gap during export cannot invalidate a later complete baseline.
+
+`upgrade-recovery-boundaries.json` projects the four native upgrade probes from
+Kubernetes 1.35.8 at `5b572b0f`. It keeps their identities, policy, interval,
+read timestamp, plan reference, and conditions. Both schema readings completed
+planning fourteen seconds after reading the database while `Ready=False` kept
+its pre-upgrade transition time. `PlanReady=True` and `Progressing=False` date
+the completed cycle. The projection omits artifact and target configuration and unrelated status
+fields. No credentials or plan payloads are included.
