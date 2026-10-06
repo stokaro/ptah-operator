@@ -817,7 +817,7 @@
       "race": "all capacity tests passed in 13.688 seconds",
       "vet": "passed",
       "python": "62 capacity tests passed before the bootstrap JSON-stream correction; all 28 affected bootstrap tests passed afterward",
-      "native": "actual bootstrap, client-certificate authentication, CRD storage, rendered apply-policy guard, spec-writer webhooks, and documented RBAC passed",
+      "native": "Author identity/Role preparation, client-certificate authentication, CRD storage, rendered apply-policy guard, spec-writer webhooks, and documented RBAC passed. The test fixture installed the Role; bootstrap Role copying is proved separately by capacityAuthorRoleCopy.",
       "original": "original ordinary-update path fails the author-isolation regression; an inert author field is added to the old struct only to compile the new fixture"
     },
     "archive": {
@@ -854,5 +854,27 @@
     },
     "custody": "Private development copy with independently hash-verified download. Final encrypted custody, retention policy, and owner acceptance remain unassessed.",
     "scope": "Fixture and API/admission proof on Darwin arm64 only. Installed Linux workload, soak, overload and threshold qualification remain open."
+  },
+  "capacityAuthorRoleCopy": {
+    "requirement": "#580 documented workload author permissions in both workload namespaces",
+    "sourceCommit": "1156b9b3b95f85511432b7ece55eed7727f4291c",
+    "conclusion": "pass",
+    "original": "Bootstrap.copy omitted Role.rules. Both the original-source unit check and real Kubernetes copy path fail.",
+    "validation": {
+      "python": "All 62 capacity probe tests passed in 35.534 seconds.",
+      "native": "Bootstrap.author reads the documented Role, Bootstrap.copy creates it with exact rules, and actual client-certificate author/approver identities execute both-family handoff, update, replacement, and RBAC refusal checks against Kubernetes 1.37. Stored execution values remain 900/10/30/30 seconds."
+    },
+    "archive": {
+      "name": "capacity-author-role-copy-2026-10-06.tar.gz",
+      "sha256": "c82ebcd6cd47f743f47a4fba3a04451c8161c252356dcceead6c490086c2f343",
+      "memberCount": 16,
+      "bytes": 6971,
+      "downloadVerified": true,
+      "transport": "authenticated SSH",
+      "hostAlias": "diabolocom-buster",
+      "directory": "/home/buster/ptah-operator-evidence/020-qualification-2026-10-06"
+    },
+    "scope": "API/admission proof on Darwin arm64 only. No controller execution, SQL workload, installed Linux soak or capacity qualification. Temporary kubeconfigs removed.",
+    "custody": "Private development copy with independently hash-verified download. Final encrypted custody, retention policy, and owner acceptance remain unassessed."
   }
 }
