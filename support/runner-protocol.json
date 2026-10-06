@@ -87,6 +87,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:205667eea4697a8bb97b336da89730d7eb90ff53461f8ab12c94afefcdbb9dea",
       "reason": "Complete receiver-audience Pod-token delivery before the first tagged 0.2.0 release. The installed runner now uses --result-token, verified server TLS, and a token reread on every bounded preflight or delivery attempt. Public template inputs bind the operation and downward API Job/Pod identities; the receiver rechecks TokenReview, immutable first-Pod binding, and live authority. Per-operation Secret creation is removed. Payloads, size limits, SQL execution guards, same-byte retries, and unknown-outcome recovery are unchanged. No tagged release consumed this development transport; protocol counters remain 1."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:f12cc65c7652fcbcd6f4430d505f850d84d7ecf6d70debb4f4dbe4be4ef0a275",
+      "reason": "Preserve bounded, sanitized preflight and result-delivery failure causes in runner diagnostics, including the final HTTP status after retry exhaustion. The wire payload, durable acknowledgment, authorization, retry budget, SQL execution behavior, and no-log-fallback rule are unchanged; protocol version 1 remains compatible."
     }
   ]
 }

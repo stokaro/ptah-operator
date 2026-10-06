@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-10-05T20:27:38.026687+00:00",
+  "frozenAt": "2026-10-06T00:39:42.611588+00:00",
   "profileSourceCommit": "b549924f777dadd2910b908a95acef4831ec0107",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
@@ -12,7 +12,7 @@
     },
     {
       "path": "support/qualification/0.2.0-coverage.md",
-      "sha256": "73c25599470625859580510b98173915ce2759446c4097fd8b0a9fdcea08279a"
+      "sha256": "f933e38cd4978158e5df89d86d12e75837bbae4e9c9356676bc2692a1113bd19"
     },
     {
       "path": "support/qualification/0.2.0-monitoring.yaml",
@@ -28,7 +28,7 @@
     },
     {
       "path": "support/e2e-suites.json",
-      "sha256": "a3fc5ddc0f72f70c8ddc5937b32b5c648f4e5c3eecd05e0fe7e87b04c3ea37f5"
+      "sha256": "b2bfed5a8382cba8be0293af6c77d689976f2dc9b5db85561586767387c32566"
     },
     {
       "path": "support/ptah.json",
@@ -41,8 +41,8 @@
   ],
   "functionalMatrix": {
     "path": "support/qualification/0.2.0-functional-matrix.md",
-    "sha256": "d9f9cee4225ced2369fc5e5abec352bbc5de434ece45edce240f9a3175237a76",
-    "generatedFromCommit": "20613aaa350c25673fee3f5f212bfd6ba63bb272",
+    "sha256": "25f068d49b1d32247662b1dab1c7cb40f456e73befa3e743bdce18790674c306",
+    "generatedFromCommit": "ecbafafe89392e8d31671b8083a18d8c8f1bc2e3",
     "command": "go run ./hack/acceptancecoverage",
     "kubernetesMinors": [
       "1.35",
@@ -53,10 +53,10 @@
       "linux/amd64",
       "linux/arm64"
     ],
-    "cellsPerPlatform": 24,
-    "requiredCells": 48,
+    "cellsPerPlatform": 27,
+    "requiredCells": 54,
     "additionalRequirements": "Q-01 through Q-12 in support/qualification/0.2.0-coverage.md remain required; the functional matrix alone is insufficient.",
-    "sourceChanges": "Run the existing certificate-rotation phase in lifecycle, whose completed assertion phase supplies its prerequisite, to reduce the certificates job critical path. Suite count, every scenario, and all qualification targets are unchanged."
+    "sourceChanges": "Move schema faults to their own suite and group certificate rotation, both reference-data engines, and certificate-expiry alerts in certificates. Nine suites replace eight to shorten the critical path. All 17 phases, 345 scenario/engine/family rows, supported minors and platforms, observation windows, and Q-01 through Q-12 targets remain unchanged."
   },
   "publishedPredecessors": {
     "checkedAt": "2026-09-29T19:00:03+00:00",
@@ -67,10 +67,10 @@
     "disposition": "No published predecessor. Synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 36,
+  "revision": 37,
   "supersedes": {
-    "freezeCommit": "20613aaa350c25673fee3f5f212bfd6ba63bb272",
-    "sha256": "6c48a2e223c90b1cfba54ff66ff8f61653b8dc2df0014111bce5e24c581129a3"
+    "freezeCommit": "b1cef6f7e7f187145980f20666e70401e77f5429",
+    "sha256": "3341ae5334aaad084ccdd7b3e40f7480791010b08833e155a2d37085afe077f9"
   },
-  "revisionReason": "Run the existing certificate-rotation phase in lifecycle, whose completed assertion phase supplies its prerequisite, to reduce the certificates job critical path. Suite count, every scenario, and all qualification targets are unchanged. This revision records no acceptance result; preserve the prior freeze at the superseded commit."
+  "revisionReason": "Move schema faults to their own suite and group certificate rotation, both reference-data engines, and certificate-expiry alerts in certificates. Nine suites replace eight to shorten the critical path. All 17 phases, 345 scenario/engine/family rows, supported minors and platforms, observation windows, and Q-01 through Q-12 targets remain unchanged. This revision records no acceptance result; preserve the prior freeze at the superseded commit."
 }
