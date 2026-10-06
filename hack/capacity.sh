@@ -14,12 +14,16 @@
 # The workload is support/capacity/workload.json unless CAPACITY_WORKLOAD names
 # another. Owned namespaces are removed on exit after workload finalizers finish.
 # A failed cleanup preserves its journal and reports the remaining fixtures.
+# CAPACITY_REMOVE_LAB=1 removes the entire owned disposable lab instead. CI uses
+# this after measurement so it does not wait an hour for result retention before
+# deleting the same cluster. Reports must be outside the lab's directories.
 set -euo pipefail
 
 ROOT_DIR=$(cd "$(dirname "$0")/.." && pwd)
 LAB_ENVIRONMENT=${LAB_ENVIRONMENT:-$ROOT_DIR/demo/.lab/environment}
 WORKLOAD=${CAPACITY_WORKLOAD:-$ROOT_DIR/support/capacity/workload.json}
 VARIED_INPUTS=${CAPACITY_VARIED_INPUTS:-0}
+REMOVE_LAB=${CAPACITY_REMOVE_LAB:-0}
 OUT_DIR=${CAPACITY_OUT_DIR:?set CAPACITY_OUT_DIR to where the report goes}
 
 fail() {
@@ -31,12 +35,17 @@ case "$VARIED_INPUTS" in
 0|1) ;;
 *) fail "CAPACITY_VARIED_INPUTS must be 0 or 1" ;;
 esac
+case "$REMOVE_LAB" in
+0|1) ;;
+*) fail "CAPACITY_REMOVE_LAB must be 0 or 1" ;;
+esac
 UNRELATED_ENABLED=$(python3 -c 'import json,sys; print(int(json.load(open(sys.argv[1])).get("unrelatedObjects",False)))' "$WORKLOAD")
 SOAK_ENABLED=$(python3 -c 'import json,sys; w=json.load(open(sys.argv[1])); print(int(w.get("soak") is not None or w.get("approvalBacklog",False)))' "$WORKLOAD")
 if [ "$SOAK_ENABLED" -eq 1 ] && [ "$VARIED_INPUTS" -ne 1 ]; then
  fail "soak and approval backlog workloads require CAPACITY_VARIED_INPUTS=1"
 fi
 [ -f "$LAB_ENVIRONMENT" ] || fail "no lab at $LAB_ENVIRONMENT; bring one up with make demo-up"
+LAB_ENVIRONMENT="$(cd "$(dirname "$LAB_ENVIRONMENT")" && pwd)/$(basename "$LAB_ENVIRONMENT")"
 set -a
 # shellcheck disable=SC1090 # The lab's own NAME=value file.
 . "$LAB_ENVIRONMENT"
@@ -45,6 +54,17 @@ export KUBECONFIG=$E2E_KUBECONFIG
 BOOTSTRAP="$ROOT_DIR/support/qualification/probes/capacity_bootstrap.py"
 mkdir -p "$OUT_DIR"
 OUT_DIR=$(cd "$OUT_DIR" && pwd)
+if [ "$REMOVE_LAB" -eq 1 ]; then
+	[ -n "${E2E_WORK_DIR:-}" ] || fail "lab teardown requires its recorded work directory"
+	python3 - "$OUT_DIR" "$E2E_WORK_DIR" "$ROOT_DIR/demo/.lab" <<'PY'
+import sys
+from pathlib import Path
+report = Path(sys.argv[1]).resolve()
+for directory in map(lambda value: Path(value).resolve(), sys.argv[2:]):
+    if report == directory or directory in report.parents:
+        sys.exit('capacity: reports must be outside directories removed by lab teardown')
+PY
+fi
 WORKLOAD="$(cd "$(dirname "$WORKLOAD")" && pwd)/$(basename "$WORKLOAD")"
 # Keep the ownership journal outside disposable scratch space. A cleanup failure
 # must leave enough identity evidence for a safe retry.
@@ -57,7 +77,12 @@ CAPACITY_COMPLETED=0
 cleanup() {
 	status=$?
 	[ "$status" -ne 0 ] || [ "$CAPACITY_COMPLETED" -eq 1 ] || status=1
-	if ! python3 "$BOOTSTRAP" cleanup --state "$STATE_FILE"; then
+	if [ "$REMOVE_LAB" -eq 1 ]; then
+		if ! LAB_ENVIRONMENT="$LAB_ENVIRONMENT" "$ROOT_DIR/demo/bin/lab" down; then
+			printf 'capacity: lab teardown failed; its environment and ownership journal are retained\n' >&2
+			status=1
+		fi
+	elif ! python3 "$BOOTSTRAP" cleanup --state "$STATE_FILE"; then
 		printf 'capacity: owned fixtures remain; retry cleanup with %s\n' "$STATE_FILE" >&2
 		status=1
 	fi

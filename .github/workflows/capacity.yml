@@ -52,7 +52,7 @@ jobs:
   measure:
     name: Measure the capacity workload
     runs-on: ubuntu-latest
-    timeout-minutes: 150
+    timeout-minutes: 90
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -169,6 +169,9 @@ jobs:
         env:
           CAPACITY_OUT_DIR: ${{ runner.temp }}/capacity
           CAPACITY_WORKLOAD: ${{ inputs.engine == 'MySQL' && 'support/capacity/workload-mysql.json' || 'support/capacity/workload.json' }}
+          # The next step retains the report outside the disposable lab. Remove
+          # the lab directly instead of waiting for namespace result retention.
+          CAPACITY_REMOVE_LAB: "1"
         shell: bash
         run: |
           set -euo pipefail

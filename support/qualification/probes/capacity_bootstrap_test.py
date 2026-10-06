@@ -355,6 +355,31 @@ class BootstrapTests(unittest.TestCase):
 
 
 class WrapperTests(unittest.TestCase):
+    def test_disposable_lab_teardown_keeps_report_and_workload_exit_status(self):
+        for workload_exit in (0, 42):
+            with self.subTest(workload_exit=workload_exit):
+                self.run_wrapper_cleanup_case('PostgreSQL', remove_lab=True, workload_exit=workload_exit)
+
+    def test_disposable_lab_teardown_failure_preserves_ownership(self):
+        self.run_wrapper_cleanup_case('PostgreSQL', remove_lab=True, workload_exit=0, teardown_exit=44)
+
+    def test_disposable_lab_refuses_to_delete_its_report(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            workload = root / 'workload.json'
+            workload.write_text('{}')
+            environment = root / 'environment'
+            environment.write_text('E2E_KUBECONFIG=/unused\nE2E_WORK_DIR=' + str(root / 'lab-work') + '\n')
+            output = root / 'lab-work/report'
+            script = Path(__file__).resolve().parents[3] / 'hack/capacity.sh'
+            env = dict(os.environ, CAPACITY_WORKLOAD=str(workload), CAPACITY_VARIED_INPUTS='0',
+                       CAPACITY_REMOVE_LAB='1', CAPACITY_OUT_DIR=str(output), LAB_ENVIRONMENT=str(environment))
+            result = subprocess.run(['bash', str(script)], env=env, capture_output=True, timeout=10)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('reports must be outside directories removed by lab teardown', result.stderr.decode())
+            self.assertTrue(environment.exists())
+            self.assertFalse((output / 'bootstrap-state.json').exists())
+
     def test_relative_output_and_failed_run_keep_cleanup_bound_to_original_journal(self):
         for engine in ('PostgreSQL', 'MySQL'):
             with self.subTest(engine=engine):
@@ -379,7 +404,8 @@ class WrapperTests(unittest.TestCase):
             self.assertIn('approval backlog workloads require CAPACITY_VARIED_INPUTS=1', result.stderr.decode())
             self.assertFalse((root / 'evidence').exists())
 
-    def run_wrapper_cleanup_case(self, engine, unrelated=False, fail_checkpoint=''):
+    def run_wrapper_cleanup_case(self, engine, unrelated=False, fail_checkpoint='',
+                                 remove_lab=False, workload_exit=None, teardown_exit=0):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / 'repository'
             caller = Path(directory) / 'caller'
@@ -394,6 +420,8 @@ class WrapperTests(unittest.TestCase):
                 shutil.copytree(repository / relative, root / relative, dirs_exist_ok=True)
             environment = caller / 'environment'
             environment.write_text('E2E_KUBECONFIG=/unused\nE2E_DOCKER_CONTEXT=capacity-test\nE2E_DOCKER_CONFIG=/capacity-test-config\nE2E_OPERATOR_NAMESPACE=operator\nE2E_REGISTRY_HOST=registry\nE2E_REGISTRY_IP=127.0.0.1\n')
+            with environment.open('a') as file:
+                file.write('E2E_WORK_DIR=' + str(root / 'lab-work') + '\n')
             def executable(path, body):
                 path.write_text(body)
                 path.chmod(0o700)
@@ -402,7 +430,21 @@ assert os.environ.get('DOCKER_CONFIG')=='/capacity-test-config', 'host reading l
 assert sys.argv[1:4]==['--context','capacity-test','info'], 'host reading used another daemon'
 print(json.dumps({'dockerID':'test-daemon','name':'test-host','cpus':4,'memoryBytes':17179869184,'architecture':'x86_64','os':'linux','observedAt':'2026-10-01T09:43:00Z'}))
 ''')
-            executable(root / 'demo/bin/lab', '#!/bin/sh\ncase "$1" in\ncredentials) echo "PTAH_OCI_USERNAME=user PTAH_OCI_PASSWORD=fixture PTAH_OCI_REGISTRY=registry" ;;\ntools) echo "' + str(bin_path) + '" ;;\nesac\n')
+            executable(root / 'demo/bin/lab', '#!' + sys.executable + '\n' + r'''import os,pathlib,sys
+if sys.argv[1]=='credentials':
+ print('PTAH_OCI_USERNAME=user PTAH_OCI_PASSWORD=fixture PTAH_OCI_REGISTRY=registry')
+elif sys.argv[1]=='tools':
+ print(pathlib.Path(__file__).resolve().parents[2]/'tools')
+elif sys.argv[1]=='down':
+ environment=pathlib.Path(os.environ['LAB_ENVIRONMENT'])
+ assert environment==pathlib.Path(os.environ['CAPACITY_TEST_ENVIRONMENT']), 'teardown selected another lab'
+ with (environment.parent/'evidence/actions.log').open('a') as output: output.write('lab-down\n')
+ code=int(os.environ['CAPACITY_TEST_TEARDOWN_EXIT'])
+ if code==0: environment.unlink()
+ sys.exit(code)
+else:
+ sys.exit('unexpected lab command')
+''')
             executable(bin_path / 'ptah', '#!' + sys.executable + '\n' + r'''import os,pathlib,sys
 args=sys.argv[1:]; engine=os.environ['CAPACITY_TEST_ENGINE']
 root=pathlib.Path(__file__).resolve().parents[1]
@@ -444,24 +486,36 @@ assert pathlib.Path(args[args.index('-workload')+1]).exists()
 assert pathlib.Path(args[args.index('-checkpoint-state')+1])==pathlib.Path(args[args.index('-out')+1],'bootstrap-state.json')
 assert json.loads(pathlib.Path(args[args.index('-host-info')+1]).read_text())['dockerID']=='test-daemon'
 pathlib.Path(args[args.index('-out')+1],'go-ran').write_text('yes')
+pathlib.Path(args[args.index('-out')+1],'report.json').write_text('{"measurement":"retained"}')
 with pathlib.Path(args[args.index('-out')+1],'actions.log').open('a') as output: output.write('go\n')
 sys.exit(int(os.environ['CAPACITY_TEST_GO_EXIT']))
 ''')
+            go_exit = workload_exit if workload_exit is not None else (0 if unrelated else 42)
             env = dict(os.environ, PATH=str(bin_path) + os.pathsep + os.environ['PATH'],
                        LAB_ENVIRONMENT=str(environment), CAPACITY_WORKLOAD='workload.json', CAPACITY_OUT_DIR='evidence', CAPACITY_TEST_ENGINE=engine, CAPACITY_VARIED_INPUTS='0',
-                       CAPACITY_TEST_GO_EXIT='0' if unrelated else '42', CAPACITY_TEST_FAIL_CHECKPOINT=fail_checkpoint)
+                       CAPACITY_TEST_GO_EXIT=str(go_exit), CAPACITY_TEST_FAIL_CHECKPOINT=fail_checkpoint,
+                       CAPACITY_REMOVE_LAB='1' if remove_lab else '0', CAPACITY_TEST_ENVIRONMENT=str(environment),
+                       CAPACITY_TEST_TEARDOWN_EXIT=str(teardown_exit))
             result = subprocess.run(['bash', str(root / 'hack/capacity.sh')], cwd=caller, env=env,
                                     capture_output=True, timeout=20)
-            self.assertEqual(result.returncode, 43 if fail_checkpoint else (0 if unrelated else 42), result.stderr.decode())
+            expected_exit = 1 if teardown_exit else (43 if fail_checkpoint else go_exit)
+            self.assertEqual(result.returncode, expected_exit, result.stderr.decode())
             self.assertEqual((caller / 'evidence/go-ran').exists(), fail_checkpoint != 'before')
             expected = ['prepare', 'engine']
             if unrelated: expected.append('verify-unrelated:before')
             if fail_checkpoint != 'before':
                 expected.append('go')
                 if unrelated: expected.append('verify-unrelated:after')
-            expected.append('cleanup')
+            expected.append('lab-down' if remove_lab else 'cleanup')
             self.assertEqual((caller / 'evidence/actions.log').read_text().splitlines(), expected)
             journal = caller / 'evidence/bootstrap-state.json'
+            if remove_lab:
+                self.assertEqual(json.loads((caller / 'evidence/report.json').read_text()), {'measurement': 'retained'})
+                self.assertEqual(json.loads(journal.read_text())['engine'], engine)
+                self.assertEqual(environment.exists(), teardown_exit != 0)
+                if teardown_exit:
+                    self.assertIn('lab teardown failed', result.stderr.decode())
+                return
             self.assertEqual(json.loads(journal.read_text()), {'cleaned': True})
             journal.write_text('earlier evidence')
             result = subprocess.run(['bash', str(root / 'hack/capacity.sh')], cwd=caller, env=env,
