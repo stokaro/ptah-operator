@@ -928,5 +928,74 @@
     "requirement": "The complete CI pipeline finishes within 90 minutes, including queueing and image preparation, without dropping owned acceptance phases.",
     "scope": "Development CI on this exact recorded head and tested merge commit. Later local capacity harness changes need their own validation. This is not the full native architecture matrix, production profile acceptance, or a release publication.",
     "custody": "Private development copy with independently hash-verified download. Final encrypted custody, retention policy, and owner acceptance remain unassessed."
+  },
+  "capacityPendingPodIPConflict": {
+    "requirement": "#580 cold-start convergence with the frozen unrelated object population and enforcing network policy",
+    "conclusion": "Infrastructure defect reproduced; temporary CNI correction passed the native network diagnostic. Capacity remains unqualified.",
+    "runtimeSourceCommit": "1b5db851859cb72793f8169e0cbaef4ad7a24556",
+    "capacityDriverCommit": "3d14baf3c37a739c2ae8d9f7c9f6403e92586a50",
+    "failedRun": {
+      "kubernetes": "1.37.0",
+      "runtime": "native Linux amd64",
+      "schemas": 10,
+      "migrations": 10,
+      "backgroundConfigMaps": 1000,
+      "backgroundCompletedJobs": 1000,
+      "coldStartSeconds": 300.004548,
+      "result": "failed",
+      "cause": "The pinned kindnet resolver prefers Running Pods, then falls back to an arbitrary Pod with the same IP. A live Pending init-container Pod can inherit the deny policy of a retained Succeeded Pod."
+    },
+    "upstream": {
+      "kind": {
+        "commit": "69b56db75a6e82dece4cdc980655d79b2b73eb77",
+        "archiveSHA256": "66ce77f5a9b2cd22d67c37a89dabb5c85b76ed85f9f2b915caeeb92c39e3e533"
+      },
+      "kube-network-policies": {
+        "commit": "f67f0fb35e2b8288782bc1f22988648580dda7f8",
+        "archiveSHA256": "e87def88a61a8987cd2eb19382a87900495402b3a766f3480588261c092ba3b5"
+      }
+    },
+    "correction": {
+      "scope": "Temporary test-cluster image only. Prefer the live Pending Pod before terminal fallback; leave the existing Running preference and terminal-only behavior intact.",
+      "image": {
+        "originalImageAlreadyPresent": true,
+        "image": "ptah-kindnet-pending:242-1b5db851",
+        "imageID": "sha256:113fbc4a9313606fab3b1495038132cc94f3a27eb9da0c1070f4feaa6d269204",
+        "originalImage": "docker.io/kindest/kindnetd@sha256:6f2d9f57548aaca08e674bc35b2a53653cd84af18b26b1a99234d59cd5e548c2",
+        "originalID": "sha256:526969f0a1a7a788a7a96f53a4ad3b51607bde7bb2841edf52a02916e8d52650",
+        "binarySHA256": "dbeff678f35dd46345c91e62798c1efc10edead864b2bbd6b09f86bc02d38a6f",
+        "resolverSHA256": "053f59b2471cb93d888a35fe348fa0ec14d009ab570f194ee421e2ec573b0f3a",
+        "scope": "Temporary local CNI diagnostic only; not a qualified profile or release artifact."
+      },
+      "native": {
+        "podIP": "10.244.3.14",
+        "retainedTerminalPodsWithSameIP": 4,
+        "traffic": {
+          "dns": "open",
+          "database": "open",
+          "registry": "open",
+          "api": "closed",
+          "receiver": "open"
+        }
+      },
+      "tests": "The exact original resolver passes the Running control and fails the Pending regression. The corrected complete upstream podinfo race suite passes."
+    },
+    "capacityConflictFix": {
+      "commit": "3d14baf3c37a739c2ae8d9f7c9f6403e92586a50",
+      "original": "Status-only resourceVersion conflict aborts author-to-installer handoff.",
+      "corrected": "All twenty handoffs complete in the native run; capacity race tests and vet pass. Cold start subsequently fails on the independent CNI defect."
+    },
+    "archive": {
+      "name": "capacity-kindnet-pending-2026-10-06.tar.gz",
+      "sha256": "cf7d179a7da51550d62799b90a0f543f4e978c952a1bc05b4f1929ed810aef71",
+      "memberCount": 145,
+      "bytes": 107634,
+      "downloadVerified": true,
+      "transport": "authenticated SSH",
+      "hostAlias": "diabolocom-buster",
+      "directory": "/home/buster/ptah-operator-evidence/020-qualification-2026-10-06"
+    },
+    "scope": "The original failed run remains failed. The corrected CNI is a diagnostic, not the frozen installation baseline. A reproducible qualified CNI configuration and affected workload reruns are still required. No #580 or #242 completion is claimed. The twenty workload resources remain suspended and the owned cluster is retained.",
+    "custody": "Private development copy with independently hash-verified download. Final encrypted custody, retention policy, and owner acceptance remain unassessed."
   }
 }
