@@ -11,20 +11,21 @@
     "suite runs against its own cluster, so phases that share mutable state stay",
     "together: the CRD upgrade and the uninstall that follows it, the schema",
     "faults and their shared watches. Reference data uses separate databases",
-    "and has no migration prerequisite, so it runs with data-plane. High",
+    "and has no migration prerequisite, so it shares the certificates job. High",
     "availability belongs with the upgrade rather than with the other",
     "control-plane phases, because it asserts what an upgrade leaves behind:",
     "the Resolve metric sources of the release it replaced. The control-plane",
     "contract supplies the suspended schema and approval the schema fault",
     "phase reads. MySQL and external PostgreSQL stay with faults because their",
-    "closing assertions must still hold afterward. These reuse the short",
-    "certificates job; the ordinary PostgreSQL, plan-size, and admission rows",
+    "closing assertions must still hold afterward. They own schema-faults;",
+    "the ordinary PostgreSQL, plan-size, and admission rows",
     "remain in data-plane.",
     "",
     "The migration path runs one engine per suite. Reference-data acceptance",
-    "runs both engines in data-plane, using its already prepared namespace,",
-    "registry and databases. This removes its serial cost from the longer",
-    "migration jobs without adding jobs or repeating acceptance.",
+    "runs both engines between certificate rotation and certificate-expiry",
+    "alerts, using the prepared namespace, registry and databases. Moving",
+    "schema faults to their own cluster lets these phases overlap the longer",
+    "data-plane and lifecycle jobs without repeating acceptance.",
     "",
     "prepare names a phase a suite runs for its prerequisites rather than for",
     "its own acceptance. A phase with a preparation mode runs in it; a phase",
@@ -55,8 +56,8 @@
     {
       "name": "lifecycle",
       "slug": "lifecycle",
-      "summary": "Installation, the CRD upgrade path, leader failover, certificate rotation, infrastructure alert delivery, and uninstall",
-      "phases": ["upgrade", "ha", "cert-rotation", "alerting", "uninstall"],
+      "summary": "Installation, the CRD upgrade path, leader failover, infrastructure alert delivery, and uninstall",
+      "phases": ["upgrade", "ha", "alerting", "uninstall"],
       "prepare": ["assert", "dataplane"]
     },
     {
@@ -69,8 +70,15 @@
     {
       "name": "certificates",
       "slug": "certificates",
-      "summary": "Certificate expiry alerts, MySQL and external PostgreSQL lifecycles, and schema fault recovery",
-      "phases": ["schema-faults", "alerting-certificates"],
+      "summary": "Certificate rotation, reference data on both engines, and certificate expiry alerts",
+      "phases": ["cert-rotation", "reference-data-postgresql", "reference-data-mysql", "alerting-certificates"],
+      "prepare": ["assert", "dataplane"]
+    },
+    {
+      "name": "schema-faults",
+      "slug": "schema-faults",
+      "summary": "MySQL and external PostgreSQL lifecycles and schema fault recovery",
+      "phases": ["schema-faults"],
       "prepare": ["assert", "dataplane"],
       "isolationWorker": true
     },
@@ -91,8 +99,8 @@
     {
       "name": "data-plane",
       "slug": "data-plane",
-      "summary": "The control-plane contract, PostgreSQL lifecycle, plan-size and admission boundaries, and reference data on both engines",
-      "phases": ["assert", "dataplane", "reference-data-postgresql", "reference-data-mysql"],
+      "summary": "The control-plane contract, PostgreSQL lifecycle, and plan-size and admission boundaries",
+      "phases": ["assert", "dataplane"],
       "prepare": []
     },
     {

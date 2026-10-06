@@ -73,8 +73,8 @@ func TestASuiteCatalogThatCannotBeExecutedIsRefused(t *testing.T) {
 		wantError string
 	}{
 		"a phase claimed by two suites": {
-			old:       `"phases": ["assert", "dataplane", "reference-data-postgresql", "reference-data-mysql"],`,
-			new:       `"phases": ["assert", "dataplane", "reference-data-postgresql", "reference-data-mysql", "migrations-mysql"],`,
+			old:       `"phases": ["assert", "dataplane"],`,
+			new:       `"phases": ["assert", "dataplane", "migrations-mysql"],`,
 			wantError: `phase "migrations-mysql" is claimed by both`,
 		},
 		"a suite that runs nothing": {
@@ -93,7 +93,7 @@ func TestASuiteCatalogThatCannotBeExecutedIsRefused(t *testing.T) {
 			wantError: `a job, a run id and an artifact are named after the slug`,
 		},
 		"a suite that says nothing about itself": {
-			old:       `"summary": "The control-plane contract, PostgreSQL lifecycle, plan-size and admission boundaries, and reference data on both engines",`,
+			old:       `"summary": "The control-plane contract, PostgreSQL lifecycle, and plan-size and admission boundaries",`,
 			new:       `"summary": "  ",`,
 			wantError: `says nothing about what it runs`,
 		},
@@ -140,7 +140,7 @@ func TestASuiteCatalogThatCannotBeExecutedIsRefused(t *testing.T) {
 
 func TestSuitesCannotOmitOrRunFixturePrerequisitesTooLate(t *testing.T) {
 	t.Parallel()
-	for _, suiteName := range []string{"certificates", "data-plane", "lifecycle"} {
+	for _, suiteName := range []string{"certificates", "schema-faults", "data-plane", "lifecycle"} {
 		t.Run(suiteName, func(t *testing.T) {
 			t.Parallel()
 			catalog, err := loadE2ESuites(repositoryFile(t, e2eSuitesPath))
@@ -214,8 +214,8 @@ func TestAPartitionThatLostAPhaseIsRefused(t *testing.T) {
 	t.Run("a mandatory phase removed", func(t *testing.T) {
 		t.Parallel()
 		path := writeSuiteCatalog(t,
-			`"phases": ["assert", "dataplane", "reference-data-postgresql", "reference-data-mysql"],`,
-			`"phases": ["assert", "dataplane", "reference-data-postgresql"],`)
+			`"phases": ["cert-rotation", "reference-data-postgresql", "reference-data-mysql", "alerting-certificates"],`,
+			`"phases": ["cert-rotation", "reference-data-postgresql", "alerting-certificates"],`)
 		catalog, err := loadE2ESuites(path)
 		if err != nil {
 			t.Fatalf("load the mutated catalog: %v", err)
@@ -228,14 +228,14 @@ func TestAPartitionThatLostAPhaseIsRefused(t *testing.T) {
 	t.Run("a phase the driver does not run", func(t *testing.T) {
 		t.Parallel()
 		path := writeSuiteCatalog(t,
-			`"phases": ["schema-faults", "alerting-certificates"],`,
-			`"phases": ["schema-faults", "alerting-certificates", "smoke"],`)
+			`"phases": ["schema-faults"],`,
+			`"phases": ["schema-faults", "smoke"],`)
 		catalog, err := loadE2ESuites(path)
 		if err != nil {
 			t.Fatalf("load the mutated catalog: %v", err)
 		}
 		err = verifyE2ESuiteCoverage(catalog, repositoryFile(t, e2eHarnessPath))
-		if err == nil || !strings.Contains(err.Error(), "smoke (in certificates)") {
+		if err == nil || !strings.Contains(err.Error(), "smoke (in schema-faults)") {
 			t.Fatalf("verifyE2ESuiteCoverage() error = %v, want the invented phase named", err)
 		}
 	})
@@ -312,9 +312,9 @@ func TestTheIsolationWorkerFollowsThePhasesThatIsolateANode(t *testing.T) {
 			wantError: `suite "migrations-mysql" runs migrations-mysql, which isolates a node, and does not declare isolationWorker`,
 		},
 		"a suite that pays for a node nothing isolates": {
-			old: `"phases": ["assert", "dataplane", "reference-data-postgresql", "reference-data-mysql"],
+			old: `"phases": ["assert", "dataplane"],
       "prepare": []`,
-			new: `"phases": ["assert", "dataplane", "reference-data-postgresql", "reference-data-mysql"],
+			new: `"phases": ["assert", "dataplane"],
       "prepare": [],
       "isolationWorker": true`,
 			wantError: `suite "data-plane" declares isolationWorker and runs no phase that isolates a node`,
@@ -323,9 +323,9 @@ func TestTheIsolationWorkerFollowsThePhasesThatIsolateANode(t *testing.T) {
 		// mode, so a suite that prepares with a phase that isolates a node
 		// needs the node as much as the suite that covers it.
 		"a suite that prepares with a phase that isolates a node": {
-			old: `"phases": ["assert", "dataplane", "reference-data-postgresql", "reference-data-mysql"],
+			old: `"phases": ["assert", "dataplane"],
       "prepare": []`,
-			new: `"phases": ["assert", "dataplane", "reference-data-postgresql", "reference-data-mysql"],
+			new: `"phases": ["assert", "dataplane"],
       "prepare": ["migrations-postgresql"]`,
 			wantError: `suite "data-plane" runs migrations-postgresql, which isolates a node, and does not declare isolationWorker`,
 		},
@@ -347,13 +347,11 @@ func TestTheIsolationWorkerFollowsThePhasesThatIsolateANode(t *testing.T) {
 
 func TestDataPlanePreparationDoesNotRequireTheFaultWorker(t *testing.T) {
 	t.Parallel()
-	catalog, err := loadE2ESuites(writeSuiteCatalog(t, `"phases": ["schema-faults", "alerting-certificates"],
-      "prepare": ["assert", "dataplane"],
-      "isolationWorker": true`, `"phases": ["alerting-certificates"],
-      "prepare": ["assert", "dataplane"]`))
-	if err != nil {
-		t.Fatal(err)
-	}
+	catalog := e2eSuiteCatalog{Suites: []e2eSuite{{
+		Name:    "preparation",
+		Phases:  []string{"alerting-certificates"},
+		Prepare: []string{"assert", "dataplane"},
+	}}}
 	if err := verifyE2ESuiteIsolationWorker(catalog); err != nil {
 		t.Fatalf("preparing the databases without running the fault scenarios required a fault worker: %v", err)
 	}
