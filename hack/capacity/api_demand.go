@@ -52,7 +52,7 @@ func managerAPIDemand(w window, samples []sample) (*apiDemand, []string) {
 		return nil, []string{"API counters do not bracket the complete scenario"}
 	}
 	inside := samples[from : through+1]
-	if problems := managerCounterContinuity(inside); len(problems) > 0 {
+	if problems := managerProcessContinuity(inside); len(problems) > 0 {
 		return nil, problems
 	}
 	for i, s := range inside {

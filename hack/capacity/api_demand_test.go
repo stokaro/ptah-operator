@@ -171,3 +171,25 @@ func TestSamplerRetainsTotalRequestsAndScrapeBounds(t *testing.T) {
 		})
 	}
 }
+
+func TestAPIDemandSurvivesAnIndependentQueueHistogramReset(t *testing.T) {
+	w, samples := requestSamples()
+	for i := range samples {
+		manager := samples[i].Managers["first"]
+		// Native readings retained the same process and increasing API count
+		// while the queue histogram changed from 10,918 observations to 24.
+		count := 10918.0
+		if i >= 10 {
+			count = 24
+		}
+		manager.QueueWait = testHistogram(map[float64]float64{1: count}, count, count/2)
+		samples[i].Managers["first"] = manager
+	}
+	if len(managerCounterContinuity(samples)) == 0 {
+		t.Fatal("the queue reset must still invalidate queue evidence")
+	}
+	got, problems := managerAPIDemand(w, samples)
+	if got == nil || len(problems) != 0 || got.MaxPerSecondUpper <= 0 {
+		t.Fatal("an unrelated queue reset erased continuous API evidence", got, problems)
+	}
+}
