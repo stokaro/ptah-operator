@@ -807,5 +807,30 @@
       "documentation and acceptance evidence"
     ],
     "archiveKey": "resultTransportIntegrationCI"
+  },
+  "capacityAuthorClient": {
+    "requirement": "#580 documented author and approver identities under the frozen apply-policy guard",
+    "sourceCommit": "9712e0c15356b52a5b173041bbcb7ae47570942d",
+    "conclusion": "pass",
+    "runtime": "Kubernetes 1.37 API server on Darwin arm64",
+    "validation": {
+      "race": "all capacity tests passed in 13.688 seconds",
+      "vet": "passed",
+      "python": "62 capacity tests passed before the bootstrap JSON-stream correction; all 28 affected bootstrap tests passed afterward",
+      "native": "actual bootstrap, client-certificate authentication, CRD storage, rendered apply-policy guard, spec-writer webhooks, and documented RBAC passed",
+      "original": "original ordinary-update path fails the author-isolation regression; an inert author field is added to the old struct only to compile the new fixture"
+    },
+    "archive": {
+      "name": "capacity-author-api-2026-10-06.tar.gz",
+      "sha256": "3506073e3430954a4adff96683dec38723bd58c017af2a5b56d782981a802495",
+      "memberCount": 25,
+      "bytes": 11828,
+      "downloadVerified": true,
+      "transport": "authenticated SSH",
+      "hostAlias": "diabolocom-buster",
+      "directory": "/home/buster/ptah-operator-evidence/020-qualification-2026-10-06"
+    },
+    "custody": "Private development copy with independently hash-verified download. Final encrypted custody, retention policy, and owner acceptance remain unassessed.",
+    "scope": "Preparation and API/admission proof only. No installed controller/SQL workload, complete soak, or Linux arm64 qualification. Temporary kubeconfigs were removed."
   }
 }
