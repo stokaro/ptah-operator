@@ -9,6 +9,7 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -34,6 +35,9 @@ func issueResultCredential(ctx context.Context, reader client.Reader, issuer Res
 	}
 	ctx, cancel := context.WithTimeout(ctx, resultIssuanceTimeout)
 	defer cancel()
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
 	config, err := jobconfig.Read(job, subject.GetUID(), operationID)
 	if err != nil || config.Generation != subject.GetGeneration() || snapshot == nil {
 		return false, errors.New("result credential operation binding is invalid")
@@ -53,6 +57,23 @@ func issueResultCredential(ctx context.Context, reader client.Reader, issuer Res
 		return false, errors.New("result credential Pod differs from admission intent")
 	}
 	identity := resultdelivery.Identity{Binding: resultstore.Binding{Namespace: subject.GetNamespace(), Kind: kind, Name: subject.GetName(), UID: subject.GetUID(), Generation: config.Generation, ExecutionBindingID: executionBinding, InputFingerprint: inputFingerprint, Operation: operation, OperationID: operationID, JobName: job.Name, JobUID: job.UID, PodName: pod.Name, PodUID: pod.UID}, Engine: strings.ToLower(engine)}
+	if config.PodToken {
+		stored := &api.PtahResultRecord{}
+		err := reader.Get(ctx, client.ObjectKey{Namespace: subject.GetNamespace(), Name: config.SecretName}, stored)
+		if err == nil {
+			if !resultcredentials.MatchesPodBinding(stored, identity) {
+				return false, resultcredentials.ErrCredential
+			}
+			// The public pin is already persisted. Job progress events need no
+			// new enrollment; the receiver and admission still independently
+			// authorize every publication against the current live claim.
+			err := ctx.Err()
+			return err == nil, err
+		}
+		if !apierrors.IsNotFound(err) {
+			return false, err
+		}
+	}
 	credential, err := issuer.Ensure(ctx, identity)
 	if err != nil {
 		return false, err

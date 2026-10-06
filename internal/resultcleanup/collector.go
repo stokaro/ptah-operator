@@ -29,15 +29,20 @@ type Collector struct {
 	query        int
 	continuation string
 	pending      []metav1.PartialObjectMetadata
-	next         map[types.UID]time.Time
+	next         map[retryHintKey]time.Time
 	operations   *prometheus.CounterVec
+}
+
+type retryHintKey struct {
+	uid        types.UID
+	credential client.ObjectKey
 }
 
 func New(writer client.Client, policy Policy, registry prometheus.Registerer) (*Collector, error) {
 	if writer == nil || policy.Reader == nil || policy.Window < resultretention.MinimumWindow || policy.Window%time.Second != 0 {
 		return nil, errors.New("invalid result cleanup configuration")
 	}
-	c := &Collector{writer: writer, policy: policy, next: map[types.UID]time.Time{}}
+	c := &Collector{writer: writer, policy: policy, next: map[retryHintKey]time.Time{}}
 	if registry != nil {
 		c.operations = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "ptah_operator_result_cleanup_operations_total", Help: "Result cleanup actions by bounded action and outcome."}, []string{"action", "outcome"})
 		if err := registry.Register(c.operations); err != nil {
@@ -121,29 +126,36 @@ func (c *Collector) Step(ctx context.Context) error {
 			c.policy.now().Before(meta.CreationTimestamp.Add(c.policy.Window)) {
 			continue
 		}
-		if next := c.next[meta.UID]; c.policy.now().Before(next) {
+		key := retryHintKey{uid: meta.UID}
+		if meta.Labels["app.kubernetes.io/component"] == "result-credential" {
+			key = retryHintKey{credential: client.ObjectKeyFromObject(&meta)}
+		}
+		if next := c.next[key]; c.policy.now().Before(next) {
 			continue
 		}
 		next, err := c.process(ctx, meta)
 		if err != nil && !retained(err) {
 			failures = append(failures, err)
 		}
-		if len(c.next) >= 4096 {
-			now := c.policy.now()
-			for uid, deadline := range c.next {
-				if !now.Before(deadline) {
-					delete(c.next, uid)
-				}
-			}
-		}
-		// Keep unexpired hints when the budget fills. Clearing the map makes
-		// a retained fleet larger than the budget recheck every root on every
-		// scan. An uncached root is still checked through the complete policy.
-		if len(c.next) < 4096 {
-			c.next[meta.UID] = next
-		}
+		c.deferUntil(key, next)
 	}
 	return errors.Join(failures...)
+}
+
+func (c *Collector) deferUntil(key retryHintKey, next time.Time) {
+	if len(c.next) >= 4096 {
+		now := c.policy.now()
+		for key, deadline := range c.next {
+			if !now.Before(deadline) {
+				delete(c.next, key)
+			}
+		}
+	}
+	// Never evict an unexpired hint to fit a new one. An uncached root still
+	// passes the complete policy, and hints never authorize a deletion.
+	if len(c.next) < 4096 {
+		c.next[key] = next
+	}
 }
 
 func (c *Collector) process(ctx context.Context, meta metav1.PartialObjectMetadata) (time.Time, error) {
@@ -209,7 +221,14 @@ func (c *Collector) process(ctx context.Context, meta metav1.PartialObjectMetada
 	}
 	if err := resultretention.Eligible(ctx, c.policy.Reader, marker, c.policy.now(), c.policy.Window); err != nil {
 		if errors.Is(err, resultretention.ErrWindow) {
-			return marker.CreationTimestamp.Add(max(c.policy.Window, time.Duration(r.RetentionSeconds)*time.Second)), err
+			deadline := marker.CreationTimestamp.Add(max(c.policy.Window, time.Duration(r.RetentionSeconds)*time.Second))
+			// The same retirement also retains this attempt's credential. Its
+			// later metadata scan need not read the same window again. Keying
+			// this deferral by name can only postpone a replacement's check;
+			// deletion still verifies its actual UID, age and live pins.
+			c.deferUntil(retryHintKey{credential: client.ObjectKey{Namespace: b.Namespace,
+				Name: jobconfig.CredentialName(b.UID, b.OperationID, b.JobName)}}, deadline)
+			return deadline, err
 		}
 		return retry, err
 	}
