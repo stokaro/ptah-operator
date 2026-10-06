@@ -3,6 +3,7 @@ package resultauthority
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -122,6 +123,35 @@ func TestSecondPodRefused(t *testing.T) {
 	}
 }
 
+func TestAuthorityValidatesTheListedPod(t *testing.T) {
+	for _, name := range []string{"schema-observe", "migration-history"} {
+		for _, changed := range []bool{false, true} {
+			t.Run(name+"/changed="+fmt.Sprint(changed), func(t *testing.T) {
+				f := resulttest.New(t, name)
+				podGets := 0
+				reader := readerHook{Reader: f.Client(t), get: func(object client.Object) error {
+					if _, ok := object.(*corev1.Pod); ok {
+						podGets++
+					}
+					return nil
+				}, list: func(pods *corev1.PodList) error {
+					if changed {
+						pods.Items[0].Spec.Containers[0].Command = []string{"other"}
+					}
+					return nil
+				}}
+				err := (Authorizer{Reader: reader}).Check(t.Context(), f.Identity)
+				if changed && !errors.Is(err, resultdelivery.ErrAuthority) || !changed && err != nil {
+					t.Fatalf("authority did not validate the listed Pod: %v", err)
+				}
+				if podGets != 0 {
+					t.Fatalf("read the Pod %d times before listing that same Pod", podGets)
+				}
+			})
+		}
+	}
+}
+
 type readerHook struct {
 	client.Reader
 	get  func(client.Object) error
@@ -148,14 +178,14 @@ func (r readerHook) List(ctx context.Context, list client.ObjectList, opts ...cl
 }
 
 func TestAuthorityReadRacesAndFailures(t *testing.T) {
-	for _, stage := range []string{"subject", "job", "pod", "list", "second subject"} {
+	for _, stage := range []string{"subject", "job", "list", "second subject"} {
 		t.Run("API failure "+stage, func(t *testing.T) {
 			f := resulttest.New(t, "schema-observe")
 			unavailable := errors.New("API unavailable")
 			reads := 0
 			reader := readerHook{Reader: f.Client(t), get: func(obj client.Object) error {
 				reads++
-				matches := stage == "subject" && reads == 1 || stage == "job" && reads == 2 || stage == "pod" && reads == 3 || stage == "second subject" && reads == 4
+				matches := stage == "subject" && reads == 1 || stage == "job" && reads == 2 || stage == "second subject" && reads == 3
 				if matches {
 					return unavailable
 				}

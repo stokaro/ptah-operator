@@ -59,13 +59,6 @@ func (a Authorizer) Check(ctx context.Context, identity resultdelivery.Identity)
 	if err != nil || projection.Generation != b.Generation {
 		return resultdelivery.ErrAuthority
 	}
-	pod := &corev1.Pod{}
-	if err := a.Reader.Get(ctx, client.ObjectKey{Namespace: b.Namespace, Name: b.PodName}, pod); err != nil {
-		return readError(err)
-	}
-	if pod.UID != b.PodUID || pod.Namespace != b.Namespace || podintent.ValidateStoredPod(pod, job, claim.Snapshot) != nil {
-		return resultdelivery.ErrAuthority
-	}
 	// A second Pod makes the one-shot attempt ambiguous, even if the original
 	// Pod is terminating. Do not let a replacement reuse its predecessor's
 	// delivery identity while both objects exist. This is additional defense,
@@ -75,6 +68,12 @@ func (a Authorizer) Check(ctx context.Context, identity resultdelivery.Identity)
 		return readError(err)
 	}
 	if len(pods.Items) != 1 || pods.Continue != "" || pods.Items[0].Name != b.PodName || pods.Items[0].UID != b.PodUID {
+		return resultdelivery.ErrAuthority
+	}
+	// Validate the same uncached object that established cardinality. A GET
+	// before the LIST adds a request and validates an older Pod snapshot.
+	pod := &pods.Items[0]
+	if pod.Namespace != b.Namespace || podintent.ValidateStoredPod(pod, job, claim.Snapshot) != nil {
 		return resultdelivery.ErrAuthority
 	}
 	current, err := a.claim(ctx, identity)

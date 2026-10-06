@@ -113,6 +113,14 @@ func (c *Collector) Step(ctx context.Context) error {
 		}
 		meta := c.pending[0]
 		c.pending = c.pending[1:]
+		// The server timestamp already proves that a young retirement cannot
+		// expire. Do not spend API reads or a retry hint on it. This only delays
+		// collection: the complete record, longer recorded window and live pins
+		// are checked again after this earliest possible deadline.
+		if meta.Labels[resultstore.LabelRecord] == "retired" && !meta.CreationTimestamp.IsZero() &&
+			c.policy.now().Before(meta.CreationTimestamp.Add(c.policy.Window)) {
+			continue
+		}
 		if next := c.next[meta.UID]; c.policy.now().Before(next) {
 			continue
 		}

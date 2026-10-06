@@ -237,6 +237,38 @@ func (r *cleanupReadCounter) Get(ctx context.Context, key client.ObjectKey, obje
 	return r.Reader.Get(ctx, key, object, opts...)
 }
 
+func TestYoungRetirementMetadataNeedsNoRetryHint(t *testing.T) {
+	f := fixture(t)
+	if err := f.c.Create(t.Context(), f.marker); err != nil {
+		t.Fatal(err)
+	}
+	reader := &cleanupReadCounter{Reader: f.c}
+	f.p.Reader = reader
+	c := f.collector(t)
+	c.pending = []metav1.PartialObjectMetadata{{ObjectMeta: f.marker.ObjectMeta}}
+	if err := c.Step(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if reader.gets != 0 || len(c.next) != 0 || len(f.c.deletes) != 0 {
+		t.Fatalf("unexpired retirement used API reads or retry hints: reads=%d hints=%d deletes=%d", reader.gets, len(c.next), len(f.c.deletes))
+	}
+	// Metadata only postpones collection. Once the earliest possible window
+	// ends, a restored active claim must still prevent deletion.
+	resource := f.f.Subject.(*api.PtahSchema)
+	resource.Status.ActiveOperation = &api.ActiveOperationStatus{ID: f.f.Identity.Binding.OperationID}
+	if err := f.c.Update(t.Context(), resource); err != nil {
+		t.Fatal(err)
+	}
+	f.c.now = f.c.now.Add(f.p.Window)
+	c.pending = []metav1.PartialObjectMetadata{{ObjectMeta: f.marker.ObjectMeta}}
+	if err := c.Step(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if reader.gets == 0 || len(f.c.deletes) != 0 {
+		t.Fatal("elapsed metadata bound bypassed the live recovery pin check")
+	}
+}
+
 func TestFullRetryHintsKeepUnexpiredRecordsDeferred(t *testing.T) {
 	for _, expired := range []int{0, 2048} {
 		t.Run(fmt.Sprintf("expired=%d", expired), func(t *testing.T) {
