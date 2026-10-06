@@ -288,6 +288,11 @@ func (b Builder) buildOperationJob(spec operationJob) (*batchv1.Job, error) {
 			},
 		},
 	}
+	// The Job wire format omits an empty selector. Build that same form so
+	// strict claim comparisons still match after the API decodes the request.
+	if len(job.Spec.Template.Spec.NodeSelector) == 0 {
+		job.Spec.Template.Spec.NodeSelector = nil
+	}
 	if b.ResultEndpoint != "" {
 		var err error
 		if b.ResultServerTrust != nil {
