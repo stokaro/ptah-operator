@@ -1446,8 +1446,108 @@
       {
         "jobID": 112500515130,
         "observation": "The deadline upgrade incident resolved 60.549 seconds after the independent healthy boundary, exceeding the unchanged 45-second limit.",
-        "historicalCause": "Not established. A local regression reproduces lost verified progress after an optimistic status conflict; the repaired observer is undergoing native validation."
+        "historicalCause": "Not established. A local regression reproduces lost verified progress after an optimistic status conflict. The repaired observer passed the complete native infrastructure-alerting phase on Kubernetes 1.35.8, including both upgrade cases within the unchanged 45-second bound; see nativeUpgradeRecovery."
       }
     ]
+  },
+  "nativeUpgradeRecovery": {
+    "requirement": "#581 upgrade alert delivery and recovery; CI 37530031203 lifecycle failure follow-up",
+    "sourceCommit": "62f9f24b3d02b39e9d65ee26f71ad2073d159e95",
+    "kubernetes": "1.35.8",
+    "runtimePlatform": "linux/amd64",
+    "dockerContext": "diabolocom",
+    "conclusion": "pass",
+    "cases": [
+      {
+        "mode": "failed",
+        "firingSeconds": 9.538395,
+        "resolutionSeconds": 10.543802,
+        "boundSeconds": 45,
+        "healthyAt": "2026-10-06T22:34:38+00:00",
+        "resolvedReceivedAt": "2026-10-06T22:34:48.543802215Z",
+        "verifiedCaseFiles": 40,
+        "candidateImage": "e2e-registry.ptah-test-a-1-35-8-242-recovery-62f9f24b-819214a3d9.svc.cluster.local:5000/ptah-operator-next@sha256:a57d785d1c6642d299587ea6afae802af5092c1622483f9ce0a496367baaa3ea",
+        "conclusion": "pass"
+      },
+      {
+        "mode": "deadline",
+        "firingSeconds": 8.648275,
+        "resolutionSeconds": 3.546913,
+        "boundSeconds": 45,
+        "healthyAt": "2026-10-06T22:52:40+00:00",
+        "resolvedReceivedAt": "2026-10-06T22:52:43.546913324Z",
+        "verifiedCaseFiles": 40,
+        "candidateImage": "e2e-registry.ptah-test-a-1-35-8-242-recovery-62f9f24b-819214a3d9.svc.cluster.local:5000/ptah-operator@sha256:3b387fa33a6628a811cb8de4da15eab602f9a1c7659c2b276dca3c992de57b0d",
+        "conclusion": "pass"
+      }
+    ],
+    "scenarios": [
+      {
+        "kind": "scenario",
+        "name": "native-producers",
+        "outcome": "pass",
+        "start": "2026-10-06T22:19:24Z",
+        "end": "2026-10-06T22:20:27Z",
+        "seconds": 63
+      },
+      {
+        "kind": "scenario",
+        "name": "monitoring-path",
+        "outcome": "pass",
+        "start": "2026-10-06T22:20:27Z",
+        "end": "2026-10-06T22:20:42Z",
+        "seconds": 15
+      },
+      {
+        "kind": "scenario",
+        "name": "unresolved-view-read-failures",
+        "outcome": "pass",
+        "start": "2026-10-06T22:20:42Z",
+        "end": "2026-10-06T22:23:20Z",
+        "seconds": 158
+      },
+      {
+        "kind": "scenario",
+        "name": "lost-scrape-target",
+        "outcome": "pass",
+        "start": "2026-10-06T22:23:20Z",
+        "end": "2026-10-06T22:26:16Z",
+        "seconds": 176
+      },
+      {
+        "kind": "scenario",
+        "name": "lost-view",
+        "outcome": "pass",
+        "start": "2026-10-06T22:26:16Z",
+        "end": "2026-10-06T22:28:05Z",
+        "seconds": 109
+      },
+      {
+        "kind": "scenario",
+        "name": "upgrade-alerts",
+        "outcome": "pass",
+        "start": "2026-10-06T22:28:05Z",
+        "end": "2026-10-06T22:53:49Z",
+        "seconds": 1544
+      }
+    ],
+    "alertingSeconds": 2065,
+    "closedHistoryManifestFiles": 86,
+    "startedAt": "2026-10-06T22:11:18.796972+00:00",
+    "completedAt": "2026-10-06T22:54:01.958763+00:00",
+    "scope": "One complete native infrastructure-alerting phase and its prerequisites. The separate upgrade, HA, and uninstall phases were intentionally skipped. This is not a full lifecycle, full alert matrix, or production acceptance verdict.",
+    "change": "Preserve an independently verified post-hook boundary after an optimistic status conflict. Every retry still requires current identity, generation, state, and successful live admission. All original deadlines remain unchanged.",
+    "historicalCausation": "The original CI observer did not retain recovery retry reasons. The conflict defect is reproduced locally, but this passing run does not establish it as the historical CI cause.",
+    "archive": {
+      "name": "native-upgrade-recovery-2026-10-06.tar.gz",
+      "sha256": "1d25a0d6dd4bd52b8880bd8375310fb0dd402e742df840505185bd56ddad64c1",
+      "bytes": 1088215,
+      "memberCount": 100,
+      "downloadVerified": true,
+      "transport": "authenticated SSH",
+      "hostAlias": "diabolocom-buster",
+      "directory": "/home/buster/ptah-operator-evidence/020-qualification-2026-10-06"
+    },
+    "custody": "Private development copy with independently hash-verified download. Final encrypted custody, retention policy, and owner acceptance remain unassessed."
   }
 }
