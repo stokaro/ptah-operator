@@ -72,9 +72,8 @@ func (p PodBindings) Ensure(ctx context.Context, identity resultdelivery.Identit
 		return Credential{}, ErrCredential
 	}
 	check := (resultauthority.Authorizer{Reader: p.Reader}).Check
-	if err := check(ctx, identity); err != nil {
-		return Credential{}, err
-	}
+	// Reading the immutable pin grants no authority. Check before creating a
+	// missing pin and after verifying the persisted winner, just before return.
 	expected, err := podBindingRecord(identity)
 	if err != nil {
 		return Credential{}, err

@@ -2,7 +2,9 @@ package resultcredentials
 
 import (
 	"bytes"
+	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"sync"
 	"testing"
@@ -13,6 +15,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
 func TestPodBindingStoresNoSecretForAnyOperation(t *testing.T) {
@@ -153,5 +156,76 @@ func TestPodBindingRejectsChangedIdentityMetadataAndNoncanonicalBytes(t *testing
 	}
 	if !reflect.DeepEqual(stored.Spec, bookkeeping.Spec) {
 		t.Fatal("fixture changed the immutable spec")
+	}
+}
+
+func TestPodBindingChecksAuthorityAtTheWriteAndReturnBoundaries(t *testing.T) {
+	for _, operation := range []string{"schema-observe", "migration-history"} {
+		for _, existing := range []bool{false, true} {
+			for _, revoked := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/existing=%v/revoked=%v", operation, existing, revoked), func(t *testing.T) {
+					f := resulttest.New(t, operation)
+					c := &credentialAPI{Client: f.Client(t)}
+					pins := PodBindings{Writer: c, Reader: c}
+					if existing {
+						if _, err := pins.Ensure(t.Context(), f.Identity); err != nil {
+							t.Fatal(err)
+						}
+					}
+					pin, err := podBindingRecord(f.Identity)
+					if err != nil {
+						t.Fatal(err)
+					}
+					reads, createsBefore := 0, c.creates.Load()
+					pins.Reader = interceptor.NewClient(c.Client.(client.WithWatch), interceptor.Funcs{
+						Get: func(ctx context.Context, base client.WithWatch, key client.ObjectKey, object client.Object, opts ...client.GetOption) error {
+							reads++
+							err := base.Get(ctx, key, object, opts...)
+							if key == client.ObjectKeyFromObject(pin) && revoked {
+								// Revoke after the pin read, including a NotFound read.
+								// A prior authorization cannot permit a later write or return.
+								subject := f.Subject.DeepCopyObject().(client.Object)
+								if e := base.Get(ctx, client.ObjectKeyFromObject(subject), subject); e != nil {
+									t.Fatal(e)
+								}
+								switch value := subject.(type) {
+								case *api.PtahSchema:
+									value.Status.ActiveOperation = nil
+								case *api.PtahMigration:
+									value.Status.ActiveOperation = nil
+								}
+								if e := base.Update(ctx, subject); e != nil {
+									t.Fatal(e)
+								}
+							}
+							return err
+						},
+						List: func(ctx context.Context, base client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+							reads++
+							return base.List(ctx, list, opts...)
+						},
+					})
+					credential, err := pins.Ensure(t.Context(), f.Identity)
+					if revoked {
+						if err == nil || credential.UID != "" || c.creates.Load() != createsBefore {
+							t.Fatalf("revoked operation wrote or received a pin: credential=%+v err=%v", credential, err)
+						}
+						return
+					}
+					if err != nil || credential.UID == "" {
+						t.Fatal("valid operation was refused", err)
+					}
+					// One seven-read authority check before return; creating a pin
+					// also needs a check before CREATE and its persisted readback.
+					budget := 8
+					if !existing {
+						budget = 16
+					}
+					if reads > budget {
+						t.Fatalf("enrollment used %d reads, budget %d", reads, budget)
+					}
+				})
+			}
+		}
 	}
 }
