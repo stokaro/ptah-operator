@@ -832,5 +832,27 @@
     },
     "custody": "Private development copy with independently hash-verified download. Final encrypted custody, retention policy, and owner acceptance remain unassessed.",
     "scope": "Preparation and API/admission proof only. No installed controller/SQL workload, complete soak, or Linux arm64 qualification. Temporary kubeconfigs were removed."
+  },
+  "capacityExecutionBaseline": {
+    "requirement": "#580 frozen execution profile",
+    "sourceCommit": "5ecd3b3e4950840872c421201f886e6f6c1bfeb7",
+    "conclusion": "pass",
+    "original": "The prior builder used operation deadline 300 seconds, connect timeout 30 seconds, retry 10 seconds, and inherited the five-minute schema lock default. The original-source regression fails.",
+    "validation": {
+      "race": "all capacity tests passed in 13.428 seconds",
+      "native": "both families retained 900/10/30/30-second operation/connect/retry/lock values through real Kubernetes 1.37 CRD storage and admission; author handoff and RBAC controls also passed"
+    },
+    "archive": {
+      "name": "capacity-execution-baseline-2026-10-06.tar.gz",
+      "sha256": "ddd04afcbcf14b5136cc23783cfdcb89ba4cacde98f93106cddd746b2dc43527",
+      "memberCount": 17,
+      "bytes": 11176,
+      "downloadVerified": true,
+      "transport": "authenticated SSH",
+      "hostAlias": "diabolocom-buster",
+      "directory": "/home/buster/ptah-operator-evidence/020-qualification-2026-10-06"
+    },
+    "custody": "Private development copy with independently hash-verified download. Final encrypted custody, retention policy, and owner acceptance remain unassessed.",
+    "scope": "Fixture and API/admission proof on Darwin arm64 only. Installed Linux workload, soak, overload and threshold qualification remain open."
   }
 }
