@@ -44,6 +44,9 @@ SOAK_ENABLED=$(python3 -c 'import json,sys; w=json.load(open(sys.argv[1])); prin
 if [ "$SOAK_ENABLED" -eq 1 ] && [ "$VARIED_INPUTS" -ne 1 ]; then
  fail "soak and approval backlog workloads require CAPACITY_VARIED_INPUTS=1"
 fi
+if [ -n "${CAPACITY_SIGNING_KEY:-}${CAPACITY_SIGNING_PUBLIC_KEY:-}" ] && [ "$VARIED_INPUTS" -ne 1 ]; then
+ fail "signed artifacts require CAPACITY_VARIED_INPUTS=1"
+fi
 [ -f "$LAB_ENVIRONMENT" ] || fail "no lab at $LAB_ENVIRONMENT; bring one up with make demo-up"
 LAB_ENVIRONMENT="$(cd "$(dirname "$LAB_ENVIRONMENT")" && pwd)/$(basename "$LAB_ENVIRONMENT")"
 set -a
@@ -150,11 +153,12 @@ else
 		*) fail "a push returned no digest" ;;
 		esac
 	done
+	ARTIFACT_REGISTRY=${CAPACITY_REGISTRY_HOST:-$E2E_REGISTRY_HOST}
 	CAPACITY_ARGS=(
-		-schema-v1 "oci://$E2E_REGISTRY_HOST/schemas/capacity@$schema_v1"
-		-schema-v2 "oci://$E2E_REGISTRY_HOST/schemas/capacity@$schema_v2"
-		-migration-v1 "oci://$E2E_REGISTRY_HOST/migrations/capacity@$migration_v1"
-		-migration-v2 "oci://$E2E_REGISTRY_HOST/migrations/capacity@$migration_v2"
+		-schema-v1 "oci://$ARTIFACT_REGISTRY/schemas/capacity@$schema_v1"
+		-schema-v2 "oci://$ARTIFACT_REGISTRY/schemas/capacity@$schema_v2"
+		-migration-v1 "oci://$ARTIFACT_REGISTRY/migrations/capacity@$migration_v1"
+		-migration-v2 "oci://$ARTIFACT_REGISTRY/migrations/capacity@$migration_v2"
 	)
 fi
 

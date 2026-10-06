@@ -1,6 +1,9 @@
 """Prepare isolated capacity lab fixtures; this is not full qualification."""
 
 import argparse
+import base64
+import copy
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -130,6 +133,36 @@ class Bootstrap:
         self.command(['get', 'clusterrole', role, '-o', 'name'])
         return {'username': username, 'clusterRole': role}
 
+    def registry_dependencies(self, dependencies, namespace):
+        host = self.env.get('CAPACITY_REGISTRY_HOST')
+        ca_name = self.env.get('CAPACITY_REGISTRY_CA_CONFIGMAP')
+        if bool(host) != bool(ca_name):
+            raise ValueError('HTTPS capacity registry requires both host and CA ConfigMap')
+        if ca_name:
+            if not re.fullmatch(r'[A-Za-z0-9.-]+:[0-9]{1,5}', host):
+                raise ValueError('capacity registry must name one DNS authority and port')
+            ca = self.read('configmap', ca_name, namespace)
+            pem = ca.get('data', {}).get('ca.pem')
+            if ca.get('immutable') is not True or not isinstance(pem, str) or not pem:
+                raise ValueError('capacity registry CA must be an immutable ConfigMap with ca.pem')
+            digest = 'sha256:' + hashlib.sha256(pem.encode()).hexdigest()
+            credential = copy.deepcopy(dependencies[0])
+            credential['data'].pop('allowPlainHTTP', None)
+            for key, value in {'registry': host, 'caSHA256': digest}.items():
+                credential['data'][key] = base64.b64encode(value.encode()).decode()
+            dependencies[0] = credential
+            dependencies.append(ca)
+            self.state['artifactRegistry'] = {'host': host, 'caConfigMap': ca_name, 'caSHA256': digest}
+        signing = [self.env.get('CAPACITY_SIGNING_KEY'), self.env.get('CAPACITY_SIGNING_PUBLIC_KEY')]
+        if bool(signing[0]) != bool(signing[1]):
+            raise ValueError('signed capacity artifacts require both signing key and public key')
+        if signing[0]:
+            for index, kind in ((2, 'schema'), (3, 'migrations')):
+                policy = copy.deepcopy(dependencies[index])
+                policy['data']['policy.yaml'] = json.dumps({'version': 1, 'require_digest_pin': True,
+                    'require_signature': True, 'artifact_types': ['application/vnd.stokaro.ptah.' + kind + '.v1']})
+                dependencies[index] = policy
+
     def prepare(self, workload):
         if self.path.exists():
             raise RuntimeError('state file already exists; refusing to replace an ownership journal')
@@ -153,6 +186,7 @@ class Bootstrap:
             if policy.get('immutable') is not True:
                 raise ValueError('verification policy is not immutable: ' + name)
             dependencies.append(policy)
+        self.registry_dependencies(dependencies, source)
         version = json.loads(self.command(['version', '-o', 'json']))['serverVersion']['gitVersion']
         match = re.match(r'^v(1\.[0-9]+)\.', version)
         if not match:

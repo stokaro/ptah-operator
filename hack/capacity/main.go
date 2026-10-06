@@ -73,6 +73,7 @@ func run() error {
 	flag.StringVar(&in.operatorNamespace, "operator-namespace", "", "the namespace the manager runs in")
 	flag.StringVar(&in.managerSelector, "manager-selector", "app.kubernetes.io/component=controller", "label selector for the manager Pods")
 	flag.StringVar(&in.registrySecret, "registry-secret", "demo-registry", "Secret holding the registry credentials")
+	flag.StringVar(&in.registryCA, "registry-ca-configmap", os.Getenv("CAPACITY_REGISTRY_CA_CONFIGMAP"), "namespace-local ConfigMap with the HTTPS registry CA in ca.pem; unset keeps the isolated HTTP lab")
 	flag.StringVar(&in.schemaPolicy, "schema-policy", "demo-verification-policy", "verification policy ConfigMap for schemas")
 	flag.StringVar(&in.migrationPolicy, "migration-policy", "demo-migration-verification-policy", "verification policy ConfigMap for migrations")
 	flag.StringVar(&in.databaseSecret, "database-secret", "capacity-db-%d", "Secret name pattern, one database per resource")

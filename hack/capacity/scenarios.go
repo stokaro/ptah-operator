@@ -32,6 +32,7 @@ type inputs struct {
 	operatorNamespace string
 	managerSelector   string
 	registrySecret    string
+	registryCA        string
 	schemaPolicy      string
 	migrationPolicy   string
 	databaseSecret    string // a fmt pattern with one %d, one database per resource
@@ -84,6 +85,10 @@ func (s *scenarios) execution() map[string]any {
 }
 
 func (s *scenarios) artifactSource(reference, policy string) map[string]any {
+	transport := map[string]any{"plainHTTP": true}
+	if s.in.registryCA != "" {
+		transport = map[string]any{"caFrom": map[string]any{"name": s.in.registryCA, "key": "ca.pem"}}
+	}
 	return map[string]any{
 		"ociRef": reference,
 		"registryAuthFrom": map[string]any{
@@ -91,7 +96,7 @@ func (s *scenarios) artifactSource(reference, policy string) map[string]any {
 			"usernameKey": "username", "passwordKey": "password",
 		},
 		"verificationPolicyFrom": map[string]any{"name": policy, "key": "policy.yaml"},
-		"transport":              map[string]any{"plainHTTP": true},
+		"transport":              transport,
 	}
 }
 

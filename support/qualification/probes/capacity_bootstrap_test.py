@@ -1,6 +1,8 @@
 """Ownership and workload-placement controls for the capacity lab bootstrap."""
 
 import copy
+import base64
+import hashlib
 import json
 import os
 import shutil
@@ -171,6 +173,44 @@ class BootstrapTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.bootstrap = FakeBootstrap(Path(self.temp.name) / 'state.json')
+
+    def test_https_registry_binds_the_copied_ca_and_requires_signed_digests(self):
+        b = self.bootstrap
+        b.env.update(CAPACITY_REGISTRY_HOST='tls.fixture.svc.cluster.local:5443',
+                     CAPACITY_REGISTRY_CA_CONFIGMAP='registry-ca',
+                     CAPACITY_SIGNING_KEY='/signing.key', CAPACITY_SIGNING_PUBLIC_KEY='/signing.pub')
+        ca = {'apiVersion': 'v1', 'kind': 'ConfigMap', 'immutable': True,
+              'metadata': {'name': 'registry-ca'}, 'data': {'ca.pem': 'exact fixture CA bytes\n'}}
+        original_read = b.read
+        def read(resource, name, namespace):
+            value = copy.deepcopy(ca) if name == 'registry-ca' else original_read(resource, name, namespace)
+            if name == 'demo-registry':
+                value['data']['allowPlainHTTP'] = base64.b64encode(b'true').decode()
+            return value
+        with patch.object(b, 'read', side_effect=read):
+            namespaces = b.prepare({'schemas': 1, 'migrations': 1})
+        for namespace in namespaces:
+            credential = b.objects['Secret', namespace, 'demo-registry']['data']
+            self.assertNotIn('allowPlainHTTP', credential)
+            self.assertEqual(base64.b64decode(credential['registry']).decode(), b.env['CAPACITY_REGISTRY_HOST'])
+            expected = 'sha256:' + hashlib.sha256(ca['data']['ca.pem'].encode()).hexdigest()
+            self.assertEqual(base64.b64decode(credential['caSHA256']).decode(), expected)
+            self.assertEqual(b.objects['ConfigMap', namespace, 'registry-ca']['data'], ca['data'])
+            for name, kind in [('demo-verification-policy', 'schema'), ('demo-migration-verification-policy', 'migrations')]:
+                policy = json.loads(b.objects['ConfigMap', namespace, name]['data']['policy.yaml'])
+                self.assertTrue(policy['require_digest_pin'])
+                self.assertTrue(policy['require_signature'])
+                self.assertEqual(policy['artifact_types'], ['application/vnd.stokaro.ptah.' + kind + '.v1'])
+
+    def test_incomplete_registry_or_signing_configuration_creates_nothing(self):
+        for setting in ('CAPACITY_REGISTRY_HOST', 'CAPACITY_REGISTRY_CA_CONFIGMAP', 'CAPACITY_SIGNING_KEY', 'CAPACITY_SIGNING_PUBLIC_KEY'):
+            with self.subTest(setting=setting):
+                b = FakeBootstrap(Path(self.temp.name) / 'state.json')
+                b.env[setting] = 'incomplete'
+                with self.assertRaises(ValueError):
+                    b.prepare({'schemas': 1, 'migrations': 1})
+                self.assertFalse(b.objects)
+                self.assertFalse(b.path.exists())
 
     def test_distinct_approver_is_bound_only_in_owned_workload_namespaces(self):
         b = self.bootstrap

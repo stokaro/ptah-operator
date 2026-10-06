@@ -141,6 +141,23 @@ func TestMySQLWorkloadSelectsBothResourceTargets(t *testing.T) {
 	}
 }
 
+func TestHTTPSWorkloadDoesNotGrantPlainHTTP(t *testing.T) {
+	s := &scenarios{in: inputs{namespace: "work", databaseSecret: "db-%d", registryCA: "registry-ca"}, load: workload{Schemas: 10}}
+	for _, spec := range []map[string]any{
+		s.schemaObject(0).Object["spec"].(map[string]any)["desired"].(map[string]any),
+		s.migrationObject("migration", 10, "Always", true).Object["spec"].(map[string]any)["artifact"].(map[string]any),
+	} {
+		transport := spec["transport"].(map[string]any)
+		if _, found := transport["plainHTTP"]; found {
+			t.Fatal("HTTPS qualification still grants plain HTTP")
+		}
+		ca, ok := transport["caFrom"].(map[string]any)
+		if !ok || ca["name"] != "registry-ca" || ca["key"] != "ca.pem" {
+			t.Fatalf("workload did not select the bootstrap's CA: %v", transport)
+		}
+	}
+}
+
 func TestAPrefixMatchesOnlyWhereItIsAsked(t *testing.T) {
 	families, err := parseScrape([]byte(strings.Join([]string{
 		`# TYPE workqueue_depth gauge`,
