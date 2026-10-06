@@ -499,5 +499,33 @@
     },
     "custody": "Private local development archive; no upload or final retention acceptance.",
     "scope": "All four native certificate/storage scenarios passed, including threshold crossing, a continuous storage incident, exact exports, safe pruning, and certificate failure/recovery. The original rule fails the pinned Prometheus regression when its gauge disappears; the corrected rule preserves the original firing state and clears on a fresh low reading. This addresses the certificates 1.36 failure in CI run 37437296857, but does not claim a new CI matrix or production acceptance."
+  },
+  "nativeTransientDelivery": {
+    "requirement": "Recover from a short busy receiver without executing Apply again",
+    "runtimeSourceCommit": "29e6224f7ca54e8903d7c515a3e7697f9b688056",
+    "harnessBaseCommit": "29e6224f7ca54e8903d7c515a3e7697f9b688056",
+    "harnessScope": "Diagnostic only; original running-Apply scenario plus preparation and complete initial watch audit. No full-suite or CI claim.",
+    "kubernetesVersion": "1.37.0",
+    "runtimeArchitecture": "linux/amd64",
+    "resources": {
+      "sharedCPUSet": "0-3",
+      "taskContainers": 7,
+      "memoryBound": false
+    },
+    "conclusion": "pass",
+    "seconds": 592.29,
+    "scenarios": {
+      "watches": 10,
+      "approval-history-audit": 31,
+      "running-apply-executor-image-change": 551
+    },
+    "archive": {
+      "name": "running-apply-delivery-native-2026-10-06.tar.gz",
+      "sha256": "e6861e21b713bc748e6e1167b6e01b9778e7e2641b7f607b83348bac6cd77e9b",
+      "memberCount": 13,
+      "bytes": 12959
+    },
+    "custody": "Private local development archive; not uploaded or accepted as final retention.",
+    "scope": "The local TLS runner regression fails after four attempts in 3.005 seconds on the original source and passes after the fix, with one executor invocation. The unchanged native running-Apply scenario then passed on PostgreSQL and MySQL: original Job/Pod identities, persisted results, complete execution horizons, new-epoch convergence, SQL audits, and no replay. This is not the complete schema-approvals phase or a CI matrix verdict."
   }
 }
