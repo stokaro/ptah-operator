@@ -1258,5 +1258,62 @@
       "directory": "/home/buster/ptah-operator-evidence/020-qualification-2026-10-06"
     },
     "custody": "Private development copy with independently hash-verified download. Final encrypted custody, retention policy, and owner acceptance remain unassessed."
+  },
+  "capacityAPIEnrollment": {
+    "requirement": "#580 manager API demand on the unchanged twenty-resource steady fleet",
+    "conclusion": "Failed: an interior sixty-second window still exceeds 100 requests/s. The enrollment read reduction does not resolve the full-profile demand failure.",
+    "runtimeSourceCommit": "4189691fef013d95186322360e4efadd5b702c4e",
+    "collectorSourceCommit": "4189691fef013d95186322360e4efadd5b702c4e",
+    "runtimeImage": "e2e-registry.ptah-test-a-1-37-0-242-profile-1b5db851-0026e8302c.svc.cluster.local:5000/ptah-operator@sha256:17f1ec42405aabc04f3d652f25448a2e1f42f195fdd4a0c6eb0bf1dad1e0cc82",
+    "runnerImage": "e2e-registry.ptah-test-a-1-37-0-242-profile-1b5db851-0026e8302c.svc.cluster.local:5000/ptah-runner@sha256:3c926b0b03baae569014ceae3522a0dde7a9c03555a645eede9773b536dde8c2",
+    "profileRevision": 39,
+    "environment": "Kubernetes 1.37.0, native Linux amd64, PostgreSQL, ten schemas and ten migrations",
+    "window": {
+      "name": "existing twenty-resource fleet API demand",
+      "start": "2026-10-06T21:13:40.581136Z",
+      "end": "2026-10-06T21:23:40.581136Z"
+    },
+    "samples": 121,
+    "slidingMinuteBounds": 108,
+    "maxRequestsPerSecondUpperBound": 256.1166666666667,
+    "thresholdRequestsPerSecond": 100,
+    "thresholdPassed": false,
+    "provenExceedance": {
+      "start": "2026-10-06T21:20:25.647501+00:00",
+      "end": "2026-10-06T21:21:25.647501+00:00",
+      "firstSample": 81,
+      "lastSample": 92,
+      "requestsAtLeast": 12697,
+      "requestsPerSecondAtLeast": 211.61666666666667
+    },
+    "monitorRequests": 726,
+    "change": "Remove the authority check before reading the immutable enrollment pin. The checks before CREATE and before returning the verified persisted pin remain. New enrollment uses at most 16 API reads instead of 23; repeated enrollment uses at most eight instead of 15.",
+    "validation": {
+      "originalRegression": "Both families exceed the read budget on the original code; all revocation controls pass.",
+      "fixedRaceTests": [
+        "internal/resultcredentials",
+        "internal/resultservice",
+        "internal/controller"
+      ],
+      "vet": [
+        "internal/resultcredentials",
+        "internal/resultservice",
+        "internal/controller"
+      ],
+      "liveFleet": "All twenty original UIDs, specs and generations stayed unchanged; every slot refreshed under the fixed manager before measurement.",
+      "auditRestoration": "All original API-server manifests verified; owned audit files removed after retention."
+    },
+    "scope": "Only this steady API-demand window is assessed. No cold/backlog rerun, full soak, retention plateau, fault matrix, architecture matrix, final artifacts, or #580/#242 closure is claimed.",
+    "archive": {
+      "name": "capacity-api-enrollment-2026-10-06.tar.gz",
+      "sha256": "e92a24d716581b68e135040420691803c656c4a9e84fc0fc175196ed72a61540",
+      "bytes": 2433817,
+      "memberCount": 68,
+      "downloadVerified": true,
+      "transport": "authenticated SSH",
+      "hostAlias": "diabolocom-buster",
+      "directory": "/home/buster/ptah-operator-evidence/020-qualification-2026-10-06"
+    },
+    "custody": "Private development copy with independently hash-verified download. Final encrypted custody, retention policy, and owner acceptance remain unassessed."
   }
 }
