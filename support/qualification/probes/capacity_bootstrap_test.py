@@ -242,6 +242,8 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual(len(roles), 2)
         self.assertEqual(len(bindings), 2)
         self.assertEqual({obj['metadata']['namespace'] for obj in roles}, set(namespaces))
+        for role in roles:
+            self.assertEqual(role.get('rules'), b.state['author']['role']['rules'])
         for obj in bindings:
             self.assertIn(obj['metadata']['namespace'], namespaces)
             self.assertEqual(obj['roleRef']['kind'], 'Role')

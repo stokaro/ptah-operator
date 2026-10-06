@@ -112,7 +112,7 @@ class Bootstrap:
     def copy(self, source, namespace):
         # Do not copy owner references, server metadata or annotations containing
         # a previous applied Secret. Existing objects are never overwritten.
-        value = {key: source[key] for key in ('apiVersion', 'kind', 'type', 'data', 'immutable') if key in source}
+        value = {key: source[key] for key in ('apiVersion', 'kind', 'type', 'data', 'immutable', 'rules') if key in source}
         value['metadata'] = {'name': source['metadata']['name'], 'namespace': namespace}
         return self.create(value)
 
