@@ -227,6 +227,73 @@ func TestPinsJobAgeAndAPIErrorsRetainEvidence(t *testing.T) {
 
 type listFailure struct{ client.Reader }
 
+type cleanupReadCounter struct {
+	client.Reader
+	gets int
+}
+
+func (r *cleanupReadCounter) Get(ctx context.Context, key client.ObjectKey, object client.Object, opts ...client.GetOption) error {
+	r.gets++
+	return r.Reader.Get(ctx, key, object, opts...)
+}
+
+func TestFullRetryHintsKeepUnexpiredRecordsDeferred(t *testing.T) {
+	for _, expired := range []int{0, 2048} {
+		t.Run(fmt.Sprintf("expired=%d", expired), func(t *testing.T) {
+			f := fixture(t)
+			if err := f.c.Create(t.Context(), f.marker); err != nil {
+				t.Fatal(err)
+			}
+			reader := &cleanupReadCounter{Reader: f.c}
+			f.p.Reader = reader
+			c := f.collector(t)
+			deadline := f.c.now.Add(time.Hour)
+			c.next[f.marker.UID] = deadline
+			for i := 1; i < 4096; i++ {
+				next := deadline
+				if i <= expired {
+					next = f.c.now
+				}
+				c.next[types.UID(fmt.Sprintf("retained-%d", i))] = next
+			}
+			// A newly listed root can disappear before its direct read. Filling
+			// the hint budget must not forget the retained roots beside it.
+			c.pending = []metav1.PartialObjectMetadata{{ObjectMeta: metav1.ObjectMeta{
+				Namespace: f.marker.Namespace, Name: "already-gone", UID: "already-gone",
+			}}}
+			if err := c.Step(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			before := reader.gets
+			c.pending = []metav1.PartialObjectMetadata{{ObjectMeta: f.marker.ObjectMeta}}
+			if err := c.Step(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if reader.gets != before {
+				t.Fatalf("retained root was read %d times before its deadline after hint overflow", reader.gets-before)
+			}
+			if len(c.next) > 4096 {
+				t.Fatalf("retry hints exceeded their memory bound: %d", len(c.next))
+			}
+			// The hint never authorizes deletion. At its deadline, a newly
+			// restored active operation must be read and retain the evidence.
+			resource := f.f.Subject.(*api.PtahSchema)
+			resource.Status.ActiveOperation = &api.ActiveOperationStatus{ID: f.f.Identity.Binding.OperationID}
+			if err := f.c.Update(t.Context(), resource); err != nil {
+				t.Fatal(err)
+			}
+			f.c.now = deadline
+			c.pending = []metav1.PartialObjectMetadata{{ObjectMeta: f.marker.ObjectMeta}}
+			if err := c.Step(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if reader.gets == before || len(f.c.deletes) != 0 {
+				t.Fatal("expired hint bypassed the live recovery pin check")
+			}
+		})
+	}
+}
+
 func (listFailure) List(context.Context, client.ObjectList, ...client.ListOption) error {
 	return errors.New("API unavailable")
 }

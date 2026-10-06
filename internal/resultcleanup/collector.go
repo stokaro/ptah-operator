@@ -121,9 +121,19 @@ func (c *Collector) Step(ctx context.Context) error {
 			failures = append(failures, err)
 		}
 		if len(c.next) >= 4096 {
-			clear(c.next) // This is only a retry hint, never deletion authority.
+			now := c.policy.now()
+			for uid, deadline := range c.next {
+				if !now.Before(deadline) {
+					delete(c.next, uid)
+				}
+			}
 		}
-		c.next[meta.UID] = next
+		// Keep unexpired hints when the budget fills. Clearing the map makes
+		// a retained fleet larger than the budget recheck every root on every
+		// scan. An uncached root is still checked through the complete policy.
+		if len(c.next) < 4096 {
+			c.next[meta.UID] = next
+		}
 	}
 	return errors.Join(failures...)
 }
