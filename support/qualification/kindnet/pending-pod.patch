@@ -1,0 +1,39 @@
+--- a/pkg/podinfo/ipresolver.go
++++ b/pkg/podinfo/ipresolver.go
+@@ -55,19 +55,26 @@
+ 	if err != nil || len(objs) == 0 {
+ 		return "", false
+ 	}
+-	// Prefer a running pod if multiple pods share the same IP.
++	// A live init container belongs to a Pending Pod. Retained terminal Pods
++	// may carry an IP already reassigned to it and must not win over it.
++	var pending *v1.Pod
+ 	for _, obj := range objs {
+-		if pod, ok := obj.(*v1.Pod); ok && pod.Status.Phase == v1.PodRunning {
++		pod, ok := obj.(*v1.Pod)
++		if !ok {
++			continue
++		}
++		if pod.Status.Phase == v1.PodRunning {
+ 			key, err := cache.MetaNamespaceKeyFunc(pod)
+-			if err == nil {
+-				return key, true
+-			}
++			return key, err == nil
++		}
++		if pod.Status.Phase == v1.PodPending {
++			pending = pod
+ 		}
+ 	}
+-	// Fallback to the first pod found.
++	if pending != nil {
++		key, err := cache.MetaNamespaceKeyFunc(pending)
++		return key, err == nil
++	}
+ 	key, err := cache.MetaNamespaceKeyFunc(objs[0])
+-	if err != nil {
+-		return "", false
+-	}
+-	return key, true
++	return key, err == nil
+ }
