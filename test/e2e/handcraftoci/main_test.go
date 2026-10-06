@@ -9,6 +9,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"io"
 	"math/big"
 	"net/http"
@@ -274,8 +275,14 @@ func TestVerifyCertificateFilesBindsChainDNSAndServerUsage(t *testing.T) {
 	if err := verifyCertificateFiles(caFile, serverFile, dnsName); err != nil {
 		t.Fatalf("verifyCertificateFiles: %v", err)
 	}
-	if err := verifyCertificateFiles(caFile, serverFile, "other.test.svc.cluster.local"); err == nil {
-		t.Fatal("verifyCertificateFiles accepted a different DNS name")
+	if err := runVerifyCertificate([]string{caFile, serverFile, dnsName}); err != nil {
+		t.Fatalf("runVerifyCertificate: %v", err)
+	}
+	wrongDNS := "other.test.svc.cluster.local"
+	var hostnameError x509.HostnameError
+	if err := runVerifyCertificate([]string{caFile, serverFile, wrongDNS}); !errors.As(err, &hostnameError) ||
+		hostnameError.Host != wrongDNS || !strings.Contains(err.Error(), wrongDNS) {
+		t.Fatalf("runVerifyCertificate must preserve the hostname refusal, got %v", err)
 	}
 	wrongCAKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -313,8 +320,22 @@ func TestVerifyCertificateFilesBindsChainDNSAndServerUsage(t *testing.T) {
 		t.Fatalf("create client-only certificate: %v", err)
 	}
 	clientOnlyFile := writeCertificatePEM(t, "client-only.crt", clientOnlyDER)
-	if err := verifyCertificateFiles(caFile, clientOnlyFile, dnsName); err == nil {
-		t.Fatal("verifyCertificateFiles accepted a certificate without serverAuth usage")
+	var invalidCertificate x509.CertificateInvalidError
+	if err := runVerifyCertificate([]string{caFile, clientOnlyFile, dnsName}); !errors.As(err, &invalidCertificate) ||
+		invalidCertificate.Reason != x509.IncompatibleUsage {
+		t.Fatalf("runVerifyCertificate must preserve the serverAuth refusal, got %v", err)
+	}
+
+	expiredTemplate := *serverTemplate
+	expiredTemplate.NotBefore, expiredTemplate.NotAfter = now.Add(-2*time.Hour), now.Add(-time.Hour)
+	expiredDER, err := x509.CreateCertificate(rand.Reader, &expiredTemplate, caCertificate, &serverKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatalf("create expired certificate: %v", err)
+	}
+	expiredFile := writeCertificatePEM(t, "expired.crt", expiredDER)
+	if err := runVerifyCertificate([]string{caFile, expiredFile, dnsName}); !errors.As(err, &invalidCertificate) ||
+		invalidCertificate.Reason != x509.Expired || !strings.Contains(err.Error(), "expired") {
+		t.Fatalf("runVerifyCertificate must preserve the validity refusal, got %v", err)
 	}
 
 	serverContents, err := os.ReadFile(serverFile)

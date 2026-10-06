@@ -129,7 +129,7 @@ func runVerifyCertificate(args []string) error {
 		return errors.New("usage: e2e-handcraft-oci verify-certificate <ca.pem> <tls.crt> <dns-name>")
 	}
 	if err := verifyCertificateFiles(args[0], args[1], args[2]); err != nil {
-		return errors.New("e2e-handcraft-oci: verify server certificate")
+		return fmt.Errorf("e2e-handcraft-oci: verify server certificate: %w", err)
 	}
 	return nil
 }
@@ -166,7 +166,7 @@ func verifyCertificateFiles(caPath, certificatePath, dnsName string) error {
 		Roots:     roots,
 		KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	}); err != nil {
-		return errors.New("server certificate chain, DNS name, or usage is invalid")
+		return fmt.Errorf("verify server certificate chain, DNS name, validity, and usage: %w", err)
 	}
 	return nil
 }

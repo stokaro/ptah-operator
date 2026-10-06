@@ -2090,8 +2090,8 @@ chmod 600 \
 	"$TLS_PROXY_CERT_FILE" "$TLS_PROXY_CERT_EXT_FILE"
 if ! go -C "$ROOT_DIR" run ./test/e2e/handcraftoci verify-certificate \
 	"$TLS_PROXY_CA_FILE" "$TLS_PROXY_CERT_FILE" "$TLS_PROXY_DNS_NAME" \
-	>/dev/null 2>&1; then
-	fail "task-scoped TLS proxy certificate does not bind its exact Service DNS name"
+	>/dev/null; then
+	fail "task-scoped TLS proxy certificate verification failed; see verifier error above"
 fi
 
 timing_next bootstrap next-release-source

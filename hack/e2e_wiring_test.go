@@ -36,6 +36,29 @@ func TestVerifyE2EWiring(t *testing.T) {
 	}
 }
 
+func TestTLSCertificateVerifierPreservesFailureDiagnostic(t *testing.T) {
+	t.Parallel()
+	source := readE2ESource(t, repositoryE2EWiringFiles().harness)
+	start := strings.Index(source, "if ! go -C \"$ROOT_DIR\" run ./test/e2e/handcraftoci verify-certificate")
+	if start < 0 {
+		t.Fatal("TLS certificate verification command is missing")
+	}
+	end := strings.Index(source[start:], "\nfi\n")
+	if end < 0 {
+		t.Fatal("TLS certificate verification command is incomplete")
+	}
+	// A compiler or tool failure happens before certificate verification. It
+	// must remain visible instead of being reported as a DNS mismatch.
+	script := "go() { printf '%s\\n' 'fixture: verifier could not start' >&2; return 42; }\n" +
+		"fail() { printf '%s\\n' \"$*\" >&2; exit 1; }\n" +
+		"ROOT_DIR=. TLS_PROXY_CA_FILE=ca.crt TLS_PROXY_CERT_FILE=tls.crt TLS_PROXY_DNS_NAME=registry.test\n" +
+		source[start:start+end+4]
+	output, err := exec.Command("sh", "-eu", "-c", script).CombinedOutput()
+	if err == nil || !strings.Contains(string(output), "fixture: verifier could not start") {
+		t.Fatalf("verifier failure diagnostic was lost: error=%v, output=%s", err, output)
+	}
+}
+
 func TestKubernetesSupportImageResolverFollowsShiftedManifest(t *testing.T) {
 	t.Parallel()
 
