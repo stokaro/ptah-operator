@@ -615,9 +615,11 @@ func alProfileExpressionEqual(actual, expected string) bool {
 		if !ok || !strings.HasPrefix(actual, left+comparison) {
 			continue
 		}
-		got, err := strconv.ParseFloat(strings.TrimPrefix(actual, left+comparison), 64)
-		want, targetErr := strconv.ParseFloat(target, 64)
-		return err == nil && targetErr == nil && got == want
+		actualNumber, actualSuffix, _ := strings.Cut(strings.TrimPrefix(actual, left+comparison), " ")
+		targetNumber, targetSuffix, _ := strings.Cut(target, " ")
+		got, err := strconv.ParseFloat(actualNumber, 64)
+		want, targetErr := strconv.ParseFloat(targetNumber, 64)
+		return err == nil && targetErr == nil && got == want && actualSuffix == targetSuffix
 	}
 	return false
 }
@@ -631,7 +633,7 @@ func alProfileRuleTargets() map[string]alProfileRule {
 		alOperationStall:                {Expr: "max by (family, operation) (ptah_operator_active_operation_seconds) > 60"},
 		"PtahOperatorLockReleaseOwed":   {Expr: "max by (family) (ptah_operator_pending_lock_releases) > 0", For: "60s"},
 		alCertificateAlert:              {Expr: "min(ptah_operator_webhook_certificate_expiry_timestamp_seconds) - time() < 86400"},
-		"PtahOperatorPlanStoreLarge":    {Expr: "max(ptah_operator_stored_plan_bytes) > 134217728"},
+		"PtahOperatorPlanStoreLarge":    {Expr: `max(ptah_operator_stored_plan_bytes) > 134217728 or (max(ALERTS{alertname="PtahOperatorPlanStoreLarge", alertstate="firing"}) unless max(ptah_operator_stored_plan_bytes))`},
 		"PtahOperatorOperationsFailing": {Expr: "sum by (family, stage) (increase(ptah_operator_failures_total[5m])) > 3"},
 		alAdmissionAlert:                {Expr: `sum(increase(apiserver_admission_webhook_rejection_count{name=~".*operator\\.ptah\\.run", error_type="calling_webhook_error"}[5m])) > 0`},
 	}

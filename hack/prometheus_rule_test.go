@@ -168,6 +168,13 @@ func TestTheStateAlertsFireOnWhatTheyAreFor(t *testing.T) {
 	runPromtool(t, renderedPrometheusRuleWith(t, stateThresholds...), "state.test.yaml")
 }
 
+// A missing census is not evidence that retained plans were pruned. The
+// incident must keep its original start time and clear on a fresh low reading.
+func TestThePlanStoreAlertWaitsForObservedRecovery(t *testing.T) {
+	t.Parallel()
+	runPromtool(t, renderedPrometheusRuleWith(t, "monitoring.prometheusRule.planStoreBytesAbove=134217728"), "plan-store.test.yaml")
+}
+
 // renderedPrometheusRule is the one PrometheusRule the chart renders with the
 // rules on and the window set.
 func renderedPrometheusRule(t *testing.T) string {

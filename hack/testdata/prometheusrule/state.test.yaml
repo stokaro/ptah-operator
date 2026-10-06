@@ -157,6 +157,6 @@ tests:
           - exp_labels:
               severity: warning
             exp_annotations:
-              summary: "Retained schema plans hold 1.5GiB, over the budget set for them"
+              summary: "Retained schema plans exceeded their storage budget; recovery is not yet confirmed"
               description: "The operator prunes no plan. The runbook says which plans are pinned and how to export and delete the rest."
               runbook_url: "https://operator.ptah.run/edge/use/operations/#prune-plans"
