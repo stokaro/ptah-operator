@@ -82,7 +82,7 @@ func (s *scenarios) migrationName(index int) string {
 func (s *scenarios) secretFor(index int) string { return fmt.Sprintf(s.in.databaseSecret, index) }
 
 func (s *scenarios) execution() map[string]any {
-	return map[string]any{"activeDeadlineSeconds": int64(300), "failureRetryInterval": "10s", "connectTimeout": "30s"}
+	return map[string]any{"activeDeadlineSeconds": int64(900), "failureRetryInterval": "30s", "connectTimeout": "10s"}
 }
 
 func (s *scenarios) artifactSource(reference, policy string) map[string]any {
@@ -117,7 +117,7 @@ func (s *scenarios) schemaObject(index int) *unstructured.Unstructured {
 		"spec": map[string]any{
 			"target":    s.target(name, index),
 			"desired":   s.artifactSource(s.schemaReference(index, 0), s.in.schemaPolicy),
-			"policy":    map[string]any{"apply": "Always", "allowDestructive": false, "driftSeverity": "all"},
+			"policy":    map[string]any{"apply": "Always", "allowDestructive": false, "driftSeverity": "all", "lockTimeout": "30s"},
 			"interval":  s.load.Interval.String(),
 			"execution": s.execution(),
 		},

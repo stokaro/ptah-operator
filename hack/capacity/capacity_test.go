@@ -158,6 +158,23 @@ func TestHTTPSWorkloadDoesNotGrantPlainHTTP(t *testing.T) {
 	}
 }
 
+func TestCapacityUsesTheFrozenExecutionBaseline(t *testing.T) {
+	for _, profile := range []string{"soak", "backlog"} {
+		load, err := loadWorkload("../../support/capacity/" + profile + ".json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		s := &scenarios{in: inputs{namespace: "work", databaseSecret: "db-%d"}, load: load}
+		for _, object := range []map[string]any{s.schemaObject(0).Object, s.migrationObject("migration", 10, "Always", true).Object} {
+			spec := object["spec"].(map[string]any)
+			execution := spec["execution"].(map[string]any)
+			if execution["activeDeadlineSeconds"] != int64(900) || execution["connectTimeout"] != "10s" || execution["failureRetryInterval"] != "30s" || spec["policy"].(map[string]any)["lockTimeout"] != "30s" {
+				t.Fatalf("%s %s differs from the frozen execution baseline: %v", profile, object["kind"], spec)
+			}
+		}
+	}
+}
+
 func TestAPrefixMatchesOnlyWhereItIsAsked(t *testing.T) {
 	families, err := parseScrape([]byte(strings.Join([]string{
 		`# TYPE workqueue_depth gauge`,
