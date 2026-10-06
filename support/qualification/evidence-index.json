@@ -1315,5 +1315,68 @@
       "directory": "/home/buster/ptah-operator-evidence/020-qualification-2026-10-06"
     },
     "custody": "Private development copy with independently hash-verified download. Final encrypted custody, retention policy, and owner acceptance remain unassessed."
+  },
+  "capacityAPICleanupHints": {
+    "requirement": "#580 manager API demand on the unchanged twenty-resource steady fleet",
+    "conclusion": "Failed: an interior sixty-second window still exceeds 100 requests/s.",
+    "runtimeSourceCommit": "56270b39b83eb2cd295bf542adae65d0bd71af99",
+    "collectorSourceCommit": "56270b39b83eb2cd295bf542adae65d0bd71af99",
+    "runtimeImage": "e2e-registry.ptah-test-a-1-37-0-242-profile-1b5db851-0026e8302c.svc.cluster.local:5000/ptah-operator@sha256:e7c751de435c07f0dfab465aa3c639f3967c01622625a2a76c6caeca0cddd92c",
+    "runnerImage": "e2e-registry.ptah-test-a-1-37-0-242-profile-1b5db851-0026e8302c.svc.cluster.local:5000/ptah-runner@sha256:3c926b0b03baae569014ceae3522a0dde7a9c03555a645eede9773b536dde8c2",
+    "profileRevision": 39,
+    "environment": "Kubernetes 1.37.0, native Linux amd64, PostgreSQL, ten schemas and ten migrations",
+    "window": {
+      "name": "existing twenty-resource fleet API demand",
+      "start": "2026-10-06T21:40:58.144605Z",
+      "end": "2026-10-06T21:50:58.144605Z"
+    },
+    "samples": 121,
+    "slidingMinuteBounds": 108,
+    "maxRequestsPerSecondUpperBound": 247.11666666666667,
+    "thresholdRequestsPerSecond": 100,
+    "thresholdPassed": false,
+    "largestContainedWindowLowerBound": {
+      "start": "2026-10-06T21:41:03.177255+00:00",
+      "end": "2026-10-06T21:42:03.177255+00:00",
+      "firstSample": 1,
+      "lastSample": 12,
+      "requestsAtLeast": 11418,
+      "requestsPerSecondAtLeast": 190.3
+    },
+    "provenExceedance": {
+      "start": "2026-10-06T21:41:03.177255+00:00",
+      "end": "2026-10-06T21:42:03.177255+00:00",
+      "firstSample": 1,
+      "lastSample": 12,
+      "requestsAtLeast": 11418,
+      "requestsPerSecondAtLeast": 190.3
+    },
+    "monitorRequests": 726,
+    "change": "Keep unexpired cleanup retry hints at the existing 4096-entry bound. Prune expired entries instead of clearing the whole map. Roots without a hint still pass every live retention and deletion check.",
+    "validation": {
+      "originalRegression": "On the original code, a new root at the hint bound causes four premature API reads of a still-retained root. Both full-cache variants fail. The fixed code preserves deferral, stays bounded, and rechecks restored recovery pins at the deadline.",
+      "fixedRaceTests": [
+        "internal/resultcleanup",
+        "internal/resultretention"
+      ],
+      "vet": [
+        "internal/resultcleanup",
+        "internal/resultretention"
+      ],
+      "liveFleet": "All twenty original UIDs, specs and generations stayed unchanged; every slot refreshed under the fixed manager before measurement.",
+      "auditRestoration": "All original API-server manifests verified; owned audit files removed after retention."
+    },
+    "scope": "Only this steady API-demand window is assessed. No cold/backlog rerun, full soak, retention plateau, fault matrix, architecture matrix, final artifacts, or #580/#242 closure is claimed.",
+    "archive": {
+      "name": "capacity-api-cleanup-hints-2026-10-06.tar.gz",
+      "sha256": "f3acf6731691c6fa6ff3da1ca5abba3b5381b57e41897f7c5cbffda7c19f165d",
+      "bytes": 1384482,
+      "memberCount": 45,
+      "downloadVerified": true,
+      "transport": "authenticated SSH",
+      "hostAlias": "diabolocom-buster",
+      "directory": "/home/buster/ptah-operator-evidence/020-qualification-2026-10-06"
+    },
+    "custody": "Private development copy with independently hash-verified download. Final encrypted custody, retention policy, and owner acceptance remain unassessed."
   }
 }
