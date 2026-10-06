@@ -94,6 +94,7 @@ class CommandTests(unittest.TestCase):
 class FakeBootstrap(Bootstrap):
     def __init__(self, state):
         super().__init__(state, {'E2E_KUBECONFIG': '/unused', 'E2E_TEST_NAMESPACE': 'shared-lab',
+                               'E2E_CONTROLLER_NAME': 'lab-controller',
                                'E2E_POSTGRES_IMAGE': 'postgres@sha256:fixture',
                                'E2E_MYSQL_IMAGE': 'mysql@sha256:fixture'})
         self.objects = {}
@@ -131,8 +132,14 @@ class FakeBootstrap(Bootstrap):
             raise RuntimeError('CREATE response lost')
         return copy.deepcopy(value)
 
-    def command(self, args, value=None, timeout=45):
+    def command(self, args, value=None, timeout=45, kubeconfig=None):
         self.commands.append((list(args), value))
+        if args[:2] == ['auth', 'whoami']:
+            if kubeconfig != '/approver-config':
+                raise AssertionError('identity must come from the approver kubeconfig')
+            return b'{"status":{"userInfo":{"username":"capacity-approver"}}}'
+        if args[:2] == ['get', 'clusterrole']:
+            return b'clusterrole.rbac.authorization.k8s.io/lab-controller-approver'
         if args[0] == 'version':
             return b'{"serverVersion":{"gitVersion":"v1.37.0"}}'
         if args[:2] == ['get', 'namespace']:
@@ -164,6 +171,26 @@ class BootstrapTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.bootstrap = FakeBootstrap(Path(self.temp.name) / 'state.json')
+
+    def test_distinct_approver_is_bound_only_in_owned_workload_namespaces(self):
+        b = self.bootstrap
+        b.env['CAPACITY_APPROVER_KUBECONFIG'] = '/approver-config'
+        namespaces = b.prepare({'schemas': 1, 'migrations': 1})
+        bindings = [obj for obj in b.objects.values() if obj['kind'] in ('RoleBinding', 'ClusterRoleBinding')]
+        self.assertEqual(len(bindings), 2)
+        self.assertEqual({obj['metadata']['namespace'] for obj in bindings}, set(namespaces))
+        for binding in bindings:
+            self.assertEqual(binding['kind'], 'RoleBinding')
+            self.assertEqual(binding['roleRef'], {'apiGroup': 'rbac.authorization.k8s.io',
+                             'kind': 'ClusterRole', 'name': 'lab-controller-approver'})
+            self.assertEqual(binding['subjects'], [{'apiGroup': 'rbac.authorization.k8s.io',
+                             'kind': 'User', 'name': 'capacity-approver'}])
+        self.assertEqual(b.state['approver']['username'], 'capacity-approver')
+
+    def test_default_workload_serviceaccount_receives_no_approval_binding(self):
+        b = self.bootstrap
+        b.prepare({'schemas': 1, 'migrations': 1})
+        self.assertFalse(any(obj['kind'] in ('RoleBinding', 'ClusterRoleBinding') for obj in b.objects.values()))
 
     def test_mysql_uses_database_scoped_users_and_matching_service(self):
         b = self.bootstrap

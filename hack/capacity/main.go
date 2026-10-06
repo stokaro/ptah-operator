@@ -53,6 +53,7 @@ func run() error {
 	var (
 		faultBaselinePath = flag.String("retention-fault-baseline", "", "run only the retention fault on the exact resumed fleet in a prior maintenance inventory; requires a fresh output and checkpoint directory")
 		kubeconfig        = flag.String("kubeconfig", os.Getenv("KUBECONFIG"), "kubeconfig of the lab cluster")
+		approverConfig    = flag.String("approver-kubeconfig", os.Getenv("CAPACITY_APPROVER_KUBECONFIG"), "optional same-cluster kubeconfig for a distinct approval writer")
 		checkpointPath    = flag.String("checkpoint-probe", "", "Python database verifier for soak checkpoints")
 		checkpointState   = flag.String("checkpoint-state", "", "owned capacity database state for soak checkpoints")
 		catalogPath       = flag.String("inputs", "", "populated per-slot input catalog prepared by the capacity harness")
@@ -171,9 +172,16 @@ func run() error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	approver, actors, err := capacityApprover(ctx, *approverConfig, config, dynamicClient)
+	if err != nil {
+		return err
+	}
 	environment, err := describeEnvironment(ctx, clientset, in)
 	if err != nil {
 		return err
+	}
+	if actors != nil {
+		environment["approvalActors"] = actors
 	}
 	if in.catalog != nil {
 		environment["inputCatalogSHA256"] = catalogDigest
@@ -240,7 +248,7 @@ func run() error {
 	steps := &scenarios{faultBaseline: baseline, faultProbe: faultProbe, sampleSnapshot: func() []sample { samples, _ := watch.snapshot(); return samples }, checkpoint: checkpoint, evidenceDir: *outDir, restartJobs: func() []jobRecord {
 		_, jobs := watch.snapshot()
 		return jobs
-	}, inputReader: inputReader, in: in, load: load, clientset: clientset, dynamic: dynamicClient, recorders: recorders}
+	}, inputReader: inputReader, in: in, load: load, clientset: clientset, dynamic: dynamicClient, approver: approver, recorders: recorders}
 	if baseline != nil {
 		archive, e := writeRetentionEvidence(*outDir, "retention-fault-baseline.json", baseline)
 		setupErr = errors.Join(setupErr, e)

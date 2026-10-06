@@ -281,7 +281,7 @@ func (s *scenarios) approvalBacklog(ctx context.Context) (err error) {
 		}
 		approval.SetName("capacity-backlog-" + string(m.Expected.GetUID()))
 		submitted := time.Now().UTC()
-		m.Approval, err = s.dynamic.Resource(backlogApprovalResource(m.Family)).Namespace(m.Expected.GetNamespace()).Create(admitCtx, approval, metav1.CreateOptions{})
+		m.Approval, err = s.approvalWriter().Resource(backlogApprovalResource(m.Family)).Namespace(m.Expected.GetNamespace()).Create(admitCtx, approval, metav1.CreateOptions{})
 		if err != nil {
 			return err
 		}

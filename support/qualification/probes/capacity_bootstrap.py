@@ -49,7 +49,7 @@ class Bootstrap:
             output.write('\n')
         temporary.replace(self.path)
 
-    def command(self, args, value=None, timeout=45):
+    def command(self, args, value=None, timeout=45, kubeconfig=None):
         data = json.dumps(value).encode() if isinstance(value, dict) else value
         owned_create = (args == ['create', '-f', '-', '-o', 'json'] and
                         isinstance(value, dict) and value.get('kind') != 'ResourceQuota' and
@@ -62,7 +62,7 @@ class Bootstrap:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise RuntimeError(failure)
-            result = subprocess.run(['kubectl', '--kubeconfig', self.env['E2E_KUBECONFIG'],
+            result = subprocess.run(['kubectl', '--kubeconfig', kubeconfig or self.env['E2E_KUBECONFIG'],
                                      '--request-timeout=30s', *args], input=data,
                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                     timeout=remaining, check=False)
@@ -118,6 +118,18 @@ class Bootstrap:
         return {'apiVersion': versions.get(kind, 'v1'), 'kind': kind,
                 'metadata': {'name': name, 'namespace': namespace}, **fields}
 
+    def approver(self):
+        path = self.env.get('CAPACITY_APPROVER_KUBECONFIG')
+        if not path:
+            return None
+        review = json.loads(self.command(['auth', 'whoami', '-o', 'json'], kubeconfig=path))
+        username = review.get('status', {}).get('userInfo', {}).get('username')
+        if not isinstance(username, str) or not username:
+            raise ValueError('approver SelfSubjectReview returned no username')
+        role = self.env['E2E_CONTROLLER_NAME'] + '-approver'
+        self.command(['get', 'clusterrole', role, '-o', 'name'])
+        return {'username': username, 'clusterRole': role}
+
     def prepare(self, workload):
         if self.path.exists():
             raise RuntimeError('state file already exists; refusing to replace an ownership journal')
@@ -133,6 +145,7 @@ class Bootstrap:
         if any(type(n) is not int or n < 0 for n in counts) or sum(counts) == 0:
             raise ValueError('workload must declare nonnegative family counts and at least one resource')
         # Read all shared prerequisites before creating anything.
+        approver = self.approver()
         source = self.env['E2E_TEST_NAMESPACE']
         dependencies = [self.read('secret', name, source) for name in ('demo-registry', 'demo-registry-pull')]
         for name in ('demo-verification-policy', 'demo-migration-verification-policy'):
@@ -151,11 +164,22 @@ class Bootstrap:
         namespaces = [prefix + '-a', prefix + '-b']
         self.state.update(fixtureNamespace=fixture, workloadNamespaces=namespaces,
                           schemas=counts[0], migrations=counts[1])
+        if approver:
+            self.state['approver'] = approver
         self.save()
         self.namespace(fixture, minor, False)
         self.copy(dependencies[1], fixture)
         for namespace in namespaces:
             self.namespace(namespace, minor, True)
+            if approver:
+                # Grant only the chart's approval permissions in these new
+                # namespaces. Namespace cleanup removes the binding as well.
+                self.create({'apiVersion': 'rbac.authorization.k8s.io/v1', 'kind': 'RoleBinding',
+                             'metadata': {'name': 'capacity-approver', 'namespace': namespace},
+                             'roleRef': {'apiGroup': 'rbac.authorization.k8s.io', 'kind': 'ClusterRole',
+                                         'name': approver['clusterRole']},
+                             'subjects': [{'apiGroup': 'rbac.authorization.k8s.io', 'kind': 'User',
+                                           'name': approver['username']}]})
             for dependency in dependencies:
                 self.copy(dependency, namespace)
             # This ServiceAccount exists only inside our freshly created namespace.

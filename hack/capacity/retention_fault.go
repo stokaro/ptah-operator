@@ -159,7 +159,7 @@ func (s *scenarios) createFaultApproval(ctx context.Context, family string, orig
 		resource = schemaApprovalResource
 	}
 	approval.SetName(fmt.Sprintf("capacity-retention-%s-g%d", family, original.GetGeneration()))
-	created, err := s.dynamic.Resource(resource).Namespace(original.GetNamespace()).Create(ctx, approval, metav1.CreateOptions{})
+	created, err := s.approvalWriter().Resource(resource).Namespace(original.GetNamespace()).Create(ctx, approval, metav1.CreateOptions{})
 	if err != nil {
 		return nil, err
 	}

@@ -60,6 +60,7 @@ type scenarios struct {
 	load        workload
 	clientset   kubernetes.Interface
 	dynamic     dynamic.Interface
+	approver    dynamic.Interface
 	windows     []window
 	recorders   []*cycleRecorder
 }
