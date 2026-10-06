@@ -1549,5 +1549,76 @@
       "directory": "/home/buster/ptah-operator-evidence/020-qualification-2026-10-06"
     },
     "custody": "Private development copy with independently hash-verified download. Final encrypted custody, retention policy, and owner acceptance remain unassessed."
+  },
+  "capacityAPIReadReduction": {
+    "requirement": "#580 manager API demand on the unchanged twenty-resource steady fleet",
+    "conclusion": "Failed: an interior sixty-second window still exceeds 100 requests/s.",
+    "runtimeSourceCommit": "99b1d825e8881510bbf206ff40ebae854a8e7c3d",
+    "collectorSourceCommit": "99b1d825e8881510bbf206ff40ebae854a8e7c3d",
+    "runtimeImage": "e2e-registry.ptah-test-a-1-37-0-242-profile-1b5db851-0026e8302c.svc.cluster.local:5000/ptah-operator@sha256:233893f4ba25e8b2dfd113334f527a05a972919f1a69d7344ab6df74035c33a8",
+    "runnerImage": "e2e-registry.ptah-test-a-1-37-0-242-profile-1b5db851-0026e8302c.svc.cluster.local:5000/ptah-runner@sha256:3c926b0b03baae569014ceae3522a0dde7a9c03555a645eede9773b536dde8c2",
+    "profileRevision": 39,
+    "environment": "Kubernetes 1.37.0, native Linux amd64, PostgreSQL, ten schemas and ten migrations",
+    "window": {
+      "name": "existing twenty-resource fleet API demand",
+      "start": "2026-10-06T23:24:49.747822Z",
+      "end": "2026-10-06T23:34:49.747822Z"
+    },
+    "samples": 121,
+    "slidingMinuteBounds": 108,
+    "maxRequestsPerSecondUpperBound": 249.11666666666667,
+    "thresholdRequestsPerSecond": 100,
+    "thresholdPassed": false,
+    "largestContainedWindowLowerBound": {
+      "start": "2026-10-06T23:24:54.846117+00:00",
+      "end": "2026-10-06T23:25:54.846117+00:00",
+      "firstSample": 1,
+      "lastSample": 12,
+      "requestsAtLeast": 11719,
+      "requestsPerSecondAtLeast": 195.31666666666666
+    },
+    "provenExceedance": {
+      "start": "2026-10-06T23:24:54.846117+00:00",
+      "end": "2026-10-06T23:25:54.846117+00:00",
+      "firstSample": 1,
+      "lastSample": 12,
+      "requestsAtLeast": 11719,
+      "requestsPerSecondAtLeast": 195.31666666666666
+    },
+    "monitorRequests": 726,
+    "change": "Validate the Pod returned by the uncached cardinality LIST instead of an earlier GET. Skip young retirement markers using their API-assigned creation timestamp without consuming retry-hint entries. Publication authority and final deletion checks remain live.",
+    "validation": {
+      "originalRegression": "The original code reads each Pod twice and does not validate the newer listed Pod contents. It also performs four unnecessary reads and stores a retry hint for an unexpired retirement marker. The fixed tests reject changed listed Pod contents for both families, avoid both redundant reads, and preserve a restored active claim at the metadata deadline.",
+      "fixedRaceTests": [
+        "internal/resultauthority",
+        "internal/resultcredentials",
+        "internal/resultcleanup",
+        "internal/resultretention",
+        "internal/resultservice",
+        "internal/controllerwrite"
+      ],
+      "vet": [
+        "internal/resultauthority",
+        "internal/resultcredentials",
+        "internal/resultcleanup",
+        "internal/resultretention",
+        "internal/resultservice",
+        "internal/controllerwrite"
+      ],
+      "liveFleet": "All twenty original UIDs, specs and generations stayed unchanged; every slot refreshed under the fixed manager before measurement.",
+      "auditRestoration": "All original API-server manifests were restored before this run; the native measurement does not run with audit enabled."
+    },
+    "scope": "Only this steady API-demand window is assessed. No cold/backlog rerun, full soak, retention plateau, fault matrix, architecture matrix, final artifacts, or #580/#242 closure is claimed.",
+    "archive": {
+      "name": "capacity-api-read-reduction-2026-10-06.tar.gz",
+      "sha256": "2531eb696442ae5ff24470d9a0ac90342451c3907b5e7b6e8d8a89167c08a961",
+      "bytes": 114432,
+      "memberCount": 29,
+      "downloadVerified": true,
+      "transport": "authenticated SSH",
+      "hostAlias": "diabolocom-buster",
+      "directory": "/home/buster/ptah-operator-evidence/020-qualification-2026-10-06"
+    },
+    "custody": "Private development copy with independently hash-verified download. Final encrypted custody, retention policy, and owner acceptance remain unassessed."
   }
 }
