@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-10-06T00:39:42.611588+00:00",
-  "profileSourceCommit": "b549924f777dadd2910b908a95acef4831ec0107",
+  "frozenAt": "2026-10-06T07:27:42.197931+00:00",
+  "profileSourceCommit": "a8b90b5816e9e45d6ba97a1bf006918896d892e3",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
   "sourceFiles": [
@@ -12,7 +12,7 @@
     },
     {
       "path": "support/qualification/0.2.0-coverage.md",
-      "sha256": "f933e38cd4978158e5df89d86d12e75837bbae4e9c9356676bc2692a1113bd19"
+      "sha256": "2ba82aaf557ae9d5fc7824106347bb9a277fb54b50b7810530c47d7cb97fa7ad"
     },
     {
       "path": "support/qualification/0.2.0-monitoring.yaml",
@@ -28,7 +28,7 @@
     },
     {
       "path": "support/e2e-suites.json",
-      "sha256": "b2bfed5a8382cba8be0293af6c77d689976f2dc9b5db85561586767387c32566"
+      "sha256": "e36f09ced6f8725a433dae202a0f7a21149143ebbe2de0512edf75565b186967"
     },
     {
       "path": "support/ptah.json",
@@ -41,8 +41,8 @@
   ],
   "functionalMatrix": {
     "path": "support/qualification/0.2.0-functional-matrix.md",
-    "sha256": "25f068d49b1d32247662b1dab1c7cb40f456e73befa3e743bdce18790674c306",
-    "generatedFromCommit": "ecbafafe89392e8d31671b8083a18d8c8f1bc2e3",
+    "sha256": "4ec061e237aa2c1150c318f447ec639eddc901b77fea1646b1e9ab3f55ef3ed3",
+    "generatedFromCommit": "a8b90b5816e9e45d6ba97a1bf006918896d892e3",
     "command": "go run ./hack/acceptancecoverage",
     "kubernetesMinors": [
       "1.35",
@@ -56,7 +56,7 @@
     "cellsPerPlatform": 27,
     "requiredCells": 54,
     "additionalRequirements": "Q-01 through Q-12 in support/qualification/0.2.0-coverage.md remain required; the functional matrix alone is insufficient.",
-    "sourceChanges": "Move schema faults to their own suite and group certificate rotation, both reference-data engines, and certificate-expiry alerts in certificates. Nine suites replace eight to shorten the critical path. All 17 phases, 345 scenario/engine/family rows, supported minors and platforms, observation windows, and Q-01 through Q-12 targets remain unchanged."
+    "sourceChanges": "Move plan-store alerting from lifecycle to certificates and PostgreSQL reference data from certificates to data-plane. Master CI run 37420035400 passed in 92m45s; its slowest lifecycle spent 20m02s on plan-store alerting before the upgrade fault window. Rebalance the existing nine suites without adding phases or scenarios. All 17 phases, 345 scenario/engine/family rows, supported minors and platforms, observation windows, and Q-01 through Q-12 targets remain unchanged."
   },
   "publishedPredecessors": {
     "checkedAt": "2026-09-29T19:00:03+00:00",
@@ -67,10 +67,10 @@
     "disposition": "No published predecessor. Synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 37,
+  "revision": 38,
   "supersedes": {
-    "freezeCommit": "b1cef6f7e7f187145980f20666e70401e77f5429",
-    "sha256": "3341ae5334aaad084ccdd7b3e40f7480791010b08833e155a2d37085afe077f9"
+    "freezeCommit": "415d0ad348a2347ce8f5ed3ad151182f82585b21",
+    "sha256": "04f176aef55d102cc83f98268d040a75ef8d53ef037a681c98c8a7ae36cf6b3f"
   },
-  "revisionReason": "Move schema faults to their own suite and group certificate rotation, both reference-data engines, and certificate-expiry alerts in certificates. Nine suites replace eight to shorten the critical path. All 17 phases, 345 scenario/engine/family rows, supported minors and platforms, observation windows, and Q-01 through Q-12 targets remain unchanged. This revision records no acceptance result; preserve the prior freeze at the superseded commit."
+  "revisionReason": "Move plan-store alerting from lifecycle to certificates and PostgreSQL reference data from certificates to data-plane. Master CI run 37420035400 passed in 92m45s; its slowest lifecycle spent 20m02s on plan-store alerting before the upgrade fault window. Rebalance the existing nine suites without adding phases or scenarios. All 17 phases, 345 scenario/engine/family rows, supported minors and platforms, observation windows, and Q-01 through Q-12 targets remain unchanged. This revision records no acceptance result; preserve the prior freeze at the superseded commit."
 }
