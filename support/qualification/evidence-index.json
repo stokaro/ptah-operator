@@ -466,9 +466,13 @@
       "name": "alerting-startup-native-2026-10-06.tar.gz",
       "sha256": "96dda47b64f64925e09cff92cd4f9695502421d5370c1dd51ea26f16e7b8c8ac",
       "memberCount": 92,
-      "bytes": 1172056
+      "bytes": 1172056,
+      "downloadVerified": true,
+      "transport": "authenticated SSH",
+      "hostAlias": "diabolocom-buster",
+      "directory": "/home/buster/ptah-operator-evidence/020-qualification-2026-10-06"
     },
-    "custody": "Private local development archive; not uploaded or accepted as final retention.",
+    "custody": "Private development copy with independently hash-verified download. Final encrypted custody, retention policy, and owner acceptance remain unassessed.",
     "scope": "All six native alerting scenarios completed, including both upgrade incidents and recovery. This fixes the missing pre-fault scrape baseline in CI run 37437296857. Independent schema-faults and certificate-suite failures in that run remain open; this is not a full CI duration or production acceptance."
   },
   "nativePlanStoreRecovery": {
@@ -495,9 +499,13 @@
       "name": "plan-store-recovery-native-2026-10-06.tar.gz",
       "sha256": "ba57ee54c1305b2c1c9092d224fb5829c595e5853aaa8f0f6a606a4336298259",
       "memberCount": 9,
-      "bytes": 248663
+      "bytes": 248663,
+      "downloadVerified": true,
+      "transport": "authenticated SSH",
+      "hostAlias": "diabolocom-buster",
+      "directory": "/home/buster/ptah-operator-evidence/020-qualification-2026-10-06"
     },
-    "custody": "Private local development archive; no upload or final retention acceptance.",
+    "custody": "Private development copy with independently hash-verified download. Final encrypted custody, retention policy, and owner acceptance remain unassessed.",
     "scope": "All four native certificate/storage scenarios passed, including threshold crossing, a continuous storage incident, exact exports, safe pruning, and certificate failure/recovery. The original rule fails the pinned Prometheus regression when its gauge disappears; the corrected rule preserves the original firing state and clears on a fresh low reading. This addresses the certificates 1.36 failure in CI run 37437296857, but does not claim a new CI matrix or production acceptance."
   },
   "nativeTransientDelivery": {
@@ -523,9 +531,13 @@
       "name": "running-apply-delivery-native-2026-10-06.tar.gz",
       "sha256": "e6861e21b713bc748e6e1167b6e01b9778e7e2641b7f607b83348bac6cd77e9b",
       "memberCount": 13,
-      "bytes": 12959
+      "bytes": 12959,
+      "downloadVerified": true,
+      "transport": "authenticated SSH",
+      "hostAlias": "diabolocom-buster",
+      "directory": "/home/buster/ptah-operator-evidence/020-qualification-2026-10-06"
     },
-    "custody": "Private local development archive; not uploaded or accepted as final retention.",
+    "custody": "Private development copy with independently hash-verified download. Final encrypted custody, retention policy, and owner acceptance remain unassessed.",
     "scope": "The local TLS runner regression fails after four attempts in 3.005 seconds on the original source and passes after the fix, with one executor invocation. The unchanged native running-Apply scenario then passed on PostgreSQL and MySQL: original Job/Pod identities, persisted results, complete execution horizons, new-epoch convergence, SQL audits, and no replay. This is not the complete schema-approvals phase or a CI matrix verdict."
   },
   "nativePodTokenUploadBounds": {
@@ -597,9 +609,13 @@
       "name": "pod-token-upload-budget-native-2026-10-06.tar.gz",
       "sha256": "db9ca058916f1fb05f0746419365ed2dc0b854f666bc70ec60bcbfb88031b8c1",
       "memberCount": 40,
-      "bytes": 79967
+      "bytes": 79967,
+      "downloadVerified": true,
+      "transport": "authenticated SSH",
+      "hostAlias": "diabolocom-buster",
+      "directory": "/home/buster/ptah-operator-evidence/020-qualification-2026-10-06"
     },
-    "custody": "Private local development archive; no upload or final retention acceptance.",
+    "custody": "Private development copy with independently hash-verified download. Final encrypted custody, retention policy, and owner acceptance remain unassessed.",
     "scope": "Replaces the certificate-based development upload-bound proof with Pod-token execution. Does not close the remaining issue 586 final integration or the artifact, architecture, capacity, and owner-acceptance requirements. The first attempt exposed an accepted empty-selector admission defect under issue 578; the successful peer omits that temporary selector. The separate Job-builder correction is covered by nativeEmptyNodeSelector."
   },
   "nativeEmptyNodeSelector": {
@@ -649,9 +665,13 @@
       "name": "empty-selector-native-2026-10-06.tar.gz",
       "sha256": "ec6d4f119ed281ea8626874b246df90684f6d6fcf2addbf6cfa53baa397e6f78",
       "memberCount": 33,
-      "bytes": 43517
+      "bytes": 43517,
+      "downloadVerified": true,
+      "transport": "authenticated SSH",
+      "hostAlias": "diabolocom-buster",
+      "directory": "/home/buster/ptah-operator-evidence/020-qualification-2026-10-06"
     },
-    "custody": "Private local development archive; no upload or final retention acceptance.",
+    "custody": "Private development copy with independently hash-verified download. Final encrypted custody, retention policy, and owner acceptance remain unassessed.",
     "scope": "Two fresh PostgreSQL databases and resources retain an explicit empty selector in API storage, complete 12 native Jobs from the fixed manager revision, execute one Apply each, and reach verified database state without Pod restarts. This closes the reproduced empty-selector defect, not the full issue 578 matrix or final artifact qualification."
   },
   "capacityDistinctApproverClient": {
@@ -677,9 +697,13 @@
       "name": "capacity-distinct-approver-api-2026-10-06.tar.gz",
       "sha256": "f789c45b7415438349f5a1fa06cdd0b67c2498a354914330d93faba90124af44",
       "memberCount": 20,
-      "bytes": 5799
+      "bytes": 5799,
+      "downloadVerified": true,
+      "transport": "authenticated SSH",
+      "hostAlias": "diabolocom-buster",
+      "directory": "/home/buster/ptah-operator-evidence/020-qualification-2026-10-06"
     },
-    "custody": "Private local development archive; no final retention acceptance.",
+    "custody": "Private development copy with independently hash-verified download. Final encrypted custody, retention policy, and owner acceptance remain unassessed.",
     "scope": "Real API-server admission with stored fixture objects; no controller, database execution, Linux arm64, soak, or complete frozen-profile proof. Temporary kubeconfigs were removed and the isolated API server stopped."
   },
   "capacitySignedRegistryPreparation": {
@@ -703,9 +727,13 @@
       "name": "capacity-signed-registry-preparation-2026-10-06.tar.gz",
       "sha256": "162bf9eb00e398dd8ac2700fe74ecbbf026278b26b4278a80437c4da959ed8f4",
       "members": 98,
-      "bytes": 18301
+      "bytes": 18301,
+      "downloadVerified": true,
+      "transport": "authenticated SSH",
+      "hostAlias": "diabolocom-buster",
+      "directory": "/home/buster/ptah-operator-evidence/020-qualification-2026-10-06"
     },
-    "custody": "Private local development archive; no final retention acceptance. Private keys and registry credentials are excluded.",
+    "custody": "Private development copy with independently hash-verified download. Final encrypted custody, retention policy, and owner acceptance remain unassessed.",
     "cleanup": "Both owned registry containers, their anonymous volumes, and their exact SSH tunnels were removed; the preexisting image was preserved.",
     "scope": "A native Linux amd64 registry and native Darwin arm64 clients exercised preparation. No Kubernetes workload, database execution, Linux arm64 acceptance, or full soak is claimed. The configured HTTPS capacity workload still needs installed execution."
   }
