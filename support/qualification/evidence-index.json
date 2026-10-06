@@ -1199,5 +1199,64 @@
     },
     "scope": "This is one Kubernetes/engine/architecture cell. It does not establish soak, churn/retention plateau, overload, remaining fault/recovery cases, other cells, final artifact applicability or #580/#242 closure. Earlier failed attempts remain retained.",
     "custody": "Private development copy with independently hash-verified download. Final encrypted custody, retention policy, and owner acceptance remain unassessed."
+  },
+  "capacityAPIDemandFailure": {
+    "requirement": "#580 API demand at most 100 requests/s across both manager identities in every 60-second window",
+    "conclusion": "Failed: an interior 60-second window contains more than 100 requests/s even using a conservative lower bound.",
+    "runtimeSourceCommit": "1b5db851859cb72793f8169e0cbaef4ad7a24556",
+    "collectorSourceCommit": "4c85b1d769ddec3adb73a48824947aa7406dfd62",
+    "reducerSourceCommit": "5c848bbe91bec226ac968f3dc98326c18244d7bf",
+    "profileRevision": 39,
+    "environment": "Kubernetes 1.37.0, native Linux amd64, PostgreSQL, unchanged twenty-resource fleet after approval backlog",
+    "window": {
+      "name": "existing twenty-resource fleet API demand",
+      "start": "2026-10-06T20:35:07.381032Z",
+      "end": "2026-10-06T20:45:07.381032Z"
+    },
+    "samples": 121,
+    "monitorRequests": 726,
+    "monitorTrafficScope": "Recorded separately by the probe transport. Manager REST counters do not include these external requests; reads performed by the manager for each scrape remain counted.",
+    "managerProcesses": [
+      {
+        "podUID": "81e8981c-60ff-4ceb-b8f5-0db1f99c9bd2",
+        "containerID": "containerd://428b46f7e36a2adf7420bd71b4a5a380acb1e6c607600c393931b683519f0a34",
+        "containerStartedAt": "2026-10-06T20:38:42+02:00",
+        "processStartedAt": 1791311922.7,
+        "restartCount": 0
+      },
+      {
+        "podUID": "b0c1b5a8-49de-45de-9a8c-f0698d62abd4",
+        "containerID": "containerd://6b55a2e9d75b3fc51d8290d83f7fa00271dc2716ec1d9bf3bf9e0bd290d78208",
+        "containerStartedAt": "2026-10-06T20:38:42+02:00",
+        "processStartedAt": 1791311922.7,
+        "restartCount": 0
+      }
+    ],
+    "slidingMinuteBounds": 108,
+    "maxRequestsPerSecondUpperBound": 180.43333333333334,
+    "provenExceedance": {
+      "start": "2026-10-06T20:43:02.459207+00:00",
+      "end": "2026-10-06T20:44:02.459207+00:00",
+      "firstSample": 95,
+      "lastSample": 106,
+      "requestsAtLeast": 8849,
+      "requestsPerSecondAtLeast": 147.48333333333332
+    },
+    "originalFailure": [
+      "sample 44 manager ptah-operator-ptah-operator-57ccf4967d-6hbn4 has a reset or invalid counter"
+    ],
+    "correction": "The reducer previously coupled API demand to unrelated queue histogram continuity. Process identities and API counters are continuous; the queue reset remains invalid for queue evidence. The fixed reducer reuses the original samples without rerunning the workload.",
+    "scope": "No capacity acceptance or #580/#242 closure. No assertion that an upper bound above the threshold alone proves an exceedance; the separate contained-window lower bound does.",
+    "archive": {
+      "name": "capacity-api-demand-2026-10-06.tar.gz",
+      "sha256": "934eab643dca5b1327e26ff11a3c976fe7ac4aa83568b6ead8d35aa80ca43c31",
+      "bytes": 61048,
+      "memberCount": 11,
+      "downloadVerified": true,
+      "transport": "authenticated SSH",
+      "hostAlias": "diabolocom-buster",
+      "directory": "/home/buster/ptah-operator-evidence/020-qualification-2026-10-06"
+    },
+    "custody": "Private development copy with independently hash-verified download. Final encrypted custody, retention policy, and owner acceptance remain unassessed."
   }
 }
