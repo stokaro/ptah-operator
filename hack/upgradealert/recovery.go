@@ -11,6 +11,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -98,7 +99,13 @@ func (v *recoveryVerifier) verify(ctx context.Context, c client.Client, s State)
 		// An actual server dry run traverses admission. It changes no stored
 		// spec, status, generation or authorization.
 		if err := c.Patch(ctx, object, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{}), client.DryRunAll); err != nil {
-			delete(v.probes, probe.UID)
+			// A status write can race this optimistic dry run without undoing
+			// the post-hook progress already verified for this generation. Keep
+			// that boundary on conflict, but require fresh state and successful
+			// admission on the next attempt before reporting recovery.
+			if !apierrors.IsConflict(err) {
+				delete(v.probes, probe.UID)
+			}
 			pending = fmt.Errorf("candidate admission probe: %w", err)
 			continue
 		}
