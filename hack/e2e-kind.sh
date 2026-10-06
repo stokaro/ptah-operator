@@ -756,6 +756,37 @@ image_identity() {
 	docker --context "$DOCKER_CONTEXT" image inspect --format '{{ .Id }}' "$1" 2>/dev/null
 }
 
+# The classic image store identifies an image by its config; containerd uses
+# its manifest. Accept that difference only when the archive's authenticated
+# manifest binds the two digests. A tag, role label or unchecked JSON is not
+# evidence that a different loaded identity contains the prepared image.
+image_identity_matches_archive() (
+	identity_archive=$1
+	identity_expected=$2
+	identity_loaded=$3
+	[ "$identity_expected" != "$identity_loaded" ] || return 0
+	for identity_digest in "$identity_expected" "$identity_loaded"; do
+		printf '%s\n' "$identity_digest" | grep -Eq '^sha256:[0-9a-f]{64}$' || return 1
+	done
+	identity_document=$WORK_DIR/image-identity-manifest.json
+	for identity_manifest in "$identity_expected" "$identity_loaded"; do
+		identity_config=$identity_expected
+		[ "$identity_manifest" != "$identity_expected" ] || identity_config=$identity_loaded
+		tar -xOf "$identity_archive" "blobs/sha256/${identity_manifest#sha256:}" \
+			>"$identity_document" 2>/dev/null || continue
+		[ "sha256:$(sha256 <"$identity_document")" = "$identity_manifest" ] || continue
+		jq -e --arg config "$identity_config" '
+          .schemaVersion == 2 and
+          (.mediaType == "application/vnd.oci.image.manifest.v1+json" or
+           .mediaType == "application/vnd.docker.distribution.manifest.v2+json") and
+          .config.digest == $config and
+          (.config.mediaType == "application/vnd.oci.image.config.v1+json" or
+           .config.mediaType == "application/vnd.docker.container.image.v1+json")
+        ' "$identity_document" >/dev/null 2>&1 && return 0
+	done
+	return 1
+)
+
 image_label_value() {
 	docker --context "$DOCKER_CONTEXT" image inspect \
 		--format "{{ index .Config.Labels \"$2\" }}" "$1" 2>/dev/null
@@ -804,7 +835,8 @@ load_prebuilt_images() {
 			--input "$E2E_PREBUILT_IMAGE_DIR/$prebuilt_file" >/dev/null ||
 			fail "the $prebuilt_role image could not be loaded from $prebuilt_file"
 		prebuilt_loaded=$(image_identity "$prebuilt_reference")
-		[ "$prebuilt_loaded" = "$prebuilt_identity" ] ||
+		image_identity_matches_archive "$E2E_PREBUILT_IMAGE_DIR/$prebuilt_file" \
+			"$prebuilt_identity" "$prebuilt_loaded" ||
 			fail "the loaded $prebuilt_role image is $prebuilt_loaded and the manifest declares $prebuilt_identity"
 		[ "$(image_label_value "$prebuilt_reference" ptah.run/e2e-role)" = "$prebuilt_role" ] ||
 			fail "the loaded $prebuilt_role image does not declare that role"
