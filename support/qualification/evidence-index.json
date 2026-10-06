@@ -402,5 +402,48 @@
       "directory": "/home/buster/ptah-operator-evidence/020-qualification-2026-10-06"
     },
     "scope": "Complete default E2E matrix and source checks. Preparation is excluded from phase coverage. Focused historical probes retain their own source identities; this run does not replace the remaining changed-authentication proof review, ARM64 runtime, production-artifact, restore, capacity, or final owner acceptance obligations."
+  },
+  "nativeSuiteRebalance": {
+    "requirement": "Local validation of the existing acceptance suite regrouping for the 90-minute CI target",
+    "harnessSourceCommit": "b1c35d6068e98301b9b7140f36e056138b00871b",
+    "runtimeSourceCommit": "630c4af8c4ca23e94710fc8353fbda85692f6700",
+    "runtimeArchitecture": "linux/amd64",
+    "kubernetesVersion": "1.37.0",
+    "conclusion": "pass",
+    "phases": {
+      "assert": {
+        "seconds": 28.23
+      },
+      "cert-rotation": {
+        "seconds": 201.26
+      },
+      "dataplane": {
+        "seconds": 10.32,
+        "mode": "prepare"
+      },
+      "reference-data-postgresql": {
+        "seconds": 899.62
+      },
+      "alerting-certificates": {
+        "seconds": 2033.76,
+        "scenarios": {
+          "native-producers": 63.13,
+          "monitoring-path": 14.15,
+          "plan-store-large": 1022.1,
+          "certificate-expiry": 934.26
+        }
+      }
+    },
+    "archive": {
+      "name": "suite-rebalance-native-2026-10-06.tar.gz",
+      "sha256": "79cee770ba30735a89d432cf0defa0b217f8bdcb583891736e8a9c4cfcb78731",
+      "memberCount": 23,
+      "bytes": 252578,
+      "downloadVerified": true,
+      "transport": "authenticated SSH",
+      "hostAlias": "diabolocom-buster",
+      "directory": "/home/buster/ptah-operator-evidence/020-qualification-2026-10-06"
+    },
+    "scope": "Moved reference-data and storage-alert scenarios passed with their native prerequisites. Preparation is not acceptance coverage. The retained cluster used the unchanged 630c4af8 product runtime and the regrouped test harness. Two preparation attempts refused existing demo or partially created fixtures; exact task-owned objects were cleaned by UID before the passing preparation. This is not a complete new suite run, a full CI duration, or production acceptance."
   }
 }
