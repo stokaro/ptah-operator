@@ -13,6 +13,7 @@ import hashlib
 import http.client
 import json
 import pathlib
+import re
 import socket
 import subprocess
 import threading
@@ -31,6 +32,46 @@ RENEWAL_SECONDS = 15
 
 EMPTY_SCHEMA = {'columns': [], 'primaryKeyColumns': []}
 EXPECTED_SCHEMA = {'columns': ['id:bigint:NO', 'email:text:NO'], 'primaryKeyColumns': ['id']}
+TOKEN_PROJECTION = {'audience': 'operator.ptah.run/results', 'expirationSeconds': 3600, 'path': 'token'}
+SCHEDULING_LABEL = 'qualification.ptah.run/upload-budget'
+
+
+def remove_scheduling_gate(execution):
+    selector = execution['nodeSelector']
+    selector.pop(SCHEDULING_LABEL)
+    if not selector:
+        execution.pop('nodeSelector')
+
+
+def runner_credentials(pod, token_mode):
+    projections = [(v['name'], s['serviceAccountToken']) for v in pod['spec'].get('volumes', [])
+                   for s in v.get('projected', {}).get('sources', []) if 'serviceAccountToken' in s]
+    expected = [('result-credentials', TOKEN_PROJECTION)] if token_mode else []
+    if pod['spec'].get('automountServiceAccountToken', True) or projections != expected:
+        raise ValueError('Runner must carry only the declared receiver credential')
+    return {'runnerAPICredentials': False, 'tokenProjection': TOKEN_PROJECTION if token_mode else None}
+
+
+def scheduling_node(nodes, selector):
+    if any(SCHEDULING_LABEL in n['metadata'].get('labels', {}) for n in nodes):
+        raise ValueError('A scheduling gate already owns this lab')
+    eligible = [n for n in nodes if not n['spec'].get('unschedulable')
+                and all(n['metadata'].get('labels', {}).get(k) == v for k, v in selector.items())
+                and not any(t['effect'] in ('NoSchedule', 'NoExecute') for t in n['spec'].get('taints', []))
+                and any(c['type'] == 'Ready' and c['status'] == 'True' for c in n['status']['conditions'])]
+    if not eligible:
+        raise ValueError('No ready untainted node matches the original selector')
+    return eligible[0]
+
+
+def set_scheduling_label(k, node, value, *, remove=False):
+    path = '/metadata/labels/' + SCHEDULING_LABEL.replace('/', '~1')
+    patch = [{'op': 'test', 'path': '/metadata/uid', 'value': node['metadata']['uid']}]
+    if remove:
+        patch += [{'op': 'test', 'path': path, 'value': value}, {'op': 'remove', 'path': path}]
+    else:
+        patch += [{'op': 'add', 'path': path, 'value': value}]
+    k('patch', 'node', node['metadata']['name'], '--type=json', '-p', json.dumps(patch))
 
 
 def schema_witness(sql, engine, database):
@@ -50,7 +91,7 @@ def verify_evidence(value):
             raise ValueError(message)
     version = value['evidenceVersion']
     family = 'PtahMigration' if version == 1 else value.get('family')
-    require(version in (1, 2) and family in ('PtahMigration', 'PtahSchema') and value['engine'] in ('PostgreSQL', 'MySQL'), 'Unknown case')
+    require(version in (1, 2, 3) and family in ('PtahMigration', 'PtahSchema') and value['engine'] in ('PostgreSQL', 'MySQL'), 'Unknown case')
     schema = family == 'PtahSchema'
     expected_database = EXPECTED_SCHEMA if schema else '1:1:true'
     expected_reason = 'InSync' if schema else 'HistoryMatched'
@@ -109,7 +150,21 @@ def verify_evidence(value):
     executions = value['executions']
     require(set(executions) == {'original', 'peer'}, 'Missing independent execution')
     require(executions['original']['resourceUID'] != executions['peer']['resourceUID'], 'Peer is original resource')
+    if version == 3:
+        require(value.get('authentication') == 'pod-token', 'Missing Pod-token authentication')
+        authority = value['authority']
+        require(authority['tokenSource'] == 'privileged-pod-bound-token-request'
+                and authority['audience'] == TOKEN_PROJECTION['audience']
+                and authority['podUID'] == executions['original']['podUID']
+                and authority['jobUID'] == executions['original']['jobUID']
+                and re.fullmatch('sha256:[0-9a-f]{64}', authority['identityDigest']), 'Wrong upload authority')
+        require(value['schedulingGate']['podUID'] == authority['podUID']
+                and value['schedulingGate']['nodeUID']
+                and value['schedulingGate']['pendingBeforeUploads'] is True
+                and value['schedulingGate']['pendingAfterUploads'] is True, 'Apply escaped the scheduling gate')
     for row in executions.values():
+        if version == 3:
+            require(row.get('tokenProjection') == TOKEN_PROJECTION, 'Runner token is not receiver-only')
         require(row['databaseWitness'] == expected_database and row['applyJobs'] == row['executionPods'] == 1
                 and row['podRestarts'] == 0 and row['podPhase'] == 'Succeeded' and row['runnerAPICredentials'] is False,
                 'SQL replay, replacement execution, or runner API credentials')
@@ -122,7 +177,8 @@ def verify_evidence(value):
 
 def run(*, k, get, create, wait, save, witness, records, open_gate, resource, pod,
         operation, engine, environment, calibration, managers, host, credential,
-        service, restore_service, endpoints_are, gate, sql, creds, database, migration_sql):
+        service, restore_service, endpoints_are, gate, sql, creds, database, migration_sql,
+        pod_token=None, identity=None, scheduling_gate=None):
     ns, opns = resource['metadata']['namespace'], environment['E2E_OPERATOR_NAMESPACE']
     family = resource['kind']
     schema = family == 'PtahSchema'
@@ -164,13 +220,23 @@ def run(*, k, get, create, wait, save, witness, records, open_gate, resource, po
                      'metadata': {'name': 'peer', 'namespace': ns}, 'spec': copy.deepcopy(resource['spec'])}
     peer_manifest['spec']['target']['urlFrom']['name'] = 'peer-database'
     peer_manifest['spec']['target']['coordinationKey'] += '/peer'
+    if pod_token is not None:
+        assert scheduling_gate and identity
+        remove_scheduling_gate(peer_manifest['spec']['execution'])
     # Keep only the original Pod gated. Confirm both sides at the real API.
     expression = "!has(object.metadata.annotations) || !('operator.ptah.run/result-pod-name' in object.metadata.annotations) || object.metadata.annotations['operator.ptah.run/result-pod-name'] != " + json.dumps(pod['metadata']['name'])
+    if pod_token is not None:
+        expression = "!has(object.metadata.labels) || !('job-name' in object.metadata.labels) || object.metadata.labels['job-name'] != " + json.dumps(operation['jobName'])
     k('patch', 'validatingadmissionpolicy', gate, '--type=json', '-p', json.dumps([{'op': 'replace', 'path': '/spec/validations/0/expression', 'value': expression}]))
     def gate_ready():
         results = []
         for name in [pod['metadata']['name'], apply_prefix + 'peer-probe']:
             probe = {'apiVersion': 'v1', 'kind': 'Secret', 'metadata': {'name': 'gate-check', 'namespace': ns, 'annotations': {'operator.ptah.run/result-pod-name': name}}}
+            if pod_token is not None:
+                probe = {'apiVersion': 'v1', 'kind': 'Pod', 'metadata': {'name': 'gate-check', 'namespace': ns,
+                         'labels': {'job-name': operation['jobName'] if name == pod['metadata']['name'] else name}},
+                         'spec': {'restartPolicy': 'Never', 'automountServiceAccountToken': False,
+                                  'containers': [{'name': 'probe', 'image': environment['RESULT_PROBE_FIXTURE_IMAGE']}]}}
             r = subprocess.run(['kubectl', '--kubeconfig', environment['E2E_KUBECONFIG'], 'create', '--dry-run=server', '-f', '-'], input=json.dumps(probe), text=True, capture_output=True, timeout=30)
             results.append((r.returncode, r.stderr))
         return results[0][0] != 0 and 'Acceptance probe holds' in results[0][1] and results[1][0] == 0
@@ -189,7 +255,7 @@ def run(*, k, get, create, wait, save, witness, records, open_gate, resource, po
         except BaseException as e:
             errors.append(str(e))
     thread = threading.Thread(target=sample)
-    client = Client(environment, managers, host, credential)
+    client = Client(environment, managers, host, credential, pod_token=pod_token, identity=identity)
     sockets = []
     label = 'qualification.ptah.run/receiver'
     follower = managers[1]
@@ -201,7 +267,7 @@ def run(*, k, get, create, wait, save, witness, records, open_gate, resource, po
         start = time.monotonic_ns()
         connection = socket.create_connection(('127.0.0.1', client.ports[index]), timeout=5)
         with connection, client.tls.wrap_socket(connection, server_hostname=host) as tls:
-            tls.sendall(('HEAD /v1/results/' + attempt + ' HTTP/1.1\r\nHost: ' + host + '\r\nConnection: close\r\n\r\n').encode())
+            tls.sendall(('HEAD /v1/results/' + attempt + ' HTTP/1.1\r\nHost: ' + host + client.token_headers + '\r\nConnection: close\r\n\r\n').encode())
             response = http.client.HTTPResponse(tls, method='HEAD')
             response.begin()
             row = {'phase': phase, 'index': index, 'receiverUID': managers[index]['metadata']['uid'],
@@ -219,7 +285,7 @@ def run(*, k, get, create, wait, save, witness, records, open_gate, resource, po
         sockets.append(tls)
         tls.settimeout(130)
         headers = ('PUT /v1/results/' + attempt + ' HTTP/1.1\r\nHost: ' + host +
-                   '\r\nContent-Type: application/vnd.ptah.result.v1+json\r\nContent-Length: 4096\r\nX-Ptah-Result-Digest: sha256:' + '0' * 64 + '\r\nConnection: close\r\n\r\n{')
+                   '\r\nContent-Type: application/vnd.ptah.result.v1+json\r\nContent-Length: 4096\r\nX-Ptah-Result-Digest: sha256:' + '0' * 64 + client.token_headers + '\r\nConnection: close\r\n\r\n{')
         tls.sendall(headers.encode())
         row = {'receiverUID': managers[index]['metadata']['uid'], 'sentNs': time.monotonic_ns(), 'declaredBytes': 4096, 'sentBytes': 1}
         slow.append(row)
@@ -273,6 +339,11 @@ def run(*, k, get, create, wait, save, witness, records, open_gate, resource, po
         assert current_leader['metadata']['uid'] == leader['metadata']['uid'] and current_leader['spec']['holderIdentity'] == holder
         assert not any(r['metadata']['name'] == attempt for r in records())
         assert witness() == (EMPTY_SCHEMA if schema else '0:1:false')
+        if pod_token is not None:
+            held = get('pod', pod['metadata']['name'])
+            assert held['metadata']['uid'] == pod['metadata']['uid'] and held['status']['phase'] == 'Pending'
+            assert not held['spec'].get('nodeName')
+            scheduling_gate['pendingAfterUploads'] = True
         restore_service()
         routed = False
         wait(lambda: endpoints_are({m['metadata']['uid'] for m in managers}), 30)
@@ -299,7 +370,7 @@ def run(*, k, get, create, wait, save, witness, records, open_gate, resource, po
                 'jobUID': job['metadata']['uid'], 'podUID': p['metadata']['uid'], 'receiptUID': complete['metadata']['uid'],
                 'databaseWitness': witness(db), 'applyJobs': len(jobs), 'executionPods': len(pods),
                 'podPhase': p['status']['phase'], 'podRestarts': sum(c['restartCount'] for c in p['status']['containerStatuses']),
-                'runnerAPICredentials': p['spec'].get('automountServiceAccountToken', True) or any('serviceAccountToken' in s for v in p['spec'].get('volumes', []) for s in v.get('projected', {}).get('sources', [])),
+                **runner_credentials(p, pod_token is not None),
                 'conditions': final['status']['conditions']}
         result = {'evidenceVersion': 2, 'family': family, 'engine': engine, 'commit': environment['E2E_CONTROLLER_REVISION'],
             'namespace': ns, 'leaderUID': managers[0]['metadata']['uid'], 'leaderUnchanged': True,
@@ -310,6 +381,11 @@ def run(*, k, get, create, wait, save, witness, records, open_gate, resource, po
             'procedureSHA256': {name: hashlib.sha256(pathlib.Path(__file__).with_name(name).read_bytes()).hexdigest()
                                 for name in ['result_lost_ack.py', 'result_upload_budget.py', 'result_concurrent.py']},
             'completedAt': dt.datetime.now(dt.timezone.utc).isoformat()}
+        if pod_token is not None:
+            result.update(evidenceVersion=3, authentication='pod-token', schedulingGate=scheduling_gate,
+                          authority={'tokenSource': 'privileged-pod-bound-token-request',
+                                     'audience': TOKEN_PROJECTION['audience'], 'podUID': pod['metadata']['uid'],
+                                     'jobUID': operation['jobUID'], 'identityDigest': 'sha256:' + hashlib.sha256(identity).hexdigest()})
         save('upload-budget.json', result)
         verify_evidence(result)
         print('PASS: ' + family + ': two bounded stalled uploads, continuous Apply Lease renewal, independent native progress', flush=True)

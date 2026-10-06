@@ -117,8 +117,8 @@ def main():
     pod_token = authentication == 'pod-token'
     if authority and not pod_token:
         raise ValueError('Authority refusals require Pod-token authentication')
-    if pod_token and (runner_loss or first_publication or upload_budget):
-        raise ValueError('Pod-token mode measures lost ACK, receiver replacement, and committed concurrent redelivery')
+    if pod_token and (runner_loss or first_publication):
+        raise ValueError('Pod-token mode measures lost ACK, receiver replacement, concurrent redelivery, and upload bounds')
     apply_prefix = 'ptah-apply-' if schema_budget else 'ptah-m-apply-'
     empty_witness = {'columns': [], 'primaryKeyColumns': []} if schema_budget else '0:1:false'
     engine = E['RESULT_PROBE_ENGINE']
@@ -322,6 +322,8 @@ def main():
     publication_port_added = False
     proxy_name = ns + '-proxy'
     client_secret = ns + '-client'
+    scheduling_node = None
+    scheduling_label_present = False
 
     def restore_service():
         assert get('service', service_name, opns)['metadata']['uid'] == service['metadata']['uid']
@@ -377,8 +379,14 @@ def main():
             manifest = subprocess.run(['demo/bin/lab', 'manifest', 'shipments', digest], env=env, text=True, capture_output=True, check=True).stdout
             migration = json.loads(k('create', '--dry-run=client', '--validate=false', '-f', '-', '-o', 'json', data=manifest, namespace=source))
         if schema_budget:
-            original_schema = get('ptahschema', 'storefront', source)
-            migration = {'apiVersion': original_schema['apiVersion'], 'kind': 'PtahSchema', 'spec': copy.deepcopy(original_schema['spec'])}
+            if pod_token:
+                migration['kind'] = 'PtahSchema'
+                migration['spec']['desired'] = migration['spec'].pop('artifact')
+                migration['spec']['desired']['verificationPolicyFrom']['name'] = 'demo-verification-policy'
+                migration['spec']['policy'] = {'apply': 'Always', 'allowDestructive': False, 'driftSeverity': 'all'}
+            else:
+                original_schema = get('ptahschema', 'storefront', source)
+                migration = {'apiVersion': original_schema['apiVersion'], 'kind': 'PtahSchema', 'spec': copy.deepcopy(original_schema['spec'])}
             migration['spec']['desired']['ociRef'] = 'oci://' + E['E2E_REGISTRY_HOST'] + '/schemas/demo@' + digest
             migration['spec']['policy']['apply'] = 'Always'
             migration['spec']['interval'] = '2h'
@@ -388,6 +396,16 @@ def main():
         migration['spec']['target']['urlFrom']['name'] = 'ack-database'
         migration['spec']['target']['engine'] = engine
         migration['spec']['execution']['activeDeadlineSeconds'] = 900
+        if pod_token and upload_budget:
+            from result_upload_budget import scheduling_node as select_node, set_scheduling_label, SCHEDULING_LABEL
+            # Resolve/Plan run normally. Once the Apply Job reaches the Pod gate,
+            # remove this task-owned label to hold that original Pod before SQL.
+            node_selector = migration['spec']['execution'].setdefault('nodeSelector', {})
+            assert SCHEDULING_LABEL not in node_selector
+            scheduling_node = select_node(get('nodes')['items'], node_selector)
+            set_scheduling_label(k, scheduling_node, ns)
+            scheduling_label_present = True
+            node_selector[SCHEDULING_LABEL] = ns
         resource = create(migration)
         if partial_loss:
             from result_partial_loss import authorize_initial
@@ -423,19 +441,57 @@ def main():
             job_uid = operation['jobUID']
         assert witness() == empty_witness
         def open_execution_gate():
-            nonlocal gated
+            nonlocal gated, scheduling_label_present
+            if scheduling_node and not scheduling_label_present:
+                set_scheduling_label(k, scheduling_node, ns)
+                scheduling_label_present = True
             k('delete', 'validatingadmissionpolicybinding', gate)
             k('delete', 'validatingadmissionpolicy', gate)
             gated = False
 
         if upload_budget:
             from result_upload_budget import run as run_budget
+            token_args = {}
+            if pod_token:
+                set_scheduling_label(k, scheduling_node, ns, remove=True)
+                scheduling_label_present = False
+                assert not any(n['metadata'].get('labels', {}).get(SCHEDULING_LABEL) == ns
+                               for n in get('nodes')['items'])
+                k('patch', 'validatingadmissionpolicy', gate, '--type=json', '-p', json.dumps([
+                    {'op': 'replace', 'path': '/spec/validations/0/expression', 'value': 'true'}]))
+                def pending_pod_and_binding():
+                    pods = [p for p in get('pods')['items'] if any(o['uid'] == job_uid for o in p['metadata'].get('ownerReferences', []))]
+                    assert len(pods) <= 1, 'Apply created a replacement Pod'
+                    bindings = [r for r in records() if r['spec']['type'] == 'credential'
+                                and r['metadata'].get('annotations', {}).get('operator.ptah.run/result-job-uid') == job_uid]
+                    assert len(bindings) <= 1
+                    return (pods[0], bindings[0]) if pods and bindings else None
+                pod, credential = wait(pending_pod_and_binding, 60)
+                assert pod['status']['phase'] == 'Pending' and not pod['spec'].get('nodeName')
+                assert credential['spec'] == pod_binding_record(job, pod)['spec']
+                assert witness() == empty_witness
+                request = {'apiVersion': 'authentication.k8s.io/v1', 'kind': 'TokenRequest', 'spec': {
+                    'audiences': ['operator.ptah.run/results'], 'expirationSeconds': 600,
+                    'boundObjectRef': {'apiVersion': 'v1', 'kind': 'Pod', 'name': pod['metadata']['name'],
+                                       'uid': pod['metadata']['uid']}}}
+                # The privileged harness issues a receiver-only token for the
+                # held Pod. It never writes that token to a file or command line.
+                issued = json.loads(k('create', '--raw', '/api/v1/namespaces/' + ns + '/serviceaccounts/' +
+                                     pod['spec']['serviceAccountName'] + '/token', '-f', '-', data=json.dumps(request)))
+                token_args = {'pod_token': issued['status']['token'],
+                              'identity': base64.b64decode(credential['spec']['data'], validate=True),
+                              'scheduling_gate': {'nodeUID': scheduling_node['metadata']['uid'],
+                                                  'podUID': pod['metadata']['uid'], 'pendingBeforeUploads': True}}
+                del issued
+                save('pod-binding.json', credential)
             run_budget(k=k, get=get, create=create, wait=wait, save=save, witness=witness,
                        records=records, open_gate=open_execution_gate, resource=resource, pod=pod,
                        operation=operation, engine=engine, environment=E, calibration=calibration,
-                       managers=managers, host=host, credential=dec(credential), service=service,
+                       managers=managers, host=host,
+                       credential={'ca.crt': trust['data']['ca.crt']} if pod_token else dec(credential), service=service,
                        restore_service=restore_service, endpoints_are=endpoints_are, gate=gate,
-                       sql=sql, creds=creds, database=database, migration_sql=migration_sql)
+                       sql=sql, creds=creds, database=database, migration_sql=migration_sql, **token_args)
+            token_args.clear()
             return
         if partial_loss:
             from result_partial_loss import run as run_partial
@@ -688,6 +744,8 @@ def main():
         save('lost-ack.json', result)
         print('PASS: identical receipt redelivered after lost ACK; one native migration SQL execution', flush=True)
     finally:
+        if scheduling_label_present:
+            set_scheduling_label(k, scheduling_node, ns, remove=True)
         if publication_webhook:
             k('delete', 'mutatingwebhookconfiguration', publication_webhook, '--ignore-not-found')
         if concurrent_client:

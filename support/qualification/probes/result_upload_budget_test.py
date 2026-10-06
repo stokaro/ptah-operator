@@ -5,7 +5,9 @@ import json
 import pathlib
 import unittest
 
-from result_upload_budget import SECOND, EXPECTED_SCHEMA, EMPTY_SCHEMA, verify_evidence
+from result_upload_budget import (SECOND, EXPECTED_SCHEMA, EMPTY_SCHEMA, TOKEN_PROJECTION,
+                                 SCHEDULING_LABEL, remove_scheduling_gate, runner_credentials,
+                                 scheduling_node, verify_evidence)
 from result_first_harvest import publication
 
 
@@ -58,6 +60,91 @@ class UploadBudgetTests(unittest.TestCase):
     def test_accepts_schema_convergence_without_claiming_sql_counters(self):
         self.assertEqual(verify_evidence(self.schema_fixture()),
                          {'timedOutUploads': 2, 'renewals': 34, 'independentSchemasConverged': 2})
+
+    def token_fixture(self, schema=False):
+        value = self.schema_fixture() if schema else self.fixture()
+        value.update(evidenceVersion=3, family='PtahSchema' if schema else 'PtahMigration',
+                     authentication='pod-token',
+                     authority={'tokenSource': 'privileged-pod-bound-token-request',
+                                'audience': TOKEN_PROJECTION['audience'], 'podUID': 'pod', 'jobUID': 'job',
+                                'identityDigest': 'sha256:' + 'a' * 64},
+                     schedulingGate={'nodeUID': 'node', 'podUID': 'pod',
+                                     'pendingBeforeUploads': True, 'pendingAfterUploads': True})
+        for row in value['executions'].values():
+            row['tokenProjection'] = copy.deepcopy(TOKEN_PROJECTION)
+        return value
+
+    def test_accepts_both_families_with_pod_tokens(self):
+        for schema in (False, True):
+            with self.subTest(schema=schema):
+                self.assertEqual(verify_evidence(self.token_fixture(schema))['timedOutUploads'], 2)
+
+    def test_refuses_wrong_token_authority_or_escaped_apply(self):
+        mutations = [
+            (['authentication'], 'certificate'),
+            (['authority', 'tokenSource'], 'unbound-service-account-token'),
+            (['authority', 'audience'], 'https://kubernetes.default.svc'),
+            (['authority', 'podUID'], 'replacement-pod'),
+            (['authority', 'jobUID'], 'another-job'),
+            (['authority', 'identityDigest'], ''),
+            (['schedulingGate', 'nodeUID'], ''),
+            (['schedulingGate', 'podUID'], 'replacement-pod'),
+            (['schedulingGate', 'pendingBeforeUploads'], False),
+            (['schedulingGate', 'pendingAfterUploads'], False),
+            (['executions', 'original', 'tokenProjection', 'audience'], 'kubernetes'),
+            (['executions', 'peer', 'tokenProjection'], None),
+        ]
+        for schema in (False, True):
+            for path, replacement in mutations:
+                with self.subTest(schema=schema, path=path):
+                    value = self.token_fixture(schema)
+                    target = value
+                    for key in path[:-1]:
+                        target = target[key]
+                    target[path[-1]] = replacement
+                    with self.assertRaises(ValueError):
+                        verify_evidence(value)
+
+    def test_runner_credentials_refuse_api_tokens_and_extra_projections(self):
+        pod = {'spec': {'automountServiceAccountToken': False, 'volumes': [
+            {'name': 'result-credentials', 'projected': {'sources': [
+                {'serviceAccountToken': copy.deepcopy(TOKEN_PROJECTION)}]}}]}}
+        self.assertFalse(runner_credentials(pod, True)['runnerAPICredentials'])
+        variants = [copy.deepcopy(pod) for _ in range(5)]
+        variants[0]['spec']['automountServiceAccountToken'] = True
+        variants[1]['spec'].pop('automountServiceAccountToken')
+        variants[2]['spec']['volumes'][0]['projected']['sources'][0]['serviceAccountToken']['audience'] = 'kubernetes'
+        variants[3]['spec']['volumes'][0]['projected']['sources'].append(
+            {'serviceAccountToken': {'path': 'api-token'}})
+        variants[4]['spec']['volumes'] = []
+        for value in variants:
+            with self.assertRaises(ValueError):
+                runner_credentials(value, True)
+        with self.assertRaises(ValueError):
+            runner_credentials(pod, False)
+
+    def test_scheduling_gate_only_uses_an_available_matching_node(self):
+        worker = {'metadata': {'uid': 'worker', 'labels': {'pool': 'tests'}}, 'spec': {},
+                  'status': {'conditions': [{'type': 'Ready', 'status': 'True'}]}}
+        tainted = copy.deepcopy(worker)
+        tainted['spec']['taints'] = [{'effect': 'NoSchedule'}]
+        self.assertEqual(scheduling_node([tainted, worker], {'pool': 'tests'}), worker)
+        with self.assertRaises(ValueError):
+            scheduling_node([tainted], {'pool': 'tests'})
+        with self.assertRaises(ValueError):
+            scheduling_node([worker], {'pool': 'missing'})
+        occupied = copy.deepcopy(worker)
+        occupied['metadata']['labels'][SCHEDULING_LABEL] = 'another-test'
+        with self.assertRaisesRegex(ValueError, 'already owns'):
+            scheduling_node([worker, occupied], {})
+
+    def test_peer_returns_to_ordinary_scheduling_without_empty_selector(self):
+        execution = {'nodeSelector': {SCHEDULING_LABEL: 'test'}}
+        remove_scheduling_gate(execution)
+        self.assertNotIn('nodeSelector', execution)
+        execution = {'nodeSelector': {SCHEDULING_LABEL: 'test', 'pool': 'qualification'}}
+        remove_scheduling_gate(execution)
+        self.assertEqual(execution['nodeSelector'], {'pool': 'qualification'})
 
     def test_refuses_schema_status_without_actual_database_effects(self):
         mutations = [
