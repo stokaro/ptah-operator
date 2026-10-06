@@ -681,5 +681,32 @@
     },
     "custody": "Private local development archive; no final retention acceptance.",
     "scope": "Real API-server admission with stored fixture objects; no controller, database execution, Linux arm64, soak, or complete frozen-profile proof. Temporary kubeconfigs were removed and the isolated API server stopped."
+  },
+  "capacitySignedRegistryPreparation": {
+    "requirement": "Issue 580: prepare signed digest-addressed inputs and HTTPS CA bindings for the frozen registry profile.",
+    "sourceCommit": "7f094468811454ff15a417c1a737fd48954f4812",
+    "pinnedPtahCommit": "f6e562c5b0986cd29a53a5cc01938827336b780a",
+    "cosignVersion": "v3.0.6",
+    "conclusion": "pass for registry and signing preparation; full capacity qualification remains open",
+    "checks": {
+      "capacityRace": "pass",
+      "capacityVet": "pass",
+      "shellcheck": "pass",
+      "pythonProbes": "60 cases: the initial run passed 59 and found a wrapper guard-order error; all six affected wrapper cases passed after that correction.",
+      "https": "authenticated publication with the explicit CA passed; unauthenticated access and an untrusted CA were refused",
+      "signatures": "the actual capacity helper signed both schema and migration digests; cryptographic verification and the pinned Ptah policy passed; unsigned artifacts and an unrelated public key were refused",
+      "credentialCleanup": "temporary signer credential directories were removed, including on verification failure"
+    },
+    "signatureArtifactType": "application/vnd.dev.cosign.artifact.sig.v1+json",
+    "cryptoVerification": "Cosign verifies each digest with the supplied public key. Ptah subsequently checks attached-signature presence. The private fixture uses no public transparency upload.",
+    "archive": {
+      "name": "capacity-signed-registry-preparation-2026-10-06.tar.gz",
+      "sha256": "162bf9eb00e398dd8ac2700fe74ecbbf026278b26b4278a80437c4da959ed8f4",
+      "members": 98,
+      "bytes": 18301
+    },
+    "custody": "Private local development archive; no final retention acceptance. Private keys and registry credentials are excluded.",
+    "cleanup": "Both owned registry containers, their anonymous volumes, and their exact SSH tunnels were removed; the preexisting image was preserved.",
+    "scope": "A native Linux amd64 registry and native Darwin arm64 clients exercised preparation. No Kubernetes workload, database execution, Linux arm64 acceptance, or full soak is claimed. The configured HTTPS capacity workload still needs installed execution."
   }
 }
