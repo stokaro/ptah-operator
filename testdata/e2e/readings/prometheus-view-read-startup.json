@@ -1,0 +1,176 @@
+{
+  "status": "success",
+  "data": {
+    "resultType": "matrix",
+    "result": [
+      {
+        "metric": {
+          "__name__": "ptah_operator_unresolved_view_read_failures_total",
+          "instance": "10.244.3.51:8080",
+          "job": "ptah-operator",
+          "pod": "ptah-runtime-generated-name-prefix-boundary-proof-634be0fctfhd8"
+        },
+        "values": [
+          [
+            1791277177.553,
+            "0"
+          ],
+          [
+            1791277182.553,
+            "0"
+          ],
+          [
+            1791277187.553,
+            "1"
+          ],
+          [
+            1791277192.553,
+            "2"
+          ],
+          [
+            1791277197.553,
+            "3"
+          ]
+        ]
+      },
+      {
+        "metric": {
+          "__name__": "ptah_operator_unresolved_view_read_failures_total",
+          "instance": "10.244.3.52:8080",
+          "job": "ptah-operator",
+          "pod": "ptah-runtime-generated-name-prefix-boundary-proof-634be0fc4zc4n"
+        },
+        "values": [
+          [
+            1791277178.875,
+            "0"
+          ],
+          [
+            1791277183.875,
+            "0"
+          ],
+          [
+            1791277188.875,
+            "0"
+          ],
+          [
+            1791277193.875,
+            "0"
+          ]
+        ]
+      },
+      {
+        "metric": {
+          "__name__": "scrape_duration_seconds",
+          "instance": "10.244.3.51:8080",
+          "job": "ptah-operator",
+          "pod": "ptah-runtime-generated-name-prefix-boundary-proof-634be0fctfhd8"
+        },
+        "values": [
+          [
+            1791277177.553,
+            "0.008628235"
+          ],
+          [
+            1791277182.553,
+            "0.007598924"
+          ],
+          [
+            1791277187.553,
+            "0.006496011"
+          ],
+          [
+            1791277192.553,
+            "0.006099304"
+          ],
+          [
+            1791277197.553,
+            "0.006303176"
+          ]
+        ]
+      },
+      {
+        "metric": {
+          "__name__": "scrape_duration_seconds",
+          "instance": "10.244.3.52:8080",
+          "job": "ptah-operator",
+          "pod": "ptah-runtime-generated-name-prefix-boundary-proof-634be0fc4zc4n"
+        },
+        "values": [
+          [
+            1791277178.875,
+            "0.004886926"
+          ],
+          [
+            1791277183.875,
+            "0.002047319"
+          ],
+          [
+            1791277188.875,
+            "0.002068447"
+          ],
+          [
+            1791277193.875,
+            "0.002165634"
+          ]
+        ]
+      },
+      {
+        "metric": {
+          "__name__": "up",
+          "instance": "10.244.3.51:8080",
+          "job": "ptah-operator",
+          "pod": "ptah-runtime-generated-name-prefix-boundary-proof-634be0fctfhd8"
+        },
+        "values": [
+          [
+            1791277177.553,
+            "1"
+          ],
+          [
+            1791277182.553,
+            "1"
+          ],
+          [
+            1791277187.553,
+            "1"
+          ],
+          [
+            1791277192.553,
+            "1"
+          ],
+          [
+            1791277197.553,
+            "1"
+          ]
+        ]
+      },
+      {
+        "metric": {
+          "__name__": "up",
+          "instance": "10.244.3.52:8080",
+          "job": "ptah-operator",
+          "pod": "ptah-runtime-generated-name-prefix-boundary-proof-634be0fc4zc4n"
+        },
+        "values": [
+          [
+            1791277178.875,
+            "1"
+          ],
+          [
+            1791277183.875,
+            "1"
+          ],
+          [
+            1791277188.875,
+            "1"
+          ],
+          [
+            1791277193.875,
+            "1"
+          ]
+        ]
+      }
+    ]
+  }
+}

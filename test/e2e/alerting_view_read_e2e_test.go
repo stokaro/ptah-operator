@@ -5,6 +5,7 @@ package e2e
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"time"
@@ -122,6 +123,19 @@ func (a *alertingRun) viewReadFailure(resource string) {
 			a.fatalf("a manager's metrics endpoint became unavailable")
 		}
 	}
+	// Healthy targets can have only their first successful scrape. Establish
+	// the history this fault measures without depending on an earlier scenario
+	// to keep Prometheus running long enough. Other invalid histories fail.
+	a.check(harness.Wait(a.ctx, "a complete pre-fault state-read baseline", alDetectionSlack, time.Second,
+		func(context.Context) (bool, string, error) {
+			checkManagers()
+			at := time.Now().UTC()
+			_, err := a.queryViewHistory(names, leader, at, at, "")
+			if errors.Is(err, errAlViewReadBaseline) {
+				return false, "waiting for two scrape intervals before the state-read fault", nil
+			}
+			return err == nil, "waiting for a complete state-read baseline", err
+		}), "establish the manager state-read baseline before changing RBAC")
 	from := a.deliveryCount()
 	started := time.Now().UTC()
 	a.check(setRules(a.ctx, original, held), "refuse the manager's actual %s list", resource)
@@ -177,11 +191,17 @@ func (a *alertingRun) viewReadFailure(resource string) {
 func (a *alertingRun) readViewHistory(pods []string, leader string, started time.Time, label string) alViewReadHistory {
 	a.t.Helper()
 	at := time.Now().UTC()
+	history, err := a.queryViewHistory(pods, leader, started, at, label)
+	a.check(err, "validate complete manager state-read histories")
+	return history
+}
+
+func (a *alertingRun) queryViewHistory(pods []string, leader string, started, at time.Time, label string) (alViewReadHistory, error) {
+	a.t.Helper()
 	groups, body := a.historySnapshot(a.ctx, at, alScrapeJob, "", alViewReadMetric, "up", "scrape_duration_seconds")
 	history, err := alReadViewHistory(groups[alViewReadMetric], groups["up"], groups["scrape_duration_seconds"], pods, leader, started, at)
 	if label != "" || err != nil {
 		a.logf("manager state-read native history %s: queriedAt=%s snapshot=%s", label, at.Format(time.RFC3339Nano), body)
 	}
-	a.check(err, "validate complete manager state-read histories")
-	return history
+	return history, err
 }

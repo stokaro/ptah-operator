@@ -14,6 +14,8 @@ const (
 	alViewReadWindow = 60 * time.Second
 )
 
+var errAlViewReadBaseline = errors.New("read-failure history has no complete pre-fault baseline")
+
 // Change only list on the one root-resource rule. Reads by name, watches,
 // metadata/status writes, and every other resource retain their exact grants.
 func alViewReadRule(role *rbacv1.ClusterRole, resource string) (int, []string, error) {
@@ -75,7 +77,7 @@ func alReadViewHistory(counterBody, upBody, durationBody []byte, pods []string, 
 				return nil, err
 			}
 			if len(values) < 2 || values[0].at.After(since) {
-				return nil, errors.New("read-failure history has no complete pre-fault baseline")
+				return nil, errAlViewReadBaseline
 			}
 			// Startup may precede the counter's first successful scrape. Keep
 			// the same last pre-fault baseline and the complete interval after

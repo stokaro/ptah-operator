@@ -2,7 +2,9 @@ package e2e
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"os"
 	"reflect"
 	"testing"
 	"time"
@@ -118,6 +120,42 @@ func TestAlViewReadHistoryDatesNativeFailures(t *testing.T) {
 	}
 }
 
+func TestAlViewReadBaselineOnNativePrometheusStartup(t *testing.T) {
+	t.Parallel()
+	// Kubernetes 1.37 lifecycle, run 37437296857, job 112184863917.
+	// Healthy targets had only just begun scraping when the fault was injected.
+	body, err := os.ReadFile("../../testdata/e2e/readings/prometheus-view-read-startup.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	groups, err := alSplitHistorySnapshot(body, alScrapeJob, []string{alViewReadMetric, "up", "scrape_duration_seconds"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pods := []string{
+		"ptah-runtime-generated-name-prefix-boundary-proof-634be0fctfhd8",
+		"ptah-runtime-generated-name-prefix-boundary-proof-634be0fc4zc4n",
+	}
+	queried, err := time.Parse(time.RFC3339Nano, "2026-10-06T08:59:58.348017118Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Even at the next whole second after manager identity capture, the
+	// required two-interval baseline was absent. Later scrapes cannot repair
+	// evidence missing before a fault that has already started.
+	started := time.Date(2026, time.October, 6, 8, 59, 43, 0, time.UTC)
+	if _, err := alReadViewHistory(groups[alViewReadMetric], groups["up"], groups["scrape_duration_seconds"],
+		pods, pods[0], started, queried); !errors.Is(err, errAlViewReadBaseline) {
+		t.Fatalf("early fault did not identify its missing baseline: %v", err)
+	}
+	// The same observed data is sufficient to start a new fault now. The
+	// caller waits for this result before changing RBAC, not after the alert.
+	if _, err := alReadViewHistory(groups[alViewReadMetric], groups["up"], groups["scrape_duration_seconds"],
+		pods, pods[0], queried, queried); err != nil {
+		t.Fatalf("complete native baseline did not become ready: %v", err)
+	}
+}
+
 func TestAlViewReadHistoryRefusesIncompleteOrChangedObservations(t *testing.T) {
 	t.Parallel()
 	for name, mutate := range map[string]func(*alViewHistoryFixture){
@@ -146,8 +184,12 @@ func TestAlViewReadHistoryRefusesIncompleteOrChangedObservations(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			f := alViewHistoryFixtureForTest()
 			mutate(&f)
-			if result, err := f.read(t); err == nil {
+			result, err := f.read(t)
+			if err == nil {
 				t.Fatalf("invalid history accepted: %+v", result)
+			}
+			if name != "missing baseline" && name != "missing duration" && errors.Is(err, errAlViewReadBaseline) {
+				t.Fatalf("invalid history became a retryable startup baseline: %v", err)
 			}
 		})
 	}
