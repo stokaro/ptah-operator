@@ -106,7 +106,11 @@ func alStalledPodMatches(pod *corev1.Pod, claim alStalledClaim, uid types.UID) b
 }
 
 func alStalledPodHeld(pod *corev1.Pod) bool {
-	if pod.Status.Phase != corev1.PodPending || pod.Spec.NodeName != "" || pod.Spec.NodeSelector[alGateLabel] != "open" {
+	return alPodHeldByGate(pod, alGateLabel)
+}
+
+func alPodHeldByGate(pod *corev1.Pod, label string) bool {
+	if pod.Status.Phase != corev1.PodPending || pod.Spec.NodeName != "" || pod.Spec.NodeSelector[label] != "open" {
 		return false
 	}
 	for _, statuses := range [][]corev1.ContainerStatus{pod.Status.InitContainerStatuses, pod.Status.ContainerStatuses} {

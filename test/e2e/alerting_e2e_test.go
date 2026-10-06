@@ -543,6 +543,10 @@ func (a *alertingRun) removeManagers() error {
 // setGate labels every node with the gate, or removes it from every node when
 // value is empty.
 func (a *alertingRun) setGate(ctx context.Context, value string) error {
+	return a.setSchedulingGate(ctx, alGateLabel, value)
+}
+
+func (a *alertingRun) setSchedulingGate(ctx context.Context, label, value string) error {
 	nodes := &corev1.NodeList{}
 	if err := a.cluster.Client.List(ctx, nodes); err != nil {
 		return err
@@ -551,16 +555,16 @@ func (a *alertingRun) setGate(ctx context.Context, value string) error {
 		name := nodes.Items[index].Name
 		err := a.updateNode(ctx, name, func(node *corev1.Node) bool {
 			if value == "" {
-				if _, found := node.Labels[alGateLabel]; !found {
+				if _, found := node.Labels[label]; !found {
 					return false
 				}
-				delete(node.Labels, alGateLabel)
+				delete(node.Labels, label)
 				return true
 			}
 			if node.Labels == nil {
 				node.Labels = map[string]string{}
 			}
-			node.Labels[alGateLabel] = value
+			node.Labels[label] = value
 			return true
 		})
 		if err != nil {
