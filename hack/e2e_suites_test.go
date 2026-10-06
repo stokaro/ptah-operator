@@ -214,8 +214,8 @@ func TestAPartitionThatLostAPhaseIsRefused(t *testing.T) {
 	t.Run("a mandatory phase removed", func(t *testing.T) {
 		t.Parallel()
 		path := writeSuiteCatalog(t,
-			`"phases": ["cert-rotation", "reference-data-postgresql", "reference-data-mysql", "alerting-certificates"],`,
-			`"phases": ["cert-rotation", "reference-data-postgresql", "alerting-certificates"],`)
+			`"phases": ["cert-rotation", "reference-data-mysql", "alerting-certificates"],`,
+			`"phases": ["cert-rotation", "alerting-certificates"],`)
 		catalog, err := loadE2ESuites(path)
 		if err != nil {
 			t.Fatalf("load the mutated catalog: %v", err)

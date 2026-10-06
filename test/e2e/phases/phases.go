@@ -482,8 +482,8 @@ type AlertingInputs struct {
 	RegistryCredentialsFile string `env:"E2E_REGISTRY_CREDENTIALS_FILE"`
 }
 
-// Alerting proves infrastructure alerts, including storage, scrape and
-// admission faults, lost managers, and interrupted upgrades.
+// Alerting proves scrape and admission faults, lost managers, and interrupted
+// upgrades. Storage uses the certificate phase's independent monitoring setup.
 var Alerting = define[AlertingInputs](Phase{
 	Name:         "alerting",
 	Test:         "TestAlerting",
@@ -492,7 +492,6 @@ var Alerting = define[AlertingInputs](Phase{
 	Scenarios: []string{
 		"native-producers",
 		"monitoring-path",
-		"plan-store-large",
 		"unresolved-view-read-failures",
 		"lost-scrape-target",
 		"lost-view",
@@ -500,14 +499,15 @@ var Alerting = define[AlertingInputs](Phase{
 	},
 })
 
-// AlertingCertificates proves expiry notification and recovery alongside
-// certificate rotation, with its own monitoring namespace and native producers.
+// AlertingCertificates proves storage and expiry notifications and recovery.
+// Both incidents share its monitoring namespace and native producers; each
+// completes before the next changes certificates or retained plans.
 var AlertingCertificates = define[AlertingInputs](Phase{
 	Name:         "alerting-certificates",
 	Test:         "TestAlertingCertificates",
-	Timeout:      30 * time.Minute,
+	Timeout:      60 * time.Minute,
 	RequiresFull: []string{"assert"},
-	Scenarios:    []string{"native-producers", "monitoring-path", "certificate-expiry"},
+	Scenarios:    []string{"native-producers", "monitoring-path", "plan-store-large", "certificate-expiry"},
 })
 
 // AlertingOperations owns operation incidents and the full no-page windows.

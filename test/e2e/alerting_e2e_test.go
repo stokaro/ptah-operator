@@ -33,7 +33,7 @@ func TestAlerting(t *testing.T) {
 	runAlertingPhase(t, phases.Alerting)
 }
 
-// TestAlertingCertificates owns the certificate expiry and recovery incident.
+// TestAlertingCertificates owns plan storage and certificate expiry incidents.
 func TestAlertingCertificates(t *testing.T) {
 	runAlertingPhase(t, phases.AlertingCertificates)
 }
