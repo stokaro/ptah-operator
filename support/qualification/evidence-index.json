@@ -600,6 +600,58 @@
       "bytes": 79967
     },
     "custody": "Private local development archive; no upload or final retention acceptance.",
-    "scope": "Replaces the certificate-based development upload-bound proof with Pod-token execution. Does not close the remaining issue 586 final integration or the artifact, architecture, capacity, and owner-acceptance requirements. The first attempt exposed an accepted empty-selector admission defect under issue 578; the successful peer omits that temporary selector, and the separate Job-builder fix still needs its native operational check."
+    "scope": "Replaces the certificate-based development upload-bound proof with Pod-token execution. Does not close the remaining issue 586 final integration or the artifact, architecture, capacity, and owner-acceptance requirements. The first attempt exposed an accepted empty-selector admission defect under issue 578; the successful peer omits that temporary selector. The separate Job-builder correction is covered by nativeEmptyNodeSelector."
+  },
+  "nativeEmptyNodeSelector": {
+    "requirement": "Issue 578: accepted API configuration boundaries must produce executable workloads.",
+    "runtimeSourceCommit": "77dcc2faf62bf38509f8e3faac5ce879920172ac",
+    "kubernetesVersion": "1.37.0",
+    "runtimeArchitecture": "linux/amd64",
+    "operatorImage": "e2e-registry.ptah-test-a-1-37-0-242-upload-be110ef4-f2944907ca.svc.cluster.local:5000/ptah-operator@sha256:e984941ce02c3efe5f95840fba4e8ad57358b378afa86debdd55e3c3bd310074",
+    "conclusion": "pass",
+    "defect": "An explicit empty execution.nodeSelector survives CRD storage but disappears from the Job wire encoding. Strict admission compared that decoded Job with a builder retaining an empty map and rejected the operator's own Job.",
+    "correction": "Normalize only the built empty Job selector to its wire form. Keep strict admission comparisons and their existing negative controls.",
+    "localRegression": "Both family wire-format tests, native migration admission regression, and a real API-server/webhook test fail against the original source. Fixed affected race packages, vet, the real API test, and complete make verify pass.",
+    "cases": [
+      {
+        "family": "PtahMigration",
+        "resourceUID": "945f71fc-f3a3-4cbd-951b-fe86da4baddc",
+        "storedSelector": {},
+        "jobs": 5,
+        "applyJobs": 1,
+        "pods": 5,
+        "databaseWitness": "1:1:true",
+        "seconds": 55.489,
+        "conclusion": "passed"
+      },
+      {
+        "family": "PtahSchema",
+        "resourceUID": "f081ad22-badc-4a98-a3fd-edc2ee1ac187",
+        "storedSelector": {},
+        "jobs": 7,
+        "applyJobs": 1,
+        "pods": 7,
+        "databaseWitness": {
+          "columns": [
+            "id:bigint:NO",
+            "email:text:NO"
+          ],
+          "primaryKeyColumns": [
+            "id"
+          ]
+        },
+        "seconds": 72.463,
+        "conclusion": "passed"
+      }
+    ],
+    "procedureSHA256": "5742e1c064ec13d85c9f14c63fc74fd17a54a1abd9c900e670104196076e7221",
+    "archive": {
+      "name": "empty-selector-native-2026-10-06.tar.gz",
+      "sha256": "ec6d4f119ed281ea8626874b246df90684f6d6fcf2addbf6cfa53baa397e6f78",
+      "memberCount": 33,
+      "bytes": 43517
+    },
+    "custody": "Private local development archive; no upload or final retention acceptance.",
+    "scope": "Two fresh PostgreSQL databases and resources retain an explicit empty selector in API storage, complete 12 native Jobs from the fixed manager revision, execute one Apply each, and reach verified database state without Pod restarts. This closes the reproduced empty-selector defect, not the full issue 578 matrix or final artifact qualification."
   }
 }
