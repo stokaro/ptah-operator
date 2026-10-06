@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -249,6 +250,37 @@ func TestResultPublicationAdmission(t *testing.T) {
 	f.schema.Status.ActiveOperation = nil
 	writeStatus(t, f.schema)
 	requireDenied(t, admin.DeleteAllOf(t.Context(), &api.PtahResultRecord{}, client.InNamespace(f.namespace), client.MatchingFields{"metadata.name": receipt.Name}, client.DryRunAll), controllerWriteWebhook, "retention has not authorized deletion")
+}
+
+func TestConcurrentResultPublicationsPassAdmission(t *testing.T) {
+	_, identity, store := publicationFixture(t, true)
+	payload := publicationPayload(t, identity)
+	type outcome struct {
+		receipt resultstore.Receipt
+		err     error
+	}
+	results := make(chan outcome, 4)
+	start := make(chan struct{})
+	var workers sync.WaitGroup
+	for range cap(results) {
+		workers.Go(func() {
+			<-start
+			receipt, err := store.Publish(t.Context(), identity.Binding, payload, publicationDigest(payload))
+			results <- outcome{receipt, err}
+		})
+	}
+	close(start)
+	workers.Wait()
+	close(results)
+	got, retained, err := store.Load(t.Context(), identity.Binding)
+	if err != nil || !bytes.Equal(got, payload) || retained.UID == "" {
+		t.Fatalf("concurrent publication readback failed: %v", err)
+	}
+	for result := range results {
+		if result.err != nil || result.receipt != retained {
+			t.Fatalf("identical publication through installed guards lost the durable receipt: %v", result.err)
+		}
+	}
 }
 
 func TestResultPublicationRefusesUnissuedOrRetiredAuthority(t *testing.T) {
