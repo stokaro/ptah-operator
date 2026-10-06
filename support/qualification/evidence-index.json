@@ -372,5 +372,35 @@
       "sha256": "e958dda8eb463bf2d84d07297fc6d403cc3ca69b8744611ba65f24dd1f3a21c1",
       "downloadVerified": true
     }
+  },
+  "defaultIntegrationCI": {
+    "requirement": "#586 default installation integration and #584 retained source-CI evidence",
+    "sourceCommit": "3c03a80842cae24457bafca4b5d912ca30da8b76",
+    "testedMergeCommit": "9c6473b4d62a0607c833e687feee738e3ae12842",
+    "sourceTree": "132e2fed82e4fc7212e1b74ea507120767caa624",
+    "mergedAs": "1e00c3c76888960ece8a09b3eb7426211156056c",
+    "runURL": "https://github.com/stokaro/ptah-operator/actions/runs/37408822317",
+    "conclusion": "success",
+    "fullPipelineSeconds": 5116,
+    "runtimeArchitecture": "linux/amd64",
+    "kubernetesMinors": [
+      "1.35",
+      "1.36",
+      "1.37"
+    ],
+    "passedSuiteCells": 27,
+    "passedOwnedPhaseExecutions": 51,
+    "declaredPhases": 17,
+    "scenarioEngineFamilyRows": 345,
+    "archive": {
+      "name": "ci-37408822317.tar.gz",
+      "sha256": "8b625af8528e232392683d59a4fb2135cfb83a64b8db1dc472232e3e9d464980",
+      "memberCount": 114,
+      "downloadVerified": true,
+      "transport": "authenticated SSH",
+      "hostAlias": "diabolocom-buster",
+      "directory": "/home/buster/ptah-operator-evidence/020-qualification-2026-10-06"
+    },
+    "scope": "Complete default E2E matrix and source checks. Preparation is excluded from phase coverage. Focused historical probes retain their own source identities; this run does not replace the remaining changed-authentication proof review, ARM64 runtime, production-artifact, restore, capacity, or final owner acceptance obligations."
   }
 }
