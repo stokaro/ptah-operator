@@ -9,9 +9,86 @@ import sys
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 from urllib.parse import urlsplit
 
 from capacity_bootstrap import Bootstrap, database_account
+
+
+class CommandTests(unittest.TestCase):
+    quota_conflict = (b'Error from server (Conflict): error when creating "STDIN": '
+                      b'Operation cannot be fulfilled on resourcequotas "background": '
+                      b'the object has been modified; please apply your changes to the latest version and try again\n')
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.bootstrap = Bootstrap(Path(self.temp.name) / 'state.json', {'E2E_KUBECONFIG': '/unused'})
+        self.bootstrap.state['namespaces'] = [{'name': 'owned', 'uid': 'namespace-uid'}]
+        self.value = self.bootstrap.object('owned', 'ConfigMap', 'background-0001', data={'payload': 'x'})
+        self.args = ['create', '-f', '-', '-o', 'json']
+
+    def test_quota_admission_refusal_retries_same_create_and_keeps_diagnostics(self):
+        refused = subprocess.CompletedProcess([], 1, b'', self.quota_conflict)
+        stored = copy.deepcopy(self.value)
+        stored['metadata']['uid'] = 'stored-uid'
+        with patch('capacity_bootstrap.subprocess.run', side_effect=[refused, refused,
+                   subprocess.CompletedProcess([], 0, json.dumps(stored).encode(), b'')]) as run, \
+                patch('capacity_bootstrap.time.sleep') as sleep:
+            self.assertEqual(self.bootstrap.create(self.value), stored)
+        self.assertEqual(run.call_count, 3)
+        self.assertTrue(all(c.kwargs['input'] == json.dumps(self.value).encode() for c in run.call_args_list))
+        self.assertEqual(sleep.call_count, 2)
+        diagnostic = self.bootstrap.path.with_suffix('.error.log')
+        self.assertEqual(diagnostic.read_bytes(), self.quota_conflict * 2)
+        self.assertEqual(diagnostic.stat().st_mode & 0o777, 0o600)
+
+    def test_other_failures_and_writes_are_not_replayed(self):
+        foreign = copy.deepcopy(self.value)
+        foreign['metadata']['namespace'] = 'foreign'
+        quota = self.bootstrap.object('owned', 'ResourceQuota', 'background')
+        for args, value, stderr, stdout in [
+                (self.args, foreign, self.quota_conflict, b''),
+                (self.args, quota, self.quota_conflict, b''),
+                (['exec', 'database', '--', 'psql'], b'SQL', self.quota_conflict, b''),
+                (self.args, self.value, self.quota_conflict, b'partial response'),
+                (self.args, self.value, self.quota_conflict.replace(b'resourcequotas', b'configmaps'), b''),
+                (self.args, self.value, b'Error from server (Forbidden): exceeded quota: background', b''),
+                (self.args, self.value, b'Error from server (AlreadyExists): object already exists', b''),
+                (self.args, self.value, b'connection reset by peer', b'')]:
+            with self.subTest(args=args, stderr=stderr, value=value), \
+                    patch('capacity_bootstrap.subprocess.run', return_value=
+                          subprocess.CompletedProcess([], 1, stdout, stderr)) as run, \
+                    patch('capacity_bootstrap.time.sleep') as sleep:
+                with self.assertRaisesRegex(RuntimeError, 'private diagnostics'):
+                    self.bootstrap.command(args, value)
+                self.assertEqual(run.call_count, 1)
+                sleep.assert_not_called()
+
+    def test_ambiguous_timeout_is_not_replayed(self):
+        with patch('capacity_bootstrap.subprocess.run', side_effect=subprocess.TimeoutExpired('kubectl', 45)) as run:
+            with self.assertRaises(subprocess.TimeoutExpired):
+                self.bootstrap.create(self.value)
+            self.assertEqual(run.call_count, 1)
+
+    def test_quota_conflicts_have_a_fixed_attempt_limit(self):
+        with patch('capacity_bootstrap.subprocess.run', return_value=
+                   subprocess.CompletedProcess([], 1, b'', self.quota_conflict)) as run, \
+                patch('capacity_bootstrap.time.sleep') as sleep:
+            with self.assertRaisesRegex(RuntimeError, 'private diagnostics'):
+                self.bootstrap.create(self.value)
+            self.assertEqual(run.call_count, 5)
+            self.assertEqual(sleep.call_count, 4)
+
+    def test_retries_share_the_original_command_deadline(self):
+        with patch('capacity_bootstrap.subprocess.run', return_value=
+                   subprocess.CompletedProcess([], 1, b'', self.quota_conflict)) as run, \
+                patch('capacity_bootstrap.time.monotonic', side_effect=[100, 100, 120, 121, 144.75]), \
+                patch('capacity_bootstrap.time.sleep') as sleep:
+            with self.assertRaisesRegex(RuntimeError, 'private diagnostics'):
+                self.bootstrap.create(self.value)
+            self.assertEqual([c.kwargs['timeout'] for c in run.call_args_list], [45, 24])
+            self.assertEqual(sleep.call_count, 1)
 
 
 class FakeBootstrap(Bootstrap):

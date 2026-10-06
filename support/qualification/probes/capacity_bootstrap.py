@@ -8,6 +8,7 @@ import re
 import secrets
 import subprocess
 import sys
+import time
 
 import capacity_unrelated
 
@@ -50,17 +51,38 @@ class Bootstrap:
 
     def command(self, args, value=None, timeout=45):
         data = json.dumps(value).encode() if isinstance(value, dict) else value
-        result = subprocess.run(['kubectl', '--kubeconfig', self.env['E2E_KUBECONFIG'],
-                                 '--request-timeout=30s', *args], input=data,
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                timeout=timeout, check=False)
-        if result.returncode:
+        owned_create = (args == ['create', '-f', '-', '-o', 'json'] and
+                        isinstance(value, dict) and value.get('kind') != 'ResourceQuota' and
+                        value.get('metadata', {}).get('namespace') in
+                        {n['name'] for n in self.state['namespaces']})
+        deadline = time.monotonic() + timeout
+        diagnostic = self.path.with_suffix('.error.log')
+        failure = 'kubectl failed; private diagnostics: ' + str(diagnostic)
+        for attempt in range(5):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise RuntimeError(failure)
+            result = subprocess.run(['kubectl', '--kubeconfig', self.env['E2E_KUBECONFIG'],
+                                     '--request-timeout=30s', *args], input=data,
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                    timeout=remaining, check=False)
+            if not result.returncode:
+                return result.stdout
             # API errors can quote Secret fields. Keep diagnostics private.
-            diagnostic = self.path.with_suffix('.error.log')
             with open(diagnostic, 'ab', opener=lambda p, f: os.open(p, f, 0o600)) as output:
                 output.write(result.stderr)
-            raise RuntimeError('kubectl failed; private diagnostics: ' + str(diagnostic))
-        return result.stdout
+            # Quota admission can exhaust its own optimistic-update retries
+            # before admitting a CREATE. Only that explicit refusal proves the
+            # object was not stored; never replay an ambiguous write or SQL exec.
+            quota_conflict = re.fullmatch(
+                rb'Error from server \(Conflict\): error when creating "STDIN": '
+                rb'Operation cannot be fulfilled on resourcequotas "(?:capacity|background)": '
+                rb'the object has been modified; please apply your changes to the latest version and try again\n?',
+                result.stderr)
+            if (not owned_create or not quota_conflict or result.stdout or attempt == 4 or
+                    time.monotonic() + 0.5 >= deadline):
+                raise RuntimeError(failure)
+            time.sleep(0.5)
 
     def read(self, resource, name, namespace):
         return json.loads(self.command(['-n', namespace, 'get', resource, name, '-o', 'json']))
