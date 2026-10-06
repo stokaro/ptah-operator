@@ -1378,5 +1378,76 @@
       "directory": "/home/buster/ptah-operator-evidence/020-qualification-2026-10-06"
     },
     "custody": "Private development copy with independently hash-verified download. Final encrypted custody, retention policy, and owner acceptance remain unassessed."
+  },
+  "ciFailureFollowup": {
+    "sourceCommit": "fc49d3ade00f59bd7e8f681d326ddcfba9814ae0",
+    "runURL": "https://github.com/stokaro/ptah-operator/actions/runs/37530031203",
+    "runAttempt": 1,
+    "conclusion": "failure",
+    "createdAt": "2026-10-06T20:54:52Z",
+    "completedAt": "2026-10-06T22:20:03Z",
+    "fullPipelineSeconds": 5111.0,
+    "lastJobElapsedSeconds": 5111.0,
+    "passedSuiteCells": 25,
+    "failedSuiteCells": [
+      {
+        "name": "Kubernetes 1.35 migrations-postgresql",
+        "jobID": 112500515032,
+        "url": "https://github.com/stokaro/ptah-operator/actions/runs/37530031203/job/112500515032",
+        "conclusion": "failure"
+      },
+      {
+        "name": "Kubernetes 1.35 lifecycle",
+        "jobID": 112500515130,
+        "url": "https://github.com/stokaro/ptah-operator/actions/runs/37530031203/job/112500515130",
+        "conclusion": "failure"
+      }
+    ],
+    "requiredSuiteCells": 27,
+    "scope": "Current-head terminal CI outcome and full-run wall time. Job success is not final production acceptance. The separate capacity workflow uses the lab profile.",
+    "within90Minutes": true,
+    "separateRuns": {
+      "Capacity": {
+        "id": 37530031261,
+        "conclusion": "success",
+        "seconds": 2898.0
+      },
+      "Release": {
+        "id": 37530031169,
+        "conclusion": "success",
+        "seconds": 426.0
+      },
+      "Documentation": {
+        "id": 37530031418,
+        "conclusion": "success",
+        "seconds": 303.0
+      }
+    },
+    "testedMergeCommit": "e5ae5978ace217a0e22b3d80661c898ac866f975",
+    "sourceDifference": "Only context7.json is added; runtime, test, dependency, chart, and workflow sources match the PR head.",
+    "archive": {
+      "name": "ci-fc49-failures-2026-10-06.tar.gz",
+      "sha256": "14af01dcd87a7dc7cb07e581d38d1e20840c737837a36f999cc787e4e793284f",
+      "bytes": 640496,
+      "memberCount": 14,
+      "downloadVerified": true,
+      "transport": "authenticated SSH",
+      "hostAlias": "diabolocom-buster",
+      "directory": "/home/buster/ptah-operator-evidence/020-qualification-2026-10-06"
+    },
+    "custody": "Private development copy with independently hash-verified download. Final encrypted custody, retention policy, and owner acceptance remain unassessed.",
+    "requirement": "Current PR integration and the unchanged 90-minute complete CI target; #242 stays open.",
+    "failureAssessment": [
+      {
+        "jobID": 112500515032,
+        "observation": "TLS bootstrap failed before cluster creation. The original cause was discarded by the verifier and suppressed by the shell.",
+        "historicalCause": "Not established. The exact Service certificate verifies locally on Linux; improved diagnostics preserve the cause on recurrence."
+      },
+      {
+        "jobID": 112500515130,
+        "observation": "The deadline upgrade incident resolved 60.549 seconds after the independent healthy boundary, exceeding the unchanged 45-second limit.",
+        "historicalCause": "Not established. A local regression reproduces lost verified progress after an optimistic status conflict; the repaired observer is undergoing native validation."
+      }
+    ]
   }
 }
