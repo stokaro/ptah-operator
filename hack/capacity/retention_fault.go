@@ -25,6 +25,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/util/retry"
 )
 
 var schemaApprovalResource = schema.GroupVersionResource{Group: schemaResource.Group, Version: schemaResource.Version, Resource: "ptahschemaapprovals"}
@@ -69,7 +70,32 @@ func patchCapacitySpec(ctx context.Context, writer dynamic.Interface, resource s
 	if err != nil {
 		return nil, err
 	}
-	result, err := writer.Resource(resource).Namespace(original.GetNamespace()).Patch(ctx, original.GetName(), types.MergePatchType, raw, metav1.PatchOptions{})
+	client := writer.Resource(resource).Namespace(original.GetNamespace())
+	var result *unstructured.Unstructured
+	refresh := false
+	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		patch := raw
+		if refresh {
+			current, err := client.Get(ctx, original.GetName(), metav1.GetOptions{})
+			if err != nil {
+				return err
+			}
+			// Status and finalizer writes can race with the author/installer
+			// handoff. A retry may refresh the version, never the desired state
+			// or the resource identity the original write was bound to.
+			if current.GetUID() != original.GetUID() || current.GetName() != original.GetName() || current.GetNamespace() != original.GetNamespace() || current.GetGeneration() != original.GetGeneration() || current.GetDeletionTimestamp() != nil || !reflect.DeepEqual(current.Object["spec"], original.Object["spec"]) {
+				return fmt.Errorf("spec patch conflict changed identity, generation or desired state")
+			}
+			patch, err = json.Marshal(map[string]any{"metadata": map[string]any{"uid": original.GetUID(), "resourceVersion": current.GetResourceVersion()}, "spec": fields})
+			if err != nil {
+				return err
+			}
+		}
+		var err error
+		result, err = client.Patch(ctx, original.GetName(), types.MergePatchType, patch, metav1.PatchOptions{})
+		refresh = true
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}
