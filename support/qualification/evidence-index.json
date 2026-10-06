@@ -527,5 +527,79 @@
     },
     "custody": "Private local development archive; not uploaded or accepted as final retention.",
     "scope": "The local TLS runner regression fails after four attempts in 3.005 seconds on the original source and passes after the fix, with one executor invocation. The unchanged native running-Apply scenario then passed on PostgreSQL and MySQL: original Job/Pod identities, persisted results, complete execution horizons, new-epoch convergence, SQL audits, and no replay. This is not the complete schema-approvals phase or a CI matrix verdict."
+  },
+  "nativePodTokenUploadBounds": {
+    "requirement": "Issue 586: bound incomplete authenticated uploads while Apply Leases renew and independent resources converge.",
+    "runtimeSourceCommit": "be110ef42e612477344eda8c2d6691e3e029f7b5",
+    "harnessSourceCommit": "77dcc2faf62bf38509f8e3faac5ce879920172ac",
+    "kubernetesVersion": "1.37.0",
+    "runtimeArchitecture": "linux/amd64",
+    "resources": {
+      "sharedCPUSet": "0-3",
+      "taskContainers": 6,
+      "memoryBound": false
+    },
+    "operatorImage": "e2e-registry.ptah-test-a-1-37-0-242-upload-be110ef4-f2944907ca.svc.cluster.local:5000/ptah-operator@sha256:f8cd2660ae48c7940f8d8d0bff6a56d866f779f3228fa284a1afb6d96fe6fa1f",
+    "conclusion": "pass",
+    "cases": [
+      {
+        "family": "PtahMigration",
+        "engine": "PostgreSQL",
+        "uploadSeconds": [
+          120.010502375,
+          120.008372291
+        ],
+        "maxRenewalGapSeconds": 5.144408,
+        "peerConvergenceSeconds": 52.062342042,
+        "evidenceSHA256": "eb64f489a99264e5bf68536aca6d500db2a628e56342bc1ea9ee763605920aa5"
+      },
+      {
+        "family": "PtahMigration",
+        "engine": "MySQL",
+        "uploadSeconds": [
+          120.019107917,
+          120.008358917
+        ],
+        "maxRenewalGapSeconds": 5.120845,
+        "peerConvergenceSeconds": 53.270427042,
+        "evidenceSHA256": "1936898a1b8e4e37683218602e69461ffab16689a70d0da5c20905b9ede5101a"
+      },
+      {
+        "family": "PtahSchema",
+        "engine": "PostgreSQL",
+        "uploadSeconds": [
+          120.020009667,
+          120.0092575
+        ],
+        "maxRenewalGapSeconds": 5.120038,
+        "peerConvergenceSeconds": 73.820465625,
+        "evidenceSHA256": "1bc5c94cac51f8f187c3ae2416580af49c26fbbc8ccef6e6c4f5a75c1862d2ba"
+      },
+      {
+        "family": "PtahSchema",
+        "engine": "MySQL",
+        "uploadSeconds": [
+          120.016240708,
+          120.008887541
+        ],
+        "maxRenewalGapSeconds": 5.472901,
+        "peerConvergenceSeconds": 73.613711834,
+        "evidenceSHA256": "2bf241758158f2e9ee5aa56dd0b712414177fa52a5cdc1e71254d7387209be07"
+      }
+    ],
+    "budgets": {
+      "uploadSeconds": 120,
+      "responseSeconds": 5,
+      "renewalSeconds": 15
+    },
+    "proof": "All four engine/family cases retained the original Job/Pod and one Apply, refused requests while both slots were occupied, recovered each slot after its timeout, and validated the native database effects and durable publications. Pod-bound receiver tokens stayed in memory. Independent readback confirmed the Service and temporary admission/node/Pod metadata were restored.",
+    "archive": {
+      "name": "pod-token-upload-budget-native-2026-10-06.tar.gz",
+      "sha256": "db9ca058916f1fb05f0746419365ed2dc0b854f666bc70ec60bcbfb88031b8c1",
+      "memberCount": 40,
+      "bytes": 79967
+    },
+    "custody": "Private local development archive; no upload or final retention acceptance.",
+    "scope": "Replaces the certificate-based development upload-bound proof with Pod-token execution. Does not close the remaining issue 586 final integration or the artifact, architecture, capacity, and owner-acceptance requirements. The first attempt exposed an accepted empty-selector admission defect under issue 578; the successful peer omits that temporary selector, and the separate Job-builder fix still needs its native operational check."
   }
 }
