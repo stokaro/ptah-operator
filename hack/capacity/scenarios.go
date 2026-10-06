@@ -62,6 +62,7 @@ type scenarios struct {
 	clientset   kubernetes.Interface
 	dynamic     dynamic.Interface
 	approver    dynamic.Interface
+	author      dynamic.Interface
 	windows     []window
 	recorders   []*cycleRecorder
 }
@@ -152,7 +153,7 @@ func (s *scenarios) create(ctx context.Context) error {
 	start := time.Now().UTC()
 	var targets []batchTarget
 	for index := range s.load.Schemas {
-		object, err := s.dynamic.Resource(schemaResource).Namespace(s.in.namespaceFor(index)).Create(ctx, s.schemaObject(index), metav1.CreateOptions{})
+		object, err := s.createWorkload(ctx, schemaResource, s.schemaObject(index))
 		if err != nil {
 			return fmt.Errorf("create %s: %w", s.schemaName(index), err)
 		}
@@ -160,7 +161,7 @@ func (s *scenarios) create(ctx context.Context) error {
 	}
 	for index := range s.load.Migrations {
 		desired := s.migrationObject(s.migrationName(index), s.load.Schemas+index, "Always", true)
-		object, err := s.dynamic.Resource(migrationResource).Namespace(desired.GetNamespace()).Create(ctx, desired, metav1.CreateOptions{})
+		object, err := s.createWorkload(ctx, migrationResource, desired)
 		if err != nil {
 			return fmt.Errorf("create %s: %w", s.migrationName(index), err)
 		}
@@ -262,7 +263,7 @@ func (s *scenarios) steady(ctx context.Context) error {
 // the burst can be measured against the one piece of work a person asked for.
 func (s *scenarios) prepareApproval(ctx context.Context) error {
 	object := s.migrationObject(approvalResource, s.load.Schemas+s.load.Migrations, "OnApproval", false)
-	if _, err := s.dynamic.Resource(migrationResource).Namespace(object.GetNamespace()).Create(ctx, object, metav1.CreateOptions{}); err != nil {
+	if _, err := s.createWorkload(ctx, migrationResource, object); err != nil {
 		return fmt.Errorf("create %s: %w", approvalResource, err)
 	}
 	deadline := time.Now().Add(s.load.Settle.Duration)
@@ -342,7 +343,7 @@ func (s *scenarios) patchReference(ctx context.Context, resource schema.GroupVer
 		return err
 	}
 	patch := fmt.Sprintf(`{"spec":{%q:{"ociRef":%q}}}`, field, reference)
-	_, err = s.dynamic.Resource(resource).Namespace(namespace).Patch(ctx, name, types.MergePatchType, []byte(patch), metav1.PatchOptions{})
+	_, err = s.workloadWriter().Resource(resource).Namespace(namespace).Patch(ctx, name, types.MergePatchType, []byte(patch), metav1.PatchOptions{})
 	if err != nil {
 		return fmt.Errorf("move %s to %s: %w", name, reference, err)
 	}

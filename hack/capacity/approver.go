@@ -14,6 +14,7 @@ import (
 )
 
 type approvalActors struct {
+	Installer      string `json:"installer,omitempty"`
 	WorkloadWriter string `json:"workloadWriter"`
 	Approver       string `json:"approver"`
 }

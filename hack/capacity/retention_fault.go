@@ -24,6 +24,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/dynamic"
 )
 
 var schemaApprovalResource = schema.GroupVersionResource{Group: schemaResource.Group, Version: schemaResource.Version, Resource: "ptahschemaapprovals"}
@@ -60,11 +61,15 @@ func faultGate(original *unstructured.Unstructured) (*admissionv1.ValidatingAdmi
 }
 
 func (s *scenarios) patchFaultSpec(ctx context.Context, resource schema.GroupVersionResource, original *unstructured.Unstructured, fields map[string]any) (*unstructured.Unstructured, error) {
+	return patchCapacitySpec(ctx, s.workloadWriter(), resource, original, fields)
+}
+
+func patchCapacitySpec(ctx context.Context, writer dynamic.Interface, resource schema.GroupVersionResource, original *unstructured.Unstructured, fields map[string]any) (*unstructured.Unstructured, error) {
 	raw, err := json.Marshal(map[string]any{"metadata": map[string]any{"uid": original.GetUID(), "resourceVersion": original.GetResourceVersion()}, "spec": fields})
 	if err != nil {
 		return nil, err
 	}
-	result, err := s.dynamic.Resource(resource).Namespace(original.GetNamespace()).Patch(ctx, original.GetName(), types.MergePatchType, raw, metav1.PatchOptions{})
+	result, err := writer.Resource(resource).Namespace(original.GetNamespace()).Patch(ctx, original.GetName(), types.MergePatchType, raw, metav1.PatchOptions{})
 	if err != nil {
 		return nil, err
 	}

@@ -137,9 +137,15 @@ class FakeBootstrap(Bootstrap):
     def command(self, args, value=None, timeout=45, kubeconfig=None):
         self.commands.append((list(args), value))
         if args[:2] == ['auth', 'whoami']:
-            if kubeconfig != '/approver-config':
-                raise AssertionError('identity must come from the approver kubeconfig')
-            return b'{"status":{"userInfo":{"username":"capacity-approver"}}}'
+            if kubeconfig not in ('/approver-config', '/author-config'):
+                raise AssertionError('identity must come from its separate kubeconfig')
+            return json.dumps({'status': {'userInfo': {'username': 'capacity-' + ('author' if kubeconfig == '/author-config' else 'approver')}}}).encode()
+        if args[:2] == ['create', '--dry-run=client']:
+            role = {'apiVersion': 'rbac.authorization.k8s.io/v1', 'kind': 'Role',
+                    'metadata': {'name': 'ptah-desired-state-author', 'namespace': 'application'},
+                    'rules': [{'apiGroups': ['operator.ptah.run'], 'resources': ['ptahschemas', 'ptahmigrations'],
+                               'verbs': ['get', 'list', 'watch', 'create', 'update', 'patch', 'delete']}]}
+            return (json.dumps(role) + '\n' + json.dumps({'kind': 'RoleBinding'})).encode()
         if args[:2] == ['get', 'clusterrole']:
             return b'clusterrole.rbac.authorization.k8s.io/lab-controller-approver'
         if args[0] == 'version':
@@ -226,6 +232,46 @@ class BootstrapTests(unittest.TestCase):
             self.assertEqual(binding['subjects'], [{'apiGroup': 'rbac.authorization.k8s.io',
                              'kind': 'User', 'name': 'capacity-approver'}])
         self.assertEqual(b.state['approver']['username'], 'capacity-approver')
+
+    def test_author_receives_only_the_documented_role_in_owned_workload_namespaces(self):
+        b = self.bootstrap
+        b.env.update(CAPACITY_AUTHOR_KUBECONFIG='/author-config', CAPACITY_APPROVER_KUBECONFIG='/approver-config')
+        namespaces = b.prepare({'schemas': 1, 'migrations': 1})
+        roles = [obj for obj in b.objects.values() if obj['kind'] == 'Role']
+        bindings = [obj for obj in b.objects.values() if obj['kind'] == 'RoleBinding' and obj['metadata']['name'] == 'capacity-author']
+        self.assertEqual(len(roles), 2)
+        self.assertEqual(len(bindings), 2)
+        self.assertEqual({obj['metadata']['namespace'] for obj in roles}, set(namespaces))
+        for obj in bindings:
+            self.assertIn(obj['metadata']['namespace'], namespaces)
+            self.assertEqual(obj['roleRef']['kind'], 'Role')
+            self.assertEqual(obj['roleRef']['name'], 'ptah-desired-state-author')
+            self.assertEqual(obj['subjects'], [{'apiGroup': 'rbac.authorization.k8s.io', 'kind': 'User', 'name': 'capacity-author'}])
+        self.assertFalse(any(obj['kind'] == 'ClusterRoleBinding' for obj in b.objects.values()))
+        self.assertEqual(b.state['author']['username'], 'capacity-author')
+        self.assertEqual(len(b.state['author']['exampleSHA256']), 64)
+
+    def test_unproven_or_privileged_author_creates_nothing(self):
+        for mode in ('missing approver', 'same user', 'administrator', 'missing username'):
+            with self.subTest(mode=mode):
+                b = FakeBootstrap(Path(self.temp.name) / 'state.json')
+                b.env['CAPACITY_AUTHOR_KUBECONFIG'] = '/author-config'
+                if mode != 'missing approver':
+                    b.env['CAPACITY_APPROVER_KUBECONFIG'] = '/approver-config'
+                original = b.command
+                def command(args, value=None, timeout=45, kubeconfig=None):
+                    if args[:2] == ['auth', 'whoami'] and kubeconfig == '/author-config':
+                        identity = {'username': 'capacity-approver' if mode == 'same user' else 'capacity-author'}
+                        if mode == 'administrator':
+                            identity['groups'] = ['system:masters']
+                        if mode == 'missing username':
+                            identity.pop('username')
+                        return json.dumps({'status': {'userInfo': identity}}).encode()
+                    return original(args, value, timeout, kubeconfig)
+                with patch.object(b, 'command', side_effect=command), self.assertRaises(ValueError):
+                    b.prepare({'schemas': 1, 'migrations': 1})
+                self.assertFalse(b.objects)
+                self.assertFalse(b.path.exists())
 
     def test_default_workload_serviceaccount_receives_no_approval_binding(self):
         b = self.bootstrap

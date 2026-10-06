@@ -133,6 +133,32 @@ class Bootstrap:
         self.command(['get', 'clusterrole', role, '-o', 'name'])
         return {'username': username, 'clusterRole': role}
 
+    def author(self):
+        path = self.env.get('CAPACITY_AUTHOR_KUBECONFIG')
+        if not path:
+            return None
+        if not self.env.get('CAPACITY_APPROVER_KUBECONFIG'):
+            raise ValueError('capacity author requires a distinct approver kubeconfig')
+        review = json.loads(self.command(['auth', 'whoami', '-o', 'json'], kubeconfig=path))
+        identity = review.get('status', {}).get('userInfo', {})
+        username = identity.get('username')
+        if not isinstance(username, str) or not username or 'system:masters' in identity.get('groups', []):
+            raise ValueError('capacity author must be an identified non-administrator')
+        example = Path(__file__).resolve().parents[3] / 'examples/desired-state-author-role.yaml'
+        # kubectl prints one JSON document per YAML input, not a single List.
+        raw = self.command(['create', '--dry-run=client', '-f', str(example), '-o', 'json']).decode()
+        rendered = []
+        decoder = json.JSONDecoder()
+        while raw.strip():
+            raw = raw.lstrip()
+            row, end = decoder.raw_decode(raw)
+            rendered.append(row)
+            raw = raw[end:]
+        roles = [row for row in rendered if row.get('kind') == 'Role']
+        if len(roles) != 1 or roles[0].get('metadata', {}).get('name') != 'ptah-desired-state-author' or not roles[0].get('rules'):
+            raise ValueError('documented author example must contain one nonempty author Role')
+        return {'username': username, 'role': roles[0], 'exampleSHA256': hashlib.sha256(example.read_bytes()).hexdigest()}
+
     def registry_dependencies(self, dependencies, namespace):
         host = self.env.get('CAPACITY_REGISTRY_HOST')
         ca_name = self.env.get('CAPACITY_REGISTRY_CA_CONFIGMAP')
@@ -178,7 +204,10 @@ class Bootstrap:
         if any(type(n) is not int or n < 0 for n in counts) or sum(counts) == 0:
             raise ValueError('workload must declare nonnegative family counts and at least one resource')
         # Read all shared prerequisites before creating anything.
+        author = self.author()
         approver = self.approver()
+        if author and author['username'] == approver['username']:
+            raise ValueError('capacity author and approver must differ')
         source = self.env['E2E_TEST_NAMESPACE']
         dependencies = [self.read('secret', name, source) for name in ('demo-registry', 'demo-registry-pull')]
         for name in ('demo-verification-policy', 'demo-migration-verification-policy'):
@@ -200,11 +229,21 @@ class Bootstrap:
                           schemas=counts[0], migrations=counts[1])
         if approver:
             self.state['approver'] = approver
+        if author:
+            self.state['author'] = author
         self.save()
         self.namespace(fixture, minor, False)
         self.copy(dependencies[1], fixture)
         for namespace in namespaces:
             self.namespace(namespace, minor, True)
+            if author:
+                self.copy(author['role'], namespace)
+                self.create({'apiVersion': 'rbac.authorization.k8s.io/v1', 'kind': 'RoleBinding',
+                             'metadata': {'name': 'capacity-author', 'namespace': namespace},
+                             'roleRef': {'apiGroup': 'rbac.authorization.k8s.io', 'kind': 'Role',
+                                         'name': author['role']['metadata']['name']},
+                             'subjects': [{'apiGroup': 'rbac.authorization.k8s.io', 'kind': 'User',
+                                           'name': author['username']}]})
             if approver:
                 # Grant only the chart's approval permissions in these new
                 # namespaces. Namespace cleanup removes the binding as well.

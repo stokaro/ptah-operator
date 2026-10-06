@@ -53,6 +53,7 @@ func run() error {
 	var (
 		faultBaselinePath = flag.String("retention-fault-baseline", "", "run only the retention fault on the exact resumed fleet in a prior maintenance inventory; requires a fresh output and checkpoint directory")
 		kubeconfig        = flag.String("kubeconfig", os.Getenv("KUBECONFIG"), "kubeconfig of the lab cluster")
+		authorConfig      = flag.String("author-kubeconfig", os.Getenv("CAPACITY_AUTHOR_KUBECONFIG"), "optional same-cluster kubeconfig for the desired-state author; requires a distinct approver")
 		approverConfig    = flag.String("approver-kubeconfig", os.Getenv("CAPACITY_APPROVER_KUBECONFIG"), "optional same-cluster kubeconfig for a distinct approval writer")
 		checkpointPath    = flag.String("checkpoint-probe", "", "Python database verifier for soak checkpoints")
 		checkpointState   = flag.String("checkpoint-state", "", "owned capacity database state for soak checkpoints")
@@ -79,6 +80,9 @@ func run() error {
 	flag.StringVar(&in.databaseSecret, "database-secret", "capacity-db-%d", "Secret name pattern, one database per resource")
 	flag.StringVar(&in.registryIP, "registry-ip", "", "the registry's address, for the outage")
 	flag.Parse()
+	if *authorConfig != "" && *approverConfig == "" {
+		return errors.New("author-kubeconfig requires approver-kubeconfig")
+	}
 	if *apiCount < 1 {
 		return errors.New("expected-api-servers must be positive")
 	}
@@ -173,7 +177,11 @@ func run() error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	approver, actors, err := capacityApprover(ctx, *approverConfig, config, dynamicClient)
+	author, workloadConfig, installer, err := capacityAuthor(ctx, *authorConfig, config)
+	if err != nil {
+		return err
+	}
+	approver, actors, err := capacityApprover(ctx, *approverConfig, workloadConfig, dynamicClient)
 	if err != nil {
 		return err
 	}
@@ -182,6 +190,7 @@ func run() error {
 		return err
 	}
 	if actors != nil {
+		actors.Installer = installer
 		environment["approvalActors"] = actors
 	}
 	if in.catalog != nil {
@@ -249,7 +258,7 @@ func run() error {
 	steps := &scenarios{faultBaseline: baseline, faultProbe: faultProbe, sampleSnapshot: func() []sample { samples, _ := watch.snapshot(); return samples }, checkpoint: checkpoint, evidenceDir: *outDir, restartJobs: func() []jobRecord {
 		_, jobs := watch.snapshot()
 		return jobs
-	}, inputReader: inputReader, in: in, load: load, clientset: clientset, dynamic: dynamicClient, approver: approver, recorders: recorders}
+	}, inputReader: inputReader, in: in, load: load, clientset: clientset, dynamic: dynamicClient, approver: approver, author: author, recorders: recorders}
 	if baseline != nil {
 		archive, e := writeRetentionEvidence(*outDir, "retention-fault-baseline.json", baseline)
 		setupErr = errors.Join(setupErr, e)
