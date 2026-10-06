@@ -67,56 +67,15 @@ func runMigrationPhase(t *testing.T, phase phases.Of[phases.MigrationsInputs], e
 			body func()
 		}{"postgresql-migrations", m.engineMigrations})
 	}
-	scenarios = append(scenarios,
-		struct {
-			name string
-			body func()
-		}{"approval-resource-replacement", m.approvalIdentityReplacement},
-		struct {
-			name string
-			body func()
-		}{"approval-policy-change", func() { m.approvalInputChange("policy") }},
-		struct {
-			name string
-			body func()
-		}{"approval-transaction-mode-change", func() { m.approvalInputChange("transaction-mode") }},
-		struct {
-			name string
-			body func()
-		}{"approval-artifact-change", func() { m.approvalInputChange("artifact") }},
-		struct {
-			name string
-			body func()
-		}{"approval-verification-policy-uid-change", func() { m.approvalInputChange("verification-policy-uid") }},
-		struct {
-			name string
-			body func()
-		}{"approval-verification-policy-content-change", func() { m.approvalInputChange("verification-policy-content") }},
-		struct {
-			name string
-			body func()
-		}{"approval-executor-image-change", m.executorImageChange},
-		struct {
-			name string
-			body func()
-		}{"approval-ptah-version-change", m.ptahVersionChange},
-		struct {
-			name string
-			body func()
-		}{"unsupported-controller-state-after-approval", m.unsupportedControllerState},
-		struct {
-			name string
-			body func()
-		}{"unsupported-runner-protocol-after-approval", m.unsupportedRunnerProtocol},
-		struct {
-			name string
-			body func()
-		}{"running-apply-executor-image-change", m.runningExecutorImageChange})
+
 	for _, scenario := range scenarios {
 		if !run.Scenario(scenario.name, m.scenario(scenario.body)) {
 			return
 		}
 	}
+	// Stop the completed fixture from refreshing status and plan pins during
+	// reference-data acceptance or later phases in an unpartitioned run.
+	m.finishFixture(m.migrationName())
 	run.Logf("e2e migrations: PASS %s approval gate, applied sequence, matching history, and credential isolation",
 		m.engine.kind)
 }
@@ -218,7 +177,6 @@ func newMigrationRun(t *testing.T, run *harness.Run, in phases.MigrationsInputs,
 	m.kubectlPtah = filepath.Join(m.workDir, "kubectl-ptah")
 	build := exec.CommandContext(m.ctx, "go", "build", "-trimpath", "-o", m.kubectlPtah, "./cmd/kubectl-ptah") //nolint:gosec // Arguments, not a shell.
 	build.Dir = repositoryRoot
-	build.Env = append(os.Environ(), "GOCACHE="+filepath.Join(m.workDir, "go-cache"))
 	build.Stdout, build.Stderr = os.Stderr, os.Stderr
 	m.check(build.Run(), "build kubectl-ptah")
 
@@ -363,6 +321,34 @@ func (m *migrationRun) patchMigration(name string, patch map[string]any) {
 	migration := &ptahv1alpha1.PtahMigration{}
 	migration.Namespace, migration.Name = m.in.TestNamespace, name
 	m.check(m.mergePatch(migration, patch), "patch PtahMigration %s", name)
+}
+
+// finishFixture stops a completed row from producing work during later rows.
+// Keep its resource and finished Jobs for diagnostics, but retire periodic
+// reads and faults once nothing else needs the fixture to reconcile.
+// Call this only after every assertion about the row's behavior has passed.
+func (m *migrationRun) finishFixture(name string) {
+	m.t.Helper()
+	resource := m.migration(name)
+	uid := resource.UID
+	m.check(retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		current := m.migration(name)
+		if current.UID != uid {
+			return fmt.Errorf("completed fixture %s was replaced before cleanup", name)
+		}
+		before := current.DeepCopy()
+		current.Spec.Suspend = true
+		return m.cluster.Client.Patch(m.ctx, current,
+			client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{}))
+	}), "suspend the completed fixture %s", name)
+	m.waitForMigration(name, "suspension of the completed fixture", time.Second,
+		func(current *ptahv1alpha1.PtahMigration) bool {
+			if current.UID != uid {
+				m.fatalf("completed fixture %s was replaced during cleanup", name)
+			}
+			return current.Spec.Suspend && current.Status.ObservedGeneration == current.Generation &&
+				current.Status.Phase == ptahv1alpha1.MigrationPhaseSuspended && current.Status.ActiveOperation == nil
+		})
 }
 
 // kubectl runs kubectl against the cluster and returns its standard output
@@ -1015,6 +1001,19 @@ func (m *migrationRun) collectDiagnostics(ctx context.Context) {
 		emit("migration Jobs", projection)
 	}
 	_, _ = fmt.Fprintln(os.Stderr, "e2e migrations: raw Job logs are suppressed to protect credential-isolation failures")
+}
+
+// retireFixtureApproval removes a completed proof's approval when that proof
+// deletes or replaces its migration. Approvals have no owner reference; leaving
+// one behind pins a plan that Kubernetes garbage-collects with the old owner.
+func (m *migrationRun) retireFixtureApproval(name string, migrationUID types.UID) {
+	m.t.Helper()
+	approval := &ptahv1alpha1.PtahMigrationApproval{}
+	m.check(m.get(name, approval), "read the completed fixture approval")
+	if migrationUID == "" || approval.Spec.MigrationRef.UID != migrationUID {
+		m.fatalf("approval %s does not belong to the completed fixture", name)
+	}
+	m.check(storedStateDeleteExact(m.ctx, m.cluster, approval), "remove only the completed fixture approval")
 }
 
 // deleteAndWait deletes an object and waits until it is gone, as kubectl

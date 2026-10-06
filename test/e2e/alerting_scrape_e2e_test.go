@@ -45,10 +45,10 @@ func (a *alertingRun) lostScrapeTarget() {
 		}
 	}
 	config := &corev1.ConfigMap{}
-	a.check(a.cluster.Client.Get(a.ctx, types.NamespacedName{Namespace: alMonitoringNamespace, Name: "prometheus"}, config),
+	a.check(a.cluster.Client.Get(a.ctx, types.NamespacedName{Namespace: a.scope.monitoringNamespace, Name: "prometheus"}, config),
 		"read the original Prometheus configuration")
 	original := config.Data["prometheus.yml"]
-	if original != alPrometheusConfig(alMonitoringNamespace, a.in.OperatorNamespace, a.metricsService, a.apiServerTargets...) {
+	if original != alPrometheusConfig(a.scope.monitoringNamespace, a.in.OperatorNamespace, a.metricsService, a.apiServerTargets...) {
 		a.fatalf("the Prometheus configuration changed before the scrape fault")
 	}
 	restored := false
@@ -85,7 +85,7 @@ func (a *alertingRun) lostScrapeTarget() {
 	labels := map[string]string{"operator_namespace": a.in.OperatorNamespace, "operator_metrics_service": a.metricsService}
 	delivery, index := a.waitForDeliveryWithCheck(alMatch{status: "firing", alertName: alViewNotSynced, labels: labels},
 		"the unresolved-view alert after only the leader's scrape failed", alViewUnsyncedFor+alDetectionSlack, from, checkFault)
-	reading := a.readScrapeHistory(names, pod, loaded, "firing")
+	reading := a.readScrapeHistory(names, pod, loaded, time.Time{}, "firing")
 	if !alScrapeFailureDelivered(delivery, reading) {
 		a.fatalf("the partial-scrape alert did not meet its native failure bound: firstFailure=%s startsAt=%s receivedAt=%s",
 			reading.firstFailure, delivery.StartsAt, delivery.ReceivedAt)
@@ -100,7 +100,7 @@ func (a *alertingRun) lostScrapeTarget() {
 		}
 	}
 	a.logf("leader %s stayed ready while its scrape failed; all %d followers stayed up; first failed native scrape=%s firing received=%s", pod, a.replicas-1, reading.firstFailure, delivery.ReceivedAt)
-	_, err = a.loadScrapeConfig(a.ctx, original, "")
+	restoredAt, err := a.loadScrapeConfig(a.ctx, original, "")
 	a.check(err, "restore the leader's metrics path")
 	restored = true
 	a.waitForTargets()
@@ -109,10 +109,10 @@ func (a *alertingRun) lostScrapeTarget() {
 	a.check(harness.Wait(a.ctx, "all scrape histories through the receiver's resolution", 2*alScrapeInterval, time.Second,
 		func(context.Context) (bool, string, error) {
 			checkManagers()
-			reading = a.readScrapeHistory(names, pod, loaded, "")
+			reading = a.readScrapeHistory(names, pod, loaded, restoredAt, "")
 			return !reading.scrapedThrough.Before(resolved.ReceivedAt), "a manager has not scraped through resolution", nil
 		}), "retain the complete partial-scrape recovery interval")
-	reading = a.readScrapeHistory(names, pod, loaded, "resolved")
+	reading = a.readScrapeHistory(names, pod, loaded, restoredAt, "resolved")
 	queriedAt := time.Now().UTC()
 	body, err := a.prometheus(a.ctx, "/api/v1/query", map[string]string{
 		"query": fmt.Sprintf(`ptah_operator_unresolved_view_synced{job=%q,pod=%q}[%ds]`, alScrapeJob, pod, int(alAdmissionHistoryWindow/time.Second)),
@@ -151,7 +151,7 @@ func (a *alertingRun) managerSnapshot() (*coordinationv1.Lease, []corev1.Pod) {
 func (a *alertingRun) loadScrapeConfig(ctx context.Context, config, pod string) (time.Time, error) {
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		cm := &corev1.ConfigMap{}
-		if err := a.cluster.Client.Get(ctx, types.NamespacedName{Namespace: alMonitoringNamespace, Name: "prometheus"}, cm); err != nil {
+		if err := a.cluster.Client.Get(ctx, types.NamespacedName{Namespace: a.scope.monitoringNamespace, Name: "prometheus"}, cm); err != nil {
 			return err
 		}
 		cm.Data["prometheus.yml"] = config
@@ -164,7 +164,7 @@ func (a *alertingRun) loadScrapeConfig(ctx context.Context, config, pod string) 
 	err = harness.Wait(ctx, "Prometheus to load its updated scrape configuration", alTimeout, alDeliveryPoll,
 		func(ctx context.Context) (bool, string, error) {
 			before := time.Now()
-			_, err := a.cluster.Clientset.CoreV1().RESTClient().Post().Namespace(alMonitoringNamespace).
+			_, err := a.cluster.Clientset.CoreV1().RESTClient().Post().Namespace(a.scope.monitoringNamespace).
 				Resource("services").Name("http:prometheus:9090").SubResource("proxy").Suffix("-/reload").DoRaw(ctx)
 			if err != nil {
 				return false, "", fmt.Errorf("reload Prometheus: %w", err)
@@ -182,13 +182,14 @@ func (a *alertingRun) loadScrapeConfig(ctx context.Context, config, pod string) 
 	return loaded, err
 }
 
-func (a *alertingRun) readScrapeHistory(pods []string, leader string, started time.Time, label string) alScrapeHistory {
+func (a *alertingRun) readScrapeHistory(pods []string, leader string, started, restored time.Time, label string) alScrapeHistory {
 	a.t.Helper()
 	at := time.Now().UTC()
 	groups, body := a.historySnapshot(a.ctx, at, alScrapeJob, "", "up", "scrape_duration_seconds")
-	history, err := alReadScrapeHistory(groups["up"], groups["scrape_duration_seconds"], pods, leader, started, at)
+	history, err := alReadScrapeHistoryWithReloads(groups["up"], groups["scrape_duration_seconds"], pods, leader, started, at, started, restored)
 	if label != "" || err != nil {
-		a.logf("leader and follower scrape native history %s: queriedAt=%s snapshot=%s", label, at.Format(time.RFC3339Nano), body)
+		a.logf("leader and follower scrape native history %s: loadedAt=%s restoredAt=%s queriedAt=%s snapshot=%s", label,
+			started.Format(time.RFC3339Nano), restored.Format(time.RFC3339Nano), at.Format(time.RFC3339Nano), body)
 	}
 	a.check(err, "validate complete leader and follower scrape histories")
 	return history

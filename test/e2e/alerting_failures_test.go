@@ -55,7 +55,7 @@ func alFailureHistoryFixtureForTest() alFailureHistoryFixture {
 
 func (f alFailureHistoryFixture) read(t *testing.T) (alFailuresHistory, error) {
 	t.Helper()
-	return alReadFailuresHistory(alAdmissionHistoryBodyForTest(t, f.counters), alAdmissionHistoryBodyForTest(t, f.up), alAdmissionHistoryBodyForTest(t, f.durations), []string{"leader", "follower"}, "leader", "schema", f.started, f.queried)
+	return alReadFailuresHistory(f.counters, f.up, f.durations, []string{"leader", "follower"}, "leader", "schema", f.started, f.queried)
 }
 
 func TestAlFailuresHistoryRetainsQuietWindowAndNativeIncrements(t *testing.T) {
@@ -83,6 +83,9 @@ func TestAlFailuresHistoryRetainsQuietWindowAndNativeIncrements(t *testing.T) {
 		"scrape gap": func(f *alFailureHistoryFixture) {
 			v := f.counters[0].Values
 			f.counters[0].Values = append(v[:70], v[71:]...)
+		},
+		"missing latest counter sample": func(f *alFailureHistoryFixture) {
+			f.counters[0].Values = f.counters[0].Values[:len(f.counters[0].Values)-1]
 		},
 		"counter reset": func(f *alFailureHistoryFixture) {
 			f.counters[0].Values[80] = alAdmissionHistorySampleForTest(f.started.Add(95*time.Second), "0")
@@ -195,7 +198,7 @@ func TestAlFailuresSupportsBothFamiliesWithHealthyFollowers(t *testing.T) {
 		follower.Values = append(follower.Values[:0:0], f.up[1].Values...)
 		// A follower may have a previously instantiated, unchanged counter.
 		f.counters = append(f.counters, follower)
-		h, err := alReadFailuresHistory(alAdmissionHistoryBodyForTest(t, f.counters), alAdmissionHistoryBodyForTest(t, f.up), alAdmissionHistoryBodyForTest(t, f.durations), []string{"leader", "follower"}, "leader", family, f.started, f.queried)
+		h, err := alReadFailuresHistory(f.counters, f.up, f.durations, []string{"leader", "follower"}, "leader", family, f.started, f.queried)
 		if err != nil || h.increments != 5 {
 			t.Fatalf("%s healthy follower proof refused: %+v, %v", family, h, err)
 		}
@@ -385,5 +388,63 @@ func TestAlFailuresAcceptsItsDeclaredThirtyMinuteHistory(t *testing.T) {
 	f.counters[0].Values[0] = alAdmissionHistorySampleForTest(f.queried.Add(-alFailuresHistoryWindow), "7")
 	if _, err := f.read(t); err == nil {
 		t.Fatal("sample outside the declared query window accepted")
+	}
+}
+
+func TestAlFailuresCleanupPreservesTheOriginalProofWindow(t *testing.T) {
+	t.Parallel()
+	for _, family := range []string{"schema", "migration"} {
+		t.Run(family, func(t *testing.T) {
+			initial := negativeFixtureState(t, family, ptahv1.ApplyPolicyNever)
+			initial.SetResourceVersion("original")
+			retired := alFailuresSuspendedCopy(initial)
+			retired.SetGeneration(initial.GetGeneration() + 1)
+			retired.SetResourceVersion("cleanup")
+			after := retired.DeepCopyObject().(client.Object)
+			after.SetResourceVersion("later")
+			if err := alFailuresClosedResources(initial, retired, []client.Object{initial, retired, after}); err != nil {
+				t.Fatal(err)
+			}
+			for _, mutation := range []string{"no original", "no cleanup", "early suspension", "changed input", "Apply after cleanup", "resumed after cleanup", "replaced consumer"} {
+				t.Run(mutation, func(t *testing.T) {
+					bad := after.DeepCopyObject().(client.Object)
+					rows := []client.Object{initial, retired, bad}
+					switch mutation {
+					case "no original":
+						rows = rows[1:]
+					case "no cleanup":
+						rows = []client.Object{initial, after}
+					case "early suspension":
+						rows = []client.Object{initial, after, retired}
+					case "changed input":
+						switch v := bad.(type) {
+						case *ptahv1.PtahSchema:
+							v.Spec.Interval.Duration += time.Second
+						case *ptahv1.PtahMigration:
+							v.Spec.Interval.Duration += time.Second
+						}
+					case "Apply after cleanup":
+						switch v := bad.(type) {
+						case *ptahv1.PtahSchema:
+							v.Status.ActiveOperation = &ptahv1.ActiveOperationStatus{Type: ptahv1.OperationApply}
+						case *ptahv1.PtahMigration:
+							v.Status.ActiveOperation = &ptahv1.MigrationOperationStatus{Type: ptahv1.MigrationOperationApply}
+						}
+					case "resumed after cleanup":
+						rows = append(rows, initial)
+					case "replaced consumer":
+						bad.SetUID("another")
+					}
+					if alFailuresClosedResources(initial, retired, rows) == nil {
+						t.Fatal("invalid cleanup history accepted")
+					}
+				})
+			}
+			changed := retired.DeepCopyObject().(client.Object)
+			changed.SetGeneration(retired.GetGeneration() + 1)
+			if alFailuresClosedResources(initial, changed, []client.Object{initial, changed}) == nil {
+				t.Fatal("cleanup concealed an extra generation change")
+			}
+		})
 	}
 }

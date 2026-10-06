@@ -241,44 +241,55 @@ func TestRunnerRedeliversAfterLostAcknowledgmentWithoutReexecuting(t *testing.T)
 }
 
 func TestRunnerDoesNotFallBackToLogsAfterDeliveryRefusal(t *testing.T) {
-	f := newDeliveryFixture(t, nil)
-	var attempts atomic.Int64
-	server := f.server(t, func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.Method == http.MethodHead {
-				next.ServeHTTP(w, r)
-				return
+	for _, tc := range []struct {
+		name     string
+		status   int
+		attempts int64
+		reason   string
+	}{
+		{"authority refusal", http.StatusForbidden, 1, "result receiver returned HTTP 403"},
+		{"busy receiver", http.StatusServiceUnavailable, 4, "result delivery attempts exhausted: result receiver returned HTTP 503"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newDeliveryFixture(t, nil)
+			var attempts atomic.Int64
+			server := f.server(t, func(next http.Handler) http.Handler {
+				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.Method == http.MethodHead {
+						next.ServeHTTP(w, r)
+						return
+					}
+					attempts.Add(1)
+					http.Error(w, "private receiver response", tc.status)
+				})
+			})
+			executable, counter := applyExecutable(t)
+			terminationLog := filepath.Join(t.TempDir(), "termination-log")
+			if err := os.WriteFile(terminationLog, nil, 0o600); err != nil {
+				t.Fatal(err)
 			}
-			attempts.Add(1)
-			http.Error(w, "forbidden", http.StatusForbidden)
+			var stdout, stderr bytes.Buffer
+			code := run(t.Context(), []string{"--ptah-binary", executable, "--operation", "migration-apply", "--result-endpoint", server.URL, "--result-credentials", f.credentials}, &stdout, &stderr, append(f.environment(t), "PTAH_TEST_INVOCATIONS="+counter), terminationLog)
+			if code != 2 || stdout.Len() != 0 || attempts.Load() != tc.attempts || stderr.String() != "ptah-runner: durable result delivery failed: "+tc.reason+"\n" {
+				t.Fatalf("exit=%d stdout=%q stderr=%q attempts=%d", code, stdout.String(), stderr.String(), attempts.Load())
+			}
+			invocations, err := os.ReadFile(counter)
+			if err != nil || string(invocations) != "run\n" {
+				t.Fatalf("Apply dispatches %q, %v", invocations, err)
+			}
+			summaryBytes, err := os.ReadFile(terminationLog)
+			if err != nil {
+				t.Fatal(err)
+			}
+			summary, err := runner.ParseSummaryFor(string(summaryBytes), runner.OperationMigrationApply, f.identity.Binding.OperationID)
+			if err != nil || !summary.MutationStarted {
+				t.Fatalf("delivery refusal lost the execution summary: %#v, %v", summary, err)
+			}
+			if _, _, err := f.store.Load(t.Context(), f.identity.Binding); err == nil {
+				t.Fatal("refused delivery unexpectedly persisted a result")
+			}
 		})
-	})
-	executable, counter := applyExecutable(t)
-	terminationLog := filepath.Join(t.TempDir(), "termination-log")
-	if err := os.WriteFile(terminationLog, nil, 0o600); err != nil {
-		t.Fatal(err)
 	}
-	var stdout, stderr bytes.Buffer
-	code := run(t.Context(), []string{"--ptah-binary", executable, "--operation", "migration-apply", "--result-endpoint", server.URL, "--result-credentials", f.credentials}, &stdout, &stderr, append(f.environment(t), "PTAH_TEST_INVOCATIONS="+counter), terminationLog)
-	if code != 2 || stdout.Len() != 0 || attempts.Load() != 1 || stderr.String() != "ptah-runner: durable result delivery failed\n" {
-		t.Fatalf("exit=%d stdout=%q stderr=%q attempts=%d", code, stdout.String(), stderr.String(), attempts.Load())
-	}
-	invocations, err := os.ReadFile(counter)
-	if err != nil || string(invocations) != "run\n" {
-		t.Fatalf("Apply dispatches %q, %v", invocations, err)
-	}
-	summaryBytes, err := os.ReadFile(terminationLog)
-	if err != nil {
-		t.Fatal(err)
-	}
-	summary, err := runner.ParseSummaryFor(string(summaryBytes), runner.OperationMigrationApply, f.identity.Binding.OperationID)
-	if err != nil || !summary.MutationStarted {
-		t.Fatalf("delivery refusal lost the execution summary: %#v, %v", summary, err)
-	}
-	if _, _, err := f.store.Load(t.Context(), f.identity.Binding); err == nil {
-		t.Fatal("refused delivery unexpectedly persisted a result")
-	}
-
 }
 
 func TestRunnerRefusesDurableProtocolMismatchBeforeDelivery(t *testing.T) {
@@ -433,11 +444,11 @@ func TestRunnerAuthenticatesProjectionBeforeStartingSQL(t *testing.T) {
 			server := f.server(t, func(next http.Handler) http.Handler {
 				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					if name == "authority refused" {
-						http.Error(w, "refused", http.StatusForbidden)
+						http.Error(w, "private receiver refusal", http.StatusForbidden)
 						return
 					}
 					if name == "receiver unavailable" {
-						http.Error(w, "unavailable", http.StatusServiceUnavailable)
+						http.Error(w, "private receiver failure", http.StatusServiceUnavailable)
 						return
 					}
 					next.ServeHTTP(w, r)
@@ -462,7 +473,13 @@ func TestRunnerAuthenticatesProjectionBeforeStartingSQL(t *testing.T) {
 			executable, counter := applyExecutable(t)
 			var stdout, stderr bytes.Buffer
 			code := run(t.Context(), []string{"--ptah-binary", executable, "--operation", "migration-apply", "--result-endpoint", server.URL, "--result-credentials", f.credentials}, &stdout, &stderr, append(f.environment(t), "PTAH_TEST_INVOCATIONS="+counter), "")
-			if code != 2 || stdout.Len() != 0 || stderr.String() != "ptah-runner: result receiver preflight failed\n" {
+			reason := "result receiver authentication failed"
+			if name == "authority refused" {
+				reason = "result receiver preflight returned HTTP 403"
+			} else if name == "receiver unavailable" {
+				reason = "result receiver preflight returned HTTP 503"
+			}
+			if code != 2 || stdout.Len() != 0 || stderr.String() != "ptah-runner: result receiver preflight failed: "+reason+"\n" {
 				t.Fatalf("exit=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 			}
 			if _, err := os.Stat(counter); !os.IsNotExist(err) {

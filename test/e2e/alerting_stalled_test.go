@@ -158,6 +158,27 @@ func TestAlStalledWorkloadIdentityAndTerminalEvidence(t *testing.T) {
 	}
 }
 
+func TestAlPodHeldByGateRejectsAnotherLane(t *testing.T) {
+	t.Parallel()
+	for _, engine := range []string{"postgresql", "mysql"} {
+		for _, family := range []string{"schema", "migration"} {
+			gate := alGateLabel + "-lock-" + engine + "-" + family
+			pod := &corev1.Pod{Spec: corev1.PodSpec{NodeSelector: map[string]string{gate: "open"}},
+				Status: corev1.PodStatus{Phase: corev1.PodPending}}
+			if !alPodHeldByGate(pod, gate) {
+				t.Fatalf("the exact %s %s gate was refused", engine, family)
+			}
+			if alPodHeldByGate(pod, gate+"-other") || alStalledPodHeld(pod) {
+				t.Fatal("a different lane's gate was accepted")
+			}
+			pod.Spec.NodeName = "already-scheduled"
+			if alPodHeldByGate(pod, gate) {
+				t.Fatal("the exact label hid an already scheduled executor")
+			}
+		}
+	}
+}
+
 func TestAlStalledDeliveryBoundsKeepSubsecondAndIncidentIdentity(t *testing.T) {
 	t.Parallel()
 	started := time.Unix(1800000000, 500000000).UTC()

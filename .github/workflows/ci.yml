@@ -481,11 +481,10 @@ jobs:
     permissions:
       contents: read
       actions: read
-    # The data-plane phase has a 180-minute aggregate bound. The PostgreSQL
-    # suite also runs reference data and the full alerting sequence after its
-    # migration acceptance. Keep room for setup and diagnostic collection;
-    # individual operation and alert deadlines remain in their scenarios.
-    timeout-minutes: 270
+    # A regression must not occupy a runner for several hours. The successful
+    # full-pipeline target is 90 minutes; this job ceiling does not prove it.
+    # Individual operation and alert deadlines remain in their scenarios.
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:

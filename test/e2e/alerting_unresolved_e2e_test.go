@@ -9,6 +9,8 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
+	"testing"
 	"time"
 
 	ptahv1 "github.com/stokaro/ptah-operator/api/v1alpha1"
@@ -26,7 +28,7 @@ import (
 // Each engine also proves Schema's distinct observation-based recovery.
 func (a *alertingRun) unresolvedApply() {
 	template := &ptahv1.PtahMigration{}
-	a.check(a.cluster.Client.Get(a.ctx, types.NamespacedName{Namespace: a.in.TestNamespace, Name: "e2e-migrations-postgresql"}, template), "read the native migration producer")
+	a.check(a.cluster.Client.Get(a.ctx, types.NamespacedName{Namespace: a.in.TestNamespace, Name: a.scope.migrationProducer}, template), "read the native migration producer")
 	registry, err := url.Parse(template.Spec.Artifact.OCIRef)
 	a.check(err, "read the prepared migration registry")
 	if registry.Scheme != "oci" || registry.Host == "" || registry.User != nil || template.Status.ExecutionBinding == nil || !alPinnedImage.MatchString(template.Status.ExecutionBinding.ExecutorImage) {
@@ -49,13 +51,40 @@ func (a *alertingRun) unresolvedApply() {
 			a.fatalf("the unfinished migration no longer has an effect-free repair")
 		}
 		m.publish("alerts-unresolved", m.fixtureDir("-uncertain"), m.reference("-uncertain"))
-		a.unresolvedMigrationCase(m, template)
+		a.unresolvedEngineCases(m, template)
 		for _, object := range []client.Object{&batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "e2e-push-migrations-" + engineName + "-alerts-unresolved", Namespace: a.in.TestNamespace}}, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "e2e-migrations-" + engineName + "-alerts-unresolved", Namespace: a.in.TestNamespace}}} {
 			a.check(a.cluster.Client.Get(a.ctx, client.ObjectKeyFromObject(object), object), "read the owned unresolved publisher")
 			uid := object.GetUID()
 			a.check(a.cluster.Client.Delete(a.ctx, object, client.Preconditions{UID: &uid}), "remove the owned unresolved publisher")
 		}
+	}
+}
+
+// PostgreSQL scopes advisory locks to each database, and these families own
+// different databases and alert series. MySQL's server-wide migration lock
+// keeps its cases sequential. Neither lane changes shared manager settings.
+func (a *alertingRun) unresolvedEngineCases(m *migrationRun, template *ptahv1.PtahMigration) {
+	if m.engine.name != "postgresql" {
+		a.unresolvedMigrationCase(m, template)
 		a.unresolvedSchemaCase(m)
+		return
+	}
+	var cases [2]harness.ParallelCase
+	for i, family := range []string{"migration", "schema"} {
+		cases[i] = harness.ParallelCase{Name: family, Run: func(t *testing.T) {
+			local, migration := *a, *m
+			local.t, local.parent, local.workDir = t, t, t.TempDir()
+			migration.t, migration.parent, migration.workDir = t, t, local.workDir
+			migration.patterns, migration.jobs = slices.Clone(m.patterns), maps.Clone(m.jobs)
+			if family == "migration" {
+				local.unresolvedMigrationCase(&migration, template)
+			} else {
+				local.unresolvedSchemaCase(&migration)
+			}
+		}}
+	}
+	if !harness.ParallelPair(a.t, "independent-postgresql-families", cases) {
+		a.t.FailNow()
 	}
 }
 

@@ -330,18 +330,36 @@ func alUpgradeProbeProgress(v, original client.Object, after time.Time) (time.Ti
 	}
 	at := r.readAt
 	var conditions []metav1.Condition
+	var boundaryType, boundaryReason string
+	var boundaryStatus metav1.ConditionStatus
 	switch v := v.(type) {
 	case *ptahv1.PtahSchema:
 		conditions = v.Status.Conditions
+		boundaryType, boundaryStatus, boundaryReason = "PlanReady", metav1.ConditionTrue, "Published"
 	case *ptahv1.PtahMigration:
 		conditions = v.Status.Conditions
+		boundaryType, boundaryStatus, boundaryReason = "Progressing", metav1.ConditionFalse, "ApplyDisabled"
 	}
+	// Ready remains False from an ordinary read through ApplyDisabled. Its
+	// transition can predate the fresh database read, which itself precedes
+	// planning. Date recovery from the condition that completes this cycle.
+	completed := false
 	for _, c := range conditions {
+		if c.ObservedGeneration != v.GetGeneration() {
+			continue
+		}
+		if c.Type == boundaryType && c.Status == boundaryStatus && c.Reason == boundaryReason &&
+			!c.LastTransitionTime.IsZero() && !c.LastTransitionTime.Time.Before(r.readAt) {
+			completed = true
+			if c.LastTransitionTime.After(at) {
+				at = c.LastTransitionTime.Time
+			}
+		}
 		if c.Type == "Ready" && c.LastTransitionTime.After(at) {
 			at = c.LastTransitionTime.Time
 		}
 	}
-	return at, !at.After(time.Now())
+	return at, completed && !at.After(time.Now())
 }
 
 func alUpgradeRetryEvidence(s alUpgradeState, events []watchEvent[*batchv1.Job]) error {

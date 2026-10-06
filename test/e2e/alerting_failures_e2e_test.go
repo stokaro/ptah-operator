@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"maps"
 	"net/url"
+	"testing"
 	"time"
 
 	ptahv1 "github.com/stokaro/ptah-operator/api/v1alpha1"
@@ -24,18 +25,29 @@ import (
 )
 
 func (a *alertingRun) operationsFailing() {
-	for _, family := range []string{"schema", "migration"} {
-		a.operationsFailingFamily(family)
+	// The families have separate consumers, databases, published artifacts and
+	// counter series. Overlap their full quiet windows without changing shared
+	// cluster settings. Each lane owns its test handle and temporary files.
+	var cases [2]harness.ParallelCase
+	for i, family := range []string{"schema", "migration"} {
+		cases[i] = harness.ParallelCase{Name: family, Run: func(t *testing.T) {
+			local := *a
+			local.t, local.parent, local.workDir = t, t, t.TempDir()
+			local.operationsFailingFamily(family)
+		}}
+	}
+	if !harness.ParallelPair(a.t, "independent-families", cases) {
+		a.t.FailNow()
 	}
 }
 
 func (a *alertingRun) operationsFailingFamily(family string) {
 	name, database := "e2e-alert-failures-"+family, "ptah_alert_failures_"+family
 	var template client.Object = &ptahv1.PtahSchema{}
-	producer := "e2e-reference-postgresql"
+	producer := a.scope.schemaProducer
 	if family == "migration" {
 		template = &ptahv1.PtahMigration{}
-		producer = "e2e-migrations-postgresql"
+		producer = a.scope.migrationProducer
 	}
 	a.check(a.cluster.Client.Get(a.ctx, types.NamespacedName{Namespace: a.in.TestNamespace, Name: producer}, template), "read the real operation-failure producer")
 	var source, executor string
@@ -182,9 +194,10 @@ func (a *alertingRun) operationsFailingFamily(family string) {
 			a.t.Errorf("remove operation-failure Secret: %v", e)
 		}
 	}()
+	expected := initial
 	read := func() {
 		a.check(a.cluster.Client.Get(a.ctx, client.ObjectKeyFromObject(initial), object), "read the unchanged operation-failure fixture")
-		a.check(alFailuresUnchanged(initial, object), "retain the unchanged failure consumer")
+		a.check(alFailuresUnchanged(expected, object), "retain the unchanged failure consumer")
 	}
 	results := map[types.UID]alFailureResult{}
 	collect := func() {
@@ -339,6 +352,30 @@ func (a *alertingRun) operationsFailingFamily(family string) {
 	if !alFailuresCleared(firing, resolved, history) || !a.noActiveAlerts(query) || history.increments != failures() {
 		a.fatalf("failure resolution has a late incident, unexplained counter or unretained failed result")
 	}
+	// The proof is complete. Stop periodic reads before closing the journals:
+	// a new Resolve during watch shutdown would otherwise have no retained
+	// outcome. An optimistic patch from an idle reading cannot cancel a claim
+	// that raced this cleanup; collect that cycle and try again instead.
+	var retired client.Object
+	a.check(harness.Wait(a.ctx, "idle operation-failure fixture cleanup", alTimeout, time.Second, func(context.Context) (bool, string, error) {
+		collect()
+		if failures() != count {
+			return false, "", errors.New("a failure recurred while closing the recovered consumer")
+		}
+		if !alNegativeReading(object).gated() {
+			return false, "waiting for the current diagnostic cycle to finish", nil
+		}
+		candidate := alFailuresSuspendedCopy(object)
+		err := a.cluster.Client.Patch(a.ctx, candidate, client.MergeFromWithOptions(object, client.MergeFromWithOptimisticLock{}))
+		if apierrors.IsConflict(err) {
+			return false, "a resource write raced idle cleanup", nil
+		}
+		if err != nil {
+			return false, "suspend the completed consumer", err
+		}
+		retired, expected = candidate, candidate.DeepCopyObject().(client.Object)
+		return true, "completed consumer suspended without canceling work", nil
+	}), "stop the completed failure consumer before closing its histories")
 	read()
 	switch v := object.(type) {
 	case *ptahv1.PtahSchema:
@@ -363,28 +400,22 @@ func (a *alertingRun) operationsFailingFamily(family string) {
 	}
 	storedStateWatchBarrier(a.t, a.ctx, a.cluster, jobs, publisher)
 	storedStateWatchBarrier(a.t, a.ctx, a.cluster, pods, &owned[0])
+	// The resource sentinel delivered every claim preceding suspension. No
+	// new claim can start, so retain the final outcomes before closing watches.
+	collect()
 	closeRunnerWatches(a.t, []recorder{resources, jobs, pods}, m.scan)
 	// Validate changes received between direct polls and while closing watches.
-	seen := 0
-	validate := func(v client.Object) {
-		if client.ObjectKeyFromObject(v) != client.ObjectKeyFromObject(initial) {
-			return
-		}
-		seen++
-		a.check(alFailuresUnchanged(initial, v), "retain the closed failure-consumer history")
-	}
+	var resourceHistory []client.Object
 	if family == "schema" {
 		for _, event := range schemas.snapshot() {
-			validate(event.Object)
+			resourceHistory = append(resourceHistory, event.Object)
 		}
 	} else {
 		for _, event := range migrations.snapshot() {
-			validate(event.Object)
+			resourceHistory = append(resourceHistory, event.Object)
 		}
 	}
-	if seen == 0 {
-		a.fatalf("the closed history contains no original failure consumer")
-	}
+	a.check(alFailuresClosedResources(initial, retired, resourceHistory), "retain the unchanged consumer through recovery and its exact cleanup write afterward")
 	a.check(alFailuresWorkloads(initial.GetUID(), results, jobs.snapshot(), pods.snapshot()), "account for the closed Resolve workload histories")
 	// Publisher objects belong only to this case; remove their exact identities.
 	for _, v := range []client.Object{&batchv1.Job{ObjectMeta: metav1.ObjectMeta{Namespace: a.in.TestNamespace, Name: jobName}}, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Namespace: a.in.TestNamespace, Name: configName}}} {
@@ -403,18 +434,15 @@ func (a *alertingRun) failureHistory(pods []string, leader, family string, start
 
 func (a *alertingRun) queryFailureHistory(pods []string, leader, family string, started time.Time, label string) (alFailuresHistory, error) {
 	queriedAt := time.Now().UTC()
-	query := func(expression string) []byte {
-		body, err := a.prometheus(a.ctx, "/api/v1/query", map[string]string{"query": expression, "time": queriedAt.Format(time.RFC3339Nano)})
-		a.check(err, "read native operation-failure history")
-		return body
+	var body []byte
+	query := func(expression string) ([]byte, error) {
+		var err error
+		body, err = a.prometheus(a.ctx, "/api/v1/query", map[string]string{"query": expression, "time": queriedAt.Format(time.RFC3339Nano)})
+		return body, err
 	}
-	scrapeHistory := func(metric string) string {
-		return fmt.Sprintf(`%s{job=%q}[%ds]`, metric, alScrapeJob, int(alFailuresHistoryWindow/time.Second))
-	}
-	counters, up, durations := query(alFailuresHistoryQuery(family)), query(scrapeHistory("up")), query(scrapeHistory("scrape_duration_seconds"))
-	history, err := alReadFailuresHistory(counters, up, durations, pods, leader, family, started, queriedAt)
-	if label != "" {
-		a.logf("operation-failure native history %s: queriedAt=%s counters=%s up=%s durations=%s", label, queriedAt.Format(time.RFC3339Nano), counters, up, durations)
+	history, err := alQueryFailuresHistory(query, pods, leader, family, started, queriedAt)
+	if label != "" || err != nil && !errors.Is(err, errAlFailuresBaseline) {
+		a.logf("operation-failure native history %s: queriedAt=%s snapshot=%s", label, queriedAt.Format(time.RFC3339Nano), body)
 	}
 	return history, err
 }

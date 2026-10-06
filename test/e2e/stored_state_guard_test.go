@@ -445,3 +445,73 @@ func TestStoredStateReadyWaitsForFinalizerCleanup(t *testing.T) {
 		})
 	}
 }
+
+func TestStoredStateBaselineStartsAfterTheWriteBarrier(t *testing.T) {
+	t.Parallel()
+	for _, before := range storedStateFixtures() {
+		kind, _, _ := storedStateFamily(before)
+		t.Run(kind, func(t *testing.T) {
+			held := before.DeepCopyObject().(client.Object)
+			switch resource := held.(type) {
+			case *ptahv1alpha1.PtahSchema:
+				resource.Status.Conditions[0].Reason = "Waiting"
+				resource.Status.Conditions[0].Message = "Create an approval bound to the current plan fingerprint"
+			case *ptahv1alpha1.PtahMigration:
+				resource.Status.Conditions[0].Reason = "Waiting"
+				resource.Status.Conditions[0].Message = "Waiting for the exact plan approval"
+			}
+			version, err := storedStateVersion(before)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if storedStateChangedOnlyByVersion(before, held, version) == nil {
+				t.Fatal("the fixture did not reproduce a status refresh before the barrier")
+			}
+			if err := storedStateSameApprovalBoundary(before, held, version); err != nil {
+				t.Fatal("a supported status refresh invalidated the same ready plan", err)
+			}
+			future := withStoredStateVersion(held, version+1)
+			if err := storedStateChangedOnlyByVersion(held, future, version+1); err != nil {
+				t.Fatal("the held status was not preserved during injection", err)
+			}
+			if storedStateChangedOnlyByVersion(before, future, version+1) == nil {
+				t.Fatal("status changes after the frozen boundary were accepted")
+			}
+			for _, change := range []string{"uid", "generation", "plan", "binding", "inputs", "finalizer"} {
+				changed := held.DeepCopyObject().(client.Object)
+				switch change {
+				case "uid":
+					changed.SetUID("replacement")
+				case "generation":
+					changed.SetGeneration(changed.GetGeneration() + 1)
+				case "finalizer":
+					changed.SetFinalizers([]string{"operator.ptah.run/operation"})
+				default:
+					switch r := changed.(type) {
+					case *ptahv1alpha1.PtahSchema:
+						switch change {
+						case "plan":
+							r.Status.Plan.UID = "replacement"
+						case "binding":
+							r.Status.ExecutionBinding.Epoch = ftOtherEpoch
+						case "inputs":
+							r.Spec.Target.URLFrom.Name = "another-target"
+						}
+					case *ptahv1alpha1.PtahMigration:
+						switch change {
+						case "plan":
+							r.Status.Plan.UID = "replacement"
+						case "binding":
+							r.Status.ExecutionBinding.Epoch = ftOtherEpoch
+						case "inputs":
+							r.Spec.Target.URLFrom.Name = "another-target"
+						}
+					}
+				}
+				if storedStateSameApprovalBoundary(before, changed, version) == nil {
+					t.Errorf("changed %s accepted as the original approval boundary", change)
+				}
+			}
+		})
+	}
+}

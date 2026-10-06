@@ -21,6 +21,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
@@ -39,9 +40,8 @@ func TestReferenceDataMySQL(t *testing.T) {
 }
 
 // runReferenceDataPhase drives one engine from a database with no tables to a
-// declared schema and declared rows the database agrees with. It runs after
-// the migration path, in the namespace the data plane stood up, on a database
-// of its own.
+// declared schema and declared rows the database agrees with. It runs in the
+// data-plane namespace on a database of its own, without a migration prerequisite.
 func runReferenceDataPhase(t *testing.T, phase phases.Of[phases.ReferenceDataInputs], engine string) {
 	run, inputs := harness.Begin(t, phase)
 	r := newReferenceRun(t, run, inputs, engine)
@@ -56,7 +56,35 @@ func runReferenceDataPhase(t *testing.T, phase phases.Of[phases.ReferenceDataInp
 			return
 		}
 	}
+	r.finishFixture()
 	run.Logf("e2e reference data: PASS %s declared rows, with no row value in status, Events, or logs", r.engine.kind)
+}
+
+// Keep the proven source available, but stop periodic reads from moving its
+// plan pins during later acceptance. Alerting also uses this for its producers.
+func (r *referenceRun) finishFixture() {
+	r.t.Helper()
+	uid := r.status().UID
+	r.check(retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		current := r.status()
+		if current.UID != uid {
+			return fmt.Errorf("completed reference fixture was replaced")
+		}
+		before := current.DeepCopy()
+		current.Spec.Suspend = true
+		return r.cluster.Client.Patch(r.ctx, current,
+			client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{}))
+	}), "suspend the completed reference fixture")
+	r.check(harness.Wait(r.ctx, "the completed reference fixture to stop reconciling", waitTimeout, time.Second,
+		func(context.Context) (bool, string, error) {
+			current := r.status()
+			if current.UID != uid {
+				return false, "", fmt.Errorf("completed reference fixture was replaced")
+			}
+			return current.Spec.Suspend && current.Status.ObservedGeneration == current.Generation &&
+				current.Status.Phase == ptahv1alpha1.PhaseSuspended && current.Status.ActiveOperation == nil &&
+				current.Status.PendingLockRelease == nil, "waiting for the original reference fixture to suspend", nil
+		}), "retire the completed reference fixture")
 }
 
 // referenceRun is what the reference-data proofs share. Each scenario runs as
@@ -133,7 +161,6 @@ func newReferenceRun(t *testing.T, run *harness.Run, in phases.ReferenceDataInpu
 	r.kubectlPtah = filepath.Join(r.workDir, "kubectl-ptah")
 	build := exec.CommandContext(r.ctx, "go", "build", "-trimpath", "-o", r.kubectlPtah, "./cmd/kubectl-ptah") //nolint:gosec // Arguments, not a shell.
 	build.Dir = repositoryRoot
-	build.Env = append(os.Environ(), "GOCACHE="+filepath.Join(r.workDir, "go-cache"))
 	build.Stdout, build.Stderr = os.Stderr, os.Stderr
 	r.check(build.Run(), "build kubectl-ptah")
 

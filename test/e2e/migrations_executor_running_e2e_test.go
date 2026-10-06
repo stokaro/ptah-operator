@@ -153,7 +153,7 @@ func (m *migrationRun) runningMigrationBackend(database string) string {
 
 func (m *migrationRun) runningExecutorImageChange() {
 	m.t.Helper()
-	name, database := "e2e-running-executor-"+m.engine.name, "ptah_e2e_running_executor"
+	name, database := "e2e-migration-running-executor-"+m.engine.name, "ptah_e2e_running_executor"
 	secret, seedReference := name+"-db", m.reference("-running-executor-seed")
 	replacement, original := m.executorVariant(), m.in.ExecutorImage
 	deployments := &appsv1.DeploymentList{}
@@ -187,7 +187,7 @@ func (m *migrationRun) runningExecutorImageChange() {
 	currentDigest := m.publish("running-executor-current", m.fixtureDir(""), currentReference)
 	currentReference = strings.TrimSuffix(currentReference, ":stable") + "@" + currentDigest
 	m.mustCreate(m.migrationDocument(migrationSpec{name: name, secret: secret, reference: seedReference,
-		coordinationKey: "e2e/running-executor/" + m.engine.name, apply: "OnApproval", interval: "1h", lockTimeout: "4m"}))
+		coordinationKey: "e2e/migration/running-executor/" + m.engine.name, apply: "OnApproval", interval: "1h", lockTimeout: "4m"}))
 	waitPlan := func(reference, digest string, versions []int64) *ptahv1alpha1.PtahMigrationPlan {
 		resource := m.waitForMigration(name, "a matching running-executor approval gate", time.Second, func(resource *ptahv1alpha1.PtahMigration) bool {
 			return resource.Status.Phase == ptahv1alpha1.MigrationPhaseAwaitingApproval && resource.Status.Plan != nil &&
@@ -357,6 +357,7 @@ func (m *migrationRun) runningExecutorImageChange() {
 		m.fatalf("the closed migration executor history contains a second Apply or overlapping work")
 	}
 	m.check(leaseHeldUntilRelease(leases.snapshot(), lease), "retain the original migration realm through its safe release")
+	m.finishFixture(name)
 	m.logf("PASS %s running Apply executor change: original Job=%s Pod=%s retained; fresh History settled Unknown without replay", m.engine.kind, jobUID, pod.UID)
 }
 

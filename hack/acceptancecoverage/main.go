@@ -18,19 +18,25 @@ import (
 // which belong to no resource family -- and it is distinguished from a missing
 // one by the entry existing at all.
 var phaseFamilies = map[string][]string{
-	"upgrade":                   {},
-	"ha":                        {},
-	"uninstall":                 {},
-	"cert-rotation":             {},
-	"assert":                    {"PtahSchema"},
-	"dataplane":                 {"PtahSchema"},
-	"migrations-postgresql":     {"PtahMigration"},
-	"migrations-mysql":          {"PtahMigration"},
-	"reference-data-postgresql": {"PtahSchema"},
-	"reference-data-mysql":      {"PtahSchema"},
+	"upgrade":                      {},
+	"ha":                           {},
+	"uninstall":                    {},
+	"cert-rotation":                {},
+	"assert":                       {"PtahSchema"},
+	"dataplane":                    {"PtahSchema"},
+	"schema-approvals":             {"PtahSchema"},
+	"schema-faults":                {"PtahSchema"},
+	"migration-runtime-postgresql": {"PtahMigration"},
+	"migration-runtime-mysql":      {"PtahMigration"},
+	"migrations-postgresql":        {"PtahMigration"},
+	"migrations-mysql":             {"PtahMigration"},
+	"reference-data-postgresql":    {"PtahSchema"},
+	"reference-data-mysql":         {"PtahSchema"},
 	// The alerts it drives to a receiver are about both families: an Apply
 	// nobody accounted for is a migration's, the stalled operation a schema's.
-	"alerting": {"PtahMigration", "PtahSchema"},
+	"alerting-operations":   {"PtahMigration", "PtahSchema"},
+	"alerting-certificates": {"PtahMigration", "PtahSchema"},
+	"alerting":              {"PtahMigration", "PtahSchema"},
 }
 
 func main() {

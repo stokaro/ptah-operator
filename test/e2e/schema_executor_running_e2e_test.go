@@ -41,6 +41,7 @@ func (f *faultRun) executorApplyBackend(engine, database string) string {
 // manager is replaced with one configured to use the new executor image.
 func (previous *faultRun) runningExecutorImageChanges() {
 	f := newFaultRun(previous.dataPlane)
+	f.fixtureSuffix = previous.fixtureSuffix
 	// The earlier fault run created the principal Secret. This independent
 	// watch window must rebuild its scanner before any polling or audit.
 	f.buildScanner()
@@ -65,7 +66,7 @@ func (previous *faultRun) runningExecutorImageChanges() {
 		establishBarrier(f, f.pods, &corev1.Pod{}, f.in.TestNamespace, f.databasePod())
 		establishBarrier(f, f.schemas, &ptahv1alpha1.PtahSchema{}, f.in.TestNamespace, heartbeatSchema)
 		establishBarrier(f, f.approvals, &ptahv1alpha1.PtahSchemaApproval{}, f.in.TestNamespace, heartbeatApproval)
-		establishBarrier(f, f.leases, &coordinationv1.Lease{}, f.in.OperatorNamespace, watchHeartbeatLease)
+		establishBarrier(f, f.leases, &coordinationv1.Lease{}, f.in.OperatorNamespace, f.heartbeatLeaseName())
 	}
 	rollout := func(expected, next string) {
 		barrier()

@@ -196,9 +196,9 @@ func (a *alertingRun) upgradeAlertCase(intent alUpgradeIntent, hookAccount, char
 			}
 		}
 	}()
-	a.check(a.cluster.WaitForRollout(a.ctx, alMonitoringNamespace, alUpgradeObserver, alTimeout), "start the independent observer")
+	a.check(a.cluster.WaitForRollout(a.ctx, a.scope.monitoringNamespace, alUpgradeObserver, alTimeout), "start the independent observer")
 	pods := &corev1.PodList{}
-	a.check(a.cluster.Client.List(a.ctx, pods, client.InNamespace(alMonitoringNamespace), client.MatchingLabels{"app": alUpgradeObserver}), "read observer Pod")
+	a.check(a.cluster.Client.List(a.ctx, pods, client.InNamespace(a.scope.monitoringNamespace), client.MatchingLabels{"app": alUpgradeObserver}), "read observer Pod")
 	if len(pods.Items) != 1 || !harness.PodReady(&pods.Items[0]) {
 		a.fatalf("observer has no unique ready Pod")
 	}
@@ -215,7 +215,7 @@ func (a *alertingRun) upgradeAlertCase(intent alUpgradeIntent, hookAccount, char
 	var original *alUpgradeState
 	read := func() alUpgradeState {
 		check()
-		body, _, err := a.cluster.Kubectl(a.ctx, "-n", alMonitoringNamespace, "exec", observer.Name, "-c", alUpgradeObserver, "--", "/e2e-upgrade-observer", "inspect", "--state", "/data/state.json")
+		body, _, err := a.cluster.Kubectl(a.ctx, "-n", a.scope.monitoringNamespace, "exec", observer.Name, "-c", alUpgradeObserver, "--", "/e2e-upgrade-observer", "inspect", "--state", "/data/state.json")
 		a.check(err, "inspect retained upgrade state")
 		s, err := alUpgradeReadState(body, intent, original)
 		if err != nil {
@@ -335,8 +335,9 @@ func (a *alertingRun) upgradeAlertCase(intent alUpgradeIntent, hookAccount, char
 		healthyAt = runtimeAt
 	}
 	resolved, _ := a.waitForDeliveryWithCheck(alMatch{status: "resolved", alertName: alUpgradeAlert, labels: labels}, "the external upgrade resolution", alDetectionSlack, index+1, checkHistory)
-	if !resolved.StartsAt.Equal(firing.StartsAt) || resolved.EndsAt.Before(healthyAt) || resolved.ReceivedAt.After(healthyAt.Add(alDetectionSlack)) || resolved.ReceivedAt.Before(resolved.EndsAt) || !a.upgradeGauge("ptah_operator_upgrade_pending", 0) {
-		a.fatalf("upgrade resolution missed verified recovery or its original bound")
+	pendingCleared := a.upgradeGauge("ptah_operator_upgrade_pending", 0)
+	if !resolved.StartsAt.Equal(firing.StartsAt) || resolved.EndsAt.Before(healthyAt) || resolved.ReceivedAt.After(healthyAt.Add(alDetectionSlack)) || resolved.ReceivedAt.Before(resolved.EndsAt) || !pendingCleared {
+		a.fatalf("upgrade resolution missed verified recovery or its original bound: mode=%s healthy=%s observed=%s ended=%s received=%s deadline=%s sameIncident=%t pendingCleared=%t", mode, healthyAt, recovered.RecoveredAt, resolved.EndsAt, resolved.ReceivedAt, healthyAt.Add(alDetectionSlack), resolved.StartsAt.Equal(firing.StartsAt), pendingCleared)
 	}
 	jobs.requestStop()
 	a.check(jobs.await(45*time.Second), "close the complete upgrade hook history")
@@ -417,7 +418,7 @@ func (a *alertingRun) upgradeGauge(metric string, want float64) bool {
 
 func (a *alertingRun) loadUpgradeMonitoring() func() {
 	cm := &corev1.ConfigMap{}
-	key := types.NamespacedName{Namespace: alMonitoringNamespace, Name: "prometheus"}
+	key := types.NamespacedName{Namespace: a.scope.monitoringNamespace, Name: "prometheus"}
 	a.check(a.cluster.Client.Get(a.ctx, key, cm), "read installed monitoring configuration")
 	original := maps.Clone(cm.Data)
 	rules, err := os.ReadFile(filepath.Join(repositoryRoot, "hack", "upgradealert", "rules.yaml"))
@@ -425,7 +426,7 @@ func (a *alertingRun) loadUpgradeMonitoring() func() {
 	var config map[string]any
 	a.check(yaml.Unmarshal([]byte(cm.Data["prometheus.yml"]), &config), "decode installed scrape configuration")
 	config["rule_files"] = append(config["rule_files"].([]any), "/etc/prometheus/upgrade-rules.yaml")
-	config["scrape_configs"] = append(config["scrape_configs"].([]any), map[string]any{"job_name": "ptah-upgrade-observer", "static_configs": []any{map[string]any{"targets": []any{alUpgradeObserver + "." + alMonitoringNamespace + ".svc:9812"}}}})
+	config["scrape_configs"] = append(config["scrape_configs"].([]any), map[string]any{"job_name": "ptah-upgrade-observer", "static_configs": []any{map[string]any{"targets": []any{alUpgradeObserver + "." + a.scope.monitoringNamespace + ".svc:9812"}}}})
 	encoded, err := yaml.Marshal(config)
 	a.check(err, "encode external observer scrape")
 	desired := maps.Clone(cm.Data)
@@ -436,7 +437,7 @@ func (a *alertingRun) loadUpgradeMonitoring() func() {
 		cm.Data = data
 		a.check(a.cluster.Client.Update(a.ctx, cm), "update external observation configuration")
 		a.check(harness.Wait(a.ctx, "the exact external rule configuration to load", alTimeout, time.Second, func(context.Context) (bool, string, error) {
-			_, err := a.cluster.Clientset.CoreV1().RESTClient().Post().Namespace(alMonitoringNamespace).Resource("services").Name("http:prometheus:9090").SubResource("proxy").Suffix("-/reload").DoRaw(a.ctx)
+			_, err := a.cluster.Clientset.CoreV1().RESTClient().Post().Namespace(a.scope.monitoringNamespace).Resource("services").Name("http:prometheus:9090").SubResource("proxy").Suffix("-/reload").DoRaw(a.ctx)
 			if err != nil {
 				return false, "", err
 			}
@@ -496,7 +497,7 @@ func (a *alertingRun) upgradeRulesLoaded(source []byte) bool {
 	}
 	a.check(json.Unmarshal(body, &loaded), "decode effective upgrade rules")
 	canonical := func(query string) string {
-		out, _, err := a.cluster.Kubectl(a.ctx, "-n", alMonitoringNamespace, "exec", "deployment/prometheus", "--", "/bin/promtool", "--experimental", "promql", "format", query)
+		out, _, err := a.cluster.Kubectl(a.ctx, "-n", a.scope.monitoringNamespace, "exec", "deployment/prometheus", "--", "/bin/promtool", "--experimental", "promql", "format", query)
 		a.check(err, "parse rule with the monitored Prometheus version")
 		return string(out)
 	}

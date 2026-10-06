@@ -14,6 +14,10 @@ type alScrapeHistory struct {
 // one continuous failed interval, healthy followers, and a real healthy baseline.
 // Reload completion and test polling never date the first failed or restored scrape.
 func alReadScrapeHistory(upBody, durationBody []byte, pods []string, leader string, started, queriedAt time.Time) (alScrapeHistory, error) {
+	return alReadScrapeHistoryWithReloads(upBody, durationBody, pods, leader, started, queriedAt, time.Time{}, time.Time{})
+}
+
+func alReadScrapeHistoryWithReloads(upBody, durationBody []byte, pods []string, leader string, started, queriedAt, loaded, restored time.Time) (alScrapeHistory, error) {
 	history := alScrapeHistory{scrapedThrough: queriedAt}
 	if started.IsZero() || queriedAt.Before(started) || queriedAt.Sub(started)+2*alScrapeInterval >= alAdmissionHistoryWindow {
 		return history, errors.New("scrape fault history does not cover its interval")
@@ -45,7 +49,14 @@ func alReadScrapeHistory(upBody, durationBody []byte, pods []string, leader stri
 				result[pod].instance != "" || instances[instance] {
 				return nil, errors.New("scrape fault history has an unexpected or duplicate target")
 			}
-			samples, err := alAdmissionNativeSamples(item, since, queriedAt, integer)
+			gapSince := since
+			if pod == leader && !loaded.IsZero() {
+				// Changing the URL changes Prometheus's target hash and scrape
+				// offset. Validate this target's gaps against the reload instants
+				// below; its durations must have the same exact timestamps.
+				gapSince = queriedAt
+			}
+			samples, err := alAdmissionNativeSamples(item, gapSince, queriedAt, integer)
 			if err != nil {
 				return nil, err
 			}
@@ -80,6 +91,28 @@ func alReadScrapeHistory(upBody, durationBody []byte, pods []string, leader stri
 			if !duration.samples[index].at.Equal(sample.at) || duration.samples[index].value > alScrapeTimeout.Seconds() ||
 				(sample.value != 0 && sample.value != 1) {
 				return history, errors.New("scrape fault history has invalid or mismatched samples")
+			}
+			if index > 0 && sample.at.After(since) {
+				previous := health.samples[index-1]
+				if pod == leader && !loaded.IsZero() && sample.value != previous.value && !sample.at.Before(started) {
+					reload := loaded
+					if sample.value == 1 {
+						reload = restored
+					}
+					// Each target URL has its own five-second schedule. The reload
+					// instant dates the HTTP request, and the old target may still
+					// scrape afterward. Bound the transition between those native
+					// observations, not from the earlier request. Only this gap may
+					// span two intervals; each side and every follower stay strict.
+					transitionGap := alScrapeInterval + alAdmissionSampleGap
+					if reload.IsZero() || sample.at.Before(reload) ||
+						reload.Sub(previous.at) > alAdmissionSampleGap ||
+						sample.at.Sub(previous.at) > transitionGap {
+						return history, errors.New("scrape transition has no fresh observations around its configuration reload")
+					}
+				} else if sample.at.Sub(previous.at) > alAdmissionSampleGap {
+					return history, errors.New("scrape fault history has missing scrapes outside a configuration reload")
+				}
 			}
 			if sample.at.Before(started) || pod != leader {
 				if sample.value != 1 {

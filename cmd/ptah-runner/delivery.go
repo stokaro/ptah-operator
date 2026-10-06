@@ -123,7 +123,7 @@ func (d *runnerDelivery) deliver(ctx context.Context, result runner.Result, stde
 	// outcome. Sender supplies a separate bounded delivery deadline. Kubelet's
 	// termination grace may still kill the process; that remains outcome-unknown.
 	if _, err := d.sender.Send(context.WithoutCancel(ctx), payload); err != nil {
-		_, _ = fmt.Fprintln(stderr, "ptah-runner: durable result delivery failed")
+		_, _ = fmt.Fprintln(stderr, "ptah-runner: durable result delivery failed:", err)
 		return 2
 	}
 	return 0

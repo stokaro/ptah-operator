@@ -126,7 +126,7 @@ whose run finished, a bisect cannot assume a commit it lands on was ever built,
 and a change that needs its own verdict — a release candidate, or a change to
 the lifecycle path itself — goes through a pull request and is merged after its
 run finishes. The pull request fans out over the same three minors and the same
-five suites.
+nine suites.
 
 ## The acceptance suites
 
@@ -139,23 +139,42 @@ unless every phase the driver runs belongs to exactly one suite.
 ```bash
 make e2e                                   # every phase, in the driver's order, as before
 E2E_SUITE=data-plane make e2e              # one suite, against a cluster of its own
-E2E_SUITE=migrations-postgresql make e2e   # one engine's migration rows and reference data
+E2E_SUITE=migrations-postgresql make e2e   # one engine's migration rows
 ```
 
-The partition follows the dependencies rather than the clock, so phases that
-share mutable state stay in one suite: the CRD upgrade and the uninstall that
-follows it, the data plane and the fault injection inside it, the migration rows
-and the reference data that runs in the same namespace.
+Phases that share mutable state stay together: the CRD upgrade and the uninstall
+that follows it and the schema faults and their shared watches. MySQL and external PostgreSQL
+stay with schema faults because their closing assertions must still hold after
+fault injection. They run in `schema-faults`. The data-plane job runs the ordinary
+PostgreSQL lifecycle, plan-size boundaries, and admission rows. Certificate
+rotation, reference-data acceptance on both engines, and certificate-expiry
+alerts share `certificates`. The reference-data rows use separate databases and
+need no migration acceptance. Alerting runs in lifecycle before the final next-release
+upgrade and uninstall. It publishes and plans its own schema and migration
+producers, then suspends them; it does not wait for either engine's migration
+or reference-data acceptance. Operation incidents run in `alerting-operations`;
+plan storage, scrape/admission loss, manager loss, and interrupted upgrades stay
+in `lifecycle`. Separate clusters let those groups overlap without global faults
+contaminating another incident's history. Each group owns its producer identities
+and monitoring namespace, so the unpartitioned driver also runs them safely.
+The matrix has nine suites.
 
-Where the clock decides is between engines, which share nothing but the
-namespace a suite stands up for itself. Both engines in one job made that suite
-the longest stage of the matrix by a wide margin, so each engine's phases are a
-suite of their own and the two run at once. The engine is a phase input rather than a default: the driver names it,
+The independent schema approval rows run in `schema-approvals`; deadline,
+restart, deletion, and shared-realm histories stay together in `schema-faults`.
+Migration approval and executor/runner changes own their artifacts and
+databases, so both engines run in `migration-authority`. Their Secret names
+include the resource family to prevent collisions. Neither runtime phase
+repeats the migration lifecycle.
+
+The two migration engines run in separate suites. Reference data runs in the
+certificates suite so it adds no serial work to either migration suite.
+The engine is a phase input rather than a default: the driver names it,
 and a phase asked to run with none refuses instead of covering one engine and
 reporting two.
 
-That last pair needs the namespace the data plane stands up — its registry
-Service, its databases, its admission fixtures — so the migrations suite runs
+The migration, migration-authority, certificates, schema-faults, schema-approvals,
+lifecycle, and alerting-operations suites need the namespace the data plane stands
+up — its registry Service, its databases, its admission fixtures — so those suites run
 the data-plane phase in preparation mode (`E2E_DATAPLANE_MODE=prepare`), which
 creates those prerequisites and executes none of its own acceptance. Preparation
 is not coverage: a phase counts as covered only where a suite lists it under

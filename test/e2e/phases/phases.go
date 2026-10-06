@@ -222,31 +222,37 @@ type DataPlaneInputs struct {
 	Mode string `env:"E2E_DATAPLANE_MODE"`
 }
 
-// DataPlane proves both engines end to end: the registry, the databases and
-// the admission fixtures it stands up, the PostgreSQL, external PostgreSQL and
-// MySQL lifecycles, the refusals, the restart and fault injection, and the
-// four-eyes and Pod-metadata rows.
+// DataPlane proves the PostgreSQL lifecycle, both engines' size limits,
+// four-eyes approval, and Pod metadata. It also prepares the other suites.
 var DataPlane = define[DataPlaneInputs](Phase{
-	Name: "dataplane",
-	Test: "TestDataPlane",
-	// The complete sequential acceptance reached the last scenarios after
-	// 150 minutes in CI run 37160360553. Individual waits keep their bounds.
-	Timeout:      180 * time.Minute,
-	IsolatesNode: true,
+	Name:         "dataplane",
+	Test:         "TestDataPlane",
+	Timeout:      90 * time.Minute,
 	RequiresFull: []string{"assert"},
 	Scenarios: []string{
 		"databases-and-fixtures",
 		"postgresql-lifecycle",
+		"native-plan-size-boundary",
+		"closing-audits",
+		"four-eyes-distinct-approver",
+		"pod-metadata-admission",
+	},
+	Preparation: 1,
+})
+
+// SchemaFaults keeps the shared fault watches and cluster-wide barriers in
+// one phase, including the lifecycle assertions that must hold after faults.
+var SchemaFaults = define[DataPlaneInputs](Phase{
+	Name:         "schema-faults",
+	Test:         "TestSchemaFaults",
+	Timeout:      160 * time.Minute,
+	IsolatesNode: true,
+	RequiresFull: []string{"assert"},
+	Scenarios: []string{
 		"external-postgresql-lifecycle",
 		"mysql-lifecycle",
 		"mysql-dsn-refusal",
-		"native-plan-size-boundary",
 		"watches",
-		"approval-resource-replacement",
-		"approval-target-secret-change",
-		"approval-destructive-policy-change",
-		"approval-exclusion-policy-change",
-		"approval-verification-policy-change",
 		"mysql-drift-before-dispatch",
 		"hung-schema-result-read",
 		"job-deadline",
@@ -254,15 +260,30 @@ var DataPlane = define[DataPlaneInputs](Phase{
 		"runner-termination",
 		"job-deletion",
 		"closing-audits",
-		"four-eyes-distinct-approver",
-		"pod-metadata-admission",
+	},
+})
+
+// SchemaApprovals proves independent approval and executor changes on both
+// engines, without waiting for the unrelated interruption sequence.
+var SchemaApprovals = define[DataPlaneInputs](Phase{
+	Name:         "schema-approvals",
+	Test:         "TestSchemaApprovals",
+	Timeout:      90 * time.Minute,
+	RequiresFull: []string{"assert"},
+	Scenarios: []string{
+		"watches",
+		"approval-resource-replacement",
+		"approval-target-secret-change",
+		"approval-destructive-policy-change",
+		"approval-exclusion-policy-change",
+		"approval-verification-policy-change",
+		"approval-history-audit",
 		"approval-executor-image-change",
 		"approval-ptah-version-change",
 		"unsupported-controller-state-after-approval",
 		"unsupported-runner-protocol-after-approval",
 		"running-apply-executor-image-change",
 	},
-	Preparation: 1,
 })
 
 // MigrationsInputs is what the driver hands the migration phases. Each phase
@@ -315,17 +336,6 @@ var MigrationsPostgreSQL = define[MigrationsInputs](Phase{
 	Scenarios: []string{
 		"migration-policy",
 		"postgresql-migrations",
-		"approval-resource-replacement",
-		"approval-policy-change",
-		"approval-transaction-mode-change",
-		"approval-artifact-change",
-		"approval-verification-policy-uid-change",
-		"approval-verification-policy-content-change",
-		"approval-executor-image-change",
-		"approval-ptah-version-change",
-		"unsupported-controller-state-after-approval",
-		"unsupported-runner-protocol-after-approval",
-		"running-apply-executor-image-change",
 	},
 	// The isolated-node row cuts the isolation worker off from the API
 	// server, so only a suite that declares the worker may run the phase.
@@ -342,6 +352,20 @@ var MigrationsMySQL = define[MigrationsInputs](Phase{
 		"migration-policy",
 		"mysql-transaction-mode",
 		"mysql-migrations",
+	},
+	// The isolated-node row cuts the isolation worker off from the API
+	// server, so only a suite that declares the worker may run the phase.
+	IsolatesNode: true,
+})
+
+// MigrationRuntimePostgreSQL proves execution bindings and runtime refusals
+// against its own native artifact and isolated databases.
+var MigrationRuntimePostgreSQL = define[MigrationsInputs](Phase{
+	Name:    "migration-runtime-postgresql",
+	Test:    "TestMigrationRuntimePostgreSQL",
+	Timeout: 45 * time.Minute,
+	Scenarios: []string{
+		"runtime-artifact",
 		"approval-resource-replacement",
 		"approval-policy-change",
 		"approval-transaction-mode-change",
@@ -354,9 +378,28 @@ var MigrationsMySQL = define[MigrationsInputs](Phase{
 		"unsupported-runner-protocol-after-approval",
 		"running-apply-executor-image-change",
 	},
-	// The isolated-node row cuts the isolation worker off from the API
-	// server, so only a suite that declares the worker may run the phase.
-	IsolatesNode: true,
+})
+
+// MigrationRuntimeMySQL proves execution bindings and runtime refusals
+// against its own native artifact and isolated databases.
+var MigrationRuntimeMySQL = define[MigrationsInputs](Phase{
+	Name:    "migration-runtime-mysql",
+	Test:    "TestMigrationRuntimeMySQL",
+	Timeout: 45 * time.Minute,
+	Scenarios: []string{
+		"runtime-artifact",
+		"approval-resource-replacement",
+		"approval-policy-change",
+		"approval-transaction-mode-change",
+		"approval-artifact-change",
+		"approval-verification-policy-uid-change",
+		"approval-verification-policy-content-change",
+		"approval-executor-image-change",
+		"approval-ptah-version-change",
+		"unsupported-controller-state-after-approval",
+		"unsupported-runner-protocol-after-approval",
+		"running-apply-executor-image-change",
+	},
 })
 
 // ReferenceDataInputs is what the driver hands the reference-data phases.
@@ -407,8 +450,8 @@ var ReferenceDataMySQL = define[ReferenceDataInputs](Phase{
 	},
 })
 
-// AlertingInputs is what the driver hands the alerting phase, which runs last
-// in the PostgreSQL migrations suite, on the cluster that suite leaves.
+// AlertingInputs is what the driver hands the alerting phase. The data-plane
+// preparation supplies databases and a registry; alerting creates its own producers.
 type AlertingInputs struct {
 	// Kubeconfig names the cluster the driver stood up.
 	Kubeconfig string `env:"E2E_KUBECONFIG"`
@@ -416,6 +459,10 @@ type AlertingInputs struct {
 	OperatorNamespace string `env:"E2E_OPERATOR_NAMESPACE"`
 	// TestNamespace holds the existing approval used for a dry-run admission probe.
 	TestNamespace string `env:"E2E_TEST_NAMESPACE"`
+	// ExecutorImage publishes the native producer artifacts.
+	ExecutorImage string `env:"E2E_EXECUTOR_IMAGE"`
+	// RegistryService is the prepared in-cluster artifact registry.
+	RegistryService string `env:"E2E_REGISTRY_SERVICE"`
 	// HelmRelease is the installed release, whose values the rules are
 	// rendered with.
 	HelmRelease string `env:"E2E_HELM_RELEASE"`
@@ -435,18 +482,42 @@ type AlertingInputs struct {
 	RegistryCredentialsFile string `env:"E2E_REGISTRY_CREDENTIALS_FILE"`
 }
 
-// Alerting proves the path from a manager's metrics to a person: an Apply
-// nobody accounted for, an operation that stops moving, a failed leader
-// scrape, certificate expiry and admission failure, and every manager gone each reach a receiver.
-// Recoverable faults clear.
+// Alerting proves infrastructure alerts, including storage, scrape and
+// admission faults, lost managers, and interrupted upgrades.
 var Alerting = define[AlertingInputs](Phase{
-	Name: "alerting",
-	Test: "TestAlerting",
-	// Native scenario measurements exceed two hours in aggregate. This
-	// bounds the sequence; each alert still has its own delivery deadline.
-	Timeout:      150 * time.Minute,
-	RequiresFull: []string{"assert", "migrations-postgresql", "reference-data-postgresql"},
+	Name:         "alerting",
+	Test:         "TestAlerting",
+	Timeout:      90 * time.Minute,
+	RequiresFull: []string{"assert"},
 	Scenarios: []string{
+		"native-producers",
+		"monitoring-path",
+		"plan-store-large",
+		"unresolved-view-read-failures",
+		"lost-scrape-target",
+		"lost-view",
+		"upgrade-alerts",
+	},
+})
+
+// AlertingCertificates proves expiry notification and recovery alongside
+// certificate rotation, with its own monitoring namespace and native producers.
+var AlertingCertificates = define[AlertingInputs](Phase{
+	Name:         "alerting-certificates",
+	Test:         "TestAlertingCertificates",
+	Timeout:      30 * time.Minute,
+	RequiresFull: []string{"assert"},
+	Scenarios:    []string{"native-producers", "monitoring-path", "certificate-expiry"},
+})
+
+// AlertingOperations owns operation incidents and the full no-page windows.
+// It runs on another cluster so infrastructure faults cannot change its history.
+var AlertingOperations = define[AlertingInputs](Phase{
+	Name:    "alerting-operations",
+	Test:    "TestAlertingOperations",
+	Timeout: 90 * time.Minute,
+	Scenarios: []string{
+		"native-producers",
 		"monitoring-path",
 		"unresolved-apply",
 		"ordinary-policy-waits",
@@ -454,12 +525,6 @@ var Alerting = define[AlertingInputs](Phase{
 		"resource-overdue",
 		"lock-release-owed",
 		"operations-failing",
-		"plan-store-large",
-		"unresolved-view-read-failures",
-		"lost-scrape-target",
-		"certificate-expiry",
-		"lost-view",
-		"upgrade-alerts",
 	},
 })
 
@@ -608,10 +673,16 @@ var all = []Phase{
 	ControlPlane.Phase,
 	CertRotation.Phase,
 	DataPlane.Phase,
+	SchemaFaults.Phase,
+	SchemaApprovals.Phase,
 	MigrationsPostgreSQL.Phase,
 	MigrationsMySQL.Phase,
+	MigrationRuntimePostgreSQL.Phase,
+	MigrationRuntimeMySQL.Phase,
 	ReferenceDataPostgreSQL.Phase,
 	ReferenceDataMySQL.Phase,
+	AlertingCertificates.Phase,
+	AlertingOperations.Phase,
 	Alerting.Phase,
 	Uninstall.Phase,
 }

@@ -176,6 +176,10 @@ func holdUnsupportedStoredState(t *testing.T, ctx context.Context, cluster *harn
 	if allowed {
 		t.Fatal("the real manager retained status PATCH permission while the approval boundary was held")
 	}
+	live := initial.DeepCopyObject().(client.Object)
+	storedStateCheck(t, cluster.Client.Get(ctx, client.ObjectKeyFromObject(initial), live), "read the approval boundary after writes are held")
+	storedStateCheck(t, storedStateSameApprovalBoundary(initial, live, supported), "retain the ready plan while establishing the write barrier")
+	initial = live.DeepCopyObject().(client.Object)
 	approval := admit()
 	if approval == nil || approval.GetUID() == "" {
 		t.Fatal("the stored-state control has no exact admitted approval")
@@ -184,7 +188,6 @@ func holdUnsupportedStoredState(t *testing.T, ctx context.Context, cluster *harn
 	// Withdrawal precedes any restoration, including failure cleanup.
 	var injected bool
 	var writer client.Client
-	live := initial.DeepCopyObject().(client.Object)
 	restore := func(cleanupCtx context.Context) error {
 		if err := storedStateDeleteExact(cleanupCtx, cluster, approval); err != nil {
 			return err

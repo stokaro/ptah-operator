@@ -6,8 +6,10 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
+	"testing"
 	"time"
 
 	ptahv1 "github.com/stokaro/ptah-operator/api/v1alpha1"
@@ -28,8 +30,8 @@ import (
 func (a *alertingRun) lockReleaseOwed() {
 	schema := &ptahv1.PtahSchema{}
 	migration := &ptahv1.PtahMigration{}
-	a.check(a.cluster.Client.Get(a.ctx, types.NamespacedName{Namespace: a.in.TestNamespace, Name: "e2e-reference-postgresql"}, schema), "read the real schema source for lock alerts")
-	a.check(a.cluster.Client.Get(a.ctx, types.NamespacedName{Namespace: a.in.TestNamespace, Name: "e2e-migrations-postgresql"}, migration), "read the real migration source for lock alerts")
+	a.check(a.cluster.Client.Get(a.ctx, types.NamespacedName{Namespace: a.in.TestNamespace, Name: a.scope.schemaProducer}, schema), "read the real schema source for lock alerts")
+	a.check(a.cluster.Client.Get(a.ctx, types.NamespacedName{Namespace: a.in.TestNamespace, Name: a.scope.migrationProducer}, migration), "read the real migration source for lock alerts")
 	if schema.Status.ExecutionBinding == nil || migration.Status.ExecutionBinding == nil || schema.Status.ExecutionBinding.ExecutorImage != migration.Status.ExecutionBinding.ExecutorImage || !alPinnedImage.MatchString(schema.Status.ExecutionBinding.ExecutorImage) {
 		a.fatalf("lock alert producers do not share an exact executor")
 	}
@@ -52,8 +54,20 @@ func (a *alertingRun) lockReleaseOwed() {
 		// Publish each engine's own real migration directory with the installed
 		// executor. The PostgreSQL suite need not have run the MySQL phase.
 		m.publish("alerts-lock", m.fixtureDir(""), m.reference(""))
-		for _, family := range []string{"schema", "migration"} {
-			a.lockReleaseCase(m, schema, migration, family)
+		// Each family owns its database, Lease, scheduling label and alert
+		// series. Keep the full firing/recovery windows while overlapping them.
+		var cases [2]harness.ParallelCase
+		for i, family := range []string{"schema", "migration"} {
+			cases[i] = harness.ParallelCase{Name: family, Run: func(t *testing.T) {
+				local, migrationLocal := *a, *m
+				local.t, local.parent, local.workDir = t, t, t.TempDir()
+				migrationLocal.t, migrationLocal.parent, migrationLocal.workDir = t, t, local.workDir
+				migrationLocal.patterns = slices.Clone(m.patterns)
+				local.lockReleaseCase(&migrationLocal, schema, migration, family)
+			}}
+		}
+		if !harness.ParallelPair(a.t, engineName+"-lock-families", cases) {
+			a.t.FailNow()
 		}
 		// These two publisher objects were created by this invocation. Registry
 		// blobs stay in the task registry until the driver removes that registry.
@@ -67,6 +81,14 @@ func (a *alertingRun) lockReleaseOwed() {
 
 func (a *alertingRun) lockReleaseCase(m *migrationRun, schemaTemplate *ptahv1.PtahSchema, migrationTemplate *ptahv1.PtahMigration, family string) {
 	name := "e2e-alert-lock-" + m.engine.name + "-" + family
+	gate := alGateLabel + "-lock-" + m.engine.name + "-" + family
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+		defer cancel()
+		if err := a.setSchedulingGate(ctx, gate, ""); err != nil {
+			a.t.Errorf("remove the owned lock scheduling gate: %v", err)
+		}
+	}()
 	database := "ptah_alert_lock_" + m.engine.name + "_" + family
 	secretName := name + "-db"
 	m.isolatedDatabase(database, secretName)
@@ -86,7 +108,7 @@ func (a *alertingRun) lockReleaseCase(m *migrationRun, schemaTemplate *ptahv1.Pt
 		v.Spec.Target.CoordinationKey = coordination
 		v.Spec.Target.SharedRealm = true
 		v.Spec.Interval.Duration = time.Hour
-		v.Spec.Execution.NodeSelector = map[string]string{alGateLabel: "open"}
+		v.Spec.Execution.NodeSelector = map[string]string{gate: "open"}
 		v.Spec.Execution.ActiveDeadlineSeconds = 300
 	case *ptahv1.PtahMigration:
 		v.Spec.Target.URLFrom.Key = "url"
@@ -95,7 +117,7 @@ func (a *alertingRun) lockReleaseCase(m *migrationRun, schemaTemplate *ptahv1.Pt
 		v.Spec.Target.SharedRealm = true
 		v.Spec.Interval.Duration = time.Hour
 		v.Spec.Artifact.OCIRef = m.reference("")
-		v.Spec.Execution.NodeSelector = map[string]string{alGateLabel: "open"}
+		v.Spec.Execution.NodeSelector = map[string]string{gate: "open"}
 		v.Spec.Execution.ActiveDeadlineSeconds = 300
 	}
 	siblingObject, err := alNegativeFixture(schemaTemplate, name+"-sibling", secretName, ptahv1.ApplyPolicyNever)
@@ -158,8 +180,7 @@ func (a *alertingRun) lockReleaseCase(m *migrationRun, schemaTemplate *ptahv1.Pt
 			a.fatalf("the lock owner was replaced")
 		}
 	}
-	a.gateOpened = true
-	a.check(a.setGate(a.ctx, "open"), "open scheduling for initial planning")
+	a.check(a.setSchedulingGate(a.ctx, gate, "open"), "open scheduling for initial planning")
 	a.check(a.create(object), "create the real lock alert owner")
 	ownerUID, ownerGeneration = object.GetUID(), object.GetGeneration()
 	cleanup = append(cleanup, object.DeepCopyObject().(client.Object))
@@ -167,8 +188,7 @@ func (a *alertingRun) lockReleaseCase(m *migrationRun, schemaTemplate *ptahv1.Pt
 		read()
 		return alLockApprovalReady(object), "waiting for the plan that needs approval", nil
 	}), "prepare the lock owner for approval")
-	a.check(a.setGate(a.ctx, ""), "hold the approved Apply off every node")
-	a.gateOpened = false
+	a.check(a.setSchedulingGate(a.ctx, gate, ""), "hold the approved Apply off every node")
 	var approval client.Object
 	switch v := object.(type) {
 	case *ptahv1.PtahSchema:
@@ -213,7 +233,7 @@ func (a *alertingRun) lockReleaseCase(m *migrationRun, schemaTemplate *ptahv1.Pt
 		if !found {
 			return false, "waiting for the gated Apply Pod", nil
 		}
-		if !alStalledPodHeld(pod) {
+		if !alPodHeldByGate(pod, gate) {
 			return false, "", fmt.Errorf("the approved Apply ran before fault installation")
 		}
 		originalJob, originalPod = job, pod
@@ -295,7 +315,7 @@ func (a *alertingRun) lockReleaseCase(m *migrationRun, schemaTemplate *ptahv1.Pt
 		a.fatalf("the Apply changed while its release fault was installed")
 	}
 	_, held, found := workload(claimed.claim)
-	if !found || held.UID != originalPod.UID || !alStalledPodHeld(held) {
+	if !found || held.UID != originalPod.UID || !alPodHeldByGate(held, gate) {
 		a.fatalf("the original executor escaped the Apply gate")
 	}
 	query := fmt.Sprintf(`ALERTS{alertname=%q,family=%q}`, alLockAlert, family)
@@ -303,8 +323,7 @@ func (a *alertingRun) lockReleaseCase(m *migrationRun, schemaTemplate *ptahv1.Pt
 		a.fatalf("a lock-release incident already exists for this family")
 	}
 	from := a.deliveryCount()
-	a.gateOpened = true
-	a.check(a.setGate(a.ctx, "open"), "run the authorized Apply with release denied")
+	a.check(a.setSchedulingGate(a.ctx, gate, "open"), "run the authorized Apply with release denied")
 	var owed alLockState
 	a.check(harness.Wait(a.ctx, "the completed Apply and its owed release", alTimeout, time.Second, func(context.Context) (bool, string, error) {
 		read()
@@ -555,7 +574,6 @@ func (a *alertingRun) lockReleaseCase(m *migrationRun, schemaTemplate *ptahv1.Pt
 	if len(applyJobs) != 1 || !applyJobs[originalJob.UID] {
 		a.fatalf("the original Apply was missing or replayed")
 	}
-	a.check(a.setGate(a.ctx, ""), "close the lock alert scheduling gate")
-	a.gateOpened = false
+	a.check(a.setSchedulingGate(a.ctx, gate, ""), "close the lock alert scheduling gate")
 	a.logf("PASS %s %s owed lock: resourceUID=%s operation=%s jobUID=%s leaseUID=%s epoch=%s completedAt=%s firingReceived=%s releasedAt=%s resolvedReceived=%s siblingJobUID=%s", m.engine.name, family, object.GetUID(), claimed.claim.id, claimed.claim.jobUID, originalLease.UID, claimed.lock.LeaseEpoch, owed.completed, firing.ReceivedAt, released, resolved.ReceivedAt, successor.jobUID)
 }

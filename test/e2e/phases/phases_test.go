@@ -220,8 +220,8 @@ func TestValidateRefusesMalformedDeclarations(t *testing.T) {
 
 // The migration suites run the data plane for the namespace it stands up. The
 // boundary has to fall after the fixtures and before everything the phase
-// accepts on its own, or preparation would run the engine lifecycles and the
-// fault injection in a suite that does not claim them.
+// accepts on its own, or preparation would run the engine lifecycles in a
+// suite that does not claim them. Faults belong to their own phase.
 func TestDataPlanePreparesBeforeItsOwnAcceptance(t *testing.T) {
 	t.Parallel()
 	prepared := DataPlane.Scenarios[:DataPlane.Preparation]
@@ -229,14 +229,21 @@ func TestDataPlanePreparesBeforeItsOwnAcceptance(t *testing.T) {
 		t.Fatalf("the data plane prepares with %v, want the databases and fixtures alone", prepared)
 	}
 	for _, acceptance := range []string{
-		"postgresql-lifecycle", "mysql-lifecycle",
-		"watches", "job-deadline", "manager-restart", "runner-termination", "job-deletion",
+		"postgresql-lifecycle", "native-plan-size-boundary",
 	} {
 		if !slices.Contains(DataPlane.Scenarios, acceptance) {
 			t.Errorf("the data plane no longer runs %s", acceptance)
 		}
 		if slices.Contains(prepared, acceptance) {
 			t.Errorf("%s runs before the preparation boundary, so preparation would execute it", acceptance)
+		}
+	}
+	for _, fault := range SchemaFaults.Scenarios {
+		if slices.Contains(prepared, fault) {
+			t.Errorf("%s runs during preparation instead of its fault phase", fault)
+		}
+		if fault != "closing-audits" && slices.Contains(DataPlane.Scenarios, fault) {
+			t.Errorf("%s is duplicated across lifecycle and fault acceptance", fault)
 		}
 	}
 }
@@ -259,5 +266,27 @@ func lookupIn(environment map[string]string) func(string) (string, bool) {
 	return func(name string) (string, bool) {
 		value, ok := environment[name]
 		return value, ok
+	}
+}
+
+// Partitioning must preserve every incident exactly once; only the native
+// producer and monitoring prerequisites run on each independent cluster.
+func TestAlertPartitionsRetainEveryIncident(t *testing.T) {
+	want := []string{
+		"certificate-expiry", "lock-release-owed", "lost-scrape-target", "lost-view",
+		"operations-failing", "ordinary-policy-waits", "plan-store-large",
+		"resource-overdue", "stalled-operation", "unresolved-apply",
+		"unresolved-view-read-failures", "upgrade-alerts",
+	}
+	var got []string
+	for _, phase := range []Phase{Alerting.Phase, AlertingOperations.Phase, AlertingCertificates.Phase} {
+		if len(phase.Scenarios) < 3 || !slices.Equal(phase.Scenarios[:2], []string{"native-producers", "monitoring-path"}) {
+			t.Fatalf("%s omits native prerequisites or all incidents", phase.Name)
+		}
+		got = append(got, phase.Scenarios[2:]...)
+	}
+	slices.Sort(got)
+	if !slices.Equal(got, want) {
+		t.Fatalf("alert partitions changed incident coverage: got %v, want %v", got, want)
 	}
 }

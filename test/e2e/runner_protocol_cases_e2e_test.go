@@ -188,7 +188,7 @@ func closeRunnerPodBoundary(t *testing.T, ctx context.Context, cluster *harness.
 
 func (m *migrationRun) unsupportedRunnerProtocol() {
 	m.t.Helper()
-	name, database := "e2e-runner-protocol-"+m.engine.name, "ptah_e2e_runner_protocol"
+	name, database := "e2e-migration-runner-protocol-"+m.engine.name, "ptah_e2e_runner_protocol"
 	secret := name + "-db"
 	watcher, err := client.NewWithWatch(m.cluster.Config, client.Options{Scheme: m.cluster.Scheme})
 	m.check(err, "open the unsupported migration runner's direct API watches")
@@ -369,6 +369,7 @@ func (m *migrationRun) unsupportedRunnerProtocol() {
 		m.query("SELECT color FROM e2e_migration_widgets WHERE id=1", database) != "blue" {
 		m.fatalf("the freshly authorized supported runner lost its native revisions, rows or schema effect")
 	}
+	m.finishFixture(name)
 	m.logf("PASS %s unsupported runner after migration approval: exact pre-fetch refusal, no unauthorized SQL or replay; Unknown explicitly acknowledged; protocol 1 restored and fresh decision applied once", m.engine.kind)
 }
 

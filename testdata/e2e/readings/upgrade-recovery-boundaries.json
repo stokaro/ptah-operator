@@ -1,0 +1,220 @@
+[
+  {
+    "kind": "PtahSchema",
+    "afterHook": "2026-10-06T02:51:03Z",
+    "completedAt": "2026-10-06T02:51:46Z",
+    "object": {
+      "metadata": {
+        "name": "e2e-upgrade-schema-mysql",
+        "namespace": "ptah-test-a-1-35-8-plan-store-parallel-5b572b0f-0d43dea1aa",
+        "uid": "f80f2cc7-9682-4e16-856e-30fd5a87512c",
+        "generation": 1
+      },
+      "spec": {
+        "policy": {
+          "apply": "Never",
+          "allowDestructive": true,
+          "driftSeverity": "all",
+          "lockTimeout": "30s",
+          "transactionMode": "file"
+        },
+        "interval": "15s"
+      },
+      "status": {
+        "observedGeneration": 1,
+        "phase": "Blocked",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "False",
+            "observedGeneration": 1,
+            "lastTransitionTime": "2026-10-06T02:48:21Z",
+            "reason": "ApplyDisabled",
+            "message": "Plan is ready but apply is disabled"
+          },
+          {
+            "type": "ReconciliationFailed",
+            "status": "False",
+            "observedGeneration": 1,
+            "lastTransitionTime": "2026-10-06T02:48:31Z",
+            "reason": "Succeeded",
+            "message": "The latest operation completed"
+          },
+          {
+            "type": "PlanReady",
+            "status": "True",
+            "observedGeneration": 1,
+            "lastTransitionTime": "2026-10-06T02:51:46Z",
+            "reason": "Published",
+            "message": "Exact plan bytes are stored in immutable chunks"
+          }
+        ],
+        "plan": {
+          "name": "ptah-plan-a640bc4d5bde9d881f6210cd",
+          "uid": "d1a4454e-7f08-44a4-9cf4-329949002a7c"
+        },
+        "target": {
+          "lastObservedAt": "2026-10-06T02:51:32Z"
+        }
+      }
+    }
+  },
+  {
+    "kind": "PtahSchema",
+    "afterHook": "2026-10-06T02:51:03Z",
+    "completedAt": "2026-10-06T02:52:11Z",
+    "object": {
+      "metadata": {
+        "name": "e2e-upgrade-schema-postgresql",
+        "namespace": "ptah-test-a-1-35-8-plan-store-parallel-5b572b0f-0d43dea1aa",
+        "uid": "32437eb9-b3a4-4449-83fb-8e5337604d1b",
+        "generation": 1
+      },
+      "spec": {
+        "policy": {
+          "apply": "Never",
+          "allowDestructive": true,
+          "driftSeverity": "all",
+          "lockTimeout": "30s",
+          "transactionMode": "file"
+        },
+        "interval": "15s"
+      },
+      "status": {
+        "observedGeneration": 1,
+        "phase": "Blocked",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "False",
+            "observedGeneration": 1,
+            "lastTransitionTime": "2026-10-06T02:46:45Z",
+            "reason": "ApplyDisabled",
+            "message": "Plan is ready but apply is disabled"
+          },
+          {
+            "type": "ReconciliationFailed",
+            "status": "False",
+            "observedGeneration": 1,
+            "lastTransitionTime": "2026-10-06T02:46:56Z",
+            "reason": "Succeeded",
+            "message": "The latest operation completed"
+          },
+          {
+            "type": "PlanReady",
+            "status": "True",
+            "observedGeneration": 1,
+            "lastTransitionTime": "2026-10-06T02:52:11Z",
+            "reason": "Published",
+            "message": "Exact plan bytes are stored in immutable chunks"
+          }
+        ],
+        "plan": {
+          "name": "ptah-plan-d227dda8d11275ded4403e4a",
+          "uid": "d1922018-1a01-4d51-8490-c1041a0765db"
+        },
+        "target": {
+          "lastObservedAt": "2026-10-06T02:51:57Z"
+        }
+      }
+    }
+  },
+  {
+    "kind": "PtahMigration",
+    "afterHook": "2026-10-06T02:51:03Z",
+    "completedAt": "2026-10-06T02:51:51Z",
+    "object": {
+      "metadata": {
+        "name": "e2e-upgrade-migration-mysql",
+        "namespace": "ptah-test-a-1-35-8-plan-store-parallel-5b572b0f-0d43dea1aa",
+        "uid": "c0a5ef00-e6af-48c8-b949-0493b1321f8d",
+        "generation": 1
+      },
+      "spec": {
+        "policy": {
+          "apply": "Never",
+          "lockTimeout": "30s"
+        },
+        "interval": "15s"
+      },
+      "status": {
+        "observedGeneration": 1,
+        "phase": "Planning",
+        "conditions": [
+          {
+            "type": "Progressing",
+            "status": "False",
+            "observedGeneration": 1,
+            "lastTransitionTime": "2026-10-06T02:51:51Z",
+            "reason": "ApplyDisabled",
+            "message": "The apply policy is Never, so nothing runs from here"
+          },
+          {
+            "type": "Ready",
+            "status": "False",
+            "observedGeneration": 1,
+            "lastTransitionTime": "2026-10-06T02:49:47Z",
+            "reason": "ApplyDisabled",
+            "message": "3 migrations are pending and the apply policy is Never"
+          }
+        ],
+        "plan": {
+          "name": "ptah-mplan-061a95d0172e9f9f9331c3f2",
+          "uid": "4df2547e-d006-4382-b9b8-debd96c34957"
+        },
+        "history": {
+          "observedAt": "2026-10-06T02:51:51Z"
+        }
+      }
+    }
+  },
+  {
+    "kind": "PtahMigration",
+    "afterHook": "2026-10-06T02:51:03Z",
+    "completedAt": "2026-10-06T02:51:52Z",
+    "object": {
+      "metadata": {
+        "name": "e2e-upgrade-migration-postgresql",
+        "namespace": "ptah-test-a-1-35-8-plan-store-parallel-5b572b0f-0d43dea1aa",
+        "uid": "bbd3c1fe-a528-447e-bf3f-20ef75ceed9c",
+        "generation": 1
+      },
+      "spec": {
+        "policy": {
+          "apply": "Never",
+          "lockTimeout": "30s"
+        },
+        "interval": "15s"
+      },
+      "status": {
+        "observedGeneration": 1,
+        "phase": "Planning",
+        "conditions": [
+          {
+            "type": "Progressing",
+            "status": "False",
+            "observedGeneration": 1,
+            "lastTransitionTime": "2026-10-06T02:51:52Z",
+            "reason": "ApplyDisabled",
+            "message": "The apply policy is Never, so nothing runs from here"
+          },
+          {
+            "type": "Ready",
+            "status": "False",
+            "observedGeneration": 1,
+            "lastTransitionTime": "2026-10-06T02:48:10Z",
+            "reason": "ApplyDisabled",
+            "message": "3 migrations are pending and the apply policy is Never"
+          }
+        ],
+        "plan": {
+          "name": "ptah-mplan-1b5b5d902d549824e10aa677",
+          "uid": "a7111a77-bde6-4148-8801-9a205271caf7"
+        },
+        "history": {
+          "observedAt": "2026-10-06T02:51:52Z"
+        }
+      }
+    }
+  }
+]

@@ -156,7 +156,11 @@ func (w *schemaRefusalWindow) resultControl(resource *ptahv1alpha1.PtahSchema, o
 	if resource == nil || resource.Name != w.name || resource.Namespace != f.in.TestNamespace || resource.UID == "" {
 		f.fatalf("schema SQL result control has no exact resource identity")
 	}
-	result := f.captureOneNewJobResult(w.name, operation, before, nil)
+	f.recordObservedJobs()
+	w.captureInventory()
+	selected, err := w.inventory.diagnosticResult(resource, operation, f.observed.since(w.name, operation, before))
+	f.check(err, "select the successful schema SQL diagnostic result")
+	result := f.captureExactJobResult(w.name, operation, selected)
 	dialect := "postgres"
 	if w.audit.engine == "mysql" {
 		dialect = "mysql"

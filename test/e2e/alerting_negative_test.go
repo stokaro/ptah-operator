@@ -134,6 +134,26 @@ func TestAlNegativeFixtureDoesNotInheritAnAcceptedStatus(t *testing.T) {
 	}
 }
 
+func TestAlNegativeFixtureResumesAnIndependentCopyOfARetiredProducer(t *testing.T) {
+	t.Parallel()
+	for _, family := range []string{"schema", "migration"} {
+		template := negativeFixtureState(t, family, ptahv1.ApplyPolicyOnApproval)
+		switch v := template.(type) {
+		case *ptahv1.PtahSchema:
+			v.Spec.Suspend = true
+		case *ptahv1.PtahMigration:
+			v.Spec.Suspend = true
+		}
+		copy, err := alNegativeFixture(template, "fresh-control", "fresh-db", ptahv1.ApplyPolicyNever)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if alNegativeReading(copy).suspended || !alNegativeReading(template).suspended {
+			t.Fatalf("%s control inherited suspension or resumed its retired producer", family)
+		}
+	}
+}
+
 func TestAlNegativeWindowAllowsOnlyTheSameExistingIncident(t *testing.T) {
 	t.Parallel()
 	old := alDelivery{Receiver: "sink", Status: "firing", AlertName: alUnresolvedApply, StartsAt: time.Unix(1800000000, 0).UTC(), Labels: map[string]string{"family": "migration", "operator_namespace": "installation", "severity": "critical"}, Annotations: map[string]string{"summary": "1 unresolved migration"}}

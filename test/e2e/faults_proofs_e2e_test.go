@@ -3,6 +3,7 @@
 package e2e
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -34,7 +35,7 @@ func (f *faultRun) captureExactJobResult(name, uid, operation string) exactResul
 	f.t.Helper()
 	job := f.waitForExactJobTerminal(name, uid)
 	if !exactResultJob(job, uid, operation, f.controller) {
-		f.fatalf("exact %s Job %s did not transport one result", operation, name)
+		f.fatalf("exact %s Job %s did not transport one result: %s", operation, name, f.failedJobDiagnostic(job))
 	}
 	operationID := job.Annotations[annotationOperationID]
 	pods := &corev1.PodList{}
@@ -58,6 +59,37 @@ func (f *faultRun) captureExactJobResult(name, uid, operation string) exactResul
 	f.auditedPods[string(pod.UID)] = true
 	f.audited.add(uid)
 	return exactResult{result: result, operationID: operationID, podUID: string(pod.UID)}
+}
+
+// A failed transport must not hide its reason behind the successful-result
+// predicate. This bounded diagnostic cannot admit a Job or replace its receipt.
+func (f *faultRun) failedJobDiagnostic(job *batchv1.Job) string {
+	ctx, cancel := context.WithTimeout(f.ctx, 15*time.Second)
+	defer cancel()
+	pods := &corev1.PodList{}
+	if err := f.cluster.Client.List(ctx, pods, client.InNamespace(job.Namespace), client.MatchingLabels{"job-name": job.Name}); err != nil {
+		return "Pod diagnostics unavailable"
+	}
+	owned := ownedPods(pods.Items, job.UID)
+	if len(owned) != 1 {
+		return fmt.Sprintf("exact Job owns %d Pods", len(owned))
+	}
+	pod := &owned[0]
+	for _, status := range pod.Status.ContainerStatuses {
+		if status.Name != "ptah" || status.State.Terminated == nil {
+			continue
+		}
+		terminated := status.State.Terminated
+		lines, limit := int64(20), int64(16<<10)
+		logs, err := f.cluster.Clientset.CoreV1().Pods(job.Namespace).GetLogs(pod.Name,
+			&corev1.PodLogOptions{Container: "ptah", TailLines: &lines, LimitBytes: &limit}).DoRaw(ctx)
+		cause := "runner log unavailable"
+		if err == nil {
+			cause = runnerDeliveryFailure(logs)
+		}
+		return fmt.Sprintf("runner exit=%d OOMKilled=%t; %s", terminated.ExitCode, terminated.Reason == "OOMKilled", cause)
+	}
+	return "exact Pod has no terminated runner"
 }
 
 // pollWithoutAudit is poll for the waits the shell ran checking first and
@@ -308,7 +340,7 @@ func (f *faultRun) publishFaultSchema(engine, dialect, reference string) {
 	if err != nil {
 		f.fatalf("fault schema fixture is missing: %s", file)
 	}
-	configMap, name := "e2e-fault-"+engine+"-source", "e2e-fault-push-"+engine
+	configMap, name := "e2e-fault-"+engine+"-source"+f.fixtureSuffix, "e2e-fault-push-"+engine+f.fixtureSuffix
 	f.check(f.create(map[string]any{
 		"apiVersion": "v1", "kind": "ConfigMap",
 		"metadata": map[string]any{"namespace": f.in.TestNamespace, "name": configMap},
@@ -364,11 +396,11 @@ func (f *faultRun) publishPrincipalArtifact(reference string) string {
 		"securityContext": restrictedContainer(),
 		"volumeMounts":    []any{map[string]any{"name": "schema", "mountPath": "/schema", "readOnly": true}},
 	}, []any{map[string]any{"name": "schema", "secret": map[string]any{
-		"secretName": principalSchemaSecret,
+		"secretName": f.principalSecretName(),
 		"items":      []any{map[string]any{"key": "schema.hcl", "path": "schema.hcl", "mode": int64(288)}},
 	}}})), "create Job %s", name)
 	job := f.waitForPublisherJob(name)
-	if !principalPublisherIsolated(job, f.in.FixtureImage, reference, principalSchemaSecret, registryAuthSecret) {
+	if !principalPublisherIsolated(job, f.in.FixtureImage, reference, f.principalSecretName(), registryAuthSecret) {
 		f.fatalf("handcrafted publisher crossed its schema/registry isolation boundary")
 	}
 	logs := f.jobLogs(job, "publisher")

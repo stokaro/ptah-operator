@@ -36,6 +36,8 @@ type faultRun struct {
 	scanner credentialScanner
 
 	principalRole, principalPassword string
+	// Separate retained setup objects when both phases share an unpartitioned run.
+	fixtureSuffix string
 
 	lastAudit time.Time
 	// The fault audit's own ledgers: the Jobs and Pods whose credential audit
@@ -81,6 +83,10 @@ func newFaultRun(d *dataPlane) *faultRun {
 	d.parent.Cleanup(f.cleanup)
 	return f
 }
+
+func (f *faultRun) principalSecretName() string { return principalSchemaSecret + f.fixtureSuffix }
+func (f *faultRun) heartbeatJobName() string    { return faultHeartbeatJob + f.fixtureSuffix }
+func (f *faultRun) heartbeatLeaseName() string  { return watchHeartbeatLease + f.fixtureSuffix }
 
 func (f *faultRun) fatalf(format string, arguments ...any) {
 	f.t.Helper()

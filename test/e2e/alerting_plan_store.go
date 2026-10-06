@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
+	"reflect"
 	"time"
 
 	ptahv1 "github.com/stokaro/ptah-operator/api/v1alpha1"
@@ -216,6 +218,17 @@ type alPlanStoreHistory struct {
 }
 
 func alReadPlanStoreHistory(gaugeBody, upBody, durationBody []byte, pods []string, leader string, started, queriedAt time.Time) (alPlanStoreHistory, error) {
+	return alReadPlanStoreWindow(gaugeBody, upBody, durationBody, pods, leader, started, queriedAt, false)
+}
+
+// Recovery starts from a fresh above-threshold baseline immediately before
+// pruning. The earlier firing window already established the crossing. Export
+// and replacement work between those events cannot extend either deadline.
+func alReadPlanStoreRecoveryHistory(gaugeBody, upBody, durationBody []byte, pods []string, leader string, started, queriedAt time.Time) (alPlanStoreHistory, error) {
+	return alReadPlanStoreWindow(gaugeBody, upBody, durationBody, pods, leader, started, queriedAt, true)
+}
+
+func alReadPlanStoreWindow(gaugeBody, upBody, durationBody []byte, pods []string, leader string, started, queriedAt time.Time, recovery bool) (alPlanStoreHistory, error) {
 	h := alPlanStoreHistory{}
 	health, err := alReadScrapeHistory(upBody, durationBody, pods, leader, started, queriedAt)
 	if err != nil {
@@ -243,6 +256,9 @@ func alReadPlanStoreHistory(gaugeBody, upBody, durationBody []byte, pods []strin
 	for len(values) > 1 && !values[1].at.After(since) {
 		values = values[1:]
 	}
+	if recovery && values[0].value <= float64(alPlanStoreLimit) {
+		return h, errors.New("plan-store recovery lacks an above-limit baseline")
+	}
 	durations, err := alAdmissionNativeMatrix(durationBody)
 	if err != nil {
 		return h, err
@@ -267,25 +283,47 @@ func alReadPlanStoreHistory(gaugeBody, upBody, durationBody []byte, pods []strin
 			return h, errors.New("plan bytes lost their scrape identity")
 		}
 		above := v.value > float64(alPlanStoreLimit)
-		if !v.at.After(started) && above {
-			return h, errors.New("plan store was already above the limit")
+		if !v.at.After(started) && above != recovery {
+			return h, errors.New("plan store disagrees with its pre-fault baseline")
 		}
 		if above {
 			if !h.clearedLower.IsZero() {
 				return h, errors.New("plan bytes crossed the limit again after pruning")
 			}
-			if h.crossedLower.IsZero() {
+			if !recovery && h.crossedLower.IsZero() {
 				if i == 0 {
 					return h, errors.New("plan store has no below-limit baseline")
 				}
 				h.crossedLower, h.crossedUpper = values[i-1].at, v.at.Add(time.Duration(times[i].value*float64(time.Second)))
 			}
-		} else if !h.crossedLower.IsZero() && h.clearedLower.IsZero() {
+		} else if (recovery || !h.crossedLower.IsZero()) && h.clearedLower.IsZero() {
 			h.clearedLower, h.clearedUpper = values[i-1].at, v.at.Add(time.Duration(times[i].value*float64(time.Second)))
 		}
 		h.latest = int64(v.value)
 	}
 	return h, nil
+}
+
+// Retain the original firing and every later receiver notification while
+// exports and replacements run. Missing gauges outside the timing windows
+// must not hide an early resolution or a different incident.
+func alPlanStoreIncidentHeld(deliveries []alDelivery, index int, firing alDelivery) bool {
+	if firing.AlertName != alPlanStoreAlert || firing.Status != "firing" || firing.StartsAt.IsZero() || firing.Receiver == "" ||
+		firing.Labels["operator_namespace"] == "" || firing.Labels["operator_metrics_service"] == "" ||
+		index < 0 || index >= len(deliveries) || !reflect.DeepEqual(deliveries[index], firing) {
+		return false
+	}
+	for _, d := range deliveries[index+1:] {
+		if d.AlertName != firing.AlertName || d.Labels["operator_namespace"] != firing.Labels["operator_namespace"] ||
+			d.Labels["operator_metrics_service"] != firing.Labels["operator_metrics_service"] {
+			continue
+		}
+		if d.Status != "firing" || !d.StartsAt.Equal(firing.StartsAt) || d.Receiver != firing.Receiver ||
+			!maps.Equal(d.Labels, firing.Labels) || d.Annotations["runbook_url"] != firing.Annotations["runbook_url"] {
+			return false
+		}
+	}
+	return true
 }
 
 func alPlanStoreDelivered(d alDelivery, h alPlanStoreHistory) bool {

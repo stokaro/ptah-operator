@@ -34,12 +34,19 @@ func TestLoadAndValidateManifestFreshness(t *testing.T) {
 		name         string
 		lastVerified string
 		now          string
+		timeOfDay    time.Duration
 		wantError    string
 	}{
 		{
 			name:         "exact maximum age is accepted",
 			lastVerified: "2026-08-31",
 			now:          "2026-10-05",
+		},
+		{
+			name:         "the entire last UTC day is accepted",
+			lastVerified: "2026-08-31",
+			now:          "2026-10-05",
+			timeOfDay:    24*time.Hour - time.Nanosecond,
 		},
 		{
 			name:         "older verification is stale",
@@ -80,7 +87,7 @@ func TestLoadAndValidateManifestFreshness(t *testing.T) {
 			if err != nil {
 				t.Fatalf("parse test date: %v", err)
 			}
-			_, _, err = loadAndValidateManifest(path, now)
+			_, _, err = loadAndValidateManifest(path, now.Add(test.timeOfDay))
 			if test.wantError == "" {
 				if err != nil {
 					t.Fatalf("loadAndValidateManifest() error = %v", err)
@@ -448,12 +455,12 @@ func TestVerifyWorkflowRejectsSupportGateMutations(t *testing.T) {
 			new: "        id: untrusted-lifecycle\n",
 		},
 		"job default shell": {
-			old: "    timeout-minutes: 270\n    strategy:\n",
-			new: "    timeout-minutes: 270\n    defaults:\n      run:\n        shell: 'true {0}'\n    strategy:\n",
+			old: "    timeout-minutes: 90\n    strategy:\n",
+			new: "    timeout-minutes: 90\n    defaults:\n      run:\n        shell: 'true {0}'\n    strategy:\n",
 		},
 		"job default working directory": {
-			old: "    timeout-minutes: 270\n    strategy:\n",
-			new: "    timeout-minutes: 270\n    defaults:\n      run:\n        working-directory: /tmp\n    strategy:\n",
+			old: "    timeout-minutes: 90\n    strategy:\n",
+			new: "    timeout-minutes: 90\n    defaults:\n      run:\n        working-directory: /tmp\n    strategy:\n",
 		},
 		"bypassed lifecycle shell": {
 			old: "          K8S_VERSION: ${{ matrix.kubernetes_version }}\n        shell: bash\n        run: make e2e\n",
@@ -517,7 +524,7 @@ func TestVerifyWorkflowRejectsSupportGateMutations(t *testing.T) {
 			new: "    name: Build Kubernetes support matrix\n    runs-on: ubuntu-latest\n    timeout-minutes: 30\n",
 		},
 		"E2E timeout drift": {
-			old: "    timeout-minutes: 270\n",
+			old: "    timeout-minutes: 90\n",
 			new: "    timeout-minutes: 185\n",
 		},
 		// The run is not complete until the published timings are, and the
@@ -750,8 +757,8 @@ func TestVerifyCIRunBoundFollowsTheNeedsGraph(t *testing.T) {
 	if ciVerifyTimeoutMinutes > imagePath {
 		t.Fatalf("verify's %d-minute limit is past the %d-minute image path", ciVerifyTimeoutMinutes, imagePath)
 	}
-	if releaseSupportPollTimeoutMinutes != 340 || releasePreflightJobTimeoutMinutes != 350 {
-		t.Fatalf("release poll %d and preflight %d minutes, want 340 and 350 as release.yml and hack/releaseverify hold them",
+	if releaseSupportPollTimeoutMinutes != 160 || releasePreflightJobTimeoutMinutes != 170 {
+		t.Fatalf("release poll %d and preflight %d minutes, want 160 and 170 as release.yml and hack/releaseverify hold them",
 			releaseSupportPollTimeoutMinutes, releasePreflightJobTimeoutMinutes)
 	}
 	atImagePath := with("verify", func(job *workflowJob) { job.TimeoutMinutes = imagePath })
@@ -784,7 +791,7 @@ func TestVerifyCIRunBoundFollowsTheNeedsGraph(t *testing.T) {
 			workflow: workflow,
 			bound: max(ciSupportMatrixTimeoutMinutes, ciVerifyTimeoutMinutes, ciRaceTimeoutMinutes) +
 				ciKubernetesE2ETimeoutMinutes + ciKubernetesSupportTimeoutMinutes,
-			want: "ends at 335 minutes, after lifecycle-timings",
+			want: "ends at 155 minutes, after lifecycle-timings",
 		},
 		"the race detector past the lifecycle": {
 			workflow: with("race", func(job *workflowJob) { job.TimeoutMinutes = 400 }),
@@ -801,12 +808,12 @@ func TestVerifyCIRunBoundFollowsTheNeedsGraph(t *testing.T) {
 		"slower published timings": {
 			workflow: with("lifecycle-timings", func(job *workflowJob) { job.TimeoutMinutes = 30 }),
 			bound:    ciRunEndMinutes,
-			want:     "ends at 355 minutes, after lifecycle-timings",
+			want:     "ends at 175 minutes, after lifecycle-timings",
 		},
 		"a job with no limit": {
 			workflow: with("prepare-images", func(job *workflowJob) { job.TimeoutMinutes = 0 }),
 			bound:    ciRunEndMinutes,
-			want:     "ends at 650 minutes",
+			want:     "ends at 470 minutes",
 		},
 		"a need nobody defines": {
 			workflow: with("kubernetes-e2e", func(job *workflowJob) {
@@ -1061,12 +1068,12 @@ func TestVerifyReleaseWorkflowRejectsSupportEvidenceMutations(t *testing.T) {
 			new: "      actions: write\n",
 		},
 		"short preflight job": {
-			old: "    timeout-minutes: 350\n",
-			new: "    timeout-minutes: 250\n",
+			old: "    timeout-minutes: 170\n",
+			new: "    timeout-minutes: 100\n",
 		},
 		"short support poll": {
-			old: "          SUPPORT_POLL_TIMEOUT_MINUTES: \"340\"\n",
-			new: "          SUPPORT_POLL_TIMEOUT_MINUTES: \"335\"\n",
+			old: "          SUPPORT_POLL_TIMEOUT_MINUTES: \"160\"\n",
+			new: "          SUPPORT_POLL_TIMEOUT_MINUTES: \"155\"\n",
 		},
 		"default branch binding": {
 			old: "          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}\n",

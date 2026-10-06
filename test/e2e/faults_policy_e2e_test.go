@@ -2,11 +2,15 @@
 
 package e2e
 
-import ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+import (
+	"path/filepath"
 
-// destructivePolicyChanges uses isolated copies of the populated v3 databases
-// and the v4 artifacts already published by each engine lifecycle. Revoking
-// allowDestructive after admission must stop the approved destructive change.
+	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+)
+
+// destructivePolicyChanges owns its populated v3 databases and publishes the
+// v4 artifacts it approves. Revoking allowDestructive after admission must
+// stop the approved destructive change without borrowing another lifecycle.
 func (f *faultRun) destructivePolicyChanges() {
 	f.t.Helper()
 	for _, engine := range []string{"postgresql", "mysql"} {
@@ -17,14 +21,16 @@ func (f *faultRun) destructivePolicyChanges() {
 		if engine == "mysql" {
 			kind, dialect = "MySQL", "mysql"
 		}
+		reference := f.registryReference("destructive-policy-" + engine)
+		digest := f.publishSchema("destructive-policy-"+engine, "v4", dialect, reference,
+			filepath.Join(repositoryRoot, "testdata", "e2e", engine+"-v4.sql"))
 		f.createDatabase(engine, database, secret)
 		f.query(engine, database, "INSERT INTO e2e_widgets (id, name, note) VALUES (701, 'policy-control', 'preserve-before-approval')")
 		beforeDatabase := f.fingerprint(engine, database, "the populated database before destructive-policy changes")
 		sqlWindow := f.startSchemaRefusalWindow(name, engine, database, secret)
 		initialJobs := f.checkpointJobs(name, "")
-		digest := f.schema("e2e-" + engine).Status.Source.Digest
 		f.createSchema(faultSchema{
-			name: name, engine: kind, reference: f.registryReference(engine), secret: secret,
+			name: name, engine: kind, reference: reference, secret: secret,
 			coordinationKey: "e2e/destructive-policy/" + engine, allowDestructive: true,
 		})
 		generation := f.schema(name).Generation

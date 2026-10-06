@@ -95,27 +95,7 @@ func newFaultTargets() faultState {
 func (f *faultRun) watches() {
 	f.t.Helper()
 	f.state = newFaultTargets()
-	f.createPrincipalSecret()
-	f.buildScanner()
-	f.logf("starting resourceVersion watches and fault-injection acceptance")
-	for _, service := range []string{pgService, mysqlService} {
-		f.check(f.get(service, &corev1.Service{}), "read Service %s", service)
-	}
-	for _, secret := range []string{pgSecret, mysqlSecret, registryAuthSecret, registryPullSecret} {
-		f.check(f.get(secret, &corev1.Secret{}), "read Secret %s", secret)
-	}
-	f.check(f.get(heartbeatSchema, &ptahv1alpha1.PtahSchema{}), "read PtahSchema %s", heartbeatSchema)
-	f.check(f.get(heartbeatApproval, &ptahv1alpha1.PtahSchemaApproval{}), "read PtahSchemaApproval %s", heartbeatApproval)
-	f.check(f.cluster.WaitForRollout(f.ctx, f.in.OperatorNamespace, f.controllerName, waitTimeout), "wait for the manager rollout")
-
-	f.pgReference = "oci://" + f.registryHost + "/schemas/fault-postgresql:stable"
-	f.mysqlReference = "oci://" + f.registryHost + "/schemas/fault-mysql:stable"
-	f.publishFaultSchema("postgresql", "postgres", f.pgReference)
-	f.publishFaultSchema("mysql", "mysql", f.mysqlReference)
-	f.createHeartbeatLease()
-	f.startWatches()
-	f.startHeartbeat()
-	f.auditRuntime()
+	f.prepareWatches()
 	f.credentialPrincipalRefusal()
 
 	s := &f.state
@@ -165,6 +145,50 @@ func (f *faultRun) watches() {
 	s.mysqlTimeout.observeBefore = f.checkpointOperationWatch(s.mysqlTimeout.schema, "observe", 1)
 	s.mysqlTimeout.planBefore = f.checkpointOperationWatch(s.mysqlTimeout.schema, "plan", 1)
 	f.assertColumn("mysql", s.mysqlTimeout.database, "fault_token", 0)
+}
+
+// prepareWatches supplies native artifacts and complete watched credential
+// histories without executing the fault sequence's unrelated acceptance.
+func (f *faultRun) prepareWatches() {
+	f.t.Helper()
+	f.createPrincipalSecret()
+	f.buildScanner()
+	f.logf("starting resourceVersion watches and fault-injection acceptance")
+	for _, service := range []string{pgService, mysqlService} {
+		f.check(f.get(service, &corev1.Service{}), "read Service %s", service)
+	}
+	for _, secret := range []string{pgSecret, mysqlSecret, registryAuthSecret, registryPullSecret} {
+		f.check(f.get(secret, &corev1.Secret{}), "read Secret %s", secret)
+	}
+	f.check(f.get(heartbeatSchema, &ptahv1alpha1.PtahSchema{}), "read PtahSchema %s", heartbeatSchema)
+	f.check(f.get(heartbeatApproval, &ptahv1alpha1.PtahSchemaApproval{}), "read PtahSchemaApproval %s", heartbeatApproval)
+	f.check(f.cluster.WaitForRollout(f.ctx, f.in.OperatorNamespace, f.controllerName, waitTimeout), "wait for the manager rollout")
+
+	f.pgReference = "oci://" + f.registryHost + "/schemas/fault-postgresql" + f.fixtureSuffix + ":stable"
+	f.mysqlReference = "oci://" + f.registryHost + "/schemas/fault-mysql" + f.fixtureSuffix + ":stable"
+	f.publishFaultSchema("postgresql", "postgres", f.pgReference)
+	f.publishFaultSchema("mysql", "mysql", f.mysqlReference)
+	f.createHeartbeatLease()
+	f.startWatches()
+	f.startHeartbeat()
+	f.auditRuntime()
+}
+
+// Close the authority-only history before executor tests replace the manager.
+// Every stream crosses an exact API write barrier before its final audit.
+func (f *faultRun) closeApprovalWatches() {
+	f.t.Helper()
+	f.auditRuntime()
+	establishBarrier(f, f.approvals, &ptahv1alpha1.PtahSchemaApproval{}, f.in.TestNamespace, heartbeatApproval)
+	establishBarrier(f, f.schemas, &ptahv1alpha1.PtahSchema{}, f.in.TestNamespace, heartbeatSchema)
+	establishBarrier(f, f.leases, newLease(), f.in.OperatorNamespace, f.heartbeatLeaseName())
+	establishBarrier(f, f.jobs, &batchv1.Job{}, f.in.TestNamespace, f.heartbeatJobName())
+	establishBarrier(f, f.pods, &corev1.Pod{}, f.in.TestNamespace, f.databasePod())
+	f.stopHeartbeat()
+	f.stopWatches()
+	f.auditRuntime()
+	f.validateAndScanWatches()
+	f.closingCredentialAudits()
 }
 
 // planTarget creates a target's schema, waits for its first plan, and pins
@@ -1099,7 +1123,7 @@ func (f *faultRun) closingHistory() {
 	establishBarrier(f, f.approvals, &ptahv1alpha1.PtahSchemaApproval{}, f.in.TestNamespace, s.aliasBApproval)
 	establishBarrier(f, f.schemas, &ptahv1alpha1.PtahSchema{}, f.in.TestNamespace, heartbeatSchema)
 	establishBarrier(f, f.leases, newLease(), f.in.OperatorNamespace, s.pgRestart.lease.name)
-	establishBarrier(f, f.jobs, &batchv1.Job{}, f.in.TestNamespace, faultHeartbeatJob)
+	establishBarrier(f, f.jobs, &batchv1.Job{}, f.in.TestNamespace, f.heartbeatJobName())
 	establishBarrier(f, f.pods, &corev1.Pod{}, f.in.TestNamespace, sentinel)
 	f.stopHeartbeat()
 	f.assertWatchesAlive()

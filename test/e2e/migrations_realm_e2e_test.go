@@ -577,6 +577,9 @@ func (m *migrationRun) branchOutOfOrderProof() {
 	m.mustCreate(m.migrationDocument(migrationSpec{
 		name: name, secret: "e2e-" + m.engine.name + "-branch-db", reference: m.reference("-branch"),
 		coordinationKey: "e2e/branch/" + m.engine.name,
+		// The claim is refusal of the refreshed artifact, not the duration
+		// of the main lifecycle's refresh interval.
+		interval: "1m",
 	}))
 	m.waitForBranchPhase(ptahv1alpha1.MigrationPhaseAwaitingApproval)
 	current := &ptahv1alpha1.PtahMigration{}
@@ -593,6 +596,7 @@ func (m *migrationRun) branchOutOfOrderProof() {
 		m.fatalf("%s did not apply its spaced history", name)
 	}
 	m.assertLateBranchMigrationBlocks()
+	m.finishFixture(name)
 }
 
 // assertLateBranchMigrationBlocks is the row itself: the artifact gains a

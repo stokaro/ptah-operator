@@ -28,8 +28,8 @@ import (
 // calls it before moving the source tag: resolving another artifact clears
 // status.applied and retires the previous plan's projection.
 func (d *dataPlane) pendingSQLReadAuthorization(schema string) func() {
-	diagnostic := d.installReaderExample("diagnostic-reader-role.yaml", "diagnostic", "<diagnostic-reader-group>")
-	reviewer := d.installReaderExample("approver-plan-reader-role.yaml", "reviewer", "<plan-reviewer-group>")
+	diagnostic := d.installReaderExample(schema, "diagnostic-reader-role.yaml", "diagnostic", "<diagnostic-reader-group>")
+	reviewer := d.installReaderExample(schema, "approver-plan-reader-role.yaml", "reviewer", "<plan-reviewer-group>")
 	verify := func(selection planview.Selection) types.UID {
 		expected, err := planview.Load(d.ctx, d.cluster.Client, d.in.TestNamespace, schema, selection)
 		d.check(err, "read the %s plan of %s as the administrator", selection, schema)
@@ -94,7 +94,7 @@ func (d *dataPlane) requireForbiddenRead(err error, what string) {
 // Only the namespace and placeholder group change. In particular, the rules
 // and roleRef remain the example's, so a documentation regression changes the
 // authority these requests actually receive.
-func (d *dataPlane) installReaderExample(file, identity, placeholder string) client.Client {
+func (d *dataPlane) installReaderExample(schema, file, identity, placeholder string) client.Client {
 	d.t.Helper()
 	content, err := os.ReadFile(filepath.Join(repositoryRoot, "examples", file))
 	d.check(err, "read %s", file)
@@ -145,7 +145,7 @@ func (d *dataPlane) installReaderExample(file, identity, placeholder string) cli
 	d.check(err, "construct the SQL reader identity")
 	d.check(harness.Wait(d.ctx, "the example RoleBinding to grant schema reads", time.Minute, time.Second,
 		func(ctx context.Context) (bool, string, error) {
-			err := reader.Get(ctx, types.NamespacedName{Namespace: d.in.TestNamespace, Name: "e2e-postgresql"}, &ptahv1alpha1.PtahSchema{})
+			err := reader.Get(ctx, types.NamespacedName{Namespace: d.in.TestNamespace, Name: schema}, &ptahv1alpha1.PtahSchema{})
 			if apierrors.IsForbidden(err) {
 				return false, "waiting for the RBAC authorizer to observe the RoleBinding", nil
 			}

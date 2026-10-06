@@ -90,7 +90,7 @@ const (
 	// control plane. Both took under a minute; this is twice that.
 	ciEnvtestFetchMinutes             = 2
 	ciRaceTimeoutMinutes              = 20
-	ciKubernetesE2ETimeoutMinutes     = 270
+	ciKubernetesE2ETimeoutMinutes     = 90
 	ciPrepareImagesTimeoutMinutes     = 45
 	ciKubernetesSupportTimeoutMinutes = 5
 	ciLifecycleTimingsTimeoutMinutes  = 10
@@ -542,6 +542,10 @@ func validationDate(value string) (time.Time, error) {
 }
 
 func loadAndValidateManifest(path string, now time.Time) (supportManifest, []parsedRelease, error) {
+	// The manifest records a UTC date, so every caller gets the same inclusive
+	// day boundary, even when it supplies a timestamp rather than midnight.
+	now = now.UTC()
+	now = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 	contents, err := os.ReadFile(path)
 	if err != nil {
 		return supportManifest{}, nil, fmt.Errorf("read %s: %w", path, err)
@@ -3204,6 +3208,9 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 			`--config "$KIND_CONFIG" \`,
 			`--kubeconfig "$KUBECONFIG_FILE" \`,
 			`--wait 5m`,
+			`if suite_runs_phase alerting || suite_runs_phase alerting-operations || suite_runs_phase alerting-certificates; then`,
+			`configure_control_plane_memory`,
+			`fi`,
 			`require_ready_nodes "after kind cluster creation"`,
 			`assert_kind_ha_topology`,
 			`assert_kubelet_log_budget`,
@@ -3295,6 +3302,7 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 		exactSourceLine("control-plane lifecycle", `run_recorded_phase assert run_go_phase assert`),
 		exactSourceLine("certificate lifecycle", `run_recorded_phase cert-rotation run_go_phase cert-rotation`),
 		exactSourceLine("data-plane and OCI lifecycle", `run_recorded_phase dataplane run_go_phase dataplane`),
+		exactSourceLine("schema fault recovery", `run_recorded_phase schema-faults run_go_phase schema-faults`),
 		exactSourceLine("PostgreSQL migration lifecycle", `run_recorded_phase migrations-postgresql run_go_phase migrations-postgresql`),
 		exactSourceLine("MySQL migration lifecycle", `run_recorded_phase migrations-mysql run_go_phase migrations-mysql`),
 		exactSourceLine("PostgreSQL reference-data lifecycle", `run_recorded_phase reference-data-postgresql run_go_phase reference-data-postgresql`),
@@ -4594,13 +4602,16 @@ func verifyPhaseEnvironmentContracts(files e2eWiringFiles) error {
 }
 
 // goPhaseBinding is what the driver binds one input of a Go phase to.
-// E2E_ENGINE is the one input whose value differs between the phases that read
-// it: each migration and reference-data phase runs the engine its name ends
+// E2E_ENGINE differs between the phases that read it: each migration and reference-data phase runs the engine its name ends
 // in, so a phase bound to the other engine would cover one engine twice and
 // leave the other unproven, with both jobs green.
 func goPhaseBinding(phase, input string) (string, bool) {
+	// Schema faults reuse the data-plane inputs but never stop at preparation.
+	if (phase == "schema-faults" || phase == "schema-approvals") && input == "E2E_DATAPLANE_MODE" {
+		return "full", true
+	}
 	if input == engineInput {
-		for _, family := range []string{"migrations-", "reference-data-"} {
+		for _, family := range []string{"migrations-", "migration-runtime-", "reference-data-"} {
 			if engine, ok := strings.CutPrefix(phase, family); ok && (engine == "postgresql" || engine == "mysql") {
 				return engine, true
 			}

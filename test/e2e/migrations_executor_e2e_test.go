@@ -112,7 +112,7 @@ func (m *migrationRun) ptahVersionChange() {
 
 func (m *migrationRun) executionComponentChange(change executionComponentChange) {
 	m.t.Helper()
-	name := "e2e-" + change.argument + "-change-" + m.engine.name
+	name := "e2e-migration-" + change.argument + "-change-" + m.engine.name
 	database, secret := "ptah_e2e_"+strings.ReplaceAll(change.argument, "-", "_")+"_change", name+"-db"
 	deployments := &appsv1.DeploymentList{}
 	m.check(m.cluster.Client.List(m.ctx, deployments, client.MatchingLabels{"app.kubernetes.io/component": "controller"}), "find the executor rollout Deployment")
@@ -152,7 +152,7 @@ func (m *migrationRun) executionComponentChange(change executionComponentChange)
 		})
 	}
 	m.mustCreate(m.migrationDocument(migrationSpec{name: name, secret: secret, reference: m.reference(""),
-		coordinationKey: "e2e/" + change.argument + "/" + m.engine.name, apply: "OnApproval", interval: "1h"}))
+		coordinationKey: "e2e/migration/" + change.argument + "/" + m.engine.name, apply: "OnApproval", interval: "1h"}))
 	before := wait("the original executor's approval gate", func(resource *ptahv1alpha1.PtahMigration) bool {
 		return resource.Status.Phase == ptahv1alpha1.MigrationPhaseAwaitingApproval && resource.Status.Plan != nil && resource.Status.ActiveOperation == nil
 	})
@@ -223,6 +223,7 @@ func (m *migrationRun) executionComponentChange(change executionComponentChange)
 		m.query("SELECT color FROM e2e_migration_widgets WHERE id = 1", database) != "blue" {
 		m.fatalf("the freshly approved executor did not converge from the database")
 	}
+	m.finishFixture(name)
 	rolloutExecutionManagers(m.t, m.ctx, m.cluster, key, change.reverse(), m.scan)
 	m.logf("PASS %s %s changed after migration approval: old decision refused; fresh decision applied once", m.engine.kind, change.argument)
 }

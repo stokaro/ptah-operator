@@ -798,6 +798,7 @@ func (m *migrationRun) unknownLayerProof() {
 	if m.query(unknownLayerRevisionTablesQuery(m.engine.name, database), database) != "0" {
 		m.fatalf("the %s database was opened for an artifact whose layers were refused", m.engine.name)
 	}
+	m.finishFixture(name)
 	m.logf("PASS %s refused an artifact built newer than its executor, before opening the database", m.engine.kind)
 }
 
@@ -1127,6 +1128,7 @@ func (r *egressRow) assertAMigrationConverges() {
 	if !egressJobsSelected(jobs) {
 		m.fatalf("the Jobs that ran %s are not all ones the egress example selects, or none of them was the Apply", name)
 	}
+	m.finishFixture(name)
 }
 
 // retargetBeforeDispatchProof ports run_retarget_before_dispatch_proof: the
@@ -1245,6 +1247,7 @@ func (r *retargetRow) recoverWithFreshApproval(audit *databaseSQLAudit, original
 		m.fatalf("%s recovered target does not carry the final approved migration", r.name)
 	}
 	r.assertUntouched(r.database)
+	m.finishFixture(r.name)
 	m.logf("PASS %s target recovery: fresh approval migrated the changed target after acknowledgment; the original database stayed unmigrated", m.engine.kind)
 }
 
@@ -1551,6 +1554,7 @@ func (m *migrationRun) rebuildDrill() {
 	if m.query(drillMarkerQuery(m.engine.name), r.database) != "0" {
 		m.fatalf("after the rebuild the %s database has the fourth migration's table; it ran without an approval", m.engine.name)
 	}
+	m.finishFixture(r.name)
 	m.closeApplyGate()
 	m.logf("PASS %s rebuilt against a database ahead of its backup and ran nothing unapproved", m.engine.kind)
 }

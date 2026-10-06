@@ -51,20 +51,20 @@ runs_phase() {
 	)
 }
 
-[ "$(runs_phase 'migrations-postgresql reference-data-postgresql' 'dataplane' migrations-postgresql)" = yes ] ||
+[ "$(runs_phase 'migrations-postgresql' 'dataplane' migrations-postgresql)" = yes ] ||
 	fail "a suite does not run a phase it claims"
-[ "$(runs_phase 'migrations-postgresql reference-data-postgresql' 'dataplane' dataplane)" = yes ] ||
+[ "$(runs_phase 'migrations-postgresql' 'dataplane' dataplane)" = yes ] ||
 	fail "a suite does not run the phase it prepares with"
-[ "$(runs_phase 'migrations-postgresql reference-data-postgresql' 'dataplane' assert)" = no ] ||
+[ "$(runs_phase 'migrations-postgresql' 'dataplane' assert)" = no ] ||
 	fail "a suite runs a phase that belongs to another suite"
-[ "$(runs_phase 'migrations-postgresql reference-data-postgresql' '' dataplane)" = no ] ||
+[ "$(runs_phase 'migrations-postgresql' '' dataplane)" = no ] ||
 	fail "a suite with no preparation runs another suite's phase"
-# The engine split is two suites over the same two scripts, so the phase names
-# are what keeps them apart. One engine's suite must not reach the other's.
-[ "$(runs_phase 'migrations-postgresql reference-data-postgresql' 'dataplane' migrations-mysql)" = no ] ||
+# Migration engines run in separate suites. Their phases must not reach the
+# other engine or the reference-data phases owned by certificates.
+[ "$(runs_phase 'migrations-postgresql' 'dataplane' migrations-mysql)" = no ] ||
 	fail "an engine's suite runs the other engine's migration phase"
-[ "$(runs_phase 'migrations-mysql reference-data-mysql' 'dataplane' reference-data-postgresql)" = no ] ||
-	fail "an engine's suite runs the other engine's reference-data phase"
+[ "$(runs_phase 'migrations-mysql' 'dataplane' reference-data-postgresql)" = no ] ||
+	fail "a migration suite runs a reference-data phase it does not own"
 # A phase whose name is a prefix or a suffix of a claimed one is not claimed:
 # the membership test is on whole words, and " $list " is what makes it so.
 [ "$(runs_phase 'reference-data' '' reference)" = no ] ||
@@ -170,7 +170,7 @@ grep -Fq 'E2E_DATAPLANE_MODE=$DATAPLANE_MODE' "$ROOT_DIR/hack/e2e-kind.sh" ||
 # Every engine-named phase the driver runs binds the engine its name says. A
 # name and a binding that disagree would run one engine twice and skip the
 # other, and both jobs would pass.
-for engine_phase in migrations reference-data; do
+for engine_phase in migrations migration-runtime reference-data; do
 	for phase_engine in postgresql mysql; do
 		engine_binding=$(grep -B1 -E "^[[:space:]]*run_recorded_phase ${engine_phase}-${phase_engine} " \
 			"$ROOT_DIR/hack/e2e-kind.sh" | head -1)

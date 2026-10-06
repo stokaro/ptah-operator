@@ -176,7 +176,7 @@ func run(ctx context.Context, arguments []string, stdout, stderr io.Writer, envi
 		}
 		defer delivery.sender.Close()
 		if err := delivery.sender.Check(ctx); err != nil {
-			_, _ = fmt.Fprintln(stderr, "ptah-runner: result receiver preflight failed")
+			_, _ = fmt.Fprintln(stderr, "ptah-runner: result receiver preflight failed:", err)
 			return 2
 		}
 	}

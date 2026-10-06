@@ -120,13 +120,13 @@ func TestAlOverdueMigrationFixtureFitsExecutionBudget(t *testing.T) {
 		errs, _ := validator.Validate(context.Background(), validationfield.NewPath("spec"), schema, spec, nil, celconfig.RuntimeCELCostBudget)
 		return errs
 	}
-	spec := alOverdueResource("migration")["spec"].(map[string]any)
+	spec := alOverdueResource(alStalledNamespace, "migration")["spec"].(map[string]any)
 	if errs := validate(spec); len(errs) != 0 {
 		t.Fatalf("overdue fixture rejected by the shipped CRD: %v", errs)
 	}
 	// Omitting the override must reproduce the native failure after the API
 	// supplies its longer lock timeout. This guards against a vacuous validator.
-	bad := alOverdueResource("migration")["spec"].(map[string]any)
+	bad := alOverdueResource(alStalledNamespace, "migration")["spec"].(map[string]any)
 	delete(bad["policy"].(map[string]any), "lockTimeout")
 	errs := validate(bad)
 	if len(errs) != 1 || errs[0].Field != "spec" || !strings.Contains(errs[0].Error(), "policy.lockTimeout must not exceed execution.activeDeadlineSeconds") {

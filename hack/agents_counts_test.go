@@ -179,7 +179,7 @@ func TestTheAgentsGuideCountCheckRefusesDrift(t *testing.T) {
 		},
 		{
 			name:        "the sentence stopped naming a number",
-			guide:       strings.Replace(guide, "the same\nfive suites", "the same suites", 1),
+			guide:       strings.Replace(guide, "the same\n"+numberWords[acceptanceSuiteCount(t)]+" suites", "the same suites", 1),
 			want:        acceptanceSuiteCount(t),
 			pattern:     regexp.MustCompile(`the same\s+([a-z]+)\s+suites`),
 			subject:     "suites",

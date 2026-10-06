@@ -3,6 +3,7 @@
 package e2e
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
@@ -127,6 +129,7 @@ func (m *migrationRun) uncertainApplyProof() {
 		m.fatalf("the interrupted %s Apply was replayed or overlapped another run in the complete Job/Pod history", m.engine.name)
 	}
 	m.assertUnresolvedRunAcknowledgedByAPerson()
+	m.finishFixture(m.uncertainMigration())
 	m.logf("PASS %s stopped on a run it could not read, and replayed nothing", m.engine.kind)
 }
 
@@ -383,14 +386,24 @@ func (m *migrationRun) acknowledgeUnresolvedRun(name, operation string) {
 	if len(approverRoles) != 1 {
 		m.fatalf("the release installed no approver ClusterRole to bind the acknowledger to: want exactly one, found %v", approverRoles)
 	}
-	if err := m.apply(map[string]any{
-		"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "RoleBinding",
-		"metadata": map[string]any{"namespace": m.in.TestNamespace, "name": "e2e-acknowledgers-" + m.engine.name},
-		"roleRef":  map[string]any{"apiGroup": "rbac.authorization.k8s.io", "kind": "ClusterRole", "name": approverRoles[0]},
-		"subjects": []any{map[string]any{"apiGroup": "rbac.authorization.k8s.io", "kind": "Group", "name": group}},
-	}); err != nil {
+	binding := &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{Namespace: m.in.TestNamespace, Name: "e2e-acknowledgers-" + m.engine.name},
+		RoleRef:    rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "ClusterRole", Name: approverRoles[0]},
+		Subjects:   []rbacv1.Subject{{APIGroup: rbacv1.GroupName, Kind: "Group", Name: group}},
+	}
+	if err := m.cluster.Client.Create(m.ctx, binding, client.FieldOwner(harness.FieldOwner)); err != nil {
 		m.fatalf("the acknowledger could not be bound to %s: %v", approverRoles[0], err)
 	}
+	// The grant belongs to this proof, not to the release. Remove its exact
+	// identity after recovery so later uninstall checks see no fixture grant.
+	defer func() {
+		if m.t.Failed() {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		m.check(storedStateDeleteExact(ctx, m.cluster, binding), "remove the completed acknowledgment grant")
+	}()
 	acknowledger, err := m.cluster.As(rest.ImpersonationConfig{UserName: person, Groups: []string{group}})
 	m.check(err, "act as %s", person)
 	m.logf("acknowledging the %s run as %s", m.engine.kind, person)
@@ -665,6 +678,7 @@ func (m *migrationRun) lateDispatchProof() {
 	m.check(storedStateDeleteExact(m.ctx, m.cluster, retired), "finalize only the proved late-dispatch fixture")
 	m.assertNoNewApplyJob([]string{claim.jobUID}, "while retiring the late-dispatch fixture", name)
 	audit.assertRecords(beforeRefusal, audit.snapshot(), pod, false)
+	m.retireFixtureApproval(name+"-approval", retired.UID)
 	m.logf("PASS %s refused an Apply Pod that started after its window closed; exact fixture finalized", m.engine.kind)
 	audit.close()
 }
@@ -828,6 +842,8 @@ func (m *migrationRun) restoredHistoryProof() {
 	m.check(m.get(run.JobName, proofJob), "retain the completed restored-history Job")
 	m.retainMigrationFixture(converged, proofJob, proofPod, beforeApply, afterApply)
 	m.check(storedStateDeleteExact(m.ctx, m.cluster, converged), "finalize only the proved restored-history fixture")
+	m.retireFixtureApproval(name+"-approval", converged.UID)
+	m.retireFixtureApproval(name+"-current", converged.UID)
 	m.closeApplyGate()
 	m.logf("PASS %s refused the stale [3] decision, then applied [2 3] only after fresh approval of the restored history; exact fixture finalized", m.engine.kind)
 }

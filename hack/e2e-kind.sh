@@ -1292,6 +1292,66 @@ probe_api_server_endpoints() {
 	[ "$api_server_endpoint_probe_count" -eq 3 ]
 }
 
+configure_control_plane_memory() {
+	# All three control planes share the test host. The native large-plan
+	# scenario exhausted it while their Go heaps grew without a budget.
+	# These soft limits leave room for etcd's mmap and the operator workloads;
+	# the 17-plan replay stayed below the host limit without read failures.
+	# Patch the static Pods before installing workloads: the pinned kind
+	# images use different kubeadm API versions, some without extraEnvs.
+	for memory_node in "${CLUSTER_NAME}-control-plane" \
+		"${CLUSTER_NAME}-control-plane2" "${CLUSTER_NAME}-control-plane3"; do
+		for memory_component in etcd kube-apiserver; do
+			case "$memory_component" in
+			etcd) memory_limit=1GiB ;;
+			kube-apiserver) memory_limit=1536MiB ;;
+			esac
+			memory_manifest="/etc/kubernetes/manifests/${memory_component}.yaml"
+			memory_input="${WORK_DIR}/${memory_node}-${memory_component}-original.yaml"
+			memory_output="${WORK_DIR}/${memory_node}-${memory_component}.json"
+			docker --context "$DOCKER_CONTEXT" exec "$memory_node" \
+				cat "$memory_manifest" >"$memory_input"
+			memory_patch=$(jq -nc --arg name "$memory_component" --arg value "$memory_limit" \
+				'{spec: {containers: [{name: $name, env: [{name: "GOMEMLIMIT", value: $value}]}]}}')
+			kubectl --kubeconfig "$KUBECONFIG_FILE" patch --local --type=strategic \
+				-f "$memory_input" -p "$memory_patch" -o json >"$memory_output"
+			jq -e --arg component "$memory_component" --arg limit "$memory_limit" '
+          .kind == "Pod" and [.spec.containers[].name] == [$component] and
+          [.spec.containers[0].env[] | select(.name == "GOMEMLIMIT").value] == [$limit]
+        ' "$memory_output" >/dev/null || fail "could not set $memory_component Go memory budget"
+			docker --context "$DOCKER_CONTEXT" exec -i "$memory_node" sh -ec '
+          cat > /etc/kubernetes/manifests/.ptah-memory
+          mv /etc/kubernetes/manifests/.ptah-memory "$1"
+        ' sh "$memory_manifest" <"$memory_output"
+		done
+	done
+	# Require every changed static Pod to become ready before any acceptance
+	# state or timing window exists. Old ready mirror Pods do not satisfy this.
+	memory_deadline=$(($(date +%s) + 300))
+	while [ "$(date +%s)" -lt "$memory_deadline" ]; do
+		if kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=10s \
+			-n kube-system get pods -l tier=control-plane -o json \
+			>"$WORK_DIR/control-plane-memory.json" 2>/dev/null &&
+			jq -e '
+          [.items[] | select(.metadata.labels.component == "etcd" or
+            .metadata.labels.component == "kube-apiserver")] as $pods |
+          ([$pods[] | select(.metadata.labels.component == "etcd")] | length) == 3 and
+          ([$pods[] | select(.metadata.labels.component == "kube-apiserver")] | length) == 3 and
+          all($pods[];
+            (.metadata.labels.component) as $component |
+            [.spec.containers[].name] == [$component] and
+            [.spec.containers[0].env[]? | select(.name == "GOMEMLIMIT").value] ==
+              [if $component == "etcd" then "1GiB" else "1536MiB" end] and
+            (.status.containerStatuses | length) == 1 and
+            .status.containerStatuses[0].ready == true)
+        ' "$WORK_DIR/control-plane-memory.json" >/dev/null; then
+			return
+		fi
+		sleep 1
+	done
+	fail "control planes did not become ready with their Go memory budgets"
+}
+
 configure_registry_hosts_on_kind_nodes() {
 	for kind_node_container in \
 		"${CLUSTER_NAME}-control-plane" \
@@ -2364,6 +2424,9 @@ kind create cluster \
 	--config "$KIND_CONFIG" \
 	--kubeconfig "$KUBECONFIG_FILE" \
 	--wait 5m
+if suite_runs_phase alerting || suite_runs_phase alerting-operations || suite_runs_phase alerting-certificates; then
+	configure_control_plane_memory
+fi
 require_ready_nodes "after kind cluster creation"
 assert_kind_ha_topology
 assert_kubelet_log_budget
@@ -2501,7 +2564,7 @@ E2E_MYSQL_IMAGE=$PUSHED_IMAGE_REF
 # images from Docker Hub for nothing.
 E2E_PROMETHEUS_IMAGE=
 E2E_ALERTMANAGER_IMAGE=
-if suite_runs_phase alerting; then
+if suite_runs_phase alerting || suite_runs_phase alerting-operations || suite_runs_phase alerting-certificates; then
 	mirror_task_image "$E2E_PROMETHEUS_SOURCE_IMAGE" prometheus
 	E2E_PROMETHEUS_IMAGE=$PUSHED_IMAGE_REF
 	mirror_task_image "$E2E_ALERTMANAGER_SOURCE_IMAGE" alertmanager
@@ -2850,8 +2913,7 @@ E2E_HELM_RELEASE=$HELM_RELEASE \
 E2E_CHART_PACKAGE=$CHART_PACKAGE \
 	run_recorded_phase cert-rotation run_go_phase cert-rotation
 
-# The data plane is a Go phase too, restart and fault injection included, and
-# it reads the environment below.
+# The engine lifecycles also prepare the namespace for the independent suites.
 E2E_KUBECONFIG=$KUBECONFIG_FILE \
 E2E_OPERATOR_NAMESPACE=$OPERATOR_NAMESPACE \
 E2E_TEST_NAMESPACE=$TEST_NAMESPACE \
@@ -2884,6 +2946,74 @@ E2E_TLS_PROXY_CERT_FILE=$TLS_PROXY_CERT_FILE \
 E2E_TLS_PROXY_KEY_FILE=$TLS_PROXY_CERT_KEY_FILE \
 E2E_DATAPLANE_MODE=$DATAPLANE_MODE \
 	run_recorded_phase dataplane run_go_phase dataplane
+
+# Fault scenarios share their own watches and barriers, after namespace preparation.
+E2E_KUBECONFIG=$KUBECONFIG_FILE \
+E2E_OPERATOR_NAMESPACE=$OPERATOR_NAMESPACE \
+E2E_TEST_NAMESPACE=$TEST_NAMESPACE \
+E2E_HELM_RELEASE=$HELM_RELEASE \
+E2E_CHART_PACKAGE=$CHART_PACKAGE \
+E2E_PTAH_VERSION=$E2E_PTAH_VERSION \
+E2E_EXECUTOR_IMAGE=$E2E_EXECUTOR_IMAGE \
+E2E_RUNNER_IMAGE=$E2E_RUNNER_IMAGE \
+E2E_FIXTURE_IMAGE=$E2E_FIXTURE_IMAGE \
+E2E_CONTROLLER_IMAGE=$CANDIDATE_OPERATOR_IMAGE \
+E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION \
+E2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION \
+E2E_POSTGRES_IMAGE=$E2E_POSTGRES_IMAGE \
+E2E_MYSQL_IMAGE=$E2E_MYSQL_IMAGE \
+E2E_REGISTRY_IP=$REGISTRY_IP \
+E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \
+E2E_REGISTRY_PORT=$E2E_REGISTRY_PORT \
+E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \
+E2E_DOCKER_CONTEXT=$DOCKER_CONTEXT \
+E2E_REGISTRY_CONTAINER_ID=$REGISTRY_CONTAINER_ID \
+E2E_EXTERNAL_POSTGRES_CONTAINER_ID=$EXTERNAL_PG_CONTAINER_ID \
+E2E_EXTERNAL_POSTGRES_IP=$EXTERNAL_PG_IP \
+E2E_EXTERNAL_POSTGRES_SERVICE=$EXTERNAL_PG_SERVICE \
+E2E_EXTERNAL_POSTGRES_IMAGE=$E2E_POSTGRES_SOURCE_IMAGE \
+E2E_EXTERNAL_POSTGRES_OWNER=$CLUSTER_NAME \
+E2E_EXTERNAL_POSTGRES_CREDENTIALS_FILE=$EXTERNAL_PG_CREDENTIALS_FILE \
+E2E_TLS_PROXY_SERVICE=$TLS_PROXY_SERVICE \
+E2E_TLS_PROXY_CA_FILE=$TLS_PROXY_CA_FILE \
+E2E_TLS_PROXY_CERT_FILE=$TLS_PROXY_CERT_FILE \
+E2E_TLS_PROXY_KEY_FILE=$TLS_PROXY_CERT_KEY_FILE \
+E2E_DATAPLANE_MODE=full \
+	run_recorded_phase schema-faults run_go_phase schema-faults
+
+# Independent authority changes use their own audit fixtures.
+E2E_KUBECONFIG=$KUBECONFIG_FILE \
+E2E_OPERATOR_NAMESPACE=$OPERATOR_NAMESPACE \
+E2E_TEST_NAMESPACE=$TEST_NAMESPACE \
+E2E_HELM_RELEASE=$HELM_RELEASE \
+E2E_CHART_PACKAGE=$CHART_PACKAGE \
+E2E_PTAH_VERSION=$E2E_PTAH_VERSION \
+E2E_EXECUTOR_IMAGE=$E2E_EXECUTOR_IMAGE \
+E2E_RUNNER_IMAGE=$E2E_RUNNER_IMAGE \
+E2E_FIXTURE_IMAGE=$E2E_FIXTURE_IMAGE \
+E2E_CONTROLLER_IMAGE=$CANDIDATE_OPERATOR_IMAGE \
+E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION \
+E2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION \
+E2E_POSTGRES_IMAGE=$E2E_POSTGRES_IMAGE \
+E2E_MYSQL_IMAGE=$E2E_MYSQL_IMAGE \
+E2E_REGISTRY_IP=$REGISTRY_IP \
+E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \
+E2E_REGISTRY_PORT=$E2E_REGISTRY_PORT \
+E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \
+E2E_DOCKER_CONTEXT=$DOCKER_CONTEXT \
+E2E_REGISTRY_CONTAINER_ID=$REGISTRY_CONTAINER_ID \
+E2E_EXTERNAL_POSTGRES_CONTAINER_ID=$EXTERNAL_PG_CONTAINER_ID \
+E2E_EXTERNAL_POSTGRES_IP=$EXTERNAL_PG_IP \
+E2E_EXTERNAL_POSTGRES_SERVICE=$EXTERNAL_PG_SERVICE \
+E2E_EXTERNAL_POSTGRES_IMAGE=$E2E_POSTGRES_SOURCE_IMAGE \
+E2E_EXTERNAL_POSTGRES_OWNER=$CLUSTER_NAME \
+E2E_EXTERNAL_POSTGRES_CREDENTIALS_FILE=$EXTERNAL_PG_CREDENTIALS_FILE \
+E2E_TLS_PROXY_SERVICE=$TLS_PROXY_SERVICE \
+E2E_TLS_PROXY_CA_FILE=$TLS_PROXY_CA_FILE \
+E2E_TLS_PROXY_CERT_FILE=$TLS_PROXY_CERT_FILE \
+E2E_TLS_PROXY_KEY_FILE=$TLS_PROXY_CERT_KEY_FILE \
+E2E_DATAPLANE_MODE=full \
+	run_recorded_phase schema-approvals run_go_phase schema-approvals
 
 # The migration path runs after the data plane and inside its namespace, on a
 # database of its own. The PostgreSQL, the registry credentials, and the
@@ -2935,8 +3065,42 @@ E2E_KIND_CLUSTER_NAME=$CLUSTER_NAME \
 E2E_ENGINE=mysql \
 	run_recorded_phase migrations-mysql run_go_phase migrations-mysql
 
-# Reference data runs after the migration path and inside the same namespace, on
-# a database of its own, because "works on first creation of a database, when
+# Runtime identity cases have independent native producers and no lifecycle prerequisite.
+E2E_FIXTURE_IMAGE=$E2E_FIXTURE_IMAGE \
+E2E_KUBECONFIG=$KUBECONFIG_FILE \
+E2E_TEST_NAMESPACE=$TEST_NAMESPACE \
+E2E_EXECUTOR_IMAGE=$E2E_EXECUTOR_IMAGE \
+E2E_PTAH_VERSION=$E2E_PTAH_VERSION \
+E2E_RUNNER_IMAGE=$E2E_RUNNER_IMAGE \
+E2E_CONTROLLER_IMAGE=$CANDIDATE_OPERATOR_IMAGE \
+E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION \
+E2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION \
+E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \
+E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \
+E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \
+E2E_DOCKER_CONTEXT=$DOCKER_CONTEXT \
+E2E_KIND_CLUSTER_NAME=$CLUSTER_NAME \
+E2E_ENGINE=postgresql \
+	run_recorded_phase migration-runtime-postgresql run_go_phase migration-runtime-postgresql
+
+E2E_FIXTURE_IMAGE=$E2E_FIXTURE_IMAGE \
+E2E_KUBECONFIG=$KUBECONFIG_FILE \
+E2E_TEST_NAMESPACE=$TEST_NAMESPACE \
+E2E_EXECUTOR_IMAGE=$E2E_EXECUTOR_IMAGE \
+E2E_PTAH_VERSION=$E2E_PTAH_VERSION \
+E2E_RUNNER_IMAGE=$E2E_RUNNER_IMAGE \
+E2E_CONTROLLER_IMAGE=$CANDIDATE_OPERATOR_IMAGE \
+E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION \
+E2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION \
+E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \
+E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \
+E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \
+E2E_DOCKER_CONTEXT=$DOCKER_CONTEXT \
+E2E_KIND_CLUSTER_NAME=$CLUSTER_NAME \
+E2E_ENGINE=mysql \
+	run_recorded_phase migration-runtime-mysql run_go_phase migration-runtime-mysql
+
+# Reference data uses the prepared namespace and a database of its own, because "works on first creation of a database, when
 # the target tables do not exist yet" is a scope line that needs tables which
 # really do not exist. Both are Go phases, and each runs the engine its name
 # ends in.
@@ -2958,13 +3122,44 @@ E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \
 E2E_ENGINE=mysql \
 	run_recorded_phase reference-data-mysql run_go_phase reference-data-mysql
 
-# The alerting path runs last in the PostgreSQL migrations suite, on the cluster
-# that suite leaves: the migration rows are what leave an Apply nobody accounted
-# for, which is the first thing the phase needs a receiver to be told about. It
-# is a Go phase too.
+# Alerting creates its own native producers from the prepared databases and
+# registry. Operation incidents have their own suite; infrastructure faults run
+# in lifecycle before uninstall. All alert phases run sequentially when no suite is selected.
 E2E_KUBECONFIG=$KUBECONFIG_FILE \
 E2E_OPERATOR_NAMESPACE=$OPERATOR_NAMESPACE \
 E2E_TEST_NAMESPACE=$TEST_NAMESPACE \
+E2E_EXECUTOR_IMAGE=$E2E_EXECUTOR_IMAGE \
+E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \
+E2E_HELM_RELEASE=$HELM_RELEASE \
+E2E_CHART_PACKAGE=$CHART_PACKAGE \
+E2E_NEXT_CHART_PACKAGE=$NEXT_CHART_PACKAGE \
+E2E_NEXT_VALUES_FILE=$NEXT_VALUES_FILE \
+E2E_FIXTURE_IMAGE=$E2E_FIXTURE_IMAGE \
+E2E_PROMETHEUS_IMAGE=$E2E_PROMETHEUS_IMAGE \
+E2E_ALERTMANAGER_IMAGE=$E2E_ALERTMANAGER_IMAGE \
+E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \
+	run_recorded_phase alerting-certificates run_go_phase alerting-certificates
+
+E2E_KUBECONFIG=$KUBECONFIG_FILE \
+E2E_OPERATOR_NAMESPACE=$OPERATOR_NAMESPACE \
+E2E_TEST_NAMESPACE=$TEST_NAMESPACE \
+E2E_EXECUTOR_IMAGE=$E2E_EXECUTOR_IMAGE \
+E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \
+E2E_HELM_RELEASE=$HELM_RELEASE \
+E2E_CHART_PACKAGE=$CHART_PACKAGE \
+E2E_NEXT_CHART_PACKAGE=$NEXT_CHART_PACKAGE \
+E2E_NEXT_VALUES_FILE=$NEXT_VALUES_FILE \
+E2E_FIXTURE_IMAGE=$E2E_FIXTURE_IMAGE \
+E2E_PROMETHEUS_IMAGE=$E2E_PROMETHEUS_IMAGE \
+E2E_ALERTMANAGER_IMAGE=$E2E_ALERTMANAGER_IMAGE \
+E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \
+	run_recorded_phase alerting-operations run_go_phase alerting-operations
+
+E2E_KUBECONFIG=$KUBECONFIG_FILE \
+E2E_OPERATOR_NAMESPACE=$OPERATOR_NAMESPACE \
+E2E_TEST_NAMESPACE=$TEST_NAMESPACE \
+E2E_EXECUTOR_IMAGE=$E2E_EXECUTOR_IMAGE \
+E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \
 E2E_HELM_RELEASE=$HELM_RELEASE \
 E2E_CHART_PACKAGE=$CHART_PACKAGE \
 E2E_NEXT_CHART_PACKAGE=$NEXT_CHART_PACKAGE \

@@ -133,6 +133,7 @@ func (m *migrationRun) applyPolicyGuardProof() {
 	migration := &ptahv1alpha1.PtahMigration{}
 	migration.Namespace, migration.Name = m.in.TestNamespace, g.migration
 	m.deleteAndWait(migration, g.migration)
+	m.retireFixtureApproval(approval.Name, approval.Spec.MigrationRef.UID)
 	for _, name := range []string{g.authorRole, g.approverRole} {
 		binding := &rbacv1.RoleBinding{}
 		binding.Namespace, binding.Name = m.in.TestNamespace, name
@@ -343,6 +344,9 @@ func (m *migrationRun) existingSchemaAdoptionProof() {
 	m.publish("adopt", m.fixtureDir(""), a.reference)
 	m.mustCreate(m.migrationDocument(migrationSpec{
 		name: a.migration, secret: a.secret, reference: a.reference, coordinationKey: a.coordinationKey,
+		// This row waits for a history refresh after manual adoption; it does
+		// not measure the main lifecycle's five-minute refresh interval.
+		interval: "1m",
 	}))
 	held := m.waitForMigration(a.migration, string(ptahv1alpha1.MigrationPhaseAwaitingApproval), migrationPoll,
 		func(migration *ptahv1alpha1.PtahMigration) bool {
@@ -362,6 +366,7 @@ func (m *migrationRun) existingSchemaAdoptionProof() {
 	m.logf("%s held an existing schema at the approval gate and recorded nothing", m.engine.kind)
 	m.runAdoptionBaseline(a)
 	m.assertAdoptedHistoryMatches(a, applies)
+	m.finishFixture(a.migration)
 	m.logf("PASS %s refuses to adopt an existing schema, and settles once a person does", m.engine.kind)
 }
 
@@ -659,6 +664,7 @@ func (m *migrationRun) checkpointBootstrapProof() {
 	m.assertCheckpointEqualsTheLongWay(name, database, settled)
 	m.patchMigration(name, map[string]any{"spec": map[string]any{"interval": "30s"}})
 	m.assertCheckpointBootstrapStaysSettled(name)
+	m.finishFixture(name)
 	m.logf("PASS %s bootstrapped from a checkpoint and matches the database that replayed everything", m.engine.kind)
 }
 

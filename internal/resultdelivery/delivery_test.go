@@ -623,7 +623,7 @@ func TestDeliveryAttemptAndDeadlineBounds(t *testing.T) {
 	r := testReceiver(t, store, func(context.Context, Identity) error { attempts.Add(1); return errors.New("API unavailable") }, time.Second)
 	server := startReceiver(t, r, certs, nil)
 	sender := testSender(t, server.URL, identity, certs)
-	if _, err := sender.Send(t.Context(), testPayload(t, identity)); err == nil || err.Error() != "result delivery attempts exhausted" {
+	if _, err := sender.Send(t.Context(), testPayload(t, identity)); err == nil || err.Error() != "result delivery attempts exhausted: result receiver returned HTTP 503" {
 		t.Fatalf("retry bound failed: %v", err)
 	}
 	if attempts.Load() != 3 {

@@ -80,7 +80,7 @@ func (f *faultRun) unsupportedControllerStates() {
 
 func (m *migrationRun) unsupportedControllerState() {
 	m.t.Helper()
-	name, database := "e2e-stored-state-"+m.engine.name, "ptah_e2e_stored_state"
+	name, database := "e2e-migration-stored-state-"+m.engine.name, "ptah_e2e_stored_state"
 	secret := name + "-db"
 	var user string
 	if m.engine.name == "mysql" {
@@ -163,5 +163,6 @@ func (m *migrationRun) unsupportedControllerState() {
 		m.query("SELECT color FROM e2e_migration_widgets WHERE id=1", database) != "blue" {
 		m.fatalf("the supported-state migration lost its actual revisions, rows or schema effect")
 	}
+	m.finishFixture(name)
 	m.logf("PASS %s unsupported controller state after migration approval: runtime refusal retained exact state; no workload or unauthorized SQL; supported state applied once after a new approval", m.engine.kind)
 }

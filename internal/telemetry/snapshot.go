@@ -81,9 +81,17 @@ func (c *SnapshotCollector) Collect(into chan<- prometheus.Metric) {
 	if lifetime != nil && lifetime.ctx.Err() == nil {
 		ctx, cancel := context.WithTimeout(lifetime.ctx, snapshotReadTimeout)
 		c.view.active = true
-		for _, list := range []client.ObjectList{&c.view.schemas, &c.view.migrations, &c.view.schemaPlans, &c.view.migrationPlans} {
-			if c.view.err = c.reader.List(ctx, list); c.view.err != nil {
-				break
+		// The kinds are independent. Read all four within the same deadline
+		// instead of adding their API latencies, which can discard a healthy
+		// reading even when every individual request fits the scrape budget.
+		lists := []client.ObjectList{&c.view.schemas, &c.view.migrations, &c.view.schemaPlans, &c.view.migrationPlans}
+		reads := make(chan error, len(lists))
+		for _, list := range lists {
+			go func() { reads <- c.reader.List(ctx, list) }()
+		}
+		for range lists {
+			if err := <-reads; c.view.err == nil {
+				c.view.err = err
 			}
 		}
 		cancel()

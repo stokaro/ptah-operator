@@ -33,13 +33,41 @@ type alFailuresHistory struct {
 	thresholdLower, lastLower, lastUpper, scrapedThrough time.Time
 }
 
+func alQueryFailuresHistory(query func(string) ([]byte, error), pods []string, leader, family string, started, queriedAt time.Time) (alFailuresHistory, error) {
+	// One range-vector query gives counters and scrape health the same
+	// storage snapshot. A fixed evaluation time alone does not: an in-flight
+	// scrape can commit its earlier timestamp between separate API requests.
+	body, err := query(alFailuresHistoryQuery(family))
+	if err != nil {
+		return alFailuresHistory{}, err
+	}
+	series, err := alAdmissionNativeMatrix(body)
+	if err != nil {
+		return alFailuresHistory{}, err
+	}
+	var counters, up, durations []alAdmissionSeries
+	for _, item := range series {
+		switch item.Metric["__name__"] {
+		case alFailuresMetric:
+			counters = append(counters, item)
+		case "up":
+			up = append(up, item)
+		case "scrape_duration_seconds":
+			durations = append(durations, item)
+		default:
+			return alFailuresHistory{}, errors.New("operation-failure snapshot contains an unexpected metric")
+		}
+	}
+	return alReadFailuresHistory(counters, up, durations, pods, leader, family, started, queriedAt)
+}
+
 // Resolve failures already have a series from the stalled-operation control.
 // Keep a full quiet window before this fault, then account for every increment
 // on the original leader. Other categories and followers must remain constant.
 // The rule uses increase(), whose extrapolation can cross >3 at the third
 // increment. Its preceding scrape is therefore the conservative delivery bound;
 // waiting for a fourth observed failure must not move that bound forward.
-func alReadFailuresHistory(counterBody, upBody, durationBody []byte, pods []string, leader, family string, started, queriedAt time.Time) (alFailuresHistory, error) {
+func alReadFailuresHistory(counterSeries, upSeries, durationSeries []alAdmissionSeries, pods []string, leader, family string, started, queriedAt time.Time) (alFailuresHistory, error) {
 	h := alFailuresHistory{scrapedThrough: queriedAt}
 	since := started.Add(-alFailuresWindow)
 	if (family != "schema" && family != "migration") || started.IsZero() || queriedAt.Before(started) || queriedAt.Sub(since)+2*alScrapeInterval >= alFailuresHistoryWindow {
@@ -59,11 +87,7 @@ func alReadFailuresHistory(counterBody, upBody, durationBody []byte, pods []stri
 		instance string
 		values   []alAdmissionSample
 	}
-	readHealth := func(body []byte, metric string, integer bool) (map[string]reading, error) {
-		series, err := alAdmissionNativeMatrix(body)
-		if err != nil {
-			return nil, err
-		}
+	readHealth := func(series []alAdmissionSeries, metric string, integer bool) (map[string]reading, error) {
 		result, instances := map[string]reading{}, map[string]bool{}
 		for _, item := range series {
 			pod, instance := item.Metric["pod"], item.Metric["instance"]
@@ -88,11 +112,11 @@ func alReadFailuresHistory(counterBody, upBody, durationBody []byte, pods []stri
 		}
 		return result, nil
 	}
-	up, err := readHealth(upBody, "up", true)
+	up, err := readHealth(upSeries, "up", true)
 	if err != nil {
 		return h, err
 	}
-	duration, err := readHealth(durationBody, "scrape_duration_seconds", false)
+	duration, err := readHealth(durationSeries, "scrape_duration_seconds", false)
 	if err != nil {
 		return h, err
 	}
@@ -108,13 +132,9 @@ func alReadFailuresHistory(counterBody, upBody, durationBody []byte, pods []stri
 		}
 		h.scrapedThrough = earlierTime(h.scrapedThrough, health.values[len(health.values)-1].at)
 	}
-	series, err := alAdmissionNativeMatrix(counterBody)
-	if err != nil {
-		return h, err
-	}
 	seen, sawLeader := map[string]bool{}, false
 	baselineUnready := false
-	for _, item := range series {
+	for _, item := range counterSeries {
 		pod, category := item.Metric["pod"], item.Metric["category"]
 		key := pod + "/" + category
 		if item.Metric["__name__"] != alFailuresMetric || item.Metric["job"] != alScrapeJob || item.Metric["family"] != family || item.Metric["stage"] != "resolve" || !wanted[pod] || item.Metric["instance"] != up[pod].instance || category == "" || seen[key] {
@@ -186,7 +206,9 @@ func alReadFailuresHistory(counterBody, upBody, durationBody []byte, pods []stri
 }
 
 func alFailuresHistoryQuery(family string) string {
-	return fmt.Sprintf(`%s{job=%q,family=%q,stage="resolve"}[%ds]`, alFailuresMetric, alScrapeJob, family, int(alFailuresHistoryWindow/time.Second))
+	// Health series have no family or stage label; retain them alongside the
+	// selected family's Resolve counters, including every failure category.
+	return fmt.Sprintf(`{__name__=~%q,job=%q,family=~%q,stage=~"resolve|"}[%ds]`, alFailuresMetric+"|up|scrape_duration_seconds", alScrapeJob, family+"|", int(alFailuresHistoryWindow/time.Second))
 }
 
 func alFailuresDelivered(d alDelivery, h alFailuresHistory, started time.Time) bool {
@@ -230,6 +252,48 @@ func alFailuresUnchanged(initial, current client.Object) error {
 	}
 	if !same || alStalledReading(current).operation == "Apply" {
 		return errors.New("the failure consumer changed its inputs or claimed Apply")
+	}
+	return nil
+}
+
+func alFailuresSuspendedCopy(object client.Object) client.Object {
+	copy := object.DeepCopyObject().(client.Object)
+	switch v := copy.(type) {
+	case *ptahv1.PtahSchema:
+		v.Spec.Suspend = true
+	case *ptahv1.PtahMigration:
+		v.Spec.Suspend = true
+	}
+	return copy
+}
+
+// Recovery must finish without editing the consumer. Only the exact suspension
+// written afterward may change it while the test closes its workload journals.
+func alFailuresClosedResources(initial, retired client.Object, history []client.Object) error {
+	expectedRetired := alFailuresSuspendedCopy(initial)
+	expectedRetired.SetGeneration(initial.GetGeneration() + 1)
+	if retired.GetResourceVersion() == "" || retired.GetResourceVersion() == initial.GetResourceVersion() {
+		return errors.New("failure cleanup has no exact suspension write")
+	}
+	if err := alFailuresUnchanged(expectedRetired, retired); err != nil {
+		return err
+	}
+	expected := initial
+	sawOriginal, sawRetirement := false, false
+	for _, v := range history {
+		if client.ObjectKeyFromObject(v) != client.ObjectKeyFromObject(initial) {
+			continue
+		}
+		if v.GetResourceVersion() == retired.GetResourceVersion() {
+			expected, sawRetirement = retired, true
+		}
+		if err := alFailuresUnchanged(expected, v); err != nil {
+			return err
+		}
+		sawOriginal = sawOriginal || !sawRetirement
+	}
+	if !sawOriginal || !sawRetirement {
+		return errors.New("failure-consumer history omitted the proof or its cleanup boundary")
 	}
 	return nil
 }

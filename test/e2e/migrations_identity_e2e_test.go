@@ -151,5 +151,7 @@ func (m *migrationRun) approvalIdentityReplacement() {
 		m.query("SELECT color FROM e2e_migration_widgets WHERE id = 1", database) != "blue" {
 		m.fatalf("the freshly approved replacement did not converge from the database")
 	}
+	m.retireFixtureApproval(originalApproval.Name, old.UID)
+	m.finishFixture(name)
 	m.logf("PASS %s same-name migration replacement: oldUID=%s newUID=%s old approval refused; new approval applied once", m.engine.kind, old.UID, current.UID)
 }

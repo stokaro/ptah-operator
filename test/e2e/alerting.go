@@ -45,6 +45,35 @@ const (
 	alScrapeJob = "ptah-operator"
 )
 
+// alPhaseScope separates retained producer records and temporary namespaces
+// when make e2e executes the alert phases sequentially on one cluster.
+// Infrastructure keeps the observer's fixed endpoint; operation incidents own
+// the suffixed namespace and producer identities.
+type alPhaseScope struct {
+	monitoringNamespace, stalledNamespace string
+	schemaProducer, migrationProducer     string
+	producerVersion                       string
+	suffix                                string
+}
+
+func alScopeFor(phase string) alPhaseScope {
+	suffix := ""
+	switch phase {
+	case "alerting-operations":
+		suffix = "-operations"
+	case "alerting-certificates":
+		suffix = "-certificates"
+	}
+	return alPhaseScope{
+		monitoringNamespace: alMonitoringNamespace + suffix,
+		stalledNamespace:    alStalledNamespace + suffix,
+		schemaProducer:      alSchemaProducer + suffix,
+		migrationProducer:   alMigrationProducer + suffix,
+		producerVersion:     "alerts-producer" + suffix,
+		suffix:              suffix,
+	}
+}
+
 // These qualification settings follow the frozen 0.2.0 alert targets.
 // They are not chart defaults; deployments choose their own operating targets.
 const (

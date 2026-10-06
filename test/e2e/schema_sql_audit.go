@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -157,6 +158,56 @@ type schemaSQLInventory struct {
 	jobs         map[types.UID]batchv1.Job
 	pods         map[types.UID]corev1.Pod
 	excludedJobs checkpoint
+}
+
+// A failed Plan can start a new Observe/Plan cycle. Select the latest successful
+// diagnostic with the same inputs, keeping every attempt in the SQL inventory.
+// The caller binds its result to the current drift report or published plan.
+// Apply callers keep the exact-one-Job boundary.
+func (inventory *schemaSQLInventory) diagnosticResult(schema *ptahv1alpha1.PtahSchema, operation string, records []observedJob) (observedJob, error) {
+	var selected observedJob
+	if schema == nil || schema.UID == "" || (operation != "observe" && operation != "plan") {
+		return selected, errors.New("result selection requires an exact schema and a read-only diagnostic")
+	}
+	fingerprint := ""
+	seen := map[string]bool{}
+	for _, record := range records {
+		job, found := inventory.jobs[types.UID(record.UID)]
+		if !found || job.UID == "" || string(job.UID) != record.UID || job.Name != record.Name || job.Namespace != schema.Namespace ||
+			record.Schema != schema.Name || record.Operation != operation || job.Labels[labelSchema] != schema.Name || job.Labels[labelOperation] != operation ||
+			!ownedExactlyOnce(job.OwnerReferences, ptahSchemaAPIVersion, "PtahSchema", schema.Name, schema.UID) {
+			return observedJob{}, fmt.Errorf("diagnostic Job %s lost its exact schema identity", record.Name)
+		}
+		if seen[record.UID] {
+			return observedJob{}, errors.New("diagnostic repeats a Job identity")
+		}
+		seen[record.UID] = true
+		input := job.Annotations["operator.ptah.run/input-fingerprint"]
+		if !sha256Pattern.MatchString(input) || (fingerprint != "" && input != fingerprint) {
+			return observedJob{}, fmt.Errorf("diagnostic Job %s has different or missing inputs", job.Name)
+		}
+		fingerprint = input
+		complete, failed := conditionTrue(job.Status.Conditions, batchv1.JobComplete), conditionTrue(job.Status.Conditions, batchv1.JobFailed)
+		if complete == failed {
+			return observedJob{}, fmt.Errorf("diagnostic Job %s has no unambiguous terminal outcome", job.Name)
+		}
+		if complete {
+			if selected.UID != "" {
+				previous := inventory.jobs[types.UID(selected.UID)]
+				if previous.CreationTimestamp.IsZero() || job.CreationTimestamp.IsZero() || previous.CreationTimestamp.Equal(&job.CreationTimestamp) {
+					return observedJob{}, errors.New("successful diagnostics have no distinct creation order")
+				}
+				if job.CreationTimestamp.Before(&previous.CreationTimestamp) {
+					continue
+				}
+			}
+			selected = record
+		}
+	}
+	if selected.UID == "" {
+		return selected, errors.New("diagnostic has no successful Job")
+	}
+	return selected, nil
 }
 
 func (inventory *schemaSQLInventory) record(jobs []batchv1.Job, pods []corev1.Pod) error {

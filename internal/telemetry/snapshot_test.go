@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -79,12 +80,15 @@ func TestSnapshotRejectsPartialReadsAndRecoversWithoutOldState(t *testing.T) {
 		t.Run(failedKind, func(t *testing.T) {
 			fail, populated := false, true
 			calls := map[string]int{}
+			var callsMu sync.Mutex
 			reader := snapshotReader{list: func(ctx context.Context, list client.ObjectList) error {
 				if deadline, ok := ctx.Deadline(); !ok || time.Until(deadline) > 3*time.Second {
-					t.Fatal("API reading has no shared three-second bound")
+					return errors.New("API reading has no shared three-second bound")
 				}
 				kind := fmt.Sprintf("%T", list)
+				callsMu.Lock()
 				calls[kind]++
+				callsMu.Unlock()
 				if fail && kind == failedKind {
 					return errors.New("API read refused")
 				}
@@ -127,23 +131,56 @@ func TestSnapshotRejectsPartialReadsAndRecoversWithoutOldState(t *testing.T) {
 
 func TestSnapshotFollowerAndCanceledLeaderPublishNoState(t *testing.T) {
 	t.Parallel()
-	calls := 0
-	reader := snapshotReader{list: func(context.Context, client.ObjectList) error { calls++; return nil }}
+	var calls atomic.Int32
+	reader := snapshotReader{list: func(context.Context, client.ObjectList) error { calls.Add(1); return nil }}
 	registry := prometheus.NewRegistry()
 	collector := telemetry.NewSnapshotCollector(registry, reader, nil)
 	if !collector.NeedLeaderElection() {
 		t.Fatal("a follower would hide a lost leader scrape")
 	}
 	assertSnapshotMissing(t, snapshotMetrics(t, registry), 0)
-	if calls != 0 {
+	if calls.Load() != 0 {
 		t.Fatal("the follower queried the API")
 	}
 	cancel := startSnapshot(t, collector, registry)
 	cancel()
-	before := calls
+	before := calls.Load()
 	assertSnapshotMissing(t, snapshotMetrics(t, registry), 0)
-	if calls != before {
+	if calls.Load() != before {
 		t.Fatal("the canceled leader queried the API")
+	}
+}
+
+func TestSnapshotDoesNotAddIndependentAPIReadLatencies(t *testing.T) {
+	t.Parallel()
+	var slow atomic.Bool
+	reader := snapshotReader{list: func(ctx context.Context, list client.ObjectList) error {
+		if slow.Load() {
+			timer := time.NewTimer(time.Second)
+			defer timer.Stop()
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-timer.C:
+			}
+		}
+		if plans, ok := list.(*operatorv1alpha1.PtahSchemaPlanList); ok {
+			plans.Items = []operatorv1alpha1.PtahSchemaPlan{{Spec: operatorv1alpha1.PtahSchemaPlanSpec{Size: 4096}}}
+		}
+		return nil
+	}}
+	registry := prometheus.NewRegistry()
+	collector := telemetry.NewSnapshotCollector(registry, reader, nil)
+	startSnapshot(t, collector, registry)
+	slow.Store(true)
+	metrics := snapshotMetrics(t, registry)
+	bytes := metrics["ptah_operator_stored_plan_bytes"]
+	if bytes == nil || len(bytes.GetMetric()) != 1 || bytes.GetMetric()[0].GetGauge().GetValue() != 4096 {
+		t.Fatal("independent one-second API reads lost the plan-store reading within the shared three-second budget")
+	}
+	if metrics["ptah_operator_unresolved_view_synced"].GetMetric()[0].GetGauge().GetValue() != 1 ||
+		metrics["ptah_operator_unresolved_view_read_failures_total"].GetMetric()[0].GetCounter().GetValue() != 0 {
+		t.Fatal("bounded successful API reads were reported as a failed snapshot")
 	}
 }
 
@@ -155,7 +192,10 @@ func TestSnapshotHungReadExpiresAndLeadershipLossCancelsIt(t *testing.T) {
 			entered := make(chan struct{}, 1)
 			reader := snapshotReader{list: func(ctx context.Context, _ client.ObjectList) error {
 				if block.Load() {
-					entered <- struct{}{}
+					select {
+					case entered <- struct{}{}:
+					default:
+					}
 					<-ctx.Done()
 					return ctx.Err()
 				}

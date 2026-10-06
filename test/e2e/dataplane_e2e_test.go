@@ -27,9 +27,9 @@ import (
 // suites' preparation. It stands up a registry endpoint, the databases, an
 // authenticated HTTPS registry proxy and the admission fixtures in the test
 // namespace, and stops there when the driver asks for preparation. In full it
-// takes both engines through their lifecycles against real databases, holds
-// the operator to its refusals, runs the restart and fault injection, and
-// proves the four-eyes and Pod-metadata rows.
+// takes PostgreSQL through its lifecycle and proves both engines' size
+// limits, four-eyes approval, and Pod-metadata boundaries. Schema fault recovery
+// runs separately against the same preparation in TestSchemaFaults.
 func TestDataPlane(t *testing.T) {
 	run, inputs := harness.Begin(t, phases.DataPlane)
 	d := newDataPlane(t, run, inputs)
@@ -45,44 +45,22 @@ func TestDataPlane(t *testing.T) {
 		run.Prepared()
 		return
 	}
-	// The fault injection is five scenarios that share one run: its watches,
-	// barriers and audit live from the first to the last.
-	var f *faultRun
+
 	for _, scenario := range []struct {
 		name string
 		body func()
 	}{
 		{"postgresql-lifecycle", d.postgresqlLifecycle},
-		{"external-postgresql-lifecycle", d.externalPostgresqlLifecycle},
-		{"mysql-lifecycle", d.mysqlLifecycle},
-		{"mysql-dsn-refusal", d.mysqlDSNRefusalScenario},
 		{"native-plan-size-boundary", d.planSizeBoundaries},
-		{"watches", func() { f = newFaultRun(d); f.watches() }},
-		{"approval-resource-replacement", func() { f.schemaIdentityReplacement() }},
-		{"approval-target-secret-change", func() { f.targetSecretChanges() }},
-		{"approval-destructive-policy-change", func() { f.destructivePolicyChanges() }},
-		{"approval-exclusion-policy-change", func() { f.exclusionPolicyChanges() }},
-		{"approval-verification-policy-change", func() { f.verificationPolicyChanges() }},
-		{"mysql-drift-before-dispatch", func() { f.mysqlDriftBeforeDispatch() }},
-		{"hung-schema-result-read", func() { f.hungResultReads() }},
-		{"job-deadline", func() { f.jobDeadline() }},
-		{"manager-restart", func() { f.managerRestart() }},
-		{"runner-termination", func() { f.runnerTermination() }},
-		{"job-deletion", func() { f.jobDeletion() }},
-		{"closing-audits", d.closingAudits},
+		{"closing-audits", d.closingCredentialAudits},
 		{"four-eyes-distinct-approver", d.fourEyesDistinctApprover},
 		{"pod-metadata-admission", d.podMetadataAdmission},
-		{"approval-executor-image-change", func() { f.executorImageChanges() }},
-		{"approval-ptah-version-change", func() { f.ptahVersionChanges() }},
-		{"unsupported-controller-state-after-approval", func() { f.unsupportedControllerStates() }},
-		{"unsupported-runner-protocol-after-approval", func() { f.unsupportedRunnerProtocols() }},
-		{"running-apply-executor-image-change", func() { f.runningExecutorImageChanges() }},
 	} {
 		if !run.Scenario(scenario.name, d.scenario(scenario.body)) {
 			return
 		}
 	}
-	run.Logf("e2e data plane: PASS PostgreSQL, external PostgreSQL, MySQL, OCI, restart, and fault lifecycle")
+	run.Logf("e2e data plane: PASS PostgreSQL, OCI, size, and admission lifecycles")
 }
 
 // dataPlane is what the scenarios share. Each scenario runs as a subtest, and

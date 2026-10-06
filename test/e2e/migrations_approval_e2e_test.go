@@ -212,5 +212,6 @@ func (m *migrationRun) approvalInputChange(field string) {
 	if color := m.query("SELECT color FROM e2e_migration_widgets WHERE id = 1", database); color != "blue" {
 		m.fatalf("%s fresh approval did not apply the final migration: %s", name, color)
 	}
+	m.finishFixture(name)
 	m.logf("PASS %s %s changed after approval: no Apply before a fresh decision; fresh decision applied", m.engine.kind, field)
 }
