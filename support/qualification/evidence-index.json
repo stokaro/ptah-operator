@@ -876,5 +876,57 @@
     },
     "scope": "API/admission proof on Darwin arm64 only. No controller execution, SQL workload, installed Linux soak or capacity qualification. Temporary kubeconfigs removed.",
     "custody": "Private development copy with independently hash-verified download. Final encrypted custody, retention policy, and owner acceptance remain unassessed."
+  },
+  "ciBudgetVerification": {
+    "testedMergeCommit": "5759d7a7a0d295fe04d0a982e4cafe7469528ace",
+    "sourceTree": "56e18687c35b233f13c3f57a79b2f7c735d47808",
+    "testedTree": "1ad360827ecadd0475ccd2d96fa65e851ae85378",
+    "sourceDifference": "context7.json added for documentation indexing; operator, runner, dependencies, charts, workflows, and tests are unchanged",
+    "runURL": "https://github.com/stokaro/ptah-operator/actions/runs/37506334882",
+    "conclusion": "success",
+    "createdAt": "2026-10-06T17:48:02Z",
+    "completedAt": "2026-10-06T19:13:38Z",
+    "fullPipelineSeconds": 5136.0,
+    "lastJobElapsedSeconds": 5135.0,
+    "within90Minutes": true,
+    "passedSuiteCells": 27,
+    "passedOwnedPhaseExecutions": 51,
+    "runtimeArchitecture": "linux/amd64",
+    "kubernetesMinors": [
+      "1.35",
+      "1.36",
+      "1.37"
+    ],
+    "separateRuns": {
+      "Capacity": {
+        "id": 37506334913,
+        "conclusion": "success",
+        "seconds": 2642.0
+      },
+      "Release": {
+        "id": 37506334879,
+        "conclusion": "success",
+        "seconds": 462.0
+      },
+      "Documentation": {
+        "id": 37506334893,
+        "conclusion": "success",
+        "seconds": 180.0
+      }
+    },
+    "archive": {
+      "name": "ci-37506334882.tar.gz",
+      "sha256": "1c10789e32f0dbb31a3e89f37234843f0775a2cf5d9f750f242ac5c11b17b2e7",
+      "memberCount": 148,
+      "bytes": 158745,
+      "downloadVerified": true,
+      "transport": "authenticated SSH",
+      "hostAlias": "diabolocom-buster",
+      "directory": "/home/buster/ptah-operator-evidence/020-qualification-2026-10-06"
+    },
+    "sourceCommit": "e64032e591c844295f29ace6e5ae840a490050fe",
+    "requirement": "The complete CI pipeline finishes within 90 minutes, including queueing and image preparation, without dropping owned acceptance phases.",
+    "scope": "Development CI on this exact recorded head and tested merge commit. Later local capacity harness changes need their own validation. This is not the full native architecture matrix, production profile acceptance, or a release publication.",
+    "custody": "Private development copy with independently hash-verified download. Final encrypted custody, retention policy, and owner acceptance remain unassessed."
   }
 }
