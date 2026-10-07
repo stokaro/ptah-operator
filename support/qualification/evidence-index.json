@@ -4791,5 +4791,959 @@
       "custody": "The individual GitHub timing artifact downloads are digest-verified. This consolidated local archive has not been independently downloaded from durable storage."
     },
     "scope": "Terminal CI for the merged master source. All declared default functional cells and phase outcomes were read from digest-verified artifacts. Later local capacity changes are not covered, and this is not production qualification."
+  },
+  "capacityPublicationAuthorityAttribution": {
+    "requirement": "#580 remaining API request attribution at the ordinary five-second monitoring cadence",
+    "conclusion": "Diagnostic only. The audit measures request composition on the unchanged fleet; it does not close the frozen capacity profile.",
+    "runtimeSourceCommit": "10f77cc7c1e9b65c1b147696127faa6206251de0",
+    "runtimeImage": "e2e-registry.ptah-test-a-1-37-0-242-profile-1b5db851-0026e8302c.svc.cluster.local:5000/ptah-operator@sha256:bb1b6ba8bed44d3a6fd38bd04f2184af2b6cb6add49f1a3b1a1df29e160f02ed",
+    "runnerImage": "e2e-registry.ptah-test-a-1-37-0-242-profile-1b5db851-0026e8302c.svc.cluster.local:5000/ptah-operator@sha256:bb1b6ba8bed44d3a6fd38bd04f2184af2b6cb6add49f1a3b1a1df29e160f02ed",
+    "window": {
+      "start": "2026-10-07T06:45:49.401784+00:00",
+      "end": "2026-10-07T06:55:49.840576+00:00"
+    },
+    "monitoringIntervalSeconds": 5,
+    "monitoringIntervals": 120,
+    "auditRequests": 42109,
+    "bracketingManagerCounterRequests": 43234.0,
+    "counterMinusAuditRequests": 1125.0,
+    "operationCohorts": [
+      {
+        "format": "inline",
+        "action": "new publication",
+        "operations": 267,
+        "boundRequests": 16450,
+        "scope": "Only requests with an explicit operation Job/Pod/record identity are assigned. Source/configuration and TokenReview requests remain unassigned; an operation may span the observation boundary."
+      },
+      {
+        "format": "inline",
+        "action": "collection",
+        "operations": 294,
+        "boundRequests": 6258,
+        "scope": "Only requests with an explicit operation Job/Pod/record identity are assigned. Source/configuration and TokenReview requests remain unassigned; an operation may span the observation boundary."
+      },
+      {
+        "format": "inline",
+        "action": "other",
+        "operations": 134,
+        "boundRequests": 899,
+        "scope": "Only requests with an explicit operation Job/Pod/record identity are assigned. Source/configuration and TokenReview requests remain unassigned; an operation may span the observation boundary."
+      },
+      {
+        "format": "chunked",
+        "action": "new publication",
+        "operations": 0,
+        "boundRequests": 0,
+        "scope": "Only requests with an explicit operation Job/Pod/record identity are assigned. Source/configuration and TokenReview requests remain unassigned; an operation may span the observation boundary."
+      },
+      {
+        "format": "chunked",
+        "action": "collection",
+        "operations": 0,
+        "boundRequests": 0,
+        "scope": "Only requests with an explicit operation Job/Pod/record identity are assigned. Source/configuration and TokenReview requests remain unassigned; an operation may span the observation boundary."
+      },
+      {
+        "format": "chunked",
+        "action": "other",
+        "operations": 10,
+        "boundRequests": 31,
+        "scope": "Only requests with an explicit operation Job/Pod/record identity are assigned. Source/configuration and TokenReview requests remain unassigned; an operation may span the observation boundary."
+      }
+    ],
+    "largestObservedAuditMinute": {
+      "from": "2026-10-07T06:53:17.803619+00:00",
+      "through": "2026-10-07T06:54:17.803619+00:00",
+      "requests": 5321,
+      "requestsPerSecond": 88.68333333333334
+    },
+    "peakRequestClasses": [
+      {
+        "key": [
+          "get",
+          "ptahresultrecords",
+          "",
+          200
+        ],
+        "count": 1025
+      },
+      {
+        "key": [
+          "get",
+          "ptahschemas",
+          "",
+          200
+        ],
+        "count": 764
+      },
+      {
+        "key": [
+          "get",
+          "ptahresultrecords",
+          "",
+          404
+        ],
+        "count": 633
+      },
+      {
+        "key": [
+          "get",
+          "jobs",
+          "",
+          200
+        ],
+        "count": 414
+      },
+      {
+        "key": [
+          "list",
+          "pods",
+          "",
+          200
+        ],
+        "count": 358
+      },
+      {
+        "key": [
+          "list",
+          "ptahresultrecords",
+          "",
+          200
+        ],
+        "count": 354
+      },
+      {
+        "key": [
+          "get",
+          "jobs",
+          "",
+          404
+        ],
+        "count": 289
+      },
+      {
+        "key": [
+          "get",
+          "ptahmigrations",
+          "",
+          200
+        ],
+        "count": 277
+      },
+      {
+        "key": [
+          "delete",
+          "ptahresultrecords",
+          "",
+          200
+        ],
+        "count": 171
+      },
+      {
+        "key": [
+          "get",
+          "configmaps",
+          "",
+          200
+        ],
+        "count": 168
+      },
+      {
+        "key": [
+          "patch",
+          "ptahschemas",
+          "status",
+          200
+        ],
+        "count": 111
+      },
+      {
+        "key": [
+          "create",
+          "ptahresultrecords",
+          "",
+          201
+        ],
+        "count": 110
+      },
+      {
+        "key": [
+          "create",
+          "tokenreviews",
+          "",
+          201
+        ],
+        "count": 84
+      },
+      {
+        "key": [
+          "get",
+          "pods",
+          "",
+          200
+        ],
+        "count": 84
+      },
+      {
+        "key": [
+          "update",
+          "leases",
+          "",
+          200
+        ],
+        "count": 74
+      },
+      {
+        "key": [
+          "get",
+          "leases",
+          "",
+          200
+        ],
+        "count": 63
+      },
+      {
+        "key": [
+          "get",
+          "serviceaccounts",
+          "",
+          200
+        ],
+        "count": 56
+      },
+      {
+        "key": [
+          "list",
+          "limitranges",
+          "",
+          200
+        ],
+        "count": 56
+      },
+      {
+        "key": [
+          "list",
+          "priorityclasses",
+          "",
+          200
+        ],
+        "count": 56
+      },
+      {
+        "key": [
+          "patch",
+          "ptahschemas",
+          "",
+          200
+        ],
+        "count": 47
+      },
+      {
+        "key": [
+          "create",
+          "jobs",
+          "",
+          201
+        ],
+        "count": 28
+      },
+      {
+        "key": [
+          "patch",
+          "jobs",
+          "",
+          200
+        ],
+        "count": 27
+      },
+      {
+        "key": [
+          "patch",
+          "ptahmigrations",
+          "status",
+          200
+        ],
+        "count": 14
+      },
+      {
+        "key": [
+          "list",
+          "ptahmigrationplans",
+          "",
+          200
+        ],
+        "count": 12
+      },
+      {
+        "key": [
+          "list",
+          "ptahschemaplans",
+          "",
+          200
+        ],
+        "count": 12
+      },
+      {
+        "key": [
+          "list",
+          "ptahschemas",
+          "",
+          200
+        ],
+        "count": 12
+      },
+      {
+        "key": [
+          "list",
+          "ptahmigrations",
+          "",
+          200
+        ],
+        "count": 12
+      },
+      {
+        "key": [
+          "patch",
+          "ptahmigrations",
+          "",
+          200
+        ],
+        "count": 8
+      },
+      {
+        "key": [
+          "watch",
+          "ptahmigrationrunacknowledgments",
+          "",
+          200
+        ],
+        "count": 1
+      },
+      {
+        "key": [
+          "watch",
+          "configmaps",
+          "",
+          200
+        ],
+        "count": 1
+      }
+    ],
+    "requestClasses": [
+      {
+        "key": [
+          "get",
+          "ptahresultrecords",
+          "",
+          200
+        ],
+        "count": 7070
+      },
+      {
+        "key": [
+          "get",
+          "ptahresultrecords",
+          "",
+          404
+        ],
+        "count": 4878
+      },
+      {
+        "key": [
+          "get",
+          "ptahschemas",
+          "",
+          200
+        ],
+        "count": 4638
+      },
+      {
+        "key": [
+          "get",
+          "jobs",
+          "",
+          200
+        ],
+        "count": 3973
+      },
+      {
+        "key": [
+          "get",
+          "ptahmigrations",
+          "",
+          200
+        ],
+        "count": 3769
+      },
+      {
+        "key": [
+          "list",
+          "pods",
+          "",
+          200
+        ],
+        "count": 3439
+      },
+      {
+        "key": [
+          "list",
+          "ptahresultrecords",
+          "",
+          200
+        ],
+        "count": 1884
+      },
+      {
+        "key": [
+          "get",
+          "jobs",
+          "",
+          404
+        ],
+        "count": 1749
+      },
+      {
+        "key": [
+          "get",
+          "configmaps",
+          "",
+          200
+        ],
+        "count": 1696
+      },
+      {
+        "key": [
+          "delete",
+          "ptahresultrecords",
+          "",
+          200
+        ],
+        "count": 882
+      },
+      {
+        "key": [
+          "create",
+          "ptahresultrecords",
+          "",
+          201
+        ],
+        "count": 859
+      },
+      {
+        "key": [
+          "create",
+          "tokenreviews",
+          "",
+          201
+        ],
+        "count": 801
+      },
+      {
+        "key": [
+          "get",
+          "pods",
+          "",
+          200
+        ],
+        "count": 801
+      },
+      {
+        "key": [
+          "patch",
+          "ptahschemas",
+          "status",
+          200
+        ],
+        "count": 707
+      },
+      {
+        "key": [
+          "update",
+          "leases",
+          "",
+          200
+        ],
+        "count": 683
+      },
+      {
+        "key": [
+          "get",
+          "leases",
+          "",
+          200
+        ],
+        "count": 572
+      },
+      {
+        "key": [
+          "get",
+          "serviceaccounts",
+          "",
+          200
+        ],
+        "count": 534
+      },
+      {
+        "key": [
+          "list",
+          "limitranges",
+          "",
+          200
+        ],
+        "count": 534
+      },
+      {
+        "key": [
+          "list",
+          "priorityclasses",
+          "",
+          200
+        ],
+        "count": 534
+      },
+      {
+        "key": [
+          "patch",
+          "ptahmigrations",
+          "status",
+          200
+        ],
+        "count": 486
+      },
+      {
+        "key": [
+          "patch",
+          "ptahschemas",
+          "",
+          200
+        ],
+        "count": 297
+      },
+      {
+        "key": [
+          "patch",
+          "jobs",
+          "",
+          200
+        ],
+        "count": 274
+      },
+      {
+        "key": [
+          "create",
+          "jobs",
+          "",
+          201
+        ],
+        "count": 267
+      },
+      {
+        "key": [
+          "patch",
+          "ptahmigrations",
+          "",
+          200
+        ],
+        "count": 244
+      },
+      {
+        "key": [
+          "list",
+          "ptahmigrations",
+          "",
+          200
+        ],
+        "count": 120
+      },
+      {
+        "key": [
+          "list",
+          "ptahmigrationplans",
+          "",
+          200
+        ],
+        "count": 120
+      },
+      {
+        "key": [
+          "list",
+          "ptahschemaplans",
+          "",
+          200
+        ],
+        "count": 120
+      },
+      {
+        "key": [
+          "list",
+          "ptahschemas",
+          "",
+          200
+        ],
+        "count": 120
+      },
+      {
+        "key": [
+          "patch",
+          "events",
+          "",
+          200
+        ],
+        "count": 42
+      },
+      {
+        "key": [
+          "watch",
+          "ptahmigrations",
+          "",
+          200
+        ],
+        "count": 4
+      },
+      {
+        "key": [
+          "watch",
+          "ptahschemas",
+          "",
+          200
+        ],
+        "count": 3
+      },
+      {
+        "key": [
+          "watch",
+          "ptahschemaapprovals",
+          "",
+          200
+        ],
+        "count": 3
+      },
+      {
+        "key": [
+          "watch",
+          "configmaps",
+          "",
+          200
+        ],
+        "count": 2
+      },
+      {
+        "key": [
+          "watch",
+          "ptahmigrationapprovals",
+          "",
+          200
+        ],
+        "count": 1
+      },
+      {
+        "key": [
+          "watch",
+          "jobs",
+          "",
+          200
+        ],
+        "count": 1
+      },
+      {
+        "key": [
+          "watch",
+          "ptahrealms",
+          "",
+          200
+        ],
+        "count": 1
+      },
+      {
+        "key": [
+          "watch",
+          "ptahmigrationrunacknowledgments",
+          "",
+          200
+        ],
+        "count": 1
+      }
+    ],
+    "managerIdentities": [
+      {
+        "name": "ptah-operator-ptah-operator-779cc557b4-28zrt",
+        "podUID": "1aff8cbc-c973-40c8-8e5e-6631e88760b3",
+        "containerID": "containerd://5a0a4909aedaa6a2bebeae63387c157e181e7819c685cdfd1c9bbcd84f08c0fa",
+        "image": "e2e-registry.ptah-test-a-1-37-0-242-profile-1b5db851-0026e8302c.svc.cluster.local:5000/ptah-operator@sha256:bb1b6ba8bed44d3a6fd38bd04f2184af2b6cb6add49f1a3b1a1df29e160f02ed",
+        "sameInstalledContainer": true
+      },
+      {
+        "name": "ptah-operator-ptah-operator-779cc557b4-lghml",
+        "podUID": "79f5ef58-c7c5-40fd-ab09-b2910f8fff1c",
+        "containerID": "containerd://6de5691573089cf7ab0701d843d2e7fc91191aa9d96ae01676aeae14c29a3dfc",
+        "image": "e2e-registry.ptah-test-a-1-37-0-242-profile-1b5db851-0026e8302c.svc.cluster.local:5000/ptah-operator@sha256:bb1b6ba8bed44d3a6fd38bd04f2184af2b6cb6add49f1a3b1a1df29e160f02ed",
+        "sameInstalledContainer": true
+      }
+    ],
+    "resourceProgress": {
+      "scope": "Endpoint progress and unchanged resource identity; not a whole-cycle census or continuous freshness proof.",
+      "readbackAt": "2026-10-07T06:55:52.267854+00:00",
+      "resources": [
+        {
+          "uid": "8fc317d1-6ca8-4ceb-b245-c9957f050e9d",
+          "kind": "PtahSchema",
+          "namespace": "ptah-qualification-a",
+          "name": "capacity-schema-000",
+          "before": "2026-10-07T06:43:06Z",
+          "after": "2026-10-07T06:53:56Z",
+          "ageAtReadbackSeconds": 116.267854,
+          "valid": true
+        },
+        {
+          "uid": "cae9f755-3394-4a0c-b9de-e44212dbaeaa",
+          "kind": "PtahSchema",
+          "namespace": "ptah-qualification-a",
+          "name": "capacity-schema-002",
+          "before": "2026-10-07T06:43:16Z",
+          "after": "2026-10-07T06:53:58Z",
+          "ageAtReadbackSeconds": 114.267854,
+          "valid": true
+        },
+        {
+          "uid": "9f986b5c-1246-443b-9088-fef4ff57ff1b",
+          "kind": "PtahSchema",
+          "namespace": "ptah-qualification-a",
+          "name": "capacity-schema-004",
+          "before": "2026-10-07T06:43:33Z",
+          "after": "2026-10-07T06:54:28Z",
+          "ageAtReadbackSeconds": 84.267854,
+          "valid": true
+        },
+        {
+          "uid": "ba977ec9-05fc-46c1-a1e1-67873d208c32",
+          "kind": "PtahSchema",
+          "namespace": "ptah-qualification-a",
+          "name": "capacity-schema-006",
+          "before": "2026-10-07T06:44:09Z",
+          "after": "2026-10-07T06:54:38Z",
+          "ageAtReadbackSeconds": 74.267854,
+          "valid": true
+        },
+        {
+          "uid": "d06a7120-94ab-48d5-a204-9c20887c9a6d",
+          "kind": "PtahSchema",
+          "namespace": "ptah-qualification-a",
+          "name": "capacity-schema-008",
+          "before": "2026-10-07T06:44:10Z",
+          "after": "2026-10-07T06:54:34Z",
+          "ageAtReadbackSeconds": 78.267854,
+          "valid": true
+        },
+        {
+          "uid": "b8453edd-170d-43bb-9284-7fcbf6cf06ce",
+          "kind": "PtahMigration",
+          "namespace": "ptah-qualification-a",
+          "name": "capacity-migration-000",
+          "before": "2026-10-07T06:45:13Z",
+          "after": "2026-10-07T06:55:13Z",
+          "ageAtReadbackSeconds": 39.267854,
+          "valid": true
+        },
+        {
+          "uid": "0871bd1c-28b5-4412-af2b-d8478b2e5c78",
+          "kind": "PtahMigration",
+          "namespace": "ptah-qualification-a",
+          "name": "capacity-migration-002",
+          "before": "2026-10-07T06:44:36Z",
+          "after": "2026-10-07T06:54:28Z",
+          "ageAtReadbackSeconds": 84.267854,
+          "valid": true
+        },
+        {
+          "uid": "38b671a7-7fcf-46f0-90cb-1722b9f03820",
+          "kind": "PtahMigration",
+          "namespace": "ptah-qualification-a",
+          "name": "capacity-migration-004",
+          "before": "2026-10-07T06:43:18Z",
+          "after": "2026-10-07T06:55:42Z",
+          "ageAtReadbackSeconds": 10.267854,
+          "valid": true
+        },
+        {
+          "uid": "09bfadf4-f80a-4388-9959-4a99ceeadf6b",
+          "kind": "PtahMigration",
+          "namespace": "ptah-qualification-a",
+          "name": "capacity-migration-006",
+          "before": "2026-10-07T06:45:25Z",
+          "after": "2026-10-07T06:55:19Z",
+          "ageAtReadbackSeconds": 33.267854,
+          "valid": true
+        },
+        {
+          "uid": "773bfaec-1829-4246-af09-3b6093cf2f91",
+          "kind": "PtahMigration",
+          "namespace": "ptah-qualification-a",
+          "name": "capacity-migration-008",
+          "before": "2026-10-07T06:43:22Z",
+          "after": "2026-10-07T06:55:39Z",
+          "ageAtReadbackSeconds": 13.267854,
+          "valid": true
+        },
+        {
+          "uid": "daf97559-6f61-41ea-a98d-9456231fb701",
+          "kind": "PtahSchema",
+          "namespace": "ptah-qualification-b",
+          "name": "capacity-schema-001",
+          "before": "2026-10-07T06:44:17Z",
+          "after": "2026-10-07T06:54:54Z",
+          "ageAtReadbackSeconds": 58.267854,
+          "valid": true
+        },
+        {
+          "uid": "533af936-eb22-4e63-8f25-5b6d28ba41a9",
+          "kind": "PtahSchema",
+          "namespace": "ptah-qualification-b",
+          "name": "capacity-schema-003",
+          "before": "2026-10-07T06:43:25Z",
+          "after": "2026-10-07T06:54:12Z",
+          "ageAtReadbackSeconds": 100.267854,
+          "valid": true
+        },
+        {
+          "uid": "a2bb16fc-7c91-4956-885a-daad9091a225",
+          "kind": "PtahSchema",
+          "namespace": "ptah-qualification-b",
+          "name": "capacity-schema-005",
+          "before": "2026-10-07T06:44:20Z",
+          "after": "2026-10-07T06:55:01Z",
+          "ageAtReadbackSeconds": 51.267854,
+          "valid": true
+        },
+        {
+          "uid": "9aeeb54f-3a78-481e-82f3-98ec454e0a3e",
+          "kind": "PtahSchema",
+          "namespace": "ptah-qualification-b",
+          "name": "capacity-schema-007",
+          "before": "2026-10-07T06:43:24Z",
+          "after": "2026-10-07T06:54:13Z",
+          "ageAtReadbackSeconds": 99.267854,
+          "valid": true
+        },
+        {
+          "uid": "7c55ed05-47a4-4d14-9963-89ae9c0a5325",
+          "kind": "PtahSchema",
+          "namespace": "ptah-qualification-b",
+          "name": "capacity-schema-009",
+          "before": "2026-10-07T06:45:03Z",
+          "after": "2026-10-07T06:55:36Z",
+          "ageAtReadbackSeconds": 16.267854,
+          "valid": true
+        },
+        {
+          "uid": "23d0c3c2-a086-496c-810d-7d1562c1bfa1",
+          "kind": "PtahMigration",
+          "namespace": "ptah-qualification-b",
+          "name": "capacity-migration-001",
+          "before": "2026-10-07T06:43:12Z",
+          "after": "2026-10-07T06:55:27Z",
+          "ageAtReadbackSeconds": 25.267854,
+          "valid": true
+        },
+        {
+          "uid": "8b8a5813-b0a7-4ce6-ac10-9de4ffa49daf",
+          "kind": "PtahMigration",
+          "namespace": "ptah-qualification-b",
+          "name": "capacity-migration-003",
+          "before": "2026-10-07T06:43:18Z",
+          "after": "2026-10-07T06:55:33Z",
+          "ageAtReadbackSeconds": 19.267854,
+          "valid": true
+        },
+        {
+          "uid": "f35d38d5-c78e-4cf2-af47-809a3309a8b7",
+          "kind": "PtahMigration",
+          "namespace": "ptah-qualification-b",
+          "name": "capacity-migration-005",
+          "before": "2026-10-07T06:43:38Z",
+          "after": "2026-10-07T06:53:27Z",
+          "ageAtReadbackSeconds": 145.267854,
+          "valid": true
+        },
+        {
+          "uid": "012e057b-0c84-406b-aa88-cfc4aaeba8e5",
+          "kind": "PtahMigration",
+          "namespace": "ptah-qualification-b",
+          "name": "capacity-migration-007",
+          "before": "2026-10-07T06:43:13Z",
+          "after": "2026-10-07T06:55:46Z",
+          "ageAtReadbackSeconds": 6.267854,
+          "valid": true
+        },
+        {
+          "uid": "5e4de788-2db1-4b44-872e-ab26031b95b4",
+          "kind": "PtahMigration",
+          "namespace": "ptah-qualification-b",
+          "name": "capacity-migration-009",
+          "before": "2026-10-07T06:45:09Z",
+          "after": "2026-10-07T06:55:00Z",
+          "ageAtReadbackSeconds": 52.267854,
+          "valid": true
+        }
+      ],
+      "problems": []
+    },
+    "restoration": "All three original API-server manifests were restored byte-for-byte, and task audit files were removed from the nodes.",
+    "scope": "Only explicit Job, Pod and result-record identities bind request attribution. Shared source/configuration and TokenReview calls are not assigned to a caller from timing. Audit-enabled request timestamps do not replace unaudited performance qualification.",
+    "custody": "Local archive only; no external upload or independent download verification.",
+    "requestTimestampBasis": "Server requestReceivedTimestamp, one request per auditID across ResponseStarted and ResponseComplete; a long-lived WATCH is counted when it starts.",
+    "counterComparison": {
+      "outerStart": "2026-10-07T06:45:38.328291+00:00",
+      "outerEnd": "2026-10-07T06:55:49.967231+00:00",
+      "innerStart": "2026-10-07T06:45:38.520967+00:00",
+      "innerEnd": "2026-10-07T06:55:49.840705+00:00",
+      "outerArrivalRequests": 43349,
+      "innerArrivalRequests": 43228,
+      "managerCounterDelta": 43234.0,
+      "counterInsideTimestampBracket": true,
+      "scope": "Consistency check over uncertain metric collection instants. It is not one-to-one matching of server arrivals and client response counters. The named audit window starts after the initial log copy; its denominator is separate."
+    },
+    "firstScrape": {
+      "firstScrapeIntervals": [
+        {
+          "name": "ptah-operator-ptah-operator-779cc557b4-28zrt",
+          "startedAt": "2026-10-07T06:45:38.328291+00:00",
+          "finishedAt": "2026-10-07T06:45:38.458186+00:00"
+        },
+        {
+          "name": "ptah-operator-ptah-operator-779cc557b4-lghml",
+          "startedAt": "2026-10-07T06:45:38.458594+00:00",
+          "finishedAt": "2026-10-07T06:45:38.520967+00:00"
+        }
+      ],
+      "responses429": [],
+      "partialTrailingRecords": [],
+      "scope": "Audit activation and first metrics read; does not retroactively establish the cause or timing of an earlier unaudited response."
+    },
+    "workloadScope": {
+      "intentInventories": {
+        "intents-before.json": {
+          "roots": 1792,
+          "outsideProfileUIDs": []
+        },
+        "intents-after.json": {
+          "roots": 1759,
+          "outsideProfileUIDs": []
+        }
+      },
+      "sampledResourceCensuses": 122,
+      "expectedCounts": {
+        "schema": 10,
+        "migration": 10
+      },
+      "censusProblems": [],
+      "scope": "Retained publication bindings and sampled leader resource gauges; not a continuous census between scrapes."
+    },
+    "archive": {
+      "name": "capacity-publication-authority-arrivals-2026-10-07.tar.gz",
+      "sha256": "37b9aeefdfe379c1b247aac416ef83f51ba5b65d91fff69d302740f269dddaeb",
+      "bytes": 15498561,
+      "memberCount": 414,
+      "downloadVerified": false
+    }
   }
 }
