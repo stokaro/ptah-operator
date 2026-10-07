@@ -1717,5 +1717,95 @@
       "directory": "/home/buster/ptah-operator-evidence/020-qualification-2026-10-06"
     },
     "custody": "Private development copy with independently hash-verified download. Final encrypted custody, retention policy, and owner acceptance remain unassessed."
+  },
+  "capacityAPICurrentClaim": {
+    "requirement": "#580 manager API demand on the unchanged twenty-resource steady fleet",
+    "conclusion": "Failed: an interior sixty-second window still exceeds 100 requests/s.",
+    "runtimeSourceCommit": "a3da4dfce57a7d4e80d765478cc6587f5ab3ce6a",
+    "collectorSourceCommit": "a3da4dfce57a7d4e80d765478cc6587f5ab3ce6a",
+    "runtimeImage": "e2e-registry.ptah-test-a-1-37-0-242-profile-1b5db851-0026e8302c.svc.cluster.local:5000/ptah-operator@sha256:8c108069f6aa479b1a3aa236e614844e32bf80d93c788f787634fa91c26ba310",
+    "runnerImage": "e2e-registry.ptah-test-a-1-37-0-242-profile-1b5db851-0026e8302c.svc.cluster.local:5000/ptah-runner@sha256:3c926b0b03baae569014ceae3522a0dde7a9c03555a645eede9773b536dde8c2",
+    "profileRevision": 39,
+    "environment": "Kubernetes 1.37.0, native Linux amd64, PostgreSQL, ten schemas and ten migrations",
+    "window": {
+      "name": "existing twenty-resource fleet API demand",
+      "start": "2026-10-07T00:54:11.991696Z",
+      "end": "2026-10-07T01:04:11.991696Z"
+    },
+    "samples": 121,
+    "slidingMinuteBounds": 108,
+    "maxRequestsPerSecondUpperBound": 205.68333333333334,
+    "thresholdRequestsPerSecond": 100,
+    "thresholdPassed": false,
+    "largestContainedWindowLowerBound": {
+      "start": "2026-10-07T01:00:52.098424+00:00",
+      "end": "2026-10-07T01:01:52.098424+00:00",
+      "firstSample": 80,
+      "lastSample": 92,
+      "requestsAtLeast": 10289,
+      "requestsPerSecondAtLeast": 171.48333333333332
+    },
+    "provenExceedance": {
+      "start": "2026-10-07T01:00:52.098424+00:00",
+      "end": "2026-10-07T01:01:52.098424+00:00",
+      "firstSample": 80,
+      "lastSample": 92,
+      "requestsAtLeast": 10289,
+      "requestsPerSecondAtLeast": 171.48333333333332
+    },
+    "monitorRequests": 726,
+    "managers": [
+      {
+        "name": "ptah-operator-ptah-operator-57d749bc64-fwd7g",
+        "podUID": "8c04d5b1-21c7-4baf-ad67-80962b45d18f",
+        "containerID": "containerd://ac3055dff425fddc8e35fa80f6fcfe0e85c2fe1a36c43c81e629ca666593d5b1",
+        "requests": 53443,
+        "cpuSeconds": 44.45,
+        "maxRSSBytes": 103579648,
+        "clientThrottleSeconds": 0,
+        "client429Responses": 0
+      },
+      {
+        "name": "ptah-operator-ptah-operator-57d749bc64-qvt7h",
+        "podUID": "c45aef86-1183-4f52-966b-242ebcc91b04",
+        "containerID": "containerd://e431a76ce41aa897066e89062ddd23e92f4b4ab595aacb9e9ed2104e07dc9ff5",
+        "requests": 13163,
+        "cpuSeconds": 11.48,
+        "maxRSSBytes": 53383168,
+        "clientThrottleSeconds": 0,
+        "client429Responses": 0
+      }
+    ],
+    "change": "Read the live Job and exact Pod list, then validate both against one current claim; every return path finishes at the live retirement fence, including adoption waits. Successful authorization uses four requests instead of six. The manager also includes the previously tested shared source/owner deletion read reduction.",
+    "validation": {
+      "originalRegression": "The original authorizer makes six reads. The final implementation makes four, checks real claim changes injected during the Pod read, and refuses retirement created after the claim read. An intermediate candidate changed definitive retirement into an adoption wait; the original-source control and final fixed control both pass, and the rejected intermediate result is retained.",
+      "fixedRaceTests": [
+        "internal/resultauthority",
+        "internal/resultcredentials",
+        "internal/resultservice",
+        "internal/resultdelivery",
+        "internal/controllerwrite",
+        "internal/controller"
+      ],
+      "vet": [
+        "internal/resultauthority",
+        "internal/resultcredentials",
+        "internal/resultservice",
+        "internal/resultdelivery",
+        "internal/controllerwrite",
+        "internal/controller"
+      ],
+      "liveFleet": "All twenty original UIDs, specs and generations stayed unchanged; every slot refreshed under the fixed manager before measurement.",
+      "auditRestoration": "All original API-server manifests were restored before this run; the native measurement does not run with audit enabled."
+    },
+    "scope": "Only this steady API-demand window is assessed. No cold/backlog rerun, full soak, retention plateau, fault matrix, architecture matrix, final artifacts, or #580/#242 closure is claimed.",
+    "archive": {
+      "name": "capacity-current-claim-2026-10-07.tar.gz",
+      "sha256": "30021ab994875daa5f0730d13abea34b6cfc7a54d818998b84be5b47ac3ba3fa",
+      "bytes": 118948,
+      "memberCount": 35,
+      "downloadVerified": false
+    },
+    "custody": "Local archive retained. Remote custody and independent download verification are not established."
   }
 }
