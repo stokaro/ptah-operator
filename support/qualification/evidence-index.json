@@ -5745,5 +5745,90 @@
       "memberCount": 414,
       "downloadVerified": false
     }
+  },
+  "inlineReceiverRestart": {
+    "source": "c78d5683acdb772bc43a957680d115cc519015d7",
+    "requirement": "Source applicability of #586 lost-acknowledgment and receiver-restart proof after atomic inline result publication.",
+    "conclusion": "passed",
+    "platform": {
+      "dockerContext": "diabolocom",
+      "kubernetes": "1.37.0",
+      "os": "linux",
+      "architecture": "amd64",
+      "managerReplicas": 2,
+      "containerLogMaxSize": "10Mi"
+    },
+    "runs": [
+      {
+        "engine": "PostgreSQL",
+        "databaseVersion": "PostgreSQL 17.11 on x86_64-pc-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit",
+        "namespace": "ptah-inline-restart-pg",
+        "resourceUID": "68206c20-69b3-420d-8a1f-3f38fbd185de",
+        "jobUID": "0429271e-ef17-4ec3-acf0-580542942e75",
+        "podUID": "b3e01a65-039a-436e-91c2-0773466bc177",
+        "receiptUID": "b9c2b766-e7c8-41b1-9ef4-0a18996d75bf",
+        "receiptName": "ptah-result-0d2e55e85219b93ba648013b2831ead0b08cb47aaae64b1a0f130acac70fdb3b",
+        "payloadBytes": 873,
+        "payloadDigest": "sha256:14602ac5e56ea2664deee52a37bcfb97c95d6238225efa864093cda1392b1c59",
+        "publicationRecords": 1,
+        "deliveries": 2,
+        "sqlExecutions": 1,
+        "oldReceiverUIDs": [
+          "e1ed9c6c-24f2-4401-9972-7c028ae60dc9",
+          "f3f9c798-b85a-4e50-8126-8056d236ca36"
+        ],
+        "newReceiverUIDs": [
+          "4fffdca0-8669-4735-a52a-da7fdb5e56f0",
+          "df4b68c9-ea72-4082-b0d4-c39906e91bbc"
+        ],
+        "completedAt": "2026-10-07T07:34:15.347460+00:00",
+        "procedureSHA256": "192ceaa7c6ca4455530237f664e7cb90e8102d6be3012022725986cab548b02f",
+        "routingRestored": true
+      },
+      {
+        "engine": "MySQL",
+        "databaseVersion": "8.4.11",
+        "namespace": "ptah-inline-restart-mysql",
+        "resourceUID": "8ec99c61-eb28-40f4-bad0-0627c9107207",
+        "jobUID": "74e2b5f4-13ff-4b6b-8d04-f203147c3250",
+        "podUID": "a41c6289-2a3f-41ef-abe9-1a3f8835ee3e",
+        "receiptUID": "9c00faec-bd39-4171-ac03-6b382d4a7394",
+        "receiptName": "ptah-result-5292f8c561a75f8b89feb685bc32c16e7491b99c4819500390d2a240fc38d4cc",
+        "payloadBytes": 873,
+        "payloadDigest": "sha256:cb8b589f51652a85146f068e32ddd848d0c54c16434774175e2b62c915a11137",
+        "publicationRecords": 1,
+        "deliveries": 2,
+        "sqlExecutions": 1,
+        "oldReceiverUIDs": [
+          "4fffdca0-8669-4735-a52a-da7fdb5e56f0",
+          "df4b68c9-ea72-4082-b0d4-c39906e91bbc"
+        ],
+        "newReceiverUIDs": [
+          "01ca0a86-1e5e-4cf2-a672-55cf7299c48e",
+          "478ad2e2-ad0f-40e1-a38d-20ba256a9cc1"
+        ],
+        "completedAt": "2026-10-07T07:36:09.195522+00:00",
+        "procedureSHA256": "192ceaa7c6ca4455530237f664e7cb90e8102d6be3012022725986cab548b02f",
+        "routingRestored": true
+      }
+    ],
+    "scope": "Installed native PostgreSQL and MySQL migrations use Pod-token authorization and one immutable inline result record. The first successful response is dropped; both receivers are replaced before retry; the same receipt is delivered again. The original Job and Pod complete without replacement or restart, calibrated nontransactional allocation witnesses detect committed and rolled-back SQL replay, and current-generation migration history converges. The isolated lab uses authenticated plain-HTTP fixture artifacts. This is not final signed-HTTPS profile acceptance, pre-consumption Pod/log-loss proof, chunked partial-publication cleanup, or the full support matrix.",
+    "custody": "Local archive only; no remote export or independent download verification.",
+    "installation": {
+      "managerImage": "e2e-registry.ptah-test-a-1-37-0-inline-results-c78d5683-8041a5a1de.svc.cluster.local:5000/ptah-operator@sha256:4794c6de35f5891e01cb900774b1222bf328fa0db21ecd5c2651ec0559d7eb27",
+      "runnerImage": "e2e-registry.ptah-test-a-1-37-0-inline-results-c78d5683-8041a5a1de.svc.cluster.local:5000/ptah-runner@sha256:4794c6de35f5891e01cb900774b1222bf328fa0db21ecd5c2651ec0559d7eb27",
+      "executorImage": "e2e-registry.ptah-test-a-1-37-0-inline-results-c78d5683-8041a5a1de.svc.cluster.local:5000/ptah-executor@sha256:71abab66f626dce96f2879e46d3e71ce84c3b39d99d797a166ba1d1f3a1a26f1",
+      "fixtureImage": "e2e-registry.ptah-test-a-1-37-0-inline-results-c78d5683-8041a5a1de.svc.cluster.local:5000/e2e-fixture@sha256:0c39027476b7fb88ca1bde7360d23528e3bfb88be227b143aa8f9ae591fb8d05",
+      "chartSHA256": "d97f42469f268eb2ac6dd31e4af39a459b93acf7b3fc98084b6f2ccc90e88da1",
+      "ptahRevision": "f6e562c5b0986cd29a53a5cc01938827336b780a",
+      "deploymentUID": "e75434ee-4d4e-4f72-b4a2-48e19b891057"
+    },
+    "archive": {
+      "name": "inline-receiver-restart-2026-10-07.tar.gz",
+      "sha256": "232cf2ad62ee614c66747f2d14d35a8cafc85ff4b2a3b113a09e691019238082",
+      "bytes": 51714,
+      "memberCount": 35,
+      "downloadVerified": false
+    }
   }
 }
