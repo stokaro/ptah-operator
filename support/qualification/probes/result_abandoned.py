@@ -13,6 +13,13 @@ from result_retention_evidence import verify_abandoned, instant
 from result_first_harvest import pod_binding_record
 
 
+def prior_retirements_complete(rows):
+    """A pending retirement must not consume the quota reserved for the Plan."""
+    jobs = {kind: {r['binding']['jobUID'] for r in rows if r['type'] == kind}
+            for kind in ('intent', 'credential', 'retired')}
+    return bool(jobs['intent']) and jobs['intent'] == jobs['credential'] == jobs['retired']
+
+
 def main():
     if not __debug__:
         raise RuntimeError('Acceptance assertions require Python without optimization')
@@ -118,7 +125,10 @@ def main():
             return op if op.get('type') in ('Plan', 'plan') and op.get('jobUID') else None
         operation = wait(held_plan, 300)
         assert not any(any(o['uid'] == operation['jobUID'] for o in p['metadata'].get('ownerReferences', [])) for p in get('pods')['items'])
-        preceding = records()
+        def preceding_ready():
+            rows = records()
+            return rows if prior_retirements_complete([public(r) for r in rows.values()]) else None
+        preceding = wait(preceding_ready, 300)
         key = 'count/ptahresultrecords.operator.ptah.run'
         limit = str(len(preceding) + 2)
         create({'apiVersion': 'v1', 'kind': 'ResourceQuota', 'metadata': {'name': 'hold-partial', 'namespace': ns}, 'spec': {'hard': {key: limit}}})

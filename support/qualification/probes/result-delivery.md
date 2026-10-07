@@ -619,8 +619,10 @@ limit. Run with the owned lab environment, explicit Docker context and
 
 The probe copies the source specification and lab credentials, disables Apply,
 and holds Plan Pod creation with a namespace-scoped admission policy. Once the
-Plan Job exists, it sets the result-record quota to the preceding operations'
-record count plus two: the new public Pod binding and Plan intent. Removing the
+Plan Job exists, it waits for every preceding operation's retirement marker,
+then sets the result-record quota to their record count plus two: the new public
+Pod binding and Plan intent. A retirement still in flight would otherwise take
+one of those slots and prevent the intended first-chunk fault. Removing the
 hold must produce an actual first-chunk quota refusal. The probe then suspends
 the schema, deletes the original Job with its UID precondition, waits for its
 Pod to disappear, and releases quota for the retirement record.

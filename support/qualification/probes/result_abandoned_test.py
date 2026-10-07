@@ -4,10 +4,24 @@ import json
 import pathlib
 import unittest
 from result_retention_evidence import verify_abandoned
+from result_abandoned import prior_retirements_complete
 import result_retention_evidence_test as retention_tests
 
 
 class AbandonedEvidenceTests(unittest.TestCase):
+    def test_quota_waits_for_all_preceding_retirement_records(self):
+        rows = [{'type': kind, 'binding': {'jobUID': job}}
+                for job in ('resolve', 'verify', 'observe') for kind in ('intent', 'credential')]
+        self.assertFalse(prior_retirements_complete([]))
+        self.assertFalse(prior_retirements_complete(rows))
+        for job in ('resolve', 'verify'):
+            rows.append({'type': 'retired', 'binding': {'jobUID': job}})
+            self.assertFalse(prior_retirements_complete(rows))
+        rows.append({'type': 'retired', 'binding': {'jobUID': 'observe'}})
+        self.assertTrue(prior_retirements_complete(rows))
+        rows.append({'type': 'credential', 'binding': {'jobUID': 'unfinished'}})
+        self.assertFalse(prior_retirements_complete(rows))
+
     def fixture(self):
         before, after, markers, audits = retention_tests.RetentionEvidenceTests().fixture()
         binding = {'namespace': 'work', 'uid': 'resource', 'operation': 'resolve',
