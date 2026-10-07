@@ -10,8 +10,10 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"io"
 	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -19,6 +21,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -383,5 +386,76 @@ func TestParseReferenceRejectsUnpinnedRegistryShape(t *testing.T) {
 		if _, err := parseReference(raw); err == nil {
 			t.Errorf("parseReference(%q) unexpectedly succeeded", raw)
 		}
+	}
+}
+
+func TestPublishFailureKeepsStageAndSafeCause(t *testing.T) {
+	t.Parallel()
+	const sensitive = "registry-password-and-private-schema"
+	for _, test := range []struct {
+		name, want string
+		failAt     int
+		status     int
+		err        error
+	}{
+		{"start refused", "start OCI blob upload: HTTP 401", 1, http.StatusUnauthorized, nil},
+		{"blob refused", "complete OCI blob upload: HTTP 503", 2, http.StatusServiceUnavailable, nil},
+		{"manifest refused", "store OCI manifest: HTTP 500", 5, http.StatusInternalServerError, nil},
+		{"DNS timeout", "start OCI blob upload: execute registry request: DNS timeout", 1, 0, &net.DNSError{Err: sensitive, Name: sensitive, IsTimeout: true}},
+		{"DNS absent", "start OCI blob upload: execute registry request: DNS not found", 1, 0, &net.DNSError{Err: sensitive, Name: sensitive, IsNotFound: true}},
+		{"DNS failed", "start OCI blob upload: execute registry request: DNS failure", 1, 0, &net.DNSError{Err: sensitive, Name: sensitive}},
+		{"refused", "complete OCI blob upload: execute registry request: connection refused", 2, 0, fmt.Errorf("%s: %w", sensitive, syscall.ECONNREFUSED)},
+		{"reset", "store OCI manifest: execute registry request: connection reset", 5, 0, fmt.Errorf("%s: %w", sensitive, syscall.ECONNRESET)},
+		{"closed", "complete OCI blob upload: execute registry request: connection closed", 2, 0, io.ErrUnexpectedEOF},
+		{"deadline", "start OCI blob upload: execute registry request: deadline exceeded", 1, 0, context.DeadlineExceeded},
+		{"canceled", "start OCI blob upload: execute registry request: canceled", 1, 0, context.Canceled},
+		{"network timeout", "start OCI blob upload: execute registry request: network timeout", 1, 0, &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ETIMEDOUT}},
+		{"untrusted error", "start OCI blob upload: execute registry request: transport failure", 1, 0, errors.New(sensitive)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			requests := 0
+			client := newRegistryClient(roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				requests++
+				if requests == test.failAt {
+					if test.err != nil {
+						return nil, test.err
+					}
+					response := testResponse(test.status, "http://"+sensitive+"/private")
+					response.Body = io.NopCloser(strings.NewReader(sensitive))
+					return response, nil
+				}
+				if req.Method == http.MethodPost {
+					return testResponse(http.StatusAccepted, "http://registry.test:5000/upload/next"), nil
+				}
+				return testResponse(http.StatusCreated, ""), nil
+			}))
+			ref := registryReference{host: "registry.test:5000", repository: "schemas/private", tag: "test"}
+			got, err := publish(context.Background(), client, ref, credentials{username: sensitive, password: sensitive}, []byte(sensitive))
+			if err == nil || err.Error() != test.want || strings.Contains(err.Error(), sensitive) || got != "" || requests != test.failAt {
+				t.Fatalf("publication failure was not preserved safely: digest=%q error=%v requests=%d", got, err, requests)
+			}
+		})
+	}
+}
+
+func TestRunReportsSafePublicationFailure(t *testing.T) {
+	const sensitive = "private-schema-and-registry-password"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = io.WriteString(w, sensitive)
+	}))
+	defer server.Close()
+	host := strings.TrimPrefix(server.URL, "http://")
+	t.Setenv("PTAH_OCI_REGISTRY", host)
+	t.Setenv("PTAH_OCI_USERNAME", "fixture")
+	t.Setenv("PTAH_OCI_PASSWORD", sensitive)
+	path := filepath.Join(t.TempDir(), "schema.hcl")
+	if err := os.WriteFile(path, []byte(sensitive), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := run([]string{"oci://" + host + "/schemas/private:test", path})
+	if err == nil || err.Error() != "e2e-handcraft-oci: start OCI blob upload: HTTP 401" {
+		t.Fatalf("command lost its safe publication failure: %v", err)
 	}
 }

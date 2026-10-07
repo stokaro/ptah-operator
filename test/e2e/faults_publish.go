@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"regexp"
 	"slices"
 	"strings"
 
@@ -77,4 +78,25 @@ func containsAll(text string, fragments ...string) bool {
 		}
 	}
 	return true
+}
+
+// Only the handcrafted publisher's fixed diagnostics may enter public CI
+// output. Never return an arbitrary log line, URL, or registry response.
+var principalPublisherError = regexp.MustCompile(`^e2e-handcraft-oci: (?:read bounded schema input|invalid registry reference|registry credentials are required|encode OCI manifest|parse OCI upload base|registry returned (?:no|an unsafe) upload location|(?:start OCI blob upload|complete OCI blob upload|store OCI manifest): (?:HTTP [1-5][0-9]{2}|create registry request|execute registry request: (?:canceled|deadline exceeded|DNS timeout|DNS not found|DNS failure|network timeout|connection refused|connection reset|connection closed|transport failure)))$`)
+
+func principalPublisherFailure(logs []byte) string {
+	var found string
+	for line := range strings.SplitSeq(string(logs), "\n") {
+		if !principalPublisherError.MatchString(line) {
+			continue
+		}
+		if found != "" {
+			return "publisher failure detail is ambiguous"
+		}
+		found = line
+	}
+	if found == "" {
+		return "publisher failure detail unavailable"
+	}
+	return found
 }
