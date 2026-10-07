@@ -1620,5 +1620,76 @@
       "directory": "/home/buster/ptah-operator-evidence/020-qualification-2026-10-06"
     },
     "custody": "Private development copy with independently hash-verified download. Final encrypted custody, retention policy, and owner acceptance remain unassessed."
+  },
+  "capacityAPIEnrollmentRetention": {
+    "requirement": "#580 manager API demand on the unchanged twenty-resource steady fleet",
+    "conclusion": "Failed: an interior sixty-second window still exceeds 100 requests/s.",
+    "runtimeSourceCommit": "989c10977d971163203f6ab706bc3efc66ffab6a",
+    "collectorSourceCommit": "989c10977d971163203f6ab706bc3efc66ffab6a",
+    "runtimeImage": "e2e-registry.ptah-test-a-1-37-0-242-profile-1b5db851-0026e8302c.svc.cluster.local:5000/ptah-operator@sha256:6a4da92e8fec2e644b81cfc08d6f6b351d198bc44e1ce26f6f9eea26bb90f7b7",
+    "runnerImage": "e2e-registry.ptah-test-a-1-37-0-242-profile-1b5db851-0026e8302c.svc.cluster.local:5000/ptah-runner@sha256:3c926b0b03baae569014ceae3522a0dde7a9c03555a645eede9773b536dde8c2",
+    "profileRevision": 39,
+    "environment": "Kubernetes 1.37.0, native Linux amd64, PostgreSQL, ten schemas and ten migrations",
+    "window": {
+      "name": "existing twenty-resource fleet API demand",
+      "start": "2026-10-07T00:00:35.107809Z",
+      "end": "2026-10-07T00:10:35.107809Z"
+    },
+    "samples": 121,
+    "slidingMinuteBounds": 108,
+    "maxRequestsPerSecondUpperBound": 188.91666666666666,
+    "thresholdRequestsPerSecond": 100,
+    "thresholdPassed": false,
+    "largestContainedWindowLowerBound": {
+      "start": "2026-10-07T00:07:25.246676+00:00",
+      "end": "2026-10-07T00:08:25.246676+00:00",
+      "firstSample": 82,
+      "lastSample": 94,
+      "requestsAtLeast": 9556,
+      "requestsPerSecondAtLeast": 159.26666666666668
+    },
+    "provenExceedance": {
+      "start": "2026-10-07T00:07:25.246676+00:00",
+      "end": "2026-10-07T00:08:25.246676+00:00",
+      "firstSample": 82,
+      "lastSample": 94,
+      "requestsAtLeast": 9556,
+      "requestsPerSecondAtLeast": 159.26666666666668
+    },
+    "monitorRequests": 726,
+    "change": "Recognize an exact existing public Pod pin without repeating enrollment on every Job event. Every publication still passes live receiver and admission authorization. Share an already-read retirement deadline with the credential scan inside the existing 4096-entry hint budget; hints only defer work, while deletion checks actual identity, age and live recovery pins.",
+    "validation": {
+      "originalRegression": "On both families, five repeated Job events previously caused five extra enrollments and 40 API reads; they now require 10 reads and no extra enrollment. Publication still refuses a revoked claim. Replacement Pods, canceled requests and unavailable pin reads fail closed. A credential scan previously reread its known retirement window four times; it now defers without reads. The regression also replaces the credential UID, restores an active claim at the deadline, verifies the new object keeps its own full window, then proves eventual collection.",
+      "fixedRaceTests": [
+        "internal/controller",
+        "internal/resultcredentials",
+        "internal/resultcleanup",
+        "internal/resultretention",
+        "internal/resultservice",
+        "internal/controllerwrite"
+      ],
+      "vet": [
+        "internal/controller",
+        "internal/resultcredentials",
+        "internal/resultcleanup",
+        "internal/resultretention",
+        "internal/resultservice",
+        "internal/controllerwrite"
+      ],
+      "liveFleet": "All twenty original UIDs, specs and generations stayed unchanged; every slot refreshed under the fixed manager before measurement.",
+      "auditRestoration": "All original API-server manifests were restored before this run; the native measurement does not run with audit enabled."
+    },
+    "scope": "Only this steady API-demand window is assessed. No cold/backlog rerun, full soak, retention plateau, fault matrix, architecture matrix, final artifacts, or #580/#242 closure is claimed.",
+    "archive": {
+      "name": "capacity-enrollment-retention-2026-10-06.tar.gz",
+      "sha256": "30469017f96f7de5fc065507e0d8b12cce833b5fa4cbbe58de36fb1efcc3e387",
+      "bytes": 117534,
+      "memberCount": 29,
+      "downloadVerified": true,
+      "transport": "authenticated SSH",
+      "hostAlias": "diabolocom-buster",
+      "directory": "/home/buster/ptah-operator-evidence/020-qualification-2026-10-06"
+    },
+    "custody": "Private development copy with independently hash-verified download. Final encrypted custody, retention policy, and owner acceptance remain unassessed."
   }
 }
