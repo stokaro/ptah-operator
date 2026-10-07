@@ -3473,5 +3473,107 @@
       "memberCount": 47,
       "downloadVerified": false
     }
+  },
+  "abandonedPodToken": {
+    "runtimeSource": "c78d5683acdb772bc43a957680d115cc519015d7",
+    "procedureRevision": "de5e0d7279e88848c621b96755336840f2ab005e",
+    "procedureSHA256": "e9c48c0a301d4f6573709c5e2681dccff671002788cb0d5b1ede308ba5361a07",
+    "requirement": "Source applicability of #586 abandoned partial-publication retention after atomic inline results and public Pod bindings.",
+    "conclusion": "passed",
+    "platform": {
+      "dockerContext": "diabolocom",
+      "kubernetes": "1.37.0",
+      "os": "linux",
+      "architecture": "amd64",
+      "managerReplicas": 2,
+      "containerLogMaxSize": "10Mi"
+    },
+    "installation": {
+      "managerImage": "e2e-registry.ptah-test-a-1-37-0-inline-results-c78d5683-8041a5a1de.svc.cluster.local:5000/ptah-operator@sha256:4794c6de35f5891e01cb900774b1222bf328fa0db21ecd5c2651ec0559d7eb27",
+      "runnerImage": "e2e-registry.ptah-test-a-1-37-0-inline-results-c78d5683-8041a5a1de.svc.cluster.local:5000/ptah-runner@sha256:4794c6de35f5891e01cb900774b1222bf328fa0db21ecd5c2651ec0559d7eb27",
+      "executorImage": "e2e-registry.ptah-test-a-1-37-0-inline-results-c78d5683-8041a5a1de.svc.cluster.local:5000/ptah-executor@sha256:71abab66f626dce96f2879e46d3e71ce84c3b39d99d797a166ba1d1f3a1a26f1",
+      "fixtureImage": "e2e-registry.ptah-test-a-1-37-0-inline-results-c78d5683-8041a5a1de.svc.cluster.local:5000/e2e-fixture@sha256:0c39027476b7fb88ca1bde7360d23528e3bfb88be227b143aa8f9ae591fb8d05",
+      "chartSHA256": "d97f42469f268eb2ac6dd31e4af39a459b93acf7b3fc98084b6f2ccc90e88da1",
+      "ptahRevision": "f6e562c5b0986cd29a53a5cc01938827336b780a",
+      "deploymentUID": "e75434ee-4d4e-4f72-b4a2-48e19b891057"
+    },
+    "publication": {
+      "operation": "plan",
+      "engine": "postgresql",
+      "namespace": "ptah-result-abandoned-v2",
+      "resourceUID": "30809e1a-f7f2-44f6-953e-b7aab817fab2",
+      "jobUID": "213f17cd-bf5a-4139-b0ad-2d74b2deb79e",
+      "podUID": "b9543f55-f6a6-47f7-9167-1419a9dd9712",
+      "intentUID": "d258a8fc-6f34-4f52-8152-e9dad8a8c0be",
+      "payloadBytes": 701125,
+      "declaredChunks": 2,
+      "retiredAt": "2026-10-07T08:28:54+00:00",
+      "retentionSeconds": 3600,
+      "lastDeletedAt": "2026-10-07T09:28:54.354360+00:00",
+      "elapsedSecondsToLastDelete": 3600.35436,
+      "observationCount": 659
+    },
+    "verification": {
+      "status": "passed",
+      "eligibleRecords": 3,
+      "pinnedRecords": 2,
+      "collectedSecretProjections": 0,
+      "preservedPlanObjects": 2,
+      "garbageCollectorIdentities": [],
+      "recordDeletes": [
+        {
+          "name": "ptah-result-06c1446f5126f9ef3bcf5038ab532e5fa60693f4c5b014a47ffbf30aabee7b77",
+          "uid": "d258a8fc-6f34-4f52-8152-e9dad8a8c0be",
+          "notBefore": "2026-10-07T09:28:54+00:00",
+          "deletedAt": "2026-10-07T09:28:54.305136Z",
+          "auditIDs": [
+            "b8bacb64-17b3-42b5-94a7-bac3d9ea1fa7"
+          ]
+        },
+        {
+          "name": "ptah-result-06c1446f5126f9ef3bcf5038ab532e5fa60693f4c5b014a47ffbf30aabee7b77-retired",
+          "uid": "7741df76-242c-4218-a9e8-905a1909a803",
+          "notBefore": "2026-10-07T09:28:54+00:00",
+          "deletedAt": "2026-10-07T09:28:54.354360Z",
+          "auditIDs": [
+            "fa0875d6-d603-45c0-a0f3-21c4ee1ee45d"
+          ]
+        },
+        {
+          "name": "ptah-result-key-797ac50928edc037945538b432f1b17c",
+          "uid": "80594d43-0b9f-4666-afcf-42d86f5c4062",
+          "notBefore": "2026-10-07T09:28:54+00:00",
+          "deletedAt": "2026-10-07T09:28:54.333523Z",
+          "auditIDs": [
+            "099eda77-34d6-4b24-8cb9-a143fb179168"
+          ]
+        }
+      ],
+      "abandonedPublication": {
+        "intentUID": "d258a8fc-6f34-4f52-8152-e9dad8a8c0be",
+        "jobUID": "213f17cd-bf5a-4139-b0ad-2d74b2deb79e",
+        "recordsBeforeRetirement": 2,
+        "quotaRefusalAuditIDs": [
+          "955f34d0-ffec-4796-b7c8-14e940524bf8"
+        ]
+      }
+    },
+    "collectorIdentity": "system:serviceaccount:ptah-system-1-37-0-inline-results-c78d5683-8041a5a1de:ptah-runtime-generated-name-prefix-boundary-proof-8041a5a1de",
+    "faultConfigurationRestored": true,
+    "scope": "Actual first-chunk CREATE refused by a namespaced result-record quota. Original read-only Plan Job and Pod are removed; the installed collector deletes the intent, public credential and retirement record with their original UID preconditions after the unchanged API-timed retention window. An existing completed MySQL migration publication and source schema plan/chunk retain their identities and bytes. No per-operation credential Secret exists. All three API server manifests are restored byte for byte. Fixture artifacts use authenticated plain HTTP; this does not qualify signed-HTTPS capacity, maximum Plan size, other platforms, or the full production profile.",
+    "custody": "Local archive only; no remote export or independent download verification.",
+    "applicabilityAudit": {
+      "archiveMember": "abandoned/applicability-before-ci.json",
+      "sha256": "d20e7641462dc7885f4c4822f2cc7e9aebdddafb0b9283d710f413bb4b3f9661",
+      "requirements": 8,
+      "terminalIntegrationPending": true
+    },
+    "archive": {
+      "name": "abandoned-pod-token-2026-10-07.tar.gz",
+      "sha256": "b7bfa0d826bd5ca320a3cf7282011d8170584bc3e1ca55d3a6882f7136be9ad6",
+      "bytes": 174410,
+      "memberCount": 48,
+      "downloadVerified": false
+    }
   }
 }
