@@ -2529,5 +2529,91 @@
       "memberCount": 38,
       "downloadVerified": false
     }
+  },
+  "capacityInlineAttribution": {
+    "requirement": "#580 attribution of remaining manager API demand with atomic small-result storage",
+    "conclusion": "Diagnostic only. The preceding unaudited ten-minute window failed the unchanged100requests/s bound. This audit includes collection of older chunked publications and does not establish the later steady inline cleanup rate.",
+    "runtimeSourceCommit": "99903ed8007035a30cc43ef2e18201de1e1f317d",
+    "runtimeImage": "e2e-registry.ptah-test-a-1-37-0-242-profile-1b5db851-0026e8302c.svc.cluster.local:5000/ptah-operator@sha256:f679a210b4be46ae0c35a81457d4028b9091b73587f2366fb923904c5c9d053e",
+    "runnerImage": "e2e-registry.ptah-test-a-1-37-0-242-profile-1b5db851-0026e8302c.svc.cluster.local:5000/ptah-operator@sha256:f679a210b4be46ae0c35a81457d4028b9091b73587f2366fb923904c5c9d053e",
+    "window": {
+      "start": "2026-10-07T04:11:45.550126+00:00",
+      "end": "2026-10-07T04:14:45.779544+00:00"
+    },
+    "auditRequests": 16254,
+    "bracketingManagerCounterRequests": 16289.0,
+    "operationCohorts": [
+      {
+        "format": "inline",
+        "action": "new publication",
+        "operations": 81,
+        "boundRequests": 5136,
+        "scope": "Only requests with an explicit operation Job/Pod/record identity are assigned. Source/configuration and TokenReview requests remain unassigned; an operation may span the observation boundary."
+      },
+      {
+        "format": "inline",
+        "action": "collection",
+        "operations": 0,
+        "boundRequests": 0,
+        "scope": "Only requests with an explicit operation Job/Pod/record identity are assigned. Source/configuration and TokenReview requests remain unassigned; an operation may span the observation boundary."
+      },
+      {
+        "format": "inline",
+        "action": "other",
+        "operations": 121,
+        "boundRequests": 532,
+        "scope": "Only requests with an explicit operation Job/Pod/record identity are assigned. Source/configuration and TokenReview requests remain unassigned; an operation may span the observation boundary."
+      },
+      {
+        "format": "chunked",
+        "action": "new publication",
+        "operations": 0,
+        "boundRequests": 0,
+        "scope": "Only requests with an explicit operation Job/Pod/record identity are assigned. Source/configuration and TokenReview requests remain unassigned; an operation may span the observation boundary."
+      },
+      {
+        "format": "chunked",
+        "action": "collection",
+        "operations": 125,
+        "boundRequests": 4206,
+        "scope": "Only requests with an explicit operation Job/Pod/record identity are assigned. Source/configuration and TokenReview requests remain unassigned; an operation may span the observation boundary."
+      },
+      {
+        "format": "chunked",
+        "action": "other",
+        "operations": 9,
+        "boundRequests": 10,
+        "scope": "Only requests with an explicit operation Job/Pod/record identity are assigned. Source/configuration and TokenReview requests remain unassigned; an operation may span the observation boundary."
+      }
+    ],
+    "largestObservedAuditMinute": {
+      "from": "2026-10-07T04:13:23.562501+00:00",
+      "through": "2026-10-07T04:14:23.562501Z",
+      "requests": 6762,
+      "requestsPerSecond": 112.7
+    },
+    "completedCleanupAttempts": 125.0,
+    "cleanupDeletes": 625,
+    "resultRecordLists": 786,
+    "remainingLegacyInventory": {
+      "observedAt": "2026-10-07T04:19:36.122570+00:00",
+      "totalRecords": 7106,
+      "legacyRoots": 930,
+      "retiredLegacyRoots": 920,
+      "withoutRetirement": 10,
+      "latestRootRetirementBound": "2026-10-07T04:52:22+00:00",
+      "limit": "This age bound is not deletion authority. Original Job absence, live pins and each member age remain mandatory."
+    },
+    "restoration": "All three API-server manifests restored and verified byte-for-byte; task audit policy and logs removed from the nodes.",
+    "nextDecision": "After ordinary collection drains the retired legacy cohort, measure the same original twenty-resource fleet again. The changed retained-object population, not a weakened limit or shorter retention, distinguishes that measurement. Keep this mixed-format failure.",
+    "scope": "No DoD or rollout capacity claim is closed. Bound request counts exclude shared subject/configuration and TokenReview requests; operations can straddle the audit window.",
+    "custody": "Local archive only; no external upload or independent download verification.",
+    "archive": {
+      "name": "capacity-inline-attribution-2026-10-07.tar.gz",
+      "sha256": "e5a1fdee9213c731e22b9e9071133683d52b69f374ae76541941086979e718e3",
+      "bytes": 8219658,
+      "memberCount": 139,
+      "downloadVerified": false
+    }
   }
 }
