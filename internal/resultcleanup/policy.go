@@ -99,17 +99,25 @@ func (p Policy) AuthorizeDelete(ctx context.Context, record *api.PtahResultRecor
 		return ErrRetained
 	}
 	source := &api.PtahResultRecord{}
-	if err := p.Reader.Get(ctx, client.ObjectKey{Namespace: b.Namespace, Name: r.Source.Name}, source); err == nil {
+	sourceErr := p.Reader.Get(ctx, client.ObjectKey{Namespace: b.Namespace, Name: r.Source.Name}, source)
+	if sourceErr == nil {
 		sourceBinding, err := RootBinding(source)
 		if err != nil || source.UID != r.Source.UID || source.Spec.Type != r.Source.Type || sourceBinding != b {
 			return ErrRetained
 		}
-	} else if !apierrors.IsNotFound(err) {
-		return err
+	} else if !apierrors.IsNotFound(sourceErr) {
+		return sourceErr
 	}
 	if record.Spec.Type == "chunk" || record.Spec.Type == "complete" {
-		intent := &api.PtahResultRecord{}
-		err := p.Reader.Get(ctx, client.ObjectKey{Namespace: b.Namespace, Name: record.OwnerReferences[0].Name}, intent)
+		// An intent-sourced retirement already read this immutable owner above.
+		// Reuse that one live reading within this verdict. Credential-sourced
+		// retirement still needs a separate intent read; no verdict is cached
+		// across deletions, and the current recovery pins are checked below.
+		intent, err := source, sourceErr
+		if record.OwnerReferences[0].Name != r.Source.Name {
+			intent = &api.PtahResultRecord{}
+			err = p.Reader.Get(ctx, client.ObjectKey{Namespace: b.Namespace, Name: record.OwnerReferences[0].Name}, intent)
+		}
 		if err == nil {
 			intentBinding, bindingErr := RootBinding(intent)
 			if bindingErr != nil || intentBinding != b || intent.UID != record.OwnerReferences[0].UID {
