@@ -107,6 +107,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:cd3214f738b2d31841650f9124a80df0a72074ddfa55d2ccde69ec949f6758a3",
       "reason": "Complete small-result atomic storage in the unreleased 0.2.0 transport. A result up to 256 KiB can commit in its immutable intent; larger and already-started publications retain the chunked format. The paired receiver, runner, and consumer accept the exact root receipt as well as a chunked completion, with unchanged bytes, digest, UID binding, live authorization, retry deadlines, and no SQL replay. Admission validates the complete inline protocol before CREATE. No tagged release consumed this development representation; contract counters remain 1."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:268060920139bbbd45f45eaae08015d8e668d0bfe6b584cccb3b1435673d2591",
+      "reason": "Move the post-upload authority check to the publisher before its first write. Atomic results use this as their commit check; chunked results still revalidate after their chunks and before completion or an existing receipt. Request authentication before reading the body, admission authorization, exact durable readback, and identical-byte retries remain required. This removes duplicate live reads without changing wire payloads, identities, execution authority, or protocol version 1."
     }
   ]
 }

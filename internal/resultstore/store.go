@@ -192,10 +192,11 @@ func (s Store) Publish(ctx context.Context, b Binding, payload []byte, expectedD
 	return s.publish(ctx, b, payload, expectedDigest, nil)
 }
 
-// PublishAuthorized rechecks the receiver's live authority after chunk writes,
-// immediately before creating the completion record. A duplicate publication
-// must pass the same check before its existing receipt is returned. Admission
-// and the consuming controller still enforce the current execution epoch.
+// PublishAuthorized checks live authority immediately before the first write.
+// Chunked publication checks again after chunk writes, before completion or
+// returning an existing receipt. An atomic publication commits at its first
+// write; identical retries still pass that check. Admission and the consuming
+// controller also enforce the current execution epoch.
 func (s Store) PublishAuthorized(ctx context.Context, b Binding, payload []byte, expectedDigest string, check func(context.Context) error) (Receipt, error) {
 	if check == nil {
 		return Receipt{}, ErrInvalid
@@ -226,6 +227,11 @@ func (s Store) publishChunks(ctx context.Context, b Binding, name string, payloa
 	}
 	encoded, _ := json.Marshal(m)
 	intent := record(b.Namespace, name, "intent", owner(apiVersion, b.Kind, b.Name, b.UID), encoded)
+	if check != nil {
+		if err := check(ctx); err != nil {
+			return Receipt{}, err
+		}
+	}
 	if err := s.ensure(ctx, intent); err != nil {
 		return Receipt{}, err
 	}
