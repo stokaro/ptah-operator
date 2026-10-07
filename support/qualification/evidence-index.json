@@ -2425,5 +2425,109 @@
     "scope": "This run covers 5cc57190 and the recorded merge tree. Later local collector and Job-event changes are not covered. The short Capacity workflow is not the frozen #580 profile; #242 remains open.",
     "custody": "GitHub timing artifacts downloaded and digest-verified locally. The local archive was read back byte for byte; remote archive custody is not established.",
     "timingArtifactDownloadsVerified": 27
+  },
+  "capacityAPIInlineResults": {
+    "requirement": "#580 manager API demand on the unchanged twenty-resource steady fleet",
+    "conclusion": "Failed: an interior sixty-second window still exceeds 100 requests/s.",
+    "runtimeSourceCommit": "99903ed8007035a30cc43ef2e18201de1e1f317d",
+    "collectorSourceCommit": "99903ed8007035a30cc43ef2e18201de1e1f317d",
+    "runtimeImage": "e2e-registry.ptah-test-a-1-37-0-242-profile-1b5db851-0026e8302c.svc.cluster.local:5000/ptah-operator@sha256:f679a210b4be46ae0c35a81457d4028b9091b73587f2366fb923904c5c9d053e",
+    "runnerImage": "e2e-registry.ptah-test-a-1-37-0-242-profile-1b5db851-0026e8302c.svc.cluster.local:5000/ptah-operator@sha256:f679a210b4be46ae0c35a81457d4028b9091b73587f2366fb923904c5c9d053e",
+    "profileRevision": 39,
+    "environment": "Kubernetes 1.37.0, native Linux amd64, PostgreSQL, ten schemas and ten migrations",
+    "window": {
+      "name": "existing twenty-resource fleet API demand",
+      "start": "2026-10-07T03:53:07.13581Z",
+      "end": "2026-10-07T04:03:07.13581Z"
+    },
+    "samples": 121,
+    "slidingMinuteBounds": 108,
+    "maxRequestsPerSecondUpperBound": 124.65,
+    "thresholdRequestsPerSecond": 100,
+    "thresholdPassed": false,
+    "largestContainedWindowLowerBound": {
+      "start": "2026-10-07T03:55:57.234688+00:00",
+      "end": "2026-10-07T03:56:57.234688+00:00",
+      "firstSample": 34,
+      "lastSample": 46,
+      "requestsAtLeast": 6686,
+      "requestsPerSecondAtLeast": 111.43333333333334
+    },
+    "provenExceedance": {
+      "start": "2026-10-07T03:55:57.234688+00:00",
+      "end": "2026-10-07T03:56:57.234688+00:00",
+      "firstSample": 34,
+      "lastSample": 46,
+      "requestsAtLeast": 6686,
+      "requestsPerSecondAtLeast": 111.43333333333334
+    },
+    "monitorRequests": 726,
+    "managers": [
+      {
+        "name": "ptah-operator-ptah-operator-6bf84d6dc8-n2wrl",
+        "podUID": "a482defb-352d-47bb-886a-5e8204a4fa99",
+        "containerID": "containerd://4eb70b5b6fa8119c8423539a302c732dc9f71540221ff2983da36e866c9f89df",
+        "requests": 11302,
+        "cpuSeconds": 10.75,
+        "maxRSSBytes": 55947264,
+        "clientThrottleSeconds": 0,
+        "client429Responses": 0
+      },
+      {
+        "name": "ptah-operator-ptah-operator-6bf84d6dc8-wzrw8",
+        "podUID": "c7bb0867-a14f-4210-bd37-499f50c48ec1",
+        "containerID": "containerd://c4dbbbfcd0b3eed45243131a576659fdffec6a2286242b530497a4fa1113d761",
+        "requests": 37054,
+        "cpuSeconds": 39.36,
+        "maxRSSBytes": 103776256,
+        "clientThrottleSeconds": 0,
+        "client429Responses": 0
+      }
+    ],
+    "change": "Small results up to256KiB commit atomically in one immutable intent instead of intent/chunk/completion. Larger and existing chunked publications retain their original path. Both manager and runner use the recorded new image. Live receiver/admission authority, byte integrity, retention pins, and no-reexecution are unchanged.",
+    "validation": {
+      "originalRegression": "The original chunked path creates three records and fails the one-record regression. The fixed path validates all bytes and identifiers before returning the root receipt; older partial chunked results resume without replacement.",
+      "fixedRaceTests": [
+        "internal/resultstore",
+        "internal/resultdelivery",
+        "internal/resultservice",
+        "internal/resultauthority",
+        "internal/resultcredentials",
+        "internal/resultretention",
+        "internal/resultcleanup",
+        "internal/resultconsumer",
+        "internal/controllerwrite",
+        "internal/controller"
+      ],
+      "realAPI": "Inline protocol and revoked-before-CREATE refusals, independent readback, identical concurrent delivery, active and restored pin deletion refusals, complete collection, maximum payload, crash boundaries and chunk UID replacement all passed.",
+      "sourceVerification": "make verify-source passed, including required real API envtest suites.166 qualification probe tests passed. E2E unit readers and the acknowledgment proxy passed.",
+      "liveFleet": "All twenty original UIDs, specs and generations remain unchanged; every sampled manager matches its installed Pod UID, container ID, and exact image.",
+      "compatibilityLimit": "The old quota2 abandoned-Resolve procedure assumes a partial small result. It now explicitly refuses atomic completion as partial evidence; its next native qualification must use an actual chunked partial publication. Earlier native transport evidence does not qualify the new inline representation.",
+      "auditRestoration": "All three API-server configurations were restored before this unaudited measurement.",
+      "nativePublicationCheck": {
+        "newJobsWithExpectedRunner": 128,
+        "verifiedAtomicPublications": 128,
+        "resourceUIDs": 20,
+        "operations": [
+          "migration-history",
+          "observe",
+          "plan",
+          "resolve",
+          "verify"
+        ],
+        "scope": "Read-only premeasurement check of new native Jobs and atomic publication bytes. Not a complete cycle, retention, or capacity verdict."
+      }
+    },
+    "scope": "Only this steady API-demand window is assessed. No cold/backlog rerun, full soak, retention plateau, fault matrix, architecture matrix, final artifacts, or #580/#242 closure is claimed.",
+    "retentionContext": "Existing one-hour retention is unchanged. The short measurement may include collection of earlier chunked publications; it does not establish the later all-inline retention plateau.",
+    "apiCriteriaPassed": false,
+    "custody": "Local archive only. Remote custody and independent download verification are not established.",
+    "archive": {
+      "name": "capacity-inline-results-2026-10-07.tar.gz",
+      "sha256": "c06989a398438c0666f388af54c90ffec807c84082f6080ed27a5d7c85383bad",
+      "bytes": 115661,
+      "memberCount": 38,
+      "downloadVerified": false
+    }
   }
 }
