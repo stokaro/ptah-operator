@@ -1691,5 +1691,31 @@
       "directory": "/home/buster/ptah-operator-evidence/020-qualification-2026-10-06"
     },
     "custody": "Private development copy with independently hash-verified download. Final encrypted custody, retention policy, and owner acceptance remain unassessed."
+  },
+  "capacityAPIAudit": {
+    "runtimeSourceCommit": "989c10977d971163203f6ab706bc3efc66ffab6a",
+    "window": {
+      "start": "2026-10-07T00:19:23.935665+00:00",
+      "end": "2026-10-07T00:20:23.945224+00:00"
+    },
+    "requests": 5089,
+    "scope": "Diagnostic Metadata-only audit of the exact manager identity after sequential API-server restarts. This is request attribution, not a steady-state capacity verdict. All original API-server manifests were restored and diagnostic files removed from the nodes.",
+    "findings": [
+      "A representative completed operation used 105 attributable Job, Pod and result-record requests, excluding subject reads and TokenReviews. Ten live authorization passes account for 20 retired-marker reads.",
+      "The deletion policy read the same immutable intent twice when it was both the retirement source and a member owner. The focused regression fails on the original source and passes with one current read. Separate owners and failed live reads retain evidence."
+    ],
+    "fixSourceCommit": "949c7d0c2c65e9aba5cb8dcc2f2dc3284d71ff39",
+    "validation": "Race tests and vet passed for resultcleanup, resultretention, and controllerwrite. No new native capacity pass is claimed.",
+    "archive": {
+      "name": "capacity-api-attribution-2026-10-07.tar.gz",
+      "sha256": "1ae7c8643d81df3d536ce4b5735851aba0286b0955d7ab61b1c35771a878ca7f",
+      "bytes": 3186617,
+      "memberCount": 39,
+      "downloadVerified": true,
+      "transport": "authenticated SSH",
+      "hostAlias": "diabolocom-buster",
+      "directory": "/home/buster/ptah-operator-evidence/020-qualification-2026-10-06"
+    },
+    "custody": "Private development copy with independently hash-verified download. Final encrypted custody, retention policy, and owner acceptance remain unassessed."
   }
 }
