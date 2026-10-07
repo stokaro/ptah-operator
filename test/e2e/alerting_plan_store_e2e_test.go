@@ -389,6 +389,8 @@ func (a *alertingRun) planStoreLarge() {
 			nextHistory = time.Now().Add(alScrapeInterval)
 		}
 	}
+	pruningCtx, stopPruning := context.WithTimeout(a.ctx, alTimeout)
+	defer stopPruning()
 	for _, p := range large {
 		check()
 		current := &ptahv1.PtahSchemaPlan{}
@@ -399,7 +401,26 @@ func (a *alertingRun) planStoreLarge() {
 		owner := read(&ptahv1.PtahSchema{ObjectMeta: metav1.ObjectMeta{Namespace: p.Namespace, Name: p.Spec.SchemaRef.Name, UID: p.Spec.SchemaRef.UID}})
 		a.check(alPlanMayPrune(current, owner, a.planStorePins()), "recheck the complete live pin set")
 		uid, rv := current.UID, current.ResourceVersion
-		a.check(a.cluster.Client.Delete(a.ctx, current, client.Preconditions{UID: &uid, ResourceVersion: &rv}), "prune only the original unpinned plan")
+		// Each owner carries 8 MiB of blocking chunks. Keep collection to one
+		// payload at a time instead of queuing the entire batch alongside the
+		// live API reads. Observe the original recovery window throughout.
+		a.check(a.cluster.Client.Delete(pruningCtx, current, client.Preconditions{UID: &uid, ResourceVersion: &rv},
+			client.PropagationPolicy(metav1.DeletePropagationForeground)), "prune only the original unpinned plan")
+		a.check(harness.Wait(pruningCtx, "the original plan's foreground collection", alTimeout, time.Second, func(ctx context.Context) (bool, string, error) {
+			check()
+			remaining := &ptahv1.PtahSchemaPlan{}
+			err := a.cluster.Client.Get(ctx, client.ObjectKeyFromObject(p), remaining)
+			if apierrors.IsNotFound(err) {
+				return true, "", nil
+			}
+			if err != nil {
+				return false, "", err
+			}
+			if remaining.UID != p.UID {
+				return false, "", fmt.Errorf("pruned plan was replaced during garbage collection")
+			}
+			return false, "waiting for the original plan and its blocking payloads", nil
+		}), "finish one original payload before pruning the next")
 	}
 	resolved, _ := a.waitForDeliveryWithCheck(alMatch{status: "resolved", alertName: alPlanStoreAlert, labels: map[string]string{"operator_namespace": a.in.OperatorNamespace, "operator_metrics_service": a.metricsService}}, "the plan-store recovery notification", alDetectionSlack, index+1, check)
 	a.check(harness.Wait(a.ctx, "native plan-store recovery samples", 2*alScrapeInterval+alScrapeTimeout, time.Second, func(context.Context) (bool, string, error) {
