@@ -1,12 +1,14 @@
 package e2e
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
 	"slices"
 	"strings"
+	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -16,6 +18,7 @@ import (
 	"k8s.io/apimachinery/pkg/watch"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/test/e2e/harness"
 )
 
 // The pinned migrator reserves one pool connection for its advisory lock and
@@ -50,6 +53,47 @@ func migrationExecutorBackendMatchesPod(backend string, pod *corev1.Pod, uid typ
 	parts := strings.Split(backend, "/")
 	return len(parts) == 4 && executorBackendMatchesPod(strings.Join(parts[:2], "/"), pod, uid) &&
 		executorBackendMatchesPod(strings.Join(parts[2:], "/"), pod, uid)
+}
+
+// SQL can reach the table barrier before kubelet publishes Running. Keep the
+// first Pod identity while waiting for both observations, and return the exact
+// reading that matched rather than reopening the window with another GET.
+func waitForMigrationExecutorBackend(ctx context.Context, timeout, interval time.Duration,
+	read func() (string, *corev1.Pod, error),
+) (string, *corev1.Pod, error) {
+	var backend string
+	var pod *corev1.Pod
+	var uid types.UID
+	err := harness.Wait(ctx, "the original migration executor's SQL sessions and running Pod", timeout, interval,
+		func(context.Context) (bool, string, error) {
+			var err error
+			backend, pod, err = read()
+			if err != nil {
+				return false, "", err
+			}
+			if backend == "" {
+				return false, "no blocked DDL and advisory-lock session pair", nil
+			}
+			if pod == nil || pod.UID == "" {
+				return false, "", errors.New("the migration session pair has no identified Apply Pod")
+			}
+			observed := fmt.Sprintf("backend=%q Pod=%s UID=%s phase=%s IP=%s", backend, pod.Name, pod.UID, pod.Status.Phase, pod.Status.PodIP)
+			if uid == "" {
+				uid = pod.UID
+			}
+			if pod.UID != uid {
+				return false, observed, fmt.Errorf("the original Apply Pod %s was replaced: %s", uid, observed)
+			}
+			if pod.Status.Phase == corev1.PodPending || pod.Status.Phase == "" ||
+				(pod.Status.Phase == corev1.PodRunning && pod.Status.PodIP == "") {
+				return false, observed, nil
+			}
+			if !migrationExecutorBackendMatchesPod(backend, pod, uid) {
+				return false, observed, fmt.Errorf("the database did not bind both sessions to the exact running migration Pod: %s", observed)
+			}
+			return true, observed, nil
+		})
+	return backend, pod, err
 }
 
 func runningMigrationApprovalPlan(resource *ptahv1alpha1.PtahMigration, plan *ptahv1alpha1.PtahMigrationPlan,

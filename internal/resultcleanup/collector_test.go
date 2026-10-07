@@ -11,10 +11,12 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	api "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/resultcredentials"
 	"github.com/stokaro/ptah-operator/internal/resultdelivery/jobconfig"
 	"github.com/stokaro/ptah-operator/internal/resultdelivery/resulttest"
 	"github.com/stokaro/ptah-operator/internal/resultretention"
 	"github.com/stokaro/ptah-operator/internal/resultstore"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -226,6 +228,207 @@ func TestPinsJobAgeAndAPIErrorsRetainEvidence(t *testing.T) {
 }
 
 type listFailure struct{ client.Reader }
+
+type cleanupReadCounter struct {
+	client.Reader
+	gets int
+}
+
+func (r *cleanupReadCounter) Get(ctx context.Context, key client.ObjectKey, object client.Object, opts ...client.GetOption) error {
+	r.gets++
+	return r.Reader.Get(ctx, key, object, opts...)
+}
+
+func TestIntentDefersItsCredentialScanUntilTheRetirementDeadline(t *testing.T) {
+	f := resulttest.New(t, "schema-plan-dev-fence-scheduling")
+	c := &observedClient{Client: f.Client(t), now: time.Date(2026, 10, 7, 0, 0, 0, 0, time.UTC)}
+	credential, err := (resultcredentials.PodBindings{Writer: c, Reader: c}).Ensure(t.Context(), f.Identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	subject := f.Subject.(*api.PtahSchema)
+	active := subject.Status.ActiveOperation
+	subject.Status.ActiveOperation = nil
+	if err := c.Update(t.Context(), subject); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Client.Delete(t.Context(), f.Job); err != nil {
+		t.Fatal(err)
+	}
+	payload := []byte("retained outcome")
+	if _, err := (resultstore.Store{Client: c, Reader: c}).Publish(t.Context(), f.Identity.Binding, payload, fmt.Sprintf("sha256:%x", sha256.Sum256(payload))); err != nil {
+		t.Fatal(err)
+	}
+	name, _ := resultstore.Name(f.Identity.Binding)
+	intent, pin := &api.PtahResultRecord{}, &api.PtahResultRecord{}
+	if err := c.Get(t.Context(), client.ObjectKey{Namespace: f.Job.Namespace, Name: name}, intent); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Get(t.Context(), client.ObjectKey{Namespace: f.Job.Namespace, Name: credential.Name}, pin); err != nil {
+		t.Fatal(err)
+	}
+	marker, err := resultretention.Record(f.Identity.Binding, resultretention.Source{Name: intent.Name, UID: intent.UID, Type: "intent"}, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Create(t.Context(), marker); err != nil {
+		t.Fatal(err)
+	}
+	reader := &cleanupReadCounter{Reader: c}
+	collector, err := New(c, Policy{Reader: reader, Window: time.Hour, Now: func() time.Time { return c.now }}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	collector.pending = []metav1.PartialObjectMetadata{{ObjectMeta: intent.ObjectMeta}}
+	if err := collector.Step(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	// A name-based hint may also defer a restored credential with a new UID.
+	// It must never shorten that new object's own retention window.
+	c.now = c.now.Add(15 * time.Minute)
+	if err := c.Client.Delete(t.Context(), pin); err != nil {
+		t.Fatal(err)
+	}
+	pin.ResourceVersion = ""
+	if err := c.Create(t.Context(), pin); err != nil {
+		t.Fatal(err)
+	}
+	if pin.UID == credential.UID {
+		t.Fatal("credential replacement did not receive a new UID")
+	}
+	before := reader.gets
+	collector.pending = []metav1.PartialObjectMetadata{{ObjectMeta: pin.ObjectMeta}}
+	if err := collector.Step(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if reader.gets != before {
+		t.Fatalf("credential repeated %d reads of the already known retirement window", reader.gets-before)
+	}
+	// The shared deadline only defers reads. A restored active claim still
+	// protects the credential once that deadline has elapsed.
+	subject.Status.ActiveOperation = active
+	if err := c.Update(t.Context(), subject); err != nil {
+		t.Fatal(err)
+	}
+	c.now = marker.CreationTimestamp.Add(time.Hour)
+	collector.pending = []metav1.PartialObjectMetadata{{ObjectMeta: pin.ObjectMeta}}
+	if err := collector.Step(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if reader.gets == before || len(c.deletes) != 0 {
+		t.Fatal("deferred credential skipped the restored live pin")
+	}
+	subject.Status.ActiveOperation = nil
+	if err := c.Update(t.Context(), subject); err != nil {
+		t.Fatal(err)
+	}
+	c.now = c.now.Add(time.Minute)
+	collector.pending = []metav1.PartialObjectMetadata{{ObjectMeta: pin.ObjectMeta}}
+	if err := collector.Step(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	key := client.ObjectKeyFromObject(pin)
+	if err := c.Get(t.Context(), key, &api.PtahResultRecord{}); err != nil {
+		t.Fatalf("replacement credential lost its own retention window: %v", err)
+	}
+	c.now = pin.CreationTimestamp.Add(time.Hour)
+	collector.pending = []metav1.PartialObjectMetadata{{ObjectMeta: pin.ObjectMeta}}
+	if err := collector.Step(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Get(t.Context(), key, &api.PtahResultRecord{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("eligible replacement credential was never collected: %v", err)
+	}
+}
+
+func TestYoungRetirementMetadataNeedsNoRetryHint(t *testing.T) {
+	f := fixture(t)
+	if err := f.c.Create(t.Context(), f.marker); err != nil {
+		t.Fatal(err)
+	}
+	reader := &cleanupReadCounter{Reader: f.c}
+	f.p.Reader = reader
+	c := f.collector(t)
+	c.pending = []metav1.PartialObjectMetadata{{ObjectMeta: f.marker.ObjectMeta}}
+	if err := c.Step(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if reader.gets != 0 || len(c.next) != 0 || len(f.c.deletes) != 0 {
+		t.Fatalf("unexpired retirement used API reads or retry hints: reads=%d hints=%d deletes=%d", reader.gets, len(c.next), len(f.c.deletes))
+	}
+	// Metadata only postpones collection. Once the earliest possible window
+	// ends, a restored active claim must still prevent deletion.
+	resource := f.f.Subject.(*api.PtahSchema)
+	resource.Status.ActiveOperation = &api.ActiveOperationStatus{ID: f.f.Identity.Binding.OperationID}
+	if err := f.c.Update(t.Context(), resource); err != nil {
+		t.Fatal(err)
+	}
+	f.c.now = f.c.now.Add(f.p.Window)
+	c.pending = []metav1.PartialObjectMetadata{{ObjectMeta: f.marker.ObjectMeta}}
+	if err := c.Step(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if reader.gets == 0 || len(f.c.deletes) != 0 {
+		t.Fatal("elapsed metadata bound bypassed the live recovery pin check")
+	}
+}
+
+func TestFullRetryHintsKeepUnexpiredRecordsDeferred(t *testing.T) {
+	for _, expired := range []int{0, 2048} {
+		t.Run(fmt.Sprintf("expired=%d", expired), func(t *testing.T) {
+			f := fixture(t)
+			if err := f.c.Create(t.Context(), f.marker); err != nil {
+				t.Fatal(err)
+			}
+			reader := &cleanupReadCounter{Reader: f.c}
+			f.p.Reader = reader
+			c := f.collector(t)
+			deadline := f.c.now.Add(time.Hour)
+			c.next[retryHintKey{uid: f.marker.UID}] = deadline
+			for i := 1; i < 4096; i++ {
+				next := deadline
+				if i <= expired {
+					next = f.c.now
+				}
+				c.next[retryHintKey{uid: types.UID(fmt.Sprintf("retained-%d", i))}] = next
+			}
+			// A newly listed root can disappear before its direct read. Filling
+			// the hint budget must not forget the retained roots beside it.
+			c.pending = []metav1.PartialObjectMetadata{{ObjectMeta: metav1.ObjectMeta{
+				Namespace: f.marker.Namespace, Name: "already-gone", UID: "already-gone",
+			}}}
+			if err := c.Step(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			before := reader.gets
+			c.pending = []metav1.PartialObjectMetadata{{ObjectMeta: f.marker.ObjectMeta}}
+			if err := c.Step(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if reader.gets != before {
+				t.Fatalf("retained root was read %d times before its deadline after hint overflow", reader.gets-before)
+			}
+			if len(c.next) > 4096 {
+				t.Fatalf("retry hints exceeded their memory bound: %d", len(c.next))
+			}
+			// The hint never authorizes deletion. At its deadline, a newly
+			// restored active operation must be read and retain the evidence.
+			resource := f.f.Subject.(*api.PtahSchema)
+			resource.Status.ActiveOperation = &api.ActiveOperationStatus{ID: f.f.Identity.Binding.OperationID}
+			if err := f.c.Update(t.Context(), resource); err != nil {
+				t.Fatal(err)
+			}
+			f.c.now = deadline
+			c.pending = []metav1.PartialObjectMetadata{{ObjectMeta: f.marker.ObjectMeta}}
+			if err := c.Step(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if reader.gets == before || len(f.c.deletes) != 0 {
+				t.Fatal("expired hint bypassed the live recovery pin check")
+			}
+		})
+	}
+}
 
 func (listFailure) List(context.Context, client.ObjectList, ...client.ListOption) error {
 	return errors.New("API unavailable")

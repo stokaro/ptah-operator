@@ -141,6 +141,40 @@ func TestMySQLWorkloadSelectsBothResourceTargets(t *testing.T) {
 	}
 }
 
+func TestHTTPSWorkloadDoesNotGrantPlainHTTP(t *testing.T) {
+	s := &scenarios{in: inputs{namespace: "work", databaseSecret: "db-%d", registryCA: "registry-ca"}, load: workload{Schemas: 10}}
+	for _, spec := range []map[string]any{
+		s.schemaObject(0).Object["spec"].(map[string]any)["desired"].(map[string]any),
+		s.migrationObject("migration", 10, "Always", true).Object["spec"].(map[string]any)["artifact"].(map[string]any),
+	} {
+		transport := spec["transport"].(map[string]any)
+		if _, found := transport["plainHTTP"]; found {
+			t.Fatal("HTTPS qualification still grants plain HTTP")
+		}
+		ca, ok := transport["caFrom"].(map[string]any)
+		if !ok || ca["name"] != "registry-ca" || ca["key"] != "ca.pem" {
+			t.Fatalf("workload did not select the bootstrap's CA: %v", transport)
+		}
+	}
+}
+
+func TestCapacityUsesTheFrozenExecutionBaseline(t *testing.T) {
+	for _, profile := range []string{"soak", "backlog"} {
+		load, err := loadWorkload("../../support/capacity/" + profile + ".json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		s := &scenarios{in: inputs{namespace: "work", databaseSecret: "db-%d"}, load: load}
+		for _, object := range []map[string]any{s.schemaObject(0).Object, s.migrationObject("migration", 10, "Always", true).Object} {
+			spec := object["spec"].(map[string]any)
+			execution := spec["execution"].(map[string]any)
+			if execution["activeDeadlineSeconds"] != int64(900) || execution["connectTimeout"] != "10s" || execution["failureRetryInterval"] != "30s" || spec["policy"].(map[string]any)["lockTimeout"] != "30s" {
+				t.Fatalf("%s %s differs from the frozen execution baseline: %v", profile, object["kind"], spec)
+			}
+		}
+	}
+}
+
 func TestAPrefixMatchesOnlyWhereItIsAsked(t *testing.T) {
 	families, err := parseScrape([]byte(strings.Join([]string{
 		`# TYPE workqueue_depth gauge`,

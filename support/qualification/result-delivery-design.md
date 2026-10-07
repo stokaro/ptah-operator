@@ -276,7 +276,10 @@ After execution, the runner encodes one immutable result, writes a bounded
 termination summary, and sends the payload. The summary's existing
 `frameDigest` field names the canonical payload SHA-256, which is also the
 receipt digest; a summary never claims durable acceptance. Delivery permits
-four attempts, each bounded to 30 seconds, within a two-minute total deadline.
+up to 120 attempts with one-second spacing, each bounded to 30 seconds, within
+the same two-minute total deadline. Fast transient refusals consume that time
+budget instead of exhausting delivery in three seconds. Definitive authority
+refusals still stop immediately; retries send the same bytes without rerunning SQL.
 It has its own context so execution cancellation can still be reported. The
 kubelet's termination grace can kill the process before delivery completes;
 unknown-outcome recovery remains necessary.

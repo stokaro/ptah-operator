@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sync"
@@ -194,8 +195,9 @@ func TestCompletedPublicationCannotBeHealed(t *testing.T) {
 // read and the API's final CREATE. This is not a missing-chunk repair.
 type completionRaceReader struct {
 	client.Reader
-	name  string
-	reads int
+	name   string
+	reads  int
+	reread func(*api.PtahResultRecord) error
 }
 
 func (r *completionRaceReader) Get(ctx context.Context, key client.ObjectKey, object client.Object, options ...client.GetOption) error {
@@ -205,7 +207,11 @@ func (r *completionRaceReader) Get(ctx context.Context, key client.ObjectKey, ob
 			return apierrors.NewNotFound(schema.GroupResource{Group: "operator.ptah.run", Resource: "ptahresultrecords"}, key.Name)
 		}
 	}
-	return r.Reader.Get(ctx, key, object, options...)
+	err := r.Reader.Get(ctx, key, object, options...)
+	if err == nil && key.Name == r.name && r.reread != nil {
+		return r.reread(object.(*api.PtahResultRecord))
+	}
+	return err
 }
 func TestAdmissionAllowsConcurrentIdenticalCompletion(t *testing.T) {
 	s, records := publishedRecords(t)
@@ -213,6 +219,62 @@ func TestAdmissionAllowsConcurrentIdenticalCompletion(t *testing.T) {
 	s.Reader = reader
 	if _, payload, err := s.ValidateRecordCreate(t.Context(), records["complete"]); err != nil || !bytes.Equal(payload, []byte("publication bytes")) {
 		t.Fatalf("identical completion race refused: %v", err)
+	}
+}
+
+func TestAdmissionAllowsMemberCreatedBeforeConcurrentCompletion(t *testing.T) {
+	for _, role := range []string{"intent", "chunk"} {
+		t.Run(role, func(t *testing.T) {
+			s, records := publishedRecords(t)
+			candidate := records[role].DeepCopy()
+			candidate.UID, candidate.ResourceVersion = "", ""
+			// The first member read precedes the other publisher's CREATE.
+			// That publisher then commits before admission reads completion.
+			reader := &completionRaceReader{Reader: s.Reader, name: candidate.Name}
+			s.Reader = reader
+			got, payload, err := s.ValidateRecordCreate(t.Context(), candidate)
+			if err != nil || got != binding() || payload != nil {
+				t.Fatalf("identical %s created before completion was refused: %v", role, err)
+			}
+			if reader.reads != 2 {
+				t.Fatalf("checked member %d times, want a re-read after completion", reader.reads)
+			}
+		})
+	}
+}
+
+func TestAdmissionMemberRaceStillRequiresExactReadableRecord(t *testing.T) {
+	for _, role := range []string{"intent", "chunk"} {
+		for _, fault := range []string{"missing", "unavailable", "changed bytes", "changed owner", "missing UID"} {
+			t.Run(role+"/"+fault, func(t *testing.T) {
+				s, records := publishedRecords(t)
+				candidate := records[role]
+				reader := &completionRaceReader{Reader: s.Reader, name: candidate.Name, reread: func(record *api.PtahResultRecord) error {
+					switch fault {
+					case "missing":
+						return apierrors.NewNotFound(schema.GroupResource{Group: api.GroupVersion.Group, Resource: "ptahresultrecords"}, record.Name)
+					case "unavailable":
+						return apierrors.NewServiceUnavailable("injected read failure")
+					case "changed bytes":
+						record.Spec.Data = append(record.Spec.Data, ' ')
+					case "changed owner":
+						record.OwnerReferences[0].UID = "other-owner"
+					case "missing UID":
+						record.UID = ""
+					}
+					return nil
+				}}
+				s.Reader = reader
+				got, payload, err := s.ValidateRecordCreate(t.Context(), candidate)
+				wantError := errors.Is(err, ErrConflict)
+				if fault == "unavailable" {
+					wantError = apierrors.IsServiceUnavailable(err)
+				}
+				if !wantError || got != (Binding{}) || payload != nil || reader.reads != 2 {
+					t.Fatalf("unsafe or unreadable member admitted after completion: reads=%d err=%v", reader.reads, err)
+				}
+			})
+		}
 	}
 }
 

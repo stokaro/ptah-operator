@@ -28,6 +28,32 @@ class WorkloadTests(unittest.TestCase):
         path.write_text(json.dumps(value))
         return path
 
+    def test_signer_refuses_wrong_digest_or_failed_cryptographic_verification(self):
+        with tempfile.TemporaryDirectory() as parent:
+            root = Path(parent) / 'inputs'
+            root.mkdir()
+            public = Path(parent) / 'signing.pub'
+            public.write_text('public key fixture')
+            workload = Workload(self.state(parent), root)
+            identity = 'sha256:' + 'a' * 64
+            reference = 'oci://localhost:1234/schemas/capacity-inputs@' + identity
+            claims = json.dumps([{'critical': {'image': {'docker-manifest-digest': identity}}}]).encode()
+            with patch.dict('os.environ', CAPACITY_SIGNING_KEY='/signing.key', CAPACITY_SIGNING_PUBLIC_KEY=str(public),
+                            PTAH_OCI_USERNAME='fixture', PTAH_OCI_PASSWORD='private'):
+                for reading in (b'[]', claims.replace(b'a' * 64, b'b' * 64), RuntimeError('signature refused')):
+                    with self.subTest(reading=reading), patch.object(workload, 'command', side_effect=[b'', reading]):
+                        with self.assertRaises((ValueError, RuntimeError)):
+                            workload.sign_artifact(reference)
+                with patch.object(workload, 'command', side_effect=[b'', claims]) as command:
+                    result = workload.sign_artifact(reference)
+                    self.assertEqual(result['manifestDigest'], identity)
+                    calls = command.call_args_list
+                    self.assertIn('--registry-referrers-mode=oci-1-1', calls[0].args[1])
+                    self.assertIn('--use-signing-config=false', calls[0].args[1])
+                    self.assertIn(str(public), calls[1].args[1])
+                    self.assertEqual(calls[0].args[2]['COSIGN_EXPERIMENTAL'], '1')
+                self.assertFalse(list(root.glob('signer-auth-*')))
+
     def test_generation_covers_every_slot_and_declared_update(self):
         with tempfile.TemporaryDirectory() as parent:
             for engine in ('PostgreSQL', 'MySQL'):

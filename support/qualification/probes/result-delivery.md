@@ -94,8 +94,9 @@ Pod-token evidence includes the manager-created public binding, the original
 Job and Pod UIDs, and the receiver-only token projection. Version 4 identifies
 Pod-token delivery; version 5 also requires receiver replacement. Certificate
 evidence cannot substitute for either version. Pod-token mode accepts lost
-acknowledgment, receiver replacement, and concurrent redelivery of a committed
-result; other fault modes retain their historical certificate setup.
+acknowledgment, receiver replacement, concurrent redelivery of a committed
+result, and bounded slow uploads; other fault modes retain their historical
+certificate setup.
 
 Each run proves a single lost acknowledgment for its recorded engine and
 Kubernetes minor. Concurrent duplicate delivery, receiver failure during retry,
@@ -457,10 +458,19 @@ to choose a winner and same-receiver saturation remain separate cases.
 
 ## Slow uploads and independent migration progress
 
-Set `RESULT_PROBE_UPLOAD_BUDGET=1` with the other fault flags unset or zero.
-The shared native setup holds the original Apply Pod before execution. The
-privileged harness uses that Pod's recorded credential over verified mTLS;
-the runner receives no API permission. It sends one byte of a declared 4096-byte
+Set `RESULT_PROBE_AUTH=pod-token` and `RESULT_PROBE_UPLOAD_BUDGET=1` with the
+other fault flags unset or zero. The shared native setup holds the original
+Apply Pod before execution. It adds a task-owned node label to the resource's
+supported `nodeSelector`, then removes that label after the Apply Job reaches
+the Pod admission gate. The admitted original Pod remains unscheduled while
+its controller renews the Apply Lease. The peer omits only this temporary
+selector. Restoring the label releases the same Pod without changing its spec.
+
+The privileged harness requests a receiver-audience token bound to that Pending
+Pod and sends its manager-created public identity over server-authenticated TLS.
+The token stays in memory; the runner receives no API permission. The runner
+later uses its own projected receiver token. Historical certificate mode uses
+the held Pod's recorded mTLS credential. The harness sends one byte of a declared 4096-byte
 body to the receiver on the current leader. A second request must receive 503
 and `Retry-After: 1`, while the other receiver still admits authenticated HEAD.
 
@@ -480,7 +490,7 @@ Both native databases must show one committed effect and no rolled-back replay,
 using the calibrated counters from the shared setup. Evidence includes both
 immutable publications, receiver identities, monotonic request intervals, raw
 Lease samples and independent-resource convergence. Cleanup restores the
-Service selector and removes the temporary Pod label and credential gate.
+Service selector and removes the temporary Pod label, node label, and admission gate.
 
 `result_upload_budget.verify_evidence` replays these bounds. Its refusal tests
 reject absent or short faults, serial saturation, unbounded responses, a changed
@@ -492,16 +502,23 @@ or supply the other controller-family and installed-failure requirements.
 Set `RESULT_PROBE_FAMILY=PtahSchema` with the upload-budget mode to exercise the
 other controller family. The default remains `PtahMigration`. The schema case
 starts two empty databases, publishes a small native schema, and holds the
-original Apply credential. An independent schema must reach current-generation
+original Apply Pod. An independent schema must reach current-generation
 `InSync` through the free receiver before the first upload times out. Both
 final database readings must contain the exact declared column types,
 nullability, and primary key. Empty metadata, a preexisting fixture, a missing
 key, or status without the database effect fails the evidence verifier.
 
-Schema evidence is version 2 and records the resource family explicitly. It
+Historical schema evidence is version 2 and records the resource family explicitly. It
 proves two distinct original Apply Jobs and native schema convergence, without
 claiming the sequence/auto-increment SQL counters used by migration evidence.
 The upload, Lease, authentication, cleanup and observation budgets are unchanged.
+
+Pod-token evidence is version 3 for both families. It binds the fault requests to
+the original Job/Pod, records the public identity digest and privileged token
+source, and requires the original Pod to remain unscheduled through the fault.
+Both completed runner Pods must carry only the declared receiver-audience token
+projection. Certificate evidence, API-audience tokens, replacement Pods, and a
+released scheduling gate cannot satisfy this version.
 
 ## Interrupted result serving-key renewal before first harvest
 

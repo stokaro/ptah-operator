@@ -114,24 +114,30 @@ func (s Store) ValidateRecordCreate(ctx context.Context, candidate *api.PtahResu
 	// A completed publication may never be healed by recreating a missing member.
 	existing := &api.PtahResultRecord{}
 	err = s.Reader.Get(ctx, client.ObjectKeyFromObject(candidate), existing)
-	if err == nil {
-		if existing.UID == "" || !existing.DeletionTimestamp.IsZero() || !recordShape(existing, candidate) || !bytes.Equal(existing.Spec.Data, candidate.Spec.Data) {
-			return Binding{}, nil, ErrConflict
-		}
-	} else if apierrors.IsNotFound(err) {
+	if apierrors.IsNotFound(err) {
 		// A completion racing this same CREATE is an identical-write race,
 		// not recreation of a missing member. Let the API resolve that race.
 		if candidate.Spec.Type != "complete" {
 			ready := &api.PtahResultRecord{}
-			err = s.Reader.Get(ctx, client.ObjectKey{Namespace: m.Binding.Namespace, Name: name + "-complete"}, ready)
-			if err == nil {
-				return Binding{}, nil, ErrConflict
-			}
-			if !apierrors.IsNotFound(err) {
-				return Binding{}, nil, err
+			readyErr := s.Reader.Get(ctx, client.ObjectKey{Namespace: m.Binding.Namespace, Name: name + "-complete"}, ready)
+			if readyErr == nil {
+				// Another publisher may have created this member and completed
+				// after the first read. Admit only its exact persisted member;
+				// a member still missing after completion cannot be recreated.
+				err = s.Reader.Get(ctx, client.ObjectKeyFromObject(candidate), existing)
+				if apierrors.IsNotFound(err) {
+					return Binding{}, nil, ErrConflict
+				}
+			} else if !apierrors.IsNotFound(readyErr) {
+				return Binding{}, nil, readyErr
 			}
 		}
-	} else {
+	}
+	if err == nil {
+		if existing.UID == "" || !existing.DeletionTimestamp.IsZero() || !recordShape(existing, candidate) || !bytes.Equal(existing.Spec.Data, candidate.Spec.Data) {
+			return Binding{}, nil, ErrConflict
+		}
+	} else if !apierrors.IsNotFound(err) {
 		return Binding{}, nil, err
 	}
 	return m.Binding, payload, nil

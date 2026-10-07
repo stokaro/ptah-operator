@@ -14,6 +14,7 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -25,8 +26,9 @@ import (
 
 type admissionClient struct {
 	client.Client
-	probes int
-	fail   bool
+	probes   int
+	fail     bool
+	conflict string
 }
 
 func (c *admissionClient) Patch(ctx context.Context, o client.Object, p client.Patch, opts ...client.PatchOption) error {
@@ -39,6 +41,10 @@ func (c *admissionClient) Patch(ctx context.Context, o client.Object, p client.P
 	}
 	if c.fail {
 		return fmt.Errorf("admission unavailable")
+	}
+	if o.GetName() == c.conflict {
+		c.conflict = ""
+		return apierrors.NewConflict(ptahv1.GroupVersion.WithResource("ptahschemas").GroupResource(), o.GetName(), fmt.Errorf("status advanced during dry run"))
 	}
 	c.probes++
 	return nil
@@ -250,6 +256,50 @@ func TestRecoveryRetainsEachProbesPostHookBoundary(t *testing.T) {
 		t.Fatal("cached progress hid Apply")
 	}
 
+}
+
+func TestRecoveryKeepsVerifiedProgressAcrossAdmissionConflict(t *testing.T) {
+	s, objects, scheme := recoveryFixture(t)
+	first := objects[len(objects)-1].(*ptahv1.PtahSchema)
+	second := first.DeepCopy()
+	second.Name, second.UID = "second", "second-uid"
+	s.Intent.Probes = append(s.Intent.Probes, Probe{Kind: "PtahSchema", Namespace: second.Namespace, Name: second.Name, UID: string(second.UID), Generation: second.Generation})
+	idle := first.Status.DeepCopy()
+	reading := idle.DeepCopy()
+	reading.ActiveOperation = &ptahv1.ActiveOperationStatus{Type: ptahv1.OperationObserve, Attempt: 1}
+	reading.Conditions = []metav1.Condition{{Type: ptahv1.ConditionReady, Status: metav1.ConditionFalse, Reason: "OperationInProgress", ObservedGeneration: first.Generation}}
+	second.Status = *reading.DeepCopy()
+	objects = append(objects, second)
+	c := &admissionClient{Client: fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(first, second).WithObjects(objects...).Build()}
+	var verifier recoveryVerifier
+	if err := verifier.verify(t.Context(), c, s); err == nil || !verifier.probes[string(first.UID)] {
+		t.Fatalf("first probe did not establish its independent boundary: %v", err)
+	}
+	for _, pair := range []struct {
+		object *ptahv1.PtahSchema
+		status *ptahv1.PtahSchemaStatus
+	}{{first, reading}, {second, idle}} {
+		if err := c.Get(t.Context(), client.ObjectKeyFromObject(pair.object), pair.object); err != nil {
+			t.Fatal(err)
+		}
+		pair.object.Status = *pair.status.DeepCopy()
+		if err := c.Status().Update(t.Context(), pair.object); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c.conflict = first.Name
+	if err := verifier.verify(t.Context(), c, s); !apierrors.IsConflict(err) {
+		t.Fatalf("conflicting admission probe passed recovery: %v", err)
+	}
+	// A successful retry must use current admission. It must not wait for the
+	// first probe's next idle period after that probe already proved recovery.
+	before := c.probes
+	if err := verifier.verify(t.Context(), c, s); err != nil {
+		t.Fatalf("status conflict discarded verified post-hook progress: %v", err)
+	}
+	if c.probes-before != len(s.Intent.Probes) {
+		t.Fatal("recovery skipped fresh admission after the conflict")
+	}
 }
 
 func TestVerifiedMigrationMayContinueHistoryButNotApplyOrRetry(t *testing.T) {

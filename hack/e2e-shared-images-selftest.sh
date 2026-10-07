@@ -30,13 +30,18 @@ trap 'rm -rf -- "$WORK_DIR"' EXIT
 
 FUNCTIONS_FILE=$WORK_DIR/functions.sh
 awk '
+	/^sha256\(\) \{$/ { capture = 1 }
+	capture { print }
+	capture && /^\}$/ { exit }
+' "$ROOT_DIR/hack/e2e-kind.sh" >"$FUNCTIONS_FILE"
+awk '
 	/^image_identity\(\) \{$/ { capture = 1 }
 	capture { print }
 	/wrote the four task images/ { finishing = 1 }
 	finishing && /^\}$/ { exit }
-' "$ROOT_DIR/hack/e2e-kind.sh" >"$FUNCTIONS_FILE"
-for required_function in image_identity image_label_value load_prebuilt_images export_task_images; do
-	grep -q "^$required_function() {" "$FUNCTIONS_FILE" ||
+' "$ROOT_DIR/hack/e2e-kind.sh" >>"$FUNCTIONS_FILE"
+for required_function in sha256 image_identity image_identity_matches_archive image_label_value load_prebuilt_images export_task_images; do
+	grep -Eq "^$required_function\\(\\) [({]$" "$FUNCTIONS_FILE" ||
 		fail "the extraction from hack/e2e-kind.sh does not carry $required_function"
 done
 
@@ -216,6 +221,44 @@ case "$load_output" in
 	*"loaded v0.7.0"*) ;;
 	*) fail "the Ptah version was not read from the manifest: $load_output" ;;
 esac
+
+# Docker's two image stores report different identities for these same bytes.
+# Build a real archive member so the acceptance depends on its hash and link,
+# not on the fake daemon agreeing with an expected answer.
+identity_fixture=$WORK_DIR/identity-fixture
+mkdir -p "$identity_fixture/blobs/sha256"
+# shellcheck source=/dev/null
+. "$FUNCTIONS_FILE"
+config_identity=sha256:$(printf '%s' '{"rootfs":{"type":"layers","diff_ids":[]}}' | sha256)
+jq -nc --arg config "$config_identity" '{schemaVersion:2,
+  mediaType:"application/vnd.oci.image.manifest.v1+json",
+  config:{mediaType:"application/vnd.oci.image.config.v1+json",digest:$config},layers:[]}' \
+	>"$WORK_DIR/identity-manifest.json"
+manifest_identity=sha256:$(sha256 <"$WORK_DIR/identity-manifest.json")
+cp "$WORK_DIR/identity-manifest.json" "$identity_fixture/blobs/sha256/${manifest_identity#sha256:}"
+write_identity_pair() {
+	write_prepared
+	tar -cf "$PREPARED_DIR/operator.tar" -C "$identity_fixture" blobs
+	jq --arg identity "$1" '.images[0].identity = $identity' \
+		"$PREPARED_DIR/images.json" >"$PREPARED_DIR/images.json.next"
+	mv "$PREPARED_DIR/images.json.next" "$PREPARED_DIR/images.json"
+	printf '%s' "$2" >"$WORK_DIR/state/$(state_key prepared/operator:1).id"
+}
+write_identity_pair "$config_identity" "$manifest_identity"
+run_load >"$WORK_DIR/identity-load.log" 2>&1 || fail "classic-to-containerd image transfer was refused"
+write_identity_pair "$manifest_identity" "$config_identity"
+run_load >"$WORK_DIR/identity-load.log" 2>&1 || fail "containerd-to-classic image transfer was refused"
+
+# A valid manifest for another config must not satisfy the prepared identity.
+foreign_identity=sha256:$(printf '%s' 'another image' | sha256)
+write_identity_pair "$foreign_identity" "$manifest_identity"
+expect_refusal "the manifest declares $foreign_identity"
+
+# Naming a file by the expected digest is not enough when its bytes were edited.
+jq --arg config "$foreign_identity" '.config.digest = $config' \
+	"$WORK_DIR/identity-manifest.json" >"$identity_fixture/blobs/sha256/${manifest_identity#sha256:}"
+write_identity_pair "$foreign_identity" "$manifest_identity"
+expect_refusal "the manifest declares $foreign_identity"
 
 # An artifact from another commit. This is the substitution the transfer makes
 # possible, and the one a content check on the images alone would pass.

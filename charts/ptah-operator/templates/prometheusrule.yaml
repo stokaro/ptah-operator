@@ -108,11 +108,13 @@ spec:
         {{- end }}
         {{- with $rules.planStoreBytesAbove }}
         - alert: PtahOperatorPlanStoreLarge
-          expr: max(ptah_operator_stored_plan_bytes) > {{ . }}
+          # A failed state read omits this gauge. Keep an existing incident
+          # until a complete reading establishes whether pruning recovered it.
+          expr: max(ptah_operator_stored_plan_bytes) > {{ . }} or (max(ALERTS{alertname="PtahOperatorPlanStoreLarge", alertstate="firing"}) unless max(ptah_operator_stored_plan_bytes))
           labels:
             severity: warning
           annotations:
-            summary: "Retained schema plans hold {{`{{ $value | humanize1024 }}`}}B, over the budget set for them"
+            summary: "Retained schema plans exceeded their storage budget; recovery is not yet confirmed"
             description: "The operator prunes no plan. The runbook says which plans are pinned and how to export and delete the rest."
             runbook_url: {{ printf "%s#prune-plans" $rules.runbookBaseURL | quote }}
         {{- end }}

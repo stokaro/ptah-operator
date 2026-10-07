@@ -372,5 +372,1788 @@
       "sha256": "e958dda8eb463bf2d84d07297fc6d403cc3ca69b8744611ba65f24dd1f3a21c1",
       "downloadVerified": true
     }
+  },
+  "defaultIntegrationCI": {
+    "requirement": "#586 default installation integration and #584 retained source-CI evidence",
+    "sourceCommit": "3c03a80842cae24457bafca4b5d912ca30da8b76",
+    "testedMergeCommit": "9c6473b4d62a0607c833e687feee738e3ae12842",
+    "sourceTree": "132e2fed82e4fc7212e1b74ea507120767caa624",
+    "mergedAs": "1e00c3c76888960ece8a09b3eb7426211156056c",
+    "runURL": "https://github.com/stokaro/ptah-operator/actions/runs/37408822317",
+    "conclusion": "success",
+    "fullPipelineSeconds": 5116,
+    "runtimeArchitecture": "linux/amd64",
+    "kubernetesMinors": [
+      "1.35",
+      "1.36",
+      "1.37"
+    ],
+    "passedSuiteCells": 27,
+    "passedOwnedPhaseExecutions": 51,
+    "declaredPhases": 17,
+    "scenarioEngineFamilyRows": 345,
+    "archive": {
+      "name": "ci-37408822317.tar.gz",
+      "sha256": "8b625af8528e232392683d59a4fb2135cfb83a64b8db1dc472232e3e9d464980",
+      "memberCount": 114,
+      "downloadVerified": true,
+      "transport": "authenticated SSH",
+      "hostAlias": "diabolocom-buster",
+      "directory": "/home/buster/ptah-operator-evidence/020-qualification-2026-10-06"
+    },
+    "scope": "Complete default E2E matrix and source checks. Preparation is excluded from phase coverage. Focused historical probes retain their own source identities; this run does not replace the remaining changed-authentication proof review, ARM64 runtime, production-artifact, restore, capacity, or final owner acceptance obligations."
+  },
+  "nativeSuiteRebalance": {
+    "requirement": "Local validation of the existing acceptance suite regrouping for the 90-minute CI target",
+    "harnessSourceCommit": "b1c35d6068e98301b9b7140f36e056138b00871b",
+    "runtimeSourceCommit": "630c4af8c4ca23e94710fc8353fbda85692f6700",
+    "runtimeArchitecture": "linux/amd64",
+    "kubernetesVersion": "1.37.0",
+    "conclusion": "pass",
+    "phases": {
+      "assert": {
+        "seconds": 28.23
+      },
+      "cert-rotation": {
+        "seconds": 201.26
+      },
+      "dataplane": {
+        "seconds": 10.32,
+        "mode": "prepare"
+      },
+      "reference-data-postgresql": {
+        "seconds": 899.62
+      },
+      "alerting-certificates": {
+        "seconds": 2033.76,
+        "scenarios": {
+          "native-producers": 63.13,
+          "monitoring-path": 14.15,
+          "plan-store-large": 1022.1,
+          "certificate-expiry": 934.26
+        }
+      }
+    },
+    "archive": {
+      "name": "suite-rebalance-native-2026-10-06.tar.gz",
+      "sha256": "79cee770ba30735a89d432cf0defa0b217f8bdcb583891736e8a9c4cfcb78731",
+      "memberCount": 23,
+      "bytes": 252578,
+      "downloadVerified": true,
+      "transport": "authenticated SSH",
+      "hostAlias": "diabolocom-buster",
+      "directory": "/home/buster/ptah-operator-evidence/020-qualification-2026-10-06"
+    },
+    "scope": "Moved reference-data and storage-alert scenarios passed with their native prerequisites. Preparation is not acceptance coverage. The retained cluster used the unchanged 630c4af8 product runtime and the regrouped test harness. Two preparation attempts refused existing demo or partially created fixtures; exact task-owned objects were cleaned by UID before the passing preparation. This is not a complete new suite run, a full CI duration, or production acceptance."
+  },
+  "nativeAlertingStartup": {
+    "requirement": "Locally validate the complete shortened alerting phase after removing its incidental Prometheus warm-up",
+    "harnessSourceCommit": "c9af0a0b394a3e0554922887e6259c3d51dd12d3",
+    "runtimeSourceCommit": "630c4af8c4ca23e94710fc8353fbda85692f6700",
+    "runtimeArchitecture": "linux/amd64",
+    "kubernetesVersion": "1.37.0",
+    "conclusion": "pass",
+    "seconds": 2141.63,
+    "scenarios": {
+      "native-producers": 62.71,
+      "monitoring-path": 12.39,
+      "unresolved-view-read-failures": 159.72,
+      "lost-scrape-target": 219.92,
+      "lost-view": 109.36,
+      "upgrade-alerts": 1577.45
+    },
+    "archive": {
+      "name": "alerting-startup-native-2026-10-06.tar.gz",
+      "sha256": "96dda47b64f64925e09cff92cd4f9695502421d5370c1dd51ea26f16e7b8c8ac",
+      "memberCount": 92,
+      "bytes": 1172056,
+      "downloadVerified": true,
+      "transport": "authenticated SSH",
+      "hostAlias": "diabolocom-buster",
+      "directory": "/home/buster/ptah-operator-evidence/020-qualification-2026-10-06"
+    },
+    "custody": "Private development copy with independently hash-verified download. Final encrypted custody, retention policy, and owner acceptance remain unassessed.",
+    "scope": "All six native alerting scenarios completed, including both upgrade incidents and recovery. This fixes the missing pre-fault scrape baseline in CI run 37437296857. Independent schema-faults and certificate-suite failures in that run remain open; this is not a full CI duration or production acceptance."
+  },
+  "nativePlanStoreRecovery": {
+    "requirement": "Preserve the native plan-storage incident until a current below-threshold reading proves safe recovery",
+    "harnessSourceCommit": "1f09dfb92453c0629198f767bb4727069ffa1f40",
+    "chartSourceCommit": "1f09dfb92453c0629198f767bb4727069ffa1f40",
+    "runtimeSourceCommit": "630c4af8c4ca23e94710fc8353fbda85692f6700",
+    "runtimeArchitecture": "linux/amd64",
+    "kubernetesVersion": "1.37.0",
+    "conclusion": "pass",
+    "seconds": 2004.41,
+    "scenarios": {
+      "native-producers": 64,
+      "monitoring-path": 12,
+      "plan-store-large": 993,
+      "certificate-expiry": 936
+    },
+    "nativePlanStore": {
+      "planCount": 17,
+      "retainedBytes": 142606336,
+      "readablePins": 30
+    },
+    "archive": {
+      "name": "plan-store-recovery-native-2026-10-06.tar.gz",
+      "sha256": "ba57ee54c1305b2c1c9092d224fb5829c595e5853aaa8f0f6a606a4336298259",
+      "memberCount": 9,
+      "bytes": 248663,
+      "downloadVerified": true,
+      "transport": "authenticated SSH",
+      "hostAlias": "diabolocom-buster",
+      "directory": "/home/buster/ptah-operator-evidence/020-qualification-2026-10-06"
+    },
+    "custody": "Private development copy with independently hash-verified download. Final encrypted custody, retention policy, and owner acceptance remain unassessed.",
+    "scope": "All four native certificate/storage scenarios passed, including threshold crossing, a continuous storage incident, exact exports, safe pruning, and certificate failure/recovery. The original rule fails the pinned Prometheus regression when its gauge disappears; the corrected rule preserves the original firing state and clears on a fresh low reading. This addresses the certificates 1.36 failure in CI run 37437296857, but does not claim a new CI matrix or production acceptance."
+  },
+  "nativeTransientDelivery": {
+    "requirement": "Recover from a short busy receiver without executing Apply again",
+    "runtimeSourceCommit": "29e6224f7ca54e8903d7c515a3e7697f9b688056",
+    "harnessBaseCommit": "29e6224f7ca54e8903d7c515a3e7697f9b688056",
+    "harnessScope": "Diagnostic only; original running-Apply scenario plus preparation and complete initial watch audit. No full-suite or CI claim.",
+    "kubernetesVersion": "1.37.0",
+    "runtimeArchitecture": "linux/amd64",
+    "resources": {
+      "sharedCPUSet": "0-3",
+      "taskContainers": 7,
+      "memoryBound": false
+    },
+    "conclusion": "pass",
+    "seconds": 592.29,
+    "scenarios": {
+      "watches": 10,
+      "approval-history-audit": 31,
+      "running-apply-executor-image-change": 551
+    },
+    "archive": {
+      "name": "running-apply-delivery-native-2026-10-06.tar.gz",
+      "sha256": "e6861e21b713bc748e6e1167b6e01b9778e7e2641b7f607b83348bac6cd77e9b",
+      "memberCount": 13,
+      "bytes": 12959,
+      "downloadVerified": true,
+      "transport": "authenticated SSH",
+      "hostAlias": "diabolocom-buster",
+      "directory": "/home/buster/ptah-operator-evidence/020-qualification-2026-10-06"
+    },
+    "custody": "Private development copy with independently hash-verified download. Final encrypted custody, retention policy, and owner acceptance remain unassessed.",
+    "scope": "The local TLS runner regression fails after four attempts in 3.005 seconds on the original source and passes after the fix, with one executor invocation. The unchanged native running-Apply scenario then passed on PostgreSQL and MySQL: original Job/Pod identities, persisted results, complete execution horizons, new-epoch convergence, SQL audits, and no replay. This is not the complete schema-approvals phase or a CI matrix verdict."
+  },
+  "nativePodTokenUploadBounds": {
+    "requirement": "Issue 586: bound incomplete authenticated uploads while Apply Leases renew and independent resources converge.",
+    "runtimeSourceCommit": "be110ef42e612477344eda8c2d6691e3e029f7b5",
+    "harnessSourceCommit": "77dcc2faf62bf38509f8e3faac5ce879920172ac",
+    "kubernetesVersion": "1.37.0",
+    "runtimeArchitecture": "linux/amd64",
+    "resources": {
+      "sharedCPUSet": "0-3",
+      "taskContainers": 6,
+      "memoryBound": false
+    },
+    "operatorImage": "e2e-registry.ptah-test-a-1-37-0-242-upload-be110ef4-f2944907ca.svc.cluster.local:5000/ptah-operator@sha256:f8cd2660ae48c7940f8d8d0bff6a56d866f779f3228fa284a1afb6d96fe6fa1f",
+    "conclusion": "pass",
+    "cases": [
+      {
+        "family": "PtahMigration",
+        "engine": "PostgreSQL",
+        "uploadSeconds": [
+          120.010502375,
+          120.008372291
+        ],
+        "maxRenewalGapSeconds": 5.144408,
+        "peerConvergenceSeconds": 52.062342042,
+        "evidenceSHA256": "eb64f489a99264e5bf68536aca6d500db2a628e56342bc1ea9ee763605920aa5"
+      },
+      {
+        "family": "PtahMigration",
+        "engine": "MySQL",
+        "uploadSeconds": [
+          120.019107917,
+          120.008358917
+        ],
+        "maxRenewalGapSeconds": 5.120845,
+        "peerConvergenceSeconds": 53.270427042,
+        "evidenceSHA256": "1936898a1b8e4e37683218602e69461ffab16689a70d0da5c20905b9ede5101a"
+      },
+      {
+        "family": "PtahSchema",
+        "engine": "PostgreSQL",
+        "uploadSeconds": [
+          120.020009667,
+          120.0092575
+        ],
+        "maxRenewalGapSeconds": 5.120038,
+        "peerConvergenceSeconds": 73.820465625,
+        "evidenceSHA256": "1bc5c94cac51f8f187c3ae2416580af49c26fbbc8ccef6e6c4f5a75c1862d2ba"
+      },
+      {
+        "family": "PtahSchema",
+        "engine": "MySQL",
+        "uploadSeconds": [
+          120.016240708,
+          120.008887541
+        ],
+        "maxRenewalGapSeconds": 5.472901,
+        "peerConvergenceSeconds": 73.613711834,
+        "evidenceSHA256": "2bf241758158f2e9ee5aa56dd0b712414177fa52a5cdc1e71254d7387209be07"
+      }
+    ],
+    "budgets": {
+      "uploadSeconds": 120,
+      "responseSeconds": 5,
+      "renewalSeconds": 15
+    },
+    "proof": "All four engine/family cases retained the original Job/Pod and one Apply, refused requests while both slots were occupied, recovered each slot after its timeout, and validated the native database effects and durable publications. Pod-bound receiver tokens stayed in memory. Independent readback confirmed the Service and temporary admission/node/Pod metadata were restored.",
+    "archive": {
+      "name": "pod-token-upload-budget-native-2026-10-06.tar.gz",
+      "sha256": "db9ca058916f1fb05f0746419365ed2dc0b854f666bc70ec60bcbfb88031b8c1",
+      "memberCount": 40,
+      "bytes": 79967,
+      "downloadVerified": true,
+      "transport": "authenticated SSH",
+      "hostAlias": "diabolocom-buster",
+      "directory": "/home/buster/ptah-operator-evidence/020-qualification-2026-10-06"
+    },
+    "custody": "Private development copy with independently hash-verified download. Final encrypted custody, retention policy, and owner acceptance remain unassessed.",
+    "scope": "Replaces the certificate-based development upload-bound proof with Pod-token execution. Does not close the remaining issue 586 final integration or the artifact, architecture, capacity, and owner-acceptance requirements. The first attempt exposed an accepted empty-selector admission defect under issue 578; the successful peer omits that temporary selector. The separate Job-builder correction is covered by nativeEmptyNodeSelector."
+  },
+  "nativeEmptyNodeSelector": {
+    "requirement": "Issue 578: accepted API configuration boundaries must produce executable workloads.",
+    "runtimeSourceCommit": "77dcc2faf62bf38509f8e3faac5ce879920172ac",
+    "kubernetesVersion": "1.37.0",
+    "runtimeArchitecture": "linux/amd64",
+    "operatorImage": "e2e-registry.ptah-test-a-1-37-0-242-upload-be110ef4-f2944907ca.svc.cluster.local:5000/ptah-operator@sha256:e984941ce02c3efe5f95840fba4e8ad57358b378afa86debdd55e3c3bd310074",
+    "conclusion": "pass",
+    "defect": "An explicit empty execution.nodeSelector survives CRD storage but disappears from the Job wire encoding. Strict admission compared that decoded Job with a builder retaining an empty map and rejected the operator's own Job.",
+    "correction": "Normalize only the built empty Job selector to its wire form. Keep strict admission comparisons and their existing negative controls.",
+    "localRegression": "Both family wire-format tests, native migration admission regression, and a real API-server/webhook test fail against the original source. Fixed affected race packages, vet, the real API test, and complete make verify pass.",
+    "cases": [
+      {
+        "family": "PtahMigration",
+        "resourceUID": "945f71fc-f3a3-4cbd-951b-fe86da4baddc",
+        "storedSelector": {},
+        "jobs": 5,
+        "applyJobs": 1,
+        "pods": 5,
+        "databaseWitness": "1:1:true",
+        "seconds": 55.489,
+        "conclusion": "passed"
+      },
+      {
+        "family": "PtahSchema",
+        "resourceUID": "f081ad22-badc-4a98-a3fd-edc2ee1ac187",
+        "storedSelector": {},
+        "jobs": 7,
+        "applyJobs": 1,
+        "pods": 7,
+        "databaseWitness": {
+          "columns": [
+            "id:bigint:NO",
+            "email:text:NO"
+          ],
+          "primaryKeyColumns": [
+            "id"
+          ]
+        },
+        "seconds": 72.463,
+        "conclusion": "passed"
+      }
+    ],
+    "procedureSHA256": "5742e1c064ec13d85c9f14c63fc74fd17a54a1abd9c900e670104196076e7221",
+    "archive": {
+      "name": "empty-selector-native-2026-10-06.tar.gz",
+      "sha256": "ec6d4f119ed281ea8626874b246df90684f6d6fcf2addbf6cfa53baa397e6f78",
+      "memberCount": 33,
+      "bytes": 43517,
+      "downloadVerified": true,
+      "transport": "authenticated SSH",
+      "hostAlias": "diabolocom-buster",
+      "directory": "/home/buster/ptah-operator-evidence/020-qualification-2026-10-06"
+    },
+    "custody": "Private development copy with independently hash-verified download. Final encrypted custody, retention policy, and owner acceptance remain unassessed.",
+    "scope": "Two fresh PostgreSQL databases and resources retain an explicit empty selector in API storage, complete 12 native Jobs from the fixed manager revision, execute one Apply each, and reach verified database state without Pod restarts. This closes the reproduced empty-selector defect, not the full issue 578 matrix or final artifact qualification."
+  },
+  "capacityDistinctApproverClient": {
+    "requirement": "Issue 580: capacity approval paths must work with the frozen distinct-approver control enabled.",
+    "sourceCommit": "9aaacb42ade3e77e73f4f5994eeeffa78db676ca",
+    "conclusion": "pass for client and bootstrap regression; full capacity qualification remains open",
+    "localChecks": {
+      "originalRetentionClient": "fails because the workload writer attempts self-approval",
+      "capacityRace": "pass",
+      "capacityVet": "pass",
+      "capacityProbeTests": 57
+    },
+    "realAPI": {
+      "kubernetesVersion": "1.37.0",
+      "hostArchitecture": "darwin/arm64",
+      "selfApproval": "refused by the actual distinct-approver webhook",
+      "separateApprover": "admitted with its API-confirmed identity",
+      "secretRead": "forbidden",
+      "summarySHA256": "06daa7ca353afe255bd4ff37227cea00514ee8c5c904aa7e2ef6b64e46e4ff09"
+    },
+    "bootstrap": "Only the two owned workload namespaces receive RoleBindings to the existing chart approver role. No cluster-wide binding is added; existing lab runs without a separate approver remain unchanged.",
+    "archive": {
+      "name": "capacity-distinct-approver-api-2026-10-06.tar.gz",
+      "sha256": "f789c45b7415438349f5a1fa06cdd0b67c2498a354914330d93faba90124af44",
+      "memberCount": 20,
+      "bytes": 5799,
+      "downloadVerified": true,
+      "transport": "authenticated SSH",
+      "hostAlias": "diabolocom-buster",
+      "directory": "/home/buster/ptah-operator-evidence/020-qualification-2026-10-06"
+    },
+    "custody": "Private development copy with independently hash-verified download. Final encrypted custody, retention policy, and owner acceptance remain unassessed.",
+    "scope": "Real API-server admission with stored fixture objects; no controller, database execution, Linux arm64, soak, or complete frozen-profile proof. Temporary kubeconfigs were removed and the isolated API server stopped."
+  },
+  "capacitySignedRegistryPreparation": {
+    "requirement": "Issue 580: prepare signed digest-addressed inputs and HTTPS CA bindings for the frozen registry profile.",
+    "sourceCommit": "7f094468811454ff15a417c1a737fd48954f4812",
+    "pinnedPtahCommit": "f6e562c5b0986cd29a53a5cc01938827336b780a",
+    "cosignVersion": "v3.0.6",
+    "conclusion": "pass for registry and signing preparation; full capacity qualification remains open",
+    "checks": {
+      "capacityRace": "pass",
+      "capacityVet": "pass",
+      "shellcheck": "pass",
+      "pythonProbes": "60 cases: the initial run passed 59 and found a wrapper guard-order error; all six affected wrapper cases passed after that correction.",
+      "https": "authenticated publication with the explicit CA passed; unauthenticated access and an untrusted CA were refused",
+      "signatures": "the actual capacity helper signed both schema and migration digests; cryptographic verification and the pinned Ptah policy passed; unsigned artifacts and an unrelated public key were refused",
+      "credentialCleanup": "temporary signer credential directories were removed, including on verification failure"
+    },
+    "signatureArtifactType": "application/vnd.dev.cosign.artifact.sig.v1+json",
+    "cryptoVerification": "Cosign verifies each digest with the supplied public key. Ptah subsequently checks attached-signature presence. The private fixture uses no public transparency upload.",
+    "archive": {
+      "name": "capacity-signed-registry-preparation-2026-10-06.tar.gz",
+      "sha256": "162bf9eb00e398dd8ac2700fe74ecbbf026278b26b4278a80437c4da959ed8f4",
+      "members": 98,
+      "bytes": 18301,
+      "downloadVerified": true,
+      "transport": "authenticated SSH",
+      "hostAlias": "diabolocom-buster",
+      "directory": "/home/buster/ptah-operator-evidence/020-qualification-2026-10-06"
+    },
+    "custody": "Private development copy with independently hash-verified download. Final encrypted custody, retention policy, and owner acceptance remain unassessed.",
+    "cleanup": "Both owned registry containers, their anonymous volumes, and their exact SSH tunnels were removed; the preexisting image was preserved.",
+    "scope": "A native Linux amd64 registry and native Darwin arm64 clients exercised preparation. No Kubernetes workload, database execution, Linux arm64 acceptance, or full soak is claimed. The configured HTTPS capacity workload still needs installed execution."
+  },
+  "resultTransportIntegrationCI": {
+    "testedMergeCommit": "5acae93fb2bec09b2d8d334199a6f1b2658ecd0c",
+    "sourceTree": "469ec1fcacd4cedbee3a4397bfdc32019efe1288",
+    "testedTree": "f1d6a6142de18c491c8f014501b1f100b1f595c8",
+    "sourceDifference": "context7.json added for documentation indexing; operator, runner, dependencies, charts, workflows, and tests are unchanged",
+    "runURL": "https://github.com/stokaro/ptah-operator/actions/runs/37494592362",
+    "conclusion": "success",
+    "createdAt": "2026-10-06T16:17:57Z",
+    "completedAt": "2026-10-06T17:42:26Z",
+    "fullPipelineSeconds": 5069.0,
+    "lastJobElapsedSeconds": 5069.0,
+    "passedSuiteCells": 27,
+    "passedOwnedPhaseExecutions": 51,
+    "runtimeArchitecture": "linux/amd64",
+    "kubernetesMinors": [
+      "1.35",
+      "1.36",
+      "1.37"
+    ],
+    "archive": {
+      "name": "ci-37494592362.tar.gz",
+      "sha256": "4d3e14ec9c84ab77866ffa3bc2ba4be319c9ed49fc9ce32da5e1714df50256fc",
+      "memberCount": 150,
+      "bytes": 162612,
+      "downloadVerified": true,
+      "transport": "authenticated SSH",
+      "hostAlias": "diabolocom-buster",
+      "directory": "/home/buster/ptah-operator-evidence/020-qualification-2026-10-06"
+    },
+    "requirement": "#586 final default installation integration and the 90-minute CI target",
+    "sourceCommit": "d3d1b28cc864f1ca84e02e3bc8431221ea72551a",
+    "relatedRuns": {
+      "Capacity": {
+        "id": 37494592431,
+        "conclusion": "success",
+        "seconds": 2777.0
+      },
+      "Release": {
+        "id": 37494592455,
+        "conclusion": "success",
+        "seconds": 410.0
+      },
+      "Documentation": {
+        "id": 37494592335,
+        "conclusion": "success",
+        "seconds": 138.0
+      }
+    },
+    "scope": "Completes issue 586 implementation and integration requirements. Historical native reports keep their own runtime identities. Production artifact, architecture, full capacity/recovery, final evidence custody, and owner acceptance remain in issues 578-584; issue 242 stays open.",
+    "custody": "Private development copy with independently hash-verified download. Final encrypted custody, retention policy, and owner acceptance remain unassessed."
+  },
+  "resultTransportRequirementReview": {
+    "issue": 586,
+    "sourceCommit": "d3d1b28cc864f1ca84e02e3bc8431221ea72551a",
+    "testedMergeCommit": "5acae93fb2bec09b2d8d334199a6f1b2658ecd0c",
+    "sourceDifference": "context7.json added for documentation indexing; operator, runner, dependencies, charts, workflows, and tests are unchanged",
+    "applicabilityAuditSHA256": "e60ff01406cee5651b152640ebd6a471006fc633a1ba619a19ce84c284c42309",
+    "currentIntegrationRun": 37494592362,
+    "scope": "Completes issue 586 implementation and integration requirements. Historical native reports keep their own runtime identities. Production artifact, architecture, full capacity/recovery, final evidence custody, and owner acceptance remain in issues 578-584; issue 242 stays open.",
+    "passedRequirements": [
+      "durable acknowledgment",
+      "exact authority and confidentiality",
+      "idempotent delivery and bounds",
+      "controller independence",
+      "default Kubernetes logging",
+      "acknowledged-result survival",
+      "lifecycle and bounded storage",
+      "documentation and acceptance evidence"
+    ],
+    "archiveKey": "resultTransportIntegrationCI"
+  },
+  "capacityAuthorClient": {
+    "requirement": "#580 documented author and approver identities under the frozen apply-policy guard",
+    "sourceCommit": "9712e0c15356b52a5b173041bbcb7ae47570942d",
+    "conclusion": "pass",
+    "runtime": "Kubernetes 1.37 API server on Darwin arm64",
+    "validation": {
+      "race": "all capacity tests passed in 13.688 seconds",
+      "vet": "passed",
+      "python": "62 capacity tests passed before the bootstrap JSON-stream correction; all 28 affected bootstrap tests passed afterward",
+      "native": "Author identity/Role preparation, client-certificate authentication, CRD storage, rendered apply-policy guard, spec-writer webhooks, and documented RBAC passed. The test fixture installed the Role; bootstrap Role copying is proved separately by capacityAuthorRoleCopy.",
+      "original": "original ordinary-update path fails the author-isolation regression; an inert author field is added to the old struct only to compile the new fixture"
+    },
+    "archive": {
+      "name": "capacity-author-api-2026-10-06.tar.gz",
+      "sha256": "3506073e3430954a4adff96683dec38723bd58c017af2a5b56d782981a802495",
+      "memberCount": 25,
+      "bytes": 11828,
+      "downloadVerified": true,
+      "transport": "authenticated SSH",
+      "hostAlias": "diabolocom-buster",
+      "directory": "/home/buster/ptah-operator-evidence/020-qualification-2026-10-06"
+    },
+    "custody": "Private development copy with independently hash-verified download. Final encrypted custody, retention policy, and owner acceptance remain unassessed.",
+    "scope": "Preparation and API/admission proof only. No installed controller/SQL workload, complete soak, or Linux arm64 qualification. Temporary kubeconfigs were removed."
+  },
+  "capacityExecutionBaseline": {
+    "requirement": "#580 frozen execution profile",
+    "sourceCommit": "5ecd3b3e4950840872c421201f886e6f6c1bfeb7",
+    "conclusion": "pass",
+    "original": "The prior builder used operation deadline 300 seconds, connect timeout 30 seconds, retry 10 seconds, and inherited the five-minute schema lock default. The original-source regression fails.",
+    "validation": {
+      "race": "all capacity tests passed in 13.428 seconds",
+      "native": "both families retained 900/10/30/30-second operation/connect/retry/lock values through real Kubernetes 1.37 CRD storage and admission; author handoff and RBAC controls also passed"
+    },
+    "archive": {
+      "name": "capacity-execution-baseline-2026-10-06.tar.gz",
+      "sha256": "ddd04afcbcf14b5136cc23783cfdcb89ba4cacde98f93106cddd746b2dc43527",
+      "memberCount": 17,
+      "bytes": 11176,
+      "downloadVerified": true,
+      "transport": "authenticated SSH",
+      "hostAlias": "diabolocom-buster",
+      "directory": "/home/buster/ptah-operator-evidence/020-qualification-2026-10-06"
+    },
+    "custody": "Private development copy with independently hash-verified download. Final encrypted custody, retention policy, and owner acceptance remain unassessed.",
+    "scope": "Fixture and API/admission proof on Darwin arm64 only. Installed Linux workload, soak, overload and threshold qualification remain open."
+  },
+  "capacityAuthorRoleCopy": {
+    "requirement": "#580 documented workload author permissions in both workload namespaces",
+    "sourceCommit": "1156b9b3b95f85511432b7ece55eed7727f4291c",
+    "conclusion": "pass",
+    "original": "Bootstrap.copy omitted Role.rules. Both the original-source unit check and real Kubernetes copy path fail.",
+    "validation": {
+      "python": "All 62 capacity probe tests passed in 35.534 seconds.",
+      "native": "Bootstrap.author reads the documented Role, Bootstrap.copy creates it with exact rules, and actual client-certificate author/approver identities execute both-family handoff, update, replacement, and RBAC refusal checks against Kubernetes 1.37. Stored execution values remain 900/10/30/30 seconds."
+    },
+    "archive": {
+      "name": "capacity-author-role-copy-2026-10-06.tar.gz",
+      "sha256": "c82ebcd6cd47f743f47a4fba3a04451c8161c252356dcceead6c490086c2f343",
+      "memberCount": 16,
+      "bytes": 6971,
+      "downloadVerified": true,
+      "transport": "authenticated SSH",
+      "hostAlias": "diabolocom-buster",
+      "directory": "/home/buster/ptah-operator-evidence/020-qualification-2026-10-06"
+    },
+    "scope": "API/admission proof on Darwin arm64 only. No controller execution, SQL workload, installed Linux soak or capacity qualification. Temporary kubeconfigs removed.",
+    "custody": "Private development copy with independently hash-verified download. Final encrypted custody, retention policy, and owner acceptance remain unassessed."
+  },
+  "ciBudgetVerification": {
+    "testedMergeCommit": "478b019c7b4eaa66f124221b009f5171532879e2",
+    "sourceTree": "70a0d1ce8b196da10bed4c67f622a3b5ac19b521",
+    "testedTree": "e658b2956a432fdfd352f8b5a2a137df89e8d433",
+    "sourceDifference": "context7.json added for documentation indexing; operator, runner, dependencies, charts, workflows, and tests are unchanged",
+    "runURL": "https://github.com/stokaro/ptah-operator/actions/runs/37543802657",
+    "conclusion": "success",
+    "createdAt": "2026-10-06T22:57:41Z",
+    "completedAt": "2026-10-07T00:22:08Z",
+    "fullPipelineSeconds": 5067.0,
+    "lastJobElapsedSeconds": 5066.0,
+    "within90Minutes": true,
+    "passedSuiteCells": 27,
+    "passedOwnedPhaseExecutions": 51,
+    "runtimeArchitecture": "linux/amd64",
+    "kubernetesMinors": [
+      "1.35",
+      "1.36",
+      "1.37"
+    ],
+    "separateRuns": {
+      "Capacity": {
+        "id": 37543802775,
+        "conclusion": "success",
+        "seconds": 2705.0
+      },
+      "Release": {
+        "id": 37543802685,
+        "conclusion": "success",
+        "seconds": 349.0
+      },
+      "Documentation": {
+        "id": 37543802606,
+        "conclusion": "success",
+        "seconds": 159.0
+      }
+    },
+    "archive": {
+      "name": "ci-37543802657.tar.gz",
+      "sha256": "d88ab8c19c2effbb0affdafd7343eeabd57345ea4f49ae1e927e04213bb03865",
+      "memberCount": 148,
+      "bytes": 159566,
+      "downloadVerified": true,
+      "transport": "authenticated SSH",
+      "hostAlias": "diabolocom-buster",
+      "directory": "/home/buster/ptah-operator-evidence/020-qualification-2026-10-06"
+    },
+    "sourceCommit": "288b7ab7631e790fd5f21cb687f6bf60018922f9",
+    "requirement": "The complete CI pipeline finishes within 90 minutes, including queueing and image preparation, without dropping owned acceptance phases.",
+    "scope": "Development CI on the recorded published head and tested merge. The subsequent local API-demand fixes are not covered by this run. This does not qualify the full capacity workload, native architecture matrix, final artifacts, or release publication.",
+    "custody": "Private development copy with independently hash-verified download. Final encrypted custody, retention policy, and owner acceptance remain unassessed."
+  },
+  "capacityPendingPodIPConflict": {
+    "requirement": "#580 cold-start convergence with the frozen unrelated object population and enforcing network policy",
+    "conclusion": "Infrastructure defect reproduced; temporary CNI correction passed the native network diagnostic. Capacity remains unqualified.",
+    "runtimeSourceCommit": "1b5db851859cb72793f8169e0cbaef4ad7a24556",
+    "capacityDriverCommit": "3d14baf3c37a739c2ae8d9f7c9f6403e92586a50",
+    "failedRun": {
+      "kubernetes": "1.37.0",
+      "runtime": "native Linux amd64",
+      "schemas": 10,
+      "migrations": 10,
+      "backgroundConfigMaps": 1000,
+      "backgroundCompletedJobs": 1000,
+      "coldStartSeconds": 300.004548,
+      "result": "failed",
+      "cause": "The pinned kindnet resolver prefers Running Pods, then falls back to an arbitrary Pod with the same IP. A live Pending init-container Pod can inherit the deny policy of a retained Succeeded Pod."
+    },
+    "upstream": {
+      "kind": {
+        "commit": "69b56db75a6e82dece4cdc980655d79b2b73eb77",
+        "archiveSHA256": "66ce77f5a9b2cd22d67c37a89dabb5c85b76ed85f9f2b915caeeb92c39e3e533"
+      },
+      "kube-network-policies": {
+        "commit": "f67f0fb35e2b8288782bc1f22988648580dda7f8",
+        "archiveSHA256": "e87def88a61a8987cd2eb19382a87900495402b3a766f3480588261c092ba3b5"
+      }
+    },
+    "correction": {
+      "scope": "Temporary test-cluster image only. Prefer the live Pending Pod before terminal fallback; leave the existing Running preference and terminal-only behavior intact.",
+      "image": {
+        "originalImageAlreadyPresent": true,
+        "image": "ptah-kindnet-pending:242-1b5db851",
+        "imageID": "sha256:113fbc4a9313606fab3b1495038132cc94f3a27eb9da0c1070f4feaa6d269204",
+        "originalImage": "docker.io/kindest/kindnetd@sha256:6f2d9f57548aaca08e674bc35b2a53653cd84af18b26b1a99234d59cd5e548c2",
+        "originalID": "sha256:526969f0a1a7a788a7a96f53a4ad3b51607bde7bb2841edf52a02916e8d52650",
+        "binarySHA256": "dbeff678f35dd46345c91e62798c1efc10edead864b2bbd6b09f86bc02d38a6f",
+        "resolverSHA256": "053f59b2471cb93d888a35fe348fa0ec14d009ab570f194ee421e2ec573b0f3a",
+        "scope": "Temporary local CNI diagnostic only; not a qualified profile or release artifact."
+      },
+      "native": {
+        "podIP": "10.244.3.14",
+        "retainedTerminalPodsWithSameIP": 4,
+        "traffic": {
+          "dns": "open",
+          "database": "open",
+          "registry": "open",
+          "api": "closed",
+          "receiver": "open"
+        }
+      },
+      "tests": "The exact original resolver passes the Running control and fails the Pending regression. The corrected complete upstream podinfo race suite passes."
+    },
+    "capacityConflictFix": {
+      "commit": "3d14baf3c37a739c2ae8d9f7c9f6403e92586a50",
+      "original": "Status-only resourceVersion conflict aborts author-to-installer handoff.",
+      "corrected": "All twenty handoffs complete in the native run; capacity race tests and vet pass. Cold start subsequently fails on the independent CNI defect."
+    },
+    "archive": {
+      "name": "capacity-kindnet-pending-2026-10-06.tar.gz",
+      "sha256": "cf7d179a7da51550d62799b90a0f543f4e978c952a1bc05b4f1929ed810aef71",
+      "memberCount": 145,
+      "bytes": 107634,
+      "downloadVerified": true,
+      "transport": "authenticated SSH",
+      "hostAlias": "diabolocom-buster",
+      "directory": "/home/buster/ptah-operator-evidence/020-qualification-2026-10-06"
+    },
+    "scope": "The original failed run remains failed. The corrected CNI is a diagnostic, not the frozen installation baseline. A reproducible qualified CNI configuration and affected workload reruns are still required. No #580 or #242 completion is claimed. The twenty workload resources remain suspended and the owned cluster is retained.",
+    "custody": "Private development copy with independently hash-verified download. Final encrypted custody, retention policy, and owner acceptance remain unassessed."
+  },
+  "capacityPinnedCNI": {
+    "requirement": "#580 enforcing network controls with the frozen retained background population",
+    "conclusion": "The pinned CNI recipe builds and passes the native network controls; capacity verdict remains separate.",
+    "profileRevision": 39,
+    "profileCommit": "8e244073eab40e2930e80cee3006cd895b193a86",
+    "recipeSourceCommit": "2fceaf524095df5ea1e126c5e3ef7f0e553607f1",
+    "runtime": "native Linux amd64, Kubernetes 1.37.0",
+    "image": {
+      "reference": "ptah-kindnet-qualification:242-20261006",
+      "dockerImageID": "sha256:ecfbdd9dca88763cbfa1cfe75a595588607364ede3b52425b32d9cb817bc59d8",
+      "architecture": "amd64"
+    },
+    "recipeSourceFiles": {
+      "Dockerfile": "6f5eaf1ab567804da95d13d9e5299f729810081703fa5ee8b0ca96177ae67b91",
+      "pending_pod_test.go.txt": "b5c89237ae7f0ca901618120870cb8b3fdbe8d13a05230f092b84e0f098ff06a",
+      "README.md": "8953635e6a1a0c2ab16fa174423aaa7333c6c22adb99048c6db2cc113cfa3929",
+      "pending-pod.patch": "3ba443fa13d416d0946a36c79b97ac4de26143de24062582ec3878979722c740"
+    },
+    "agentPods": [
+      {
+        "uid": "4101f00e-ed2e-4a33-9e60-d7723f9f882e",
+        "node": "ptah-e2e-1-37-0-242-profile-1-0026e8302c-control-plane",
+        "imageID": "docker.io/library/import-2026-10-06@sha256:bbd52fa8038be16babdf9fa84f80bbe0238724b83f2f64eaf922a0a173a0e665",
+        "ready": true
+      },
+      {
+        "uid": "b5a49fb3-0d1a-44c8-9ef5-55b387aec4ad",
+        "node": "ptah-e2e-1-37-0-242-profile-1-0026e8302c-control-plane3",
+        "imageID": "docker.io/library/import-2026-10-06@sha256:bbd52fa8038be16babdf9fa84f80bbe0238724b83f2f64eaf922a0a173a0e665",
+        "ready": true
+      },
+      {
+        "uid": "7bd5e3c7-3ce3-4e0f-888e-2bace694f82d",
+        "node": "ptah-e2e-1-37-0-242-profile-1-0026e8302c-control-plane2",
+        "imageID": "docker.io/library/import-2026-10-06@sha256:bbd52fa8038be16babdf9fa84f80bbe0238724b83f2f64eaf922a0a173a0e665",
+        "ready": true
+      },
+      {
+        "uid": "c4b3993c-8325-4f85-ae64-cb8820189f86",
+        "node": "ptah-e2e-1-37-0-242-profile-1-0026e8302c-worker",
+        "imageID": "docker.io/library/import-2026-10-06@sha256:bbd52fa8038be16babdf9fa84f80bbe0238724b83f2f64eaf922a0a173a0e665",
+        "ready": true
+      }
+    ],
+    "controls": {
+      "operationManagerAndDatabaseRows": 20,
+      "pendingInitRows": 2,
+      "pendingReuse": [
+        {
+          "namespace": "ptah-qualification-a",
+          "uid": "2a9d97ce-6df1-46ab-b09d-d10d7f5d1ab1",
+          "IP": "10.244.3.15",
+          "retainedTerminalPods": 4
+        },
+        {
+          "namespace": "ptah-qualification-b",
+          "uid": "86783d23-8926-44f3-9fd8-4a7b5044c89d",
+          "IP": "10.244.3.17",
+          "retainedTerminalPods": 5
+        }
+      ],
+      "result": "Every expected allowed and denied endpoint matched; all four replacement agents are Ready with zero restarts."
+    },
+    "archive": {
+      "name": "capacity-kindnet-profile-2026-10-06.tar.gz",
+      "sha256": "457754828068ec5f1dfd7b36a2eb5ef9a391d6f9e27ab1fa468da7145b719f90",
+      "bytes": 45263,
+      "memberCount": 291,
+      "downloadVerified": true,
+      "transport": "authenticated SSH",
+      "hostAlias": "diabolocom-buster",
+      "directory": "/home/buster/ptah-operator-evidence/020-qualification-2026-10-06"
+    },
+    "scope": "The original failed cold start and its evidence remain unchanged. This proves the CNI correction on the named platform only, not the capacity targets, other matrix cells, #580 completion, or #242 closure.",
+    "custody": "Private development copy with independently hash-verified download. Final encrypted custody, retention policy, and owner acceptance remain unassessed."
+  },
+  "capacityProfileBacklog": {
+    "requirement": "#580 full-profile cold start, steady load and within-fleet approval backlog",
+    "conclusion": "Workflow and database checks passed on the named profile cell. Complete capacity threshold acceptance remains unproved.",
+    "runtimeSourceCommit": "1b5db851859cb72793f8169e0cbaef4ad7a24556",
+    "driverSourceCommit": "3d14baf3c37a739c2ae8d9f7c9f6403e92586a50",
+    "driverBinarySHA256": "4ff555c243202fca689ae5c6bc10f554f37d896fc19ea13a25ce2eafff959534",
+    "profileRevision": 39,
+    "profileDigests": {
+      "0.2.0.md": "0da8b2ffd36c9c00b3d37ec8e50e6eb5ac57f425e4e676bf69110ce76c6950b6",
+      "0.2.0-coverage.md": "2ba82aaf557ae9d5fc7824106347bb9a277fb54b50b7810530c47d7cb97fa7ad",
+      "0.2.0-monitoring.yaml": "464b4352a25ecb1ed41379034d056056bb3744ade566f4b1938558b3cbc8ae65",
+      "0.2.0-freeze.json": "694f660ad4acfd0712412378c9eee4d392939a5e3d2363f986cbca27f4f2c464"
+    },
+    "environment": {
+      "kubernetes": "1.37.0",
+      "platform": "native Linux amd64",
+      "engine": "PostgreSQL",
+      "schemas": 10,
+      "migrations": 10,
+      "rowsPerDatabase": 10000,
+      "backgroundConfigMaps": 1000,
+      "backgroundCompletedJobs": 1000,
+      "workloadNamespaces": [
+        "ptah-qualification-a",
+        "ptah-qualification-b"
+      ],
+      "kindnetImage": "sha256:ecfbdd9dca88763cbfa1cfe75a595588607364ede3b52425b32d9cb817bc59d8"
+    },
+    "measurements": {
+      "coldStatusConvergenceSeconds": 189.188932,
+      "coldDatabaseVerifiedSeconds": 273.859493,
+      "steadySeconds": 600.005836,
+      "approvalDatabaseVerifiedSeconds": 78.454406,
+      "samples": 232,
+      "incompleteMetricSamples": 0,
+      "jobs": 545,
+      "failedReadOnlyJobs": [
+        {
+          "jobUID": "0903f6d6-d03b-4758-bb15-259b13b5d923",
+          "operation": "observe",
+          "originalGeneration": 3,
+          "changedGeneration": 4,
+          "inputsChangedAt": "2026-10-06T20:19:02.343561Z",
+          "scope": "Continuous watch binds the read-only Job to the superseded generation and records InputsChanged at its terminal time. Job/Pod logs were already garbage-collected; no exit-log cause is invented."
+        },
+        {
+          "jobUID": "77716a43-67ef-476c-9c6a-73a1345410de",
+          "operation": "resolve",
+          "originalGeneration": 3,
+          "changedGeneration": 4,
+          "inputsChangedAt": "2026-10-06T20:19:03.29423Z",
+          "scope": "Continuous watch binds the read-only Job to the superseded generation and records InputsChanged at its terminal time. Job/Pod logs were already garbage-collected; no exit-log cause is invented."
+        }
+      ],
+      "appliedPlansVerified": 15,
+      "databaseCheckpoints": 5,
+      "completeRowInventories": 100,
+      "schemaBands": [
+        "small",
+        "medium",
+        "large"
+      ],
+      "migrationHistoryLengths": [
+        2,
+        32,
+        128
+      ],
+      "steady": {
+        "jobCompletionSeconds": {
+          "count": 249,
+          "p50": 5,
+          "p95": 8,
+          "max": 9
+        },
+        "podsPendingMax": 4,
+        "podsRunningMax": 4,
+        "managerRSSMaxBytes": 104050688,
+        "managerCPUCoresAverage": 0.10907501136598592,
+        "queueWaitSeconds": {
+          "count": 2883,
+          "p50": 9.999999999999999e-05,
+          "p95": 1
+        },
+        "clientThrottleSeconds": 0,
+        "requests429": 0,
+        "apiRejected": 0
+      },
+      "approvalExecution": {
+        "jobCompletionSeconds": {
+          "count": 34,
+          "p50": 6,
+          "p95": 9,
+          "max": 9
+        },
+        "podsPendingMax": 6,
+        "podsRunningMax": 3,
+        "managerRSSMaxBytes": 107446272,
+        "managerCPUCoresAverage": 0.16039912529010306,
+        "queueWaitSeconds": {
+          "count": 414,
+          "p50": 0.01,
+          "p95": 1
+        },
+        "clientThrottleSeconds": 0,
+        "requests429": 0,
+        "apiRejected": 0
+      }
+    },
+    "remainingMeasurementGaps": [
+      "The original driver did not retain total manager API requests; demand is not inferred from zero HTTP 429 responses. A separate read-only native measurement uses the subsequent collector fix.",
+      "One API server has zero matching operator webhook observations in every scenario. Its admission percentile is unavailable, not zero.",
+      "Three eligible steady-state readings have neither a next reconciliation deadline nor an active operation. The original overdue bound remains unavailable; they are not replaced with zero."
+    ],
+    "archive": {
+      "name": "capacity-profile-backlog-2026-10-06.tar.gz",
+      "sha256": "17bd063533cd3364afe8278358ca5d2f7026da156ce6e7ff66baf5da974b492b",
+      "bytes": 42027852,
+      "memberCount": 323,
+      "downloadVerified": true,
+      "transport": "authenticated SSH",
+      "hostAlias": "diabolocom-buster",
+      "directory": "/home/buster/ptah-operator-evidence/020-qualification-2026-10-06"
+    },
+    "scope": "This is one Kubernetes/engine/architecture cell. It does not establish soak, churn/retention plateau, overload, remaining fault/recovery cases, other cells, final artifact applicability or #580/#242 closure. Earlier failed attempts remain retained.",
+    "custody": "Private development copy with independently hash-verified download. Final encrypted custody, retention policy, and owner acceptance remain unassessed."
+  },
+  "capacityAPIDemandFailure": {
+    "requirement": "#580 API demand at most 100 requests/s across both manager identities in every 60-second window",
+    "conclusion": "Failed: an interior 60-second window contains more than 100 requests/s even using a conservative lower bound.",
+    "runtimeSourceCommit": "1b5db851859cb72793f8169e0cbaef4ad7a24556",
+    "collectorSourceCommit": "4c85b1d769ddec3adb73a48824947aa7406dfd62",
+    "reducerSourceCommit": "5c848bbe91bec226ac968f3dc98326c18244d7bf",
+    "profileRevision": 39,
+    "environment": "Kubernetes 1.37.0, native Linux amd64, PostgreSQL, unchanged twenty-resource fleet after approval backlog",
+    "window": {
+      "name": "existing twenty-resource fleet API demand",
+      "start": "2026-10-06T20:35:07.381032Z",
+      "end": "2026-10-06T20:45:07.381032Z"
+    },
+    "samples": 121,
+    "monitorRequests": 726,
+    "monitorTrafficScope": "Recorded separately by the probe transport. Manager REST counters do not include these external requests; reads performed by the manager for each scrape remain counted.",
+    "managerProcesses": [
+      {
+        "podUID": "81e8981c-60ff-4ceb-b8f5-0db1f99c9bd2",
+        "containerID": "containerd://428b46f7e36a2adf7420bd71b4a5a380acb1e6c607600c393931b683519f0a34",
+        "containerStartedAt": "2026-10-06T20:38:42+02:00",
+        "processStartedAt": 1791311922.7,
+        "restartCount": 0
+      },
+      {
+        "podUID": "b0c1b5a8-49de-45de-9a8c-f0698d62abd4",
+        "containerID": "containerd://6b55a2e9d75b3fc51d8290d83f7fa00271dc2716ec1d9bf3bf9e0bd290d78208",
+        "containerStartedAt": "2026-10-06T20:38:42+02:00",
+        "processStartedAt": 1791311922.7,
+        "restartCount": 0
+      }
+    ],
+    "slidingMinuteBounds": 108,
+    "maxRequestsPerSecondUpperBound": 180.43333333333334,
+    "provenExceedance": {
+      "start": "2026-10-06T20:43:02.459207+00:00",
+      "end": "2026-10-06T20:44:02.459207+00:00",
+      "firstSample": 95,
+      "lastSample": 106,
+      "requestsAtLeast": 8849,
+      "requestsPerSecondAtLeast": 147.48333333333332
+    },
+    "originalFailure": [
+      "sample 44 manager ptah-operator-ptah-operator-57ccf4967d-6hbn4 has a reset or invalid counter"
+    ],
+    "correction": "The reducer previously coupled API demand to unrelated queue histogram continuity. Process identities and API counters are continuous; the queue reset remains invalid for queue evidence. The fixed reducer reuses the original samples without rerunning the workload.",
+    "scope": "No capacity acceptance or #580/#242 closure. No assertion that an upper bound above the threshold alone proves an exceedance; the separate contained-window lower bound does.",
+    "archive": {
+      "name": "capacity-api-demand-2026-10-06.tar.gz",
+      "sha256": "934eab643dca5b1327e26ff11a3c976fe7ac4aa83568b6ead8d35aa80ca43c31",
+      "bytes": 61048,
+      "memberCount": 11,
+      "downloadVerified": true,
+      "transport": "authenticated SSH",
+      "hostAlias": "diabolocom-buster",
+      "directory": "/home/buster/ptah-operator-evidence/020-qualification-2026-10-06"
+    },
+    "custody": "Private development copy with independently hash-verified download. Final encrypted custody, retention policy, and owner acceptance remain unassessed."
+  },
+  "capacityAPIEnrollment": {
+    "requirement": "#580 manager API demand on the unchanged twenty-resource steady fleet",
+    "conclusion": "Failed: an interior sixty-second window still exceeds 100 requests/s. The enrollment read reduction does not resolve the full-profile demand failure.",
+    "runtimeSourceCommit": "4189691fef013d95186322360e4efadd5b702c4e",
+    "collectorSourceCommit": "4189691fef013d95186322360e4efadd5b702c4e",
+    "runtimeImage": "e2e-registry.ptah-test-a-1-37-0-242-profile-1b5db851-0026e8302c.svc.cluster.local:5000/ptah-operator@sha256:17f1ec42405aabc04f3d652f25448a2e1f42f195fdd4a0c6eb0bf1dad1e0cc82",
+    "runnerImage": "e2e-registry.ptah-test-a-1-37-0-242-profile-1b5db851-0026e8302c.svc.cluster.local:5000/ptah-runner@sha256:3c926b0b03baae569014ceae3522a0dde7a9c03555a645eede9773b536dde8c2",
+    "profileRevision": 39,
+    "environment": "Kubernetes 1.37.0, native Linux amd64, PostgreSQL, ten schemas and ten migrations",
+    "window": {
+      "name": "existing twenty-resource fleet API demand",
+      "start": "2026-10-06T21:13:40.581136Z",
+      "end": "2026-10-06T21:23:40.581136Z"
+    },
+    "samples": 121,
+    "slidingMinuteBounds": 108,
+    "maxRequestsPerSecondUpperBound": 256.1166666666667,
+    "thresholdRequestsPerSecond": 100,
+    "thresholdPassed": false,
+    "provenExceedance": {
+      "start": "2026-10-06T21:20:25.647501+00:00",
+      "end": "2026-10-06T21:21:25.647501+00:00",
+      "firstSample": 81,
+      "lastSample": 92,
+      "requestsAtLeast": 12697,
+      "requestsPerSecondAtLeast": 211.61666666666667
+    },
+    "monitorRequests": 726,
+    "change": "Remove the authority check before reading the immutable enrollment pin. The checks before CREATE and before returning the verified persisted pin remain. New enrollment uses at most 16 API reads instead of 23; repeated enrollment uses at most eight instead of 15.",
+    "validation": {
+      "originalRegression": "Both families exceed the read budget on the original code; all revocation controls pass.",
+      "fixedRaceTests": [
+        "internal/resultcredentials",
+        "internal/resultservice",
+        "internal/controller"
+      ],
+      "vet": [
+        "internal/resultcredentials",
+        "internal/resultservice",
+        "internal/controller"
+      ],
+      "liveFleet": "All twenty original UIDs, specs and generations stayed unchanged; every slot refreshed under the fixed manager before measurement.",
+      "auditRestoration": "All original API-server manifests verified; owned audit files removed after retention."
+    },
+    "scope": "Only this steady API-demand window is assessed. No cold/backlog rerun, full soak, retention plateau, fault matrix, architecture matrix, final artifacts, or #580/#242 closure is claimed.",
+    "archive": {
+      "name": "capacity-api-enrollment-2026-10-06.tar.gz",
+      "sha256": "e92a24d716581b68e135040420691803c656c4a9e84fc0fc175196ed72a61540",
+      "bytes": 2433817,
+      "memberCount": 68,
+      "downloadVerified": true,
+      "transport": "authenticated SSH",
+      "hostAlias": "diabolocom-buster",
+      "directory": "/home/buster/ptah-operator-evidence/020-qualification-2026-10-06"
+    },
+    "custody": "Private development copy with independently hash-verified download. Final encrypted custody, retention policy, and owner acceptance remain unassessed."
+  },
+  "capacityAPICleanupHints": {
+    "requirement": "#580 manager API demand on the unchanged twenty-resource steady fleet",
+    "conclusion": "Failed: an interior sixty-second window still exceeds 100 requests/s.",
+    "runtimeSourceCommit": "56270b39b83eb2cd295bf542adae65d0bd71af99",
+    "collectorSourceCommit": "56270b39b83eb2cd295bf542adae65d0bd71af99",
+    "runtimeImage": "e2e-registry.ptah-test-a-1-37-0-242-profile-1b5db851-0026e8302c.svc.cluster.local:5000/ptah-operator@sha256:e7c751de435c07f0dfab465aa3c639f3967c01622625a2a76c6caeca0cddd92c",
+    "runnerImage": "e2e-registry.ptah-test-a-1-37-0-242-profile-1b5db851-0026e8302c.svc.cluster.local:5000/ptah-runner@sha256:3c926b0b03baae569014ceae3522a0dde7a9c03555a645eede9773b536dde8c2",
+    "profileRevision": 39,
+    "environment": "Kubernetes 1.37.0, native Linux amd64, PostgreSQL, ten schemas and ten migrations",
+    "window": {
+      "name": "existing twenty-resource fleet API demand",
+      "start": "2026-10-06T21:40:58.144605Z",
+      "end": "2026-10-06T21:50:58.144605Z"
+    },
+    "samples": 121,
+    "slidingMinuteBounds": 108,
+    "maxRequestsPerSecondUpperBound": 247.11666666666667,
+    "thresholdRequestsPerSecond": 100,
+    "thresholdPassed": false,
+    "largestContainedWindowLowerBound": {
+      "start": "2026-10-06T21:41:03.177255+00:00",
+      "end": "2026-10-06T21:42:03.177255+00:00",
+      "firstSample": 1,
+      "lastSample": 12,
+      "requestsAtLeast": 11418,
+      "requestsPerSecondAtLeast": 190.3
+    },
+    "provenExceedance": {
+      "start": "2026-10-06T21:41:03.177255+00:00",
+      "end": "2026-10-06T21:42:03.177255+00:00",
+      "firstSample": 1,
+      "lastSample": 12,
+      "requestsAtLeast": 11418,
+      "requestsPerSecondAtLeast": 190.3
+    },
+    "monitorRequests": 726,
+    "change": "Keep unexpired cleanup retry hints at the existing 4096-entry bound. Prune expired entries instead of clearing the whole map. Roots without a hint still pass every live retention and deletion check.",
+    "validation": {
+      "originalRegression": "On the original code, a new root at the hint bound causes four premature API reads of a still-retained root. Both full-cache variants fail. The fixed code preserves deferral, stays bounded, and rechecks restored recovery pins at the deadline.",
+      "fixedRaceTests": [
+        "internal/resultcleanup",
+        "internal/resultretention"
+      ],
+      "vet": [
+        "internal/resultcleanup",
+        "internal/resultretention"
+      ],
+      "liveFleet": "All twenty original UIDs, specs and generations stayed unchanged; every slot refreshed under the fixed manager before measurement.",
+      "auditRestoration": "All original API-server manifests verified; owned audit files removed after retention."
+    },
+    "scope": "Only this steady API-demand window is assessed. No cold/backlog rerun, full soak, retention plateau, fault matrix, architecture matrix, final artifacts, or #580/#242 closure is claimed.",
+    "archive": {
+      "name": "capacity-api-cleanup-hints-2026-10-06.tar.gz",
+      "sha256": "f3acf6731691c6fa6ff3da1ca5abba3b5381b57e41897f7c5cbffda7c19f165d",
+      "bytes": 1384482,
+      "memberCount": 45,
+      "downloadVerified": true,
+      "transport": "authenticated SSH",
+      "hostAlias": "diabolocom-buster",
+      "directory": "/home/buster/ptah-operator-evidence/020-qualification-2026-10-06"
+    },
+    "custody": "Private development copy with independently hash-verified download. Final encrypted custody, retention policy, and owner acceptance remain unassessed."
+  },
+  "ciFailureFollowup": {
+    "sourceCommit": "fc49d3ade00f59bd7e8f681d326ddcfba9814ae0",
+    "runURL": "https://github.com/stokaro/ptah-operator/actions/runs/37530031203",
+    "runAttempt": 1,
+    "conclusion": "failure",
+    "createdAt": "2026-10-06T20:54:52Z",
+    "completedAt": "2026-10-06T22:20:03Z",
+    "fullPipelineSeconds": 5111.0,
+    "lastJobElapsedSeconds": 5111.0,
+    "passedSuiteCells": 25,
+    "failedSuiteCells": [
+      {
+        "name": "Kubernetes 1.35 migrations-postgresql",
+        "jobID": 112500515032,
+        "url": "https://github.com/stokaro/ptah-operator/actions/runs/37530031203/job/112500515032",
+        "conclusion": "failure"
+      },
+      {
+        "name": "Kubernetes 1.35 lifecycle",
+        "jobID": 112500515130,
+        "url": "https://github.com/stokaro/ptah-operator/actions/runs/37530031203/job/112500515130",
+        "conclusion": "failure"
+      }
+    ],
+    "requiredSuiteCells": 27,
+    "scope": "Current-head terminal CI outcome and full-run wall time. Job success is not final production acceptance. The separate capacity workflow uses the lab profile.",
+    "within90Minutes": true,
+    "separateRuns": {
+      "Capacity": {
+        "id": 37530031261,
+        "conclusion": "success",
+        "seconds": 2898.0
+      },
+      "Release": {
+        "id": 37530031169,
+        "conclusion": "success",
+        "seconds": 426.0
+      },
+      "Documentation": {
+        "id": 37530031418,
+        "conclusion": "success",
+        "seconds": 303.0
+      }
+    },
+    "testedMergeCommit": "e5ae5978ace217a0e22b3d80661c898ac866f975",
+    "sourceDifference": "Only context7.json is added; runtime, test, dependency, chart, and workflow sources match the PR head.",
+    "archive": {
+      "name": "ci-fc49-failures-2026-10-06.tar.gz",
+      "sha256": "14af01dcd87a7dc7cb07e581d38d1e20840c737837a36f999cc787e4e793284f",
+      "bytes": 640496,
+      "memberCount": 14,
+      "downloadVerified": true,
+      "transport": "authenticated SSH",
+      "hostAlias": "diabolocom-buster",
+      "directory": "/home/buster/ptah-operator-evidence/020-qualification-2026-10-06"
+    },
+    "custody": "Private development copy with independently hash-verified download. Final encrypted custody, retention policy, and owner acceptance remain unassessed.",
+    "requirement": "Current PR integration and the unchanged 90-minute complete CI target; #242 stays open.",
+    "failureAssessment": [
+      {
+        "jobID": 112500515032,
+        "observation": "TLS bootstrap failed before cluster creation. The original cause was discarded by the verifier and suppressed by the shell.",
+        "historicalCause": "Not established. The exact Service certificate verifies locally on Linux; improved diagnostics preserve the cause on recurrence."
+      },
+      {
+        "jobID": 112500515130,
+        "observation": "The deadline upgrade incident resolved 60.549 seconds after the independent healthy boundary, exceeding the unchanged 45-second limit.",
+        "historicalCause": "Not established. A local regression reproduces lost verified progress after an optimistic status conflict. The repaired observer passed the complete native infrastructure-alerting phase on Kubernetes 1.35.8, including both upgrade cases within the unchanged 45-second bound; see nativeUpgradeRecovery."
+      }
+    ]
+  },
+  "nativeUpgradeRecovery": {
+    "requirement": "#581 upgrade alert delivery and recovery; CI 37530031203 lifecycle failure follow-up",
+    "sourceCommit": "62f9f24b3d02b39e9d65ee26f71ad2073d159e95",
+    "kubernetes": "1.35.8",
+    "runtimePlatform": "linux/amd64",
+    "dockerContext": "diabolocom",
+    "conclusion": "pass",
+    "cases": [
+      {
+        "mode": "failed",
+        "firingSeconds": 9.538395,
+        "resolutionSeconds": 10.543802,
+        "boundSeconds": 45,
+        "healthyAt": "2026-10-06T22:34:38+00:00",
+        "resolvedReceivedAt": "2026-10-06T22:34:48.543802215Z",
+        "verifiedCaseFiles": 40,
+        "candidateImage": "e2e-registry.ptah-test-a-1-35-8-242-recovery-62f9f24b-819214a3d9.svc.cluster.local:5000/ptah-operator-next@sha256:a57d785d1c6642d299587ea6afae802af5092c1622483f9ce0a496367baaa3ea",
+        "conclusion": "pass"
+      },
+      {
+        "mode": "deadline",
+        "firingSeconds": 8.648275,
+        "resolutionSeconds": 3.546913,
+        "boundSeconds": 45,
+        "healthyAt": "2026-10-06T22:52:40+00:00",
+        "resolvedReceivedAt": "2026-10-06T22:52:43.546913324Z",
+        "verifiedCaseFiles": 40,
+        "candidateImage": "e2e-registry.ptah-test-a-1-35-8-242-recovery-62f9f24b-819214a3d9.svc.cluster.local:5000/ptah-operator@sha256:3b387fa33a6628a811cb8de4da15eab602f9a1c7659c2b276dca3c992de57b0d",
+        "conclusion": "pass"
+      }
+    ],
+    "scenarios": [
+      {
+        "kind": "scenario",
+        "name": "native-producers",
+        "outcome": "pass",
+        "start": "2026-10-06T22:19:24Z",
+        "end": "2026-10-06T22:20:27Z",
+        "seconds": 63
+      },
+      {
+        "kind": "scenario",
+        "name": "monitoring-path",
+        "outcome": "pass",
+        "start": "2026-10-06T22:20:27Z",
+        "end": "2026-10-06T22:20:42Z",
+        "seconds": 15
+      },
+      {
+        "kind": "scenario",
+        "name": "unresolved-view-read-failures",
+        "outcome": "pass",
+        "start": "2026-10-06T22:20:42Z",
+        "end": "2026-10-06T22:23:20Z",
+        "seconds": 158
+      },
+      {
+        "kind": "scenario",
+        "name": "lost-scrape-target",
+        "outcome": "pass",
+        "start": "2026-10-06T22:23:20Z",
+        "end": "2026-10-06T22:26:16Z",
+        "seconds": 176
+      },
+      {
+        "kind": "scenario",
+        "name": "lost-view",
+        "outcome": "pass",
+        "start": "2026-10-06T22:26:16Z",
+        "end": "2026-10-06T22:28:05Z",
+        "seconds": 109
+      },
+      {
+        "kind": "scenario",
+        "name": "upgrade-alerts",
+        "outcome": "pass",
+        "start": "2026-10-06T22:28:05Z",
+        "end": "2026-10-06T22:53:49Z",
+        "seconds": 1544
+      }
+    ],
+    "alertingSeconds": 2065,
+    "closedHistoryManifestFiles": 86,
+    "startedAt": "2026-10-06T22:11:18.796972+00:00",
+    "completedAt": "2026-10-06T22:54:01.958763+00:00",
+    "scope": "One complete native infrastructure-alerting phase and its prerequisites. The separate upgrade, HA, and uninstall phases were intentionally skipped. This is not a full lifecycle, full alert matrix, or production acceptance verdict.",
+    "change": "Preserve an independently verified post-hook boundary after an optimistic status conflict. Every retry still requires current identity, generation, state, and successful live admission. All original deadlines remain unchanged.",
+    "historicalCausation": "The original CI observer did not retain recovery retry reasons. The conflict defect is reproduced locally, but this passing run does not establish it as the historical CI cause.",
+    "archive": {
+      "name": "native-upgrade-recovery-2026-10-06.tar.gz",
+      "sha256": "1d25a0d6dd4bd52b8880bd8375310fb0dd402e742df840505185bd56ddad64c1",
+      "bytes": 1088215,
+      "memberCount": 100,
+      "downloadVerified": true,
+      "transport": "authenticated SSH",
+      "hostAlias": "diabolocom-buster",
+      "directory": "/home/buster/ptah-operator-evidence/020-qualification-2026-10-06"
+    },
+    "custody": "Private development copy with independently hash-verified download. Final encrypted custody, retention policy, and owner acceptance remain unassessed."
+  },
+  "capacityAPIReadReduction": {
+    "requirement": "#580 manager API demand on the unchanged twenty-resource steady fleet",
+    "conclusion": "Failed: an interior sixty-second window still exceeds 100 requests/s.",
+    "runtimeSourceCommit": "99b1d825e8881510bbf206ff40ebae854a8e7c3d",
+    "collectorSourceCommit": "99b1d825e8881510bbf206ff40ebae854a8e7c3d",
+    "runtimeImage": "e2e-registry.ptah-test-a-1-37-0-242-profile-1b5db851-0026e8302c.svc.cluster.local:5000/ptah-operator@sha256:233893f4ba25e8b2dfd113334f527a05a972919f1a69d7344ab6df74035c33a8",
+    "runnerImage": "e2e-registry.ptah-test-a-1-37-0-242-profile-1b5db851-0026e8302c.svc.cluster.local:5000/ptah-runner@sha256:3c926b0b03baae569014ceae3522a0dde7a9c03555a645eede9773b536dde8c2",
+    "profileRevision": 39,
+    "environment": "Kubernetes 1.37.0, native Linux amd64, PostgreSQL, ten schemas and ten migrations",
+    "window": {
+      "name": "existing twenty-resource fleet API demand",
+      "start": "2026-10-06T23:24:49.747822Z",
+      "end": "2026-10-06T23:34:49.747822Z"
+    },
+    "samples": 121,
+    "slidingMinuteBounds": 108,
+    "maxRequestsPerSecondUpperBound": 249.11666666666667,
+    "thresholdRequestsPerSecond": 100,
+    "thresholdPassed": false,
+    "largestContainedWindowLowerBound": {
+      "start": "2026-10-06T23:24:54.846117+00:00",
+      "end": "2026-10-06T23:25:54.846117+00:00",
+      "firstSample": 1,
+      "lastSample": 12,
+      "requestsAtLeast": 11719,
+      "requestsPerSecondAtLeast": 195.31666666666666
+    },
+    "provenExceedance": {
+      "start": "2026-10-06T23:24:54.846117+00:00",
+      "end": "2026-10-06T23:25:54.846117+00:00",
+      "firstSample": 1,
+      "lastSample": 12,
+      "requestsAtLeast": 11719,
+      "requestsPerSecondAtLeast": 195.31666666666666
+    },
+    "monitorRequests": 726,
+    "change": "Validate the Pod returned by the uncached cardinality LIST instead of an earlier GET. Skip young retirement markers using their API-assigned creation timestamp without consuming retry-hint entries. Publication authority and final deletion checks remain live.",
+    "validation": {
+      "originalRegression": "The original code reads each Pod twice and does not validate the newer listed Pod contents. It also performs four unnecessary reads and stores a retry hint for an unexpired retirement marker. The fixed tests reject changed listed Pod contents for both families, avoid both redundant reads, and preserve a restored active claim at the metadata deadline.",
+      "fixedRaceTests": [
+        "internal/resultauthority",
+        "internal/resultcredentials",
+        "internal/resultcleanup",
+        "internal/resultretention",
+        "internal/resultservice",
+        "internal/controllerwrite"
+      ],
+      "vet": [
+        "internal/resultauthority",
+        "internal/resultcredentials",
+        "internal/resultcleanup",
+        "internal/resultretention",
+        "internal/resultservice",
+        "internal/controllerwrite"
+      ],
+      "liveFleet": "All twenty original UIDs, specs and generations stayed unchanged; every slot refreshed under the fixed manager before measurement.",
+      "auditRestoration": "All original API-server manifests were restored before this run; the native measurement does not run with audit enabled."
+    },
+    "scope": "Only this steady API-demand window is assessed. No cold/backlog rerun, full soak, retention plateau, fault matrix, architecture matrix, final artifacts, or #580/#242 closure is claimed.",
+    "archive": {
+      "name": "capacity-api-read-reduction-2026-10-06.tar.gz",
+      "sha256": "2531eb696442ae5ff24470d9a0ac90342451c3907b5e7b6e8d8a89167c08a961",
+      "bytes": 114432,
+      "memberCount": 29,
+      "downloadVerified": true,
+      "transport": "authenticated SSH",
+      "hostAlias": "diabolocom-buster",
+      "directory": "/home/buster/ptah-operator-evidence/020-qualification-2026-10-06"
+    },
+    "custody": "Private development copy with independently hash-verified download. Final encrypted custody, retention policy, and owner acceptance remain unassessed."
+  },
+  "capacityAPIEnrollmentRetention": {
+    "requirement": "#580 manager API demand on the unchanged twenty-resource steady fleet",
+    "conclusion": "Failed: an interior sixty-second window still exceeds 100 requests/s.",
+    "runtimeSourceCommit": "989c10977d971163203f6ab706bc3efc66ffab6a",
+    "collectorSourceCommit": "989c10977d971163203f6ab706bc3efc66ffab6a",
+    "runtimeImage": "e2e-registry.ptah-test-a-1-37-0-242-profile-1b5db851-0026e8302c.svc.cluster.local:5000/ptah-operator@sha256:6a4da92e8fec2e644b81cfc08d6f6b351d198bc44e1ce26f6f9eea26bb90f7b7",
+    "runnerImage": "e2e-registry.ptah-test-a-1-37-0-242-profile-1b5db851-0026e8302c.svc.cluster.local:5000/ptah-runner@sha256:3c926b0b03baae569014ceae3522a0dde7a9c03555a645eede9773b536dde8c2",
+    "profileRevision": 39,
+    "environment": "Kubernetes 1.37.0, native Linux amd64, PostgreSQL, ten schemas and ten migrations",
+    "window": {
+      "name": "existing twenty-resource fleet API demand",
+      "start": "2026-10-07T00:00:35.107809Z",
+      "end": "2026-10-07T00:10:35.107809Z"
+    },
+    "samples": 121,
+    "slidingMinuteBounds": 108,
+    "maxRequestsPerSecondUpperBound": 188.91666666666666,
+    "thresholdRequestsPerSecond": 100,
+    "thresholdPassed": false,
+    "largestContainedWindowLowerBound": {
+      "start": "2026-10-07T00:07:25.246676+00:00",
+      "end": "2026-10-07T00:08:25.246676+00:00",
+      "firstSample": 82,
+      "lastSample": 94,
+      "requestsAtLeast": 9556,
+      "requestsPerSecondAtLeast": 159.26666666666668
+    },
+    "provenExceedance": {
+      "start": "2026-10-07T00:07:25.246676+00:00",
+      "end": "2026-10-07T00:08:25.246676+00:00",
+      "firstSample": 82,
+      "lastSample": 94,
+      "requestsAtLeast": 9556,
+      "requestsPerSecondAtLeast": 159.26666666666668
+    },
+    "monitorRequests": 726,
+    "change": "Recognize an exact existing public Pod pin without repeating enrollment on every Job event. Every publication still passes live receiver and admission authorization. Share an already-read retirement deadline with the credential scan inside the existing 4096-entry hint budget; hints only defer work, while deletion checks actual identity, age and live recovery pins.",
+    "validation": {
+      "originalRegression": "On both families, five repeated Job events previously caused five extra enrollments and 40 API reads; they now require 10 reads and no extra enrollment. Publication still refuses a revoked claim. Replacement Pods, canceled requests and unavailable pin reads fail closed. A credential scan previously reread its known retirement window four times; it now defers without reads. The regression also replaces the credential UID, restores an active claim at the deadline, verifies the new object keeps its own full window, then proves eventual collection.",
+      "fixedRaceTests": [
+        "internal/controller",
+        "internal/resultcredentials",
+        "internal/resultcleanup",
+        "internal/resultretention",
+        "internal/resultservice",
+        "internal/controllerwrite"
+      ],
+      "vet": [
+        "internal/controller",
+        "internal/resultcredentials",
+        "internal/resultcleanup",
+        "internal/resultretention",
+        "internal/resultservice",
+        "internal/controllerwrite"
+      ],
+      "liveFleet": "All twenty original UIDs, specs and generations stayed unchanged; every slot refreshed under the fixed manager before measurement.",
+      "auditRestoration": "All original API-server manifests were restored before this run; the native measurement does not run with audit enabled."
+    },
+    "scope": "Only this steady API-demand window is assessed. No cold/backlog rerun, full soak, retention plateau, fault matrix, architecture matrix, final artifacts, or #580/#242 closure is claimed.",
+    "archive": {
+      "name": "capacity-enrollment-retention-2026-10-06.tar.gz",
+      "sha256": "30469017f96f7de5fc065507e0d8b12cce833b5fa4cbbe58de36fb1efcc3e387",
+      "bytes": 117534,
+      "memberCount": 29,
+      "downloadVerified": true,
+      "transport": "authenticated SSH",
+      "hostAlias": "diabolocom-buster",
+      "directory": "/home/buster/ptah-operator-evidence/020-qualification-2026-10-06"
+    },
+    "custody": "Private development copy with independently hash-verified download. Final encrypted custody, retention policy, and owner acceptance remain unassessed."
+  },
+  "capacityAPIAudit": {
+    "runtimeSourceCommit": "989c10977d971163203f6ab706bc3efc66ffab6a",
+    "window": {
+      "start": "2026-10-07T00:19:23.935665+00:00",
+      "end": "2026-10-07T00:20:23.945224+00:00"
+    },
+    "requests": 5089,
+    "scope": "Diagnostic Metadata-only audit of the exact manager identity after sequential API-server restarts. This is request attribution, not a steady-state capacity verdict. All original API-server manifests were restored and diagnostic files removed from the nodes.",
+    "findings": [
+      "A representative completed operation used 105 attributable Job, Pod and result-record requests, excluding subject reads and TokenReviews. Ten live authorization passes account for 20 retired-marker reads.",
+      "The deletion policy read the same immutable intent twice when it was both the retirement source and a member owner. The focused regression fails on the original source and passes with one current read. Separate owners and failed live reads retain evidence."
+    ],
+    "fixSourceCommit": "949c7d0c2c65e9aba5cb8dcc2f2dc3284d71ff39",
+    "validation": "Race tests and vet passed for resultcleanup, resultretention, and controllerwrite. No new native capacity pass is claimed.",
+    "archive": {
+      "name": "capacity-api-attribution-2026-10-07.tar.gz",
+      "sha256": "1ae7c8643d81df3d536ce4b5735851aba0286b0955d7ab61b1c35771a878ca7f",
+      "bytes": 3186617,
+      "memberCount": 39,
+      "downloadVerified": true,
+      "transport": "authenticated SSH",
+      "hostAlias": "diabolocom-buster",
+      "directory": "/home/buster/ptah-operator-evidence/020-qualification-2026-10-06"
+    },
+    "custody": "Private development copy with independently hash-verified download. Final encrypted custody, retention policy, and owner acceptance remain unassessed."
+  },
+  "capacityAPICurrentClaim": {
+    "requirement": "#580 manager API demand on the unchanged twenty-resource steady fleet",
+    "conclusion": "Failed: an interior sixty-second window still exceeds 100 requests/s.",
+    "runtimeSourceCommit": "a3da4dfce57a7d4e80d765478cc6587f5ab3ce6a",
+    "collectorSourceCommit": "a3da4dfce57a7d4e80d765478cc6587f5ab3ce6a",
+    "runtimeImage": "e2e-registry.ptah-test-a-1-37-0-242-profile-1b5db851-0026e8302c.svc.cluster.local:5000/ptah-operator@sha256:8c108069f6aa479b1a3aa236e614844e32bf80d93c788f787634fa91c26ba310",
+    "runnerImage": "e2e-registry.ptah-test-a-1-37-0-242-profile-1b5db851-0026e8302c.svc.cluster.local:5000/ptah-runner@sha256:3c926b0b03baae569014ceae3522a0dde7a9c03555a645eede9773b536dde8c2",
+    "profileRevision": 39,
+    "environment": "Kubernetes 1.37.0, native Linux amd64, PostgreSQL, ten schemas and ten migrations",
+    "window": {
+      "name": "existing twenty-resource fleet API demand",
+      "start": "2026-10-07T00:54:11.991696Z",
+      "end": "2026-10-07T01:04:11.991696Z"
+    },
+    "samples": 121,
+    "slidingMinuteBounds": 108,
+    "maxRequestsPerSecondUpperBound": 205.68333333333334,
+    "thresholdRequestsPerSecond": 100,
+    "thresholdPassed": false,
+    "largestContainedWindowLowerBound": {
+      "start": "2026-10-07T01:00:52.098424+00:00",
+      "end": "2026-10-07T01:01:52.098424+00:00",
+      "firstSample": 80,
+      "lastSample": 92,
+      "requestsAtLeast": 10289,
+      "requestsPerSecondAtLeast": 171.48333333333332
+    },
+    "provenExceedance": {
+      "start": "2026-10-07T01:00:52.098424+00:00",
+      "end": "2026-10-07T01:01:52.098424+00:00",
+      "firstSample": 80,
+      "lastSample": 92,
+      "requestsAtLeast": 10289,
+      "requestsPerSecondAtLeast": 171.48333333333332
+    },
+    "monitorRequests": 726,
+    "managers": [
+      {
+        "name": "ptah-operator-ptah-operator-57d749bc64-fwd7g",
+        "podUID": "8c04d5b1-21c7-4baf-ad67-80962b45d18f",
+        "containerID": "containerd://ac3055dff425fddc8e35fa80f6fcfe0e85c2fe1a36c43c81e629ca666593d5b1",
+        "requests": 53443,
+        "cpuSeconds": 44.45,
+        "maxRSSBytes": 103579648,
+        "clientThrottleSeconds": 0,
+        "client429Responses": 0
+      },
+      {
+        "name": "ptah-operator-ptah-operator-57d749bc64-qvt7h",
+        "podUID": "c45aef86-1183-4f52-966b-242ebcc91b04",
+        "containerID": "containerd://e431a76ce41aa897066e89062ddd23e92f4b4ab595aacb9e9ed2104e07dc9ff5",
+        "requests": 13163,
+        "cpuSeconds": 11.48,
+        "maxRSSBytes": 53383168,
+        "clientThrottleSeconds": 0,
+        "client429Responses": 0
+      }
+    ],
+    "change": "Read the live Job and exact Pod list, then validate both against one current claim; every return path finishes at the live retirement fence, including adoption waits. Successful authorization uses four requests instead of six. The manager also includes the previously tested shared source/owner deletion read reduction.",
+    "validation": {
+      "originalRegression": "The original authorizer makes six reads. The final implementation makes four, checks real claim changes injected during the Pod read, and refuses retirement created after the claim read. An intermediate candidate changed definitive retirement into an adoption wait; the original-source control and final fixed control both pass, and the rejected intermediate result is retained.",
+      "fixedRaceTests": [
+        "internal/resultauthority",
+        "internal/resultcredentials",
+        "internal/resultservice",
+        "internal/resultdelivery",
+        "internal/controllerwrite",
+        "internal/controller"
+      ],
+      "vet": [
+        "internal/resultauthority",
+        "internal/resultcredentials",
+        "internal/resultservice",
+        "internal/resultdelivery",
+        "internal/controllerwrite",
+        "internal/controller"
+      ],
+      "liveFleet": "All twenty original UIDs, specs and generations stayed unchanged; every slot refreshed under the fixed manager before measurement.",
+      "auditRestoration": "All original API-server manifests were restored before this run; the native measurement does not run with audit enabled."
+    },
+    "scope": "Only this steady API-demand window is assessed. No cold/backlog rerun, full soak, retention plateau, fault matrix, architecture matrix, final artifacts, or #580/#242 closure is claimed.",
+    "archive": {
+      "name": "capacity-current-claim-2026-10-07.tar.gz",
+      "sha256": "30021ab994875daa5f0730d13abea34b6cfc7a54d818998b84be5b47ac3ba3fa",
+      "bytes": 118948,
+      "memberCount": 35,
+      "downloadVerified": false
+    },
+    "custody": "Local archive retained. Remote custody and independent download verification are not established."
+  },
+  "capacityAPISteadyAudit": {
+    "requirement": "#580 API demand attribution after current-claim reduction",
+    "conclusion": "Diagnostic attribution complete; the independent native steady window remains failed.",
+    "runtimeSourceCommit": "a3da4dfce57a7d4e80d765478cc6587f5ab3ce6a",
+    "window": {
+      "start": "2026-10-07T01:13:49.354254+00:00",
+      "end": "2026-10-07T01:16:49.507792+00:00"
+    },
+    "exactManagerAuditRequests": 24108,
+    "bracketingManagerCounterRequests": 24143.0,
+    "largestObservedAuditMinute": {
+      "from": "2026-10-07T01:13:50.264605+00:00",
+      "through": "2026-10-07T01:14:50.264605Z",
+      "requests": 9470,
+      "requestsPerSecond": 157.83333333333334,
+      "resources": [
+        {
+          "key": [
+            "get",
+            "ptahresultrecords",
+            "",
+            200
+          ],
+          "count": 2608
+        },
+        {
+          "key": [
+            "get",
+            "ptahresultrecords",
+            "",
+            404
+          ],
+          "count": 1236
+        },
+        {
+          "key": [
+            "get",
+            "ptahschemas",
+            "",
+            200
+          ],
+          "count": 955
+        },
+        {
+          "key": [
+            "get",
+            "ptahmigrations",
+            "",
+            200
+          ],
+          "count": 710
+        },
+        {
+          "key": [
+            "get",
+            "jobs",
+            "",
+            404
+          ],
+          "count": 673
+        },
+        {
+          "key": [
+            "list",
+            "ptahresultrecords",
+            "",
+            200
+          ],
+          "count": 618
+        },
+        {
+          "key": [
+            "get",
+            "jobs",
+            "",
+            200
+          ],
+          "count": 587
+        },
+        {
+          "key": [
+            "list",
+            "pods",
+            "",
+            200
+          ],
+          "count": 524
+        },
+        {
+          "key": [
+            "delete",
+            "ptahresultrecords",
+            "",
+            200
+          ],
+          "count": 302
+        },
+        {
+          "key": [
+            "get",
+            "configmaps",
+            "",
+            200
+          ],
+          "count": 216
+        },
+        {
+          "key": [
+            "create",
+            "ptahresultrecords",
+            "",
+            201
+          ],
+          "count": 169
+        },
+        {
+          "key": [
+            "create",
+            "tokenreviews",
+            "",
+            201
+          ],
+          "count": 116
+        },
+        {
+          "key": [
+            "get",
+            "pods",
+            "",
+            200
+          ],
+          "count": 116
+        },
+        {
+          "key": [
+            "patch",
+            "ptahschemas",
+            "status",
+            200
+          ],
+          "count": 88
+        },
+        {
+          "key": [
+            "update",
+            "leases",
+            "",
+            200
+          ],
+          "count": 66
+        },
+        {
+          "key": [
+            "get",
+            "serviceaccounts",
+            "",
+            200
+          ],
+          "count": 64
+        },
+        {
+          "key": [
+            "list",
+            "limitranges",
+            "",
+            200
+          ],
+          "count": 64
+        },
+        {
+          "key": [
+            "list",
+            "priorityclasses",
+            "",
+            200
+          ],
+          "count": 64
+        },
+        {
+          "key": [
+            "get",
+            "leases",
+            "",
+            200
+          ],
+          "count": 54
+        },
+        {
+          "key": [
+            "patch",
+            "ptahmigrations",
+            "status",
+            200
+          ],
+          "count": 51
+        },
+        {
+          "key": [
+            "patch",
+            "ptahschemas",
+            "",
+            200
+          ],
+          "count": 37
+        },
+        {
+          "key": [
+            "patch",
+            "jobs",
+            "",
+            200
+          ],
+          "count": 32
+        },
+        {
+          "key": [
+            "create",
+            "jobs",
+            "",
+            201
+          ],
+          "count": 32
+        },
+        {
+          "key": [
+            "patch",
+            "ptahmigrations",
+            "",
+            200
+          ],
+          "count": 27
+        },
+        {
+          "key": [
+            "list",
+            "ptahmigrationplans",
+            "",
+            200
+          ],
+          "count": 12
+        },
+        {
+          "key": [
+            "list",
+            "ptahschemas",
+            "",
+            200
+          ],
+          "count": 12
+        },
+        {
+          "key": [
+            "list",
+            "ptahschemaplans",
+            "",
+            200
+          ],
+          "count": 12
+        },
+        {
+          "key": [
+            "list",
+            "ptahmigrations",
+            "",
+            200
+          ],
+          "count": 12
+        },
+        {
+          "key": [
+            "patch",
+            "events",
+            "",
+            200
+          ],
+          "count": 9
+        },
+        {
+          "key": [
+            "watch",
+            "ptahschemas",
+            "",
+            200
+          ],
+          "count": 2
+        },
+        {
+          "key": [
+            "watch",
+            "jobs",
+            "",
+            200
+          ],
+          "count": 1
+        },
+        {
+          "key": [
+            "watch",
+            "ptahschemaapprovals",
+            "",
+            200
+          ],
+          "count": 1
+        }
+      ]
+    },
+    "completedCleanupAttempts": 139,
+    "deletedResultRecords": 695,
+    "requestsBoundToDeletedAttempts": 7449,
+    "recordLists": 1426,
+    "newPublications": 84,
+    "observations": [
+      "The139 complete cleanup attempts each deleted complete, chunk, intent, credential, and retirement records.",
+      "Typical cleanup has54 directly bound requests, excluding subject reads and collection LISTs.",
+      "The1426 record LISTs equal36 metadata scans plus10 lists per139 cleanup attempts. Collection and independent deletion admission each repeat member checks.",
+      "The before inventory contains1732 intents; two deferral hints per intent would be3464, below the4096 bound. This does not establish the actual hint-map occupancy.",
+      "Bracketing manager counters include35 more requests than the exact audit window; scrape intervals and audit event boundaries are retained.",
+      "Two client429 responses occurred in this audit-enabled diagnostic window. The preceding unaudited native window had zero observed429 delta; no causal attribution or passing pressure verdict is claimed."
+    ],
+    "apiConfigurationRestored": true,
+    "scope": "Metadata-only audit for the exact manager ServiceAccount after five-minute warmup, three-minute window, both managers sampled every five seconds. All three API servers were restored. This is attribution, not acceptance or a replacement for the failed native measurement.",
+    "custody": "Local archive retained. Remote custody and independent download verification are not established.",
+    "archive": {
+      "name": "capacity-steady-attribution-2026-10-07.tar.gz",
+      "sha256": "aacbea69177e2ba69099497c97c577d5e18b3e27d66ea9057b0aabd04415aa1d",
+      "bytes": 6336395,
+      "memberCount": 136,
+      "downloadVerified": false
+    }
+  },
+  "migrationExecutorStatusWait": {
+    "conclusion": "A delayed Pod-status reading reproduces and fixes a test race; original CI Pod status was not recorded.",
+    "ciRun": 37552581994,
+    "ciJob": 112573395456,
+    "originalLocal": "PASS in 254.58s; original CI failure not reproduced without injection.",
+    "controlledOriginal": "FAIL with exact SQL IPs and injected Pending status.",
+    "controlledFixed": "PASS with the same delayed status, executor rollout and History recovery without Apply replay.",
+    "checks": "Complete test/e2e/... race suite and tagged vet passed; UID/IP, replacement and terminal-state refusals retained.",
+    "scope": "Focused PostgreSQL scenario on native Kubernetes 1.35.8; 7 task containers share CPUs 0-3; memory is uncapped. Runtime uses the local current-claim authority change. The candidate initially waited behind the remaining realm claim of the negative control; that completed control was suspended before candidate operations started. Not a full phase, CI hardware equivalence, or proof of the missing original CI Pod snapshot. No timeout increase or matcher relaxation.",
+    "archive": {
+      "name": "migration-status-wait-2026-10-07.tar.gz",
+      "sha256": "955449d62742a22467c75fc746f54b74131a61fa7b825e698e8b19e2dda78040",
+      "bytes": 100659,
+      "memberCount": 38,
+      "downloadVerified": false
+    },
+    "custody": "Local archive only; no remote export or download verification."
   }
 }

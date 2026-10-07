@@ -81,7 +81,7 @@ func (s *scenarios) approveAndWait(ctx context.Context, start time.Time) (map[st
 	}
 	defer stream.Stop()
 	for {
-		created, err := s.dynamic.Resource(approvalGVR).Namespace(s.in.namespace).Create(admissionCtx, approval, metav1.CreateOptions{})
+		created, err := s.approvalWriter().Resource(approvalGVR).Namespace(s.in.namespace).Create(admissionCtx, approval, metav1.CreateOptions{})
 		if err == nil {
 			if created.GetUID() == "" || created.GetCreationTimestamp().Time.IsZero() || created.GetCreationTimestamp().Time.Before(start.Truncate(time.Second)) {
 				return outcome, fmt.Errorf("admitted approval lacks a fresh API identity")

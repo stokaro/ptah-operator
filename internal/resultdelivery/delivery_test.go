@@ -176,7 +176,7 @@ func TestLostAcknowledgmentOnlyRedeliversSavedBytes(t *testing.T) {
 	server := startReceiver(t, receiver, certs, func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if requests.Add(1) == 1 {
-				next.ServeHTTP(&lostACK{ResponseWriter: w}, r)
+				serveWithoutAcknowledgment(next, w, r)
 				return
 			}
 			next.ServeHTTP(w, r)
@@ -219,7 +219,19 @@ func TestLostAcknowledgmentOnlyRedeliversSavedBytes(t *testing.T) {
 
 type lostACK struct {
 	http.ResponseWriter
-	closed bool
+	connection net.Conn
+}
+
+func serveWithoutAcknowledgment(next http.Handler, w http.ResponseWriter, r *http.Request) {
+	lost := &lostACK{ResponseWriter: w}
+	defer func() {
+		if lost.connection != nil {
+			// Release the receiver's upload slot before waking the retry. This
+			// fixture loses an acknowledgment without adding upload contention.
+			_ = lost.connection.Close()
+		}
+	}()
+	next.ServeHTTP(lost, r)
 }
 
 func (w *lostACK) Unwrap() http.ResponseWriter { return w.ResponseWriter }
@@ -230,12 +242,11 @@ func (w *lostACK) WriteHeader(status int) {
 	}
 	connection, _, err := http.NewResponseController(w.ResponseWriter).Hijack()
 	if err == nil {
-		_ = connection.Close()
-		w.closed = true
+		w.connection = connection
 	}
 }
 func (w *lostACK) Write(p []byte) (int, error) {
-	if w.closed {
+	if w.connection != nil {
 		return 0, io.ErrClosedPipe
 	}
 	return w.ResponseWriter.Write(p)

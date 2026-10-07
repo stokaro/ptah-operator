@@ -218,15 +218,14 @@ func (m *migrationRun) runningExecutorImageChange() {
 	releaseTable := m.runningMigrationTableBarrier(database)
 	m.check(m.approve(name+"-running", name, plan.Name, string(plan.UID), plan.Spec.Fingerprint), "authorize the original executor's pending sequence")
 	jobUID, _ := m.waitForStopRowApply(name)
-	backend := ""
-	m.poll("the original migration executor inside its blocked DDL", time.Second, func() bool {
-		backend = m.runningMigrationBackend(database)
-		return backend != ""
+	backend, pod, err := waitForMigrationExecutorBackend(m.ctx, waitTimeout, time.Second, func() (string, *corev1.Pod, error) {
+		backend := m.runningMigrationBackend(database)
+		if backend == "" {
+			return "", nil, nil
+		}
+		return backend, m.readStopRowPod(jobUID), nil
 	})
-	pod := m.readStopRowPod(jobUID)
-	if !migrationExecutorBackendMatchesPod(backend, pod, pod.UID) {
-		m.fatalf("the database did not bind both DDL and advisory-lock sessions to the exact running migration Pod")
-	}
+	m.check(err, "bind both SQL sessions to the original running migration Pod")
 	before := m.migration(name)
 	if before.Status.ActiveOperation == nil || string(before.Status.ActiveOperation.JobUID) != jobUID {
 		m.fatalf("the running migration did not retain its exact dispatched claim")

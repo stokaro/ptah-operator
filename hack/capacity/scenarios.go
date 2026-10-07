@@ -32,6 +32,7 @@ type inputs struct {
 	operatorNamespace string
 	managerSelector   string
 	registrySecret    string
+	registryCA        string
 	schemaPolicy      string
 	migrationPolicy   string
 	databaseSecret    string // a fmt pattern with one %d, one database per resource
@@ -60,6 +61,8 @@ type scenarios struct {
 	load        workload
 	clientset   kubernetes.Interface
 	dynamic     dynamic.Interface
+	approver    dynamic.Interface
+	author      dynamic.Interface
 	windows     []window
 	recorders   []*cycleRecorder
 }
@@ -79,10 +82,14 @@ func (s *scenarios) migrationName(index int) string {
 func (s *scenarios) secretFor(index int) string { return fmt.Sprintf(s.in.databaseSecret, index) }
 
 func (s *scenarios) execution() map[string]any {
-	return map[string]any{"activeDeadlineSeconds": int64(300), "failureRetryInterval": "10s", "connectTimeout": "30s"}
+	return map[string]any{"activeDeadlineSeconds": int64(900), "failureRetryInterval": "30s", "connectTimeout": "10s"}
 }
 
 func (s *scenarios) artifactSource(reference, policy string) map[string]any {
+	transport := map[string]any{"plainHTTP": true}
+	if s.in.registryCA != "" {
+		transport = map[string]any{"caFrom": map[string]any{"name": s.in.registryCA, "key": "ca.pem"}}
+	}
 	return map[string]any{
 		"ociRef": reference,
 		"registryAuthFrom": map[string]any{
@@ -90,7 +97,7 @@ func (s *scenarios) artifactSource(reference, policy string) map[string]any {
 			"usernameKey": "username", "passwordKey": "password",
 		},
 		"verificationPolicyFrom": map[string]any{"name": policy, "key": "policy.yaml"},
-		"transport":              map[string]any{"plainHTTP": true},
+		"transport":              transport,
 	}
 }
 
@@ -110,7 +117,7 @@ func (s *scenarios) schemaObject(index int) *unstructured.Unstructured {
 		"spec": map[string]any{
 			"target":    s.target(name, index),
 			"desired":   s.artifactSource(s.schemaReference(index, 0), s.in.schemaPolicy),
-			"policy":    map[string]any{"apply": "Always", "allowDestructive": false, "driftSeverity": "all"},
+			"policy":    map[string]any{"apply": "Always", "allowDestructive": false, "driftSeverity": "all", "lockTimeout": "30s"},
 			"interval":  s.load.Interval.String(),
 			"execution": s.execution(),
 		},
@@ -146,7 +153,7 @@ func (s *scenarios) create(ctx context.Context) error {
 	start := time.Now().UTC()
 	var targets []batchTarget
 	for index := range s.load.Schemas {
-		object, err := s.dynamic.Resource(schemaResource).Namespace(s.in.namespaceFor(index)).Create(ctx, s.schemaObject(index), metav1.CreateOptions{})
+		object, err := s.createWorkload(ctx, schemaResource, s.schemaObject(index))
 		if err != nil {
 			return fmt.Errorf("create %s: %w", s.schemaName(index), err)
 		}
@@ -154,7 +161,7 @@ func (s *scenarios) create(ctx context.Context) error {
 	}
 	for index := range s.load.Migrations {
 		desired := s.migrationObject(s.migrationName(index), s.load.Schemas+index, "Always", true)
-		object, err := s.dynamic.Resource(migrationResource).Namespace(desired.GetNamespace()).Create(ctx, desired, metav1.CreateOptions{})
+		object, err := s.createWorkload(ctx, migrationResource, desired)
 		if err != nil {
 			return fmt.Errorf("create %s: %w", s.migrationName(index), err)
 		}
@@ -256,7 +263,7 @@ func (s *scenarios) steady(ctx context.Context) error {
 // the burst can be measured against the one piece of work a person asked for.
 func (s *scenarios) prepareApproval(ctx context.Context) error {
 	object := s.migrationObject(approvalResource, s.load.Schemas+s.load.Migrations, "OnApproval", false)
-	if _, err := s.dynamic.Resource(migrationResource).Namespace(object.GetNamespace()).Create(ctx, object, metav1.CreateOptions{}); err != nil {
+	if _, err := s.createWorkload(ctx, migrationResource, object); err != nil {
 		return fmt.Errorf("create %s: %w", approvalResource, err)
 	}
 	deadline := time.Now().Add(s.load.Settle.Duration)
@@ -336,7 +343,7 @@ func (s *scenarios) patchReference(ctx context.Context, resource schema.GroupVer
 		return err
 	}
 	patch := fmt.Sprintf(`{"spec":{%q:{"ociRef":%q}}}`, field, reference)
-	_, err = s.dynamic.Resource(resource).Namespace(namespace).Patch(ctx, name, types.MergePatchType, []byte(patch), metav1.PatchOptions{})
+	_, err = s.workloadWriter().Resource(resource).Namespace(namespace).Patch(ctx, name, types.MergePatchType, []byte(patch), metav1.PatchOptions{})
 	if err != nil {
 		return fmt.Errorf("move %s to %s: %w", name, reference, err)
 	}

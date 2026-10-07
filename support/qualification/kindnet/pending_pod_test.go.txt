@@ -1,0 +1,28 @@
+package podinfo
+
+import (
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/tools/cache"
+	"testing"
+)
+
+type orderedPodIndex struct {
+	cache.Indexer
+	objects []interface{}
+}
+
+func (i orderedPodIndex) ByIndex(string, string) ([]interface{}, error) { return i.objects, nil }
+func TestRetainedTerminalPodCannotOwnPendingInitTraffic(t *testing.T) {
+	for _, phase := range []corev1.PodPhase{corev1.PodRunning, corev1.PodPending} {
+		t.Run(string(phase), func(t *testing.T) {
+			old := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "old", Namespace: "unrelated"}, Status: corev1.PodStatus{Phase: corev1.PodSucceeded, PodIP: "10.244.3.167", PodIPs: []corev1.PodIP{{IP: "10.244.3.167"}}}}
+			live := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "fetch", Namespace: "workload"}, Status: corev1.PodStatus{Phase: phase, PodIP: "10.244.3.167", PodIPs: []corev1.PodIP{{IP: "10.244.3.167"}}}}
+			resolver := &InformerResolver{podIndexer: orderedPodIndex{objects: []interface{}{old, live}}}
+			key, ok := resolver.LookupPod("10.244.3.167")
+			if !ok || key != "workload/fetch" {
+				t.Fatalf("live %s Pod incorrectly resolves to %q", phase, key)
+			}
+		})
+	}
+}

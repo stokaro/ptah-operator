@@ -57,7 +57,7 @@ func newSender(endpoint string, identity Identity, tlsConfig *tls.Config, retry 
 	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil ||
 		parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" || (parsed.Path != "" && parsed.Path != "/") ||
 		!identity.valid() || tlsConfig == nil || tlsConfig.InsecureSkipVerify || tlsConfig.RootCAs == nil ||
-		retry.Attempts < 1 || retry.Attempts > 8 || retry.Interval <= 0 || retry.Interval > 30*time.Second ||
+		retry.Attempts < 1 || retry.Attempts > 120 || retry.Interval <= 0 || retry.Interval > 30*time.Second ||
 		retry.AttemptTimeout <= 0 || retry.TotalTimeout < retry.AttemptTimeout || retry.TotalTimeout > 5*time.Minute {
 		return nil, errors.New("invalid result sender configuration")
 	}

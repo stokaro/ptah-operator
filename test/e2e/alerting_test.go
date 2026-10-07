@@ -219,6 +219,20 @@ func TestAlProfileNumericThresholdSpelling(t *testing.T) {
 			t.Fatalf("changed threshold accepted: %s", actual)
 		}
 	}
+	compound := alProfileRuleTargets()[alPlanStoreAlert].Expr
+	if !alProfileExpressionEqual(strings.Replace(compound, "134217728", "1.34217728e+08", 1), compound) {
+		t.Fatal("Helm number spelling rejected in the incident-preserving rule")
+	}
+	for _, actual := range []string{
+		strings.Replace(compound, "134217728", "134217729", 1),
+		strings.Replace(compound, "unless", "or", 1),
+		strings.Replace(compound, `alertstate="firing"`, `alertstate="pending"`, 1),
+		expected,
+	} {
+		if alProfileExpressionEqual(actual, compound) {
+			t.Fatalf("changed incident-preserving rule accepted: %s", actual)
+		}
+	}
 }
 
 // The runbook base is the one the chart's values name.

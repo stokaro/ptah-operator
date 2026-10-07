@@ -1,6 +1,9 @@
 """Prepare isolated capacity lab fixtures; this is not full qualification."""
 
 import argparse
+import base64
+import copy
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -8,6 +11,7 @@ import re
 import secrets
 import subprocess
 import sys
+import time
 
 import capacity_unrelated
 
@@ -48,19 +52,40 @@ class Bootstrap:
             output.write('\n')
         temporary.replace(self.path)
 
-    def command(self, args, value=None, timeout=45):
+    def command(self, args, value=None, timeout=45, kubeconfig=None):
         data = json.dumps(value).encode() if isinstance(value, dict) else value
-        result = subprocess.run(['kubectl', '--kubeconfig', self.env['E2E_KUBECONFIG'],
-                                 '--request-timeout=30s', *args], input=data,
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                timeout=timeout, check=False)
-        if result.returncode:
+        owned_create = (args == ['create', '-f', '-', '-o', 'json'] and
+                        isinstance(value, dict) and value.get('kind') != 'ResourceQuota' and
+                        value.get('metadata', {}).get('namespace') in
+                        {n['name'] for n in self.state['namespaces']})
+        deadline = time.monotonic() + timeout
+        diagnostic = self.path.with_suffix('.error.log')
+        failure = 'kubectl failed; private diagnostics: ' + str(diagnostic)
+        for attempt in range(5):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise RuntimeError(failure)
+            result = subprocess.run(['kubectl', '--kubeconfig', kubeconfig or self.env['E2E_KUBECONFIG'],
+                                     '--request-timeout=30s', *args], input=data,
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                    timeout=remaining, check=False)
+            if not result.returncode:
+                return result.stdout
             # API errors can quote Secret fields. Keep diagnostics private.
-            diagnostic = self.path.with_suffix('.error.log')
             with open(diagnostic, 'ab', opener=lambda p, f: os.open(p, f, 0o600)) as output:
                 output.write(result.stderr)
-            raise RuntimeError('kubectl failed; private diagnostics: ' + str(diagnostic))
-        return result.stdout
+            # Quota admission can exhaust its own optimistic-update retries
+            # before admitting a CREATE. Only that explicit refusal proves the
+            # object was not stored; never replay an ambiguous write or SQL exec.
+            quota_conflict = re.fullmatch(
+                rb'Error from server \(Conflict\): error when creating "STDIN": '
+                rb'Operation cannot be fulfilled on resourcequotas "(?:capacity|background)": '
+                rb'the object has been modified; please apply your changes to the latest version and try again\n?',
+                result.stderr)
+            if (not owned_create or not quota_conflict or result.stdout or attempt == 4 or
+                    time.monotonic() + 0.5 >= deadline):
+                raise RuntimeError(failure)
+            time.sleep(0.5)
 
     def read(self, resource, name, namespace):
         return json.loads(self.command(['-n', namespace, 'get', resource, name, '-o', 'json']))
@@ -87,7 +112,7 @@ class Bootstrap:
     def copy(self, source, namespace):
         # Do not copy owner references, server metadata or annotations containing
         # a previous applied Secret. Existing objects are never overwritten.
-        value = {key: source[key] for key in ('apiVersion', 'kind', 'type', 'data', 'immutable') if key in source}
+        value = {key: source[key] for key in ('apiVersion', 'kind', 'type', 'data', 'immutable', 'rules') if key in source}
         value['metadata'] = {'name': source['metadata']['name'], 'namespace': namespace}
         return self.create(value)
 
@@ -96,9 +121,84 @@ class Bootstrap:
         return {'apiVersion': versions.get(kind, 'v1'), 'kind': kind,
                 'metadata': {'name': name, 'namespace': namespace}, **fields}
 
+    def approver(self):
+        path = self.env.get('CAPACITY_APPROVER_KUBECONFIG')
+        if not path:
+            return None
+        review = json.loads(self.command(['auth', 'whoami', '-o', 'json'], kubeconfig=path))
+        username = review.get('status', {}).get('userInfo', {}).get('username')
+        if not isinstance(username, str) or not username:
+            raise ValueError('approver SelfSubjectReview returned no username')
+        role = self.env['E2E_CONTROLLER_NAME'] + '-approver'
+        self.command(['get', 'clusterrole', role, '-o', 'name'])
+        return {'username': username, 'clusterRole': role}
+
+    def author(self):
+        path = self.env.get('CAPACITY_AUTHOR_KUBECONFIG')
+        if not path:
+            return None
+        if not self.env.get('CAPACITY_APPROVER_KUBECONFIG'):
+            raise ValueError('capacity author requires a distinct approver kubeconfig')
+        review = json.loads(self.command(['auth', 'whoami', '-o', 'json'], kubeconfig=path))
+        identity = review.get('status', {}).get('userInfo', {})
+        username = identity.get('username')
+        if not isinstance(username, str) or not username or 'system:masters' in identity.get('groups', []):
+            raise ValueError('capacity author must be an identified non-administrator')
+        example = Path(__file__).resolve().parents[3] / 'examples/desired-state-author-role.yaml'
+        # kubectl prints one JSON document per YAML input, not a single List.
+        raw = self.command(['create', '--dry-run=client', '-f', str(example), '-o', 'json']).decode()
+        rendered = []
+        decoder = json.JSONDecoder()
+        while raw.strip():
+            raw = raw.lstrip()
+            row, end = decoder.raw_decode(raw)
+            rendered.append(row)
+            raw = raw[end:]
+        roles = [row for row in rendered if row.get('kind') == 'Role']
+        if len(roles) != 1 or roles[0].get('metadata', {}).get('name') != 'ptah-desired-state-author' or not roles[0].get('rules'):
+            raise ValueError('documented author example must contain one nonempty author Role')
+        return {'username': username, 'role': roles[0], 'exampleSHA256': hashlib.sha256(example.read_bytes()).hexdigest()}
+
+    def registry_dependencies(self, dependencies, namespace):
+        host = self.env.get('CAPACITY_REGISTRY_HOST')
+        ca_name = self.env.get('CAPACITY_REGISTRY_CA_CONFIGMAP')
+        if bool(host) != bool(ca_name):
+            raise ValueError('HTTPS capacity registry requires both host and CA ConfigMap')
+        if ca_name:
+            if not re.fullmatch(r'[A-Za-z0-9.-]+:[0-9]{1,5}', host):
+                raise ValueError('capacity registry must name one DNS authority and port')
+            ca = self.read('configmap', ca_name, namespace)
+            pem = ca.get('data', {}).get('ca.pem')
+            if ca.get('immutable') is not True or not isinstance(pem, str) or not pem:
+                raise ValueError('capacity registry CA must be an immutable ConfigMap with ca.pem')
+            digest = 'sha256:' + hashlib.sha256(pem.encode()).hexdigest()
+            credential = copy.deepcopy(dependencies[0])
+            credential['data'].pop('allowPlainHTTP', None)
+            for key, value in {'registry': host, 'caSHA256': digest}.items():
+                credential['data'][key] = base64.b64encode(value.encode()).decode()
+            dependencies[0] = credential
+            dependencies.append(ca)
+            self.state['artifactRegistry'] = {'host': host, 'caConfigMap': ca_name, 'caSHA256': digest}
+        signing = [self.env.get('CAPACITY_SIGNING_KEY'), self.env.get('CAPACITY_SIGNING_PUBLIC_KEY')]
+        if bool(signing[0]) != bool(signing[1]):
+            raise ValueError('signed capacity artifacts require both signing key and public key')
+        if signing[0]:
+            for index, kind in ((2, 'schema'), (3, 'migrations')):
+                policy = copy.deepcopy(dependencies[index])
+                policy['data']['policy.yaml'] = json.dumps({'version': 1, 'require_digest_pin': True,
+                    'require_signature': True, 'artifact_types': ['application/vnd.stokaro.ptah.' + kind + '.v1']})
+                dependencies[index] = policy
+
     def prepare(self, workload):
         if self.path.exists():
             raise RuntimeError('state file already exists; refusing to replace an ownership journal')
+        namespaces = None
+        if 'CAPACITY_WORKLOAD_NAMESPACES' in self.env:
+            namespaces = self.env['CAPACITY_WORKLOAD_NAMESPACES'].split(',')
+            if (len(namespaces) != 2 or len(set(namespaces)) != 2 or
+                    any(len(name) > 63 or not re.fullmatch(r'[a-z0-9](?:[-a-z0-9]*[a-z0-9])?', name)
+                        for name in namespaces)):
+                raise ValueError('CAPACITY_WORKLOAD_NAMESPACES requires two distinct DNS labels separated by a comma')
         if type(workload.get('unrelatedObjects', False)) is not bool:
             raise ValueError('unrelatedObjects must be boolean')
         engine = workload.get('engine', 'PostgreSQL')
@@ -111,6 +211,10 @@ class Bootstrap:
         if any(type(n) is not int or n < 0 for n in counts) or sum(counts) == 0:
             raise ValueError('workload must declare nonnegative family counts and at least one resource')
         # Read all shared prerequisites before creating anything.
+        author = self.author()
+        approver = self.approver()
+        if author and author['username'] == approver['username']:
+            raise ValueError('capacity author and approver must differ')
         source = self.env['E2E_TEST_NAMESPACE']
         dependencies = [self.read('secret', name, source) for name in ('demo-registry', 'demo-registry-pull')]
         for name in ('demo-verification-policy', 'demo-migration-verification-policy'):
@@ -118,6 +222,7 @@ class Bootstrap:
             if policy.get('immutable') is not True:
                 raise ValueError('verification policy is not immutable: ' + name)
             dependencies.append(policy)
+        self.registry_dependencies(dependencies, source)
         version = json.loads(self.command(['version', '-o', 'json']))['serverVersion']['gitVersion']
         match = re.match(r'^v(1\.[0-9]+)\.', version)
         if not match:
@@ -126,14 +231,35 @@ class Bootstrap:
         self.state.update(runID=secrets.token_hex(5), kubernetes=version, engine=engine)
         prefix = 'ptah-capacity-' + self.state['runID']
         fixture = prefix + '-fixtures'
-        namespaces = [prefix + '-a', prefix + '-b']
+        namespaces = namespaces or [prefix + '-a', prefix + '-b']
         self.state.update(fixtureNamespace=fixture, workloadNamespaces=namespaces,
                           schemas=counts[0], migrations=counts[1])
+        if approver:
+            self.state['approver'] = approver
+        if author:
+            self.state['author'] = author
         self.save()
         self.namespace(fixture, minor, False)
         self.copy(dependencies[1], fixture)
         for namespace in namespaces:
             self.namespace(namespace, minor, True)
+            if author:
+                self.copy(author['role'], namespace)
+                self.create({'apiVersion': 'rbac.authorization.k8s.io/v1', 'kind': 'RoleBinding',
+                             'metadata': {'name': 'capacity-author', 'namespace': namespace},
+                             'roleRef': {'apiGroup': 'rbac.authorization.k8s.io', 'kind': 'Role',
+                                         'name': author['role']['metadata']['name']},
+                             'subjects': [{'apiGroup': 'rbac.authorization.k8s.io', 'kind': 'User',
+                                           'name': author['username']}]})
+            if approver:
+                # Grant only the chart's approval permissions in these new
+                # namespaces. Namespace cleanup removes the binding as well.
+                self.create({'apiVersion': 'rbac.authorization.k8s.io/v1', 'kind': 'RoleBinding',
+                             'metadata': {'name': 'capacity-approver', 'namespace': namespace},
+                             'roleRef': {'apiGroup': 'rbac.authorization.k8s.io', 'kind': 'ClusterRole',
+                                         'name': approver['clusterRole']},
+                             'subjects': [{'apiGroup': 'rbac.authorization.k8s.io', 'kind': 'User',
+                                           'name': approver['username']}]})
             for dependency in dependencies:
                 self.copy(dependency, namespace)
             # This ServiceAccount exists only inside our freshly created namespace.

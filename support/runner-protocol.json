@@ -92,6 +92,16 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:f12cc65c7652fcbcd6f4430d505f850d84d7ecf6d70debb4f4dbe4be4ef0a275",
       "reason": "Preserve bounded, sanitized preflight and result-delivery failure causes in runner diagnostics, including the final HTTP status after retry exhaustion. The wire payload, durable acknowledgment, authorization, retry budget, SQL execution behavior, and no-log-fallback rule are unchanged; protocol version 1 remains compatible."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:81e1f036591f54bf4f163e0f30c90ef97151af2f1f8b99ac995088c4fa0068ec",
+      "reason": "Complete transient receiver recovery before the first tagged 0.2.0 release. Preflight and identical-byte result delivery now permit up to 120 attempts at one-second intervals instead of exhausting four immediate refusals in three seconds. The existing two-minute total deadline and 30-second request deadline still bound each retry sequence. Definitive authority refusals, wire payloads, durable acknowledgment, SQL execution guards, and the no-reexecution and no-log-fallback rules are unchanged. No tagged release consumed this development transport; protocol counters remain 1."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:a85c0f0ad1ec2fa008906e82612f75ce70d7b376fd49a572db7dd4c61a76c3c7",
+      "reason": "Allow an identical result-record CREATE when another publisher creates that member and completes between the admission reads. After observing completion, admission re-reads the member and still requires its exact immutable bytes, ownership, live UID, and absence of deletion. Missing or conflicting members remain refused, and API read failures remain errors. This changes a receiver-side admission race in a transitive runner package; wire payloads, durable receipts, live authority checks, SQL execution, retry budgets, and the no-reexecution rule are unchanged. Protocol version 1 remains compatible."
     }
   ]
 }

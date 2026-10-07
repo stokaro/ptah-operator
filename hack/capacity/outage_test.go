@@ -57,7 +57,7 @@ func TestUnobservedOutageFailsAndRemovesOnlyItsPolicy(t *testing.T) {
 		}
 		s := &scenarios{clientset: clientset, in: inputs{namespace: "work", registryIP: "192.0.2.1"},
 			load: workload{Schemas: 1, Migrations: 1, Outage: duration{time.Nanosecond}}}
-		want := "no fresh Resolve failure"
+		want := "no fresh registry-read failure"
 		if readError {
 			want = "injected API failure"
 		}
@@ -91,7 +91,7 @@ func TestRegistryFailureNeedsAFreshBoundRunnerFailure(t *testing.T) {
 	s := &scenarios{in: inputs{namespace: "work"}, load: workload{Schemas: 1, Migrations: 1}}
 	for _, family := range []string{"schema", "migration"} {
 		good := resolvePod(t, family, start.Add(time.Second), nil)
-		if got, digest := s.failedResolve(good, start); got != family || !strings.HasPrefix(digest, "sha256:") {
+		if got, digest := s.failedRegistryRead(good, start); got != family || !strings.HasPrefix(digest, "sha256:") {
 			t.Fatalf("the actual runner failure was refused: %s %s", got, digest)
 		}
 		for name, mutate := range map[string]func(*corev1.Pod){
@@ -111,12 +111,12 @@ func TestRegistryFailureNeedsAFreshBoundRunnerFailure(t *testing.T) {
 			t.Run(family+"/"+name, func(t *testing.T) {
 				pod := good.DeepCopy()
 				mutate(pod)
-				if got, _ := s.failedResolve(*pod, start); got != "" {
+				if got, _ := s.failedRegistryRead(*pod, start); got != "" {
 					t.Fatal("accepted a Pod that does not prove the outage")
 				}
 			})
 		}
-		for _, code := range []string{"", "dispatch_deadline_expired"} {
+		for _, code := range []string{"", "dispatch_deadline_expired", "invalid_verification_output"} {
 			pod := resolvePod(t, family, start.Add(time.Second), func(r *runner.Result) {
 				if code == "" {
 					r.ChildExitCode, r.Error = 0, nil
@@ -127,7 +127,7 @@ func TestRegistryFailureNeedsAFreshBoundRunnerFailure(t *testing.T) {
 					r.Error.Code = code
 				}
 			})
-			if got, _ := s.failedResolve(pod, start); got != "" {
+			if got, _ := s.failedRegistryRead(pod, start); got != "" {
 				t.Fatalf("accepted the wrong result code %q", code)
 			}
 		}

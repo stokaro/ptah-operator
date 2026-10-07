@@ -226,7 +226,7 @@ func (s *scenarios) churnOne(ctx context.Context, family string, index, round in
 		resource, name, field, reference = migrationResource, s.migrationName(index), "artifact", s.migrationReference(index, round)
 	}
 	target := batchTarget{family: family, resource: resource, namespace: s.in.namespaceFor(index), name: name, reference: reference}
-	objects := s.dynamic.Resource(resource).Namespace(target.namespace)
+	objects := s.workloadWriter().Resource(resource).Namespace(target.namespace)
 	for attempt := 0; ; attempt++ {
 		if err := ctx.Err(); err != nil {
 			return target, err
@@ -280,7 +280,7 @@ func (s *scenarios) churnOne(ctx context.Context, family string, index, round in
 				return target, err
 			}
 		}
-		created, err := objects.Create(ctx, replacement, metav1.CreateOptions{})
+		created, err := s.createWorkload(ctx, resource, replacement)
 		if err != nil {
 			return target, err
 		}

@@ -67,14 +67,20 @@ func decodePodBinding(record *api.PtahResultRecord, stored bool) (resultdelivery
 	return identity, nil
 }
 
+// MatchesPodBinding recognizes an exact persisted public pin. It grants no
+// publication authority; each delivery must still pass AuthorizePublication.
+func MatchesPodBinding(record *api.PtahResultRecord, identity resultdelivery.Identity) bool {
+	bound, err := decodePodBinding(record, true)
+	return err == nil && record.DeletionTimestamp.IsZero() && bound == identity
+}
+
 func (p PodBindings) Ensure(ctx context.Context, identity resultdelivery.Identity) (Credential, error) {
 	if p.Writer == nil || p.Reader == nil {
 		return Credential{}, ErrCredential
 	}
 	check := (resultauthority.Authorizer{Reader: p.Reader}).Check
-	if err := check(ctx, identity); err != nil {
-		return Credential{}, err
-	}
+	// Reading the immutable pin grants no authority. Check before creating a
+	// missing pin and after verifying the persisted winner, just before return.
 	expected, err := podBindingRecord(identity)
 	if err != nil {
 		return Credential{}, err

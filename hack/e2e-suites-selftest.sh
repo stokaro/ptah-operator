@@ -60,7 +60,7 @@ runs_phase() {
 [ "$(runs_phase 'migrations-postgresql' '' dataplane)" = no ] ||
 	fail "a suite with no preparation runs another suite's phase"
 # Migration engines run in separate suites. Their phases must not reach the
-# other engine or the reference-data phases owned by certificates.
+# other engine or reference-data phases owned by other suites.
 [ "$(runs_phase 'migrations-postgresql' 'dataplane' migrations-mysql)" = no ] ||
 	fail "an engine's suite runs the other engine's migration phase"
 [ "$(runs_phase 'migrations-mysql' 'dataplane' reference-data-postgresql)" = no ] ||

@@ -1711,6 +1711,10 @@ sets none:
 | `failures.window` with `failures.count` | `PtahOperatorOperationsFailing` |
 | `admissionFailingFor` | `PtahOperatorAdmissionUnavailable`, which reads the API server's metrics |
 
+Once `PtahOperatorPlanStoreLarge` fires, a missing state reading keeps the
+existing incident open. A fresh reading at or below the configured budget
+clears it; loss of API access alone cannot establish that plans were pruned.
+
 Read them off the installation they are for, over a period that includes a
 rollout and a busy day, and set each comfortably above what normal work
 produced:

@@ -18,7 +18,9 @@ import (
 	"github.com/stokaro/ptah-operator/internal/runner"
 )
 
-var deliveryRetry = resultdelivery.RetryPolicy{Attempts: 4, Interval: time.Second, AttemptTimeout: 30 * time.Second, TotalTimeout: 2 * time.Minute}
+// Fast transient refusals must not exhaust delivery after three seconds. Keep
+// one-second spacing across the existing total deadline; SQL is never retried.
+var deliveryRetry = resultdelivery.RetryPolicy{Attempts: 120, Interval: time.Second, AttemptTimeout: 30 * time.Second, TotalTimeout: 2 * time.Minute}
 
 type runnerDelivery struct {
 	sender   *resultdelivery.Sender

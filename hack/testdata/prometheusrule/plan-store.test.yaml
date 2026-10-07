@@ -1,0 +1,74 @@
+# CI run 37437296857, certificates 1.36: one failed census reset an ongoing
+# storage incident before any pruning. Keep its original start time through
+# absent readings, then clear on an actual below-budget reading.
+rule_files:
+  - rules.yaml
+evaluation_interval: 5s
+tests:
+  - interval: 5s
+    input_series:
+      - series: 'ptah_operator_stored_plan_bytes{pod="leader"}'
+        values: '142606336x2 stale 142606336x3 0x1 stale'
+    promql_expr_test:
+      - expr: 'ALERTS{alertname="PtahOperatorPlanStoreLarge",alertstate="firing"}'
+        eval_time: 15s
+        exp_samples:
+          - labels: 'ALERTS{alertname="PtahOperatorPlanStoreLarge",alertstate="firing",severity="warning"}'
+            value: 1
+      - expr: 'ALERTS_FOR_STATE{alertname="PtahOperatorPlanStoreLarge"}'
+        eval_time: 25s
+        exp_samples:
+          - labels: 'ALERTS_FOR_STATE{alertname="PtahOperatorPlanStoreLarge",severity="warning"}'
+            value: 0
+      - expr: 'ALERTS{alertname="PtahOperatorPlanStoreLarge"}'
+        eval_time: 40s
+        exp_samples: []
+      - expr: 'ALERTS{alertname="PtahOperatorPlanStoreLarge"}'
+        eval_time: 55s
+        exp_samples: []
+
+  # Do not turn an unknown initial size or a lost below-budget reading into
+  # a storage incident. Equality with the configured budget is not a fault.
+  - interval: 5s
+    input_series:
+      - series: 'ptah_operator_stored_plan_bytes{pod="leader"}'
+        values: '_x2 134217728x2 stale _x2 134217728x2'
+    promql_expr_test:
+      - expr: 'ALERTS{alertname="PtahOperatorPlanStoreLarge"}'
+        eval_time: 5s
+        exp_samples: []
+      - expr: 'ALERTS{alertname="PtahOperatorPlanStoreLarge"}'
+        eval_time: 30s
+        exp_samples: []
+      - expr: 'ALERTS{alertname="PtahOperatorPlanStoreLarge"}'
+        eval_time: 45s
+        exp_samples: []
+
+  # A new leader's fresh low reading clears the incident immediately. The
+  # old leader's historical high sample must not keep it firing.
+  - interval: 5s
+    input_series:
+      - series: 'ptah_operator_stored_plan_bytes{pod="old"}'
+        values: '142606336x2 stale'
+      - series: 'ptah_operator_stored_plan_bytes{pod="new"}'
+        values: '_x2 134217728x4'
+    promql_expr_test:
+      - expr: 'ALERTS{alertname="PtahOperatorPlanStoreLarge"}'
+        eval_time: 15s
+        exp_samples: []
+
+  # Unknown size is not recovery even when it lasts beyond the ordinary
+  # lookback window. A later real zero still resolves on its first evaluation.
+  - interval: 5s
+    input_series:
+      - series: 'ptah_operator_stored_plan_bytes{pod="leader"}'
+        values: '142606336x2 stale _x64 0x2'
+    promql_expr_test:
+      - expr: 'ALERTS_FOR_STATE{alertname="PtahOperatorPlanStoreLarge"}'
+        eval_time: 5m30s
+        exp_samples:
+          - labels: 'ALERTS_FOR_STATE{alertname="PtahOperatorPlanStoreLarge",severity="warning"}'
+            value: 0
+      - expr: 'ALERTS{alertname="PtahOperatorPlanStoreLarge"}'
+        eval_time: 5m50s
+        exp_samples: []

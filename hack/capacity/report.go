@@ -31,7 +31,9 @@ type report struct {
 
 // scenarioCost is one window reduced to the figures the capacity page names.
 type scenarioCost struct {
-	EligibleFreshness *freshnessCost `json:"eligibleFreshness"`
+	ManagerAPIDemand   *apiDemand     `json:"managerAPIDemand"`
+	APIRequestProblems []string       `json:"apiRequestProblems,omitempty"`
+	EligibleFreshness  *freshnessCost `json:"eligibleFreshness"`
 	window
 	RefreshCycles         []resourceCycleCount `json:"refreshCycles"`
 	CycleProblems         []string             `json:"cycleProblems,omitempty"`
@@ -95,6 +97,7 @@ func histogramQuantiles(h histogram) quantiles {
 // cost reduces the samples and Jobs inside one window.
 func cost(w window, samples []sample, jobs []jobRecord) scenarioCost {
 	out := scenarioCost{window: w, WorkqueueDepthMax: map[string]float64{}, Incomplete: map[string]int{}}
+	out.ManagerAPIDemand, out.APIRequestProblems = managerAPIDemand(w, samples)
 	var inside []sample
 	for _, reading := range samples {
 		if !reading.At.Before(w.Start) && !reading.At.After(w.End) {
@@ -267,6 +270,15 @@ func writeSummary(out io.Writer, r report) error {
 		}
 		fmt.Fprintf(&b, "| %s | %d | %d | %d | %d | %d | %d | %d | %s | %s | %s |\n", s.Name, f.EligibleReadings, f.SuspendedReadings, f.DeletingReadings, f.MissingObservations, f.MissingDeadlines, f.ScheduledReadings, f.InFlightReadings, number(f.ObservationAgeMaxSeconds), number(f.OverdueMaxSeconds), number(f.ActiveOperationAgeMaxSeconds))
 	}
+	b.WriteString("\n| Scenario | API 60-second window bounds | Manager requests/s upper bound | Missing API demand evidence |\n| --- | --- | --- | --- |\n")
+	for _, s := range r.Scenarios {
+		if s.ManagerAPIDemand == nil {
+			fmt.Fprintf(&b, "| %s | n/a | n/a | %s |\n", s.Name, strings.Join(s.APIRequestProblems, "; "))
+			continue
+		}
+		fmt.Fprintf(&b, "| %s | %d | %.2f | |\n", s.Name, len(s.ManagerAPIDemand.Windows), s.ManagerAPIDemand.MaxPerSecondUpper)
+	}
+	b.WriteString("\nAPI demand sums manager process counters only. Each bound covers all sliding 60-second windows in its recorded start interval, including edge traffic outside the window; it is not an average over the longer scrape span. Missing counters, gaps, resets, or replacement processes leave the bound unavailable. Monitoring and fixture traffic are separate and are not measured by these manager counters.\n")
 	_, err := io.WriteString(out, b.String())
 	return err
 }

@@ -11,7 +11,8 @@
     "suite runs against its own cluster, so phases that share mutable state stay",
     "together: the CRD upgrade and the uninstall that follows it, the schema",
     "faults and their shared watches. Reference data uses separate databases",
-    "and has no migration prerequisite, so it shares the certificates job. High",
+    "and has no migration prerequisite. PostgreSQL reference data shares the",
+    "data-plane job; MySQL reference data shares certificates. High",
     "availability belongs with the upgrade rather than with the other",
     "control-plane phases, because it asserts what an upgrade leaves behind:",
     "the Resolve metric sources of the release it replaced. The control-plane",
@@ -22,8 +23,9 @@
     "remain in data-plane.",
     "",
     "The migration path runs one engine per suite. Reference-data acceptance",
-    "runs both engines between certificate rotation and certificate-expiry",
-    "alerts, using the prepared namespace, registry and databases. Moving",
+    "uses the prepared namespace, registry and databases. Plan-store alerting",
+    "shares the certificate monitoring setup rather than extending the",
+    "lifecycle job that already holds the upgrade fault window. Moving",
     "schema faults to their own cluster lets these phases overlap the longer",
     "data-plane and lifecycle jobs without repeating acceptance.",
     "",
@@ -70,8 +72,8 @@
     {
       "name": "certificates",
       "slug": "certificates",
-      "summary": "Certificate rotation, reference data on both engines, and certificate expiry alerts",
-      "phases": ["cert-rotation", "reference-data-postgresql", "reference-data-mysql", "alerting-certificates"],
+      "summary": "Certificate rotation, MySQL reference data, plan storage and certificate expiry alerts",
+      "phases": ["cert-rotation", "reference-data-mysql", "alerting-certificates"],
       "prepare": ["assert", "dataplane"]
     },
     {
@@ -99,8 +101,8 @@
     {
       "name": "data-plane",
       "slug": "data-plane",
-      "summary": "The control-plane contract, PostgreSQL lifecycle, and plan-size and admission boundaries",
-      "phases": ["assert", "dataplane"],
+      "summary": "The control-plane contract, PostgreSQL lifecycle and reference data, and plan-size and admission boundaries",
+      "phases": ["assert", "dataplane", "reference-data-postgresql"],
       "prepare": []
     },
     {

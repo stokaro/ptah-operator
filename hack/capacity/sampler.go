@@ -52,6 +52,7 @@ type sample struct {
 
 // managerReading is one manager Pod's own account of itself.
 type managerReading struct {
+	APIRequests        *apiRequestReading `json:"apiRequests"`
 	PodUID             string             `json:"podUID"`
 	ContainerID        string             `json:"containerID"`
 	ContainerStartedAt time.Time          `json:"containerStartedAt"`
@@ -309,7 +310,9 @@ func (s *sampler) readManagers(ctx context.Context, into *sample) error {
 			problems = append(problems, err)
 			continue
 		}
+		scrapeStarted := time.Now().UTC()
 		reading, err := scrapePod(ctx, s.clientset, s.operatorNamespace, pod.Name, s.metricsPort)
+		scrapeFinished := time.Now().UTC()
 		if err != nil {
 			problems = append(problems, fmt.Errorf("manager %s: %w", pod.Name, err))
 			continue
@@ -342,6 +345,10 @@ func (s *sampler) readManagers(ctx context.Context, into *sample) error {
 			throttle = reading.histogram("rest_client_rate_limiter_duration_seconds", nil).sum
 		}
 		too, _ := reading.value("rest_client_requests_total", map[string]string{"code": "429"})
+		var requests *apiRequestReading
+		if total, present := reading.value("rest_client_requests_total", nil); present && counterContinues(0, total) {
+			requests = &apiRequestReading{Total: total, StartedAt: scrapeStarted, FinishedAt: scrapeFinished}
+		}
 		queue := reading.histogram("workqueue_queue_duration_seconds", nil)
 		depths := reading.maxBy("workqueue_depth", "name")
 		validDepths := true
@@ -353,7 +360,8 @@ func (s *sampler) readManagers(ctx context.Context, into *sample) error {
 			continue
 		}
 		into.Managers[pod.Name] = managerReading{
-			PodUID: identity.PodUID, ContainerID: identity.ContainerID,
+			APIRequests: requests,
+			PodUID:      identity.PodUID, ContainerID: identity.ContainerID,
 			ContainerStartedAt: identity.ContainerStartedAt, ProcessStartedAt: identity.ProcessStartedAt,
 			RestartCount:    identity.RestartCount,
 			RSSBytes:        rss,

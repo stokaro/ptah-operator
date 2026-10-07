@@ -54,6 +54,30 @@ func (m managerReading) identity() (processIdentity, bool) {
 // A replacement or a collection gap retains its gauges, but cannot establish
 // an upper bound on work done by processes that were not observed.
 func managerCounterContinuity(samples []sample) []string {
+	problems := managerProcessContinuity(samples)
+	for i := 1; i < len(samples); i++ {
+		for name, before := range samples[i-1].Managers {
+			after, exists := samples[i].Managers[name]
+			beforeID, beforeOK := before.identity()
+			afterID, afterOK := after.identity()
+			if !exists || !beforeOK || !afterOK || beforeID != afterID {
+				continue
+			}
+			if !counterContinues(before.CPUSeconds, after.CPUSeconds) ||
+				!counterContinues(before.ThrottleSeconds, after.ThrottleSeconds) ||
+				!counterContinues(before.Requests429, after.Requests429) ||
+				!histogramContinues(before.QueueWait, after.QueueWait) {
+				problems = append(problems, fmt.Sprintf("sample %d manager %s has a reset or invalid counter", i, name))
+			}
+		}
+	}
+	sort.Strings(problems)
+	return problems
+}
+
+// Process continuity is shared by independent metric families. A queue
+// histogram reset does not reset a continuous REST request counter.
+func managerProcessContinuity(samples []sample) []string {
 	if len(samples) < 2 {
 		return []string{"fewer than two manager samples"}
 	}
@@ -89,12 +113,7 @@ func managerCounterContinuity(samples []sample) []string {
 				problems = append(problems, fmt.Sprintf("sample %d manager %s changed process identity", i, name))
 				continue
 			}
-			if !counterContinues(before.CPUSeconds, after.CPUSeconds) ||
-				!counterContinues(before.ThrottleSeconds, after.ThrottleSeconds) ||
-				!counterContinues(before.Requests429, after.Requests429) ||
-				!histogramContinues(before.QueueWait, after.QueueWait) {
-				problems = append(problems, fmt.Sprintf("sample %d manager %s has a reset or invalid counter", i, name))
-			}
+
 		}
 		for name := range reading.Managers {
 			if _, exists := earlier.Managers[name]; !exists {

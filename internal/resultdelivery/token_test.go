@@ -87,7 +87,7 @@ func TestTokenRotationAfterLostAcknowledgmentPreservesReceipt(t *testing.T) {
 				}
 				r.Body = io.NopCloser(bytes.NewReader(body))
 				if uploads.Add(1) == 1 {
-					next.ServeHTTP(&lostACK{ResponseWriter: w}, r)
+					serveWithoutAcknowledgment(next, w, r)
 					_, saved, err := store.Load(t.Context(), identity.Binding)
 					if err != nil {
 						t.Error("lost acknowledgment did not leave a complete result")
