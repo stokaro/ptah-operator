@@ -17,6 +17,8 @@ const (
 	alAdmissionSampleGap = alScrapeInterval + time.Second
 )
 
+var errAlHistoryNotFresh = errors.New("admission history ended before a fresh scrape")
+
 type alAdmissionSample struct {
 	at    time.Time
 	value float64
@@ -102,7 +104,7 @@ func alNativeSamplesWithin(series alAdmissionSeries, since, queriedAt time.Time,
 		samples = append(samples, alAdmissionSample{at: at, value: value})
 	}
 	if fresh && queriedAt.Sub(samples[len(samples)-1].at) > alAdmissionSampleGap {
-		return nil, errors.New("admission history ended before a fresh scrape")
+		return nil, errAlHistoryNotFresh
 	}
 	return samples, nil
 }
