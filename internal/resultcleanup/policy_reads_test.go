@@ -25,6 +25,42 @@ func (r *policyReads) Get(ctx context.Context, key client.ObjectKey, object clie
 	return r.Reader.Get(ctx, key, object, opts...)
 }
 
+func TestCollectionDoesNotDuplicateDeleteAdmissionReads(t *testing.T) {
+	f := fixture(t)
+	f.retire(t)
+	reader := &policyReads{Reader: f.c, gets: map[client.ObjectKey]int{}}
+	f.p.Reader = reader
+	if err := f.collector(t).collect(t.Context(), f.marker, f.f.Identity.Binding); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.c.deletes) != 5 || len(remaining(t, f.c)) != 0 {
+		t.Fatalf("incomplete collection: deleted %v", f.c.deletes)
+	}
+	job := client.ObjectKeyFromObject(f.f.Job)
+	if got := reader.gets[job]; got != len(f.c.deletes)+1 {
+		t.Fatalf("%d deletes made %d original-Job absence reads; want one collection preflight and one per admitted DELETE", len(f.c.deletes), got)
+	}
+}
+
+func TestDeleteAdmissionSeesPinRestoredAfterCollectorRead(t *testing.T) {
+	f := fixture(t)
+	f.retire(t)
+	f.c.beforeDelete = func(client.Object) {
+		f.c.beforeDelete = nil
+		subject := f.f.Subject.(*api.PtahSchema)
+		subject.Status.PendingObservation = &api.PendingObservationStatus{ApplyOperationID: f.f.Identity.Binding.OperationID}
+		if err := f.c.Update(t.Context(), subject); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := f.collector(t).collect(t.Context(), f.marker, f.f.Identity.Binding); !errors.Is(err, resultretention.ErrPinned) {
+		t.Fatalf("the API accepted deletion after a recovery pin was restored: %v", err)
+	}
+	if len(f.c.deletes) != 0 || len(remaining(t, f.c)) != 5 {
+		t.Fatal("the restored pin did not preserve every result record")
+	}
+}
+
 func TestDeletionReadsSharedSourceAndOwnerOnce(t *testing.T) {
 	for _, role := range []string{"complete", "chunk"} {
 		t.Run(role, func(t *testing.T) {

@@ -21,8 +21,9 @@ import (
 )
 
 // Collector scans metadata in bounded pages outside both reconciliation
-// workers. It keeps no payload cache and deletes through the same policy the
-// webhook independently applies. Only the elected manager scans.
+// workers. It keeps no payload cache. The API's required admission guard
+// authorizes each UID-bound DELETE with current reads; the collector does not
+// repeat that entire verdict before sending the request. Only the leader scans.
 type Collector struct {
 	writer       client.Client
 	policy       Policy
@@ -252,6 +253,12 @@ func (c *Collector) collect(ctx context.Context, marker *api.PtahResultRecord, b
 			return err
 		}
 	}
+	// Avoid sending deletions while the original Job still fences this attempt.
+	// Admission repeats this check at each write, along with current recovery
+	// pins, source identity, record age, and dependency order.
+	if err := c.policy.requireJobAbsent(ctx, b); err != nil {
+		return err
+	}
 	// The member index also finds children left after an interrupted restore
 	// omitted their intent. Admission checks each child's immutable binding.
 	members, err := c.policy.members(ctx, b)
@@ -286,14 +293,13 @@ func (c *Collector) remove(ctx context.Context, key client.ObjectKey, uid types.
 	if (uid != "" && record.UID != uid) || record.ResourceVersion == "" {
 		return ErrRetained
 	}
-	if err := c.policy.AuthorizeDelete(ctx, record); err != nil {
-		return err
-	}
 	if !record.DeletionTimestamp.IsZero() && len(record.Finalizers) == 1 && record.Finalizers[0] == metav1.FinalizerDeleteDependents {
 		// The garbage collector finishes the foreground DELETE already in
 		// progress. Admission applies the same policy to its finalizer removal.
 		return nil
 	}
+	// The API admission guard must authorize this exact object. A denied or
+	// unavailable webhook leaves it intact; no collector decision bypasses it.
 	options := &client.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &record.UID, ResourceVersion: &record.ResourceVersion}, PropagationPolicy: ptr.To(metav1.DeletePropagationBackground)}
 	if err := c.writer.Delete(ctx, record, options); err != nil && !apierrors.IsNotFound(err) {
 		return err

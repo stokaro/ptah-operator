@@ -195,6 +195,10 @@ reconcile workers and Lease renewal. Repeated delivery returns the same receipt
 without executing SQL again. Diagnostic logs are never a correctness fallback.
 A leader-only collector preserves active and recovery-pinned records and waits
 at least one hour after retirement before deleting eligible publications.
+The API admission guard checks current recovery pins, source identity, Job
+absence, retention age, and dependency order for every deletion. The collector
+sends UID- and resource-version-bound requests; a denied or unavailable guard
+retains the evidence.
 [Backup and recovery](../../use/recovery/#what-to-preserve) includes these
 records and the receiver trust and rotation state.
 

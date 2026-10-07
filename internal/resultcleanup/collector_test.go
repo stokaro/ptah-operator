@@ -34,6 +34,7 @@ type observedClient struct {
 	after        bool
 	failCreate   bool
 	beforeDelete func(client.Object)
+	admission    *Policy
 }
 
 func (c *observedClient) Create(ctx context.Context, o client.Object, opts ...client.CreateOption) error {
@@ -52,6 +53,12 @@ func (c *observedClient) Delete(ctx context.Context, o client.Object, opts ...cl
 	}
 	if c.beforeDelete != nil {
 		c.beforeDelete(o)
+	}
+	if c.admission == nil {
+		return errors.New("test API deletion guard is not configured")
+	}
+	if err := c.admission.AuthorizeDelete(ctx, o.(*api.PtahResultRecord)); err != nil {
+		return err
 	}
 	c.deletes = append(c.deletes, o.(*api.PtahResultRecord).Spec.Type)
 	fail := c.failAt == len(c.deletes)
@@ -108,6 +115,7 @@ func (f cleanupFixture) retire(t *testing.T) {
 }
 func (f cleanupFixture) collector(t *testing.T) *Collector {
 	t.Helper()
+	f.c.admission = &f.p
 	c, err := New(f.c, f.p, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -275,7 +283,9 @@ func TestIntentDefersItsCredentialScanUntilTheRetirementDeadline(t *testing.T) {
 		t.Fatal(err)
 	}
 	reader := &cleanupReadCounter{Reader: c}
-	collector, err := New(c, Policy{Reader: reader, Window: time.Hour, Now: func() time.Time { return c.now }}, nil)
+	p := Policy{Reader: reader, Window: time.Hour, Now: func() time.Time { return c.now }}
+	c.admission = &p
+	collector, err := New(c, p, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -536,6 +546,7 @@ func TestLegacyChildrenAndOrphanCleanup(t *testing.T) {
 func TestCleanupMetricsContainOnlyBoundedLabels(t *testing.T) {
 	f := fixture(t)
 	reg := prometheus.NewRegistry()
+	f.c.admission = &f.p
 	c, err := New(f.c, f.p, reg)
 	if err != nil {
 		t.Fatal(err)

@@ -187,6 +187,26 @@ func TestResultCollectorThroughAPIAdmission(t *testing.T) {
 	}
 	f.schema.Status.ActiveOperation = nil
 	writeStatus(t, f.schema)
+	// Restore a pin after the collector has read the object and before its
+	// DELETE reaches the API. The actual admission handler must still retain
+	// every byte; a collector's earlier eligible snapshot is not authority.
+	writer := &beforeResultDelete{Client: store.Client, before: func() {
+		f.schema.Status.ActiveOperation = op
+		writeStatus(t, f.schema)
+	}}
+	collector, err := resultcleanup.New(writer, p, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireDenied(t, collector.Step(t.Context()), controllerWriteWebhook, "retention has not authorized deletion")
+	if writer.calls != 1 || len(list()) != 5 {
+		t.Fatalf("restored pin did not stop the first DELETE: calls=%d", writer.calls)
+	}
+	if _, loaded, err := store.Load(t.Context(), identity.Binding); err != nil || loaded != receipt {
+		t.Fatalf("denied collection changed the retained receipt: %v", err)
+	}
+	f.schema.Status.ActiveOperation = nil
+	writeStatus(t, f.schema)
 	step()
 	if got := list(); len(got) != 0 {
 		for _, record := range got {
@@ -202,4 +222,18 @@ func TestResultCollectorThroughAPIAdmission(t *testing.T) {
 	}
 	// Envtest runs no garbage collector. The projection's cascading owner is
 	// covered separately; this test makes no claim about Secret garbage collection.
+}
+
+type beforeResultDelete struct {
+	client.Client
+	before func()
+	calls  int
+}
+
+func (w *beforeResultDelete) Delete(ctx context.Context, object client.Object, options ...client.DeleteOption) error {
+	w.calls++
+	if w.calls == 1 {
+		w.before()
+	}
+	return w.Client.Delete(ctx, object, options...)
 }
