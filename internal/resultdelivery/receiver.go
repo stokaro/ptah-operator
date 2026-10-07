@@ -14,7 +14,8 @@ import (
 )
 
 // Publisher returns only a durable, fully read-back receipt. check must run
-// after chunk writes and before committing or returning an existing receipt.
+// before the first write and again after chunk writes, before committing or
+// returning a chunked receipt. One atomic write needs only the first check.
 type Publisher interface {
 	PublishAuthorized(context.Context, resultstore.Binding, []byte, string, func(context.Context) error) (resultstore.Receipt, error)
 }
@@ -202,10 +203,6 @@ func (r *Receiver) ServeHTTP(w http.ResponseWriter, request *http.Request) {
 		refuse(http.StatusUnprocessableEntity)
 		return
 	}
-	if err := check(ctx); err != nil {
-		authorityError(err)
-		return
-	}
 	receipt, err := r.config.Store.PublishAuthorized(ctx, identity.Binding, payload, digest, check)
 	if err != nil {
 		switch {
@@ -220,7 +217,7 @@ func (r *Receiver) ServeHTTP(w http.ResponseWriter, request *http.Request) {
 		}
 		return
 	}
-	if receipt.Name != name+"-complete" || receipt.UID == "" || receipt.Digest != digest || receipt.Size != int64(len(payload)) {
+	if (receipt.Name != name && receipt.Name != name+"-complete") || receipt.UID == "" || receipt.Digest != digest || receipt.Size != int64(len(payload)) {
 		refuse(http.StatusInternalServerError)
 		return
 	}

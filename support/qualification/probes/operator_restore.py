@@ -398,8 +398,17 @@ class OperatorProbe(db.Probe):
         credential_uids = {r['metadata']['uid'] for r in records if r['spec']['type'] == 'credential'}
         projections = [s for s in self.read('secrets', False)['items']
                        if any(o['uid'] in credential_uids for o in s['metadata'].get('ownerReferences', []))]
+        complete = []
+        for record in records:
+            if record['spec']['type'] != 'intent':
+                continue
+            cohort = {r['metadata']['name']: r for r in records
+                      if r['metadata'].get('namespace') == record['metadata'].get('namespace')}
+            manifest = json.loads(base64.b64decode(record['spec']['data'], validate=True))
+            if 'inline' in manifest or record['metadata']['name'] + '-complete' in cohort:
+                complete.append(publication(cohort, manifest['binding']['jobUID']))
         self.check('durable backup includes completed results and credentials',
-                   {'intent', 'chunk', 'complete', 'credential'} <= {r['spec']['type'] for r in records})
+                   bool(complete) and bool(credential_uids))
         self.validate_result_material(trust, journal, policy)
         return {'enabled': True, 'records': records, 'credentialProjections': projections,
                 'trust': trust, 'journal': journal, 'enrollmentPolicy': policy,

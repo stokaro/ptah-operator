@@ -66,7 +66,7 @@ func (v *Validator) validateResultRecord(ctx context.Context, req admissionv1.Ad
 			if err == nil {
 				identity, authorityErr := v.ResultCredentials.AuthorizePublication(ctx, b)
 				err = authorityErr
-				if err == nil && record.Spec.Type == "complete" {
+				if err == nil && len(payload) != 0 {
 					_, err = resultdelivery.Decode(identity, payload)
 				}
 			}

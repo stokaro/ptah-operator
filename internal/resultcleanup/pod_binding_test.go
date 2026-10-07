@@ -26,6 +26,7 @@ func TestPublicPodBindingRetainsActiveAuthorityAndCollectsAfterWindow(t *testing
 		t.Fatalf("collector cannot read the public first-Pod pin: %v", err)
 	}
 	p := Policy{Reader: c, Window: time.Hour, Now: func() time.Time { return c.now }}
+	c.admission = &p
 	collector, err := New(c, p, nil)
 	if err != nil {
 		t.Fatal(err)

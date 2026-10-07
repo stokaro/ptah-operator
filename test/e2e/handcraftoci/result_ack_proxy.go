@@ -224,7 +224,7 @@ func (p *resultACKProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var receipt ackReceipt
 	decoder := json.NewDecoder(bytes.NewReader(encoded))
 	decoder.DisallowUnknownFields()
-	if err != nil || len(encoded) > 4096 || response.Header.Get("Content-Type") != "application/json" || decoder.Decode(&receipt) != nil || receipt.UID == "" || receipt.Name != strings.TrimPrefix(r.URL.Path, "/v1/results/")+"-complete" || receipt.Digest != digest(body) || receipt.Size != int64(len(body)) {
+	if err != nil || len(encoded) > 4096 || response.Header.Get("Content-Type") != "application/json" || decoder.Decode(&receipt) != nil || receipt.UID == "" || (receipt.Name != strings.TrimPrefix(r.URL.Path, "/v1/results/")+"-complete" && receipt.Name != strings.TrimPrefix(r.URL.Path, "/v1/results/")) || receipt.Digest != digest(body) || receipt.Size != int64(len(body)) {
 		http.Error(w, "invalid fixture receipt", http.StatusBadGateway)
 		return
 	}

@@ -184,8 +184,11 @@ reads it and never writes it. See
 [Concurrency and coordination](../execution/#concurrency-and-coordination).
 
 `PtahResultRecord` stores immutable intent, payload, and completion records for
-durable runner result delivery. Publication checks the complete payload before
-acknowledgment; a consumer checks the binding and all chunk identities before
+durable runner result delivery. Results up to 256 KiB commit atomically in one
+intent containing the exact bytes, digest, and operation binding. Larger results
+use separate chunks and a completion record. Existing chunked publications retain
+their layout when retried. Publication checks the complete payload before
+acknowledgment; a consumer checks the binding, digest, and any chunk identities before
 using it. The dedicated resource permits result reads without access to database
 Secrets. Its payloads are confidential and must be excluded from ordinary reader
 and author roles. Delivery is enabled by default. The receiver authenticates
@@ -195,6 +198,10 @@ reconcile workers and Lease renewal. Repeated delivery returns the same receipt
 without executing SQL again. Diagnostic logs are never a correctness fallback.
 A leader-only collector preserves active and recovery-pinned records and waits
 at least one hour after retirement before deleting eligible publications.
+The API admission guard checks current recovery pins, source identity, Job
+absence, retention age, and dependency order for every deletion. The collector
+sends UID- and resource-version-bound requests; a denied or unavailable guard
+retains the evidence.
 [Backup and recovery](../../use/recovery/#what-to-preserve) includes these
 records and the receiver trust and rotation state.
 

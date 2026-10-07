@@ -125,7 +125,7 @@ def verify_authority_evidence(value):
             and foreign['tokenReviewAuthenticated'] is True
             and foreign['audiences'] == ['operator.ptah.run/results'], 'Missing authenticated foreign-Pod control')
     require(len(receivers) == 2 and len(set(receivers)) == 2 and all(receivers), 'Missing distinct receivers')
-    require(bool(receipt['UID']) and receipt['Name'] == attempt_name(identity) + '-complete', 'Missing original receipt')
+    require(bool(receipt['UID']) and receipt['Name'] in (attempt_name(identity), attempt_name(identity) + '-complete'), 'Missing original receipt')
     expected = authority_cases(identity)
     require([c['name'] for c in value['cases']] == [label for label, _ in expected], 'Missing authority refusal case')
     for case, (label, claim) in zip(value['cases'], expected):

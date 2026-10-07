@@ -52,7 +52,7 @@ func RootBinding(record *api.PtahResultRecord) (resultstore.Binding, error) {
 	}
 }
 
-// AuthorizeDelete is also the admission verdict, regardless of the DELETE
+// AuthorizeDelete is the admission verdict, regardless of the DELETE
 // caller. Neither a collector's cached decision nor an administrator's identity
 // replaces these current checks. Every API failure retains the evidence.
 func (p Policy) AuthorizeDelete(ctx context.Context, record *api.PtahResultRecord) error {

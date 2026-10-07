@@ -61,6 +61,9 @@ func (s Store) ValidateRecordCreate(ctx context.Context, candidate *api.PtahResu
 	if err != nil {
 		return Binding{}, nil, err
 	}
+	if m.Inline != nil && candidate.Spec.Type != "intent" {
+		return Binding{}, nil, ErrInvalid
+	}
 	if candidate.Labels[LabelAttempt] != AttemptLabel(name) {
 		return Binding{}, nil, ErrInvalid
 	}
@@ -69,6 +72,7 @@ func (s Store) ValidateRecordCreate(ctx context.Context, candidate *api.PtahResu
 	switch candidate.Spec.Type {
 	case "intent":
 		// admissionManifest already checked its exact metadata and bytes.
+		payload = m.Inline
 	case "chunk":
 		index := -1
 		for n := range m.Chunks {
@@ -145,11 +149,20 @@ func (s Store) ValidateRecordCreate(ctx context.Context, candidate *api.PtahResu
 
 func admissionManifest(intent *api.PtahResultRecord) (manifest, string, error) {
 	var m manifest
-	if intent == nil || len(intent.Spec.Data) == 0 || len(intent.Spec.Data) > ChunkBytes || !intent.DeletionTimestamp.IsZero() || !canonicalRecord(intent.Spec.Data, &m) || m.Version != 1 || m.Size <= 0 || m.Size > MaxPayloadBytes || !digestPattern.MatchString(m.Digest) || len(m.Chunks) != int((m.Size+ChunkBytes-1)/ChunkBytes) || len(m.Chunks) > maxChunks {
+	if intent == nil || len(intent.Spec.Data) == 0 || len(intent.Spec.Data) > ChunkBytes || !intent.DeletionTimestamp.IsZero() || !canonicalRecord(intent.Spec.Data, &m) || m.Version != 1 || m.Size <= 0 || m.Size > MaxPayloadBytes || !digestPattern.MatchString(m.Digest) {
 		return m, "", ErrInvalid
 	}
 	name, err := Name(m.Binding)
 	if err != nil || !recordShape(intent, record(m.Binding.Namespace, name, "intent", owner(apiVersion, m.Binding.Kind, m.Binding.Name, m.Binding.UID), nil)) {
+		return m, "", ErrInvalid
+	}
+	if m.Inline != nil {
+		if m.Chunks != nil || len(m.Inline) == 0 || len(m.Inline) > InlinePayloadBytes || int64(len(m.Inline)) != m.Size || digest(m.Inline) != m.Digest {
+			return m, "", ErrInvalid
+		}
+		return m, name, nil
+	}
+	if len(m.Chunks) != int((m.Size+ChunkBytes-1)/ChunkBytes) || len(m.Chunks) > maxChunks {
 		return m, "", ErrInvalid
 	}
 	for n, ref := range m.Chunks {

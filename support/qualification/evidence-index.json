@@ -2155,5 +2155,1425 @@
       "downloadVerified": false
     },
     "custody": "Local archive only; no remote export or download verification."
+  },
+  "capacityAPICleanupAdmission": {
+    "requirement": "#580 manager API demand on the unchanged twenty-resource steady fleet",
+    "conclusion": "Failed: an interior sixty-second window still exceeds 100 requests/s.",
+    "runtimeSourceCommit": "594775377d0d09a20b1ccd02e34af23126193106",
+    "collectorSourceCommit": "594775377d0d09a20b1ccd02e34af23126193106",
+    "runtimeImage": "e2e-registry.ptah-test-a-1-37-0-242-profile-1b5db851-0026e8302c.svc.cluster.local:5000/ptah-operator@sha256:21e98681a8b50058aa8725f68b33efade42dc676221a6152229e58ee53935c86",
+    "runnerImage": "e2e-registry.ptah-test-a-1-37-0-242-profile-1b5db851-0026e8302c.svc.cluster.local:5000/ptah-runner@sha256:3c926b0b03baae569014ceae3522a0dde7a9c03555a645eede9773b536dde8c2",
+    "profileRevision": 39,
+    "environment": "Kubernetes 1.37.0, native Linux amd64, PostgreSQL, ten schemas and ten migrations",
+    "window": {
+      "name": "existing twenty-resource fleet API demand",
+      "start": "2026-10-07T02:19:27.681166Z",
+      "end": "2026-10-07T02:29:27.681166Z"
+    },
+    "samples": 121,
+    "slidingMinuteBounds": 108,
+    "maxRequestsPerSecondUpperBound": 130.78333333333333,
+    "thresholdRequestsPerSecond": 100,
+    "thresholdPassed": false,
+    "largestContainedWindowLowerBound": {
+      "start": "2026-10-07T02:22:47.777859+00:00",
+      "end": "2026-10-07T02:23:47.777859+00:00",
+      "firstSample": 40,
+      "lastSample": 52,
+      "requestsAtLeast": 6726,
+      "requestsPerSecondAtLeast": 112.1
+    },
+    "provenExceedance": {
+      "start": "2026-10-07T02:22:47.777859+00:00",
+      "end": "2026-10-07T02:23:47.777859+00:00",
+      "firstSample": 40,
+      "lastSample": 52,
+      "requestsAtLeast": 6726,
+      "requestsPerSecondAtLeast": 112.1
+    },
+    "monitorRequests": 726,
+    "managers": [
+      {
+        "name": "ptah-operator-ptah-operator-7b849cfb76-tlsvg",
+        "podUID": "0392257e-641e-4c0b-92cf-079ca168ec95",
+        "containerID": "containerd://bdaf295eabeb61579dbf16905a66ec4e83882579e4f79787841180bb82a195bf",
+        "requests": 5550,
+        "cpuSeconds": 6.02,
+        "maxRSSBytes": 56053760,
+        "clientThrottleSeconds": 0,
+        "client429Responses": 0
+      },
+      {
+        "name": "ptah-operator-ptah-operator-7b849cfb76-v5nhs",
+        "podUID": "05dd17c4-f42d-4f28-9e7d-2265f5d51e09",
+        "containerID": "containerd://b57b3a6ab95dffc4ecc0bab99ca127828b333f13ce0cd1122cf4c872b42c3f57",
+        "requests": 50564,
+        "cpuSeconds": 46.95,
+        "maxRSSBytes": 104071168,
+        "clientThrottleSeconds": 0,
+        "client429Responses": 2
+      }
+    ],
+    "change": "Keep collection preflight and exact UID/resourceVersion requests; the existing required API admission guard makes each final DELETE decision without a duplicate collector verdict. No permission, retention window, pin, identity, or dependency-order rule changes.",
+    "validation": {
+      "originalRegression": "Five deletes repeated ten original-Job absence reads. The fixed path uses one collection preflight and one read per admitted DELETE.",
+      "fixedRaceTests": [
+        "internal/resultcleanup",
+        "internal/resultretention",
+        "internal/controllerwrite"
+      ],
+      "vet": [
+        "internal/resultcleanup",
+        "internal/resultretention",
+        "internal/controllerwrite",
+        "test/envtest/webhook"
+      ],
+      "apiServerTests": "Both TestResultCollector tests pass. Restoring an active pin immediately before the actual API DELETE refuses the first deletion, preserves all five records and the original receipt, then permits collection after pin removal. Foreground collection in a terminating namespace remains guarded.",
+      "liveFleet": "All twenty original UIDs, specs and generations stay unchanged; every manager sample matches its installed Pod UID, container ID, and exact image.",
+      "auditRestoration": "The latest diagnostic restored all original API-server manifests before this unaudited measurement."
+    },
+    "scope": "Only this steady API-demand window is assessed. No cold/backlog rerun, full soak, retention plateau, fault matrix, architecture matrix, final artifacts, or #580/#242 closure is claimed.",
+    "custody": "Local archive only. Remote custody and independent download verification are not established.",
+    "archive": {
+      "name": "capacity-cleanup-admission-2026-10-07.tar.gz",
+      "sha256": "36faa2416270c502557589959da66b753bc196adbdf3363c4477b8d97749d4f7",
+      "bytes": 89694,
+      "memberCount": 33,
+      "downloadVerified": false
+    }
+  },
+  "capacityCleanupAdmissionAttribution": {
+    "requirement": "#580 attribution of remaining manager API demand after removing duplicate collector admission checks",
+    "conclusion": "Diagnostic only; the separate native ten-minute measurement still fails the unchanged 100 requests/s bound.",
+    "runtimeSourceCommit": "594775377d0d09a20b1ccd02e34af23126193106",
+    "window": {
+      "start": "2026-10-07T02:41:35.774636+00:00",
+      "end": "2026-10-07T02:44:35.949042+00:00"
+    },
+    "auditRequests": 16288,
+    "bracketingManagerCounterRequests": 16375.0,
+    "largestObservedAuditMinute": {
+      "from": "2026-10-07T02:41:45.856643+00:00",
+      "through": "2026-10-07T02:42:45.856643Z",
+      "requests": 7940,
+      "requestsPerSecond": 132.33333333333334,
+      "successfulJobGets": 853,
+      "successfulPodLists": 764,
+      "completeAttemptsDeleted": 30
+    },
+    "completedCleanupAttempts": 73,
+    "requestsBoundToEachDeletedAttempt": 35,
+    "cleanupAttributionLimit": "Bound requests exclude subject GETs and member LISTs. Shared reads are not assigned by timing alone.",
+    "resultRecordLists": 474,
+    "resultRecordListAccounting": "36 metadata scans plus 6 member-list requests for each of 73 collected attempts.",
+    "newPublicationIntents": 81,
+    "retirementRecordsCreated": 50,
+    "requests429Scope": "All audit 429 responses precede the exact window. The two bracketing counter increments belong to plan LISTs immediately before the window, with storage is (re)initializing. They do not establish the cause of the earlier native measurement 429s.",
+    "restoration": "All three original API-server manifests restored and verified byte-for-byte; diagnostic policy and audit files removed from their nodes.",
+    "scope": "Metadata audit is diagnostic, not native capacity acceptance. No DoD is closed.",
+    "custody": "Local diagnostic archive only; no remote copy or independent download verification.",
+    "archive": {
+      "name": "capacity-cleanup-attribution-2026-10-07.tar.gz",
+      "sha256": "7121e8a1d2ac416ce6d40836f460207ead3244296dded13203da876074b2d804",
+      "bytes": 6334522,
+      "memberCount": 138,
+      "downloadVerified": false
+    },
+    "requests429": {
+      "auditResponses": 6,
+      "insideExactWindow": 0,
+      "reason": "storage is (re)initializing",
+      "bracketingPlanListResponses": [
+        {
+          "at": "2026-10-07T02:41:34.744594Z",
+          "resource": "ptahmigrationplans"
+        },
+        {
+          "at": "2026-10-07T02:41:34.752900Z",
+          "resource": "ptahschemaplans"
+        }
+      ]
+    }
+  },
+  "capacityAPIJobEvents": {
+    "requirement": "#580 manager API demand on the unchanged twenty-resource steady fleet",
+    "conclusion": "Failed: an interior sixty-second window still exceeds 100 requests/s.",
+    "runtimeSourceCommit": "bd830d263f382d06c80f5e78212327dae7b6df8c",
+    "collectorSourceCommit": "bd830d263f382d06c80f5e78212327dae7b6df8c",
+    "runtimeImage": "e2e-registry.ptah-test-a-1-37-0-242-profile-1b5db851-0026e8302c.svc.cluster.local:5000/ptah-operator@sha256:2d63e917c128d56193263c1d862916346a9e2453c94af3c6d84455ee68c1f19e",
+    "runnerImage": "e2e-registry.ptah-test-a-1-37-0-242-profile-1b5db851-0026e8302c.svc.cluster.local:5000/ptah-runner@sha256:3c926b0b03baae569014ceae3522a0dde7a9c03555a645eede9773b536dde8c2",
+    "profileRevision": 39,
+    "environment": "Kubernetes 1.37.0, native Linux amd64, PostgreSQL, ten schemas and ten migrations",
+    "window": {
+      "name": "existing twenty-resource fleet API demand",
+      "start": "2026-10-07T03:11:59.694831Z",
+      "end": "2026-10-07T03:21:59.694831Z"
+    },
+    "samples": 121,
+    "slidingMinuteBounds": 108,
+    "maxRequestsPerSecondUpperBound": 140.23333333333332,
+    "thresholdRequestsPerSecond": 100,
+    "thresholdPassed": false,
+    "largestContainedWindowLowerBound": {
+      "start": "2026-10-07T03:18:29.817561+00:00",
+      "end": "2026-10-07T03:19:29.817561+00:00",
+      "firstSample": 78,
+      "lastSample": 90,
+      "requestsAtLeast": 7215,
+      "requestsPerSecondAtLeast": 120.25
+    },
+    "provenExceedance": {
+      "start": "2026-10-07T03:18:29.817561+00:00",
+      "end": "2026-10-07T03:19:29.817561+00:00",
+      "firstSample": 78,
+      "lastSample": 90,
+      "requestsAtLeast": 7215,
+      "requestsPerSecondAtLeast": 120.25
+    },
+    "monitorRequests": 726,
+    "managers": [
+      {
+        "name": "ptah-operator-ptah-operator-7649c894f7-qh5k5",
+        "podUID": "06a6d34e-8ca6-4d84-b666-4d9b1247c776",
+        "containerID": "containerd://bb4e59f06bc716ae1bd936f9ef0c29f2429d7079da530c92944ccdece5920e1d",
+        "requests": 12327,
+        "cpuSeconds": 11.970000000000002,
+        "maxRSSBytes": 54415360,
+        "clientThrottleSeconds": 0,
+        "client429Responses": 0
+      },
+      {
+        "name": "ptah-operator-ptah-operator-7649c894f7-znq4d",
+        "podUID": "f3ca2a47-42bd-4fa8-b627-1bae59e08265",
+        "containerID": "containerd://ed353f84dacddd743a36d53ed8fbb335655c06d89523ec67d6a2c811f7fbba01",
+        "requests": 40786,
+        "cpuSeconds": 40.459999999999994,
+        "maxRSSBytes": 102309888,
+        "clientThrottleSeconds": 0,
+        "client429Responses": 0
+      }
+    ],
+    "change": "Both family controllers ignore Job updates that change only readiness and API bookkeeping. All other updates, including execution intent, deletion, failure and completion, still enqueue; direct authority checks and reconciliation timers are unchanged.",
+    "validation": {
+      "observedEvents": "A three-minute watch of both workload namespaces captured 687 Job events, including 528 updates. Exactly 136 updates changed only status.ready.",
+      "originalRegression": "The original default update predicate fails the readiness-only regression. The new predicate also preserves terminal conditions, Pod counters, UID, deletion, finalizers, ownership, labels, annotations, generation and execution intent changes without mutating watch objects.",
+      "fixedRaceTests": [
+        "internal/controller"
+      ],
+      "vet": [
+        "internal/controller"
+      ],
+      "liveFleet": "All twenty original UIDs, specs and generations remain unchanged; every sampled manager matches its installed Pod UID, container ID, and exact image.",
+      "auditRestoration": "All three API-server configurations were restored before this unaudited measurement."
+    },
+    "scope": "Only this steady API-demand window is assessed. No cold/backlog rerun, full soak, retention plateau, fault matrix, architecture matrix, final artifacts, or #580/#242 closure is claimed.",
+    "custody": "Local archive only. Remote custody and independent download verification are not established.",
+    "archive": {
+      "name": "capacity-job-events-2026-10-07.tar.gz",
+      "sha256": "f8cfd67e8e6bc2b6635947f15ff5f5665216cf4ca6f2e3d97bfecd87c3aa408f",
+      "bytes": 169447,
+      "memberCount": 42,
+      "downloadVerified": false
+    }
+  },
+  "migrationStatusIntegrationCI": {
+    "head": "5cc57190e413587b2b35b913a784d7741dfc427a",
+    "testedMergeCommit": "ada06ab2dd386f1db05f5627a93fc20a890c70a8",
+    "sourceTree": "6ec0ebbeb407b735b42fd3a221e76de997bb0b51",
+    "testedTree": "155a6fe9b47f767c60d24685ed97a58fece54b1b",
+    "sourceDifference": "context7.json added for documentation indexing; operator, runner, dependencies, charts, workflows, and tests are unchanged",
+    "runURL": "https://github.com/stokaro/ptah-operator/actions/runs/37559698997",
+    "conclusion": "success",
+    "createdAt": "2026-10-07T01:58:19Z",
+    "completedAt": "2026-10-07T03:23:33Z",
+    "fullPipelineSeconds": 5114.0,
+    "lastJobElapsedSeconds": 5113.0,
+    "within90Minutes": true,
+    "passedSuiteCells": 27,
+    "passedOwnedPhaseExecutions": 51,
+    "runtimeArchitecture": "linux/amd64",
+    "kubernetesMinors": [
+      "1.35",
+      "1.36",
+      "1.37"
+    ],
+    "separateRuns": {
+      "Capacity": {
+        "id": 37559699038,
+        "conclusion": "success",
+        "seconds": 2799.0
+      },
+      "Release": {
+        "id": 37559698986,
+        "conclusion": "success",
+        "seconds": 429.0
+      },
+      "Documentation": {
+        "id": 37559698998,
+        "conclusion": "success",
+        "seconds": 212.0
+      }
+    },
+    "archive": {
+      "name": "ci-37559698997.tar.gz",
+      "sha256": "8d8a0409d429a7331999c9a87762a5dd063a3db92e88ab5cbdbfdb5e89da2a2a",
+      "memberCount": 148,
+      "bytes": 160179,
+      "downloadVerified": false
+    },
+    "requirement": "Complete PR CI within 90 minutes, including queueing and preparation, and follow up the migration-authority SQL/Pod binding failure.",
+    "scope": "This run covers 5cc57190 and the recorded merge tree. Later local collector and Job-event changes are not covered. The short Capacity workflow is not the frozen #580 profile; #242 remains open.",
+    "custody": "GitHub timing artifacts downloaded and digest-verified locally. The local archive was read back byte for byte; remote archive custody is not established.",
+    "timingArtifactDownloadsVerified": 27
+  },
+  "capacityAPIInlineResults": {
+    "requirement": "#580 manager API demand on the unchanged twenty-resource steady fleet",
+    "conclusion": "Failed: an interior sixty-second window still exceeds 100 requests/s.",
+    "runtimeSourceCommit": "99903ed8007035a30cc43ef2e18201de1e1f317d",
+    "collectorSourceCommit": "99903ed8007035a30cc43ef2e18201de1e1f317d",
+    "runtimeImage": "e2e-registry.ptah-test-a-1-37-0-242-profile-1b5db851-0026e8302c.svc.cluster.local:5000/ptah-operator@sha256:f679a210b4be46ae0c35a81457d4028b9091b73587f2366fb923904c5c9d053e",
+    "runnerImage": "e2e-registry.ptah-test-a-1-37-0-242-profile-1b5db851-0026e8302c.svc.cluster.local:5000/ptah-operator@sha256:f679a210b4be46ae0c35a81457d4028b9091b73587f2366fb923904c5c9d053e",
+    "profileRevision": 39,
+    "environment": "Kubernetes 1.37.0, native Linux amd64, PostgreSQL, ten schemas and ten migrations",
+    "window": {
+      "name": "existing twenty-resource fleet API demand",
+      "start": "2026-10-07T03:53:07.13581Z",
+      "end": "2026-10-07T04:03:07.13581Z"
+    },
+    "samples": 121,
+    "slidingMinuteBounds": 108,
+    "maxRequestsPerSecondUpperBound": 124.65,
+    "thresholdRequestsPerSecond": 100,
+    "thresholdPassed": false,
+    "largestContainedWindowLowerBound": {
+      "start": "2026-10-07T03:55:57.234688+00:00",
+      "end": "2026-10-07T03:56:57.234688+00:00",
+      "firstSample": 34,
+      "lastSample": 46,
+      "requestsAtLeast": 6686,
+      "requestsPerSecondAtLeast": 111.43333333333334
+    },
+    "provenExceedance": {
+      "start": "2026-10-07T03:55:57.234688+00:00",
+      "end": "2026-10-07T03:56:57.234688+00:00",
+      "firstSample": 34,
+      "lastSample": 46,
+      "requestsAtLeast": 6686,
+      "requestsPerSecondAtLeast": 111.43333333333334
+    },
+    "monitorRequests": 726,
+    "managers": [
+      {
+        "name": "ptah-operator-ptah-operator-6bf84d6dc8-n2wrl",
+        "podUID": "a482defb-352d-47bb-886a-5e8204a4fa99",
+        "containerID": "containerd://4eb70b5b6fa8119c8423539a302c732dc9f71540221ff2983da36e866c9f89df",
+        "requests": 11302,
+        "cpuSeconds": 10.75,
+        "maxRSSBytes": 55947264,
+        "clientThrottleSeconds": 0,
+        "client429Responses": 0
+      },
+      {
+        "name": "ptah-operator-ptah-operator-6bf84d6dc8-wzrw8",
+        "podUID": "c7bb0867-a14f-4210-bd37-499f50c48ec1",
+        "containerID": "containerd://c4dbbbfcd0b3eed45243131a576659fdffec6a2286242b530497a4fa1113d761",
+        "requests": 37054,
+        "cpuSeconds": 39.36,
+        "maxRSSBytes": 103776256,
+        "clientThrottleSeconds": 0,
+        "client429Responses": 0
+      }
+    ],
+    "change": "Small results up to256KiB commit atomically in one immutable intent instead of intent/chunk/completion. Larger and existing chunked publications retain their original path. Both manager and runner use the recorded new image. Live receiver/admission authority, byte integrity, retention pins, and no-reexecution are unchanged.",
+    "validation": {
+      "originalRegression": "The original chunked path creates three records and fails the one-record regression. The fixed path validates all bytes and identifiers before returning the root receipt; older partial chunked results resume without replacement.",
+      "fixedRaceTests": [
+        "internal/resultstore",
+        "internal/resultdelivery",
+        "internal/resultservice",
+        "internal/resultauthority",
+        "internal/resultcredentials",
+        "internal/resultretention",
+        "internal/resultcleanup",
+        "internal/resultconsumer",
+        "internal/controllerwrite",
+        "internal/controller"
+      ],
+      "realAPI": "Inline protocol and revoked-before-CREATE refusals, independent readback, identical concurrent delivery, active and restored pin deletion refusals, complete collection, maximum payload, crash boundaries and chunk UID replacement all passed.",
+      "sourceVerification": "make verify-source passed, including required real API envtest suites.166 qualification probe tests passed. E2E unit readers and the acknowledgment proxy passed.",
+      "liveFleet": "All twenty original UIDs, specs and generations remain unchanged; every sampled manager matches its installed Pod UID, container ID, and exact image.",
+      "compatibilityLimit": "The old quota2 abandoned-Resolve procedure assumes a partial small result. It now explicitly refuses atomic completion as partial evidence; its next native qualification must use an actual chunked partial publication. Earlier native transport evidence does not qualify the new inline representation.",
+      "auditRestoration": "All three API-server configurations were restored before this unaudited measurement.",
+      "nativePublicationCheck": {
+        "newJobsWithExpectedRunner": 128,
+        "verifiedAtomicPublications": 128,
+        "resourceUIDs": 20,
+        "operations": [
+          "migration-history",
+          "observe",
+          "plan",
+          "resolve",
+          "verify"
+        ],
+        "scope": "Read-only premeasurement check of new native Jobs and atomic publication bytes. Not a complete cycle, retention, or capacity verdict."
+      }
+    },
+    "scope": "Only this steady API-demand window is assessed. No cold/backlog rerun, full soak, retention plateau, fault matrix, architecture matrix, final artifacts, or #580/#242 closure is claimed.",
+    "retentionContext": "Existing one-hour retention is unchanged. The short measurement may include collection of earlier chunked publications; it does not establish the later all-inline retention plateau.",
+    "apiCriteriaPassed": false,
+    "custody": "Local archive only. Remote custody and independent download verification are not established.",
+    "archive": {
+      "name": "capacity-inline-results-2026-10-07.tar.gz",
+      "sha256": "c06989a398438c0666f388af54c90ffec807c84082f6080ed27a5d7c85383bad",
+      "bytes": 115661,
+      "memberCount": 38,
+      "downloadVerified": false
+    }
+  },
+  "capacityInlineAttribution": {
+    "requirement": "#580 attribution of remaining manager API demand with atomic small-result storage",
+    "conclusion": "Diagnostic only. The preceding unaudited ten-minute window failed the unchanged100requests/s bound. This audit includes collection of older chunked publications and does not establish the later steady inline cleanup rate.",
+    "runtimeSourceCommit": "99903ed8007035a30cc43ef2e18201de1e1f317d",
+    "runtimeImage": "e2e-registry.ptah-test-a-1-37-0-242-profile-1b5db851-0026e8302c.svc.cluster.local:5000/ptah-operator@sha256:f679a210b4be46ae0c35a81457d4028b9091b73587f2366fb923904c5c9d053e",
+    "runnerImage": "e2e-registry.ptah-test-a-1-37-0-242-profile-1b5db851-0026e8302c.svc.cluster.local:5000/ptah-operator@sha256:f679a210b4be46ae0c35a81457d4028b9091b73587f2366fb923904c5c9d053e",
+    "window": {
+      "start": "2026-10-07T04:11:45.550126+00:00",
+      "end": "2026-10-07T04:14:45.779544+00:00"
+    },
+    "auditRequests": 16254,
+    "bracketingManagerCounterRequests": 16289.0,
+    "operationCohorts": [
+      {
+        "format": "inline",
+        "action": "new publication",
+        "operations": 81,
+        "boundRequests": 5136,
+        "scope": "Only requests with an explicit operation Job/Pod/record identity are assigned. Source/configuration and TokenReview requests remain unassigned; an operation may span the observation boundary."
+      },
+      {
+        "format": "inline",
+        "action": "collection",
+        "operations": 0,
+        "boundRequests": 0,
+        "scope": "Only requests with an explicit operation Job/Pod/record identity are assigned. Source/configuration and TokenReview requests remain unassigned; an operation may span the observation boundary."
+      },
+      {
+        "format": "inline",
+        "action": "other",
+        "operations": 121,
+        "boundRequests": 532,
+        "scope": "Only requests with an explicit operation Job/Pod/record identity are assigned. Source/configuration and TokenReview requests remain unassigned; an operation may span the observation boundary."
+      },
+      {
+        "format": "chunked",
+        "action": "new publication",
+        "operations": 0,
+        "boundRequests": 0,
+        "scope": "Only requests with an explicit operation Job/Pod/record identity are assigned. Source/configuration and TokenReview requests remain unassigned; an operation may span the observation boundary."
+      },
+      {
+        "format": "chunked",
+        "action": "collection",
+        "operations": 125,
+        "boundRequests": 4206,
+        "scope": "Only requests with an explicit operation Job/Pod/record identity are assigned. Source/configuration and TokenReview requests remain unassigned; an operation may span the observation boundary."
+      },
+      {
+        "format": "chunked",
+        "action": "other",
+        "operations": 9,
+        "boundRequests": 10,
+        "scope": "Only requests with an explicit operation Job/Pod/record identity are assigned. Source/configuration and TokenReview requests remain unassigned; an operation may span the observation boundary."
+      }
+    ],
+    "largestObservedAuditMinute": {
+      "from": "2026-10-07T04:13:23.562501+00:00",
+      "through": "2026-10-07T04:14:23.562501Z",
+      "requests": 6762,
+      "requestsPerSecond": 112.7
+    },
+    "completedCleanupAttempts": 125.0,
+    "cleanupDeletes": 625,
+    "resultRecordLists": 786,
+    "remainingLegacyInventory": {
+      "observedAt": "2026-10-07T04:19:36.122570+00:00",
+      "totalRecords": 7106,
+      "legacyRoots": 930,
+      "retiredLegacyRoots": 920,
+      "withoutRetirement": 10,
+      "latestRootRetirementBound": "2026-10-07T04:52:22+00:00",
+      "limit": "This age bound is not deletion authority. Original Job absence, live pins and each member age remain mandatory."
+    },
+    "restoration": "All three API-server manifests restored and verified byte-for-byte; task audit policy and logs removed from the nodes.",
+    "nextDecision": "After ordinary collection drains the retired legacy cohort, measure the same original twenty-resource fleet again. The changed retained-object population, not a weakened limit or shorter retention, distinguishes that measurement. Keep this mixed-format failure.",
+    "scope": "No DoD or rollout capacity claim is closed. Bound request counts exclude shared subject/configuration and TokenReview requests; operations can straddle the audit window.",
+    "custody": "Local archive only; no external upload or independent download verification.",
+    "archive": {
+      "name": "capacity-inline-attribution-2026-10-07.tar.gz",
+      "sha256": "e5a1fdee9213c731e22b9e9071133683d52b69f374ae76541941086979e718e3",
+      "bytes": 8219658,
+      "memberCount": 139,
+      "downloadVerified": false
+    }
+  },
+  "capacityAPIInlineSteady": {
+    "requirement": "#580 manager API demand on the unchanged twenty-resource steady fleet",
+    "conclusion": "Unproved: the conservative upper bound exceeds the threshold.",
+    "runtimeSourceCommit": "99903ed8007035a30cc43ef2e18201de1e1f317d",
+    "collectorSourceCommit": "dccbbde548cea7d4628e7ddff43fb9b31c21e262",
+    "runtimeImage": "e2e-registry.ptah-test-a-1-37-0-242-profile-1b5db851-0026e8302c.svc.cluster.local:5000/ptah-operator@sha256:f679a210b4be46ae0c35a81457d4028b9091b73587f2366fb923904c5c9d053e",
+    "runnerImage": "e2e-registry.ptah-test-a-1-37-0-242-profile-1b5db851-0026e8302c.svc.cluster.local:5000/ptah-operator@sha256:f679a210b4be46ae0c35a81457d4028b9091b73587f2366fb923904c5c9d053e",
+    "profileRevision": 39,
+    "environment": "Kubernetes 1.37.0, native Linux amd64, PostgreSQL, ten schemas and ten migrations",
+    "window": {
+      "name": "existing twenty-resource fleet API demand",
+      "start": "2026-10-07T04:55:47.529454Z",
+      "end": "2026-10-07T05:05:47.529454Z"
+    },
+    "samples": 121,
+    "slidingMinuteBounds": 108,
+    "maxRequestsPerSecondUpperBound": 106.53333333333333,
+    "thresholdRequestsPerSecond": 100,
+    "thresholdPassed": false,
+    "largestContainedWindowLowerBound": {
+      "start": "2026-10-07T05:03:17.666848+00:00",
+      "end": "2026-10-07T05:04:17.666848+00:00",
+      "firstSample": 90,
+      "lastSample": 102,
+      "requestsAtLeast": 5554,
+      "requestsPerSecondAtLeast": 92.56666666666666
+    },
+    "provenExceedance": null,
+    "monitorRequests": 726,
+    "managers": [
+      {
+        "name": "ptah-operator-ptah-operator-6bf84d6dc8-n2wrl",
+        "podUID": "a482defb-352d-47bb-886a-5e8204a4fa99",
+        "containerID": "containerd://4eb70b5b6fa8119c8423539a302c732dc9f71540221ff2983da36e866c9f89df",
+        "requests": 4679,
+        "cpuSeconds": 5.57,
+        "maxRSSBytes": 56909824,
+        "clientThrottleSeconds": 0,
+        "client429Responses": 0
+      },
+      {
+        "name": "ptah-operator-ptah-operator-6bf84d6dc8-wzrw8",
+        "podUID": "c7bb0867-a14f-4210-bd37-499f50c48ec1",
+        "containerID": "containerd://c4dbbbfcd0b3eed45243131a576659fdffec6a2286242b530497a4fa1113d761",
+        "requests": 37866,
+        "cpuSeconds": 39.639999999999986,
+        "maxRSSBytes": 108343296,
+        "clientThrottleSeconds": 0,
+        "client429Responses": 0
+      }
+    ],
+    "change": "Small results up to256KiB commit atomically in one immutable intent instead of intent/chunk/completion. Larger and existing chunked publications retain their original path. Both manager and runner use the recorded new image. Live receiver/admission authority, byte integrity, retention pins, and no-reexecution are unchanged.",
+    "validation": {
+      "originalRegression": "The original chunked path creates three records and fails the one-record regression. The fixed path validates all bytes and identifiers before returning the root receipt; older partial chunked results resume without replacement.",
+      "fixedRaceTests": [
+        "internal/resultstore",
+        "internal/resultdelivery",
+        "internal/resultservice",
+        "internal/resultauthority",
+        "internal/resultcredentials",
+        "internal/resultretention",
+        "internal/resultcleanup",
+        "internal/resultconsumer",
+        "internal/controllerwrite",
+        "internal/controller"
+      ],
+      "realAPI": "Inline protocol and revoked-before-CREATE refusals, independent readback, identical concurrent delivery, active and restored pin deletion refusals, complete collection, maximum payload, crash boundaries and chunk UID replacement all passed.",
+      "sourceVerification": "make verify-source passed, including required real API envtest suites.166 qualification probe tests passed. E2E unit readers and the acknowledgment proxy passed.",
+      "liveFleet": "All twenty original UIDs, specs and generations remain unchanged; every sampled manager matches its installed Pod UID, container ID, and exact image.",
+      "compatibilityLimit": "The old quota2 abandoned-Resolve procedure assumes a partial small result. It now explicitly refuses atomic completion as partial evidence; its next native qualification must use an actual chunked partial publication. Earlier native transport evidence does not qualify the new inline representation.",
+      "auditRestoration": "All three API-server configurations were restored before this unaudited measurement.",
+      "nativePublicationCheck": {
+        "newJobsWithExpectedRunner": 128,
+        "verifiedAtomicPublications": 128,
+        "resourceUIDs": 20,
+        "operations": [
+          "migration-history",
+          "observe",
+          "plan",
+          "resolve",
+          "verify"
+        ],
+        "scope": "Read-only premeasurement check of new native Jobs and atomic publication bytes. Not a complete cycle, retention, or capacity verdict."
+      },
+      "legacyCohort": {
+        "retiredPublications": 920,
+        "remainingMembersBeforeMeasurement": 0,
+        "readOnlyObservationCount": 29,
+        "readyAt": "2026-10-07T04:55:39.867037+00:00",
+        "procedureSHA256": "18dbc05ddc8921b45dce853a9d36604dcd96eb4b982cd7a2e2f44cdd8e877b51",
+        "readerSHA256": "07ab3851d8f55796b320d0781222bf7692b5ee75e9835cba57bddc468a6f2659",
+        "preservedApplyPublicationCount": 10
+      },
+      "resourceProgress": {
+        "scope": "Every original resource has a newer accepted database-observation timestamp after the measured interval begins, no more than 300 seconds old at the final readback. This endpoint check is not a complete refresh-cycle census or a continuous freshness measurement.",
+        "readbackAt": "2026-10-07T05:05:48.054181+00:00",
+        "problems": [],
+        "resourceCount": 20
+      }
+    },
+    "scope": "Only this steady API-demand window is assessed. No cold/backlog rerun, full soak, retention plateau, fault matrix, architecture matrix, final artifacts, or #580/#242 closure is claimed.",
+    "retentionContext": "The 920 retired legacy publications drained through the unchanged one-hour policy before this window. Their intents, children, credentials and retirement markers were absent. All 10 original Apply publications were independently reconstructed and remained pinned with unchanged receipts, payloads and public bindings. This ten-minute sample still does not establish the full soak or retention plateau.",
+    "apiCriteriaPassed": false,
+    "custody": "Local archive only. Remote custody and independent download verification are not established.",
+    "archive": {
+      "name": "capacity-inline-steady-2026-10-07.tar.gz",
+      "sha256": "fc202fb45742d462b644c818a11fd80a64a1e7d5e57043ea30beee29a489ef1e",
+      "bytes": 241527,
+      "memberCount": 50,
+      "downloadVerified": false
+    },
+    "details": {
+      "archiveMember": "inline-results-steady-native/evidence-summary.json",
+      "sha256": "ef2256b6ab393bf59cb435f1a68c1e76f3efee207b286956359ac24ac43af313",
+      "scope": "Per-resource identities, observations, and request-class tables remain in the checksummed archive; this index retains their counts and the original verdict."
+    }
+  },
+  "capacityAPIInlinePrecise": {
+    "requirement": "#580 manager API demand on the unchanged twenty-resource steady fleet",
+    "conclusion": "Failed: an interior sixty-second window still exceeds 100 requests/s.",
+    "runtimeSourceCommit": "99903ed8007035a30cc43ef2e18201de1e1f317d",
+    "collectorSourceCommit": "50b52b155264ab69369cb4695fdd53c9e1101883",
+    "runtimeImage": "e2e-registry.ptah-test-a-1-37-0-242-profile-1b5db851-0026e8302c.svc.cluster.local:5000/ptah-operator@sha256:f679a210b4be46ae0c35a81457d4028b9091b73587f2366fb923904c5c9d053e",
+    "runnerImage": "e2e-registry.ptah-test-a-1-37-0-242-profile-1b5db851-0026e8302c.svc.cluster.local:5000/ptah-operator@sha256:f679a210b4be46ae0c35a81457d4028b9091b73587f2366fb923904c5c9d053e",
+    "profileRevision": 39,
+    "environment": "Kubernetes 1.37.0, native Linux amd64, PostgreSQL, ten schemas and ten migrations",
+    "window": {
+      "name": "existing twenty-resource fleet API demand",
+      "start": "2026-10-07T05:08:43.595272Z",
+      "end": "2026-10-07T05:18:43.595272Z"
+    },
+    "samples": 601,
+    "slidingMinuteBounds": 540,
+    "maxRequestsPerSecondUpperBound": 104.33333333333333,
+    "thresholdRequestsPerSecond": 100,
+    "thresholdPassed": false,
+    "largestContainedWindowLowerBound": {
+      "start": "2026-10-07T05:15:17.710375+00:00",
+      "end": "2026-10-07T05:16:17.710375+00:00",
+      "firstSample": 394,
+      "lastSample": 454,
+      "requestsAtLeast": 6129,
+      "requestsPerSecondAtLeast": 102.15
+    },
+    "provenExceedance": {
+      "start": "2026-10-07T05:15:17.710375+00:00",
+      "end": "2026-10-07T05:16:17.710375+00:00",
+      "firstSample": 394,
+      "lastSample": 454,
+      "requestsAtLeast": 6129,
+      "requestsPerSecondAtLeast": 102.15
+    },
+    "monitorRequests": 3606,
+    "managers": [
+      {
+        "name": "ptah-operator-ptah-operator-6bf84d6dc8-n2wrl",
+        "podUID": "a482defb-352d-47bb-886a-5e8204a4fa99",
+        "containerID": "containerd://4eb70b5b6fa8119c8423539a302c732dc9f71540221ff2983da36e866c9f89df",
+        "requests": 5163,
+        "cpuSeconds": 7.649999999999999,
+        "maxRSSBytes": 62185472,
+        "clientThrottleSeconds": 0,
+        "client429Responses": 0
+      },
+      {
+        "name": "ptah-operator-ptah-operator-6bf84d6dc8-wzrw8",
+        "podUID": "c7bb0867-a14f-4210-bd37-499f50c48ec1",
+        "containerID": "containerd://c4dbbbfcd0b3eed45243131a576659fdffec6a2286242b530497a4fa1113d761",
+        "requests": 41765,
+        "cpuSeconds": 46.420000000000016,
+        "maxRSSBytes": 113717248,
+        "clientThrottleSeconds": 0,
+        "client429Responses": 0
+      }
+    ],
+    "change": "Small results up to256KiB commit atomically in one immutable intent instead of intent/chunk/completion. Larger and existing chunked publications retain their original path. Both manager and runner use the recorded new image. Live receiver/admission authority, byte integrity, retention pins, and no-reexecution are unchanged.",
+    "validation": {
+      "originalRegression": "The original chunked path creates three records and fails the one-record regression. The fixed path validates all bytes and identifiers before returning the root receipt; older partial chunked results resume without replacement.",
+      "fixedRaceTests": [
+        "internal/resultstore",
+        "internal/resultdelivery",
+        "internal/resultservice",
+        "internal/resultauthority",
+        "internal/resultcredentials",
+        "internal/resultretention",
+        "internal/resultcleanup",
+        "internal/resultconsumer",
+        "internal/controllerwrite",
+        "internal/controller"
+      ],
+      "realAPI": "Inline protocol and revoked-before-CREATE refusals, independent readback, identical concurrent delivery, active and restored pin deletion refusals, complete collection, maximum payload, crash boundaries and chunk UID replacement all passed.",
+      "sourceVerification": "make verify-source passed, including required real API envtest suites.166 qualification probe tests passed. E2E unit readers and the acknowledgment proxy passed.",
+      "liveFleet": "All twenty original UIDs, specs and generations remain unchanged; every sampled manager matches its installed Pod UID, container ID, and exact image.",
+      "compatibilityLimit": "The old quota2 abandoned-Resolve procedure assumes a partial small result. It now explicitly refuses atomic completion as partial evidence; its next native qualification must use an actual chunked partial publication. Earlier native transport evidence does not qualify the new inline representation.",
+      "auditRestoration": "All three API-server configurations were restored before this unaudited measurement.",
+      "nativePublicationCheck": {
+        "newJobsWithExpectedRunner": 128,
+        "verifiedAtomicPublications": 128,
+        "resourceUIDs": 20,
+        "operations": [
+          "migration-history",
+          "observe",
+          "plan",
+          "resolve",
+          "verify"
+        ],
+        "scope": "Read-only premeasurement check of new native Jobs and atomic publication bytes. Not a complete cycle, retention, or capacity verdict."
+      },
+      "legacyCohort": {
+        "retiredPublications": 920,
+        "remainingMembersBeforeMeasurement": 0,
+        "readOnlyObservationCount": 29,
+        "readyAt": "2026-10-07T04:55:39.867037+00:00",
+        "procedureSHA256": "18dbc05ddc8921b45dce853a9d36604dcd96eb4b982cd7a2e2f44cdd8e877b51",
+        "readerSHA256": "07ab3851d8f55796b320d0781222bf7692b5ee75e9835cba57bddc468a6f2659",
+        "preservedApplyPublicationCount": 10
+      },
+      "resourceProgress": {
+        "scope": "Every original resource has a newer accepted database-observation timestamp after the measured interval begins, no more than 300 seconds old at the final readback. This endpoint check is not a complete refresh-cycle census or a continuous freshness measurement.",
+        "readbackAt": "2026-10-07T05:18:44.116349+00:00",
+        "problems": [],
+        "resourceCount": 20
+      }
+    },
+    "scope": "Only this steady API-demand window is assessed. No cold/backlog rerun, full soak, retention plateau, fault matrix, architecture matrix, final artifacts, or #580/#242 closure is claimed.",
+    "retentionContext": "The 920 retired legacy publications drained through the unchanged one-hour policy before this window. Their intents, children, credentials and retirement markers were absent. All 10 original Apply publications were independently reconstructed and remained pinned with unchanged receipts, payloads and public bindings. This ten-minute sample still does not establish the full soak or retention plateau.",
+    "apiCriteriaPassed": false,
+    "diagnosticCadence": {
+      "sampleEverySeconds": 1,
+      "previousSampleEverySeconds": 5,
+      "expectedSamples": 601,
+      "purpose": "Narrow the conservative upper-bound uncertainty left by the previous 92.57-106.53 requests/s interval. Only sampling cadence changes; runtime, workload, threshold and ten-minute duration remain unchanged. This does not replace the frozen full profile.",
+      "monitorTraffic": "The probe retains its own requests separately. They are not subtracted from manager counters."
+    },
+    "custody": "Local archive only. Remote custody and independent download verification are not established.",
+    "archive": {
+      "name": "capacity-inline-precise-2026-10-07.tar.gz",
+      "sha256": "9aa0dd7598650a17ffd2a1e648bda4a66f6a9ad61d21ba74d595447912849cac",
+      "bytes": 338946,
+      "memberCount": 53,
+      "downloadVerified": false
+    },
+    "measurementOverhead": {
+      "finding": "Every leader /metrics scrape invokes four live API lists. The one-second probe therefore changes manager-generated monitoring demand as well as counter resolution. Its measured excess does not establish an excess at the original five-second profile cadence.",
+      "sourceCommit": "99903ed8007035a30cc43ef2e18201de1e1f317d",
+      "sources": [
+        {
+          "path": "internal/telemetry/snapshot.go",
+          "sha256": "58f758d69962a83df176769931f5f56513312b04aed7271f5ec7366c05a9cb9b"
+        },
+        {
+          "path": "cmd/manager/main.go",
+          "sha256": "d4e00aa8501af1317d68ce388a3c172a85773d1bad288c27f9f2bedc2900e2e8"
+        },
+        {
+          "path": "hack/capacity/sampler.go",
+          "sha256": "4b64e8c6dce379e2c04190e39487269d9dcc2ec7c65aa247edaeeeb7b4a505d8"
+        }
+      ],
+      "sourceDerivedAdditionalRequestsPerSecond": 3.2,
+      "calculation": "4 * (1 / 1 second - 1 / 5 seconds)",
+      "status": "Source-derived monitoring effect, not an exact subtraction from the observed counters. Raw samples and the failed diagnostic remain unchanged.",
+      "nextDecision": "Attribute manager requests with the existing metadata audit at the ordinary five-second scrape cadence before selecting another runtime fix."
+    },
+    "details": {
+      "archiveMember": "inline-results-precise-native/evidence-summary.json",
+      "sha256": "f5a8e4b8cb53556fdda4cc1ed40d45c73d3e538a82f2e212ade7f77d364cbe60",
+      "scope": "Per-resource identities, observations, and request-class tables remain in the checksummed archive; this index retains their counts and the original verdict."
+    }
+  },
+  "capacityInlineSteadyAttribution": {
+    "requirement": "#580 remaining API request attribution at the ordinary five-second monitoring cadence",
+    "conclusion": "Diagnostic only. The audit measures request composition on the unchanged fleet; it does not close the frozen capacity profile.",
+    "runtimeSourceCommit": "99903ed8007035a30cc43ef2e18201de1e1f317d",
+    "runtimeImage": "e2e-registry.ptah-test-a-1-37-0-242-profile-1b5db851-0026e8302c.svc.cluster.local:5000/ptah-operator@sha256:f679a210b4be46ae0c35a81457d4028b9091b73587f2366fb923904c5c9d053e",
+    "runnerImage": "e2e-registry.ptah-test-a-1-37-0-242-profile-1b5db851-0026e8302c.svc.cluster.local:5000/ptah-operator@sha256:f679a210b4be46ae0c35a81457d4028b9091b73587f2366fb923904c5c9d053e",
+    "window": {
+      "start": "2026-10-07T05:32:27.253858+00:00",
+      "end": "2026-10-07T05:42:27.482252+00:00"
+    },
+    "monitoringIntervalSeconds": 5,
+    "monitoringIntervals": 120,
+    "auditRequests": 41994,
+    "bracketingManagerCounterRequests": 41998.0,
+    "counterMinusAuditRequests": 4.0,
+    "operationCohorts": [
+      {
+        "format": "inline",
+        "action": "new publication",
+        "operations": 272,
+        "boundRequests": 18061,
+        "scope": "Only requests with an explicit operation Job/Pod/record identity are assigned. Source/configuration and TokenReview requests remain unassigned; an operation may span the observation boundary."
+      },
+      {
+        "format": "inline",
+        "action": "collection",
+        "operations": 232,
+        "boundRequests": 4996,
+        "scope": "Only requests with an explicit operation Job/Pod/record identity are assigned. Source/configuration and TokenReview requests remain unassigned; an operation may span the observation boundary."
+      },
+      {
+        "format": "inline",
+        "action": "other",
+        "operations": 165,
+        "boundRequests": 597,
+        "scope": "Only requests with an explicit operation Job/Pod/record identity are assigned. Source/configuration and TokenReview requests remain unassigned; an operation may span the observation boundary."
+      },
+      {
+        "format": "chunked",
+        "action": "new publication",
+        "operations": 0,
+        "boundRequests": 0,
+        "scope": "Only requests with an explicit operation Job/Pod/record identity are assigned. Source/configuration and TokenReview requests remain unassigned; an operation may span the observation boundary."
+      },
+      {
+        "format": "chunked",
+        "action": "collection",
+        "operations": 0,
+        "boundRequests": 0,
+        "scope": "Only requests with an explicit operation Job/Pod/record identity are assigned. Source/configuration and TokenReview requests remain unassigned; an operation may span the observation boundary."
+      },
+      {
+        "format": "chunked",
+        "action": "other",
+        "operations": 10,
+        "boundRequests": 26,
+        "scope": "Only requests with an explicit operation Job/Pod/record identity are assigned. Source/configuration and TokenReview requests remain unassigned; an operation may span the observation boundary."
+      }
+    ],
+    "largestObservedAuditMinute": {
+      "from": "2026-10-07T05:37:30.340662+00:00",
+      "through": "2026-10-07T05:38:30.340662Z",
+      "requests": 5687,
+      "requestsPerSecond": 94.78333333333333
+    },
+    "managerIdentities": [
+      {
+        "name": "ptah-operator-ptah-operator-6bf84d6dc8-n2wrl",
+        "podUID": "a482defb-352d-47bb-886a-5e8204a4fa99",
+        "containerID": "containerd://4eb70b5b6fa8119c8423539a302c732dc9f71540221ff2983da36e866c9f89df",
+        "image": "e2e-registry.ptah-test-a-1-37-0-242-profile-1b5db851-0026e8302c.svc.cluster.local:5000/ptah-operator@sha256:f679a210b4be46ae0c35a81457d4028b9091b73587f2366fb923904c5c9d053e",
+        "sameInstalledContainer": true
+      },
+      {
+        "name": "ptah-operator-ptah-operator-6bf84d6dc8-wzrw8",
+        "podUID": "c7bb0867-a14f-4210-bd37-499f50c48ec1",
+        "containerID": "containerd://c4dbbbfcd0b3eed45243131a576659fdffec6a2286242b530497a4fa1113d761",
+        "image": "e2e-registry.ptah-test-a-1-37-0-242-profile-1b5db851-0026e8302c.svc.cluster.local:5000/ptah-operator@sha256:f679a210b4be46ae0c35a81457d4028b9091b73587f2366fb923904c5c9d053e",
+        "sameInstalledContainer": true
+      }
+    ],
+    "resourceProgress": {
+      "scope": "Endpoint progress and unchanged resource identity; not a whole-cycle census or continuous freshness proof.",
+      "readbackAt": "2026-10-07T05:42:28.773418+00:00",
+      "problems": [],
+      "resourceCount": 20
+    },
+    "restoration": "All three original API-server manifests were restored byte-for-byte, and task audit files were removed from the nodes.",
+    "scope": "Only explicit Job, Pod and result-record identities bind request attribution. Shared source/configuration and TokenReview calls are not assigned to a caller from timing. Audit-enabled request timestamps do not replace unaudited performance qualification.",
+    "custody": "Local archive only; no external upload or independent download verification.",
+    "workloadScope": {
+      "intentInventories": {
+        "intents-before.json": {
+          "roots": 1773,
+          "outsideProfileUIDs": []
+        },
+        "intents-after.json": {
+          "roots": 1813,
+          "outsideProfileUIDs": []
+        }
+      },
+      "sampledResourceCensuses": 122,
+      "expectedCounts": {
+        "schema": 10,
+        "migration": 10
+      },
+      "censusProblems": [],
+      "scope": "Retained publication bindings and sampled leader resource gauges; not a continuous census between scrapes."
+    },
+    "archive": {
+      "name": "capacity-inline-steady-attribution-2026-10-07.tar.gz",
+      "sha256": "b40648ed35ef00c35822fd65bdf392b8522bc32f7dca2356144ee9dca3d874ce",
+      "bytes": 14717817,
+      "memberCount": 396,
+      "downloadVerified": false
+    },
+    "peakRequestClassCount": 30,
+    "requestClassCount": 39,
+    "details": {
+      "archiveMember": "api-demand-diagnosis/audit-inline-steady/evidence-summary.json",
+      "sha256": "c9c914155f521fc255b43fcbb299c63afa516f2dad5faa1a1f387d542db9419b",
+      "scope": "Per-resource identities, observations, and request-class tables remain in the checksummed archive; this index retains their counts and the original verdict."
+    }
+  },
+  "capacityAPIPublicationAuthority": {
+    "requirement": "#580 manager API demand on the unchanged twenty-resource steady fleet",
+    "conclusion": "Unproved: the conservative upper bound exceeds the threshold.",
+    "runtimeSourceCommit": "10f77cc7c1e9b65c1b147696127faa6206251de0",
+    "collectorSourceCommit": "10f77cc7c1e9b65c1b147696127faa6206251de0",
+    "runtimeImage": "e2e-registry.ptah-test-a-1-37-0-242-profile-1b5db851-0026e8302c.svc.cluster.local:5000/ptah-operator@sha256:bb1b6ba8bed44d3a6fd38bd04f2184af2b6cb6add49f1a3b1a1df29e160f02ed",
+    "runnerImage": "e2e-registry.ptah-test-a-1-37-0-242-profile-1b5db851-0026e8302c.svc.cluster.local:5000/ptah-operator@sha256:bb1b6ba8bed44d3a6fd38bd04f2184af2b6cb6add49f1a3b1a1df29e160f02ed",
+    "profileRevision": 39,
+    "environment": "Kubernetes 1.37.0, native Linux amd64, PostgreSQL, ten schemas and ten migrations",
+    "window": {
+      "name": "existing twenty-resource fleet API demand",
+      "start": "2026-10-07T06:19:32.493991Z",
+      "end": "2026-10-07T06:29:32.493991Z"
+    },
+    "samples": 121,
+    "samplingIntervalSeconds": 5,
+    "slidingMinuteBounds": 108,
+    "maxRequestsPerSecondUpperBound": 113.26666666666667,
+    "thresholdRequestsPerSecond": 100,
+    "thresholdPassed": false,
+    "largestContainedWindowLowerBound": {
+      "start": "2026-10-07T06:19:37.517605+00:00",
+      "end": "2026-10-07T06:20:37.517605+00:00",
+      "firstSample": 1,
+      "lastSample": 12,
+      "requestsAtLeast": 5557,
+      "requestsPerSecondAtLeast": 92.61666666666666
+    },
+    "provenExceedance": null,
+    "monitorRequests": 726,
+    "managers": [
+      {
+        "name": "ptah-operator-ptah-operator-779cc557b4-28zrt",
+        "podUID": "1aff8cbc-c973-40c8-8e5e-6631e88760b3",
+        "containerID": "containerd://5a0a4909aedaa6a2bebeae63387c157e181e7819c685cdfd1c9bbcd84f08c0fa",
+        "requests": 38381,
+        "cpuSeconds": 39.81,
+        "maxRSSBytes": 102768640,
+        "clientThrottleSeconds": 0,
+        "client429Responses": 2
+      },
+      {
+        "name": "ptah-operator-ptah-operator-779cc557b4-lghml",
+        "podUID": "79f5ef58-c7c5-40fd-ab09-b2910f8fff1c",
+        "containerID": "containerd://6de5691573089cf7ab0701d843d2e7fc91191aa9d96ae01676aeae14c29a3dfc",
+        "requests": 3779,
+        "cpuSeconds": 4.630000000000001,
+        "maxRSSBytes": 56586240,
+        "clientThrottleSeconds": 0,
+        "client429Responses": 0
+      }
+    ],
+    "change": "The publisher checks live authority before its first write. Atomic inline results no longer repeat that check immediately after the receiver reads the body. Chunked results retain a second check before completion. Authentication before reading, admission checks, exact durable readback, and identical-byte retry remain required.",
+    "validation": {
+      "originalRegression": "The original receiver repeats six checks for two inline uploads instead of four. Its chunked Store boundary also allows intent and chunk writes before checking authority; the isolated revoked-before-write regression fails. Installed admission remains a separate authority guard.",
+      "fixedRaceTests": [
+        "internal/resultdelivery",
+        "internal/resultstore",
+        "internal/resultservice",
+        "internal/resultconsumer",
+        "internal/resultcredentials",
+        "internal/resultauthority"
+      ],
+      "sourceVerification": "make verify-source completed successfully, including required real API envtests for admission policies, CRDs, webhooks, and result storage.",
+      "liveFleet": "All twenty original UIDs, specs, and generations remain unchanged. Every sampled manager matches its installed Pod UID, container ID, and exact image.",
+      "auditRestoration": "The preceding diagnostic restored all three original API-server configurations. This measurement does not enable audit.",
+      "transportApplicability": "The earlier native transport proofs retain their original source identities. Inline Apply lost-acknowledgment and pre-consumption recovery, and the actual chunked partial-publication procedure still need affected native qualification.",
+      "resourceProgress": {
+        "scope": "Every original resource has a newer accepted database-observation timestamp after the measured interval begins, no more than 300 seconds old at the final readback. This endpoint check is not a complete refresh-cycle census or a continuous freshness measurement.",
+        "readbackAt": "2026-10-07T06:29:33.007232+00:00",
+        "problems": [],
+        "resourceCount": 20
+      }
+    },
+    "scope": "Only this steady API-demand window is assessed. No full soak, cold/backlog recovery, retention plateau, architecture matrix, final artifact qualification, or #580/#242 closure is claimed.",
+    "custody": "Local archive only. Remote custody and independent download verification are not established.",
+    "apiCriteriaPassed": false,
+    "archive": {
+      "name": "capacity-publication-authority-2026-10-07.tar.gz",
+      "sha256": "418d7f8d54983d1a3c7be1fb7383ae6293274596f3ae134cb0ed1880ed8cf43c",
+      "bytes": 95028,
+      "memberCount": 35,
+      "downloadVerified": false
+    },
+    "details": {
+      "archiveMember": "publication-authority-native/evidence-summary.json",
+      "sha256": "12d610a5797f93c7211473830ff42e24a6dca21d986f53ac6702fcfd28856132",
+      "scope": "Per-resource identities, observations, and request-class tables remain in the checksummed archive; this index retains their counts and the original verdict."
+    }
+  },
+  "mergedMasterCI7412": {
+    "head": "7412ca889e63274db11f8965be3bbc3367dfeb90",
+    "testedMergeCommit": "7412ca889e63274db11f8965be3bbc3367dfeb90",
+    "sourceTree": "155a6fe9b47f767c60d24685ed97a58fece54b1b",
+    "testedTree": "155a6fe9b47f767c60d24685ed97a58fece54b1b",
+    "sourceDifference": "Identical source tree",
+    "runURL": "https://github.com/stokaro/ptah-operator/actions/runs/37575772162",
+    "conclusion": "success",
+    "createdAt": "2026-10-07T05:19:55Z",
+    "completedAt": "2026-10-07T06:48:29Z",
+    "fullPipelineSeconds": 5314.0,
+    "lastJobElapsedSeconds": 5313.0,
+    "within90Minutes": true,
+    "passedSuiteCells": 27,
+    "passedOwnedPhaseExecutions": 51,
+    "runtimeArchitecture": "linux/amd64",
+    "kubernetesMinors": [
+      "1.35",
+      "1.36",
+      "1.37"
+    ],
+    "separateRuns": {
+      "Documentation": {
+        "id": 37575772122,
+        "conclusion": "success",
+        "seconds": 264.0
+      },
+      "Publish documentation": {
+        "id": 37575772120,
+        "conclusion": "success",
+        "seconds": 78.0
+      }
+    },
+    "archive": {
+      "name": "ci-37575772162.tar.gz",
+      "sha256": "3434fed67fd01385df649dd6724b8ab05fac0a18d84b56a75187d42fc3b39df4",
+      "memberCount": 146,
+      "bytes": 158607,
+      "downloadVerified": false,
+      "custody": "The individual GitHub timing artifact downloads are digest-verified. This consolidated local archive has not been independently downloaded from durable storage."
+    },
+    "scope": "Terminal CI for the merged master source. All declared default functional cells and phase outcomes were read from digest-verified artifacts. Later local capacity changes are not covered, and this is not production qualification."
+  },
+  "capacityPublicationAuthorityAttribution": {
+    "requirement": "#580 remaining API request attribution at the ordinary five-second monitoring cadence",
+    "conclusion": "Diagnostic only. The audit measures request composition on the unchanged fleet; it does not close the frozen capacity profile.",
+    "runtimeSourceCommit": "10f77cc7c1e9b65c1b147696127faa6206251de0",
+    "runtimeImage": "e2e-registry.ptah-test-a-1-37-0-242-profile-1b5db851-0026e8302c.svc.cluster.local:5000/ptah-operator@sha256:bb1b6ba8bed44d3a6fd38bd04f2184af2b6cb6add49f1a3b1a1df29e160f02ed",
+    "runnerImage": "e2e-registry.ptah-test-a-1-37-0-242-profile-1b5db851-0026e8302c.svc.cluster.local:5000/ptah-operator@sha256:bb1b6ba8bed44d3a6fd38bd04f2184af2b6cb6add49f1a3b1a1df29e160f02ed",
+    "window": {
+      "start": "2026-10-07T06:45:49.401784+00:00",
+      "end": "2026-10-07T06:55:49.840576+00:00"
+    },
+    "monitoringIntervalSeconds": 5,
+    "monitoringIntervals": 120,
+    "auditRequests": 42109,
+    "bracketingManagerCounterRequests": 43234.0,
+    "counterMinusAuditRequests": 1125.0,
+    "operationCohorts": [
+      {
+        "format": "inline",
+        "action": "new publication",
+        "operations": 267,
+        "boundRequests": 16450,
+        "scope": "Only requests with an explicit operation Job/Pod/record identity are assigned. Source/configuration and TokenReview requests remain unassigned; an operation may span the observation boundary."
+      },
+      {
+        "format": "inline",
+        "action": "collection",
+        "operations": 294,
+        "boundRequests": 6258,
+        "scope": "Only requests with an explicit operation Job/Pod/record identity are assigned. Source/configuration and TokenReview requests remain unassigned; an operation may span the observation boundary."
+      },
+      {
+        "format": "inline",
+        "action": "other",
+        "operations": 134,
+        "boundRequests": 899,
+        "scope": "Only requests with an explicit operation Job/Pod/record identity are assigned. Source/configuration and TokenReview requests remain unassigned; an operation may span the observation boundary."
+      },
+      {
+        "format": "chunked",
+        "action": "new publication",
+        "operations": 0,
+        "boundRequests": 0,
+        "scope": "Only requests with an explicit operation Job/Pod/record identity are assigned. Source/configuration and TokenReview requests remain unassigned; an operation may span the observation boundary."
+      },
+      {
+        "format": "chunked",
+        "action": "collection",
+        "operations": 0,
+        "boundRequests": 0,
+        "scope": "Only requests with an explicit operation Job/Pod/record identity are assigned. Source/configuration and TokenReview requests remain unassigned; an operation may span the observation boundary."
+      },
+      {
+        "format": "chunked",
+        "action": "other",
+        "operations": 10,
+        "boundRequests": 31,
+        "scope": "Only requests with an explicit operation Job/Pod/record identity are assigned. Source/configuration and TokenReview requests remain unassigned; an operation may span the observation boundary."
+      }
+    ],
+    "largestObservedAuditMinute": {
+      "from": "2026-10-07T06:53:17.803619+00:00",
+      "through": "2026-10-07T06:54:17.803619+00:00",
+      "requests": 5321,
+      "requestsPerSecond": 88.68333333333334
+    },
+    "managerIdentities": [
+      {
+        "name": "ptah-operator-ptah-operator-779cc557b4-28zrt",
+        "podUID": "1aff8cbc-c973-40c8-8e5e-6631e88760b3",
+        "containerID": "containerd://5a0a4909aedaa6a2bebeae63387c157e181e7819c685cdfd1c9bbcd84f08c0fa",
+        "image": "e2e-registry.ptah-test-a-1-37-0-242-profile-1b5db851-0026e8302c.svc.cluster.local:5000/ptah-operator@sha256:bb1b6ba8bed44d3a6fd38bd04f2184af2b6cb6add49f1a3b1a1df29e160f02ed",
+        "sameInstalledContainer": true
+      },
+      {
+        "name": "ptah-operator-ptah-operator-779cc557b4-lghml",
+        "podUID": "79f5ef58-c7c5-40fd-ab09-b2910f8fff1c",
+        "containerID": "containerd://6de5691573089cf7ab0701d843d2e7fc91191aa9d96ae01676aeae14c29a3dfc",
+        "image": "e2e-registry.ptah-test-a-1-37-0-242-profile-1b5db851-0026e8302c.svc.cluster.local:5000/ptah-operator@sha256:bb1b6ba8bed44d3a6fd38bd04f2184af2b6cb6add49f1a3b1a1df29e160f02ed",
+        "sameInstalledContainer": true
+      }
+    ],
+    "resourceProgress": {
+      "scope": "Endpoint progress and unchanged resource identity; not a whole-cycle census or continuous freshness proof.",
+      "readbackAt": "2026-10-07T06:55:52.267854+00:00",
+      "problems": [],
+      "resourceCount": 20
+    },
+    "restoration": "All three original API-server manifests were restored byte-for-byte, and task audit files were removed from the nodes.",
+    "scope": "Only explicit Job, Pod and result-record identities bind request attribution. Shared source/configuration and TokenReview calls are not assigned to a caller from timing. Audit-enabled request timestamps do not replace unaudited performance qualification.",
+    "custody": "Local archive only; no external upload or independent download verification.",
+    "requestTimestampBasis": "Server requestReceivedTimestamp, one request per auditID across ResponseStarted and ResponseComplete; a long-lived WATCH is counted when it starts.",
+    "counterComparison": {
+      "outerStart": "2026-10-07T06:45:38.328291+00:00",
+      "outerEnd": "2026-10-07T06:55:49.967231+00:00",
+      "innerStart": "2026-10-07T06:45:38.520967+00:00",
+      "innerEnd": "2026-10-07T06:55:49.840705+00:00",
+      "outerArrivalRequests": 43349,
+      "innerArrivalRequests": 43228,
+      "managerCounterDelta": 43234.0,
+      "counterInsideTimestampBracket": true,
+      "scope": "Consistency check over uncertain metric collection instants. It is not one-to-one matching of server arrivals and client response counters. The named audit window starts after the initial log copy; its denominator is separate."
+    },
+    "firstScrape": {
+      "firstScrapeIntervals": [
+        {
+          "name": "ptah-operator-ptah-operator-779cc557b4-28zrt",
+          "startedAt": "2026-10-07T06:45:38.328291+00:00",
+          "finishedAt": "2026-10-07T06:45:38.458186+00:00"
+        },
+        {
+          "name": "ptah-operator-ptah-operator-779cc557b4-lghml",
+          "startedAt": "2026-10-07T06:45:38.458594+00:00",
+          "finishedAt": "2026-10-07T06:45:38.520967+00:00"
+        }
+      ],
+      "responses429": [],
+      "partialTrailingRecords": [],
+      "scope": "Audit activation and first metrics read; does not retroactively establish the cause or timing of an earlier unaudited response."
+    },
+    "workloadScope": {
+      "intentInventories": {
+        "intents-before.json": {
+          "roots": 1792,
+          "outsideProfileUIDs": []
+        },
+        "intents-after.json": {
+          "roots": 1759,
+          "outsideProfileUIDs": []
+        }
+      },
+      "sampledResourceCensuses": 122,
+      "expectedCounts": {
+        "schema": 10,
+        "migration": 10
+      },
+      "censusProblems": [],
+      "scope": "Retained publication bindings and sampled leader resource gauges; not a continuous census between scrapes."
+    },
+    "archive": {
+      "name": "capacity-publication-authority-arrivals-2026-10-07.tar.gz",
+      "sha256": "37b9aeefdfe379c1b247aac416ef83f51ba5b65d91fff69d302740f269dddaeb",
+      "bytes": 15498561,
+      "memberCount": 414,
+      "downloadVerified": false
+    },
+    "peakRequestClassCount": 30,
+    "requestClassCount": 37,
+    "details": {
+      "archiveMember": "api-demand-diagnosis/audit-publication-authority/evidence-summary.json",
+      "sha256": "4d2c031738ec94510dcadd1d0c2c9b9604ac3d8918e2d04dbdabf3236e401584",
+      "scope": "Per-resource identities, observations, and request-class tables remain in the checksummed archive; this index retains their counts and the original verdict."
+    }
+  },
+  "inlineReceiverRestart": {
+    "source": "c78d5683acdb772bc43a957680d115cc519015d7",
+    "requirement": "Source applicability of #586 lost-acknowledgment and receiver-restart proof after atomic inline result publication.",
+    "conclusion": "passed",
+    "platform": {
+      "dockerContext": "diabolocom",
+      "kubernetes": "1.37.0",
+      "os": "linux",
+      "architecture": "amd64",
+      "managerReplicas": 2,
+      "containerLogMaxSize": "10Mi"
+    },
+    "runs": [
+      {
+        "engine": "PostgreSQL",
+        "databaseVersion": "PostgreSQL 17.11 on x86_64-pc-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit",
+        "namespace": "ptah-inline-restart-pg",
+        "resourceUID": "68206c20-69b3-420d-8a1f-3f38fbd185de",
+        "jobUID": "0429271e-ef17-4ec3-acf0-580542942e75",
+        "podUID": "b3e01a65-039a-436e-91c2-0773466bc177",
+        "receiptUID": "b9c2b766-e7c8-41b1-9ef4-0a18996d75bf",
+        "receiptName": "ptah-result-0d2e55e85219b93ba648013b2831ead0b08cb47aaae64b1a0f130acac70fdb3b",
+        "payloadBytes": 873,
+        "payloadDigest": "sha256:14602ac5e56ea2664deee52a37bcfb97c95d6238225efa864093cda1392b1c59",
+        "publicationRecords": 1,
+        "deliveries": 2,
+        "sqlExecutions": 1,
+        "oldReceiverUIDs": [
+          "e1ed9c6c-24f2-4401-9972-7c028ae60dc9",
+          "f3f9c798-b85a-4e50-8126-8056d236ca36"
+        ],
+        "newReceiverUIDs": [
+          "4fffdca0-8669-4735-a52a-da7fdb5e56f0",
+          "df4b68c9-ea72-4082-b0d4-c39906e91bbc"
+        ],
+        "completedAt": "2026-10-07T07:34:15.347460+00:00",
+        "procedureSHA256": "192ceaa7c6ca4455530237f664e7cb90e8102d6be3012022725986cab548b02f",
+        "routingRestored": true
+      },
+      {
+        "engine": "MySQL",
+        "databaseVersion": "8.4.11",
+        "namespace": "ptah-inline-restart-mysql",
+        "resourceUID": "8ec99c61-eb28-40f4-bad0-0627c9107207",
+        "jobUID": "74e2b5f4-13ff-4b6b-8d04-f203147c3250",
+        "podUID": "a41c6289-2a3f-41ef-abe9-1a3f8835ee3e",
+        "receiptUID": "9c00faec-bd39-4171-ac03-6b382d4a7394",
+        "receiptName": "ptah-result-5292f8c561a75f8b89feb685bc32c16e7491b99c4819500390d2a240fc38d4cc",
+        "payloadBytes": 873,
+        "payloadDigest": "sha256:cb8b589f51652a85146f068e32ddd848d0c54c16434774175e2b62c915a11137",
+        "publicationRecords": 1,
+        "deliveries": 2,
+        "sqlExecutions": 1,
+        "oldReceiverUIDs": [
+          "4fffdca0-8669-4735-a52a-da7fdb5e56f0",
+          "df4b68c9-ea72-4082-b0d4-c39906e91bbc"
+        ],
+        "newReceiverUIDs": [
+          "01ca0a86-1e5e-4cf2-a672-55cf7299c48e",
+          "478ad2e2-ad0f-40e1-a38d-20ba256a9cc1"
+        ],
+        "completedAt": "2026-10-07T07:36:09.195522+00:00",
+        "procedureSHA256": "192ceaa7c6ca4455530237f664e7cb90e8102d6be3012022725986cab548b02f",
+        "routingRestored": true
+      }
+    ],
+    "scope": "Installed native PostgreSQL and MySQL migrations use Pod-token authorization and one immutable inline result record. The first successful response is dropped; both receivers are replaced before retry; the same receipt is delivered again. The original Job and Pod complete without replacement or restart, calibrated nontransactional allocation witnesses detect committed and rolled-back SQL replay, and current-generation migration history converges. The isolated lab uses authenticated plain-HTTP fixture artifacts. This is not final signed-HTTPS profile acceptance, pre-consumption Pod/log-loss proof, chunked partial-publication cleanup, or the full support matrix.",
+    "custody": "Local archive only; no remote export or independent download verification.",
+    "installation": {
+      "managerImage": "e2e-registry.ptah-test-a-1-37-0-inline-results-c78d5683-8041a5a1de.svc.cluster.local:5000/ptah-operator@sha256:4794c6de35f5891e01cb900774b1222bf328fa0db21ecd5c2651ec0559d7eb27",
+      "runnerImage": "e2e-registry.ptah-test-a-1-37-0-inline-results-c78d5683-8041a5a1de.svc.cluster.local:5000/ptah-runner@sha256:4794c6de35f5891e01cb900774b1222bf328fa0db21ecd5c2651ec0559d7eb27",
+      "executorImage": "e2e-registry.ptah-test-a-1-37-0-inline-results-c78d5683-8041a5a1de.svc.cluster.local:5000/ptah-executor@sha256:71abab66f626dce96f2879e46d3e71ce84c3b39d99d797a166ba1d1f3a1a26f1",
+      "fixtureImage": "e2e-registry.ptah-test-a-1-37-0-inline-results-c78d5683-8041a5a1de.svc.cluster.local:5000/e2e-fixture@sha256:0c39027476b7fb88ca1bde7360d23528e3bfb88be227b143aa8f9ae591fb8d05",
+      "chartSHA256": "d97f42469f268eb2ac6dd31e4af39a459b93acf7b3fc98084b6f2ccc90e88da1",
+      "ptahRevision": "f6e562c5b0986cd29a53a5cc01938827336b780a",
+      "deploymentUID": "e75434ee-4d4e-4f72-b4a2-48e19b891057"
+    },
+    "archive": {
+      "name": "inline-receiver-restart-2026-10-07.tar.gz",
+      "sha256": "232cf2ad62ee614c66747f2d14d35a8cafc85ff4b2a3b113a09e691019238082",
+      "bytes": 51714,
+      "memberCount": 35,
+      "downloadVerified": false
+    }
+  },
+  "inlineFirstHarvest": {
+    "runtimeSource": "c78d5683acdb772bc43a957680d115cc519015d7",
+    "requirement": "Source applicability of #586 acknowledged-result recovery before first controller consumption after atomic inline publication.",
+    "conclusion": "passed",
+    "platform": {
+      "dockerContext": "diabolocom",
+      "kubernetes": "1.37.0",
+      "os": "linux",
+      "architecture": "amd64",
+      "managerReplicas": 2,
+      "containerLogMaxSize": "10Mi"
+    },
+    "installation": {
+      "managerImage": "e2e-registry.ptah-test-a-1-37-0-inline-results-c78d5683-8041a5a1de.svc.cluster.local:5000/ptah-operator@sha256:4794c6de35f5891e01cb900774b1222bf328fa0db21ecd5c2651ec0559d7eb27",
+      "runnerImage": "e2e-registry.ptah-test-a-1-37-0-inline-results-c78d5683-8041a5a1de.svc.cluster.local:5000/ptah-runner@sha256:4794c6de35f5891e01cb900774b1222bf328fa0db21ecd5c2651ec0559d7eb27",
+      "executorImage": "e2e-registry.ptah-test-a-1-37-0-inline-results-c78d5683-8041a5a1de.svc.cluster.local:5000/ptah-executor@sha256:71abab66f626dce96f2879e46d3e71ce84c3b39d99d797a166ba1d1f3a1a26f1",
+      "fixtureImage": "e2e-registry.ptah-test-a-1-37-0-inline-results-c78d5683-8041a5a1de.svc.cluster.local:5000/e2e-fixture@sha256:0c39027476b7fb88ca1bde7360d23528e3bfb88be227b143aa8f9ae591fb8d05",
+      "chartSHA256": "d97f42469f268eb2ac6dd31e4af39a459b93acf7b3fc98084b6f2ccc90e88da1",
+      "ptahRevision": "f6e562c5b0986cd29a53a5cc01938827336b780a",
+      "deploymentUID": "e75434ee-4d4e-4f72-b4a2-48e19b891057"
+    },
+    "runs": [
+      {
+        "engine": "postgresql",
+        "namespace": "ptah-inline-harvest-pg",
+        "resourceUID": "e097761a-56b6-49bd-80ad-d1fafb17aaea",
+        "jobUID": "ac71ea4d-0923-4b0c-9da7-5aa07836480f",
+        "podUID": "b9b25166-18f5-4593-9777-e99c552c408d",
+        "receiptUID": "e8fab6d2-40f3-4c0f-845e-f50363eaa655",
+        "payloadBytes": 76893,
+        "payloadDigest": "sha256:46c7bedb8e4d51a33fa2a968b374855c6ab71a27d2df1786b78fc96199c0f753",
+        "planUID": "fd665074-dd84-4744-8c33-dd87f223672d",
+        "planBytes": 65536,
+        "planChunks": 1,
+        "planContentDigest": "sha256:60271050dddaeadb97def1701d56c93c39173ccc515ab2c1bd9f6d3862603aeb",
+        "postApplyVerificationPlanJobs": 1,
+        "approvedApplyJobs": 1,
+        "applyJobUID": "5975dcf6-be37-424b-932a-407fc7ae9926",
+        "databaseDefault": "10824:10824:0",
+        "oldReceiverUIDs": [
+          "ca0db434-8ccf-4da5-be93-305307847fae",
+          "ec73f857-f4b3-42b9-8136-d7283578bee9"
+        ],
+        "newReceiverUIDs": [
+          "21420c98-36f9-4356-8497-5d8add6f8e2c",
+          "97389e29-2181-4611-bebf-c31854822262"
+        ],
+        "completedAt": "2026-10-07T07:45:00.878270+00:00",
+        "procedureRevision": "690f24945ad262c4b31b31e37c9d35a8289037cf",
+        "procedureSHA256": "9685b0654fff0cfcd73a92805579718557dc181fd173c9c6db86db19da95dbed",
+        "faultConfigurationRestored": true
+      },
+      {
+        "engine": "mysql",
+        "namespace": "ptah-inline-harvest-mysql",
+        "resourceUID": "c9a8d0d6-34b0-452d-a27f-2bfdd1b3ac5a",
+        "jobUID": "4a365382-49b2-4e81-bb3f-384bea1eed4e",
+        "podUID": "dfd92fae-b60a-4fad-a543-b47b0ce2ece5",
+        "receiptUID": "7fc44a17-13c0-4fd5-9db3-d069ad07c4d5",
+        "payloadBytes": 74472,
+        "payloadDigest": "sha256:25c720813a775d0b4df683bb63ec5f7c3cd9abc1c8228135aa0c7318f6c12773",
+        "planUID": "6970fe4b-e237-4fdd-a099-335bb0467eb7",
+        "planBytes": 65536,
+        "planChunks": 1,
+        "planContentDigest": "sha256:84e0186212cd82e999c5dd182a2f03b4f43a14375ff0dc31718a669ebb14a90d",
+        "postApplyVerificationPlanJobs": 1,
+        "approvedApplyJobs": 1,
+        "applyJobUID": "9a6eb68a-e418-4a42-bc08-4c75e5b9fa00",
+        "databaseDefault": "100:6339:6336",
+        "oldReceiverUIDs": [
+          "1e789222-47f3-45f4-921b-7c68202f9e5e",
+          "e432d644-70df-4bc7-a392-2b6132e14daf"
+        ],
+        "newReceiverUIDs": [
+          "3dfe8bf7-f556-41ae-8a09-25373bcb4811",
+          "cb58a1ed-0794-41b1-9d1d-7468a51e454d"
+        ],
+        "completedAt": "2026-10-07T07:49:01.711851+00:00",
+        "procedureRevision": "690f24945ad262c4b31b31e37c9d35a8289037cf",
+        "procedureSHA256": "9685b0654fff0cfcd73a92805579718557dc181fd173c9c6db86db19da95dbed",
+        "faultConfigurationRestored": true
+      }
+    ],
+    "scope": "Both native engines preserve one acknowledged immutable inline result after the producing Pod/logs are removed and both manager processes are replaced, while reconciliation is prevented by denied leader Lease access. The unchanged original claim has no plan before leadership resumes. First consumption reconstructs exactly 65,536 plan bytes with the same digest, then one approved Apply converges and native database defaults match. Temporary leadership and admission changes are restored. Fixture artifacts use authenticated plain HTTP; this does not qualify the signed-HTTPS production profile, maximum plan size, chunked partial-publication retention, or the complete support matrix.",
+    "custody": "Local archive only; no remote export or independent download verification.",
+    "archive": {
+      "name": "inline-first-harvest-2026-10-07.tar.gz",
+      "sha256": "1599e0d80131f211f5d9d1879ab6e99fdcda7d2405af19c099c373e5aa077a75",
+      "bytes": 161808,
+      "memberCount": 47,
+      "downloadVerified": false
+    }
+  },
+  "abandonedPodToken": {
+    "runtimeSource": "c78d5683acdb772bc43a957680d115cc519015d7",
+    "procedureRevision": "de5e0d7279e88848c621b96755336840f2ab005e",
+    "procedureSHA256": "e9c48c0a301d4f6573709c5e2681dccff671002788cb0d5b1ede308ba5361a07",
+    "requirement": "Source applicability of #586 abandoned partial-publication retention after atomic inline results and public Pod bindings.",
+    "conclusion": "passed",
+    "platform": {
+      "dockerContext": "diabolocom",
+      "kubernetes": "1.37.0",
+      "os": "linux",
+      "architecture": "amd64",
+      "managerReplicas": 2,
+      "containerLogMaxSize": "10Mi"
+    },
+    "installation": {
+      "managerImage": "e2e-registry.ptah-test-a-1-37-0-inline-results-c78d5683-8041a5a1de.svc.cluster.local:5000/ptah-operator@sha256:4794c6de35f5891e01cb900774b1222bf328fa0db21ecd5c2651ec0559d7eb27",
+      "runnerImage": "e2e-registry.ptah-test-a-1-37-0-inline-results-c78d5683-8041a5a1de.svc.cluster.local:5000/ptah-runner@sha256:4794c6de35f5891e01cb900774b1222bf328fa0db21ecd5c2651ec0559d7eb27",
+      "executorImage": "e2e-registry.ptah-test-a-1-37-0-inline-results-c78d5683-8041a5a1de.svc.cluster.local:5000/ptah-executor@sha256:71abab66f626dce96f2879e46d3e71ce84c3b39d99d797a166ba1d1f3a1a26f1",
+      "fixtureImage": "e2e-registry.ptah-test-a-1-37-0-inline-results-c78d5683-8041a5a1de.svc.cluster.local:5000/e2e-fixture@sha256:0c39027476b7fb88ca1bde7360d23528e3bfb88be227b143aa8f9ae591fb8d05",
+      "chartSHA256": "d97f42469f268eb2ac6dd31e4af39a459b93acf7b3fc98084b6f2ccc90e88da1",
+      "ptahRevision": "f6e562c5b0986cd29a53a5cc01938827336b780a",
+      "deploymentUID": "e75434ee-4d4e-4f72-b4a2-48e19b891057"
+    },
+    "publication": {
+      "operation": "plan",
+      "engine": "postgresql",
+      "namespace": "ptah-result-abandoned-v2",
+      "resourceUID": "30809e1a-f7f2-44f6-953e-b7aab817fab2",
+      "jobUID": "213f17cd-bf5a-4139-b0ad-2d74b2deb79e",
+      "podUID": "b9543f55-f6a6-47f7-9167-1419a9dd9712",
+      "intentUID": "d258a8fc-6f34-4f52-8152-e9dad8a8c0be",
+      "payloadBytes": 701125,
+      "declaredChunks": 2,
+      "retiredAt": "2026-10-07T08:28:54+00:00",
+      "retentionSeconds": 3600,
+      "lastDeletedAt": "2026-10-07T09:28:54.354360+00:00",
+      "elapsedSecondsToLastDelete": 3600.35436,
+      "observationCount": 659
+    },
+    "verification": {
+      "status": "passed",
+      "eligibleRecords": 3,
+      "pinnedRecords": 2,
+      "collectedSecretProjections": 0,
+      "preservedPlanObjects": 2,
+      "garbageCollectorIdentities": [],
+      "recordDeletes": [
+        {
+          "name": "ptah-result-06c1446f5126f9ef3bcf5038ab532e5fa60693f4c5b014a47ffbf30aabee7b77",
+          "uid": "d258a8fc-6f34-4f52-8152-e9dad8a8c0be",
+          "notBefore": "2026-10-07T09:28:54+00:00",
+          "deletedAt": "2026-10-07T09:28:54.305136Z",
+          "auditIDs": [
+            "b8bacb64-17b3-42b5-94a7-bac3d9ea1fa7"
+          ]
+        },
+        {
+          "name": "ptah-result-06c1446f5126f9ef3bcf5038ab532e5fa60693f4c5b014a47ffbf30aabee7b77-retired",
+          "uid": "7741df76-242c-4218-a9e8-905a1909a803",
+          "notBefore": "2026-10-07T09:28:54+00:00",
+          "deletedAt": "2026-10-07T09:28:54.354360Z",
+          "auditIDs": [
+            "fa0875d6-d603-45c0-a0f3-21c4ee1ee45d"
+          ]
+        },
+        {
+          "name": "ptah-result-key-797ac50928edc037945538b432f1b17c",
+          "uid": "80594d43-0b9f-4666-afcf-42d86f5c4062",
+          "notBefore": "2026-10-07T09:28:54+00:00",
+          "deletedAt": "2026-10-07T09:28:54.333523Z",
+          "auditIDs": [
+            "099eda77-34d6-4b24-8cb9-a143fb179168"
+          ]
+        }
+      ],
+      "abandonedPublication": {
+        "intentUID": "d258a8fc-6f34-4f52-8152-e9dad8a8c0be",
+        "jobUID": "213f17cd-bf5a-4139-b0ad-2d74b2deb79e",
+        "recordsBeforeRetirement": 2,
+        "quotaRefusalAuditIDs": [
+          "955f34d0-ffec-4796-b7c8-14e940524bf8"
+        ]
+      }
+    },
+    "collectorIdentity": "system:serviceaccount:ptah-system-1-37-0-inline-results-c78d5683-8041a5a1de:ptah-runtime-generated-name-prefix-boundary-proof-8041a5a1de",
+    "faultConfigurationRestored": true,
+    "scope": "Actual first-chunk CREATE refused by a namespaced result-record quota. Original read-only Plan Job and Pod are removed; the installed collector deletes the intent, public credential and retirement record with their original UID preconditions after the unchanged API-timed retention window. An existing completed MySQL migration publication and source schema plan/chunk retain their identities and bytes. No per-operation credential Secret exists. All three API server manifests are restored byte for byte. Fixture artifacts use authenticated plain HTTP; this does not qualify signed-HTTPS capacity, maximum Plan size, other platforms, or the full production profile.",
+    "custody": "Local archive only; no remote export or independent download verification.",
+    "applicabilityAudit": {
+      "archiveMember": "abandoned/applicability-before-ci.json",
+      "sha256": "d20e7641462dc7885f4c4822f2cc7e9aebdddafb0b9283d710f413bb4b3f9661",
+      "requirements": 8,
+      "terminalIntegrationPending": true
+    },
+    "archive": {
+      "name": "abandoned-pod-token-2026-10-07.tar.gz",
+      "sha256": "b7bfa0d826bd5ca320a3cf7282011d8170584bc3e1ca55d3a6882f7136be9ad6",
+      "bytes": 174410,
+      "memberCount": 48,
+      "downloadVerified": false
+    }
   }
 }

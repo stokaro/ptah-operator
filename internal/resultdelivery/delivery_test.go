@@ -192,7 +192,8 @@ func TestLostAcknowledgmentOnlyRedeliversSavedBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if requests.Load() != 2 || authorizations.Load() != 6 {
+	// Each upload checks before reading its body and before durable commit.
+	if requests.Load() != 2 || authorizations.Load() != 4 {
 		t.Fatalf("requests=%d authority checks=%d", requests.Load(), authorizations.Load())
 	}
 	got, stored, err := store.Load(t.Context(), identity.Binding)
@@ -200,7 +201,7 @@ func TestLostAcknowledgmentOnlyRedeliversSavedBytes(t *testing.T) {
 		t.Fatalf("readback lost result: %v", err)
 	}
 	list := &recordapi.PtahResultRecordList{}
-	if err := store.Client.List(t.Context(), list); err != nil || len(list.Items) != 3 {
+	if err := store.Client.List(t.Context(), list); err != nil || len(list.Items) != 1 {
 		t.Fatalf("duplicate delivery created another publication: %v", err)
 	}
 	// Another receiver and client have no memory of the first delivery.
@@ -276,20 +277,24 @@ func TestConflictingPayloadGetsOneDefinitiveRefusal(t *testing.T) {
 }
 
 func TestAuthorityRecheckedAtPublicationBoundary(t *testing.T) {
-	for _, refuseAt := range []int32{1, 2, 3} {
-		t.Run(fmt.Sprint(refuseAt), func(t *testing.T) {
+	for _, row := range publicationRefusals() {
+		t.Run(row.name, func(t *testing.T) {
 			identity := testIdentity()
 			store := testStore(t)
 			certs := testCertificates(t, identity)
+			payload := testPayload(t, identity)
+			if row.chunked {
+				payload = testChunkedPayload(t, identity)
+			}
 			var calls atomic.Int32
 			r := testReceiver(t, store, func(context.Context, Identity) error {
-				if calls.Add(1) >= refuseAt {
+				if calls.Add(1) >= row.refuseAt {
 					return errors.Join(ErrAuthority, errors.New("private authority details"))
 				}
 				return nil
 			}, time.Second)
 			server := startReceiver(t, r, certs, nil)
-			if _, err := testSender(t, server.URL, identity, certs).Send(t.Context(), testPayload(t, identity)); err == nil || err.Error() != "result receiver returned HTTP 403" {
+			if _, err := testSender(t, server.URL, identity, certs).Send(t.Context(), payload); err == nil || err.Error() != "result receiver returned HTTP 403" {
 				t.Fatalf("authority change acknowledged: %v", err)
 			}
 			if _, _, err := store.Load(t.Context(), identity.Binding); !errors.Is(err, resultstore.ErrIncomplete) {
@@ -300,21 +305,25 @@ func TestAuthorityRecheckedAtPublicationBoundary(t *testing.T) {
 }
 
 func TestCurrentClientTrustRecheckedAtPublicationBoundary(t *testing.T) {
-	for _, refuseAt := range []int32{1, 2, 3} {
-		t.Run(fmt.Sprint(refuseAt), func(t *testing.T) {
+	for _, row := range publicationRefusals() {
+		t.Run(row.name, func(t *testing.T) {
 			identity := testIdentity()
 			store := testStore(t)
 			certs := testCertificates(t, identity)
+			payload := testPayload(t, identity)
+			if row.chunked {
+				payload = testChunkedPayload(t, identity)
+			}
 			var calls atomic.Int32
 			r := testReceiver(t, store, func(context.Context, Identity) error { return nil }, time.Second)
 			r.config.VerifyClient = func(*tls.ConnectionState) error {
-				if calls.Add(1) >= refuseAt {
+				if calls.Add(1) >= row.refuseAt {
 					return errors.New("private trust refusal details")
 				}
 				return nil
 			}
 			server := startReceiver(t, r, certs, nil)
-			if _, err := testSender(t, server.URL, identity, certs).Send(t.Context(), testPayload(t, identity)); err == nil || err.Error() != "result receiver returned HTTP 403" {
+			if _, err := testSender(t, server.URL, identity, certs).Send(t.Context(), payload); err == nil || err.Error() != "result receiver returned HTTP 403" {
 				t.Fatalf("retired client trust acknowledged: %v", err)
 			}
 			if _, _, err := store.Load(t.Context(), identity.Binding); !errors.Is(err, resultstore.ErrIncomplete) {
@@ -594,8 +603,8 @@ func TestTransientAuthorityFailureRetriesAndDefinitiveDenialDoesNot(t *testing.T
 	if _, err := testSender(t, server.URL, identity, certs).Send(t.Context(), testPayload(t, identity)); err != nil {
 		t.Fatalf("temporary API outage stopped delivery: %v", err)
 	}
-	if calls.Load() != 4 {
-		t.Fatalf("authority calls=%d, want one transient failure and three successful checks", calls.Load())
+	if calls.Load() != 3 {
+		t.Fatalf("authority calls=%d, want one transient failure and two successful checks", calls.Load())
 	}
 }
 

@@ -1943,7 +1943,7 @@ func (r *MigrationReconciler) SetupWithManager(manager ctrl.Manager) error {
 			predicate.AnnotationChangedPredicate{},
 			predicate.LabelChangedPredicate{},
 		))).
-		Owns(&batchv1.Job{}).
+		Owns(&batchv1.Job{}, builder.WithPredicates(operationJobEvents())).
 		Watches(&operatorv1alpha1.PtahMigrationApproval{}, handler.EnqueueRequestsFromMapFunc(migrationForApproval)).
 		Watches(&operatorv1alpha1.PtahMigrationRunAcknowledgment{}, handler.EnqueueRequestsFromMapFunc(migrationForAcknowledgment)).
 		Watches(&corev1.ConfigMap{}, handler.EnqueueRequestsFromMapFunc(r.migrationsForVerificationPolicy)).

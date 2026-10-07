@@ -28,11 +28,14 @@ import (
 const (
 	ChunkBytes      = plancontract.ChunkBytes
 	MaxPayloadBytes = plancontract.MaxResultPayloadBytes
-	maxChunks       = int((MaxPayloadBytes + ChunkBytes - 1) / ChunkBytes)
-	apiVersion      = "operator.ptah.run/v1alpha1"
-	labelRecord     = "operator.ptah.run/result-record"
-	LabelAttempt    = "operator.ptah.run/result-attempt"
-	LabelRecord     = labelRecord
+	// InlinePayloadBytes leaves room for the binding and JSON/base64 envelope
+	// inside one record. Larger results keep the chunked publication protocol.
+	InlinePayloadBytes = ChunkBytes / 2
+	maxChunks          = int((MaxPayloadBytes + ChunkBytes - 1) / ChunkBytes)
+	apiVersion         = "operator.ptah.run/v1alpha1"
+	labelRecord        = "operator.ptah.run/result-record"
+	LabelAttempt       = "operator.ptah.run/result-attempt"
+	LabelRecord        = labelRecord
 )
 
 var (
@@ -145,6 +148,7 @@ type manifest struct {
 	Digest  string  `json:"digest"`
 	Size    int64   `json:"size"`
 	Chunks  []chunk `json:"chunks"`
+	Inline  []byte  `json:"inline,omitempty"`
 }
 
 type chunk struct {
@@ -158,7 +162,8 @@ type completion struct {
 	ChunkUIDs      []types.UID `json:"chunkUIDs"`
 }
 
-// Receipt identifies the immutable completion record. It contains no SQL,
+// Receipt identifies the immutable record that commits the result: the intent
+// itself for an inline result, or the chunked completion. It contains no SQL,
 // payload bytes, database credentials, or delivery credentials.
 type Receipt struct {
 	Name   string
@@ -175,8 +180,9 @@ type Store struct {
 	Reader client.Reader
 }
 
-// Publish fixes the byte digest before writing any chunks, then creates the
-// completion record last. Identical retries resume; conflicting bytes never
+// Publish commits small results atomically in their intent. Larger results fix
+// the digest before writing chunks, then create the completion record last.
+// Identical retries resume; conflicting bytes never
 // replace even a partial publication. A successful return includes a complete
 // readback. It is the only storage state on which a receiver may acknowledge.
 //
@@ -186,10 +192,11 @@ func (s Store) Publish(ctx context.Context, b Binding, payload []byte, expectedD
 	return s.publish(ctx, b, payload, expectedDigest, nil)
 }
 
-// PublishAuthorized rechecks the receiver's live authority after chunk writes,
-// immediately before creating the completion record. A duplicate publication
-// must pass the same check before its existing receipt is returned. Admission
-// and the consuming controller still enforce the current execution epoch.
+// PublishAuthorized checks live authority immediately before the first write.
+// Chunked publication checks again after chunk writes, before completion or
+// returning an existing receipt. An atomic publication commits at its first
+// write; identical retries still pass that check. Admission and the consuming
+// controller also enforce the current execution epoch.
 func (s Store) PublishAuthorized(ctx context.Context, b Binding, payload []byte, expectedDigest string, check func(context.Context) error) (Receipt, error) {
 	if check == nil {
 		return Receipt{}, ErrInvalid
@@ -206,6 +213,13 @@ func (s Store) publish(ctx context.Context, b Binding, payload []byte, expectedD
 		!digestPattern.MatchString(expectedDigest) || digest(payload) != expectedDigest {
 		return Receipt{}, ErrInvalid
 	}
+	if len(payload) <= InlinePayloadBytes {
+		return s.publishInline(ctx, b, payload, expectedDigest, check)
+	}
+	return s.publishChunks(ctx, b, name, payload, expectedDigest, check)
+}
+
+func (s Store) publishChunks(ctx context.Context, b Binding, name string, payload []byte, expectedDigest string, check func(context.Context) error) (Receipt, error) {
 	m := manifest{Version: 1, Binding: b, Digest: expectedDigest, Size: int64(len(payload))}
 	for offset := 0; offset < len(payload); offset += ChunkBytes {
 		part := payload[offset:min(offset+ChunkBytes, len(payload))]
@@ -213,13 +227,18 @@ func (s Store) publish(ctx context.Context, b Binding, payload []byte, expectedD
 	}
 	encoded, _ := json.Marshal(m)
 	intent := record(b.Namespace, name, "intent", owner(apiVersion, b.Kind, b.Name, b.UID), encoded)
+	if check != nil {
+		if err := check(ctx); err != nil {
+			return Receipt{}, err
+		}
+	}
 	if err := s.ensure(ctx, intent); err != nil {
 		return Receipt{}, err
 	}
 	childOwner := owner(apiVersion, "PtahResultRecord", intent.Name, intent.UID)
 	// Once committed, never recreate a missing chunk or rewrite a receipt.
 	ready := &api.PtahResultRecord{}
-	err = s.Reader.Get(ctx, client.ObjectKey{Namespace: b.Namespace, Name: name + "-complete"}, ready)
+	err := s.Reader.Get(ctx, client.ObjectKey{Namespace: b.Namespace, Name: name + "-complete"}, ready)
 	if err == nil {
 		if check != nil {
 			if err := check(ctx); err != nil {
@@ -272,6 +291,9 @@ func (s Store) Load(ctx context.Context, b Binding) ([]byte, Receipt, error) {
 	m, _, err := admissionManifest(intent)
 	if err != nil || m.Binding != b {
 		return nil, Receipt{}, ErrConflict
+	}
+	if m.Inline != nil {
+		return bytes.Clone(m.Inline), Receipt{Name: intent.Name, UID: intent.UID, Digest: m.Digest, Size: m.Size}, nil
 	}
 	childOwner := owner(apiVersion, "PtahResultRecord", intent.Name, intent.UID)
 	ready, err := s.read(ctx, record(b.Namespace, name+"-complete", "complete", childOwner, nil))

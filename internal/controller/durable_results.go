@@ -89,7 +89,7 @@ func durableTerminalResult(ctx context.Context, reader client.Reader, results Op
 		return evidence, fmt.Errorf("%w: %w", errResultReadRetry, err)
 	}
 	publicationName, bindingErr := resultstore.Name(loaded.Binding)
-	if bindingErr != nil || !request.Matches(loaded.Binding) || loaded.Receipt.Name != publicationName+"-complete" || loaded.Receipt.UID == "" || loaded.Receipt.Digest == "" || loaded.Receipt.Size <= 0 {
+	if bindingErr != nil || !request.Matches(loaded.Binding) || (loaded.Receipt.Name != publicationName && loaded.Receipt.Name != publicationName+"-complete") || loaded.Receipt.UID == "" || loaded.Receipt.Digest == "" || loaded.Receipt.Size <= 0 {
 		evidence.ResultError = resultconsumer.ErrBinding
 		return evidence, nil
 	}

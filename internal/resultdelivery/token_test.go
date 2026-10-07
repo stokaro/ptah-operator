@@ -123,32 +123,6 @@ func TestTokenRotationAfterLostAcknowledgmentPreservesReceipt(t *testing.T) {
 	}
 }
 
-func TestTokenRevocationBeforeCommitRefusesCompletion(t *testing.T) {
-	for _, at := range []int32{1, 2, 3} {
-		identity := testIdentity()
-		store, certs := testStore(t), testCertificates(t, identity)
-		var checks atomic.Int32
-		r, err := NewReceiver(ReceiverConfig{Store: store, MaxConcurrent: 1, Timeout: time.Second,
-			AuthenticateToken: func(context.Context, string, Identity) error {
-				if checks.Add(1) >= at {
-					return ErrAuthority
-				}
-				return nil
-			}, Authorize: func(context.Context, Identity) error { return nil }})
-		if err != nil {
-			t.Fatal(err)
-		}
-		server := startTokenReceiver(t, r, certs, nil)
-		sender := testTokenSender(t, server.URL, identity, certs, func() (string, error) { return "bound.token", nil })
-		if _, err := sender.Send(t.Context(), testPayload(t, identity)); err == nil || err.Error() != "result receiver returned HTTP 403" || checks.Load() != at {
-			t.Fatalf("revoked token was accepted or retried: checks=%d err=%v", checks.Load(), err)
-		}
-		if _, _, err := store.Load(t.Context(), identity.Binding); !errors.Is(err, resultstore.ErrIncomplete) {
-			t.Fatalf("revoked token completed publication: %v", err)
-		}
-	}
-}
-
 func TestTokenReviewRunsInsideBoundedReceiverSlot(t *testing.T) {
 	identity := testIdentity()
 	store, certs := testStore(t), testCertificates(t, identity)

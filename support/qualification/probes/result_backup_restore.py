@@ -237,9 +237,12 @@ def main():
             records = restored_records[cohort['namespace']]
             receipts = []
             for record in records.values():
-                if record['spec']['type'] != 'intent' or record['metadata']['name'] + '-complete' not in records:
+                if record['spec']['type'] != 'intent':
                     continue
-                binding = json.loads(base64.b64decode(record['spec']['data']))['binding']
+                manifest = json.loads(base64.b64decode(record['spec']['data']))
+                if 'inline' not in manifest and record['metadata']['name'] + '-complete' not in records:
+                    continue
+                binding = manifest['binding']
                 assert binding['uid'] == cohort['resourceUID']
                 _, receipt, payload = publication(records, binding['jobUID'])
                 receipts.append({'operation': binding['operation'], 'jobUID': binding['jobUID'], 'receiptUID': receipt['metadata']['uid'], 'payloadSHA256': digest(payload)})

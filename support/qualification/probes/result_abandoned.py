@@ -1,21 +1,35 @@
 #!/usr/bin/env python3
-"""Collect an abandoned quota-interrupted Resolve using the installed collector."""
+"""Collect an abandoned quota-interrupted Plan using the installed collector."""
 import base64
 import datetime as dt
 import hashlib
 import json
 import os
 import pathlib
+import re
 import subprocess
 import time
-from result_retention_evidence import verify, instant
+from result_retention_evidence import verify_abandoned, instant
+from result_first_harvest import pod_binding_record
+
+
+def prior_retirements_complete(rows):
+    """A pending retirement must not consume the quota reserved for the Plan."""
+    jobs = {kind: {r['binding']['jobUID'] for r in rows if r['type'] == kind}
+            for kind in ('intent', 'credential', 'retired')}
+    return bool(jobs['intent']) and jobs['intent'] == jobs['credential'] == jobs['retired']
 
 
 def main():
     if not __debug__:
         raise RuntimeError('Acceptance assertions require Python without optimization')
     e = os.environ
-    ns = 'ptah-result-abandoned'
+    ns = e.get('RESULT_PROBE_NAMESPACE', 'ptah-result-abandoned')
+    source_namespace = e['RESULT_PROBE_SOURCE_NAMESPACE']
+    source_name = e['RESULT_PROBE_SOURCE_NAME']
+    pin_ns = e['RESULT_PROBE_PIN_NAMESPACE']
+    artifact_digest = e['RESULT_PROBE_ARTIFACT_DIGEST']
+    assert re.fullmatch('sha256:[0-9a-f]{64}', artifact_digest)
     out = pathlib.Path(e['RESULT_PROBE_EVIDENCE_DIR'])
     out.mkdir(exist_ok=True)
 
@@ -56,7 +70,7 @@ def main():
         v = {'name': m['name'], 'uid': m['uid'], 'createdAt': m['creationTimestamp'],
              'owners': m.get('ownerReferences', []), 'type': r['spec']['type'],
              'dataDigest': 'sha256:' + hashlib.sha256(base64.b64decode(r['spec']['data'])).hexdigest()}
-        if r['spec']['type'] in ('intent', 'retired'):
+        if r['spec']['type'] in ('intent', 'retired', 'credential'):
             v['binding'] = decode(r)['binding']
         return v
 
@@ -77,18 +91,62 @@ def main():
         obj['metadata'] = {'name': name, 'namespace': ns}
         create(obj)
     k('patch', 'serviceaccount', 'default', '--type=merge', '-p', json.dumps({'imagePullSecrets': [{'name': 'demo-registry-pull'}]}))
-    key = 'count/ptahresultrecords.operator.ptah.run'
-    create({'apiVersion': 'v1', 'kind': 'ResourceQuota', 'metadata': {'name': 'hold-partial', 'namespace': ns}, 'spec': {'hard': {key: '2'}}})
-    wait(lambda: get('resourcequota', 'hold-partial').get('status', {}).get('hard', {}).get(key) == '2')
-    source = get('ptahschema', 'storefront', e['E2E_TEST_NAMESPACE'])
+    source = get('ptahschema', source_name, source_namespace)
+    assert get('namespace', source_namespace)['metadata']['labels']['operator.ptah.run/acceptance-owner'] == e['E2E_KIND_CLUSTER_NAME']
     source = {'apiVersion': source['apiVersion'], 'kind': source['kind'], 'metadata': {'name': 'abandoned', 'namespace': ns}, 'spec': source['spec']}
     source['spec']['policy']['apply'] = 'Never'
-    source['spec']['target']['coordinationKey'] = 'qualification/abandoned/resolve'
+    source['spec']['target']['coordinationKey'] = 'qualification/abandoned/plan'
+    source['spec']['target']['urlFrom'] = {'name': 'demo-database', 'key': 'url'}
+    assert '@sha256:' in source['spec']['desired']['ociRef']
+    source['spec']['desired']['ociRef'] = source['spec']['desired']['ociRef'].rsplit('@', 1)[0] + '@' + artifact_digest
     source['spec']['suspend'] = False
-    resource = create(source)
+    gate = ns + '-gate'
+    message = 'Acceptance probe holds abandoned Plan Pods'
+    create({'apiVersion': 'admissionregistration.k8s.io/v1', 'kind': 'ValidatingAdmissionPolicy',
+            'metadata': {'name': gate}, 'spec': {'failurePolicy': 'Fail', 'matchConstraints': {
+                'resourceRules': [{'apiGroups': [''], 'apiVersions': ['v1'], 'operations': ['CREATE'], 'resources': ['pods']}]},
+                'validations': [{'expression': "!has(object.metadata.labels) || !('operator.ptah.run/operation' in object.metadata.labels) || object.metadata.labels['operator.ptah.run/operation'] != 'plan'", 'message': message}]}})
+    try:
+        create({'apiVersion': 'admissionregistration.k8s.io/v1', 'kind': 'ValidatingAdmissionPolicyBinding',
+                'metadata': {'name': gate}, 'spec': {'policyName': gate, 'validationActions': ['Deny'],
+                'matchResources': {'namespaceSelector': {'matchLabels': {'kubernetes.io/metadata.name': ns}}}}})
+        def gate_ready():
+            probe = {'apiVersion': 'v1', 'kind': 'Pod', 'metadata': {'name': 'gate-probe', 'namespace': ns,
+                     'labels': {'operator.ptah.run/operation': 'plan'}},
+                     'spec': {'automountServiceAccountToken': False, 'restartPolicy': 'Never',
+                              'containers': [{'name': 'probe', 'image': e['RESULT_PROBE_FIXTURE_IMAGE']}]}}
+            result = subprocess.run(['kubectl', '--kubeconfig', e['E2E_KUBECONFIG'], 'create', '--dry-run=server', '-f', '-'],
+                                    input=json.dumps(probe), text=True, capture_output=True, timeout=30)
+            return result.returncode != 0 and message in result.stderr
+        wait(gate_ready, 30)
+        resource = create(source)
+        def held_plan():
+            op = get('ptahschema', 'abandoned').get('status', {}).get('activeOperation') or {}
+            return op if op.get('type') in ('Plan', 'plan') and op.get('jobUID') else None
+        operation = wait(held_plan, 300)
+        assert not any(any(o['uid'] == operation['jobUID'] for o in p['metadata'].get('ownerReferences', [])) for p in get('pods')['items'])
+        def preceding_ready():
+            rows = records()
+            return rows if prior_retirements_complete([public(r) for r in rows.values()]) else None
+        preceding = wait(preceding_ready, 300)
+        key = 'count/ptahresultrecords.operator.ptah.run'
+        limit = str(len(preceding) + 2)
+        create({'apiVersion': 'v1', 'kind': 'ResourceQuota', 'metadata': {'name': 'hold-partial', 'namespace': ns}, 'spec': {'hard': {key: limit}}})
+        wait(lambda: get('resourcequota', 'hold-partial').get('status', {}).get('hard', {}).get(key) == limit)
+    finally:
+        k('delete', 'validatingadmissionpolicybinding', gate, '--ignore-not-found')
+        k('delete', 'validatingadmissionpolicy', gate, '--ignore-not-found')
+
+    def cohort(rows, job_uid):
+        intents = {r['metadata']['uid'] for r in rows.values() if r['spec']['type'] == 'intent' and decode(r)['binding']['jobUID'] == job_uid}
+        return {name: r for name, r in rows.items() if (
+            r['spec']['type'] in ('intent', 'retired', 'credential') and decode(r)['binding']['jobUID'] == job_uid)
+            or any(o['uid'] in intents for o in r['metadata'].get('ownerReferences', []))}
 
     def partial():
-        rows = records()
+        all_rows = records()
+        assert all(n in all_rows and public(all_rows[n]) == public(r) for n, r in preceding.items()), 'Earlier operation changed during the quota fault'
+        rows = cohort(all_rows, operation['jobUID'])
         intents = [r for r in rows.values() if r['spec']['type'] == 'intent']
         if not intents:
             return None
@@ -98,27 +156,58 @@ def main():
 
     interrupted = wait(partial)
     intent = next(r for r in interrupted.values() if r['spec']['type'] == 'intent')
+    assert 'inline' not in decode(intent), 'Atomic result is complete, not an interrupted chunk publication'
     binding = decode(intent)['binding']
-    assert binding['operation'] == 'resolve' and binding['uid'] == resource['metadata']['uid']
+    assert decode(intent)['size'] > 262144 and decode(intent)['chunks']
+    assert binding['operation'] == 'plan' and binding['uid'] == resource['metadata']['uid']
     current = get('ptahschema', 'abandoned')
     assert current['status']['activeOperation']['id'] == binding['operationID']
     job = get('job', binding['jobName'])
     pod = get('pod', binding['podName'])
     assert job['metadata']['uid'] == binding['jobUID'] and pod['metadata']['uid'] == binding['podUID']
-    save('interrupted.json', {'resource': current, 'job': job, 'pod': pod,
-                            'records': [public(r) for r in interrupted.values()], 'intent': intent,
-                            'quota': get('resourcequota', 'hold-partial')})
+    credential = next(r for r in interrupted.values() if r['spec']['type'] == 'credential')
+    assert credential['spec'] == pod_binding_record(job, pod)['spec']
+
+    def audit_events():
+        events = []
+        for node in nodes:
+            if 'node-role.kubernetes.io/control-plane' not in node['metadata'].get('labels', {}):
+                continue
+            raw = run(['docker', '--context', e['E2E_DOCKER_CONTEXT'], 'exec', node['metadata']['name'], 'cat', '/etc/kubernetes/result-acceptance-audit/events.jsonl'])
+            events.extend(a for a in map(json.loads, raw.splitlines()) if a.get('objectRef', {}).get('namespace') == ns)
+        return events
+
+    def chunk_refusals():
+        return [a for a in audit_events() if a.get('verb') == 'create'
+                and a.get('stage') == 'ResponseComplete' and a.get('responseStatus', {}).get('code') == 403
+                and 'exceeded quota: hold-partial' in a['responseStatus'].get('message', '')
+                and a.get('objectRef', {}).get('resource') == 'ptahresultrecords'
+                and a['objectRef'].get('name') == intent['metadata']['name'] + '-000']
+    refused = wait(chunk_refusals, 60)
+    current = get('ptahschema', 'abandoned')
+    assert current['status']['activeOperation']['id'] == binding['operationID']
+    interrupted_reading = {'resource': current, 'job': job, 'pod': pod,
+                          'records': [public(r) for r in interrupted.values()], 'intent': intent,
+                          'precedingRecords': [public(r) for r in preceding.values()],
+                          'quota': get('resourcequota', 'hold-partial')}
+    save('interrupted.json', interrupted_reading)
+    save('quota-refusal-audit.json', refused)
     k('patch', 'ptahschema', 'abandoned', '--type=json', '-p', json.dumps([
         {'op': 'test', 'path': '/metadata/uid', 'value': resource['metadata']['uid']},
         {'op': 'test', 'path': '/metadata/resourceVersion', 'value': current['metadata']['resourceVersion']},
         {'op': 'replace', 'path': '/spec/suspend', 'value': True}]))
-    wait(lambda: not get('ptahschema', 'abandoned').get('status', {}).get('activeOperation'))
-    k('delete', 'job', binding['jobName'], '--ignore-not-found', '--wait=true', '--timeout=60s')
-    wait(lambda: not get('pods')['items'])
+    delete_options = {'apiVersion': 'v1', 'kind': 'DeleteOptions',
+                      'preconditions': {'uid': binding['jobUID']}, 'propagationPolicy': 'Background'}
+    save('job-delete-options.json', delete_options)
+    if k('get', 'job', binding['jobName'], '--ignore-not-found', '-o', 'name').strip():
+        k('delete', '--raw', '/apis/batch/v1/namespaces/' + ns + '/jobs/' + binding['jobName'],
+          '-f', '-', data=json.dumps(delete_options))
+    wait(lambda: not any(any(o['uid'] == binding['jobUID'] for o in p['metadata'].get('ownerReferences', [])) for p in get('pods')['items']))
     k('delete', 'resourcequota', 'hold-partial')
+    wait(lambda: not get('ptahschema', 'abandoned').get('status', {}).get('activeOperation'))
 
     def retired():
-        rows = records()
+        rows = cohort(records(), binding['jobUID'])
         markers = [r for r in rows.values() if r['spec']['type'] == 'retired']
         if not markers:
             return None
@@ -128,7 +217,6 @@ def main():
 
     baseline, marker = wait(retired)
     # Reuse a completed native migration's live recovery pin as the control.
-    pin_ns = 'ptah-result-partial-mysql'
     assert get('namespace', pin_ns)['metadata']['labels']['operator.ptah.run/acceptance-owner'] == e['E2E_KIND_CLUSTER_NAME']
     pinned_resource = get('ptahmigration', 'lost-ack', pin_ns)
     assert pinned_resource['spec']['suspend']
@@ -140,26 +228,35 @@ def main():
     pinned = {n: r for n, r in pin_all.items() if n == pinned_intent['metadata']['name'] or
               any(o['uid'] == pinned_intent['metadata']['uid'] for o in r['metadata'].get('ownerReferences', [])) or
               (r['spec']['type'] == 'credential' and r['metadata']['annotations']['operator.ptah.run/result-job-uid'] == pinned_job)}
-    assert {r['spec']['type'] for r in pinned.values()} == {'intent', 'chunk', 'complete', 'credential'}
+    expected_roles = {'intent', 'credential'} if 'inline' in decode(pinned_intent) else {'intent', 'chunk', 'complete', 'credential'}
+    assert {r['spec']['type'] for r in pinned.values()} == expected_roles
     eligible = set(baseline)
     all_rows = baseline | pinned
     marker_value = decode(marker)
     assert marker_value['retentionSeconds'] >= 3600
     deadlines = {n: max(instant(marker['metadata']['creationTimestamp']), instant(r['metadata']['creationTimestamp'])) + dt.timedelta(seconds=marker_value['retentionSeconds']) for n, r in baseline.items()}
     secret_owners = {}
-    for namespace, rows in [(ns, baseline), (pin_ns, pinned)]:
-        for name, r in rows.items():
-            if r['spec']['type'] == 'credential':
-                secret_owners[name] = get('secret', name, namespace)['metadata']
+    credential_names = sorted(n for n, r in all_rows.items() if r['spec']['type'] == 'credential')
+    assert credential_names
+    def secret_census():
+        present = sorted(r['metadata']['name'] for namespace in (ns, pin_ns)
+                         for r in get('secrets', namespace=namespace)['items']
+                         if r['metadata']['name'] in credential_names)
+        assert not present, 'Pod-token credential has a Secret projection'
+        return {'expectedNames': credential_names, 'presentNames': present}
 
     def plans():
         return {r['metadata']['uid']: hashlib.sha256(json.dumps(r['spec'], sort_keys=True).encode()).hexdigest()
-                for kind in ('ptahschemaplans', 'ptahschemaplanchunks') for r in get(kind, namespace=e['E2E_TEST_NAMESPACE'])['items']}
+                for kind in ('ptahschemaplans', 'ptahschemaplanchunks') for r in get(kind, namespace=source_namespace)['items']}
 
     plan_hashes = plans()
     assert plan_hashes
+    manager = get('deployment', e['E2E_CONTROLLER_NAME'], e['E2E_OPERATOR_NAMESPACE'])
+    collector = 'system:serviceaccount:' + e['E2E_OPERATOR_NAMESPACE'] + ':' + manager['spec']['template']['spec']['serviceAccountName']
     before = {'records': [public(r) for r in all_rows.values()], 'eligibleNames': sorted(eligible), 'pinnedNames': sorted(pinned),
-              'secretOwners': secret_owners, 'planDigests': plan_hashes, 'deadlines': {n: d.isoformat() for n, d in deadlines.items()},
+              'authentication': 'pod-token', 'secretOwners': secret_owners,
+              'collectorIdentity': collector,
+              'credentialSecretCensus': secret_census(), 'planDigests': plan_hashes, 'deadlines': {n: d.isoformat() for n, d in deadlines.items()},
               'runtimeRevision': e['E2E_CONTROLLER_REVISION'], 'pinnedResource': pinned_resource,
               'procedureSHA256': hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest()}
     save('retention-before.json', before)
@@ -171,41 +268,26 @@ def main():
         now = records()
         remaining_pins = records(pin_ns)
         assert all(n in remaining_pins and public(remaining_pins[n]) == public(r) for n, r in pinned.items())
-        secrets = {}
-        for namespace in (ns, pin_ns):
-            for r in get('secrets', namespace=namespace)['items']:
-                if r['metadata']['name'] in secret_owners:
-                    secrets[r['metadata']['name']] = r['metadata']
-        assert all(n in secrets and secrets[n]['uid'] == secret_owners[n]['uid'] for n in set(pinned) & secret_owners.keys())
-        assert not get('jobs')['items'] and not get('ptahschema', 'abandoned')['status'].get('activeOperation')
-        row = {'observedAt': dt.datetime.now(dt.timezone.utc).isoformat(), 'remainingRecords': len(eligible & now.keys()), 'remainingEligibleSecrets': len(eligible & secrets.keys()), 'pinnedRecords': len(pinned)}
+        secret_census()
+        assert not any(j['metadata']['uid'] == binding['jobUID'] for j in get('jobs')['items'])
+        assert not get('ptahschema', 'abandoned')['status'].get('activeOperation')
+        row = {'observedAt': dt.datetime.now(dt.timezone.utc).isoformat(), 'remainingRecords': len(eligible & now.keys()), 'remainingEligibleSecrets': 0, 'pinnedRecords': len(pinned)}
         with (out / 'retention-observations.jsonl').open('a') as f:
             f.write(json.dumps(row) + '\n')
         if time.monotonic() - last >= 60:
             print(json.dumps(row), flush=True)
             last = time.monotonic()
-        if not (eligible & now.keys()) and not (eligible & secrets.keys()):
+        if not (eligible & now.keys()):
             break
         time.sleep(5)
     else:
         raise RuntimeError('Abandoned publication or its projection was not collected')
-    assert not now and plans() == plan_hashes
-    audits = []
-    for node in nodes:
-        if 'node-role.kubernetes.io/control-plane' not in node['metadata'].get('labels', {}):
-            continue
-        raw = run(['docker', '--context', e['E2E_DOCKER_CONTEXT'], 'exec', node['metadata']['name'], 'cat', '/etc/kubernetes/result-acceptance-audit/events.jsonl'])
-        for line in raw.splitlines():
-            a = json.loads(line)
-            if a.get('objectRef', {}).get('namespace') == ns:
-                audits.append(a)
-    refused = [a for a in audits if a.get('verb') == 'create' and a.get('responseStatus', {}).get('code') == 403
-               and a.get('objectRef', {}).get('resource') == 'ptahresultrecords' and a['objectRef'].get('name') == intent['metadata']['name'] + '-000']
-    assert refused, 'No actual API refusal of the first chunk'
-    after = {'remainingPinned': [public(remaining_pins[n]) for n in sorted(pinned)], 'planDigests': plans(),
+    assert not (eligible & now.keys()) and plans() == plan_hashes
+    audits = audit_events()
+    after = {'authentication': 'pod-token', 'credentialSecretCensus': secret_census(), 'remainingPinned': [public(remaining_pins[n]) for n in sorted(pinned)], 'planDigests': plans(),
              'eligibleRecordsCollected': len(eligible), 'eligibleSecretProjectionsCollected': len(eligible & secret_owners.keys())}
     markers = json.loads((out / 'retention-markers.json').read_text())
-    verdict = verify(before, after, markers, audits)
+    verdict = verify_abandoned(interrupted_reading, before, after, markers, audits, refused)
     save('retention-after.json', after)
     save('retention-delete-audit.json', [a for a in audits if a.get('verb') == 'delete'])
     save('quota-refusal-audit.json', refused)

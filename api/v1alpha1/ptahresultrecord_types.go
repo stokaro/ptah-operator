@@ -26,7 +26,8 @@ type PtahResultRecordSpec struct {
 // PtahResultRecord stores one part of a durable runner result or a delivery
 // credential. It has its own RBAC resource so the control plane can read these
 // records without permission to read database Secrets. It has no status or
-// mutable payload; a separate completion record commits a complete publication.
+// mutable payload. A small result commits atomically in its intent; a chunked
+// result commits through a separate completion record.
 // Records belong to their exact operation resource or publication intent.
 // They are internal transport objects, not desired database configuration.
 // +kubebuilder:object:root=true

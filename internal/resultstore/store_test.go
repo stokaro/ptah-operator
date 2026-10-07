@@ -108,7 +108,7 @@ func TestResumeEveryPublicationBoundary(t *testing.T) {
 
 func TestConflictingBytesCannotReplacePartialPublication(t *testing.T) {
 	s := newStore(t)
-	payload := []byte("first result")
+	payload := bytes.Repeat([]byte("p"), InlinePayloadBytes+1)
 	broken := Store{Client: &failingClient{Client: s.Client, at: 2}, Reader: s.Reader}
 	if _, err := broken.Publish(t.Context(), binding(), payload, digest(payload)); !errors.Is(err, errLostWrite) {
 		t.Fatal(err)
@@ -343,7 +343,7 @@ func TestCanceledPublicationReturnsNoReceipt(t *testing.T) {
 
 func TestFinalReadbackFailurePreventsAcknowledgment(t *testing.T) {
 	s := newStore(t)
-	payload := []byte("persisted before the readback fails")
+	payload := bytes.Repeat([]byte("p"), InlinePayloadBytes+1)
 	reader := &failedReadback{Reader: s.Reader}
 	broken := Store{Client: s.Client, Reader: reader}
 	if receipt, err := broken.Publish(t.Context(), binding(), payload, digest(payload)); !errors.Is(err, errLostWrite) || receipt != (Receipt{}) {
