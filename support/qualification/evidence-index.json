@@ -878,16 +878,16 @@
     "custody": "Private development copy with independently hash-verified download. Final encrypted custody, retention policy, and owner acceptance remain unassessed."
   },
   "ciBudgetVerification": {
-    "testedMergeCommit": "5759d7a7a0d295fe04d0a982e4cafe7469528ace",
-    "sourceTree": "56e18687c35b233f13c3f57a79b2f7c735d47808",
-    "testedTree": "1ad360827ecadd0475ccd2d96fa65e851ae85378",
+    "testedMergeCommit": "478b019c7b4eaa66f124221b009f5171532879e2",
+    "sourceTree": "70a0d1ce8b196da10bed4c67f622a3b5ac19b521",
+    "testedTree": "e658b2956a432fdfd352f8b5a2a137df89e8d433",
     "sourceDifference": "context7.json added for documentation indexing; operator, runner, dependencies, charts, workflows, and tests are unchanged",
-    "runURL": "https://github.com/stokaro/ptah-operator/actions/runs/37506334882",
+    "runURL": "https://github.com/stokaro/ptah-operator/actions/runs/37543802657",
     "conclusion": "success",
-    "createdAt": "2026-10-06T17:48:02Z",
-    "completedAt": "2026-10-06T19:13:38Z",
-    "fullPipelineSeconds": 5136.0,
-    "lastJobElapsedSeconds": 5135.0,
+    "createdAt": "2026-10-06T22:57:41Z",
+    "completedAt": "2026-10-07T00:22:08Z",
+    "fullPipelineSeconds": 5067.0,
+    "lastJobElapsedSeconds": 5066.0,
     "within90Minutes": true,
     "passedSuiteCells": 27,
     "passedOwnedPhaseExecutions": 51,
@@ -899,34 +899,34 @@
     ],
     "separateRuns": {
       "Capacity": {
-        "id": 37506334913,
+        "id": 37543802775,
         "conclusion": "success",
-        "seconds": 2642.0
+        "seconds": 2705.0
       },
       "Release": {
-        "id": 37506334879,
+        "id": 37543802685,
         "conclusion": "success",
-        "seconds": 462.0
+        "seconds": 349.0
       },
       "Documentation": {
-        "id": 37506334893,
+        "id": 37543802606,
         "conclusion": "success",
-        "seconds": 180.0
+        "seconds": 159.0
       }
     },
     "archive": {
-      "name": "ci-37506334882.tar.gz",
-      "sha256": "1c10789e32f0dbb31a3e89f37234843f0775a2cf5d9f750f242ac5c11b17b2e7",
+      "name": "ci-37543802657.tar.gz",
+      "sha256": "d88ab8c19c2effbb0affdafd7343eeabd57345ea4f49ae1e927e04213bb03865",
       "memberCount": 148,
-      "bytes": 158745,
+      "bytes": 159566,
       "downloadVerified": true,
       "transport": "authenticated SSH",
       "hostAlias": "diabolocom-buster",
       "directory": "/home/buster/ptah-operator-evidence/020-qualification-2026-10-06"
     },
-    "sourceCommit": "e64032e591c844295f29ace6e5ae840a490050fe",
+    "sourceCommit": "288b7ab7631e790fd5f21cb687f6bf60018922f9",
     "requirement": "The complete CI pipeline finishes within 90 minutes, including queueing and image preparation, without dropping owned acceptance phases.",
-    "scope": "Development CI on this exact recorded head and tested merge commit. Later local capacity harness changes need their own validation. This is not the full native architecture matrix, production profile acceptance, or a release publication.",
+    "scope": "Development CI on the recorded published head and tested merge. The subsequent local API-demand fixes are not covered by this run. This does not qualify the full capacity workload, native architecture matrix, final artifacts, or release publication.",
     "custody": "Private development copy with independently hash-verified download. Final encrypted custody, retention policy, and owner acceptance remain unassessed."
   },
   "capacityPendingPodIPConflict": {
