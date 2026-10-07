@@ -1807,5 +1807,335 @@
       "downloadVerified": false
     },
     "custody": "Local archive retained. Remote custody and independent download verification are not established."
+  },
+  "capacityAPISteadyAudit": {
+    "requirement": "#580 API demand attribution after current-claim reduction",
+    "conclusion": "Diagnostic attribution complete; the independent native steady window remains failed.",
+    "runtimeSourceCommit": "a3da4dfce57a7d4e80d765478cc6587f5ab3ce6a",
+    "window": {
+      "start": "2026-10-07T01:13:49.354254+00:00",
+      "end": "2026-10-07T01:16:49.507792+00:00"
+    },
+    "exactManagerAuditRequests": 24108,
+    "bracketingManagerCounterRequests": 24143.0,
+    "largestObservedAuditMinute": {
+      "from": "2026-10-07T01:13:50.264605+00:00",
+      "through": "2026-10-07T01:14:50.264605Z",
+      "requests": 9470,
+      "requestsPerSecond": 157.83333333333334,
+      "resources": [
+        {
+          "key": [
+            "get",
+            "ptahresultrecords",
+            "",
+            200
+          ],
+          "count": 2608
+        },
+        {
+          "key": [
+            "get",
+            "ptahresultrecords",
+            "",
+            404
+          ],
+          "count": 1236
+        },
+        {
+          "key": [
+            "get",
+            "ptahschemas",
+            "",
+            200
+          ],
+          "count": 955
+        },
+        {
+          "key": [
+            "get",
+            "ptahmigrations",
+            "",
+            200
+          ],
+          "count": 710
+        },
+        {
+          "key": [
+            "get",
+            "jobs",
+            "",
+            404
+          ],
+          "count": 673
+        },
+        {
+          "key": [
+            "list",
+            "ptahresultrecords",
+            "",
+            200
+          ],
+          "count": 618
+        },
+        {
+          "key": [
+            "get",
+            "jobs",
+            "",
+            200
+          ],
+          "count": 587
+        },
+        {
+          "key": [
+            "list",
+            "pods",
+            "",
+            200
+          ],
+          "count": 524
+        },
+        {
+          "key": [
+            "delete",
+            "ptahresultrecords",
+            "",
+            200
+          ],
+          "count": 302
+        },
+        {
+          "key": [
+            "get",
+            "configmaps",
+            "",
+            200
+          ],
+          "count": 216
+        },
+        {
+          "key": [
+            "create",
+            "ptahresultrecords",
+            "",
+            201
+          ],
+          "count": 169
+        },
+        {
+          "key": [
+            "create",
+            "tokenreviews",
+            "",
+            201
+          ],
+          "count": 116
+        },
+        {
+          "key": [
+            "get",
+            "pods",
+            "",
+            200
+          ],
+          "count": 116
+        },
+        {
+          "key": [
+            "patch",
+            "ptahschemas",
+            "status",
+            200
+          ],
+          "count": 88
+        },
+        {
+          "key": [
+            "update",
+            "leases",
+            "",
+            200
+          ],
+          "count": 66
+        },
+        {
+          "key": [
+            "get",
+            "serviceaccounts",
+            "",
+            200
+          ],
+          "count": 64
+        },
+        {
+          "key": [
+            "list",
+            "limitranges",
+            "",
+            200
+          ],
+          "count": 64
+        },
+        {
+          "key": [
+            "list",
+            "priorityclasses",
+            "",
+            200
+          ],
+          "count": 64
+        },
+        {
+          "key": [
+            "get",
+            "leases",
+            "",
+            200
+          ],
+          "count": 54
+        },
+        {
+          "key": [
+            "patch",
+            "ptahmigrations",
+            "status",
+            200
+          ],
+          "count": 51
+        },
+        {
+          "key": [
+            "patch",
+            "ptahschemas",
+            "",
+            200
+          ],
+          "count": 37
+        },
+        {
+          "key": [
+            "patch",
+            "jobs",
+            "",
+            200
+          ],
+          "count": 32
+        },
+        {
+          "key": [
+            "create",
+            "jobs",
+            "",
+            201
+          ],
+          "count": 32
+        },
+        {
+          "key": [
+            "patch",
+            "ptahmigrations",
+            "",
+            200
+          ],
+          "count": 27
+        },
+        {
+          "key": [
+            "list",
+            "ptahmigrationplans",
+            "",
+            200
+          ],
+          "count": 12
+        },
+        {
+          "key": [
+            "list",
+            "ptahschemas",
+            "",
+            200
+          ],
+          "count": 12
+        },
+        {
+          "key": [
+            "list",
+            "ptahschemaplans",
+            "",
+            200
+          ],
+          "count": 12
+        },
+        {
+          "key": [
+            "list",
+            "ptahmigrations",
+            "",
+            200
+          ],
+          "count": 12
+        },
+        {
+          "key": [
+            "patch",
+            "events",
+            "",
+            200
+          ],
+          "count": 9
+        },
+        {
+          "key": [
+            "watch",
+            "ptahschemas",
+            "",
+            200
+          ],
+          "count": 2
+        },
+        {
+          "key": [
+            "watch",
+            "jobs",
+            "",
+            200
+          ],
+          "count": 1
+        },
+        {
+          "key": [
+            "watch",
+            "ptahschemaapprovals",
+            "",
+            200
+          ],
+          "count": 1
+        }
+      ]
+    },
+    "completedCleanupAttempts": 139,
+    "deletedResultRecords": 695,
+    "requestsBoundToDeletedAttempts": 7449,
+    "recordLists": 1426,
+    "newPublications": 84,
+    "observations": [
+      "The139 complete cleanup attempts each deleted complete, chunk, intent, credential, and retirement records.",
+      "Typical cleanup has54 directly bound requests, excluding subject reads and collection LISTs.",
+      "The1426 record LISTs equal36 metadata scans plus10 lists per139 cleanup attempts. Collection and independent deletion admission each repeat member checks.",
+      "The before inventory contains1732 intents; two deferral hints per intent would be3464, below the4096 bound. This does not establish the actual hint-map occupancy.",
+      "Bracketing manager counters include35 more requests than the exact audit window; scrape intervals and audit event boundaries are retained.",
+      "Two client429 responses occurred in this audit-enabled diagnostic window. The preceding unaudited native window had zero observed429 delta; no causal attribution or passing pressure verdict is claimed."
+    ],
+    "apiConfigurationRestored": true,
+    "scope": "Metadata-only audit for the exact manager ServiceAccount after five-minute warmup, three-minute window, both managers sampled every five seconds. All three API servers were restored. This is attribution, not acceptance or a replacement for the failed native measurement.",
+    "custody": "Local archive retained. Remote custody and independent download verification are not established.",
+    "archive": {
+      "name": "capacity-steady-attribution-2026-10-07.tar.gz",
+      "sha256": "aacbea69177e2ba69099497c97c577d5e18b3e27d66ea9057b0aabd04415aa1d",
+      "bytes": 6336395,
+      "memberCount": 136,
+      "downloadVerified": false
+    }
   }
 }
