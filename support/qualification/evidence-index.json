@@ -2137,5 +2137,23 @@
       "memberCount": 136,
       "downloadVerified": false
     }
+  },
+  "migrationExecutorStatusWait": {
+    "conclusion": "A delayed Pod-status reading reproduces and fixes a test race; original CI Pod status was not recorded.",
+    "ciRun": 37552581994,
+    "ciJob": 112573395456,
+    "originalLocal": "PASS in 254.58s; original CI failure not reproduced without injection.",
+    "controlledOriginal": "FAIL with exact SQL IPs and injected Pending status.",
+    "controlledFixed": "PASS with the same delayed status, executor rollout and History recovery without Apply replay.",
+    "checks": "Complete test/e2e/... race suite and tagged vet passed; UID/IP, replacement and terminal-state refusals retained.",
+    "scope": "Focused PostgreSQL scenario on native Kubernetes 1.35.8; 7 task containers share CPUs 0-3; memory is uncapped. Runtime uses the local current-claim authority change. The candidate initially waited behind the remaining realm claim of the negative control; that completed control was suspended before candidate operations started. Not a full phase, CI hardware equivalence, or proof of the missing original CI Pod snapshot. No timeout increase or matcher relaxation.",
+    "archive": {
+      "name": "migration-status-wait-2026-10-07.tar.gz",
+      "sha256": "955449d62742a22467c75fc746f54b74131a61fa7b825e698e8b19e2dda78040",
+      "bytes": 100659,
+      "memberCount": 38,
+      "downloadVerified": false
+    },
+    "custody": "Local archive only; no remote export or download verification."
   }
 }
