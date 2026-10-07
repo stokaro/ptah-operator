@@ -2294,5 +2294,136 @@
         }
       ]
     }
+  },
+  "capacityAPIJobEvents": {
+    "requirement": "#580 manager API demand on the unchanged twenty-resource steady fleet",
+    "conclusion": "Failed: an interior sixty-second window still exceeds 100 requests/s.",
+    "runtimeSourceCommit": "bd830d263f382d06c80f5e78212327dae7b6df8c",
+    "collectorSourceCommit": "bd830d263f382d06c80f5e78212327dae7b6df8c",
+    "runtimeImage": "e2e-registry.ptah-test-a-1-37-0-242-profile-1b5db851-0026e8302c.svc.cluster.local:5000/ptah-operator@sha256:2d63e917c128d56193263c1d862916346a9e2453c94af3c6d84455ee68c1f19e",
+    "runnerImage": "e2e-registry.ptah-test-a-1-37-0-242-profile-1b5db851-0026e8302c.svc.cluster.local:5000/ptah-runner@sha256:3c926b0b03baae569014ceae3522a0dde7a9c03555a645eede9773b536dde8c2",
+    "profileRevision": 39,
+    "environment": "Kubernetes 1.37.0, native Linux amd64, PostgreSQL, ten schemas and ten migrations",
+    "window": {
+      "name": "existing twenty-resource fleet API demand",
+      "start": "2026-10-07T03:11:59.694831Z",
+      "end": "2026-10-07T03:21:59.694831Z"
+    },
+    "samples": 121,
+    "slidingMinuteBounds": 108,
+    "maxRequestsPerSecondUpperBound": 140.23333333333332,
+    "thresholdRequestsPerSecond": 100,
+    "thresholdPassed": false,
+    "largestContainedWindowLowerBound": {
+      "start": "2026-10-07T03:18:29.817561+00:00",
+      "end": "2026-10-07T03:19:29.817561+00:00",
+      "firstSample": 78,
+      "lastSample": 90,
+      "requestsAtLeast": 7215,
+      "requestsPerSecondAtLeast": 120.25
+    },
+    "provenExceedance": {
+      "start": "2026-10-07T03:18:29.817561+00:00",
+      "end": "2026-10-07T03:19:29.817561+00:00",
+      "firstSample": 78,
+      "lastSample": 90,
+      "requestsAtLeast": 7215,
+      "requestsPerSecondAtLeast": 120.25
+    },
+    "monitorRequests": 726,
+    "managers": [
+      {
+        "name": "ptah-operator-ptah-operator-7649c894f7-qh5k5",
+        "podUID": "06a6d34e-8ca6-4d84-b666-4d9b1247c776",
+        "containerID": "containerd://bb4e59f06bc716ae1bd936f9ef0c29f2429d7079da530c92944ccdece5920e1d",
+        "requests": 12327,
+        "cpuSeconds": 11.970000000000002,
+        "maxRSSBytes": 54415360,
+        "clientThrottleSeconds": 0,
+        "client429Responses": 0
+      },
+      {
+        "name": "ptah-operator-ptah-operator-7649c894f7-znq4d",
+        "podUID": "f3ca2a47-42bd-4fa8-b627-1bae59e08265",
+        "containerID": "containerd://ed353f84dacddd743a36d53ed8fbb335655c06d89523ec67d6a2c811f7fbba01",
+        "requests": 40786,
+        "cpuSeconds": 40.459999999999994,
+        "maxRSSBytes": 102309888,
+        "clientThrottleSeconds": 0,
+        "client429Responses": 0
+      }
+    ],
+    "change": "Both family controllers ignore Job updates that change only readiness and API bookkeeping. All other updates, including execution intent, deletion, failure and completion, still enqueue; direct authority checks and reconciliation timers are unchanged.",
+    "validation": {
+      "observedEvents": "A three-minute watch of both workload namespaces captured 687 Job events, including 528 updates. Exactly 136 updates changed only status.ready.",
+      "originalRegression": "The original default update predicate fails the readiness-only regression. The new predicate also preserves terminal conditions, Pod counters, UID, deletion, finalizers, ownership, labels, annotations, generation and execution intent changes without mutating watch objects.",
+      "fixedRaceTests": [
+        "internal/controller"
+      ],
+      "vet": [
+        "internal/controller"
+      ],
+      "liveFleet": "All twenty original UIDs, specs and generations remain unchanged; every sampled manager matches its installed Pod UID, container ID, and exact image.",
+      "auditRestoration": "All three API-server configurations were restored before this unaudited measurement."
+    },
+    "scope": "Only this steady API-demand window is assessed. No cold/backlog rerun, full soak, retention plateau, fault matrix, architecture matrix, final artifacts, or #580/#242 closure is claimed.",
+    "custody": "Local archive only. Remote custody and independent download verification are not established.",
+    "archive": {
+      "name": "capacity-job-events-2026-10-07.tar.gz",
+      "sha256": "f8cfd67e8e6bc2b6635947f15ff5f5665216cf4ca6f2e3d97bfecd87c3aa408f",
+      "bytes": 169447,
+      "memberCount": 42,
+      "downloadVerified": false
+    }
+  },
+  "migrationStatusIntegrationCI": {
+    "head": "5cc57190e413587b2b35b913a784d7741dfc427a",
+    "testedMergeCommit": "ada06ab2dd386f1db05f5627a93fc20a890c70a8",
+    "sourceTree": "6ec0ebbeb407b735b42fd3a221e76de997bb0b51",
+    "testedTree": "155a6fe9b47f767c60d24685ed97a58fece54b1b",
+    "sourceDifference": "context7.json added for documentation indexing; operator, runner, dependencies, charts, workflows, and tests are unchanged",
+    "runURL": "https://github.com/stokaro/ptah-operator/actions/runs/37559698997",
+    "conclusion": "success",
+    "createdAt": "2026-10-07T01:58:19Z",
+    "completedAt": "2026-10-07T03:23:33Z",
+    "fullPipelineSeconds": 5114.0,
+    "lastJobElapsedSeconds": 5113.0,
+    "within90Minutes": true,
+    "passedSuiteCells": 27,
+    "passedOwnedPhaseExecutions": 51,
+    "runtimeArchitecture": "linux/amd64",
+    "kubernetesMinors": [
+      "1.35",
+      "1.36",
+      "1.37"
+    ],
+    "separateRuns": {
+      "Capacity": {
+        "id": 37559699038,
+        "conclusion": "success",
+        "seconds": 2799.0
+      },
+      "Release": {
+        "id": 37559698986,
+        "conclusion": "success",
+        "seconds": 429.0
+      },
+      "Documentation": {
+        "id": 37559698998,
+        "conclusion": "success",
+        "seconds": 212.0
+      }
+    },
+    "archive": {
+      "name": "ci-37559698997.tar.gz",
+      "sha256": "8d8a0409d429a7331999c9a87762a5dd063a3db92e88ab5cbdbfdb5e89da2a2a",
+      "memberCount": 148,
+      "bytes": 160179,
+      "downloadVerified": false
+    },
+    "requirement": "Complete PR CI within 90 minutes, including queueing and preparation, and follow up the migration-authority SQL/Pod binding failure.",
+    "scope": "This run covers 5cc57190 and the recorded merge tree. Later local collector and Job-event changes are not covered. The short Capacity workflow is not the frozen #580 profile; #242 remains open.",
+    "custody": "GitHub timing artifacts downloaded and digest-verified locally. The local archive was read back byte for byte; remote archive custody is not established.",
+    "timingArtifactDownloadsVerified": 27
   }
 }
