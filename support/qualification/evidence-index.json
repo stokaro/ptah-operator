@@ -4462,5 +4462,291 @@
       "memberCount": 396,
       "downloadVerified": false
     }
+  },
+  "capacityAPIPublicationAuthority": {
+    "requirement": "#580 manager API demand on the unchanged twenty-resource steady fleet",
+    "conclusion": "Unproved: the conservative upper bound exceeds the threshold.",
+    "runtimeSourceCommit": "10f77cc7c1e9b65c1b147696127faa6206251de0",
+    "collectorSourceCommit": "10f77cc7c1e9b65c1b147696127faa6206251de0",
+    "runtimeImage": "e2e-registry.ptah-test-a-1-37-0-242-profile-1b5db851-0026e8302c.svc.cluster.local:5000/ptah-operator@sha256:bb1b6ba8bed44d3a6fd38bd04f2184af2b6cb6add49f1a3b1a1df29e160f02ed",
+    "runnerImage": "e2e-registry.ptah-test-a-1-37-0-242-profile-1b5db851-0026e8302c.svc.cluster.local:5000/ptah-operator@sha256:bb1b6ba8bed44d3a6fd38bd04f2184af2b6cb6add49f1a3b1a1df29e160f02ed",
+    "profileRevision": 39,
+    "environment": "Kubernetes 1.37.0, native Linux amd64, PostgreSQL, ten schemas and ten migrations",
+    "window": {
+      "name": "existing twenty-resource fleet API demand",
+      "start": "2026-10-07T06:19:32.493991Z",
+      "end": "2026-10-07T06:29:32.493991Z"
+    },
+    "samples": 121,
+    "samplingIntervalSeconds": 5,
+    "slidingMinuteBounds": 108,
+    "maxRequestsPerSecondUpperBound": 113.26666666666667,
+    "thresholdRequestsPerSecond": 100,
+    "thresholdPassed": false,
+    "largestContainedWindowLowerBound": {
+      "start": "2026-10-07T06:19:37.517605+00:00",
+      "end": "2026-10-07T06:20:37.517605+00:00",
+      "firstSample": 1,
+      "lastSample": 12,
+      "requestsAtLeast": 5557,
+      "requestsPerSecondAtLeast": 92.61666666666666
+    },
+    "provenExceedance": null,
+    "monitorRequests": 726,
+    "managers": [
+      {
+        "name": "ptah-operator-ptah-operator-779cc557b4-28zrt",
+        "podUID": "1aff8cbc-c973-40c8-8e5e-6631e88760b3",
+        "containerID": "containerd://5a0a4909aedaa6a2bebeae63387c157e181e7819c685cdfd1c9bbcd84f08c0fa",
+        "requests": 38381,
+        "cpuSeconds": 39.81,
+        "maxRSSBytes": 102768640,
+        "clientThrottleSeconds": 0,
+        "client429Responses": 2
+      },
+      {
+        "name": "ptah-operator-ptah-operator-779cc557b4-lghml",
+        "podUID": "79f5ef58-c7c5-40fd-ab09-b2910f8fff1c",
+        "containerID": "containerd://6de5691573089cf7ab0701d843d2e7fc91191aa9d96ae01676aeae14c29a3dfc",
+        "requests": 3779,
+        "cpuSeconds": 4.630000000000001,
+        "maxRSSBytes": 56586240,
+        "clientThrottleSeconds": 0,
+        "client429Responses": 0
+      }
+    ],
+    "change": "The publisher checks live authority before its first write. Atomic inline results no longer repeat that check immediately after the receiver reads the body. Chunked results retain a second check before completion. Authentication before reading, admission checks, exact durable readback, and identical-byte retry remain required.",
+    "validation": {
+      "originalRegression": "The original receiver repeats six checks for two inline uploads instead of four. Its chunked Store boundary also allows intent and chunk writes before checking authority; the isolated revoked-before-write regression fails. Installed admission remains a separate authority guard.",
+      "fixedRaceTests": [
+        "internal/resultdelivery",
+        "internal/resultstore",
+        "internal/resultservice",
+        "internal/resultconsumer",
+        "internal/resultcredentials",
+        "internal/resultauthority"
+      ],
+      "sourceVerification": "make verify-source completed successfully, including required real API envtests for admission policies, CRDs, webhooks, and result storage.",
+      "liveFleet": "All twenty original UIDs, specs, and generations remain unchanged. Every sampled manager matches its installed Pod UID, container ID, and exact image.",
+      "auditRestoration": "The preceding diagnostic restored all three original API-server configurations. This measurement does not enable audit.",
+      "transportApplicability": "The earlier native transport proofs retain their original source identities. Inline Apply lost-acknowledgment and pre-consumption recovery, and the actual chunked partial-publication procedure still need affected native qualification.",
+      "resourceProgress": {
+        "scope": "Every original resource has a newer accepted database-observation timestamp after the measured interval begins, no more than 300 seconds old at the final readback. This endpoint check is not a complete refresh-cycle census or a continuous freshness measurement.",
+        "readbackAt": "2026-10-07T06:29:33.007232+00:00",
+        "resources": [
+          {
+            "kind": "PtahSchema",
+            "namespace": "ptah-qualification-a",
+            "name": "capacity-schema-000",
+            "uid": "8fc317d1-6ca8-4ceb-b245-c9957f050e9d",
+            "before": "2026-10-07T06:19:00Z",
+            "after": "2026-10-07T06:26:58Z",
+            "ageAtFinalReadbackSeconds": 155.007232,
+            "valid": true
+          },
+          {
+            "kind": "PtahSchema",
+            "namespace": "ptah-qualification-a",
+            "name": "capacity-schema-002",
+            "uid": "cae9f755-3394-4a0c-b9de-e44212dbaeaa",
+            "before": "2026-10-07T06:17:57Z",
+            "after": "2026-10-07T06:29:12Z",
+            "ageAtFinalReadbackSeconds": 21.007232,
+            "valid": true
+          },
+          {
+            "kind": "PtahSchema",
+            "namespace": "ptah-qualification-a",
+            "name": "capacity-schema-004",
+            "uid": "9f986b5c-1246-443b-9088-fef4ff57ff1b",
+            "before": "2026-10-07T06:19:09Z",
+            "after": "2026-10-07T06:27:07Z",
+            "ageAtFinalReadbackSeconds": 146.007232,
+            "valid": true
+          },
+          {
+            "kind": "PtahSchema",
+            "namespace": "ptah-qualification-a",
+            "name": "capacity-schema-006",
+            "uid": "ba977ec9-05fc-46c1-a1e1-67873d208c32",
+            "before": "2026-10-07T06:17:30Z",
+            "after": "2026-10-07T06:28:13Z",
+            "ageAtFinalReadbackSeconds": 80.007232,
+            "valid": true
+          },
+          {
+            "kind": "PtahSchema",
+            "namespace": "ptah-qualification-a",
+            "name": "capacity-schema-008",
+            "uid": "d06a7120-94ab-48d5-a204-9c20887c9a6d",
+            "before": "2026-10-07T06:17:21Z",
+            "after": "2026-10-07T06:28:20Z",
+            "ageAtFinalReadbackSeconds": 73.007232,
+            "valid": true
+          },
+          {
+            "kind": "PtahMigration",
+            "namespace": "ptah-qualification-a",
+            "name": "capacity-migration-000",
+            "uid": "b8453edd-170d-43bb-9284-7fcbf6cf06ce",
+            "before": "2026-10-07T06:17:41Z",
+            "after": "2026-10-07T06:27:31Z",
+            "ageAtFinalReadbackSeconds": 122.007232,
+            "valid": true
+          },
+          {
+            "kind": "PtahMigration",
+            "namespace": "ptah-qualification-a",
+            "name": "capacity-migration-002",
+            "uid": "0871bd1c-28b5-4412-af2b-d8478b2e5c78",
+            "before": "2026-10-07T06:17:29Z",
+            "after": "2026-10-07T06:27:19Z",
+            "ageAtFinalReadbackSeconds": 134.007232,
+            "valid": true
+          },
+          {
+            "kind": "PtahMigration",
+            "namespace": "ptah-qualification-a",
+            "name": "capacity-migration-004",
+            "uid": "38b671a7-7fcf-46f0-90cb-1722b9f03820",
+            "before": "2026-10-07T06:18:13Z",
+            "after": "2026-10-07T06:28:03Z",
+            "ageAtFinalReadbackSeconds": 90.007232,
+            "valid": true
+          },
+          {
+            "kind": "PtahMigration",
+            "namespace": "ptah-qualification-a",
+            "name": "capacity-migration-006",
+            "uid": "09bfadf4-f80a-4388-9959-4a99ceeadf6b",
+            "before": "2026-10-07T06:17:28Z",
+            "after": "2026-10-07T06:27:20Z",
+            "ageAtFinalReadbackSeconds": 133.007232,
+            "valid": true
+          },
+          {
+            "kind": "PtahMigration",
+            "namespace": "ptah-qualification-a",
+            "name": "capacity-migration-008",
+            "uid": "773bfaec-1829-4246-af09-3b6093cf2f91",
+            "before": "2026-10-07T06:18:22Z",
+            "after": "2026-10-07T06:28:24Z",
+            "ageAtFinalReadbackSeconds": 69.007232,
+            "valid": true
+          },
+          {
+            "kind": "PtahSchema",
+            "namespace": "ptah-qualification-b",
+            "name": "capacity-schema-001",
+            "uid": "daf97559-6f61-41ea-a98d-9456231fb701",
+            "before": "2026-10-07T06:18:03Z",
+            "after": "2026-10-07T06:28:33Z",
+            "ageAtFinalReadbackSeconds": 60.007232,
+            "valid": true
+          },
+          {
+            "kind": "PtahSchema",
+            "namespace": "ptah-qualification-b",
+            "name": "capacity-schema-003",
+            "uid": "533af936-eb22-4e63-8f25-5b6d28ba41a9",
+            "before": "2026-10-07T06:18:20Z",
+            "after": "2026-10-07T06:28:59Z",
+            "ageAtFinalReadbackSeconds": 34.007232,
+            "valid": true
+          },
+          {
+            "kind": "PtahSchema",
+            "namespace": "ptah-qualification-b",
+            "name": "capacity-schema-005",
+            "uid": "a2bb16fc-7c91-4956-885a-daad9091a225",
+            "before": "2026-10-07T06:17:57Z",
+            "after": "2026-10-07T06:28:41Z",
+            "ageAtFinalReadbackSeconds": 52.007232,
+            "valid": true
+          },
+          {
+            "kind": "PtahSchema",
+            "namespace": "ptah-qualification-b",
+            "name": "capacity-schema-007",
+            "uid": "9aeeb54f-3a78-481e-82f3-98ec454e0a3e",
+            "before": "2026-10-07T06:18:34Z",
+            "after": "2026-10-07T06:29:10Z",
+            "ageAtFinalReadbackSeconds": 23.007232,
+            "valid": true
+          },
+          {
+            "kind": "PtahSchema",
+            "namespace": "ptah-qualification-b",
+            "name": "capacity-schema-009",
+            "uid": "7c55ed05-47a4-4d14-9963-89ae9c0a5325",
+            "before": "2026-10-07T06:18:21Z",
+            "after": "2026-10-07T06:28:55Z",
+            "ageAtFinalReadbackSeconds": 38.007232,
+            "valid": true
+          },
+          {
+            "kind": "PtahMigration",
+            "namespace": "ptah-qualification-b",
+            "name": "capacity-migration-001",
+            "uid": "23d0c3c2-a086-496c-810d-7d1562c1bfa1",
+            "before": "2026-10-07T06:17:17Z",
+            "after": "2026-10-07T06:27:22Z",
+            "ageAtFinalReadbackSeconds": 131.007232,
+            "valid": true
+          },
+          {
+            "kind": "PtahMigration",
+            "namespace": "ptah-qualification-b",
+            "name": "capacity-migration-003",
+            "uid": "8b8a5813-b0a7-4ce6-ac10-9de4ffa49daf",
+            "before": "2026-10-07T06:17:38Z",
+            "after": "2026-10-07T06:27:20Z",
+            "ageAtFinalReadbackSeconds": 133.007232,
+            "valid": true
+          },
+          {
+            "kind": "PtahMigration",
+            "namespace": "ptah-qualification-b",
+            "name": "capacity-migration-005",
+            "uid": "f35d38d5-c78e-4cf2-af47-809a3309a8b7",
+            "before": "2026-10-07T06:18:51Z",
+            "after": "2026-10-07T06:28:42Z",
+            "ageAtFinalReadbackSeconds": 51.007232,
+            "valid": true
+          },
+          {
+            "kind": "PtahMigration",
+            "namespace": "ptah-qualification-b",
+            "name": "capacity-migration-007",
+            "uid": "012e057b-0c84-406b-aa88-cfc4aaeba8e5",
+            "before": "2026-10-07T06:17:59Z",
+            "after": "2026-10-07T06:28:01Z",
+            "ageAtFinalReadbackSeconds": 92.007232,
+            "valid": true
+          },
+          {
+            "kind": "PtahMigration",
+            "namespace": "ptah-qualification-b",
+            "name": "capacity-migration-009",
+            "uid": "5e4de788-2db1-4b44-872e-ab26031b95b4",
+            "before": "2026-10-07T06:17:47Z",
+            "after": "2026-10-07T06:27:38Z",
+            "ageAtFinalReadbackSeconds": 115.007232,
+            "valid": true
+          }
+        ],
+        "problems": []
+      }
+    },
+    "scope": "Only this steady API-demand window is assessed. No full soak, cold/backlog recovery, retention plateau, architecture matrix, final artifact qualification, or #580/#242 closure is claimed.",
+    "custody": "Local archive only. Remote custody and independent download verification are not established.",
+    "apiCriteriaPassed": false,
+    "archive": {
+      "name": "capacity-publication-authority-2026-10-07.tar.gz",
+      "sha256": "418d7f8d54983d1a3c7be1fb7383ae6293274596f3ae134cb0ed1880ed8cf43c",
+      "bytes": 95028,
+      "memberCount": 35,
+      "downloadVerified": false
+    }
   }
 }
