@@ -248,6 +248,16 @@ checks the resulting size, all 16 planstore chunks, and their reconstructed
 SHA-256. A changed serializer that produces a different size fails the probe.
 It does not silently lower the maximum-size requirement.
 
+For source changes to atomic small results, set `RESULT_PROBE_PLAN_BYTES=65536`
+to run the same loss and recovery sequence with an exact 64 KiB native plan.
+The probe requires an inline publication whose intent UID is also the receipt
+UID, one reconstructed planstore chunk, and database-verified convergence after
+one approved Apply. It writes `first-harvest-inline.json`, separately from the
+maximum-size proof. The default remains 8 MiB; this smaller row supplies no
+maximum-size evidence. Both forms retain the acknowledged publication, original
+Job and Pod, and the unchanged claim and receipt after Pod removal and manager
+replacement, before leadership is restored.
+
 For the existing maximum-plus-one refusal row, set
 `RESULT_PROBE_PLAN_BYTES=8388609`. The same fixture adds exactly one byte to
 its native saved plan. The runner must report `invalid_plan_output` with the

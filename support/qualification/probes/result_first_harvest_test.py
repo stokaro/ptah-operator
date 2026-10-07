@@ -75,6 +75,20 @@ class PodBindingTests(unittest.TestCase):
 
 
 class SizeFixtureTests(unittest.TestCase):
+    def test_inline_fixture_uses_the_native_serializer_at_exact_64_kib(self):
+        for engine in ('postgresql', 'mysql'):
+            with self.subTest(engine=engine):
+                dialect, repeated, suffix, checksum = size_fixture(engine, 65536)
+                raw = (pathlib.Path(__file__).resolve().parents[3] / (
+                    'testdata/e2e/readings/plan-size-small-' + dialect + '.json')).read_bytes()
+                self.assertEqual(checksum, hashlib.sha256(raw).hexdigest())
+                self.assertEqual(len(raw) - 32 * 6 + repeated * 6 + suffix, 65536)
+                self.assertGreater(repeated, 0)
+                self.assertIn(suffix, range(6))
+        for size in (65535, 65537, 262144):
+            with self.subTest(size=size), self.assertRaises(ValueError):
+                size_fixture('postgresql', size)
+
     def test_captured_native_calibration_hits_exact_limit(self):
         for engine in ('postgresql', 'mysql'):
             with self.subTest(engine=engine):

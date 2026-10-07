@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Recover an acknowledged 8 MiB Plan before its first controller harvest.
+"""Recover an acknowledged inline or maximum Plan before its first harvest.
 
 Run only in an owned disposable e2e bootstrap cluster. See result-delivery.md
 for required environment, fault restoration, evidence, and scope limits.
@@ -81,8 +81,8 @@ def size_fixture(engine, plan_bytes=8388608):
     """Reuse the captured native serializer for the exact supported boundaries."""
     if engine not in ('postgresql', 'mysql'):
         raise ValueError('Expected postgresql or mysql')
-    if plan_bytes not in (8388608, 8388609):
-        raise ValueError('Expected the exact maximum or maximum-plus-one boundary')
+    if plan_bytes not in (65536, 8388608, 8388609):
+        raise ValueError('Expected the inline fixture, maximum, or maximum-plus-one boundary')
     dialect = 'postgres' if engine == 'postgresql' else 'mysql'
     path = pathlib.Path(__file__).resolve().parents[3] / ('testdata/e2e/readings/plan-size-small-' + dialect + '.json')
     raw = path.read_bytes()
@@ -189,6 +189,7 @@ def main():
     engine = E.get('RESULT_PROBE_ENGINE', 'postgresql')
     plan_bytes = int(E.get('RESULT_PROBE_PLAN_BYTES', '8388608'))
     dialect, repeated, suffix, calibration_digest = size_fixture(engine, plan_bytes)
+    evidence_name = 'first-harvest-inline.json' if plan_bytes == 65536 else 'first-harvest-maximum.json'
 
     def run(argv, data=None):
         p = subprocess.run(argv, input=data, text=True, capture_output=True, timeout=360)
@@ -412,6 +413,18 @@ def main():
         rs = {r['metadata']['name']: r for r in records()}
         intent, completion, data = publication(rs, job_uid)
         manifest = dec(intent)
+        if plan_bytes == 65536:
+            assert 'inline' in manifest and not manifest.get('chunks'), 'small Plan did not use inline publication'
+            assert intent['metadata']['uid'] == completion['metadata']['uid'], 'inline receipt is not the atomic intent'
+        elif plan_bytes == 8388608:
+            assert 'inline' not in manifest and manifest['chunks'], 'maximum Plan did not use chunked publication'
+        save('acknowledged-publication.json', {
+            name: record for name, record in rs.items()
+            if name == intent['metadata']['name'] or any(
+                owner['uid'] == intent['metadata']['uid']
+                for owner in record['metadata'].get('ownerReferences', []))})
+        save('completed-job.json', get('job', job_name))
+        save('producing-pod.json', get('pod', pod_name))
         assert claim() == before and (not plans()), 'a controller harvested before the fault'
         print('Plan completed and receipt verified before any controller could harvest', flush=True)
         k('delete', 'pod', pod_name, '--wait=true', '--timeout=60s')
@@ -440,6 +453,16 @@ def main():
         persisted = get('ptahresultrecord', completion['metadata']['name'])
         assert persisted['metadata']['uid'] == completion['metadata']['uid']
         assert persisted['spec'] == completion['spec']
+        producer_absent = not k('get', 'pod', pod_name, '--ignore-not-found', '-o', 'name').strip()
+        assert producer_absent, 'producing Pod exists before consumption'
+        save('before-first-consumption.json', {
+            'claimBeforeExecution': before, 'claimBeforeConsumption': claim(),
+            'plansBeforeConsumption': plans(),
+            'producerPodAbsent': producer_absent,
+            'receiptAfterRestart': persisted,
+            'managerUIDsBeforeDelivery': sorted(first_managers),
+            'managerUIDsBeforeConsumption': sorted(second_managers),
+            'observedAt': dt.datetime.now(dt.timezone.utc).isoformat()})
         print('Producing Pod and logs removed and both manager processes restarted before first harvest', flush=True)
         k('patch', 'rolebinding', sa, '--type=merge', '-p', json.dumps({'subjects': original_subjects}), namespace=opns)
         paused = False
@@ -492,16 +515,16 @@ def main():
         assert published[0]['spec']['contentDigest'] == expected_digest
         # Reconstruct planstore independently, rather than trusting its Ready
         # condition or repeating the digest written into the plan metadata.
-        plan_bytes = []
+        plan_parts = []
         for i, ref in enumerate(published[0]['spec']['chunks']):
             chunk = get('ptahschemaplanchunk', ref['name'])
             body = base64.b64decode(chunk['spec']['data'], validate=True)
             assert ref['index'] == i and len(body) == ref['size']
             assert 'sha256:' + hashlib.sha256(body).hexdigest() == ref['digest']
             assert chunk['metadata']['ownerReferences'][0]['uid'] == published[0]['metadata']['uid']
-            plan_bytes.append(body)
-        rebuilt = b''.join(plan_bytes)
-        assert len(rebuilt) == 8388608
+            plan_parts.append(body)
+        rebuilt = b''.join(plan_parts)
+        assert len(rebuilt) == plan_bytes
         assert 'sha256:' + hashlib.sha256(rebuilt).hexdigest() == expected_digest
         jobs = get('jobs')['items']
         assert all((j['metadata']['uid'] == job_uid for j in jobs if j['metadata']['name'].startswith('ptah-plan-'))), 'replacement Plan Job executed'
@@ -510,11 +533,12 @@ def main():
         evidence = {'commit': E['E2E_CONTROLLER_REVISION'], 'namespace': ns, 'resourceUID': uid, 'binding': manifest['binding'], 'jobUID': job_uid, 'podUID': pod['metadata']['uid'], 'intentUID': intent['metadata']['uid'], 'receiptUID': completion['metadata']['uid'], 'payloadDigest': manifest['digest'], 'payloadBytes': manifest['size'], 'planUID': published[0]['metadata']['uid'], 'planContentDigest': expected_digest, 'conditions': after['status']['conditions'], 'status': 'passed', 'managerUIDsBeforeDelivery': sorted(first_managers), 'managerUIDsBeforeConsumption': sorted(second_managers), 'controllersStoppedAt': stopped_at, 'procedureSHA256': hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest(), 'scope': 'Plan receipt first consumed after producing Pod/log removal (completed Job retained) and manager restart. Leader permission was removed while the receiver remained available. This read-only Plan row does not measure SQL replay.'}
         evidence.update(engine=engine, repeatedCharacters=repeated, asciiSuffix=suffix, calibrationSHA256=calibration_digest)
         evidence['planBytes'] = published[0]['spec']['size']
-        assert evidence['planBytes'] == 8388608
+        assert evidence['planBytes'] == plan_bytes
         evidence['planChunks'] = len(published[0]['spec']['chunks'])
-        assert evidence['planChunks'] == 16
-        evidence['resultChunks'] = len(manifest['chunks'])
-        save('first-harvest-maximum.json', evidence)
+        assert evidence['planChunks'] == (1 if plan_bytes == 65536 else 16)
+        evidence['resultChunks'] = len(manifest.get('chunks') or [])
+        evidence['publicationFormat'] = 'inline' if 'inline' in manifest else 'chunked'
+        save(evidence_name, evidence)
         print('PASS: first harvest published the saved Plan after Pod/log removal and manager restart', flush=True)
     finally:
         if paused:
@@ -531,6 +555,8 @@ def main():
     wait(converged, 600)
     apply_intents = [dec(r) for r in records() if r['spec']['type'] == 'intent' and dec(r)['binding']['operation'] == 'apply']
     assert len(apply_intents) == 1
+    apply_jobs = [j for j in get('jobs')['items'] if j['metadata']['name'].startswith('ptah-apply-')]
+    assert len(apply_jobs) == 1 and apply_jobs[0]['metadata']['uid'] == apply_intents[0]['binding']['jobUID']
     if engine == 'mysql':
         actual = sql("SELECT CONCAT(COUNT(*), ':', SUM(CHAR_LENGTH(column_default)), ':', SUM(CHAR_LENGTH(column_default)-CHAR_LENGTH(REPLACE(column_default,'<','')))) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name LIKE 'e2e_plan_size_limit_%' AND column_name='payload'")
         assert actual == f'100:{repeated+suffix}:{repeated}'
@@ -539,7 +565,7 @@ def main():
         actual = sql("INSERT INTO e2e_plan_size_limit (id) VALUES (1); SELECT length(payload)::text || ':' || length(replace(payload,'x',''))::text || ':' || length(replace(payload,'<',''))::text FROM e2e_plan_size_limit WHERE id=1;").splitlines()[-1]
         assert actual == f'{repeated+suffix}:{repeated}:{suffix}'
     evidence.update(converged=True, applyJobUID=apply_intents[0]['binding']['jobUID'], approvedApplyJobs=1, databaseDefault=actual, completedAt=dt.datetime.now(dt.timezone.utc).isoformat())
-    save('first-harvest-maximum.json', evidence)
-    print('PASS: recovered exact 8 MiB plan approved, one Apply, native database default verified', flush=True)
+    save(evidence_name, evidence)
+    print(f'PASS: recovered exact {plan_bytes}-byte plan approved, one Apply, native database default verified', flush=True)
 if __name__ == '__main__':
     main()
