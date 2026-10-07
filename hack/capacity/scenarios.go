@@ -26,19 +26,20 @@ const (
 
 // inputs are what the harness prepared on the lab before the tool runs.
 type inputs struct {
-	catalog           *inputCatalog
-	namespace         string
-	namespaces        []string
-	operatorNamespace string
-	managerSelector   string
-	registrySecret    string
-	registryCA        string
-	schemaPolicy      string
-	migrationPolicy   string
-	databaseSecret    string // a fmt pattern with one %d, one database per resource
-	schemaRefs        [2]string
-	migrationRefs     [2]string
-	registryIP        string
+	catalog                *inputCatalog
+	namespace              string
+	namespaces             []string
+	operatorNamespace      string
+	managerSelector        string
+	registrySecret         string
+	registryCA             string
+	schemaPolicy           string
+	migrationPolicy        string
+	databaseSecret         string // a fmt pattern with one %d, one database per resource
+	schemaRefs             [2]string
+	migrationRefs          [2]string
+	registryIP             string
+	registryEgressPolicies string
 }
 
 type scenarios struct {

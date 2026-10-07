@@ -79,6 +79,7 @@ func run() error {
 	flag.StringVar(&in.migrationPolicy, "migration-policy", "demo-migration-verification-policy", "verification policy ConfigMap for migrations")
 	flag.StringVar(&in.databaseSecret, "database-secret", "capacity-db-%d", "Secret name pattern, one database per resource")
 	flag.StringVar(&in.registryIP, "registry-ip", "", "the registry's address, for the outage")
+	flag.StringVar(&in.registryEgressPolicies, "registry-egress-policies", "", "comma-separated registry-only egress policies to withdraw in each workload namespace during the outage")
 	flag.Parse()
 	if *authorConfig != "" && *approverConfig == "" {
 		return errors.New("author-kubeconfig requires approver-kubeconfig")
@@ -325,6 +326,11 @@ func runScenarios(ctx context.Context, steps *scenarios) error {
 		}
 		return nil
 	}
+	// Reject an ineffective outage configuration before creating the fleet or
+	// spending the soak interval. Read again immediately before the fault.
+	if _, err := steps.registryOutagePolicies(ctx); err != nil {
+		return fmt.Errorf("registry outage preflight: %w", err)
+	}
 	if steps.load.ApprovalBacklog {
 		for _, step := range []struct {
 			name string
@@ -388,8 +394,8 @@ func requireInputs(in inputs, load workload, outDir string) error {
 	if in.catalog == nil && (in.migrationRefs[0] == "" || load.ChangeBatch > 0 && in.migrationRefs[1] == "") {
 		missing = append(missing, "-migration-v1/-migration-v2")
 	}
-	if load.Outage.Duration > 0 && in.registryIP == "" {
-		missing = append(missing, "-registry-ip")
+	if load.Outage.Duration > 0 && in.registryIP == "" && in.registryEgressPolicies == "" {
+		missing = append(missing, "-registry-ip or -registry-egress-policies")
 	}
 	for _, reference := range append(in.schemaRefs[:], in.migrationRefs[:]...) {
 		if reference != "" && !strings.Contains(reference, "@sha256:") {

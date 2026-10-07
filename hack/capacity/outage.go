@@ -20,12 +20,16 @@ func (s *scenarios) outage(ctx context.Context) (resultErr error) {
 	if s.load.Outage.Duration == 0 {
 		return nil
 	}
-	if s.in.registryIP == "" {
-		return errors.New("an outage needs the registry address")
+	originals, err := s.registryOutagePolicies(ctx)
+	if err != nil {
+		return err
 	}
 	var policies []*networkingv1.NetworkPolicy
 	restore := func(restoreCtx context.Context) error {
 		var problems []error
+		for _, original := range originals {
+			problems = append(problems, s.restoreRegistryPolicy(restoreCtx, original))
+		}
 		for _, policy := range policies {
 			if policy.UID == "" {
 				problems = append(problems, fmt.Errorf("cannot safely remove outage policy %s/%s without UID", policy.Namespace, policy.Name))
@@ -47,23 +51,32 @@ func (s *scenarios) outage(ctx context.Context) (resultErr error) {
 			resultErr = errors.Join(resultErr, restore(cleanupCtx))
 		}
 	}()
-	for _, namespace := range workloadNamespaces(s.in.namespace, s.in.namespaces) {
-		policy, err := s.clientset.NetworkingV1().NetworkPolicies(namespace).Create(ctx, &networkingv1.NetworkPolicy{
-			ObjectMeta: metav1.ObjectMeta{Name: outagePolicyName, Namespace: namespace},
-			Spec: networkingv1.NetworkPolicySpec{
-				PodSelector: metav1.LabelSelector{MatchLabels: map[string]string{"app.kubernetes.io/managed-by": "ptah-operator"}},
-				PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeEgress},
-				Egress: []networkingv1.NetworkPolicyEgressRule{{To: []networkingv1.NetworkPolicyPeer{{
-					IPBlock: &networkingv1.IPBlock{CIDR: "0.0.0.0/0", Except: []string{s.in.registryIP + "/32"}},
-				}}}},
-			},
-		}, metav1.CreateOptions{})
-		if err != nil {
-			return fmt.Errorf("cut the registry off in %s: %w", namespace, err)
+	for _, original := range originals {
+		disabled := original.DeepCopy()
+		disabled.Spec.Egress = nil
+		if _, err := s.clientset.NetworkingV1().NetworkPolicies(original.Namespace).Update(ctx, disabled, metav1.UpdateOptions{}); err != nil {
+			return fmt.Errorf("withdraw registry policy %s/%s: %w", original.Namespace, original.Name, err)
 		}
-		policies = append(policies, policy)
-		if policy.UID == "" {
-			return fmt.Errorf("created outage policy in %s has no UID", namespace)
+	}
+	if len(originals) == 0 {
+		for _, namespace := range workloadNamespaces(s.in.namespace, s.in.namespaces) {
+			policy, err := s.clientset.NetworkingV1().NetworkPolicies(namespace).Create(ctx, &networkingv1.NetworkPolicy{
+				ObjectMeta: metav1.ObjectMeta{Name: outagePolicyName, Namespace: namespace},
+				Spec: networkingv1.NetworkPolicySpec{
+					PodSelector: metav1.LabelSelector{MatchLabels: map[string]string{"app.kubernetes.io/managed-by": "ptah-operator"}},
+					PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeEgress},
+					Egress: []networkingv1.NetworkPolicyEgressRule{{To: []networkingv1.NetworkPolicyPeer{{
+						IPBlock: &networkingv1.IPBlock{CIDR: "0.0.0.0/0", Except: []string{s.in.registryIP + "/32"}},
+					}}}},
+				},
+			}, metav1.CreateOptions{})
+			if err != nil {
+				return fmt.Errorf("cut the registry off in %s: %w", namespace, err)
+			}
+			policies = append(policies, policy)
+			if policy.UID == "" {
+				return fmt.Errorf("created outage policy in %s has no UID", namespace)
+			}
 		}
 	}
 	start := time.Now().UTC()
