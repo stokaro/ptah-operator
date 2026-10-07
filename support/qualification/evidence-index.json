@@ -2241,5 +2241,58 @@
       "memberCount": 33,
       "downloadVerified": false
     }
+  },
+  "capacityCleanupAdmissionAttribution": {
+    "requirement": "#580 attribution of remaining manager API demand after removing duplicate collector admission checks",
+    "conclusion": "Diagnostic only; the separate native ten-minute measurement still fails the unchanged 100 requests/s bound.",
+    "runtimeSourceCommit": "594775377d0d09a20b1ccd02e34af23126193106",
+    "window": {
+      "start": "2026-10-07T02:41:35.774636+00:00",
+      "end": "2026-10-07T02:44:35.949042+00:00"
+    },
+    "auditRequests": 16288,
+    "bracketingManagerCounterRequests": 16375.0,
+    "largestObservedAuditMinute": {
+      "from": "2026-10-07T02:41:45.856643+00:00",
+      "through": "2026-10-07T02:42:45.856643Z",
+      "requests": 7940,
+      "requestsPerSecond": 132.33333333333334,
+      "successfulJobGets": 853,
+      "successfulPodLists": 764,
+      "completeAttemptsDeleted": 30
+    },
+    "completedCleanupAttempts": 73,
+    "requestsBoundToEachDeletedAttempt": 35,
+    "cleanupAttributionLimit": "Bound requests exclude subject GETs and member LISTs. Shared reads are not assigned by timing alone.",
+    "resultRecordLists": 474,
+    "resultRecordListAccounting": "36 metadata scans plus 6 member-list requests for each of 73 collected attempts.",
+    "newPublicationIntents": 81,
+    "retirementRecordsCreated": 50,
+    "requests429Scope": "All audit 429 responses precede the exact window. The two bracketing counter increments belong to plan LISTs immediately before the window, with storage is (re)initializing. They do not establish the cause of the earlier native measurement 429s.",
+    "restoration": "All three original API-server manifests restored and verified byte-for-byte; diagnostic policy and audit files removed from their nodes.",
+    "scope": "Metadata audit is diagnostic, not native capacity acceptance. No DoD is closed.",
+    "custody": "Local diagnostic archive only; no remote copy or independent download verification.",
+    "archive": {
+      "name": "capacity-cleanup-attribution-2026-10-07.tar.gz",
+      "sha256": "7121e8a1d2ac416ce6d40836f460207ead3244296dded13203da876074b2d804",
+      "bytes": 6334522,
+      "memberCount": 138,
+      "downloadVerified": false
+    },
+    "requests429": {
+      "auditResponses": 6,
+      "insideExactWindow": 0,
+      "reason": "storage is (re)initializing",
+      "bracketingPlanListResponses": [
+        {
+          "at": "2026-10-07T02:41:34.744594Z",
+          "resource": "ptahmigrationplans"
+        },
+        {
+          "at": "2026-10-07T02:41:34.752900Z",
+          "resource": "ptahschemaplans"
+        }
+      ]
+    }
   }
 }
