@@ -5830,5 +5830,98 @@
       "memberCount": 35,
       "downloadVerified": false
     }
+  },
+  "inlineFirstHarvest": {
+    "runtimeSource": "c78d5683acdb772bc43a957680d115cc519015d7",
+    "requirement": "Source applicability of #586 acknowledged-result recovery before first controller consumption after atomic inline publication.",
+    "conclusion": "passed",
+    "platform": {
+      "dockerContext": "diabolocom",
+      "kubernetes": "1.37.0",
+      "os": "linux",
+      "architecture": "amd64",
+      "managerReplicas": 2,
+      "containerLogMaxSize": "10Mi"
+    },
+    "installation": {
+      "managerImage": "e2e-registry.ptah-test-a-1-37-0-inline-results-c78d5683-8041a5a1de.svc.cluster.local:5000/ptah-operator@sha256:4794c6de35f5891e01cb900774b1222bf328fa0db21ecd5c2651ec0559d7eb27",
+      "runnerImage": "e2e-registry.ptah-test-a-1-37-0-inline-results-c78d5683-8041a5a1de.svc.cluster.local:5000/ptah-runner@sha256:4794c6de35f5891e01cb900774b1222bf328fa0db21ecd5c2651ec0559d7eb27",
+      "executorImage": "e2e-registry.ptah-test-a-1-37-0-inline-results-c78d5683-8041a5a1de.svc.cluster.local:5000/ptah-executor@sha256:71abab66f626dce96f2879e46d3e71ce84c3b39d99d797a166ba1d1f3a1a26f1",
+      "fixtureImage": "e2e-registry.ptah-test-a-1-37-0-inline-results-c78d5683-8041a5a1de.svc.cluster.local:5000/e2e-fixture@sha256:0c39027476b7fb88ca1bde7360d23528e3bfb88be227b143aa8f9ae591fb8d05",
+      "chartSHA256": "d97f42469f268eb2ac6dd31e4af39a459b93acf7b3fc98084b6f2ccc90e88da1",
+      "ptahRevision": "f6e562c5b0986cd29a53a5cc01938827336b780a",
+      "deploymentUID": "e75434ee-4d4e-4f72-b4a2-48e19b891057"
+    },
+    "runs": [
+      {
+        "engine": "postgresql",
+        "namespace": "ptah-inline-harvest-pg",
+        "resourceUID": "e097761a-56b6-49bd-80ad-d1fafb17aaea",
+        "jobUID": "ac71ea4d-0923-4b0c-9da7-5aa07836480f",
+        "podUID": "b9b25166-18f5-4593-9777-e99c552c408d",
+        "receiptUID": "e8fab6d2-40f3-4c0f-845e-f50363eaa655",
+        "payloadBytes": 76893,
+        "payloadDigest": "sha256:46c7bedb8e4d51a33fa2a968b374855c6ab71a27d2df1786b78fc96199c0f753",
+        "planUID": "fd665074-dd84-4744-8c33-dd87f223672d",
+        "planBytes": 65536,
+        "planChunks": 1,
+        "planContentDigest": "sha256:60271050dddaeadb97def1701d56c93c39173ccc515ab2c1bd9f6d3862603aeb",
+        "postApplyVerificationPlanJobs": 1,
+        "approvedApplyJobs": 1,
+        "applyJobUID": "5975dcf6-be37-424b-932a-407fc7ae9926",
+        "databaseDefault": "10824:10824:0",
+        "oldReceiverUIDs": [
+          "ca0db434-8ccf-4da5-be93-305307847fae",
+          "ec73f857-f4b3-42b9-8136-d7283578bee9"
+        ],
+        "newReceiverUIDs": [
+          "21420c98-36f9-4356-8497-5d8add6f8e2c",
+          "97389e29-2181-4611-bebf-c31854822262"
+        ],
+        "completedAt": "2026-10-07T07:45:00.878270+00:00",
+        "procedureRevision": "690f24945ad262c4b31b31e37c9d35a8289037cf",
+        "procedureSHA256": "9685b0654fff0cfcd73a92805579718557dc181fd173c9c6db86db19da95dbed",
+        "faultConfigurationRestored": true
+      },
+      {
+        "engine": "mysql",
+        "namespace": "ptah-inline-harvest-mysql",
+        "resourceUID": "c9a8d0d6-34b0-452d-a27f-2bfdd1b3ac5a",
+        "jobUID": "4a365382-49b2-4e81-bb3f-384bea1eed4e",
+        "podUID": "dfd92fae-b60a-4fad-a543-b47b0ce2ece5",
+        "receiptUID": "7fc44a17-13c0-4fd5-9db3-d069ad07c4d5",
+        "payloadBytes": 74472,
+        "payloadDigest": "sha256:25c720813a775d0b4df683bb63ec5f7c3cd9abc1c8228135aa0c7318f6c12773",
+        "planUID": "6970fe4b-e237-4fdd-a099-335bb0467eb7",
+        "planBytes": 65536,
+        "planChunks": 1,
+        "planContentDigest": "sha256:84e0186212cd82e999c5dd182a2f03b4f43a14375ff0dc31718a669ebb14a90d",
+        "postApplyVerificationPlanJobs": 1,
+        "approvedApplyJobs": 1,
+        "applyJobUID": "9a6eb68a-e418-4a42-bc08-4c75e5b9fa00",
+        "databaseDefault": "100:6339:6336",
+        "oldReceiverUIDs": [
+          "1e789222-47f3-45f4-921b-7c68202f9e5e",
+          "e432d644-70df-4bc7-a392-2b6132e14daf"
+        ],
+        "newReceiverUIDs": [
+          "3dfe8bf7-f556-41ae-8a09-25373bcb4811",
+          "cb58a1ed-0794-41b1-9d1d-7468a51e454d"
+        ],
+        "completedAt": "2026-10-07T07:49:01.711851+00:00",
+        "procedureRevision": "690f24945ad262c4b31b31e37c9d35a8289037cf",
+        "procedureSHA256": "9685b0654fff0cfcd73a92805579718557dc181fd173c9c6db86db19da95dbed",
+        "faultConfigurationRestored": true
+      }
+    ],
+    "scope": "Both native engines preserve one acknowledged immutable inline result after the producing Pod/logs are removed and both manager processes are replaced, while reconciliation is prevented by denied leader Lease access. The unchanged original claim has no plan before leadership resumes. First consumption reconstructs exactly 65,536 plan bytes with the same digest, then one approved Apply converges and native database defaults match. Temporary leadership and admission changes are restored. Fixture artifacts use authenticated plain HTTP; this does not qualify the signed-HTTPS production profile, maximum plan size, chunked partial-publication retention, or the complete support matrix.",
+    "custody": "Local archive only; no remote export or independent download verification.",
+    "archive": {
+      "name": "inline-first-harvest-2026-10-07.tar.gz",
+      "sha256": "1599e0d80131f211f5d9d1879ab6e99fdcda7d2405af19c099c373e5aa077a75",
+      "bytes": 161808,
+      "memberCount": 47,
+      "downloadVerified": false
+    }
   }
 }
