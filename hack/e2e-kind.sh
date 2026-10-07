@@ -1615,6 +1615,16 @@ collect_diagnostics() {
 	printf '%s\n' 'e2e: collecting failure diagnostics' >&2
 	kubectl --kubeconfig "$KUBECONFIG_FILE" get nodes -o wide >&2 || true
 	kubectl --kubeconfig "$KUBECONFIG_FILE" get all -A >&2 || true
+	# A completed restart no longer appears in the current container state.
+	# Keep both exit records without the free-form messages or raw Pod logs,
+	# which can carry credentials and require the explicit debug opt-in below.
+	printf '%s\n' '=== failed or restarted containers ===' >&2
+	kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=15s get pods -A -o json 2>/dev/null |
+		jq -c '.items[] | .metadata as $pod | (.status.initContainerStatuses[]?, .status.containerStatuses[]?) |
+			select(.restartCount > 0 or (.state.terminated.exitCode // 0) != 0) |
+			{namespace: $pod.namespace, pod: $pod.name, uid: $pod.uid, container: .name, ready, restartCount,
+			terminated: (.state.terminated | if . == null then null else {reason, exitCode, signal, startedAt, finishedAt} end),
+			lastTermination: (.lastState.terminated | if . == null then null else {reason, exitCode, signal, startedAt, finishedAt} end)}' >&2 || true
 	if [ "$E2E_DEBUG_LOGS" -eq 1 ]; then
 		debug_logs_stop_following
 		printf '%s\n' 'e2e: E2E_DEBUG_LOGS=1: raw pod logs follow and may contain credentials' >&2
