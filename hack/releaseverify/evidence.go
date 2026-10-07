@@ -61,6 +61,7 @@ type acceptanceJob struct {
 // names ci.yml gives them.
 func (job acceptanceJob) acceptanceArtifactFiles() []string {
 	return []string{
+		"native-runtime.json",
 		"resource-samples-" + job.slug + ".csv",
 		"timing-context-" + job.slug + ".json",
 		"timing-report-" + job.slug + ".json",

@@ -109,3 +109,35 @@ func TestContainsAll(t *testing.T) {
 		}
 	}
 }
+
+func TestPrincipalPublisherFailureAllowsOnlyFixedDiagnostics(t *testing.T) {
+	t.Parallel()
+	const prefix = "e2e-handcraft-oci: "
+	for _, detail := range []string{
+		"read bounded schema input", "invalid registry reference", "registry credentials are required",
+		"encode OCI manifest", "parse OCI upload base", "registry returned no upload location", "registry returned an unsafe upload location",
+		"start OCI blob upload: HTTP 401", "complete OCI blob upload: HTTP 503", "store OCI manifest: HTTP 500",
+		"start OCI blob upload: create registry request",
+		"start OCI blob upload: execute registry request: DNS timeout",
+		"complete OCI blob upload: execute registry request: connection refused",
+		"store OCI manifest: execute registry request: transport failure",
+	} {
+		if got := principalPublisherFailure([]byte(prefix + detail + "\n")); got != prefix+detail {
+			t.Errorf("fixed diagnostic lost: %q -> %q", detail, got)
+		}
+	}
+	for _, text := range []string{
+		"", "private-schema-and-password", prefix + "private-schema-and-password",
+		prefix + "store OCI manifest: HTTP 500 private-schema-and-password",
+		prefix + "start OCI blob upload: execute registry request: https://user:password@registry.test/private",
+		prefix + "start OCI blob upload: HTTP 401\rprivate-schema-and-password",
+		prefix + "start OCI blob upload: HTTP 401\x1b[31m",
+	} {
+		if got := principalPublisherFailure([]byte(text)); got != "publisher failure detail unavailable" {
+			t.Errorf("untrusted diagnostic escaped: %q -> %q", text, got)
+		}
+	}
+	if got := principalPublisherFailure([]byte(prefix + "store OCI manifest: HTTP 500\n" + prefix + "store OCI manifest: HTTP 401\n")); got != "publisher failure detail is ambiguous" {
+		t.Fatalf("conflicting causes accepted: %q", got)
+	}
+}

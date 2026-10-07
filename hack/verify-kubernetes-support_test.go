@@ -16,6 +16,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -337,6 +338,21 @@ func TestVerifyWorkflowRejectsSupportGateMutations(t *testing.T) {
 		old string
 		new string
 	}{
+		"manual architecture loses its default": {
+			old: "        default: amd64\n", new: "        default: arm64\n",
+		},
+		"manual architecture loses arm64": {
+			old: "        options: [amd64, arm64]\n", new: "        options: [amd64]\n",
+		},
+		"native runner is ignored": {
+			old: "    needs: [support-matrix]\n    runs-on: " + ciNativeRunner + "\n", new: "    needs: [support-matrix]\n    runs-on: ubuntu-latest\n",
+		},
+		"native identity is not retained": {
+			old: "            ${{ runner.temp }}/native-runtime.json\n", new: "",
+		},
+		"wrong kubectl architecture": {
+			old: `/v${{ needs.support-matrix.outputs.prepare_kubernetes_version }}/bin/linux/$(go env GOHOSTARCH)"`, new: `/v${{ needs.support-matrix.outputs.prepare_kubernetes_version }}/bin/linux/amd64"`,
+		},
 		"superseded CI not canceled": {
 			old: "  cancel-in-progress: true\n",
 			new: "  cancel-in-progress: false\n",
@@ -1368,4 +1384,84 @@ func writeMutatedWorkflow(t *testing.T, workflow, old, replacement string) strin
 		t.Fatal(err)
 	}
 	return path
+}
+
+func TestCINativeArchitectureChecksActualHostAndDaemon(t *testing.T) {
+	t.Parallel()
+	workflow, _, err := readWorkflow(filepath.Join("..", workflowPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	job := workflow.Jobs["kubernetes-e2e"]
+	var script string
+	for _, step := range job.Steps {
+		if step.ID == "native-architecture" {
+			script = step.Run
+		}
+	}
+	if script == "" {
+		t.Fatal("native architecture step is missing")
+	}
+	for _, test := range []struct {
+		name, expected, machine, goArch, dockerArch string
+		pass                                        bool
+	}{
+		{"amd64", "amd64", "x86_64", "amd64", "x86_64", true},
+		{"arm64", "arm64", "aarch64", "arm64", "aarch64", true},
+		{"Docker arm alias", "arm64", "aarch64", "arm64", "arm64", true},
+		{"emulated host", "arm64", "x86_64", "arm64", "arm64", false},
+		{"foreign daemon", "arm64", "aarch64", "arm64", "x86_64", false},
+		{"foreign Go", "arm64", "aarch64", "amd64", "arm64", false},
+		{"unknown request", "other", "aarch64", "arm64", "arm64", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			stubs := map[string]string{
+				"uname": `case "$1" in -s) echo Linux ;; -m) printf '%s\n' "$TEST_MACHINE" ;; *) exit 1 ;; esac`,
+				"go": `test "$*" = 'env GOHOSTARCH'
+printf '%s\n' "$TEST_GO_ARCH"`,
+				"docker": `test "$1" = --context
+test "$2" = native-test
+test "$3" = info
+printf '%s\n' "$TEST_DOCKER_ARCH"`,
+			}
+			for name, body := range stubs {
+				if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\nset -eu\n"+body+"\n"), 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			identity := filepath.Join(dir, "native-runtime.json")
+			command := exec.Command("bash", "-c", script)
+			command.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"),
+				"EXPECTED_ARCHITECTURE="+test.expected, "NATIVE_IDENTITY_FILE="+identity, "DOCKER_CONTEXT=native-test",
+				"TEST_MACHINE="+test.machine, "TEST_GO_ARCH="+test.goArch, "TEST_DOCKER_ARCH="+test.dockerArch,
+				"GITHUB_RUN_ID=123", "GITHUB_RUN_ATTEMPT=2", "GITHUB_JOB=kubernetes-e2e")
+			output, err := command.CombinedOutput()
+			if (err == nil) != test.pass {
+				t.Fatalf("native identity exit=%v, want pass=%t: %s", err, test.pass, output)
+			}
+			if !test.pass {
+				if _, err := os.Stat(identity); !os.IsNotExist(err) {
+					t.Fatal("a refused architecture produced acceptance identity")
+				}
+				return
+			}
+			data, err := os.ReadFile(identity)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got struct {
+				Architecture, Machine, DockerArchitecture, Run, Attempt, Job string
+				NativeHostVerified                                           bool
+			}
+			if err := json.Unmarshal(data, &got); err != nil {
+				t.Fatal(err)
+			}
+			if got.Architecture != test.expected || got.Machine != test.machine || got.DockerArchitecture != test.expected ||
+				got.Run != "123" || got.Attempt != "2" || got.Job != "kubernetes-e2e" || !got.NativeHostVerified {
+				t.Fatalf("native identity does not describe the admitted execution: %s", data)
+			}
+		})
+	}
 }

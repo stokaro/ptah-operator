@@ -35,7 +35,7 @@ func (f *faultRun) captureExactJobResult(name, uid, operation string) exactResul
 	f.t.Helper()
 	job := f.waitForExactJobTerminal(name, uid)
 	if !exactResultJob(job, uid, operation, f.controller) {
-		f.fatalf("exact %s Job %s did not transport one result: %s", operation, name, f.failedJobDiagnostic(job))
+		f.fatalf("exact %s Job %s did not transport one result: %s", operation, name, f.failedJobDiagnostic(job, "ptah", runnerDeliveryFailure))
 	}
 	operationID := job.Annotations[annotationOperationID]
 	pods := &corev1.PodList{}
@@ -63,7 +63,7 @@ func (f *faultRun) captureExactJobResult(name, uid, operation string) exactResul
 
 // A failed transport must not hide its reason behind the successful-result
 // predicate. This bounded diagnostic cannot admit a Job or replace its receipt.
-func (f *faultRun) failedJobDiagnostic(job *batchv1.Job) string {
+func (f *faultRun) failedJobDiagnostic(job *batchv1.Job, container string, failure func([]byte) string) string {
 	ctx, cancel := context.WithTimeout(f.ctx, 15*time.Second)
 	defer cancel()
 	pods := &corev1.PodList{}
@@ -76,20 +76,20 @@ func (f *faultRun) failedJobDiagnostic(job *batchv1.Job) string {
 	}
 	pod := &owned[0]
 	for _, status := range pod.Status.ContainerStatuses {
-		if status.Name != "ptah" || status.State.Terminated == nil {
+		if status.Name != container || status.State.Terminated == nil {
 			continue
 		}
 		terminated := status.State.Terminated
 		lines, limit := int64(20), int64(16<<10)
 		logs, err := f.cluster.Clientset.CoreV1().Pods(job.Namespace).GetLogs(pod.Name,
-			&corev1.PodLogOptions{Container: "ptah", TailLines: &lines, LimitBytes: &limit}).DoRaw(ctx)
-		cause := "runner log unavailable"
+			&corev1.PodLogOptions{Container: container, TailLines: &lines, LimitBytes: &limit}).DoRaw(ctx)
+		cause := "container log unavailable"
 		if err == nil {
-			cause = runnerDeliveryFailure(logs)
+			cause = failure(logs)
 		}
-		return fmt.Sprintf("runner exit=%d OOMKilled=%t; %s", terminated.ExitCode, terminated.Reason == "OOMKilled", cause)
+		return fmt.Sprintf("%s exit=%d OOMKilled=%t; %s", container, terminated.ExitCode, terminated.Reason == "OOMKilled", cause)
 	}
-	return "exact Pod has no terminated runner"
+	return "exact Pod has no terminated " + container
 }
 
 // pollWithoutAudit is poll for the waits the shell ran checking first and
@@ -427,7 +427,8 @@ func (f *faultRun) waitForPublisherJob(name string) *batchv1.Job {
 			return true
 		}
 		if conditionTrue(job.Status.Conditions, batchv1.JobFailed) {
-			f.fatalf("schema publisher Job %s failed", name)
+			f.fatalf("schema publisher Job %s failed: %s", name,
+				f.failedJobDiagnostic(job, "publisher", principalPublisherFailure))
 		}
 		return false
 	})

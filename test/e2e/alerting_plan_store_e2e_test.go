@@ -540,12 +540,12 @@ func (a *alertingRun) planStoreRecoveryHistory(pods []string, leader string, sta
 func (a *alertingRun) readPlanStoreHistory(pods []string, leader string, started time.Time, label string, recovery bool) (alPlanStoreHistory, error) {
 	a.t.Helper()
 	at := time.Now().UTC()
-	groups, body := a.historySnapshot(a.ctx, at, alScrapeJob, "", alPlanStoreMetric, "up", "scrape_duration_seconds")
-	read := alReadPlanStoreHistory
-	if recovery {
-		read = alReadPlanStoreRecoveryHistory
-	}
-	history, err := read(groups[alPlanStoreMetric], groups["up"], groups["scrape_duration_seconds"], pods, leader, started, at)
+	history, body, err := alQueryPlanStoreHistory(a.ctx, func(ctx context.Context, queriedAt time.Time) ([]byte, error) {
+		return a.prometheus(ctx, "/api/v1/query", map[string]string{
+			"query": alHistorySnapshotQuery(alScrapeJob, "", []string{alPlanStoreMetric, "up", "scrape_duration_seconds"}),
+			"time":  queriedAt.Format(time.RFC3339Nano),
+		})
+	}, pods, leader, started, at, recovery)
 	if label != "" || err != nil {
 		a.logf("plan-store measurement window: started=%s recovery=%t", started.Format(time.RFC3339Nano), recovery)
 		a.logf("plan-store native history %s: queriedAt=%s snapshot=%s", label, at.Format(time.RFC3339Nano), body)

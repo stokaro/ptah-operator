@@ -118,7 +118,7 @@ func run(args []string) error {
 	}
 	digest, err := publish(context.Background(), newRegistryClient(nil), ref, credential, contents)
 	if err != nil {
-		return errors.New("e2e-handcraft-oci: publish handcrafted OCI artifact")
+		return fmt.Errorf("e2e-handcraft-oci: %w", err)
 	}
 	fmt.Printf("Digest: %s\n", digest)
 	return nil
@@ -476,7 +476,7 @@ func publish(
 	manifestURL := fmt.Sprintf("http://%s/v2/%s/manifests/%s", ref.host, ref.repository, ref.tag)
 	status, _, err := request(ctx, client, http.MethodPut, manifestURL, manifestType, credential, manifestBytes)
 	if err != nil || status != http.StatusCreated {
-		return "", errors.New("store OCI manifest")
+		return "", registryResponseError("store OCI manifest", status, err)
 	}
 	return digest(manifestBytes), nil
 }
@@ -491,8 +491,11 @@ func uploadBlob(
 ) error {
 	startURL := fmt.Sprintf("http://%s/v2/%s/blobs/uploads/", ref.host, ref.repository)
 	status, location, err := request(ctx, client, http.MethodPost, startURL, "", credential, nil)
-	if err != nil || status != http.StatusAccepted || location == "" {
-		return errors.New("start OCI blob upload")
+	if err != nil || status != http.StatusAccepted {
+		return registryResponseError("start OCI blob upload", status, err)
+	}
+	if location == "" {
+		return errors.New("registry returned no upload location")
 	}
 	base, err := url.Parse(startURL)
 	if err != nil {
@@ -507,7 +510,7 @@ func uploadBlob(
 	target.RawQuery = query.Encode()
 	status, _, err = request(ctx, client, http.MethodPut, target.String(), "application/octet-stream", credential, contents)
 	if err != nil || status != http.StatusCreated {
-		return errors.New("complete OCI blob upload")
+		return registryResponseError("complete OCI blob upload", status, err)
 	}
 	return nil
 }
@@ -532,11 +535,50 @@ func request(
 	}
 	response, err := client.Do(request)
 	if err != nil {
-		return 0, "", errors.New("execute registry request")
+		return 0, "", fmt.Errorf("execute registry request: %s", registryErrorClass(err))
 	}
 	defer response.Body.Close()
 	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, maxResponseBytes))
 	return response.StatusCode, response.Header.Get("Location"), nil
+}
+
+// Registry errors may contain URLs, credentials, or response bodies. Only
+// fixed error classes and numeric HTTP status codes leave this fixture.
+func registryResponseError(stage string, status int, err error) error {
+	if err != nil {
+		return fmt.Errorf("%s: %w", stage, err)
+	}
+	return fmt.Errorf("%s: HTTP %d", stage, status)
+}
+
+func registryErrorClass(err error) string {
+	var dns *net.DNSError
+	var network net.Error
+	switch {
+	case errors.Is(err, context.Canceled):
+		return "canceled"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "deadline exceeded"
+	case errors.As(err, &dns):
+		switch {
+		case dns.IsTimeout:
+			return "DNS timeout"
+		case dns.IsNotFound:
+			return "DNS not found"
+		default:
+			return "DNS failure"
+		}
+	case errors.As(err, &network) && network.Timeout():
+		return "network timeout"
+	case errors.Is(err, syscall.ECONNREFUSED):
+		return "connection refused"
+	case errors.Is(err, syscall.ECONNRESET):
+		return "connection reset"
+	case errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
+		return "connection closed"
+	default:
+		return "transport failure"
+	}
 }
 
 func digest(contents []byte) string {

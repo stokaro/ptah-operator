@@ -3,6 +3,7 @@ package e2e
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -14,6 +15,7 @@ import (
 
 	ptahv1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/plancontract"
+	"github.com/stokaro/ptah-operator/test/e2e/harness"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -215,6 +217,41 @@ func alReadPlanExport(body []byte) (alPlanExport, error) {
 type alPlanStoreHistory struct {
 	crossedLower, crossedUpper, clearedLower, clearedUpper, through time.Time
 	latest                                                          int64
+}
+
+// A scrape is timestamped when it starts but becomes queryable only after it
+// commits. A query during that scrape can have an unfinished tail. Requery the
+// same instant within the configured scrape timeout; never move the measurement
+// window or relax the checks for missing, unhealthy, or mismatched samples.
+func alQueryPlanStoreHistory(ctx context.Context, query func(context.Context, time.Time) ([]byte, error), pods []string, leader string, started, at time.Time, recovery bool) (alPlanStoreHistory, []byte, error) {
+	var history alPlanStoreHistory
+	var body []byte
+	read := func(ctx context.Context) error {
+		var err error
+		body, err = query(ctx, at)
+		if err != nil {
+			return err
+		}
+		groups, err := alSplitHistorySnapshot(body, alScrapeJob, []string{alPlanStoreMetric, "up", "scrape_duration_seconds"})
+		if err != nil {
+			return err
+		}
+		history, err = alReadPlanStoreWindow(groups[alPlanStoreMetric], groups["up"], groups["scrape_duration_seconds"], pods, leader, started, at, recovery)
+		return err
+	}
+	if err := read(ctx); !errors.Is(err, errAlHistoryNotFresh) {
+		return history, body, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, alScrapeTimeout)
+	defer cancel()
+	err := harness.Wait(ctx, "a committed native plan-store scrape", alScrapeTimeout, 100*time.Millisecond, func(ctx context.Context) (bool, string, error) {
+		err := read(ctx)
+		if errors.Is(err, errAlHistoryNotFresh) {
+			return false, err.Error(), nil
+		}
+		return err == nil, "", err
+	})
+	return history, body, err
 }
 
 func alReadPlanStoreHistory(gaugeBody, upBody, durationBody []byte, pods []string, leader string, started, queriedAt time.Time) (alPlanStoreHistory, error) {
