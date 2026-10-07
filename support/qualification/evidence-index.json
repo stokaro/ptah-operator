@@ -2155,5 +2155,91 @@
       "downloadVerified": false
     },
     "custody": "Local archive only; no remote export or download verification."
+  },
+  "capacityAPICleanupAdmission": {
+    "requirement": "#580 manager API demand on the unchanged twenty-resource steady fleet",
+    "conclusion": "Failed: an interior sixty-second window still exceeds 100 requests/s.",
+    "runtimeSourceCommit": "594775377d0d09a20b1ccd02e34af23126193106",
+    "collectorSourceCommit": "594775377d0d09a20b1ccd02e34af23126193106",
+    "runtimeImage": "e2e-registry.ptah-test-a-1-37-0-242-profile-1b5db851-0026e8302c.svc.cluster.local:5000/ptah-operator@sha256:21e98681a8b50058aa8725f68b33efade42dc676221a6152229e58ee53935c86",
+    "runnerImage": "e2e-registry.ptah-test-a-1-37-0-242-profile-1b5db851-0026e8302c.svc.cluster.local:5000/ptah-runner@sha256:3c926b0b03baae569014ceae3522a0dde7a9c03555a645eede9773b536dde8c2",
+    "profileRevision": 39,
+    "environment": "Kubernetes 1.37.0, native Linux amd64, PostgreSQL, ten schemas and ten migrations",
+    "window": {
+      "name": "existing twenty-resource fleet API demand",
+      "start": "2026-10-07T02:19:27.681166Z",
+      "end": "2026-10-07T02:29:27.681166Z"
+    },
+    "samples": 121,
+    "slidingMinuteBounds": 108,
+    "maxRequestsPerSecondUpperBound": 130.78333333333333,
+    "thresholdRequestsPerSecond": 100,
+    "thresholdPassed": false,
+    "largestContainedWindowLowerBound": {
+      "start": "2026-10-07T02:22:47.777859+00:00",
+      "end": "2026-10-07T02:23:47.777859+00:00",
+      "firstSample": 40,
+      "lastSample": 52,
+      "requestsAtLeast": 6726,
+      "requestsPerSecondAtLeast": 112.1
+    },
+    "provenExceedance": {
+      "start": "2026-10-07T02:22:47.777859+00:00",
+      "end": "2026-10-07T02:23:47.777859+00:00",
+      "firstSample": 40,
+      "lastSample": 52,
+      "requestsAtLeast": 6726,
+      "requestsPerSecondAtLeast": 112.1
+    },
+    "monitorRequests": 726,
+    "managers": [
+      {
+        "name": "ptah-operator-ptah-operator-7b849cfb76-tlsvg",
+        "podUID": "0392257e-641e-4c0b-92cf-079ca168ec95",
+        "containerID": "containerd://bdaf295eabeb61579dbf16905a66ec4e83882579e4f79787841180bb82a195bf",
+        "requests": 5550,
+        "cpuSeconds": 6.02,
+        "maxRSSBytes": 56053760,
+        "clientThrottleSeconds": 0,
+        "client429Responses": 0
+      },
+      {
+        "name": "ptah-operator-ptah-operator-7b849cfb76-v5nhs",
+        "podUID": "05dd17c4-f42d-4f28-9e7d-2265f5d51e09",
+        "containerID": "containerd://b57b3a6ab95dffc4ecc0bab99ca127828b333f13ce0cd1122cf4c872b42c3f57",
+        "requests": 50564,
+        "cpuSeconds": 46.95,
+        "maxRSSBytes": 104071168,
+        "clientThrottleSeconds": 0,
+        "client429Responses": 2
+      }
+    ],
+    "change": "Keep collection preflight and exact UID/resourceVersion requests; the existing required API admission guard makes each final DELETE decision without a duplicate collector verdict. No permission, retention window, pin, identity, or dependency-order rule changes.",
+    "validation": {
+      "originalRegression": "Five deletes repeated ten original-Job absence reads. The fixed path uses one collection preflight and one read per admitted DELETE.",
+      "fixedRaceTests": [
+        "internal/resultcleanup",
+        "internal/resultretention",
+        "internal/controllerwrite"
+      ],
+      "vet": [
+        "internal/resultcleanup",
+        "internal/resultretention",
+        "internal/controllerwrite",
+        "test/envtest/webhook"
+      ],
+      "apiServerTests": "Both TestResultCollector tests pass. Restoring an active pin immediately before the actual API DELETE refuses the first deletion, preserves all five records and the original receipt, then permits collection after pin removal. Foreground collection in a terminating namespace remains guarded.",
+      "liveFleet": "All twenty original UIDs, specs and generations stay unchanged; every manager sample matches its installed Pod UID, container ID, and exact image.",
+      "auditRestoration": "The latest diagnostic restored all original API-server manifests before this unaudited measurement."
+    },
+    "scope": "Only this steady API-demand window is assessed. No cold/backlog rerun, full soak, retention plateau, fault matrix, architecture matrix, final artifacts, or #580/#242 closure is claimed.",
+    "custody": "Local archive only. Remote custody and independent download verification are not established.",
+    "archive": {
+      "name": "capacity-cleanup-admission-2026-10-07.tar.gz",
+      "sha256": "36faa2416270c502557589959da66b753bc196adbdf3363c4477b8d97749d4f7",
+      "bytes": 89694,
+      "memberCount": 33,
+      "downloadVerified": false
+    }
   }
 }
