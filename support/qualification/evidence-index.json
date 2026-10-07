@@ -4748,5 +4748,48 @@
       "memberCount": 35,
       "downloadVerified": false
     }
+  },
+  "mergedMasterCI7412": {
+    "head": "7412ca889e63274db11f8965be3bbc3367dfeb90",
+    "testedMergeCommit": "7412ca889e63274db11f8965be3bbc3367dfeb90",
+    "sourceTree": "155a6fe9b47f767c60d24685ed97a58fece54b1b",
+    "testedTree": "155a6fe9b47f767c60d24685ed97a58fece54b1b",
+    "sourceDifference": "Identical source tree",
+    "runURL": "https://github.com/stokaro/ptah-operator/actions/runs/37575772162",
+    "conclusion": "success",
+    "createdAt": "2026-10-07T05:19:55Z",
+    "completedAt": "2026-10-07T06:48:29Z",
+    "fullPipelineSeconds": 5314.0,
+    "lastJobElapsedSeconds": 5313.0,
+    "within90Minutes": true,
+    "passedSuiteCells": 27,
+    "passedOwnedPhaseExecutions": 51,
+    "runtimeArchitecture": "linux/amd64",
+    "kubernetesMinors": [
+      "1.35",
+      "1.36",
+      "1.37"
+    ],
+    "separateRuns": {
+      "Documentation": {
+        "id": 37575772122,
+        "conclusion": "success",
+        "seconds": 264.0
+      },
+      "Publish documentation": {
+        "id": 37575772120,
+        "conclusion": "success",
+        "seconds": 78.0
+      }
+    },
+    "archive": {
+      "name": "ci-37575772162.tar.gz",
+      "sha256": "3434fed67fd01385df649dd6724b8ab05fac0a18d84b56a75187d42fc3b39df4",
+      "memberCount": 146,
+      "bytes": 158607,
+      "downloadVerified": false,
+      "custody": "The individual GitHub timing artifact downloads are digest-verified. This consolidated local archive has not been independently downloaded from durable storage."
+    },
+    "scope": "Terminal CI for the merged master source. All declared default functional cells and phase outcomes were read from digest-verified artifacts. Later local capacity changes are not covered, and this is not production qualification."
   }
 }
