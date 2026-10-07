@@ -16,7 +16,7 @@ import (
 
 func TestResultCollectorInTerminatingNamespace(t *testing.T) {
 	f, identity, store := publicationFixture(t, true)
-	payload := publicationPayload(t, identity)
+	payload := chunkedPublicationPayload(t, identity)
 	if _, err := store.Publish(t.Context(), identity.Binding, payload, publicationDigest(payload)); err != nil {
 		t.Fatal(err)
 	}
@@ -123,8 +123,18 @@ func (r namespaceReader) List(ctx context.Context, list client.ObjectList, opts 
 }
 
 func TestResultCollectorThroughAPIAdmission(t *testing.T) {
+	t.Run("chunked", func(t *testing.T) { testResultCollectorThroughAPIAdmission(t, false) })
+	t.Run("inline", func(t *testing.T) { testResultCollectorThroughAPIAdmission(t, true) })
+}
+
+func testResultCollectorThroughAPIAdmission(t *testing.T, inline bool) {
 	f, identity, store := publicationFixture(t, true)
-	payload := publicationPayload(t, identity)
+	payload := chunkedPublicationPayload(t, identity)
+	activeRecords := 4
+	if inline {
+		payload = publicationPayload(t, identity)
+		activeRecords = 2
+	}
 	receipt, err := store.Publish(t.Context(), identity.Binding, payload, publicationDigest(payload))
 	if err != nil {
 		t.Fatal(err)
@@ -151,14 +161,14 @@ func TestResultCollectorThroughAPIAdmission(t *testing.T) {
 	}
 	// A result still awaiting consumption cannot even be retired.
 	step()
-	if got := len(list()); got != 4 {
+	if got := len(list()); got != activeRecords {
 		t.Fatalf("active result changed: %d records", got)
 	}
 	op := f.schema.Status.ActiveOperation.DeepCopy()
 	f.schema.Status.ActiveOperation = nil
 	writeStatus(t, f.schema)
 	step()
-	if got := len(list()); got != 5 {
+	if got := len(list()); got != activeRecords+1 {
 		t.Fatalf("retirement was not persisted: %d records", got)
 	}
 	// Real API creation times start the wait. No clock override yet.
@@ -168,7 +178,7 @@ func TestResultCollectorThroughAPIAdmission(t *testing.T) {
 	cleanupClockOffset.Store(int64(2 * time.Hour))
 	defer cleanupClockOffset.Store(0)
 	step()
-	if got := len(list()); got != 5 {
+	if got := len(list()); got != activeRecords+1 {
 		t.Fatal("original Job no longer fences collection")
 	}
 	job := &batchv1.Job{}
@@ -182,7 +192,7 @@ func TestResultCollectorThroughAPIAdmission(t *testing.T) {
 	f.schema.Status.ActiveOperation = op
 	writeStatus(t, f.schema)
 	step()
-	if got := len(list()); got != 5 {
+	if got := len(list()); got != activeRecords+1 {
 		t.Fatal("restored claim did not retain evidence")
 	}
 	f.schema.Status.ActiveOperation = nil
@@ -199,7 +209,7 @@ func TestResultCollectorThroughAPIAdmission(t *testing.T) {
 		t.Fatal(err)
 	}
 	requireDenied(t, collector.Step(t.Context()), controllerWriteWebhook, "retention has not authorized deletion")
-	if writer.calls != 1 || len(list()) != 5 {
+	if writer.calls != 1 || len(list()) != activeRecords+1 {
 		t.Fatalf("restored pin did not stop the first DELETE: calls=%d", writer.calls)
 	}
 	if _, loaded, err := store.Load(t.Context(), identity.Binding); err != nil || loaded != receipt {

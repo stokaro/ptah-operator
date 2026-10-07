@@ -36,6 +36,19 @@ def publication(records, job_uid):
     intent = intents[0]
     name, uid = intent['metadata']['name'], intent['metadata']['uid']
     manifest = json.loads(decode(intent))
+    if 'inline' in manifest:
+        data = base64.b64decode(manifest['inline'], validate=True)
+        require(bool(uid) and manifest.get('version') == 1 and manifest.get('chunks') is None,
+                'Invalid inline publication envelope')
+        require(0 < len(data) <= 262144 and len(data) == manifest['size']
+                and digest(data) == manifest['digest'], 'Inline publication bytes changed')
+        owners = intent['metadata'].get('ownerReferences', [])
+        require(len(owners) == 1 and owners[0]['uid'] == manifest['binding']['uid'],
+                'Inline publication belongs to another resource')
+        require(not any(r['spec']['type'] in ('chunk', 'complete')
+                        and any(o['uid'] == uid for o in r['metadata'].get('ownerReferences', []))
+                        for r in records.values()), 'Inline publication has child records')
+        return intent, intent, data
     completion = records[name + '-complete']
     receipt = json.loads(decode(completion))
     require(bool(uid) and bool(completion['metadata']['uid']), 'Missing publication UID')

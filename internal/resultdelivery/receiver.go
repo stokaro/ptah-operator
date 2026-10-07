@@ -220,7 +220,7 @@ func (r *Receiver) ServeHTTP(w http.ResponseWriter, request *http.Request) {
 		}
 		return
 	}
-	if receipt.Name != name+"-complete" || receipt.UID == "" || receipt.Digest != digest || receipt.Size != int64(len(payload)) {
+	if (receipt.Name != name && receipt.Name != name+"-complete") || receipt.UID == "" || receipt.Digest != digest || receipt.Size != int64(len(payload)) {
 		refuse(http.StatusInternalServerError)
 		return
 	}

@@ -200,7 +200,7 @@ func TestLostAcknowledgmentOnlyRedeliversSavedBytes(t *testing.T) {
 		t.Fatalf("readback lost result: %v", err)
 	}
 	list := &recordapi.PtahResultRecordList{}
-	if err := store.Client.List(t.Context(), list); err != nil || len(list.Items) != 3 {
+	if err := store.Client.List(t.Context(), list); err != nil || len(list.Items) != 1 {
 		t.Fatalf("duplicate delivery created another publication: %v", err)
 	}
 	// Another receiver and client have no memory of the first delivery.

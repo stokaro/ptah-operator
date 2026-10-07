@@ -230,7 +230,7 @@ func (s *Sender) send(ctx context.Context, payload []byte, digest string) (resul
 		return resultstore.Receipt{}, false, errors.New("result receipt is not canonical")
 	}
 	name, _ := resultstore.Name(s.identity.Binding)
-	if receipt.Name != name+"-complete" || receipt.UID == "" || receipt.Digest != digest || receipt.Size != int64(len(payload)) {
+	if (receipt.Name != name && receipt.Name != name+"-complete") || receipt.UID == "" || receipt.Digest != digest || receipt.Size != int64(len(payload)) {
 		return resultstore.Receipt{}, false, errors.New("result receipt does not match the delivered bytes")
 	}
 	return receipt, false, nil

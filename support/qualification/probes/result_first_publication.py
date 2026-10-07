@@ -16,8 +16,10 @@ def verify_evidence(value):
     require(value['evidenceVersion'] == 1, 'Unknown first-publication evidence version')
     concurrent = value['concurrent']
     verify_concurrent(concurrent)
-    require(bool(value['intentUID']) and concurrent['receipt']['Name'] == value['intentName'] + '-complete',
+    require(bool(value['intentUID']) and concurrent['receipt']['Name'] in (value['intentName'], value['intentName'] + '-complete'),
             'Missing or foreign publication identity')
+    if concurrent['receipt']['Name'] == value['intentName']:
+        require(concurrent['receipt']['UID'] == value['intentUID'], 'Inline receipt UID differs from intent')
     before = value['before']
     census = before['records']
     require(len(census) > 0 and len({r['name'] for r in census}) == len(census)

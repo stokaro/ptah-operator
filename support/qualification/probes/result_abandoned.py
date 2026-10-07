@@ -98,6 +98,7 @@ def main():
 
     interrupted = wait(partial)
     intent = next(r for r in interrupted.values() if r['spec']['type'] == 'intent')
+    assert 'inline' not in decode(intent), 'Atomic result is complete, not an interrupted chunk publication'
     binding = decode(intent)['binding']
     assert binding['operation'] == 'resolve' and binding['uid'] == resource['metadata']['uid']
     current = get('ptahschema', 'abandoned')
@@ -140,7 +141,8 @@ def main():
     pinned = {n: r for n, r in pin_all.items() if n == pinned_intent['metadata']['name'] or
               any(o['uid'] == pinned_intent['metadata']['uid'] for o in r['metadata'].get('ownerReferences', [])) or
               (r['spec']['type'] == 'credential' and r['metadata']['annotations']['operator.ptah.run/result-job-uid'] == pinned_job)}
-    assert {r['spec']['type'] for r in pinned.values()} == {'intent', 'chunk', 'complete', 'credential'}
+    expected_roles = {'intent', 'credential'} if 'inline' in decode(pinned_intent) else {'intent', 'chunk', 'complete', 'credential'}
+    assert {r['spec']['type'] for r in pinned.values()} == expected_roles
     eligible = set(baseline)
     all_rows = baseline | pinned
     marker_value = decode(marker)

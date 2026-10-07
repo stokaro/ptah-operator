@@ -1,4 +1,7 @@
-The result transport writes these immutable records. Grant read access only to
+The result transport writes these immutable records. A result up to 256 KiB
+commits atomically in its intent, which contains its bytes, digest, and operation
+binding. Larger results use the chunk and completion records shown below.
+Grant read access only to
 identities allowed to inspect operation SQL and delivery credentials; ordinary
 Secret read permission does not grant access to them. Include this resource in
 the cluster's encryption-at-rest and restricted backup configuration.

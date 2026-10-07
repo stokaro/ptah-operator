@@ -27,7 +27,7 @@ func TestResultRetirementFencesPublicationWithoutErasingReceipts(t *testing.T) {
 	for _, partial := range []bool{false, true} {
 		t.Run(fmt.Sprintf("partial=%v", partial), func(t *testing.T) {
 			f, identity, store := publicationFixture(t, true)
-			payload := publicationPayload(t, identity)
+			payload := chunkedPublicationPayload(t, identity)
 			publishing := store
 			interrupted := errors.New("stop after intent")
 			if partial {
@@ -152,6 +152,18 @@ func publicationPayload(t *testing.T, identity resultdelivery.Identity) []byte {
 	}
 	return payload
 }
+
+// Chunk-specific rows need an actual multi-record payload. Small results are
+// covered by the inline admission and concurrent publication rows.
+func chunkedPublicationPayload(t *testing.T, identity resultdelivery.Identity) []byte {
+	t.Helper()
+	payload, err := resultdelivery.Encode(identity, runner.Result{ProtocolVersion: runner.ProtocolVersion, Operation: runner.OperationResolve, OperationID: identity.Binding.OperationID, ChildExitCode: -1, Error: &runner.ResultError{Code: "refused", Message: string(bytes.Repeat([]byte("r"), resultstore.InlinePayloadBytes+1))}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return payload
+}
+
 func publicationDigest(payload []byte) string {
 	return fmt.Sprintf("sha256:%x", sha256.Sum256(payload))
 }
@@ -180,7 +192,7 @@ func (w publicationWriter) Create(ctx context.Context, object client.Object, opt
 
 func TestResultPublicationAdmission(t *testing.T) {
 	f, identity, store := publicationFixture(t, true)
-	payload := publicationPayload(t, identity)
+	payload := chunkedPublicationPayload(t, identity)
 	candidates := map[string]*api.PtahResultRecord{}
 	guarded := store
 	guarded.Client = publicationWriter{Client: store.Client, before: func(r *api.PtahResultRecord) error { candidates[r.Spec.Type] = r.DeepCopy(); return nil }}
@@ -287,7 +299,7 @@ func TestResultPublicationRefusesUnissuedOrRetiredAuthority(t *testing.T) {
 	for _, mode := range []string{"unissued", "retired before completion", "invalid protocol"} {
 		t.Run(mode, func(t *testing.T) {
 			f, identity, store := publicationFixture(t, mode != "unissued")
-			payload := publicationPayload(t, identity)
+			payload := chunkedPublicationPayload(t, identity)
 			if mode == "invalid protocol" {
 				payload = []byte(`{"not":"a runner result"}`)
 			}
@@ -317,7 +329,7 @@ func TestResultPublicationResumesLostAPIWriteResponse(t *testing.T) {
 	for _, role := range []string{"intent", "chunk", "complete"} {
 		t.Run(role, func(t *testing.T) {
 			_, identity, store := publicationFixture(t, true)
-			payload := publicationPayload(t, identity)
+			payload := chunkedPublicationPayload(t, identity)
 			lost := errors.New("lost API acknowledgment")
 			fired := false
 			failing := store

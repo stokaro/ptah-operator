@@ -56,7 +56,8 @@ func TestPublicationAdmissionAndIdenticalRetry(t *testing.T) {
 func publishedRecords(t *testing.T) (Store, map[string]*api.PtahResultRecord) {
 	t.Helper()
 	s := newStore(t)
-	payload := []byte("publication bytes")
+	// These rows corrupt chunk and completion records independently.
+	payload := bytes.Repeat([]byte("p"), InlinePayloadBytes+1)
 	if _, err := s.Publish(t.Context(), binding(), payload, digest(payload)); err != nil {
 		t.Fatal(err)
 	}
@@ -217,7 +218,7 @@ func TestAdmissionAllowsConcurrentIdenticalCompletion(t *testing.T) {
 	s, records := publishedRecords(t)
 	reader := &completionRaceReader{Reader: s.Reader, name: records["complete"].Name}
 	s.Reader = reader
-	if _, payload, err := s.ValidateRecordCreate(t.Context(), records["complete"]); err != nil || !bytes.Equal(payload, []byte("publication bytes")) {
+	if _, payload, err := s.ValidateRecordCreate(t.Context(), records["complete"]); err != nil || !bytes.Equal(payload, records["chunk"].Spec.Data) {
 		t.Fatalf("identical completion race refused: %v", err)
 	}
 }

@@ -184,8 +184,11 @@ reads it and never writes it. See
 [Concurrency and coordination](../execution/#concurrency-and-coordination).
 
 `PtahResultRecord` stores immutable intent, payload, and completion records for
-durable runner result delivery. Publication checks the complete payload before
-acknowledgment; a consumer checks the binding and all chunk identities before
+durable runner result delivery. Results up to 256 KiB commit atomically in one
+intent containing the exact bytes, digest, and operation binding. Larger results
+use separate chunks and a completion record. Existing chunked publications retain
+their layout when retried. Publication checks the complete payload before
+acknowledgment; a consumer checks the binding, digest, and any chunk identities before
 using it. The dedicated resource permits result reads without access to database
 Secrets. Its payloads are confidential and must be excluded from ordinary reader
 and author roles. Delivery is enabled by default. The receiver authenticates

@@ -238,7 +238,7 @@ func TestResultNeedsNeitherJobNorPodToLoad(t *testing.T) {
 func TestReplacementChunkUIDIsNotAccepted(t *testing.T) {
 	b := newBinding(t)
 	s := resultstore.Store{Client: api, Reader: api}
-	payload := []byte("same bytes")
+	payload := bytes.Repeat([]byte("p"), resultstore.InlinePayloadBytes+1)
 	if _, err := s.Publish(t.Context(), b, payload, digest(payload)); err != nil {
 		t.Fatal(err)
 	}

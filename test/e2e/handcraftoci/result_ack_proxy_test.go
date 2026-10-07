@@ -56,7 +56,7 @@ func TestResultACKProxyForwardsRotatedPodTokensWithoutRetainingThem(t *testing.T
 			t.Error("proxy changed the original bytes or digest")
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(ackReceipt{Name: "original-complete", UID: "receipt", Digest: digest(data), Size: int64(len(data))})
+		_ = json.NewEncoder(w).Encode(ackReceipt{Name: "original", UID: "receipt", Digest: digest(data), Size: int64(len(data))})
 	}))
 	t.Cleanup(backend.Close)
 	f.proxy = newResultACKTokenProxy(backend.Client(), backend.URL, "original-job")

@@ -123,8 +123,8 @@ func TestReadOperationResultNeverFallsBackToLogs(t *testing.T) {
 	}
 	publishOperationResult(t, c, f, want)
 	var records api.PtahResultRecordList
-	if err := c.List(t.Context(), &records, client.MatchingLabels{resultstore.LabelRecord: "chunk"}); err != nil || len(records.Items) != 1 {
-		t.Fatalf("read the exact result chunk: count=%d, err=%v", len(records.Items), err)
+	if err := c.List(t.Context(), &records, client.MatchingLabels{resultstore.LabelRecord: "intent"}); err != nil || len(records.Items) != 1 {
+		t.Fatalf("read the exact atomic result: count=%d, err=%v", len(records.Items), err)
 	}
 	records.Items[0].Spec.Data = []byte("corrupt")
 	if err := c.Update(t.Context(), &records.Items[0]); err != nil {
