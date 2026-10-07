@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
@@ -154,11 +155,17 @@ func TestAuthorityValidatesTheListedPod(t *testing.T) {
 
 type readerHook struct {
 	client.Reader
-	get  func(client.Object) error
-	list func(*corev1.PodList) error
+	beforeGet func(client.Object) error
+	get       func(client.Object) error
+	list      func(*corev1.PodList) error
 }
 
 func (r readerHook) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+	if r.beforeGet != nil {
+		if err := r.beforeGet(obj); err != nil {
+			return err
+		}
+	}
 	if err := r.Reader.Get(ctx, key, obj, opts...); err != nil {
 		return err
 	}
@@ -178,16 +185,24 @@ func (r readerHook) List(ctx context.Context, list client.ObjectList, opts ...cl
 }
 
 func TestAuthorityReadRacesAndFailures(t *testing.T) {
-	for _, stage := range []string{"subject", "job", "list", "second subject"} {
+	for _, stage := range []string{"subject", "job", "list", "retirement"} {
 		t.Run("API failure "+stage, func(t *testing.T) {
 			f := resulttest.New(t, "schema-observe")
 			unavailable := errors.New("API unavailable")
-			reads := 0
-			reader := readerHook{Reader: f.Client(t), get: func(obj client.Object) error {
-				reads++
-				matches := stage == "subject" && reads == 1 || stage == "job" && reads == 2 || stage == "second subject" && reads == 3
-				if matches {
-					return unavailable
+			reader := readerHook{Reader: f.Client(t), beforeGet: func(obj client.Object) error {
+				switch obj.(type) {
+				case *api.PtahSchema:
+					if stage == "subject" {
+						return unavailable
+					}
+				case *batchv1.Job:
+					if stage == "job" {
+						return unavailable
+					}
+				case *api.PtahResultRecord:
+					if stage == "retirement" {
+						return unavailable
+					}
 				}
 				return nil
 			}, list: func(*corev1.PodList) error {
@@ -203,15 +218,11 @@ func TestAuthorityReadRacesAndFailures(t *testing.T) {
 	}
 	t.Run("retirement during Pod reads", func(t *testing.T) {
 		f := resulttest.New(t, "migration-history")
-		reads := 0
-		reader := readerHook{Reader: f.Client(t), get: func(obj client.Object) error {
-			if m, ok := obj.(*api.PtahMigration); ok {
-				reads++
-				if reads == 2 {
-					m.Status.ActiveOperation = nil
-				}
-			}
-			return nil
+		c := f.Client(t)
+		reader := readerHook{Reader: c, list: func(*corev1.PodList) error {
+			m := f.Subject.(*api.PtahMigration)
+			m.Status.ActiveOperation = nil
+			return c.Status().Update(t.Context(), m)
 		}}
 		if err := (Authorizer{Reader: reader}).Check(t.Context(), f.Identity); !errors.Is(err, resultdelivery.ErrAuthority) {
 			t.Fatal(err)
@@ -219,15 +230,11 @@ func TestAuthorityReadRacesAndFailures(t *testing.T) {
 	})
 	t.Run("claim changes without retirement", func(t *testing.T) {
 		f := resulttest.New(t, "schema-observe")
-		reads := 0
-		reader := readerHook{Reader: f.Client(t), get: func(obj client.Object) error {
-			if s, ok := obj.(*api.PtahSchema); ok {
-				reads++
-				if reads == 2 {
-					s.Status.ExecutionBinding.PtahVersion = "v9.0.0"
-				}
-			}
-			return nil
+		c := f.Client(t)
+		reader := readerHook{Reader: c, list: func(*corev1.PodList) error {
+			s := f.Subject.(*api.PtahSchema)
+			s.Status.ExecutionBinding.PtahVersion = "v9.0.0"
+			return c.Status().Update(t.Context(), s)
 		}}
 		if err := (Authorizer{Reader: reader}).Check(t.Context(), f.Identity); !errors.Is(err, resultdelivery.ErrAuthority) {
 			t.Fatal(err)

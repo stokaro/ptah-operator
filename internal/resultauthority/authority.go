@@ -5,7 +5,6 @@ package resultauthority
 import (
 	"context"
 	"errors"
-	"reflect"
 	"strings"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -27,32 +26,36 @@ import (
 // result as a definitive authority refusal.
 var ErrNotReady = errors.New("result delivery is waiting for durable Job adoption")
 
-// Authorizer must use an uncached API reader. It reads the subject again after
-// checking Job and Pod so a concurrent retirement observed during the request
-// cannot be mistaken for an active claim. Admission and the consumer must still
-// cover changes after this read; Kubernetes offers no cross-object transaction.
+// Authorizer must use an uncached API reader. It reads the subject after Job and
+// Pod, validates both against that current claim, and finishes with the live
+// retirement fence. Admission and the consumer must still cover later changes;
+// Kubernetes offers no cross-object transaction.
 type Authorizer struct{ Reader client.Reader }
 
-func (a Authorizer) Check(ctx context.Context, identity resultdelivery.Identity) error {
+func (a Authorizer) Check(ctx context.Context, identity resultdelivery.Identity) (verdict error) {
 	if a.Reader == nil {
 		return errors.New("result authority API reader is required")
 	}
 	if _, err := resultdelivery.CertificateURI(identity); err != nil {
 		return resultdelivery.ErrAuthority
 	}
-	if err := a.checkRetirement(ctx, identity); err != nil {
-		return err
-	}
-	claim, err := a.claim(ctx, identity)
-	if err != nil {
-		return err
-	}
+	defer func() {
+		// A retirement is definitive even when the workload is absent or the
+		// claim has not adopted its Job yet. Check this fence last on every
+		// path, preserving that refusal without an earlier duplicate read.
+		if err := a.checkRetirement(ctx, identity); err != nil {
+			verdict = err
+		}
+		if verdict == nil {
+			verdict = ctx.Err()
+		}
+	}()
 	b := identity.Binding
 	job := &batchv1.Job{}
 	if err := a.Reader.Get(ctx, client.ObjectKey{Namespace: b.Namespace, Name: b.JobName}, job); err != nil {
 		return readError(err)
 	}
-	if job.UID != b.JobUID || jobclaim.Match(job, claim) != nil || podintent.ValidateActiveJob(job) != nil {
+	if job.UID != b.JobUID || podintent.ValidateActiveJob(job) != nil {
 		return resultdelivery.ErrAuthority
 	}
 	projection, err := jobconfig.Read(job, b.UID, b.OperationID)
@@ -70,23 +73,22 @@ func (a Authorizer) Check(ctx context.Context, identity resultdelivery.Identity)
 	if len(pods.Items) != 1 || pods.Continue != "" || pods.Items[0].Name != b.PodName || pods.Items[0].UID != b.PodUID {
 		return resultdelivery.ErrAuthority
 	}
+	// Every claim-dependent check uses this later reading. An earlier claim
+	// would add a request without establishing current workload authority.
+	claim, err := a.claim(ctx, identity)
+	if err != nil {
+		return err
+	}
+	if jobclaim.Match(job, claim) != nil {
+		return resultdelivery.ErrAuthority
+	}
 	// Validate the same uncached object that established cardinality. A GET
 	// before the LIST adds a request and validates an older Pod snapshot.
 	pod := &pods.Items[0]
 	if pod.Namespace != b.Namespace || podintent.ValidateStoredPod(pod, job, claim.Snapshot) != nil {
 		return resultdelivery.ErrAuthority
 	}
-	current, err := a.claim(ctx, identity)
-	if err != nil {
-		return err
-	}
-	if !reflect.DeepEqual(current, claim) {
-		return resultdelivery.ErrAuthority
-	}
-	if err := a.checkRetirement(ctx, identity); err != nil {
-		return err
-	}
-	return ctx.Err()
+	return nil
 }
 
 func (a Authorizer) checkRetirement(ctx context.Context, identity resultdelivery.Identity) error {
