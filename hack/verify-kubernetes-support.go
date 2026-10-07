@@ -685,6 +685,113 @@ func ciCancelsEverySupersededRun(node yaml.Node) bool {
 	return node.Kind == yaml.ScalarNode && node.Tag == "!!bool" && node.Value == "true"
 }
 
+// Manual qualification runs supply the second native architecture required by
+// the frozen profile. Pushes and pull requests retain the ordinary matrix.
+const ciNativeRunner = "${{ github.event_name == 'workflow_dispatch' && inputs.architecture == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}"
+
+const ciNativeArchitectureRun = `set -euo pipefail
+case "$EXPECTED_ARCHITECTURE" in
+  amd64) machine=x86_64 ;;
+  arm64) machine=aarch64 ;;
+  *) echo "unsupported native architecture" >&2; exit 1 ;;
+esac
+if [[ "$(uname -s)" != Linux || "$(uname -m)" != "$machine" ]]; then
+  echo "host does not match the requested native architecture" >&2; exit 1
+fi
+if [[ "$(go env GOHOSTARCH)" != "$EXPECTED_ARCHITECTURE" ]]; then
+  echo "Go is not running on the requested native architecture" >&2; exit 1
+fi
+docker_arch="$(docker --context "$DOCKER_CONTEXT" info --format '{{.Architecture}}')"
+case "$docker_arch" in
+  x86_64|amd64) docker_arch=amd64 ;;
+  aarch64|arm64) docker_arch=arm64 ;;
+  *) echo "unsupported Docker architecture" >&2; exit 1 ;;
+esac
+if [[ "$docker_arch" != "$EXPECTED_ARCHITECTURE" ]]; then
+  echo "Docker does not match the requested native architecture" >&2; exit 1
+fi
+mkdir -p "$(dirname "$NATIVE_IDENTITY_FILE")"
+jq -n --arg architecture "$EXPECTED_ARCHITECTURE" --arg machine "$machine" \
+  --arg dockerArchitecture "$docker_arch" --arg run "$GITHUB_RUN_ID" \
+  --arg attempt "$GITHUB_RUN_ATTEMPT" --arg job "$GITHUB_JOB" \
+  '{architecture:$architecture, machine:$machine, dockerArchitecture:$dockerArchitecture,
+    run:$run, attempt:$attempt, job:$job, nativeHostVerified:true}' > "$NATIVE_IDENTITY_FILE"
+cat "$NATIVE_IDENTITY_FILE"
+`
+
+func verifyCINativeArchitecture(path string, workflow workflowDocument) error {
+	var dispatch struct {
+		Inputs map[string]struct {
+			Type     string   `yaml:"type"`
+			Required bool     `yaml:"required"`
+			Default  string   `yaml:"default"`
+			Options  []string `yaml:"options"`
+		} `yaml:"inputs"`
+	}
+	node, ok := workflow.On["workflow_dispatch"]
+	if !ok || node.Decode(&dispatch) != nil {
+		return fmt.Errorf("%s: CI must expose its native architecture input", path)
+	}
+	input := dispatch.Inputs["architecture"]
+	if len(dispatch.Inputs) != 1 || input.Type != "choice" || !input.Required || input.Default != "amd64" ||
+		len(input.Options) != 2 || input.Options[0] != "amd64" || input.Options[1] != "arm64" {
+		return fmt.Errorf("%s: CI architecture must default to amd64 and offer exactly amd64 and arm64", path)
+	}
+	for _, name := range []string{"prepare-images", "kubernetes-e2e"} {
+		job := workflow.Jobs[name]
+		if job.RunsOn != ciNativeRunner {
+			return fmt.Errorf("%s: %s must select the requested native runner", path, name)
+		}
+		step, err := requireWorkflowStep(path, name, job, "native-architecture")
+		if err != nil {
+			return err
+		}
+		file := "${{ runner.temp }}/native-runtime.json"
+		workID := "lifecycle"
+		if name == "prepare-images" {
+			file = "${{ runner.temp }}/task-images/native-runtime.json"
+			workID = "images"
+			cache, err := requireWorkflowStep(path, name, job, "prepare-build-cache")
+			if err != nil {
+				return err
+			}
+			if err := verifyGoBuildCacheStep(path, name, cache, "${{ runner.arch == 'ARM64' && 'ARM64-' || '' }}prepare"); err != nil {
+				return err
+			}
+		}
+		if step.If != "" || step.Uses != "" || step.Shell != "bash" || step.WorkingDirectory != "" ||
+			step.ContinueOnError || step.Run != ciNativeArchitectureRun || !equalStringMap(step.Env, map[string]string{
+			"EXPECTED_ARCHITECTURE": "${{ inputs.architecture || 'amd64' }}",
+			"DOCKER_CONTEXT":        "${{ steps.docker-context.outputs.name }}",
+			"NATIVE_IDENTITY_FILE":  file,
+		}) {
+			return fmt.Errorf("%s: %s must verify and retain its native execution identity", path, name)
+		}
+		dockerIndex, nativeIndex, workIndex := -1, -1, -1
+		kubectlNative, retained := false, name == "prepare-images"
+		for i, item := range job.Steps {
+			switch item.ID {
+			case "docker-context":
+				dockerIndex = i
+			case "native-architecture":
+				nativeIndex = i
+			case workID:
+				workIndex = i
+			}
+			if item.Name == "Install matching kubectl" && strings.Contains(item.Run, `/bin/linux/$(go env GOHOSTARCH)"`) {
+				kubectlNative = true
+			}
+			if item.Name == "Preserve the measurements this run took" && strings.Contains(item.With["path"], file+"\n") {
+				retained = true
+			}
+		}
+		if dockerIndex < 0 || nativeIndex <= dockerIndex || workIndex <= nativeIndex || !kubectlNative || !retained {
+			return fmt.Errorf("%s: %s must check native execution before work, use native kubectl, and retain its identity", path, name)
+		}
+	}
+	return nil
+}
+
 func verifyCIWorkflowSemantics(path string, workflow workflowDocument, contents []byte) error {
 	if workflow.Concurrency.Group != "ci-${{ github.workflow }}-${{ github.ref }}" ||
 		!ciCancelsEverySupersededRun(workflow.Concurrency.CancelInProgress) {
@@ -692,6 +799,9 @@ func verifyCIWorkflowSemantics(path string, workflow workflowDocument, contents 
 			"%s: CI must cancel a superseded run on every ref, master included: cancel-in-progress is true and nothing else",
 			path,
 		)
+	}
+	if err := verifyCINativeArchitecture(path, workflow); err != nil {
+		return err
 	}
 	required := []string{
 		"go run ./hack/verify-kubernetes-support.go -output=matrix",
@@ -1091,7 +1201,7 @@ printf 'baseline=%s\n' "$baseline" >> "$GITHUB_OUTPUT"
 		return err
 	}
 	if err := verifyGoBuildCacheStep(
-		path, "kubernetes-e2e", e2eCache, "e2e-${{ matrix.minor_slug }}-${{ matrix.suite_slug }}",
+		path, "kubernetes-e2e", e2eCache, "${{ runner.arch == 'ARM64' && 'ARM64-' || '' }}e2e-${{ matrix.minor_slug }}-${{ matrix.suite_slug }}",
 	); err != nil {
 		return err
 	}

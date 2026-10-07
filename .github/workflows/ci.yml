@@ -7,6 +7,13 @@ on:
   schedule:
     - cron: "17 4 * * 1"
   workflow_dispatch:
+    inputs:
+      architecture:
+        description: Native architecture for the existing acceptance matrix
+        type: choice
+        required: true
+        default: amd64
+        options: [amd64, arm64]
 
 permissions:
   contents: read
@@ -339,7 +346,7 @@ jobs:
   prepare-images:
     name: Build the shared task images
     needs: [support-matrix]
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && inputs.architecture == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     timeout-minutes: 45
     steps:
       - name: Check out repository
@@ -361,10 +368,10 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.cache/go-build
-          key: go-build-${{ runner.os }}-prepare-${{ hashFiles('go.sum') }}-${{ github.sha }}
+          key: go-build-${{ runner.os }}-${{ runner.arch == 'ARM64' && 'ARM64-' || '' }}prepare-${{ hashFiles('go.sum') }}-${{ github.sha }}
           restore-keys: |
-            go-build-${{ runner.os }}-prepare-${{ hashFiles('go.sum') }}-
-            go-build-${{ runner.os }}-prepare-
+            go-build-${{ runner.os }}-${{ runner.arch == 'ARM64' && 'ARM64-' || '' }}prepare-${{ hashFiles('go.sum') }}-
+            go-build-${{ runner.os }}-${{ runner.arch == 'ARM64' && 'ARM64-' || '' }}prepare-
       - name: Check out pinned Ptah executor source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -393,7 +400,7 @@ jobs:
           set -euo pipefail
           install_dir="$RUNNER_TEMP/bin"
           mkdir -p "$install_dir"
-          base_url="https://dl.k8s.io/release/v${{ needs.support-matrix.outputs.prepare_kubernetes_version }}/bin/linux/amd64"
+          base_url="https://dl.k8s.io/release/v${{ needs.support-matrix.outputs.prepare_kubernetes_version }}/bin/linux/$(go env GOHOSTARCH)"
           curl --fail --location --silent --show-error --output "$install_dir/kubectl" "$base_url/kubectl"
           curl --fail --location --silent --show-error --output "$RUNNER_TEMP/kubectl.sha256" "$base_url/kubectl.sha256"
           echo "$(<"$RUNNER_TEMP/kubectl.sha256")  $install_dir/kubectl" | sha256sum --check
@@ -429,6 +436,42 @@ jobs:
           docker context create "$context_name" --docker host=ssh://ptah-ci-docker
           docker --context "$context_name" info >/dev/null
           printf 'name=%s\n' "$context_name" >> "$GITHUB_OUTPUT"
+      - name: Verify native execution architecture
+        id: native-architecture
+        env:
+          EXPECTED_ARCHITECTURE: ${{ inputs.architecture || 'amd64' }}
+          DOCKER_CONTEXT: ${{ steps.docker-context.outputs.name }}
+          NATIVE_IDENTITY_FILE: ${{ runner.temp }}/task-images/native-runtime.json
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$EXPECTED_ARCHITECTURE" in
+            amd64) machine=x86_64 ;;
+            arm64) machine=aarch64 ;;
+            *) echo "unsupported native architecture" >&2; exit 1 ;;
+          esac
+          if [[ "$(uname -s)" != Linux || "$(uname -m)" != "$machine" ]]; then
+            echo "host does not match the requested native architecture" >&2; exit 1
+          fi
+          if [[ "$(go env GOHOSTARCH)" != "$EXPECTED_ARCHITECTURE" ]]; then
+            echo "Go is not running on the requested native architecture" >&2; exit 1
+          fi
+          docker_arch="$(docker --context "$DOCKER_CONTEXT" info --format '{{.Architecture}}')"
+          case "$docker_arch" in
+            x86_64|amd64) docker_arch=amd64 ;;
+            aarch64|arm64) docker_arch=arm64 ;;
+            *) echo "unsupported Docker architecture" >&2; exit 1 ;;
+          esac
+          if [[ "$docker_arch" != "$EXPECTED_ARCHITECTURE" ]]; then
+            echo "Docker does not match the requested native architecture" >&2; exit 1
+          fi
+          mkdir -p "$(dirname "$NATIVE_IDENTITY_FILE")"
+          jq -n --arg architecture "$EXPECTED_ARCHITECTURE" --arg machine "$machine" \
+            --arg dockerArchitecture "$docker_arch" --arg run "$GITHUB_RUN_ID" \
+            --arg attempt "$GITHUB_RUN_ATTEMPT" --arg job "$GITHUB_JOB" \
+            '{architecture:$architecture, machine:$machine, dockerArchitecture:$dockerArchitecture,
+              run:$run, attempt:$attempt, job:$job, nativeHostVerified:true}' > "$NATIVE_IDENTITY_FILE"
+          cat "$NATIVE_IDENTITY_FILE"
       - name: Build and export the task images
         id: images
         env:
@@ -474,7 +517,7 @@ jobs:
   kubernetes-e2e:
     name: Kubernetes ${{ matrix.minor }} ${{ matrix.suite }}
     needs: [support-matrix, verify, prepare-images]
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && inputs.architecture == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     # actions: read is what separates waiting for a runner from working on it.
     # The job's own record carries when it was created and when a runner picked
     # it up, and no measurement inside the job can see the difference.
@@ -512,10 +555,10 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.cache/go-build
-          key: go-build-${{ runner.os }}-e2e-${{ matrix.minor_slug }}-${{ matrix.suite_slug }}-${{ hashFiles('go.sum') }}-${{ github.sha }}
+          key: go-build-${{ runner.os }}-${{ runner.arch == 'ARM64' && 'ARM64-' || '' }}e2e-${{ matrix.minor_slug }}-${{ matrix.suite_slug }}-${{ hashFiles('go.sum') }}-${{ github.sha }}
           restore-keys: |
-            go-build-${{ runner.os }}-e2e-${{ matrix.minor_slug }}-${{ matrix.suite_slug }}-${{ hashFiles('go.sum') }}-
-            go-build-${{ runner.os }}-e2e-${{ matrix.minor_slug }}-${{ matrix.suite_slug }}-
+            go-build-${{ runner.os }}-${{ runner.arch == 'ARM64' && 'ARM64-' || '' }}e2e-${{ matrix.minor_slug }}-${{ matrix.suite_slug }}-${{ hashFiles('go.sum') }}-
+            go-build-${{ runner.os }}-${{ runner.arch == 'ARM64' && 'ARM64-' || '' }}e2e-${{ matrix.minor_slug }}-${{ matrix.suite_slug }}-
       # The images arrive built. The harness checks each one against this run's
       # own commit and the catalog's Ptah pin before loading it, so no Ptah
       # source is needed here and none is checked out.
@@ -536,7 +579,7 @@ jobs:
           set -euo pipefail
           install_dir="$RUNNER_TEMP/bin"
           mkdir -p "$install_dir"
-          base_url="https://dl.k8s.io/release/v${{ matrix.kubernetes_version }}/bin/linux/amd64"
+          base_url="https://dl.k8s.io/release/v${{ matrix.kubernetes_version }}/bin/linux/$(go env GOHOSTARCH)"
           curl --fail --location --silent --show-error --output "$install_dir/kubectl" "$base_url/kubectl"
           curl --fail --location --silent --show-error --output "$RUNNER_TEMP/kubectl.sha256" "$base_url/kubectl.sha256"
           echo "$(<"$RUNNER_TEMP/kubectl.sha256")  $install_dir/kubectl" | sha256sum --check
@@ -572,6 +615,42 @@ jobs:
           docker context create "$context_name" --docker host=ssh://ptah-ci-docker
           docker --context "$context_name" info >/dev/null
           printf 'name=%s\n' "$context_name" >> "$GITHUB_OUTPUT"
+      - name: Verify native execution architecture
+        id: native-architecture
+        env:
+          EXPECTED_ARCHITECTURE: ${{ inputs.architecture || 'amd64' }}
+          DOCKER_CONTEXT: ${{ steps.docker-context.outputs.name }}
+          NATIVE_IDENTITY_FILE: ${{ runner.temp }}/native-runtime.json
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$EXPECTED_ARCHITECTURE" in
+            amd64) machine=x86_64 ;;
+            arm64) machine=aarch64 ;;
+            *) echo "unsupported native architecture" >&2; exit 1 ;;
+          esac
+          if [[ "$(uname -s)" != Linux || "$(uname -m)" != "$machine" ]]; then
+            echo "host does not match the requested native architecture" >&2; exit 1
+          fi
+          if [[ "$(go env GOHOSTARCH)" != "$EXPECTED_ARCHITECTURE" ]]; then
+            echo "Go is not running on the requested native architecture" >&2; exit 1
+          fi
+          docker_arch="$(docker --context "$DOCKER_CONTEXT" info --format '{{.Architecture}}')"
+          case "$docker_arch" in
+            x86_64|amd64) docker_arch=amd64 ;;
+            aarch64|arm64) docker_arch=arm64 ;;
+            *) echo "unsupported Docker architecture" >&2; exit 1 ;;
+          esac
+          if [[ "$docker_arch" != "$EXPECTED_ARCHITECTURE" ]]; then
+            echo "Docker does not match the requested native architecture" >&2; exit 1
+          fi
+          mkdir -p "$(dirname "$NATIVE_IDENTITY_FILE")"
+          jq -n --arg architecture "$EXPECTED_ARCHITECTURE" --arg machine "$machine" \
+            --arg dockerArchitecture "$docker_arch" --arg run "$GITHUB_RUN_ID" \
+            --arg attempt "$GITHUB_RUN_ATTEMPT" --arg job "$GITHUB_JOB" \
+            '{architecture:$architecture, machine:$machine, dockerArchitecture:$dockerArchitecture,
+              run:$run, attempt:$attempt, job:$job, nativeHostVerified:true}' > "$NATIVE_IDENTITY_FILE"
+          cat "$NATIVE_IDENTITY_FILE"
       # Samples while the lifecycle runs, so a slow stage can be told from a
       # starved one. The sampler is the same script a local run uses, and
       # killing it is the only thing that stops it.
@@ -655,6 +734,7 @@ jobs:
             ${{ runner.temp }}/timing-context-${{ matrix.minor_slug }}-${{ matrix.suite_slug }}.json
             ${{ runner.temp }}/timing-report-${{ matrix.minor_slug }}-${{ matrix.suite_slug }}.json
             ${{ runner.temp }}/resource-samples-${{ matrix.minor_slug }}-${{ matrix.suite_slug }}.csv
+            ${{ runner.temp }}/native-runtime.json
           if-no-files-found: warn
           retention-days: 30
           overwrite: true

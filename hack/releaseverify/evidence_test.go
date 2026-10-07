@@ -195,8 +195,8 @@ func TestTheAcceptanceEvidenceIsDeterministic(t *testing.T) {
 			lifecycles++
 		}
 	}
-	// jobs.json, the record, and four files from every lifecycle.
-	if len(names) != 2+4*lifecycles || lifecycles == 0 {
+	// jobs.json, the record, and five files from every lifecycle.
+	if len(names) != 2+5*lifecycles || lifecycles == 0 {
 		t.Fatalf("the bundle holds %d entries for %d lifecycles", len(names), lifecycles)
 	}
 	for index := 1; index < len(names); index++ {
