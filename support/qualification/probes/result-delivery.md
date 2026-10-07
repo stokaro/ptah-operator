@@ -603,36 +603,55 @@ case leaves its admission hold installed.
 
 ## Abandoned partial-publication collection
 
-`result_abandoned.py` fills the dedicated `ptah-result-abandoned` namespace's
-result-record quota with the canonical credential and Resolve intent. Before
-completion it suspends that read-only schema, removes the original Job/Pod and
-releases quota for the collector's retirement record. The source schema and
-credentials come from the owned lab's existing `storefront` fixture. No Apply
-is permitted. Run with the same lab environment, explicit Docker context and
-`RESULT_PROBE_EVIDENCE_DIR` used by the other installed probes.
+`result_abandoned.py` interrupts a chunked Plan publication in a dedicated
+namespace. Small results are atomic, so a Resolve cannot supply this fault.
+Prepare a native schema artifact whose Plan result exceeds the 256 KiB inline
+limit. Run with the owned lab environment, explicit Docker context and
+`RESULT_PROBE_EVIDENCE_DIR`, plus these inputs:
+
+- `RESULT_PROBE_SOURCE_NAMESPACE` and `RESULT_PROBE_SOURCE_NAME`: an existing
+  schema in the owned lab, with published plans to preserve.
+- `RESULT_PROBE_ARTIFACT_DIGEST`: the prepared large schema artifact's digest.
+- `RESULT_PROBE_PIN_NAMESPACE`: an owned namespace containing a suspended,
+  completed `lost-ack` migration whose latest run still pins its result.
+- `RESULT_PROBE_NAMESPACE`: a new namespace; defaults to `ptah-result-abandoned`.
+- `RESULT_PROBE_FIXTURE_IMAGE`: the lab's fixture image for the admission check.
+
+The probe copies the source specification and lab credentials, disables Apply,
+and holds Plan Pod creation with a namespace-scoped admission policy. Once the
+Plan Job exists, it sets the result-record quota to the preceding operations'
+record count plus two: the new public Pod binding and Plan intent. Removing the
+hold must produce an actual first-chunk quota refusal. The probe then suspends
+the schema, deletes the original Job with its UID precondition, waits for its
+Pod to disappear, and releases quota for the retirement record.
 
 The API audit policy must record Request-level DELETEs for result records and
 Secret projections, and Metadata-level result-record operations. It must not
-capture payload or credential write bodies. The executed setup is retained as
-`evidence/result-abandoned-2026-10-02/audit-setup.py`; it saves each original
-API-server manifest before enabling that policy, leaves default kubelet logging
-unchanged, and waits for each replacement API server before advancing. Restore
-those saved manifests after collecting the evidence.
+capture payload or credential write bodies. Save each original API-server
+manifest before enabling that policy, leave default kubelet logging unchanged,
+and wait for each replacement API server before advancing. Restore those saved
+manifests after collecting the evidence. The earlier certificate-transport
+setup remains in `evidence/result-abandoned-2026-10-02/audit-setup.py` as
+historical evidence; it does not prove the current Pod-token transport.
 
 The probe freezes the abandoned record UIDs, data hashes and retirement
 creation time. The unchanged minimum one-hour window elapses on the real clock.
-The suspended `ptah-result-partial-mysql/lost-ack` fixture supplies the existing
-latest-run pin; its records and credential projection must remain unchanged.
-Published source schema plans retain their UIDs and spec hashes. The observer
-requires the abandoned namespace to have no result records or Jobs after
-collection. API audit events must identify exact UIDs and place every successful
-DELETE after its persisted deadline; Secret deletion must come from Kubernetes
-garbage collection. The first chunk CREATE must have an actual quota refusal.
+The suspended migration supplies the existing latest-run pin; its records must
+remain unchanged. Public Pod bindings must have no credential Secret projections
+before or after collection. Published source schema plans retain their UIDs and
+spec hashes. The observer requires the abandoned publication's three records to
+disappear and its original Job to remain absent. Earlier operations' records do
+not belong to that cohort. API audit events must identify exact UIDs, attribute
+every successful DELETE to the installed collector, and place each request after
+its persisted deadline.
 
 Replay the frozen collection with `result_retention_evidence.verify_abandoned`;
-its refusal tests reject a completed or replaced publication, missing quota
-fault, incomplete collection, early DELETE and lost pinned evidence. A running
-checkpoint or elapsed timer is not a passing result.
+its refusal tests reject an atomic or replaced publication, missing quota fault,
+missing Pod-binding or Secret-absence evidence, incomplete collection, early
+DELETE, a different deleting identity, and lost pinned evidence. The reader
+still validates historical certificate-transport records with their original
+Secret-collection requirements. A running checkpoint or elapsed timer is not a
+passing result.
 
 
 ## Enforced receiver networking

@@ -35,7 +35,23 @@ def verify(before, after, markers, audits):
     require(after['eligibleRecordsCollected'] == len(eligible), 'Incomplete record collection')
     secrets = before['secretOwners']
     eligible_secrets = eligible & secrets.keys()
-    require(eligible_secrets and pinned & secrets.keys(), 'Missing eligible or pinned Secret census')
+    authentication = before.get('authentication', 'certificate')
+    require(authentication in ('certificate', 'pod-token'), 'Unknown result authentication')
+    if authentication == 'pod-token':
+        require(after.get('authentication') == authentication and not secrets,
+                'Pod-token evidence contains legacy Secret projections')
+        require(before.get('collectorIdentity', '').startswith('system:serviceaccount:'),
+                'Missing installed collector identity')
+        credentials = {n for n, r in records.items() if r['type'] == 'credential'}
+        require(credentials & eligible and credentials & pinned, 'Missing public Pod-binding census')
+        for reading in (before, after):
+            census = reading.get('credentialSecretCensus', {})
+            require(census.get('expectedNames') == sorted(credentials)
+                    and census.get('presentNames') == [], 'Credential Secret absence was not verified')
+        require(all(records[n].get('binding', {}).get('jobUID') for n in credentials),
+                'Public credential record has no Job binding')
+    else:
+        require(eligible_secrets and pinned & secrets.keys(), 'Missing eligible or pinned Secret census')
     require(after['eligibleSecretProjectionsCollected'] == len(eligible_secrets),
             'Incomplete projection collection')
 
@@ -47,6 +63,9 @@ def verify(before, after, markers, audits):
     intent_jobs = {r['uid']: r['binding']['jobUID'] for r in records.values() if r['type'] == 'intent'}
     credential_jobs = {m['spec']['value']['source']['name']: uid for uid, m in retired.items()
                        if m['spec']['value']['source']['type'] == 'credential'}
+    if authentication == 'pod-token':
+        credential_jobs.update({n: r['binding']['jobUID'] for n, r in records.items()
+                                if r['type'] == 'credential'})
     for name, secret in secrets.items():
         owner = secret['ownerReferences']
         require(len(owner) == 1 and owner[0]['uid'] == records[name]['uid']
@@ -93,6 +112,9 @@ def verify(before, after, markers, audits):
     for name in sorted(eligible):
         matches = events('ptahresultrecords', name, records[name]['uid'])
         require(matches, 'No exact-UID successful DELETE for ' + name)
+        if authentication == 'pod-token':
+            require(all(a.get('user', {}).get('username') == before['collectorIdentity'] for a in matches),
+                    'Result record was not deleted by the installed collector')
         require(all(instant(a['requestReceivedTimestamp']) >= deadlines[name] for a in matches),
                 'Record deleted before its retention deadline: ' + name)
         witnesses.append({'name': name, 'uid': records[name]['uid'],
@@ -121,7 +143,13 @@ def verify_abandoned(interrupted, before, after, markers, audits, refusals):
     intent = interrupted['intent']
     manifest = json.loads(base64.b64decode(intent['spec']['data'], validate=True))
     binding = manifest['binding']
-    require(binding['operation'] == 'resolve' and manifest['chunks'], 'Missing read-only publication')
+    pod_token = before.get('authentication') == 'pod-token'
+    require(binding['operation'] == ('plan' if pod_token else 'resolve')
+            and manifest.get('chunks') and 'inline' not in manifest, 'Missing unfinished read-only publication')
+    if pod_token:
+        require(manifest.get('size', 0) > 262144
+                and sum(chunk['size'] for chunk in manifest['chunks']) == manifest['size'],
+                'Plan does not require chunked delivery')
     resource, job, pod = interrupted['resource'], interrupted['job'], interrupted['pod']
     require(resource['metadata']['uid'] == binding['uid']
             and resource['status']['activeOperation']['id'] == binding['operationID']
@@ -140,7 +168,12 @@ def verify_abandoned(interrupted, before, after, markers, audits, refusals):
             'Retirement cohort does not cover exactly the abandoned publication')
     quota = interrupted['quota']
     key = 'count/ptahresultrecords.operator.ptah.run'
-    require(quota['status']['hard'][key] == '2' and quota['status']['used'][key] == '2',
+    preceding = interrupted.get('precedingRecords', []) if pod_token else []
+    require(len({r['name'] for r in preceding}) == len(preceding)
+            and not {r['name'] for r in preceding} & {r['name'] for r in rows},
+            'Invalid preceding publication census')
+    limit = str(2 + len(preceding))
+    require(quota['status']['hard'][key] == limit and quota['status']['used'][key] == limit,
             'Quota did not fill at the interrupted publication')
     matches = [a for a in refusals if a.get('verb') == 'create' and a.get('stage') == 'ResponseComplete'
                and a.get('responseStatus', {}).get('code') == 403

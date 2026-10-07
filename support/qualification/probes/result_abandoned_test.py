@@ -36,6 +36,63 @@ class AbandonedEvidenceTests(unittest.TestCase):
         self.assertEqual(report['eligibleRecords'], 3)
         self.assertEqual(report['abandonedPublication']['recordsBeforeRetirement'], 2)
 
+    def pod_token_fixture(self):
+        interrupted, before, after, markers, audits, refusals = self.fixture()
+        before['authentication'] = after['authentication'] = 'pod-token'
+        before['collectorIdentity'] = 'system:serviceaccount:operator:manager'
+        before['secretOwners'] = {}
+        for rows in (before['records'], interrupted['records'], after['remainingPinned']):
+            for r in rows:
+                if r['type'] == 'credential':
+                    r['binding'] = {'jobUID': 'pinned-job' if r['name'] == 'pinned' else 'retired-job'}
+                elif 'binding' in r:
+                    r['binding']['operation'] = 'plan'
+        for reading in (before, after):
+            reading['credentialSecretCensus'] = {'expectedNames': ['credential', 'pinned'], 'presentNames': []}
+        after['eligibleSecretProjectionsCollected'] = 0
+        audits = [a for a in audits if a['objectRef']['resource'] != 'secrets']
+        for event in audits:
+            event['user']['username'] = before['collectorIdentity']
+        manifest = json.loads(base64.b64decode(interrupted['intent']['spec']['data']))
+        manifest['binding']['operation'] = 'plan'
+        manifest.update(size=300000, chunks=[{'size': 300000}])
+        interrupted['intent']['spec']['data'] = base64.b64encode(json.dumps(manifest).encode()).decode()
+        interrupted['precedingRecords'] = [{'name': 'earlier-result', 'uid': 'earlier-result-uid'}]
+        for field in ('hard', 'used'):
+            interrupted['quota']['status'][field]['count/ptahresultrecords.operator.ptah.run'] = '3'
+        return interrupted, before, after, markers, audits, refusals
+
+    def test_accepts_large_plan_without_credential_secret_projections(self):
+        report = verify_abandoned(*self.pod_token_fixture())
+        self.assertEqual(report['eligibleRecords'], 3)
+        self.assertEqual(report['collectedSecretProjections'], 0)
+
+    def test_refuses_false_partial_plan_or_missing_token_census(self):
+        for fault in ('inline', 'small', 'bad chunk sizes', 'missing census', 'Secret exists',
+                      'missing credential binding', 'wrong authentication', 'unfilled quota',
+                      'missing preceding records', 'repeated preceding record', 'early delete', 'lost pin',
+                      'foreign collector'):
+            with self.subTest(fault=fault):
+                args = self.pod_token_fixture()
+                interrupted, before, after, _, audits, _ = args
+                manifest = json.loads(base64.b64decode(interrupted['intent']['spec']['data']))
+                if fault == 'inline': manifest['inline'] = 'YQ=='
+                if fault == 'small': manifest.update(size=1, chunks=[{'size': 1}])
+                if fault == 'bad chunk sizes': manifest['chunks'][0]['size'] = 1
+                if fault == 'missing census': before.pop('credentialSecretCensus')
+                if fault == 'Secret exists': after['credentialSecretCensus']['presentNames'] = ['credential']
+                if fault == 'missing credential binding': before['records'][0].pop('binding')
+                if fault == 'wrong authentication': after['authentication'] = 'certificate'
+                if fault == 'unfilled quota': interrupted['quota']['status']['used']['count/ptahresultrecords.operator.ptah.run'] = '2'
+                if fault == 'missing preceding records': interrupted['precedingRecords'] = []
+                if fault == 'repeated preceding record': interrupted['precedingRecords'] *= 2
+                if fault == 'early delete': audits[0]['requestReceivedTimestamp'] = '2026-10-02T09:59:59Z'
+                if fault == 'lost pin': after['remainingPinned'] = []
+                if fault == 'foreign collector': audits[0]['user']['username'] = 'administrator'
+                interrupted['intent']['spec']['data'] = base64.b64encode(json.dumps(manifest).encode()).decode()
+                with self.assertRaises(ValueError):
+                    verify_abandoned(*args)
+
     def test_refuses_wrong_fault_or_collection(self):
         for fault in ('complete', 'wrong Pod', 'changed intent', 'missing cohort', 'quota available',
                       'missing refusal', 'wrong refusal cause', 'wrong refused namespace', 'early delete', 'lost pin'):
