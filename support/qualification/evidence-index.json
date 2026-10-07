@@ -3049,5 +3049,475 @@
       "memberCount": 50,
       "downloadVerified": false
     }
+  },
+  "capacityAPIInlinePrecise": {
+    "requirement": "#580 manager API demand on the unchanged twenty-resource steady fleet",
+    "conclusion": "Failed: an interior sixty-second window still exceeds 100 requests/s.",
+    "runtimeSourceCommit": "99903ed8007035a30cc43ef2e18201de1e1f317d",
+    "collectorSourceCommit": "50b52b155264ab69369cb4695fdd53c9e1101883",
+    "runtimeImage": "e2e-registry.ptah-test-a-1-37-0-242-profile-1b5db851-0026e8302c.svc.cluster.local:5000/ptah-operator@sha256:f679a210b4be46ae0c35a81457d4028b9091b73587f2366fb923904c5c9d053e",
+    "runnerImage": "e2e-registry.ptah-test-a-1-37-0-242-profile-1b5db851-0026e8302c.svc.cluster.local:5000/ptah-operator@sha256:f679a210b4be46ae0c35a81457d4028b9091b73587f2366fb923904c5c9d053e",
+    "profileRevision": 39,
+    "environment": "Kubernetes 1.37.0, native Linux amd64, PostgreSQL, ten schemas and ten migrations",
+    "window": {
+      "name": "existing twenty-resource fleet API demand",
+      "start": "2026-10-07T05:08:43.595272Z",
+      "end": "2026-10-07T05:18:43.595272Z"
+    },
+    "samples": 601,
+    "slidingMinuteBounds": 540,
+    "maxRequestsPerSecondUpperBound": 104.33333333333333,
+    "thresholdRequestsPerSecond": 100,
+    "thresholdPassed": false,
+    "largestContainedWindowLowerBound": {
+      "start": "2026-10-07T05:15:17.710375+00:00",
+      "end": "2026-10-07T05:16:17.710375+00:00",
+      "firstSample": 394,
+      "lastSample": 454,
+      "requestsAtLeast": 6129,
+      "requestsPerSecondAtLeast": 102.15
+    },
+    "provenExceedance": {
+      "start": "2026-10-07T05:15:17.710375+00:00",
+      "end": "2026-10-07T05:16:17.710375+00:00",
+      "firstSample": 394,
+      "lastSample": 454,
+      "requestsAtLeast": 6129,
+      "requestsPerSecondAtLeast": 102.15
+    },
+    "monitorRequests": 3606,
+    "managers": [
+      {
+        "name": "ptah-operator-ptah-operator-6bf84d6dc8-n2wrl",
+        "podUID": "a482defb-352d-47bb-886a-5e8204a4fa99",
+        "containerID": "containerd://4eb70b5b6fa8119c8423539a302c732dc9f71540221ff2983da36e866c9f89df",
+        "requests": 5163,
+        "cpuSeconds": 7.649999999999999,
+        "maxRSSBytes": 62185472,
+        "clientThrottleSeconds": 0,
+        "client429Responses": 0
+      },
+      {
+        "name": "ptah-operator-ptah-operator-6bf84d6dc8-wzrw8",
+        "podUID": "c7bb0867-a14f-4210-bd37-499f50c48ec1",
+        "containerID": "containerd://c4dbbbfcd0b3eed45243131a576659fdffec6a2286242b530497a4fa1113d761",
+        "requests": 41765,
+        "cpuSeconds": 46.420000000000016,
+        "maxRSSBytes": 113717248,
+        "clientThrottleSeconds": 0,
+        "client429Responses": 0
+      }
+    ],
+    "change": "Small results up to256KiB commit atomically in one immutable intent instead of intent/chunk/completion. Larger and existing chunked publications retain their original path. Both manager and runner use the recorded new image. Live receiver/admission authority, byte integrity, retention pins, and no-reexecution are unchanged.",
+    "validation": {
+      "originalRegression": "The original chunked path creates three records and fails the one-record regression. The fixed path validates all bytes and identifiers before returning the root receipt; older partial chunked results resume without replacement.",
+      "fixedRaceTests": [
+        "internal/resultstore",
+        "internal/resultdelivery",
+        "internal/resultservice",
+        "internal/resultauthority",
+        "internal/resultcredentials",
+        "internal/resultretention",
+        "internal/resultcleanup",
+        "internal/resultconsumer",
+        "internal/controllerwrite",
+        "internal/controller"
+      ],
+      "realAPI": "Inline protocol and revoked-before-CREATE refusals, independent readback, identical concurrent delivery, active and restored pin deletion refusals, complete collection, maximum payload, crash boundaries and chunk UID replacement all passed.",
+      "sourceVerification": "make verify-source passed, including required real API envtest suites.166 qualification probe tests passed. E2E unit readers and the acknowledgment proxy passed.",
+      "liveFleet": "All twenty original UIDs, specs and generations remain unchanged; every sampled manager matches its installed Pod UID, container ID, and exact image.",
+      "compatibilityLimit": "The old quota2 abandoned-Resolve procedure assumes a partial small result. It now explicitly refuses atomic completion as partial evidence; its next native qualification must use an actual chunked partial publication. Earlier native transport evidence does not qualify the new inline representation.",
+      "auditRestoration": "All three API-server configurations were restored before this unaudited measurement.",
+      "nativePublicationCheck": {
+        "newJobsWithExpectedRunner": 128,
+        "verifiedAtomicPublications": 128,
+        "resourceUIDs": 20,
+        "operations": [
+          "migration-history",
+          "observe",
+          "plan",
+          "resolve",
+          "verify"
+        ],
+        "scope": "Read-only premeasurement check of new native Jobs and atomic publication bytes. Not a complete cycle, retention, or capacity verdict."
+      },
+      "legacyCohort": {
+        "retiredPublications": 920,
+        "remainingMembersBeforeMeasurement": 0,
+        "readOnlyObservationCount": 29,
+        "readyAt": "2026-10-07T04:55:39.867037+00:00",
+        "preservedApplyPublications": [
+          {
+            "namespace": "ptah-qualification-a",
+            "name": "ptah-result-3ba8a6d5059702d9a66e39ad98855ed8c1ac35a297fa1f73b4a9ef20c5137130",
+            "uid": "7be61e7c-2649-4683-89b9-3021781c1d66",
+            "resourceUID": "b8453edd-170d-43bb-9284-7fcbf6cf06ce",
+            "jobUID": "e129195d-5021-4d0d-9ef4-69f147dba2f0",
+            "receiptUID": "eced9b78-f7df-4c76-a1f7-3bf024d9820c",
+            "payloadDigest": "sha256:e2d0f5a8e30ae2f08985de5d9f09793758db419d325b78bd900cf028327dab7c",
+            "payloadBytes": 1356,
+            "credentialUID": "fe0d68f9-eb30-43a1-b276-650e869a83d0",
+            "credentialDigest": "572e173eff670c7c32a0614285a82a7b41c1c25b0e18a44b2017e757cbabf6e2"
+          },
+          {
+            "namespace": "ptah-qualification-a",
+            "name": "ptah-result-4e7229b6d6a79f0e7e8462864f98fdef3b5ac7b300e7e58d00383dd06ef6dc67",
+            "uid": "247dd674-654a-41ec-8600-d67d869f0dd7",
+            "resourceUID": "38b671a7-7fcf-46f0-90cb-1722b9f03820",
+            "jobUID": "dc210d9a-d6f9-45ec-aafa-9e258deed5b0",
+            "receiptUID": "75df960a-1bb3-4e83-ad4a-e974c654faa9",
+            "payloadDigest": "sha256:a35ac06f36719c553c5025ac4bedaf714d793a839b3d21c6406b26f91b7a98d3",
+            "payloadBytes": 8698,
+            "credentialUID": "783b199b-b6e3-4cbd-82fd-b3b178b721ee",
+            "credentialDigest": "65c10f81cfa72235dadb9c7195b5e0baceff224cb6066018c6ec3932e2574151"
+          },
+          {
+            "namespace": "ptah-qualification-a",
+            "name": "ptah-result-4fd79ac5fd726ba1f8901db7c9362109c25de17a84811502efc0cd97b6a2e127",
+            "uid": "f9ccd065-bab8-4a69-8c7f-92e82578a3a2",
+            "resourceUID": "773bfaec-1829-4246-af09-3b6093cf2f91",
+            "jobUID": "7128646b-703c-4051-a7ad-ce45aa80babd",
+            "receiptUID": "ab4a09f6-6eaf-4234-85ed-4eb84b31772e",
+            "payloadDigest": "sha256:e71f8920cc3fd17ddb250a49f8372ca5c61667d54cd727ab425c486f56b77d55",
+            "payloadBytes": 32035,
+            "credentialUID": "220db80c-bbdc-4d53-9d8c-9a6cdc7906d6",
+            "credentialDigest": "a2e0e03e65a30c4d27a8320e17c7a86b751e73d5d47133f858b80a9d52a48c2f"
+          },
+          {
+            "namespace": "ptah-qualification-a",
+            "name": "ptah-result-71ced762742cc1318a6d2213fa4500acbc768720f9304065cec68a2f032c1d5f",
+            "uid": "294602f5-7307-4565-802f-7f58b98f4a70",
+            "resourceUID": "09bfadf4-f80a-4388-9959-4a99ceeadf6b",
+            "jobUID": "24bdf00d-1643-41e2-8c26-dc708d78e6ab",
+            "receiptUID": "6f429934-da76-4f89-a326-84c76227de85",
+            "payloadDigest": "sha256:33aa89f047865efffefc405a0e05a1ef317cabe063d79c56bb928100a8a4e9e6",
+            "payloadBytes": 8453,
+            "credentialUID": "2222789b-0444-4fee-b828-c210a1c61a6c",
+            "credentialDigest": "19371fb13b6d9a60389562c8d5cd01ff8a7ac8aae3762ab269787051c5bb2058"
+          },
+          {
+            "namespace": "ptah-qualification-a",
+            "name": "ptah-result-b8f86b180a7d99f1cee087807d5f0cbdf10cf1d4ef238ffe867d44397da3dbe7",
+            "uid": "3e3707fa-e12e-497e-a0b1-ef40cb6163ab",
+            "resourceUID": "0871bd1c-28b5-4412-af2b-d8478b2e5c78",
+            "jobUID": "9d0400c4-92c6-45c0-8878-df665e612429",
+            "receiptUID": "dabdc698-5c79-4722-a8ff-eeb081b49823",
+            "payloadDigest": "sha256:27e3567332b8fa4049c1a0389dafc97cd9b7d72e4fa0c109b1ba7f194ba6cb26",
+            "payloadBytes": 1356,
+            "credentialUID": "3226e64b-2523-4185-bf16-ce86e72a572b",
+            "credentialDigest": "39060cfab63fddc9308e91e251d717796f9cd538b919ac0f910ba3a8b383467c"
+          },
+          {
+            "namespace": "ptah-qualification-b",
+            "name": "ptah-result-32f87bf133eb096d3940c2fdec68488b517b2ee8cd54e91659cedb0ba6c9b431",
+            "uid": "5d58119f-4e90-4730-b2ce-39c2be8ad84e",
+            "resourceUID": "5e4de788-2db1-4b44-872e-ab26031b95b4",
+            "jobUID": "5f79d55c-7a88-43d9-aeb7-388c1abe0391",
+            "receiptUID": "bcb5af31-60db-43c6-89dd-66edef05912e",
+            "payloadDigest": "sha256:1b6d47bb39f331ee4f260f1de72baa2c171e37998494ed27b1c251acb71ea588",
+            "payloadBytes": 32035,
+            "credentialUID": "7d888adc-8337-440a-aa94-f9fbf41426c1",
+            "credentialDigest": "afcd11470ac9e7703d407532c1f8b36fd2c8783e97c3bbc1806ede78579b72c6"
+          },
+          {
+            "namespace": "ptah-qualification-b",
+            "name": "ptah-result-6b36e2f2a8ca68d36f75fb32da503ec3a545a6ad0cc5df3ce0192f6aaeb6ae27",
+            "uid": "6963997c-2c7b-4c0a-9253-d1b132acdd77",
+            "resourceUID": "f35d38d5-c78e-4cf2-af47-809a3309a8b7",
+            "jobUID": "95616736-eb9d-475d-bff5-fd199aee1458",
+            "receiptUID": "fe39df61-4ac8-4efd-aeff-2c6e63835f10",
+            "payloadDigest": "sha256:7a654303e84104d9dbb1d888b094576602151641c30ab47aa151eff45934d083",
+            "payloadBytes": 8453,
+            "credentialUID": "02f0a687-9570-45ea-bd53-c673a397aaa8",
+            "credentialDigest": "269a998390695d199edcff2094abbe66d6f8f286f2c8eb9e53ba0df5b469a0df"
+          },
+          {
+            "namespace": "ptah-qualification-b",
+            "name": "ptah-result-6f09dd637dcaef70c7732338e94c9cab42a22a9932bf945403da4e8ddc1f5107",
+            "uid": "9e6f9bbf-1560-4601-a2c9-5ee21bf092e7",
+            "resourceUID": "012e057b-0c84-406b-aa88-cfc4aaeba8e5",
+            "jobUID": "38e4ac01-a8e1-4cbd-b820-e0f3d395858a",
+            "receiptUID": "b13459f6-7e22-452b-aa56-20cb683db900",
+            "payloadDigest": "sha256:acc0dea7d2cf4d048c86d214d78b9c4e31ce1ae7a94be9523ad1edebe19a37ef",
+            "payloadBytes": 32035,
+            "credentialUID": "acf3dcfd-fcb5-4e36-a244-c9911b899aa8",
+            "credentialDigest": "a76353e8d36a14804a85d093c8b2cad37a7a27cd6377e1d6ad397d758c0ad225"
+          },
+          {
+            "namespace": "ptah-qualification-b",
+            "name": "ptah-result-7c18a6a250e0cb0d8617b934ed9da4714426f443d3259d9c2734d50bf9ec3be3",
+            "uid": "6f351471-c30a-43d8-ab89-b5ba33107350",
+            "resourceUID": "23d0c3c2-a086-496c-810d-7d1562c1bfa1",
+            "jobUID": "ca8f5b63-1722-4038-abee-f60d721d06a4",
+            "receiptUID": "87195826-6b51-4ac4-9e13-3a98ca19093d",
+            "payloadDigest": "sha256:a039243b400507842f3637d40c4a7127c98ed0d56e863441b00ff592c26ad8c0",
+            "payloadBytes": 1356,
+            "credentialUID": "c99435ba-9fd6-4b36-95a7-59eeda3643cc",
+            "credentialDigest": "91af0ed07e491bc605f6cb5098eec6da10f630e2007f44a52a69b392146331af"
+          },
+          {
+            "namespace": "ptah-qualification-b",
+            "name": "ptah-result-d9f89cc7660484d025712af3e6c7f9974bd913937d04dbd5b654950698d155b2",
+            "uid": "92ba98ea-5d76-43d4-9af7-1d48ee11a828",
+            "resourceUID": "8b8a5813-b0a7-4ce6-ac10-9de4ffa49daf",
+            "jobUID": "807fc7f3-2090-4993-9e93-9fb57a957603",
+            "receiptUID": "f321f301-f36b-4362-9114-8883ef8c93c9",
+            "payloadDigest": "sha256:e70e655180afc749b160a394af0ef32415f85fbf3947a9aed537e4fe76906264",
+            "payloadBytes": 1356,
+            "credentialUID": "fa3ab5c6-9179-4386-8c66-3590beace6d9",
+            "credentialDigest": "4f463b83955a776807e9f8e05260d2722704351844c78f811773ae7dc16254cc"
+          }
+        ],
+        "procedureSHA256": "18dbc05ddc8921b45dce853a9d36604dcd96eb4b982cd7a2e2f44cdd8e877b51",
+        "readerSHA256": "07ab3851d8f55796b320d0781222bf7692b5ee75e9835cba57bddc468a6f2659"
+      },
+      "resourceProgress": {
+        "scope": "Every original resource has a newer accepted database-observation timestamp after the measured interval begins, no more than 300 seconds old at the final readback. This endpoint check is not a complete refresh-cycle census or a continuous freshness measurement.",
+        "readbackAt": "2026-10-07T05:18:44.116349+00:00",
+        "resources": [
+          {
+            "kind": "PtahSchema",
+            "namespace": "ptah-qualification-a",
+            "name": "capacity-schema-000",
+            "uid": "8fc317d1-6ca8-4ceb-b245-c9957f050e9d",
+            "before": "2026-10-07T05:06:50Z",
+            "after": "2026-10-07T05:17:23Z",
+            "ageAtFinalReadbackSeconds": 81.116349,
+            "valid": true
+          },
+          {
+            "kind": "PtahSchema",
+            "namespace": "ptah-qualification-a",
+            "name": "capacity-schema-002",
+            "uid": "cae9f755-3394-4a0c-b9de-e44212dbaeaa",
+            "before": "2026-10-07T05:08:01Z",
+            "after": "2026-10-07T05:16:08Z",
+            "ageAtFinalReadbackSeconds": 156.116349,
+            "valid": true
+          },
+          {
+            "kind": "PtahSchema",
+            "namespace": "ptah-qualification-a",
+            "name": "capacity-schema-004",
+            "uid": "9f986b5c-1246-443b-9088-fef4ff57ff1b",
+            "before": "2026-10-07T05:07:07Z",
+            "after": "2026-10-07T05:17:49Z",
+            "ageAtFinalReadbackSeconds": 55.116349,
+            "valid": true
+          },
+          {
+            "kind": "PtahSchema",
+            "namespace": "ptah-qualification-a",
+            "name": "capacity-schema-006",
+            "uid": "ba977ec9-05fc-46c1-a1e1-67873d208c32",
+            "before": "2026-10-07T05:07:27Z",
+            "after": "2026-10-07T05:17:58Z",
+            "ageAtFinalReadbackSeconds": 46.116349,
+            "valid": true
+          },
+          {
+            "kind": "PtahSchema",
+            "namespace": "ptah-qualification-a",
+            "name": "capacity-schema-008",
+            "uid": "d06a7120-94ab-48d5-a204-9c20887c9a6d",
+            "before": "2026-10-07T05:07:33Z",
+            "after": "2026-10-07T05:18:07Z",
+            "ageAtFinalReadbackSeconds": 37.116349,
+            "valid": true
+          },
+          {
+            "kind": "PtahMigration",
+            "namespace": "ptah-qualification-a",
+            "name": "capacity-migration-000",
+            "uid": "b8453edd-170d-43bb-9284-7fcbf6cf06ce",
+            "before": "2026-10-07T05:08:37Z",
+            "after": "2026-10-07T05:18:29Z",
+            "ageAtFinalReadbackSeconds": 15.116349,
+            "valid": true
+          },
+          {
+            "kind": "PtahMigration",
+            "namespace": "ptah-qualification-a",
+            "name": "capacity-migration-002",
+            "uid": "0871bd1c-28b5-4412-af2b-d8478b2e5c78",
+            "before": "2026-10-07T05:08:22Z",
+            "after": "2026-10-07T05:18:00Z",
+            "ageAtFinalReadbackSeconds": 44.116349,
+            "valid": true
+          },
+          {
+            "kind": "PtahMigration",
+            "namespace": "ptah-qualification-a",
+            "name": "capacity-migration-004",
+            "uid": "38b671a7-7fcf-46f0-90cb-1722b9f03820",
+            "before": "2026-10-07T05:06:39Z",
+            "after": "2026-10-07T05:16:27Z",
+            "ageAtFinalReadbackSeconds": 137.116349,
+            "valid": true
+          },
+          {
+            "kind": "PtahMigration",
+            "namespace": "ptah-qualification-a",
+            "name": "capacity-migration-006",
+            "uid": "09bfadf4-f80a-4388-9959-4a99ceeadf6b",
+            "before": "2026-10-07T05:06:35Z",
+            "after": "2026-10-07T05:16:14Z",
+            "ageAtFinalReadbackSeconds": 150.116349,
+            "valid": true
+          },
+          {
+            "kind": "PtahMigration",
+            "namespace": "ptah-qualification-a",
+            "name": "capacity-migration-008",
+            "uid": "773bfaec-1829-4246-af09-3b6093cf2f91",
+            "before": "2026-10-07T05:06:17Z",
+            "after": "2026-10-07T05:18:36Z",
+            "ageAtFinalReadbackSeconds": 8.116349,
+            "valid": true
+          },
+          {
+            "kind": "PtahSchema",
+            "namespace": "ptah-qualification-b",
+            "name": "capacity-schema-001",
+            "uid": "daf97559-6f61-41ea-a98d-9456231fb701",
+            "before": "2026-10-07T05:08:11Z",
+            "after": "2026-10-07T05:16:06Z",
+            "ageAtFinalReadbackSeconds": 158.116349,
+            "valid": true
+          },
+          {
+            "kind": "PtahSchema",
+            "namespace": "ptah-qualification-b",
+            "name": "capacity-schema-003",
+            "uid": "533af936-eb22-4e63-8f25-5b6d28ba41a9",
+            "before": "2026-10-07T05:06:25Z",
+            "after": "2026-10-07T05:17:03Z",
+            "ageAtFinalReadbackSeconds": 101.116349,
+            "valid": true
+          },
+          {
+            "kind": "PtahSchema",
+            "namespace": "ptah-qualification-b",
+            "name": "capacity-schema-005",
+            "uid": "a2bb16fc-7c91-4956-885a-daad9091a225",
+            "before": "2026-10-07T05:08:21Z",
+            "after": "2026-10-07T05:16:22Z",
+            "ageAtFinalReadbackSeconds": 142.116349,
+            "valid": true
+          },
+          {
+            "kind": "PtahSchema",
+            "namespace": "ptah-qualification-b",
+            "name": "capacity-schema-007",
+            "uid": "9aeeb54f-3a78-481e-82f3-98ec454e0a3e",
+            "before": "2026-10-07T05:06:13Z",
+            "after": "2026-10-07T05:17:02Z",
+            "ageAtFinalReadbackSeconds": 102.116349,
+            "valid": true
+          },
+          {
+            "kind": "PtahSchema",
+            "namespace": "ptah-qualification-b",
+            "name": "capacity-schema-009",
+            "uid": "7c55ed05-47a4-4d14-9963-89ae9c0a5325",
+            "before": "2026-10-07T05:06:56Z",
+            "after": "2026-10-07T05:17:29Z",
+            "ageAtFinalReadbackSeconds": 75.116349,
+            "valid": true
+          },
+          {
+            "kind": "PtahMigration",
+            "namespace": "ptah-qualification-b",
+            "name": "capacity-migration-001",
+            "uid": "23d0c3c2-a086-496c-810d-7d1562c1bfa1",
+            "before": "2026-10-07T05:06:54Z",
+            "after": "2026-10-07T05:16:32Z",
+            "ageAtFinalReadbackSeconds": 132.116349,
+            "valid": true
+          },
+          {
+            "kind": "PtahMigration",
+            "namespace": "ptah-qualification-b",
+            "name": "capacity-migration-003",
+            "uid": "8b8a5813-b0a7-4ce6-ac10-9de4ffa49daf",
+            "before": "2026-10-07T05:07:36Z",
+            "after": "2026-10-07T05:17:26Z",
+            "ageAtFinalReadbackSeconds": 78.116349,
+            "valid": true
+          },
+          {
+            "kind": "PtahMigration",
+            "namespace": "ptah-qualification-b",
+            "name": "capacity-migration-005",
+            "uid": "f35d38d5-c78e-4cf2-af47-809a3309a8b7",
+            "before": "2026-10-07T05:06:44Z",
+            "after": "2026-10-07T05:16:35Z",
+            "ageAtFinalReadbackSeconds": 129.116349,
+            "valid": true
+          },
+          {
+            "kind": "PtahMigration",
+            "namespace": "ptah-qualification-b",
+            "name": "capacity-migration-007",
+            "uid": "012e057b-0c84-406b-aa88-cfc4aaeba8e5",
+            "before": "2026-10-07T05:07:41Z",
+            "after": "2026-10-07T05:17:32Z",
+            "ageAtFinalReadbackSeconds": 72.116349,
+            "valid": true
+          },
+          {
+            "kind": "PtahMigration",
+            "namespace": "ptah-qualification-b",
+            "name": "capacity-migration-009",
+            "uid": "5e4de788-2db1-4b44-872e-ab26031b95b4",
+            "before": "2026-10-07T05:08:24Z",
+            "after": "2026-10-07T05:18:14Z",
+            "ageAtFinalReadbackSeconds": 30.116349,
+            "valid": true
+          }
+        ],
+        "problems": []
+      }
+    },
+    "scope": "Only this steady API-demand window is assessed. No cold/backlog rerun, full soak, retention plateau, fault matrix, architecture matrix, final artifacts, or #580/#242 closure is claimed.",
+    "retentionContext": "The 920 retired legacy publications drained through the unchanged one-hour policy before this window. Their intents, children, credentials and retirement markers were absent. All 10 original Apply publications were independently reconstructed and remained pinned with unchanged receipts, payloads and public bindings. This ten-minute sample still does not establish the full soak or retention plateau.",
+    "apiCriteriaPassed": false,
+    "diagnosticCadence": {
+      "sampleEverySeconds": 1,
+      "previousSampleEverySeconds": 5,
+      "expectedSamples": 601,
+      "purpose": "Narrow the conservative upper-bound uncertainty left by the previous 92.57-106.53 requests/s interval. Only sampling cadence changes; runtime, workload, threshold and ten-minute duration remain unchanged. This does not replace the frozen full profile.",
+      "monitorTraffic": "The probe retains its own requests separately. They are not subtracted from manager counters."
+    },
+    "custody": "Local archive only. Remote custody and independent download verification are not established.",
+    "archive": {
+      "name": "capacity-inline-precise-2026-10-07.tar.gz",
+      "sha256": "9aa0dd7598650a17ffd2a1e648bda4a66f6a9ad61d21ba74d595447912849cac",
+      "bytes": 338946,
+      "memberCount": 53,
+      "downloadVerified": false
+    },
+    "measurementOverhead": {
+      "finding": "Every leader /metrics scrape invokes four live API lists. The one-second probe therefore changes manager-generated monitoring demand as well as counter resolution. Its measured excess does not establish an excess at the original five-second profile cadence.",
+      "sourceCommit": "99903ed8007035a30cc43ef2e18201de1e1f317d",
+      "sources": [
+        {
+          "path": "internal/telemetry/snapshot.go",
+          "sha256": "58f758d69962a83df176769931f5f56513312b04aed7271f5ec7366c05a9cb9b"
+        },
+        {
+          "path": "cmd/manager/main.go",
+          "sha256": "d4e00aa8501af1317d68ce388a3c172a85773d1bad288c27f9f2bedc2900e2e8"
+        },
+        {
+          "path": "hack/capacity/sampler.go",
+          "sha256": "4b64e8c6dce379e2c04190e39487269d9dcc2ec7c65aa247edaeeeb7b4a505d8"
+        }
+      ],
+      "sourceDerivedAdditionalRequestsPerSecond": 3.2,
+      "calculation": "4 * (1 / 1 second - 1 / 5 seconds)",
+      "status": "Source-derived monitoring effect, not an exact subtraction from the observed counters. Raw samples and the failed diagnostic remain unchanged.",
+      "nextDecision": "Attribute manager requests with the existing metadata audit at the ordinary five-second scrape cadence before selecting another runtime fix."
+    }
   }
 }
