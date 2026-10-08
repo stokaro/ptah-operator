@@ -1,14 +1,14 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-10-06T19:59:26.998006+00:00",
-  "profileSourceCommit": "2fceaf524095df5ea1e126c5e3ef7f0e553607f1",
+  "frozenAt": "2026-10-08T15:25:27.498144+00:00",
+  "profileSourceCommit": "4a5fefb036dc32b23b5b9853c6fe33d034d5ad8e",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
   "sourceFiles": [
     {
       "path": "support/qualification/0.2.0.md",
-      "sha256": "0da8b2ffd36c9c00b3d37ec8e50e6eb5ac57f425e4e676bf69110ce76c6950b6"
+      "sha256": "5bb42f29ddc01fdaa89a3e0079c1c04f11dee214937e8994b9a05ad7b6e76e1a"
     },
     {
       "path": "support/qualification/0.2.0-coverage.md",
@@ -83,10 +83,10 @@
     "disposition": "No published predecessor. Synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 39,
+  "revision": 40,
   "supersedes": {
-    "freezeCommit": "b1c35d6068e98301b9b7140f36e056138b00871b",
-    "sha256": "58dca1814b04172f0cfe0ef9cc263eda068e1a56169b6144f2e50877ccbe388f"
+    "freezeCommit": "4a5fefb036dc32b23b5b9853c6fe33d034d5ad8e",
+    "sha256": "694f660ad4acfd0712412378c9eee4d392939a5e3d2363f986cbca27f4f2c464"
   },
-  "revisionReason": "Pin the minimal kindnet Pod resolver correction and its reproducible build inputs. The full-profile cold start failed because a Pending init-container Pod inherited a retained terminal Pod network policy after IP reuse. Prefer the live Pending Pod while preserving Running preference and terminal-only fallback. Keep all 1,000 completed background Jobs and Pods, network restrictions, capacity limits, cold-start deadline, matrix cells, and Q-01 through Q-12 targets unchanged. Preserve the original failed run and revision 38; this revision records no successful capacity or production acceptance result."
+  "revisionReason": "Raise the aggregate manager API-demand budget from 6,000 to 7,000 requests in every sliding 60-second window, as explicitly approved on October 8, 2026 for #580. Accept the 16.67% larger request budget without changing workload, sampling, zero HTTP 429/APF rejection requirements, client-throttling limits, or any other target. Preserve revision 39 and its original failed or incomplete results; any reassessment under revision 40 is separate. New affected qualification runs must record this revision before execution. This revision records no successful capacity or production acceptance result."
 }
