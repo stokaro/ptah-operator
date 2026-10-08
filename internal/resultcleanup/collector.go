@@ -177,13 +177,13 @@ func (c *Collector) process(ctx context.Context, meta metav1.PartialObjectMetada
 		c.observe("retire", err)
 		return retry, err
 	}
-	if err := resultretention.CheckUnpinned(ctx, c.policy.Reader, b); err != nil {
-		c.observe("retire", err)
-		return retry, err
-	}
 	name, _ := resultretention.Name(b)
-	marker := &api.PtahResultRecord{}
-	err = c.policy.Reader.Get(ctx, client.ObjectKey{Namespace: b.Namespace, Name: name}, marker)
+	// A listed retirement was just read directly and UID-checked above.
+	marker := record
+	if record.Spec.Type != "retired" {
+		marker = &api.PtahResultRecord{}
+		err = c.policy.Reader.Get(ctx, client.ObjectKey{Namespace: b.Namespace, Name: name}, marker)
+	}
 	if apierrors.IsNotFound(err) && record.Spec.Type != "retired" {
 		if !record.DeletionTimestamp.IsZero() {
 			if _, err := c.policy.foregroundBinding(ctx, record); err != nil {
@@ -191,6 +191,10 @@ func (c *Collector) process(ctx context.Context, meta metav1.PartialObjectMetada
 			}
 			err = c.collect(ctx, nil, b)
 			c.observe("delete", err)
+			return retry, err
+		}
+		if err := resultretention.CheckUnpinned(ctx, c.policy.Reader, b); err != nil {
+			c.observe("retire", err)
 			return retry, err
 		}
 		marker, err = resultretention.Record(b, resultretention.Source{Name: record.Name, UID: record.UID, Type: record.Spec.Type}, c.policy.Window)
@@ -217,20 +221,22 @@ func (c *Collector) process(ctx context.Context, meta metav1.PartialObjectMetada
 		return retry, err
 	}
 	r, err := resultretention.Decode(marker)
-	if err != nil || r.Binding != b {
+	if err != nil || r.Binding != b || marker.UID == "" || marker.CreationTimestamp.IsZero() {
 		return retry, resultretention.ErrRecord
 	}
+	deadline := marker.CreationTimestamp.Add(max(c.policy.Window, time.Duration(r.RetentionSeconds)*time.Second))
+	if c.policy.now().Before(deadline) {
+		// A persisted future deadline already requires retention. Checking
+		// current pins cannot permit collection sooner. Eligible and DELETE
+		// admission recheck those pins when the window has actually elapsed.
+		// The same deadline defers the credential scan. Its name-based hint
+		// can only postpone a replacement's check, never authorize deletion.
+		c.deferUntil(retryHintKey{credential: client.ObjectKey{Namespace: b.Namespace,
+			Name: jobconfig.CredentialName(b.UID, b.OperationID, b.JobName)}}, deadline)
+		return deadline, resultretention.ErrWindow
+	}
 	if err := resultretention.Eligible(ctx, c.policy.Reader, marker, c.policy.now(), c.policy.Window); err != nil {
-		if errors.Is(err, resultretention.ErrWindow) {
-			deadline := marker.CreationTimestamp.Add(max(c.policy.Window, time.Duration(r.RetentionSeconds)*time.Second))
-			// The same retirement also retains this attempt's credential. Its
-			// later metadata scan need not read the same window again. Keying
-			// this deferral by name can only postpone a replacement's check;
-			// deletion still verifies its actual UID, age and live pins.
-			c.deferUntil(retryHintKey{credential: client.ObjectKey{Namespace: b.Namespace,
-				Name: jobconfig.CredentialName(b.UID, b.OperationID, b.JobName)}}, deadline)
-			return deadline, err
-		}
+		c.observe("retire", err)
 		return retry, err
 	}
 	err = c.collect(ctx, marker, b)

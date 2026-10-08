@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	api "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/resultdelivery/jobconfig"
 	"github.com/stokaro/ptah-operator/internal/resultretention"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -15,6 +17,60 @@ type policyReads struct {
 	client.Reader
 	gets map[client.ObjectKey]int
 	fail client.ObjectKey
+}
+
+func TestCollectorReusesItsRetirementRead(t *testing.T) {
+	f := fixture(t)
+	f.retire(t)
+	reader := &policyReads{Reader: f.c, gets: map[client.ObjectKey]int{}}
+	f.p.Reader = reader
+	collector := f.collector(t)
+	if _, err := collector.process(t.Context(), metav1.PartialObjectMetadata{ObjectMeta: f.marker.ObjectMeta}); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.c.deletes) != 5 || len(remaining(t, f.c)) != 0 {
+		t.Fatalf("incomplete collection: deleted %v", f.c.deletes)
+	}
+	// Each DELETE independently reads the marker and current recovery pins.
+	// The collector needs one pin preflight, one marker read to process the
+	// listed record, and one marker read for its UID/RV-bound final DELETE.
+	if got, want := reader.gets[client.ObjectKeyFromObject(f.marker)], len(f.c.deletes)+2; got != want {
+		t.Errorf("retirement reads: %d, want %d", got, want)
+	}
+	if got, want := reader.gets[client.ObjectKeyFromObject(f.f.Subject)], len(f.c.deletes)+1; got != want {
+		t.Errorf("recovery pin reads: %d, want %d", got, want)
+	}
+}
+
+func TestCollectorRetainsNewRetirementWithoutAnotherPinRead(t *testing.T) {
+	f := fixture(t)
+	reader := &policyReads{Reader: f.c, gets: map[client.ObjectKey]int{}}
+	f.p.Reader = reader
+	collector := f.collector(t)
+	if err := collector.Step(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.c.deletes) != 0 || len(remaining(t, f.c)) != 5 {
+		t.Fatal("new retirement did not retain all evidence")
+	}
+	if got := reader.gets[client.ObjectKeyFromObject(f.f.Subject)]; got != 1 {
+		t.Fatalf("collector made %d pin reads, want one before creating retirement", got)
+	}
+	// A fresh collector must recheck a restored pin once the window expires.
+	// Knowing the deadline never grants permission to remove evidence.
+	subject := f.f.Subject.(*api.PtahSchema)
+	subject.Status.PendingObservation = &api.PendingObservationStatus{ApplyOperationID: f.f.Identity.Binding.OperationID}
+	if err := f.c.Update(t.Context(), subject); err != nil {
+		t.Fatal(err)
+	}
+	f.c.now = f.c.now.Add(time.Hour)
+	clear(reader.gets)
+	if err := f.collector(t).Step(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if reader.gets[client.ObjectKeyFromObject(subject)] == 0 || len(f.c.deletes) != 0 || len(remaining(t, f.c)) != 5 {
+		t.Fatal("expired retirement skipped its restored recovery pin")
+	}
 }
 
 func (r *policyReads) Get(ctx context.Context, key client.ObjectKey, object client.Object, opts ...client.GetOption) error {
