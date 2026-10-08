@@ -1751,6 +1751,9 @@ func TestResolveResultAdvancesToVerification(t *testing.T) {
 	if actual.Status.Source.Digest != testDigest || actual.Status.Source.Verified {
 		t.Fatalf("source status = %#v", actual.Status.Source)
 	}
+	if actual.Status.NextReconciliationTime == nil || !actual.Status.NextReconciliationTime.Time.Equal(reconciler.now()) {
+		t.Fatalf("Resolve retired without a persisted deadline for Verify: next=%v", actual.Status.NextReconciliationTime)
+	}
 	if contains(actual.Finalizers, activeOperationFinalizer) {
 		t.Fatal("completed operation retained the transient finalizer")
 	}
@@ -2254,6 +2257,10 @@ func TestObservePersistsCredentialFreeDriftFindings(t *testing.T) {
 	if actual.Status.Target.HighestDriftSeverity != "error" || actual.Status.Target.DriftFindingCount != 3 ||
 		!reflect.DeepEqual(actual.Status.Target.DriftFindings, wantFindings) {
 		t.Fatalf("persisted drift summary = %#v", actual.Status.Target)
+	}
+	if actual.Status.ActiveOperation != nil || actual.Status.NextReconciliationTime == nil ||
+		!actual.Status.NextReconciliationTime.Time.Equal(reconciler.now()) {
+		t.Fatalf("Observe retired without a persisted deadline for Plan: active=%v next=%v", actual.Status.ActiveOperation, actual.Status.NextReconciliationTime)
 	}
 }
 

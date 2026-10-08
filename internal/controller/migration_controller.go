@@ -1018,11 +1018,14 @@ func (r *MigrationReconciler) consumeMigrationResult(
 	default:
 		return r.retryMigrationOperation(ctx, migration, job, fmt.Errorf("unsupported migration operation %q", operation.Type))
 	}
+	// Intermediate steps are due now. Keep that deadline in the same status
+	// write that retires the claim so the handoff remains measurable.
+	next := metav1.NewTime(r.now())
 	if migration.Status.Phase != operatorv1alpha1.MigrationPhaseVerifying &&
 		migration.Status.Phase != operatorv1alpha1.MigrationPhaseReading {
-		next := metav1.NewTime(r.now().Add(migrationInterval(migration)))
-		migration.Status.NextReconciliationTime = &next
+		next = metav1.NewTime(next.Add(migrationInterval(migration)))
 	}
+	migration.Status.NextReconciliationTime = &next
 	if err := r.markJobHarvested(ctx, job); err != nil {
 		return ctrl.Result{}, err
 	}

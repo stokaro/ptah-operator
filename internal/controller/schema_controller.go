@@ -1461,6 +1461,8 @@ func (r *SchemaReconciler) consumeResultWithTransport(ctx context.Context, schem
 			schema.Status.Applied = nil
 		}
 		schema.Status.Phase = operatorv1alpha1.PhaseVerifying
+		// Persist when the next step became due before retiring this claim.
+		schema.Status.NextReconciliationTime = &now
 		setCondition(schema, operatorv1alpha1.ConditionArtifactResolved, metav1.ConditionTrue, operatorv1alpha1.ReasonDigestPinned, "Desired OCI reference resolved to immutable content")
 		setCondition(schema, operatorv1alpha1.ConditionArtifactVerified, metav1.ConditionFalse, operatorv1alpha1.ReasonPending, "Resolved content has not been verified")
 	case operatorv1alpha1.OperationVerify:
@@ -1478,6 +1480,7 @@ func (r *SchemaReconciler) consumeResultWithTransport(ctx context.Context, schem
 		schema.Status.Source.VerificationPolicyDigest = result.VerificationPolicyDigest
 		schema.Status.Source.VerifiedAt = &now
 		schema.Status.Phase = operatorv1alpha1.PhaseObserving
+		schema.Status.NextReconciliationTime = &now
 		setCondition(schema, operatorv1alpha1.ConditionArtifactVerified, metav1.ConditionTrue, operatorv1alpha1.ReasonPolicySatisfied, "Artifact type and verification policy were satisfied")
 	case operatorv1alpha1.OperationObserve:
 		if result.Stdout != "" || result.CoordinationDigest == "" || result.TargetIdentityDigest == "" ||
@@ -1529,6 +1532,7 @@ func (r *SchemaReconciler) consumeResultWithTransport(ctx context.Context, schem
 		setCondition(schema, operatorv1alpha1.ConditionDriftDetected, metav1.ConditionUnknown, operatorv1alpha1.ReasonScopedPlanPending, "Raw drift was recorded; the authoritative managed scope is being planned")
 		setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionUnknown, operatorv1alpha1.ReasonScopedPlanPending, "Convergence is unknown until scoped planning completes")
 		setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonScopedPlanPending, "A read-only scoped plan is required")
+		schema.Status.NextReconciliationTime = &now
 		if pending == nil {
 			schema.Status.Phase = operatorv1alpha1.PhasePlanning
 		} else {

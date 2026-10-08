@@ -102,6 +102,9 @@ func TestMigrationResolveResultAdvancesToVerification(t *testing.T) {
 	if actual.Status.Artifact == nil || actual.Status.Artifact.Digest != testDigest {
 		t.Fatalf("artifact binding = %#v", actual.Status.Artifact)
 	}
+	if actual.Status.NextReconciliationTime == nil || !actual.Status.NextReconciliationTime.Time.Equal(reconciler.now()) {
+		t.Fatalf("Resolve retired without a persisted deadline for Verify: next=%v", actual.Status.NextReconciliationTime)
+	}
 	harvested := &batchv1.Job{}
 	if err := api.Get(context.Background(), client.ObjectKeyFromObject(job), harvested); err != nil {
 		t.Fatal(err)
@@ -138,6 +141,33 @@ func TestMigrationVerifyRefusesAnArtifactOfAnotherType(t *testing.T) {
 	}
 	if actual.Status.ActiveOperation == nil || actual.Status.ActiveOperation.Attempt != 2 {
 		t.Fatalf("active operation after the refusal = %#v", actual.Status.ActiveOperation)
+	}
+}
+
+func TestMigrationVerifyPersistsHistoryDeadline(t *testing.T) {
+	t.Parallel()
+	migration := migrationFixture()
+	migration.Status.ExecutionBinding = migrationExecutionBinding()
+	migration.Status.Artifact = resolvedMigrationArtifact()
+	migration.Status.Phase = operatorv1alpha1.MigrationPhaseVerifying
+	migration.Finalizers = []string{migrationOperationFinalizer}
+	operation := migrationClaim(t, migration, operatorv1alpha1.MigrationOperationVerify)
+	job, pod := terminalMigrationWorkload(migration, batchv1.JobComplete)
+	frame := migrationFrame(t, runner.Result{
+		ProtocolVersion: runner.ProtocolVersion, Operation: runner.OperationVerify,
+		OperationID: operation.ID, ObservedArtifactType: dataplane.MigrationArtifactType,
+		ResolvedDigest: testDigest,
+	})
+	reconciler, api := fakeMigrationReconciler(t, staticLogs{content: frame}, migration, job, pod, verificationPolicyConfigMap())
+	if _, err := reconciler.Reconcile(t.Context(), migrationRequest(migration)); err != nil {
+		t.Fatal(err)
+	}
+	actual := readMigration(t, api, migration)
+	if actual.Status.Phase != operatorv1alpha1.MigrationPhaseReading || actual.Status.ActiveOperation != nil {
+		t.Fatalf("Verify did not finish: phase=%s active=%v", actual.Status.Phase, actual.Status.ActiveOperation)
+	}
+	if actual.Status.NextReconciliationTime == nil || !actual.Status.NextReconciliationTime.Time.Equal(reconciler.now()) {
+		t.Fatalf("Verify retired without a persisted deadline for History: next=%v", actual.Status.NextReconciliationTime)
 	}
 }
 
