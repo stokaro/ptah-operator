@@ -3,6 +3,7 @@
 import argparse
 import base64
 import copy
+from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
@@ -20,8 +21,8 @@ class ClusterRestoreProbe(OperatorProbe):
     cold_cluster_recovery = True
 
     def __init__(self, engine, family, environment, root, loss, timing='idle', result_delivery=False):
-        if loss not in ('operator', 'combined'):
-            raise ValueError('Cold cluster recovery requires operator or combined loss')
+        if loss not in ('operator', 'combined') and not (loss == 'database' and timing == 'operator-lag'):
+            raise ValueError('Cluster recovery requires operator/combined loss or database-only loss with an older operator checkpoint')
         super().__init__(engine, family, environment, root, loss, timing)
         if not self.envs['E2E_KIND_CLUSTER_NAME'].startswith('ptah-e2e-'):
             raise ValueError('Only the explicitly recorded disposable e2e cluster may be destroyed')
@@ -31,12 +32,96 @@ class ClusterRestoreProbe(OperatorProbe):
         self.source_envs = dict(self.envs)
         self.target_environment = root / 'target-environment'
         self.archived_workloads = {'jobs': [], 'pods': []}
+        self.source_watches = {}
         self.target_active = False
         self.result_delivery = result_delivery
         self.api_tunnels = []
         self.report.update(scope='Development-image cold-cluster recovery. The original kind control plane is destroyed, a separate cluster is provisioned after loss, and namespace state is rebuilt from an encrypted backup. Final-profile and final-artifact acceptance remain required.',
                            procedureSHA256=db.digest(Path(__file__).read_bytes()),
                            operatorProcedureSHA256=db.digest((REPO / 'support/qualification/probes/operator_restore.py').read_bytes()))
+        if self.loss == 'database':
+            self.report['scope'] = ('Development-image database loss with a lagged operator backup. The original operator '
+                'state survives suspended and continuously watched. A separate cluster restores the older operator '
+                'checkpoint and the database backup. Final-profile and final-artifact acceptance remain required.')
+
+    @property
+    def rebuilds_operator(self):
+        return True
+
+    @contextmanager
+    def source_access(self):
+        saved = self.envs, self.target_active, self.watches
+        self.envs, self.target_active = self.source_envs, False
+        if self.source_watches:
+            self.watches = self.source_watches
+        try:
+            yield
+        finally:
+            self.envs, self.target_active, self.watches = saved
+
+    def check_retained_source(self):
+        with self.source_access():
+            current = self.read()
+            secret = self.read('secrets', 'restore-target')
+            cluster = self.read('namespaces', 'kube-system')
+            original = self.retained_resource
+            self.check('the original operator state survives suspended without another execution',
+                       cluster['metadata']['uid'] == self.source_cluster['uid'] and
+                       current['metadata']['uid'] == original['metadata']['uid'] and
+                       current['spec'] == original['spec'] and current['spec'].get('suspend') is True and
+                       current['spec']['policy']['apply'] == 'OnApproval' and
+                       not current.get('status', {}).get('activeOperation') and
+                       current['status'].get('executionBinding') == original['status'].get('executionBinding') and
+                       bool(current['status'].get('executionBinding')) and
+                       secret['metadata']['uid'] == self.retained_secret['metadata']['uid'] and
+                       secret.get('type') == self.retained_secret.get('type') and
+                       bool(secret.get('data')) and secret['data'] == self.retained_secret.get('data'))
+            self.check('both original workload watches remain live', set(self.watches) == {'jobs', 'pods'} and
+                       all(process.poll() is None for process, _, _, _ in self.watches.values()))
+        self.report['survivingOperator'] = {'clusterUID': cluster['metadata']['uid'],
+            'resourceUID': current['metadata']['uid'], 'targetSecretUID': secret['metadata']['uid'],
+            'targetSecretDataSHA256': db.digest(json.dumps(secret['data'], sort_keys=True).encode()),
+            'specSHA256': db.digest(json.dumps(current['spec'], sort_keys=True).encode()), 'verifiedAt': db.now()}
+        self.persist()
+
+    def retain_source_namespace(self):
+        self.retained_resource = copy.deepcopy(self.recovery_update['resource'])
+        secrets = [r for r in self.recovery_update['namespaceState']['dependencies']
+                   if r['kind'] == 'Secret' and r['metadata']['name'] == 'restore-target']
+        self.check('the surviving target is bound to the encrypted recovery inventory', len(secrets) == 1)
+        self.retained_secret = copy.deepcopy(secrets[0])
+        self.check_retained_source()
+        # Keep the live streams through the final approval. Renaming their files
+        # also keeps target watchers from truncating source evidence.
+        for resource, (process, output, path, baseline) in self.watches.items():
+            retained = self.root / ('source-' + path.name)
+            path.rename(retained)
+            error = self.root / (resource + '-watch.stderr.private')
+            if error.exists():
+                error.rename(self.root / ('source-' + error.name))
+            self.source_watches[resource] = (process, output, retained, baseline)
+        self.watches = {}
+        self.report['operatorLossInjected'] = False
+        self.report['sourceRetainedAt'] = db.now()
+        self.persist()
+
+    def stop_source_watches(self):
+        clean = True
+        for process, output, _, _ in getattr(self, 'source_watches', {}).values():
+            try:
+                if process.poll() is None:
+                    process.terminate()
+                process.wait(timeout=10)
+            except (OSError, subprocess.TimeoutExpired):
+                clean = False
+                try:
+                    process.kill()
+                    process.wait(timeout=5)
+                except (OSError, subprocess.TimeoutExpired):
+                    pass
+            finally:
+                output.close()
+        return clean
 
     @staticmethod
     def api_ready(environment):
@@ -126,6 +211,9 @@ class ClusterRestoreProbe(OperatorProbe):
         return archive
 
     def lose_namespace(self):
+        if getattr(self, 'loss', None) == 'database':
+            self.retain_source_namespace()
+            return
         barriers = self.barrier('source-cluster-loss-boundary')
         for resource in ('jobs', 'pods'):
             self.archived_workloads[resource] = super().watched_objects(resource, barriers[resource])
@@ -153,6 +241,11 @@ class ClusterRestoreProbe(OperatorProbe):
         self.persist()
 
     def provision_target(self):
+        if getattr(self, 'loss', None) == 'database':
+            self.check('database-only lag recovery retains and watches the source operator',
+                       self.timing == 'operator-lag' and bool(self.report.get('sourceRetainedAt')) and
+                       self.report.get('operatorLossInjected') is False and bool(self.source_watches))
+            self.check_retained_source()
         if self.timing == 'during-apply':
             self.check('the source execution is fenced before replacement provisioning',
                        ApplyLoss.replacement_is_fenced(self.report))
@@ -246,7 +339,26 @@ class ClusterRestoreProbe(OperatorProbe):
         self.persist()
 
     def watched_objects(self, resource, barrier):
+        if getattr(self, 'source_watches', {}):
+            if not isinstance(barrier, dict) or set(barrier) != {'source', 'replacement'}:
+                raise RuntimeError('Surviving-source recovery requires an observation boundary on both clusters')
+            with self.source_access():
+                original = super().watched_objects(resource, barrier['source'])
+            return original + super().watched_objects(resource, barrier['replacement'])
         return self.archived_workloads[resource] + super().watched_objects(resource, barrier)
+
+    def barrier(self, name):
+        if getattr(self, 'source_watches', {}) and self.target_active:
+            with self.source_access():
+                original = super().barrier(name)
+            replacement = super().barrier(name)
+            return {kind: {'source': original[kind], 'replacement': replacement[kind]} for kind in ('jobs', 'pods')}
+        return super().barrier(name)
+
+    def verify_recovered_results(self, checkpoint, fresh_apply_uids):
+        super().verify_recovered_results(checkpoint, fresh_apply_uids)
+        if self.loss == 'database':
+            self.check_retained_source()
 
     @staticmethod
     def comparable_contract(items, namespace, controller):
@@ -316,6 +428,7 @@ class ClusterRestoreProbe(OperatorProbe):
             self.persist()
             raise
         finally:
+            watches_clean = self.stop_source_watches()
             self.close_api_tunnels()
             outcomes = []
             for name, path in (('replacement', self.target_environment), ('source', self.source_environment)):
@@ -333,10 +446,10 @@ class ClusterRestoreProbe(OperatorProbe):
                         outcome = {'cluster': name, 'exitCode': 127, 'error': 'cleanup could not start'}
                 outcomes.append(outcome)
             self.report.update(clusterCleanup=outcomes, completedAt=db.now())
-            if any(r['exitCode'] for r in outcomes):
+            if not watches_clean or any(r['exitCode'] for r in outcomes):
                 self.report.update(status='FAIL', cleanupSucceeded=False, failure='Owned cluster cleanup failed')
             self.persist()
-            if any(r['exitCode'] for r in outcomes):
+            if not watches_clean or any(r['exitCode'] for r in outcomes):
                 raise RuntimeError('Owned cluster cleanup failed; private diagnostics retained')
 
 
@@ -345,9 +458,9 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('engine', choices=db.IMAGES)
     parser.add_argument('family', choices=['schema', 'migration'])
-    parser.add_argument('environment', type=Path, help='Environment of the disposable source cluster that will be destroyed')
+    parser.add_argument('environment', type=Path, help='Environment of the disposable source cluster; both owned clusters are removed after the drill')
     parser.add_argument('output', type=Path)
-    parser.add_argument('--loss', choices=['operator', 'combined'], required=True)
+    parser.add_argument('--loss', choices=['operator', 'combined', 'database'], required=True)
     parser.add_argument('--timing', choices=['idle', 'operator-lag', 'during-apply'], default='idle')
     parser.add_argument('--result-delivery', action='store_true', help='Enable durable delivery before backup and on the replacement installation')
     args = parser.parse_args()

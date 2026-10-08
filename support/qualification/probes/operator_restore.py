@@ -33,8 +33,8 @@ class OperatorProbe(db.Probe):
             raise ValueError('Unknown recovery timing')
         if timing == 'during-apply' and loss != 'database' and not self.cold_cluster_recovery:
             raise ValueError('This procedure supports database loss only during Apply; use cluster_restore.py for operator or combined loss')
-        if timing == 'operator-lag' and loss == 'database':
-            raise ValueError('The operator-lag procedure must restore the older operator backup')
+        if timing == 'operator-lag' and loss == 'database' and not self.cold_cluster_recovery:
+            raise ValueError('The operator-lag procedure must restore the older operator backup; use cluster_restore.py for an isolated recovery copy')
         super().__init__(engine, root)
         self.family = family
         self.loss = loss
@@ -56,6 +56,10 @@ class OperatorProbe(db.Probe):
             procedureSHA256=db.digest(Path(__file__).read_bytes()), databaseProcedureSHA256=db.digest((REPO / 'support/qualification/probes/database_restore.py').read_bytes()))
         self.report['applyRecoveryProcedureSHA256'] = db.digest((REPO / 'support/qualification/probes/restore_during_apply.py').read_bytes())
         self.watches = {}
+
+    @property
+    def rebuilds_operator(self):
+        return self.loss != 'database'
 
     def kubectl(self, action, args, data=None, required=True):
         return self.command(action, ['kubectl', '--kubeconfig', self.envs['E2E_KUBECONFIG'], '--request-timeout=30s', '-n', self.namespace] + args, data, required)
@@ -706,6 +710,7 @@ class OperatorProbe(db.Probe):
                   'resource': self.settled('Suspended'), 'namespaceState': self.namespace_backup()}
         self.validate_lagged_update(checkpoint, later, update, self.report['backups'])
         self.encrypted('operator-update', json.dumps(update).encode(), recipient, key, wrong)
+        self.recovery_update = update
         self.report['operatorUpdateCompletedAt'] = db.now()
         self.persist()
 
@@ -806,7 +811,7 @@ class OperatorProbe(db.Probe):
             recipient = self.command('read backup recipient', ['age-keygen', '-y', str(key)]).stdout.decode().strip()
             self.report['backupStartedAt'] = db.now()
             checkpoint = {'resource': suspended, 'initialApplied': applied, 'plan': old_plan, 'approval': stored_old_approval, 'jobs': list(original_jobs.values()), 'pods': original_pods, 'targetSecret': target_secret}
-            if self.loss != 'database':
+            if self.rebuilds_operator:
                 checkpoint['namespaceState'] = self.namespace_backup()
             else:
                 checkpoint['durableResults'] = self.result_backup()
@@ -850,7 +855,7 @@ class OperatorProbe(db.Probe):
                            all(0 <= (loss_at - db.dt.datetime.fromisoformat(self.report[field])).total_seconds() <= 300
                                for field in ('backupStartedAt', 'databaseBackupStartedAt')))
             clock = time.monotonic()
-            if self.loss != 'database':
+            if self.rebuilds_operator:
                 self.lose_namespace()
                 if in_flight:
                     self.check('the original cluster is destroyed before fencing surviving SQL',
@@ -879,7 +884,7 @@ class OperatorProbe(db.Probe):
                     else:
                         self.sql(restored, data.decode(), database='postgres' if self.engine == 'postgresql' else '')
                     del data
-            if self.loss != 'database':
+            if self.rebuilds_operator:
                 self.restore_namespace(checkpoint_path, key)
             after = self.inventories(restored)
             self.report['inventories'] = {}
@@ -903,7 +908,7 @@ class OperatorProbe(db.Probe):
             recovered = self.settled('InSync')
             if in_flight:
                 in_flight.verify_resolution(recovered)
-            if self.loss == 'database':
+            if not self.rebuilds_operator:
                 self.check('operator identity survived database loss', recovered['metadata']['uid'] == original_uid)
                 self.check('execution binding survived database loss', recovered['status'].get('executionBinding') == suspended['status'].get('executionBinding') and bool(suspended['status'].get('executionBinding')))
                 self.check('target Secret identity survived database loss', self.read('secrets', 'restore-target')['metadata']['uid'] == target_secret['metadata']['uid'])
@@ -922,7 +927,7 @@ class OperatorProbe(db.Probe):
             self.check('recovery change has a new exact plan', fresh_plan['metadata']['uid'] != old_plan['metadata']['uid'])
             denied = self.approve(ready, old_plan, 'restore-old-replay', required=False)
             expected = b"referenced plan is no longer current for the schema" if self.family == 'schema' else b"referenced plan is no longer the migration's current plan"
-            if self.loss == 'database':
+            if not self.rebuilds_operator:
                 self.check('admission rejects an old plan approval', denied.returncode != 0 and expected in denied.stderr)
                 if in_flight:
                     denied_in_flight = self.approve(ready, in_flight.plan, 'restore-in-flight-replay', required=False)
@@ -966,7 +971,7 @@ class OperatorProbe(db.Probe):
                 old_finished = max(old_finished, in_flight.execution_ended_at)
             new_created = min(db.dt.datetime.fromisoformat(current_apply_jobs[u]['metadata']['creationTimestamp'].replace('Z', '+00:00')) for u in new_apply_uids)
             self.check('replacement Apply starts after original execution ended', new_created >= old_finished)
-            if self.loss == 'database':
+            if not self.rebuilds_operator:
                 retained = self.read(self.kind.lower() + 'approvals', 'restore-original')
                 self.check('original approval identity and stamped spec are unchanged', retained['metadata']['uid'] == stored_old_approval['metadata']['uid'] and retained['spec'] == stored_old_approval['spec'])
                 if in_flight:
