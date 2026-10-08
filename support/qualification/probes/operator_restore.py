@@ -14,6 +14,7 @@ import time
 from urllib.parse import urlencode
 from result_first_harvest import publication
 from restore_during_apply import ApplyLoss, terminal_apply_pods
+from restore_runtime import ReleaseRuntime
 
 REPO = Path(__file__).resolve().parents[3]
 OPERATOR_CRDS = frozenset(name + '.operator.ptah.run' for name in (
@@ -28,7 +29,7 @@ spec.loader.exec_module(db)
 class OperatorProbe(db.Probe):
     cold_cluster_recovery = False
 
-    def __init__(self, engine, family, environment, root, loss="database", timing="idle"):
+    def __init__(self, engine, family, environment, root, loss="database", timing="idle", release_assets=None):
         if timing not in ('idle', 'operator-lag', 'during-apply'):
             raise ValueError('Unknown recovery timing')
         if timing == 'during-apply' and loss != 'database' and not self.cold_cluster_recovery:
@@ -39,6 +40,8 @@ class OperatorProbe(db.Probe):
         self.family = family
         self.loss = loss
         self.timing = timing
+        self.release_assets = release_assets
+        self.release_runtime = None
         self.envs = dict(line.split('=', 1) for line in environment.read_text().splitlines() if '=' in line)
         endpoint = self.command('verify the explicit database Docker endpoint', db.DOCKER + ['context', 'inspect', db.DOCKER[-1], '--format', '{{.Endpoints.docker.Host}}']).stdout.decode().strip()
         if self.envs.get('E2E_DOCKER_ENDPOINT') != endpoint:
@@ -139,7 +142,7 @@ class OperatorProbe(db.Probe):
         credentials = json.loads(Path(self.envs['E2E_REGISTRY_CREDENTIALS_FILE']).read_text())
         self.secret('restore-registry', {'username': credentials['username'], 'password': credentials['password'], 'registry': self.registry, 'allowPlainHTTP': 'true'})
         auth = base64.b64encode((credentials['username'] + ':' + credentials['password']).encode()).decode()
-        image_registry = self.envs['E2E_EXECUTOR_IMAGE'].split('/')[0]
+        image_registry = self.envs['E2E_REGISTRY_HOST']
         self.secret('restore-pull', {'.dockerconfigjson': json.dumps({'auths': {image_registry: {'auth': auth}}})}, 'kubernetes.io/dockerconfigjson')
         policy_type = 'schema' if self.family == 'schema' else 'migrations'
         self.create(self.obj('ConfigMap', 'restore-policy', immutable=True, data={'policy.yaml': 'version: 1\nartifact_types:\n  - application/vnd.stokaro.ptah.' + policy_type + '.v1\n'}))
@@ -219,6 +222,8 @@ class OperatorProbe(db.Probe):
                 if any(o.get('uid') in job_uids for o in pod['metadata'].get('ownerReferences', [])):
                     selected.append(pod)
             if terminal_apply_pods(selected, job_uids, require_success):
+                if getattr(self, 'release_runtime', None):
+                    self.release_runtime.verify_apply_pods(selected)
                 return selected
             time.sleep(1)
         raise RuntimeError('the exact Apply Pods did not all reach the required terminal state')
@@ -758,9 +763,22 @@ class OperatorProbe(db.Probe):
         if rpo.get('database') != 'PASS' or not operator_ok:
             report.update(status='FAIL', failure='Recovery completed, but the required recovery-point objective is not established')
 
+    def prepare_runtime(self):
+        if getattr(self, 'release_assets', None) and not getattr(self, 'release_runtime', None):
+            runtime = ReleaseRuntime(self, self.release_assets)
+            runtime.authenticate()
+            runtime.install(self.envs, 'source')
+            self.release_runtime = runtime
+            self.report.update(operatorImage=self.envs['E2E_CONTROLLER_IMAGE'],
+                               executorImage=self.envs['E2E_EXECUTOR_IMAGE'])
+            self.report['scope'] = ('Native recovery with authenticated release runtime. Namespace rebuilds still '
+                'exclude control-plane loss. Runtime identity, functional recovery, RPO/RTO and custody '
+                'remain separate assertions.')
+
     def run(self):
         in_flight = None
         try:
+            self.prepare_runtime()
             self.prepare_namespace()
             self.command('create isolated database network', db.DOCKER + ['network', 'create', '--internal', '--label', 'ptah.restore-run=' + self.prefix, self.prefix])
             self.network = self.prefix
@@ -1066,8 +1084,9 @@ if __name__ == '__main__':
     parser.add_argument('output', type=Path)
     parser.add_argument('--loss', choices=['database', 'operator', 'combined'], default='database')
     parser.add_argument('--timing', choices=['idle', 'operator-lag', 'during-apply'], default='idle')
+    parser.add_argument('--release-assets', type=Path, help='Complete authenticated 0.2.0 release download to install before creating the fixture')
     args = parser.parse_args()
-    probe = OperatorProbe(args.engine, args.family, args.environment, args.output, args.loss, args.timing)
+    probe = OperatorProbe(args.engine, args.family, args.environment, args.output, args.loss, args.timing, args.release_assets)
     probe.run()
     print(json.dumps({k: probe.report.get(k) for k in ('engine', 'family', 'status', 'functionalRestore', 'profileRPO', 'recoverySeconds', 'cleanupSucceeded')}))
     raise SystemExit(0 if probe.report.get('status') == 'PASS' else 2)
