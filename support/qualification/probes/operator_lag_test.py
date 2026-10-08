@@ -1,4 +1,5 @@
 import copy
+import base64
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -143,22 +144,43 @@ class LagDiagnosisTest(unittest.TestCase):
         self.new_source = {'ociRef': 'oci://fixture/new@sha256:' + '2' * 64}
         spec = {'suspend': True, 'policy': {'apply': 'OnApproval'}, self.field: self.old_source}
         self.live = {'spec': copy.deepcopy(spec)}
-        self.old = {'resource': {'spec': copy.deepcopy(spec)}}
+        reading = json.loads((Path(__file__).parent / 'testdata/workload-history.json').read_text())
+        job, pod = copy.deepcopy((reading['jobs'][0], reading['pods'][0]))
+        later_job, later_pod = copy.deepcopy((job, pod))
+        later_job['metadata']['uid'] = 'completed-intervening'
+        later_pod['metadata']['uid'] = 'intervening-pod'
+        later_pod['metadata']['ownerReferences'][0]['uid'] = later_job['metadata']['uid']
+        resource = {'metadata': {'uid': reading['identity']['uid']}, 'spec': copy.deepcopy(spec)}
+        self.old = {'resource': resource, 'jobs': [job]}
         self.later = {'sourceField': self.field, 'reference': self.new_source['ociRef'],
-                      'suspended': {'spec': {**copy.deepcopy(spec), self.field: self.new_source}},
-                      'jobs': [{'metadata': {'uid': 'completed-original'}}, {'metadata': {'uid': 'completed-intervening'}}]}
+                      'suspended': {'metadata': copy.deepcopy(resource['metadata']),
+                                    'spec': {**copy.deepcopy(spec), self.field: self.new_source}},
+                      'jobs': [job, later_job], 'pods': [pod, later_pod],
+                      'plan': {'metadata': {'uid': 'intervening-plan'}, 'spec': {'artifactDigest': 'new'}},
+                      'approval': {'metadata': {'uid': 'intervening-approval'}, 'spec': {'planUID': 'intervening-plan'},
+                                   'status': {'conditions': [{'type': 'Consumed', 'status': 'True'}]}}}
+        dependencies = [{'kind': kind, 'apiVersion': 'v1', 'metadata': {'name': name, 'uid': name + '-uid'},
+                         'data': {'fixture': 'original'}}
+                        for kind, name in [('Secret', 'restore-target'), ('Secret', 'restore-registry'),
+                            ('Secret', 'restore-pull'), ('ConfigMap', 'restore-policy'),
+                            ('Service', 'restore-database'), ('Service', 'restore-registry'),
+                            ('EndpointSlice', 'restore-database-endpoint'), ('EndpointSlice', 'restore-registry-endpoint')]]
+        self.old['namespaceState'] = {'namespace': {'metadata': {'uid': 'original-namespace'}},
+            'dependencies': dependencies, 'plans': [], 'approvals': [], 'chunks': [], 'jobs': [job], 'pods': [pod],
+            'preservedContract': [{'kind': 'CustomResourceDefinition', 'uid': 'contract'}], 'durableResults': {'enabled': False}}
+        fresh = copy.deepcopy(self.old['namespaceState'])
+        fresh.update(plans=[self.later['plan']], approvals=[self.later['approval']], jobs=[later_job], pods=[later_pod])
+        self.update = {'startedAt': '2026-10-08T19:05:00+00:00',
+                       'resource': copy.deepcopy(self.later['suspended']), 'namespaceState': fresh}
         self.payloads = {}
         self.probe.report = {'backups': {}, 'checks': {}}
-        for name, obj in (('operator-checkpoint', self.old), ('intervening-execution', self.later)):
-            payload = json.dumps(obj).encode()
-            self.payloads[name] = payload
-            self.probe.report['backups'][name] = {'plaintextSHA256': db.digest(payload)}
+        self.seal_archives()
         self.probe.command = lambda action, args: SimpleNamespace(stdout=self.payloads[Path(args[-1]).stem])
         self.probe.persist = lambda: None
         self.probe.settled = lambda phase: copy.deepcopy(self.live)
         self.probe.source_spec = lambda reference: {'ociRef': reference}
         self.probe.barrier = lambda name: name
-        self.jobs = {'completed-original', 'completed-intervening'}
+        self.jobs = {j['metadata']['uid'] for j in self.later['jobs']}
         self.probe.watched_apply_jobs = lambda barrier: self.jobs
         self.patches = []
 
@@ -167,6 +189,17 @@ class LagDiagnosisTest(unittest.TestCase):
             self.live['spec'].update(value['spec'])
 
         self.probe.patch = patch
+
+    def seal_archives(self):
+        for name, obj in (('operator-checkpoint', self.old), ('intervening-execution', self.later)):
+            payload = json.dumps(obj).encode()
+            self.payloads[name] = payload
+            self.probe.report['backups'][name] = {'plaintextSHA256': db.digest(payload)}
+        self.update.update(baseSHA256=db.digest(self.payloads['operator-checkpoint']),
+                           executionSHA256=db.digest(self.payloads['intervening-execution']))
+        payload = json.dumps(self.update).encode()
+        self.payloads['operator-update'] = payload
+        self.probe.report['backups']['operator-update'] = {'plaintextSHA256': db.digest(payload)}
 
     def diagnose(self):
         self.probe.select_diagnosed_source(Path('operator-checkpoint.age'), Path('key'), self.field)
@@ -181,11 +214,12 @@ class LagDiagnosisTest(unittest.TestCase):
         self.assertEqual(self.probe.lag_execution, self.later)
 
     def test_bad_backup_or_changed_runtime_never_enables_a_source_change(self):
-        for defect in ('old-backup', 'later-backup', 'already-new', 'not-suspended', 'automatic', 'replay', 'missing-history'):
+        for defect in ('old-backup', 'later-backup', 'update-backup', 'already-new', 'not-suspended', 'automatic', 'replay', 'missing-history'):
             with self.subTest(defect=defect):
                 self.setUp()
-                if defect in ('old-backup', 'later-backup'):
-                    name = 'operator-checkpoint' if defect == 'old-backup' else 'intervening-execution'
+                if defect in ('old-backup', 'later-backup', 'update-backup'):
+                    name = {'old-backup': 'operator-checkpoint', 'later-backup': 'intervening-execution',
+                            'update-backup': 'operator-update'}[defect]
                     self.payloads[name] += b' '
                 elif defect == 'already-new':
                     self.live['spec'][self.field] = self.new_source
@@ -200,6 +234,118 @@ class LagDiagnosisTest(unittest.TestCase):
                 with self.assertRaises(RuntimeError):
                     self.diagnose()
                 self.assertEqual(self.patches, [])
+
+    def test_valid_checksums_do_not_hide_an_incomplete_update(self):
+        for defect in ('missing-dependency', 'changed-secret', 'duplicate-dependency', 'changed-contract',
+                       'missing-inventory', 'different-namespace', 'different-resource', 'active-operation',
+                       'unresolved-run', 'unresolved-copy', 'automatic-update', 'changed-source', 'missing-plan',
+                       'changed-approval', 'unconsumed-approval', 'missing-job', 'missing-pod', 'running-pod',
+                       'missing-finish', 'different-delivery', 'naive-time'):
+            with self.subTest(defect=defect):
+                self.setUp()
+                fresh = self.update['namespaceState']
+                if defect == 'missing-dependency': fresh['dependencies'].pop()
+                elif defect == 'changed-secret': fresh['dependencies'][0]['data']['fixture'] = 'rotated'
+                elif defect == 'duplicate-dependency': fresh['dependencies'][-1] = fresh['dependencies'][0]
+                elif defect == 'changed-contract': fresh['preservedContract'][0]['uid'] = 'changed'
+                elif defect == 'missing-inventory': fresh.pop('durableResults')
+                elif defect == 'different-namespace': fresh['namespace']['metadata']['uid'] = 'another'
+                elif defect == 'different-resource': self.update['resource']['metadata']['uid'] = 'another'
+                elif defect == 'active-operation': self.update['resource']['status'] = {'activeOperation': {'id': 'running'}}
+                elif defect == 'unresolved-run': self.update['resource']['status'] = {'unresolvedRun': {'operationID': 'unknown'}}
+                elif defect == 'unresolved-copy': self.update['resource']['metadata']['annotations'] = {'operator.ptah.run/unresolved-run': '{}'}
+                elif defect == 'automatic-update': self.update['resource']['spec']['policy']['apply'] = 'Always'
+                elif defect == 'changed-source': self.update['resource']['spec'][self.field] = self.old_source
+                elif defect == 'missing-plan': fresh['plans'] = []
+                elif defect == 'changed-approval': fresh['approvals'] = [copy.deepcopy(self.later['approval'])]; fresh['approvals'][0]['spec']['planUID'] = 'other'
+                elif defect == 'unconsumed-approval': self.later['approval']['status']['conditions'] = []
+                elif defect == 'missing-job': fresh['jobs'] = []
+                elif defect == 'missing-pod': fresh['pods'] = []
+                elif defect == 'running-pod': self.later['pods'][1]['status']['phase'] = 'Running'
+                elif defect == 'missing-finish': self.later['pods'][1]['status']['containerStatuses'][0]['state']['terminated'].pop('finishedAt')
+                elif defect == 'different-delivery': fresh['durableResults']['enabled'] = True
+                elif defect == 'naive-time': self.update['startedAt'] = '2026-10-08T19:05:00'
+                self.seal_archives()
+                with self.assertRaises((RuntimeError, KeyError)):
+                    self.diagnose()
+                self.assertEqual(self.patches, [])
+
+    def test_individually_valid_archives_must_belong_to_the_same_kit(self):
+        for field in ('baseSHA256', 'executionSHA256'):
+            with self.subTest(field=field):
+                self.setUp()
+                self.update[field] = 'f' * 64
+                payload = json.dumps(self.update).encode()
+                self.payloads['operator-update'] = payload
+                self.probe.report['backups']['operator-update']['plaintextSHA256'] = db.digest(payload)
+                with self.assertRaisesRegex(RuntimeError, 'checkpoint or execution binding differs'):
+                    self.diagnose()
+                self.assertEqual(self.patches, [])
+
+    def test_a_fresh_recovery_kit_preserves_the_failed_base_age(self):
+        self.diagnose()
+        report = self.probe.report
+        report.update(status='PASS', functionalRestore='PASS', cleanupSucceeded=True, timing='operator-lag',
+                      operatorBaseBackupAgeUpperBoundSeconds=380,
+                      operatorUpdateCompletedAt='2026-10-08T19:05:10+00:00',
+                      databaseBackupStartedAt='2026-10-08T19:05:11+00:00', lossInjectedAt='2026-10-08T19:05:20+00:00',
+                      profileRPO={'database': 'PASS', 'operatorBase': 'FAIL', 'combinedOperatorRecoveryKit': 'PASS'})
+        self.assertEqual(OperatorProbe.lagged_recovery_point(report), 20)
+        OperatorProbe.finalize_result(report)
+        self.assertEqual(report['status'], 'PASS')
+        self.assertEqual(report['profileRPO']['operatorBase'], 'FAIL')
+        self.assertEqual(report['operatorBaseBackupAgeUpperBoundSeconds'], 380)
+        for defect in ('missing-update', 'different-update', 'different-base', 'missing-diagnosis', 'after-loss',
+                       'after-database', 'old-point', 'naive-point', 'not-lag'):
+            with self.subTest(defect=defect):
+                bad = copy.deepcopy(report)
+                if defect == 'missing-update': bad['backups'].pop('operator-update')
+                elif defect == 'different-update': bad['lagDiagnosis']['operatorUpdateSHA256'] = 'f' * 64
+                elif defect == 'different-base': bad['lagDiagnosis']['operatorCheckpointSHA256'] = 'f' * 64
+                elif defect == 'missing-diagnosis': bad.pop('lagDiagnosis')
+                elif defect == 'after-loss': bad['operatorUpdateCompletedAt'] = '2026-10-08T19:05:21+00:00'
+                elif defect == 'after-database': bad['operatorUpdateCompletedAt'] = '2026-10-08T19:05:12+00:00'
+                elif defect == 'old-point': bad['lagDiagnosis']['recoveryPointStartedAt'] = '2026-10-08T19:00:19+00:00'
+                elif defect == 'naive-point': bad['lagDiagnosis']['recoveryPointStartedAt'] = '2026-10-08T19:05:00'
+                elif defect == 'not-lag': bad['timing'] = 'idle'
+                OperatorProbe.finalize_result(bad)
+                self.assertEqual(bad['status'], 'FAIL')
+                self.assertEqual(bad['functionalRestore'], 'PASS')
+
+    def test_later_recovery_inventory_reconstructs_the_actual_durable_apply(self):
+        path = Path(__file__).parent / 'testdata/results/result-network-2026-10-02/ptah-result-network-pg-migration-workflow.json'
+        reading = json.loads(path.read_text())
+        job_uid = reading['verification']['publications']['migration-apply']['jobUID']
+        for defect in ('none', 'missing-receipt', 'wrong-resource', 'missing-trust', 'different-journal'):
+            with self.subTest(defect=defect):
+                self.setUp()
+                for resource in (self.old['resource'], self.later['suspended'], self.update['resource']):
+                    resource['metadata'].update(uid=reading['resource']['metadata']['uid'],
+                                                namespace=reading['resource']['metadata']['namespace'])
+                    resource['kind'] = 'PtahMigration'
+                self.later['jobs'][1]['metadata']['uid'] = job_uid
+                self.later['pods'][1]['metadata']['ownerReferences'][0]['uid'] = job_uid
+                self.jobs = {j['metadata']['uid'] for j in self.later['jobs']}
+                self.old['namespaceState']['durableResults'] = {'enabled': True}
+                material = {'enabled': True, 'records': copy.deepcopy(list(reading['publications'].values())),
+                    'trust': {'metadata': {'uid': 'trust'}, 'data': {k: 'eA==' for k in
+                        ('tls.crt', 'tls.key', 'ca.crt', 'client-ca.crt', 'client-ca.key', 'client-trust.crt')}},
+                    'enrollmentPolicy': {'metadata': {'uid': 'policy'}, 'data': {'enrollment.json': '{}'}},
+                    'journal': {'data': {'rotation.json': base64.b64encode(json.dumps(
+                        {'projectionUID': 'trust', 'policyUID': 'policy'}).encode()).decode()}}}
+                self.update['namespaceState']['durableResults'] = material
+                if defect == 'missing-receipt': material['records'] = [r for r in material['records'] if r['spec']['type'] != 'complete']
+                elif defect == 'wrong-resource':
+                    for resource in (self.old['resource'], self.later['suspended'], self.update['resource']):
+                        resource['metadata']['uid'] = 'foreign-resource'
+                elif defect == 'missing-trust': material['trust']['data'].pop('client-ca.key')
+                elif defect == 'different-journal': material['trust']['metadata']['uid'] = 'replacement'
+                self.seal_archives()
+                if defect == 'none': self.diagnose()
+                else:
+                    with self.assertRaises((RuntimeError, ValueError, KeyError)):
+                        self.diagnose()
+                    self.assertEqual(self.patches, [])
 
 
 if __name__ == '__main__':

@@ -579,13 +579,16 @@ class OperatorProbe(db.Probe):
         # Read both immutable archives and record the controlled recovery edit.
         archives = {}
         for name, path in (('operator-checkpoint', checkpoint_path),
-                           ('intervening-execution', self.root / 'intervening-execution.age')):
+                           ('intervening-execution', self.root / 'intervening-execution.age'),
+                           ('operator-update', self.root / 'operator-update.age')):
             payload = self.command('read the original ' + name + ' during lag diagnosis',
                                    ['age', '-d', '-i', str(key), str(path)]).stdout
             self.check(name + ' still matches its recorded recovery bytes',
                        db.digest(payload) == self.report['backups'][name]['plaintextSHA256'])
             archives[name] = json.loads(payload)
         old, later = archives['operator-checkpoint'], archives['intervening-execution']
+        update = archives['operator-update']
+        self.validate_lagged_update(old, later, update, self.report['backups'])
         live = self.settled('Suspended')
         self.check('the restored operator really retains the older source while suspended',
                    live['spec']['suspend'] is True and live['spec']['policy']['apply'] == 'OnApproval' and
@@ -603,10 +606,129 @@ class OperatorProbe(db.Probe):
         self.report['lagDiagnosis'] = {'completedAt': db.now(),
             'operatorCheckpointSHA256': self.report['backups']['operator-checkpoint']['plaintextSHA256'],
             'interveningEvidenceSHA256': self.report['backups']['intervening-execution']['plaintextSHA256'],
+            'operatorUpdateSHA256': self.report['backups']['operator-update']['plaintextSHA256'],
+            'recoveryPointStartedAt': update['startedAt'],
             'controlledSourceChange': {'from': old['resource']['spec'][source_field]['ociRef'], 'to': later['reference']},
             'decision': 'The restored database matches the newer completed execution. Select that immutable artifact while suspended; retain OnApproval and do not replay the older source.'}
         self.lag_execution = later
         self.persist()
+
+    @staticmethod
+    def validate_lagged_update(old, later, update, backups):
+        """The later recovery point must cover the whole declared rebuild.
+
+        This procedure changes only the desired artifact between checkpoints.
+        Refuse a changed dependency or installation instead of silently
+        restoring its older bytes. Execution and result identities stay in
+        the encrypted archives; they never become replacement authorization.
+        """
+        def require(condition, reason):
+            if not condition:
+                raise RuntimeError('Incomplete lagged recovery kit: ' + reason)
+        require(update.get('baseSHA256') == backups['operator-checkpoint']['plaintextSHA256'] and
+                update.get('executionSHA256') == backups['intervening-execution']['plaintextSHA256'],
+                'checkpoint or execution binding differs')
+        started = db.dt.datetime.fromisoformat(update['startedAt'])
+        require(started.tzinfo is not None, 'recovery point has no time zone')
+        previous, current = old['resource'], update['resource']
+        field = later['sourceField']
+        require(previous['metadata'].get('uid') and previous['metadata']['uid'] == current['metadata'].get('uid') ==
+                later['suspended']['metadata'].get('uid'), 'resource identity differs')
+        expected = copy.deepcopy(previous['spec']); expected[field] = later['suspended']['spec'][field]
+        require(current['spec'] == expected == later['suspended']['spec'] and
+                current['spec']['suspend'] is True and current['spec']['policy']['apply'] == 'OnApproval' and
+                current['spec'][field]['ociRef'] == later['reference'] and
+                not current.get('status', {}).get('activeOperation') and
+                not current.get('status', {}).get('unresolvedRun') and
+                not current['metadata'].get('annotations', {}).get('operator.ptah.run/unresolved-run'),
+                'resource is not the declared quiescent update')
+        base, fresh = old['namespaceState'], update['namespaceState']
+        required = {'namespace', 'dependencies', 'plans', 'approvals', 'chunks', 'jobs', 'pods',
+                    'preservedContract', 'durableResults'}
+        require(required <= set(base) and required <= set(fresh), 'namespace inventory is incomplete')
+        require(base['namespace']['metadata']['uid'] == fresh['namespace']['metadata']['uid'], 'namespace identity differs')
+        def dependencies(objects):
+            values = {}
+            for obj in objects:
+                identity = (obj['kind'], obj['metadata']['name'], obj['metadata']['uid'])
+                require(identity not in values, 'duplicate dependency')
+                values[identity] = {k: v for k, v in obj.items() if k != 'metadata'}
+                values[identity]['metadata'] = {k: v for k, v in obj['metadata'].items()
+                                               if k not in ('resourceVersion', 'managedFields')}
+            require(len(values) == 8, 'the rebuild requires all eight dependencies')
+            return values
+        require(dependencies(base['dependencies']) == dependencies(fresh['dependencies']), 'dependency changed after the base backup')
+        for name in ('preservedContract', 'release', 'sourceCluster'):
+            require(base.get(name) == fresh.get(name), name + ' changed after the base backup')
+        require(bool(base['preservedContract']), 'installation contract is empty')
+        for collection, item in (('plans', later['plan']), ('approvals', later['approval'])):
+            matches = [r for r in fresh[collection] if r['metadata']['uid'] == item['metadata']['uid']]
+            require(len(matches) == 1 and matches[0]['spec'] == item['spec'], 'intervening ' + collection + ' missing or changed')
+        require(any(c.get('type') == 'Consumed' and c.get('status') == 'True'
+                    for c in later['approval'].get('status', {}).get('conditions', [])), 'intervening approval was not consumed')
+        jobs = {job['metadata']['uid'] for job in later['jobs']}
+        require(len(jobs) == len(later['jobs']) == 2 and terminal_apply_pods(later['pods'], jobs),
+                'both exact pre-loss executions must have stopped')
+        original_jobs = {j['metadata']['uid'] for j in old['jobs']}
+        new_jobs = jobs - original_jobs
+        require(len(original_jobs) == len(new_jobs) == 1 and original_jobs < jobs,
+                'the intervening execution is not distinct')
+        for uid in new_jobs:
+            require(any(j['metadata']['uid'] == uid for j in fresh['jobs']) and
+                    any(any(o.get('uid') == uid for o in p['metadata'].get('ownerReferences', []))
+                        for p in fresh['pods']), 'the latest inventory omitted the intervening executor')
+        for chunk in later.get('chunks', []):
+            matches = [r for r in fresh['chunks'] if r['metadata']['uid'] == chunk['metadata']['uid']]
+            require(len(matches) == 1 and matches[0]['spec'] == chunk['spec'], 'intervening plan chunk missing or changed')
+        results = fresh['durableResults']
+        require(results.get('enabled') is base['durableResults'].get('enabled') and
+                type(results.get('enabled')) is bool, 'result delivery mode differs')
+        if results['enabled']:
+            OperatorProbe.validate_result_material(results['trust'], results['journal'], results['enrollmentPolicy'])
+            records = {r['metadata']['name']: r for r in results['records']}
+            for uid in new_jobs:
+                intent, _, payload = publication(records, uid)
+                binding = json.loads(base64.b64decode(intent['spec']['data']))['binding']
+                require(binding['uid'] == current['metadata']['uid'] and
+                        binding['namespace'] == current['metadata']['namespace'] and
+                        binding['operation'] == ('migration-apply' if current['kind'] == 'PtahMigration' else 'apply') and
+                        json.loads(payload)['childExitCode'] == 0, 'intervening durable result is not the resource success')
+
+    def backup_lagged_update(self, checkpoint, recipient, key, wrong):
+        started = db.now()
+        payload = self.command('read encrypted execution evidence before the recovery update',
+                               ['age', '-d', '-i', str(key), str(self.root / 'intervening-execution.age')]).stdout
+        self.check('the recovery update binds the recorded intervening bytes',
+                   db.digest(payload) == self.report['backups']['intervening-execution']['plaintextSHA256'])
+        later = json.loads(payload)
+        update = {'startedAt': started, 'baseSHA256': self.report['backups']['operator-checkpoint']['plaintextSHA256'],
+                  'executionSHA256': self.report['backups']['intervening-execution']['plaintextSHA256'],
+                  'resource': self.settled('Suspended'), 'namespaceState': self.namespace_backup()}
+        self.validate_lagged_update(checkpoint, later, update, self.report['backups'])
+        self.encrypted('operator-update', json.dumps(update).encode(), recipient, key, wrong)
+        self.report['operatorUpdateCompletedAt'] = db.now()
+        self.persist()
+
+    @staticmethod
+    def lagged_recovery_point(report):
+        """Date only the complete kit actually read during recovery."""
+        diagnosis = report['lagDiagnosis']
+        for archive, field in (('operator-checkpoint', 'operatorCheckpointSHA256'),
+                               ('intervening-execution', 'interveningEvidenceSHA256'),
+                               ('operator-update', 'operatorUpdateSHA256')):
+            digest = report['backups'][archive]['plaintextSHA256']
+            if not re.fullmatch('[0-9a-f]{64}', digest) or diagnosis[field] != digest:
+                raise ValueError('Recovery diagnosis does not bind the complete backup kit')
+        point = db.dt.datetime.fromisoformat(diagnosis['recoveryPointStartedAt'])
+        completed = db.dt.datetime.fromisoformat(report['operatorUpdateCompletedAt'])
+        database = db.dt.datetime.fromisoformat(report['databaseBackupStartedAt'])
+        loss = db.dt.datetime.fromisoformat(report['lossInjectedAt'])
+        if not all(t.tzinfo is not None for t in (point, completed, database, loss)) or not point <= completed <= database <= loss:
+            raise ValueError('Operator update was not completed before database backup and loss')
+        age = (loss - point).total_seconds()
+        if not 0 <= age <= 300:
+            raise ValueError('The complete operator recovery point exceeds five minutes')
+        return age
 
     @staticmethod
     def finalize_result(report):
@@ -619,8 +741,16 @@ class OperatorProbe(db.Probe):
             report.update(status='FAIL', failure='Owned recovery resource cleanup did not succeed')
             return
         rpo = report.get('profileRPO', {})
-        if any(rpo.get(name) != 'PASS' for name in ('database', 'operatorBase')) or (
-                'combinedOperatorRecoveryKit' in rpo and rpo['combinedOperatorRecoveryKit'] != 'PASS'):
+        operator_ok = rpo.get('operatorBase') == 'PASS'
+        if 'combinedOperatorRecoveryKit' in rpo:
+            operator_ok = False
+            if report.get('timing') == 'operator-lag' and rpo['combinedOperatorRecoveryKit'] == 'PASS':
+                try:
+                    OperatorProbe.lagged_recovery_point(report)
+                    operator_ok = True
+                except (KeyError, ValueError, TypeError):
+                    pass
+        if rpo.get('database') != 'PASS' or not operator_ok:
             report.update(status='FAIL', failure='Recovery completed, but the required recovery-point objective is not established')
 
     def run(self):
@@ -686,6 +816,7 @@ class OperatorProbe(db.Probe):
             if self.timing == 'operator-lag':
                 before, original_jobs, original_pods = self.advance_lagged_database(
                     source, source_field, original_jobs, original_pods, recipient, key, wrong)
+                self.backup_lagged_update(checkpoint, recipient, key, wrong)
             self.report['databaseBackupStartedAt'] = db.now()
             if self.timing == 'operator-lag':
                 lag = (db.dt.datetime.fromisoformat(self.report['databaseBackupStartedAt']) -
@@ -867,10 +998,11 @@ class OperatorProbe(db.Probe):
             if self.timing != 'operator-lag':
                 self.check('the operator checkpoint is within five minutes of loss', 0 <= operator_age <= 300)
             else:
-                self.report['profileRPO']['combinedOperatorRecoveryKit'] = 'Not assessed'
-                self.report['profileRPO']['reason'] = ('The older full operator checkpoint exceeds the five-minute backup-age bound. '
-                    'Supplemental execution evidence is retained, but it has not been accepted as an incremental operator backup. '
-                    'A successful functional restore does not establish this profile RPO.')
+                self.report['operatorKitRPOUpperBoundSeconds'] = self.lagged_recovery_point(self.report)
+                self.report['profileRPO']['combinedOperatorRecoveryKit'] = 'PASS'
+                self.report['profileRPO']['reason'] = ('The base checkpoint remains older than five minutes. '
+                    'Recovery read and verified the linked full operator update and intervening execution archive '
+                    'before selecting the committed source. The complete kit, not the base alone, supplies the recovery point.')
             rto_bound = 900 if self.loss == 'operator' else 1800
             self.check('verified recovery meets the declared loss-type bound', 0 < recovery_seconds <= rto_bound)
             self.report.update(status='PASS', functionalRestore='PASS', expectedLostRowIDs=sorted(int(v) for v in expected_loss), observedLostRowIDs=sorted(int(v) for v in old_ids - new_ids), serviceRestoredAt=db.now(), recoverySeconds=recovery_seconds,
