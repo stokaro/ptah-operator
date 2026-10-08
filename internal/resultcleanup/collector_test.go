@@ -57,10 +57,19 @@ func (c *observedClient) Delete(ctx context.Context, o client.Object, opts ...cl
 	if c.admission == nil {
 		return errors.New("test API deletion guard is not configured")
 	}
-	if err := c.admission.AuthorizeDelete(ctx, o.(*api.PtahResultRecord)); err != nil {
+	// Admission receives the API server's stored object, not the client's
+	// DELETE body. This storage read is not a request from the collector.
+	stored := &api.PtahResultRecord{}
+	if err := c.Client.Get(ctx, client.ObjectKeyFromObject(o), stored); err != nil {
 		return err
 	}
-	c.deletes = append(c.deletes, o.(*api.PtahResultRecord).Spec.Type)
+	if stored.UID != *options.Preconditions.UID || stored.ResourceVersion != *options.Preconditions.ResourceVersion {
+		return apierrors.NewConflict(api.GroupVersion.WithResource("ptahresultrecords").GroupResource(), stored.Name, errors.New("delete precondition failed"))
+	}
+	if err := c.admission.AuthorizeDelete(ctx, stored); err != nil {
+		return err
+	}
+	c.deletes = append(c.deletes, stored.Spec.Type)
 	fail := c.failAt == len(c.deletes)
 	if fail && !c.after {
 		return errWrite
@@ -141,11 +150,11 @@ func TestCollectionResumesEveryDeleteBoundary(t *testing.T) {
 				f.retire(t)
 				f.c.failAt = at
 				f.c.after = after
-				if err := f.collector(t).collect(t.Context(), f.marker, f.f.Identity.Binding); !errors.Is(err, errWrite) {
+				if err := f.collector(t).collect(t.Context(), f.marker, nil, f.f.Identity.Binding); !errors.Is(err, errWrite) {
 					t.Fatalf("wanted interrupted deletion: %v", err)
 				}
 				f.c.failAt = 0
-				if err := f.collector(t).collect(t.Context(), f.marker, f.f.Identity.Binding); err != nil {
+				if err := f.collector(t).collect(t.Context(), f.marker, nil, f.f.Identity.Binding); err != nil {
 					t.Fatal(err)
 				}
 				if got := remaining(t, f.c); len(got) != 0 {
@@ -225,7 +234,7 @@ func TestPinsJobAgeAndAPIErrorsRetainEvidence(t *testing.T) {
 			case "list-error":
 				f.p.Reader = listFailure{Reader: f.c}
 			}
-			if err := f.collector(t).collect(t.Context(), f.marker, f.f.Identity.Binding); err == nil {
+			if err := f.collector(t).collect(t.Context(), f.marker, nil, f.f.Identity.Binding); err == nil {
 				t.Fatal("unsafe deletion allowed")
 			}
 			if len(f.c.deletes) != 0 {
@@ -499,7 +508,7 @@ func TestForegroundRetirementPreservesPinsAndWindow(t *testing.T) {
 			if reason == "list-error" {
 				f.p.Reader = listFailure{Reader: f.c}
 			}
-			err := f.collector(t).collect(t.Context(), nil, f.f.Identity.Binding)
+			err := f.collector(t).collect(t.Context(), nil, nil, f.f.Identity.Binding)
 			if reason == "eligible" {
 				if err != nil {
 					t.Fatal(err)
@@ -625,7 +634,7 @@ func TestIncompleteMemberScanRefusesDeletion(t *testing.T) {
 	f.retire(t)
 	reader := &pagedReader{Reader: f.c, endless: true}
 	f.p.Reader = reader
-	if err := f.collector(t).collect(t.Context(), f.marker, f.f.Identity.Binding); !errors.Is(err, ErrRetained) {
+	if err := f.collector(t).collect(t.Context(), f.marker, nil, f.f.Identity.Binding); !errors.Is(err, ErrRetained) {
 		t.Fatalf("incomplete scan: %v", err)
 	}
 	if len(f.c.deletes) != 0 || len(reader.calls) != 1 {
@@ -673,7 +682,7 @@ func TestForeignRestoredIntentCannotLoseChildren(t *testing.T) {
 	if err := f.c.Update(t.Context(), intent); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.collector(t).collect(t.Context(), marker, b); !errors.Is(err, ErrRetained) {
+	if err := f.collector(t).collect(t.Context(), marker, nil, b); !errors.Is(err, ErrRetained) {
 		t.Fatalf("foreign restored publication: %v", err)
 	}
 	if len(f.c.deletes) != 0 {
