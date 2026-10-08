@@ -13,9 +13,12 @@ import time
 from urllib.parse import urlsplit
 
 from operator_restore import OPERATOR_CRDS, OperatorProbe, REPO, db
+from restore_during_apply import ApplyLoss
 
 
 class ClusterRestoreProbe(OperatorProbe):
+    cold_cluster_recovery = True
+
     def __init__(self, engine, family, environment, root, loss, timing='idle', result_delivery=False):
         if loss not in ('operator', 'combined'):
             raise ValueError('Cold cluster recovery requires operator or combined loss')
@@ -31,7 +34,7 @@ class ClusterRestoreProbe(OperatorProbe):
         self.target_active = False
         self.result_delivery = result_delivery
         self.api_tunnels = []
-        self.report.update(scope='Development-image cold-cluster recovery. The original kind control plane is destroyed, a separate cluster is provisioned after loss, and namespace state is rebuilt from an encrypted backup. Final-profile, in-flight and final-artifact acceptance remain required.',
+        self.report.update(scope='Development-image cold-cluster recovery. The original kind control plane is destroyed, a separate cluster is provisioned after loss, and namespace state is rebuilt from an encrypted backup. Final-profile and final-artifact acceptance remain required.',
                            procedureSHA256=db.digest(Path(__file__).read_bytes()),
                            operatorProcedureSHA256=db.digest((REPO / 'support/qualification/probes/operator_restore.py').read_bytes()))
 
@@ -150,6 +153,9 @@ class ClusterRestoreProbe(OperatorProbe):
         self.persist()
 
     def provision_target(self):
+        if self.timing == 'during-apply':
+            self.check('the source execution is fenced before replacement provisioning',
+                       ApplyLoss.replacement_is_fenced(self.report))
         environment = {k: v for k, v in os.environ.items() if not k.startswith('E2E_')}
         environment.update(DOCKER_CONTEXT=db.DOCKER_CONTEXT,
                            K8S_VERSION=self.source_cluster['kubernetesVersion'],
@@ -342,7 +348,7 @@ if __name__ == '__main__':
     parser.add_argument('environment', type=Path, help='Environment of the disposable source cluster that will be destroyed')
     parser.add_argument('output', type=Path)
     parser.add_argument('--loss', choices=['operator', 'combined'], required=True)
-    parser.add_argument('--timing', choices=['idle', 'operator-lag'], default='idle')
+    parser.add_argument('--timing', choices=['idle', 'operator-lag', 'during-apply'], default='idle')
     parser.add_argument('--result-delivery', action='store_true', help='Enable durable delivery before backup and on the replacement installation')
     args = parser.parse_args()
     probe = ClusterRestoreProbe(args.engine, args.family, args.environment, args.output, args.loss, args.timing, args.result_delivery)

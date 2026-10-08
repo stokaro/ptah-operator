@@ -1,11 +1,12 @@
 import copy
 import json
 from pathlib import Path
+import subprocess
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from operator_restore import OperatorProbe
-from restore_during_apply import ApplyLoss, fixture_waiter, running_apply, terminal_apply_pods
+from restore_during_apply import ApplyLoss, executor_node_address, fixture_waiter, running_apply, terminal_apply_pods
 
 
 class ApplyLossBoundaryTest(unittest.TestCase):
@@ -83,6 +84,27 @@ class ApplyLossBoundaryTest(unittest.TestCase):
         failed['status']['initContainerStatuses'].pop()
         self.assertFalse(terminal_apply_pods([failed], jobs, require_success=False))
 
+    def test_external_database_source_can_be_the_exact_executor_node(self):
+        pod = {'spec': {'nodeName': 'worker'}, 'status': {'podIP': '10.244.1.5', 'hostIP': '172.19.0.4'}}
+        node = {'metadata': {'name': 'worker', 'uid': 'node-uid'},
+                'status': {'addresses': [{'type': 'InternalIP', 'address': '172.19.0.4'}]}}
+        self.assertEqual(executor_node_address(pod, node), '172.19.0.4')
+        row = {'session': 42, 'query': 'ALTER TABLE recovery_canary ADD COLUMN recovered INTEGER;',
+               'client': '172.19.0.4', 'blockers': [17], 'state': 'Waiting for table metadata lock'}
+        for engine in ('postgresql', 'mysql'):
+            self.assertFalse(fixture_waiter(row, pod['status']['podIP'], 17, engine))
+            self.assertTrue(fixture_waiter(row, pod['status']['podIP'], 17, engine, executor_node_address(pod, node)))
+            self.assertFalse(fixture_waiter(row, pod['status']['podIP'], 17, engine, '172.19.0.5'))
+        for defect in ('different-node', 'missing-uid', 'different-address', 'external-address', 'unscheduled'):
+            with self.subTest(defect=defect):
+                wrong_pod, wrong_node = copy.deepcopy((pod, node))
+                if defect == 'different-node': wrong_node['metadata']['name'] = 'another-worker'
+                if defect == 'missing-uid': wrong_node['metadata'].pop('uid')
+                if defect == 'different-address': wrong_pod['status']['hostIP'] = '172.19.0.5'
+                if defect == 'external-address': wrong_node['status']['addresses'][0]['type'] = 'ExternalIP'
+                if defect == 'unscheduled': wrong_pod['spec'].pop('nodeName')
+                with self.assertRaises(RuntimeError): executor_node_address(wrong_pod, wrong_node)
+
     def test_existing_namespace_rebuild_cannot_claim_during_apply_coverage(self):
         for loss in ('operator', 'combined'):
             with self.subTest(loss=loss), self.assertRaisesRegex(ValueError, 'database loss only'):
@@ -94,6 +116,68 @@ class ApplyLossRecoveryTest(unittest.TestCase):
     def checked(name, condition):
         if not condition:
             raise RuntimeError(name)
+
+    def test_database_fence_cannot_address_an_unowned_or_replaced_container(self):
+        for defect in ('none', 'unowned', 'label', 'replacement'):
+            with self.subTest(defect=defect):
+                probe = Mock(); probe.check.side_effect = self.checked
+                probe.containers = ['original']; probe.prefix = 'owned-run'
+                fault = ApplyLoss(probe, ['docker', '--context', 'fixture'])
+                fault.source_id = 'a' * 64
+                identity = ('b' if defect == 'replacement' else 'a') * 64
+                label = 'another-run' if defect == 'label' else probe.prefix
+                probe.command.return_value = subprocess.CompletedProcess([], 0, (identity + ' ' + label).encode())
+                if defect == 'none':
+                    fault.bind_source('original')
+                    self.assertEqual(fault.source_id, identity)
+                else:
+                    with self.assertRaises(RuntimeError):
+                        fault.bind_source('unowned' if defect == 'unowned' else 'original')
+                probe.sql.assert_not_called()
+
+    def test_replacement_requires_both_node_loss_and_a_later_database_fence(self):
+        original = {'sourceDestroyedAt': '2026-10-08T18:00:00+00:00',
+            'checks': {'the original control plane and workload nodes were destroyed': True},
+            'inFlightLoss': {'sourceContainerID': 'original', 'databaseFence': {'containerID': 'original',
+                'writer': 'operator_writer', 'loginRefused': True, 'remainingWriterSessions': [],
+                'endedAt': '2026-10-08T18:00:01+00:00'}}}
+        self.assertTrue(ApplyLoss.replacement_is_fenced(original))
+        for defect in ('nodes', 'source', 'login', 'writer', 'sessions', 'missing-sessions', 'old-time', 'naive-time'):
+            with self.subTest(defect=defect):
+                report = copy.deepcopy(original); fence = report['inFlightLoss']['databaseFence']
+                if defect == 'nodes': report['checks'].clear()
+                if defect == 'source': fence['containerID'] = 'replacement'
+                if defect == 'login': fence['loginRefused'] = False
+                if defect == 'writer': fence['writer'] = 'another-account'
+                if defect == 'sessions': fence['remainingWriterSessions'] = [{'session': 7}]
+                if defect == 'missing-sessions': fence.pop('remainingWriterSessions')
+                if defect == 'old-time': fence['endedAt'] = '2026-10-08T17:59:59+00:00'
+                if defect == 'naive-time': fence['endedAt'] = '2026-10-08T18:00:01'
+                self.assertFalse(ApplyLoss.replacement_is_fenced(report))
+
+    def test_writer_access_stays_closed_until_safe_replacement_state(self):
+        for loss in ('operator', 'combined'):
+            for defect in ('none', 'not-fenced', 'old-uid', 'automatic', 'running', 'active-operation'):
+                with self.subTest(loss=loss, defect=defect):
+                    probe = Mock(); probe.check.side_effect = self.checked
+                    probe.loss = loss; probe.engine = 'postgresql'; probe.report = {'inFlightLoss': {}}
+                    resource = {'metadata': {'uid': 'new'}, 'spec': {'suspend': True, 'policy': {'apply': 'OnApproval'}}}
+                    if defect == 'old-uid': resource['metadata']['uid'] = 'old'
+                    if defect == 'automatic': resource['spec']['policy']['apply'] = 'Always'
+                    if defect == 'running': resource['spec']['suspend'] = False
+                    if defect == 'active-operation': resource['status'] = {'activeOperation': {'type': 'Apply'}}
+                    probe.read.return_value = resource
+                    fault = ApplyLoss(probe, [])
+                    fault.resource = {'metadata': {'uid': 'old'}}; fault.fenced = defect != 'not-fenced'
+                    with patch.object(fault, 'bind_source'), patch.object(fault, 'writer_connection',
+                            return_value=subprocess.CompletedProcess([], 0, b'1\n')) as login:
+                        if defect == 'none':
+                            fault.allow_recovered_writer('database', 'fixture-password')
+                            self.assertTrue(probe.report['inFlightLoss']['writerAccessRestored'])
+                            self.assertEqual(probe.sql.call_count, 1 if loss == 'operator' else 0)
+                        else:
+                            with self.assertRaises(RuntimeError): fault.allow_recovered_writer('database', 'fixture-password')
+                            probe.sql.assert_not_called(); login.assert_not_called()
 
     def test_replacement_pod_stops_recovery_before_spec_changes(self):
         probe = Mock()

@@ -51,6 +51,7 @@ class RestoreDockerContextTest(unittest.TestCase):
     def test_replacement_bootstrap_keeps_the_selected_context(self):
         with tempfile.TemporaryDirectory() as directory:
             probe = object.__new__(ClusterRestoreProbe)
+            probe.timing = 'idle'
             probe.root = Path(directory); probe.report = {'steps': []}
             probe.source_cluster = {'kubernetesVersion': '1.37.0'}
             probe.prefix = 'ptah-020-restore-owned'
@@ -62,6 +63,16 @@ class RestoreDockerContextTest(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, 'provisioning failed'):
                     probe.provision_target()
             self.assertEqual(start.call_args.kwargs['env']['DOCKER_CONTEXT'], 'diabolocom')
+
+    def test_in_flight_replacement_never_starts_without_the_execution_fence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            probe = object.__new__(ClusterRestoreProbe)
+            probe.root = Path(directory); probe.report = {'checks': {}}
+            probe.timing = 'during-apply'
+            with patch('cluster_restore.subprocess.Popen') as start:
+                with self.assertRaisesRegex(RuntimeError, 'fenced before replacement'):
+                    probe.provision_target()
+            start.assert_not_called()
 
     def test_endpoint_mismatch_stops_before_any_resource_is_created(self):
         with tempfile.TemporaryDirectory() as directory:

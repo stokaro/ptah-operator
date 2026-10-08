@@ -26,11 +26,13 @@ spec.loader.exec_module(db)
 
 
 class OperatorProbe(db.Probe):
+    cold_cluster_recovery = False
+
     def __init__(self, engine, family, environment, root, loss="database", timing="idle"):
         if timing not in ('idle', 'operator-lag', 'during-apply'):
             raise ValueError('Unknown recovery timing')
-        if timing == 'during-apply' and loss != 'database':
-            raise ValueError('During-Apply recovery currently implements database loss only; operator and combined loss remain required')
+        if timing == 'during-apply' and loss != 'database' and not self.cold_cluster_recovery:
+            raise ValueError('This procedure supports database loss only during Apply; use cluster_restore.py for operator or combined loss')
         if timing == 'operator-lag' and loss == 'database':
             raise ValueError('The operator-lag procedure must restore the older operator backup')
         super().__init__(engine, root)
@@ -719,6 +721,11 @@ class OperatorProbe(db.Probe):
             clock = time.monotonic()
             if self.loss != 'database':
                 self.lose_namespace()
+                if in_flight:
+                    self.check('the original cluster is destroyed before fencing surviving SQL',
+                               self.cold_cluster_recovery and bool(self.report.get('sourceDestroyedAt')) and
+                               self.report['checks'].get('the original control plane and workload nodes were destroyed') is True)
+                    in_flight.fence(source, password)
             if self.loss == 'operator':
                 restored = source
             else:
@@ -726,7 +733,8 @@ class OperatorProbe(db.Probe):
                 self.command('destroy original database storage', db.DOCKER + ['volume', 'rm', volume]); self.volumes.remove(volume)
                 if in_flight:
                     in_flight.close()
-                    original_pods += in_flight.stopped(source_field, suspended['spec'][source_field])
+                    if self.loss == 'database':
+                        original_pods += in_flight.stopped(source_field, suspended['spec'][source_field])
                 restored, _ = self.start('restored', password, False)
                 if self.engine == 'postgresql':
                     empty = self.sql(restored, "SELECT count(*) FROM pg_database WHERE datname='drill'; SELECT count(*) FROM pg_roles WHERE rolname='operator_writer';", database='postgres').stdout.strip()
@@ -757,6 +765,7 @@ class OperatorProbe(db.Probe):
                 self.connect_database(restored, True)
             if in_flight:
                 in_flight.diagnose(restored)
+                in_flight.allow_recovered_writer(restored, password)
             if self.timing == 'operator-lag':
                 self.select_diagnosed_source(checkpoint_path, key, source_field)
             self.patch({'spec': {'suspend': False}})
@@ -795,6 +804,15 @@ class OperatorProbe(db.Probe):
                 denied_uid = self.approve(resource, fresh_plan, 'restore-old-resource', required=False)
                 self.check('admission refuses the old resource UID against the fresh plan',
                            denied_uid.returncode != 0 and ('approval ' + self.family + ' reference does not match the plan').encode() in denied_uid.stderr)
+                if in_flight:
+                    denied_in_flight = self.approve(ready, in_flight.plan, 'restore-in-flight-replay', required=False)
+                    self.check('admission refuses the interrupted Apply plan from the lost cluster',
+                               denied_in_flight.returncode != 0 and expected in denied_in_flight.stderr and
+                               b'not found' in denied_in_flight.stderr and in_flight.plan['metadata']['name'].encode() in denied_in_flight.stderr)
+                    absent = self.kubectl('confirm interrupted authorization was not recreated',
+                                         ['get', self.kind.lower() + 'approvals', 'restore-in-flight'], required=False)
+                    self.check('the replacement contains no recreated in-flight approval',
+                               absent.returncode != 0 and b'NotFound' in absent.stderr and b'restore-in-flight' in absent.stderr)
                 if self.timing == 'operator-lag':
                     later_plan = self.lag_execution['plan']
                     denied_later = self.approve(ready, later_plan, 'restore-intervening-replay', required=False)
@@ -813,6 +831,8 @@ class OperatorProbe(db.Probe):
             self.check('fresh authorization has one completed Apply Job', len(new_apply_uids) == 1)
             new_pods = self.stopped_apply_pods(new_apply_uids)
             old_finished = max(db.dt.datetime.fromisoformat(s['state']['terminated']['finishedAt'].replace('Z', '+00:00')) for p in original_pods for s in p['status']['containerStatuses'] + p['status'].get('initContainerStatuses', []))
+            if in_flight and self.loss != 'database':
+                old_finished = max(old_finished, in_flight.execution_ended_at)
             new_created = min(db.dt.datetime.fromisoformat(current_apply_jobs[u]['metadata']['creationTimestamp'].replace('Z', '+00:00')) for u in new_apply_uids)
             self.check('replacement Apply starts after original execution ended', new_created >= old_finished)
             if self.loss == 'database':
@@ -856,6 +876,8 @@ class OperatorProbe(db.Probe):
             self.report.update(status='PASS', functionalRestore='PASS', expectedLostRowIDs=sorted(int(v) for v in expected_loss), observedLostRowIDs=sorted(int(v) for v in old_ids - new_ids), serviceRestoredAt=db.now(), recoverySeconds=recovery_seconds,
                 databaseRPOUpperBoundSeconds=rpo_seconds,
                 identity={'resourceUID': self.uid, 'originalResourceUID': original_uid, 'oldPlanUID': old_plan['metadata']['uid'], 'oldApprovalUID': old_approval['metadata']['uid'], 'freshPlanUID': fresh_plan['metadata']['uid'], 'freshApprovalUID': fresh_approval['metadata']['uid'], 'originalApplyJobUIDs': sorted(original_jobs), 'freshApplyJobUIDs': sorted(final_jobs - set(original_jobs)), 'originalApplyPodUIDs': [p['metadata']['uid'] for p in original_pods], 'freshApplyPodUIDs': [p['metadata']['uid'] for p in new_pods]})
+            if in_flight and self.loss != 'database':
+                self.report['identity']['originalApplyPodUIDs'].append(in_flight.pod['metadata']['uid'])
             self.persist()
         except BaseException as exc:
             self.report.update(status='FAIL', failure=type(exc).__name__ + ': ' + str(exc)); self.persist(); raise
