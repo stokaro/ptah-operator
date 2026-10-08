@@ -129,6 +129,7 @@ type SchemaReconciler struct {
 	Logs              PodLogReader
 	Results           OperationResults
 	ResultCredentials ResultCredentialIssuer
+	enrollmentHints   *resultEnrollmentHints
 	// ResultReadTimeout bounds the pod/log read of one terminal operation.
 	// Zero means defaultResultReadTimeout, which is what the manager runs.
 	ResultReadTimeout time.Duration
@@ -988,7 +989,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 			if operation.Target != nil {
 				engine = string(operation.Target.Engine)
 			}
-			issued, issueErr := issueResultCredential(ctx, r.directReader(), r.ResultCredentials, schema, "PtahSchema", job, operation.AdmissionSnapshot, operation.ExecutionBindingID, operation.InputFingerprint, string(schemaOperation(operation).Runner), operation.ID, engine)
+			issued, issueErr := issueResultCredential(ctx, r.directReader(), r.ResultCredentials, resultEnrollmentHintsOf(&r.enrollmentHints), schema, "PtahSchema", job, operation.AdmissionSnapshot, operation.ExecutionBindingID, operation.InputFingerprint, string(schemaOperation(operation).Runner), operation.ID, engine)
 			if issueErr != nil {
 				r.event(schema, corev1.EventTypeWarning, "ResultCredentialFailed", "Result delivery credential is not ready; issuance will be retried")
 			}

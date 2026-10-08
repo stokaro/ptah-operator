@@ -92,6 +92,7 @@ type MigrationReconciler struct {
 	Logs              PodLogReader
 	Results           OperationResults
 	ResultCredentials ResultCredentialIssuer
+	enrollmentHints   *resultEnrollmentHints
 	// ResultReadTimeout bounds the pod/log read of one terminal operation.
 	// Zero means defaultResultReadTimeout, which is what the manager runs.
 	ResultReadTimeout time.Duration
@@ -735,7 +736,7 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 			if operation.Target != nil {
 				engine = string(operation.Target.Engine)
 			}
-			issued, issueErr := issueResultCredential(ctx, r.directReader(), r.ResultCredentials, migration, "PtahMigration", job, operation.AdmissionSnapshot, operation.ExecutionBindingID, operation.InputFingerprint, string(migrationOperation(operation).Runner), operation.ID, engine)
+			issued, issueErr := issueResultCredential(ctx, r.directReader(), r.ResultCredentials, resultEnrollmentHintsOf(&r.enrollmentHints), migration, "PtahMigration", job, operation.AdmissionSnapshot, operation.ExecutionBindingID, operation.InputFingerprint, string(migrationOperation(operation).Runner), operation.ID, engine)
 			if issueErr != nil {
 				r.event(migration, corev1.EventTypeWarning, "ResultCredentialFailed", "Result delivery credential is not ready; issuance will be retried")
 			}
