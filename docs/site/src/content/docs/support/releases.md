@@ -185,6 +185,11 @@ the commit the acceptance suite builds its own executor from, and both builds
 use the same recipe, `Dockerfile.executor`, so the image a release ships comes
 from the source and the recipe the suite ran.
 
+The recipe applies the `golang.org/x/net` v0.60.0 security update through a
+separate module file. The pinned source keeps its original `go.mod` and `go.sum`;
+the compiled binary records the updated dependency. The build requires the
+source dependency to be v0.59.0 so a new Ptah pin must reassess this override.
+
 The workflow fetches that commit from `https://github.com/stokaro/ptah` by its
 hash and refuses to build when Git resolves anything else. The build stamps the
 binary with the full commit, the catalog's `ptahDescribe` and the commit date,
