@@ -1076,7 +1076,7 @@ func TestVerifyReleaseWorkflowRejectsSupportEvidenceMutations(t *testing.T) {
 			new: "  # workflow_dispatch removed\n",
 		},
 		"manual smoke guard": {
-			old: "github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'",
+			old: "github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.action == 'smoke' || !startsWith(github.ref, 'refs/tags/v')))",
 			new: "github.event_name == 'pull_request'",
 		},
 		"privileged preflight": {
@@ -1100,8 +1100,8 @@ func TestVerifyReleaseWorkflowRejectsSupportEvidenceMutations(t *testing.T) {
 			new: "          true # freshness omitted\n",
 		},
 		"release contract verification": {
-			old: "          go run ./hack/releaseverify\n",
-			new: "          true # release contract omitted\n",
+			old: "          go run ./hack/verify-kubernetes-support.go -now \"$today\"\n          go run ./hack/releaseverify\n",
+			new: "          go run ./hack/verify-kubernetes-support.go -now \"$today\"\n          true # release contract omitted\n",
 		},
 		"exact CI workflow": {
 			old: "actions/workflows/ci.yml/runs",

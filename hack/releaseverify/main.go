@@ -1452,12 +1452,16 @@ type workflowJob struct {
 	If              string             `yaml:"if"`
 	Needs           workflowStringList `yaml:"needs"`
 	Environment     string             `yaml:"environment"`
+	Env             map[string]string  `yaml:"env"`
 	TimeoutMinutes  int                `yaml:"timeout-minutes"`
 	Permissions     map[string]string  `yaml:"permissions"`
 	Outputs         map[string]string  `yaml:"outputs"`
 	ContinueOnError bool               `yaml:"continue-on-error"`
 	Steps           []workflowStep     `yaml:"steps"`
 }
+
+const releaseSmokeCondition = "github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.action == 'smoke' || !startsWith(github.ref, 'refs/tags/v')))"
+const releaseTagCondition = "startsWith(github.ref, 'refs/tags/v') && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.action == 'prepare' || inputs.action == 'publish')))"
 
 type workflowStep struct {
 	ID              string            `yaml:"id"`
@@ -1506,12 +1510,12 @@ func verifyWorkflowSemantics(document []byte) error {
 	if _, ok := workflow.On["pull_request"]; !ok {
 		return errors.New("release workflow must run smoke checks on pull requests")
 	}
-	if _, ok := workflow.On["workflow_dispatch"]; !ok {
-		return errors.New("release workflow must run smoke checks on manual dispatch")
+	if err := verifyReleaseDispatch(workflow.On["workflow_dispatch"]); err != nil {
+		return err
 	}
 	push, ok := workflow.On["push"]
 	if !ok {
-		return errors.New("release workflow must publish from tag pushes")
+		return errors.New("release workflow must prepare drafts from tag pushes")
 	}
 	var pushConfig struct {
 		Tags []string `yaml:"tags"`
@@ -1538,7 +1542,7 @@ func verifyWorkflowSemantics(document []byte) error {
 	if !ok {
 		return errors.New("release workflow has no smoke job")
 	}
-	if smoke.If != "github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'" || len(smoke.Permissions) != 0 {
+	if smoke.If != releaseSmokeCondition || len(smoke.Permissions) != 0 || len(smoke.Env) != 0 {
 		return errors.New("smoke job must be read-only and gated to pull requests or manual dispatch")
 	}
 	if err := verifyStepContract("smoke", smoke.Steps,
@@ -1589,8 +1593,8 @@ func verifyWorkflowSemantics(document []byte) error {
 	if preflight.Name != "Verify release Kubernetes support evidence" {
 		return errors.New("support-preflight job name does not match the release contract")
 	}
-	if preflight.If != "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')" {
-		return errors.New("support-preflight job must be gated to v* tag push refs")
+	if preflight.If != releaseTagCondition {
+		return errors.New("support-preflight job must be gated to tag preparation or explicit tag publication")
 	}
 	if preflight.Environment != "" || len(preflight.Needs) != 0 {
 		return errors.New("support-preflight job must run before and outside the protected release environment")
@@ -1688,11 +1692,17 @@ func verifyWorkflowSemantics(document []byte) error {
 	if !equalStringSet(publish.Needs, []string{"support-preflight"}) {
 		return errors.New("publish job must depend only on support-preflight")
 	}
-	if publish.If != "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && needs.support-preflight.outputs.source-sha == github.sha" {
+	if publish.If != releaseTagCondition+" && needs.support-preflight.outputs.source-sha == github.sha" {
 		return errors.New("publish job must bind successful support-preflight evidence to the tag SHA")
 	}
 	if publish.Environment != "release" {
 		return errors.New("publish job must use the protected release environment")
+	}
+	if !equalStringMap(publish.Env, map[string]string{
+		"RELEASE_ACTION":            "${{ github.event_name == 'push' && 'prepare' || inputs.action }}",
+		"QUALIFIED_MANIFEST_SHA256": "${{ inputs.manifest_sha256 }}",
+	}) {
+		return errors.New("tag pushes must prepare only; publication must bind the requested manifest digest")
 	}
 	wantPermissions := map[string]string{
 		"contents":          "write",
@@ -1738,6 +1748,9 @@ func verifyWorkflowSemantics(document []byte) error {
 			return fmt.Errorf("release job %s must not continue on error", jobName)
 		}
 		for _, step := range job.Steps {
+			if jobName == "publish" && (step.Env["RELEASE_ACTION"] != "" || step.Env["QUALIFIED_MANIFEST_SHA256"] != "") {
+				return fmt.Errorf("release step %q must not override the publication request", step.ID)
+			}
 			if step.ContinueOnError {
 				return fmt.Errorf("release step %q in job %s must not continue on error", step.ID, jobName)
 			}
@@ -1752,6 +1765,9 @@ func verifyWorkflowSemantics(document []byte) error {
 
 	steps, err := stepsByID(publish.Steps)
 	if err != nil {
+		return err
+	}
+	if err := verifyReleasePreparation(smoke.Steps, steps); err != nil {
 		return err
 	}
 	checkout, err := requireStep(steps, "checkout")
@@ -2080,7 +2096,7 @@ func verifyWorkflowTextBindings(document []byte) error {
 		text  string
 		count int
 	}{
-		{"run: go run ./hack/releaseverify\n", 1},
+		{"go run ./hack/releaseverify\n", 2},
 		{`[[ "$(jq -r '.immutable' <<<"$release_json")" == true ]]`, 2},
 	} {
 		if got := bytes.Count(document, []byte(binding.text)); got != binding.count {

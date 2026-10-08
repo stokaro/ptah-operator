@@ -3,6 +3,18 @@ name: Release
 on:
   pull_request:
   workflow_dispatch:
+    inputs:
+      action:
+        description: Smoke check, prepare a signed draft, or publish a qualified draft
+        type: choice
+        required: true
+        default: smoke
+        options: [smoke, prepare, publish]
+      manifest_sha256:
+        description: SHA-256 of the qualified release-manifest.txt; required only for publish
+        type: string
+        required: false
+        default: ""
   push:
     tags:
       - "v*"
@@ -21,7 +33,7 @@ env:
 jobs:
   smoke:
     name: Release contract and multi-architecture build
-    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.action == 'smoke' || !startsWith(github.ref, 'refs/tags/v')))
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -43,7 +55,18 @@ jobs:
           version: v4.3.0
       - name: Verify release metadata
         id: verify-release
-        run: go run ./hack/releaseverify
+        env:
+          RELEASE_ACTION: ${{ inputs.action }}
+          QUALIFIED_MANIFEST_SHA256: ${{ inputs.manifest_sha256 }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+            [[ "$RELEASE_ACTION" == smoke && -z "$QUALIFIED_MANIFEST_SHA256" ]] || {
+              echo 'prepare and publish require a v* tag ref; smoke accepts no manifest digest' >&2
+              exit 1
+            }
+          fi
+          go run ./hack/releaseverify
       # PA-11 of #242: scan the shipped targets against a current advisory
       # database. Deliberately unpinned -- a pinned database would make this
       # reproducible and useless, because the question is what is known now.
@@ -144,7 +167,7 @@ jobs:
 
   support-preflight:
     name: Verify release Kubernetes support evidence
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.action == 'prepare' || inputs.action == 'publish')))
     runs-on: ubuntu-latest
     timeout-minutes: 170
     permissions:
@@ -402,12 +425,15 @@ jobs:
           overwrite: true
 
   publish:
-    name: Publish signed images and attested chart
+    name: Prepare or publish the signed release
     needs: [support-preflight]
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && needs.support-preflight.outputs.source-sha == github.sha
+    if: startsWith(github.ref, 'refs/tags/v') && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.action == 'prepare' || inputs.action == 'publish'))) && needs.support-preflight.outputs.source-sha == github.sha
     runs-on: ubuntu-latest
     environment: release
     timeout-minutes: 60
+    env:
+      RELEASE_ACTION: ${{ github.event_name == 'push' && 'prepare' || inputs.action }}
+      QUALIFIED_MANIFEST_SHA256: ${{ inputs.manifest_sha256 }}
     permissions:
       contents: write
       packages: write
@@ -440,6 +466,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          case "$RELEASE_ACTION" in
+            prepare) [[ -z "$QUALIFIED_MANIFEST_SHA256" ]] ;;
+            publish) [[ "$QUALIFIED_MANIFEST_SHA256" =~ ^[0-9a-f]{64}$ ]] ;;
+            *) echo 'release action must be prepare or publish' >&2; exit 1 ;;
+          esac
           go run ./hack/releaseverify -tag "$GITHUB_REF_NAME"
           default_branch='${{ github.event.repository.default_branch }}'
           [[ -n "$default_branch" ]]
@@ -587,6 +618,16 @@ jobs:
           state_path=dist/release-manifest.txt
           if [[ "$release_state" == fresh || "$release_state" == prepared ]]; then
             state_path=dist/release-journal.txt
+          fi
+          if [[ "$RELEASE_ACTION" == publish ]]; then
+            [[ "$release_state" == recover || "$release_state" == published ]] || {
+              echo 'prepare and qualify a complete signed draft before requesting publication' >&2
+              exit 1
+            }
+            [[ "$(sha256sum "$state_path" | awk '{print $1}')" == "$QUALIFIED_MANIFEST_SHA256" ]] || {
+              echo 'the requested manifest differs from the existing transaction' >&2
+              exit 1
+            }
           fi
           field() {
             sed -n "s/^$1=//p" "$state_path"
@@ -1402,6 +1443,16 @@ jobs:
             -checksums "$gate_dir/SHA256SUMS" \
             -chart "$gate_dir/ptah-operator-${{ steps.release.outputs.version }}.tgz"
           if [[ "$mode" != published ]]; then
+            if [[ "$RELEASE_ACTION" == prepare ]]; then
+              manifest_sha256="$(sha256sum "$gate_dir/release-manifest.txt" | awk '{print $1}')"
+              printf 'Signed draft prepared; official release remains unpublished. Manifest SHA-256: %s\n' "$manifest_sha256" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            [[ "$RELEASE_ACTION" == publish ]] || { echo 'publication was not requested' >&2; exit 1; }
+            [[ "$(sha256sum "$gate_dir/release-manifest.txt" | awk '{print $1}')" == "$QUALIFIED_MANIFEST_SHA256" ]] || {
+              echo 'the final manifest differs from the qualified transaction' >&2
+              exit 1
+            }
             gh release edit "$GITHUB_REF_NAME" --draft=false --latest=false
             go run ./hack/releaseverify \
               -tag "$GITHUB_REF_NAME" \
