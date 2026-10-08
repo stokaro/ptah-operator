@@ -189,7 +189,7 @@ func (c *Collector) process(ctx context.Context, meta metav1.PartialObjectMetada
 			if _, err := c.policy.foregroundBinding(ctx, record); err != nil {
 				return retry, err
 			}
-			err = c.collect(ctx, nil, b)
+			err = c.collect(ctx, nil, record, b)
 			c.observe("delete", err)
 			return retry, err
 		}
@@ -239,12 +239,12 @@ func (c *Collector) process(ctx context.Context, meta metav1.PartialObjectMetada
 		c.observe("retire", err)
 		return retry, err
 	}
-	err = c.collect(ctx, marker, b)
+	err = c.collect(ctx, marker, record, b)
 	c.observe("delete", err)
 	return retry, err
 }
 
-func (c *Collector) collect(ctx context.Context, marker *api.PtahResultRecord, b resultstore.Binding) error {
+func (c *Collector) collect(ctx context.Context, marker, root *api.PtahResultRecord, b resultstore.Binding) error {
 	if marker == nil {
 		// A credential can outlive its original intent. Never use its attempt
 		// index to collect a restored intent carrying a different full binding.
@@ -272,23 +272,29 @@ func (c *Collector) collect(ctx context.Context, marker *api.PtahResultRecord, b
 		return err
 	}
 	for _, meta := range members {
-		if err := c.remove(ctx, client.ObjectKeyFromObject(&meta), meta.UID); err != nil {
+		if err := c.removeMetadata(ctx, meta.ObjectMeta); err != nil {
 			return err
 		}
 	}
 	intentName, _ := resultstore.Name(b)
 	for _, name := range []string{intentName, jobconfig.CredentialName(b.UID, b.OperationID, b.JobName)} {
-		if err := c.remove(ctx, client.ObjectKey{Namespace: b.Namespace, Name: name}, ""); err != nil {
+		var err error
+		if root != nil && root.Namespace == b.Namespace && root.Name == name {
+			err = c.removeMetadata(ctx, root.ObjectMeta)
+		} else {
+			err = c.remove(ctx, client.ObjectKey{Namespace: b.Namespace, Name: name})
+		}
+		if err != nil {
 			return err
 		}
 	}
 	if marker != nil {
-		return c.remove(ctx, client.ObjectKeyFromObject(marker), marker.UID)
+		return c.removeMetadata(ctx, marker.ObjectMeta)
 	}
 	return nil
 }
 
-func (c *Collector) remove(ctx context.Context, key client.ObjectKey, uid types.UID) error {
+func (c *Collector) remove(ctx context.Context, key client.ObjectKey) error {
 	record := &api.PtahResultRecord{}
 	if err := c.policy.Reader.Get(ctx, key, record); err != nil {
 		if apierrors.IsNotFound(err) {
@@ -296,19 +302,37 @@ func (c *Collector) remove(ctx context.Context, key client.ObjectKey, uid types.
 		}
 		return err
 	}
-	if (uid != "" && record.UID != uid) || record.ResourceVersion == "" {
+	return c.removeMetadata(ctx, record.ObjectMeta)
+}
+
+// The scan or root read already supplied the version to delete. Fetching its
+// payload again adds no authority: admission checks the API server's current
+// object, and both preconditions retain anything replaced or updated since
+// this reading. A conflict retries through a fresh scan.
+func (c *Collector) removeMetadata(ctx context.Context, meta metav1.ObjectMeta) error {
+	if meta.UID == "" || meta.ResourceVersion == "" {
 		return ErrRetained
 	}
-	if !record.DeletionTimestamp.IsZero() && len(record.Finalizers) == 1 && record.Finalizers[0] == metav1.FinalizerDeleteDependents {
+	if !meta.DeletionTimestamp.IsZero() && len(meta.Finalizers) == 1 && meta.Finalizers[0] == metav1.FinalizerDeleteDependents {
 		// The garbage collector finishes the foreground DELETE already in
 		// progress. Admission applies the same policy to its finalizer removal.
 		return nil
 	}
 	// The API admission guard must authorize this exact object. A denied or
 	// unavailable webhook leaves it intact; no collector decision bypasses it.
+	record := &api.PtahResultRecord{ObjectMeta: meta}
 	options := &client.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &record.UID, ResourceVersion: &record.ResourceVersion}, PropagationPolicy: ptr.To(metav1.DeletePropagationBackground)}
 	if err := c.writer.Delete(ctx, record, options); err != nil && !apierrors.IsNotFound(err) {
 		return err
+	}
+	// The same metadata page may still contain this root's retirement entry.
+	// Deferring that exact UID avoids a redundant NotFound read. These bounded
+	// hints only postpone scans; they cannot authorize a replacement's DELETE.
+	if role := meta.Labels[resultstore.LabelRecord]; role == "intent" || role == "retired" {
+		c.deferUntil(retryHintKey{uid: meta.UID}, c.policy.now().Add(30*time.Second))
+	}
+	if meta.Labels["app.kubernetes.io/component"] == "result-credential" {
+		c.deferUntil(retryHintKey{credential: client.ObjectKeyFromObject(record)}, c.policy.now().Add(30*time.Second))
 	}
 	return nil
 }

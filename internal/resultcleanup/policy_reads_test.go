@@ -15,8 +15,9 @@ import (
 
 type policyReads struct {
 	client.Reader
-	gets map[client.ObjectKey]int
-	fail client.ObjectKey
+	gets        map[client.ObjectKey]int
+	fail        client.ObjectKey
+	recordsOnly bool
 }
 
 func TestCollectorReusesItsRetirementRead(t *testing.T) {
@@ -33,12 +34,51 @@ func TestCollectorReusesItsRetirementRead(t *testing.T) {
 	}
 	// Each DELETE independently reads the marker and current recovery pins.
 	// The collector needs one pin preflight, one marker read to process the
-	// listed record, and one marker read for its UID/RV-bound final DELETE.
-	if got, want := reader.gets[client.ObjectKeyFromObject(f.marker)], len(f.c.deletes)+2; got != want {
+	// listed record. That record already carries the final DELETE's UID/RV.
+	if got, want := reader.gets[client.ObjectKeyFromObject(f.marker)], len(f.c.deletes)+1; got != want {
 		t.Errorf("retirement reads: %d, want %d", got, want)
 	}
 	if got, want := reader.gets[client.ObjectKeyFromObject(f.f.Subject)], len(f.c.deletes)+1; got != want {
 		t.Errorf("recovery pin reads: %d, want %d", got, want)
+	}
+}
+
+func TestCollectorDeletesFromReadMetadataWithoutReloadingPayloads(t *testing.T) {
+	f := fixture(t)
+	f.retire(t)
+	var intent api.PtahResultRecord
+	for _, record := range remaining(t, f.c) {
+		if record.Spec.Type == "intent" {
+			intent = record
+		}
+	}
+	if intent.UID == "" {
+		t.Fatal("missing intent")
+	}
+	collector := f.collector(t)
+	// Count only the collector's requests. Admission keeps its own live
+	// reader and must still authorize every DELETE independently.
+	reader := &policyReads{Reader: f.c, gets: map[client.ObjectKey]int{}, recordsOnly: true}
+	collector.policy.Reader = reader
+	collector.pending = []metav1.PartialObjectMetadata{
+		{ObjectMeta: intent.ObjectMeta}, {ObjectMeta: f.marker.ObjectMeta},
+	}
+	if err := collector.Step(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.c.deletes) != 5 || len(remaining(t, f.c)) != 0 {
+		t.Fatalf("incomplete collection: deleted %v", f.c.deletes)
+	}
+	// The initial intent, its retirement, and the absent credential are the
+	// only full reads. The member list already carries each child's UID/RV,
+	// and the later retirement entry in this same page was just deleted.
+	if len(reader.gets) != 3 {
+		t.Fatalf("collector reloaded records already read or deleted: %v", reader.gets)
+	}
+	for key, count := range reader.gets {
+		if count != 1 {
+			t.Errorf("collector read %s %d times, want once", key, count)
+		}
 	}
 }
 
@@ -74,7 +114,9 @@ func TestCollectorRetainsNewRetirementWithoutAnotherPinRead(t *testing.T) {
 }
 
 func (r *policyReads) Get(ctx context.Context, key client.ObjectKey, object client.Object, opts ...client.GetOption) error {
-	r.gets[key]++
+	if _, record := object.(*api.PtahResultRecord); record || !r.recordsOnly {
+		r.gets[key]++
+	}
 	if key == r.fail {
 		return errWrite
 	}
@@ -86,7 +128,7 @@ func TestCollectionDoesNotDuplicateDeleteAdmissionReads(t *testing.T) {
 	f.retire(t)
 	reader := &policyReads{Reader: f.c, gets: map[client.ObjectKey]int{}}
 	f.p.Reader = reader
-	if err := f.collector(t).collect(t.Context(), f.marker, f.f.Identity.Binding); err != nil {
+	if err := f.collector(t).collect(t.Context(), f.marker, nil, f.f.Identity.Binding); err != nil {
 		t.Fatal(err)
 	}
 	if len(f.c.deletes) != 5 || len(remaining(t, f.c)) != 0 {
@@ -109,7 +151,7 @@ func TestDeleteAdmissionSeesPinRestoredAfterCollectorRead(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := f.collector(t).collect(t.Context(), f.marker, f.f.Identity.Binding); !errors.Is(err, resultretention.ErrPinned) {
+	if err := f.collector(t).collect(t.Context(), f.marker, nil, f.f.Identity.Binding); !errors.Is(err, resultretention.ErrPinned) {
 		t.Fatalf("the API accepted deletion after a recovery pin was restored: %v", err)
 	}
 	if len(f.c.deletes) != 0 || len(remaining(t, f.c)) != 5 {
