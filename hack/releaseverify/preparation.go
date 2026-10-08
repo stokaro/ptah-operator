@@ -78,9 +78,15 @@ esac`); err != nil {
 	if err != nil {
 		return err
 	}
-	if client.If != "steps.transaction.outputs.mode != 'published' && env.RELEASE_ACTION == 'prepare'" {
+	if client.If != "steps.transaction.outputs.mode != 'published' && env.RELEASE_ACTION == 'prepare'" ||
+		value(client.With, "args") != "build --clean --skip=validate" {
 		return errors.New("client binaries may only be built during preparation")
 	}
+	if err := requireRunBindings(steps, "chart-package", `[[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]]`,
+		`[[ -z "$(git status --porcelain)" ]]`); err != nil {
+		return err
+	}
+
 	if err := requireRunBindings(steps, "artifacts",
 		`if [[ "$mode" != published && "$RELEASE_ACTION" == prepare ]]; then`,
 		`gh release download "$RELEASE_TAG" --dir "$download_dir"`,

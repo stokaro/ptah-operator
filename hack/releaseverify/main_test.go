@@ -465,8 +465,11 @@ func TestVerifyWorkflowRejectsCriticalMutations(t *testing.T) {
 		"prepare publishes":                   {`if [[ "$RELEASE_ACTION" == prepare ]]; then`, `if [[ "$RELEASE_ACTION" == ignored ]]; then`, false},
 		"changed final manifest":              {`"$(sha256sum "$gate_dir/release-manifest.txt" | awk '{print $1}')" == "$QUALIFIED_MANIFEST_SHA256"`, `-n "$QUALIFIED_MANIFEST_SHA256"`, false},
 		"independent publication concurrency": {`release-${{ github.event_name == 'pull_request' && github.ref || 'transaction' }}`, `release-${{ github.ref }}`, false},
-		"mutable draft target":                {`--target "$GITHUB_SHA"`, `--target master`, false},
-		"client version from old tag":         {`printf 'GORELEASER_CURRENT_TAG=%s\n' "$release_tag" >> "$GITHUB_ENV"`, `echo omitted`, false},
+		"dirty client source":                 {`[[ -z "$(git status --porcelain)" ]]`, `true`, false},
+		"different client source":             {`[[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]]`, `true`, false},
+
+		"mutable draft target":        {`--target "$GITHUB_SHA"`, `--target master`, false},
+		"client version from old tag": {`printf 'GORELEASER_CURRENT_TAG=%s\n' "$release_tag" >> "$GITHUB_ENV"`, `echo omitted`, false},
 		"client rebuilt on publication": {`id: client
         if: steps.transaction.outputs.mode != 'published' && env.RELEASE_ACTION == 'prepare'`, `id: client
         if: steps.transaction.outputs.mode != 'published'`, false},

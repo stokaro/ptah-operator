@@ -846,6 +846,8 @@ jobs:
           [[ "$TESTED_CHART_SHA256" =~ ^[0-9a-f]{64}$ ]]
           [[ "$chart_sha256" == "$TESTED_CHART_SHA256" ]]
           printf 'path=%s\n' "$chart_path" >> "$GITHUB_OUTPUT"
+          [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]]
+          [[ -z "$(git status --porcelain)" ]]
       # The plugin a person installs, one file per client platform, built from
       # the selected source with the intended version stamped in -- so
       # `kubectl ptah --version` names the release it came from.
@@ -854,6 +856,8 @@ jobs:
       # its own CLI. It writes into dist/client, so --clean removes only what
       # it wrote and leaves this transaction's own artifacts in dist/ alone.
       # Publishing stays here: goreleaser builds and does not release.
+      # Its tag-existence validation cannot run before tagging. The workflow
+      # binds the live source separately and checks a clean checkout above.
       - name: Build the kubectl plugin for the supported client platforms
         id: client
         if: steps.transaction.outputs.mode != 'published' && env.RELEASE_ACTION == 'prepare'
@@ -861,7 +865,7 @@ jobs:
         with:
           distribution: goreleaser
           version: v2.18.2
-          args: build --clean
+          args: build --clean --skip=validate
       - name: Collect the acceptance evidence the preflight bundled
         id: evidence-download
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c

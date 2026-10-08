@@ -94,7 +94,10 @@ gh workflow run release.yml --ref master -f action=prepare
 The protected job checks that `master` still names that exact successful source
 commit and that the intended release tag is absent. The draft's
 `target_commitish` is the full commit SHA. Its journal, signatures and
-attestations name `refs/heads/master` as the actual producer. The job stops
+attestations name `refs/heads/master` as the actual producer. GoReleaser receives
+the intended version explicitly and skips its tag-existence validation; the
+workflow checks the live source identity and a clean checkout independently.
+The job stops
 before publication and records the SHA-256 of `release-manifest.txt`. Keep that
 digest with the qualification results. Staged images are readable by digest;
 the draft does not establish an official immutable release.
