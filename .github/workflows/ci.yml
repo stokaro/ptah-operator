@@ -408,11 +408,16 @@ jobs:
           echo "$install_dir" >> "$GITHUB_PATH"
       - name: Configure explicit Docker context
         id: docker-context
+        timeout-minutes: 5
         shell: bash
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install --yes apache2-utils openssh-server
+          # Hosted runners already carry these tools. A stalled package mirror
+          # must not consume the lifecycle budget before tests start.
+          if ! command -v htpasswd >/dev/null || [[ ! -x /usr/sbin/sshd ]]; then
+            sudo apt-get update
+            sudo apt-get install --yes apache2-utils openssh-server
+          fi
 
           ssh_key="$RUNNER_TEMP/ptah-e2e-ssh"
           known_hosts="$RUNNER_TEMP/ptah-e2e-known-hosts"
@@ -587,11 +592,16 @@ jobs:
           echo "$install_dir" >> "$GITHUB_PATH"
       - name: Configure explicit Docker context
         id: docker-context
+        timeout-minutes: 5
         shell: bash
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install --yes apache2-utils openssh-server
+          # Hosted runners already carry these tools. A stalled package mirror
+          # must not consume the lifecycle budget before tests start.
+          if ! command -v htpasswd >/dev/null || [[ ! -x /usr/sbin/sshd ]]; then
+            sudo apt-get update
+            sudo apt-get install --yes apache2-utils openssh-server
+          fi
 
           ssh_key="$RUNNER_TEMP/ptah-e2e-ssh"
           known_hosts="$RUNNER_TEMP/ptah-e2e-known-hosts"

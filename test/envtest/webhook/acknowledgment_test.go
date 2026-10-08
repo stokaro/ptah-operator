@@ -2,10 +2,13 @@ package webhook_test
 
 import (
 	"context"
+	"fmt"
 	"maps"
 	"slices"
 	"testing"
+	"time"
 
+	authorizationv1 "k8s.io/api/authorization/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -75,6 +78,29 @@ func newAcknowledgmentFixture(t *testing.T) acknowledgmentFixture {
 			Resources: []string{"ptahmigrationrunacknowledgments"},
 			Verbs:     []string{"create", "get"},
 		})
+	// The RBAC authorizer observes the binding asynchronously. Admission
+	// assertions start only once this identity can create an acknowledgment;
+	// the requests whose webhook verdicts are tested are still sent once.
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	if err := eventually(10*time.Second, func() error {
+		review := &authorizationv1.SubjectAccessReview{Spec: authorizationv1.SubjectAccessReviewSpec{
+			User: approverName, UID: approverUID, Groups: []string{approverRole, "system:authenticated"},
+			ResourceAttributes: &authorizationv1.ResourceAttributes{
+				Namespace: namespace, Group: operatorv1alpha1.GroupVersion.Group,
+				Resource: "ptahmigrationrunacknowledgments", Verb: "create",
+			},
+		}}
+		if err := admin.Create(ctx, review); err != nil {
+			return err
+		}
+		if !review.Status.Allowed || review.Status.Denied || review.Status.EvaluationError != "" {
+			return fmt.Errorf("acknowledger %s is not authorized in %s: %+v", approverName, namespace, review.Status)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("wait for acknowledgment fixture RBAC: %v", err)
+	}
 	return acknowledgmentFixture{namespace: namespace, migration: migration}
 }
 

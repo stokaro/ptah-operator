@@ -175,6 +175,7 @@ go run ./hack/capacity \
 	-operator-namespace "$E2E_OPERATOR_NAMESPACE" \
 	"${CAPACITY_ARGS[@]}" \
 	-registry-ip "$E2E_REGISTRY_IP" \
+	-registry-egress-policies "${CAPACITY_REGISTRY_EGRESS_POLICIES:-}" \
 	-out "$OUT_DIR"
 if [ "$VARIED_INPUTS" -eq 1 ]; then
 	python3 "$INPUT_PROBE" --state "$STATE_FILE" --directory "$OUT_DIR/inputs" --verify-changed "$CHANGE_BATCH" --verify-round "$FINAL_ROUND"

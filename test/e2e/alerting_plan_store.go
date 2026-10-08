@@ -227,11 +227,12 @@ func alQueryPlanStoreHistory(ctx context.Context, query func(context.Context, ti
 	var history alPlanStoreHistory
 	var body []byte
 	read := func(ctx context.Context) error {
-		var err error
-		body, err = query(ctx, at)
+		snapshot, err := query(ctx, at)
 		if err != nil {
 			return err
 		}
+		// A timed-out retry must retain the last response for diagnosis.
+		body = snapshot
 		groups, err := alSplitHistorySnapshot(body, alScrapeJob, []string{alPlanStoreMetric, "up", "scrape_duration_seconds"})
 		if err != nil {
 			return err
@@ -283,7 +284,9 @@ func alReadPlanStoreWindow(gaugeBody, upBody, durationBody []byte, pods []string
 		return h, errors.New("plan bytes must come from the original leader alone")
 	}
 	since := started.Add(-2 * alScrapeInterval)
-	values, err := alAdmissionNativeSamples(series[0], since, queriedAt, true)
+	// Health already proves a fresh committed scrape. Its gauge must match
+	// those exact timestamps below; a missing gauge is not a pending scrape.
+	values, err := alNativeSamples(series[0], since, queriedAt, true, false)
 	if err != nil {
 		return h, err
 	}

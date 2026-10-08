@@ -137,6 +137,20 @@ credentials and immutable verification policies into each namespace, and gives
 their default ServiceAccounts pull credentials without API write grants or
 automatic token mounting.
 
+On a cluster with enforced egress, set
+`CAPACITY_REGISTRY_EGRESS_POLICIES=ptah-schema-operations-registry,ptah-migration-operations-registry`
+to name the registry-only allowances from the network-policy example in every
+workload namespace. The collector's equivalent is `-registry-egress-policies`.
+The outage temporarily withdraws those allowances and restores their original
+rules, preserving DNS, database, and result-delivery policies. Recovery refuses
+to overwrite a replaced or concurrently edited policy. An interrupted process
+that cannot run cleanup requires restoring the named policies before another run.
+The IP-based fault is limited to the unrestricted HTTP lab: additive policies
+cannot override an existing allowance, and an HTTP backend address does not
+identify the TLS proxy. The collector checks this configuration before creating
+the fleet. A timed hold still passes only after fresh registry-read failures
+have been observed in both resource families in every workload namespace.
+
 The restart scenario requires a fresh approval, its exact Apply Job, and a
 fresh converged History reading for the approved migration. It watches the
 claim from before admission and checks the migration, plan, approval, and Job

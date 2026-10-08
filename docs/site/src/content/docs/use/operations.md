@@ -1924,7 +1924,10 @@ kubectl get ptahschemaapprovals,ptahmigrationapprovals -A \
 
 Delete a plan only if its name is absent from `pinned.txt`. Its chunks, and any
 ConfigMaps an Apply projected it into, are owned by the plan, so garbage
-collection removes them after it. Each carries the label
+collection removes them after it. Delete one plan at a time with
+`--cascade=foreground --wait=true`, and wait for its payloads to disappear
+before deleting the next. This bounds the garbage-collection work competing
+with live API reads during maintenance. Each payload carries the label
 `operator.ptah.run/plan=<plan-name>`, which is how to confirm they went.
 
 #### What proves it worked {#prune-evidence}
