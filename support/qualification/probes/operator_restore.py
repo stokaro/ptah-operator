@@ -13,6 +13,7 @@ import subprocess
 import time
 from urllib.parse import urlencode
 from result_first_harvest import publication
+from restore_during_apply import ApplyLoss, terminal_apply_pods
 
 REPO = Path(__file__).resolve().parents[3]
 OPERATOR_CRDS = frozenset(name + '.operator.ptah.run' for name in (
@@ -26,8 +27,10 @@ spec.loader.exec_module(db)
 
 class OperatorProbe(db.Probe):
     def __init__(self, engine, family, environment, root, loss="database", timing="idle"):
-        if timing not in ('idle', 'operator-lag'):
+        if timing not in ('idle', 'operator-lag', 'during-apply'):
             raise ValueError('Unknown recovery timing')
+        if timing == 'during-apply' and loss != 'database':
+            raise ValueError('During-Apply recovery currently implements database loss only; operator and combined loss remain required')
         if timing == 'operator-lag' and loss == 'database':
             raise ValueError('The operator-lag procedure must restore the older operator backup')
         super().__init__(engine, root)
@@ -46,9 +49,10 @@ class OperatorProbe(db.Probe):
         self.name = 'restore-case'
         self.api = 'operator.ptah.run/v1alpha1'
         self.created_namespace = False
-        self.report.update(scope='Native recovery pilot; operator loss means a namespaced-state rebuild with new UIDs. CRDs and the installed release survive. No in-flight, final-artifact or full-matrix acceptance', family=family, lossType=loss, timing=timing,
+        self.report.update(scope='Native recovery pilot; operator loss means a namespaced-state rebuild with new UIDs. CRDs and the installed release survive. No final-artifact or full-matrix acceptance', family=family, lossType=loss, timing=timing,
             operatorRevision=self.envs['E2E_CONTROLLER_REVISION'], operatorImage=self.envs['E2E_CONTROLLER_IMAGE'], executorImage=self.envs['E2E_EXECUTOR_IMAGE'],
             procedureSHA256=db.digest(Path(__file__).read_bytes()), databaseProcedureSHA256=db.digest((REPO / 'support/qualification/probes/database_restore.py').read_bytes()))
+        self.report['applyRecoveryProcedureSHA256'] = db.digest((REPO / 'support/qualification/probes/restore_during_apply.py').read_bytes())
         self.watches = {}
 
     def kubectl(self, action, args, data=None, required=True):
@@ -201,17 +205,17 @@ class OperatorProbe(db.Probe):
         jobs = self.read('jobs', False)
         return {j['metadata']['uid']: j for j in jobs['items'] if j['metadata'].get('labels', {}).get('operator.ptah.run/operation') == 'apply' and any(o.get('uid') == self.uid for o in j['metadata'].get('ownerReferences', []))}
 
-    def stopped_apply_pods(self, job_uids):
+    def stopped_apply_pods(self, job_uids, require_success=True):
         deadline = time.monotonic() + 60
         while time.monotonic() < deadline:
             selected = []
             for pod in self.read('pods', False)['items']:
                 if any(o.get('uid') in job_uids for o in pod['metadata'].get('ownerReferences', [])):
                     selected.append(pod)
-            if len(selected) == len(job_uids) and all(p.get('status', {}).get('phase') == 'Succeeded' and p['status'].get('containerStatuses') and all(s.get('state', {}).get('terminated', {}).get('finishedAt') for s in p['status'].get('containerStatuses', []) + p['status'].get('initContainerStatuses', [])) for p in selected):
+            if terminal_apply_pods(selected, job_uids, require_success):
                 return selected
             time.sleep(1)
-        raise RuntimeError('the exact Apply Pods did not all stop successfully')
+        raise RuntimeError('the exact Apply Pods did not all reach the required terminal state')
 
     def begin_watch(self):
         for resource in ('jobs', 'pods'):
@@ -618,6 +622,7 @@ class OperatorProbe(db.Probe):
             report.update(status='FAIL', failure='Recovery completed, but the required recovery-point objective is not established')
 
     def run(self):
+        in_flight = None
         try:
             self.prepare_namespace()
             self.command('create isolated database network', db.DOCKER + ['network', 'create', '--internal', '--label', 'ptah.restore-run=' + self.prefix, self.prefix])
@@ -701,7 +706,16 @@ class OperatorProbe(db.Probe):
             self.check('late write committed before loss', old_ids == {'1', '2', '3'})
             if self.loss == 'operator':
                 before['rows'] = self.inspect(source)['rows']
+            if self.timing == 'during-apply':
+                in_flight = ApplyLoss(self, db.DOCKER)
+                original_jobs = in_flight.arm(source, source_field, original_jobs, recipient, key, wrong)
+                in_flight.verify_loss_boundary(source)
             self.report['lossInjectedAt'] = db.now()
+            if in_flight:
+                loss_at = db.dt.datetime.fromisoformat(self.report['lossInjectedAt'])
+                self.check('both recovery points are fresh before injecting in-flight loss',
+                           all(0 <= (loss_at - db.dt.datetime.fromisoformat(self.report[field])).total_seconds() <= 300
+                               for field in ('backupStartedAt', 'databaseBackupStartedAt')))
             clock = time.monotonic()
             if self.loss != 'database':
                 self.lose_namespace()
@@ -710,6 +724,9 @@ class OperatorProbe(db.Probe):
             else:
                 self.command('destroy original database instance', db.DOCKER + ['rm', '-f', source]); self.containers.remove(source)
                 self.command('destroy original database storage', db.DOCKER + ['volume', 'rm', volume]); self.volumes.remove(volume)
+                if in_flight:
+                    in_flight.close()
+                    original_pods += in_flight.stopped(source_field, suspended['spec'][source_field])
                 restored, _ = self.start('restored', password, False)
                 if self.engine == 'postgresql':
                     empty = self.sql(restored, "SELECT count(*) FROM pg_database WHERE datname='drill'; SELECT count(*) FROM pg_roles WHERE rolname='operator_writer';", database='postgres').stdout.strip()
@@ -738,10 +755,14 @@ class OperatorProbe(db.Probe):
             self.check('restored reader cannot mutate schema', denied.returncode != 0 and (b'permission denied for schema public' if self.engine == 'postgresql' else b'ERROR 1142') in denied.stderr)
             if self.loss != 'operator':
                 self.connect_database(restored, True)
+            if in_flight:
+                in_flight.diagnose(restored)
             if self.timing == 'operator-lag':
                 self.select_diagnosed_source(checkpoint_path, key, source_field)
             self.patch({'spec': {'suspend': False}})
             recovered = self.settled('InSync')
+            if in_flight:
+                in_flight.verify_resolution(recovered)
             if self.loss == 'database':
                 self.check('operator identity survived database loss', recovered['metadata']['uid'] == original_uid)
                 self.check('execution binding survived database loss', recovered['status'].get('executionBinding') == suspended['status'].get('executionBinding') and bool(suspended['status'].get('executionBinding')))
@@ -753,7 +774,7 @@ class OperatorProbe(db.Probe):
                 self.check('the target Secret was restored with a new identity',
                            self.read('secrets', 'restore-target')['metadata']['uid'] != target_secret['metadata']['uid'])
             self.check('old approval did not replay after database restoration', self.watched_apply_jobs(self.barrier('restored-watch-boundary')) == set(original_jobs))
-            final_revision = 3 if self.timing == 'operator-lag' else 2
+            final_revision = 3 if self.timing in ('operator-lag', 'during-apply') else 2
             fresh_ref = self.publish(final_revision)
             self.patch({'spec': {source_field: self.source_spec(fresh_ref)}})
             ready = self.settled('AwaitingApproval')
@@ -763,6 +784,10 @@ class OperatorProbe(db.Probe):
             expected = b"referenced plan is no longer current for the schema" if self.family == 'schema' else b"referenced plan is no longer the migration's current plan"
             if self.loss == 'database':
                 self.check('admission rejects an old plan approval', denied.returncode != 0 and expected in denied.stderr)
+                if in_flight:
+                    denied_in_flight = self.approve(ready, in_flight.plan, 'restore-in-flight-replay', required=False)
+                    self.check('admission rejects replay of the interrupted Apply plan',
+                               denied_in_flight.returncode != 0 and expected in denied_in_flight.stderr)
             else:
                 expected = b'read referenced plan:' if self.family == 'schema' else b'read referenced migration plan:'
                 self.check('admission refuses the original backup plan approval',
@@ -793,13 +818,21 @@ class OperatorProbe(db.Probe):
             if self.loss == 'database':
                 retained = self.read(self.kind.lower() + 'approvals', 'restore-original')
                 self.check('original approval identity and stamped spec are unchanged', retained['metadata']['uid'] == stored_old_approval['metadata']['uid'] and retained['spec'] == stored_old_approval['spec'])
+                if in_flight:
+                    retained = self.read(self.kind.lower() + 'approvals', 'restore-in-flight')
+                    self.check('the interrupted approval remains the original consumed decision',
+                               retained['metadata']['uid'] == in_flight.evidence['approval']['metadata']['uid'] and
+                               retained['spec'] == in_flight.evidence['approval']['spec'] and
+                               any(c['type'] == 'Consumed' and c['status'] == 'True'
+                                   for c in retained.get('status', {}).get('conditions', [])))
             else:
                 absent = self.kubectl('confirm original authorization was not recreated',
                                       ['get', self.kind.lower() + 'approvals', 'restore-original'], required=False)
                 self.check('the rebuilt namespace contains no recreated old approval',
                            absent.returncode != 0 and b'NotFound' in absent.stderr and b'restore-original' in absent.stderr)
-            final_column = 'resumed' if self.timing == 'operator-lag' else 'recovered'
-            self.check('approved change reached the restored database', self.sql(restored, 'SELECT count(*) FROM recovery_canary WHERE ' + final_column + '=1;').stdout.strip() == str(len(new_ids)).encode())
+            final_column = 'resumed' if final_revision == 3 else 'recovered'
+            final_columns = 'recovered=1 AND resumed=1' if in_flight else final_column + '=1'
+            self.check('approved change reached the restored database', self.sql(restored, 'SELECT count(*) FROM recovery_canary WHERE ' + final_columns + ';').stdout.strip() == str(len(new_ids)).encode())
             final_jobs = self.watched_apply_jobs(self.barrier('final-watch-boundary'))
             self.check('exactly one fresh Apply followed restoration', len(final_jobs - set(original_jobs)) == 1 and set(original_jobs) <= final_jobs)
             if self.family == 'migration':
@@ -811,8 +844,8 @@ class OperatorProbe(db.Probe):
             operator_age = (db.dt.datetime.fromisoformat(self.report['lossInjectedAt']) - db.dt.datetime.fromisoformat(self.report['backupStartedAt'])).total_seconds()
             self.report['operatorBaseBackupAgeUpperBoundSeconds'] = operator_age
             self.report['profileRPO'] = {'database': 'PASS', 'operatorBase': 'PASS' if 0 <= operator_age <= 300 else 'FAIL'}
-            if self.timing == 'idle':
-                self.check('the idle operator checkpoint is within five minutes of loss', 0 <= operator_age <= 300)
+            if self.timing != 'operator-lag':
+                self.check('the operator checkpoint is within five minutes of loss', 0 <= operator_age <= 300)
             else:
                 self.report['profileRPO']['combinedOperatorRecoveryKit'] = 'Not assessed'
                 self.report['profileRPO']['reason'] = ('The older full operator checkpoint exceeds the five-minute backup-age bound. '
@@ -828,6 +861,11 @@ class OperatorProbe(db.Probe):
             self.report.update(status='FAIL', failure=type(exc).__name__ + ': ' + str(exc)); self.persist(); raise
         finally:
             clean = True
+            if in_flight:
+                try:
+                    in_flight.close()
+                except (OSError, subprocess.TimeoutExpired):
+                    clean = False
             for process, output, _, _ in self.watches.values():
                 process.terminate()
                 try:
@@ -868,7 +906,7 @@ if __name__ == '__main__':
     parser.add_argument('environment', type=Path)
     parser.add_argument('output', type=Path)
     parser.add_argument('--loss', choices=['database', 'operator', 'combined'], default='database')
-    parser.add_argument('--timing', choices=['idle', 'operator-lag'], default='idle')
+    parser.add_argument('--timing', choices=['idle', 'operator-lag', 'during-apply'], default='idle')
     args = parser.parse_args()
     probe = OperatorProbe(args.engine, args.family, args.environment, args.output, args.loss, args.timing)
     probe.run()
