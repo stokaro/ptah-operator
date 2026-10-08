@@ -34,7 +34,7 @@ func (s Store) publishInline(ctx context.Context, b Binding, payload []byte, exp
 		}
 		return Receipt{}, err
 	}
-	// A successful CREATE or an identical retry still owes a direct readback.
-	_, receipt, err := s.Load(ctx, b)
+	// ensure has already read the persisted record and checked its exact bytes.
+	_, receipt, err := s.loadIntent(ctx, intent, b)
 	return receipt, err
 }

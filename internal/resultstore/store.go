@@ -135,7 +135,7 @@ func (s Store) LoadAttempt(ctx context.Context, namespace string, uid types.UID,
 	if err != nil || found != name || m.Binding.Namespace != namespace || m.Binding.UID != uid || m.Binding.OperationID != operationID || m.Binding.JobName != jobName {
 		return Binding{}, nil, Receipt{}, ErrConflict
 	}
-	payload, receipt, err := s.Load(ctx, m.Binding)
+	payload, receipt, err := s.loadIntent(ctx, intent, m.Binding)
 	if err != nil {
 		return Binding{}, nil, Receipt{}, err
 	}
@@ -288,7 +288,18 @@ func (s Store) Load(ctx context.Context, b Binding) ([]byte, Receipt, error) {
 	if err != nil {
 		return nil, Receipt{}, err
 	}
-	m, _, err := admissionManifest(intent)
+	return s.loadIntent(ctx, intent, b)
+}
+
+// loadIntent consumes the direct read already obtained by Load, LoadAttempt,
+// or ensure. Inline records contain the entire immutable publication, so that
+// same read is its complete readback. Chunked results still read and verify
+// their completion and every chunk against this exact intent UID.
+func (s Store) loadIntent(ctx context.Context, intent *api.PtahResultRecord, b Binding) ([]byte, Receipt, error) {
+	if intent == nil || intent.UID == "" {
+		return nil, Receipt{}, ErrConflict
+	}
+	m, name, err := admissionManifest(intent)
 	if err != nil || m.Binding != b {
 		return nil, Receipt{}, ErrConflict
 	}

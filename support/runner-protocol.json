@@ -112,6 +112,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:268060920139bbbd45f45eaae08015d8e668d0bfe6b584cccb3b1435673d2591",
       "reason": "Move the post-upload authority check to the publisher before its first write. Atomic results use this as their commit check; chunked results still revalidate after their chunks and before completion or an existing receipt. Request authentication before reading the body, admission authorization, exact durable readback, and identical-byte retries remain required. This removes duplicate live reads without changing wire payloads, identities, execution authority, or protocol version 1."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:ce799cc270f33f2db4ad28da35fcf088edc6d7347268e28f7f1756144cc8328e",
+      "reason": "Reuse an immutable intent already read and verified within the same result publication or load instead of reading it twice. The persisted UID, owner, binding, manifest, digest, size, and chunk-completion checks remain required; a CREATE response does not replace durable readback. This changes the result store in the runner's transitive dependency closure. Wire payloads, receipt formats, live authorization, SQL execution, and retry limits are unchanged. Protocol version 1 remains compatible."
     }
   ]
 }
