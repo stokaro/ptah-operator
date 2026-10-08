@@ -39,7 +39,8 @@ func TestAlPlanStoreRecoveryWindowFromNativeScrapes(t *testing.T) {
 func TestAlPlanStoreRecoveryRejectsTheCurrentCIMissingGauge(t *testing.T) {
 	t.Parallel()
 	// The failed latest scrape from CI 37315953826, job 111785841643,
-	// still cannot establish a fresh baseline or complete a recovery window.
+	// has committed health samples without their gauge. It is a permanent
+	// omission, not a pending scrape that can establish recovery on a retry.
 	body, err := os.ReadFile("../../testdata/e2e/readings/prometheus-plan-store-stale-gauge.json")
 	if err != nil {
 		t.Fatal(err)
@@ -53,7 +54,7 @@ func TestAlPlanStoreRecoveryRejectsTheCurrentCIMissingGauge(t *testing.T) {
 	at := time.Unix(1791219460, 999000227).UTC()
 	for _, started := range []time.Time{at.Add(-20 * time.Second), at} {
 		_, err := alReadPlanStoreRecoveryHistory(groups[alPlanStoreMetric], groups["up"], groups["scrape_duration_seconds"], pods, leader, started, at)
-		if err == nil || !strings.Contains(err.Error(), "before a fresh scrape") {
+		if err == nil || !strings.Contains(err.Error(), "plan bytes omitted a native scrape") {
 			t.Fatalf("missing native gauge supplied recovery authority: %v", err)
 		}
 	}

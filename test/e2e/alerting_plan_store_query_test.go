@@ -106,6 +106,9 @@ func TestAlPlanStoreWaitsForTheOriginalScrapeCommit(t *testing.T) {
 			} else if err == nil {
 				t.Fatal("waiting accepted an incomplete or invalid history")
 			}
+			if mutation == "missing gauge" && (calls != 2 || errors.Is(err, errAlHistoryNotFresh) || errors.Is(err, context.Canceled)) {
+				t.Fatalf("a committed scrape without its gauge was treated as pending: calls=%d, error=%v", calls, err)
+			}
 		})
 	}
 	t.Run("query timeout preserves the preceding snapshot", func(t *testing.T) {

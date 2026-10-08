@@ -284,7 +284,9 @@ func alReadPlanStoreWindow(gaugeBody, upBody, durationBody []byte, pods []string
 		return h, errors.New("plan bytes must come from the original leader alone")
 	}
 	since := started.Add(-2 * alScrapeInterval)
-	values, err := alAdmissionNativeSamples(series[0], since, queriedAt, true)
+	// Health already proves a fresh committed scrape. Its gauge must match
+	// those exact timestamps below; a missing gauge is not a pending scrape.
+	values, err := alNativeSamples(series[0], since, queriedAt, true, false)
 	if err != nil {
 		return h, err
 	}
