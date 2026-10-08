@@ -16,6 +16,13 @@ Event, because that is the object whose author has to act.
 Event messages are bounded. A failure long enough to be truncated is recorded in
 full on the resource's own status and in the operation's Job.
 
+Result reads use the transport recorded on the Job. With the default durable
+delivery, the controller reads `PtahResultRecord` objects through the Kubernetes
+API. Check API availability and the manager's read permissions when those reads
+fail. Logs and termination summaries cannot replace a missing durable receipt.
+The log-loss window and summary fallback apply only to
+[legacy result reads](../../reference/execution/#legacy-result-reads).
+
 | Reason | Type | Recorded on | What it says |
 | --- | --- | --- | --- |
 | `AdmissionSnapshotRefreshed` | Normal | `PtahSchema`, `PtahMigration` | A claim that had not dispatched found the Pod template it would dispatch different from the one its admission snapshot recorded, usually because a new manager release took over. The claim stands, and the snapshot is resolved again before its Job is created. This happens once per claim; a template that changes again retires the claim. |
@@ -38,11 +45,11 @@ full on the resource's own status and in the operation's Job.
 | `PodAdmissionRefused` | Warning | `PtahSchema`, `PtahMigration` | The Job controller could not create the operation Pod because the API server refused it, and the message carries the refusal: a policy the namespace runs, a mutating admission whose change the operator's own Pod webhook refused, a quota. The Job keeps its deadline and the Job controller keeps trying; declare what the Pod has to carry in `spec.execution.podMetadata`, or change the policy. [Execution](../../reference/execution/#meshes-and-policy-engines) says what a Pod may carry. |
 | `ProtectedTableRefused` | Warning | `PtahSchema` | A plan would change a table `spec.policy.protectedTables` fences off, so no plan is published. |
 | `ResultCredentialFailed` | Warning | `PtahSchema`, `PtahMigration` | Issuing the operation-bound delivery credential failed and will be retried. Check receiver trust readiness, the enrollment policy, and admission refusals. The runner waits for its credential before executing. |
-| `ResultReadFailed` | Warning | `PtahSchema`, `PtahMigration` | Reading an operation's result failed in a way that may pass, such as a kubelet the API server cannot reach, and will be tried again. A log that keeps failing for two minutes is treated as gone. |
-| `ResultReadTimedOut` | Warning | `PtahSchema`, `PtahMigration` | Reading an operation's result took longer than the bound it is given. A log that keeps failing for two minutes is treated as gone. |
+| `ResultReadFailed` | Warning | `PtahSchema`, `PtahMigration` | Reading an operation's result failed and will be retried. The message identifies the failed read; check the Job's result transport before investigating storage or container logs. |
+| `ResultReadTimedOut` | Warning | `PtahSchema`, `PtahMigration` | Reading an operation's result exceeded its time bound and will be retried. This can affect either durable result storage or legacy container-log reads. |
 | `RunnerProtocolMismatch` | Warning | `PtahSchema`, `PtahMigration` | The runner from `execution.runnerImage` speaks another protocol than this manager and refused the Job before starting the executor. A read-only operation is tried again after the failure interval; an Apply still owes its read-only proof. |
 | `TargetLockReleaseOwed` | Warning | `PtahMigration` | The database lock was not released, and the release the claim owes will be retried. |
-| `TerminationSummaryRefused` | Warning | `PtahMigration` | An Apply's log held no readable result, and the summary in its Pod's termination message was not read in its place. The message says why: another attempt, a summary cut short, or a log that holds a different frame. The run is recorded as unknown. |
+| `TerminationSummaryRefused` | Warning | `PtahMigration` | A legacy Apply's log held no readable result, and the summary in its Pod's termination message was not read in its place. The message says why: another attempt, a summary cut short, or a log that holds a different frame. The run is recorded as unknown. |
 | `UnresolvedRunAcknowledged` | Normal | `PtahMigration` | A person's `PtahMigrationRunAcknowledgment` settled the run this resource recorded as unresolved. The message names who, the outcome and the operation, and the resource reads its database again before it plans. |
 | `UnresolvedRunDiscarded` | Warning | `PtahMigration` | Deleting this resource discarded the record of a run nobody accounted for. The message names the outcome, the version, and the database. |
 | `UnresolvedRunRestored` | Warning | `PtahMigration` | The resource came back without the record of a run nobody accounted for in its status -- a restore that dropped status -- and the manager put it back from the copy in its `operator.ptah.run/unresolved-run` annotation. Nothing is planned until a reading or an acknowledgment settles it. |
