@@ -1,7 +1,9 @@
 package e2e
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -15,9 +17,14 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/watch"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
 func alUpgradeFixture() (alUpgradeState, *batchv1.Job) {
@@ -264,6 +271,88 @@ func TestAlUpgradeProbeRecoveryRequiresCurrentReadOnlyProgress(t *testing.T) {
 				t.Fatal("Apply claim accepted")
 			}
 		})
+	}
+}
+
+func TestAlUpgradeProbeAdmissionRereadsOnlyOnConflict(t *testing.T) {
+	t.Parallel()
+	for _, family := range []string{"schema", "migration"} {
+		for _, fault := range []string{"status write", "replacement", "admission refusal"} {
+			t.Run(family+"/"+fault, func(t *testing.T) {
+				t.Parallel()
+				original := negativeFixtureState(t, family, ptahv1.ApplyPolicyNever)
+				scheme := runtime.NewScheme()
+				if err := ptahv1.AddToScheme(scheme); err != nil {
+					t.Fatal(err)
+				}
+				patches := 0
+				resource := schema.GroupResource{Group: ptahv1.GroupVersion.Group, Resource: "ptah" + family + "s"}
+				refusal := apierrors.NewForbidden(resource, original.GetName(), errors.New("admission refused"))
+				c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(original).WithStatusSubresource(original).
+					WithInterceptorFuncs(interceptor.Funcs{Patch: func(ctx context.Context, c client.WithWatch, object client.Object, patch client.Patch, options ...client.PatchOption) error {
+						patches++
+						settings := (&client.PatchOptions{}).ApplyOptions(options)
+						if len(settings.DryRun) != 1 || settings.DryRun[0] != metav1.DryRunAll {
+							t.Fatal("admission proof attempted a persisted write")
+						}
+						if fault == "admission refusal" {
+							return refusal
+						}
+						current := original.DeepCopyObject().(client.Object)
+						if err := c.Get(ctx, client.ObjectKeyFromObject(original), current); err != nil {
+							return err
+						}
+						if patches == 1 {
+							if fault == "replacement" {
+								if err := c.Delete(ctx, current); err != nil {
+									return err
+								}
+								current.SetUID("replacement")
+								current.SetResourceVersion("")
+								if err := c.Create(ctx, current); err != nil {
+									return err
+								}
+							} else {
+								if err := c.Status().Update(ctx, current); err != nil {
+									return err
+								}
+								if current.GetResourceVersion() == object.GetResourceVersion() {
+									t.Fatal("status write did not advance the resource version")
+								}
+							}
+							return apierrors.NewConflict(resource, original.GetName(), errors.New("concurrent controller write"))
+						}
+						data, err := patch.Data(object)
+						if err != nil {
+							return err
+						}
+						var change struct {
+							Metadata struct {
+								ResourceVersion string `json:"resourceVersion"`
+							} `json:"metadata"`
+						}
+						if json.Unmarshal(data, &change) != nil || change.Metadata.ResourceVersion == "" || change.Metadata.ResourceVersion != current.GetResourceVersion() {
+							t.Fatal("retry lost the fresh resource-version precondition")
+						}
+						return c.Patch(ctx, object, patch, options...)
+					}}).Build()
+				before, admitted, err := alUpgradeProbeAdmission(t.Context(), c, original)
+				if fault == "status write" {
+					if err != nil || patches != 2 || before == nil || admitted == nil || !alUpgradeProbeSafe(before, original) || admitted.GetAnnotations()["qualification.ptah.run/native-upgrade-admission"] != "verified" {
+						t.Fatalf("status conflict did not recover: patches=%d, error=%v", patches, err)
+					}
+					stored := original.DeepCopyObject().(client.Object)
+					if err := c.Get(t.Context(), client.ObjectKeyFromObject(original), stored); err != nil || stored.GetAnnotations()["qualification.ptah.run/native-upgrade-admission"] != "" {
+						t.Fatal("dry-run admission changed the stored probe", err)
+					}
+				} else if err == nil || patches != 1 || admitted != nil || fault == "admission refusal" && !apierrors.IsForbidden(err) {
+					t.Fatalf("unsafe probe or refusal was retried: patches=%d, error=%v", patches, err)
+				}
+				if fault == "replacement" && (before == nil || before.GetUID() != "replacement" || err.Error() != "upgrade changed the read-only probe") {
+					t.Fatal("retry did not revalidate the replacement probe", err)
+				}
+			})
+		}
 	}
 }
 

@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -24,6 +25,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/watch"
+	"k8s.io/client-go/util/retry"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -289,6 +291,34 @@ func alUpgradeProbeSafe(v, original client.Object) bool {
 		return ok && equality.Semantic.DeepEqual(current.Spec, old.Spec) && current.Spec.Policy.Apply == ptahv1.ApplyPolicyNever && !current.Spec.Suspend && current.Status.LastRun == nil && current.Status.UnresolvedRun == nil && (current.Status.ActiveOperation == nil || current.Status.ActiveOperation.Type != ptahv1.MigrationOperationApply)
 	}
 	return false
+}
+
+// A controller status write can invalidate the dry-run's resource version.
+// Re-read and revalidate the original probe on conflict; admission refusals
+// and changed probe identities still fail immediately.
+func alUpgradeProbeAdmission(ctx context.Context, c client.Client, original client.Object) (before, admitted client.Object, err error) {
+	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		live := original.DeepCopyObject().(client.Object)
+		if err := c.Get(ctx, client.ObjectKeyFromObject(original), live); err != nil {
+			return err
+		}
+		before = live.DeepCopyObject().(client.Object)
+		if !alUpgradeProbeSafe(live, original) {
+			return errors.New("upgrade changed the read-only probe")
+		}
+		annotations := live.GetAnnotations()
+		if annotations == nil {
+			annotations = map[string]string{}
+		}
+		annotations["qualification.ptah.run/native-upgrade-admission"] = "verified"
+		live.SetAnnotations(annotations)
+		if err := c.Patch(ctx, live, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{}), client.DryRunAll); err != nil {
+			return err
+		}
+		admitted = live
+		return nil
+	})
+	return before, admitted, err
 }
 
 // Prometheus instant-vector timestamps are evaluation times, so query the

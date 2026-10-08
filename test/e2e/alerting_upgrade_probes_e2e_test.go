@@ -284,20 +284,11 @@ func (a *alertingRun) upgradeRuntimeBoundary(intent alUpgradeIntent, probes []cl
 		}
 	}
 	for _, probe := range probes {
-		live := probe.DeepCopyObject().(client.Object)
-		a.check(a.cluster.Client.Get(a.ctx, client.ObjectKeyFromObject(probe), live), "read original recovered probe")
-		if !alUpgradeProbeSafe(live, probe) {
-			a.fatalf("upgrade changed the read-only probe")
+		before, live, err := alUpgradeProbeAdmission(a.ctx, a.cluster.Client, probe)
+		if before != nil {
+			retain("recovery-probe-"+probe.GetName()+".json", mustJSONBytes(before))
 		}
-		retain("recovery-probe-"+probe.GetName()+".json", mustJSONBytes(live))
-		before := live.DeepCopyObject().(client.Object)
-		annotations := live.GetAnnotations()
-		if annotations == nil {
-			annotations = map[string]string{}
-		}
-		annotations["qualification.ptah.run/native-upgrade-admission"] = "verified"
-		live.SetAnnotations(annotations)
-		a.check(a.cluster.Client.Patch(a.ctx, live, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{}), client.DryRunAll), "verify actual recovered admission")
+		a.check(err, "verify actual recovered admission")
 		retain("recovery-admission-"+probe.GetName()+".json", mustJSONBytes(live))
 	}
 	return boundary
