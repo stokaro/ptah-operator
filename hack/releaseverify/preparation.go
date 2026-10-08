@@ -55,6 +55,40 @@ func verifyReleasePreparation(smoke []workflowStep, steps map[string]workflowSte
 esac`); err != nil {
 		return err
 	}
+	if err := requireRunBindings(steps, "release",
+		`release_tag="$(go run ./hack/releaseverify -print-release-tag)"`,
+		`go run ./hack/releaseverify -tag "$release_tag"`,
+		`printf 'RELEASE_TAG=%s\n' "$release_tag" >> "$GITHUB_ENV"`,
+		`printf 'GORELEASER_CURRENT_TAG=%s\n' "$release_tag" >> "$GITHUB_ENV"`); err != nil {
+		return err
+	}
+	if err := requireRunBindings(steps, "transaction",
+		`release_json="$(go run ./hack/releaseverify -tag "$RELEASE_TAG" -read-release)"`,
+		`SOURCE_REF="$(sed -n 's/^source-ref=//p' "$state_path")"`,
+		`-tag "$RELEASE_TAG" -source-sha "$GITHUB_SHA" -source-ref "$SOURCE_REF"`,
+		`if [[ "$release_state" == prepared && "$SOURCE_REF" != "$GITHUB_REF" ]]; then`,
+		`printf 'SOURCE_REF=%s\n' "$SOURCE_REF" >> "$GITHUB_ENV"`); err != nil {
+		return err
+	}
+	if err := requireRunBindings(steps, "draft", `--target "$GITHUB_SHA"`,
+		`go run ./hack/releaseverify -tag "$RELEASE_TAG" -verify-source-identity`); err != nil {
+		return err
+	}
+	client, err := requireStep(steps, "client")
+	if err != nil {
+		return err
+	}
+	if client.If != "steps.transaction.outputs.mode != 'published' && env.RELEASE_ACTION == 'prepare'" {
+		return errors.New("client binaries may only be built during preparation")
+	}
+	if err := requireRunBindings(steps, "artifacts",
+		`if [[ "$mode" != published && "$RELEASE_ACTION" == prepare ]]; then`,
+		`gh release download "$RELEASE_TAG" --dir "$download_dir"`,
+		`cmp "$manifest" "$download_dir/release-manifest.txt"`,
+		`cmp "$chart_path" "$download_dir/$(basename "$chart_path")"`,
+		`-source-ref "$SOURCE_REF"`); err != nil {
+		return err
+	}
 	if err := requireRunBindings(steps, "transaction", `if [[ "$RELEASE_ACTION" == publish ]]; then
   [[ "$release_state" == recover || "$release_state" == published ]] || {
     echo 'prepare and qualify a complete signed draft before requesting publication' >&2
@@ -78,5 +112,5 @@ fi`); err != nil {
     echo 'the final manifest differs from the qualified transaction' >&2
     exit 1
   }
-  gh release edit "$GITHUB_REF_NAME" --draft=false --latest=false`)
+  gh release edit "$RELEASE_TAG" --draft=false --latest=false`)
 }

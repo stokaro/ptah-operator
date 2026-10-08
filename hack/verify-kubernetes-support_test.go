@@ -1076,7 +1076,7 @@ func TestVerifyReleaseWorkflowRejectsSupportEvidenceMutations(t *testing.T) {
 			new: "  # workflow_dispatch removed\n",
 		},
 		"manual smoke guard": {
-			old: "github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.action == 'smoke' || !startsWith(github.ref, 'refs/tags/v')))",
+			old: "github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.action == 'smoke' || (!startsWith(github.ref, 'refs/tags/v') && !(github.ref == 'refs/heads/master' && inputs.action == 'prepare'))))",
 			new: "github.event_name == 'pull_request'",
 		},
 		"privileged preflight": {

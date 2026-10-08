@@ -66,6 +66,10 @@ func main() {
 	checksums := flag.String("checksums", "", "SHA256SUMS file to verify")
 	chart := flag.String("chart", "", "packaged chart to verify")
 	sourceSHA := flag.String("source-sha", "", "release source commit SHA")
+	sourceRef := flag.String("source-ref", "", "expected build ref: the release tag (default) or refs/heads/master")
+	printReleaseTag := flag.Bool("print-release-tag", false, "print the intended tag from the verified chart version")
+	readRelease := flag.Bool("read-release", false, "read the exact release, including a draft without a Git tag")
+	verifySourceIdentity := flag.Bool("verify-source-identity", false, "verify the live source ref and release tag state")
 	verifyTagIdentity := flag.Bool("verify-tag-identity", false, "verify that the live GitHub tag still peels to GITHUB_SHA")
 	printDockerfileInputDigests := flag.Bool(
 		"print-dockerfile-input-digests",
@@ -107,6 +111,44 @@ func main() {
 	if err := verifyRepository(*root, *tag); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
+	}
+	if *printReleaseTag {
+		chart, err := os.ReadFile(filepath.Join(*root, "charts", "ptah-operator", "Chart.yaml"))
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		version, err := topLevelScalar(chart, "version")
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		fmt.Println("v" + version)
+		return
+	}
+	if *readRelease || *verifySourceIdentity {
+		apiURL := os.Getenv("GITHUB_API_URL")
+		if apiURL == "" {
+			apiURL = "https://api.github.com"
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		client := &http.Client{Timeout: 15 * time.Second}
+		var err error
+		if *readRelease {
+			var body []byte
+			body, err = readGitHubRelease(ctx, client, apiURL, os.Getenv("GITHUB_REPOSITORY"), *tag, os.Getenv("GITHUB_SHA"), os.Getenv("GH_TOKEN"))
+			if err == nil {
+				fmt.Println(string(body))
+			}
+		} else {
+			err = verifyReleaseSource(ctx, client, apiURL, os.Getenv("GITHUB_REPOSITORY"), *tag, os.Getenv("GITHUB_REF"), os.Getenv("GITHUB_SHA"), os.Getenv("RELEASE_ACTION"), os.Getenv("GH_TOKEN"))
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
 	}
 	if *registryMissingError != "" || *registryMissingReference != "" {
 		if *registryMissingError == "" || *registryMissingReference == "" {
@@ -210,7 +252,7 @@ func main() {
 			&http.Client{Timeout: 15 * time.Second},
 			apiURL,
 			os.Getenv("GITHUB_REPOSITORY"),
-			os.Getenv("GITHUB_REF_NAME"),
+			*tag,
 			os.Getenv("GITHUB_SHA"),
 			os.Getenv("GH_TOKEN"),
 		); err != nil {
@@ -218,7 +260,7 @@ func main() {
 			os.Exit(1)
 		}
 	}
-	if *manifest != "" || *journal != "" || *checksums != "" || *chart != "" || *sourceSHA != "" {
+	if *manifest != "" || *journal != "" || *checksums != "" || *chart != "" || *sourceSHA != "" || *sourceRef != "" {
 		if *manifest == "" && *journal == "" || *tag == "" || *sourceSHA == "" {
 			fmt.Fprintln(os.Stderr, "release state verification requires -manifest or -journal, plus -tag and -source-sha")
 			os.Exit(1)
@@ -237,9 +279,9 @@ func main() {
 				fmt.Fprintln(os.Stderr, "prepared journal verification does not accept -checksums or -chart")
 				os.Exit(1)
 			}
-			err = verifyPreparedJournal(*journal, *tag, *sourceSHA)
+			err = verifyPreparedJournal(*journal, *tag, *sourceSHA, *sourceRef)
 		} else {
-			err = verifyReleaseAssets(*root, *manifest, *checksums, *chart, *tag, *sourceSHA)
+			err = verifyReleaseAssets(*root, *manifest, *checksums, *chart, *tag, *sourceSHA, *sourceRef)
 		}
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
@@ -1460,8 +1502,8 @@ type workflowJob struct {
 	Steps           []workflowStep     `yaml:"steps"`
 }
 
-const releaseSmokeCondition = "github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.action == 'smoke' || !startsWith(github.ref, 'refs/tags/v')))"
-const releaseTagCondition = "startsWith(github.ref, 'refs/tags/v') && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.action == 'prepare' || inputs.action == 'publish')))"
+const releaseSmokeCondition = "github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.action == 'smoke' || (!startsWith(github.ref, 'refs/tags/v') && !(github.ref == 'refs/heads/master' && inputs.action == 'prepare'))))"
+const releaseTagCondition = "(startsWith(github.ref, 'refs/tags/v') && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.action == 'prepare' || inputs.action == 'publish'))) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' && inputs.action == 'prepare'))"
 
 type workflowStep struct {
 	ID              string            `yaml:"id"`
@@ -1524,10 +1566,10 @@ func verifyWorkflowSemantics(document []byte) error {
 		return errors.New("release workflow push trigger must contain only v* tags")
 	}
 	cancelInProgress := workflow.Concurrency.CancelInProgress
-	if workflow.Concurrency.Group != "release-${{ github.ref }}" ||
+	if workflow.Concurrency.Group != "release-${{ github.event_name == 'pull_request' && github.ref || 'transaction' }}" ||
 		cancelInProgress.Kind != yaml.ScalarNode || cancelInProgress.Tag != "!!str" ||
 		cancelInProgress.Value != "${{ github.event_name == 'pull_request' }}" {
-		return errors.New("release workflow must cancel only superseded pull request validation and serialize each tag without canceling an active transaction")
+		return errors.New("release workflow must cancel only superseded pull request validation and serialize preparation and publication without canceling an active transaction")
 	}
 	if !equalStringMap(workflow.Permissions, map[string]string{"contents": "read"}) {
 		return errors.New("release workflow top-level permissions must be contents: read only")
@@ -1594,7 +1636,7 @@ func verifyWorkflowSemantics(document []byte) error {
 		return errors.New("support-preflight job name does not match the release contract")
 	}
 	if preflight.If != releaseTagCondition {
-		return errors.New("support-preflight job must be gated to tag preparation or explicit tag publication")
+		return errors.New("support-preflight job must be gated to master/tag preparation or explicit tag publication")
 	}
 	if preflight.Environment != "" || len(preflight.Needs) != 0 {
 		return errors.New("support-preflight job must run before and outside the protected release environment")
@@ -1693,7 +1735,7 @@ func verifyWorkflowSemantics(document []byte) error {
 		return errors.New("publish job must depend only on support-preflight")
 	}
 	if publish.If != releaseTagCondition+" && needs.support-preflight.outputs.source-sha == github.sha" {
-		return errors.New("publish job must bind successful support-preflight evidence to the tag SHA")
+		return errors.New("publish job must bind successful support-preflight evidence to the selected source SHA")
 	}
 	if publish.Environment != "release" {
 		return errors.New("publish job must use the protected release environment")
@@ -1828,6 +1870,7 @@ func verifyWorkflowSemantics(document []byte) error {
 		return err
 	}
 	if !equalStringMap(artifacts.Env, map[string]string{
+		"GH_TOKEN":                         "${{ secrets.GITHUB_TOKEN }}",
 		"TESTED_KUBERNETES_SUPPORT_WINDOW": "${{ needs.support-preflight.outputs.kubernetes-support-window }}",
 		"TESTED_SUPPORT_EVIDENCE_RUN_ID":   "${{ needs.support-preflight.outputs.support-evidence-run-id }}",
 	}) {
@@ -1957,9 +2000,9 @@ func verifyWorkflowSemantics(document []byte) error {
 		"release_state=prepared",
 		"transaction=\"$GITHUB_RUN_ID\"",
 		"-journal dist/release-journal.txt",
-		"-verify-tag-identity",
+		"-verify-source-identity",
 		".assets | length == 0",
-		"--source-ref \"$GITHUB_REF\"",
+		"--source-ref \"$SOURCE_REF\"",
 		"--source-digest \"$GITHUB_SHA\"",
 		"--signer-workflow \"$GITHUB_REPOSITORY/.github/workflows/release.yml\"",
 		"executor_tag=\"$EXECUTOR_IMAGE:tx-$GITHUB_SHA-$transaction\"",
@@ -1975,13 +2018,13 @@ func verifyWorkflowSemantics(document []byte) error {
 	if err := requireRunBindings(steps, "draft",
 		"gh release create", "--draft", "--latest=false",
 		"--notes-file dist/release-journal.txt", "gh attestation verify dist/release-journal.txt",
-		"-verify-tag-identity", ".assets | length == 0"); err != nil {
+		"-verify-source-identity", ".assets | length == 0"); err != nil {
 		return err
 	}
 	if err := requireRunBindings(steps, "stage-inspect",
 		"imagetools inspect --raw", "steps.transaction.outputs.image-tag", "reuse=true",
 		"reuse=false", "refusing to rebuild", "gh attestation verify \"oci://$IMAGE@$digest\"",
-		"--source-ref \"$GITHUB_REF\"", "--source-digest \"$GITHUB_SHA\"",
+		"--source-ref \"$SOURCE_REF\"", "--source-digest \"$GITHUB_SHA\"",
 		"--signer-workflow \"$GITHUB_REPOSITORY/.github/workflows/release.yml\"",
 		"-registry-missing-error \"$error_file\"", "-registry-missing-reference \"$reference\""); err != nil {
 		return err
@@ -1989,7 +2032,7 @@ func verifyWorkflowSemantics(document []byte) error {
 	if err := requireRunBindings(steps, "executor-stage-inspect",
 		"imagetools inspect --raw", "steps.transaction.outputs.executor-tag", "reuse=true",
 		"reuse=false", "refusing to rebuild", "gh attestation verify \"oci://$EXECUTOR_IMAGE@$digest\"",
-		"--source-ref \"$GITHUB_REF\"", "--source-digest \"$GITHUB_SHA\"",
+		"--source-ref \"$SOURCE_REF\"", "--source-digest \"$GITHUB_SHA\"",
 		"--signer-workflow \"$GITHUB_REPOSITORY/.github/workflows/release.yml\"",
 		"-registry-missing-error \"$error_file\"", "-registry-missing-reference \"$reference\""); err != nil {
 		return err
@@ -2019,7 +2062,7 @@ func verifyWorkflowSemantics(document []byte) error {
 		return err
 	}
 	if err := requireRunBindings(steps, "executor-final-verify",
-		"--certificate-identity \"$identity\"", "--source-ref \"$GITHUB_REF\"",
+		"--certificate-identity \"$identity\"", "--source-ref \"$SOURCE_REF\"",
 		"--source-digest \"$GITHUB_SHA\"",
 		"steps.artifacts.outputs.executor-repository", "steps.artifacts.outputs.executor-digest",
 		"imagetools inspect --raw \"$reference\"", "steps.artifacts.outputs.executor-tag",
@@ -2041,12 +2084,12 @@ func verifyWorkflowSemantics(document []byte) error {
 	if err := requireRunBindings(steps, "finalize-journal",
 		"cmp dist/release-journal.txt", "gh release edit", "--notes-file dist/release-manifest.txt",
 		"gh attestation verify dist/release-manifest.txt", "cmp dist/release-manifest.txt",
-		"-verify-tag-identity", ".assets | length == 0"); err != nil {
+		"-verify-source-identity", ".assets | length == 0"); err != nil {
 		return err
 	}
 	if err := requireRunBindings(steps, "asset-auth",
 		"dist/release-manifest.txt", "dist/SHA256SUMS", "dist/"+acceptanceEvidenceAsset,
-		"--source-ref \"$GITHUB_REF\"", "--source-digest \"$GITHUB_SHA\""); err != nil {
+		"--source-ref \"$SOURCE_REF\"", "--source-digest \"$GITHUB_SHA\""); err != nil {
 		return err
 	}
 	if err := requireRunBindings(steps, "asset-sync",
@@ -2058,7 +2101,7 @@ func verifyWorkflowSemantics(document []byte) error {
 		return err
 	}
 	if err := requireRunBindings(steps, "final-verify",
-		"--certificate-identity \"$identity\"", "--source-ref \"$GITHUB_REF\"",
+		"--certificate-identity \"$identity\"", "--source-ref \"$SOURCE_REF\"",
 		"--source-digest \"$GITHUB_SHA\"", "docker logout ghcr.io",
 		"imagetools inspect --raw \"$reference\"", "steps.artifacts.outputs.image-tag",
 		"cmp \"$image_dir/index.json\" \"$image_dir/final-index.json\"",
@@ -2067,7 +2110,7 @@ func verifyWorkflowSemantics(document []byte) error {
 	}
 	if err := requireRunBindings(steps, "publish-release",
 		"\n  "+acceptanceEvidenceAsset+" \\\n",
-		"if [[ \"$mode\" != published ]]", "gh release edit", "--draft=false", "--latest=false", "-verify-tag-identity",
+		"if [[ \"$mode\" != published ]]", "gh release edit", "--draft=false", "--latest=false", "-verify-source-identity",
 		"cmp dist/release-manifest.txt", "gh release download", "gh attestation verify",
 		"-checksums \"$gate_dir/SHA256SUMS\"", ".immutable", "gh release verify",
 		"gh release verify-asset", "delay=$((delay < 30 ? delay * 2 : 30))"); err != nil {
@@ -2103,8 +2146,8 @@ func verifyWorkflowTextBindings(document []byte) error {
 			return fmt.Errorf("release workflow must state %q %d times, found %d", binding.text, binding.count, got)
 		}
 	}
-	if bytes.Contains(document, []byte("-verify-tag-identity=")) {
-		return errors.New("release workflow must not give -verify-tag-identity a value")
+	if bytes.Contains(document, []byte("-verify-source-identity=")) {
+		return errors.New("release workflow must not give -verify-source-identity a value")
 	}
 	if match := constantBranch.Find(document); match != nil {
 		return fmt.Errorf("release workflow shell step has a branch with a constant condition: %q", bytes.TrimSpace(match))
@@ -2280,7 +2323,7 @@ func verifyAcceptanceEvidenceSteps(preflightSteps, publishSteps map[string]workf
 	if err != nil {
 		return err
 	}
-	if asset.If != "" || !equalStringMap(asset.Env, map[string]string{
+	if asset.If != "steps.transaction.outputs.mode != 'published' && env.RELEASE_ACTION == 'prepare'" || !equalStringMap(asset.Env, map[string]string{
 		"TESTED_ACCEPTANCE_EVIDENCE_SHA256": "${{ needs.support-preflight.outputs.acceptance-evidence-sha256 }}",
 	}) {
 		return errors.New("the acceptance evidence asset must bind only the digest the preflight reported")
@@ -2406,7 +2449,7 @@ func clientAssets(root string) ([]string, error) {
 	return nil, fmt.Errorf("the build configuration has no %s build", clientBuildID)
 }
 
-func verifyReleaseAssets(root, manifestPath, checksumsPath, chartPath, tag, sourceSHA string) error {
+func verifyReleaseAssets(root, manifestPath, checksumsPath, chartPath, tag, sourceSHA, sourceRef string) error {
 	supportWindow, err := repositoryKubernetesSupportWindow(root)
 	if err != nil {
 		return err
@@ -2419,7 +2462,7 @@ func verifyReleaseAssets(root, manifestPath, checksumsPath, chartPath, tag, sour
 	if err != nil {
 		return err
 	}
-	manifest, fields, err := parseReleaseManifest(manifestPath, tag, sourceSHA, supportWindow, assets, pin)
+	manifest, fields, err := parseReleaseManifest(manifestPath, tag, sourceSHA, sourceRef, supportWindow, assets, pin)
 	if err != nil {
 		return err
 	}
@@ -2482,7 +2525,11 @@ func verifyReleaseAssets(root, manifestPath, checksumsPath, chartPath, tag, sour
 	return nil
 }
 
-func verifyPreparedJournal(path, tag, sourceSHA string) error {
+func verifyPreparedJournal(path, tag, sourceSHA, sourceRef string) error {
+	sourceRef, err := releaseSourceRef(tag, sourceRef)
+	if err != nil {
+		return err
+	}
 	if !commitPattern.MatchString(sourceSHA) {
 		return fmt.Errorf("source SHA %q is not a full lowercase commit SHA", sourceSHA)
 	}
@@ -2506,7 +2553,7 @@ func verifyPreparedJournal(path, tag, sourceSHA string) error {
 		"state":             "prepared",
 		"version":           version,
 		"source-repository": repositoryName,
-		"source-ref":        "refs/tags/" + tag,
+		"source-ref":        sourceRef,
 		"source-sha":        sourceSHA,
 		"chart-asset":       "ptah-operator-" + version + ".tgz",
 	}
@@ -2530,10 +2577,14 @@ func verifyPreparedJournal(path, tag, sourceSHA string) error {
 }
 
 func parseReleaseManifest(
-	path, tag, sourceSHA, supportWindow string,
+	path, tag, sourceSHA, sourceRef, supportWindow string,
 	clientAssets []string,
 	pin ptahPin,
 ) ([]byte, map[string]string, error) {
+	sourceRef, err := releaseSourceRef(tag, sourceRef)
+	if err != nil {
+		return nil, nil, err
+	}
 	if !commitPattern.MatchString(sourceSHA) {
 		return nil, nil, fmt.Errorf("source SHA %q is not a full lowercase commit SHA", sourceSHA)
 	}
@@ -2562,7 +2613,7 @@ func parseReleaseManifest(
 	wantExact := map[string]string{
 		"version":                   version,
 		"source-repository":         repositoryName,
-		"source-ref":                "refs/tags/" + tag,
+		"source-ref":                sourceRef,
 		"source-sha":                sourceSHA,
 		"executor-ptah-commit":      pin.Commit,
 		"executor-ptah-version":     pin.Version,
