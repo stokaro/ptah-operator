@@ -28,9 +28,6 @@ func (a *alertingRun) certificateExpiry() {
 	a.t.Helper()
 	a.waitForTargets()
 	a.waitForAPIServerTargets()
-	if !a.noActiveAlerts(`ALERTS{alertname="PtahOperatorAdmissionUnavailable"}`) {
-		a.fatalf("the admission alert was active before the certificate fault")
-	}
 	if !a.noActiveAlerts(`ALERTS{alertname="PtahOperatorWebhookCertificateExpiring"}`) {
 		a.fatalf("the certificate alert was active before the expiry fault")
 	}
@@ -88,6 +85,14 @@ func (a *alertingRun) certificateExpiry() {
 		warningExpiry.Format(time.RFC3339), warningAt.Format(time.RFC3339), delivered.ReceivedAt.Format(time.RFC3339Nano), warningExpiry.Sub(delivered.ReceivedAt))
 	// The warning used the real 24-hour threshold. A separate leaf now gives
 	// the admission failure its own signed expiry without a day-long sleep.
+	// Earlier scenarios can leave a healthy webhook inside the alert's five-
+	// minute lookback. The warning stage already spans that window. Require a
+	// clean baseline here, immediately before the admission fault, and exclude
+	// those earlier deliveries from this incident's evidence.
+	if !a.noActiveAlerts(`ALERTS{alertname="PtahOperatorAdmissionUnavailable"}`) {
+		a.fatalf("the admission alert was active before the admission expiry fault")
+	}
+	admissionFrom := a.deliveryCount()
 	fault.shortLeaf, fault.expiry, err = alServingCertificate(fault.secret.Data, time.Now(), alCertificateLifetime)
 	a.check(err, "prepare the admission expiry certificate")
 	a.check(fault.writeLeaf(a.ctx, fault.shortLeaf), "install the admission expiry certificate")
@@ -112,7 +117,7 @@ func (a *alertingRun) certificateExpiry() {
 			return alExpiredApprovalError(a.approvalCertificateProbe(ctx)), "no expiry-specific admission refusal yet", nil
 		}), "verify admission refusal after certificate expiry")
 	a.logf("PASS approval admission refused the expired serving certificate")
-	admissionIndex, admissionHistory := a.admissionFailureDelivered(from, fault.expiry)
+	admissionIndex, admissionHistory := a.admissionFailureDelivered(admissionFrom, fault.expiry)
 	restoredAt := time.Now()
 	a.check(fault.writeLeaf(a.ctx, fault.secret.Data["tls.crt"]), "restore the valid serving certificate")
 	restoredServedAt, err := a.waitForServingCertificate(managerPods, fault.secret.Data["tls.crt"], fault.secret.Data["ca.crt"], alCertificateProjection)
