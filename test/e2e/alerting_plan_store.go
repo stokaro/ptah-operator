@@ -227,11 +227,12 @@ func alQueryPlanStoreHistory(ctx context.Context, query func(context.Context, ti
 	var history alPlanStoreHistory
 	var body []byte
 	read := func(ctx context.Context) error {
-		var err error
-		body, err = query(ctx, at)
+		snapshot, err := query(ctx, at)
 		if err != nil {
 			return err
 		}
+		// A timed-out retry must retain the last response for diagnosis.
+		body = snapshot
 		groups, err := alSplitHistorySnapshot(body, alScrapeJob, []string{alPlanStoreMetric, "up", "scrape_duration_seconds"})
 		if err != nil {
 			return err

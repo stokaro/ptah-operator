@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -107,6 +108,20 @@ func TestAlPlanStoreWaitsForTheOriginalScrapeCommit(t *testing.T) {
 			}
 		})
 	}
+	t.Run("query timeout preserves the preceding snapshot", func(t *testing.T) {
+		t.Parallel()
+		calls := 0
+		_, snapshot, err := alQueryPlanStoreHistory(context.Background(), func(context.Context, time.Time) ([]byte, error) {
+			calls++
+			if calls == 1 {
+				return body, nil
+			}
+			return nil, context.DeadlineExceeded
+		}, pods, leader, started, at, true)
+		if !errors.Is(err, context.DeadlineExceeded) || calls != 2 || !bytes.Equal(snapshot, body) {
+			t.Fatalf("query timeout lost the pending scrape: calls=%d, snapshot bytes=%d, error=%v", calls, len(snapshot), err)
+		}
+	})
 }
 
 func TestAlPlanStoreQueryDoesNotRetryOtherFailures(t *testing.T) {
