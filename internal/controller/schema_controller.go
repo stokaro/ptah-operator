@@ -997,7 +997,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 				return ctrl.Result{RequeueAfter: resultReadRetryInterval}, nil
 			}
 		}
-		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+		return ctrl.Result{RequeueAfter: activeJobPollInterval(schemaClaimHoldsLock(schema))}, nil
 	}
 	current, currentErr := r.operationInputFingerprint(schema, operation.Type)
 	if currentErr != nil || current != operation.InputFingerprint {

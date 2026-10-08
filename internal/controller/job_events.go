@@ -2,11 +2,24 @@ package controller
 
 import (
 	"reflect"
+	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 )
+
+// Job watches normally drive progress. A read-only claim without a Lease only
+// needs a bounded fallback when no event arrives; polling every five seconds
+// repeats its live Job and intent reads while the same Pod is still running.
+// Claims holding a Lease must keep their existing renewal cadence. Credential
+// enrollment and result-read retries use their own shorter timers.
+func activeJobPollInterval(holdsLock bool) time.Duration {
+	if holdsLock {
+		return maxLockContentionPoll
+	}
+	return 30 * time.Second
+}
 
 // Operation progress depends on active/terminal Pods and Job conditions, not
 // the readiness count. The Job controller updates readiness separately, often

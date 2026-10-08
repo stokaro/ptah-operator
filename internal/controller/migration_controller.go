@@ -744,7 +744,7 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 				return ctrl.Result{RequeueAfter: resultReadRetryInterval}, nil
 			}
 		}
-		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+		return ctrl.Result{RequeueAfter: activeJobPollInterval(kind.HoldsLock(false))}, nil
 	}
 	current, currentErr := r.migrationInputFingerprint(ctx, migration, operation.Type)
 	if currentErr != nil || current != operation.InputFingerprint {
