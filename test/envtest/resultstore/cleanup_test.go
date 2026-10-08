@@ -124,6 +124,9 @@ type changedMetadataReader struct {
 }
 
 func (r *changedMetadataReader) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	// Other result-store cases use the same API server. Keep this collector
+	// inside its own fixture, including when tests run in a different order.
+	opts = append(opts, client.InNamespace(r.root.Namespace))
 	if err := r.Reader.List(ctx, list, opts...); err != nil {
 		return err
 	}
