@@ -1,13 +1,80 @@
 import copy
 import json
+import os
 from pathlib import Path
+import runpy
 import subprocess
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
-from cluster_restore import ClusterRestoreProbe
+from cluster_restore import ClusterRestoreProbe, db
 from operator_restore import OPERATOR_CRDS, OperatorProbe
+
+
+class RestoreDockerContextTest(unittest.TestCase):
+    def test_database_commands_and_report_use_the_selected_context(self):
+        for selected in ('diabolocom', '', None):
+            with self.subTest(selected=selected), tempfile.TemporaryDirectory() as directory:
+                environment = {} if selected is None else {'DOCKER_CONTEXT': selected}
+                with patch.dict(os.environ, environment, clear=True):
+                    module = runpy.run_path(str(Path(__file__).with_name('database_restore.py')))
+                with patch.object(db.subprocess, 'check_output', return_value=b'fixture-commit'):
+                    probe = module['Probe']('postgresql', Path(directory) / 'proof')
+                expected = selected or 'remote-dev-container'
+                with patch.object(probe, 'command') as command:
+                    probe.sql('owned-database', 'SELECT 1')
+                self.assertEqual(command.call_args.args[1][:3], ['docker', '--context', expected])
+                self.assertEqual(probe.report['context'], expected)
+
+    def test_source_teardown_keeps_the_selected_context(self):
+        with tempfile.TemporaryDirectory() as directory:
+            probe = object.__new__(ClusterRestoreProbe)
+            probe.root = Path(directory); probe.report = {'checks': {}}
+            probe.source_envs = {'E2E_KIND_CLUSTER_NAME': 'ptah-e2e-owned-restore'}
+            probe.source_cluster = {'nodeNames': ['node-' + str(i) for i in range(4)]}
+            probe.archived_workloads = {}; probe.watches = {}
+            containers = '\n'.join(probe.source_cluster['nodeNames'] + ['load-balancer']).encode()
+            responses = [subprocess.CompletedProcess([], 0, containers),
+                         subprocess.CompletedProcess([], 0), subprocess.CompletedProcess([], 0, b'')]
+            with patch.object(db, 'DOCKER_CONTEXT', 'diabolocom'), patch.object(
+                    db, 'DOCKER', ['docker', '--context', 'diabolocom']), patch.object(
+                    probe, 'barrier', return_value={'jobs': '', 'pods': ''}), patch.object(
+                    OperatorProbe, 'watched_objects', return_value=[]), patch.object(
+                    probe, 'command', side_effect=responses) as command:
+                probe.lose_namespace()
+            argv = [call.args[1] for call in command.call_args_list]
+            self.assertEqual(argv[0][:3], ['docker', '--context', 'diabolocom'])
+            self.assertIn('DOCKER_CONTEXT=diabolocom', argv[1])
+            self.assertEqual(argv[2][:3], ['docker', '--context', 'diabolocom'])
+
+    def test_replacement_bootstrap_keeps_the_selected_context(self):
+        with tempfile.TemporaryDirectory() as directory:
+            probe = object.__new__(ClusterRestoreProbe)
+            probe.root = Path(directory); probe.report = {'steps': []}
+            probe.source_cluster = {'kubernetesVersion': '1.37.0'}
+            probe.prefix = 'ptah-020-restore-owned'
+            probe.target_environment = probe.root / 'target-environment'
+            process = Mock(); process.wait.return_value = 1
+            with patch.object(db, 'DOCKER_CONTEXT', 'diabolocom'), patch.dict(
+                    os.environ, {'DOCKER_CONTEXT': 'ambient-wrong-context'}), patch(
+                    'cluster_restore.subprocess.Popen', return_value=process) as start:
+                with self.assertRaisesRegex(RuntimeError, 'provisioning failed'):
+                    probe.provision_target()
+            self.assertEqual(start.call_args.kwargs['env']['DOCKER_CONTEXT'], 'diabolocom')
+
+    def test_endpoint_mismatch_stops_before_any_resource_is_created(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            environment = root / 'environment'
+            environment.write_text('E2E_DOCKER_ENDPOINT=ssh://recorded-host\n')
+            with patch.object(db.subprocess, 'check_output', return_value=b'fixture-commit'), patch.object(
+                    OperatorProbe, 'command', return_value=subprocess.CompletedProcess(
+                        [], 0, b'ssh://different-host\n')) as command:
+                with self.assertRaisesRegex(RuntimeError, 'different Docker daemons'):
+                    OperatorProbe('postgresql', 'schema', environment, root / 'proof')
+            self.assertEqual(command.call_count, 1)
+            self.assertIn('inspect', command.call_args.args[1])
 
 
 class ColdRestoreContractTest(unittest.TestCase):

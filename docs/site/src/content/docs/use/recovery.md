@@ -115,8 +115,10 @@ A backup that omits any of these turns a consistent restore into a rebuild.
 - With durable result delivery enabled, the receiver trust Secret, its private
   rotation journal Secret, and the public enrollment-policy ConfigMap. Preserve
   their UIDs together: the journal binds the projection and policy identities.
-  Keep operation credential records and their Secret projections in the same
-  restricted backup. Reinstalling the chart does not restore these identities.
+  Keep operation credential records in the same restricted backup. Current Jobs
+  use public Pod-binding records and projected Pod tokens, with no per-operation
+  Secret. Preserve legacy credential Secret projections when present.
+  Reinstalling the chart does not restore these identities.
 - Every `PtahRealm`. A realm has no status, but a restore without it refuses
   every resource that names it.
 - The verification-policy ConfigMaps the plans and approvals bind by UID and

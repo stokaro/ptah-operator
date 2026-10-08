@@ -140,7 +140,7 @@ class ClusterRestoreProbe(OperatorProbe):
                    len(containers) == 5 and set(self.source_cluster['nodeNames']) < set(containers))
         self.report['sourceDestructionStartedAt'] = db.now()
         self.command('destroy the recorded source kind cluster',
-                     ['env', 'DOCKER_CONTEXT=remote-dev-container', 'KIND_EXPERIMENTAL_PROVIDER=docker',
+                     ['env', 'DOCKER_CONTEXT=' + db.DOCKER_CONTEXT, 'KIND_EXPERIMENTAL_PROVIDER=docker',
                       'kind', 'delete', 'cluster', '--name', cluster])
         remaining = self.command('verify no source cluster containers survive',
                                  db.DOCKER + ['ps', '--all', '--quiet', '--filter', 'label=io.x-k8s.kind.cluster=' + cluster])
@@ -151,7 +151,7 @@ class ClusterRestoreProbe(OperatorProbe):
 
     def provision_target(self):
         environment = {k: v for k, v in os.environ.items() if not k.startswith('E2E_')}
-        environment.update(DOCKER_CONTEXT='remote-dev-container',
+        environment.update(DOCKER_CONTEXT=db.DOCKER_CONTEXT,
                            K8S_VERSION=self.source_cluster['kubernetesVersion'],
                            E2E_RUN_ID='cold-restore-' + self.prefix.removeprefix('ptah-020-restore-'),
                            E2E_STOP_AFTER='bootstrap', E2E_ENVIRONMENT_FILE=str(self.target_environment),
