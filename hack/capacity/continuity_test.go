@@ -1,10 +1,44 @@
 package main
 
 import (
+	"bytes"
+	"math"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestQueueResetPreservesIndependentManagerCounters(t *testing.T) {
+	base := time.Date(2026, 10, 8, 11, 32, 33, 0, time.UTC)
+	// The observed queue reset kept the same process and increasing CPU
+	// counter. It cannot prove queue latency across the lost interval.
+	queues := []histogram{
+		testHistogram(map[float64]float64{0.1: 10657, 1: 13054, 10: 13199}, 13199, 969.0964452100014),
+		testHistogram(map[float64]float64{0.1: 12, 1: 13, 10: 13}, 13, 0.168416559),
+		testHistogram(map[float64]float64{0.1: 35, 1: 39, 10: 39}, 39, 1.232993651),
+	}
+	var rows []sample
+	for i, cpu := range []float64{209.57, 209.98, 210.36} {
+		rows = append(rows, sample{At: base.Add(time.Duration(i) * 5 * time.Second), Managers: map[string]managerReading{
+			"manager": identifiedManager("manager", managerReading{CPUSeconds: cpu, ThrottleSeconds: float64(i) / 4, Requests429: float64(i), QueueWait: queues[i]}),
+		}})
+	}
+	result := cost(window{Name: "queue reset", Start: base, End: base.Add(10 * time.Second)}, rows, nil)
+	if len(result.CounterProblems) != 0 || len(result.QueueCounterProblems) != 1 || !result.missing(sourceQueueContinuity) || result.missing(sourceManagerContinuity) {
+		t.Fatalf("queue reset invalidated unrelated counters: %+v", result)
+	}
+	object := jsonObject(t, result)
+	if math.Abs(result.ManagerCPUCores-0.079) > 1e-9 || string(object["clientThrottleSeconds"]) != "0.5" || string(object["requests429"]) != "2" || string(object["managerCPUCoresAverage"]) == "null" || string(object["queueWaitSeconds"]) != "null" {
+		t.Fatalf("continuous counters or missing queue evidence were misreported: %s", object)
+	}
+	var summary bytes.Buffer
+	if err := writeSummary(&summary, report{Scenarios: []scenarioCost{result}}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(summary.String(), "| 0.08 | n/a | 0.5 |") {
+		t.Fatal("Markdown did not preserve CPU/throttling while refusing the queue percentile")
+	}
+}
 
 func TestCounterResetBetweenEndpointsInvalidatesTheWindow(t *testing.T) {
 	base := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
@@ -76,6 +110,13 @@ func TestManagerContinuityRequiresEveryProcessAndCounter(t *testing.T) {
 			manager := rows[1].Managers["second"]
 			change(&manager)
 			rows[1].Managers["second"] = manager
+			if strings.HasPrefix(name, "histogram ") {
+				result := cost(w, rows, nil)
+				if len(result.QueueCounterProblems) == 0 || result.missing(sourceManagerContinuity) || string(jsonObject(t, result)["queueWaitSeconds"]) != "null" {
+					t.Fatal("queue failure did not isolate the histogram's missing evidence")
+				}
+				return
+			}
 			assertCounterEvidenceMissing(t, cost(w, rows, nil))
 		})
 	}

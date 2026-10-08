@@ -15,6 +15,7 @@ import (
 
 	api "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/podintent"
+	"github.com/stokaro/ptah-operator/internal/resultconsumer"
 	"github.com/stokaro/ptah-operator/internal/resultcredentials"
 	"github.com/stokaro/ptah-operator/internal/resultdelivery"
 	"github.com/stokaro/ptah-operator/internal/resultdelivery/jobconfig"
@@ -29,7 +30,7 @@ type ResultCredentialIssuer interface {
 	Ensure(context.Context, resultdelivery.Identity) (resultcredentials.Credential, error)
 }
 
-func issueResultCredential(ctx context.Context, reader client.Reader, issuer ResultCredentialIssuer, subject metav1.Object, kind string, job *batchv1.Job, snapshot *api.PodAdmissionSnapshot, executionBinding, inputFingerprint, operation, operationID, engine string) (bool, error) {
+func issueResultCredential(ctx context.Context, reader client.Reader, issuer ResultCredentialIssuer, hints *resultEnrollmentHints, subject metav1.Object, kind string, job *batchv1.Job, snapshot *api.PodAdmissionSnapshot, executionBinding, inputFingerprint, operation, operationID, engine string) (bool, error) {
 	if issuer == nil {
 		return false, errors.New("result credential issuer is not configured")
 	}
@@ -41,6 +42,14 @@ func issueResultCredential(ctx context.Context, reader client.Reader, issuer Res
 	config, err := jobconfig.Read(job, subject.GetUID(), operationID)
 	if err != nil || config.Generation != subject.GetGeneration() || snapshot == nil {
 		return false, errors.New("result credential operation binding is invalid")
+	}
+	request := resultconsumer.Request{Namespace: subject.GetNamespace(), Kind: kind, Name: subject.GetName(),
+		UID: subject.GetUID(), Generation: config.Generation, ExecutionBindingID: executionBinding,
+		InputFingerprint: inputFingerprint, Operation: operation, OperationID: operationID,
+		JobName: job.Name, JobUID: job.UID, Engine: strings.ToLower(engine)}
+	if config.PodToken && hints.known(request) {
+		err := ctx.Err()
+		return err == nil, err
 	}
 	pods := &corev1.PodList{}
 	if err := reader.List(ctx, pods, client.InNamespace(subject.GetNamespace()), client.MatchingLabels{batchv1.ControllerUidLabel: string(job.UID)}, client.Limit(2)); err != nil {
@@ -68,6 +77,9 @@ func issueResultCredential(ctx context.Context, reader client.Reader, issuer Res
 			// new enrollment; the receiver and admission still independently
 			// authorize every publication against the current live claim.
 			err := ctx.Err()
+			if err == nil {
+				hints.remember(request)
+			}
 			return err == nil, err
 		}
 		if !apierrors.IsNotFound(err) {
@@ -80,6 +92,12 @@ func issueResultCredential(ctx context.Context, reader client.Reader, issuer Res
 	}
 	if credential.Name != config.SecretName || credential.UID == "" {
 		return false, fmt.Errorf("issuer returned a foreign credential")
+	}
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	if config.PodToken {
+		hints.remember(request)
 	}
 	return true, nil
 }

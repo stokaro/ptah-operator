@@ -39,6 +39,10 @@ func (p *issuanceProbe) Ensure(ctx context.Context, identity resultdelivery.Iden
 	return resultcredentials.Credential{Name: name, UID: "canonical-credential"}, nil
 }
 func invokeIssuance(ctx context.Context, f *resulttest.Fixture, reader client.Reader, issuer ResultCredentialIssuer) (bool, error) {
+	return invokeIssuanceWithHints(ctx, f, reader, issuer, nil)
+}
+
+func invokeIssuanceWithHints(ctx context.Context, f *resulttest.Fixture, reader client.Reader, issuer ResultCredentialIssuer, hints *resultEnrollmentHints) (bool, error) {
 	b := f.Identity.Binding
 	var snapshot *api.PodAdmissionSnapshot
 	switch subject := f.Subject.(type) {
@@ -47,7 +51,7 @@ func invokeIssuance(ctx context.Context, f *resulttest.Fixture, reader client.Re
 	case *api.PtahMigration:
 		snapshot = subject.Status.ActiveOperation.AdmissionSnapshot
 	}
-	return issueResultCredential(ctx, reader, issuer, f.Subject, b.Kind, f.Job, snapshot, b.ExecutionBindingID, b.InputFingerprint, b.Operation, b.OperationID, f.Identity.Engine)
+	return issueResultCredential(ctx, reader, issuer, hints, f.Subject, b.Kind, f.Job, snapshot, b.ExecutionBindingID, b.InputFingerprint, b.Operation, b.OperationID, f.Identity.Engine)
 }
 func TestCredentialIssuanceUsesExactAdoptedPodForAllOperations(t *testing.T) {
 	for _, name := range []string{"schema-resolve", "schema-verify-admitted", "schema-observe", "schema-plan-dev-fence-scheduling", "schema-apply-admitted-scheduling", "migration-resolve", "migration-verify-admitted", "migration-history", "migration-apply-admitted-scheduling"} {
