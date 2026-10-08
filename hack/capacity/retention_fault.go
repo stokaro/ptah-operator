@@ -40,6 +40,7 @@ type retentionFaultProof struct {
 	MigrationApproval           *unstructured.Unstructured                    `json:"migrationApproval,omitempty"`
 	DispatchedMigration         *ptah.PtahMigration                           `json:"dispatchedMigration,omitempty"`
 	ApplyJob                    *batchv1.Job                                  `json:"applyJob,omitempty"`
+	ApplyPod                    *corev1.Pod                                   `json:"applyPod,omitempty"`
 	SuspendedMigration          *unstructured.Unstructured                    `json:"suspendedMigration,omitempty"`
 	RecoveredMigration          *unstructured.Unstructured                    `json:"recoveredMigration,omitempty"`
 	RecoveredSchema             *unstructured.Unstructured                    `json:"recoveredSchema,omitempty"`
@@ -587,18 +588,9 @@ func (s *scenarios) retentionFault(ctx context.Context) (err error) {
 	if e != nil {
 		return e
 	}
-	terminal, e := s.clientset.BatchV1().Jobs(migration.GetNamespace()).Get(ctx, op.JobName, metav1.GetOptions{})
-	if e != nil {
+	if e := s.recordFaultApplyResult(ctx, proof); e != nil {
 		return e
 	}
-	if e = jobclaim.Match(terminal, jobclaim.MigrationOperation(proof.DispatchedMigration, op)); e != nil {
-		return e
-	}
-	_, failed, done := jobEnd(terminal)
-	if !done || failed {
-		return fmt.Errorf("suspended Apply has no successful terminal Job")
-	}
-	proof.ApplyJob = terminal
 	path, digest, _, e := s.exportOwnedPlans(ctx, proof.SuspendedMigration, "migration", filepath.Join(s.evidenceDir, "retention", "fault"), "migration-original.json")
 	if e != nil {
 		return e
