@@ -65,9 +65,25 @@ func managerCounterContinuity(samples []sample) []string {
 			}
 			if !counterContinues(before.CPUSeconds, after.CPUSeconds) ||
 				!counterContinues(before.ThrottleSeconds, after.ThrottleSeconds) ||
-				!counterContinues(before.Requests429, after.Requests429) ||
-				!histogramContinues(before.QueueWait, after.QueueWait) {
+				!counterContinues(before.Requests429, after.Requests429) {
 				problems = append(problems, fmt.Sprintf("sample %d manager %s has a reset or invalid counter", i, name))
+			}
+		}
+	}
+	sort.Strings(problems)
+	return problems
+}
+
+// Native histogram bucket limits can reset the queue histogram without a
+// process restart. That gap invalidates queue latency, not the independent
+// CPU and REST client counters. Process continuity still gates every family.
+func managerQueueContinuity(samples []sample) []string {
+	var problems []string
+	for i := 1; i < len(samples); i++ {
+		for name, before := range samples[i-1].Managers {
+			after, exists := samples[i].Managers[name]
+			if exists && !histogramContinues(before.QueueWait, after.QueueWait) {
+				problems = append(problems, fmt.Sprintf("sample %d manager %s has a reset or invalid queue histogram", i, name))
 			}
 		}
 	}

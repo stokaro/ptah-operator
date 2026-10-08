@@ -39,6 +39,7 @@ type scenarioCost struct {
 	CycleProblems         []string             `json:"cycleProblems,omitempty"`
 	APICounterProblems    []string             `json:"apiCounterProblems,omitempty"`
 	CounterProblems       []string             `json:"counterProblems,omitempty"`
+	QueueCounterProblems  []string             `json:"queueCounterProblems,omitempty"`
 	Incomplete            map[string]int       `json:"incomplete,omitempty"`
 	Samples               int                  `json:"samples"`
 	JobsCreated           int                  `json:"jobsCreated"`
@@ -128,6 +129,10 @@ func cost(w window, samples []sample, jobs []jobRecord) scenarioCost {
 	out.CounterProblems = managerCounterContinuity(inside)
 	if len(out.CounterProblems) > 0 {
 		out.Incomplete[sourceManagerContinuity] = len(out.CounterProblems)
+	}
+	out.QueueCounterProblems = managerQueueContinuity(inside)
+	if len(out.QueueCounterProblems) > 0 {
+		out.Incomplete[sourceQueueContinuity] = len(out.QueueCounterProblems)
 	}
 	out.ManagerCPUCores, out.ClientThrottleSeconds, out.Requests429, out.QueueWaitSeconds = managerGrowth(inside)
 	var apiProblems []string
@@ -251,7 +256,7 @@ func writeSummary(out io.Writer, r report) error {
 			figure(sourcePods, "%d", s.PodsPendingMax),
 			figure(sourceResources, "%.0f", s.ObservationAgeMax), figure(sourceResources, "%.0f", s.OverdueMax),
 			figure(sourceManagers, "%.0f", s.ManagerRSSMaxBytes/(1<<20)), figure(sourceManagerContinuity, "%.2f", s.ManagerCPUCores),
-			figure(sourceManagerContinuity, "%s", atMost(s.QueueWaitSeconds)), figure(sourceManagerContinuity, "%.1f", s.ClientThrottleSeconds),
+			figure(sourceQueueContinuity, "%s", atMost(s.QueueWaitSeconds)), figure(sourceManagerContinuity, "%.1f", s.ClientThrottleSeconds),
 			figure(sourceAPI, "%s", apiAdmissionSummary(s.APIServers)), strings.Join(outcome, ", "))
 	}
 	b.WriteString("\nThe main table retains freshness maxima over all resources, including suspended ones. Eligible freshness below excludes only suspended or deleting resources; approval-gated resources still refresh. Freshness uses each resource list's actual read time within the scenario. Active claims retain their age and stay eligible for observation freshness. Scheduled overdue measures persisted deadlines; a claim without a deadline is in flight, while a missing deadline without a claim remains unavailable. Scheduled and in-flight counts can overlap during recovery. Older reports without per-resource readings remain unavailable.\n\n")

@@ -185,7 +185,7 @@ func TestAPIDemandSurvivesAnIndependentQueueHistogramReset(t *testing.T) {
 		manager.QueueWait = testHistogram(map[float64]float64{1: count}, count, count/2)
 		samples[i].Managers["first"] = manager
 	}
-	if len(managerCounterContinuity(samples)) == 0 {
+	if len(managerQueueContinuity(samples)) == 0 || len(managerCounterContinuity(samples)) != 0 {
 		t.Fatal("the queue reset must still invalidate queue evidence")
 	}
 	got, problems := managerAPIDemand(w, samples)

@@ -12,6 +12,7 @@ const (
 	sourceRetained          = "retained-objects"
 	sourceManagers          = "manager-metrics"
 	sourceManagerContinuity = "manager-counter-continuity"
+	sourceQueueContinuity   = "manager-queue-continuity"
 	sourceAPI               = "api-server-metrics"
 	sourceAPIContinuity     = "api-server-counter-continuity"
 	sourceJobs              = "jobs"
@@ -33,6 +34,7 @@ var scenarioFields = map[string][]string{
 	sourceCycles:            {"refreshCycles"},
 	sourceAPIContinuity:     {"apiServers", "apiRejected"},
 	sourceManagerContinuity: {"managerCPUCoresAverage", "queueWaitSeconds", "clientThrottleSeconds", "requests429"},
+	sourceQueueContinuity:   {"queueWaitSeconds"},
 	sourcePods:              {"podsPendingMax", "podsRunningMax"},
 	sourceResources:         {"observationAgeMaxSeconds", "overdueMaxSeconds"},
 	sourceRetained:          {"plansAtEnd", "chunkBytesAtEnd"},
@@ -70,6 +72,9 @@ func (s sample) MarshalJSON() ([]byte, error) {
 }
 
 func (s scenarioCost) missing(source string) bool {
+	if source == sourceQueueContinuity && s.missing(sourceManagerContinuity) {
+		return true
+	}
 	return s.Samples == 0 || s.Incomplete[source] > 0 || source == sourceManagerContinuity && s.Incomplete[sourceManagers] > 0 || source == sourceAPI && s.Incomplete[sourceAPIContinuity] > 0
 }
 
