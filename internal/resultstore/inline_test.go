@@ -76,15 +76,10 @@ func TestInlinePublicationWriteAndReadbackFailures(t *testing.T) {
 
 type inlineReadbackFailure struct {
 	client.Reader
-	reads int
 }
 
 func (r *inlineReadbackFailure) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
-	r.reads++
-	if r.reads == 2 {
-		return errLostWrite
-	}
-	return r.Reader.Get(ctx, key, obj, opts...)
+	return errLostWrite
 }
 
 func TestInlinePublicationChecksAuthorityBeforeCommitAndRetry(t *testing.T) {

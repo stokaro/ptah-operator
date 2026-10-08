@@ -226,6 +226,10 @@ func TestStorageDamageCannotProduceReceipt(t *testing.T) {
 			if err == nil || len(got) != 0 || receipt != (Receipt{}) {
 				t.Fatal("damaged storage produced a result")
 			}
+			loadedBinding, got, receipt, err := s.LoadAttempt(t.Context(), b.Namespace, b.UID, b.OperationID, b.JobName)
+			if err == nil || loadedBinding != (Binding{}) || len(got) != 0 || receipt != (Receipt{}) {
+				t.Fatal("damaged storage produced an attempt result")
+			}
 			if damage != "missing complete" {
 				if _, err := s.Publish(t.Context(), b, payload, digest(payload)); err == nil {
 					t.Fatal("retry concealed committed storage damage")
