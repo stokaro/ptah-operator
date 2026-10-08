@@ -61,7 +61,7 @@ class ReleaseRuntimeTest(unittest.TestCase):
         self.calls.append(args)
         result = b''
         if args[:2] == ['gh', 'api']:
-            result = ('a' * 40).encode()
+            result = json.dumps(self.draft).encode() if '/releases/tags/' in args[-1] else ('a' * 40).encode()
         elif 'imagetools' in args:
             result = self.index
         elif args[0] == 'helm' and 'upgrade' in args:
@@ -254,6 +254,65 @@ class ReleaseRuntimeTest(unittest.TestCase):
                     p.release_runtime.install.assert_not_called()
                 else:
                     p.release_runtime.install.assert_called_once_with(target, 'replacement')
+
+    def prepared_runtime(self):
+        for name in ('acceptance-evidence.tar.gz', 'kubectl-ptah-darwin-amd64', 'kubectl-ptah-darwin-arm64',
+                     'kubectl-ptah-linux-amd64', 'kubectl-ptah-linux-arm64'):
+            (self.root / name).write_bytes(('fixture ' + name).encode())
+        names = [self.chart.name, 'release-manifest.txt', 'acceptance-evidence.tar.gz',
+                 'kubectl-ptah-darwin-amd64', 'kubectl-ptah-darwin-arm64',
+                 'kubectl-ptah-linux-amd64', 'kubectl-ptah-linux-arm64']
+        (self.root / 'SHA256SUMS').write_text(''.join(ReleaseRuntime.sha(self.root / n) + '  ' + n + '\n' for n in names))
+        names.append('SHA256SUMS')
+        self.draft = {'draft': True, 'immutable': False, 'tag_name': TAG,
+                      'body': (self.root / 'release-manifest.txt').read_text(),
+                      'assets': [{'name': n, 'state': 'uploaded', 'size': (self.root / n).stat().st_size,
+                                  'digest': 'sha256:' + ReleaseRuntime.sha(self.root / n)} for n in names]}
+        return ReleaseRuntime(self.probe, self.root, ReleaseRuntime.sha(self.root / 'release-manifest.txt'))
+
+    def test_prepared_mode_keeps_exact_signature_identity_and_records_unpublished_state(self):
+        runtime = self.prepared_runtime()
+        runtime.authenticate()
+        self.assertEqual(self.probe.report['releaseRuntime']['publicationState'], 'signed-draft')
+        self.assertEqual(len(self.probe.report['releaseRuntime']['assets']), 8)
+        self.assertFalse(any(c[:2] == ['gh', 'release'] for c in self.calls))
+        attestations = [c for c in self.calls if c[:3] == ['gh', 'attestation', 'verify']]
+        self.assertEqual(len(attestations), 5)
+        self.assertTrue(all(c[c.index('--source-ref') + 1] == 'refs/tags/' + TAG for c in attestations))
+        (self.root / 'kubectl-ptah-linux-arm64').write_bytes(b'changed after selection')
+        with self.assertRaisesRegex(RuntimeError, 'changed'):
+            runtime.unchanged()
+
+    def test_prepared_mode_refuses_incomplete_replaced_or_published_readback(self):
+        for defect in ('published', 'immutable', 'tag', 'body', 'missing asset', 'extra asset', 'duplicate asset',
+                       'upload incomplete', 'digest', 'size', 'changed client and readback'):
+            with self.subTest(defect=defect):
+                runtime = self.prepared_runtime()
+                if defect == 'published': self.draft['draft'] = False
+                elif defect == 'immutable': self.draft['immutable'] = True
+                elif defect == 'tag': self.draft['tag_name'] = 'another'
+                elif defect == 'body': self.draft['body'] = 'state=prepared\n'
+                elif defect == 'missing asset': self.draft['assets'].pop()
+                elif defect == 'extra asset': self.draft['assets'].append({'name': 'extra'})
+                elif defect == 'duplicate asset': self.draft['assets'][-1] = copy.deepcopy(self.draft['assets'][0])
+                elif defect == 'upload incomplete': self.draft['assets'][0]['state'] = 'new'
+                elif defect == 'digest': self.draft['assets'][0]['digest'] = 'sha256:' + 'f' * 64
+                elif defect == 'size': self.draft['assets'][0]['size'] += 1
+                elif defect == 'changed client and readback':
+                    asset = next(a for a in self.draft['assets'] if a['name'] == 'kubectl-ptah-linux-arm64')
+                    path = self.root / asset['name']; path.write_bytes(b'changed client')
+                    asset.update(size=path.stat().st_size, digest='sha256:' + ReleaseRuntime.sha(path))
+                with self.assertRaises(RuntimeError): runtime.authenticate()
+                self.assertFalse(runtime.authenticated)
+
+    def test_prepared_manifest_is_explicit_and_cannot_be_selected_by_a_partial_hash(self):
+        for digest in ('', 'a' * 12, 'b' * 64):
+            with self.subTest(digest=digest), self.assertRaises(ValueError):
+                ReleaseRuntime(self.probe, self.root, digest)
+        for probe in (OperatorProbe, __import__('cluster_restore').ClusterRestoreProbe):
+            with self.subTest(probe=probe), self.assertRaisesRegex(ValueError, 'complete release asset directory'):
+                probe('postgresql', 'schema', Path('missing'), self.root / 'unused', 'operator', prepared_manifest_sha256='a' * 64)
+        self.assertFalse((self.root / 'unused').exists())
 
 
 if __name__ == '__main__':

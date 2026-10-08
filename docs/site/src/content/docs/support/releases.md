@@ -3,7 +3,8 @@ title: Releases and provenance
 description: What a release publishes and how to verify it before installing.
 ---
 
-Every `v<chart-version>` tag publishes one version-addressed release set:
+Every `v<chart-version>` tag prepares one signed draft release set. Publication
+requires a separate manual request that names the qualified manifest digest:
 
 - a `linux/amd64` and `linux/arm64` manager/runner image;
 - a `linux/amd64` and `linux/arm64` Ptah executor image, built from the Ptah
@@ -84,6 +85,35 @@ Preparation does not create a tag or publish artifacts. Before creating
 
 Creating the tag is a separate release action. Before approving its `release`
 environment, check that the tag points to the recorded successful commit.
+The tag-triggered run builds and authenticates the draft and its staged images,
+then stops before publishing the release. Its summary records the SHA-256 of
+`release-manifest.txt`. Keep that digest with the qualification results.
+Staged images are readable by digest; the draft does not establish an official
+immutable release.
+
+To resume interrupted preparation, run the same workflow on that tag:
+
+```sh
+gh workflow run release.yml --ref v0.2.0 -f action=prepare
+```
+
+After qualifying those exact assets, request publication with the recorded
+manifest digest:
+
+```sh
+qualified_manifest_sha256='replace-with-the-recorded-64-character-digest'
+gh workflow run release.yml --ref v0.2.0 \
+  -f action=publish -f manifest_sha256="$qualified_manifest_sha256"
+```
+
+This run requires approval of the protected `release` environment again. It
+refuses a missing draft, an incomplete prepared journal or a different manifest
+before any build can start. It re-verifies the complete existing transaction,
+then compares the manifest digest again immediately before publishing. It does
+not replace the selected image digests or assets. A published immutable release
+remains a read-only verification state. A manual dispatch without an action
+still runs smoke checks; preparation and publication require a `v*` tag ref.
+
 On the first publication, GHCR packages may not exist until the workflow
 pushes them. If either anonymous image check fails because its package is
 private, make that package public and rerun the same transaction as described

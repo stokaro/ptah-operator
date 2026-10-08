@@ -1771,12 +1771,13 @@ func verifyReleaseWorkflow(path string) error {
 	}
 
 	smoke := workflow.Jobs["smoke"]
-	if smoke.If != "github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'" {
-		return fmt.Errorf("%s: release smoke must run for pull requests and manual dispatches", path)
+	if smoke.If != "github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.action == 'smoke' || !startsWith(github.ref, 'refs/tags/v')))" {
+		return fmt.Errorf("%s: release smoke must run for pull requests, manual smoke, and invalid branch publication requests", path)
 	}
 
 	preflight := workflow.Jobs["support-preflight"]
-	if preflight.If != "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')" {
+	releaseTagCondition := "startsWith(github.ref, 'refs/tags/v') && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.action == 'prepare' || inputs.action == 'publish')))"
+	if preflight.If != releaseTagCondition {
 		return fmt.Errorf("%s: support preflight must run only for release tags", path)
 	}
 	if !equalStringMap(preflight.Permissions, map[string]string{"actions": "read", "contents": "read"}) {
@@ -1859,7 +1860,7 @@ func verifyReleaseWorkflow(path string) error {
 	if !equalStringSet(publish.Needs, []string{"support-preflight"}) {
 		return fmt.Errorf("%s: publish must depend on support-preflight", path)
 	}
-	if publish.If != "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && needs.support-preflight.outputs.source-sha == github.sha" {
+	if publish.If != releaseTagCondition+" && needs.support-preflight.outputs.source-sha == github.sha" {
 		return fmt.Errorf("%s: publish must bind the preflight source SHA to the tag commit", path)
 	}
 	chartPackage, err := requireWorkflowStep(path, "publish", publish, "chart-package")

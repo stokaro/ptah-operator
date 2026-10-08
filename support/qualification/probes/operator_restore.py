@@ -29,7 +29,9 @@ spec.loader.exec_module(db)
 class OperatorProbe(db.Probe):
     cold_cluster_recovery = False
 
-    def __init__(self, engine, family, environment, root, loss="database", timing="idle", release_assets=None):
+    def __init__(self, engine, family, environment, root, loss="database", timing="idle", release_assets=None, prepared_manifest_sha256=None):
+        if prepared_manifest_sha256 is not None and release_assets is None:
+            raise ValueError('A prepared manifest digest requires the complete release asset directory')
         if timing not in ('idle', 'operator-lag', 'during-apply'):
             raise ValueError('Unknown recovery timing')
         if timing == 'during-apply' and loss != 'database' and not self.cold_cluster_recovery:
@@ -41,6 +43,7 @@ class OperatorProbe(db.Probe):
         self.loss = loss
         self.timing = timing
         self.release_assets = release_assets
+        self.prepared_manifest_sha256 = prepared_manifest_sha256
         self.release_runtime = None
         self.envs = dict(line.split('=', 1) for line in environment.read_text().splitlines() if '=' in line)
         endpoint = self.command('verify the explicit database Docker endpoint', db.DOCKER + ['context', 'inspect', db.DOCKER[-1], '--format', '{{.Endpoints.docker.Host}}']).stdout.decode().strip()
@@ -765,7 +768,7 @@ class OperatorProbe(db.Probe):
 
     def prepare_runtime(self):
         if getattr(self, 'release_assets', None) and not getattr(self, 'release_runtime', None):
-            runtime = ReleaseRuntime(self, self.release_assets)
+            runtime = ReleaseRuntime(self, self.release_assets, getattr(self, 'prepared_manifest_sha256', None))
             runtime.authenticate()
             runtime.install(self.envs, 'source')
             self.release_runtime = runtime
@@ -1085,8 +1088,11 @@ if __name__ == '__main__':
     parser.add_argument('--loss', choices=['database', 'operator', 'combined'], default='database')
     parser.add_argument('--timing', choices=['idle', 'operator-lag', 'during-apply'], default='idle')
     parser.add_argument('--release-assets', type=Path, help='Complete authenticated 0.2.0 release download to install before creating the fixture')
+    parser.add_argument('--prepared-manifest-sha256', help='Explicitly select a complete signed draft by manifest digest; does not establish official publication')
     args = parser.parse_args()
-    probe = OperatorProbe(args.engine, args.family, args.environment, args.output, args.loss, args.timing, args.release_assets)
+    if args.prepared_manifest_sha256 is not None and not args.release_assets:
+        parser.error('--prepared-manifest-sha256 requires --release-assets')
+    probe = OperatorProbe(args.engine, args.family, args.environment, args.output, args.loss, args.timing, args.release_assets, args.prepared_manifest_sha256)
     probe.run()
     print(json.dumps({k: probe.report.get(k) for k in ('engine', 'family', 'status', 'functionalRestore', 'profileRPO', 'recoverySeconds', 'cleanupSucceeded')}))
     raise SystemExit(0 if probe.report.get('status') == 'PASS' else 2)

@@ -20,7 +20,9 @@ from restore_during_apply import ApplyLoss
 class ClusterRestoreProbe(OperatorProbe):
     cold_cluster_recovery = True
 
-    def __init__(self, engine, family, environment, root, loss, timing='idle', result_delivery=False, release_assets=None):
+    def __init__(self, engine, family, environment, root, loss, timing='idle', result_delivery=False, release_assets=None, prepared_manifest_sha256=None):
+        if prepared_manifest_sha256 is not None and release_assets is None:
+            raise ValueError('A prepared manifest digest requires the complete release asset directory')
         if loss not in ('operator', 'combined') and not (loss == 'database' and timing == 'operator-lag'):
             raise ValueError('Cluster recovery requires operator/combined loss or database-only loss with an older operator checkpoint')
         super().__init__(engine, family, environment, root, loss, timing)
@@ -36,6 +38,7 @@ class ClusterRestoreProbe(OperatorProbe):
         self.target_active = False
         self.result_delivery = result_delivery
         self.release_assets = release_assets
+        self.prepared_manifest_sha256 = prepared_manifest_sha256
         self.release_runtime = None
         self.api_tunnels = []
         self.report.update(scope='Development-image cold-cluster recovery. The original kind control plane is destroyed, a separate cluster is provisioned after loss, and namespace state is rebuilt from an encrypted backup. Final-profile and final-artifact acceptance remain required.',
@@ -475,8 +478,11 @@ if __name__ == '__main__':
     parser.add_argument('--timing', choices=['idle', 'operator-lag', 'during-apply'], default='idle')
     parser.add_argument('--result-delivery', action='store_true', help='Enable durable delivery before backup and on the replacement installation')
     parser.add_argument('--release-assets', type=Path, help='Complete authenticated 0.2.0 release download; install these exact bytes in both clusters before restoring workloads')
+    parser.add_argument('--prepared-manifest-sha256', help='Explicitly select a complete signed draft by manifest digest; does not establish official publication')
     args = parser.parse_args()
-    probe = ClusterRestoreProbe(args.engine, args.family, args.environment, args.output, args.loss, args.timing, args.result_delivery, args.release_assets)
+    if args.prepared_manifest_sha256 is not None and not args.release_assets:
+        parser.error('--prepared-manifest-sha256 requires --release-assets')
+    probe = ClusterRestoreProbe(args.engine, args.family, args.environment, args.output, args.loss, args.timing, args.result_delivery, args.release_assets, args.prepared_manifest_sha256)
     probe.run()
     print(json.dumps({k: probe.report.get(k) for k in ('engine', 'family', 'lossType', 'status', 'functionalRestore', 'profileRPO', 'recoverySeconds', 'cleanupSucceeded')}))
     raise SystemExit(0 if probe.report.get('status') == 'PASS' else 2)

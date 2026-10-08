@@ -11,13 +11,18 @@ TAG = 'v0.2.0'
 
 
 class ReleaseRuntime:
-    def __init__(self, probe, directory):
+    def __init__(self, probe, directory, prepared_manifest_sha256=None):
         self.probe = probe
         self.directory = Path(directory).resolve()
         self.manifest = self.directory / 'release-manifest.txt'
         self.chart = self.directory / 'ptah-operator-0.2.0.tgz'
         self.hashes = {path.name: self.sha(path) for path in (
             self.manifest, self.chart, self.directory / 'SHA256SUMS')}
+        self.prepared_manifest_sha256 = prepared_manifest_sha256
+        if prepared_manifest_sha256 is not None and (
+                not re.fullmatch(r'[0-9a-f]{64}', prepared_manifest_sha256)
+                or prepared_manifest_sha256 != self.hashes[self.manifest.name]):
+            raise ValueError('Prepared recovery assets must match the explicitly selected manifest digest')
         self.fields = {}
         for line in self.manifest.read_text().splitlines():
             key, separator, value = line.partition('=')
@@ -55,12 +60,16 @@ class ReleaseRuntime:
             'gh', 'api', 'repos/' + REPOSITORY + '/commits/' + TAG, '--jq', '.sha']).stdout.decode().strip()
         if source != p.report['sourceCommit']:
             raise RuntimeError('The published recovery release has a different source commit')
-        p.command('verify the immutable recovery release', ['gh', 'release', 'verify', TAG, '--repo', REPOSITORY])
+        if self.prepared_manifest_sha256 is None:
+            p.command('verify the immutable recovery release', ['gh', 'release', 'verify', TAG, '--repo', REPOSITORY])
+        else:
+            self.verify_draft()
         identity = ['--repo', REPOSITORY, '--source-ref', 'refs/tags/' + TAG,
                     '--source-digest', source, '--signer-workflow', REPOSITORY + '/.github/workflows/release.yml']
         for path in (self.manifest, self.chart, self.directory / 'SHA256SUMS'):
-            p.command('verify recovery asset ' + path.name, [
-                'gh', 'release', 'verify-asset', TAG, str(path), '--repo', REPOSITORY])
+            if self.prepared_manifest_sha256 is None:
+                p.command('verify recovery asset ' + path.name, [
+                    'gh', 'release', 'verify-asset', TAG, str(path), '--repo', REPOSITORY])
             p.command('authenticate recovery asset ' + path.name, ['gh', 'attestation', 'verify', str(path)] + identity)
         for key in ('image', 'executor'):
             reference = self.fields[key]
@@ -75,8 +84,38 @@ class ReleaseRuntime:
         p.report['releaseRuntime'] = {'source': source, 'tag': TAG, 'assets': dict(self.hashes),
             'operatorImage': self.fields['image'], 'runnerImage': self.fields['image'],
             'executorImage': self.fields['executor'], 'installations': [],
+            'publicationState': 'signed-draft' if self.prepared_manifest_sha256 else 'immutable-release',
             'scope': 'Authenticated runtime identity only; restore, RPO/RTO and profile acceptance require their own results.'}
         p.persist()
+
+    def verify_draft(self):
+        self.unchanged()
+        release = json.loads(self.probe.command('read the selected prepared recovery release', [
+            'gh', 'api', '-H', 'X-GitHub-Api-Version: 2026-03-10',
+            'repos/' + REPOSITORY + '/releases/tags/' + TAG]).stdout)
+        if (release.get('draft') is not True or release.get('immutable') is not False
+                or release.get('tag_name') != TAG or release.get('body') != self.manifest.read_text()):
+            raise RuntimeError('The prepared release state or manifest differs from the selected recovery kit')
+        names = {self.chart.name, self.manifest.name, 'SHA256SUMS', 'acceptance-evidence.tar.gz',
+                 'kubectl-ptah-darwin-amd64', 'kubectl-ptah-darwin-arm64',
+                 'kubectl-ptah-linux-amd64', 'kubectl-ptah-linux-arm64'}
+        assets = release.get('assets', [])
+        if len(assets) != len(names) or {a['name'] for a in assets} != names:
+            raise RuntimeError('The prepared release asset inventory is incomplete or has extra assets')
+        checksums = {name: digest for digest, name in
+                     (line.split('  ', 1) for line in (self.directory / 'SHA256SUMS').read_text().splitlines())}
+        hashes = {}
+        for asset in assets:
+            path = self.directory / asset['name']
+            digest = self.sha(path)
+            if (asset.get('state') != 'uploaded' or asset.get('size') != path.stat().st_size
+                    or asset.get('digest') != 'sha256:' + digest
+                    or (path.name in self.hashes and self.hashes[path.name] != digest)
+                    or (path.name != 'SHA256SUMS' and checksums.get(path.name) != digest)):
+                raise RuntimeError('A prepared release asset differs from its authenticated checksum or release readback')
+            hashes[path.name] = digest
+        self.unchanged()
+        self.hashes.update(hashes)
 
     def install(self, environment, name):
         if not self.authenticated:
