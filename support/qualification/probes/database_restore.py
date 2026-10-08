@@ -14,7 +14,8 @@ IMAGES = {
     "postgresql": "postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73",
     "mysql": "mysql:8.4@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb",
 }
-DOCKER = ["docker", "--context", "remote-dev-container"]
+DOCKER_CONTEXT = os.environ.get("DOCKER_CONTEXT") or "remote-dev-container"
+DOCKER = ["docker", "--context", DOCKER_CONTEXT]
 
 
 def now():
@@ -38,7 +39,7 @@ class Probe:
         self.mysql_client = None
         self.report = {
             "scope": "Isolated idle database backup, encryption and fresh-instance restoration only; no operator, migration history, full recovery RPO/RTO, final-artifact or production-store qualification",
-            "engine": engine, "image": IMAGES[engine], "context": "remote-dev-container",
+            "engine": engine, "image": IMAGES[engine], "context": DOCKER_CONTEXT,
             "runID": self.prefix, "startedAt": now(), "status": "RUNNING",
             "sourceCommit": subprocess.check_output(["git", "rev-parse", "HEAD"]).decode().strip(),
             "procedureSHA256": digest(Path(__file__).read_bytes()),
