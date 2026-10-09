@@ -692,7 +692,18 @@ jobs:
           jq -e '.assets | length == 0' <<<"$release_json" >/dev/null
           jq -j '.body | strings' <<<"$release_json" > "$RUNNER_TEMP/prepared-release-body.txt"
           cmp dist/release-journal.txt "$RUNNER_TEMP/prepared-release-body.txt"
-      - name: Inspect prepared image transaction anonymously
+      # GHCR refuses an anonymous token for a package that does not exist yet
+      # exactly as it refuses one for a private package, so only an
+      # authenticated read tells a first release's missing tag from a denial.
+      - name: Log in to GHCR
+        id: registry-login
+        if: steps.transaction.outputs.mode != 'published'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Inspect prepared image transaction
         id: stage-inspect
         if: steps.transaction.outputs.mode == 'fresh' || steps.transaction.outputs.mode == 'prepared'
         env:
@@ -732,7 +743,7 @@ jobs:
             echo 'could not determine prepared image state; refusing to rebuild' >&2
             exit 1
           fi
-      - name: Inspect prepared executor transaction anonymously
+      - name: Inspect prepared executor transaction
         id: executor-stage-inspect
         if: steps.transaction.outputs.mode == 'fresh' || steps.transaction.outputs.mode == 'prepared'
         env:
@@ -772,14 +783,6 @@ jobs:
             echo 'could not determine prepared executor state; refusing to rebuild' >&2
             exit 1
           fi
-      - name: Log in to GHCR
-        id: registry-login
-        if: steps.transaction.outputs.mode != 'published'
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build image into transaction staging
         id: image
         if: >-

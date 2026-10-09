@@ -363,6 +363,34 @@ func TestVerifyBuildProvenanceUsesExactResolvedDependencies(t *testing.T) {
 	}
 }
 
+// GHCR answers an anonymous token request for a package that does not exist
+// with the same denial as for a private one, so a first release inspected
+// anonymously can never learn that its transaction tag is missing. The login
+// has to come first; moving it back behind the inspections is refused.
+func TestReleaseWorkflowLogsInBeforeInspectingTheTransaction(t *testing.T) {
+	t.Parallel()
+
+	raw, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "release.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflow := string(raw)
+	if err := verifyWorkflowSemantics(raw); err != nil {
+		t.Fatalf("verifyWorkflowSemantics() refused the release workflow: %v", err)
+	}
+	start := strings.Index(workflow, "      - name: Log in to GHCR\n")
+	end := strings.Index(workflow, "      - name: Inspect prepared image transaction\n")
+	build := strings.Index(workflow, "      - name: Build image into transaction staging\n")
+	if start < 0 || end < start || build < end {
+		t.Fatal("the release workflow no longer logs in directly before inspecting the transaction")
+	}
+	login := workflow[start:end]
+	moved := workflow[:start] + workflow[end:build] + login + workflow[build:]
+	if err := verifyWorkflowSemantics([]byte(moved)); err == nil || !strings.Contains(err.Error(), "registry-login") {
+		t.Fatalf("verifyWorkflowSemantics() accepted inspection before the GHCR login: %v", err)
+	}
+}
+
 func TestReleaseWorkflowJQProgramsCompile(t *testing.T) {
 	t.Parallel()
 

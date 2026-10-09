@@ -1759,7 +1759,7 @@ func verifyWorkflowSemantics(document []byte) error {
 	if err := verifyStepContract("publish", publish.Steps,
 		[]string{
 			"checkout", "setup-go", "setup-buildx", "release", "executor-source", "immutability-preflight", "transaction",
-			"journal-attestation", "draft", "stage-inspect", "executor-stage-inspect", "registry-login",
+			"journal-attestation", "draft", "registry-login", "stage-inspect", "executor-stage-inspect",
 			"image", "build-checkpoint", "executor-image", "executor-build-checkpoint",
 			"chart-package", "client", "evidence-download", "evidence-asset", "artifacts", "image-structure", "executor-structure",
 			"asset-attestation", "finalize-journal", "asset-auth", "asset-sync",

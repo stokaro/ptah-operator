@@ -287,8 +287,12 @@ the body before any registry push. A rerun keeps the run ID recorded in that
 journal; the attempt number is deliberately not part of the transaction
 identity.
 
-After the prepared draft exists, the workflow anonymously inspects each exact
-retention tag. An existing raw manifest is reused only when its exact digest has
+After the prepared draft exists, the workflow logs in to GHCR and inspects each
+exact retention tag. The inspection is authenticated because GHCR refuses an
+anonymous read of a package that does not exist yet exactly as it refuses a
+private one, so only an authenticated read tells a first release's missing tag
+from a denial. Anonymous readability is proved separately before publication.
+An existing raw manifest is reused only when its exact digest has
 an authenticated build checkpoint from this release workflow, repository, producer ref,
 and source commit. That checkpoint is created solely from the digest returned
 by a successful image-build action. A missing or uncheckpointed tag is rebuilt;
