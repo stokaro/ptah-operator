@@ -302,6 +302,42 @@ func TestRecoveryKeepsVerifiedProgressAcrossAdmissionConflict(t *testing.T) {
 	}
 }
 
+func TestRecoveryKeepsFirstProgressAcrossAdmissionConflict(t *testing.T) {
+	s, objects, scheme := recoveryFixture(t)
+	probe := objects[len(objects)-1].(*ptahv1.PtahSchema)
+	c := &admissionClient{Client: fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(probe).WithObjects(objects...).Build(), conflict: probe.Name}
+	var verifier recoveryVerifier
+	if err := verifier.verify(t.Context(), c, s); !apierrors.IsConflict(err) {
+		t.Fatalf("first admission conflict passed recovery: %v", err)
+	}
+	// The first post-hook healthy boundary is already verified. A status write
+	// can race that very first dry run, before any admission receipt exists.
+	if err := c.Get(t.Context(), client.ObjectKeyFromObject(probe), probe); err != nil {
+		t.Fatal(err)
+	}
+	probe.Status.ActiveOperation = &ptahv1.ActiveOperationStatus{Type: ptahv1.OperationObserve, Attempt: 1}
+	probe.Status.Conditions = []metav1.Condition{{Type: ptahv1.ConditionReady, Status: metav1.ConditionFalse, Reason: "OperationInProgress", ObservedGeneration: probe.Generation}}
+	if err := c.Status().Update(t.Context(), probe); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifier.verify(t.Context(), c, s); err != nil {
+		t.Fatalf("first admission conflict discarded verified post-hook progress: %v", err)
+	}
+	if c.probes != 1 {
+		t.Fatal("recovery skipped fresh admission after the first conflict")
+	}
+	// A real admission failure still invalidates the retained progress. The
+	// next ordinary read cannot supply a new healthy boundary on its own.
+	c.fail = true
+	if err := verifier.verify(t.Context(), c, s); err == nil {
+		t.Fatal("retained progress hid failed admission")
+	}
+	c.fail = false
+	if err := verifier.verify(t.Context(), c, s); err == nil {
+		t.Fatal("failed admission retained the previous healthy boundary")
+	}
+}
+
 func TestVerifiedMigrationMayContinueHistoryButNotApplyOrRetry(t *testing.T) {
 	after := time.Now().Add(-time.Hour)
 	probe := Probe{Kind: "PtahMigration", Namespace: "workloads", Name: "migration", UID: "migration-uid", Generation: 1}
