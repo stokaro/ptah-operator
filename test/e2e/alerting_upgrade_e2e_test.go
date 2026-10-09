@@ -433,15 +433,28 @@ func (a *alertingRun) loadUpgradeMonitoring() func() {
 	desired["prometheus.yml"] = string(encoded)
 	desired["upgrade-rules.yaml"] = string(rules)
 	load := func(data map[string]string, enabled bool) {
-		a.check(a.cluster.Client.Get(a.ctx, key, cm), "read monitoring configuration before reload")
+		ctx, cancel := context.WithTimeout(a.ctx, alTimeout)
+		defer cancel()
+		a.check(a.cluster.Client.Get(ctx, key, cm), "read monitoring configuration before reload")
 		cm.Data = data
-		a.check(a.cluster.Client.Update(a.ctx, cm), "update external observation configuration")
-		a.check(harness.Wait(a.ctx, "the exact external rule configuration to load", alTimeout, time.Second, func(context.Context) (bool, string, error) {
-			_, err := a.cluster.Clientset.CoreV1().RESTClient().Post().Namespace(a.scope.monitoringNamespace).Resource("services").Name("http:prometheus:9090").SubResource("proxy").Suffix("-/reload").DoRaw(a.ctx)
-			if err != nil {
-				return false, "", err
-			}
-			body, err := a.prometheus(a.ctx, "/api/v1/status/config", nil)
+		a.check(a.cluster.Client.Update(ctx, cm), "update external observation configuration")
+		files := map[string]string{"prometheus.yml": data["prometheus.yml"]}
+		if enabled {
+			files["upgrade-rules.yaml"] = data["upgrade-rules.yaml"]
+		}
+		a.check(alReloadProjectedMonitoring(ctx, files, func(ctx context.Context, name string) ([]byte, error) {
+			// A new ConfigMap key can still lack its visible file link. Missing
+			// files are pending projection; exec and read failures remain errors.
+			body, _, err := a.cluster.Kubectl(ctx, "-n", a.scope.monitoringNamespace,
+				"exec", "deployment/prometheus", "--", "/bin/sh", "-c",
+				`if [ -f "$1" ]; then cat "$1"; fi`, "--", "/etc/prometheus/"+name)
+			return body, err
+		}, func(ctx context.Context) error {
+			_, err := a.cluster.Clientset.CoreV1().RESTClient().Post().Namespace(a.scope.monitoringNamespace).Resource("services").Name("http:prometheus:9090").SubResource("proxy").Suffix("-/reload").DoRaw(ctx)
+			return err
+		}), "reload the projected upgrade monitoring files")
+		a.check(harness.Wait(ctx, "the exact external rule configuration to load", alTimeout, time.Second, func(ctx context.Context) (bool, string, error) {
+			body, err := a.prometheus(ctx, "/api/v1/status/config", nil)
 			if err != nil {
 				return false, "", err
 			}
@@ -454,7 +467,7 @@ func (a *alertingRun) loadUpgradeMonitoring() func() {
 				return false, "", err
 			}
 			found := strings.Contains(response.Data.YAML, "ptah-upgrade-observer")
-			return found == enabled && (!enabled || a.upgradeRulesLoaded(rules)), "waiting for the projected monitoring configuration and evaluated rules", nil
+			return found == enabled && (!enabled || a.upgradeRulesLoaded(ctx, rules)), "waiting for the projected monitoring configuration and evaluated rules", nil
 		}), "load the external upgrade rule and target")
 	}
 	load(desired, true)
@@ -463,7 +476,7 @@ func (a *alertingRun) loadUpgradeMonitoring() func() {
 
 // Compare the effective rules through the Prometheus image's own parser.
 // Formatting differences cannot hide a changed expression or hold duration.
-func (a *alertingRun) upgradeRulesLoaded(source []byte) bool {
+func (a *alertingRun) upgradeRulesLoaded(ctx context.Context, source []byte) bool {
 	var expected struct {
 		Groups []struct {
 			Rules []struct {
@@ -476,7 +489,7 @@ func (a *alertingRun) upgradeRulesLoaded(source []byte) bool {
 		} `json:"groups"`
 	}
 	a.check(yaml.Unmarshal(source, &expected), "read expected external rules")
-	body, err := a.prometheus(a.ctx, "/api/v1/rules", nil)
+	body, err := a.prometheus(ctx, "/api/v1/rules", nil)
 	a.check(err, "read effective upgrade rules")
 	if !alRulesLoaded(body) {
 		return false
@@ -497,7 +510,7 @@ func (a *alertingRun) upgradeRulesLoaded(source []byte) bool {
 	}
 	a.check(json.Unmarshal(body, &loaded), "decode effective upgrade rules")
 	canonical := func(query string) string {
-		out, _, err := a.cluster.Kubectl(a.ctx, "-n", a.scope.monitoringNamespace, "exec", "deployment/prometheus", "--", "/bin/promtool", "--experimental", "promql", "format", query)
+		out, _, err := a.cluster.Kubectl(ctx, "-n", a.scope.monitoringNamespace, "exec", "deployment/prometheus", "--", "/bin/promtool", "--experimental", "promql", "format", query)
 		a.check(err, "parse rule with the monitored Prometheus version")
 		return string(out)
 	}

@@ -89,6 +89,9 @@ func (v *recoveryVerifier) verify(ctx context.Context, c client.Client, s State)
 			pending = fmt.Errorf("probe %s: %w", probe.Name, err)
 			continue
 		}
+		// Retain the post-hook progress before admission: the first dry run
+		// can also conflict with the next ordinary read's status update.
+		v.probes[probe.UID] = true
 		before := object.DeepCopyObject().(client.Object)
 		annotations := object.GetAnnotations()
 		if annotations == nil {
@@ -109,7 +112,6 @@ func (v *recoveryVerifier) verify(ctx context.Context, c client.Client, s State)
 			pending = fmt.Errorf("candidate admission probe: %w", err)
 			continue
 		}
-		v.probes[probe.UID] = true
 	}
 	if pending != nil {
 		return pending
