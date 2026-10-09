@@ -719,6 +719,58 @@ jq -n --arg architecture "$EXPECTED_ARCHITECTURE" --arg machine "$machine" \
 cat "$NATIVE_IDENTITY_FILE"
 `
 
+// A dispatched qualification run can install a prepared release instead of its
+// own build. The manifest arrives as an input, the images must carry the release
+// workflow's build attestation for the source it names before the harness reads
+// it, and the harness then refuses a chart or runtime source that differs.
+const ciReleaseManifestIf = "${{ github.event_name == 'workflow_dispatch' && inputs.release_manifest != '' }}"
+
+const ciReleaseManifestRun = `set -euo pipefail
+manifest="$RUNNER_TEMP/release-manifest.txt"
+base64 --decode <<<"$RELEASE_MANIFEST_BASE64" > "$manifest"
+sha256sum "$manifest"
+source="$(sed -n 's/^source-sha=//p' "$manifest")"
+[[ "$source" =~ ^[0-9a-f]{40}$ ]]
+for field in image executor; do
+  reference="$(sed -n "s/^$field=//p" "$manifest")"
+  [[ "$reference" =~ ^ghcr\.io/stokaro/ptah-operator(-executor)?@sha256:[0-9a-f]{64}$ ]]
+  gh attestation verify "oci://$reference" \
+    --bundle-from-oci \
+    --repo "$GITHUB_REPOSITORY" \
+    --source-digest "$source" \
+    --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml"
+done
+printf 'path=%s\n' "$manifest" >> "$GITHUB_OUTPUT"
+`
+
+func verifyCIReleaseManifest(path string, workflow workflowDocument) error {
+	job := workflow.Jobs["kubernetes-e2e"]
+	step, err := requireWorkflowStep(path, "kubernetes-e2e", job, "release-manifest")
+	if err != nil {
+		return err
+	}
+	if step.If != ciReleaseManifestIf || step.Uses != "" || step.Shell != "bash" || step.WorkingDirectory != "" ||
+		step.ContinueOnError || step.Run != ciReleaseManifestRun || !equalStringMap(step.Env, map[string]string{
+		"GH_TOKEN":                "${{ secrets.GITHUB_TOKEN }}",
+		"RELEASE_MANIFEST_BASE64": "${{ inputs.release_manifest }}",
+	}) {
+		return fmt.Errorf("%s: kubernetes-e2e must verify a dispatched release's attestations before installing it", path)
+	}
+	manifestIndex, lifecycleIndex := -1, -1
+	for index, item := range job.Steps {
+		switch item.ID {
+		case "release-manifest":
+			manifestIndex = index
+		case "lifecycle":
+			lifecycleIndex = index
+		}
+	}
+	if manifestIndex < 0 || lifecycleIndex <= manifestIndex {
+		return fmt.Errorf("%s: kubernetes-e2e must bind a dispatched release before its lifecycle", path)
+	}
+	return nil
+}
+
 func verifyCINativeArchitecture(path string, workflow workflowDocument) error {
 	var dispatch struct {
 		Inputs map[string]struct {
@@ -733,9 +785,13 @@ func verifyCINativeArchitecture(path string, workflow workflowDocument) error {
 		return fmt.Errorf("%s: CI must expose its native architecture input", path)
 	}
 	input := dispatch.Inputs["architecture"]
-	if len(dispatch.Inputs) != 1 || input.Type != "choice" || !input.Required || input.Default != "amd64" ||
+	if len(dispatch.Inputs) != 2 || input.Type != "choice" || !input.Required || input.Default != "amd64" ||
 		len(input.Options) != 2 || input.Options[0] != "amd64" || input.Options[1] != "arm64" {
 		return fmt.Errorf("%s: CI architecture must default to amd64 and offer exactly amd64 and arm64", path)
+	}
+	release, ok := dispatch.Inputs["release_manifest"]
+	if !ok || release.Type != "string" || release.Required || release.Default != "" || len(release.Options) != 0 {
+		return fmt.Errorf("%s: CI must accept an optional release manifest and nothing else beside the architecture", path)
 	}
 	for _, name := range []string{"prepare-images", "kubernetes-e2e"} {
 		job := workflow.Jobs[name]
@@ -801,6 +857,9 @@ func verifyCIWorkflowSemantics(path string, workflow workflowDocument, contents 
 		)
 	}
 	if err := verifyCINativeArchitecture(path, workflow); err != nil {
+		return err
+	}
+	if err := verifyCIReleaseManifest(path, workflow); err != nil {
 		return err
 	}
 	required := []string{
@@ -1175,8 +1234,10 @@ printf 'baseline=%s\n' "$baseline" >> "$GITHUB_OUTPUT"
 		"E2E_DIRECT_HOST_ACCESS": "1",
 		// No Ptah source reaches a lifecycle job: the executor arrives built,
 		// and the harness checks it against this pin before loading it.
-		"E2E_PREBUILT_IMAGE_DIR":   "${{ runner.temp }}/task-images",
-		"E2E_PTAH_REVISION":        "${{ needs.support-matrix.outputs.ptah_commit }}",
+		"E2E_PREBUILT_IMAGE_DIR": "${{ runner.temp }}/task-images",
+		"E2E_PTAH_REVISION":      "${{ needs.support-matrix.outputs.ptah_commit }}",
+		// Empty unless a dispatched run names a prepared release to install.
+		"E2E_RELEASE_MANIFEST":     "${{ steps.release-manifest.outputs.path }}",
 		"E2E_RELEASE_CHART_OUTPUT": "${{ runner.temp }}/ptah-operator-${{ matrix.minor_slug }}.tgz",
 		"E2E_RUN_ID":               "ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.minor_slug }}-${{ matrix.suite_slug }}",
 		// The suite this job runs. The driver reads the phases it names out of
@@ -2985,15 +3046,20 @@ func verifyE2ESourceSnapshot(path string, contents []byte) error {
 	}{
 		{line: `resolved_controller=$(git -C "$SOURCE_REPOSITORY_ROOT" rev-parse --verify "${CONTROLLER_REVISION}^{commit}") ||`, count: 1},
 		{line: `git -C "$SOURCE_REPOSITORY_ROOT" archive --format=tar \`, count: 2},
-		{line: `chart_source_epoch=$(git -C "$SOURCE_REPOSITORY_ROOT" show -s --format=%ct "$CONTROLLER_REVISION")`, count: 1},
+		{line: `chart_source_epoch=$(git -C "$SOURCE_REPOSITORY_ROOT" show -s --format=%ct "$chart_epoch_revision")`, count: 1},
+		// A run that installs a prepared release reads the release commit, which
+		// the manifest names as a full SHA, and compares its runtime sources with
+		// the exact controller revision.
+		{line: `git -C "$SOURCE_REPOSITORY_ROOT" cat-file -e "${RELEASE_SOURCE_SHA}^{commit}" 2>/dev/null ||`, count: 1},
+		{line: `release_runtime_changes=$(git -C "$SOURCE_REPOSITORY_ROOT" diff --name-only \`, count: 1},
 	}
 	for _, read := range immutableObjectReads {
 		if count := bytes.Count(innerContents, []byte(read.line)); count != read.count {
 			return fmt.Errorf("%s: immutable Git object read %q occurs %d times, want %d", path, read.line, count, read.count)
 		}
 	}
-	if count := bytes.Count(innerContents, []byte(`$SOURCE_REPOSITORY_ROOT`)); count != 6 {
-		return fmt.Errorf("%s: original checkout must have only two isolation checks and four audited immutable Git object reads, found %d references", path, count)
+	if count := bytes.Count(innerContents, []byte(`$SOURCE_REPOSITORY_ROOT`)); count != 8 {
+		return fmt.Errorf("%s: original checkout must have only two isolation checks and six audited immutable Git object reads, found %d references", path, count)
 	}
 
 	snapshotPaths := []struct {

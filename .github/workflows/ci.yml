@@ -14,6 +14,11 @@ on:
         required: true
         default: amd64
         options: [amd64, arm64]
+      release_manifest:
+        description: Base64 of a prepared release-manifest.txt; installs those digests instead of this run's build
+        type: string
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -661,6 +666,34 @@ jobs:
             '{architecture:$architecture, machine:$machine, dockerArchitecture:$dockerArchitecture,
               run:$run, attempt:$attempt, job:$job, nativeHostVerified:true}' > "$NATIVE_IDENTITY_FILE"
           cat "$NATIVE_IDENTITY_FILE"
+      # A run dispatched with a prepared release installs the release's own
+      # digests. The images must carry the release workflow's build attestation
+      # for the source the manifest names; the harness then refuses a chart or
+      # runtime source that differs from that release.
+      - name: Bind the prepared release this run installs
+        id: release-manifest
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.release_manifest != '' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_MANIFEST_BASE64: ${{ inputs.release_manifest }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest="$RUNNER_TEMP/release-manifest.txt"
+          base64 --decode <<<"$RELEASE_MANIFEST_BASE64" > "$manifest"
+          sha256sum "$manifest"
+          source="$(sed -n 's/^source-sha=//p' "$manifest")"
+          [[ "$source" =~ ^[0-9a-f]{40}$ ]]
+          for field in image executor; do
+            reference="$(sed -n "s/^$field=//p" "$manifest")"
+            [[ "$reference" =~ ^ghcr\.io/stokaro/ptah-operator(-executor)?@sha256:[0-9a-f]{64}$ ]]
+            gh attestation verify "oci://$reference" \
+              --bundle-from-oci \
+              --repo "$GITHUB_REPOSITORY" \
+              --source-digest "$source" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml"
+          done
+          printf 'path=%s\n' "$manifest" >> "$GITHUB_OUTPUT"
       # Samples while the lifecycle runs, so a slow stage can be told from a
       # starved one. The sampler is the same script a local run uses, and
       # killing it is the only thing that stops it.
@@ -680,6 +713,7 @@ jobs:
           E2E_DIRECT_HOST_ACCESS: "1"
           E2E_PREBUILT_IMAGE_DIR: ${{ runner.temp }}/task-images
           E2E_PTAH_REVISION: ${{ needs.support-matrix.outputs.ptah_commit }}
+          E2E_RELEASE_MANIFEST: ${{ steps.release-manifest.outputs.path }}
           E2E_RELEASE_CHART_OUTPUT: ${{ runner.temp }}/ptah-operator-${{ matrix.minor_slug }}.tgz
           E2E_RUN_ID: ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.minor_slug }}-${{ matrix.suite_slug }}
           E2E_SUITE: ${{ matrix.suite }}

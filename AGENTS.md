@@ -236,6 +236,23 @@ for itself, so there is one build path rather than a CI-only one, and
 `hack/e2e-shared-images-selftest.sh` measures
 every refusal.
 
+A run can install a prepared release instead of its own build:
+
+```bash
+E2E_RELEASE_MANIFEST=/tmp/release-manifest.txt make e2e
+```
+
+The manifest is the `release-manifest.txt` a Release `prepare` run attached to
+its draft. The candidate operator, its runner and the executor become the
+release's digests, copied into the task registry by `hack/imagecopy` without
+changing a byte, so a Pod runs the digest that was released. The harness
+refuses a chart that is not the release's chart asset and a harness commit that
+changes any runtime source of the release commit; the fixture and the synthetic
+next release stay this run's own builds. CI takes the same manifest as the
+base64 `release_manifest` dispatch input and verifies both images' build
+attestations against the manifest's source first.
+`hack/e2e-release-images-selftest.sh` measures those refusals.
+
 ## Where a run's time went
 
 A lifecycle records one row per stage: the bootstrap steps, each phase, and

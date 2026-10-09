@@ -280,6 +280,7 @@ printf 'e2e static: %s built images, each recorded for the teardown\n' "$BUILT_I
 
 "$ROOT_DIR/hack/e2e-timing-selftest.sh"
 "$ROOT_DIR/hack/e2e-shared-images-selftest.sh"
+"$ROOT_DIR/hack/e2e-release-images-selftest.sh"
 "$ROOT_DIR/hack/e2e-suites-selftest.sh"
 "$ROOT_DIR/hack/e2e-control-plane-shape-selftest.sh"
 

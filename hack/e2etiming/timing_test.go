@@ -190,3 +190,33 @@ func TestResourceSamplesReportTheExtremesTheyMeasured(t *testing.T) {
 		t.Fatalf("the samples were summarized as %+v", resources)
 	}
 }
+
+// A run that installed a prepared release names the release in its context
+// and its summary; a run that installed its own build says nothing of one.
+func TestAReleaseRunNamesTheReleaseItInstalled(t *testing.T) {
+	t.Parallel()
+	directory := t.TempDir()
+	path := filepath.Join(directory, "timing-context.json")
+	payload := `{"runID":"ci-9-1-1-37","operatorRevision":"abc1234","kubernetes":"1.37.0","suite":"lifecycle",` +
+		`"releaseSource":"46bc229995d0e2fccdebc42f12eb9709b734958b",` +
+		`"releaseImage":"ghcr.io/stokaro/ptah-operator@sha256:` + strings.Repeat("a", 64) + `",` +
+		`"releaseExecutor":"ghcr.io/stokaro/ptah-operator-executor@sha256:` + strings.Repeat("b", 64) + `",` +
+		`"releaseChartSHA256":"` + strings.Repeat("c", 64) + `"}`
+	if err := os.WriteFile(path, []byte(payload), 0o600); err != nil {
+		t.Fatalf("write the context: %v", err)
+	}
+	runContext, err := readContext(path)
+	if err != nil {
+		t.Fatalf("read a release context: %v", err)
+	}
+	rendered := summary(Report{Context: runContext}, nil)
+	for _, want := range []string{runContext.ReleaseSource, runContext.ReleaseImage, runContext.ReleaseExecutor, runContext.ReleaseChartSHA256} {
+		if want == "" || !strings.Contains(rendered, want) {
+			t.Fatalf("the summary does not name %q:\n%s", want, rendered)
+		}
+	}
+	own := summary(Report{Context: Context{RunID: "ci-9-1-1-37", OperatorRevision: "abc1234", Kubernetes: "1.37.0", Suite: "lifecycle"}}, nil)
+	if strings.Contains(own, "Release built from") {
+		t.Fatalf("a run of its own build names a release:\n%s", own)
+	}
+}
