@@ -73,7 +73,11 @@ func TestPublicationExecutesOnlyForTheQualifiedManifest(t *testing.T) {
 			// Only the remote service and the already-tested asset verifier are
 			// replaced. The workflow's complete final shell step runs unchanged.
 			stubs := map[string]string{
-				"go": "#!/bin/sh\nexit 0\n",
+				"go": `#!/bin/sh
+case "$*" in
+  *-read-release*) gh api fixture ;;
+esac
+`,
 				"gh": `#!/usr/bin/env python3
 import json, os, pathlib, shutil, sys
 root = pathlib.Path(os.environ['PTAH_RELEASE_TEST_ROOT'])
@@ -114,7 +118,7 @@ elif args[:2] not in (['attestation', 'verify'], ['release', 'verify'], ['releas
 			command.Dir = directory
 			command.Env = append(os.Environ(), "PATH="+filepath.Join(directory, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"),
 				"PTAH_RELEASE_TEST_ROOT="+directory, "RUNNER_TEMP="+filepath.Join(directory, "tmp"),
-				"GITHUB_STEP_SUMMARY="+filepath.Join(directory, "summary"), "GITHUB_REF_NAME=v0.2.0",
+				"GITHUB_STEP_SUMMARY="+filepath.Join(directory, "summary"), "RELEASE_TAG=v0.2.0", "SOURCE_REF=refs/heads/master",
 				"GITHUB_REF=refs/tags/v0.2.0", "GITHUB_SHA="+strings.Repeat("a", 40),
 				"GITHUB_REPOSITORY=stokaro/ptah-operator", "RELEASE_ACTION="+test.action,
 				"QUALIFIED_MANIFEST_SHA256="+digest)
@@ -169,7 +173,7 @@ func TestPublicationRefusesAnIncompleteTransactionBeforeBuilds(t *testing.T) {
 func TestReleaseActionRequiresAnExplicitPublicationDigest(t *testing.T) {
 	t.Parallel()
 	program := releaseStepsForTest(t)["release"].Run
-	end := strings.Index(program, "go run ./hack/releaseverify -tag")
+	end := strings.Index(program, "release_tag=")
 	if end < 0 {
 		t.Fatal("missing release metadata validation boundary")
 	}

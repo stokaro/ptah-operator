@@ -20,7 +20,7 @@ on:
       - "v*"
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ github.event_name == 'pull_request' && github.ref || 'transaction' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
@@ -33,7 +33,7 @@ env:
 jobs:
   smoke:
     name: Release contract and multi-architecture build
-    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.action == 'smoke' || !startsWith(github.ref, 'refs/tags/v')))
+    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.action == 'smoke' || (!startsWith(github.ref, 'refs/tags/v') && !(github.ref == 'refs/heads/master' && inputs.action == 'prepare'))))
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -62,7 +62,7 @@ jobs:
           set -euo pipefail
           if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
             [[ "$RELEASE_ACTION" == smoke && -z "$QUALIFIED_MANIFEST_SHA256" ]] || {
-              echo 'prepare and publish require a v* tag ref; smoke accepts no manifest digest' >&2
+              echo 'prepare requires master or a v* tag; publish requires a v* tag; smoke accepts no manifest digest' >&2
               exit 1
             }
           fi
@@ -167,7 +167,7 @@ jobs:
 
   support-preflight:
     name: Verify release Kubernetes support evidence
-    if: startsWith(github.ref, 'refs/tags/v') && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.action == 'prepare' || inputs.action == 'publish')))
+    if: (startsWith(github.ref, 'refs/tags/v') && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.action == 'prepare' || inputs.action == 'publish'))) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' && inputs.action == 'prepare'))
     runs-on: ubuntu-latest
     timeout-minutes: 170
     permissions:
@@ -427,7 +427,7 @@ jobs:
   publish:
     name: Prepare or publish the signed release
     needs: [support-preflight]
-    if: startsWith(github.ref, 'refs/tags/v') && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.action == 'prepare' || inputs.action == 'publish'))) && needs.support-preflight.outputs.source-sha == github.sha
+    if: (startsWith(github.ref, 'refs/tags/v') && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.action == 'prepare' || inputs.action == 'publish'))) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' && inputs.action == 'prepare')) && needs.support-preflight.outputs.source-sha == github.sha
     runs-on: ubuntu-latest
     environment: release
     timeout-minutes: 60
@@ -461,7 +461,7 @@ jobs:
           cache-binary: false
           driver-opts: |
             image=moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8
-      - name: Validate tag and derive release metadata
+      - name: Validate source and derive release metadata
         id: release
         shell: bash
         run: |
@@ -471,13 +471,16 @@ jobs:
             publish) [[ "$QUALIFIED_MANIFEST_SHA256" =~ ^[0-9a-f]{64}$ ]] ;;
             *) echo 'release action must be prepare or publish' >&2; exit 1 ;;
           esac
-          go run ./hack/releaseverify -tag "$GITHUB_REF_NAME"
+          release_tag="$(go run ./hack/releaseverify -print-release-tag)"
+          go run ./hack/releaseverify -tag "$release_tag"
           default_branch='${{ github.event.repository.default_branch }}'
           [[ -n "$default_branch" ]]
           git fetch --no-tags origin \
             "refs/heads/$default_branch:refs/remotes/origin/$default_branch"
           git merge-base --is-ancestor "$GITHUB_SHA" "refs/remotes/origin/$default_branch"
-          version="${GITHUB_REF_NAME#v}"
+          version="${release_tag#v}"
+          printf 'RELEASE_TAG=%s\n' "$release_tag" >> "$GITHUB_ENV"
+          printf 'GORELEASER_CURRENT_TAG=%s\n' "$release_tag" >> "$GITHUB_ENV"
           printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
       # The executor is Ptah, built here from the commit support/ptah.json pins,
       # which is the commit the acceptance suite built its executor from. The
@@ -535,13 +538,12 @@ jobs:
         run: |
           set -euo pipefail
           go run ./hack/releaseverify \
-            -tag "$GITHUB_REF_NAME" \
-            -verify-tag-identity
+            -tag "$RELEASE_TAG" \
+            -verify-source-identity
           mkdir -p dist
-          error_file="$RUNNER_TEMP/release-view-error.txt"
-          if release_json="$(gh api \
-            -H 'X-GitHub-Api-Version: 2026-03-10' \
-            "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" 2>"$error_file")"; then
+          SOURCE_REF="$GITHUB_REF"
+          release_json="$(go run ./hack/releaseverify -tag "$RELEASE_TAG" -read-release)"
+          if [[ "$release_json" != null ]]; then
             jq -e '(.draft | type) == "boolean" and (.immutable | type) == "boolean"' \
               <<<"$release_json" >/dev/null
             draft="$(jq -r '.draft' <<<"$release_json")"
@@ -559,7 +561,7 @@ jobs:
               elif [[ "$immutable" == true ]]; then
                 release_state=published
               else
-                echo "release $GITHUB_REF_NAME is published but not immutable; refusing recovery" >&2
+                echo "release $RELEASE_TAG is published but not immutable; refusing recovery" >&2
                 exit 1
               fi
               mv dist/release-state.txt dist/release-manifest.txt
@@ -570,11 +572,19 @@ jobs:
             else
               state_path=dist/release-manifest.txt
             fi
+            SOURCE_REF="$(sed -n 's/^source-ref=//p' "$state_path")"
+            go run ./hack/releaseverify \
+              -tag "$RELEASE_TAG" -source-sha "$GITHUB_SHA" -source-ref "$SOURCE_REF" \
+              "$state_flag" "$state_path"
+            if [[ "$release_state" == prepared && "$SOURCE_REF" != "$GITHUB_REF" ]]; then
+              echo 'resume an incomplete build on its original source ref' >&2
+              exit 1
+            fi
             delay=2
             for attempt in {1..8}; do
               if gh attestation verify "$state_path" \
                 --repo "$GITHUB_REPOSITORY" \
-                --source-ref "$GITHUB_REF" \
+                --source-ref "$SOURCE_REF" \
                 --source-digest "$GITHUB_SHA" \
                 --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml"
               then
@@ -587,10 +597,11 @@ jobs:
               delay=$((delay < 30 ? delay * 2 : 30))
             done
             go run ./hack/releaseverify \
-              -tag "$GITHUB_REF_NAME" \
+              -tag "$RELEASE_TAG" \
               -source-sha "$GITHUB_SHA" \
+              -source-ref "$SOURCE_REF" \
               "$state_flag" "$state_path"
-          elif grep -Fq '(HTTP 404)' "$error_file"; then
+          else
             release_state=fresh
             transaction="$GITHUB_RUN_ID"
             image_tag="$IMAGE:tx-$GITHUB_SHA-$transaction"
@@ -607,14 +618,12 @@ jobs:
               printf 'chart-asset=ptah-operator-%s.tgz\n' '${{ steps.release.outputs.version }}'
             } > dist/release-journal.txt
             go run ./hack/releaseverify \
-              -tag "$GITHUB_REF_NAME" \
+              -tag "$RELEASE_TAG" \
               -source-sha "$GITHUB_SHA" \
+              -source-ref "$SOURCE_REF" \
               -journal dist/release-journal.txt
-          else
-            cat "$error_file" >&2
-            echo 'could not determine release state; refusing to publish' >&2
-            exit 1
           fi
+          printf 'SOURCE_REF=%s\n' "$SOURCE_REF" >> "$GITHUB_ENV"
           state_path=dist/release-manifest.txt
           if [[ "$release_state" == fresh || "$release_state" == prepared ]]; then
             state_path=dist/release-journal.txt
@@ -653,13 +662,13 @@ jobs:
         run: |
           set -euo pipefail
           go run ./hack/releaseverify \
-            -tag "$GITHUB_REF_NAME" \
-            -verify-tag-identity
+            -tag "$RELEASE_TAG" \
+            -verify-source-identity
           delay=2
           for attempt in {1..8}; do
             if gh attestation verify dist/release-journal.txt \
               --repo "$GITHUB_REPOSITORY" \
-              --source-ref "$GITHUB_REF" \
+              --source-ref "$SOURCE_REF" \
               --source-digest "$GITHUB_SHA" \
               --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml"
             then
@@ -671,13 +680,14 @@ jobs:
             sleep "$delay"
             delay=$((delay < 30 ? delay * 2 : 30))
           done
-          gh release create "$GITHUB_REF_NAME" \
+          gh release create "$RELEASE_TAG" \
             --draft \
-            --verify-tag \
+            --target "$GITHUB_SHA" \
             --latest=false \
             --notes-file dist/release-journal.txt \
             --title "Ptah Operator ${{ steps.release.outputs.version }}"
-          release_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME")"
+          go run ./hack/releaseverify -tag "$RELEASE_TAG" -verify-source-identity
+          release_json="$(go run ./hack/releaseverify -tag "$RELEASE_TAG" -read-release)"
           [[ "$(jq -r '.draft' <<<"$release_json")" == true ]]
           jq -e '.assets | length == 0' <<<"$release_json" >/dev/null
           jq -j '.body | strings' <<<"$release_json" > "$RUNNER_TEMP/prepared-release-body.txt"
@@ -698,7 +708,7 @@ jobs:
             checkpoint_error="$RUNNER_TEMP/prepared-image-checkpoint-error.txt"
             if gh attestation verify "oci://$IMAGE@$digest" \
               --repo "$GITHUB_REPOSITORY" \
-              --source-ref "$GITHUB_REF" \
+              --source-ref "$SOURCE_REF" \
               --source-digest "$GITHUB_SHA" \
               --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml" \
               2>"$checkpoint_error"
@@ -738,7 +748,7 @@ jobs:
             checkpoint_error="$RUNNER_TEMP/prepared-executor-checkpoint-error.txt"
             if gh attestation verify "oci://$EXECUTOR_IMAGE@$digest" \
               --repo "$GITHUB_REPOSITORY" \
-              --source-ref "$GITHUB_REF" \
+              --source-ref "$SOURCE_REF" \
               --source-digest "$GITHUB_SHA" \
               --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml" \
               2>"$checkpoint_error"
@@ -836,21 +846,26 @@ jobs:
           [[ "$TESTED_CHART_SHA256" =~ ^[0-9a-f]{64}$ ]]
           [[ "$chart_sha256" == "$TESTED_CHART_SHA256" ]]
           printf 'path=%s\n' "$chart_path" >> "$GITHUB_OUTPUT"
+          [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]]
+          [[ -z "$(git status --porcelain)" ]]
       # The plugin a person installs, one file per client platform, built from
-      # the tag's own source with the version stamped in -- so
+      # the selected source with the intended version stamped in -- so
       # `kubectl ptah --version` names the release it came from.
       #
       # .goreleaser.yaml says which platforms and how, the way ptah.run builds
       # its own CLI. It writes into dist/client, so --clean removes only what
       # it wrote and leaves this transaction's own artifacts in dist/ alone.
       # Publishing stays here: goreleaser builds and does not release.
+      # Its tag-existence validation cannot run before tagging. The workflow
+      # binds the live source separately and checks a clean checkout above.
       - name: Build the kubectl plugin for the supported client platforms
         id: client
+        if: steps.transaction.outputs.mode != 'published' && env.RELEASE_ACTION == 'prepare'
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
           distribution: goreleaser
           version: v2.18.2
-          args: build --clean
+          args: build --clean --skip=validate
       - name: Collect the acceptance evidence the preflight bundled
         id: evidence-download
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -861,6 +876,7 @@ jobs:
       # preflight built and reported, and no others.
       - name: Materialize the acceptance evidence
         id: evidence-asset
+        if: steps.transaction.outputs.mode != 'published' && env.RELEASE_ACTION == 'prepare'
         env:
           TESTED_ACCEPTANCE_EVIDENCE_SHA256: ${{ needs.support-preflight.outputs.acceptance-evidence-sha256 }}
         shell: bash
@@ -875,6 +891,7 @@ jobs:
       - name: Materialize immutable release assets
         id: artifacts
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TESTED_KUBERNETES_SUPPORT_WINDOW: ${{ needs.support-preflight.outputs.kubernetes-support-window }}
           TESTED_SUPPORT_EVIDENCE_RUN_ID: ${{ needs.support-preflight.outputs.support-evidence-run-id }}
         shell: bash
@@ -884,8 +901,10 @@ jobs:
           chart_path='${{ steps.chart-package.outputs.path }}'
           # Beside the chart and the manifest, which is where the checksum file
           # names them and where the upload reads them from.
-          mv dist/client/kubectl-ptah-* dist/
           mode='${{ steps.transaction.outputs.mode }}'
+          if [[ "$mode" != published && "$RELEASE_ACTION" == prepare ]]; then
+            mv dist/client/kubectl-ptah-* dist/
+          fi
           if [[ "$mode" == fresh || "$mode" == prepared ]]; then
             image_digest='${{ steps.image.outputs.digest }}'
             if [[ '${{ steps.stage-inspect.outputs.reuse }}' == true ]]; then
@@ -919,16 +938,26 @@ jobs:
               printf 'kubernetes-support-window=%s\n' "$TESTED_KUBERNETES_SUPPORT_WINDOW"
             } > "$manifest"
           fi
-          chart_name="$(basename "$chart_path")"
-          (
-            cd dist
-            sha256sum "$chart_name" release-manifest.txt acceptance-evidence.tar.gz \
-              kubectl-ptah-darwin-amd64 kubectl-ptah-darwin-arm64 \
-              kubectl-ptah-linux-amd64 kubectl-ptah-linux-arm64 > SHA256SUMS
-          )
+          if [[ "$mode" != published && "$RELEASE_ACTION" == prepare ]]; then
+            chart_name="$(basename "$chart_path")"
+            (
+              cd dist
+              sha256sum "$chart_name" release-manifest.txt acceptance-evidence.tar.gz \
+                kubectl-ptah-darwin-amd64 kubectl-ptah-darwin-arm64 \
+                kubectl-ptah-linux-amd64 kubectl-ptah-linux-arm64 > SHA256SUMS
+            )
+          else
+            download_dir="$RUNNER_TEMP/selected-release-assets"
+            mkdir "$download_dir"
+            gh release download "$RELEASE_TAG" --dir "$download_dir"
+            cmp "$manifest" "$download_dir/release-manifest.txt"
+            cmp "$chart_path" "$download_dir/$(basename "$chart_path")"
+            cp "$download_dir/"* dist/
+          fi
           go run ./hack/releaseverify \
-            -tag "$GITHUB_REF_NAME" \
+            -tag "$RELEASE_TAG" \
             -source-sha "$GITHUB_SHA" \
+            -source-ref "$SOURCE_REF" \
             -manifest "$manifest" \
             -checksums dist/SHA256SUMS \
             -chart "$chart_path"
@@ -1151,13 +1180,13 @@ jobs:
         run: |
           set -euo pipefail
           go run ./hack/releaseverify \
-            -tag "$GITHUB_REF_NAME" \
-            -verify-tag-identity
+            -tag "$RELEASE_TAG" \
+            -verify-source-identity
           delay=2
           for attempt in {1..8}; do
             if gh attestation verify dist/release-manifest.txt \
               --repo "$GITHUB_REPOSITORY" \
-              --source-ref "$GITHUB_REF" \
+              --source-ref "$SOURCE_REF" \
               --source-digest "$GITHUB_SHA" \
               --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml"
             then
@@ -1169,15 +1198,15 @@ jobs:
             sleep "$delay"
             delay=$((delay < 30 ? delay * 2 : 30))
           done
-          release_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME")"
+          release_json="$(go run ./hack/releaseverify -tag "$RELEASE_TAG" -read-release)"
           [[ "$(jq -r '.draft' <<<"$release_json")" == true ]]
           jq -e '.assets | length == 0' <<<"$release_json" >/dev/null
           jq -j '.body | strings' <<<"$release_json" > "$RUNNER_TEMP/prepared-body-before-finalize.txt"
           cmp dist/release-journal.txt "$RUNNER_TEMP/prepared-body-before-finalize.txt"
-          gh release edit "$GITHUB_REF_NAME" \
+          gh release edit "$RELEASE_TAG" \
             --draft \
             --notes-file dist/release-manifest.txt
-          release_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME")"
+          release_json="$(go run ./hack/releaseverify -tag "$RELEASE_TAG" -read-release)"
           [[ "$(jq -r '.draft' <<<"$release_json")" == true ]]
           jq -e '.assets | length == 0' <<<"$release_json" >/dev/null
           jq -j '.body | strings' <<<"$release_json" > "$RUNNER_TEMP/finalized-release-body.txt"
@@ -1199,7 +1228,7 @@ jobs:
             for attempt in {1..8}; do
               if gh attestation verify "$asset" \
                 --repo "$GITHUB_REPOSITORY" \
-                --source-ref "$GITHUB_REF" \
+                --source-ref "$SOURCE_REF" \
                 --source-digest "$GITHUB_SHA" \
                 --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml"
               then
@@ -1229,7 +1258,7 @@ jobs:
             kubectl-ptah-darwin-arm64 \
             kubectl-ptah-linux-amd64 \
             kubectl-ptah-linux-arm64 | sort)"
-          release_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME")"
+          release_json="$(go run ./hack/releaseverify -tag "$RELEASE_TAG" -read-release)"
           [[ "$(jq -r '.draft' <<<"$release_json")" == true ]]
           jq -j '.body' <<<"$release_json" > "$RUNNER_TEMP/release-body.txt"
           cmp dist/release-manifest.txt "$RUNNER_TEMP/release-body.txt"
@@ -1253,23 +1282,23 @@ jobs:
               asset="$(jq -ce --arg name "$name" '[.assets[] | select(.name == $name)] | if length == 1 then .[0] else error("asset name is not unique") end' <<<"$release_json")"
               state="$(jq -r '.state' <<<"$asset")"
               if [[ "$state" == uploaded ]]; then
-                gh release download "$GITHUB_REF_NAME" \
+                gh release download "$RELEASE_TAG" \
                   --pattern "$name" \
                   --dir "$RUNNER_TEMP/existing-assets"
                 cmp "$source" "$RUNNER_TEMP/existing-assets/$name"
               elif [[ "$state" == starter ]]; then
                 asset_id="$(jq -er '.id | numbers' <<<"$asset")"
                 gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id"
-                gh release upload "$GITHUB_REF_NAME" "$source"
+                gh release upload "$RELEASE_TAG" "$source"
               else
                 echo "draft asset $name has unsupported state $state" >&2
                 exit 1
               fi
             else
-              gh release upload "$GITHUB_REF_NAME" "$source"
+              gh release upload "$RELEASE_TAG" "$source"
             fi
           done <<<"$expected_names"
-          release_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME")"
+          release_json="$(go run ./hack/releaseverify -tag "$RELEASE_TAG" -read-release)"
           actual_names="$(jq -r '.assets[].name' <<<"$release_json" | sort)"
           [[ "$actual_names" == "$expected_names" ]]
           jq -e '[.assets[] | select(.state != "uploaded")] | length == 0' <<<"$release_json" >/dev/null
@@ -1307,7 +1336,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          identity="https://github.com/$GITHUB_REPOSITORY/.github/workflows/release.yml@$GITHUB_REF"
+          identity="https://github.com/$GITHUB_REPOSITORY/.github/workflows/release.yml@$SOURCE_REF"
           reference="${{ steps.artifacts.outputs.image-repository }}@${{ steps.artifacts.outputs.image-digest }}"
           delay=2
           for attempt in {1..8}; do
@@ -1317,7 +1346,7 @@ jobs:
               "$reference" && \
               gh attestation verify "oci://$reference" \
                 --repo "$GITHUB_REPOSITORY" \
-                --source-ref "$GITHUB_REF" \
+                --source-ref "$SOURCE_REF" \
                 --source-digest "$GITHUB_SHA" \
                 --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml"
             then
@@ -1350,7 +1379,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          identity="https://github.com/$GITHUB_REPOSITORY/.github/workflows/release.yml@$GITHUB_REF"
+          identity="https://github.com/$GITHUB_REPOSITORY/.github/workflows/release.yml@$SOURCE_REF"
           reference="${{ steps.artifacts.outputs.executor-repository }}@${{ steps.artifacts.outputs.executor-digest }}"
           delay=2
           for attempt in {1..8}; do
@@ -1360,7 +1389,7 @@ jobs:
               "$reference" && \
               gh attestation verify "oci://$reference" \
                 --repo "$GITHUB_REPOSITORY" \
-                --source-ref "$GITHUB_REF" \
+                --source-ref "$SOURCE_REF" \
                 --source-digest "$GITHUB_SHA" \
                 --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml"
             then
@@ -1388,8 +1417,8 @@ jobs:
         run: |
           set -euo pipefail
           go run ./hack/releaseverify \
-            -tag "$GITHUB_REF_NAME" \
-            -verify-tag-identity
+            -tag "$RELEASE_TAG" \
+            -verify-source-identity
           expected_names="$(printf '%s\n' \
             "$(basename '${{ steps.chart-package.outputs.path }}')" \
             release-manifest.txt \
@@ -1400,9 +1429,7 @@ jobs:
             kubectl-ptah-linux-amd64 \
             kubectl-ptah-linux-arm64 | sort)"
           mode='${{ steps.transaction.outputs.mode }}'
-          release_json="$(gh api \
-            -H 'X-GitHub-Api-Version: 2026-03-10' \
-            "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME")"
+          release_json="$(go run ./hack/releaseverify -tag "$RELEASE_TAG" -read-release)"
           if [[ "$mode" == published ]]; then
             [[ "$(jq -r '.draft' <<<"$release_json")" == false ]]
             [[ "$(jq -r '.immutable' <<<"$release_json")" == true ]]
@@ -1417,13 +1444,13 @@ jobs:
           gate_dir="$RUNNER_TEMP/publish-gate-assets"
           mkdir -p "$gate_dir"
           while IFS= read -r name; do
-            gh release download "$GITHUB_REF_NAME" --pattern "$name" --dir "$gate_dir"
+            gh release download "$RELEASE_TAG" --pattern "$name" --dir "$gate_dir"
             cmp "dist/$name" "$gate_dir/$name"
             delay=2
             for attempt in {1..8}; do
               if gh attestation verify "$gate_dir/$name" \
                 --repo "$GITHUB_REPOSITORY" \
-                --source-ref "$GITHUB_REF" \
+                --source-ref "$SOURCE_REF" \
                 --source-digest "$GITHUB_SHA" \
                 --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml"
               then
@@ -1437,8 +1464,9 @@ jobs:
             done
           done <<<"$expected_names"
           go run ./hack/releaseverify \
-            -tag "$GITHUB_REF_NAME" \
+            -tag "$RELEASE_TAG" \
             -source-sha "$GITHUB_SHA" \
+            -source-ref "$SOURCE_REF" \
             -manifest "$gate_dir/release-manifest.txt" \
             -checksums "$gate_dir/SHA256SUMS" \
             -chart "$gate_dir/ptah-operator-${{ steps.release.outputs.version }}.tgz"
@@ -1453,14 +1481,12 @@ jobs:
               echo 'the final manifest differs from the qualified transaction' >&2
               exit 1
             }
-            gh release edit "$GITHUB_REF_NAME" --draft=false --latest=false
+            gh release edit "$RELEASE_TAG" --draft=false --latest=false
             go run ./hack/releaseverify \
-              -tag "$GITHUB_REF_NAME" \
-              -verify-tag-identity
+              -tag "$RELEASE_TAG" \
+              -verify-source-identity
           fi
-          release_json="$(gh api \
-            -H 'X-GitHub-Api-Version: 2026-03-10' \
-            "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME")"
+          release_json="$(go run ./hack/releaseverify -tag "$RELEASE_TAG" -read-release)"
           [[ "$(jq -r '.draft' <<<"$release_json")" == false ]]
           [[ "$(jq -r '.immutable' <<<"$release_json")" == true ]]
           jq -j '.body' <<<"$release_json" > "$RUNNER_TEMP/published-body.txt"
@@ -1471,7 +1497,7 @@ jobs:
           error_file="$RUNNER_TEMP/release-verify-error.txt"
           delay=2
           for attempt in {1..8}; do
-            if gh release verify "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" 2>"$error_file"; then
+            if gh release verify "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" 2>"$error_file"; then
               verified=true
               break
             fi
@@ -1489,7 +1515,7 @@ jobs:
             verified=false
             delay=2
             for attempt in {1..8}; do
-              if gh release verify-asset "$GITHUB_REF_NAME" "$gate_dir/$name" \
+              if gh release verify-asset "$RELEASE_TAG" "$gate_dir/$name" \
                 --repo "$GITHUB_REPOSITORY" 2>"$error_file"
               then
                 verified=true

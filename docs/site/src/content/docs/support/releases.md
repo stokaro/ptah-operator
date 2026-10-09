@@ -3,12 +3,13 @@ title: Releases and provenance
 description: What a release publishes and how to verify it before installing.
 ---
 
-Every `v<chart-version>` tag prepares one signed draft release set. Publication
-requires a separate manual request that names the qualified manifest digest:
+A reviewed `master` commit can prepare a signed draft before its release tag
+exists. Publication requires a separate manual request from that tag naming
+the qualified manifest digest. The artifact set contains:
 
 - a `linux/amd64` and `linux/arm64` manager/runner image;
 - a `linux/amd64` and `linux/arm64` Ptah executor image, built from the Ptah
-  commit that `support/ptah.json` pins at the tagged source;
+  commit that `support/ptah.json` pins at the selected source;
 - a reproducible Helm chart asset whose version and `appVersion` match the tag;
 - a keyless signature and GitHub build provenance for each image digest;
 - GitHub build provenance for every downloadable asset;
@@ -40,7 +41,7 @@ inventory object absent after uninstall before export. CI retains one artifact
 per supported minor for the completed run. Release preflight accepts only the
 complete, unexpired artifact set from the exact successful default-branch run, requires all copies
 to be byte-identical, and passes their SHA-256 digest into the protected publish
-job. The chart rebuilt from the tagged commit must match that tested digest
+job. The chart rebuilt from the selected commit must match that tested digest
 before any release asset can be materialized. A published-release claim still
 requires an actual immutable release; source CI proves package installability,
 not publication state.
@@ -62,8 +63,8 @@ preflight fails closed and requires a new release commit.
 
 ## Prepare a release
 
-Preparation does not create a tag or publish artifacts. Before creating
-`v0.2.0`:
+Signed preparation uploads a draft and digest-addressed images without creating
+the Git tag or publishing the official release. Before preparing `v0.2.0`:
 
 1. Merge the changes through a pull request, then wait for the complete CI
    run on that exact `master` commit. Record the commit and run URL. The pull
@@ -73,7 +74,8 @@ Preparation does not create a tag or publish artifacts. Before creating
    same version. Keep the installed-chart and lifecycle artifacts from its CI
    run; preflight checks their bytes and expiration.
 3. Confirm immutable releases are enabled. The `release` environment must
-   require a reviewer, accept only `v*` tags, and contain the fine-grained
+   require a reviewer, accept only the exact `master` branch and `v*` tags,
+   and contain the fine-grained
    `IMMUTABLE_RELEASES_READ_TOKEN` described below. A repository secret is not
    a substitute for the environment secret. Protect version tag creation and
    refuse updates and deletion.
@@ -83,22 +85,32 @@ Preparation does not create a tag or publish artifacts. Before creating
    production capacity/soak qualification. A successful build does not close
    [production qualification](https://github.com/stokaro/ptah-operator/issues/242).
 
-Creating the tag is a separate release action. Before approving its `release`
-environment, check that the tag points to the recorded successful commit.
-The tag-triggered run builds and authenticates the draft and its staged images,
-then stops before publishing the release. Its summary records the SHA-256 of
-`release-manifest.txt`. Keep that digest with the qualification results.
-Staged images are readable by digest; the draft does not establish an official
-immutable release.
-
-To resume interrupted preparation, run the same workflow on that tag:
+Prepare the signed assets from the recorded `master` commit:
 
 ```sh
-gh workflow run release.yml --ref v0.2.0 -f action=prepare
+gh workflow run release.yml --ref master -f action=prepare
 ```
 
-After qualifying those exact assets, request publication with the recorded
-manifest digest:
+The protected job checks that `master` still names that exact successful source
+commit and that the intended release tag is absent. The draft's
+`target_commitish` is the full commit SHA. Its journal, signatures and
+attestations name `refs/heads/master` as the actual producer. GoReleaser receives
+the intended version explicitly and skips its tag-existence validation; the
+workflow checks the live source identity and a clean checkout independently.
+The job stops
+before publication and records the SHA-256 of `release-manifest.txt`. Keep that
+digest with the qualification results. Staged images are readable by digest;
+the draft does not establish an official immutable release.
+
+Repeat the same preparation command to recover an interrupted transaction.
+An incomplete build must resume from its original producer ref and source.
+Preparation and publication share one concurrency group so they cannot mutate
+the same draft simultaneously. Unrelated pull request smoke runs remain separate.
+
+After qualifying those exact assets, creating the release tag requires a
+separate decision. It must point to the manifest's source commit. A tag push
+only prepares or re-verifies the draft; it does not publish the release.
+Request publication from that tag with the recorded manifest digest:
 
 ```sh
 qualified_manifest_sha256='replace-with-the-recorded-64-character-digest'
@@ -112,7 +124,8 @@ before any build can start. It re-verifies the complete existing transaction,
 then compares the manifest digest again immediately before publishing. It does
 not replace the selected image digests or assets. A published immutable release
 remains a read-only verification state. A manual dispatch without an action
-still runs smoke checks; preparation and publication require a `v*` tag ref.
+still runs smoke checks. Preparation accepts `master` or the exact release tag;
+publication requires the exact release tag.
 
 On the first publication, GHCR packages may not exist until the workflow
 pushes them. If either anonymous image check fails because its package is
@@ -157,11 +170,11 @@ digest in the manifest as `acceptance-evidence-sha256`, lists them in
 and `hack/releaseverify` opens the bundle again and requires `jobs.json` to name
 the same run as `support-evidence-run-id` and a success for every required job.
 
-A rerun rebuilds the bundle from the CI run the preflight selects. Once the
-manifest is final, that bundle has to be byte-identical to the one it records,
-so a rerun after the CI run was executed again fails closed. A draft can be
-deleted to start a new transaction; a published release keeps the bundle it
-published.
+Interrupted preparation rebuilds the bundle from the CI run the preflight
+selects. Once the manifest is final, that bundle has to match its recorded
+digest. Publication downloads the selected draft assets and authenticates their
+existing bytes; it does not rebuild its client binaries or evidence bundle.
+A published release keeps the bundle it published.
 
 ## The executor
 
@@ -171,6 +184,11 @@ built from the commit the `edge` row of `support/ptah.json` verifies. That is
 the commit the acceptance suite builds its own executor from, and both builds
 use the same recipe, `Dockerfile.executor`, so the image a release ships comes
 from the source and the recipe the suite ran.
+
+The recipe applies the `golang.org/x/net` v0.60.0 security update through a
+separate module file. The pinned source keeps its original `go.mod` and `go.sum`;
+the compiled binary records the updated dependency. The build requires the
+source dependency to be v0.59.0 so a new Ptah pin must reassess this override.
 
 The workflow fetches that commit from `https://github.com/stokaro/ptah` by its
 hash and refuses to build when Git resolves anything else. The build stamps the
@@ -259,7 +277,8 @@ the release that reads the state already written, not an older one.
 ## Publication transaction
 
 A fresh transaction first creates and attests a minimal `state=prepared` journal
-that binds the tag, source commit, stable transaction ID, expected chart name,
+that binds the intended version, producer ref, source commit, stable transaction
+ID, expected chart name,
 and the exact retention tags
 `ghcr.io/stokaro/ptah-operator:tx-<source-sha>-<run-id>` and
 `ghcr.io/stokaro/ptah-operator-executor:tx-<source-sha>-<run-id>`.
@@ -270,7 +289,7 @@ identity.
 
 After the prepared draft exists, the workflow anonymously inspects each exact
 retention tag. An existing raw manifest is reused only when its exact digest has
-an authenticated build checkpoint from this release workflow, repository, tag,
+an authenticated build checkpoint from this release workflow, repository, producer ref,
 and source commit. That checkpoint is created solely from the digest returned
 by a successful image-build action. A missing or uncheckpointed tag is rebuilt;
 the replacement cannot become reusable until the new build output has its own
@@ -304,8 +323,9 @@ rebuilt from the checked-out source and checksum-locked modules for every
 transaction.
 
 Rerunning a partially completed release first authenticates either the prepared
-journal or final manifest against the exact tag, source commit, and signer
-workflow. From a prepared journal it reuses each existing staged digest only
+journal or final manifest against its exact producer ref, source commit, and
+signer workflow. The producer is restricted to `refs/heads/master` or the
+selected release tag; later publication preserves that original identity. From a prepared journal it reuses each existing staged digest only
 after verifying the exact build checkpoint described above; otherwise it
 rebuilds into the same transaction tag and checkpoints the action's returned
 digest. It reproduces the chart bytes deterministically and resumes missing
@@ -362,7 +382,8 @@ repository secret. The final step requires both the API's immutable flag and a
 valid release attestation.
 
 Configure the `release` environment with required reviewers and restrict it to
-release tags. Protect `v*` creation with a repository ruleset and require the
+the exact `master` branch and `v*` release tags. Keep the required reviewer
+for both. Protect `v*` creation with a repository ruleset and require the
 tagged commit to have passed the default-branch review and CI policy. The
 workflow independently proves that the tagged commit is reachable from the
 current default branch. These repository controls are part of the release trust
@@ -389,7 +410,10 @@ release attestation.
 ## Verify before installation
 
 Choose the tag independently, resolve its commit, and authenticate the release
-and its assets before reading the manifest or trusting its checksums:
+and its assets before trusting the manifest or its checksums. The recorded
+producer ref selects between the exact release tag and `refs/heads/master`;
+every other ref is refused, and attestations still require the resolved release
+commit and the exact signer workflow:
 
 ```sh
 tag=v0.2.0
@@ -411,16 +435,29 @@ for asset in \
   acceptance-evidence.tar.gz
 do
   gh release verify-asset "$tag" "$asset" --repo "$repository"
+done
+
+source_ref="$(sed -n 's/^source-ref=//p' release-manifest.txt)"
+case "$source_ref" in
+  "refs/tags/$tag"|refs/heads/master) ;;
+  *) echo 'unexpected release producer ref' >&2; exit 1 ;;
+esac
+for asset in \
+  "ptah-operator-$version.tgz" \
+  release-manifest.txt \
+  SHA256SUMS \
+  acceptance-evidence.tar.gz
+do
   gh attestation verify "$asset" \
     --repo "$repository" \
-    --source-ref "refs/tags/$tag" \
+    --source-ref "$source_ref" \
     --source-digest "$source_sha" \
     --signer-workflow "$repository/.github/workflows/release.yml"
 done
 
 grep -Fx "version=$version" release-manifest.txt
 grep -Fx "source-repository=$repository" release-manifest.txt
-grep -Fx "source-ref=refs/tags/$tag" release-manifest.txt
+grep -Fx "source-ref=$source_ref" release-manifest.txt
 grep -Fx "source-sha=$source_sha" release-manifest.txt
 sha256sum --check --ignore-missing SHA256SUMS
 grep -Fx "acceptance-evidence-sha256=$(sha256sum acceptance-evidence.tar.gz | awk '{print $1}')" \
@@ -436,23 +473,23 @@ tar -xzOf acceptance-evidence.tar.gz jobs.json |
 ```
 
 Only after those checks should the image reference be read from the manifest.
-Verify its provenance against the same tag and commit:
+Verify its provenance against the same producer ref and release commit:
 
 ```sh
 image="$(sed -n 's/^image=//p' release-manifest.txt)"
 
 gh attestation verify "oci://$image" \
   --repo "$repository" \
-  --source-ref "refs/tags/$tag" \
+  --source-ref "$source_ref" \
   --source-digest "$source_sha" \
   --signer-workflow "$repository/.github/workflows/release.yml"
 ```
 
 Cosign provides an independent signature check. Bind its certificate identity
-to the exact selected tag, not to a wildcard release identity:
+to the authenticated producer ref:
 
 ```sh
-identity="https://github.com/$repository/.github/workflows/release.yml@refs/tags/$tag"
+identity="https://github.com/$repository/.github/workflows/release.yml@$source_ref"
 cosign verify \
   --certificate-identity "$identity" \
   --certificate-oidc-issuer='https://token.actions.githubusercontent.com' \
@@ -470,7 +507,7 @@ ptah_version="$(sed -n 's/^executor-ptah-version=//p' release-manifest.txt)"
 
 gh attestation verify "oci://$executor" \
   --repo "$repository" \
-  --source-ref "refs/tags/$tag" \
+  --source-ref "$source_ref" \
   --source-digest "$source_sha" \
   --signer-workflow "$repository/.github/workflows/release.yml"
 

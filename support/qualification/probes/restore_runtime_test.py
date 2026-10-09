@@ -60,8 +60,10 @@ class ReleaseRuntimeTest(unittest.TestCase):
     def command(self, action, args):
         self.calls.append(args)
         result = b''
-        if args[:2] == ['gh', 'api']:
-            result = json.dumps(self.draft).encode() if '/releases/tags/' in args[-1] else ('a' * 40).encode()
+        if args[:3] == ['gh', 'release', 'view']:
+            result = b'1234'
+        elif args[:2] == ['gh', 'api']:
+            result = json.dumps(self.draft).encode() if '/releases/' in args[-1] else ('a' * 40).encode()
         elif 'imagetools' in args:
             result = self.index
         elif args[0] == 'helm' and 'upgrade' in args:
@@ -73,7 +75,7 @@ class ReleaseRuntimeTest(unittest.TestCase):
         return subprocess.CompletedProcess(args, 0, result)
 
     def test_manifest_refusals_happen_before_any_command(self):
-        for key, value in [('source-sha', 'e' * 40), ('source-ref', 'refs/heads/master'),
+        for key, value in [('source-sha', 'e' * 40), ('source-ref', 'refs/heads/untrusted'),
                            ('version', 'dev'), ('image', 'ghcr.io/stokaro/ptah-operator:latest'),
                            ('executor', 'example.com/executor@' + self.digest),
                            ('chart-asset-sha256', 'f' * 64)]:
@@ -264,7 +266,7 @@ class ReleaseRuntimeTest(unittest.TestCase):
                  'kubectl-ptah-linux-amd64', 'kubectl-ptah-linux-arm64']
         (self.root / 'SHA256SUMS').write_text(''.join(ReleaseRuntime.sha(self.root / n) + '  ' + n + '\n' for n in names))
         names.append('SHA256SUMS')
-        self.draft = {'draft': True, 'immutable': False, 'tag_name': TAG,
+        self.draft = {'draft': True, 'immutable': False, 'tag_name': TAG, 'target_commitish': 'a' * 40,
                       'body': (self.root / 'release-manifest.txt').read_text(),
                       'assets': [{'name': n, 'state': 'uploaded', 'size': (self.root / n).stat().st_size,
                                   'digest': 'sha256:' + ReleaseRuntime.sha(self.root / n)} for n in names]}
@@ -275,7 +277,7 @@ class ReleaseRuntimeTest(unittest.TestCase):
         runtime.authenticate()
         self.assertEqual(self.probe.report['releaseRuntime']['publicationState'], 'signed-draft')
         self.assertEqual(len(self.probe.report['releaseRuntime']['assets']), 8)
-        self.assertFalse(any(c[:2] == ['gh', 'release'] for c in self.calls))
+        self.assertFalse(any(c[:3] in (['gh', 'release', 'verify'], ['gh', 'release', 'verify-asset']) for c in self.calls))
         attestations = [c for c in self.calls if c[:3] == ['gh', 'attestation', 'verify']]
         self.assertEqual(len(attestations), 5)
         self.assertTrue(all(c[c.index('--source-ref') + 1] == 'refs/tags/' + TAG for c in attestations))
@@ -283,14 +285,33 @@ class ReleaseRuntimeTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'changed'):
             runtime.unchanged()
 
+    def test_master_preparation_needs_no_tag_and_preserves_the_producer_identity(self):
+        self.fields['source-ref'] = 'refs/heads/master'
+        self.write_manifest()
+        runtime = self.prepared_runtime()
+        runtime.authenticate()
+        self.assertFalse(any('/commits/' in arg or '/releases/tags/' in arg for c in self.calls for arg in c))
+        for c in self.calls:
+            if c[:3] == ['gh', 'attestation', 'verify']:
+                self.assertEqual(c[c.index('--source-ref') + 1], 'refs/heads/master')
+            if c[:2] == ['cosign', 'verify']:
+                self.assertEqual(c[c.index('--certificate-identity') + 1],
+                                 'https://github.com/' + REPOSITORY + '/.github/workflows/release.yml@refs/heads/master')
+        self.assertEqual(self.probe.report['releaseRuntime']['sourceRef'], 'refs/heads/master')
+        self.calls.clear()
+        ReleaseRuntime(self.probe, self.root).authenticate()
+        self.assertTrue(any('/commits/' + TAG in arg for c in self.calls for arg in c))
+        self.assertTrue(any(c[:3] == ['gh', 'release', 'verify'] for c in self.calls))
+
     def test_prepared_mode_refuses_incomplete_replaced_or_published_readback(self):
-        for defect in ('published', 'immutable', 'tag', 'body', 'missing asset', 'extra asset', 'duplicate asset',
+        for defect in ('published', 'immutable', 'tag', 'target', 'body', 'missing asset', 'extra asset', 'duplicate asset',
                        'upload incomplete', 'digest', 'size', 'changed client and readback'):
             with self.subTest(defect=defect):
                 runtime = self.prepared_runtime()
                 if defect == 'published': self.draft['draft'] = False
                 elif defect == 'immutable': self.draft['immutable'] = True
                 elif defect == 'tag': self.draft['tag_name'] = 'another'
+                elif defect == 'target': self.draft['target_commitish'] = 'master'
                 elif defect == 'body': self.draft['body'] = 'state=prepared\n'
                 elif defect == 'missing asset': self.draft['assets'].pop()
                 elif defect == 'extra asset': self.draft['assets'].append({'name': 'extra'})

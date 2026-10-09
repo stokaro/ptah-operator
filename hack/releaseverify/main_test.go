@@ -450,20 +450,32 @@ func TestVerifyWorkflowRejectsCriticalMutations(t *testing.T) {
 		new string
 		all bool
 	}{
-		"cancel active publication": {`  cancel-in-progress: ${{ github.event_name == 'pull_request' }}`, `  cancel-in-progress: true`, false},
-		"retain superseded PR":      {`  cancel-in-progress: ${{ github.event_name == 'pull_request' }}`, `  cancel-in-progress: false`, false},
-		"cancel tag validation":     {`  cancel-in-progress: ${{ github.event_name == 'pull_request' }}`, `  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}`, false},
-		"cancel manual validation":  {`  cancel-in-progress: ${{ github.event_name == 'pull_request' }}`, `  cancel-in-progress: ${{ github.event_name != 'push' }}`, false},
-		"shared release group":      {`  group: release-${{ github.ref }}`, `  group: release`, false},
-		"manual smoke trigger":      {`  workflow_dispatch:`, `  # workflow_dispatch removed`, false},
-		"manual smoke guard":        {releaseSmokeCondition, `github.event_name == 'pull_request'`, false},
-		"automatic publication":     {`github.event_name == 'push' && 'prepare' || inputs.action`, `github.event_name == 'push' && 'publish' || inputs.action`, false},
-		"publish default":           {`default: smoke`, `default: publish`, false},
-		"unbound publication":       {`QUALIFIED_MANIFEST_SHA256: ${{ inputs.manifest_sha256 }}`, `QUALIFIED_MANIFEST_SHA256: ignored`, true},
-		"publish incomplete draft":  {`"$release_state" == recover || "$release_state" == published`, `"$release_state" == prepared || "$release_state" == published`, false},
-		"publish another manifest":  {`"$(sha256sum "$state_path" | awk '{print $1}')" == "$QUALIFIED_MANIFEST_SHA256"`, `-n "$QUALIFIED_MANIFEST_SHA256"`, false},
-		"prepare publishes":         {`if [[ "$RELEASE_ACTION" == prepare ]]; then`, `if [[ "$RELEASE_ACTION" == ignored ]]; then`, false},
-		"changed final manifest":    {`"$(sha256sum "$gate_dir/release-manifest.txt" | awk '{print $1}')" == "$QUALIFIED_MANIFEST_SHA256"`, `-n "$QUALIFIED_MANIFEST_SHA256"`, false},
+		"cancel active publication":           {`  cancel-in-progress: ${{ github.event_name == 'pull_request' }}`, `  cancel-in-progress: true`, false},
+		"retain superseded PR":                {`  cancel-in-progress: ${{ github.event_name == 'pull_request' }}`, `  cancel-in-progress: false`, false},
+		"cancel tag validation":               {`  cancel-in-progress: ${{ github.event_name == 'pull_request' }}`, `  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}`, false},
+		"cancel manual validation":            {`  cancel-in-progress: ${{ github.event_name == 'pull_request' }}`, `  cancel-in-progress: ${{ github.event_name != 'push' }}`, false},
+		"shared release group":                {`  group: release-${{ github.event_name == 'pull_request' && github.ref || 'transaction' }}`, `  group: release`, false},
+		"manual smoke trigger":                {`  workflow_dispatch:`, `  # workflow_dispatch removed`, false},
+		"manual smoke guard":                  {releaseSmokeCondition, `github.event_name == 'pull_request'`, false},
+		"automatic publication":               {`github.event_name == 'push' && 'prepare' || inputs.action`, `github.event_name == 'push' && 'publish' || inputs.action`, false},
+		"publish default":                     {`default: smoke`, `default: publish`, false},
+		"unbound publication":                 {`QUALIFIED_MANIFEST_SHA256: ${{ inputs.manifest_sha256 }}`, `QUALIFIED_MANIFEST_SHA256: ignored`, true},
+		"publish incomplete draft":            {`"$release_state" == recover || "$release_state" == published`, `"$release_state" == prepared || "$release_state" == published`, false},
+		"publish another manifest":            {`"$(sha256sum "$state_path" | awk '{print $1}')" == "$QUALIFIED_MANIFEST_SHA256"`, `-n "$QUALIFIED_MANIFEST_SHA256"`, false},
+		"prepare publishes":                   {`if [[ "$RELEASE_ACTION" == prepare ]]; then`, `if [[ "$RELEASE_ACTION" == ignored ]]; then`, false},
+		"changed final manifest":              {`"$(sha256sum "$gate_dir/release-manifest.txt" | awk '{print $1}')" == "$QUALIFIED_MANIFEST_SHA256"`, `-n "$QUALIFIED_MANIFEST_SHA256"`, false},
+		"independent publication concurrency": {`release-${{ github.event_name == 'pull_request' && github.ref || 'transaction' }}`, `release-${{ github.ref }}`, false},
+		"dirty client source":                 {`[[ -z "$(git status --porcelain)" ]]`, `true`, false},
+		"different client source":             {`[[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]]`, `true`, false},
+
+		"mutable draft target":        {`--target "$GITHUB_SHA"`, `--target master`, false},
+		"client version from old tag": {`printf 'GORELEASER_CURRENT_TAG=%s\n' "$release_tag" >> "$GITHUB_ENV"`, `echo omitted`, false},
+		"client rebuilt on publication": {`id: client
+        if: steps.transaction.outputs.mode != 'published' && env.RELEASE_ACTION == 'prepare'`, `id: client
+        if: steps.transaction.outputs.mode != 'published'`, false},
+		"prepare producer overwritten": {`if [[ "$release_state" == prepared && "$SOURCE_REF" != "$GITHUB_REF" ]]; then`, `if [[ "$release_state" == fresh && "$SOURCE_REF" != "$GITHUB_REF" ]]; then`, false},
+		"selected chart replaced":      {`cmp "$chart_path" "$download_dir/$(basename "$chart_path")"`, `true`, false},
+
 		"tag trigger":               {`      - "v*"`, `      - main`, false},
 		"tag job guard":             {`startsWith(github.ref, 'refs/tags/v')`, `startsWith(github.ref, 'refs/heads/')`, false},
 		"preflight permission":      {`      actions: read`, `      actions: write`, false},
@@ -530,8 +542,8 @@ func TestVerifyWorkflowRejectsCriticalMutations(t *testing.T) {
 		"checkpoint digest":         {`          subject-digest: ${{ steps.image.outputs.digest }}`, `          subject-digest: sha256:bad`, false},
 		"registry error binding":    {`            -registry-missing-reference "$reference"`, `            -registry-missing-reference ghcr.io/example/other:tag`, false},
 		"Docker material verifier":  {`            -provenance "$image_dir/provenance.json"`, `            -provenance /dev/null`, false},
-		"live tag binding":          {`            -verify-tag-identity`, `            -verify-tag-identity=false`, true},
-		"asset source ref":          {`              --source-ref "$GITHUB_REF"`, `              --source-ref refs/tags/v-any`, true},
+		"live tag binding":          {`            -verify-source-identity`, `            -verify-source-identity=false`, true},
+		"asset source ref":          {`              --source-ref "$SOURCE_REF"`, `              --source-ref refs/tags/v-any`, true},
 		"asset comparison":          {`          cmp dist/release-manifest.txt`, `          test -f dist/release-manifest.txt`, false},
 		"publish gate attestation":  {`gh attestation verify "$gate_dir/$name"`, `test -f "$gate_dir/$name"`, false},
 		"starter cleanup":           {`gh api --method DELETE`, `gh api --method GET`, false},
@@ -539,11 +551,11 @@ func TestVerifyWorkflowRejectsCriticalMutations(t *testing.T) {
 		"retention tag binding":     {`          cmp "$image_dir/index.json" "$image_dir/tag-index.json"`, `          true`, false},
 		"platform contract":         {`              ["linux/amd64", "linux/arm64"] and`, `              ["linux/amd64"] and`, false},
 		"max provenance":            {`            -provenance-revision "$GITHUB_SHA"`, `            -provenance-revision unknown`, false},
-		"final publication":         {`gh release edit "$GITHUB_REF_NAME" --draft=false`, `gh release edit "$GITHUB_REF_NAME" --draft=true`, false},
+		"final publication":         {`gh release edit "$RELEASE_TAG" --draft=false`, `gh release edit "$RELEASE_TAG" --draft=true`, false},
 		"immutable verification":    {`          [[ "$(jq -r '.immutable' <<<"$release_json")" == true ]]`, `          true`, false},
-		"asset replacement":         {`gh release upload "$GITHUB_REF_NAME" "$source"`, `gh release upload "$GITHUB_REF_NAME" "$source" --clobber`, false},
+		"asset replacement":         {`gh release upload "$RELEASE_TAG" "$source"`, `gh release upload "$RELEASE_TAG" "$source" --clobber`, false},
 		"extra privileged step":     {`      - name: Publish completed release transaction`, "      - name: Injected\n        id: injected\n        run: true\n      - name: Publish completed release transaction", false},
-		"dead shell branch":         {`          gh release edit "$GITHUB_REF_NAME" --draft=false --latest=false`, "          if false; then\n            echo bypass\n          fi\n          gh release edit \"$GITHUB_REF_NAME\" --draft=false --latest=false", false},
+		"dead shell branch":         {`          gh release edit "$RELEASE_TAG" --draft=false --latest=false`, "          if false; then\n            echo bypass\n          fi\n          gh release edit \"$RELEASE_TAG\" --draft=false --latest=false", false},
 
 		// The acceptance evidence, from the CI run the preflight verified to
 		// the asset the release publishes.
@@ -563,7 +575,7 @@ func TestVerifyWorkflowRejectsCriticalMutations(t *testing.T) {
 		"evidence attestation":            {"            dist/acceptance-evidence.tar.gz\n            dist/kubectl-ptah-darwin-amd64", "            dist/kubectl-ptah-darwin-amd64", false},
 		"evidence authentication":         {"            dist/SHA256SUMS \\\n            dist/acceptance-evidence.tar.gz\n          do", "            dist/SHA256SUMS\n          do", false},
 		"evidence upload":                 {"            SHA256SUMS \\\n            acceptance-evidence.tar.gz \\\n", "            SHA256SUMS \\\n", false},
-		"evidence publication gate":       {"            -verify-tag-identity\n          expected_names=\"$(printf '%s\\n' \\\n            \"$(basename '${{ steps.chart-package.outputs.path }}')\" \\\n            release-manifest.txt \\\n            SHA256SUMS \\\n            acceptance-evidence.tar.gz \\\n", "            -verify-tag-identity\n          expected_names=\"$(printf '%s\\n' \\\n            \"$(basename '${{ steps.chart-package.outputs.path }}')\" \\\n            release-manifest.txt \\\n            SHA256SUMS \\\n", false},
+		"evidence publication gate":       {"            -verify-source-identity\n          expected_names=\"$(printf '%s\\n' \\\n            \"$(basename '${{ steps.chart-package.outputs.path }}')\" \\\n            release-manifest.txt \\\n            SHA256SUMS \\\n            acceptance-evidence.tar.gz \\\n", "            -verify-source-identity\n          expected_names=\"$(printf '%s\\n' \\\n            \"$(basename '${{ steps.chart-package.outputs.path }}')\" \\\n            release-manifest.txt \\\n            SHA256SUMS \\\n", false},
 
 		// The executor, from the pinned source to the verified signature.
 		"executor repository":           {`  EXECUTOR_IMAGE: ghcr.io/stokaro/ptah-operator-executor`, `  EXECUTOR_IMAGE: ghcr.io/stokaro/ptah`, false},
@@ -756,9 +768,12 @@ func TestVerifyReleaseAssets(t *testing.T) {
 	if err := os.WriteFile(checksumsPath, []byte(checksums), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := verifyReleaseAssets(root, manifestPath, checksumsPath, chartPath, tag, sourceSHA); err != nil {
+	if err := verifyReleaseAssets(root, manifestPath, checksumsPath, chartPath, tag, sourceSHA, ""); err != nil {
 		t.Fatalf("verifyReleaseAssets(valid) error = %v", err)
 	}
+	checkReleaseSourceBindings(t, manifestPath, tag, sourceSHA, func(ref, sha string) error {
+		return verifyReleaseAssets(root, manifestPath, "", "", tag, sha, ref)
+	})
 	for name, mutation := range map[string]string{
 		"zero support run":     strings.Replace(manifest, "support-evidence-run-id=456", "support-evidence-run-id=0", 1),
 		"different window":     strings.Replace(manifest, "kubernetes-support-window="+supportWindow, "kubernetes-support-window=9.98,9.99,9.100", 1),
@@ -772,7 +787,7 @@ func TestVerifyReleaseAssets(t *testing.T) {
 			if err := os.WriteFile(manifestPath, []byte(mutation), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			if err := verifyReleaseAssets(root, manifestPath, checksumsPath, chartPath, tag, sourceSHA); err == nil {
+			if err := verifyReleaseAssets(root, manifestPath, checksumsPath, chartPath, tag, sourceSHA, ""); err == nil {
 				t.Fatal("verifyReleaseAssets() accepted a manifest evidence mutation")
 			}
 		})
@@ -846,7 +861,7 @@ func TestVerifyReleaseAssets(t *testing.T) {
 			if err := os.WriteFile(manifestPath, []byte(row.manifest), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			err := verifyReleaseAssets(root, manifestPath, checksumsPath, chartPath, tag, sourceSHA)
+			err := verifyReleaseAssets(root, manifestPath, checksumsPath, chartPath, tag, sourceSHA, "")
 			if err == nil {
 				t.Fatal("verifyReleaseAssets() accepted the manifest")
 			}
@@ -933,7 +948,7 @@ func TestVerifyReleaseAssets(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			err := verifyReleaseAssets(root, manifestPath, checksumsPath, chartPath, tag, sourceSHA)
+			err := verifyReleaseAssets(root, manifestPath, checksumsPath, chartPath, tag, sourceSHA, "")
 			if err == nil {
 				t.Fatal("verifyReleaseAssets() accepted the release")
 			}
@@ -956,7 +971,7 @@ func TestVerifyReleaseAssets(t *testing.T) {
 	if err := os.WriteFile(chartPath, append(chart, '!'), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := verifyReleaseAssets(root, manifestPath, checksumsPath, chartPath, tag, sourceSHA); err == nil {
+	if err := verifyReleaseAssets(root, manifestPath, checksumsPath, chartPath, tag, sourceSHA, ""); err == nil {
 		t.Fatal("verifyReleaseAssets() accepted a changed chart")
 	}
 }
@@ -982,9 +997,12 @@ func TestVerifyPreparedJournal(t *testing.T) {
 	if err := os.WriteFile(path, []byte(journal), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := verifyPreparedJournal(path, tag, sourceSHA); err != nil {
+	if err := verifyPreparedJournal(path, tag, sourceSHA, ""); err != nil {
 		t.Fatalf("verifyPreparedJournal(valid) error = %v", err)
 	}
+	checkReleaseSourceBindings(t, path, tag, sourceSHA, func(ref, sha string) error {
+		return verifyPreparedJournal(path, tag, sha, ref)
+	})
 	// A resumed transaction reuses or rebuilds the executor at the tag its
 	// journal names, so the journal has to name one, and only this
 	// transaction's.
@@ -1018,7 +1036,7 @@ func TestVerifyPreparedJournal(t *testing.T) {
 			if err := os.WriteFile(rowPath, []byte(row.journal), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			err := verifyPreparedJournal(rowPath, tag, sourceSHA)
+			err := verifyPreparedJournal(rowPath, tag, sourceSHA, "")
 			if err == nil {
 				t.Fatal("verifyPreparedJournal() accepted the journal")
 			}
@@ -1031,7 +1049,7 @@ func TestVerifyPreparedJournal(t *testing.T) {
 	if err := os.WriteFile(path, []byte(mutated), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := verifyPreparedJournal(path, tag, sourceSHA); err == nil {
+	if err := verifyPreparedJournal(path, tag, sourceSHA, ""); err == nil {
 		t.Fatal("verifyPreparedJournal() accepted an unstable run-attempt transaction")
 	}
 	withEvidence := strings.Replace(journal,
@@ -1042,7 +1060,7 @@ func TestVerifyPreparedJournal(t *testing.T) {
 	if err := os.WriteFile(path, []byte(withEvidence), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := verifyPreparedJournal(path, tag, sourceSHA); err == nil {
+	if err := verifyPreparedJournal(path, tag, sourceSHA, ""); err == nil {
 		t.Fatal("verifyPreparedJournal() accepted final evidence in the intent-only journal")
 	}
 }

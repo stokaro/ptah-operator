@@ -117,6 +117,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:ce799cc270f33f2db4ad28da35fcf088edc6d7347268e28f7f1756144cc8328e",
       "reason": "Reuse an immutable intent already read and verified within the same result publication or load instead of reading it twice. The persisted UID, owner, binding, manifest, digest, size, and chunk-completion checks remain required; a CREATE response does not replace durable readback. This changes the result store in the runner's transitive dependency closure. Wire payloads, receipt formats, live authorization, SQL execution, and retry limits are unchanged. Protocol version 1 remains compatible."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:91cef3c54b2de594260c869f7608fe9aa031f11a1eeb15249961d1a3bbb98471",
+      "reason": "Update golang.org/x/net to v0.60.0 for the October 8 HTTP/2 security fixes. This changes a dependency in the runner source closure. Runner commands, payloads, result validation, delivery identity, SQL authority, and retry limits are unchanged. The security fixes reject malformed HTTP/2 traffic without changing the protocol-1 application contract."
     }
   ]
 }

@@ -1752,10 +1752,10 @@ func verifyReleaseWorkflow(path string) error {
 		return err
 	}
 	cancelInProgress := workflow.Concurrency.CancelInProgress
-	if workflow.Concurrency.Group != "release-${{ github.ref }}" ||
+	if workflow.Concurrency.Group != "release-${{ github.event_name == 'pull_request' && github.ref || 'transaction' }}" ||
 		cancelInProgress.Kind != yaml.ScalarNode || cancelInProgress.Tag != "!!str" ||
 		cancelInProgress.Value != "${{ github.event_name == 'pull_request' }}" {
-		return fmt.Errorf("%s: release concurrency must cancel only superseded pull request validation and serialize each tag", path)
+		return fmt.Errorf("%s: release concurrency must cancel only superseded pull request validation and serialize preparation and publication", path)
 	}
 	if _, ok := workflow.On["workflow_dispatch"]; !ok {
 		return fmt.Errorf("%s: release smoke must support manual dispatch", path)
@@ -1771,14 +1771,14 @@ func verifyReleaseWorkflow(path string) error {
 	}
 
 	smoke := workflow.Jobs["smoke"]
-	if smoke.If != "github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.action == 'smoke' || !startsWith(github.ref, 'refs/tags/v')))" {
+	if smoke.If != "github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.action == 'smoke' || (!startsWith(github.ref, 'refs/tags/v') && !(github.ref == 'refs/heads/master' && inputs.action == 'prepare'))))" {
 		return fmt.Errorf("%s: release smoke must run for pull requests, manual smoke, and invalid branch publication requests", path)
 	}
 
 	preflight := workflow.Jobs["support-preflight"]
-	releaseTagCondition := "startsWith(github.ref, 'refs/tags/v') && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.action == 'prepare' || inputs.action == 'publish')))"
+	releaseTagCondition := "(startsWith(github.ref, 'refs/tags/v') && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.action == 'prepare' || inputs.action == 'publish'))) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' && inputs.action == 'prepare'))"
 	if preflight.If != releaseTagCondition {
-		return fmt.Errorf("%s: support preflight must run only for release tags", path)
+		return fmt.Errorf("%s: support preflight must gate master/tag preparation and tag publication", path)
 	}
 	if !equalStringMap(preflight.Permissions, map[string]string{"actions": "read", "contents": "read"}) {
 		return fmt.Errorf("%s: support preflight permissions must be actions: read and contents: read", path)
@@ -1890,6 +1890,7 @@ func verifyReleaseWorkflow(path string) error {
 	if artifacts.If != "" || artifacts.Uses != "" || artifacts.Shell != "bash" ||
 		artifacts.WorkingDirectory != "" || len(artifacts.With) != 0 ||
 		!equalStringMap(artifacts.Env, map[string]string{
+			"GH_TOKEN":                         "${{ secrets.GITHUB_TOKEN }}",
 			"TESTED_KUBERNETES_SUPPORT_WINDOW": "${{ needs.support-preflight.outputs.kubernetes-support-window }}",
 			"TESTED_SUPPORT_EVIDENCE_RUN_ID":   "${{ needs.support-preflight.outputs.support-evidence-run-id }}",
 		}) {
