@@ -27,6 +27,7 @@ kubeconfigs and keys stay in the lab directory, which is private.
 """
 
 import argparse
+import base64
 import copy
 import datetime
 import hashlib
@@ -58,6 +59,19 @@ FREEZE = 'support/qualification/0.2.0-freeze.json'
 
 def sha(raw):
     return hashlib.sha256(raw).hexdigest()
+
+
+def registry_secrets(namespace, host, credentials):
+    """The registry Secrets the capacity driver copies, in the shape the demonstration lab writes them."""
+    username, password = credentials['username'], credentials['password']
+    auth = base64.b64encode(f'{username}:{password}'.encode()).decode()
+    config = {'auths': {host: {'username': username, 'password': password, 'auth': auth}}}
+    return [
+        {'apiVersion': 'v1', 'kind': 'Secret', 'metadata': {'name': 'demo-registry', 'namespace': namespace}, 'type': 'Opaque',
+         'stringData': {'username': username, 'password': password, 'registry': host, 'allowPlainHTTP': 'true'}},
+        {'apiVersion': 'v1', 'kind': 'Secret', 'metadata': {'name': 'demo-registry-pull', 'namespace': namespace},
+         'type': 'kubernetes.io/dockerconfigjson', 'stringData': {'.dockerconfigjson': json.dumps(config)}},
+    ]
 
 
 def profile_freeze(raw, read):
@@ -410,11 +424,6 @@ class Lab:
         env = self.env
         binary = self.dir / 'ptah-e2e.test'
         self.run('e2e-test-build', ['go', 'test', '-tags', 'e2e', '-c', '-o', str(binary), './test/e2e'], timeout=900)
-        # The demonstration namespace first: the data-plane preparation adds a
-        # LimitRange whose 64Mi default would admit the demo's MySQL server
-        # with a limit it cannot start under.
-        self.run('lab-prepare', [str(ROOT / 'demo/bin/lab'), 'prepare'],
-                 env=self.child_env({'LAB_ENVIRONMENT': str(self.dir / 'profile.environment')}), timeout=600)
         work = Path(env['E2E_WORK_DIR'])
         driver = (ROOT / 'hack/e2e-kind.sh').read_text()
         postgres = re.search(r'E2E_POSTGRES_SOURCE_IMAGE=\$\{E2E_POSTGRES_SOURCE_IMAGE:-(.*?)\}', driver)[1]
@@ -425,6 +434,14 @@ class Lab:
                      E2E_DATAPLANE_MODE='prepare', E2E_TIMING_LEDGER=str(self.dir / 'fixture-timings.jsonl'))
         self.run('fixture-prepare', [str(binary), '-test.v', '-e2e.phase=dataplane', '-e2e.completed=' + str(self.dir / 'fixture-prepared')],
                  cwd=ROOT / 'test/e2e', env=self.child_env(extra), timeout=1200)
+        # The capacity driver copies these two Secrets from the test namespace.
+        # The demonstration lab's own preparation would also start four demo
+        # database Pods, which a measurement would carry as load, and under the
+        # data plane's 64Mi LimitRange its MySQL server cannot start at all.
+        credentials = json.loads(Path(env['E2E_REGISTRY_CREDENTIALS_FILE']).read_text())
+        for secret in registry_secrets(env['E2E_TEST_NAMESPACE'], env['E2E_REGISTRY_HOST'], credentials):
+            self.run('create-' + secret['metadata']['name'], self.kubectl() + ['create', '-f', '-', '-o', 'name'],
+                     json.dumps(secret).encode())
         self.finish('fixtures')
 
     # prepare --------------------------------------------------------------
