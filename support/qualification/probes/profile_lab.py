@@ -265,23 +265,28 @@ class Lab:
 
     # bootstrap ------------------------------------------------------------
 
-    def bootstrap(self, context, kubernetes, release_manifest):
+    def bootstrap(self, context, kubernetes, release_manifest, development=False):
+        """Bring the lab up on the release's digests, or on this checkout's own build for a
+        development lab. A development lab is recorded as one and qualifies nothing."""
         self.begin('bootstrap')
         if subprocess.run(['git', 'status', '--porcelain'], cwd=ROOT, capture_output=True, text=True).stdout.strip():
             raise RuntimeError('a qualification lab is built from a clean, committed checkout')
         harness = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
-        manifest = Path(release_manifest).resolve()
+        manifest = Path(release_manifest).resolve() if release_manifest else None
+        if (manifest is None) != development:
+            raise RuntimeError('a qualification lab names a release manifest; only a development lab omits it')
         env = dict(os.environ, DOCKER_CONTEXT=context, K8S_VERSION=kubernetes,
                    E2E_RUN_ID='lab-' + secrets.token_hex(4), E2E_STOP_AFTER='bootstrap',
-                   E2E_ENVIRONMENT_FILE=str(self.dir / 'environment'), E2E_RELEASE_MANIFEST=str(manifest),
+                   E2E_ENVIRONMENT_FILE=str(self.dir / 'environment'), E2E_RELEASE_MANIFEST=str(manifest or ''),
                    E2E_TIMING_LEDGER=str(self.dir / 'bootstrap-timings.jsonl'),
                    E2E_TIMING_CONTEXT=str(self.dir / 'bootstrap-context.json'))
         with (self.dir / 'bootstrap.log').open('wb') as log:
             result = subprocess.run(['make', 'e2e'], cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT)
         if result.returncode or not (self.dir / 'environment').is_file():
             raise RuntimeError(f'bootstrap failed; see {self.dir / "bootstrap.log"}')
-        self.finish('bootstrap', harnessCommit=harness, context=context, kubernetes=kubernetes,
-                    releaseManifest=str(manifest), releaseManifestSHA256=sha(manifest.read_bytes()))
+        self.finish('bootstrap', harnessCommit=harness, context=context, kubernetes=kubernetes, development=development,
+                    releaseManifest=str(manifest) if manifest else None,
+                    releaseManifestSHA256=sha(manifest.read_bytes()) if manifest else None)
 
     # install --------------------------------------------------------------
 
@@ -639,13 +644,16 @@ def main():
     parser.add_argument('--kubernetes', help='bootstrap: Kubernetes version, such as 1.37.0')
     parser.add_argument('--release-manifest', help='bootstrap: release-manifest.txt of the prepared release')
     parser.add_argument('--workload', help='prepare: capacity workload file')
+    parser.add_argument('--development', action='store_true', help='bootstrap: this checkout\'s own build; qualifies nothing')
     args = parser.parse_args()
     os.umask(0o077)
     lab = Lab(args.lab)
     if args.step == 'bootstrap':
-        if not (args.context and args.kubernetes and args.release_manifest) or args.context in ('default', 'orbstack'):
-            parser.error('bootstrap needs --context, --kubernetes and --release-manifest on a remote context')
-        lab.bootstrap(args.context, args.kubernetes, args.release_manifest)
+        if not (args.context and args.kubernetes) or args.context in ('default', 'orbstack'):
+            parser.error('bootstrap needs --context and --kubernetes on a remote context')
+        if bool(args.release_manifest) == args.development:
+            parser.error('bootstrap needs --release-manifest, or --development for a lab that qualifies nothing')
+        lab.bootstrap(args.context, args.kubernetes, args.release_manifest, args.development)
     elif args.step == 'prepare':
         if not args.workload:
             parser.error('prepare needs --workload')
