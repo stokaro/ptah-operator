@@ -167,11 +167,12 @@ func (s *scenarios) unresolvedResources(ctx context.Context) ([]string, error) {
 
 // applyJobsPerResource counts the Apply Jobs each resource was given over the
 // whole run. Neither family changes its input during the overload, so a second
-// Apply for one resource is a replay.
+// Apply for one resource is a replay. The Job's operation label is the claim's
+// type, which is "apply" for both families.
 func applyJobsPerResource(jobs []jobRecord) map[string]int {
 	counts := map[string]int{}
 	for _, job := range jobs {
-		if job.Operation == "apply" || job.Operation == "migration-apply" {
+		if job.Operation == "apply" {
 			counts[job.Family+"/"+job.Namespace+"/"+job.Resource]++
 		}
 	}

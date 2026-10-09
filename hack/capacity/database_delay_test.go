@@ -32,12 +32,17 @@ func databasePod(t *testing.T, operation runner.Operation, family string, create
 		t.Fatalf("encode the result: %v / %v", err, encoded.SummaryErr)
 	}
 	started := created.Add(time.Second)
+	// The label is the claim's type, as the operator writes it: a migration's
+	// History and Apply claims run migration-history and migration-apply.
+	label := strings.TrimPrefix(string(operation), "migration-")
 	return corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: string(operation), Namespace: "work", UID: "pod-uid",
 			CreationTimestamp: metav1.NewTime(created),
-			Labels: map[string]string{operationworkload.LabelOperation: string(operation),
+			Labels: map[string]string{operationworkload.LabelOperation: label,
 				"operator.ptah.run/" + family: "capacity-" + family + "-000"},
 			Annotations: map[string]string{operationworkload.AnnotationOperationID: "operation-id"}},
+		Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "ptah",
+			Args: []string{"--ptah-binary", "/ptah", "--operation", string(operation)}}}},
 		Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{Name: "ptah",
 			State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{
 				StartedAt: metav1.NewTime(started), FinishedAt: metav1.NewTime(started.Add(run)),
@@ -86,6 +91,14 @@ func TestADelayedDatabaseOperationIsOneTheFaultReached(t *testing.T) {
 		})
 	}
 
+	relabeled := databasePod(t, runner.OperationResolve, "schema", after, 10*time.Second, nil)
+	relabeled.Labels[operationworkload.LabelOperation] = "observe"
+	if _, _, ok := s.delayedDatabaseOperation(relabeled, injected, delay); ok {
+		t.Fatal("a registry operation labeled as a database one counted as evidence")
+	}
+	if got := databasePod(t, runner.OperationMigrationHistory, "migration", after, 10*time.Second, nil).Labels[operationworkload.LabelOperation]; got != "history" {
+		t.Fatalf("the fixture labels a History claim %q, not as the operator does", got)
+	}
 	foreign := databasePod(t, runner.OperationObserve, "schema", after, 10*time.Second, nil)
 	foreign.Labels["operator.ptah.run/schema"] = "someone-else"
 	if _, _, ok := s.delayedDatabaseOperation(foreign, injected, delay); ok {

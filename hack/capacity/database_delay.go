@@ -136,6 +136,24 @@ var databaseOperations = map[runner.Operation]bool{
 	runner.OperationMigrationHistory: true, runner.OperationMigrationApply: true,
 }
 
+// podRunnerOperation is the operation the Pod's runner was told to run. The
+// operation label is the claim's type, which a migration spells "history" and
+// "apply" while its runner runs migration-history and migration-apply; the
+// runner's own argument is what the result summary is bound to.
+func podRunnerOperation(pod corev1.Pod) runner.Operation {
+	for _, container := range pod.Spec.Containers {
+		if container.Name != "ptah" {
+			continue
+		}
+		for i := 0; i+1 < len(container.Args); i++ {
+			if container.Args[i] == "--operation" {
+				return runner.Operation(container.Args[i+1])
+			}
+		}
+	}
+	return ""
+}
+
 // delayedDatabaseOperation reports whether one operation Pod is evidence the
 // delay reached the operator: a database operation created after the fault
 // whose Ptah container either ran at least the delay or reported a failure
@@ -143,7 +161,7 @@ var databaseOperations = map[runner.Operation]bool{
 // Pod from before the fault, and a failure that may have mutated prove nothing
 // about this fault.
 func (s *scenarios) delayedDatabaseOperation(pod corev1.Pod, after time.Time, delay time.Duration) (string, delayedOperation, bool) {
-	operation := runner.Operation(pod.Labels[operationworkload.LabelOperation])
+	operation := podRunnerOperation(pod)
 	if !databaseOperations[operation] || pod.UID == "" || !pod.CreationTimestamp.After(after) ||
 		pod.Annotations[operationworkload.AnnotationOperationID] == "" {
 		return "", delayedOperation{}, false

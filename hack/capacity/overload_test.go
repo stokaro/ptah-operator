@@ -82,8 +82,8 @@ func TestASecondApplyForOneResourceIsAReplay(t *testing.T) {
 		{Family: "schema", Namespace: "a", Resource: "capacity-schema-000", Operation: "apply"},
 		{Family: "schema", Namespace: "a", Resource: "capacity-schema-000", Operation: "plan"},
 		{Family: "schema", Namespace: "a", Resource: "capacity-schema-000", Operation: "observe"},
-		{Family: "migration", Namespace: "b", Resource: "capacity-migration-001", Operation: "migration-apply"},
-		{Family: "migration", Namespace: "b", Resource: "capacity-migration-001", Operation: "migration-history"},
+		{Family: "migration", Namespace: "b", Resource: "capacity-migration-001", Operation: "apply"},
+		{Family: "migration", Namespace: "b", Resource: "capacity-migration-001", Operation: "history"},
 		{Family: "schema", Namespace: "b", Resource: "capacity-schema-001", Operation: "apply"},
 	}
 	counts := applyJobsPerResource(jobs)
@@ -93,7 +93,7 @@ func TestASecondApplyForOneResourceIsAReplay(t *testing.T) {
 	if replayed := replayedApplies(counts); len(replayed) != 0 {
 		t.Fatalf("one Apply each read as a replay: %v", replayed)
 	}
-	jobs = append(jobs, jobRecord{Family: "migration", Namespace: "b", Resource: "capacity-migration-001", Operation: "migration-apply", Failed: true})
+	jobs = append(jobs, jobRecord{Family: "migration", Namespace: "b", Resource: "capacity-migration-001", Operation: "apply", Failed: true})
 	replayed := replayedApplies(applyJobsPerResource(jobs))
 	if len(replayed) != 1 || !strings.Contains(replayed[0], "capacity-migration-001 (2)") {
 		t.Fatalf("a second Apply, failed or not, was not a replay: %v", replayed)
