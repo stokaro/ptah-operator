@@ -268,20 +268,46 @@ func (a *alertingRun) planStoreLarge() {
 	if baseline.latest > alPlanStoreLimit || !baseline.crossedLower.IsZero() {
 		a.fatalf("no native below-threshold baseline")
 	}
-	// A missing sample inside the crossing window cannot recover later. Check
-	// that window while waiting for plans, at most once per scrape interval.
+	// Observe delivery while publication continues. Its native timestamp ends
+	// the firing proof; finishing another payload or export cannot extend it.
+	// Missing samples inside that fixed window still fail immediately.
 	checkCluster := check
 	nextHistory := time.Now().Add(alScrapeInterval)
+	var firing alDelivery
+	var history alPlanStoreHistory
+	index := -1
+	match := alMatch{status: "firing", alertName: alPlanStoreAlert, labels: map[string]string{"operator_namespace": a.in.OperatorNamespace, "operator_metrics_service": a.metricsService}}
 	check = func() {
 		checkCluster()
-		if !time.Now().Before(nextHistory) {
-			a.planStoreHistory(names, leader, started, "")
-			nextHistory = time.Now().Add(alScrapeInterval)
+		if time.Now().Before(nextHistory) {
+			return
 		}
+		body, err := a.deploymentLog(a.ctx, "alert-sink")
+		a.check(err, "read the plan-store incident history")
+		deliveries, err := alDeliveries(body)
+		a.check(err, "decode the plan-store incident history")
+		if index < 0 {
+			if delivery, position, found := alFirstDelivery(deliveries, from, match); found {
+				firing, index = delivery, position
+				history = a.planStoreFiringHistory(names, leader, started, firing)
+				if !alPlanStoreDelivered(firing, history) {
+					a.fatalf("plan-store notification missed its native crossing bound")
+				}
+			} else {
+				a.planStoreHistory(names, leader, started, "")
+			}
+		}
+		if index >= 0 && !alPlanStoreIncidentHeld(deliveries, index, firing) {
+			a.fatalf("plan-store incident changed or resolved before safe pruning")
+		}
+		nextHistory = time.Now().Add(alScrapeInterval)
 	}
 	allocate(15, alPlanStoreCount)
-	firing, index := a.waitForDeliveryWithCheck(alMatch{status: "firing", alertName: alPlanStoreAlert, labels: map[string]string{"operator_namespace": a.in.OperatorNamespace, "operator_metrics_service": a.metricsService}}, "the retained-plan notification", alDetectionSlack, from, check)
-	history := a.planStoreHistory(names, leader, started, "firing")
+	nextHistory = time.Time{}
+	a.check(harness.Wait(a.ctx, "the retained-plan notification", alDetectionSlack, alDeliveryPoll, func(context.Context) (bool, string, error) {
+		check()
+		return index >= 0, "waiting for the native firing notification", nil
+	}), "observe the plan-store firing")
 	if !alPlanStoreDelivered(firing, history) || firing.Labels["severity"] != "warning" || firing.Annotations["runbook_url"] != a.runbookBase+"#prune-plans" || !alRunbookAnchor(a.operationsPage(), "prune-plans") {
 		a.fatalf("plan-store notification missed its native bound or pruning runbook")
 	}
@@ -297,31 +323,9 @@ func (a *alertingRun) planStoreLarge() {
 	if len(large) != alPlanStoreCount || total <= alPlanStoreLimit {
 		a.fatalf("test-owned native payloads do not exceed the frozen threshold")
 	}
-	// Publishing the last manifest can precede its next scrape. Require the
-	// counter-equivalent byte reading without moving the firing deadline.
-	a.check(harness.Wait(a.ctx, "all owned bytes in a native scrape", 2*alScrapeInterval+alScrapeTimeout, time.Second, func(context.Context) (bool, string, error) {
-		check()
-		h := a.planStoreHistory(names, leader, started, "")
-		return h.latest >= total, "waiting for the final retained manifest scrape", nil
-	}), "measure every owned payload in the native gauge")
-	// The delivery bound is now proven. Replacements and exports do not start
-	// a new timing window, but the receiver must retain the same incident until
-	// pruning. Fail immediately on an early resolution or a changed incident.
-	nextIncident := time.Now()
-	check = func() {
-		checkCluster()
-		if time.Now().Before(nextIncident) {
-			return
-		}
-		body, err := a.deploymentLog(a.ctx, "alert-sink")
-		a.check(err, "retain the plan-store incident history")
-		deliveries, err := alDeliveries(body)
-		a.check(err, "decode the plan-store incident history")
-		if !alPlanStoreIncidentHeld(deliveries, index, firing) {
-			a.fatalf("plan-store incident changed or resolved before safe pruning")
-		}
-		nextIncident = time.Now().Add(alScrapeInterval)
-	}
+	// The pre-pruning baseline below requires the native gauge to include all
+	// these bytes. Until then, retain the original incident through publication,
+	// replacement and export without extending the proven delivery window.
 	// Replace the current plan, then suspend each owner. Its old large plan
 	// stays retained but no longer has an active, pending or approval pin.
 	for start := 0; start < len(large); start += 4 {
@@ -368,7 +372,7 @@ func (a *alertingRun) planStoreLarge() {
 	a.check(harness.Wait(a.ctx, "the native pre-pruning byte baseline", 2*alScrapeInterval+alScrapeTimeout, time.Second, func(context.Context) (bool, string, error) {
 		check()
 		at := time.Now().UTC()
-		h, err := a.readPlanStoreHistory(names, leader, at, "", true)
+		h, err := a.readPlanStoreHistory(names, leader, at, at, "", true)
 		if err != nil {
 			return false, err.Error(), nil
 		}
@@ -378,7 +382,7 @@ func (a *alertingRun) planStoreLarge() {
 		recoveryStarted = at
 		return true, "", nil
 	}), "retain a fresh baseline before safe pruning")
-	nextIncident = time.Time{}
+	nextHistory = time.Time{}
 	check()
 	pruningStarted := time.Now().UTC()
 	nextHistory = time.Now().Add(alScrapeInterval)
@@ -546,21 +550,33 @@ func (a *alertingRun) planStorePinnedBytes(pins alPlanPinSet) map[alPlanKey]stri
 }
 func (a *alertingRun) planStoreHistory(pods []string, leader string, started time.Time, label string) alPlanStoreHistory {
 	a.t.Helper()
-	history, err := a.readPlanStoreHistory(pods, leader, started, label, false)
+	history, err := a.readPlanStoreHistory(pods, leader, started, time.Now().UTC(), label, false)
 	a.check(err, "validate complete plan-store crossing histories")
+	return history
+}
+
+func (a *alertingRun) planStoreFiringHistory(pods []string, leader string, started time.Time, firing alDelivery) alPlanStoreHistory {
+	a.t.Helper()
+	// Include a complete scrape from each manager after the receiver timestamp,
+	// even if the test notices that notification much later during publication.
+	at := firing.ReceivedAt.Add(alAdmissionSampleGap)
+	if delay := time.Until(at); delay > 0 {
+		a.sleep(delay)
+	}
+	history, err := a.readPlanStoreHistory(pods, leader, started, at, "firing", false)
+	a.check(err, "validate complete plan-store histories through firing delivery")
 	return history
 }
 
 func (a *alertingRun) planStoreRecoveryHistory(pods []string, leader string, started time.Time, label string) alPlanStoreHistory {
 	a.t.Helper()
-	history, err := a.readPlanStoreHistory(pods, leader, started, label, true)
+	history, err := a.readPlanStoreHistory(pods, leader, started, time.Now().UTC(), label, true)
 	a.check(err, "validate complete plan-store recovery histories")
 	return history
 }
 
-func (a *alertingRun) readPlanStoreHistory(pods []string, leader string, started time.Time, label string, recovery bool) (alPlanStoreHistory, error) {
+func (a *alertingRun) readPlanStoreHistory(pods []string, leader string, started, at time.Time, label string, recovery bool) (alPlanStoreHistory, error) {
 	a.t.Helper()
-	at := time.Now().UTC()
 	history, body, err := alQueryPlanStoreHistory(a.ctx, func(ctx context.Context, queriedAt time.Time) ([]byte, error) {
 		return a.prometheus(ctx, "/api/v1/query", map[string]string{
 			"query": alHistorySnapshotQuery(alScrapeJob, "", []string{alPlanStoreMetric, "up", "scrape_duration_seconds"}),

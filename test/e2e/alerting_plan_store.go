@@ -367,7 +367,7 @@ func alPlanStoreIncidentHeld(deliveries []alDelivery, index int, firing alDelive
 }
 
 func alPlanStoreDelivered(d alDelivery, h alPlanStoreHistory) bool {
-	return !h.crossedLower.IsZero() && !d.StartsAt.Before(h.crossedLower) && !d.ReceivedAt.Before(d.StartsAt) && !d.ReceivedAt.After(h.crossedLower.Add(alDetectionSlack))
+	return !h.crossedLower.IsZero() && !d.StartsAt.Before(h.crossedLower) && !d.ReceivedAt.Before(d.StartsAt) && !d.ReceivedAt.After(h.crossedLower.Add(alDetectionSlack)) && !h.through.Before(d.ReceivedAt)
 }
 func alPlanStoreResolved(firing, resolved alDelivery, h alPlanStoreHistory, pruningStarted time.Time) bool {
 	return !h.clearedLower.IsZero() && !pruningStarted.IsZero() && !h.clearedUpper.Before(pruningStarted) && resolved.StartsAt.Equal(firing.StartsAt) &&
