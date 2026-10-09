@@ -34,7 +34,9 @@ trap 'rm -rf -- "$WORK_DIR"' EXIT
 
 FUNCTIONS_FILE=$WORK_DIR/functions.sh
 for function_name in sha256 is_pinned_image release_manifest_field read_release_manifest \
-	verify_release_chart copy_release_image; do
+	verify_release_chart copy_release_image add_created_image ensure_source_image \
+	image_audit_container_matches_task create_image_audit_container remove_image_audit_container \
+	audit_controller_image audit_candidate_images; do
 	awk -v name="$function_name" '
 		$0 == name "() {" { capture = 1 }
 		capture { print }
@@ -43,6 +45,15 @@ for function_name in sha256 is_pinned_image release_manifest_field read_release_
 	grep -Eq "^$function_name\\(\\) \\{$" "$FUNCTIONS_FILE" ||
 		selftest_fail "the extraction from hack/e2e-kind.sh does not carry $function_name"
 done
+# The candidate revision defaults to the harness commit at the top level, and
+# every place the installed manager's revision leaves the driver reads it.
+[ "$(grep -c '^CANDIDATE_REVISION=$CONTROLLER_REVISION$' "$ROOT_DIR/hack/e2e-kind.sh")" = 1 ] ||
+	selftest_fail "the driver does not default the candidate revision to the harness commit"
+grep -qF "printf 'E2E_CONTROLLER_REVISION=%s\\n' \"\$CANDIDATE_REVISION\"" "$ROOT_DIR/hack/e2e-kind.sh" ||
+	selftest_fail "the lab environment does not hand on the candidate revision"
+if grep -q 'E2E_CONTROLLER_REVISION=\$CONTROLLER_REVISION' "$ROOT_DIR/hack/e2e-kind.sh"; then
+	selftest_fail "a phase still receives the harness revision as the candidate's"
+fi
 RUNTIME_PATHS_LINE=$(grep -E '^RELEASE_RUNTIME_PATHS=' "$ROOT_DIR/hack/e2e-kind.sh")
 [ -n "$RUNTIME_PATHS_LINE" ] || selftest_fail "the driver declares no release runtime paths"
 printf '%s\n' "$RUNTIME_PATHS_LINE" >>"$FUNCTIONS_FILE"
@@ -104,6 +115,7 @@ run_case() {
 		E2E_RUNNER_IMAGE=
 		E2E_STOP_AFTER=
 		RELEASE_CHART_SHA256=
+		CANDIDATE_REVISION=$CONTROLLER_REVISION
 		eval "$1"
 	) 2>&1
 }
@@ -132,9 +144,12 @@ manifest_variant() {
 # The control: a harness commit that changed only hack/ installs the release,
 # and the run takes the executor's Ptah version from the manifest.
 admitted=$(expect_admitted 'a harness-only change' \
-	'read_release_manifest; printf "version=%s source=%s chart=%s\n" "$E2E_PTAH_VERSION" "$RELEASE_SOURCE_SHA" "$RELEASE_CHART_SHA256"')
-printf '%s\n' "$admitted" | grep -qF "version=v0.9.0 source=$RELEASE_COMMIT chart=$CHART_DIGEST" ||
-	selftest_fail "the admitted manifest was read as: $admitted"
+	'read_release_manifest; printf "version=%s source=%s chart=%s candidate=%s harness=%s\n" "$E2E_PTAH_VERSION" "$RELEASE_SOURCE_SHA" "$RELEASE_CHART_SHA256" "$CANDIDATE_REVISION" "$CONTROLLER_REVISION"')
+printf '%s\n' "$admitted" | grep -qF "version=v0.9.0 source=$RELEASE_COMMIT chart=$CHART_DIGEST candidate=$RELEASE_COMMIT harness=$HARNESS_COMMIT" ||
+	selftest_fail "the release source R and the harness commit H were not kept apart: $admitted"
+own=$(expect_admitted 'a run of its own build' 'printf "candidate=%s\n" "$CANDIDATE_REVISION"')
+printf '%s\n' "$own" | grep -qF "candidate=$HARNESS_COMMIT" ||
+	selftest_fail "a run of its own build does not install the harness revision: $own"
 # The release source itself is admitted too: no change is no change.
 expect_admitted 'the release source as harness' \
 	'CONTROLLER_REVISION=$RELEASE_COMMIT; read_release_manifest' >/dev/null
@@ -228,4 +243,116 @@ FAKE_COPY_DIGEST=$OPERATOR_DIGEST
 FAKE_COPY_FAILS=1
 expect_refused 'a failed copy' 'could not copy release image' "$COPY_SCRIPT"
 
-printf '%s\n' 'e2e release images self-test: PASS a release is installed only by its own digests, chart and runtime source'
+# A Docker that answers the audit from files: each image's file list is a
+# directory, export packs it, and a container records the image it was made
+# from. Pull marks an image present; nothing reaches a daemon.
+cat >"$FAKE_BIN/docker" <<'FAKE'
+#!/bin/sh
+set -eu
+state=$FAKE_DOCKER_STATE
+key() { printf '%s' "$1" | tr -c 'A-Za-z0-9' '_'; }
+[ "${1:-}" = --context ] && shift 2
+printf '%s\n' "$*" >>"$state/calls"
+case "$1 ${2:-}" in
+	"container inspect")
+		id=$3
+		[ -f "$state/containers/$id" ] || exit 1
+		. "$state/containers/$id"
+		jq -n --arg id "$id" --arg name "/$name" --arg owner "$owner" --arg token "$token" \
+			'[{Id: $id, Name: $name, Config: {Labels: {"operator.ptah.run/e2e-owner": $owner,
+			  "operator.ptah.run/e2e-component": "image-audit", "operator.ptah.run/e2e-claim-token": $token}}}]'
+		;;
+	"container rm") rm -f "$state/containers/$3" ;;
+	"image inspect") [ -f "$state/present/$(key "$3")" ] ;;
+	pull*) [ -d "$state/images/$(key "$2")" ] && : >"$state/present/$(key "$2")" ;;
+	create*)
+		shift
+		name= owner= token=
+		while [ "$#" -gt 1 ]; do
+			case "$1" in
+				--name) name=$2; shift 2 ;;
+				--label)
+					case "$2" in
+						operator.ptah.run/e2e-owner=*) owner=${2#*=} ;;
+						operator.ptah.run/e2e-claim-token=*) token=${2#*=} ;;
+					esac
+					shift 2 ;;
+				*) shift ;;
+			esac
+		done
+		image=$1
+		[ -f "$state/present/$(key "$image")" ] || exit 1
+		id=$(printf '%s' "$image" | sha256sum 2>/dev/null | cut -c1-64 || printf '%s' "$image" | shasum -a 256 | cut -c1-64)
+		printf 'name=%s\nowner=%s\ntoken=%s\nimage=%s\n' "$name" "$owner" "$token" "$(key "$image")" >"$state/containers/$id"
+		printf '%s\n' "$id"
+		;;
+	export*)
+		. "$state/containers/$2"
+		tar -cf - -C "$state/images/$image" .
+		;;
+	*) exit 2 ;;
+esac
+FAKE
+chmod +x "$FAKE_BIN/docker"
+
+FAKE_DOCKER_STATE=$WORK_DIR/docker
+export FAKE_DOCKER_STATE
+docker_image() {
+	directory=$FAKE_DOCKER_STATE/images/$(printf '%s' "$1" | tr -c 'A-Za-z0-9' '_')
+	rm -rf "$directory"
+	mkdir -p "$directory"
+	shift
+	for file in "$@"; do
+		: >"$directory/$file"
+	done
+}
+reset_docker() {
+	rm -rf "$FAKE_DOCKER_STATE"
+	mkdir -p "$FAKE_DOCKER_STATE/images" "$FAKE_DOCKER_STATE/present" "$FAKE_DOCKER_STATE/containers"
+	: >"$FAKE_DOCKER_STATE/calls"
+	CI_IMAGE=ptah-e2e-operator:selftest
+	RELEASE_IMAGE=ghcr.io/stokaro/ptah-operator@$OPERATOR_DIGEST
+	docker_image "$CI_IMAGE" manager ptah-runner ptah-cert-rotator ptah-crd-manager
+	: >"$FAKE_DOCKER_STATE/present/$(printf '%s' "$CI_IMAGE" | tr -c 'A-Za-z0-9' '_')"
+}
+AUDIT_SCRIPT='PATH=$FAKE_BIN:$PATH
+DOCKER_CONTEXT=selftest
+SELECTED_DOCKER_CONTEXT=selftest
+IMAGE_AUDIT_CONTAINER=ptah-image-audit-selftest
+IMAGE_AUDIT_ARCHIVE=$WORK_DIR/audit.tar
+IMAGE_AUDIT_CONTAINER_CREATED=0
+IMAGE_AUDIT_CONTAINER_ID=
+CLUSTER_NAME=selftest-cluster
+TASK_CLAIM_TOKEN=selftest-token
+CREATED_IMAGE_REFS=
+OPERATOR_IMAGE=$CI_IMAGE
+RELEASE_OPERATOR_IMAGE=$RELEASE_IMAGE
+audit_candidate_images
+printf "audited\n"'
+
+reset_docker
+docker_image "$RELEASE_IMAGE" manager ptah-runner ptah-cert-rotator ptah-crd-manager e2e-handcraft-oci
+expect_refused 'a release image carrying a test fixture beside a clean local build' \
+	'the controller image contains the test-only OCI publisher' \
+	"$AUDIT_SCRIPT"
+reset_docker
+docker_image "$RELEASE_IMAGE" manager ptah-runner ptah-cert-rotator ptah-crd-manager e2e-handcraft-oci
+expect_admitted 'the same images in a run of its own build, which installs the clean one' \
+	"E2E_RELEASE_MANIFEST=; $AUDIT_SCRIPT" >/dev/null
+if grep -q "$OPERATOR_DIGEST" "$FAKE_DOCKER_STATE/calls"; then
+	selftest_fail "a run of its own build touched the release image"
+fi
+reset_docker
+docker_image "$RELEASE_IMAGE" ptah-runner ptah-cert-rotator ptah-crd-manager
+expect_refused 'a release image without its manager' 'does not contain /manager' "$AUDIT_SCRIPT"
+reset_docker
+docker_image "$RELEASE_IMAGE" manager ptah-runner ptah-cert-rotator ptah-crd-manager
+expect_admitted 'a clean release image' "$AUDIT_SCRIPT" >/dev/null
+for call in "pull $RELEASE_IMAGE" "create" "export"; do
+	grep -q "^$call" "$FAKE_DOCKER_STATE/calls" ||
+		selftest_fail "the release audit never ran: no $call"
+done
+[ "$(grep -c '^create' "$FAKE_DOCKER_STATE/calls")" = 2 ] ||
+	selftest_fail "a release run did not audit both the local build and the release image"
+
+printf '%s\n' 'e2e release images self-test: PASS a release is installed only by its own digests, chart, runtime source and revision, and its image passes the controller audit'

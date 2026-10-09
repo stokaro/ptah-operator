@@ -2683,12 +2683,12 @@ grep -F '| kubectl --kubeconfig "$KUBECONFIG_FILE" create -f - >/dev/null' \
 # shellcheck disable=SC2016 # Match literal runtime controller identity expressions.
 for controller_identity_assignment in \
 	'E2E_CONTROLLER_IMAGE=$CANDIDATE_OPERATOR_IMAGE 10' \
-	'E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION 8' \
+	'E2E_CONTROLLER_REVISION=$CANDIDATE_REVISION 8' \
 	'E2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION 8'; do
 	controller_identity_expected=${controller_identity_assignment##* }
 	controller_identity_assignment=${controller_identity_assignment% *}
 	controller_identity_count=$(grep -Fc -- "$controller_identity_assignment" \
-		"$ROOT_DIR/hack/e2e-kind.sh")
+		"$ROOT_DIR/hack/e2e-kind.sh" || true)
 	[ "$controller_identity_count" -eq "$controller_identity_expected" ] || {
 		printf 'e2e static: %s is handed to %s phases, and %s read it\n' \
 			"$controller_identity_assignment" "$controller_identity_count" "$controller_identity_expected" >&2

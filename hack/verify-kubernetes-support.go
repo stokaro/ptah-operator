@@ -3372,8 +3372,21 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 		exactSourceLine("API-server feature gate patch implementation", `append_api_server_feature_gate_patch() {`),
 		exactSourceLine("API-server feature gate patch call", `append_api_server_feature_gate_patch "$K8S_MAJOR_MINOR" "$KIND_CONFIG"`),
 		exactSourceLineSequence("operator image audit by captured ID", []string{
-			`create_image_audit_container "$OPERATOR_IMAGE"`,
+			`audit_controller_image() {`,
+			`create_image_audit_container "$1"`,
 			`docker --context "$DOCKER_CONTEXT" export "$IMAGE_AUDIT_CONTAINER_ID" >"$IMAGE_AUDIT_ARCHIVE"`,
+		}),
+		// A release run installs the release's operator image instead of the one
+		// built here, so that image is audited as well as the local build.
+		exactSourceLineSequence("candidate operator images audited, the release image included", []string{
+			`audit_candidate_images() {`,
+			`audit_controller_image "$OPERATOR_IMAGE"`,
+			`if [ -n "$E2E_RELEASE_MANIFEST" ]; then`,
+			`ensure_source_image "$RELEASE_OPERATOR_IMAGE"`,
+			`audit_controller_image "$RELEASE_OPERATOR_IMAGE"`,
+			`fi`,
+			`}`,
+			`audit_candidate_images`,
 		}),
 		exactSourceLineSequence("fixture image audit by captured ID", []string{
 			`create_image_audit_container "$FIXTURE_BUILD_IMAGE"`,
@@ -3643,13 +3656,15 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 		"image_audit_container_matches_task",
 		"create_image_audit_container",
 		"remove_image_audit_container",
+		"audit_controller_image",
+		"audit_candidate_images",
 		"run_go_phase",
 	} {
 		if err := verifySingleShellFunctionDefinition(harness, harnessContents, functionName); err != nil {
 			return err
 		}
 	}
-	if count := bytes.Count(harnessContents, []byte("\nremove_image_audit_container\n")); count != 2 {
+	if count := len(imageAuditRemoval.FindAll(harnessContents, -1)); count != 2 {
 		return fmt.Errorf("%s: expected exactly two task-owned image-audit removals, found %d", harness, count)
 	}
 	if err := verifySingleDirectHelmInstallAttempt(harness, harnessContents); err != nil {
@@ -4634,17 +4649,19 @@ type phaseEnvironmentBinding struct {
 // line per variable rather than one block per phase, because an input means
 // the same thing in every phase that reads it.
 var goPhaseBindings = map[string]string{
-	"E2E_KUBECONFIG":               `$KUBECONFIG_FILE`,
-	"E2E_OPERATOR_NAMESPACE":       `$OPERATOR_NAMESPACE`,
-	"E2E_TEST_NAMESPACE":           `$TEST_NAMESPACE`,
-	"E2E_FOREIGN_NAMESPACE":        `$FOREIGN_NAMESPACE`,
-	"E2E_HELM_RELEASE":             `$HELM_RELEASE`,
-	"E2E_CHART_PACKAGE":            `$CHART_PACKAGE`,
-	"E2E_EXECUTOR_IMAGE":           `$E2E_EXECUTOR_IMAGE`,
-	"E2E_RUNNER_IMAGE":             `$E2E_RUNNER_IMAGE`,
-	"E2E_PTAH_VERSION":             `$E2E_PTAH_VERSION`,
-	"E2E_CONTROLLER_IMAGE":         `$CANDIDATE_OPERATOR_IMAGE`,
-	"E2E_CONTROLLER_REVISION":      `$CONTROLLER_REVISION`,
+	"E2E_KUBECONFIG":         `$KUBECONFIG_FILE`,
+	"E2E_OPERATOR_NAMESPACE": `$OPERATOR_NAMESPACE`,
+	"E2E_TEST_NAMESPACE":     `$TEST_NAMESPACE`,
+	"E2E_FOREIGN_NAMESPACE":  `$FOREIGN_NAMESPACE`,
+	"E2E_HELM_RELEASE":       `$HELM_RELEASE`,
+	"E2E_CHART_PACKAGE":      `$CHART_PACKAGE`,
+	"E2E_EXECUTOR_IMAGE":     `$E2E_EXECUTOR_IMAGE`,
+	"E2E_RUNNER_IMAGE":       `$E2E_RUNNER_IMAGE`,
+	"E2E_PTAH_VERSION":       `$E2E_PTAH_VERSION`,
+	"E2E_CONTROLLER_IMAGE":   `$CANDIDATE_OPERATOR_IMAGE`,
+	// The revision the installed candidate records: the harness commit for a
+	// run of its own build, the release source for a release run.
+	"E2E_CONTROLLER_REVISION":      `$CANDIDATE_REVISION`,
 	"E2E_CONTROLLER_STATE_VERSION": `$CONTROLLER_STATE_VERSION`,
 	"E2E_FIXTURE_IMAGE":            `$E2E_FIXTURE_IMAGE`,
 	// The lifecycle phases: the namespace the upgrade phase keeps its proof
@@ -4848,6 +4865,10 @@ func verifyGoPhaseInvocation(path string, phase phases.Phase, invocation phaseIn
 	}
 	return nil
 }
+
+// imageAuditRemoval is a call that removes the task-owned audit container,
+// at any indentation: the controller audit makes it inside a function.
+var imageAuditRemoval = regexp.MustCompile(`(?m)^[ \t]*remove_image_audit_container[ \t]*$`)
 
 func exactSourceLineSequence(name string, lines []string) sourceContractStep {
 	var pattern strings.Builder

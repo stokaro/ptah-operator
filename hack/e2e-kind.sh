@@ -486,6 +486,11 @@ RELEASE_OPERATOR_IMAGE=
 RELEASE_EXECUTOR_IMAGE=
 RELEASE_CHART_SHA256=
 RELEASE_IMAGES_FILE=
+# CANDIDATE_REVISION is the revision the installed candidate manager records.
+# A run of its own build installs CONTROLLER_REVISION; a release run installs
+# the release's image, which was built from the release source. The snapshot,
+# the builds and the synthetic next release stay at CONTROLLER_REVISION.
+CANDIDATE_REVISION=$CONTROLLER_REVISION
 
 # read_release_manifest reads the release this run installs and refuses a
 # manifest that is incomplete, names an executor the catalog does not pin, or
@@ -524,6 +529,7 @@ read_release_manifest() {
 		fail "E2E_PTAH_VERSION $E2E_PTAH_VERSION differs from the release executor's $release_ptah_version"
 	fi
 	E2E_PTAH_VERSION=$release_ptah_version
+	CANDIDATE_REVISION=$RELEASE_SOURCE_SHA
 	git -C "$SOURCE_REPOSITORY_ROOT" cat-file -e "${RELEASE_SOURCE_SHA}^{commit}" 2>/dev/null ||
 		fail "release source $RELEASE_SOURCE_SHA is not in the operator checkout; fetch it first"
 	# shellcheck disable=SC2086 # the runtime paths are separate pathspecs.
@@ -2516,27 +2522,44 @@ if [ -z "$E2E_PREBUILT_IMAGE_DIR" ]; then
 fi
 
 timing_next bootstrap image-audit
-create_image_audit_container "$OPERATOR_IMAGE"
-docker --context "$DOCKER_CONTEXT" export "$IMAGE_AUDIT_CONTAINER_ID" >"$IMAGE_AUDIT_ARCHIVE"
-if tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)e2e-handcraft-oci$'; then
-	fail "the controller image contains the test-only OCI publisher"
-fi
-if tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)e2e-alert-sink$'; then
-	fail "the controller image contains the test-only alert receiver"
-fi
-if tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)e2e-upgrade-observer$'; then
-	fail "the controller image contains the external upgrade observer fixture"
-fi
-if tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)e2e-protocol-runner(\.json)?$'; then
-	fail "the controller image contains the unsupported-runner fixture"
-fi
-tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)manager$' ||
-	fail "the controller image does not contain /manager"
-tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)ptah-runner$' ||
-	fail "the controller image does not contain /ptah-runner"
-tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)ptah-crd-manager$' ||
-	fail "the controller image does not contain /ptah-crd-manager"
-remove_image_audit_container
+# audit_controller_image holds an operator image to what a controller image may
+# carry: the manager and its runner binaries, and no test-only fixture.
+audit_controller_image() {
+	create_image_audit_container "$1"
+	docker --context "$DOCKER_CONTEXT" export "$IMAGE_AUDIT_CONTAINER_ID" >"$IMAGE_AUDIT_ARCHIVE"
+	if tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)e2e-handcraft-oci$'; then
+		fail "the controller image contains the test-only OCI publisher"
+	fi
+	if tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)e2e-alert-sink$'; then
+		fail "the controller image contains the test-only alert receiver"
+	fi
+	if tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)e2e-upgrade-observer$'; then
+		fail "the controller image contains the external upgrade observer fixture"
+	fi
+	if tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)e2e-protocol-runner(\.json)?$'; then
+		fail "the controller image contains the unsupported-runner fixture"
+	fi
+	tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)manager$' ||
+		fail "the controller image does not contain /manager"
+	tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)ptah-runner$' ||
+		fail "the controller image does not contain /ptah-runner"
+	tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)ptah-crd-manager$' ||
+		fail "the controller image does not contain /ptah-crd-manager"
+	remove_image_audit_container
+}
+
+# audit_candidate_images audits every operator image this run builds or
+# installs as the candidate. A release run installs the release's image rather
+# than the one built here, so that image is pulled for this platform and held
+# to the same rules: a clean local build says nothing about the bytes installed.
+audit_candidate_images() {
+	audit_controller_image "$OPERATOR_IMAGE"
+	if [ -n "$E2E_RELEASE_MANIFEST" ]; then
+		ensure_source_image "$RELEASE_OPERATOR_IMAGE"
+		audit_controller_image "$RELEASE_OPERATOR_IMAGE"
+	fi
+}
+audit_candidate_images
 
 create_image_audit_container "$FIXTURE_BUILD_IMAGE"
 docker --context "$DOCKER_CONTEXT" export "$IMAGE_AUDIT_CONTAINER_ID" >"$IMAGE_AUDIT_ARCHIVE"
@@ -2979,7 +3002,7 @@ if [ "$E2E_STOP_AFTER" = bootstrap ]; then
 		printf 'E2E_HELM_RELEASE=%s\n' "$HELM_RELEASE"
 		printf 'E2E_CONTROLLER_NAME=%s\n' "$RUNTIME_FULLNAME"
 		printf 'E2E_CONTROLLER_IMAGE=%s\n' "$CANDIDATE_OPERATOR_IMAGE"
-		printf 'E2E_CONTROLLER_REVISION=%s\n' "$CONTROLLER_REVISION"
+		printf 'E2E_CONTROLLER_REVISION=%s\n' "$CANDIDATE_REVISION"
 		printf 'E2E_CONTROLLER_STATE_VERSION=%s\n' "$CONTROLLER_STATE_VERSION"
 		printf 'E2E_EXECUTOR_IMAGE=%s\n' "$E2E_EXECUTOR_IMAGE"
 		printf 'E2E_RUNNER_IMAGE=%s\n' "$E2E_RUNNER_IMAGE"
@@ -3077,7 +3100,7 @@ E2E_EXECUTOR_IMAGE=$E2E_EXECUTOR_IMAGE \
 E2E_RUNNER_IMAGE=$E2E_RUNNER_IMAGE \
 E2E_PTAH_VERSION=$E2E_PTAH_VERSION \
 E2E_CONTROLLER_IMAGE=$CANDIDATE_OPERATOR_IMAGE \
-E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION \
+E2E_CONTROLLER_REVISION=$CANDIDATE_REVISION \
 E2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION \
 	run_recorded_phase assert run_go_phase assert
 
@@ -3101,7 +3124,7 @@ E2E_EXECUTOR_IMAGE=$E2E_EXECUTOR_IMAGE \
 E2E_RUNNER_IMAGE=$E2E_RUNNER_IMAGE \
 E2E_FIXTURE_IMAGE=$E2E_FIXTURE_IMAGE \
 E2E_CONTROLLER_IMAGE=$CANDIDATE_OPERATOR_IMAGE \
-E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION \
+E2E_CONTROLLER_REVISION=$CANDIDATE_REVISION \
 E2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION \
 E2E_POSTGRES_IMAGE=$E2E_POSTGRES_IMAGE \
 E2E_MYSQL_IMAGE=$E2E_MYSQL_IMAGE \
@@ -3135,7 +3158,7 @@ E2E_EXECUTOR_IMAGE=$E2E_EXECUTOR_IMAGE \
 E2E_RUNNER_IMAGE=$E2E_RUNNER_IMAGE \
 E2E_FIXTURE_IMAGE=$E2E_FIXTURE_IMAGE \
 E2E_CONTROLLER_IMAGE=$CANDIDATE_OPERATOR_IMAGE \
-E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION \
+E2E_CONTROLLER_REVISION=$CANDIDATE_REVISION \
 E2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION \
 E2E_POSTGRES_IMAGE=$E2E_POSTGRES_IMAGE \
 E2E_MYSQL_IMAGE=$E2E_MYSQL_IMAGE \
@@ -3169,7 +3192,7 @@ E2E_EXECUTOR_IMAGE=$E2E_EXECUTOR_IMAGE \
 E2E_RUNNER_IMAGE=$E2E_RUNNER_IMAGE \
 E2E_FIXTURE_IMAGE=$E2E_FIXTURE_IMAGE \
 E2E_CONTROLLER_IMAGE=$CANDIDATE_OPERATOR_IMAGE \
-E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION \
+E2E_CONTROLLER_REVISION=$CANDIDATE_REVISION \
 E2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION \
 E2E_POSTGRES_IMAGE=$E2E_POSTGRES_IMAGE \
 E2E_MYSQL_IMAGE=$E2E_MYSQL_IMAGE \
@@ -3215,7 +3238,7 @@ E2E_EXECUTOR_IMAGE=$E2E_EXECUTOR_IMAGE \
 E2E_PTAH_VERSION=$E2E_PTAH_VERSION \
 E2E_RUNNER_IMAGE=$E2E_RUNNER_IMAGE \
 E2E_CONTROLLER_IMAGE=$CANDIDATE_OPERATOR_IMAGE \
-E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION \
+E2E_CONTROLLER_REVISION=$CANDIDATE_REVISION \
 E2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION \
 E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \
 E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \
@@ -3232,7 +3255,7 @@ E2E_EXECUTOR_IMAGE=$E2E_EXECUTOR_IMAGE \
 E2E_PTAH_VERSION=$E2E_PTAH_VERSION \
 E2E_RUNNER_IMAGE=$E2E_RUNNER_IMAGE \
 E2E_CONTROLLER_IMAGE=$CANDIDATE_OPERATOR_IMAGE \
-E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION \
+E2E_CONTROLLER_REVISION=$CANDIDATE_REVISION \
 E2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION \
 E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \
 E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \
@@ -3250,7 +3273,7 @@ E2E_EXECUTOR_IMAGE=$E2E_EXECUTOR_IMAGE \
 E2E_PTAH_VERSION=$E2E_PTAH_VERSION \
 E2E_RUNNER_IMAGE=$E2E_RUNNER_IMAGE \
 E2E_CONTROLLER_IMAGE=$CANDIDATE_OPERATOR_IMAGE \
-E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION \
+E2E_CONTROLLER_REVISION=$CANDIDATE_REVISION \
 E2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION \
 E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \
 E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \
@@ -3267,7 +3290,7 @@ E2E_EXECUTOR_IMAGE=$E2E_EXECUTOR_IMAGE \
 E2E_PTAH_VERSION=$E2E_PTAH_VERSION \
 E2E_RUNNER_IMAGE=$E2E_RUNNER_IMAGE \
 E2E_CONTROLLER_IMAGE=$CANDIDATE_OPERATOR_IMAGE \
-E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION \
+E2E_CONTROLLER_REVISION=$CANDIDATE_REVISION \
 E2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION \
 E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \
 E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \
