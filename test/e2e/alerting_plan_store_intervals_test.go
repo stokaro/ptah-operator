@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"encoding/json"
 	"fmt"
 	"maps"
 	"os"
@@ -8,6 +9,94 @@ import (
 	"testing"
 	"time"
 )
+
+func TestAlPlanStoreFiringWindowEndsAtNativeDelivery(t *testing.T) {
+	t.Parallel()
+	// CI 37868912881, job 113624549798 delivered at 02:13:03.979.
+	// The gauge at 02:13:16.056 is missing while the final plan is still
+	// publishing. That later work cannot extend the firing measurement.
+	body, err := os.ReadFile("../../testdata/e2e/readings/prometheus-plan-store-after-delivery-gap.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	instant := func(value string) time.Time {
+		t.Helper()
+		at, err := time.Parse(time.RFC3339Nano, value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return at
+	}
+	leader := "ptah-runtime-generated-name-prefix-boundary-proof-8d3235d5kl6gr"
+	pods := []string{leader, "ptah-runtime-generated-name-prefix-boundary-proof-8d3235d5mgb2r"}
+	started := instant("2026-10-09T02:12:09.3849191Z")
+	firing := alDelivery{StartsAt: instant("2026-10-09T02:12:58.974Z"), ReceivedAt: instant("2026-10-09T02:13:03.979730628Z")}
+	read := func(at time.Time, mutation string) (alPlanStoreHistory, error) {
+		t.Helper()
+		series, err := alAdmissionNativeMatrix(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i := range series {
+			// Model Prometheus's range query at the specified instant. Keep
+			// every native value and omission within that query's interval.
+			var values [][]json.RawMessage
+			for _, sample := range series[i].Values {
+				var timestamp float64
+				if err := json.Unmarshal(sample[0], &timestamp); err != nil {
+					t.Fatal(err)
+				}
+				if timestamp > float64(at.UnixNano())/float64(time.Second) {
+					continue
+				}
+				if series[i].Metric["__name__"] == alPlanStoreMetric &&
+					(mutation == "crossing gap" && int64(timestamp*1000) == instant("2026-10-09T02:12:56.056Z").UnixMilli() ||
+						mutation == "missing gauge through delivery" && int64(timestamp*1000) == instant("2026-10-09T02:13:06.056Z").UnixMilli()) {
+					continue
+				}
+				values = append(values, sample)
+			}
+			series[i].Values = values
+		}
+		groups, err := alSplitHistorySnapshot(alAdmissionHistoryBodyForTest(t, series), alScrapeJob, []string{alPlanStoreMetric, "up", "scrape_duration_seconds"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return alReadPlanStoreHistory(groups[alPlanStoreMetric], groups["up"], groups["scrape_duration_seconds"], pods, leader, started, at)
+	}
+	if _, err := read(instant("2026-10-09T02:13:21.600Z"), ""); err == nil || !strings.Contains(err.Error(), "missing scrapes") {
+		t.Fatalf("extending the original interval no longer reproduces the CI failure: %v", err)
+	}
+	at := firing.ReceivedAt.Add(alAdmissionSampleGap)
+	h, err := read(at, "")
+	if err != nil || h.latest != 134228556 || !alPlanStoreDelivered(firing, h) {
+		t.Fatalf("complete native firing interval = %+v, %v", h, err)
+	}
+	for _, mutation := range []string{"crossing gap", "missing gauge through delivery"} {
+		t.Run(mutation, func(t *testing.T) {
+			if _, err := read(at, mutation); err == nil {
+				t.Fatal("the delivery boundary hid a missing gauge inside the measurement")
+			}
+		})
+	}
+	for _, mutation := range []string{"early firing", "late firing", "history ends before delivery"} {
+		t.Run(mutation, func(t *testing.T) {
+			d, history := firing, h
+			switch mutation {
+			case "early firing":
+				d.StartsAt = h.crossedLower.Add(-time.Nanosecond)
+			case "late firing":
+				d.ReceivedAt = h.crossedLower.Add(alDetectionSlack + time.Nanosecond)
+				history.through = d.ReceivedAt
+			case "history ends before delivery":
+				history.through = firing.ReceivedAt.Add(-time.Nanosecond)
+			}
+			if alPlanStoreDelivered(d, history) {
+				t.Fatal("invalid timing evidence accepted")
+			}
+		})
+	}
+}
 
 func TestAlPlanStoreRecoveryWindowFromNativeScrapes(t *testing.T) {
 	t.Parallel()
