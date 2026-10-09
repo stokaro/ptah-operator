@@ -447,7 +447,12 @@ func (a *alertingRun) standUp(rules string) {
 			args:           []string{"--config.file=/etc/alertmanager/alertmanager.yml", "--storage.path=/data", "--cluster.listen-address="},
 			serviceAccount: "default", configMap: "alertmanager"},
 		{name: "prometheus", image: a.in.PrometheusImage, port: 9090,
-			args:           []string{"--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/data", "--web.enable-lifecycle", "--no-config.auto-reload"},
+			// A scrape-path fault restarts the pool before discovery replaces
+			// the target. Its default five-second throttle can cancel the old
+			// loop's next scrape and add a third interval to the transition.
+			// Apply discovery promptly so the native-history checks still
+			// enforce two scrape intervals and their existing jitter allowance.
+			args:           []string{"--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/data", "--web.enable-lifecycle", "--no-config.auto-reload", "--scrape.discovery-reload-interval=100ms"},
 			serviceAccount: "prometheus", configMap: "prometheus"},
 	} {
 		workload.namespace, workload.pullSecret = a.scope.monitoringNamespace, alPullSecret
