@@ -13,6 +13,12 @@ name: Demonstration
 
 on:
   workflow_dispatch:
+    inputs:
+      release_manifest:
+        description: Base64 of a prepared release-manifest.txt; records against those digests instead of this run's build
+        type: string
+        required: false
+        default: ""
   schedule:
     - cron: '17 4 * * 1'
 
@@ -133,12 +139,41 @@ jobs:
           docker context create "$context_name" --docker host=ssh://ptah-demo-docker
           docker --context "$context_name" info >/dev/null
           printf 'name=%s\n' "$context_name" >> "$GITHUB_OUTPUT"
+      # A run dispatched with a prepared release records against the release's
+      # own digests. The images must carry the release workflow's build
+      # attestation for the source the manifest names; the harness then refuses
+      # a chart or runtime source that differs from that release.
+      - name: Bind the prepared release this run installs
+        id: release-manifest
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.release_manifest != '' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_MANIFEST_BASE64: ${{ inputs.release_manifest }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest="$RUNNER_TEMP/release-manifest.txt"
+          base64 --decode <<<"$RELEASE_MANIFEST_BASE64" > "$manifest"
+          sha256sum "$manifest"
+          source="$(sed -n 's/^source-sha=//p' "$manifest")"
+          [[ "$source" =~ ^[0-9a-f]{40}$ ]]
+          for field in image executor; do
+            reference="$(sed -n "s/^$field=//p" "$manifest")"
+            [[ "$reference" =~ ^ghcr\.io/stokaro/ptah-operator(-executor)?@sha256:[0-9a-f]{64}$ ]]
+            gh attestation verify "oci://$reference" \
+              --bundle-from-oci \
+              --repo "$GITHUB_REPOSITORY" \
+              --source-digest "$source" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml"
+          done
+          printf 'path=%s\n' "$manifest" >> "$GITHUB_OUTPUT"
       - name: Bring the lab up and record every scenario
         env:
           DOCKER_CONTEXT: ${{ steps.docker-context.outputs.name }}
           E2E_DIRECT_HOST_ACCESS: "1"
           E2E_PTAH_REVISION: ${{ steps.support.outputs.ptah_commit }}
           E2E_PTAH_SOURCE_DIR: ${{ runner.temp }}/ptah
+          E2E_RELEASE_MANIFEST: ${{ steps.release-manifest.outputs.path }}
           DEMO_KUBERNETES_VERSION: ${{ steps.target.outputs.kubernetes_version }}
           DEMO_RUN_ID: demo-${{ github.run_id }}-${{ github.run_attempt }}
         shell: bash
