@@ -1,0 +1,143 @@
+name: Fresh installation
+
+# The published installation guide, executed as a reader runs it.
+#
+# A fresh kind cluster, the released assets downloaded and verified with the
+# commands the release guide prints, the chart installed by digest, and the
+# first schema applied, approved and converged on PostgreSQL and on MySQL.
+# support/qualification/probes/fresh_install.py reads those commands out of the
+# documentation at the release commit; what a reader brings -- the databases,
+# a registry and the schema published with the pinned Ptah -- is a fixture kept
+# apart from them, and every substitution is in the transcript it uploads.
+#
+# It runs on request against a published release tag. The release has to be
+# published first: the guide verifies the immutable release, which a draft is
+# not.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published release tag to install, such as v0.2.0
+        type: string
+        required: true
+      architecture:
+        description: Native runner architecture
+        type: choice
+        required: true
+        default: amd64
+        options: [amd64, arm64]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fresh-install-${{ github.ref }}-${{ inputs.architecture }}
+  cancel-in-progress: true
+
+env:
+  GOFLAGS: -mod=readonly
+
+jobs:
+  install:
+    name: Install ${{ inputs.tag }} from the guide on ${{ inputs.architecture }}
+    runs-on: ${{ inputs.architecture == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    timeout-minutes: 90
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Read the newest supported minor and the verified Ptah commit
+        id: support
+        shell: bash
+        run: |
+          set -euo pipefail
+          newest="$(go run ./hack/verify-kubernetes-support.go -output=matrix | jq -c 'last')"
+          for field in kind_version kubernetes_version node_image; do
+            printf '%s=%s\n' "$field" "$(jq -er --arg field "$field" '.[$field]' <<<"$newest")" >> "$GITHUB_OUTPUT"
+          done
+          printf 'ptah_commit=%s\n' "$(go run ./hack/verifyptahsupport -output=commit)" >> "$GITHUB_OUTPUT"
+          # The fixture images are the ones the acceptance suite mirrors, read
+          # from the harness so the two cannot name different builds.
+          for name in POSTGRES MYSQL; do
+            image="$(sed -n "s/^E2E_${name}_SOURCE_IMAGE=\${E2E_${name}_SOURCE_IMAGE:-\(.*\)}$/\1/p" hack/e2e-kind.sh)"
+            [[ "$image" =~ @sha256:[0-9a-f]{64}$ ]]
+            printf '%s_image=%s\n' "${name,,}" "$image" >> "$GITHUB_OUTPUT"
+          done
+          # shellcheck disable=SC2016 # the pattern matches the harness's literal ${...}.
+          image="$(sed -n 's/^E2E_REGISTRY_IMAGE=${E2E_REGISTRY_IMAGE:-\(.*\)}$/\1/p' hack/e2e-kind.sh)"
+          [[ "$image" =~ @sha256:[0-9a-f]{64}$ ]]
+          printf 'registry_image=%s\n' "$image" >> "$GITHUB_OUTPUT"
+      - name: Set up Helm
+        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4
+        with:
+          version: v4.3.0
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+      - name: Install kind and the matching kubectl
+        shell: bash
+        run: |
+          set -euo pipefail
+          go install "sigs.k8s.io/kind@${{ steps.support.outputs.kind_version }}"
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          install_dir="$RUNNER_TEMP/bin"
+          mkdir -p "$install_dir"
+          base_url="https://dl.k8s.io/release/v${{ steps.support.outputs.kubernetes_version }}/bin/linux/$(go env GOHOSTARCH)"
+          curl --fail --location --silent --show-error --output "$install_dir/kubectl" "$base_url/kubectl"
+          curl --fail --location --silent --show-error --output "$RUNNER_TEMP/kubectl.sha256" "$base_url/kubectl.sha256"
+          echo "$(<"$RUNNER_TEMP/kubectl.sha256")  $install_dir/kubectl" | sha256sum --check
+          chmod 0755 "$install_dir/kubectl"
+          echo "$install_dir" >> "$GITHUB_PATH"
+      - name: Check out the verified Ptah
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: stokaro/ptah
+          ref: ${{ steps.support.outputs.ptah_commit }}
+          path: .guide/ptah
+          persist-credentials: false
+      - name: Build the Ptah a reader publishes with
+        shell: bash
+        run: |
+          set -euo pipefail
+          mv "$GITHUB_WORKSPACE/.guide/ptah" "$RUNNER_TEMP/ptah"
+          rmdir "$GITHUB_WORKSPACE/.guide"
+          go -C "$RUNNER_TEMP/ptah" build -o "$RUNNER_TEMP/bin/ptah" ./cmd/ptah
+      - name: Create a fresh cluster
+        shell: bash
+        run: |
+          set -euo pipefail
+          kind create cluster --name ptah-guide --image '${{ steps.support.outputs.node_image }}' --wait 5m
+          kubectl get nodes -o wide
+      - name: Run the installation guide
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GUIDE_TAG: ${{ inputs.tag }}
+          GUIDE_POSTGRES_IMAGE: ${{ steps.support.outputs.postgres_image }}
+          GUIDE_MYSQL_IMAGE: ${{ steps.support.outputs.mysql_image }}
+          GUIDE_REGISTRY_IMAGE: ${{ steps.support.outputs.registry_image }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          export GUIDE_BIN="$RUNNER_TEMP/bin"
+          python3 support/qualification/probes/fresh_install.py \
+            --tag "$GUIDE_TAG" \
+            --work "$RUNNER_TEMP/guide" \
+            --evidence "$RUNNER_TEMP/guide-evidence"
+      - name: Preserve the transcript
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fresh-install-${{ inputs.architecture }}
+          path: ${{ runner.temp }}/guide-evidence
+          if-no-files-found: warn
+          retention-days: 90
+      - name: Remove the cluster
+        if: always()
+        run: kind delete cluster --name ptah-guide
