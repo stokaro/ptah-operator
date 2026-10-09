@@ -53,10 +53,27 @@ QUOTA = {'pods': '24', 'count/jobs.batch': '512', 'configmaps': '512', 'secrets'
          'count/ptahschemaplanchunks.operator.ptah.run': '32768',
          'count/ptahmigrationplans.operator.ptah.run': '2048'}
 COSIGN_MODULE = 'github.com/sigstore/cosign/v3/cmd/cosign@v3.0.6'
+FREEZE = 'support/qualification/0.2.0-freeze.json'
 
 
 def sha(raw):
     return hashlib.sha256(raw).hexdigest()
+
+
+def profile_freeze(raw, read):
+    """The freeze revision a lab measures against, once every input it pins matches.
+
+    read returns a path's bytes at the harness commit, so the check is against
+    what the toolbox is built from rather than this working tree.
+    """
+    freeze = json.loads(raw)
+    entries = freeze['sourceFiles'] + [freeze['functionalMatrix']]
+    if not freeze['sourceFiles']:
+        raise ValueError('the freeze pins no inputs')
+    for entry in entries:
+        if sha(read(entry['path'])) != entry['sha256']:
+            raise ValueError(f"{entry['path']} differs from freeze revision {freeze['revision']}")
+    return {'revision': freeze['revision'], 'sha256': sha(raw), 'inputs': len(entries)}
 
 
 def now():
@@ -272,6 +289,8 @@ class Lab:
         if subprocess.run(['git', 'status', '--porcelain'], cwd=ROOT, capture_output=True, text=True).stdout.strip():
             raise RuntimeError('a qualification lab is built from a clean, committed checkout')
         harness = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
+        show = lambda path: subprocess.run(['git', 'show', f'{harness}:{path}'], cwd=ROOT, capture_output=True, check=True).stdout
+        profile = profile_freeze(show(FREEZE), show)
         manifest = Path(release_manifest).resolve() if release_manifest else None
         if (manifest is None) != development:
             raise RuntimeError('a qualification lab names a release manifest; only a development lab omits it')
@@ -284,7 +303,7 @@ class Lab:
             result = subprocess.run(['make', 'e2e'], cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT)
         if result.returncode or not (self.dir / 'environment').is_file():
             raise RuntimeError(f'bootstrap failed; see {self.dir / "bootstrap.log"}')
-        self.finish('bootstrap', harnessCommit=harness, context=context, kubernetes=kubernetes, development=development,
+        self.finish('bootstrap', harnessCommit=harness, profile=profile, context=context, kubernetes=kubernetes, development=development,
                     releaseManifest=str(manifest) if manifest else None,
                     releaseManifestSHA256=sha(manifest.read_bytes()) if manifest else None)
 
@@ -391,6 +410,11 @@ class Lab:
         env = self.env
         binary = self.dir / 'ptah-e2e.test'
         self.run('e2e-test-build', ['go', 'test', '-tags', 'e2e', '-c', '-o', str(binary), './test/e2e'], timeout=900)
+        # The demonstration namespace first: the data-plane preparation adds a
+        # LimitRange whose 64Mi default would admit the demo's MySQL server
+        # with a limit it cannot start under.
+        self.run('lab-prepare', [str(ROOT / 'demo/bin/lab'), 'prepare'],
+                 env=self.child_env({'LAB_ENVIRONMENT': str(self.dir / 'profile.environment')}), timeout=600)
         work = Path(env['E2E_WORK_DIR'])
         driver = (ROOT / 'hack/e2e-kind.sh').read_text()
         postgres = re.search(r'E2E_POSTGRES_SOURCE_IMAGE=\$\{E2E_POSTGRES_SOURCE_IMAGE:-(.*?)\}', driver)[1]
@@ -401,8 +425,6 @@ class Lab:
                      E2E_DATAPLANE_MODE='prepare', E2E_TIMING_LEDGER=str(self.dir / 'fixture-timings.jsonl'))
         self.run('fixture-prepare', [str(binary), '-test.v', '-e2e.phase=dataplane', '-e2e.completed=' + str(self.dir / 'fixture-prepared')],
                  cwd=ROOT / 'test/e2e', env=self.child_env(extra), timeout=1200)
-        self.run('lab-prepare', [str(ROOT / 'demo/bin/lab'), 'prepare'],
-                 env=self.child_env({'LAB_ENVIRONMENT': str(self.dir / 'profile.environment')}), timeout=600)
         self.finish('fixtures')
 
     # prepare --------------------------------------------------------------
@@ -561,6 +583,10 @@ class Lab:
                  'work/evidence/host.json': json.dumps(host).encode(),
                  'work/evidence/workload.json': Path(prepared['workload']).read_bytes(),
                  'work/native.py': INNER.encode()}
+        bootstrap = self.state['steps']['bootstrap']
+        if bootstrap.get('profile'):
+            files['work/evidence/profile-freeze.json'] = json.dumps(dict(bootstrap['profile'], harnessCommit=bootstrap['harnessCommit'],
+                                                                         development=bootstrap['development'])).encode()
         for role, key in (('installer', 'E2E_KUBECONFIG'), ('author', 'CAPACITY_AUTHOR_KUBECONFIG'), ('approver', 'CAPACITY_APPROVER_KUBECONFIG')):
             config = json.loads(self.run('flatten-' + role, ['kubectl', '--kubeconfig', env[key], 'config', 'view', '--raw', '--flatten', '-o', 'json']))
             config['clusters'][0]['cluster']['server'] = 'https://127.0.0.1:6443'

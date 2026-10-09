@@ -7,8 +7,8 @@ import tarfile
 import tempfile
 import unittest
 
-from profile_lab import (QUOTA, archive, database_service, preflight_failures, profile_values, read_environment,
-                         receive, write_environment)
+from profile_lab import (QUOTA, archive, database_service, preflight_failures, profile_freeze, profile_values,
+                         read_environment, receive, write_environment)
 from profile_network import bind_policy, task_expectations
 
 
@@ -78,6 +78,33 @@ class ProfileTest(unittest.TestCase):
         arguments[6].append({'metadata': {'deletionTimestamp': 'x'}, 'spec': {'containers': [{'image': 'kindnet:original'}]},
                              'status': {'containerStatuses': []}})
         self.assertEqual(preflight_failures(*arguments), [])
+
+
+class FreezeTest(unittest.TestCase):
+    def freeze(self, files):
+        entries = [{'path': p, 'sha256': hashlib.sha256(r).hexdigest()} for p, r in files.items()]
+        return json.dumps({'revision': 41, 'sourceFiles': entries[:-1], 'functionalMatrix': entries[-1]}).encode()
+
+    def test_a_lab_records_the_revision_whose_inputs_match(self):
+        files = {'profile.md': b'targets', 'coverage.md': b'cells', 'matrix.md': b'54'}
+        raw = self.freeze(files)
+        self.assertEqual(profile_freeze(raw, files.__getitem__),
+                         {'revision': 41, 'sha256': hashlib.sha256(raw).hexdigest(), 'inputs': 3})
+
+    def test_a_changed_input_or_an_empty_freeze_is_refused(self):
+        files = {'profile.md': b'targets', 'matrix.md': b'54'}
+        raw = self.freeze(files)
+        for path in files:
+            with self.subTest(path), self.assertRaises(ValueError) as refusal:
+                profile_freeze(raw, lambda p: b'changed' if p == path else files[p])
+            self.assertIn(path, str(refusal.exception))
+        with self.assertRaises(ValueError):
+            profile_freeze(self.freeze({'matrix.md': b'54'}), files.__getitem__)
+
+    def test_the_real_freeze_matches_this_checkout(self):
+        root = Path(__file__).resolve().parents[3]
+        result = profile_freeze((root / 'support/qualification/0.2.0-freeze.json').read_bytes(), lambda p: (root / p).read_bytes())
+        self.assertGreaterEqual(result['revision'], 41)
 
 
 class EvidenceTest(unittest.TestCase):
