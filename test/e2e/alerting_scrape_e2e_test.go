@@ -143,11 +143,10 @@ func (a *alertingRun) managerSnapshot() (*coordinationv1.Lease, []corev1.Pod) {
 	return lease, pods.Items
 }
 
-// Reload until the running configuration contains the changed volume. Each
-// successful reload is read back immediately; an API error fails the row,
-// since retrying it could date the fault later than it actually started.
-// The returned instant precedes the reload that first installed the change,
-// so slow observation cannot make the alert's detection time look shorter.
+// Wait for the ConfigMap volume before reloading once. Repeated reloads of
+// the old file increase discovery's update backoff while the volume propagates.
+// Read the running configuration back immediately; retrying a failed reload
+// could date the fault later than it actually started.
 func (a *alertingRun) loadScrapeConfig(ctx context.Context, config, pod string) (time.Time, error) {
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		cm := &corev1.ConfigMap{}
@@ -160,26 +159,32 @@ func (a *alertingRun) loadScrapeConfig(ctx context.Context, config, pod string) 
 	if err != nil {
 		return time.Time{}, err
 	}
-	var loaded time.Time
-	err = harness.Wait(ctx, "Prometheus to load its updated scrape configuration", alTimeout, alDeliveryPoll,
+	err = harness.Wait(ctx, "Prometheus to mount its updated scrape configuration", alTimeout, alDeliveryPoll,
 		func(ctx context.Context) (bool, string, error) {
-			before := time.Now()
-			_, err := a.cluster.Clientset.CoreV1().RESTClient().Post().Namespace(a.scope.monitoringNamespace).
-				Resource("services").Name("http:prometheus:9090").SubResource("proxy").Suffix("-/reload").DoRaw(ctx)
+			mounted, _, err := a.cluster.Kubectl(ctx, "-n", a.scope.monitoringNamespace,
+				"exec", "deployment/prometheus", "--", "/bin/cat", "/etc/prometheus/prometheus.yml")
 			if err != nil {
-				return false, "", fmt.Errorf("reload Prometheus: %w", err)
+				return false, "", fmt.Errorf("read mounted Prometheus configuration: %w", err)
 			}
-			body, err := a.prometheus(ctx, "/api/v1/status/config", nil)
-			if err != nil {
-				return false, "", fmt.Errorf("read running Prometheus configuration: %w", err)
-			}
-			if !alScrapeFaultLoaded(body, pod) {
-				return false, "the mounted configuration has not changed yet", nil
-			}
-			loaded = before
-			return true, "", nil
+			return string(mounted) == config, "the mounted configuration has not changed yet", nil
 		})
-	return loaded, err
+	if err != nil {
+		return time.Time{}, err
+	}
+	loaded := time.Now().UTC()
+	_, err = a.cluster.Clientset.CoreV1().RESTClient().Post().Namespace(a.scope.monitoringNamespace).
+		Resource("services").Name("http:prometheus:9090").SubResource("proxy").Suffix("-/reload").DoRaw(ctx)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("reload Prometheus: %w", err)
+	}
+	body, err := a.prometheus(ctx, "/api/v1/status/config", nil)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("read running Prometheus configuration: %w", err)
+	}
+	if !alScrapeFaultLoaded(body, pod) {
+		return time.Time{}, fmt.Errorf("Prometheus did not load the mounted scrape configuration")
+	}
+	return loaded, nil
 }
 
 func (a *alertingRun) readScrapeHistory(pods []string, leader string, started, restored time.Time, label string) alScrapeHistory {
