@@ -1,3 +1,4 @@
+import base64
 import copy
 import hashlib
 import io
@@ -8,7 +9,7 @@ import tempfile
 import unittest
 
 from profile_lab import (QUOTA, archive, database_service, preflight_failures, profile_freeze, profile_values,
-                         read_environment, receive, write_environment)
+                         read_environment, receive, registry_secrets, write_environment)
 from profile_network import bind_policy, task_expectations
 
 
@@ -52,6 +53,16 @@ class ProfileTest(unittest.TestCase):
         self.assertEqual(database_service('MySQL'), ('capacity-mysql', 3306))
         with self.assertRaises(ValueError):
             database_service('Oracle')
+
+    def test_the_registry_secrets_match_what_the_demonstration_lab_writes(self):
+        opaque, pull = registry_secrets('ns', 'e2e-registry.ns.svc.cluster.local:5000', {'username': 'u', 'password': 'p:w'})
+        self.assertEqual((opaque['metadata'], opaque['type']), ({'name': 'demo-registry', 'namespace': 'ns'}, 'Opaque'))
+        self.assertEqual(opaque['stringData'], {'username': 'u', 'password': 'p:w', 'registry': 'e2e-registry.ns.svc.cluster.local:5000',
+                                                'allowPlainHTTP': 'true'})
+        self.assertEqual((pull['metadata']['name'], pull['type']), ('demo-registry-pull', 'kubernetes.io/dockerconfigjson'))
+        entry = json.loads(pull['stringData']['.dockerconfigjson'])['auths']['e2e-registry.ns.svc.cluster.local:5000']
+        self.assertEqual(base64.b64decode(entry['auth']), b'u:p:w')
+        self.assertEqual((entry['username'], entry['password']), ('u', 'p:w'))
 
     def test_a_lab_meeting_the_profile_passes_the_preflight(self):
         self.assertEqual(preflight_failures(*healthy()), [])
