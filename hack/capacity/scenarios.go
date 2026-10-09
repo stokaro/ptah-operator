@@ -40,6 +40,10 @@ type inputs struct {
 	migrationRefs          [2]string
 	registryIP             string
 	registryEgressPolicies string
+	// fixtureImage carries the database delay proxy; database is the server
+	// the bootstrap provisioned, read from its state.
+	fixtureImage string
+	database     capacityDatabase
 }
 
 type scenarios struct {
@@ -47,6 +51,10 @@ type scenarios struct {
 	faultBaseline       *retentionInventory
 	faultProbe          func(context.Context, string, int, string) error
 	retentionFaultProof *retentionFaultProof
+	databaseDelayProof  *databaseDelayProof
+	overloadProof       *overloadProof
+	// admittedOnly is set once an overload has returned to the admitted fleet.
+	admittedOnly        bool
 	checkpoint          func(context.Context, int, string) (databaseCheckpoint, error)
 	databaseCheckpoints []databaseCheckpoint
 	churnProofs         []churnProof
@@ -237,8 +245,8 @@ func (s *scenarios) convergenceTargets(ctx context.Context, references map[strin
 			}
 		}
 	}
-	if len(targets) == 0 || len(targets) != s.load.Schemas+s.load.Migrations {
-		return nil, fmt.Errorf("convergence inventory has %d resources, require %d", len(targets), s.load.Schemas+s.load.Migrations)
+	if len(targets) == 0 || len(targets) != s.expectedResources() {
+		return nil, fmt.Errorf("convergence inventory has %d resources, require %d", len(targets), s.expectedResources())
 	}
 	for key := range references {
 		if !seen[key] {

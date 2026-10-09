@@ -1,0 +1,17 @@
+{
+  "name": "capacity-overload",
+  "description": "Forty resources, twice the admitted fleet, held for ten minutes, then returned to twenty. Behavior beyond the admitted profile, not a larger admitted capacity.",
+  "engine": "PostgreSQL",
+  "schemas": 20,
+  "migrations": 20,
+  "interval": "2m",
+  "settle": "20m",
+  "steadyState": "10m",
+  "sampleEvery": "5s",
+  "changeBatch": 0,
+  "outage": "0s",
+  "overload": {
+    "admitted": 10,
+    "recovery": "5m"
+  }
+}

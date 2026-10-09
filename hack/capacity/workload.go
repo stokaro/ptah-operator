@@ -38,6 +38,10 @@ type workload struct {
 	// Outage is how long operation Pods cannot reach the registry.
 	Outage duration      `json:"outage"`
 	Soak   *soakWorkload `json:"soak,omitempty"`
+	// DatabaseDelay holds every new database session for a while, after the
+	// registry outage. Overload is the separate probe beyond the admitted fleet.
+	DatabaseDelay *databaseDelayWorkload `json:"databaseDelay,omitempty"`
+	Overload      *overloadWorkload      `json:"overload,omitempty"`
 }
 
 // duration reads a Go duration string from JSON.
@@ -113,6 +117,12 @@ func (w workload) validate() error {
 	}
 	if w.Soak != nil {
 		problems = append(problems, w.Soak.validate(w))
+	}
+	if w.DatabaseDelay != nil {
+		problems = append(problems, w.DatabaseDelay.validate(w))
+	}
+	if w.Overload != nil {
+		problems = append(problems, w.Overload.validate(w))
 	}
 	return errors.Join(problems...)
 }

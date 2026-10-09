@@ -1,0 +1,15 @@
+{
+  "name": "capacity-backlog-mysql",
+  "description": "Five schemas and five migrations from one populated twenty-resource fleet wait for approval, then apply the first changed artifact batch.",
+  "engine": "MySQL",
+  "schemas": 10,
+  "migrations": 10,
+  "interval": "2m",
+  "settle": "5m",
+  "steadyState": "10m",
+  "sampleEvery": "5s",
+  "changeBatch": 5,
+  "outage": "0s",
+  "approvalBacklog": true,
+  "unrelatedObjects": true
+}

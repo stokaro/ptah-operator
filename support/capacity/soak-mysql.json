@@ -1,7 +1,7 @@
 {
-  "name": "capacity-soak",
+  "name": "capacity-soak-mysql",
   "description": "Ninety-minute populated-input soak with nine update, churn and retention maintenance rounds, followed by the pending-approval and unresolved-Apply retention fault, the registry outage and a thirty-second database delay. Backlog and overload are separate workloads.",
-  "engine": "PostgreSQL",
+  "engine": "MySQL",
   "schemas": 10,
   "migrations": 10,
   "interval": "2m",
