@@ -265,6 +265,26 @@ func (c *coverage) recordMarkdown(root string, declared *profile) string {
 		out.WriteString("\n")
 	}
 
+	if declared != nil && declared.Handoff != nil {
+		h := declared.Handoff
+		out.WriteString("### Owners and deployment handoff\n\n| Field | Value |\n| --- | --- |\n")
+		for _, row := range [][2]string{
+			{"Engineering owner", h.EngineeringOwner}, {"Operations owner", h.OperationsOwner},
+			{"Evidence owner", h.EvidenceOwner}, {"Decision date", h.DecisionDate},
+			{"Accepted scope and limits", h.AcceptedScope}, {"Evidence location", h.EvidenceLocation},
+			{"Incident contact", h.IncidentContact}, {"Backup and recovery access", h.RecoveryAccess},
+			{"Reassessment triggers", h.ReassessmentTriggers}, {"Initial deployment checks", h.DeploymentChecks},
+			{"Enabling automatic operation", h.AutomaticOperationPolicy},
+		} {
+			value := row[1]
+			if strings.TrimSpace(value) == "" {
+				value = "_to be supplied_"
+			}
+			fmt.Fprintf(&out, "| %s | %s |\n", row[0], value)
+		}
+		out.WriteString("\n")
+	}
+
 	out.WriteString(c.markdown())
 	return out.String()
 }

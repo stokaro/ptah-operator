@@ -31,6 +31,55 @@ type profile struct {
 	Requirements        map[string]disposition `json:"requirements"`
 	Exclusions          []exclusion            `json:"exclusions"`
 	Decision            string                 `json:"decision"`
+	Handoff             *handoff               `json:"handoff,omitempty"`
+}
+
+// handoff is what #242 asks the owners to record beside an accepted decision:
+// who is responsible, when they decided, what the acceptance covers, where its
+// evidence is kept, who answers an incident, who can restore, what makes the
+// decision stale, and how the first deployment proves itself before automatic
+// operation is enabled.
+type handoff struct {
+	EngineeringOwner         string `json:"engineeringOwner"`
+	OperationsOwner          string `json:"operationsOwner"`
+	EvidenceOwner            string `json:"evidenceOwner"`
+	DecisionDate             string `json:"decisionDate"`
+	AcceptedScope            string `json:"acceptedScope"`
+	EvidenceLocation         string `json:"evidenceLocation"`
+	IncidentContact          string `json:"incidentContact"`
+	RecoveryAccess           string `json:"recoveryAccess"`
+	ReassessmentTriggers     string `json:"reassessmentTriggers"`
+	DeploymentChecks         string `json:"deploymentChecks"`
+	AutomaticOperationPolicy string `json:"automaticOperationPolicy"`
+}
+
+// missing names the handoff fields left empty.
+func (h *handoff) missing() []string {
+	if h == nil {
+		return []string{"handoff"}
+	}
+	var empty []string
+	for _, field := range []struct {
+		name  string
+		value string
+	}{
+		{"engineeringOwner", h.EngineeringOwner},
+		{"operationsOwner", h.OperationsOwner},
+		{"evidenceOwner", h.EvidenceOwner},
+		{"decisionDate", h.DecisionDate},
+		{"acceptedScope", h.AcceptedScope},
+		{"evidenceLocation", h.EvidenceLocation},
+		{"incidentContact", h.IncidentContact},
+		{"recoveryAccess", h.RecoveryAccess},
+		{"reassessmentTriggers", h.ReassessmentTriggers},
+		{"deploymentChecks", h.DeploymentChecks},
+		{"automaticOperationPolicy", h.AutomaticOperationPolicy},
+	} {
+		if strings.TrimSpace(field.value) == "" {
+			empty = append(empty, "handoff."+field.name)
+		}
+	}
+	return empty
 }
 
 // exclusion is a requirement the profile narrows out of the supported use.
@@ -235,6 +284,15 @@ func (p *profile) validateDecision() error {
 			"acceptance profile: the decision is accepted while %s %s neither accepted nor excluded; "+
 				"every applicable requirement must pass",
 			strings.Join(outstanding, ", "), plural(len(outstanding)))
+	}
+	if missing := p.Handoff.missing(); len(missing) > 0 {
+		return fmt.Errorf(
+			"acceptance profile: the decision is accepted while %s %s empty; the owners record "+
+				"who decided, when, for what scope, and how the first deployment proves itself",
+			strings.Join(missing, ", "), plural(len(missing)))
+	}
+	if _, err := time.Parse("2006-01-02", p.Handoff.DecisionDate); err != nil {
+		return fmt.Errorf("acceptance profile: handoff.decisionDate %q is not a date", p.Handoff.DecisionDate)
 	}
 	return nil
 }

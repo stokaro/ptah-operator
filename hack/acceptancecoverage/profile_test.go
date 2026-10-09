@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -268,4 +269,65 @@ func TestADecisionTheRequirementsDoNotSupportIsRefused(t *testing.T) {
 			t.Fatalf("a rejection was refused: %v", err)
 		}
 	})
+}
+
+// acceptedProfile is completeProfile with every requirement accepted and the
+// decision recorded; handoff is the JSON object the test supplies.
+func acceptedProfile(handoff string) string {
+	var rows []string
+	for _, entry := range requirements {
+		rows = append(rows, fmt.Sprintf(`"%s": {"disposition": "Accepted for the stated profile", "evidence": "evidence bundle row %s"}`, entry.id, entry.id))
+	}
+	body := strings.Replace(completeProfile,
+		`"PA-01": {"disposition": "Accepted for the stated profile", "evidence": "run 36030331644 coverage table"}`,
+		strings.Join(rows, ",\n    "), 1)
+	body = strings.Replace(body, "\n}", `,"decision":"Accepted for the stated profile"`+"\n}", 1)
+	if handoff != "" {
+		body = strings.Replace(body, "\n}", `,"handoff":`+handoff+"\n}", 1)
+	}
+	return body
+}
+
+const completeHandoff = `{"engineeringOwner":"Ptah Engineering","operationsOwner":"Ptah Engineering","evidenceOwner":"Ptah Engineering",
+"decisionDate":"2026-10-12","acceptedScope":"kind on Kubernetes 1.35-1.37, linux/amd64 and arm64, 20 resources",
+"evidenceLocation":"v0.2.0 release asset acceptance-evidence.tar.gz","incidentContact":"Ptah Engineering",
+"recoveryAccess":"restore operators named by Ptah Engineering","reassessmentTriggers":"runtime bytes, API, policy, platform or capacity change",
+"deploymentChecks":"installation, monitoring and one approved change","automaticOperationPolicy":"OnApproval until the deployment checks pass"}`
+
+// The owners record who decided, when, for what and how the first deployment
+// proves itself. An accepted decision without that is a verdict nobody owns.
+func TestAnAcceptedDecisionNeedsItsOwnersAndHandoff(t *testing.T) {
+	t.Parallel()
+
+	declared, err := readProfile(writeProfile(t, acceptedProfile(completeHandoff)))
+	if err != nil {
+		t.Fatalf("a complete accepted profile was refused: %v", err)
+	}
+	built, err := buildCoverage("../..", "edge")
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := built.recordMarkdown("../..", declared)
+	for _, want := range []string{"### Owners and deployment handoff", "| Engineering owner | Ptah Engineering |", "| Decision date | 2026-10-12 |"} {
+		if !strings.Contains(record, want) {
+			t.Fatalf("the record does not carry %q", want)
+		}
+	}
+
+	for _, row := range []struct {
+		name, body, refusal string
+	}{
+		{"no handoff", acceptedProfile(""), "handoff is empty"},
+		{"no operations owner", acceptedProfile(strings.Replace(completeHandoff, `"operationsOwner":"Ptah Engineering"`, `"operationsOwner":""`, 1)), "handoff.operationsOwner"},
+		{"no deployment checks", acceptedProfile(strings.Replace(completeHandoff, `"deploymentChecks":"installation, monitoring and one approved change"`, `"deploymentChecks":" "`, 1)), "handoff.deploymentChecks"},
+		{"a decision date that is not a date", acceptedProfile(strings.Replace(completeHandoff, `"2026-10-12"`, `"next week"`, 1)), "is not a date"},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := readProfile(writeProfile(t, row.body))
+			if err == nil || !strings.Contains(err.Error(), row.refusal) {
+				t.Fatalf("got %v, want a refusal naming %q", err, row.refusal)
+			}
+		})
+	}
 }
