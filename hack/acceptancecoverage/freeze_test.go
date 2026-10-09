@@ -22,6 +22,8 @@ type qualificationFreeze struct {
 	FunctionalMatrix frozenFile   `json:"functionalMatrix"`
 }
 
+// The acceptance record is not an input: qualification fills it, and the
+// targets it restates are frozen here through the profile.
 var frozenInputs = []string{
 	"support/qualification/0.2.0.md",
 	"support/qualification/0.2.0-coverage.md",
@@ -30,7 +32,6 @@ var frozenInputs = []string{
 	"support/qualification/kindnet/pending-pod.patch",
 	"support/qualification/kindnet/pending_pod_test.go.txt",
 	"support/qualification/kindnet/README.md",
-	"support/acceptance/0.2.0.json",
 	"support/kubernetes.json",
 	"support/e2e-suites.json",
 	"support/ptah.json",
