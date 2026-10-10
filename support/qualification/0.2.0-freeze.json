@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-10-10T09:36:38.899317+00:00",
+  "frozenAt": "2026-10-10T23:09:03.111540+00:00",
   "profileSourceCommit": "1259f4d59343fef049307085e3ea77d2971677cb",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
@@ -28,7 +28,7 @@
     },
     {
       "path": "support/ptah.json",
-      "sha256": "4ec281950b5fb02e8ac0e475be1ae0109a08ba6964721eb43e41b7a1510f8181"
+      "sha256": "aac1be11029a87cbc41009d3e1834e650d39306f23d5254b0a0051910c565193"
     },
     {
       "path": "docs/site/src/content/docs/support/databases.md",
@@ -79,10 +79,10 @@
     "disposition": "No published predecessor. Synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 42,
+  "revision": 43,
   "supersedes": {
-    "freezeCommit": "73a718ab330dc4e0bdf4fcb8e0b8c6c053987704",
-    "sha256": "7e144ac7874a86e552b7f04bbada419225b0de68964f1416d4cba3b1ac66b60d"
+    "freezeCommit": "b98f92bed240a4a34cde9c6bf5bc0cdc07da6d96",
+    "sha256": "b29e2927431da6c34e64b2996e002a77933eafc5eedd17474f2d24a4dabf3300"
   },
-  "revisionReason": "Run Ptah's own v0.13.0 release image as the executor, pinned by digest in support/ptah.json, as the release owner decided on October 10, 2026: the operator builds, signs and publishes no executor of its own. support/ptah.json changes to that release and its image; the profile, its targets and every other input are unchanged."
+  "revisionReason": "Declare the published v0.2.0 in support/ptah.json, as the release procedure asks once the tag exists, and drop the limitation that the scope was measured against v0.7.0, which the release's manifest-backed matrix repeated with v0.13.0. The edge pin, the profile, its targets and every other input are unchanged; qualification measured revision 42 at b98f92be."
 }
