@@ -150,15 +150,15 @@ func alNegativeFixture(template client.Object, name, secret string, policy ptahv
 	return nil, errors.New("unsupported negative-control family")
 }
 
-// History initializes the empty default revision table at the pinned Ptah
-// version. That effect is permitted without Apply; revision rows and every
-// application table remain forbidden. Schema controls have no such exception.
+// alNegativeDatabaseUnchanged holds a control that never applied to an empty
+// database.
 func alNegativeDatabaseUnchanged(family, tables, historyRows string) bool {
 	switch family {
-	case "schema":
+	// Ptah's History reads the revision table only when it exists and never
+	// creates it, so a migration that was never applied leaves its database
+	// as empty as a schema that was never applied.
+	case "schema", "migration":
 		return strings.TrimSpace(tables) == "" && historyRows == ""
-	case "migration":
-		return strings.TrimSpace(tables) == "schema_migrations|BASE TABLE" && strings.TrimSpace(historyRows) == "0"
 	default:
 		return false
 	}

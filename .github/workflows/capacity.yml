@@ -81,17 +81,6 @@ jobs:
         uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4
         with:
           version: v4.3.0
-      - name: Check out pinned Ptah executor source
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          repository: stokaro/ptah
-          ref: ${{ steps.support.outputs.ptah_commit }}
-          path: .demo/ptah
-          persist-credentials: false
-      - name: Stage pinned Ptah source outside the operator build context
-        run: |
-          mv "$GITHUB_WORKSPACE/.demo/ptah" "$RUNNER_TEMP/ptah"
-          rmdir "$GITHUB_WORKSPACE/.demo"
       # One minor, and the newest is the one a reader would install against. It
       # is selected from the same matrix the lifecycle fans out over, so the two
       # cannot name different releases.
@@ -160,7 +149,6 @@ jobs:
           DOCKER_CONTEXT: ${{ steps.docker-context.outputs.name }}
           E2E_DIRECT_HOST_ACCESS: "1"
           E2E_PTAH_REVISION: ${{ steps.support.outputs.ptah_commit }}
-          E2E_PTAH_SOURCE_DIR: ${{ runner.temp }}/ptah
           DEMO_KUBERNETES_VERSION: ${{ steps.target.outputs.kubernetes_version }}
           DEMO_RUN_ID: capacity-${{ github.run_id }}-${{ github.run_attempt }}
         shell: bash

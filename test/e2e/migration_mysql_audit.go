@@ -224,14 +224,16 @@ func mysqlMigrationHistoryStatement(command, statement, database string) bool {
 	case "Query":
 		switch statement {
 		case "SELECT VERSION()", "SELECT @@SESSION.restrict_fk_on_non_standard_key", mysqlHistoryCreate,
+			"SELECT * FROM `schema_migrations` WHERE 1 = 0",
 			"SHOW CREATE TABLE `" + database + "`.`schema_migrations`",
 			"SELECT version, description, state, applied, total, COALESCE(error, ''), COALESCE(error_stmt, ''), execution_time_ms, checksum, applied_at\nFROM `" + database + "`.`schema_migrations`\nORDER BY version":
 			return true
 		}
 	case "Prepare":
-		return statement == mysqlHistoryEngine || statement == mysqlHistoryVersionType || statement == mysqlHistoryColumn
+		return statement == mysqlHistoryExists || statement == mysqlHistoryEngine || statement == mysqlHistoryVersionType ||
+			statement == mysqlHistoryColumn
 	case "Execute":
-		for _, template := range []string{mysqlHistoryEngine, mysqlHistoryVersionType} {
+		for _, template := range []string{mysqlHistoryExists, mysqlHistoryEngine, mysqlHistoryVersionType} {
 			bound := strings.Replace(template, "?", "'"+database+"'", 1)
 			bound = strings.Replace(bound, "?", "'schema_migrations'", 1)
 			if statement == bound {
@@ -249,6 +251,10 @@ func mysqlMigrationHistoryStatement(command, statement, database string) bool {
 	}
 	return false
 }
+
+const mysqlHistoryExists = `SELECT COUNT(*)
+FROM information_schema.tables
+WHERE table_schema = ? AND table_name = ? AND table_type = 'BASE TABLE'`
 
 const mysqlHistoryEngine = `SELECT engine
 FROM information_schema.tables

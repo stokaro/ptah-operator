@@ -1,13 +1,13 @@
 {
   "format_version": 1,
-  "name": "plan_d26fcd9f445a",
+  "name": "plan_c0c61521e885",
   "dialect": "mysql",
-  "from_fingerprint": "sha256:4a871fcca73ca649929d352c020fb93a670126a25fc0d8434cfc25c02922aac3",
-  "to_fingerprint": "sha256:d234ab4e92a03f6fce7d61f6b6d562ea2852d430d3737a08857dc30af00ade01",
+  "from_fingerprint": "sha256:86d62f6b736e596cd52b465e582ab0c7a312589f9708b5a9b059bbffbda1ffd1",
+  "to_fingerprint": "sha256:cfa026b68d0d76906f6b583dabdc83976a410bb27a566a9f07d6c1ec2137414d",
   "destructive": true,
   "statements": [
     {
-      "sql": "-- Modify table: e2e_widgets --\n-- ALTER statements: --\nALTER TABLE `e2e_widgets` ADD COLUMN `fault_token` varchar(255)",
+      "sql": "-- Modify table: e2e_widgets\n-- ALTER statements: --\nALTER TABLE `e2e_widgets` ADD COLUMN `fault_token` varchar(255)",
       "severity": "safe",
       "reason": "does not remove data or tighten constraints"
     },

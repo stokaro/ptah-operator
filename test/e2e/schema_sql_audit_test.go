@@ -140,7 +140,7 @@ func TestSchemaMySQLAuditAfterACompletedEarlierWindow(t *testing.T) {
 	clients := map[string]operationSQLClient{mysqlAuditHost: schemaAuditActor("plan")}
 	check := func(rows []mysqlStatementRecord, unused bool) error {
 		counts, err := mysqlStatementRefusalSQL(before, append(slices.Clone(before), rows...), schemaAuditDatabase, mysqlAuditUser, clients, unused, schemaDiagnosticActor, policy.mysql)
-		if err == nil && counts[mysqlAuditHost] != 27 {
+		if err == nil && counts[mysqlAuditHost] != 31 {
 			t.Fatal("prior SQL was counted as a new diagnostic control")
 		}
 		return err
@@ -190,7 +190,7 @@ func TestSchemaSQLPlanValidation(t *testing.T) {
 			}
 			raw := schemaAuditReading(t, engine, "drift-validate-plan")
 			counts, err := check(raw, "plan")
-			want := map[string]int{"postgresql": 43, "mysql": 17}[engine]
+			want := map[string]int{"postgresql": 44, "mysql": 19}[engine]
 			if err != nil || len(counts) != 1 || counts[mysqlAuditHost] != want {
 				t.Fatalf("native Plan validation: counts=%v, error=%v", counts, err)
 			}
@@ -335,17 +335,17 @@ func TestSchemaSQLContractHasActualWitnessesAtThePinnedSource(t *testing.T) {
 			var readings []witness
 			for _, variant := range []string{"", "destructive-", "exclusion-wide-", "exclusion-narrow-", "initial-v1-", "tag-v2-", "tag-v3-", "drift-"} {
 				for _, operation := range []string{"observe", "plan"} {
-					count := map[string]map[string]int{"postgresql": {"observe": 45, "plan": 82}, "mysql": {"observe": 14, "plan": 27}}[engine][operation]
-					if engine == "postgresql" && variant == "initial-v1-" {
-						count = map[string]int{"observe": 39, "plan": 75}[operation]
+					count := map[string]map[string]int{"postgresql": {"observe": 46, "plan": 84}, "mysql": {"observe": 16, "plan": 31}}[engine][operation]
+					if variant == "initial-v1-" {
+						count = map[string]map[string]int{"postgresql": {"observe": 40, "plan": 77}, "mysql": {"observe": 15, "plan": 29}}[engine][operation]
 					}
 					readings = append(readings, witness{variant + operation, operation, count})
 				}
 			}
-			readings = append(readings, witness{"drift-validate-plan", "plan", map[string]int{"postgresql": 43, "mysql": 17}[engine]},
-				witness{"drift-stale-apply", "stale-apply", map[string]int{"postgresql": 43, "mysql": 17}[engine]})
+			readings = append(readings, witness{"drift-validate-plan", "plan", map[string]int{"postgresql": 44, "mysql": 19}[engine]},
+				witness{"drift-stale-apply", "stale-apply", map[string]int{"postgresql": 44, "mysql": 19}[engine]})
 			if engine == "mysql" {
-				readings = append(readings, witness{"lock-45-plan", "plan", 71}, witness{"lock-60-plan", "plan", 71})
+				readings = append(readings, witness{"lock-45-plan", "plan", 81}, witness{"lock-60-plan", "plan", 81})
 			}
 			for _, reading := range readings {
 				actor := schemaAuditActor(reading.operation)

@@ -1,16 +1,16 @@
 {
   "format_version": 1,
-  "name": "plan_7a0294e58d02",
+  "name": "plan_547291fddc02",
   "dialect": "postgres",
   "from_fingerprint": "sha256:ee16d03a27896be598e62a8c19dc64c652ed34fb7eb21a7213fd1ed44d480df8",
-  "to_fingerprint": "sha256:ea828595397db2e0dfc42811c2188e30f54424d5fab565520a923ddb3579bc8e",
+  "to_fingerprint": "sha256:c7a2eacf75c1d76e0d19a6c6cdcdc10d388be1c9ec18ebf95bd49d76ab5f286d",
   "exclude": [
     "e2e_excluded_policy_keep"
   ],
   "destructive": false,
   "statements": [
     {
-      "sql": "-- Add/modify columns for table: e2e_widgets --\n-- ALTER statements: --\nALTER TABLE \"e2e_widgets\" ADD COLUMN \"fault_token\" text",
+      "sql": "-- Add/modify columns for table: e2e_widgets\n-- ALTER statements: --\nALTER TABLE \"e2e_widgets\" ADD COLUMN \"fault_token\" text",
       "severity": "safe",
       "reason": "does not remove data or tighten constraints"
     }

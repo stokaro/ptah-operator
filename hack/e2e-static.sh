@@ -264,7 +264,7 @@ printf 'e2e static: %s demonstration scripts\n' "$DEMO_SHELL_COUNT"
 BUILT_IMAGE_VARIABLES=$(grep -oE -- '--tag "\$[A-Z_]+"' "$ROOT_DIR/hack/e2e-kind.sh" |
 	sed 's/.*"\$\([A-Z_]*\)"/\1/' | sort -u)
 BUILT_IMAGE_COUNT=$(printf '%s\n' "$BUILT_IMAGE_VARIABLES" | grep -c . || true)
-[ "$BUILT_IMAGE_COUNT" -ge 4 ] || {
+[ "$BUILT_IMAGE_COUNT" -ge 3 ] || {
 	printf 'e2e static: found %s built images, and the harness builds more than that\n' \
 		"$BUILT_IMAGE_COUNT" >&2
 	exit 1
@@ -319,16 +319,14 @@ for timing_image_label in \
 	'--label "ptah.run/e2e-role=operator"' \
 	'--label "ptah.run/e2e-role=next-operator"' \
 	'--label "ptah.run/e2e-role=fixture"' \
-	'--label "ptah.run/e2e-role=executor"' \
-	'--label "ptah.run/e2e-operator-revision=$CONTROLLER_REVISION"' \
-	'--label "ptah.run/e2e-ptah-commit=${PTAH_COMMIT}"'; do
+	'--label "ptah.run/e2e-operator-revision=$CONTROLLER_REVISION"'; do
 	grep -F -- "$timing_image_label" "$ROOT_DIR/hack/e2e-kind.sh" >/dev/null || {
 		printf 'e2e static: a task image is built without its provenance: %s\n' \
 			"$timing_image_label" >&2
 		exit 1
 	}
 done
-printf '%s\n' 'e2e static: the four task images carry the commit, the Ptah pin and the role they play'
+printf '%s\n' 'e2e static: the three task images carry the commit and the role they play'
 
 # shellcheck disable=SC2016 # These checks intentionally match literal script variables.
 grep -F 'git -C "$SOURCE_REPOSITORY_ROOT" archive --format=tar' "$ROOT_DIR/hack/e2e-kind.sh" >/dev/null || {
@@ -354,16 +352,16 @@ grep -F 'ln -s "$BUILDX_PLUGIN_PATH" "$DOCKER_CLI_CONFIG/cli-plugins/docker-buil
 }
 # shellcheck disable=SC2016 # Match the exact context-bound Buildx invocation.
 [ "$(grep -Fc 'docker --context "$DOCKER_CONTEXT" buildx build' \
-	"$ROOT_DIR/hack/e2e-kind.sh")" -eq 4 ] || {
+	"$ROOT_DIR/hack/e2e-kind.sh")" -eq 3 ] || {
 	printf '%s\n' 'e2e static: every task image must use explicit Buildx' >&2
 	exit 1
 }
 # shellcheck disable=SC2016 # Match the exact remote builder binding.
-[ "$(grep -Fc -- '--builder "$DOCKER_CONTEXT"' "$ROOT_DIR/hack/e2e-kind.sh")" -eq 4 ] || {
+[ "$(grep -Fc -- '--builder "$DOCKER_CONTEXT"' "$ROOT_DIR/hack/e2e-kind.sh")" -eq 3 ] || {
 	printf '%s\n' 'e2e static: every task image must bind the selected remote builder' >&2
 	exit 1
 }
-[ "$(grep -Fc -- '--load' "$ROOT_DIR/hack/e2e-kind.sh")" -eq 4 ] || {
+[ "$(grep -Fc -- '--load' "$ROOT_DIR/hack/e2e-kind.sh")" -eq 3 ] || {
 	printf '%s\n' 'e2e static: every task image must load its Buildx result into the selected daemon' >&2
 	exit 1
 }
@@ -619,8 +617,6 @@ for tls_fixture_source_marker in \
 		"$ROOT_DIR/test/e2e/handcraftoci/main.go" \
 		"$ROOT_DIR/test/e2e/handcraftoci/main_test.go" >/dev/null
 done
-grep -F './cmd/ptah' "$ROOT_DIR/Dockerfile.executor" >/dev/null
-grep -Eq '^FROM .*@sha256:[0-9a-f]{64}' "$ROOT_DIR/Dockerfile.executor"
 grep -F './cmd/manager' "$ROOT_DIR/test/e2e/Dockerfile.operator" >/dev/null
 grep -F './cmd/ptah-runner' "$ROOT_DIR/test/e2e/Dockerfile.operator" >/dev/null
 grep -F './cmd/ptah-cert-rotator' "$ROOT_DIR/test/e2e/Dockerfile.operator" >/dev/null

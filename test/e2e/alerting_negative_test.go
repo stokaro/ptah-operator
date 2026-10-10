@@ -269,12 +269,12 @@ func TestAlNegativeDatabaseAllowsOnlyEmptyHistory(t *testing.T) {
 	for _, row := range []struct{ name, family, tables, historyRows string }{
 		{"schema application table", "schema", "widgets|BASE TABLE", ""},
 		{"schema history table", "schema", "schema_migrations|BASE TABLE", "0"},
-		{"migration application table", "migration", "schema_migrations|BASE TABLE\nwidgets|BASE TABLE", "0"},
-		{"migration application view", "migration", "schema_migrations|BASE TABLE\nwidgets|VIEW", "0"},
+		{"migration application table", "migration", "widgets|BASE TABLE", ""},
+		{"migration application view", "migration", "widgets|VIEW", ""},
+		{"revision table created", "migration", "schema_migrations|BASE TABLE", "0"},
 		{"revision recorded", "migration", "schema_migrations|BASE TABLE", "1"},
-		{"history not read", "migration", "schema_migrations|BASE TABLE", ""},
-		{"history absent", "migration", "", "0"},
-		{"history replaced by view", "migration", "schema_migrations|VIEW", "0"},
+		{"revision rows without a table", "migration", "", "0"},
+		{"revision table replaced by view", "migration", "schema_migrations|VIEW", ""},
 		{"unknown family", "", "", ""},
 	} {
 		t.Run(row.name, func(t *testing.T) {

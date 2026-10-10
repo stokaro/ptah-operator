@@ -737,17 +737,6 @@ func TestJobIdentitySets(t *testing.T) {
 	}
 }
 
-func TestUnknownLayerRevisionTablesQuery(t *testing.T) {
-	t.Parallel()
-	// MySQL's catalog spans the server, so its count names the database.
-	if !strings.Contains(unknownLayerRevisionTablesQuery("mysql", "ptah_e2e_unknown_layer"), "table_schema = 'ptah_e2e_unknown_layer'") {
-		t.Fatal("the MySQL count does not name its database")
-	}
-	if strings.Contains(unknownLayerRevisionTablesQuery("postgresql", "ptah_e2e_unknown_layer"), "table_schema") {
-		t.Fatal("the PostgreSQL count is narrowed to a schema the connection already chose")
-	}
-}
-
 func TestEgressExpectations(t *testing.T) {
 	t.Parallel()
 	var schema, migration []string

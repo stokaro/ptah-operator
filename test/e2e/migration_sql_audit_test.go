@@ -31,7 +31,7 @@ func TestPostgresMigrationSQLAuditAcceptsOnlyTheHistoryContract(t *testing.T) {
 	const database, host = "ptah_e2e_retarget", "10.244.3.97"
 	clients := map[string]operationSQLClient{host: {jobUID: "job", podUID: "pod", operation: "history"}}
 	counts, err := postgresMigrationRefusalSQL(raw, database, clients)
-	if err != nil || counts[host] != 17 || len(counts) != 1 {
+	if err != nil || counts[host] != 9 || len(counts) != 1 {
 		t.Fatalf("actual History reading: counts=%v error=%v", counts, err)
 	}
 	for name, statement := range map[string]string{
@@ -132,7 +132,7 @@ func TestPostgresMigrationSQLAuditBoundsHarnessReads(t *testing.T) {
 	clients := map[string]operationSQLClient{"10.244.3.97": {jobUID: "job", podUID: "pod", operation: "history"}}
 	const row = `{"dbname":"ptah_e2e_retarget","remote_host":"127.0.0.1","message":"statement: SELECT count(*) FROM schema_migrations"}`
 	counts, err := postgresMigrationRefusalSQL(append(append([]byte{}, raw...), row...), "ptah_e2e_retarget", clients)
-	if err != nil || counts["127.0.0.1"] != 1 || counts["10.244.3.97"] != 17 {
+	if err != nil || counts["127.0.0.1"] != 1 || counts["10.244.3.97"] != 9 {
 		t.Fatalf("harness diagnostic control: %v %v", counts, err)
 	}
 	for _, bad := range []string{

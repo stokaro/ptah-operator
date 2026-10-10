@@ -767,6 +767,11 @@ func (m *migrationRun) unknownLayerProof() {
 	database, secret := "ptah_e2e_unknown_layer", "e2e-"+m.engine.name+"-unknown-layer-db"
 	m.isolatedDatabase(database, secret)
 	m.publishUnknownLayerArtifact()
+	// The database server's own journal is the witness that nothing connected:
+	// a Pod of this resource that sent a statement shows up in it, whatever the
+	// statement did.
+	audit := &databaseSQLAudit{t: m.t, ctx: m.ctx, cluster: m.cluster, namespace: m.in.TestNamespace, engine: m.engine.name}
+	before := audit.snapshot()
 	m.mustCreate(m.migrationDocument(migrationSpec{
 		name: name, secret: secret, reference: m.reference("-unknown"),
 		coordinationKey: "e2e/unknown-layer/" + m.engine.name, apply: "Always", interval: "30s",
@@ -782,6 +787,16 @@ func (m *migrationRun) unknownLayerProof() {
 	}) {
 		m.fatalf("%s never named the step that refused the artifact within %s", name, waitTimeout)
 	}
+	podIPs := map[string]bool{}
+	recordPods := func() {
+		pods := &corev1.PodList{}
+		m.check(m.list(pods, client.MatchingLabels{labelMigration: name}), "read the unknown-layer Pods")
+		for _, pod := range pods.Items {
+			if pod.Status.PodIP != "" {
+				podIPs[pod.Status.PodIP] = true
+			}
+		}
+	}
 	deadline := time.Now().Add(90 * time.Second)
 	for time.Now().Before(deadline) {
 		if !actedOnNothing(m.migration(name).Status) {
@@ -790,13 +805,22 @@ func (m *migrationRun) unknownLayerProof() {
 		if len(m.applyJobUIDs(name)) != 0 {
 			m.fatalf("%s dispatched a run for an artifact its executor refused", name)
 		}
+		recordPods()
 		m.sleep(10 * time.Second)
 	}
-	// Nothing connected. Ptah creates its revision table on the first history
-	// read, so a database that has none was never opened, which the refusal's
-	// own message cannot prove.
-	if m.query(unknownLayerRevisionTablesQuery(m.engine.name, database), database) != "0" {
-		m.fatalf("the %s database was opened for an artifact whose layers were refused", m.engine.name)
+	recordPods()
+	// Nothing connected: no Pod of this resource sent the server a statement,
+	// which the refusal's own message cannot prove.
+	if len(podIPs) == 0 {
+		m.fatalf("%s left no Pod address to check the database journal against", name)
+	}
+	after := audit.snapshot()
+	for ip := range podIPs {
+		delta, err := sqlAuditDelta(before, after, ip)
+		m.check(err, "compare the unknown-layer database journal")
+		if delta != 0 {
+			m.fatalf("the %s database received %d statements from a Pod of an artifact whose layers were refused", m.engine.name, delta)
+		}
 	}
 	m.finishFixture(name)
 	m.logf("PASS %s refused an artifact built newer than its executor, before opening the database", m.engine.kind)

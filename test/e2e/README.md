@@ -35,23 +35,20 @@ Required inputs:
   `support/kubernetes.json` when the tested version is in the support window;
   callers must provide it explicitly for any other version.
 
-The harness builds its Ptah executor from the commit the compatibility
-catalog records as verified, read from
-[`support/ptah.json`](../../support/ptah.json), in a sibling Ptah checkout by
-default. The catalog is the only place that commit is written down, because
-the claim it publishes and the build this suite exercises have to be the same
-one. Set `E2E_PTAH_SOURCE_DIR` and `E2E_PTAH_REVISION` to select another
-checkout and exact commit. When no sibling checkout exists, the harness clones
-`E2E_PTAH_GIT_URL` into its task-owned temporary directory.
-`E2E_EXECUTOR_IMAGE` may instead provide a digest-pinned external image, in
-which case `E2E_PTAH_VERSION` is required. `E2E_RUNNER_IMAGE` may similarly
-override the runner embedded in the freshly built operator image.
+The executor is Ptah's own release image, as the compatibility catalog
+[`support/ptah.json`](../../support/ptah.json) pins it by digest beside its
+commit and version. The harness copies that image into the disposable registry
+unchanged and builds no executor. The catalog is the only place the pin is
+written down, because the claim it publishes and the build this suite
+exercises have to be the same one. `E2E_EXECUTOR_IMAGE` may name another
+digest-pinned image, in which case `E2E_PTAH_VERSION` is required.
+`E2E_RUNNER_IMAGE` may similarly override the runner embedded in the freshly
+built operator image.
 
-For a source build, the harness derives `E2E_PTAH_VERSION` from the selected
-exact commit when the caller does not provide it. In both source and external
-image modes, it passes that non-empty version explicitly to Helm and verifies
-the same version-and-digest binding through the control-plane resources; no
-chart or assertion fallback supplies a release label.
+The harness passes the catalog's Ptah version, or the one supplied with an
+external image, explicitly to Helm and verifies the same version-and-digest
+binding through the control-plane resources; no chart or assertion fallback
+supplies a release label.
 
 The registry, PostgreSQL, MySQL, and both e2e build images have digest-pinned
 defaults. Each runtime image is copied into the disposable registry and

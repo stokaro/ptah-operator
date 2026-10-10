@@ -65,17 +65,6 @@ jobs:
         uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4
         with:
           version: v4.3.0
-      - name: Check out pinned Ptah executor source
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          repository: stokaro/ptah
-          ref: ${{ steps.support.outputs.ptah_commit }}
-          path: .demo/ptah
-          persist-credentials: false
-      - name: Stage pinned Ptah source outside the operator build context
-        run: |
-          mv "$GITHUB_WORKSPACE/.demo/ptah" "$RUNNER_TEMP/ptah"
-          rmdir "$GITHUB_WORKSPACE/.demo"
       # One minor, and the newest is the one a reader would install against. It
       # is selected from the same matrix the lifecycle fans out over, so the two
       # cannot name different releases.
@@ -157,22 +146,19 @@ jobs:
           sha256sum "$manifest"
           source="$(sed -n 's/^source-sha=//p' "$manifest")"
           [[ "$source" =~ ^[0-9a-f]{40}$ ]]
-          for field in image executor; do
-            reference="$(sed -n "s/^$field=//p" "$manifest")"
-            [[ "$reference" =~ ^ghcr\.io/stokaro/ptah-operator(-executor)?@sha256:[0-9a-f]{64}$ ]]
-            gh attestation verify "oci://$reference" \
-              --bundle-from-oci \
-              --repo "$GITHUB_REPOSITORY" \
-              --source-digest "$source" \
-              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml"
-          done
+          reference="$(sed -n 's/^image=//p' "$manifest")"
+          [[ "$reference" =~ ^ghcr\.io/stokaro/ptah-operator@sha256:[0-9a-f]{64}$ ]]
+          gh attestation verify "oci://$reference" \
+            --bundle-from-oci \
+            --repo "$GITHUB_REPOSITORY" \
+            --source-digest "$source" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml"
           printf 'path=%s\n' "$manifest" >> "$GITHUB_OUTPUT"
       - name: Bring the lab up and record every scenario
         env:
           DOCKER_CONTEXT: ${{ steps.docker-context.outputs.name }}
           E2E_DIRECT_HOST_ACCESS: "1"
           E2E_PTAH_REVISION: ${{ steps.support.outputs.ptah_commit }}
-          E2E_PTAH_SOURCE_DIR: ${{ runner.temp }}/ptah
           E2E_RELEASE_MANIFEST: ${{ steps.release-manifest.outputs.path }}
           DEMO_KUBERNETES_VERSION: ${{ steps.target.outputs.kubernetes_version }}
           DEMO_RUN_ID: demo-${{ github.run_id }}-${{ github.run_attempt }}

@@ -30,6 +30,7 @@ import (
 const (
 	testCommit      = "abcdef0123456789abcdef0123456789abcdef01"
 	testOtherCommit = "1111111111111111111111111111111111111111"
+	testImage       = "ghcr.io/stokaro/ptah@sha256:2222222222222222222222222222222222222222222222222222222222222222"
 )
 
 func testToday(t *testing.T) time.Time {
@@ -58,6 +59,7 @@ func validCatalog() catalog {
 					{
 						PtahCommit:            testCommit,
 						PtahDescribe:          "v0.3.0-201-gabcdef012",
+						PtahImage:             testImage,
 						RunnerProtocolVersion: runner.ProtocolVersion,
 						Evidence:              "kubernetes-e2e",
 						Scope:                 "the full lifecycle",
@@ -536,17 +538,37 @@ func TestLoadRefusesAnUnknownField(t *testing.T) {
 	}
 }
 
-// TestEdgeCommitIsTheDeclaration pins the value the pipeline reads. The
-// lifecycle job checks this commit out and builds the executor from it, so a
-// change here changes what the published matrix is a claim about.
-func TestEdgeCommitIsTheDeclaration(t *testing.T) {
+// TestEdgeBuildIsTheDeclaration pins the values the pipeline reads. The
+// lifecycle job runs this image as its executor, so a change here changes what
+// the published matrix is a claim about.
+func TestEdgeBuildIsTheDeclaration(t *testing.T) {
 	t.Parallel()
 
-	commit, err := edgeCommit(validCatalog())
+	build, err := edgeBuild(validCatalog())
 	if err != nil {
-		t.Fatalf("the development row has no commit: %v", err)
+		t.Fatalf("the development row has no build: %v", err)
 	}
-	if commit != testCommit {
-		t.Fatalf("read %s, wanted %s", commit, testCommit)
+	if build.PtahCommit != testCommit || build.PtahImage != testImage {
+		t.Fatalf("read %s and %s, wanted %s and %s", build.PtahCommit, build.PtahImage, testCommit, testImage)
+	}
+}
+
+// TestTheExecutorIsPtahsImagePinnedByDigest refuses an image the operator
+// would have to trust by tag, or one Ptah did not publish.
+func TestTheExecutorIsPtahsImagePinnedByDigest(t *testing.T) {
+	t.Parallel()
+
+	for _, image := range []string{
+		"",
+		"ghcr.io/stokaro/ptah:0.13.0",
+		"ghcr.io/stokaro/ptah-operator-executor@sha256:" + strings.Repeat("a", 64),
+		"ghcr.io/stokaro/ptah@sha256:" + strings.Repeat("A", 64),
+	} {
+		loaded := validCatalog()
+		loaded.Releases[0].Verified[0].PtahImage = image
+		err := validate(loaded, testToday(t))
+		if err == nil || !strings.Contains(err.Error(), "pinned by digest") {
+			t.Errorf("validate() accepted executor image %q: %v", image, err)
+		}
 	}
 }

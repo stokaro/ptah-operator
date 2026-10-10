@@ -261,8 +261,6 @@ class ClusterRestoreProbe(OperatorProbe):
                            E2E_STOP_AFTER='bootstrap', E2E_ENVIRONMENT_FILE=str(self.target_environment),
                            E2E_TIMING_LEDGER=str(self.root / 'target-timings.jsonl'),
                            E2E_TIMING_CONTEXT=str(self.root / 'target-context.json'))
-        if os.environ.get('E2E_PTAH_SOURCE_DIR'):
-            environment['E2E_PTAH_SOURCE_DIR'] = os.environ['E2E_PTAH_SOURCE_DIR']
         row = {'action': 'provision a separate recovery cluster after source loss', 'startedAt': db.now()}
         self.report['targetProvisionStartedAt'] = row['startedAt']
         self.persist()

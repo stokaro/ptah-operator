@@ -321,16 +321,20 @@ func postgresMigrationHarnessRead(statement, parameters string) bool {
 // This is the exact default-table History contract used by these fixtures at
 // the pinned Ptah source, not a SQL classifier. In particular SELECT, WITH,
 // comments, additional statements and changed parameters receive no exception.
-// Ptah's History may create its empty revision table; it may not change rows.
-// See testdata/e2e/readings/postgresql-migration-history-audit.md for sources.
+// History reads the revision table only after asking whether it exists; the
+// Apply that shares these statements may still create the empty table. Neither
+// may change rows. See testdata/e2e/readings/postgresql-migration-history-audit.md.
 func postgresMigrationHistoryStatement(statement, parameters string) bool {
 	if parameters == "" {
 		switch statement {
 		case "-- ping", "SELECT version()", "SELECT current_schema()",
 			"SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'timescaledb')",
-			postgresHistoryCreate, postgresHistoryRead:
+			postgresHistoryCreate, postgresHistoryRead, postgresHistoryColumnsProbe:
 			return true
 		}
+	}
+	if statement == postgresHistoryExists && parameters == "Parameters: $1 = 'schema_migrations'" {
+		return true
 	}
 	const tableParameters = "Parameters: $1 = '', $2 = 'schema_migrations'"
 	if parameters == tableParameters && (statement == postgresHistoryOwner || statement == postgresHistoryVersionType) {
@@ -345,6 +349,13 @@ func postgresMigrationHistoryStatement(statement, parameters string) bool {
 	}
 	return false
 }
+
+const postgresHistoryExists = `SELECT COUNT(*)
+FROM information_schema.tables
+WHERE table_schema = current_schema() AND table_name = $1 AND table_type = 'BASE TABLE'`
+
+// History reads the revision table's columns from an empty result.
+const postgresHistoryColumnsProbe = `SELECT * FROM "schema_migrations" WHERE 1 = 0`
 
 const postgresHistoryOwner = `SELECT
   pg_catalog.pg_get_userbyid(c.relowner),

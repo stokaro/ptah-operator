@@ -1,11 +1,18 @@
 package crdschemahistory
 
 import (
+	"context"
 	"testing"
 )
 
+// developmentTreeCommit is master before the drift vocabulary grew: the last
+// tree whose CRDs are exactly the ones the result-record transitions name.
+// Reading it from history keeps those rows about their own transition when a
+// later development change edits a CRD they do not cover.
+const developmentTreeCommit = "81208488a8c549b6a635ba2342adf1900ce95706"
+
 func TestResultRecordDevelopmentAdditionIsExact(t *testing.T) {
-	files, err := readWorkingTreeFiles("../..", "config/crd/bases")
+	files, err := readGitFiles(context.Background(), "../..", developmentTreeCommit, "config/crd/bases")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +65,7 @@ func TestResultRecordDevelopmentAdditionIsExact(t *testing.T) {
 }
 
 func TestResultRecordRetirementTransitionIsExact(t *testing.T) {
-	files, err := readWorkingTreeFiles("../..", "config/crd/bases")
+	files, err := readGitFiles(context.Background(), "../..", developmentTreeCommit, "config/crd/bases")
 	if err != nil {
 		t.Fatal(err)
 	}

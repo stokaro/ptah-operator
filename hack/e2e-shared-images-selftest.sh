@@ -6,10 +6,9 @@ set -eu
 #
 # A matrix that builds its images once has to be told which images they are, and
 # the answer arrives as files. Everything that makes that safe is a refusal in
-# hack/e2e-kind.sh: the manifest's commit is this run's commit, the executor is
-# the one the compatibility catalog pins, the loaded image is the one the
-# manifest declared, and each image says which role it plays so the synthetic
-# next release cannot be installed as the candidate. A refusal nothing exercises
+# hack/e2e-kind.sh: the manifest's commit is this run's commit, the loaded image
+# is the one the manifest declared, and each image says which role it plays so
+# the synthetic next release cannot be installed as the candidate. A refusal nothing exercises
 # is a comment.
 #
 # This extracts those functions from the driver and runs them against a Docker
@@ -37,7 +36,7 @@ awk '
 awk '
 	/^image_identity\(\) \{$/ { capture = 1 }
 	capture { print }
-	/wrote the four task images/ { finishing = 1 }
+	/wrote the three task images/ { finishing = 1 }
 	finishing && /^\}$/ { exit }
 ' "$ROOT_DIR/hack/e2e-kind.sh" >>"$FUNCTIONS_FILE"
 for required_function in sha256 image_identity image_identity_matches_archive image_label_value load_prebuilt_images export_task_images; do
@@ -101,7 +100,6 @@ FAKE
 chmod 0755 "$FAKE_BIN/docker"
 
 EXPECTED_REVISION=1111111111111111111111111111111111111111
-PTAH_PIN=2222222222222222222222222222222222222222
 PREPARED_DIR=$WORK_DIR/task-images
 mkdir -p "$PREPARED_DIR"
 
@@ -111,26 +109,22 @@ mkdir -p "$PREPARED_DIR"
 # attributable to that thing.
 write_prepared() {
 	prepared_revision=${1:-$EXPECTED_REVISION}
-	prepared_ptah=${2:-$PTAH_PIN}
 	rm -rf "$PREPARED_DIR" "$WORK_DIR/state"
 	mkdir -p "$PREPARED_DIR" "$WORK_DIR/state"
-	for prepared_role in operator next-operator fixture executor; do
+	for prepared_role in operator next-operator fixture; do
 		: >"$PREPARED_DIR/$prepared_role.tar"
 	done
 	jq -n \
 		--arg revision "$prepared_revision" \
-		--arg ptah "$prepared_ptah" \
-		'{operatorRevision: $revision, ptahCommit: $ptah, ptahVersion: "v0.7.0",
+		'{operatorRevision: $revision,
 		  images: [
 		    {role: "operator", file: "operator.tar", reference: "prepared/operator:1", identity: "sha256:aa"},
 		    {role: "next-operator", file: "next-operator.tar", reference: "prepared/next:1", identity: "sha256:bb"},
-		    {role: "fixture", file: "fixture.tar", reference: "prepared/fixture:1", identity: "sha256:cc"},
-		    {role: "executor", file: "executor.tar", reference: "prepared/executor:1", identity: "sha256:dd"}
+		    {role: "fixture", file: "fixture.tar", reference: "prepared/fixture:1", identity: "sha256:cc"}
 		  ]}' >"$PREPARED_DIR/images.json"
 	state_write prepared/operator:1 sha256:aa operator "$prepared_revision"
 	state_write prepared/next:1 sha256:bb next-operator "$prepared_revision"
 	state_write prepared/fixture:1 sha256:cc fixture "$prepared_revision"
-	state_executor prepared/executor:1 sha256:dd "$prepared_ptah"
 }
 
 state_key() {
@@ -149,13 +143,6 @@ state_write() {
 		>"$WORK_DIR/state/$state_name.$(state_key ptah.run/e2e-operator-revision)"
 }
 
-state_executor() {
-	state_name=$(state_key "$1")
-	printf '%s' "$2" >"$WORK_DIR/state/$state_name.id"
-	printf '%s' executor >"$WORK_DIR/state/$state_name.$(state_key ptah.run/e2e-role)"
-	printf '%s' "$3" >"$WORK_DIR/state/$state_name.$(state_key ptah.run/e2e-ptah-commit)"
-}
-
 # run_load runs the driver's own loading path against the prepared directory.
 # The names below are read by the functions this sources, which shellcheck
 # cannot follow, and the stubs are called from them for the same reason.
@@ -168,14 +155,11 @@ run_load() {
 		export FAKE_IMAGE_STATE
 		DOCKER_CONTEXT=selftest
 		CONTROLLER_REVISION=$EXPECTED_REVISION
-		E2E_PTAH_REVISION=$PTAH_PIN
-		E2E_PTAH_VERSION=
 		E2E_PREBUILT_IMAGE_DIR=$PREPARED_DIR
 		OPERATOR_IMAGE=local/operator:run
 		NEXT_OPERATOR_IMAGE=local/next:run
 		FIXTURE_BUILD_IMAGE=local/fixture:run
-		PTAH_IMAGE=local/executor:run
-		TASK_IMAGE_ROLES='operator next-operator fixture executor'
+		TASK_IMAGE_ROLES='operator next-operator fixture'
 		IMAGE_CREATED=0
 		add_created_image() { :; }
 		fail() {
@@ -187,14 +171,13 @@ run_load() {
 				operator) printf '%s' "$OPERATOR_IMAGE" ;;
 				next-operator) printf '%s' "$NEXT_OPERATOR_IMAGE" ;;
 				fixture) printf '%s' "$FIXTURE_BUILD_IMAGE" ;;
-				executor) printf '%s' "$PTAH_IMAGE" ;;
 				*) fail "no task image has the role $1" ;;
 			esac
 		}
 		# shellcheck source=/dev/null
 		. "$FUNCTIONS_FILE"
 		load_prebuilt_images
-		printf 'loaded %s\n' "$E2E_PTAH_VERSION"
+		printf 'loaded %s\n' "$IMAGE_CREATED"
 	)
 }
 
@@ -210,16 +193,15 @@ expect_refusal() {
 	esac
 }
 
-# The correct preparation loads, and reports the Ptah version out of the
-# manifest, because nothing else in the job knows it.
+# The correct preparation loads.
 write_prepared
 load_status=0
 load_output=$(run_load 2>&1) || load_status=$?
 [ "$load_status" -eq 0 ] ||
 	fail "a correct set of prepared images was refused: $load_output"
 case "$load_output" in
-	*"loaded v0.7.0"*) ;;
-	*) fail "the Ptah version was not read from the manifest: $load_output" ;;
+	*"loaded 1"*) ;;
+	*) fail "a correct set of prepared images did not finish loading: $load_output" ;;
 esac
 
 # Docker's two image stores report different identities for these same bytes.
@@ -265,10 +247,6 @@ expect_refusal "the manifest declares $foreign_identity"
 write_prepared 3333333333333333333333333333333333333333
 expect_refusal "were built from 3333333333333333333333333333333333333333"
 
-# An executor built from a Ptah the catalog does not pin.
-write_prepared "$EXPECTED_REVISION" 4444444444444444444444444444444444444444
-expect_refusal "carries Ptah 4444444444444444444444444444444444444444"
-
 # A tarball whose loaded image is not the one the manifest declared.
 write_prepared
 printf '%s' sha256:ee >"$WORK_DIR/state/$(state_key prepared/operator:1).id"
@@ -293,9 +271,9 @@ expect_refusal "is missing from"
 
 # A manifest with an entry missing its identity.
 write_prepared
-jq '.images |= map(if .role == "executor" then del(.identity) else . end)' \
+jq '.images |= map(if .role == "fixture" then del(.identity) else . end)' \
 	"$PREPARED_DIR/images.json" >"$PREPARED_DIR/images.json.next"
 mv "$PREPARED_DIR/images.json.next" "$PREPARED_DIR/images.json"
-expect_refusal "carries no complete entry for the executor image"
+expect_refusal "carries no complete entry for the fixture image"
 
 printf '%s\n' 'e2e shared images self-test: PASS prepared images are refused unless they are this run'

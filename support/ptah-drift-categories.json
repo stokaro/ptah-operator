@@ -3,7 +3,7 @@
   "sources": [
     {
       "path": "internal/cli/drift/drift.go",
-      "sha256": "7432306b4122be32c51aa3cefcd5e1142db2623ed877c1c1279a511bf17fd92d"
+      "sha256": "4bda9d83ab9a180c46ca5968d68c194414805868231688b2d4503eaef3a9d9e4"
     },
     {
       "path": "internal/datamigrate/datamigrate.go",
@@ -11,15 +11,21 @@
     },
     {
       "path": "migration/safety/safety.go",
-      "sha256": "15e36b0770c20e2579d67104f29e0c666fad14f06b74bcfbc2b58122641407fe"
+      "sha256": "9347c0c965d6ba2127d8170d935bde2fe0c6ec02bb4bafa4d06fc5aa13814880"
     }
   ],
   "categories": [
+    "async_replications_added",
+    "async_replications_modified",
+    "async_replications_removed",
     "columns_added",
     "columns_modified",
     "columns_removed",
     "constraints_added",
     "constraints_removed",
+    "coordination_nodes_added",
+    "coordination_nodes_modified",
+    "coordination_nodes_removed",
     "data_rows_deleted",
     "data_rows_inserted",
     "data_rows_updated",
@@ -30,11 +36,23 @@
     "extensions_added",
     "extensions_modified",
     "extensions_removed",
+    "external_data_sources_added",
+    "external_data_sources_changed",
+    "external_data_sources_removed",
+    "external_tables_added",
+    "external_tables_changed",
+    "external_tables_removed",
     "functions_added",
     "functions_modified",
     "functions_removed",
     "indexes_added",
     "indexes_removed",
+    "resource_pool_classifiers_added",
+    "resource_pool_classifiers_modified",
+    "resource_pool_classifiers_removed",
+    "resource_pools_added",
+    "resource_pools_modified",
+    "resource_pools_removed",
     "rls_enabled_tables_added",
     "rls_enabled_tables_removed",
     "rls_force_added",
@@ -45,10 +63,23 @@
     "roles_added",
     "roles_modified",
     "roles_removed",
+    "schemas_added",
+    "schemas_modified",
+    "schemas_removed",
+    "secrets_added",
+    "secrets_removed",
+    "secrets_rotated",
     "table_constraints_added",
     "table_constraints_removed",
     "tables_added",
     "tables_removed",
+    "topic_consumers_removed",
+    "topics_added",
+    "topics_modified",
+    "topics_removed",
+    "transfers_added",
+    "transfers_modified",
+    "transfers_removed",
     "unique_protections_removed",
     "vector_dimension_changed"
   ]
