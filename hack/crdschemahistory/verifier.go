@@ -562,7 +562,7 @@ func evaluateTransitionWith(
 		}
 	}
 	if changed {
-		if resultRecordDevelopmentAddition(baseline, candidate) {
+		if resultRecordDevelopmentAddition(baseline, candidate) || driftVocabularyDevelopmentExtension(baseline, candidate) {
 			if err := verifyStoredObjectCompatibility(baseline, candidate, candidateIdentity.version, declared); err != nil {
 				return Result{}, err
 			}

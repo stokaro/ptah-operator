@@ -858,7 +858,7 @@ type DriftFindingStatus struct {
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=64
 	// +kubebuilder:validation:Pattern=`^[a-z][a-z0-9_]{0,63}$`
-	// +kubebuilder:validation:Enum=columns_added;columns_modified;columns_removed;constraints_added;constraints_removed;data_rows_deleted;data_rows_inserted;data_rows_updated;enum_values_added;enum_values_removed;enums_added;enums_removed;extensions_added;extensions_modified;extensions_removed;functions_added;functions_modified;functions_removed;indexes_added;indexes_removed;rls_enabled_tables_added;rls_enabled_tables_removed;rls_force_added;rls_force_removed;rls_policies_added;rls_policies_modified;rls_policies_removed;roles_added;roles_modified;roles_removed;table_constraints_added;table_constraints_removed;tables_added;tables_removed;unique_protections_removed;vector_dimension_changed
+	// +kubebuilder:validation:Enum=async_replications_added;async_replications_modified;async_replications_removed;columns_added;columns_modified;columns_removed;constraints_added;constraints_removed;coordination_nodes_added;coordination_nodes_modified;coordination_nodes_removed;data_rows_deleted;data_rows_inserted;data_rows_updated;enum_values_added;enum_values_removed;enums_added;enums_removed;extensions_added;extensions_modified;extensions_removed;external_data_sources_added;external_data_sources_changed;external_data_sources_removed;external_tables_added;external_tables_changed;external_tables_removed;functions_added;functions_modified;functions_removed;indexes_added;indexes_removed;resource_pool_classifiers_added;resource_pool_classifiers_modified;resource_pool_classifiers_removed;resource_pools_added;resource_pools_modified;resource_pools_removed;rls_enabled_tables_added;rls_enabled_tables_removed;rls_force_added;rls_force_removed;rls_policies_added;rls_policies_modified;rls_policies_removed;roles_added;roles_modified;roles_removed;schemas_added;schemas_modified;schemas_removed;secrets_added;secrets_removed;secrets_rotated;table_constraints_added;table_constraints_removed;tables_added;tables_removed;topic_consumers_removed;topics_added;topics_modified;topics_removed;transfers_added;transfers_modified;transfers_removed;unique_protections_removed;vector_dimension_changed
 	// Category is the kind of difference, never the object it was found in:
 	// a table name is part of the schema, and the status does not carry it.
 	Category string `json:"category"`
@@ -897,7 +897,7 @@ type TargetStatus struct {
 	// DriftFindings contains only category-level aggregates, one per category
 	// the report found. The list is never truncated: it is keyed by category,
 	// and the bound holds every category in the vocabulary.
-	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:MaxItems=128
 	// +listType=map
 	// +listMapKey=category
 	DriftFindings []DriftFindingStatus `json:"driftFindings,omitempty"`

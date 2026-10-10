@@ -170,7 +170,7 @@ type DriftFindingSummary struct {
 // most once, and the whole vocabulary fits under the bound, so the summaries
 // are always the complete report and their counts always sum to
 // DriftFindingCount.
-const maxDriftFindings = 64
+const maxDriftFindings = 128
 
 // Result is the complete credential-free result emitted by ptah-runner.
 type Result struct {

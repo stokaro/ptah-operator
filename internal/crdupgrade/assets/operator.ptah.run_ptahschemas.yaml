@@ -5,7 +5,7 @@ metadata:
   annotations:
     operator.ptah.run/controller-state-version: "1"
     operator.ptah.run/crd-schema-version: "1"
-    operator.ptah.run/crd-schema-digest: "sha256:b748c135a91ab9f47252aba72d8b556d301e2cec6d505c3caa4ed6f2eb8736fe"
+    operator.ptah.run/crd-schema-digest: "sha256:ce3071b2d2ed9f1f5dc9587a5e9dcc45ab5bfab2f415b2c7aa29544ca8e910c6"
     controller-gen.kubebuilder.io/version: v0.22.0
   name: ptahschemas.operator.ptah.run
 spec:
@@ -2192,11 +2192,17 @@ spec:
                       properties:
                         category:
                           enum:
+                          - async_replications_added
+                          - async_replications_modified
+                          - async_replications_removed
                           - columns_added
                           - columns_modified
                           - columns_removed
                           - constraints_added
                           - constraints_removed
+                          - coordination_nodes_added
+                          - coordination_nodes_modified
+                          - coordination_nodes_removed
                           - data_rows_deleted
                           - data_rows_inserted
                           - data_rows_updated
@@ -2207,11 +2213,23 @@ spec:
                           - extensions_added
                           - extensions_modified
                           - extensions_removed
+                          - external_data_sources_added
+                          - external_data_sources_changed
+                          - external_data_sources_removed
+                          - external_tables_added
+                          - external_tables_changed
+                          - external_tables_removed
                           - functions_added
                           - functions_modified
                           - functions_removed
                           - indexes_added
                           - indexes_removed
+                          - resource_pool_classifiers_added
+                          - resource_pool_classifiers_modified
+                          - resource_pool_classifiers_removed
+                          - resource_pools_added
+                          - resource_pools_modified
+                          - resource_pools_removed
                           - rls_enabled_tables_added
                           - rls_enabled_tables_removed
                           - rls_force_added
@@ -2222,10 +2240,23 @@ spec:
                           - roles_added
                           - roles_modified
                           - roles_removed
+                          - schemas_added
+                          - schemas_modified
+                          - schemas_removed
+                          - secrets_added
+                          - secrets_removed
+                          - secrets_rotated
                           - table_constraints_added
                           - table_constraints_removed
                           - tables_added
                           - tables_removed
+                          - topic_consumers_removed
+                          - topics_added
+                          - topics_modified
+                          - topics_removed
+                          - transfers_added
+                          - transfers_modified
+                          - transfers_removed
                           - unique_protections_removed
                           - vector_dimension_changed
                           maxLength: 64
@@ -2249,7 +2280,7 @@ spec:
                       - count
                       - severity
                       type: object
-                    maxItems: 64
+                    maxItems: 128
                     type: array
                     x-kubernetes-list-map-keys:
                     - category
