@@ -2018,7 +2018,8 @@ func verifyWorkflowSemantics(document []byte) error {
 	if err := requireRunBindings(steps, "draft",
 		"gh release create", "--draft", "--latest=false",
 		"--notes-file dist/release-journal.txt", "gh attestation verify dist/release-journal.txt",
-		"-verify-source-identity", ".assets | length == 0"); err != nil {
+		"-verify-source-identity", ".assets | length == 0",
+		"the release list does not show the draft just created"); err != nil {
 		return err
 	}
 	if err := requireRunBindings(steps, "stage-inspect",
@@ -2084,7 +2085,8 @@ func verifyWorkflowSemantics(document []byte) error {
 	if err := requireRunBindings(steps, "finalize-journal",
 		"cmp dist/release-journal.txt", "gh release edit", "--notes-file dist/release-manifest.txt",
 		"gh attestation verify dist/release-manifest.txt", "cmp dist/release-manifest.txt",
-		"-verify-source-identity", ".assets | length == 0"); err != nil {
+		"-verify-source-identity", ".assets | length == 0",
+		"the release list does not show the committed manifest"); err != nil {
 		return err
 	}
 	if err := requireRunBindings(steps, "asset-auth",
@@ -2094,7 +2096,8 @@ func verifyWorkflowSemantics(document []byte) error {
 	}
 	if err := requireRunBindings(steps, "asset-sync",
 		"cmp dist/release-manifest.txt", "gh release upload", "gh release download",
-		"state\" == starter", "--method DELETE", "\n  "+acceptanceEvidenceAsset+" \\\n"); err != nil {
+		"state\" == starter", "--method DELETE", "\n  "+acceptanceEvidenceAsset+" \\\n",
+		"the release list does not show every uploaded asset"); err != nil {
 		return err
 	}
 	if err := verifyAcceptanceEvidenceSteps(preflightSteps, steps); err != nil {
@@ -2113,7 +2116,8 @@ func verifyWorkflowSemantics(document []byte) error {
 		"if [[ \"$mode\" != published ]]", "gh release edit", "--draft=false", "--latest=false", "-verify-source-identity",
 		"cmp dist/release-manifest.txt", "gh release download", "gh attestation verify",
 		"-checksums \"$gate_dir/SHA256SUMS\"", ".immutable", "gh release verify",
-		"gh release verify-asset", "delay=$((delay < 30 ? delay * 2 : 30))"); err != nil {
+		"gh release verify-asset", "delay=$((delay < 30 ? delay * 2 : 30))",
+		"the release list does not show the release published and immutable"); err != nil {
 		return err
 	}
 	if publish.Steps[len(publish.Steps)-1].ID != "publish-release" {
