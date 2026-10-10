@@ -212,9 +212,9 @@ declaration for a phase the driver stopped running.
 
 ## Where the task images come from
 
-The four images a run needs — the operator under test, the synthetic next
-release, the isolated fixture and the Ptah executor — depend on one commit and
-one catalog pin, and on no Kubernetes minor. CI builds them once:
+The three images a run builds — the operator under test, the synthetic next
+release and the isolated fixture — depend on one commit and on no Kubernetes
+minor. CI builds them once:
 
 ```bash
 E2E_STOP_AFTER=images E2E_IMAGE_EXPORT_DIR=/tmp/task-images make e2e
@@ -222,20 +222,23 @@ E2E_STOP_AFTER=images E2E_IMAGE_EXPORT_DIR=/tmp/task-images make e2e
 
 That is the same driver a lifecycle runs, stopped where the images exist and no
 cluster does. Beside them it writes `images.json`: the commit they were built
-from, the Ptah commit the executor carries, and each image's own identity. A
-lifecycle reads them back:
+from and each image's own identity. A lifecycle reads them back:
 
 ```bash
 E2E_PREBUILT_IMAGE_DIR=/tmp/task-images make e2e
 ```
 
 and refuses anything that is not its own inputs — a manifest from another
-commit, an executor built from a Ptah the catalog does not pin, an image whose
-identity or role label disagrees with the manifest it travelled with. The
+commit, an image whose identity or role label disagrees with the manifest it
+travelled with. The
 content audits still run over whatever was loaded. `make e2e` on its own builds
 for itself, so there is one build path rather than a CI-only one, and
 `hack/e2e-shared-images-selftest.sh` measures
 every refusal.
+
+The executor is not built at all. It is Ptah's own release image, which
+[`support/ptah.json`](support/ptah.json) pins by digest beside its commit and
+version, and every run copies it into the task registry unchanged.
 
 A run can install a prepared release instead of its own build:
 
@@ -244,14 +247,15 @@ E2E_RELEASE_MANIFEST=/tmp/release-manifest.txt make e2e
 ```
 
 The manifest is the `release-manifest.txt` a Release `prepare` run attached to
-its draft. The candidate operator, its runner and the executor become the
-release's digests, copied into the task registry by `hack/imagecopy` without
-changing a byte, so a Pod runs the digest that was released. The harness
+its draft. The candidate operator and its runner become the release's digest,
+and the executor is the Ptah image the release names, which must be the one the
+catalog pins; both are copied into the task registry by `hack/imagecopy`
+without changing a byte, so a Pod runs the digest that was released. The harness
 refuses a chart that is not the release's chart asset and a harness commit that
 changes any runtime source of the release commit; the fixture and the synthetic
 next release stay this run's own builds. CI takes the same manifest as the
-base64 `release_manifest` dispatch input and verifies both images' build
-attestations against the manifest's source first.
+base64 `release_manifest` dispatch input and verifies the operator image's
+build attestation against the manifest's source first.
 `hack/e2e-release-images-selftest.sh` measures those refusals.
 
 ## Where a run's time went

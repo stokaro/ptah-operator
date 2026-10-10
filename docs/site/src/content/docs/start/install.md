@@ -61,9 +61,9 @@ digest and is never inferred from an image tag or supplied by a chart default.
 
 A release names every one of them in its `release-manifest.txt`. The digest in
 `image` is `<operator-image-digest>`, and the same image is the runner. The
-release also builds the executor from the Ptah commit it was tested with: the
-digest in `executor` is `<executor-image-digest>`, and `executor-ptah-version`
-is the `<ptah-version>` to pass with it. The chart does not read the manifest,
+executor is the Ptah release image the operator was tested with, unchanged:
+the digest in `executor` is `<executor-image-digest>`, and
+`executor-ptah-version` is the `<ptah-version>` to pass with it. The chart does not read the manifest,
 and it would take any other verified executor just as well; the values below
 are where the choice is made. Authenticate the manifest and verify each image's
 signature first, as
@@ -76,7 +76,7 @@ helm upgrade --install ptah-operator ./charts/ptah-operator \
   --create-namespace \
   --set-string image.digest=sha256:<operator-image-digest> \
   --set-string execution.runnerImage=ghcr.io/stokaro/ptah-operator@sha256:<operator-image-digest> \
-  --set-string execution.executorImage=ghcr.io/stokaro/ptah-operator-executor@sha256:<executor-image-digest> \
+  --set-string execution.executorImage=ghcr.io/stokaro/ptah@sha256:<executor-image-digest> \
   --set-string execution.ptahVersion=<ptah-version>
 ```
 
@@ -100,8 +100,8 @@ a GitOps tool that renders with it;
 else they cannot see.
 
 The supplied version is recorded in plans, approvals, Jobs, and applied status
-alongside the executor digest. Verify both values from the executor's release
-provenance before installation; changing the digest requires verifying and
+alongside the executor digest. Verify both values against the Ptah release
+before installation; changing the digest requires verifying and
 supplying its version again. Which Ptah builds have been run against this
 operator is [Ptah compatibility](../../support/ptah/).
 

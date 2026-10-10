@@ -200,7 +200,7 @@ func TestAReleaseRunNamesTheReleaseItInstalled(t *testing.T) {
 	payload := `{"runID":"ci-9-1-1-37","operatorRevision":"abc1234","kubernetes":"1.37.0","suite":"lifecycle",` +
 		`"releaseSource":"46bc229995d0e2fccdebc42f12eb9709b734958b",` +
 		`"releaseImage":"ghcr.io/stokaro/ptah-operator@sha256:` + strings.Repeat("a", 64) + `",` +
-		`"releaseExecutor":"ghcr.io/stokaro/ptah-operator-executor@sha256:` + strings.Repeat("b", 64) + `",` +
+		`"releaseExecutor":"ghcr.io/stokaro/ptah@sha256:` + strings.Repeat("b", 64) + `",` +
 		`"releaseChartSHA256":"` + strings.Repeat("c", 64) + `"}`
 	if err := os.WriteFile(path, []byte(payload), 0o600); err != nil {
 		t.Fatalf("write the context: %v", err)

@@ -9,8 +9,8 @@ operator" is a question about that executor and not about the CLI a person used
 to build the OCI artifact.
 
 `support/ptah.json` is the machine-readable answer, and it is canonical: the
-lifecycle suite takes the commit it builds the executor from out of this file,
-and the table below is generated from it.
+lifecycle suite takes the image it runs as the executor out of this file, and
+the table below is generated from it.
 
 ## The table
 
@@ -21,11 +21,11 @@ things, and [the next section](#three-states-kept-apart) says what.
 <!-- BEGIN GENERATED COMPATIBILITY -->
 **Axis:** Operator version to the Ptah build the operator executes, identified by the digest-pinned executorImage and the ptahVersion bound beside it. It is not the Ptah CLI a person used to build the OCI artifact. The runner is not a third axis: it is built from the operator source this row names, and the exact protocol both halves speak is in runnerProtocolVersion.
 
-**Last measured:** 2026-09-27.
+**Last measured:** 2026-10-10.
 
 | Operator | Declared range | Verified builds | Guide |
 | --- | --- | --- | --- |
-| `edge` | No range | `v0.9.0-73-gf6e562c5b`, not a release | [edge](https://operator.ptah.run/edge/) |
+| `edge` | No range | `v0.13.0` | [edge](https://operator.ptah.run/edge/) |
 
 ### edge
 
@@ -35,19 +35,19 @@ The development state. Its guide is at [https://operator.ptah.run/edge/](https:/
 
 **Verified:**
 
-- `v0.9.0-73-gf6e562c5b`, which is not a Ptah release. Commit [`f6e562c5b0986cd29a53a5cc01938827336b780a`](https://github.com/stokaro/ptah/commit/f6e562c5b0986cd29a53a5cc01938827336b780a), runner protocol version 1, evidence `kubernetes-e2e`. The complete OCI resolution and verification, observation, planning, approval, apply, failure-recovery and convergence lifecycle against PostgreSQL and MySQL, on every supported Kubernetes minor, for both artifact formats this operator reads: application/vnd.stokaro.ptah.schema.v1 for a declared schema, whose declared rows converge on both engines, and application/vnd.stokaro.ptah.migrations.v1 for a versioned migration directory, whose history read, approval gate and applied sequence run against PostgreSQL and MySQL.
+- Ptah `v0.13.0`. Commit [`eb69f8c4435643c5c9f3fbd1c9953b9ba0f44b6f`](https://github.com/stokaro/ptah/commit/eb69f8c4435643c5c9f3fbd1c9953b9ba0f44b6f), runner protocol version 1, evidence `kubernetes-e2e`. The complete OCI resolution and verification, observation, planning, approval, apply, failure-recovery and convergence lifecycle against PostgreSQL and MySQL, on every supported Kubernetes minor, for both artifact formats this operator reads: application/vnd.stokaro.ptah.schema.v1 for a declared schema, whose declared rows converge on both engines, and application/vnd.stokaro.ptah.migrations.v1 for a versioned migration directory, whose history read, approval gate and applied sequence run against PostgreSQL and MySQL.
 
 **Limitations:**
 
-- The verified commit is not a Ptah release. It descends from stokaro/ptah#3794, which completes the `--json` documents stokaro/ptah#3777 added to `schema plan` and `schema apply`: a run that panics still writes one, and `--json` reads no environment variable. The operator reads those documents on every declared-schema Plan and Apply. An executor without #3777, v0.9.0 included, rejects `--json` with exit code 2, so the declared-schema workflow needs at least that merge rather than any build that has the commands. The suite builds the executor image from the verified commit, and an installation has to build or obtain an image carrying at least it until a release does.
-- The scope above was measured against v0.7.0 at 127aa2477. It holds for this commit when a complete lifecycle run repeats it, and this limitation stays until one has.
+- The verified build is the Ptah v0.13.0 release image, ghcr.io/stokaro/ptah:0.13.0 pinned by digest, run as Ptah published it: the operator builds no executor of its own. It contains stokaro/ptah#3777 and #3794, the complete `--json` documents of `schema plan` and `schema apply` that the operator reads on every declared-schema Plan and Apply. An executor without #3777, v0.9.0 included, rejects `--json` with exit code 2.
+- The scope above was measured against v0.7.0 at 127aa2477. It holds for this release when a complete lifecycle run repeats it, and this limitation stays until one has.
 - The migration machine contracts -- `migrations status --json` carrying contract_version and a per-migration record, and `migrations up --json` carrying an outcome -- reached Ptah after v0.3.0-201, and `migrations up --expect-sequence`, which the operator passes on every migration Apply, reached it in v0.9.0. A build older than v0.9.0 resolves and verifies a migration artifact and then fails at its own history document or at the flag every migration Apply passes, so the versioned workflow needs at least v0.9.0 rather than any build that has the commands.
 - The verified scope is the operator's database support window, PostgreSQL 17.x and MySQL 8.4.x LTS. Other engines Ptah addresses are unverified here, whatever the Ptah build.
 - The published verified set is a repository document. It is not compiled into the manager, and nothing compares a running executor's ptahVersion against it, so a combination outside this set is outside what the matrix measured rather than something the operator refuses. What is refused before a database is mutated is a change of any bound execution component between the plan and the apply -- Ptah, the executor image, the runner protocol version, the controller-state version -- checked before the Job is created. The manager's image and revision and the runner image are recorded and not bound: a manager release that changes only them applies the plans and approvals its predecessor left. What is refused after a Job has run is a runner speaking another protocol version, which is a rejected result frame rather than a prevented mutation. Pinning both the executor image and its ptahVersion at install is a requirement on whoever installs, not a check at runtime.
 
 ### Evidence
 
-- `kubernetes-e2e`: The full lifecycle suite in test/e2e, run by the kubernetes-e2e job of .github/workflows/ci.yml on every pull request and on the weekly default-branch run. hack/e2e-kind.sh and the workflow both take the commit from this file, so the Ptah the suite builds and the claim published here are one declaration.
+- `kubernetes-e2e`: The full lifecycle suite in test/e2e, run by the kubernetes-e2e job of .github/workflows/ci.yml on every pull request and on the weekly default-branch run. hack/e2e-kind.sh and the workflow both take the image from this file, so the Ptah build the suite runs and the claim published here are one declaration.
 <!-- END GENERATED COMPATIBILITY -->
 
 ## Three states, kept apart
@@ -63,12 +63,12 @@ version is meant to work with. Where it is `null`, nothing is promised, and
 **Verified** is a measurement. Each `verified` entry names a Ptah build the
 operator was actually run against, the evidence behind it, and what ran.
 `ptahRelease` is `null` when the build is not a released Ptah, and the table
-then names the build by `ptahDescribe`. The suite builds its executor from the
-pinned commit rather than pulling a published image, so what the measurement
-covers is the code at that commit. An operator release builds its executor from
-the same commit with the same recipe, and
-[Releases and provenance](../releases/#the-executor) says how that image is
-checked against this row before it is signed.
+then names the build by `ptahDescribe`. `ptahImage` is the Ptah release image
+that ran, pinned by digest: the suite copies it unchanged and builds no
+executor, so what the measurement covers is exactly that image. An operator
+release names the same image, and
+[Releases and provenance](../releases/#the-executor) says how it is checked
+against this row.
 
 **Absent** is neither. A combination no row mentions is untested, and untested
 is not incompatible. A version with nothing verified carries
@@ -98,11 +98,12 @@ everything".
 
 ## One pin, not two
 
-The commit in `verified[].ptahCommit` is the commit the lifecycle suite builds.
-`hack/e2e-kind.sh` reads it from this file, and the `kubernetes-e2e` job takes
-it from the same place through the support job's output. The release workflow
-reads it here too, through `hack/releaseverify`, when it builds the executor it
-publishes. Nothing else may write it down:
+The image in `verified[].ptahImage` is the executor the lifecycle suite runs,
+and `verified[].ptahCommit` is the commit it was built from. `hack/e2e-kind.sh`
+reads both from this file, and the `kubernetes-e2e` job takes the commit from
+the same place through the support job's output. The release workflow reads
+them here too, through `hack/releaseverify`, when it names the executor in its
+manifest. Nothing else may write them down:
 
 ```sh
 make verify-ptah-support
@@ -125,8 +126,8 @@ was last measured, not when the file was last touched.
 
 The drift finding categories the pinned build can emit are recorded in
 `support/ptah-drift-categories.json`, with the digests of the Ptah files that
-produce them. The job that builds the executor compares the record with the
-pinned source. A new pin whose drift command, row summary or schema classifier
+produce them. The job that builds the shared task images compares the record
+with the pinned source. A new pin whose drift command, row summary or schema classifier
 changed fails there until the record is rewritten:
 
 ```sh

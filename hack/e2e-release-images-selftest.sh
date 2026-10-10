@@ -7,9 +7,9 @@ set -eu
 
 # Prove what the harness refuses when it is told to install a prepared release.
 #
-# E2E_RELEASE_MANIFEST replaces the candidate operator, its runner and the
-# executor with the digests a Release prepare run built, and the chart with the
-# release's chart asset. What makes that a statement about the release is a set
+# E2E_RELEASE_MANIFEST replaces the candidate operator and its runner with the
+# digest a Release prepare run built, the executor with the Ptah image the
+# release names, and the chart with the release's chart asset. What makes that a statement about the release is a set
 # of refusals in hack/e2e-kind.sh: the manifest is complete and unambiguous, the
 # executor is the one the catalog pins, the harness revision changed no runtime
 # source of the release, the registry holds the digest that was released, and
@@ -88,7 +88,7 @@ cat >"$GOOD_MANIFEST" <<EOF
 version=0.2.0
 source-sha=$RELEASE_COMMIT
 image=ghcr.io/stokaro/ptah-operator@$OPERATOR_DIGEST
-executor=ghcr.io/stokaro/ptah-operator-executor@$EXECUTOR_DIGEST
+executor=ghcr.io/stokaro/ptah@$EXECUTOR_DIGEST
 executor-ptah-commit=$PTAH_PIN
 executor-ptah-version=v0.9.0
 chart-asset=ptah-operator-0.2.0.tgz
@@ -110,6 +110,7 @@ run_case() {
 		CONTROLLER_REVISION=$HARNESS_COMMIT
 		E2E_RELEASE_MANIFEST=$GOOD_MANIFEST
 		E2E_PTAH_REVISION=$PTAH_PIN
+		CATALOG_EXECUTOR_IMAGE=ghcr.io/stokaro/ptah@$EXECUTOR_DIGEST
 		E2E_PTAH_VERSION=
 		E2E_EXECUTOR_IMAGE=
 		E2E_RUNNER_IMAGE=
@@ -168,11 +169,14 @@ expect_refused 'a repeated image' 'exactly one image' \
 image_tag=$(manifest_variant image-tag 's/^image=.*/image=ghcr.io\/stokaro\/ptah-operator:v0.2.0/')
 expect_refused 'an image named by tag' 'release image is not pinned by digest' \
 	'E2E_RELEASE_MANIFEST=$image_tag; read_release_manifest'
-executor_tag=$(manifest_variant executor-tag 's/^executor=.*/executor=ghcr.io\/stokaro\/ptah-operator-executor:v0.2.0/')
-expect_refused 'an executor named by tag' 'release executor is not pinned by digest' \
+executor_tag=$(manifest_variant executor-tag 's/^executor=.*/executor=ghcr.io\/stokaro\/ptah:0.13.0/')
+expect_refused 'an executor named by tag' "the catalog pins ghcr.io/stokaro/ptah@$EXECUTOR_DIGEST" \
 	'E2E_RELEASE_MANIFEST=$executor_tag; read_release_manifest'
+other_executor=$(manifest_variant other-executor "s/^executor=.*/executor=ghcr.io\/stokaro\/ptah@sha256:$(printf '%064d' 9)/")
+expect_refused 'another executor digest' "the catalog pins ghcr.io/stokaro/ptah@$EXECUTOR_DIGEST" \
+	'E2E_RELEASE_MANIFEST=$other_executor; read_release_manifest'
 other_ptah=$(manifest_variant ptah 's/^executor-ptah-commit=.*/executor-ptah-commit=2222222222222222222222222222222222222222/')
-expect_refused 'another Ptah commit' 'the catalog pins' \
+expect_refused 'another Ptah commit' 'carries Ptah 2222222222222222222222222222222222222222' \
 	'E2E_RELEASE_MANIFEST=$other_ptah; read_release_manifest'
 short_source=$(manifest_variant short 's/^source-sha=\(.\{12\}\).*/source-sha=\1/')
 expect_refused 'an abbreviated source' 'not a full commit' \

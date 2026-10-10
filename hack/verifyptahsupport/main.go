@@ -49,11 +49,9 @@ const (
 	// against the catalog. It names the support job's output now, and this
 	// path keeps it that way.
 	workflowContractPath = "hack/verify-kubernetes-support.go"
-	// The release builds its executor from the same commit and reads it
-	// through hack/releaseverify, so neither the release workflow nor the
-	// recipe it builds with has a reason to write the commit down.
+	// The release names the executor it ships through hack/releaseverify, so
+	// the release workflow has no reason to write the pin down either.
 	releaseWorkflowPath = ".github/workflows/release.yml"
-	executorRecipePath  = "Dockerfile.executor"
 	// schemaVersion is the shape this program understands. A catalog written
 	// for a later shape is refused rather than read with the fields this
 	// program happens to recognize.
@@ -71,6 +69,9 @@ var (
 	releasePattern  = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+$`)
 	datePattern     = regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2}$`)
 	describePattern = regexp.MustCompile(`-g([0-9a-f]{7,40})$`)
+	// imagePattern is the executor as Ptah publishes it, pinned by digest: the
+	// operator runs Ptah's own release image and builds no executor of its own.
+	imagePattern = regexp.MustCompile(`^ghcr\.io/stokaro/ptah@sha256:([0-9a-f]{64})$`)
 	// looseCommit finds a bare commit anywhere in a file. The cross-file checks
 	// use it to refuse a second copy of the pin rather than to read one.
 	looseCommit = regexp.MustCompile(`\b[0-9a-f]{40}\b`)
@@ -134,6 +135,8 @@ type verified struct {
 	PtahRelease  *string `json:"ptahRelease"`
 	PtahCommit   string  `json:"ptahCommit"`
 	PtahDescribe string  `json:"ptahDescribe"`
+	// PtahImage is the image that ran, as Ptah published it, pinned by digest.
+	PtahImage string `json:"ptahImage"`
 
 	// RunnerProtocolVersion is the frame version the executor and the operator
 	// spoke in the run this row reports. It is not a third compatibility axis:
@@ -156,7 +159,7 @@ type evidence struct {
 func main() {
 	var output string
 	var now string
-	flag.StringVar(&output, "output", "", "what to print: empty to verify only, or `commit` for the verified edge Ptah commit")
+	flag.StringVar(&output, "output", "", "what to print: empty to verify only, or `commit`, `image` or `version` of the verified edge Ptah build")
 	flag.StringVar(&now, "now", "", "validation date as YYYY-MM-DD; defaults to today in UTC")
 	flag.Parse()
 
@@ -179,24 +182,29 @@ func run(output, now string) error {
 		return err
 	}
 	if err := checkSinglePin(loaded, []string{
-		lifecyclePath, workflowPath, workflowContractPath, releaseWorkflowPath, executorRecipePath,
+		lifecyclePath, workflowPath, workflowContractPath, releaseWorkflowPath,
 	}); err != nil {
 		return err
 	}
 
+	if output == "" {
+		return nil
+	}
+	build, err := edgeBuild(loaded)
+	if err != nil {
+		return err
+	}
 	switch output {
-	case "":
-		return nil
 	case "commit":
-		commit, err := edgeCommit(loaded)
-		if err != nil {
-			return err
-		}
-		fmt.Println(commit)
-		return nil
+		fmt.Println(build.PtahCommit)
+	case "image":
+		fmt.Println(build.PtahImage)
+	case "version":
+		fmt.Println(build.PtahDescribe)
 	default:
 		return fmt.Errorf("unknown -output %q", output)
 	}
+	return nil
 }
 
 func load(path string) (catalog, error) {
@@ -480,6 +488,11 @@ func validateMeasurement(name string, measurement verified, claim declared, evid
 			name, *measurement.PtahRelease))
 	}
 	problems = append(problems, validateDescribe(name, measurement)...)
+	if !imagePattern.MatchString(measurement.PtahImage) {
+		problems = append(problems, fmt.Errorf(
+			"%s verifies %s with image %q, which is not ghcr.io/stokaro/ptah pinned by digest",
+			name, measurement.PtahCommit, measurement.PtahImage))
+	}
 
 	if strings.TrimSpace(measurement.Scope) == "" {
 		problems = append(problems, fmt.Errorf("%s verifies %s and does not say what ran", name, measurement.PtahCommit))
@@ -577,9 +590,13 @@ func validateEvidenceIsUsed(loaded catalog) []error {
 // workflow as well would keep working on the day the two disagree, and the
 // published matrix would then name a build nothing ran.
 func checkSinglePin(loaded catalog, paths []string) error {
-	commit, err := edgeCommit(loaded)
+	build, err := edgeBuild(loaded)
 	if err != nil {
 		return err
+	}
+	digest := ""
+	if match := imagePattern.FindStringSubmatch(build.PtahImage); match != nil {
+		digest = match[1]
 	}
 
 	var problems []error
@@ -590,28 +607,33 @@ func checkSinglePin(loaded catalog, paths []string) error {
 			continue
 		}
 		for _, found := range looseCommit.FindAllString(string(raw), -1) {
-			if found == commit {
+			if found == build.PtahCommit {
 				problems = append(problems, fmt.Errorf(
 					"%s writes the verified Ptah commit down a second time; %s is the one declaration and the file has to read it",
 					path, catalogPath))
 				break
 			}
 		}
+		if digest != "" && strings.Contains(string(raw), digest) {
+			problems = append(problems, fmt.Errorf(
+				"%s writes the verified Ptah image digest down a second time; %s is the one declaration and the file has to read it",
+				path, catalogPath))
+		}
 	}
 	return errors.Join(problems...)
 }
 
-// edgeCommit is the Ptah build the development state is verified against, which
-// is the commit the lifecycle suite builds its executor from.
-func edgeCommit(loaded catalog) (string, error) {
+// edgeBuild is the Ptah build the development state is verified against, which
+// is the image the lifecycle suite runs as its executor.
+func edgeBuild(loaded catalog) (verified, error) {
 	for _, entry := range loaded.Releases {
 		if entry.Operator != edgeVersion {
 			continue
 		}
 		if len(entry.Verified) == 0 {
-			return "", fmt.Errorf("%s records no verified Ptah build for %s", catalogPath, edgeVersion)
+			return verified{}, fmt.Errorf("%s records no verified Ptah build for %s", catalogPath, edgeVersion)
 		}
-		return entry.Verified[0].PtahCommit, nil
+		return entry.Verified[0], nil
 	}
-	return "", fmt.Errorf("%s names no %s row", catalogPath, edgeVersion)
+	return verified{}, fmt.Errorf("%s names no %s row", catalogPath, edgeVersion)
 }

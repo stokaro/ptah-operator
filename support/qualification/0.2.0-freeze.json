@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-10-09T18:58:05.650018+00:00",
+  "frozenAt": "2026-10-10T09:36:38.899317+00:00",
   "profileSourceCommit": "1259f4d59343fef049307085e3ea77d2971677cb",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
@@ -28,7 +28,7 @@
     },
     {
       "path": "support/ptah.json",
-      "sha256": "c7af39d043cfe038972ebf112225bd7e7be721c68e4cd8b5478aa2b7981472ab"
+      "sha256": "4ec281950b5fb02e8ac0e475be1ae0109a08ba6964721eb43e41b7a1510f8181"
     },
     {
       "path": "docs/site/src/content/docs/support/databases.md",
@@ -53,7 +53,7 @@
   ],
   "functionalMatrix": {
     "path": "support/qualification/0.2.0-functional-matrix.md",
-    "sha256": "4ec061e237aa2c1150c318f447ec639eddc901b77fea1646b1e9ab3f55ef3ed3",
+    "sha256": "f19fc04e419a9e21c694b7bc7203cba7cecab36862fd7db6c5d1091f53b86cde",
     "generatedFromCommit": "a8b90b5816e9e45d6ba97a1bf006918896d892e3",
     "command": "go run ./hack/acceptancecoverage",
     "kubernetesMinors": [
@@ -68,7 +68,7 @@
     "cellsPerPlatform": 27,
     "requiredCells": 54,
     "additionalRequirements": "Q-01 through Q-12 in support/qualification/0.2.0-coverage.md remain required; the functional matrix alone is insufficient.",
-    "sourceChanges": "Move plan-store alerting from lifecycle to certificates and PostgreSQL reference data from certificates to data-plane. Master CI run 37420035400 passed in 92m45s; its slowest lifecycle spent 20m02s on plan-store alerting before the upgrade fault window. Rebalance the existing nine suites without adding phases or scenarios. All 17 phases, 345 scenario/engine/family rows, supported minors and platforms, observation windows, and Q-01 through Q-12 targets remain unchanged."
+    "sourceChanges": "Move plan-store alerting from lifecycle to certificates and PostgreSQL reference data from certificates to data-plane. Master CI run 37420035400 passed in 92m45s; its slowest lifecycle spent 20m02s on plan-store alerting before the upgrade fault window. Rebalance the existing nine suites without adding phases or scenarios. All 17 phases, 345 scenario/engine/family rows, supported minors and platforms, observation windows, and Q-01 through Q-12 targets remain unchanged. Revision 42 changes only the line naming the Ptah build under test, now the v0.13.0 release image; no phase, scenario, cell, platform or target changes."
   },
   "publishedPredecessors": {
     "checkedAt": "2026-09-29T19:00:03+00:00",
@@ -79,10 +79,10 @@
     "disposition": "No published predecessor. Synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 41,
+  "revision": 42,
   "supersedes": {
-    "freezeCommit": "1259f4d59343fef049307085e3ea77d2971677cb",
-    "sha256": "75a14419827f8d12cff909dc9285df023641f9aecb136d667171167f0ad4c249"
+    "freezeCommit": "73a718ab330dc4e0bdf4fcb8e0b8c6c053987704",
+    "sha256": "7e144ac7874a86e552b7f04bbada419225b0de68964f1416d4cba3b1ac66b60d"
   },
-  "revisionReason": "Let the accountable owner of each Evidence and decision role be the team that holds it rather than one person, as the release owner decided on October 9, 2026 for #584: every 0.2.0 role and contact is Ptah Engineering. Stop freezing support/acceptance/0.2.0.json: it is the output qualification fills, its targets restate this profile, which stays frozen, and pinning its initial text would refuse the completed record. No target, threshold, workload, scenario, coverage cell or execution requirement changes. Revision 40 and every result recorded under it are preserved. This revision records no successful qualification or production acceptance result."
+  "revisionReason": "Run Ptah's own v0.13.0 release image as the executor, pinned by digest in support/ptah.json, as the release owner decided on October 10, 2026: the operator builds, signs and publishes no executor of its own. support/ptah.json changes to that release and its image; the profile, its targets and every other input are unchanged."
 }

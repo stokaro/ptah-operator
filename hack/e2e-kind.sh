@@ -76,13 +76,8 @@ if [ "${1:-}" != --source-snapshot ]; then
 		snapshot_fail "exact-source snapshot lacks an executable E2E entrypoint"
 	E2E_SOURCE_REPOSITORY_ROOT=$BOOTSTRAP_ROOT_DIR
 	E2E_CONTROLLER_REVISION=$SNAPSHOT_REVISION
-	E2E_PTAH_SIBLING_SOURCE_DIR=
-	if [ -z "${E2E_PTAH_SOURCE_DIR:-}" ] &&
-		git -C "$BOOTSTRAP_ROOT_DIR/../ptah" rev-parse --git-dir >/dev/null 2>&1; then
-		E2E_PTAH_SIBLING_SOURCE_DIR=$BOOTSTRAP_ROOT_DIR/../ptah
-	fi
 	export E2E_SOURCE_REPOSITORY_ROOT
-	export E2E_CONTROLLER_REVISION E2E_PTAH_SIBLING_SOURCE_DIR
+	export E2E_CONTROLLER_REVISION
 	SNAPSHOT_BOOTSTRAP_COMPLETED=1
 	"$SOURCE_SNAPSHOT_ROOT/hack/e2e-kind.sh" --source-snapshot "$@"
 	exit $?
@@ -92,7 +87,6 @@ shift
 ROOT_DIR=$BOOTSTRAP_ROOT_DIR
 SOURCE_REPOSITORY_ROOT=${E2E_SOURCE_REPOSITORY_ROOT:?E2E_SOURCE_REPOSITORY_ROOT is required inside the source snapshot}
 CONTROLLER_REVISION=${E2E_CONTROLLER_REVISION:?E2E_CONTROLLER_REVISION is required inside the source snapshot}
-E2E_PTAH_SIBLING_SOURCE_DIR=${E2E_PTAH_SIBLING_SOURCE_DIR:-}
 
 DOCKER_CONTEXT=${DOCKER_CONTEXT:-remote-dev-container}
 K8S_VERSION=${K8S_VERSION:-}
@@ -100,7 +94,6 @@ KIND_NODE_IMAGE=${KIND_NODE_IMAGE:-}
 E2E_EXECUTOR_IMAGE=${E2E_EXECUTOR_IMAGE:-}
 E2E_RUNNER_IMAGE=${E2E_RUNNER_IMAGE:-}
 E2E_PTAH_VERSION=${E2E_PTAH_VERSION:-}
-E2E_PTAH_SOURCE_DIR=${E2E_PTAH_SOURCE_DIR:-}
 E2E_PTAH_REVISION=${E2E_PTAH_REVISION:-}
 # E2E_STOP_AFTER=bootstrap brings the environment up, keeps it, and runs no
 # phase. The demonstration lab uses it, so that one bootstrap serves both the
@@ -111,11 +104,11 @@ E2E_STOP_AFTER=${E2E_STOP_AFTER:-}
 # matrix from and refuses unless every phase below belongs to exactly one suite.
 # all runs them in the order they appear here, which is what make e2e does.
 E2E_SUITE=${E2E_SUITE:-all}
-# E2E_STOP_AFTER=images builds the four task images, audits them, writes them
+# E2E_STOP_AFTER=images builds the three task images, audits them, writes them
 # and their provenance to E2E_IMAGE_EXPORT_DIR, and stops before the cluster
 # exists. E2E_PREBUILT_IMAGE_DIR reads that directory back: the images are
-# loaded and checked against this run's own commit and Ptah pin instead of being
-# built again. One driver, so a matrix that builds once and a local run that
+# loaded and checked against this run's own commit instead of being built
+# again. One driver, so a matrix that builds once and a local run that
 # builds for itself execute the same code.
 E2E_IMAGE_EXPORT_DIR=${E2E_IMAGE_EXPORT_DIR:-}
 E2E_PREBUILT_IMAGE_DIR=${E2E_PREBUILT_IMAGE_DIR:-}
@@ -126,7 +119,6 @@ E2E_PREBUILT_IMAGE_DIR=${E2E_PREBUILT_IMAGE_DIR:-}
 # the synthetic next release stay this run's own builds.
 E2E_RELEASE_MANIFEST=${E2E_RELEASE_MANIFEST:-}
 E2E_ENVIRONMENT_FILE=${E2E_ENVIRONMENT_FILE:-}
-E2E_PTAH_GIT_URL=${E2E_PTAH_GIT_URL:-https://github.com/stokaro/ptah.git}
 E2E_REGISTRY_IMAGE=${E2E_REGISTRY_IMAGE:-registry:3@sha256:1be55279f18a2fe1a74edf2664cac61c1bea305b7b4642dab412e7affdcb3e33}
 E2E_POSTGRES_SOURCE_IMAGE=${E2E_POSTGRES_SOURCE_IMAGE:-postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73}
 E2E_MYSQL_SOURCE_IMAGE=${E2E_MYSQL_SOURCE_IMAGE:-mysql:8.4@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb}
@@ -261,19 +253,19 @@ is_pinned_image() {
 	printf '%s\n' "$1" | grep -Eq '^[^[:space:]@]+@sha256:[0-9a-f]{64}$'
 }
 
-# The four images this task builds, each with the role it is loaded back as. The
-# role is what keeps the synthetic next release from being taken for the
+# The three images this task builds, each with the role it is loaded back as.
+# The role is what keeps the synthetic next release from being taken for the
 # candidate: they are built from the same commit and differ only in the manager
 # image, so a transfer that mixed them up would install one as the other and
-# prove the upgrade path against nothing.
-TASK_IMAGE_ROLES='operator next-operator fixture executor'
+# prove the upgrade path against nothing. The executor is not among them: it is
+# Ptah's own release image.
+TASK_IMAGE_ROLES='operator next-operator fixture'
 
 task_image_for_role() {
 	case $1 in
 		operator) printf '%s' "$OPERATOR_IMAGE" ;;
 		next-operator) printf '%s' "$NEXT_OPERATOR_IMAGE" ;;
 		fixture) printf '%s' "$FIXTURE_BUILD_IMAGE" ;;
-		executor) printf '%s' "$PTAH_IMAGE" ;;
 		*) fail "no task image has the role $1" ;;
 	esac
 }
@@ -406,8 +398,8 @@ SUPPORTED_KIND_NODE_IMAGE=$("$ROOT_DIR/hack/e2e-kubernetes-support-image.sh" \
 	"$ROOT_DIR/support/kubernetes.json" "$K8S_VERSION") ||
 	fail "Kubernetes $K8S_VERSION is not an exact member of support/kubernetes.json"
 # The Ptah build this suite verifies is declared once, in the compatibility
-# catalog, because the claim the catalog publishes and the commit the suite
-# actually builds have to be the same commit. A default here would be a second
+# catalog, because the claim the catalog publishes and the build the suite
+# actually runs have to be the same build. A default here would be a second
 # list, and the first day they disagreed the published matrix would name a
 # build nothing ran.
 if [ -z "$E2E_PTAH_REVISION" ]; then
@@ -420,6 +412,21 @@ if [ -z "$E2E_PTAH_REVISION" ]; then
 fi
 printf '%s\n' "$E2E_PTAH_REVISION" | grep -Eq '^[0-9a-f]{40}$' ||
 	fail "E2E_PTAH_REVISION must be an exact 40-character lowercase Git commit"
+# The executor is that build's release image as Ptah published it, pinned by
+# digest in the same row. The suite copies it unchanged and builds none.
+CATALOG_EXECUTOR_IMAGE=$(jq -r '
+	[.releases[] | select(.operator == "edge") | .verified[].ptahImage] | first // empty
+' "$ROOT_DIR/support/ptah.json") ||
+	fail "support/ptah.json could not be read for the verified Ptah image"
+is_pinned_image "$CATALOG_EXECUTOR_IMAGE" ||
+	fail "support/ptah.json declares no digest-pinned Ptah image for the edge operator"
+CATALOG_PTAH_VERSION=$(jq -r '
+	[.releases[] | select(.operator == "edge") | .verified[].ptahDescribe] | first // empty
+' "$ROOT_DIR/support/ptah.json") ||
+	fail "support/ptah.json could not be read for the verified Ptah version"
+[ -n "$CATALOG_PTAH_VERSION" ] ||
+	fail "support/ptah.json declares no Ptah version for the edge operator"
+PTAH_COMMIT=$E2E_PTAH_REVISION
 if [ -z "$KIND_NODE_IMAGE" ]; then
 	KIND_NODE_IMAGE=$SUPPORTED_KIND_NODE_IMAGE
 fi
@@ -440,12 +447,6 @@ ACTUAL_KIND_VERSION=$(kind version | awk '{print $2}')
 
 if [ -n "$E2E_IMAGE_EXPORT_DIR" ] && [ -n "$E2E_PREBUILT_IMAGE_DIR" ]; then
 	fail "E2E_IMAGE_EXPORT_DIR writes the task images and E2E_PREBUILT_IMAGE_DIR reads them; name one"
-fi
-if [ -n "$E2E_PREBUILT_IMAGE_DIR" ] && [ -n "$E2E_EXECUTOR_IMAGE" ]; then
-	fail "E2E_PREBUILT_IMAGE_DIR carries the executor; E2E_EXECUTOR_IMAGE would name a second one"
-fi
-if [ "$E2E_STOP_AFTER" = images ] && [ -n "$E2E_EXECUTOR_IMAGE" ]; then
-	fail "E2E_STOP_AFTER=images writes the four images it built, and an external executor is not one of them"
 fi
 if [ -n "$E2E_IMAGE_EXPORT_DIR" ] && [ "$E2E_STOP_AFTER" != images ]; then
 	fail "E2E_IMAGE_EXPORT_DIR is written by E2E_STOP_AFTER=images, which this run is not"
@@ -480,7 +481,7 @@ release_manifest_field() {
 # What every runtime byte and the chart are built from. A harness commit may
 # differ from the release source only outside these paths, so the phases assert
 # against the code the prepared images were built from.
-RELEASE_RUNTIME_PATHS='api cmd internal config charts go.mod go.sum Dockerfile Dockerfile.executor support/ptah.json'
+RELEASE_RUNTIME_PATHS='api cmd internal config charts go.mod go.sum Dockerfile support/ptah.json'
 RELEASE_SOURCE_SHA=
 RELEASE_OPERATOR_IMAGE=
 RELEASE_EXECUTOR_IMAGE=
@@ -520,8 +521,8 @@ read_release_manifest() {
 		fail "the release chart-asset-sha256 is not a SHA-256"
 	is_pinned_image "$RELEASE_OPERATOR_IMAGE" ||
 		fail "the release image is not pinned by digest: $RELEASE_OPERATOR_IMAGE"
-	is_pinned_image "$RELEASE_EXECUTOR_IMAGE" ||
-		fail "the release executor is not pinned by digest: $RELEASE_EXECUTOR_IMAGE"
+	[ "$RELEASE_EXECUTOR_IMAGE" = "$CATALOG_EXECUTOR_IMAGE" ] ||
+		fail "the release executor is $RELEASE_EXECUTOR_IMAGE and the catalog pins $CATALOG_EXECUTOR_IMAGE"
 	[ "$release_ptah_commit" = "$E2E_PTAH_REVISION" ] ||
 		fail "the release executor carries Ptah $release_ptah_commit and the catalog pins $E2E_PTAH_REVISION"
 	[ -n "$release_ptah_version" ] || fail "the release manifest names no executor Ptah version"
@@ -550,6 +551,11 @@ verify_release_chart() {
 }
 if [ -n "$E2E_RELEASE_MANIFEST" ]; then
 	read_release_manifest
+else
+	E2E_EXECUTOR_IMAGE=${E2E_EXECUTOR_IMAGE:-$CATALOG_EXECUTOR_IMAGE}
+	if [ "$E2E_EXECUTOR_IMAGE" = "$CATALOG_EXECUTOR_IMAGE" ]; then
+		E2E_PTAH_VERSION=${E2E_PTAH_VERSION:-$CATALOG_PTAH_VERSION}
+	fi
 fi
 
 case "$DOCKER_CONTEXT" in
@@ -652,7 +658,6 @@ OPERATOR_IMAGE="${IMAGE_REPOSITORY}:${IMAGE_TAG}"
 NEXT_IMAGE_REPOSITORY=ptah-operator-e2e.local/ptah-operator-next
 NEXT_OPERATOR_IMAGE="${NEXT_IMAGE_REPOSITORY}:${IMAGE_TAG}"
 FIXTURE_BUILD_IMAGE="ptah-operator-e2e.local/e2e-fixture:${IMAGE_TAG}"
-PTAH_IMAGE="ptah-executor-e2e.local/ptah:${IMAGE_TAG}"
 REGISTRY_CONTAINER=$(dns_name ptah-registry "$identity" 63)
 REGISTRY_SERVICE=e2e-registry
 REGISTRY_DNS_NAME="${REGISTRY_SERVICE}.${TEST_NAMESPACE}.svc.cluster.local"
@@ -883,12 +888,12 @@ image_label_value() {
 # load_prebuilt_images reads the images an E2E_STOP_AFTER=images run wrote and
 # refuses anything that is not this run's own inputs.
 #
-# The manifest names the commit the images were built from and the Ptah commit
-# the executor carries, and each image repeats both as labels of its own. Both
-# are checked: a manifest is a file next to the images, and a label travels
-# inside the image a registry or a transfer would have to rewrite to forge. A
-# mismatch on either is a refusal rather than a rebuild, because a run that
-# quietly rebuilt would report a pass for images nobody transferred.
+# The manifest names the commit the images were built from, and each image
+# repeats it as a label of its own. Both are checked: a manifest is a file next
+# to the images, and a label travels inside the image a registry or a transfer
+# would have to rewrite to forge. A mismatch on either is a refusal rather than
+# a rebuild, because a run that quietly rebuilt would report a pass for images
+# nobody transferred.
 load_prebuilt_images() {
 	prebuilt_manifest=$E2E_PREBUILT_IMAGE_DIR/images.json
 	prebuilt_revision=$(jq -r '.operatorRevision // empty' "$prebuilt_manifest")
@@ -896,16 +901,6 @@ load_prebuilt_images() {
 		fail "$prebuilt_manifest names no operator revision"
 	[ "$prebuilt_revision" = "$CONTROLLER_REVISION" ] ||
 		fail "the prepared images were built from $prebuilt_revision and this run tests $CONTROLLER_REVISION"
-	prebuilt_ptah_commit=$(jq -r '.ptahCommit // empty' "$prebuilt_manifest")
-	[ "$prebuilt_ptah_commit" = "$E2E_PTAH_REVISION" ] ||
-		fail "the prepared executor carries Ptah $prebuilt_ptah_commit and the catalog pins $E2E_PTAH_REVISION"
-	if [ -z "$E2E_PTAH_VERSION" ]; then
-		E2E_PTAH_VERSION=$(jq -r '.ptahVersion // empty' "$prebuilt_manifest")
-	fi
-	[ -n "$E2E_PTAH_VERSION" ] ||
-		fail "$prebuilt_manifest names no Ptah version, and none was supplied"
-	PTAH_COMMIT=$prebuilt_ptah_commit
-	PTAH_SHORT_COMMIT=$(printf '%s' "$PTAH_COMMIT" | cut -c1-12)
 
 	for prebuilt_role in $TASK_IMAGE_ROLES; do
 		prebuilt_file=$(jq -r --arg role "$prebuilt_role" \
@@ -928,16 +923,8 @@ load_prebuilt_images() {
 			fail "the loaded $prebuilt_role image is $prebuilt_loaded and the manifest declares $prebuilt_identity"
 		[ "$(image_label_value "$prebuilt_reference" ptah.run/e2e-role)" = "$prebuilt_role" ] ||
 			fail "the loaded $prebuilt_role image does not declare that role"
-		case $prebuilt_role in
-			executor)
-				[ "$(image_label_value "$prebuilt_reference" ptah.run/e2e-ptah-commit)" = "$PTAH_COMMIT" ] ||
-					fail "the loaded executor image does not declare Ptah commit $PTAH_COMMIT"
-				;;
-			*)
-				[ "$(image_label_value "$prebuilt_reference" ptah.run/e2e-operator-revision)" = "$CONTROLLER_REVISION" ] ||
-					fail "the loaded $prebuilt_role image does not declare revision $CONTROLLER_REVISION"
-				;;
-		esac
+		[ "$(image_label_value "$prebuilt_reference" ptah.run/e2e-operator-revision)" = "$CONTROLLER_REVISION" ] ||
+			fail "the loaded $prebuilt_role image does not declare revision $CONTROLLER_REVISION"
 		add_created_image "$prebuilt_target"
 		docker --context "$DOCKER_CONTEXT" tag "$prebuilt_reference" "$prebuilt_target" ||
 			fail "the $prebuilt_role image could not be tagged as $prebuilt_target"
@@ -950,7 +937,7 @@ load_prebuilt_images() {
 	IMAGE_CREATED=1
 }
 
-# export_task_images writes the four images and their provenance, for a matrix
+# export_task_images writes the three images and their provenance, for a matrix
 # that builds them once. The references are this run's own, so the manifest
 # carries them: a reader tags what it loaded under its own names, and the
 # identity it checks is the image's rather than a tag anyone can move.
@@ -977,13 +964,10 @@ export_task_images() {
 	done
 	jq -n \
 		--arg operatorRevision "$CONTROLLER_REVISION" \
-		--arg ptahCommit "$PTAH_COMMIT" \
-		--arg ptahVersion "$E2E_PTAH_VERSION" \
 		--slurpfile images "$export_entries" \
-		'{operatorRevision: $operatorRevision, ptahCommit: $ptahCommit, ptahVersion: $ptahVersion,
-		  images: $images[0]}' >"$E2E_IMAGE_EXPORT_DIR/images.json" ||
+		'{operatorRevision: $operatorRevision, images: $images[0]}' >"$E2E_IMAGE_EXPORT_DIR/images.json" ||
 		fail "the image manifest could not be written"
-	printf 'e2e: wrote the four task images and their provenance to %s\n' "$E2E_IMAGE_EXPORT_DIR"
+	printf 'e2e: wrote the three task images and their provenance to %s\n' "$E2E_IMAGE_EXPORT_DIR"
 }
 
 add_created_image() {
@@ -2119,10 +2103,6 @@ fi
 if docker --context "$DOCKER_CONTEXT" image inspect "$FIXTURE_BUILD_IMAGE" >/dev/null 2>&1; then
 	fail "refusing to overwrite pre-existing image $FIXTURE_BUILD_IMAGE; choose another E2E_RUN_ID"
 fi
-if [ -z "$E2E_EXECUTOR_IMAGE" ] &&
-	docker --context "$DOCKER_CONTEXT" image inspect "$PTAH_IMAGE" >/dev/null 2>&1; then
-	fail "refusing to overwrite pre-existing image $PTAH_IMAGE; choose another E2E_RUN_ID"
-fi
 if docker --context "$DOCKER_CONTEXT" container inspect "$REGISTRY_CONTAINER" >/dev/null 2>&1; then
 	fail "refusing to reuse pre-existing registry container $REGISTRY_CONTAINER; choose another E2E_RUN_ID"
 fi
@@ -2421,59 +2401,9 @@ if [ "$E2E_DIRECT_HOST_ACCESS" -eq 0 ]; then
 	fi
 fi
 
-# Empty unless the executor is built here. A caller who supplies
-# E2E_EXECUTOR_IMAGE gets no Ptah source, and the bootstrap hand-off prints this
-# name; without the assignment set -u ends the run at the line that should have
-# written the lab's environment. The lab command reads the empty value and says
-# where a Ptah CLI has to come from instead.
-PTAH_BUILD_CONTEXT=
-timing_next bootstrap ptah-executor-image
+timing_next bootstrap prebuilt-images
 if [ -n "$E2E_PREBUILT_IMAGE_DIR" ]; then
 	load_prebuilt_images
-	EXECUTOR_SOURCE_IMAGE=$PTAH_IMAGE
-elif [ -z "$E2E_EXECUTOR_IMAGE" ]; then
-	if [ -z "$E2E_PTAH_SOURCE_DIR" ]; then
-		if [ -n "$E2E_PTAH_SIBLING_SOURCE_DIR" ] &&
-			git -C "$E2E_PTAH_SIBLING_SOURCE_DIR" rev-parse --git-dir >/dev/null 2>&1; then
-			E2E_PTAH_SOURCE_DIR=$E2E_PTAH_SIBLING_SOURCE_DIR
-		else
-			E2E_PTAH_SOURCE_DIR=$WORK_DIR/ptah-repository
-			printf 'e2e: cloning Ptah source from %s\n' "$E2E_PTAH_GIT_URL"
-			git clone --filter=blob:none --no-checkout "$E2E_PTAH_GIT_URL" "$E2E_PTAH_SOURCE_DIR"
-		fi
-	fi
-	git -C "$E2E_PTAH_SOURCE_DIR" rev-parse --git-dir >/dev/null 2>&1 ||
-		fail "E2E_PTAH_SOURCE_DIR must name a Ptah Git checkout"
-	PTAH_COMMIT=$(git -C "$E2E_PTAH_SOURCE_DIR" rev-parse "${E2E_PTAH_REVISION}^{commit}")
-	[ "$PTAH_COMMIT" = "$E2E_PTAH_REVISION" ] ||
-		fail "Ptah revision resolved to $PTAH_COMMIT, expected exact commit $E2E_PTAH_REVISION"
-	PTAH_SHORT_COMMIT=$(printf '%s' "$PTAH_COMMIT" | cut -c1-12)
-	if [ -z "$E2E_PTAH_VERSION" ]; then
-		E2E_PTAH_VERSION=$(git -C "$E2E_PTAH_SOURCE_DIR" describe --tags --always "$PTAH_COMMIT")
-	fi
-	PTAH_BUILD_DATE=$(git -C "$E2E_PTAH_SOURCE_DIR" show -s --format=%cI "$PTAH_COMMIT")
-	PTAH_SOURCE_ARCHIVE=$WORK_DIR/ptah-source.tar
-	PTAH_BUILD_CONTEXT=$WORK_DIR/ptah-source
-	mkdir -p "$PTAH_BUILD_CONTEXT"
-	git -C "$E2E_PTAH_SOURCE_DIR" archive --format=tar \
-		--output="$PTAH_SOURCE_ARCHIVE" "$PTAH_COMMIT"
-	tar -xf "$PTAH_SOURCE_ARCHIVE" -C "$PTAH_BUILD_CONTEXT"
-	cp "$ROOT_DIR/Dockerfile.executor" "$PTAH_BUILD_CONTEXT/Dockerfile.e2e"
-	printf 'e2e: building Ptah executor %s from commit %s\n' "$PTAH_IMAGE" "$PTAH_COMMIT"
-	add_created_image "$PTAH_IMAGE"
-	docker --context "$DOCKER_CONTEXT" buildx build \
-		--builder "$DOCKER_CONTEXT" \
-		--load \
-		--file "$PTAH_BUILD_CONTEXT/Dockerfile.e2e" \
-		--build-arg "PTAH_BUILD_VERSION=${E2E_PTAH_VERSION}" \
-		--build-arg "PTAH_BUILD_COMMIT=${PTAH_SHORT_COMMIT}" \
-		--build-arg "PTAH_BUILD_DATE=${PTAH_BUILD_DATE}" \
-		--label "ptah.run/e2e-role=executor" \
-		--label "ptah.run/e2e-ptah-commit=${PTAH_COMMIT}" \
-		--tag "$PTAH_IMAGE" "$PTAH_BUILD_CONTEXT"
-	EXECUTOR_SOURCE_IMAGE=$PTAH_IMAGE
-else
-	EXECUTOR_SOURCE_IMAGE=$E2E_EXECUTOR_IMAGE
 fi
 if [ -n "$E2E_RUNNER_IMAGE" ]; then
 	RUNNER_SOURCE_IMAGE=$E2E_RUNNER_IMAGE
@@ -2720,9 +2650,9 @@ printf 'server = "http://%s"\n\n[host."http://%s"]\n  capabilities = ["pull", "r
 configure_registry_hosts_on_kind_nodes
 
 printf '%s\n' 'e2e: mirroring immutable execution and database images into the isolated registry'
+RELEASE_IMAGES_FILE=$WORK_DIR/release-images.jsonl
+: >"$RELEASE_IMAGES_FILE"
 if [ -n "$E2E_RELEASE_MANIFEST" ]; then
-	RELEASE_IMAGES_FILE=$WORK_DIR/release-images.jsonl
-	: >"$RELEASE_IMAGES_FILE"
 	copy_release_image "$RELEASE_OPERATOR_IMAGE" ptah-operator
 else
 	push_task_image "$OPERATOR_IMAGE" ptah-operator
@@ -2750,7 +2680,7 @@ if [ -n "$E2E_RELEASE_MANIFEST" ]; then
 	copy_release_image "$RELEASE_OPERATOR_IMAGE" ptah-runner
 	E2E_RUNNER_IMAGE=$PUSHED_IMAGE_REF
 else
-	mirror_task_image "$EXECUTOR_SOURCE_IMAGE" ptah-executor
+	copy_release_image "$E2E_EXECUTOR_IMAGE" ptah-executor
 	E2E_EXECUTOR_IMAGE=$PUSHED_IMAGE_REF
 	mirror_task_image "$RUNNER_SOURCE_IMAGE" ptah-runner
 	E2E_RUNNER_IMAGE=$PUSHED_IMAGE_REF
@@ -3016,11 +2946,9 @@ if [ "$E2E_STOP_AFTER" = bootstrap ]; then
 		printf 'E2E_REGISTRY_IP=%s\n' "$REGISTRY_IP"
 		printf 'E2E_REGISTRY_CONTAINER_ID=%s\n' "$REGISTRY_CONTAINER_ID"
 		# What a client outside the cluster needs to publish an artifact the
-		# operator will read: the registry's address on the Docker host, and the
-		# exact Ptah source the executor was built from, so the CLI doing the
-		# publishing is the build that will read it back.
+		# operator will read: the registry's address on the Docker host. The
+		# Ptah CLI doing the publishing is the release E2E_PTAH_VERSION names.
 		printf 'E2E_REGISTRY_HOST_ADDRESS=%s\n' "$REMOTE_REGISTRY"
-		printf 'E2E_PTAH_BUILD_CONTEXT=%s\n' "$PTAH_BUILD_CONTEXT"
 		printf 'E2E_REGISTRY_USERNAME=%s\n' "$REGISTRY_USERNAME"
 		printf 'E2E_REGISTRY_CREDENTIALS_FILE=%s\n' "$REGISTRY_CREDENTIALS_FILE"
 		printf 'E2E_EXTERNAL_POSTGRES_CONTAINER_ID=%s\n' "$EXTERNAL_PG_CONTAINER_ID"

@@ -3,7 +3,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from release_scan import decode_stream, govulncheck_findings, manifest_fields, trivy_findings
+from release_scan import client_assets, decode_stream, govulncheck_findings, manifest_fields, trivy_findings
 
 STREAM = b'''{"config":{"protocol_version":"v1.0.0","scanner_name":"govulncheck"}}
 {"osv":{"id":"GO-2026-0001"}}
@@ -31,16 +31,28 @@ class ReleaseScanTest(unittest.TestCase):
 
     def test_the_manifest_must_name_pinned_images_once(self):
         good = ('source-sha=' + 'a' * 40 + '\nimage=ghcr.io/stokaro/ptah-operator@sha256:' + 'b' * 64 +
-                '\nexecutor=ghcr.io/stokaro/ptah-operator-executor@sha256:' + 'c' * 64 + '\nexecutor-ptah-commit=' + 'd' * 40 + '\n')
+                '\nexecutor=ghcr.io/stokaro/ptah@sha256:' + 'c' * 64 + '\n')
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'release-manifest.txt'
             path.write_text(good)
-            self.assertEqual(manifest_fields(path)['source-sha'], 'a' * 40)
+            self.assertEqual(manifest_fields(path)['executor'], 'ghcr.io/stokaro/ptah@sha256:' + 'c' * 64)
             for broken in (good.replace('@sha256:' + 'b' * 64, ':v0.2.0'), good + 'image=again\n',
-                           good.replace('executor-ptah-commit=' + 'd' * 40 + '\n', '')):
+                           good.replace('executor=ghcr.io/stokaro/ptah@sha256:' + 'c' * 64 + '\n', '')):
                 path.write_text(broken)
                 with self.assertRaises(ValueError):
                     manifest_fields(path)
+
+    def test_every_client_asset_the_manifest_names_must_be_beside_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for name in ('kubectl-ptah-linux-amd64', 'kubectl-ptah-darwin-arm64'):
+                (Path(directory) / name).write_bytes(b'binary')
+            fields = {'client-assets': 'kubectl-ptah-linux-amd64,kubectl-ptah-darwin-arm64'}
+            self.assertEqual([path.name for path in client_assets(fields, directory)],
+                             ['kubectl-ptah-linux-amd64', 'kubectl-ptah-darwin-arm64'])
+            self.assertEqual(client_assets({}, directory), [])
+            for broken in ('kubectl-ptah-linux-amd64,kubectl-ptah-linux-arm64', '../kubectl-ptah-linux-amd64'):
+                with self.assertRaises(ValueError):
+                    client_assets({'client-assets': broken}, directory)
 
 
 if __name__ == '__main__':

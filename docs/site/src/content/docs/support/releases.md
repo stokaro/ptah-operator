@@ -8,10 +8,10 @@ exists. Publication requires a separate manual request from that tag naming
 the qualified manifest digest. The artifact set contains:
 
 - a `linux/amd64` and `linux/arm64` manager/runner image;
-- a `linux/amd64` and `linux/arm64` Ptah executor image, built from the Ptah
-  commit that `support/ptah.json` pins at the selected source;
+- a reference to the Ptah release image the operator runs as its executor,
+  the one `support/ptah.json` pins by digest at the selected source;
 - a reproducible Helm chart asset whose version and `appVersion` match the tag;
-- a keyless signature and GitHub build provenance for each image digest;
+- a keyless signature and GitHub build provenance for the image digest;
 - GitHub build provenance for every downloadable asset;
 - the reproducibly packaged chart, a digest manifest, and SHA-256 checksums;
 - the acceptance evidence of the CI run that proved the candidate.
@@ -179,33 +179,19 @@ A published release keeps the bundle it published.
 ## The executor
 
 The executor is Ptah itself, the program an operation Job runs against the
-database. A release publishes it as `ghcr.io/stokaro/ptah-operator-executor`,
-built from the commit the `edge` row of `support/ptah.json` verifies. That is
-the commit the acceptance suite builds its own executor from, and both builds
-use the same recipe, `Dockerfile.executor`, so the image a release ships comes
-from the source and the recipe the suite ran.
+database. A release does not build it. It names the Ptah release image
+`ghcr.io/stokaro/ptah` at the digest the `edge` row of `support/ptah.json`
+pins, which is the image the acceptance suite copies and runs unchanged.
 
-The recipe applies the `golang.org/x/net` v0.60.0 security update through a
-separate module file. The pinned source keeps its original `go.mod` and `go.sum`;
-the compiled binary records the updated dependency. The build requires the
-source dependency to be v0.59.0 so a new Ptah pin must reassess this override.
+The workflow reads that image back from the registry before it writes the
+manifest, and refuses it unless the index digest is the pinned one and the
+index carries both `linux/amd64` and `linux/arm64`. Ptah's own release
+workflow builds, signs and attests the image; this release adds no signature
+of its own to it.
 
-The workflow fetches that commit from `https://github.com/stokaro/ptah` by its
-hash and refuses to build when Git resolves anything else. The build stamps the
-binary with the full commit, the catalog's `ptahDescribe` and the commit date,
-and labels the image with the commit as `org.opencontainers.image.revision`
-and the describe string as `org.opencontainers.image.version`. Before the
-digest is attested or signed, the workflow reads the labels back on each
-platform and requires them to name the pinned commit and describe string, and
-requires the build provenance to carry the commit, the describe string and the
-commit date as build arguments. An image that names another Ptah build is not
-signed.
-
-The release manifest records the digest as `executor`, the staging tag as
-`executor-tag`, and the build it carries as `executor-ptah-commit` and
-`executor-ptah-version`. The verifier refuses a manifest whose commit or version
-differs from the catalog at the tag, or whose `executor` is not a digest
-reference in that repository.
+The release manifest records the image as `executor` and the build it carries
+as `executor-ptah-commit` and `executor-ptah-version`. The verifier refuses a
+manifest whose image, commit or version differs from the catalog at the tag.
 
 The chart still has no executor default. The release names a build; the
 installer decides to pin it, and can pin another verified executor instead.
@@ -279,15 +265,14 @@ the release that reads the state already written, not an older one.
 A fresh transaction first creates and attests a minimal `state=prepared` journal
 that binds the intended version, producer ref, source commit, stable transaction
 ID, expected chart name,
-and the exact retention tags
-`ghcr.io/stokaro/ptah-operator:tx-<source-sha>-<run-id>` and
-`ghcr.io/stokaro/ptah-operator-executor:tx-<source-sha>-<run-id>`.
+and the exact retention tag
+`ghcr.io/stokaro/ptah-operator:tx-<source-sha>-<run-id>`.
 It stores those exact bytes as the body of an empty draft release and verifies
 the body before any registry push. A rerun keeps the run ID recorded in that
 journal; the attempt number is deliberately not part of the transaction
 identity.
 
-After the prepared draft exists, the workflow logs in to GHCR and inspects each
+After the prepared draft exists, the workflow logs in to GHCR and inspects the
 exact retention tag. The inspection is authenticated because GHCR refuses an
 anonymous read of a package that does not exist yet exactly as it refuses a
 private one, so only an authenticated read tells a first release's missing tag
@@ -297,13 +282,12 @@ an authenticated build checkpoint from this release workflow, repository, produc
 and source commit. That checkpoint is created solely from the digest returned
 by a successful image-build action. A missing or uncheckpointed tag is rebuilt;
 the replacement cannot become reusable until the new build output has its own
-checkpoint. The two images are decided separately, so a rerun can reuse the
-manager image and rebuild the executor, or the other way round. The registry's
+checkpoint. The registry's
 one-line missing response must name the exact tag that was inspected. An
 unavailable, multiline, or otherwise ambiguous response fails closed. A
 transaction tag is not a release identity and must never be consumed. The final
-authenticated manifest records both digest references. Both images include a
-maximal BuildKit provenance record and SBOM. Chart packaging normalizes all
+authenticated manifest records the image digest beside the executor the catalog
+pins. The image includes a maximal BuildKit provenance record and SBOM. Chart packaging normalizes all
 source timestamps to the source commit time and CI requires two independent
 packages to be byte-identical.
 
@@ -314,7 +298,7 @@ A failed upload may leave an empty `starter` asset; recovery deletes only that
 exact incomplete asset ID and uploads the journaled bytes again. Any uploaded
 mismatch, duplicate name, unexpected asset, or unknown state fails closed.
 Image signing, attestation, and anonymous digest pull verification all finish
-for both images before the draft is published.
+before the draft is published.
 
 The build boundary is versioned as data. Actions use audited commit pins,
 Buildx uses an exact version, and its BuildKit daemon image is selected by
@@ -340,14 +324,14 @@ mutation. A published but mutable release, a moved source tag, a mismatched
 asset, or an unavailable state check fails closed. No step uses asset
 replacement.
 
-Every mode, the read-only one included, fetches the pinned Ptah commit again,
-because the executor's labels and provenance are checked against it. A rerun
-therefore also needs `github.com/stokaro/ptah` to serve that commit.
+Every mode, the read-only one included, reads the pinned Ptah image back from
+the registry, so a rerun also needs `ghcr.io/stokaro/ptah` to serve that
+digest.
 
 Before publication, the image gate compares the transaction retention tag with
 the manifest-list digest recorded in the final release manifest. It requires
 exactly the `linux/amd64` and `linux/arm64` runtime manifests, validates source,
-revision, and version labels on each image, and binds each platform to its own
+revision, and version labels on each platform image, and binds each platform to its own
 SBOM and maximal BuildKit provenance attestation. The provenance must carry the
 release build arguments and detailed build graph. A single fail-closed parser
 enumerates external image inputs from case-insensitive Dockerfile instructions,
@@ -362,17 +346,6 @@ the predicate cannot satisfy the gate. The same exact material check separately
 requires the pinned SBOM generator digest. This structural and material
 verification finishes before the final image attestation or signature is
 created. The same gate runs during published recovery.
-
-The executor passes the same gate with Ptah's identity in place of the
-operator's: its labels name `https://github.com/stokaro/ptah`, the pinned
-commit and its describe string, and its provenance carries `PTAH_BUILD_COMMIT`,
-`PTAH_BUILD_VERSION` and `PTAH_BUILD_DATE`. The same parser enumerates the
-inputs of `Dockerfile.executor`, and their digests must appear in each
-platform's resolved dependencies. The recipe names no syntax frontend, so
-BuildKit parses it with the frontend built into the pinned BuildKit image. The
-parser also requires the build to compile for the target platform: the builder
-stage runs on the build platform, and the image config would name `arm64`
-whatever architecture the binary in it had.
 
 Repository administrators must enable immutable releases before publishing the
 first version. This makes the published tag and assets platform-enforced
@@ -394,12 +367,11 @@ current default branch. These repository controls are part of the release trust
 boundary: a workflow file loaded from an unreviewed tag must never receive the
 environment secret or OIDC publication authority.
 
-Administrators must also make both image packages,
-`ghcr.io/stokaro/ptah-operator` and `ghcr.io/stokaro/ptah-operator-executor`,
+Administrators must also make the image package `ghcr.io/stokaro/ptah-operator`
 public before the first release. The workflow logs out of GHCR and proves that
-each exact image digest is anonymously readable before publishing the draft.
-GHCR creates a package on its first push. If a first release stops at an
-anonymous check because a package is still private, make it public and rerun
+the exact image digest is anonymously readable before publishing the draft.
+GHCR creates a package on its first push. If a first release stops at the
+anonymous check because the package is still private, make it public and rerun
 the workflow; the rerun resumes the same transaction.
 
 Immediately before publishing, the workflow re-fetches the draft body and exact
@@ -500,25 +472,14 @@ cosign verify \
   "$image"
 ```
 
-The executor is verified the same way, from the same manifest. Its digest is
-`executor`, and the Ptah build it carries is `executor-ptah-commit` and
-`executor-ptah-version`; the release checked both against the image's labels
-and provenance before it signed the digest:
+The executor is the Ptah release image named in the same manifest. Its digest
+is `executor`, and the Ptah build it carries is `executor-ptah-commit` and
+`executor-ptah-version`. The manifest's attestation above is what binds that
+digest to this release, so install exactly the digest it names:
 
 ```sh
 executor="$(sed -n 's/^executor=//p' release-manifest.txt)"
 ptah_version="$(sed -n 's/^executor-ptah-version=//p' release-manifest.txt)"
-
-gh attestation verify "oci://$executor" \
-  --repo "$repository" \
-  --source-ref "$source_ref" \
-  --source-digest "$source_sha" \
-  --signer-workflow "$repository/.github/workflows/release.yml"
-
-cosign verify \
-  --certificate-identity "$identity" \
-  --certificate-oidc-issuer='https://token.actions.githubusercontent.com' \
-  "$executor"
 ```
 
 ## Install by digest

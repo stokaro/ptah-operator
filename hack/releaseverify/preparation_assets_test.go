@@ -81,7 +81,7 @@ done
 					"${{ steps.release.outputs.version }}", "0.2.0",
 				}
 				// These bindings are inside the fresh/prepared branch and must not run.
-				for _, name := range []string{"image.outputs.digest", "stage-inspect.outputs.reuse", "stage-inspect.outputs.digest", "executor-image.outputs.digest", "executor-stage-inspect.outputs.reuse", "executor-stage-inspect.outputs.digest", "transaction.outputs.transaction", "transaction.outputs.image-tag", "transaction.outputs.executor-tag", "executor-source.outputs.commit", "executor-source.outputs.version"} {
+				for _, name := range []string{"image.outputs.digest", "stage-inspect.outputs.reuse", "stage-inspect.outputs.digest", "transaction.outputs.transaction", "transaction.outputs.image-tag", "executor-source.outputs.image", "executor-source.outputs.commit", "executor-source.outputs.version"} {
 					replacements = append(replacements, "${{ steps."+name+" }}", "unused-build-output")
 				}
 				program := strings.NewReplacer(replacements...).Replace(step)

@@ -749,17 +749,38 @@ lab_ptah() {
 	if [ -x "$lab_ptah_bin/ptah" ]; then
 		return 0
 	fi
-	# A lab built from a prebuilt executor image archived no Ptah source, so
-	# there is nothing here to build a CLI from. That is a configuration a
-	# reader chose, not a fault: say what it costs and where a CLI comes from.
-	[ -n "${E2E_PTAH_BUILD_CONTEXT:-}" ] ||
-		lab_fail "this lab was built from the executor image ${E2E_EXECUTOR_IMAGE:-} rather than from Ptah source, so it kept none to build the CLI from; install ptah yourself and put it on PATH"
-	[ -f "$E2E_PTAH_BUILD_CONTEXT/go.mod" ] ||
-		lab_fail "the lab kept no Ptah source at $E2E_PTAH_BUILD_CONTEXT"
+	# The executor is a Ptah release image, so the CLI that publishes what it
+	# reads is the same release's binary for this machine, checked against the
+	# checksums that release published.
+	lab_require E2E_PTAH_VERSION
+	lab_ptah_version=${E2E_PTAH_VERSION#v}
+	case $(uname -s) in
+	Linux) lab_ptah_os=linux ;;
+	Darwin) lab_ptah_os=darwin ;;
+	*) lab_fail "Ptah publishes no binary for $(uname -s); install ptah $E2E_PTAH_VERSION yourself and put it on PATH" ;;
+	esac
+	case $(uname -m) in
+	x86_64 | amd64) lab_ptah_arch=amd64 ;;
+	aarch64 | arm64) lab_ptah_arch=arm64 ;;
+	*) lab_fail "Ptah publishes no binary for $(uname -m); install ptah $E2E_PTAH_VERSION yourself and put it on PATH" ;;
+	esac
+	lab_ptah_archive=ptah_${lab_ptah_version}_${lab_ptah_os}_${lab_ptah_arch}.tar.gz
+	lab_ptah_release=https://github.com/stokaro/ptah/releases/download/v$lab_ptah_version
+	lab_ptah_download=$(mktemp -d "${TMPDIR:-/tmp}/lab-ptah.XXXXXX")
+	printf 'lab: downloading ptah %s for this machine\n' "$E2E_PTAH_VERSION" >&2
+	{
+		curl -fsSL -o "$lab_ptah_download/$lab_ptah_archive" "$lab_ptah_release/$lab_ptah_archive" &&
+			curl -fsSL -o "$lab_ptah_download/checksums.txt" "$lab_ptah_release/checksums.txt"
+	} || lab_fail "could not download ptah $E2E_PTAH_VERSION from $lab_ptah_release"
+	lab_ptah_expected=$(awk -v name="$lab_ptah_archive" '$2 == name { print $1 }' "$lab_ptah_download/checksums.txt")
+	lab_ptah_actual=$(openssl dgst -sha256 -r "$lab_ptah_download/$lab_ptah_archive" | cut -d' ' -f1)
+	[ -n "$lab_ptah_expected" ] && [ "$lab_ptah_actual" = "$lab_ptah_expected" ] ||
+		lab_fail "$lab_ptah_archive does not match the checksum ptah $E2E_PTAH_VERSION published"
+	tar -xzf "$lab_ptah_download/$lab_ptah_archive" -C "$lab_ptah_download" ptah ||
+		lab_fail "$lab_ptah_archive holds no ptah binary"
 	mkdir -p "$lab_ptah_bin"
-	printf 'lab: building ptah %s for this machine\n' "${E2E_PTAH_VERSION:-}" >&2
-	( cd "$E2E_PTAH_BUILD_CONTEXT" && go build -o "$lab_ptah_bin/ptah" ./cmd/ptah ) ||
-		lab_fail "could not build the Ptah CLI from $E2E_PTAH_BUILD_CONTEXT"
+	mv "$lab_ptah_download/ptah" "$lab_ptah_bin/ptah"
+	rm -rf "$lab_ptah_download"
 }
 
 # lab_registry_address prints the address a client outside the cluster publishes

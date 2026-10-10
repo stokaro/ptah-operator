@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Renders the Ptah compatibility catalog into the Ptah compatibility page.
 //
-// support/ptah.json is the answer, and the lifecycle suite builds its executor
-// from the commit it names. A table typed beside it would be a second copy that
+// support/ptah.json is the answer, and the lifecycle suite runs the Ptah image
+// it names as its executor. A table typed beside it would be a second copy that
 // drifts the first time the pin moves, so this reads the file and writes the
 // table between the markers in the page. Without --write it fails when the page
 // no longer says what the file does.

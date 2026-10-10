@@ -351,11 +351,11 @@ func TestVerifyWorkflowRejectsSupportGateMutations(t *testing.T) {
 		"release manifest gains a default": {
 			old: "        required: false\n        default: \"\"\n", new: "        required: false\n        default: \"e30=\"\n",
 		},
-		"release images installed without their attestation": {
-			old: "              --bundle-from-oci \\\n", new: "",
+		"release image installed without its attestation": {
+			old: "            --bundle-from-oci \\\n", new: "",
 		},
 		"release attestation not bound to the manifest source": {
-			old: "              --source-digest \"$source\" \\\n", new: "",
+			old: "            --source-digest \"$source\" \\\n", new: "",
 		},
 		"release step runs on every event": {
 			old: "        if: " + ciReleaseManifestIf + "\n", new: "",
@@ -626,8 +626,8 @@ func TestVerifyWorkflowRejectsSupportGateMutations(t *testing.T) {
 			new: "          E2E_STOP_AFTER: bootstrap\n",
 		},
 		"prepared images unbound from the catalog pin": {
-			old: "          E2E_PTAH_REVISION: ${{ needs.support-matrix.outputs.ptah_commit }}\n          E2E_PTAH_SOURCE_DIR: ${{ runner.temp }}/ptah\n",
-			new: "          E2E_PTAH_REVISION: main\n          E2E_PTAH_SOURCE_DIR: ${{ runner.temp }}/ptah\n",
+			old: "          E2E_PTAH_REVISION: ${{ needs.support-matrix.outputs.ptah_commit }}\n          E2E_RUN_ID: ci-${{ github.run_id }}-${{ github.run_attempt }}-images\n",
+			new: "          E2E_PTAH_REVISION: main\n          E2E_RUN_ID: ci-${{ github.run_id }}-${{ github.run_attempt }}-images\n",
 		},
 		"unbound lifecycle result": {
 			old: "          KUBERNETES_E2E_RESULT: ${{ needs.kubernetes-e2e.result }}\n",

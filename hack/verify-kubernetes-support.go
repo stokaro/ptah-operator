@@ -720,9 +720,10 @@ cat "$NATIVE_IDENTITY_FILE"
 `
 
 // A dispatched qualification run can install a prepared release instead of its
-// own build. The manifest arrives as an input, the images must carry the release
-// workflow's build attestation for the source it names before the harness reads
-// it, and the harness then refuses a chart or runtime source that differs.
+// own build. The manifest arrives as an input, the operator image must carry the
+// release workflow's build attestation for the source it names before the
+// harness reads it, and the harness then refuses a chart or runtime source that
+// differs, and an executor that is not the Ptah image the catalog pins.
 const ciReleaseManifestIf = "${{ github.event_name == 'workflow_dispatch' && inputs.release_manifest != '' }}"
 
 const ciReleaseManifestRun = `set -euo pipefail
@@ -731,15 +732,13 @@ base64 --decode <<<"$RELEASE_MANIFEST_BASE64" > "$manifest"
 sha256sum "$manifest"
 source="$(sed -n 's/^source-sha=//p' "$manifest")"
 [[ "$source" =~ ^[0-9a-f]{40}$ ]]
-for field in image executor; do
-  reference="$(sed -n "s/^$field=//p" "$manifest")"
-  [[ "$reference" =~ ^ghcr\.io/stokaro/ptah-operator(-executor)?@sha256:[0-9a-f]{64}$ ]]
-  gh attestation verify "oci://$reference" \
-    --bundle-from-oci \
-    --repo "$GITHUB_REPOSITORY" \
-    --source-digest "$source" \
-    --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml"
-done
+reference="$(sed -n 's/^image=//p' "$manifest")"
+[[ "$reference" =~ ^ghcr\.io/stokaro/ptah-operator@sha256:[0-9a-f]{64}$ ]]
+gh attestation verify "oci://$reference" \
+  --bundle-from-oci \
+  --repo "$GITHUB_REPOSITORY" \
+  --source-digest "$source" \
+  --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml"
 printf 'path=%s\n' "$manifest" >> "$GITHUB_OUTPUT"
 `
 
@@ -1184,7 +1183,6 @@ printf 'baseline=%s\n' "$baseline" >> "$GITHUB_OUTPUT"
 		"E2E_DIRECT_HOST_ACCESS": "1",
 		"E2E_IMAGE_EXPORT_DIR":   "${{ runner.temp }}/task-images",
 		"E2E_PTAH_REVISION":      "${{ needs.support-matrix.outputs.ptah_commit }}",
-		"E2E_PTAH_SOURCE_DIR":    "${{ runner.temp }}/ptah",
 		"E2E_RUN_ID":             "ci-${{ github.run_id }}-${{ github.run_attempt }}-images",
 		"E2E_STOP_AFTER":         "images",
 		"E2E_TIMING_CONTEXT":     "${{ runner.temp }}/timing-context-images.json",
@@ -1232,8 +1230,8 @@ printf 'baseline=%s\n' "$baseline" >> "$GITHUB_OUTPUT"
 	wantMatrixEnv := map[string]string{
 		"DOCKER_CONTEXT":         "${{ steps.docker-context.outputs.name }}",
 		"E2E_DIRECT_HOST_ACCESS": "1",
-		// No Ptah source reaches a lifecycle job: the executor arrives built,
-		// and the harness checks it against this pin before loading it.
+		// No Ptah source reaches a lifecycle job: the executor is the Ptah
+		// image the catalog pins beside this commit, copied by digest.
 		"E2E_PREBUILT_IMAGE_DIR": "${{ runner.temp }}/task-images",
 		"E2E_PTAH_REVISION":      "${{ needs.support-matrix.outputs.ptah_commit }}",
 		// Empty unless a dispatched run names a prepared release to install.
@@ -3070,7 +3068,6 @@ func verifyE2ESourceSnapshot(path string, contents []byte) error {
 		{marker: `chart_version=$(sed -n 's/^version: //p' "$ROOT_DIR/charts/ptah-operator/Chart.yaml")`, count: 1},
 		{marker: `go -C "$ROOT_DIR" run ./hack/chartpackage \`, count: 1},
 		{marker: `"$ROOT_DIR/testdata/e2e/kind.yaml.tmpl" >"$KIND_CONFIG"`, count: 1},
-		{marker: `cp "$ROOT_DIR/Dockerfile.executor" "$PTAH_BUILD_CONTEXT/Dockerfile.e2e"`, count: 1},
 		{marker: `--file "$ROOT_DIR/test/e2e/Dockerfile.operator" \`, count: 2},
 		{marker: `--tag "$OPERATOR_IMAGE" "$ROOT_DIR"`, count: 1},
 		{marker: `--tag "$FIXTURE_BUILD_IMAGE" "$ROOT_DIR"`, count: 1},

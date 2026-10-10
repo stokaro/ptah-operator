@@ -605,39 +605,15 @@ func TestVerifyWorkflowRejectsCriticalMutations(t *testing.T) {
 		"evidence upload":                 {"            SHA256SUMS \\\n            acceptance-evidence.tar.gz \\\n", "            SHA256SUMS \\\n", false},
 		"evidence publication gate":       {"            -verify-source-identity\n          expected_names=\"$(printf '%s\\n' \\\n            \"$(basename '${{ steps.chart-package.outputs.path }}')\" \\\n            release-manifest.txt \\\n            SHA256SUMS \\\n            acceptance-evidence.tar.gz \\\n", "            -verify-source-identity\n          expected_names=\"$(printf '%s\\n' \\\n            \"$(basename '${{ steps.chart-package.outputs.path }}')\" \\\n            release-manifest.txt \\\n            SHA256SUMS \\\n", false},
 
-		// The executor, from the pinned source to the verified signature.
-		"executor repository":           {`  EXECUTOR_IMAGE: ghcr.io/stokaro/ptah-operator-executor`, `  EXECUTOR_IMAGE: ghcr.io/stokaro/ptah`, false},
-		"executor pin source":           {`pin="$(go run ./hack/releaseverify -print-executor-source)"`, `pin="$(cat support/ptah.json)"`, true},
-		"executor commit refusal":       {`if [[ "$fetched" != "$commit" ]]; then`, `if false; then`, true},
-		"executor source condition":     {"        id: executor-source\n        shell: bash", "        id: executor-source\n        if: github.event_name == 'push'\n        shell: bash", false},
-		"executor source credentials":   {"        id: executor-source\n        shell: bash", "        id: executor-source\n        env:\n          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}\n        shell: bash", true},
-		"executor context":              {`context: ${{ steps.executor-source.outputs.context }}`, `context: .`, true},
-		"executor recipe":               {`file: ${{ github.workspace }}/Dockerfile.executor`, `file: ${{ steps.executor-source.outputs.context }}/Dockerfile`, true},
-		"executor commit argument":      {`PTAH_BUILD_COMMIT=${{ steps.executor-source.outputs.commit }}`, `PTAH_BUILD_COMMIT=unknown`, true},
-		"executor smoke platform":       {"          file: ${{ github.workspace }}/Dockerfile.executor\n          platforms: linux/amd64,linux/arm64\n          push: false", "          file: ${{ github.workspace }}/Dockerfile.executor\n          platforms: linux/amd64\n          push: false", false},
-		"executor smoke push":           {"          file: ${{ github.workspace }}/Dockerfile.executor\n          platforms: linux/amd64,linux/arm64\n          push: false", "          file: ${{ github.workspace }}/Dockerfile.executor\n          platforms: linux/amd64,linux/arm64\n          push: true", false},
-		"executor smoke output":         {"          sbom: false\n          build-args: |\n            PTAH_BUILD_VERSION", "          sbom: false\n          outputs: type=registry,name=example.invalid/executor\n          build-args: |\n            PTAH_BUILD_VERSION", false},
-		"executor staging recipe":       {"          file: ${{ github.workspace }}/Dockerfile.executor\n          platforms: linux/amd64,linux/arm64\n          push: true", "          file: ${{ steps.executor-source.outputs.context }}/Dockerfile\n          platforms: linux/amd64,linux/arm64\n          push: true", false},
-		"executor staging argument":     {"            PTAH_BUILD_VERSION=${{ steps.executor-source.outputs.version }}\n            PTAH_BUILD_COMMIT=${{ steps.executor-source.outputs.commit }}\n            PTAH_BUILD_DATE=${{ steps.executor-source.outputs.date }}\n      - name: Attest exact executor build output checkpoint", "            PTAH_BUILD_VERSION=${{ steps.executor-source.outputs.version }}\n            PTAH_BUILD_COMMIT=unknown\n            PTAH_BUILD_DATE=${{ steps.executor-source.outputs.date }}\n      - name: Attest exact executor build output checkpoint", false},
-		"executor staging push":         {"          push: true\n          tags: ${{ steps.transaction.outputs.executor-tag }}", "          push: false\n          tags: ${{ steps.transaction.outputs.executor-tag }}", false},
-		"executor staging tag":          {`          tags: ${{ steps.transaction.outputs.executor-tag }}`, `          tags: ${{ steps.transaction.outputs.image-tag }}`, false},
-		"executor provenance":           {"          tags: ${{ steps.transaction.outputs.executor-tag }}\n          provenance: mode=max", "          tags: ${{ steps.transaction.outputs.executor-tag }}\n          provenance: false", false},
-		"executor SBOM":                 {"          sbom: generator=docker.io/docker/buildkit-syft-scanner:stable-1@sha256:ae4f3b554449e7e25548e7d8ccc029d17357348e30c6e3df01b92bc93654d6a9\n          build-args: |\n            PTAH_BUILD_VERSION", "          sbom: true\n          build-args: |\n            PTAH_BUILD_VERSION", false},
-		"executor rebuild guard":        {`steps.executor-stage-inspect.outputs.reuse != 'true'`, `true`, false},
-		"executor stage inspection":     {"        id: executor-stage-inspect\n        if: steps.transaction.outputs.mode == 'fresh' || steps.transaction.outputs.mode == 'prepared'", "        id: executor-stage-inspect\n        if: steps.transaction.outputs.mode == 'fresh'", false},
-		"executor staging checkpoint":   {`gh attestation verify "oci://$EXECUTOR_IMAGE@$digest"`, `test -n "$digest"`, false},
-		"executor journal tag":          {`executor_tag="$EXECUTOR_IMAGE:tx-$GITHUB_SHA-$transaction"`, `executor_tag="$EXECUTOR_IMAGE:latest"`, false},
-		"executor checkpoint subject":   {`subject-name: ${{ env.EXECUTOR_IMAGE }}`, `subject-name: ${{ env.IMAGE }}`, false},
-		"executor checkpoint digest":    {`subject-digest: ${{ steps.executor-image.outputs.digest }}`, `subject-digest: sha256:bad`, false},
-		"executor manifest commit":      {`printf 'executor-ptah-commit=%s\n' '${{ steps.executor-source.outputs.commit }}'`, `printf 'executor-ptah-commit=%s\n' unknown`, false},
-		"executor structure skipped":    {"        id: executor-structure\n", "        id: executor-structure\n        if: steps.transaction.outputs.mode != 'published'\n", false},
-		"executor revision label":       {`--arg revision "$commit"`, `--arg revision "$GITHUB_SHA"`, false},
-		"executor provenance verifier":  {`-executor-provenance "$image_dir/provenance.json"`, `-executor-provenance /dev/null`, false},
-		"executor attestation digest":   {`subject-digest: ${{ steps.artifacts.outputs.executor-digest }}`, `subject-digest: ${{ steps.artifacts.outputs.image-digest }}`, false},
-		"executor signature guard":      {"        id: executor-signature\n        if: steps.transaction.outputs.mode != 'published'", "        id: executor-signature\n        if: steps.transaction.outputs.mode == 'fresh'", false},
-		"executor signature digest":     {`cosign sign --yes "${{ steps.artifacts.outputs.executor-repository }}@${{ steps.artifacts.outputs.executor-digest }}"`, `cosign sign --yes "${{ steps.artifacts.outputs.executor-repository }}:latest"`, false},
-		"executor final verify skipped": {"        id: executor-final-verify\n", "        id: executor-final-verify\n        if: steps.transaction.outputs.mode == 'published'\n", false},
-		"executor final read-back":      {`'${{ steps.artifacts.outputs.executor-tag }}' > "$image_dir/final-tag-index.json"`, `'${{ steps.artifacts.outputs.image-tag }}' > "$image_dir/final-tag-index.json"`, false},
+		// The executor: the Ptah image the catalog pins, served as pinned.
+		"executor pin source":         {`pin="$(go run ./hack/releaseverify -print-executor-source)"`, `pin="$(cat support/ptah.json)"`, true},
+		"executor image shape":        {`[[ "$image" =~ ^ghcr\.io/stokaro/ptah@sha256:[0-9a-f]{64}$ ]]`, `[[ -n "$image" ]]`, false},
+		"executor index digest":       {`[[ "sha256:$(sha256sum "$index" | awk '{print $1}')" == "${image#*@}" ]]`, `true`, false},
+		"executor platforms":          {`index("amd64") != null and index("arm64") != null`, `index("amd64") != null`, false},
+		"executor source condition":   {"        id: executor-source\n        shell: bash", "        id: executor-source\n        if: github.event_name == 'push'\n        shell: bash", false},
+		"executor source credentials": {"        id: executor-source\n        shell: bash", "        id: executor-source\n        env:\n          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}\n        shell: bash", false},
+		"executor manifest image":     {`printf 'executor=%s\n' '${{ steps.executor-source.outputs.image }}'`, `printf 'executor=%s\n' ghcr.io/stokaro/ptah:latest`, false},
+		"executor manifest commit":    {`printf 'executor-ptah-commit=%s\n' '${{ steps.executor-source.outputs.commit }}'`, `printf 'executor-ptah-commit=%s\n' unknown`, false},
 	}
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -729,7 +705,6 @@ func TestVerifyReleaseAssets(t *testing.T) {
 	}
 	chartSum := fmt.Sprintf("%x", sha256.Sum256(chart))
 	digest := "sha256:" + strings.Repeat("2", 64)
-	executorDigest := "sha256:" + strings.Repeat("3", 64)
 	// The executor is whatever the catalog pins, so the fixture reads the
 	// catalog rather than repeating the commit.
 	pin, err := repositoryPtahPin(root)
@@ -751,8 +726,7 @@ func TestVerifyReleaseAssets(t *testing.T) {
 		"transaction=123\n"+
 		"image=%s@%s\n"+
 		"image-tag=%s:tx-%s-123\n"+
-		"executor=%s@%s\n"+
-		"executor-tag=%s:tx-%s-123\n"+
+		"executor=%s\n"+
 		"executor-ptah-commit=%s\n"+
 		"executor-ptah-version=%s\n"+
 		"chart-asset=%s\n"+
@@ -762,13 +736,12 @@ func TestVerifyReleaseAssets(t *testing.T) {
 		"support-evidence-run-id=456\n"+
 		"kubernetes-support-window=%s\n",
 		repositoryName, tag, sourceSHA, imageName, digest, imageName, sourceSHA,
-		executorImageName, executorDigest, executorImageName, sourceSHA, pin.Commit, pin.Version,
+		pin.Image, pin.Commit, pin.Version,
 		chartName, chartSum, strings.Join(assets, ","), evidenceSum, supportWindow)
-	executorLines := fmt.Sprintf("executor=%s@%s\n"+
-		"executor-tag=%s:tx-%s-123\n"+
+	executorLines := fmt.Sprintf("executor=%s\n"+
 		"executor-ptah-commit=%s\n"+
 		"executor-ptah-version=%s\n",
-		executorImageName, executorDigest, executorImageName, sourceSHA, pin.Commit, pin.Version)
+		pin.Image, pin.Commit, pin.Version)
 	if !strings.Contains(manifest, executorLines) {
 		t.Fatal("the fixture does not carry the executor records it mutates")
 	}
@@ -833,22 +806,29 @@ func TestVerifyReleaseAssets(t *testing.T) {
 			// it: an installer reading it would find no executor to pin.
 			name:     "a manifest without the executor",
 			manifest: strings.Replace(manifest, executorLines, "", 1),
-			problem:  "release manifest has 13 records, expected 17",
+			problem:  "release manifest has 13 records, expected 16",
 		},
 		{
-			// A tag moves; only a digest names the bytes that were signed.
+			// A tag moves; only a digest names the bytes the suite ran.
 			name: "an executor named by a tag",
 			manifest: strings.Replace(manifest,
-				"executor="+executorImageName+"@"+executorDigest,
-				"executor="+executorImageName+":v0.1.0", 1),
-			problem: `release manifest reference "` + executorImageName + `:v0.1.0" is invalid`,
+				"executor="+pin.Image,
+				"executor=ghcr.io/stokaro/ptah:0.13.0", 1),
+			problem: "release manifest executor is",
 		},
 		{
-			name: "an executor in another repository",
+			name: "an executor the catalog does not pin",
 			manifest: strings.Replace(manifest,
-				"executor="+executorImageName+"@",
-				"executor=ghcr.io/stokaro/ptah@", 1),
-			problem: `release manifest reference "ghcr.io/stokaro/ptah@`,
+				"executor="+pin.Image,
+				"executor=ghcr.io/stokaro/ptah@sha256:"+strings.Repeat("3", 64), 1),
+			problem: "release manifest executor is",
+		},
+		{
+			name: "an executor the operator built itself",
+			manifest: strings.Replace(manifest,
+				"executor=ghcr.io/stokaro/ptah@",
+				"executor=ghcr.io/stokaro/ptah-operator-executor@", 1),
+			problem: "release manifest executor is",
 		},
 		{
 			// The catalog at the tagged source is what the suite built and
@@ -866,20 +846,6 @@ func TestVerifyReleaseAssets(t *testing.T) {
 				"executor-ptah-version="+pin.Version,
 				"executor-ptah-version=v9.9.9", 1),
 			problem: "release manifest executor-ptah-version is",
-		},
-		{
-			name: "an executor staged by another transaction",
-			manifest: strings.Replace(manifest,
-				"executor-tag="+executorImageName+":tx-"+sourceSHA+"-123",
-				"executor-tag="+executorImageName+":tx-"+sourceSHA+"-124", 1),
-			problem: "release manifest executor-tag is",
-		},
-		{
-			name: "the executor staged under the operator's name",
-			manifest: strings.Replace(manifest,
-				"executor-tag="+executorImageName+":tx-",
-				"executor-tag="+imageName+":tx-", 1),
-			problem: "release manifest executor-tag is",
 		},
 	} {
 		t.Run(row.name, func(t *testing.T) {
@@ -917,7 +883,7 @@ func TestVerifyReleaseAssets(t *testing.T) {
 		{
 			name:     "a manifest without the bundle",
 			manifest: strings.Replace(manifest, "acceptance-evidence-sha256="+evidenceSum+"\n", "", 1),
-			problem:  "release manifest has 16 records, expected 17",
+			problem:  "release manifest has 15 records, expected 16",
 		},
 		{
 			name: "a manifest naming another bundle",
@@ -1018,9 +984,8 @@ func TestVerifyPreparedJournal(t *testing.T) {
 		"source-sha=%s\n"+
 		"transaction=123\n"+
 		"image-tag=%s:tx-%s-123\n"+
-		"executor-tag=%s:tx-%s-123\n"+
 		"chart-asset=ptah-operator-0.1.0.tgz\n",
-		repositoryName, tag, sourceSHA, imageName, sourceSHA, executorImageName, sourceSHA)
+		repositoryName, tag, sourceSHA, imageName, sourceSHA)
 	path := filepath.Join(t.TempDir(), "release-journal.txt")
 	if err := os.WriteFile(path, []byte(journal), 0o600); err != nil {
 		t.Fatal(err)
@@ -1031,47 +996,17 @@ func TestVerifyPreparedJournal(t *testing.T) {
 	checkReleaseSourceBindings(t, path, tag, sourceSHA, func(ref, sha string) error {
 		return verifyPreparedJournal(path, tag, sha, ref)
 	})
-	// A resumed transaction reuses or rebuilds the executor at the tag its
-	// journal names, so the journal has to name one, and only this
-	// transaction's.
-	executorTag := "executor-tag=" + executorImageName + ":tx-" + sourceSHA + "-123\n"
-	for _, row := range []struct {
-		name    string
-		journal string
-		problem string
-	}{
-		{
-			name:    "a journal with no executor staging tag",
-			journal: strings.Replace(journal, executorTag, "", 1),
-			problem: "prepared release journal has 8 records, expected 9",
-		},
-		{
-			name:    "an executor staged by another transaction",
-			journal: strings.Replace(journal, executorTag, "executor-tag="+executorImageName+":tx-"+sourceSHA+"-124\n", 1),
-			problem: "prepared release journal executor-tag is",
-		},
-		{
-			name:    "the executor staged under the operator's name",
-			journal: strings.Replace(journal, executorTag, "executor-tag="+imageName+":tx-"+sourceSHA+"-123\n", 1),
-			problem: "prepared release journal executor-tag is",
-		},
-	} {
-		t.Run(row.name, func(t *testing.T) {
-			if row.journal == journal {
-				t.Fatal("the mutation changed nothing, so this row measures nothing")
-			}
-			rowPath := filepath.Join(t.TempDir(), "release-journal.txt")
-			if err := os.WriteFile(rowPath, []byte(row.journal), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			err := verifyPreparedJournal(rowPath, tag, sourceSHA, "")
-			if err == nil {
-				t.Fatal("verifyPreparedJournal() accepted the journal")
-			}
-			if !strings.Contains(err.Error(), row.problem) {
-				t.Fatalf("verifyPreparedJournal() said %q, which does not carry %q", err, row.problem)
-			}
-		})
+	// A journal that still names an executor staging tag is a transaction the
+	// operator built an executor for, which no release does any more.
+	staged := strings.Replace(journal, "chart-asset=",
+		"executor-tag=ghcr.io/stokaro/ptah-operator-executor:tx-"+sourceSHA+"-123\nchart-asset=", 1)
+	stagedPath := filepath.Join(t.TempDir(), "release-journal.txt")
+	if err := os.WriteFile(stagedPath, []byte(staged), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyPreparedJournal(stagedPath, tag, sourceSHA, ""); err == nil ||
+		!strings.Contains(err.Error(), "prepared release journal has 9 records, expected 8") {
+		t.Fatalf("verifyPreparedJournal() accepted a journal with an executor staging tag: %v", err)
 	}
 	mutated := strings.Replace(journal, "transaction=123", "transaction=123-1", 1)
 	if err := os.WriteFile(path, []byte(mutated), 0o600); err != nil {

@@ -95,9 +95,9 @@ jobs:
             printf 'prepare_node_image=%s\n' "$node_image"
             printf 'prepare_kind_version=%s\n' "$kind_version"
           } >> "$GITHUB_OUTPUT"
-      # The lifecycle job needs the tested Ptah commit twice -- to check the
-      # source out and to build the executor from it -- and the catalog is
-      # where that commit is declared. Exporting it here is what keeps the
+      # The image job needs the tested Ptah commit to check the source out for
+      # the drift categories, and every lifecycle names it beside the executor
+      # image the catalog pins; the catalog is where that commit is declared. Exporting it here is what keeps the
       # published compatibility claim and the build that backs it one value;
       # a literal in either place would keep working on the day they diverged.
       - name: Validate the Ptah compatibility catalog and export its pin
@@ -340,11 +340,11 @@ jobs:
         shell: bash
         run: make test-race
 
-  # The four task images do not depend on the Kubernetes minor: the operator, the
-  # synthetic next release, the isolated fixture and the Ptah executor are built
-  # from one commit and one catalog pin. Building them once and handing the bytes
-  # to every lifecycle removes about four and a half minutes from each of three
-  # jobs, and is what keeps that cost flat when the matrix grows suites.
+  # The three task images do not depend on the Kubernetes minor: the operator,
+  # the synthetic next release and the isolated fixture are built from one
+  # commit. Building them once and handing the bytes to every lifecycle keeps
+  # that cost flat when the matrix grows suites. The executor is Ptah's own
+  # release image, which each lifecycle copies by digest.
   #
   # It runs the same driver the lifecycle runs, stopped at the boundary where the
   # images exist and no cluster does. There is no second build path to drift.
@@ -377,7 +377,7 @@ jobs:
           restore-keys: |
             go-build-${{ runner.os }}-${{ runner.arch == 'ARM64' && 'ARM64-' || '' }}prepare-${{ hashFiles('go.sum') }}-
             go-build-${{ runner.os }}-${{ runner.arch == 'ARM64' && 'ARM64-' || '' }}prepare-
-      - name: Check out pinned Ptah executor source
+      - name: Check out pinned Ptah source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: stokaro/ptah
@@ -489,7 +489,6 @@ jobs:
           E2E_DIRECT_HOST_ACCESS: "1"
           E2E_IMAGE_EXPORT_DIR: ${{ runner.temp }}/task-images
           E2E_PTAH_REVISION: ${{ needs.support-matrix.outputs.ptah_commit }}
-          E2E_PTAH_SOURCE_DIR: ${{ runner.temp }}/ptah
           E2E_RUN_ID: ci-${{ github.run_id }}-${{ github.run_attempt }}-images
           E2E_STOP_AFTER: images
           E2E_TIMING_CONTEXT: ${{ runner.temp }}/timing-context-images.json
@@ -684,15 +683,13 @@ jobs:
           sha256sum "$manifest"
           source="$(sed -n 's/^source-sha=//p' "$manifest")"
           [[ "$source" =~ ^[0-9a-f]{40}$ ]]
-          for field in image executor; do
-            reference="$(sed -n "s/^$field=//p" "$manifest")"
-            [[ "$reference" =~ ^ghcr\.io/stokaro/ptah-operator(-executor)?@sha256:[0-9a-f]{64}$ ]]
-            gh attestation verify "oci://$reference" \
-              --bundle-from-oci \
-              --repo "$GITHUB_REPOSITORY" \
-              --source-digest "$source" \
-              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml"
-          done
+          reference="$(sed -n 's/^image=//p' "$manifest")"
+          [[ "$reference" =~ ^ghcr\.io/stokaro/ptah-operator@sha256:[0-9a-f]{64}$ ]]
+          gh attestation verify "oci://$reference" \
+            --bundle-from-oci \
+            --repo "$GITHUB_REPOSITORY" \
+            --source-digest "$source" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml"
           printf 'path=%s\n' "$manifest" >> "$GITHUB_OUTPUT"
       # Samples while the lifecycle runs, so a slow stage can be told from a
       # starved one. The sampler is the same script a local run uses, and

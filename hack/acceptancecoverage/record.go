@@ -142,8 +142,8 @@ var requirements = []requirement{
 		"the documented install run on a fresh cluster, and a PtahSchema on MySQL among the examples"},
 	{"PA-11", "Verify the artifacts that will be installed",
 		"checksums, signatures, provenance and a vulnerability scan against the published digests",
-		"the provenance, SBOM, signature and read-back steps of `.github/workflows/release.yml` for the operator and the executor, " +
-			"which is built from `Dockerfile.executor` at the pinned Ptah commit, " +
+		"the provenance, SBOM, signature and read-back steps of `.github/workflows/release.yml` for the operator, " +
+			"the executor named as the Ptah release image `support/ptah.json` pins by digest, " +
 			"the reproducible chart, the checksum file, and a govulncheck scan of the source",
 		"a release run of the publication path, which no tag has exercised yet; the lifecycle run against the published digests; " +
 			"a scan of the shipped images and binaries; and an interrupted publication"},
