@@ -719,6 +719,58 @@ jq -n --arg architecture "$EXPECTED_ARCHITECTURE" --arg machine "$machine" \
 cat "$NATIVE_IDENTITY_FILE"
 `
 
+// A dispatched qualification run can install a prepared release instead of its
+// own build. The manifest arrives as an input, the images must carry the release
+// workflow's build attestation for the source it names before the harness reads
+// it, and the harness then refuses a chart or runtime source that differs.
+const ciReleaseManifestIf = "${{ github.event_name == 'workflow_dispatch' && inputs.release_manifest != '' }}"
+
+const ciReleaseManifestRun = `set -euo pipefail
+manifest="$RUNNER_TEMP/release-manifest.txt"
+base64 --decode <<<"$RELEASE_MANIFEST_BASE64" > "$manifest"
+sha256sum "$manifest"
+source="$(sed -n 's/^source-sha=//p' "$manifest")"
+[[ "$source" =~ ^[0-9a-f]{40}$ ]]
+for field in image executor; do
+  reference="$(sed -n "s/^$field=//p" "$manifest")"
+  [[ "$reference" =~ ^ghcr\.io/stokaro/ptah-operator(-executor)?@sha256:[0-9a-f]{64}$ ]]
+  gh attestation verify "oci://$reference" \
+    --bundle-from-oci \
+    --repo "$GITHUB_REPOSITORY" \
+    --source-digest "$source" \
+    --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml"
+done
+printf 'path=%s\n' "$manifest" >> "$GITHUB_OUTPUT"
+`
+
+func verifyCIReleaseManifest(path string, workflow workflowDocument) error {
+	job := workflow.Jobs["kubernetes-e2e"]
+	step, err := requireWorkflowStep(path, "kubernetes-e2e", job, "release-manifest")
+	if err != nil {
+		return err
+	}
+	if step.If != ciReleaseManifestIf || step.Uses != "" || step.Shell != "bash" || step.WorkingDirectory != "" ||
+		step.ContinueOnError || step.Run != ciReleaseManifestRun || !equalStringMap(step.Env, map[string]string{
+		"GH_TOKEN":                "${{ secrets.GITHUB_TOKEN }}",
+		"RELEASE_MANIFEST_BASE64": "${{ inputs.release_manifest }}",
+	}) {
+		return fmt.Errorf("%s: kubernetes-e2e must verify a dispatched release's attestations before installing it", path)
+	}
+	manifestIndex, lifecycleIndex := -1, -1
+	for index, item := range job.Steps {
+		switch item.ID {
+		case "release-manifest":
+			manifestIndex = index
+		case "lifecycle":
+			lifecycleIndex = index
+		}
+	}
+	if manifestIndex < 0 || lifecycleIndex <= manifestIndex {
+		return fmt.Errorf("%s: kubernetes-e2e must bind a dispatched release before its lifecycle", path)
+	}
+	return nil
+}
+
 func verifyCINativeArchitecture(path string, workflow workflowDocument) error {
 	var dispatch struct {
 		Inputs map[string]struct {
@@ -733,9 +785,13 @@ func verifyCINativeArchitecture(path string, workflow workflowDocument) error {
 		return fmt.Errorf("%s: CI must expose its native architecture input", path)
 	}
 	input := dispatch.Inputs["architecture"]
-	if len(dispatch.Inputs) != 1 || input.Type != "choice" || !input.Required || input.Default != "amd64" ||
+	if len(dispatch.Inputs) != 2 || input.Type != "choice" || !input.Required || input.Default != "amd64" ||
 		len(input.Options) != 2 || input.Options[0] != "amd64" || input.Options[1] != "arm64" {
 		return fmt.Errorf("%s: CI architecture must default to amd64 and offer exactly amd64 and arm64", path)
+	}
+	release, ok := dispatch.Inputs["release_manifest"]
+	if !ok || release.Type != "string" || release.Required || release.Default != "" || len(release.Options) != 0 {
+		return fmt.Errorf("%s: CI must accept an optional release manifest and nothing else beside the architecture", path)
 	}
 	for _, name := range []string{"prepare-images", "kubernetes-e2e"} {
 		job := workflow.Jobs[name]
@@ -801,6 +857,9 @@ func verifyCIWorkflowSemantics(path string, workflow workflowDocument, contents 
 		)
 	}
 	if err := verifyCINativeArchitecture(path, workflow); err != nil {
+		return err
+	}
+	if err := verifyCIReleaseManifest(path, workflow); err != nil {
 		return err
 	}
 	required := []string{
@@ -1175,8 +1234,10 @@ printf 'baseline=%s\n' "$baseline" >> "$GITHUB_OUTPUT"
 		"E2E_DIRECT_HOST_ACCESS": "1",
 		// No Ptah source reaches a lifecycle job: the executor arrives built,
 		// and the harness checks it against this pin before loading it.
-		"E2E_PREBUILT_IMAGE_DIR":   "${{ runner.temp }}/task-images",
-		"E2E_PTAH_REVISION":        "${{ needs.support-matrix.outputs.ptah_commit }}",
+		"E2E_PREBUILT_IMAGE_DIR": "${{ runner.temp }}/task-images",
+		"E2E_PTAH_REVISION":      "${{ needs.support-matrix.outputs.ptah_commit }}",
+		// Empty unless a dispatched run names a prepared release to install.
+		"E2E_RELEASE_MANIFEST":     "${{ steps.release-manifest.outputs.path }}",
 		"E2E_RELEASE_CHART_OUTPUT": "${{ runner.temp }}/ptah-operator-${{ matrix.minor_slug }}.tgz",
 		"E2E_RUN_ID":               "ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.minor_slug }}-${{ matrix.suite_slug }}",
 		// The suite this job runs. The driver reads the phases it names out of
@@ -2985,15 +3046,20 @@ func verifyE2ESourceSnapshot(path string, contents []byte) error {
 	}{
 		{line: `resolved_controller=$(git -C "$SOURCE_REPOSITORY_ROOT" rev-parse --verify "${CONTROLLER_REVISION}^{commit}") ||`, count: 1},
 		{line: `git -C "$SOURCE_REPOSITORY_ROOT" archive --format=tar \`, count: 2},
-		{line: `chart_source_epoch=$(git -C "$SOURCE_REPOSITORY_ROOT" show -s --format=%ct "$CONTROLLER_REVISION")`, count: 1},
+		{line: `chart_source_epoch=$(git -C "$SOURCE_REPOSITORY_ROOT" show -s --format=%ct "$chart_epoch_revision")`, count: 1},
+		// A run that installs a prepared release reads the release commit, which
+		// the manifest names as a full SHA, and compares its runtime sources with
+		// the exact controller revision.
+		{line: `git -C "$SOURCE_REPOSITORY_ROOT" cat-file -e "${RELEASE_SOURCE_SHA}^{commit}" 2>/dev/null ||`, count: 1},
+		{line: `release_runtime_changes=$(git -C "$SOURCE_REPOSITORY_ROOT" diff --name-only \`, count: 1},
 	}
 	for _, read := range immutableObjectReads {
 		if count := bytes.Count(innerContents, []byte(read.line)); count != read.count {
 			return fmt.Errorf("%s: immutable Git object read %q occurs %d times, want %d", path, read.line, count, read.count)
 		}
 	}
-	if count := bytes.Count(innerContents, []byte(`$SOURCE_REPOSITORY_ROOT`)); count != 6 {
-		return fmt.Errorf("%s: original checkout must have only two isolation checks and four audited immutable Git object reads, found %d references", path, count)
+	if count := bytes.Count(innerContents, []byte(`$SOURCE_REPOSITORY_ROOT`)); count != 8 {
+		return fmt.Errorf("%s: original checkout must have only two isolation checks and six audited immutable Git object reads, found %d references", path, count)
 	}
 
 	snapshotPaths := []struct {
@@ -3306,8 +3372,21 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 		exactSourceLine("API-server feature gate patch implementation", `append_api_server_feature_gate_patch() {`),
 		exactSourceLine("API-server feature gate patch call", `append_api_server_feature_gate_patch "$K8S_MAJOR_MINOR" "$KIND_CONFIG"`),
 		exactSourceLineSequence("operator image audit by captured ID", []string{
-			`create_image_audit_container "$OPERATOR_IMAGE"`,
+			`audit_controller_image() {`,
+			`create_image_audit_container "$1"`,
 			`docker --context "$DOCKER_CONTEXT" export "$IMAGE_AUDIT_CONTAINER_ID" >"$IMAGE_AUDIT_ARCHIVE"`,
+		}),
+		// A release run installs the release's operator image instead of the one
+		// built here, so that image is audited as well as the local build.
+		exactSourceLineSequence("candidate operator images audited, the release image included", []string{
+			`audit_candidate_images() {`,
+			`audit_controller_image "$OPERATOR_IMAGE"`,
+			`if [ -n "$E2E_RELEASE_MANIFEST" ]; then`,
+			`ensure_source_image "$RELEASE_OPERATOR_IMAGE"`,
+			`audit_controller_image "$RELEASE_OPERATOR_IMAGE"`,
+			`fi`,
+			`}`,
+			`audit_candidate_images`,
 		}),
 		exactSourceLineSequence("fixture image audit by captured ID", []string{
 			`create_image_audit_container "$FIXTURE_BUILD_IMAGE"`,
@@ -3577,13 +3656,15 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 		"image_audit_container_matches_task",
 		"create_image_audit_container",
 		"remove_image_audit_container",
+		"audit_controller_image",
+		"audit_candidate_images",
 		"run_go_phase",
 	} {
 		if err := verifySingleShellFunctionDefinition(harness, harnessContents, functionName); err != nil {
 			return err
 		}
 	}
-	if count := bytes.Count(harnessContents, []byte("\nremove_image_audit_container\n")); count != 2 {
+	if count := len(imageAuditRemoval.FindAll(harnessContents, -1)); count != 2 {
 		return fmt.Errorf("%s: expected exactly two task-owned image-audit removals, found %d", harness, count)
 	}
 	if err := verifySingleDirectHelmInstallAttempt(harness, harnessContents); err != nil {
@@ -4568,17 +4649,19 @@ type phaseEnvironmentBinding struct {
 // line per variable rather than one block per phase, because an input means
 // the same thing in every phase that reads it.
 var goPhaseBindings = map[string]string{
-	"E2E_KUBECONFIG":               `$KUBECONFIG_FILE`,
-	"E2E_OPERATOR_NAMESPACE":       `$OPERATOR_NAMESPACE`,
-	"E2E_TEST_NAMESPACE":           `$TEST_NAMESPACE`,
-	"E2E_FOREIGN_NAMESPACE":        `$FOREIGN_NAMESPACE`,
-	"E2E_HELM_RELEASE":             `$HELM_RELEASE`,
-	"E2E_CHART_PACKAGE":            `$CHART_PACKAGE`,
-	"E2E_EXECUTOR_IMAGE":           `$E2E_EXECUTOR_IMAGE`,
-	"E2E_RUNNER_IMAGE":             `$E2E_RUNNER_IMAGE`,
-	"E2E_PTAH_VERSION":             `$E2E_PTAH_VERSION`,
-	"E2E_CONTROLLER_IMAGE":         `$CANDIDATE_OPERATOR_IMAGE`,
-	"E2E_CONTROLLER_REVISION":      `$CONTROLLER_REVISION`,
+	"E2E_KUBECONFIG":         `$KUBECONFIG_FILE`,
+	"E2E_OPERATOR_NAMESPACE": `$OPERATOR_NAMESPACE`,
+	"E2E_TEST_NAMESPACE":     `$TEST_NAMESPACE`,
+	"E2E_FOREIGN_NAMESPACE":  `$FOREIGN_NAMESPACE`,
+	"E2E_HELM_RELEASE":       `$HELM_RELEASE`,
+	"E2E_CHART_PACKAGE":      `$CHART_PACKAGE`,
+	"E2E_EXECUTOR_IMAGE":     `$E2E_EXECUTOR_IMAGE`,
+	"E2E_RUNNER_IMAGE":       `$E2E_RUNNER_IMAGE`,
+	"E2E_PTAH_VERSION":       `$E2E_PTAH_VERSION`,
+	"E2E_CONTROLLER_IMAGE":   `$CANDIDATE_OPERATOR_IMAGE`,
+	// The revision the installed candidate records: the harness commit for a
+	// run of its own build, the release source for a release run.
+	"E2E_CONTROLLER_REVISION":      `$CANDIDATE_REVISION`,
 	"E2E_CONTROLLER_STATE_VERSION": `$CONTROLLER_STATE_VERSION`,
 	"E2E_FIXTURE_IMAGE":            `$E2E_FIXTURE_IMAGE`,
 	// The lifecycle phases: the namespace the upgrade phase keeps its proof
@@ -4782,6 +4865,10 @@ func verifyGoPhaseInvocation(path string, phase phases.Phase, invocation phaseIn
 	}
 	return nil
 }
+
+// imageAuditRemoval is a call that removes the task-owned audit container,
+// at any indentation: the controller audit makes it inside a function.
+var imageAuditRemoval = regexp.MustCompile(`(?m)^[ \t]*remove_image_audit_container[ \t]*$`)
 
 func exactSourceLineSequence(name string, lines []string) sourceContractStep {
 	var pattern strings.Builder

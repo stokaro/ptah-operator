@@ -1,14 +1,14 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-10-08T15:25:27.498144+00:00",
-  "profileSourceCommit": "4a5fefb036dc32b23b5b9853c6fe33d034d5ad8e",
+  "frozenAt": "2026-10-09T18:58:05.650018+00:00",
+  "profileSourceCommit": "1259f4d59343fef049307085e3ea77d2971677cb",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
   "sourceFiles": [
     {
       "path": "support/qualification/0.2.0.md",
-      "sha256": "5bb42f29ddc01fdaa89a3e0079c1c04f11dee214937e8994b9a05ad7b6e76e1a"
+      "sha256": "daa5c086a4982f87a224476b27364ba8e7cd64324f236f9ff642b028734caf8e"
     },
     {
       "path": "support/qualification/0.2.0-coverage.md",
@@ -17,10 +17,6 @@
     {
       "path": "support/qualification/0.2.0-monitoring.yaml",
       "sha256": "464b4352a25ecb1ed41379034d056056bb3744ade566f4b1938558b3cbc8ae65"
-    },
-    {
-      "path": "support/acceptance/0.2.0.json",
-      "sha256": "972430c03d9f557c505f4c60511cab4a0ed27e3f8720db023d8167e5e1d069ea"
     },
     {
       "path": "support/kubernetes.json",
@@ -83,10 +79,10 @@
     "disposition": "No published predecessor. Synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 40,
+  "revision": 41,
   "supersedes": {
-    "freezeCommit": "4a5fefb036dc32b23b5b9853c6fe33d034d5ad8e",
-    "sha256": "694f660ad4acfd0712412378c9eee4d392939a5e3d2363f986cbca27f4f2c464"
+    "freezeCommit": "1259f4d59343fef049307085e3ea77d2971677cb",
+    "sha256": "75a14419827f8d12cff909dc9285df023641f9aecb136d667171167f0ad4c249"
   },
-  "revisionReason": "Raise the aggregate manager API-demand budget from 6,000 to 7,000 requests in every sliding 60-second window, as explicitly approved on October 8, 2026 for #580. Accept the 16.67% larger request budget without changing workload, sampling, zero HTTP 429/APF rejection requirements, client-throttling limits, or any other target. Preserve revision 39 and its original failed or incomplete results; any reassessment under revision 40 is separate. New affected qualification runs must record this revision before execution. This revision records no successful capacity or production acceptance result."
+  "revisionReason": "Let the accountable owner of each Evidence and decision role be the team that holds it rather than one person, as the release owner decided on October 9, 2026 for #584: every 0.2.0 role and contact is Ptah Engineering. Stop freezing support/acceptance/0.2.0.json: it is the output qualification fills, its targets restate this profile, which stays frozen, and pinning its initial text would refuse the completed record. No target, threshold, workload, scenario, coverage cell or execution requirement changes. Revision 40 and every result recorded under it are preserved. This revision records no successful qualification or production acceptance result."
 }

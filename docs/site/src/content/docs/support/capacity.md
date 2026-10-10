@@ -397,9 +397,21 @@ workload resources. Its report declares `retention-fault-only`. Keep the owned
 lab and fixture journal until the retry finishes, then run the original cleanup.
 This mode reuses preparation and does not repeat the soak.
 
-The approval backlog, overload cases and the full qualified
-execution matrix remain required
-by [the frozen profile](https://github.com/stokaro/ptah-operator/blob/master/support/qualification/0.2.0.md).
+After the registry outage, `databaseDelay` holds every new database session
+for thirty seconds over a five-minute window. The collector points the
+database Service at a proxy from the lab's fixture image, which accepts each
+connection and reaches the database only after the delay; sessions already open
+keep their route. It creates no object in the databases the operator manages,
+because a function or trigger there would be schema the operator plans to
+remove. Each family in each namespace needs one fresh database operation the
+delay reached: one that failed without starting a mutation, or one whose Ptah
+container ran at least the delay. The proxy's own log must show every session it
+connected was held for the delay. The collector then restores the Service
+selector it moved, drains and removes the proxy, and measures fresh convergence
+from the restore. `soak-mysql.json` runs the same workload on MySQL.
+
+The full qualified execution matrix remains required by
+[the frozen profile](https://github.com/stokaro/ptah-operator/blob/master/support/qualification/0.2.0.md).
 
 ## The first reading {#lab-20}
 
@@ -490,3 +502,23 @@ watch prevents success. Waiting is reported separately from execution.
 This workload adds the declared unrelated-object population by default. Its
 implementation and unit tests do not establish a backlog capacity result; that
 requires a completed run and comparison with the frozen profile's thresholds.
+
+`backlog-mysql.json` runs the same backlog on MySQL.
+
+## Beyond the admitted fleet
+
+`CAPACITY_WORKLOAD=support/capacity/overload.json` runs forty resources at once,
+twice the admitted twenty, holds them for ten minutes, and then retires the
+upper half of each family. It measures behavior outside the profile, not a
+larger admitted capacity. Excess concurrency may queue and refuse; the report
+keeps the peak running and pending operation Pods with every other measurement.
+The run fails if a manager restarts or is OOM killed, if any resource carries an
+unresolved Apply, if one resource is applied twice, or if the twenty that remain
+do not reach fresh convergence within five minutes of the return. Each retired
+resource is idle and converged when deleted, its plans are exported first, and
+the delete carries the UID and resource version that export read.
+`overload-mysql.json` runs it on MySQL.
+
+The plan beyond the 8 MiB executable limit is the data-plane suite's
+`native-plan-size-boundary` row. It proves both engines' size limits, and the
+refusal of a larger plan, on every supported minor and architecture.

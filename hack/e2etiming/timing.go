@@ -51,6 +51,12 @@ type Context struct {
 	Kubernetes       string `json:"kubernetes"`
 	Suite            string `json:"suite"`
 	Cluster          string `json:"cluster,omitempty"`
+	// Set when the run installed a prepared release instead of its own build:
+	// the commit the release was built from and the digests it installed.
+	ReleaseSource      string `json:"releaseSource,omitempty"`
+	ReleaseImage       string `json:"releaseImage,omitempty"`
+	ReleaseExecutor    string `json:"releaseExecutor,omitempty"`
+	ReleaseChartSHA256 string `json:"releaseChartSHA256,omitempty"`
 }
 
 // Stage is one ledger row: a bootstrap step, a phase, or a scenario inside one.
@@ -305,6 +311,10 @@ func summary(report Report, problems []string) string {
 		fmt.Fprintf(&out, " · workflow run %s attempt %s", context.GithubRunID, context.GithubRunAttempt)
 	}
 	out.WriteString("\n\n")
+	if context.ReleaseSource != "" {
+		fmt.Fprintf(&out, "Release built from `%s`: image `%s`, executor `%s`, chart SHA-256 `%s`.\n\n",
+			context.ReleaseSource, context.ReleaseImage, context.ReleaseExecutor, context.ReleaseChartSHA256)
+	}
 
 	phases := ofKind(stages, "phase")
 	bootstrap := ofKind(stages, "bootstrap")

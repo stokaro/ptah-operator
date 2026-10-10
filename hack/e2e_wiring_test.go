@@ -1508,17 +1508,23 @@ func TestVerifyE2EHarnessRejectsCriticalMutations(t *testing.T) {
 		},
 		{
 			name: "operator image audit exports reusable name",
-			old: "docker --context \"$DOCKER_CONTEXT\" export \"$IMAGE_AUDIT_CONTAINER_ID\" >\"$IMAGE_AUDIT_ARCHIVE\"\n" +
-				`if tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)e2e-handcraft-oci$'; then`,
-			replacement: "docker --context \"$DOCKER_CONTEXT\" export \"$IMAGE_AUDIT_CONTAINER\" >\"$IMAGE_AUDIT_ARCHIVE\"\n" +
-				`if tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)e2e-handcraft-oci$'; then`,
+			old: "\tdocker --context \"$DOCKER_CONTEXT\" export \"$IMAGE_AUDIT_CONTAINER_ID\" >\"$IMAGE_AUDIT_ARCHIVE\"\n" +
+				"\t" + `if tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)e2e-handcraft-oci$'; then`,
+			replacement: "\tdocker --context \"$DOCKER_CONTEXT\" export \"$IMAGE_AUDIT_CONTAINER\" >\"$IMAGE_AUDIT_ARCHIVE\"\n" +
+				"\t" + `if tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)e2e-handcraft-oci$'; then`,
 			wantError: "operator image audit by captured ID",
 		},
 		{
 			name:        "operator image audit removal omitted",
-			old:         "remove_image_audit_container\n\ncreate_image_audit_container \"$FIXTURE_BUILD_IMAGE\"",
-			replacement: `create_image_audit_container "$FIXTURE_BUILD_IMAGE"`,
+			old:         "\tremove_image_audit_container\n}\n\n# audit_candidate_images",
+			replacement: "}\n\n# audit_candidate_images",
 			wantError:   "exactly two task-owned image-audit removals",
+		},
+		{
+			name:        "release operator image not audited",
+			old:         "\t\taudit_controller_image \"$RELEASE_OPERATOR_IMAGE\"\n",
+			replacement: "\t\t:\n",
+			wantError:   "candidate operator images audited, the release image included",
 		},
 		{
 			name:        "image-audit cleanup removes reusable name",
@@ -2411,9 +2417,9 @@ func TestVerifyE2EHarnessRejectsCriticalMutations(t *testing.T) {
 		},
 		{
 			name:        "migration lifecycle loses the controller identity",
-			old:         "E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION \\\nE2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION \\\nE2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \\\nE2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\nE2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\nE2E_DOCKER_CONTEXT=$DOCKER_CONTEXT \\\nE2E_KIND_CLUSTER_NAME=$CLUSTER_NAME \\\nE2E_ENGINE=postgresql \\\n\trun_recorded_phase migrations-postgresql run_go_phase migrations-postgresql\n",
+			old:         "E2E_CONTROLLER_REVISION=$CANDIDATE_REVISION \\\nE2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION \\\nE2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \\\nE2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\nE2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\nE2E_DOCKER_CONTEXT=$DOCKER_CONTEXT \\\nE2E_KIND_CLUSTER_NAME=$CLUSTER_NAME \\\nE2E_ENGINE=postgresql \\\n\trun_recorded_phase migrations-postgresql run_go_phase migrations-postgresql\n",
 			replacement: "E2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION \\\nE2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \\\nE2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\nE2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\nE2E_DOCKER_CONTEXT=$DOCKER_CONTEXT \\\nE2E_KIND_CLUSTER_NAME=$CLUSTER_NAME \\\nE2E_ENGINE=postgresql \\\n\trun_recorded_phase migrations-postgresql run_go_phase migrations-postgresql\n",
-			wantError:   `migrations-postgresql phase must bind E2E_CONTROLLER_REVISION to "$CONTROLLER_REVISION", and binds nothing`,
+			wantError:   `migrations-postgresql phase must bind E2E_CONTROLLER_REVISION to "$CANDIDATE_REVISION", and binds nothing`,
 		},
 		{
 			// A phase that ran the engine its name does not say would cover one
@@ -2862,15 +2868,34 @@ func TestPhaseEnvironmentContractsRejectCriticalMutations(t *testing.T) {
 			wantError:   `migrations-postgresql phase must bind E2E_REGISTRY_HOST_ADDRESS to "$REMOTE_REGISTRY", and binds nothing`,
 		},
 		{
-			name: "candidate controller image redirected",
+			// A release run installs an image built from the release source.
+			// Handing the phases the harness commit instead makes every proof of
+			// what the installed manager recorded compare against the wrong one.
+			name: "candidate revision replaced by the harness revision",
 			old: "E2E_CONTROLLER_IMAGE=$CANDIDATE_OPERATOR_IMAGE \\\n" +
+				"E2E_CONTROLLER_REVISION=$CANDIDATE_REVISION \\\n" +
+				"E2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION \\\n" +
+				"E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \\\n" +
+				"E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\n" +
+				"E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\n" + isolationBindings + "E2E_ENGINE=postgresql \\\n\trun_recorded_phase migrations-postgresql run_go_phase migrations-postgresql\n",
+			replacement: "E2E_CONTROLLER_IMAGE=$CANDIDATE_OPERATOR_IMAGE \\\n" +
 				"E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION \\\n" +
 				"E2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION \\\n" +
 				"E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \\\n" +
 				"E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\n" +
 				"E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\n" + isolationBindings + "E2E_ENGINE=postgresql \\\n\trun_recorded_phase migrations-postgresql run_go_phase migrations-postgresql\n",
+			wantError: `migrations-postgresql phase must bind E2E_CONTROLLER_REVISION to "$CANDIDATE_REVISION", and binds "$CONTROLLER_REVISION"`,
+		},
+		{
+			name: "candidate controller image redirected",
+			old: "E2E_CONTROLLER_IMAGE=$CANDIDATE_OPERATOR_IMAGE \\\n" +
+				"E2E_CONTROLLER_REVISION=$CANDIDATE_REVISION \\\n" +
+				"E2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION \\\n" +
+				"E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \\\n" +
+				"E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\n" +
+				"E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\n" + isolationBindings + "E2E_ENGINE=postgresql \\\n\trun_recorded_phase migrations-postgresql run_go_phase migrations-postgresql\n",
 			replacement: "E2E_CONTROLLER_IMAGE=$PRODUCTION_OPERATOR_IMAGE \\\n" +
-				"E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION \\\n" +
+				"E2E_CONTROLLER_REVISION=$CANDIDATE_REVISION \\\n" +
 				"E2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION \\\n" +
 				"E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \\\n" +
 				"E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\n" +

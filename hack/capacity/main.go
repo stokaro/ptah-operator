@@ -80,6 +80,7 @@ func run() error {
 	flag.StringVar(&in.databaseSecret, "database-secret", "capacity-db-%d", "Secret name pattern, one database per resource")
 	flag.StringVar(&in.registryIP, "registry-ip", "", "the registry's address, for the outage")
 	flag.StringVar(&in.registryEgressPolicies, "registry-egress-policies", "", "comma-separated registry-only egress policies to withdraw in each workload namespace during the outage")
+	flag.StringVar(&in.fixtureImage, "fixture-image", os.Getenv("E2E_FIXTURE_IMAGE"), "the lab's fixture image, which carries the database delay proxy")
 	flag.Parse()
 	if *authorConfig != "" && *approverConfig == "" {
 		return errors.New("author-kubeconfig requires approver-kubeconfig")
@@ -118,6 +119,14 @@ func run() error {
 	if *catalogPath != "" {
 		in.catalog, catalogDigest, err = readInputCatalog(*catalogPath, load, os.Getenv("E2E_PTAH_REVISION"))
 		if err != nil {
+			return err
+		}
+	}
+	if load.DatabaseDelay != nil {
+		if in.fixtureImage == "" || !strings.Contains(in.fixtureImage, "@sha256:") {
+			return errors.New("the database delay needs -fixture-image pinned by digest")
+		}
+		if in.database, err = readCapacityDatabase(*checkpointState); err != nil {
 			return err
 		}
 	}
@@ -283,6 +292,8 @@ func run() error {
 	environment["retention"] = steps.retentionProofs
 	environment["retentionFault"] = steps.retentionFaultProof
 	environment["approvalBacklog"] = steps.backlogProof
+	environment["databaseDelay"] = steps.databaseDelayProof
+	environment["overload"] = steps.overloadProof
 	for _, history := range cycleProof.Histories {
 		if history.Error != "" {
 			scenarioErr = errors.Join(scenarioErr, fmt.Errorf("%s cycles: %s", history.Family, history.Error))
@@ -343,12 +354,24 @@ func runScenarios(ctx context.Context, steps *scenarios) error {
 		}
 		return nil
 	}
+	if steps.load.Overload != nil {
+		for _, step := range []struct {
+			name string
+			run  func(context.Context) error
+		}{{"cold start", steps.create}, {"overload", steps.overload}, {"return to profile", steps.returnToProfile}} {
+			slog.Info("scenario", "name", step.name)
+			if err := step.run(ctx); err != nil {
+				return fmt.Errorf("%s: %w", step.name, err)
+			}
+		}
+		return nil
+	}
 	if steps.load.Soak != nil {
 		for _, step := range []struct {
 			name string
 			run  func(context.Context) error
 		}{
-			{"cold start", steps.create}, {"soak", steps.soak}, {"retention fault", steps.retentionFault}, {"approval gate", steps.prepareApproval}, {"restart burst", steps.restart}, {"registry outage", steps.outage},
+			{"cold start", steps.create}, {"soak", steps.soak}, {"retention fault", steps.retentionFault}, {"approval gate", steps.prepareApproval}, {"restart burst", steps.restart}, {"registry outage", steps.outage}, {"database delay", steps.databaseDelay},
 		} {
 			slog.Info("scenario", "name", step.name)
 			if err := step.run(ctx); err != nil {
@@ -367,6 +390,7 @@ func runScenarios(ctx context.Context, steps *scenarios) error {
 		{"restart burst", steps.restart},
 		{"change batch", steps.change},
 		{"registry outage", steps.outage},
+		{"database delay", steps.databaseDelay},
 	} {
 		slog.Info("scenario", "name", step.name)
 		if err := step.run(ctx); err != nil {

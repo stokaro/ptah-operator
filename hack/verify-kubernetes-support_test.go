@@ -344,6 +344,25 @@ func TestVerifyWorkflowRejectsSupportGateMutations(t *testing.T) {
 		"manual architecture loses arm64": {
 			old: "        options: [amd64, arm64]\n", new: "        options: [amd64]\n",
 		},
+		"release manifest becomes required": {
+			old: "        description: Base64 of a prepared release-manifest.txt; installs those digests instead of this run's build\n        type: string\n        required: false\n",
+			new: "        description: Base64 of a prepared release-manifest.txt; installs those digests instead of this run's build\n        type: string\n        required: true\n",
+		},
+		"release manifest gains a default": {
+			old: "        required: false\n        default: \"\"\n", new: "        required: false\n        default: \"e30=\"\n",
+		},
+		"release images installed without their attestation": {
+			old: "              --bundle-from-oci \\\n", new: "",
+		},
+		"release attestation not bound to the manifest source": {
+			old: "              --source-digest \"$source\" \\\n", new: "",
+		},
+		"release step runs on every event": {
+			old: "        if: " + ciReleaseManifestIf + "\n", new: "",
+		},
+		"release manifest never reaches the lifecycle": {
+			old: "          E2E_RELEASE_MANIFEST: ${{ steps.release-manifest.outputs.path }}\n", new: "",
+		},
 		"native runner is ignored": {
 			old: "    needs: [support-matrix]\n    runs-on: " + ciNativeRunner + "\n", new: "    needs: [support-matrix]\n    runs-on: ubuntu-latest\n",
 		},

@@ -119,6 +119,12 @@ E2E_SUITE=${E2E_SUITE:-all}
 # builds for itself execute the same code.
 E2E_IMAGE_EXPORT_DIR=${E2E_IMAGE_EXPORT_DIR:-}
 E2E_PREBUILT_IMAGE_DIR=${E2E_PREBUILT_IMAGE_DIR:-}
+# E2E_RELEASE_MANIFEST names the release-manifest.txt a Release prepare run
+# wrote. The candidate operator, its runner and the executor are then the
+# prepared images, copied by digest into the task registry, and the chart this
+# run packages must be the release's chart asset byte for byte. The fixture and
+# the synthetic next release stay this run's own builds.
+E2E_RELEASE_MANIFEST=${E2E_RELEASE_MANIFEST:-}
 E2E_ENVIRONMENT_FILE=${E2E_ENVIRONMENT_FILE:-}
 E2E_PTAH_GIT_URL=${E2E_PTAH_GIT_URL:-https://github.com/stokaro/ptah.git}
 E2E_REGISTRY_IMAGE=${E2E_REGISTRY_IMAGE:-registry:3@sha256:1be55279f18a2fe1a74edf2664cac61c1bea305b7b4642dab412e7affdcb3e33}
@@ -463,6 +469,88 @@ for source_image in "$E2E_REGISTRY_IMAGE" "$E2E_POSTGRES_SOURCE_IMAGE" "$E2E_MYS
 	is_pinned_image "$source_image" ||
 		fail "registry, database and monitoring source images must be pinned by digest: $source_image"
 done
+
+# release_manifest_field prints the value of the one NAME= line the release
+# manifest carries, and fails on a field that is missing or repeated.
+release_manifest_field() {
+	[ "$(grep -c "^$1=" "$E2E_RELEASE_MANIFEST" || true)" = 1 ] || return 1
+	sed -n "s/^$1=//p" "$E2E_RELEASE_MANIFEST"
+}
+
+# What every runtime byte and the chart are built from. A harness commit may
+# differ from the release source only outside these paths, so the phases assert
+# against the code the prepared images were built from.
+RELEASE_RUNTIME_PATHS='api cmd internal config charts go.mod go.sum Dockerfile Dockerfile.executor support/ptah.json'
+RELEASE_SOURCE_SHA=
+RELEASE_OPERATOR_IMAGE=
+RELEASE_EXECUTOR_IMAGE=
+RELEASE_CHART_SHA256=
+RELEASE_IMAGES_FILE=
+# CANDIDATE_REVISION is the revision the installed candidate manager records.
+# A run of its own build installs CONTROLLER_REVISION; a release run installs
+# the release's image, which was built from the release source. The snapshot,
+# the builds and the synthetic next release stay at CONTROLLER_REVISION.
+CANDIDATE_REVISION=$CONTROLLER_REVISION
+
+# read_release_manifest reads the release this run installs and refuses a
+# manifest that is incomplete, names an executor the catalog does not pin, or
+# was built from runtime sources the harness revision has changed.
+read_release_manifest() {
+	{ [ -f "$E2E_RELEASE_MANIFEST" ] && [ ! -L "$E2E_RELEASE_MANIFEST" ]; } ||
+		fail "E2E_RELEASE_MANIFEST must name a regular file"
+	{ [ -z "$E2E_EXECUTOR_IMAGE" ] && [ -z "$E2E_RUNNER_IMAGE" ]; } ||
+		fail "E2E_RELEASE_MANIFEST names the executor and runner; E2E_EXECUTOR_IMAGE and E2E_RUNNER_IMAGE would name others"
+	[ "$E2E_STOP_AFTER" != images ] ||
+		fail "E2E_STOP_AFTER=images exports this run's own builds, which a release manifest replaces"
+	RELEASE_SOURCE_SHA=$(release_manifest_field source-sha) ||
+		fail "the release manifest must carry exactly one source-sha"
+	RELEASE_OPERATOR_IMAGE=$(release_manifest_field image) ||
+		fail "the release manifest must carry exactly one image"
+	RELEASE_EXECUTOR_IMAGE=$(release_manifest_field executor) ||
+		fail "the release manifest must carry exactly one executor"
+	release_ptah_commit=$(release_manifest_field executor-ptah-commit) ||
+		fail "the release manifest must carry exactly one executor-ptah-commit"
+	release_ptah_version=$(release_manifest_field executor-ptah-version) ||
+		fail "the release manifest must carry exactly one executor-ptah-version"
+	RELEASE_CHART_SHA256=$(release_manifest_field chart-asset-sha256) ||
+		fail "the release manifest must carry exactly one chart-asset-sha256"
+	printf '%s\n' "$RELEASE_SOURCE_SHA" | grep -Eq '^[0-9a-f]{40}$' ||
+		fail "the release source-sha is not a full commit"
+	printf '%s\n' "$RELEASE_CHART_SHA256" | grep -Eq '^[0-9a-f]{64}$' ||
+		fail "the release chart-asset-sha256 is not a SHA-256"
+	is_pinned_image "$RELEASE_OPERATOR_IMAGE" ||
+		fail "the release image is not pinned by digest: $RELEASE_OPERATOR_IMAGE"
+	is_pinned_image "$RELEASE_EXECUTOR_IMAGE" ||
+		fail "the release executor is not pinned by digest: $RELEASE_EXECUTOR_IMAGE"
+	[ "$release_ptah_commit" = "$E2E_PTAH_REVISION" ] ||
+		fail "the release executor carries Ptah $release_ptah_commit and the catalog pins $E2E_PTAH_REVISION"
+	[ -n "$release_ptah_version" ] || fail "the release manifest names no executor Ptah version"
+	if [ -n "$E2E_PTAH_VERSION" ] && [ "$E2E_PTAH_VERSION" != "$release_ptah_version" ]; then
+		fail "E2E_PTAH_VERSION $E2E_PTAH_VERSION differs from the release executor's $release_ptah_version"
+	fi
+	E2E_PTAH_VERSION=$release_ptah_version
+	CANDIDATE_REVISION=$RELEASE_SOURCE_SHA
+	git -C "$SOURCE_REPOSITORY_ROOT" cat-file -e "${RELEASE_SOURCE_SHA}^{commit}" 2>/dev/null ||
+		fail "release source $RELEASE_SOURCE_SHA is not in the operator checkout; fetch it first"
+	# shellcheck disable=SC2086 # the runtime paths are separate pathspecs.
+	release_runtime_changes=$(git -C "$SOURCE_REPOSITORY_ROOT" diff --name-only \
+		"$RELEASE_SOURCE_SHA" "$CONTROLLER_REVISION" -- $RELEASE_RUNTIME_PATHS) ||
+		fail "could not compare the harness revision with release source $RELEASE_SOURCE_SHA"
+	[ -z "$release_runtime_changes" ] ||
+		fail "harness revision $CONTROLLER_REVISION changes runtime sources of release $RELEASE_SOURCE_SHA: $(printf '%s' "$release_runtime_changes" | tr '\n' ' ')"
+	printf 'e2e: release manifest %s: source %s, image %s, executor %s\n' \
+		"$(sha256 <"$E2E_RELEASE_MANIFEST")" "$RELEASE_SOURCE_SHA" \
+		"$RELEASE_OPERATOR_IMAGE" "$RELEASE_EXECUTOR_IMAGE"
+}
+# verify_release_chart refuses a packaged chart that is not the release's chart
+# asset: the run would install a chart nobody released.
+verify_release_chart() {
+	[ "$1" = "$RELEASE_CHART_SHA256" ] ||
+		fail "the packaged chart is $1 and the release chart asset is $RELEASE_CHART_SHA256"
+}
+if [ -n "$E2E_RELEASE_MANIFEST" ]; then
+	read_release_manifest
+fi
 
 case "$DOCKER_CONTEXT" in
 	default | orbstack)
@@ -1706,9 +1794,16 @@ write_timing_context() {
 		--arg kubernetes "$K8S_VERSION" \
 		--arg suite "$E2E_SUITE" \
 		--arg cluster "$CLUSTER_NAME" \
+		--arg releaseSource "$RELEASE_SOURCE_SHA" \
+		--arg releaseImage "$RELEASE_OPERATOR_IMAGE" \
+		--arg releaseExecutor "$RELEASE_EXECUTOR_IMAGE" \
+		--arg releaseChartSHA256 "$RELEASE_CHART_SHA256" \
 		'{runID: $runID, githubRunID: $githubRunID, githubRunAttempt: $githubRunAttempt,
 		  operatorRevision: $operatorRevision, ptahCommit: $ptahCommit, ptahVersion: $ptahVersion,
-		  kubernetes: $kubernetes, suite: $suite, cluster: $cluster}' \
+		  kubernetes: $kubernetes, suite: $suite, cluster: $cluster}
+		 + if $releaseSource == "" then {} else
+		   {releaseSource: $releaseSource, releaseImage: $releaseImage,
+		    releaseExecutor: $releaseExecutor, releaseChartSHA256: $releaseChartSHA256} end' \
 		>"$E2E_TIMING_CONTEXT" 2>/dev/null ||
 		printf 'e2e timing: %s could not be written; the ledger keeps its stages\n' \
 			"$E2E_TIMING_CONTEXT" >&2
@@ -2112,7 +2207,13 @@ tar -xf "$NEXT_SOURCE_ARCHIVE" -C "$NEXT_BUILD_CONTEXT"
 
 chart_version=$(sed -n 's/^version: //p' "$ROOT_DIR/charts/ptah-operator/Chart.yaml")
 [ -n "$chart_version" ] || fail "Helm chart version is missing"
-chart_source_epoch=$(git -C "$SOURCE_REPOSITORY_ROOT" show -s --format=%ct "$CONTROLLER_REVISION")
+# The archive's timestamps come from the commit the chart is released from, so
+# a release run dates it by the release source rather than the harness commit.
+chart_epoch_revision=$CONTROLLER_REVISION
+if [ -n "$E2E_RELEASE_MANIFEST" ]; then
+	chart_epoch_revision=$RELEASE_SOURCE_SHA
+fi
+chart_source_epoch=$(git -C "$SOURCE_REPOSITORY_ROOT" show -s --format=%ct "$chart_epoch_revision")
 printf '%s\n' "$chart_source_epoch" | grep -Eq '^[0-9]+$' ||
 	fail "source commit does not have a valid release epoch"
 timing_next bootstrap chart-package
@@ -2131,6 +2232,9 @@ packaged_chart_version=$(printf '%s\n' "$packaged_chart_metadata" |
 [ "$packaged_chart_version" = "$chart_version" ] ||
 	fail "packaged chart version is $packaged_chart_version, want $chart_version"
 CHART_PACKAGE_DIGEST=$(sha256 <"$CHART_PACKAGE")
+if [ -n "$E2E_RELEASE_MANIFEST" ]; then
+	verify_release_chart "$CHART_PACKAGE_DIGEST"
+fi
 chart_asset=${CHART_PACKAGE##*/}
 printf 'e2e: installing release-form chart %s (%s)\n' \
 	"$chart_asset" "$CHART_PACKAGE_DIGEST"
@@ -2228,6 +2332,29 @@ mirror_task_image() {
 	mirror_repository=$2
 	ensure_source_image "$mirror_source"
 	push_task_image "$mirror_source" "$mirror_repository"
+}
+
+# copy_release_image copies a prepared release image into the task registry
+# with its index and every platform manifest unchanged, so the digest a Pod
+# runs is the digest the release names. A push through Docker would re-encode
+# the image and report a digest nobody released.
+copy_release_image() {
+	copy_source=$1
+	copy_repository=$2
+	copy_output=$(go -C "$ROOT_DIR" run ./hack/imagecopy \
+		-from "$copy_source" \
+		-to "${REMOTE_REGISTRY}/${copy_repository}:${IMAGE_TAG}" \
+		-to-plain-http \
+		-to-username "$REGISTRY_USERNAME" \
+		-to-password-file "$REGISTRY_PASSWORD_FILE" \
+		-require-platforms linux/amd64,linux/arm64) ||
+		fail "could not copy release image $copy_source into the task registry"
+	copy_digest=$(printf '%s\n' "$copy_output" | jq -r '.digest // empty')
+	[ "$copy_digest" = "${copy_source#*@}" ] ||
+		fail "the task registry holds $copy_digest for release image $copy_source"
+	printf '%s\n' "$copy_output" >>"$RELEASE_IMAGES_FILE"
+	PUSHED_IMAGE_REF="${REGISTRY_HOST}/${copy_repository}@${copy_digest}"
+	printf 'e2e: copied release image %s into the task registry unchanged\n' "$copy_source"
 }
 
 sed "s/__API_SERVER_PORT__/${E2E_API_SERVER_PORT}/g" \
@@ -2395,27 +2522,44 @@ if [ -z "$E2E_PREBUILT_IMAGE_DIR" ]; then
 fi
 
 timing_next bootstrap image-audit
-create_image_audit_container "$OPERATOR_IMAGE"
-docker --context "$DOCKER_CONTEXT" export "$IMAGE_AUDIT_CONTAINER_ID" >"$IMAGE_AUDIT_ARCHIVE"
-if tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)e2e-handcraft-oci$'; then
-	fail "the controller image contains the test-only OCI publisher"
-fi
-if tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)e2e-alert-sink$'; then
-	fail "the controller image contains the test-only alert receiver"
-fi
-if tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)e2e-upgrade-observer$'; then
-	fail "the controller image contains the external upgrade observer fixture"
-fi
-if tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)e2e-protocol-runner(\.json)?$'; then
-	fail "the controller image contains the unsupported-runner fixture"
-fi
-tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)manager$' ||
-	fail "the controller image does not contain /manager"
-tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)ptah-runner$' ||
-	fail "the controller image does not contain /ptah-runner"
-tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)ptah-crd-manager$' ||
-	fail "the controller image does not contain /ptah-crd-manager"
-remove_image_audit_container
+# audit_controller_image holds an operator image to what a controller image may
+# carry: the manager and its runner binaries, and no test-only fixture.
+audit_controller_image() {
+	create_image_audit_container "$1"
+	docker --context "$DOCKER_CONTEXT" export "$IMAGE_AUDIT_CONTAINER_ID" >"$IMAGE_AUDIT_ARCHIVE"
+	if tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)e2e-handcraft-oci$'; then
+		fail "the controller image contains the test-only OCI publisher"
+	fi
+	if tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)e2e-alert-sink$'; then
+		fail "the controller image contains the test-only alert receiver"
+	fi
+	if tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)e2e-upgrade-observer$'; then
+		fail "the controller image contains the external upgrade observer fixture"
+	fi
+	if tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)e2e-protocol-runner(\.json)?$'; then
+		fail "the controller image contains the unsupported-runner fixture"
+	fi
+	tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)manager$' ||
+		fail "the controller image does not contain /manager"
+	tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)ptah-runner$' ||
+		fail "the controller image does not contain /ptah-runner"
+	tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)ptah-crd-manager$' ||
+		fail "the controller image does not contain /ptah-crd-manager"
+	remove_image_audit_container
+}
+
+# audit_candidate_images audits every operator image this run builds or
+# installs as the candidate. A release run installs the release's image rather
+# than the one built here, so that image is pulled for this platform and held
+# to the same rules: a clean local build says nothing about the bytes installed.
+audit_candidate_images() {
+	audit_controller_image "$OPERATOR_IMAGE"
+	if [ -n "$E2E_RELEASE_MANIFEST" ]; then
+		ensure_source_image "$RELEASE_OPERATOR_IMAGE"
+		audit_controller_image "$RELEASE_OPERATOR_IMAGE"
+	fi
+}
+audit_candidate_images
 
 create_image_audit_container "$FIXTURE_BUILD_IMAGE"
 docker --context "$DOCKER_CONTEXT" export "$IMAGE_AUDIT_CONTAINER_ID" >"$IMAGE_AUDIT_ARCHIVE"
@@ -2576,7 +2720,13 @@ printf 'server = "http://%s"\n\n[host."http://%s"]\n  capabilities = ["pull", "r
 configure_registry_hosts_on_kind_nodes
 
 printf '%s\n' 'e2e: mirroring immutable execution and database images into the isolated registry'
-push_task_image "$OPERATOR_IMAGE" ptah-operator
+if [ -n "$E2E_RELEASE_MANIFEST" ]; then
+	RELEASE_IMAGES_FILE=$WORK_DIR/release-images.jsonl
+	: >"$RELEASE_IMAGES_FILE"
+	copy_release_image "$RELEASE_OPERATOR_IMAGE" ptah-operator
+else
+	push_task_image "$OPERATOR_IMAGE" ptah-operator
+fi
 CANDIDATE_OPERATOR_IMAGE=$PUSHED_IMAGE_REF
 CANDIDATE_OPERATOR_REPOSITORY=${CANDIDATE_OPERATOR_IMAGE%@*}
 CANDIDATE_OPERATOR_DIGEST=${CANDIDATE_OPERATOR_IMAGE#*@}
@@ -2594,10 +2744,17 @@ printf '%s\n' "$NEXT_CONTROLLER_DIGEST" | grep -Eq '^sha256:[0-9a-f]{64}$' ||
 	fail "synthetic next-release operator image digest is invalid"
 mirror_task_image "$FIXTURE_BUILD_IMAGE" e2e-fixture
 E2E_FIXTURE_IMAGE=$PUSHED_IMAGE_REF
-mirror_task_image "$EXECUTOR_SOURCE_IMAGE" ptah-executor
-E2E_EXECUTOR_IMAGE=$PUSHED_IMAGE_REF
-mirror_task_image "$RUNNER_SOURCE_IMAGE" ptah-runner
-E2E_RUNNER_IMAGE=$PUSHED_IMAGE_REF
+if [ -n "$E2E_RELEASE_MANIFEST" ]; then
+	copy_release_image "$RELEASE_EXECUTOR_IMAGE" ptah-executor
+	E2E_EXECUTOR_IMAGE=$PUSHED_IMAGE_REF
+	copy_release_image "$RELEASE_OPERATOR_IMAGE" ptah-runner
+	E2E_RUNNER_IMAGE=$PUSHED_IMAGE_REF
+else
+	mirror_task_image "$EXECUTOR_SOURCE_IMAGE" ptah-executor
+	E2E_EXECUTOR_IMAGE=$PUSHED_IMAGE_REF
+	mirror_task_image "$RUNNER_SOURCE_IMAGE" ptah-runner
+	E2E_RUNNER_IMAGE=$PUSHED_IMAGE_REF
+fi
 mirror_task_image "$E2E_POSTGRES_SOURCE_IMAGE" postgresql
 E2E_POSTGRES_IMAGE=$PUSHED_IMAGE_REF
 mirror_task_image "$E2E_MYSQL_SOURCE_IMAGE" mysql
@@ -2845,12 +3002,13 @@ if [ "$E2E_STOP_AFTER" = bootstrap ]; then
 		printf 'E2E_HELM_RELEASE=%s\n' "$HELM_RELEASE"
 		printf 'E2E_CONTROLLER_NAME=%s\n' "$RUNTIME_FULLNAME"
 		printf 'E2E_CONTROLLER_IMAGE=%s\n' "$CANDIDATE_OPERATOR_IMAGE"
-		printf 'E2E_CONTROLLER_REVISION=%s\n' "$CONTROLLER_REVISION"
+		printf 'E2E_CONTROLLER_REVISION=%s\n' "$CANDIDATE_REVISION"
 		printf 'E2E_CONTROLLER_STATE_VERSION=%s\n' "$CONTROLLER_STATE_VERSION"
 		printf 'E2E_EXECUTOR_IMAGE=%s\n' "$E2E_EXECUTOR_IMAGE"
 		printf 'E2E_RUNNER_IMAGE=%s\n' "$E2E_RUNNER_IMAGE"
 		printf 'E2E_POSTGRES_IMAGE=%s\n' "$E2E_POSTGRES_IMAGE"
 		printf 'E2E_MYSQL_IMAGE=%s\n' "$E2E_MYSQL_IMAGE"
+		printf 'E2E_FIXTURE_IMAGE=%s\n' "$E2E_FIXTURE_IMAGE"
 		printf 'E2E_PTAH_VERSION=%s\n' "$E2E_PTAH_VERSION"
 		printf 'E2E_PTAH_REVISION=%s\n' "$E2E_PTAH_REVISION"
 		printf 'E2E_REGISTRY_HOST=%s\n' "$REGISTRY_HOST"
@@ -2942,7 +3100,7 @@ E2E_EXECUTOR_IMAGE=$E2E_EXECUTOR_IMAGE \
 E2E_RUNNER_IMAGE=$E2E_RUNNER_IMAGE \
 E2E_PTAH_VERSION=$E2E_PTAH_VERSION \
 E2E_CONTROLLER_IMAGE=$CANDIDATE_OPERATOR_IMAGE \
-E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION \
+E2E_CONTROLLER_REVISION=$CANDIDATE_REVISION \
 E2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION \
 	run_recorded_phase assert run_go_phase assert
 
@@ -2966,7 +3124,7 @@ E2E_EXECUTOR_IMAGE=$E2E_EXECUTOR_IMAGE \
 E2E_RUNNER_IMAGE=$E2E_RUNNER_IMAGE \
 E2E_FIXTURE_IMAGE=$E2E_FIXTURE_IMAGE \
 E2E_CONTROLLER_IMAGE=$CANDIDATE_OPERATOR_IMAGE \
-E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION \
+E2E_CONTROLLER_REVISION=$CANDIDATE_REVISION \
 E2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION \
 E2E_POSTGRES_IMAGE=$E2E_POSTGRES_IMAGE \
 E2E_MYSQL_IMAGE=$E2E_MYSQL_IMAGE \
@@ -3000,7 +3158,7 @@ E2E_EXECUTOR_IMAGE=$E2E_EXECUTOR_IMAGE \
 E2E_RUNNER_IMAGE=$E2E_RUNNER_IMAGE \
 E2E_FIXTURE_IMAGE=$E2E_FIXTURE_IMAGE \
 E2E_CONTROLLER_IMAGE=$CANDIDATE_OPERATOR_IMAGE \
-E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION \
+E2E_CONTROLLER_REVISION=$CANDIDATE_REVISION \
 E2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION \
 E2E_POSTGRES_IMAGE=$E2E_POSTGRES_IMAGE \
 E2E_MYSQL_IMAGE=$E2E_MYSQL_IMAGE \
@@ -3034,7 +3192,7 @@ E2E_EXECUTOR_IMAGE=$E2E_EXECUTOR_IMAGE \
 E2E_RUNNER_IMAGE=$E2E_RUNNER_IMAGE \
 E2E_FIXTURE_IMAGE=$E2E_FIXTURE_IMAGE \
 E2E_CONTROLLER_IMAGE=$CANDIDATE_OPERATOR_IMAGE \
-E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION \
+E2E_CONTROLLER_REVISION=$CANDIDATE_REVISION \
 E2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION \
 E2E_POSTGRES_IMAGE=$E2E_POSTGRES_IMAGE \
 E2E_MYSQL_IMAGE=$E2E_MYSQL_IMAGE \
@@ -3080,7 +3238,7 @@ E2E_EXECUTOR_IMAGE=$E2E_EXECUTOR_IMAGE \
 E2E_PTAH_VERSION=$E2E_PTAH_VERSION \
 E2E_RUNNER_IMAGE=$E2E_RUNNER_IMAGE \
 E2E_CONTROLLER_IMAGE=$CANDIDATE_OPERATOR_IMAGE \
-E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION \
+E2E_CONTROLLER_REVISION=$CANDIDATE_REVISION \
 E2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION \
 E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \
 E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \
@@ -3097,7 +3255,7 @@ E2E_EXECUTOR_IMAGE=$E2E_EXECUTOR_IMAGE \
 E2E_PTAH_VERSION=$E2E_PTAH_VERSION \
 E2E_RUNNER_IMAGE=$E2E_RUNNER_IMAGE \
 E2E_CONTROLLER_IMAGE=$CANDIDATE_OPERATOR_IMAGE \
-E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION \
+E2E_CONTROLLER_REVISION=$CANDIDATE_REVISION \
 E2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION \
 E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \
 E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \
@@ -3115,7 +3273,7 @@ E2E_EXECUTOR_IMAGE=$E2E_EXECUTOR_IMAGE \
 E2E_PTAH_VERSION=$E2E_PTAH_VERSION \
 E2E_RUNNER_IMAGE=$E2E_RUNNER_IMAGE \
 E2E_CONTROLLER_IMAGE=$CANDIDATE_OPERATOR_IMAGE \
-E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION \
+E2E_CONTROLLER_REVISION=$CANDIDATE_REVISION \
 E2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION \
 E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \
 E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \
@@ -3132,7 +3290,7 @@ E2E_EXECUTOR_IMAGE=$E2E_EXECUTOR_IMAGE \
 E2E_PTAH_VERSION=$E2E_PTAH_VERSION \
 E2E_RUNNER_IMAGE=$E2E_RUNNER_IMAGE \
 E2E_CONTROLLER_IMAGE=$CANDIDATE_OPERATOR_IMAGE \
-E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION \
+E2E_CONTROLLER_REVISION=$CANDIDATE_REVISION \
 E2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION \
 E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \
 E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \

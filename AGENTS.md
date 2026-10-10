@@ -8,10 +8,11 @@ A Kubernetes operator for Ptah, scaffolded with Kubebuilder v4 under the group
 `ptah.run`. The API is `api/v1alpha1`, and it serves two families:
 `PtahSchema`, `PtahSchemaPlan` and `PtahSchemaApproval` for a declared schema,
 and `PtahMigration`, `PtahMigrationPlan`, `PtahMigrationApproval` and
-`PtahMigrationRunAcknowledgment` for a versioned sequence. Two more kinds sit
-beside them: `PtahSchemaPlanChunk`, the immutable pieces a schema plan's SQL is
-stored in, and `PtahRealm`, the cluster-scoped grant that lets more than one
-namespace manage a database. The work happens in `internal/`, which holds the
+`PtahMigrationRunAcknowledgment` for a versioned sequence. Beside them sit
+`PtahSchemaPlanChunk`, the immutable pieces a schema plan's SQL is stored in,
+`PtahRealm`, the cluster-scoped grant that lets more than one namespace manage a
+database, and `PtahResultRecord`, the immutable records an operation Pod
+delivers its result through. The work happens in `internal/`, which holds the
 controllers, admission, certificate rotation, the CRD upgrade path, the plan
 store and the runner. Five programs ship from `cmd/`: the manager, the
 certificate rotator, the CRD manager, the runner and the `kubectl ptah` plugin.
@@ -235,6 +236,23 @@ content audits still run over whatever was loaded. `make e2e` on its own builds
 for itself, so there is one build path rather than a CI-only one, and
 `hack/e2e-shared-images-selftest.sh` measures
 every refusal.
+
+A run can install a prepared release instead of its own build:
+
+```bash
+E2E_RELEASE_MANIFEST=/tmp/release-manifest.txt make e2e
+```
+
+The manifest is the `release-manifest.txt` a Release `prepare` run attached to
+its draft. The candidate operator, its runner and the executor become the
+release's digests, copied into the task registry by `hack/imagecopy` without
+changing a byte, so a Pod runs the digest that was released. The harness
+refuses a chart that is not the release's chart asset and a harness commit that
+changes any runtime source of the release commit; the fixture and the synthetic
+next release stay this run's own builds. CI takes the same manifest as the
+base64 `release_manifest` dispatch input and verifies both images' build
+attestations against the manifest's source first.
+`hack/e2e-release-images-selftest.sh` measures those refusals.
 
 ## Where a run's time went
 
