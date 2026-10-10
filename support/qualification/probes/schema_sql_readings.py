@@ -21,6 +21,7 @@ from pathlib import Path
 import secrets
 import subprocess
 import sys
+import tempfile
 import time
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -53,8 +54,8 @@ def run(argv, data=None, check=True):
 class Lab:
     """One disposable server, its network, and the executor runs against it."""
 
-    def __init__(self, context, engine, image):
-        self.engine, self.image = engine, image
+    def __init__(self, context, engine, image, database=DATABASE, address=AUDIT_HOST):
+        self.engine, self.image, self.database, self.address = engine, image, database, address
         self.docker = ['docker', '--context', context]
         self.name = f'ptah-sql-readings-{engine}-{secrets.token_hex(4)}'
         self.password = secrets.token_hex(16)
@@ -66,19 +67,19 @@ class Lab:
         server = self.name + '-server'
         if self.engine == 'postgresql':
             run(self.docker + ['run', '-d', '--name', server, '--network', self.name,
-                               '-e', f'POSTGRES_USER={ACCOUNT}', '-e', f'POSTGRES_PASSWORD={self.password}', '-e', f'POSTGRES_DB={DATABASE}',
+                               '-e', f'POSTGRES_USER={ACCOUNT}', '-e', f'POSTGRES_PASSWORD={self.password}', '-e', f'POSTGRES_DB={self.database}',
                                SERVERS['postgresql'], '-c', 'log_statement=all', '-c', 'logging_collector=on',
                                '-c', 'log_destination=jsonlog', '-c', 'log_directory=/tmp/pglog', '-c', 'log_filename=pg'])
         else:
             run(self.docker + ['run', '-d', '--name', server, '--network', self.name,
-                               '-e', f'MYSQL_ROOT_PASSWORD={self.password}', '-e', f'MYSQL_DATABASE={DATABASE}',
+                               '-e', f'MYSQL_ROOT_PASSWORD={self.password}', '-e', f'MYSQL_DATABASE={self.database}',
                                '-e', f'MYSQL_USER={ACCOUNT}', '-e', f'MYSQL_PASSWORD={self.password}', SERVERS['mysql'],
                                '--general-log=1', '--log-output=TABLE'])
         self.created.append(('container', server))
         self.server = server
         deadline = time.time() + 180
         while time.time() < deadline:
-            probe = ['pg_isready', '-U', ACCOUNT, '-d', DATABASE] if self.engine == 'postgresql' else \
+            probe = ['pg_isready', '-U', ACCOUNT, '-d', self.database] if self.engine == 'postgresql' else \
                 ['mysql', '-uroot', f'-p{self.password}', '-e', 'SELECT 1']
             if run(self.docker + ['exec', server] + probe, check=False).returncode == 0:
                 break
@@ -101,9 +102,9 @@ class Lab:
 
     def sql(self, text, root=False):
         if self.engine == 'postgresql':
-            return run(self.docker + ['exec', '-i', self.server, 'psql', '-q', '-v', 'ON_ERROR_STOP=1', '-U', ACCOUNT, '-d', DATABASE],
+            return run(self.docker + ['exec', '-i', self.server, 'psql', '-q', '-v', 'ON_ERROR_STOP=1', '-U', ACCOUNT, '-d', self.database],
                        text.encode()).stdout
-        user = ['-uroot', f'-p{self.password}'] if root else [f'-u{ACCOUNT}', f'-p{self.password}', DATABASE]
+        user = ['-uroot', f'-p{self.password}'] if root else [f'-u{ACCOUNT}', f'-p{self.password}', self.database]
         return run(self.docker + ['exec', '-i', self.server, 'mysql', '-N', '-B'] + user, text.encode()).stdout
 
     def seed(self, *files, statements=()):
@@ -126,7 +127,7 @@ class Lab:
                 record = json.loads(line)
                 if record.get('remote_host') in (None, '[local]') or record.get('message') is None:
                     continue
-                row = {'dbname': record.get('dbname'), 'remote_host': AUDIT_HOST, 'message': record['message']}
+                row = {'dbname': record.get('dbname'), 'remote_host': self.address, 'message': record['message']}
                 for key in ('statement', 'detail'):
                     if record.get(key) is not None:
                         row[key] = record[key]
@@ -139,16 +140,16 @@ class Lab:
         for line in self.sql(query, root=True).decode().splitlines():
             stamp, command, client, thread, argument = line.split('\t')
             host = client[client.rindex('[') + 1:client.rindex(']')]
-            client = client.replace(f'[{host}]', f'[{AUDIT_HOST}]')
-            argument = binascii.unhexlify(argument).replace(host.encode(), AUDIT_HOST.encode()).hex().upper()
+            client = client.replace(f'[{host}]', f'[{self.address}]')
+            argument = binascii.unhexlify(argument).replace(host.encode(), self.address.encode()).hex().upper()
             rows.append({'time': stamp, 'type': command, 'client': client, 'thread': int(thread), 'argumentHex': argument})
         return rows
 
-    def ptah(self, args, desired=None, plan=None, environment=None):
+    def ptah(self, args, desired=None, plan=None, environment=None, files=None):
         """Run one executor command; return its exit code, journal and saved plan."""
         container = self.name + '-ptah-' + secrets.token_hex(3)
-        url = (f'postgres://{ACCOUNT}:{self.password}@{self.server}:5432/{DATABASE}?sslmode=disable'
-               if self.engine == 'postgresql' else f'mysql://{ACCOUNT}:{self.password}@{self.server}:3306/{DATABASE}')
+        url = (f'postgres://{ACCOUNT}:{self.password}@{self.server}:5432/{self.database}?sslmode=disable'
+               if self.engine == 'postgresql' else f'mysql://{ACCOUNT}:{self.password}@{self.server}:3306/{self.database}')
         env = ['-e', f'PTAH_DB_URL={url}']
         for key, value in (environment or {}).items():
             env += ['-e', f'{key}={value}']
@@ -158,6 +159,8 @@ class Lab:
                 run(self.docker + ['cp', str(FIXTURES / desired), container + ':/desired.sql'])
             if plan:
                 run(self.docker + ['cp', str(plan), container + ':/plan.json'])
+            for target, source in (files or {}).items():
+                run(self.docker + ['cp', str(source), container + ':' + target])
             mark = self.mark()
             time.sleep(1.1)
             code = run(self.docker + ['start', '-a', container], check=False).returncode
@@ -251,6 +254,55 @@ def capture(context, image, engine, out):
     return results
 
 
+def migration_directory(engine, versions, root):
+    """A copy of the repository's migration fixture holding only the given versions."""
+    target = Path(root) / f'{engine}-{"-".join(map(str, versions))}'
+    target.mkdir(parents=True)
+    for source in sorted((FIXTURES / 'migrations' / engine).iterdir()):
+        if int(source.name.split('_', 1)[0]) in versions:
+            (target / source.name).write_bytes(source.read_bytes())
+    return target
+
+
+def capture_migrations(context, image, engine, out, scratch):
+    """The migration History reading and the restored-history refusal reading."""
+    results = {}
+    status = ['migrations', 'status', '--migrations-dir', '/migrations', '--json']
+    up = ['migrations', 'up', '--migrations-dir', '/migrations', '--json'] + (['--tx-mode', 'none'] if engine == 'mysql' else [])
+    lock = {'PTAH_MIGRATION_LOCK_TIMEOUT': '30s'}
+    every = migration_directory(engine, (1, 2, 3), scratch)
+    # History of a database that already has a revision table. Its statements
+    # include everything History sends to an empty one, which stops after
+    # asking whether the table exists.
+    history = ('ptah_e2e_retarget', '10.244.3.97') if engine == 'postgresql' else ('ptah_audit_history', AUDIT_HOST)
+    with Lab(context, engine, image, database=history[0], address=history[1]) as lab:
+        code, _, _ = lab.ptah(up, files={'/migrations': migration_directory(engine, (1, 2), Path(scratch) / 'history')},
+                              environment=lock)
+        if code:
+            raise RuntimeError(f'{engine}: the first two migrations did not apply')
+        code, rows, _ = lab.ptah(status, files={'/migrations': every})
+        write(out, f'{engine}-migration-history-audit.jsonl', rows, code, results)
+    # Apply 1 and 2, lose 2's column and revision row, then approve only [3]:
+    # the selection guard must refuse the [2, 3] Ptah now selects.
+    with Lab(context, engine, image, database='ptah_audit_restore') as lab:
+        first = migration_directory(engine, (1, 2), scratch)
+        code, _, _ = lab.ptah(up, files={'/migrations': first}, environment=lock)
+        if code:
+            raise RuntimeError(f'{engine}: the first two migrations did not apply')
+        lab.sql('ALTER TABLE e2e_migration_widgets DROP COLUMN color; DELETE FROM schema_migrations WHERE version = 2;')
+        sequence = Path(scratch) / f'{engine}-approved-3.json'
+        sequence.write_text('{"migrations":[{"version":3}]}')
+        code, rows, _ = lab.ptah(up + ['--expect-sequence', '/sequence.json'],
+                                 files={'/migrations': every, '/sequence.json': sequence}, environment=lock)
+        write(out, f'{engine}-restored-history-refusal.jsonl', rows, code, results)
+        fresh = Path(scratch) / f'{engine}-approved-2-3.json'
+        fresh.write_text('{"migrations":[{"version":2},{"version":3}]}')
+        code, _, _ = lab.ptah(up + ['--expect-sequence', '/sequence.json'],
+                              files={'/migrations': every, '/sequence.json': fresh}, environment=lock)
+        results[f'{engine}-restored-history-control'] = {'exitCode': code, 'records': None}
+    return results
+
+
 def comparable(path):
     """What a reading says, without the timestamps and thread numbers a rerun changes."""
     rows = [json.loads(line) for line in path.read_text().splitlines()]
@@ -321,6 +373,7 @@ def main():
     parser.add_argument('--executor-image')
     parser.add_argument('--engine', choices=sorted(SERVERS), action='append')
     parser.add_argument('--out', required=True, help='directory the readings are written to')
+    parser.add_argument('--part', choices=('all', 'schema', 'migrations'), default='all')
     parser.add_argument('--compare', action='store_true',
                         help='compare every reading with the checked-in one instead of only writing it')
     parser.add_argument('--contract', help='instead of capturing, write the diagnostic contract the readings in --out witness')
@@ -339,13 +392,17 @@ def main():
     out = Path(args.out).resolve()
     out.mkdir(parents=True, exist_ok=True)
     results = {}
+    scratch = Path(tempfile.mkdtemp(prefix='ptah-sql-readings-'))
     for engine in args.engine or sorted(SERVERS):
-        results.update(capture(args.context, args.executor_image, engine, out))
+        if args.part in ('all', 'schema'):
+            results.update(capture(args.context, args.executor_image, engine, out))
+        if args.part in ('all', 'migrations'):
+            results.update(capture_migrations(args.context, args.executor_image, engine, out, scratch))
     (out / 'capture.json').write_text(json.dumps({'executorImage': args.executor_image, 'readings': results}, indent=2) + '\n')
     mismatched = 0
     for name, result in sorted(results.items()):
         line = f"{name}: exit {result['exitCode']}, {result['records']} records"
-        if args.compare:
+        if args.compare and result['records'] is not None:
             recorded = ROOT / 'testdata/e2e/readings' / name
             same = recorded.is_file() and comparable(recorded) == comparable(out / name)
             mismatched += not same

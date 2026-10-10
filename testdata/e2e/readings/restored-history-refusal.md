@@ -12,7 +12,10 @@ The revision table still contained only version 1. A new invocation approving
 Both invocations used `PTAH_MIGRATION_LOCK_TIMEOUT=30s`, matching the operator
 fixture. MySQL also used its explicit `--tx-mode none`.
 
-- Ptah source: `f6e562c5b0986cd29a53a5cc01938827336b780a`
+- Ptah source: `f6e562c5b0986cd29a53a5cc01938827336b780a`; on 2026-10-10 the same
+  procedure, run by `support/qualification/probes/schema_sql_readings.py --part migrations`
+  with the pinned Ptah v0.13.0 image (`eb69f8c4`), produced both journals record for
+  record, so they stand for that executor unchanged
 - Executor image ID: `sha256:cc4fabbc0ad0d4dc6d1138df08456222232c0f38d7ef0eba4a7b40bd03946fd1`
 - Operator fixture source: `85201caff7c44b9a271930331052108b34629ab9`
 - Database: `ptah_audit_restore`; account: `ptah_audit`

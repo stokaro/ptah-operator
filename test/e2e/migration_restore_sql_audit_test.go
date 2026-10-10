@@ -49,7 +49,7 @@ func TestPostgresRestoredHistorySQLAuditUsesTheExactRefusedApply(t *testing.T) {
 	clients["10.244.3.97"] = operationSQLClient{jobUID: "history", podUID: "history-pod", operation: "history"}
 	history := bytes.ReplaceAll(postgresMigrationAuditReading(t), []byte("ptah_e2e_retarget"), []byte(restoreAuditDatabase))
 	counts, err = postgresMigrationRefusalSQLForJob(append(bytes.Clone(raw), history...), restoreAuditDatabase, clients, "refused-job")
-	if err != nil || counts[mysqlAuditHost] != 25 || counts["10.244.3.97"] != 17 {
+	if err != nil || counts[mysqlAuditHost] != 25 || counts["10.244.3.97"] != 9 {
 		t.Fatalf("refused Apply plus later History: %v %v", counts, err)
 	}
 	if _, err := postgresMigrationRefusalSQLForJob(history, restoreAuditDatabase, clients, "refused-job"); err == nil {

@@ -38,11 +38,11 @@ func mysqlAuditClients() map[string]operationSQLClient {
 func TestMySQLMigrationSQLAuditAcceptsActualHistory(t *testing.T) {
 	t.Parallel()
 	rows, before := mysqlMigrationAuditReading(t), mysqlAuditBaseline()
-	if len(rows) != 34 {
-		t.Fatalf("expected the complete 34-record reading, got %d", len(rows))
+	if len(rows) != 13 {
+		t.Fatalf("expected the complete 13-record reading, got %d", len(rows))
 	}
 	counts, err := mysqlMigrationRefusalSQL(before, append(slices.Clone(before), rows...), mysqlAuditDatabase, mysqlAuditUser, mysqlAuditClients())
-	if err != nil || len(counts) != 1 || counts[mysqlAuditHost] != 14 {
+	if err != nil || len(counts) != 1 || counts[mysqlAuditHost] != 7 {
 		t.Fatalf("actual History: counts=%v error=%v", counts, err)
 	}
 	// Before this window an unrelated Pod can have used the same IP. Its old
