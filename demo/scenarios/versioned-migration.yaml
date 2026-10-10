@@ -60,16 +60,15 @@ steps:
       stdout_contains: [AwaitingApproval, "Current version:0", "Pending:        2", Create Shipments, Add Carrier]
       stdout_absent: ["CREATE TABLE", "ALTER TABLE"]
 
-  - note: No migration has run. The revision table is there because reading a history needs it.
-    # Not an empty database: the read creates Ptah's bookkeeping table if it is
-    # absent, which is why the history of a database nobody has migrated is a
-    # readable fact rather than an error. What is absent is the table a
-    # migration would create.
-    run: kubectl -n "$NAMESPACE" exec deploy/demo-psql -- psql -c "\dt"
+  - note: No migration has run, and reading the history wrote nothing. The database is still empty.
+    # Ptah reads the history without creating its revision table, so a
+    # database nobody has migrated reads as an empty history. The count is a
+    # query because \dt prints nothing to stdout for an empty database.
+    run: |
+      kubectl -n "$NAMESPACE" exec deploy/demo-psql -- psql -tAc "SELECT 'tables: ' || count(*) FROM pg_tables WHERE schemaname = current_schema()"
     expect:
       exit: 0
-      stdout_contains: [schema_migrations]
-      stdout_absent: [shipments]
+      stdout_contains: ["tables: 0"]
 
   - note: An approval names the migration, the plan and its fingerprint. The rest is read off the plan.
     run: |
