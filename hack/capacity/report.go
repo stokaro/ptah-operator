@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -208,6 +209,27 @@ func managerGrowth(inside []sample) (cores, throttle, too float64, wait quantile
 	return cores, throttle, too, histogramQuantiles(total)
 }
 
+// summaryValue is how one environment entry reads in the summary table. A
+// scalar is printed; a proof is a structure whose %v rendering is pointer
+// addresses and whole Kubernetes objects, so the table points at the report
+// that holds it instead.
+func summaryValue(key string, value any) string {
+	if value == nil {
+		return "none"
+	}
+	v := reflect.ValueOf(value)
+	switch v.Kind() {
+	case reflect.Bool, reflect.String, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Float32, reflect.Float64:
+		return fmt.Sprint(value)
+	case reflect.Pointer, reflect.Interface, reflect.Map, reflect.Slice:
+		if v.IsNil() {
+			return "none"
+		}
+	}
+	return "in report.json at `environment." + key + "`"
+}
+
 // writeSummary is the report as a reader of the capacity page reads it.
 func writeSummary(out io.Writer, r report) error {
 	var b strings.Builder
@@ -224,7 +246,7 @@ func writeSummary(out io.Writer, r report) error {
 	sort.Strings(keys)
 	b.WriteString("| Environment | |\n| --- | --- |\n")
 	for _, key := range keys {
-		fmt.Fprintf(&b, "| %s | %v |\n", key, r.Environment[key])
+		fmt.Fprintf(&b, "| %s | %s |\n", key, summaryValue(key, r.Environment[key]))
 	}
 	b.WriteString("\n| Scenario | Seconds | Jobs/min avg (peak) | Job done p50/p95 s | Pending Pods max | Oldest reading s | Overdue s | Manager RSS MiB | Manager cores | Queue wait p95 s | Throttled s | Admission p95 s | Outcome |\n")
 	b.WriteString("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n")
