@@ -4,11 +4,13 @@ name: Fresh installation
 #
 # A fresh kind cluster, the released assets downloaded and verified with the
 # commands the release guide prints, the chart installed by digest, and the
-# first schema applied, approved and converged on PostgreSQL and on MySQL.
+# first schema applied, approved and converged. The guide's resource is one
+# engine's, so PostgreSQL and MySQL each get a cluster of their own.
 # support/qualification/probes/fresh_install.py reads those commands out of the
-# documentation at the release commit; what a reader brings -- the databases,
-# a registry and the schema published with the pinned Ptah -- is a fixture kept
-# apart from them, and every substitution is in the transcript it uploads.
+# documentation at the release commit; what a reader brings -- the database,
+# a registry and the schema published with the pinned Ptah release's own
+# binary -- is a fixture kept apart from them, and every substitution is in the
+# transcript it uploads.
 #
 # It runs on request against a published release tag. The release has to be
 # published first: the guide verifies the immutable release, which a draft is
@@ -54,7 +56,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
-      - name: Read the newest supported minor and the verified Ptah commit
+      - name: Read the newest supported minor and the verified Ptah release
         id: support
         shell: bash
         run: |
@@ -63,7 +65,7 @@ jobs:
           for field in kind_version kubernetes_version node_image; do
             printf '%s=%s\n' "$field" "$(jq -er --arg field "$field" '.[$field]' <<<"$newest")" >> "$GITHUB_OUTPUT"
           done
-          printf 'ptah_commit=%s\n' "$(go run ./hack/verifyptahsupport -output=commit)" >> "$GITHUB_OUTPUT"
+          printf 'ptah_version=%s\n' "$(go run ./hack/verifyptahsupport -output=version)" >> "$GITHUB_OUTPUT"
           # The fixture images are the ones the acceptance suite mirrors, read
           # from the harness so the two cannot name different builds.
           for name in POSTGRES MYSQL; do
@@ -95,41 +97,63 @@ jobs:
           echo "$(<"$RUNNER_TEMP/kubectl.sha256")  $install_dir/kubectl" | sha256sum --check
           chmod 0755 "$install_dir/kubectl"
           echo "$install_dir" >> "$GITHUB_PATH"
-      - name: Check out the verified Ptah
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          repository: stokaro/ptah
-          ref: ${{ steps.support.outputs.ptah_commit }}
-          path: .guide/ptah
-          persist-credentials: false
-      - name: Build the Ptah a reader publishes with
+      # A reader publishes with the Ptah release the executor image is, so the
+      # binary is that release's own, checked against the checksums it published.
+      - name: Download the Ptah release a reader publishes with
+        env:
+          PTAH_VERSION: ${{ steps.support.outputs.ptah_version }}
         shell: bash
         run: |
           set -euo pipefail
-          mv "$GITHUB_WORKSPACE/.guide/ptah" "$RUNNER_TEMP/ptah"
-          rmdir "$GITHUB_WORKSPACE/.guide"
-          go -C "$RUNNER_TEMP/ptah" build -o "$RUNNER_TEMP/bin/ptah" ./cmd/ptah
-      - name: Create a fresh cluster
-        shell: bash
-        run: |
-          set -euo pipefail
-          kind create cluster --name ptah-guide --image '${{ steps.support.outputs.node_image }}' --wait 5m
-          kubectl get nodes -o wide
-      - name: Run the installation guide
+          [[ "$PTAH_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          version="${PTAH_VERSION#v}"
+          archive="ptah_${version}_linux_$(go env GOHOSTARCH).tar.gz"
+          release="https://github.com/stokaro/ptah/releases/download/$PTAH_VERSION"
+          download="$RUNNER_TEMP/ptah-download"
+          mkdir -p "$download"
+          curl --fail --location --silent --show-error --output "$download/$archive" "$release/$archive"
+          curl --fail --location --silent --show-error --output "$download/checksums.txt" "$release/checksums.txt"
+          (cd "$download" && grep -E "  ${archive}\$" checksums.txt | sha256sum --check --strict)
+          tar -xzf "$download/$archive" -C "$download" ptah
+          install -m 0755 "$download/ptah" "$RUNNER_TEMP/bin/ptah"
+          "$RUNNER_TEMP/bin/ptah" --version
+      - name: Install on a fresh cluster and converge a PostgreSQL schema
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GUIDE_TAG: ${{ inputs.tag }}
           GUIDE_POSTGRES_IMAGE: ${{ steps.support.outputs.postgres_image }}
-          GUIDE_MYSQL_IMAGE: ${{ steps.support.outputs.mysql_image }}
           GUIDE_REGISTRY_IMAGE: ${{ steps.support.outputs.registry_image }}
+          NODE_IMAGE: ${{ steps.support.outputs.node_image }}
         shell: bash
         run: |
           set -euo pipefail
-          export GUIDE_BIN="$RUNNER_TEMP/bin"
-          python3 support/qualification/probes/fresh_install.py \
-            --tag "$GUIDE_TAG" \
-            --work "$RUNNER_TEMP/guide" \
-            --evidence "$RUNNER_TEMP/guide-evidence"
+          kind create cluster --name ptah-guide-postgresql --image "$NODE_IMAGE" --wait 5m
+          kubectl get nodes -o wide
+          GUIDE_BIN="$RUNNER_TEMP/bin" python3 support/qualification/probes/fresh_install.py \
+            --tag "$GUIDE_TAG" --engine postgresql \
+            --work "$RUNNER_TEMP/guide-postgresql" \
+            --evidence "$RUNNER_TEMP/guide-evidence/postgresql"
+          kind delete cluster --name ptah-guide-postgresql
+      # MySQL runs whether or not PostgreSQL passed, so one engine's failure
+      # cannot hide the other's result.
+      - name: Install on a fresh cluster and converge a MySQL schema
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GUIDE_TAG: ${{ inputs.tag }}
+          GUIDE_MYSQL_IMAGE: ${{ steps.support.outputs.mysql_image }}
+          GUIDE_REGISTRY_IMAGE: ${{ steps.support.outputs.registry_image }}
+          NODE_IMAGE: ${{ steps.support.outputs.node_image }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          kind delete cluster --name ptah-guide-postgresql
+          kind create cluster --name ptah-guide-mysql --image "$NODE_IMAGE" --wait 5m
+          kubectl get nodes -o wide
+          GUIDE_BIN="$RUNNER_TEMP/bin" python3 support/qualification/probes/fresh_install.py \
+            --tag "$GUIDE_TAG" --engine mysql \
+            --work "$RUNNER_TEMP/guide-mysql" \
+            --evidence "$RUNNER_TEMP/guide-evidence/mysql"
       - name: Preserve the transcript
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -138,6 +162,8 @@ jobs:
           path: ${{ runner.temp }}/guide-evidence
           if-no-files-found: warn
           retention-days: 90
-      - name: Remove the cluster
+      - name: Remove the clusters
         if: always()
-        run: kind delete cluster --name ptah-guide
+        run: |
+          kind delete cluster --name ptah-guide-postgresql
+          kind delete cluster --name ptah-guide-mysql

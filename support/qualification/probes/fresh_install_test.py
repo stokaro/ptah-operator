@@ -1,7 +1,7 @@
 from pathlib import Path
 import unittest
 
-from fresh_install import blocks, substitute
+from fresh_install import SERVERS, blocks, fixture_deployment, substitute
 
 DOCS = Path(__file__).resolve().parents[3] / 'docs/site/src/content/docs'
 
@@ -27,6 +27,26 @@ class BlockExtractionTest(unittest.TestCase):
             substitute('a=1\n', [('<x>', '1')])
         with self.assertRaises(ValueError):
             substitute('<x> <x>\n', [('<x>', '1')])
+
+
+class FixtureTest(unittest.TestCase):
+    def test_a_database_keeps_its_data_on_an_emptydir_and_is_ready_only_on_its_port(self):
+        for engine, server in SERVERS.items():
+            deployment, service = fixture_deployment('ns', server['name'], 'image@sha256:' + '0' * 64, server['port'], [],
+                                                     data=server['data'])
+            spec = deployment['spec']['template']['spec']
+            container = spec['containers'][0]
+            self.assertEqual(container['volumeMounts'], [{'name': 'data', 'mountPath': server['data']}], engine)
+            self.assertEqual(spec['volumes'], [{'name': 'data', 'emptyDir': {}}], engine)
+            self.assertEqual(container['readinessProbe']['tcpSocket'], {'port': server['port']}, engine)
+            self.assertEqual(service['spec']['ports'], [{'port': server['port'], 'targetPort': server['port']}], engine)
+
+    def test_a_server_without_data_mounts_nothing(self):
+        deployment, _ = fixture_deployment('ns', 'registry', 'image@sha256:' + '0' * 64, 5000, [])
+        spec = deployment['spec']['template']['spec']
+        self.assertNotIn('volumes', spec)
+        self.assertNotIn('volumeMounts', spec['containers'][0])
+        self.assertEqual(spec['containers'][0]['readinessProbe']['tcpSocket'], {'port': 5000})
 
 
 class PublishedGuideTest(unittest.TestCase):
