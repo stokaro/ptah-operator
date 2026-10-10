@@ -270,11 +270,9 @@ func (a *alertingRun) negativeControls() {
 		tables, err := databaseSQL(a.ctx, a.cluster, a.in.TestNamespace, engine, f.database, "SELECT table_name, table_type FROM information_schema.tables WHERE table_schema='public' ORDER BY table_name")
 		a.check(err, "read the isolated negative-control tables")
 		family := f.initial.claim.family
+		// History never creates the revision table, so there are no revision
+		// rows to read unless a table appeared, which the check already refuses.
 		var historyRows string
-		if family == "migration" {
-			historyRows, err = databaseSQL(a.ctx, a.cluster, a.in.TestNamespace, engine, f.database, "SELECT count(*) FROM public.schema_migrations")
-			a.check(err, "read the negative-control revision count")
-		}
 		if !alNegativeDatabaseUnchanged(family, tables, historyRows) {
 			a.fatalf("%s has application tables or revision rows without approval", f.object.GetName())
 		}

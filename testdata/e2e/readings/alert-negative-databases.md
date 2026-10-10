@@ -1,15 +1,18 @@
 # Ordinary policy-control databases
 
-These four readings were collected after the failed `ordinary-policy-waits`
-scenario on 2026-10-03, Kubernetes 1.37.0, Linux amd64, Docker context
-`diabolocom`. Runtime source: `3e6dd38e660b43a50c529f2045ee879fc72143b9`.
-Ptah source: `f6e562c5b0986cd29a53a5cc01938827336b780a`.
+These four readings describe the isolated databases of the `ordinary-policy-waits`
+scenario after its ten-minute window: two Schema and two Migration resources
+that observe and plan but never apply.
 
-The isolated Schema databases are empty. Each Migration database contains only
-an empty default `schema_migrations` base table. The pinned History operation
-may initialize that table; [the existing History audit](postgresql-migration-history-audit.md)
-documents the exact contract. Application tables and recorded revision rows
-are not permitted without Apply.
+The first readings were collected on 2026-10-03, Kubernetes 1.37.0, Linux amd64,
+with Ptah `f6e562c5`, whose History created an empty default `schema_migrations`
+table. The executor is now the Ptah v0.13.0 release image, whose History asks
+whether the revision table exists and never creates it: the isolated History
+capture in [postgresql-migration-history-audit.md](postgresql-migration-history-audit.md)
+shows a fresh database left untouched. The Migration readings were updated to
+that state on 2026-10-10, so every database is empty. Application tables, a
+created revision table and recorded revision rows are refused without Apply.
 
-The reading validates the database predicate. It does not turn the failed
-native attempt into a pass or establish a complete alert or SQL-audit verdict.
+The reading validates the database predicate. The scenario logs the tables it
+reads, which is where a native run confirms this state; it does not turn a
+failed attempt into a pass or establish a complete alert or SQL-audit verdict.

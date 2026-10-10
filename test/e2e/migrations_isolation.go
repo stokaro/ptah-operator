@@ -446,18 +446,6 @@ func miDistinct(values []string) []string {
 	return slices.Compact(sorted)
 }
 
-// unknownLayerRevisionTablesQuery counts the revision tables in the database.
-// Ptah creates one on its first history read, so a database with none was
-// never opened. MySQL's catalog spans the server, so there the database is
-// named.
-func unknownLayerRevisionTablesQuery(engine, database string) string {
-	if engine == "mysql" {
-		return "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = '" + database +
-			"' AND table_name = 'schema_migrations'"
-	}
-	return "SELECT count(*) FROM information_schema.tables WHERE table_name = 'schema_migrations'"
-}
-
 // egressExpectation is one operation of one family, and what the egress
 // example grants its Pods: the name service, the database and the registry,
 // each open or closed.

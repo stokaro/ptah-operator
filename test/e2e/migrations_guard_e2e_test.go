@@ -352,10 +352,10 @@ func (m *migrationRun) existingSchemaAdoptionProof() {
 		func(migration *ptahv1alpha1.PtahMigration) bool {
 			return migration.Status.Phase == ptahv1alpha1.MigrationPhaseAwaitingApproval
 		})
-	// The row itself. What must not happen is a recorded revision, not a
-	// created table: the read that establishes the history is also what
-	// creates the table, so demanding its absence would measure Ptah's reader
-	// and report it as an adoption the operator never performed.
+	// The row itself. What must not happen is a recorded revision. Whether a
+	// revision table exists depends on which Ptah build read the history, so
+	// demanding its absence would measure Ptah's reader and report it as an
+	// adoption the operator never performed.
 	if !existingSchemaHeld(held) {
 		m.fatalf("%s did not hold the whole sequence at the approval gate", a.migration)
 	}
@@ -458,8 +458,8 @@ func (m *migrationRun) buildAdoptSchemaWithoutTheOperator(a adoptRow) {
 }
 
 // adoptRevisionTables counts the revision table Ptah records history in. It
-// separates a database nothing has touched from one a history read has
-// reached, which is not the same question as whether anything was adopted.
+// separates a database Ptah never recorded anything in from one it has, which
+// is not the same question as whether anything was adopted.
 func (m *migrationRun) adoptRevisionTables(a adoptRow) string {
 	statement := "SELECT count(*) FROM information_schema.tables WHERE table_name = 'schema_migrations'"
 	if m.engine.name == "mysql" {
@@ -469,11 +469,9 @@ func (m *migrationRun) adoptRevisionTables(a adoptRow) string {
 	return m.query(statement, a.database)
 }
 
-// adoptRecordedRevisions counts what the revision table records. Reading the
-// history is what creates the table, so its presence says a read happened and
-// nothing else. Adoption is a row in it, a version recorded as applied that
-// nothing ran, and a table that is not there answers zero the same way an
-// empty one does.
+// adoptRecordedRevisions counts what the revision table records. Adoption is a
+// row in it, a version recorded as applied that nothing ran, and a table that
+// is not there answers zero the same way an empty one does.
 func (m *migrationRun) adoptRecordedRevisions(a adoptRow) string {
 	if m.adoptRevisionTables(a) == "0" {
 		return "0"
