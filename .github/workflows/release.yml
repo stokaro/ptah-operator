@@ -628,7 +628,22 @@ jobs:
             --notes-file dist/release-journal.txt \
             --title "Ptah Operator ${{ steps.release.outputs.version }}"
           go run ./hack/releaseverify -tag "$RELEASE_TAG" -verify-source-identity
-          release_json="$(go run ./hack/releaseverify -tag "$RELEASE_TAG" -read-release)"
+          # The release list can trail the write that created the draft.
+          converged=false
+          delay=2
+          for _ in {1..8}; do
+            release_json="$(go run ./hack/releaseverify -tag "$RELEASE_TAG" -read-release)"
+            if [[ "$release_json" != null ]]; then
+              converged=true
+              break
+            fi
+            sleep "$delay"
+            delay=$((delay < 30 ? delay * 2 : 30))
+          done
+          if [[ "$converged" != true ]]; then
+            echo 'the release list does not show the draft just created' >&2
+            exit 1
+          fi
           [[ "$(jq -r '.draft' <<<"$release_json")" == true ]]
           jq -e '.assets | length == 0' <<<"$release_json" >/dev/null
           jq -j '.body | strings' <<<"$release_json" > "$RUNNER_TEMP/prepared-release-body.txt"
@@ -982,7 +997,23 @@ jobs:
           gh release edit "$RELEASE_TAG" \
             --draft \
             --notes-file dist/release-manifest.txt
-          release_json="$(go run ./hack/releaseverify -tag "$RELEASE_TAG" -read-release)"
+          # The release list can trail the edit that committed the manifest.
+          converged=false
+          delay=2
+          for _ in {1..8}; do
+            release_json="$(go run ./hack/releaseverify -tag "$RELEASE_TAG" -read-release)"
+            jq -j '.body | strings' <<<"$release_json" > "$RUNNER_TEMP/finalized-release-body.txt"
+            if cmp -s dist/release-manifest.txt "$RUNNER_TEMP/finalized-release-body.txt"; then
+              converged=true
+              break
+            fi
+            sleep "$delay"
+            delay=$((delay < 30 ? delay * 2 : 30))
+          done
+          if [[ "$converged" != true ]]; then
+            echo 'the release list does not show the committed manifest' >&2
+            exit 1
+          fi
           [[ "$(jq -r '.draft' <<<"$release_json")" == true ]]
           jq -e '.assets | length == 0' <<<"$release_json" >/dev/null
           jq -j '.body | strings' <<<"$release_json" > "$RUNNER_TEMP/finalized-release-body.txt"
@@ -1074,7 +1105,24 @@ jobs:
               gh release upload "$RELEASE_TAG" "$source"
             fi
           done <<<"$expected_names"
-          release_json="$(go run ./hack/releaseverify -tag "$RELEASE_TAG" -read-release)"
+          # The release list can trail the uploads.
+          converged=false
+          delay=2
+          for _ in {1..8}; do
+            release_json="$(go run ./hack/releaseverify -tag "$RELEASE_TAG" -read-release)"
+            actual_names="$(jq -r '(.assets // [])[].name' <<<"$release_json" | sort)"
+            if [[ "$actual_names" == "$expected_names" ]] &&
+              jq -e '[.assets[] | select(.state != "uploaded")] | length == 0' <<<"$release_json" >/dev/null; then
+              converged=true
+              break
+            fi
+            sleep "$delay"
+            delay=$((delay < 30 ? delay * 2 : 30))
+          done
+          if [[ "$converged" != true ]]; then
+            echo 'the release list does not show every uploaded asset' >&2
+            exit 1
+          fi
           actual_names="$(jq -r '.assets[].name' <<<"$release_json" | sort)"
           [[ "$actual_names" == "$expected_names" ]]
           jq -e '[.assets[] | select(.state != "uploaded")] | length == 0' <<<"$release_json" >/dev/null
@@ -1210,7 +1258,22 @@ jobs:
               -tag "$RELEASE_TAG" \
               -verify-source-identity
           fi
-          release_json="$(go run ./hack/releaseverify -tag "$RELEASE_TAG" -read-release)"
+          # The release list can trail publication and the immutability it brings.
+          converged=false
+          delay=2
+          for _ in {1..8}; do
+            release_json="$(go run ./hack/releaseverify -tag "$RELEASE_TAG" -read-release)"
+            if jq -e '.draft == false and .immutable == true' <<<"$release_json" >/dev/null; then
+              converged=true
+              break
+            fi
+            sleep "$delay"
+            delay=$((delay < 30 ? delay * 2 : 30))
+          done
+          if [[ "$converged" != true ]]; then
+            echo 'the release list does not show the release published and immutable' >&2
+            exit 1
+          fi
           [[ "$(jq -r '.draft' <<<"$release_json")" == false ]]
           [[ "$(jq -r '.immutable' <<<"$release_json")" == true ]]
           jq -j '.body' <<<"$release_json" > "$RUNNER_TEMP/published-body.txt"
