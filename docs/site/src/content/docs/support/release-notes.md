@@ -18,7 +18,10 @@ out of silence.
 
 ## 0.2.1
 
-**Before you upgrade.** Nothing has to change. One behavior does:
+**Before you upgrade.** Nothing has to change. The upgrade replaces the
+manager image, so run it as
+[Upgrade to a new release](../../use/operations/#upgrade) says, with
+`--force-conflicts`. One behavior changes:
 `spec.interval` now runs from the start of one refresh to the start of the
 next, as the API describes it. 0.2.0 waited one interval after each refresh
 finished, so the refresh's own Jobs lengthened every period.
