@@ -15,6 +15,11 @@ name: Fresh installation
 # It runs on request against a published release tag. The release has to be
 # published first: the guide verifies the immutable release, which a draft is
 # not.
+#
+# With upgrade_from, each cluster first installs that published release through
+# its own guide and converges the schema on it, then upgrades to the tag as the
+# operations guide describes and requires the runtime on the tag's image with
+# the schema still converged, refreshed by the new manager.
 
 on:
   workflow_dispatch:
@@ -23,6 +28,11 @@ on:
         description: Published release tag to install, such as v0.2.0
         type: string
         required: true
+      upgrade_from:
+        description: Published release to install first and upgrade from, such as v0.2.0; empty for a fresh installation
+        type: string
+        required: false
+        default: ''
       architecture:
         description: Native runner architecture
         type: choice
@@ -34,7 +44,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: fresh-install-${{ github.ref }}-${{ inputs.architecture }}
+  group: fresh-install-${{ github.ref }}-${{ inputs.architecture }}-${{ inputs.upgrade_from }}
   cancel-in-progress: true
 
 env:
@@ -42,9 +52,9 @@ env:
 
 jobs:
   install:
-    name: Install ${{ inputs.tag }} from the guide on ${{ inputs.architecture }}
+    name: Install ${{ inputs.tag }}${{ inputs.upgrade_from && format(' over {0}', inputs.upgrade_from) || '' }} from the guide on ${{ inputs.architecture }}
     runs-on: ${{ inputs.architecture == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
-    timeout-minutes: 90
+    timeout-minutes: 150
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -121,6 +131,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GUIDE_TAG: ${{ inputs.tag }}
+          UPGRADE_FROM: ${{ inputs.upgrade_from }}
           GUIDE_POSTGRES_IMAGE: ${{ steps.support.outputs.postgres_image }}
           GUIDE_REGISTRY_IMAGE: ${{ steps.support.outputs.registry_image }}
           NODE_IMAGE: ${{ steps.support.outputs.node_image }}
@@ -129,8 +140,10 @@ jobs:
           set -euo pipefail
           kind create cluster --name ptah-guide-postgresql --image "$NODE_IMAGE" --wait 5m
           kubectl get nodes -o wide
+          upgrade=()
+          if [[ -n "$UPGRADE_FROM" ]]; then upgrade=(--upgrade-from "$UPGRADE_FROM"); fi
           GUIDE_BIN="$RUNNER_TEMP/bin" python3 support/qualification/probes/fresh_install.py \
-            --tag "$GUIDE_TAG" --engine postgresql \
+            --tag "$GUIDE_TAG" --engine postgresql "${upgrade[@]}" \
             --work "$RUNNER_TEMP/guide-postgresql" \
             --evidence "$RUNNER_TEMP/guide-evidence/postgresql"
           kind delete cluster --name ptah-guide-postgresql
@@ -141,6 +154,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GUIDE_TAG: ${{ inputs.tag }}
+          UPGRADE_FROM: ${{ inputs.upgrade_from }}
           GUIDE_MYSQL_IMAGE: ${{ steps.support.outputs.mysql_image }}
           GUIDE_REGISTRY_IMAGE: ${{ steps.support.outputs.registry_image }}
           NODE_IMAGE: ${{ steps.support.outputs.node_image }}
@@ -150,15 +164,17 @@ jobs:
           kind delete cluster --name ptah-guide-postgresql
           kind create cluster --name ptah-guide-mysql --image "$NODE_IMAGE" --wait 5m
           kubectl get nodes -o wide
+          upgrade=()
+          if [[ -n "$UPGRADE_FROM" ]]; then upgrade=(--upgrade-from "$UPGRADE_FROM"); fi
           GUIDE_BIN="$RUNNER_TEMP/bin" python3 support/qualification/probes/fresh_install.py \
-            --tag "$GUIDE_TAG" --engine mysql \
+            --tag "$GUIDE_TAG" --engine mysql "${upgrade[@]}" \
             --work "$RUNNER_TEMP/guide-mysql" \
             --evidence "$RUNNER_TEMP/guide-evidence/mysql"
       - name: Preserve the transcript
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: fresh-install-${{ inputs.architecture }}
+          name: fresh-install-${{ inputs.architecture }}${{ inputs.upgrade_from && format('-from-{0}', inputs.upgrade_from) || '' }}
           path: ${{ runner.temp }}/guide-evidence
           if-no-files-found: warn
           retention-days: 90

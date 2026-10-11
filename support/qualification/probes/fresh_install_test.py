@@ -1,7 +1,9 @@
+import copy
+import datetime
 from pathlib import Path
 import unittest
 
-from fresh_install import SERVERS, blocks, fixture_deployment, substitute
+from fresh_install import SERVERS, blocks, converged_after, fixture_deployment, runtime_findings, substitute, upgrade_command
 
 DOCS = Path(__file__).resolve().parents[3] / 'docs/site/src/content/docs'
 
@@ -16,6 +18,14 @@ class BlockExtractionTest(unittest.TestCase):
         self.assertEqual(blocks(page, 'Second'), ['three\n'])
         with self.assertRaises(ValueError):
             blocks(page, 'Missing')
+
+    def test_an_anchor_picks_one_of_several_headings_with_the_same_title(self):
+        page = '\n'.join(['## Install', '### Run it {#install-run}', '```sh', 'install', '```',
+                          '## Upgrade', '### Run it {#upgrade-run}', '```sh', 'upgrade', '```'])
+        self.assertEqual(blocks(page, '#upgrade-run'), ['upgrade\n'])
+        self.assertEqual(blocks(page, 'Run it'), ['install\n', 'upgrade\n'])
+        with self.assertRaises(ValueError):
+            blocks(page, '#rollback-run')
 
     def test_a_heading_inside_a_fence_is_not_a_heading(self):
         page = '\n'.join(['## Real', '```sh', '## not a heading', 'echo kept', '```'])
@@ -49,6 +59,86 @@ class FixtureTest(unittest.TestCase):
         self.assertEqual(spec['containers'][0]['readinessProbe']['tcpSocket'], {'port': 5000})
 
 
+CANDIDATE = 'sha256:' + '1' * 64
+PREDECESSOR = 'sha256:' + '0' * 64
+
+
+def deployment(name, component, image=CANDIDATE, init=CANDIDATE, rolled_out=True):
+    return {
+        'metadata': {'name': name, 'generation': 3},
+        'spec': {'replicas': 2, 'selector': {'matchLabels': {'component': component}},
+                 'template': {'spec': {'initContainers': [{'name': 'init', 'image': f'ghcr.io/stokaro/ptah-operator@{init}'}],
+                                       'containers': [{'name': 'run', 'image': f'ghcr.io/stokaro/ptah-operator@{image}'}]}}},
+        'status': {'observedGeneration': 3, 'replicas': 2, 'updatedReplicas': 2 if rolled_out else 1, 'availableReplicas': 2},
+    }
+
+
+def pod(name, component, digest=CANDIDATE, init=CANDIDATE):
+    return {'metadata': {'name': name, 'labels': {'component': component}},
+            'status': {'initContainerStatuses': [{'name': 'init', 'imageID': f'ghcr.io/stokaro/ptah-operator@{init}'}],
+                       'containerStatuses': [{'name': 'run', 'imageID': f'ghcr.io/stokaro/ptah-operator@{digest}'}]}}
+
+
+class RuntimeTest(unittest.TestCase):
+    def test_a_namespace_on_the_candidate_passes_and_reports_what_it_examined(self):
+        findings, examined = runtime_findings([deployment('manager', 'controller')],
+                                              [pod('a', 'controller'), pod('b', 'controller'), pod('hook', 'other', PREDECESSOR)],
+                                              CANDIDATE)
+        self.assertEqual(findings, [])
+        self.assertEqual([p['metadata']['name'] for p in examined], ['a', 'b'])
+
+    def test_anything_left_on_the_predecessor_is_a_finding(self):
+        cases = {
+            'a predecessor Pod still terminating': ([deployment('manager', 'controller')],
+                                                    [pod('a', 'controller'), pod('old', 'controller', PREDECESSOR)]),
+            'an init container on the predecessor': ([deployment('manager', 'controller')],
+                                                     [pod('a', 'controller', init=PREDECESSOR)]),
+            'a template that names the predecessor': ([deployment('manager', 'controller', image=PREDECESSOR)],
+                                                      [pod('a', 'controller')]),
+            'a rollout still in progress': ([deployment('manager', 'controller', rolled_out=False)], [pod('a', 'controller')]),
+            'a Deployment with no Pod': ([deployment('manager', 'controller'), deployment('rotator', 'rotation')],
+                                         [pod('a', 'controller')]),
+            'a Pod that reports no container': ([deployment('manager', 'controller')],
+                                                [{'metadata': {'name': 'a', 'labels': {'component': 'controller'}}, 'status': {}}]),
+        }
+        for name, (deployments, pods) in cases.items():
+            findings, _ = runtime_findings(deployments, pods, CANDIDATE)
+            self.assertTrue(findings, name)
+
+
+STARTED = datetime.datetime(2026, 10, 11, 12, 0, 0, tzinfo=datetime.timezone.utc)
+APPLIED = {'planRef': {'name': 'application-1', 'uid': 'u1'}, 'completedAt': '2026-10-11T11:40:00Z'}
+EPOCH = 'v1-' + 'a' * 32
+BEFORE = {'applied': APPLIED, 'executionBinding': {'epoch': EPOCH}}
+
+
+def schema(finished='2026-10-11T12:08:30Z', phase='InSync', applied=APPLIED, status='True', reason='ScopedConverged', epoch=EPOCH):
+    return {'status': {'phase': phase, 'applied': copy.deepcopy(applied), 'lastSuccessfulReconciliation': finished,
+                       'executionBinding': {'epoch': epoch} if epoch else None,
+                       'conditions': [{'type': 'Ready', 'status': 'True', 'reason': 'Converged'},
+                                      {'type': 'InSync', 'status': status, 'reason': reason}]}}
+
+
+class ConvergedAfterTest(unittest.TestCase):
+    def test_a_refresh_the_new_manager_finished_in_sync_for_the_same_record_passes(self):
+        self.assertTrue(converged_after(schema(), BEFORE, STARTED))
+
+    def test_readings_that_do_not_show_it_are_refused(self):
+        cases = {
+            "the predecessor's last refresh": schema(finished='2026-10-11T11:58:00Z'),
+            'a refresh finished the second the Pod started': schema(finished='2026-10-11T12:00:00Z'),
+            'no completed refresh': schema(finished=None),
+            'a plan waiting for approval': schema(phase='AwaitingApproval'),
+            'another applied record': schema(applied={**APPLIED, 'planRef': {'name': 'application-2', 'uid': 'u2'}}),
+            'a new execution epoch': schema(epoch='v1-' + 'b' * 32),
+            'no execution binding': schema(epoch=None),
+            'not in sync': schema(status='False', reason='PlanRequired'),
+            'in sync for another reason': schema(reason='Converged'),
+        }
+        for name, reading in cases.items():
+            self.assertFalse(converged_after(reading, BEFORE, STARTED), name)
+
+
 class PublishedGuideTest(unittest.TestCase):
     """The walkthrough reads these sections; a renamed heading or a reworded
     placeholder must fail here rather than on a cluster."""
@@ -65,6 +155,14 @@ class PublishedGuideTest(unittest.TestCase):
             self.assertIn(f'{variable}=', verify)
         self.assertIn('helm upgrade --install ptah-operator', install)
         self.assertIn('${image##*@}', install)
+
+    def test_the_upgrade_adds_only_the_flag_the_operations_guide_names(self):
+        install = ''.join(blocks(self.read('support/releases.md'), 'Install by digest'))
+        upgraded = upgrade_command(install, self.read('use/operations.md'))
+        self.assertEqual(upgraded.replace(' \\\n  --force-conflicts', ''), install)
+        self.assertIn('--force-conflicts\n', upgraded)
+        with self.assertRaises(ValueError):
+            upgrade_command(install, self.read('use/operations.md').replace('--force-conflicts', '--force'))
 
     def test_the_install_guide_confirms_the_installation(self):
         confirm = ''.join(blocks(self.read('start/install.md'), 'Confirm it installed'))
