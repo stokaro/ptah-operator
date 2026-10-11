@@ -2,10 +2,12 @@ package webhook_test
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
+	authorizationv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -75,6 +77,45 @@ func grant(t *testing.T, namespace, name string, subject rbacv1.Subject, rules .
 	}
 	if err := admin.Create(ctx, binding); err != nil {
 		t.Fatalf("create RoleBinding %s/%s: %v", namespace, name, err)
+	}
+	// The RBAC authorizer observes Roles and RoleBindings through its own
+	// cache. A request sent before it has seen this grant is refused by RBAC
+	// rather than by the admission handler a row tests, so the grant returns
+	// only once the authorizer allows the subject its first rule.
+	if len(rules) == 0 {
+		return
+	}
+	attributes := &authorizationv1.ResourceAttributes{Namespace: namespace, Verb: rules[0].Verbs[0]}
+	if len(rules[0].APIGroups) > 0 {
+		attributes.Group = rules[0].APIGroups[0]
+	}
+	if len(rules[0].Resources) > 0 {
+		attributes.Resource, _, _ = strings.Cut(rules[0].Resources[0], "/")
+		_, attributes.Subresource, _ = strings.Cut(rules[0].Resources[0], "/")
+	}
+	if len(rules[0].ResourceNames) > 0 {
+		attributes.Name = rules[0].ResourceNames[0]
+	}
+	review := authorizationv1.SubjectAccessReviewSpec{ResourceAttributes: attributes}
+	switch subject.Kind {
+	case rbacv1.UserKind:
+		review.User = subject.Name
+	case rbacv1.GroupKind:
+		review.User, review.Groups = "rbac-observer", []string{subject.Name}
+	case rbacv1.ServiceAccountKind:
+		review.User = "system:serviceaccount:" + subject.Namespace + ":" + subject.Name
+	}
+	if err := eventually(10*time.Second, func() error {
+		request := &authorizationv1.SubjectAccessReview{Spec: review}
+		if err := admin.Create(ctx, request); err != nil {
+			return err
+		}
+		if !request.Status.Allowed {
+			return fmt.Errorf("the authorizer does not yet allow %s %s: %+v", subject.Kind, subject.Name, request.Status)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("wait for Role %s/%s to take effect: %v", namespace, name, err)
 	}
 }
 
