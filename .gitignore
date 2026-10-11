@@ -2,10 +2,31 @@
 /dist/
 # `go build ./demo/...` writes the recorder here.
 /record
-# `go build ./hack/<tool>` writes the tool here. Two were committed that way;
-# hack/tracked_binaries_test.go refuses any compiled executable in the tree.
+# `go build ./hack/<tool>` or `./cmd/<program>` from the root writes the binary
+# here. Three were committed that way; hack/tracked_binaries_test.go refuses any
+# compiled executable in the tree.
+/acceptancecoverage
+/capacity
+/capacityplancheck
+/chartpackage
+/chartpolicies
 /crdreference
+/crdschemadigest
+/e2etiming
+/imagecopy
+/kubectl-ptah
+/manager
+/ptah-cert-rotator
+/ptah-crd-manager
+/ptah-runner
+/ptahdriftcategories
+/releaseverify
 /unknownlayerfixture
+/updatekubernetessupport
+/upgradealert
+/verifycrdschemahistory
+/verifyptahsupport
+/verifyrunnerprotocol
 /cover.out
 /coverage/
 /.idea/
