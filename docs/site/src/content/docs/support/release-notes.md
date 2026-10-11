@@ -18,10 +18,8 @@ out of silence.
 
 ## 0.2.2
 
-**Before you upgrade.** Nothing has to change. The upgrade replaces the
-manager image, so run it as
-[Upgrade to a new release](../../use/operations/#upgrade) says, with
-`--force-conflicts`.
+**Before you upgrade.** Nothing has to change. As from 0.2.0, the manager image
+changes, so the upgrade needs `--force-conflicts`.
 
 A manager that is stopping no longer starts a Job, and one whose dispatch had
 already begun finishes creating it. Before, an approval that arrived while the
