@@ -65,8 +65,11 @@ var requirements = []requirement{
 			"and `test/e2e/migrations_approval_e2e_test.go`, each followed by a fresh approval that executes, " +
 			"PtahSchema target-Secret changes on both engines and MySQL drift before dispatch in `test/e2e/faults_target_e2e_test.go`, " +
 			"server-side SQL counts for target-Secret refusals on both engines and families in `test/e2e/database_audit_e2e_test.go`, with a positive control for each refusal, " +
-			"and an author refused Always by the example guard in `test/e2e/migrations_guard_e2e_test.go`",
-		"server-side statement counts for the other approval-binding and drift refusals"},
+			"an author refused Always by the example guard in `test/e2e/migrations_guard_e2e_test.go`, " +
+			"and statement-level audits of the remaining approval-binding and drift refusals on both engines and families " +
+			"against the predicates in `test/e2e/schema_sql_audit.go`, `test/e2e/migration_sql_audit.go` " +
+			"and `test/e2e/migration_mysql_audit.go`, which the readings under `testdata/e2e/readings` witness",
+		""},
 	{"PA-03", "Preserve safety through interrupted Apply",
 		"faults injected before Job creation, after dispatch, during SQL, after SQL before persistence, and during lock release, observed against the database and the Pod lifecycle",
 		"the job-deadline, manager-restart, runner-termination and shared-alias faults in `test/e2e/faults_scenarios_e2e_test.go`, " +
@@ -113,46 +116,55 @@ var requirements = []requirement{
 			"in `test/e2e/lifecycle_constraints_e2e_test.go`, " +
 			"leader failover in `test/e2e/lifecycle_ha_e2e_test.go`, " +
 			"and certificate recovery in `test/e2e/certrotation_e2e_test.go`, on every supported minor",
-		"an upgrade from a published release, since none exists yet; the remaining lifecycle and certificate transitions " +
-			"under the profile's ResourceQuota and Pod Security settings; " +
-			"and a database audit after the lifecycle"},
+		"an upgrade from a published release: 0.2.0 is the first, so its transitions run from the synthetic next release"},
 	{"PA-07", "Restore operator and database state safely",
 		"a restore drill with a database ahead of the restored Kubernetes state, proving no unapproved replay",
 		"the recovery runbook, its derived inventory check, and the rebuild drill in " +
-			"`test/e2e/migrations_isolation_e2e_test.go`, which rebuilds a resource against a database ahead of its backup",
-		"operator state restored from a backup into an isolated cluster, the database restored with it, " +
-			"and a measured recovery time"},
+			"`test/e2e/migrations_isolation_e2e_test.go`, which rebuilds a resource against a database ahead of its backup, " +
+			"and the 36-cell recovery matrix `support/qualification/probes/restore_matrix.py`, which runs " +
+			"`support/qualification/probes/operator_restore.py`, `support/qualification/probes/cluster_restore.py` " +
+			"and `support/qualification/probes/restore_during_apply.py` for each engine, family, loss and timing, " +
+			"restoring into isolated clusters from real backups and measuring recovery against the declared objectives",
+		""},
 	{"PA-08", "Establish capacity and failure limits",
 		"declared thresholds and a soak long enough to measure repeated cycles and retention",
 		"the plan and chunk ceilings, the pruning runbook, `hack/capacity` with its weekly workflow and " +
-			"`support/capacity/workload.json`, and one published reading",
-		"pass and fail thresholds, a soak, churn and unrelated objects, varied plan and history sizes, " +
-			"and behavior beyond the admitted limits"},
+			"`support/capacity/workload.json`, and `support/qualification/probes/capacity_matrix.py`, which runs the frozen " +
+			"soak, backlog and overload workloads under `support/capacity` on a fresh profile lab per engine and minor, " +
+			"with churn, unrelated objects, varied plan and history sizes, retention faults and threshold verdicts",
+		""},
 	{"PA-09", "Detect and diagnose operational failures",
 		"alerts firing inside a declared detection target and reaching a configured receiver",
 		"`test/e2e/alerting_e2e_test.go`, `test/e2e/alerting_scrape_e2e_test.go` and `test/e2e/alerting_certificate_e2e_test.go`, with `test/e2e/alerting_admission_e2e_test.go` reading every API server, which deliver the unresolved-Apply, stalled-operation, certificate-expiry and admission-failure alerts " +
 			"and the lost-view alert after all managers disappear or only the leader's scrape fails, " +
-			"from the chart's rules through Alertmanager to a receiver, and the operator metrics on a new leader in `test/e2e/lifecycle_ha_e2e_test.go`",
-		"on a cluster, the upgrade, overdue, lock-release, plan-store, failure-rate and view-read alerts; " +
-			"and approval waits kept from paging"},
+			"from the chart's rules through Alertmanager to a receiver, and the operator metrics on a new leader in `test/e2e/lifecycle_ha_e2e_test.go`, " +
+			"the overdue, lock-release, plan-store, failure-rate, view-read and upgrade alerts in `test/e2e/alerting_overdue_e2e_test.go`, " +
+			"`test/e2e/alerting_lock_e2e_test.go`, `test/e2e/alerting_plan_store_e2e_test.go`, `test/e2e/alerting_failures_e2e_test.go`, " +
+			"`test/e2e/alerting_view_read_e2e_test.go` and `test/e2e/alerting_upgrade_e2e_test.go` with `hack/upgradealert`, " +
+			"and ordinary approval waits kept from paging in `test/e2e/alerting_negative_e2e_test.go`",
+		""},
 	{"PA-10", "Make documentation executable and usable",
 		"the documented install and primary examples executed from a fresh environment on the candidate's versions",
 		"the demo workflow, which runs every scenario under `demo/scenarios` on the lab and repeats one without the lab's scripts, " +
-			"the recordings bound in `demo/recordings/runs.json`, and the runbook, access and contract-page gates under `hack/`",
-		"the documented install run on a fresh cluster, and a PtahSchema on MySQL among the examples"},
+			"the recordings bound in `demo/recordings/runs.json`, the runbook, access and contract-page gates under `hack/`, " +
+			"`.github/workflows/fresh-install.yml`, which runs the published guide's own commands through " +
+			"`support/qualification/probes/fresh_install.py` on a fresh cluster per engine, and `examples/ptahschema-mysql.yaml`",
+		""},
 	{"PA-11", "Verify the artifacts that will be installed",
 		"checksums, signatures, provenance and a vulnerability scan against the published digests",
 		"the provenance, SBOM, signature and read-back steps of `.github/workflows/release.yml` for the operator, " +
 			"the executor named as the Ptah release image `support/ptah.json` pins by digest, " +
-			"the reproducible chart, the checksum file, and a govulncheck scan of the source",
-		"a release run of the publication path, which no tag has exercised yet; the lifecycle run against the published digests; " +
-			"a scan of the shipped images and binaries; and an interrupted publication"},
+			"the reproducible chart, the checksum file, a govulncheck scan of the source, " +
+			"the lifecycle against a prepared release's own digests that `hack/e2e-release-images-selftest.sh` holds to its refusals, " +
+			"and `support/qualification/probes/release_scan.py` over every shipped image and binary",
+		""},
 	{"PA-12", "Retain evidence and make a bounded decision",
 		"the retained evidence of every executed requirement and a recorded decision for the stated profile",
 		"this record, and the acceptance evidence bundle `.github/workflows/release.yml` attaches to the immutable release: " +
 			"the required jobs of the exact CI run with their IDs, attempts and conclusions, every lifecycle's timing artifacts, " +
-			"and this record at the release commit",
-		"a candidate release whose evidence bundle was published"},
+			"this record at the release commit, and `support/qualification/probes/evidence_bundle.py`, which publishes the " +
+			"sanitized qualification bundle as an immutable release and stores the restricted one encrypted",
+		""},
 }
 
 // candidateField is one line of the identity block. supplied is empty where
