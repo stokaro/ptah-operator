@@ -1087,7 +1087,7 @@ if __name__ == '__main__':
     parser.add_argument('output', type=Path)
     parser.add_argument('--loss', choices=['database', 'operator', 'combined'], default='database')
     parser.add_argument('--timing', choices=['idle', 'operator-lag', 'during-apply'], default='idle')
-    parser.add_argument('--release-assets', type=Path, help='Complete authenticated 0.2.0 release download to install before creating the fixture')
+    parser.add_argument('--release-assets', type=Path, help='Complete authenticated release download to install before creating the fixture')
     parser.add_argument('--prepared-manifest-sha256', help='Explicitly select a complete signed draft by manifest digest; does not establish official publication')
     args = parser.parse_args()
     if args.prepared_manifest_sha256 is not None and not args.release_assets:
