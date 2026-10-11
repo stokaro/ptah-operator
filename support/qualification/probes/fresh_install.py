@@ -232,7 +232,9 @@ class Walkthrough:
         if engine == 'postgresql':
             command = ['psql', '-v', 'ON_ERROR_STOP=1', '-U', 'postgres']
         else:
-            command = ['sh', '-c', 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysql -u root --batch --skip-column-names']
+            # Over TCP: the server's socket path is whatever the image's my.cnf
+            # says, which need not be where the client looks by default.
+            command = ['sh', '-c', 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysql -h 127.0.0.1 -P 3306 -u root --batch --skip-column-names']
         deployment = SERVERS[engine]['name']
         for attempt in range(30):
             result = self.kubectl('-n', self.fixtures, 'exec', '-i', f'deploy/{deployment}', '--', *command, stdin=statements, check=False)
