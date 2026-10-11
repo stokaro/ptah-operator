@@ -115,8 +115,10 @@ var requirements = []requirement{
 			"the quota-refused exported-chart install, unchanged-candidate recovery and uninstall under restricted Pod Security " +
 			"in `test/e2e/lifecycle_constraints_e2e_test.go`, " +
 			"leader failover in `test/e2e/lifecycle_ha_e2e_test.go`, " +
-			"and certificate recovery in `test/e2e/certrotation_e2e_test.go`, on every supported minor",
-		"an upgrade from a published release: 0.2.0 is the first, so its transitions run from the synthetic next release"},
+			"and certificate recovery in `test/e2e/certrotation_e2e_test.go`, on every supported minor, " +
+			"and the upgrade from the published predecessor through both releases' guides in " +
+			"`support/qualification/probes/fresh_install.py`",
+		""},
 	{"PA-07", "Restore operator and database state safely",
 		"a restore drill with a database ahead of the restored Kubernetes state, proving no unapproved replay",
 		"the recovery runbook, its derived inventory check, and the rebuild drill in " +
@@ -248,10 +250,15 @@ func (c *coverage) recordMarkdown(root string, declared *profile) string {
 	out.WriteString("\n### Not yet exercised\n\n")
 	out.WriteString("What each requirement's pass condition asks for and nothing in the tree runs. A\n")
 	out.WriteString("requirement absent here has no known gap, which is still not a pass.\n\n")
+	gaps := 0
 	for _, entry := range requirements {
 		if entry.untested != "" {
 			fmt.Fprintf(&out, "- **%s**: %s.\n", entry.id, entry.untested)
+			gaps++
 		}
+	}
+	if gaps == 0 {
+		out.WriteString(everyRequirementExercised + "\n")
 	}
 
 	out.WriteString("\n## Decision\n\n")
@@ -326,3 +333,7 @@ func candidateFields(root string, c *coverage, declared *profile) []candidateFie
 		{name: "Run evidence", value: supplied.RunEvidence, supplied: "the CI run and job identities the executed scenarios come from"},
 	}
 }
+
+// everyRequirementExercised is what the gap list says when it has no entry, so
+// an empty list reads as a statement rather than as a list nothing filled.
+const everyRequirementExercised = "Every requirement's pass condition is run by a proof the tree names."
