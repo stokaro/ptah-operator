@@ -9,7 +9,9 @@ import unittest
 from unittest.mock import Mock, patch
 
 from operator_restore import OperatorProbe
-from restore_runtime import ReleaseRuntime, REPOSITORY, TAG
+from restore_runtime import EXECUTOR_REPOSITORY, ReleaseRuntime, REPOSITORY
+
+TAG = 'v0.2.0'
 
 
 class ReleaseRuntimeTest(unittest.TestCase):
@@ -25,7 +27,7 @@ class ReleaseRuntimeTest(unittest.TestCase):
             {'digest': 'sha256:' + 'd' * 64, 'platform': {'os': 'linux', 'architecture': 'arm64'}}]}).encode()
         self.digest = 'sha256:' + hashlib.sha256(self.index).hexdigest()
         self.image = 'ghcr.io/' + REPOSITORY + '@' + self.digest
-        self.executor = 'ghcr.io/' + REPOSITORY + '-executor@' + self.digest
+        self.executor = 'ghcr.io/' + EXECUTOR_REPOSITORY + '@' + self.digest
         self.chart = self.root / 'ptah-operator-0.2.0.tgz'
         self.chart.write_bytes(b'chart bytes; the external release verifier is mocked in these orchestration tests')
         self.fields = {'version': '0.2.0', 'source-repository': REPOSITORY, 'source-ref': 'refs/tags/' + TAG,
@@ -78,6 +80,7 @@ class ReleaseRuntimeTest(unittest.TestCase):
         for key, value in [('source-sha', 'e' * 40), ('source-ref', 'refs/heads/untrusted'),
                            ('version', 'dev'), ('image', 'ghcr.io/stokaro/ptah-operator:latest'),
                            ('executor', 'example.com/executor@' + self.digest),
+                           ('executor', 'ghcr.io/' + REPOSITORY + '-executor@' + self.digest),
                            ('chart-asset-sha256', 'f' * 64)]:
             with self.subTest(key=key):
                 original = self.fields[key]; self.fields[key] = value; self.write_manifest()
@@ -85,6 +88,22 @@ class ReleaseRuntimeTest(unittest.TestCase):
                     ReleaseRuntime(self.probe, self.root)
                 self.fields[key] = original
         self.assertEqual(self.calls, [])
+
+    def test_the_manifest_version_names_the_tag_and_chart(self):
+        (self.root / 'ptah-operator-0.2.2.tgz').write_bytes(self.chart.read_bytes())
+        self.fields.update(version='0.2.2', **{'source-ref': 'refs/tags/v0.2.2', 'chart-asset': 'ptah-operator-0.2.2.tgz'})
+        self.write_manifest()
+        runtime = ReleaseRuntime(self.probe, self.root)
+        self.assertEqual((runtime.tag, runtime.chart.name), ('v0.2.2', 'ptah-operator-0.2.2.tgz'))
+        runtime.authenticate()
+        self.assertIn(['go', 'run', './hack/releaseverify', '-tag', 'v0.2.2'], [c[:5] for c in self.calls])
+        self.assertTrue(all(c[c.index('--source-ref') + 1] == 'refs/tags/v0.2.2'
+                            for c in self.calls if c[:3] == ['gh', 'attestation', 'verify']))
+        # A chart asset the version does not name is not this release's.
+        self.fields['chart-asset'] = 'ptah-operator-0.2.0.tgz'
+        self.write_manifest()
+        with self.assertRaises(ValueError):
+            ReleaseRuntime(self.probe, self.root)
 
     def test_duplicate_or_changed_assets_are_refused(self):
         path = self.root / 'release-manifest.txt'
@@ -98,12 +117,15 @@ class ReleaseRuntimeTest(unittest.TestCase):
     def test_complete_consumer_identity_is_required(self):
         self.runtime.authenticate()
         checks = [a for a in self.calls if a[:3] == ['gh', 'attestation', 'verify']]
-        self.assertEqual(len(checks), 5)
+        # Three assets and the operator image. The executor is Ptah's image,
+        # which this repository's release workflow neither builds nor signs.
+        self.assertEqual(len(checks), 4)
+        self.assertFalse(any(self.executor in arg for c in self.calls for arg in c if c[:1] in (['cosign'], ['gh'])))
         for command in checks:
             for flag, value in [('--repo', REPOSITORY), ('--source-ref', 'refs/tags/' + TAG),
                                 ('--source-digest', 'a' * 40), ('--signer-workflow', REPOSITORY + '/.github/workflows/release.yml')]:
                 self.assertEqual(command[command.index(flag) + 1], value)
-        self.assertEqual(len([a for a in self.calls if a[:2] == ['cosign', 'verify']]), 2)
+        self.assertEqual(len([a for a in self.calls if a[:2] == ['cosign', 'verify']]), 1)
         self.assertTrue(self.runtime.authenticated)
 
     def test_each_failed_trust_command_prevents_installation(self):
@@ -279,7 +301,7 @@ class ReleaseRuntimeTest(unittest.TestCase):
         self.assertEqual(len(self.probe.report['releaseRuntime']['assets']), 8)
         self.assertFalse(any(c[:3] in (['gh', 'release', 'verify'], ['gh', 'release', 'verify-asset']) for c in self.calls))
         attestations = [c for c in self.calls if c[:3] == ['gh', 'attestation', 'verify']]
-        self.assertEqual(len(attestations), 5)
+        self.assertEqual(len(attestations), 4)
         self.assertTrue(all(c[c.index('--source-ref') + 1] == 'refs/tags/' + TAG for c in attestations))
         (self.root / 'kubectl-ptah-linux-arm64').write_bytes(b'changed after selection')
         with self.assertRaisesRegex(RuntimeError, 'changed'):

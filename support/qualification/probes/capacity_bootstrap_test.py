@@ -522,6 +522,13 @@ class BootstrapTests(unittest.TestCase):
 
 
 
+# How long a run of hack/capacity.sh with stubbed tools may take before it
+# counts as hung. It guards against a hang and asserts nothing: on a loaded
+# workstation the wrapper took longer than the earlier 20 seconds to run its
+# stubs, and the tests failed on timing rather than on what they check.
+WRAPPER_TIMEOUT = 180
+
+
 class WrapperTests(unittest.TestCase):
     def test_disposable_lab_teardown_keeps_report_and_workload_exit_status(self):
         for workload_exit in (0, 42):
@@ -542,7 +549,7 @@ class WrapperTests(unittest.TestCase):
             script = Path(__file__).resolve().parents[3] / 'hack/capacity.sh'
             env = dict(os.environ, CAPACITY_WORKLOAD=str(workload), CAPACITY_VARIED_INPUTS='0',
                        CAPACITY_REMOVE_LAB='1', CAPACITY_OUT_DIR=str(output), LAB_ENVIRONMENT=str(environment))
-            result = subprocess.run(['bash', str(script)], env=env, capture_output=True, timeout=10)
+            result = subprocess.run(['bash', str(script)], env=env, capture_output=True, timeout=WRAPPER_TIMEOUT)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn('reports must be outside directories removed by lab teardown', result.stderr.decode())
             self.assertTrue(environment.exists())
@@ -567,7 +574,7 @@ class WrapperTests(unittest.TestCase):
             env = dict(os.environ, CAPACITY_WORKLOAD=str(workload),
                        CAPACITY_VARIED_INPUTS='0', CAPACITY_OUT_DIR=str(root / 'evidence'),
                        LAB_ENVIRONMENT=str(root / 'must-not-open'))
-            result = subprocess.run(['bash', str(script)], env=env, capture_output=True, timeout=10)
+            result = subprocess.run(['bash', str(script)], env=env, capture_output=True, timeout=WRAPPER_TIMEOUT)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn('approval backlog workloads require CAPACITY_VARIED_INPUTS=1', result.stderr.decode())
             self.assertFalse((root / 'evidence').exists())
@@ -665,7 +672,7 @@ sys.exit(int(os.environ['CAPACITY_TEST_GO_EXIT']))
                        CAPACITY_REMOVE_LAB='1' if remove_lab else '0', CAPACITY_TEST_ENVIRONMENT=str(environment),
                        CAPACITY_TEST_TEARDOWN_EXIT=str(teardown_exit))
             result = subprocess.run(['bash', str(root / 'hack/capacity.sh')], cwd=caller, env=env,
-                                    capture_output=True, timeout=20)
+                                    capture_output=True, timeout=WRAPPER_TIMEOUT)
             expected_exit = 1 if teardown_exit else (43 if fail_checkpoint else go_exit)
             self.assertEqual(result.returncode, expected_exit, result.stderr.decode())
             self.assertEqual((caller / 'evidence/go-ran').exists(), fail_checkpoint != 'before')
@@ -687,7 +694,7 @@ sys.exit(int(os.environ['CAPACITY_TEST_GO_EXIT']))
             self.assertEqual(json.loads(journal.read_text()), {'cleaned': True})
             journal.write_text('earlier evidence')
             result = subprocess.run(['bash', str(root / 'hack/capacity.sh')], cwd=caller, env=env,
-                                    capture_output=True, timeout=20)
+                                    capture_output=True, timeout=WRAPPER_TIMEOUT)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn('ownership journal already exists', result.stderr.decode())
             self.assertEqual(journal.read_text(), 'earlier evidence')
@@ -695,7 +702,7 @@ sys.exit(int(os.environ['CAPACITY_TEST_GO_EXIT']))
             host = caller / 'evidence/host.json'
             before = host.read_bytes()
             result = subprocess.run(['bash', str(root / 'hack/capacity.sh')], cwd=caller, env=env,
-                                    capture_output=True, timeout=20)
+                                    capture_output=True, timeout=WRAPPER_TIMEOUT)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn('host evidence already exists', result.stderr.decode())
             self.assertEqual(host.read_bytes(), before)

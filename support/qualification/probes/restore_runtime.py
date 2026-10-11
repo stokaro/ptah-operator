@@ -7,7 +7,10 @@ import re
 
 
 REPOSITORY = 'stokaro/ptah-operator'
-TAG = 'v0.2.0'
+# The executor is Ptah's own release image, run as Ptah published it. The
+# authenticated manifest names it by digest; its signature is Ptah's, not this
+# repository's release workflow's.
+EXECUTOR_REPOSITORY = 'stokaro/ptah'
 
 
 class ReleaseRuntime:
@@ -15,29 +18,36 @@ class ReleaseRuntime:
         self.probe = probe
         self.directory = Path(directory).resolve()
         self.manifest = self.directory / 'release-manifest.txt'
-        self.chart = self.directory / 'ptah-operator-0.2.0.tgz'
-        self.hashes = {path.name: self.sha(path) for path in (
-            self.manifest, self.chart, self.directory / 'SHA256SUMS')}
+        # The manifest is parsed from the bytes that are hashed, so the release
+        # it names is the one whose digest is checked from here on.
+        raw = self.manifest.read_bytes()
+        self.fields = {}
+        for line in raw.decode().splitlines():
+            key, separator, value = line.partition('=')
+            if not separator or not value or key in self.fields:
+                raise ValueError('Invalid or duplicate release manifest record')
+            self.fields[key] = value
+        version = self.fields.get('version', '')
+        if not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', version):
+            raise ValueError('The release manifest names no release version')
+        self.tag = 'v' + version
+        self.chart = self.directory / ('ptah-operator-' + version + '.tgz')
+        self.hashes = {self.manifest.name: hashlib.sha256(raw).hexdigest()}
+        self.hashes.update({path.name: self.sha(path) for path in (self.chart, self.directory / 'SHA256SUMS')})
         self.prepared_manifest_sha256 = prepared_manifest_sha256
         if prepared_manifest_sha256 is not None and (
                 not re.fullmatch(r'[0-9a-f]{64}', prepared_manifest_sha256)
                 or prepared_manifest_sha256 != self.hashes[self.manifest.name]):
             raise ValueError('Prepared recovery assets must match the explicitly selected manifest digest')
-        self.fields = {}
-        for line in self.manifest.read_text().splitlines():
-            key, separator, value = line.partition('=')
-            if not separator or not value or key in self.fields:
-                raise ValueError('Invalid or duplicate release manifest record')
-            self.fields[key] = value
         self.source_ref = self.fields.get('source-ref')
-        if self.source_ref not in ('refs/tags/' + TAG, 'refs/heads/master'):
+        if self.source_ref not in ('refs/tags/' + self.tag, 'refs/heads/master'):
             raise ValueError('Recovery requires the exact release tag or protected master build ref')
         expected = {'source-repository': REPOSITORY,
-                    'source-sha': probe.report['sourceCommit'], 'version': '0.2.0',
+                    'source-sha': probe.report['sourceCommit'],
                     'chart-asset': self.chart.name, 'chart-asset-sha256': self.hashes[self.chart.name]}
         if any(self.fields.get(key) != value for key, value in expected.items()):
             raise ValueError('Recovery release assets do not match the selected source and chart')
-        for key, image in (('image', REPOSITORY), ('executor', REPOSITORY + '-executor')):
+        for key, image in (('image', REPOSITORY), ('executor', EXECUTOR_REPOSITORY)):
             if not re.fullmatch('ghcr.io/' + re.escape(image) + r'@sha256:[0-9a-f]{64}', self.fields.get(key, '')):
                 raise ValueError('Recovery requires the release repository and exact image digests')
         self.authenticated = False
@@ -56,16 +66,16 @@ class ReleaseRuntime:
         # Use the existing release contract and consumer commands. No local
         # signature, relaxed source identity, or unsigned mode stands in for it.
         p.command('validate the complete recovery release asset inventory', [
-            'go', 'run', './hack/releaseverify', '-tag', TAG,
+            'go', 'run', './hack/releaseverify', '-tag', self.tag,
             '-source-sha', p.report['sourceCommit'], '-source-ref', self.source_ref, '-manifest', str(self.manifest),
             '-checksums', str(self.directory / 'SHA256SUMS'), '-chart', str(self.chart)])
         source = p.report['sourceCommit']
         if self.prepared_manifest_sha256 is None:
             tagged_source = p.command('resolve the immutable recovery release source', [
-                'gh', 'api', 'repos/' + REPOSITORY + '/commits/' + TAG, '--jq', '.sha']).stdout.decode().strip()
+                'gh', 'api', 'repos/' + REPOSITORY + '/commits/' + self.tag, '--jq', '.sha']).stdout.decode().strip()
             if tagged_source != source:
                 raise RuntimeError('The published recovery release has a different source commit')
-            p.command('verify the immutable recovery release', ['gh', 'release', 'verify', TAG, '--repo', REPOSITORY])
+            p.command('verify the immutable recovery release', ['gh', 'release', 'verify', self.tag, '--repo', REPOSITORY])
         else:
             self.verify_draft()
         identity = ['--repo', REPOSITORY, '--source-ref', self.source_ref,
@@ -73,19 +83,21 @@ class ReleaseRuntime:
         for path in (self.manifest, self.chart, self.directory / 'SHA256SUMS'):
             if self.prepared_manifest_sha256 is None:
                 p.command('verify recovery asset ' + path.name, [
-                    'gh', 'release', 'verify-asset', TAG, str(path), '--repo', REPOSITORY])
+                    'gh', 'release', 'verify-asset', self.tag, str(path), '--repo', REPOSITORY])
             p.command('authenticate recovery asset ' + path.name, ['gh', 'attestation', 'verify', str(path)] + identity)
-        for key in ('image', 'executor'):
-            reference = self.fields[key]
-            p.command('authenticate recovery ' + key, ['gh', 'attestation', 'verify', 'oci://' + reference] + identity)
-            p.command('verify recovery image signature ' + key, [
-                'cosign', 'verify', '--certificate-identity',
-                'https://github.com/' + REPOSITORY + '/.github/workflows/release.yml@' + self.source_ref,
-                '--certificate-oidc-issuer', 'https://token.actions.githubusercontent.com', reference])
+        # The operator image is this release's own build. The executor is
+        # Ptah's image, named by digest in the manifest authenticated above,
+        # and its index is held to that digest below.
+        reference = self.fields['image']
+        p.command('authenticate recovery image', ['gh', 'attestation', 'verify', 'oci://' + reference] + identity)
+        p.command('verify recovery image signature', [
+            'cosign', 'verify', '--certificate-identity',
+            'https://github.com/' + REPOSITORY + '/.github/workflows/release.yml@' + self.source_ref,
+            '--certificate-oidc-issuer', 'https://token.actions.githubusercontent.com', reference])
         self.image_digests = {key: self.read_image_digests(self.fields[key]) for key in ('image', 'executor')}
         self.unchanged()
         self.authenticated = True
-        p.report['releaseRuntime'] = {'source': source, 'sourceRef': self.source_ref, 'tag': TAG, 'assets': dict(self.hashes),
+        p.report['releaseRuntime'] = {'source': source, 'sourceRef': self.source_ref, 'tag': self.tag, 'assets': dict(self.hashes),
             'operatorImage': self.fields['image'], 'runnerImage': self.fields['image'],
             'executorImage': self.fields['executor'], 'installations': [],
             'publicationState': 'signed-draft' if self.prepared_manifest_sha256 else 'immutable-release',
@@ -95,7 +107,7 @@ class ReleaseRuntime:
     def verify_draft(self):
         self.unchanged()
         release_id = self.probe.command('locate the authenticated draft by its intended tag', [
-            'gh', 'release', 'view', TAG, '--repo', REPOSITORY,
+            'gh', 'release', 'view', self.tag, '--repo', REPOSITORY,
             '--json', 'databaseId', '--jq', '.databaseId']).stdout.decode().strip()
         if not re.fullmatch(r'[1-9][0-9]*', release_id):
             raise RuntimeError('The selected draft has no valid release ID')
@@ -103,7 +115,7 @@ class ReleaseRuntime:
             'gh', 'api', '-H', 'X-GitHub-Api-Version: 2026-03-10',
             'repos/' + REPOSITORY + '/releases/' + release_id]).stdout)
         if (release.get('draft') is not True or release.get('immutable') is not False
-                or release.get('tag_name') != TAG or release.get('body') != self.manifest.read_text()
+                or release.get('tag_name') != self.tag or release.get('body') != self.manifest.read_text()
                 or release.get('target_commitish') != self.probe.report['sourceCommit']):
             raise RuntimeError('The prepared release state or manifest differs from the selected recovery kit')
         names = {self.chart.name, self.manifest.name, 'SHA256SUMS', 'acceptance-evidence.tar.gz',

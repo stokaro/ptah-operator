@@ -475,7 +475,7 @@ if __name__ == '__main__':
     parser.add_argument('--loss', choices=['operator', 'combined', 'database'], required=True)
     parser.add_argument('--timing', choices=['idle', 'operator-lag', 'during-apply'], default='idle')
     parser.add_argument('--result-delivery', action='store_true', help='Enable durable delivery before backup and on the replacement installation')
-    parser.add_argument('--release-assets', type=Path, help='Complete authenticated 0.2.0 release download; install these exact bytes in both clusters before restoring workloads')
+    parser.add_argument('--release-assets', type=Path, help='Complete authenticated release download; install these exact bytes in both clusters before restoring workloads')
     parser.add_argument('--prepared-manifest-sha256', help='Explicitly select a complete signed draft by manifest digest; does not establish official publication')
     args = parser.parse_args()
     if args.prepared_manifest_sha256 is not None and not args.release_assets:
