@@ -16,6 +16,21 @@ release that says so, and this is where it is said. A version that asks
 nothing of you says so in as many words, rather than leaving you to read it
 out of silence.
 
+## 0.2.2
+
+**Before you upgrade.** Nothing has to change. The upgrade replaces the
+manager image, so run it as
+[Upgrade to a new release](../../use/operations/#upgrade) says, with
+`--force-conflicts`.
+
+A manager that is stopping no longer starts a Job, and one whose dispatch had
+already begun finishes creating it. Before, an approval that arrived while the
+managers were being replaced could be taken by the stopping manager, whose
+interrupted create left an outcome nobody established, and a migration then
+blocked until a person acknowledged the run. The manager now finishes stopping
+within 20 seconds, inside the Pod's grace period, so it releases its leader
+Lease before it is killed and the next manager takes over at once.
+
 ## 0.2.1
 
 **Before you upgrade.** Nothing has to change. The upgrade replaces the
