@@ -33,7 +33,11 @@ builds:
       - amd64
       - arm64
     mod_timestamp: "{{ .CommitTimestamp }}"
+    # No VCS stamp: built from the tag or from the untagged commit before it,
+    # the bytes are the same, so a recovery rerun from the tag reproduces the
+    # draft's clients. The version a person sees comes from main.version.
     flags:
       - -trimpath
+      - -buildvcs=false
     ldflags:
       - -s -w -X main.version=v{{ .Version }}

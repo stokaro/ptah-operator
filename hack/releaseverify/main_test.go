@@ -1087,6 +1087,11 @@ func TestClientAssetsFailurePath(t *testing.T) {
 			problem: "keeps a directory per target",
 		},
 		{
+			name:    "a VCS-stamped build",
+			mutate:  func(s string) string { return strings.Replace(s, "      - -buildvcs=false\n", "", 1) },
+			problem: "stamps VCS information",
+		},
+		{
 			name:    "another build",
 			mutate:  func(s string) string { return strings.Replace(s, "id: kubectl-ptah", "id: something-else", 1) },
 			problem: "no kubectl-ptah build",

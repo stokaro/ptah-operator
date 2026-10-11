@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -2152,6 +2153,7 @@ func clientAssets(root string) ([]string, error) {
 			GOOS            []string `yaml:"goos"`
 			GOARCH          []string `yaml:"goarch"`
 			NoUniqueDistDir bool     `yaml:"no_unique_dist_dir"`
+			Flags           []string `yaml:"flags"`
 		} `yaml:"builds"`
 	}
 	if err := yaml.Unmarshal(document, &config); err != nil {
@@ -2178,6 +2180,14 @@ func clientAssets(root string) ([]string, error) {
 		}
 		if len(build.GOOS) == 0 || len(build.GOARCH) == 0 {
 			return nil, fmt.Errorf("the %s build names no platform", clientBuildID)
+		}
+		// Go stamps the module version from a tag on the checked-out commit,
+		// so a VCS-stamped client built from the tag differs from the one the
+		// draft was prepared with before the tag existed (#609).
+		if !slices.Contains(build.Flags, "-buildvcs=false") {
+			return nil, fmt.Errorf(
+				"the %s build stamps VCS information, so its bytes depend on whether the commit is tagged",
+				clientBuildID)
 		}
 		var assets []string
 		for _, operatingSystem := range build.GOOS {
