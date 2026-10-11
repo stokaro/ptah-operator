@@ -292,7 +292,7 @@ lab_prepare_shadow() {
                     {name: "POSTGRES_DB", value: "shadow"}
                   ],
                   ports: [{name: "postgresql", containerPort: 5432}],
-                  readinessProbe: {exec: {command: ["pg_isready", "-U", "postgres"]}, periodSeconds: 3}
+                  readinessProbe: {exec: {command: ["pg_isready", "-h", "127.0.0.1", "-U", "postgres"]}, periodSeconds: 3}
                 }]
               }
             }
