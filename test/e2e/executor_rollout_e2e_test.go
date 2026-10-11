@@ -4,6 +4,7 @@ package e2e
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/test/e2e/harness"
 )
 
@@ -105,5 +107,18 @@ func rolloutExecutionManagers(t *testing.T, ctx context.Context, cluster *harnes
 	_, after := readReady()
 	if !managerPodsReplaced(before, after) {
 		t.Fatal("executor rollout retained or lost a manager Pod UID")
+	}
+	// A Pod is Ready before the webhook Service routes to it: until its
+	// EndpointSlice and kube-proxy catch up the ClusterIP refuses the
+	// connection and every write the webhooks gate fails closed. The new
+	// leader used to take the old Lease only after it expired, which hid that
+	// gap; it now takes a released Lease at once.
+	probe := &ptahv1alpha1.PtahSchemaApproval{ObjectMeta: metav1.ObjectMeta{Namespace: key.Namespace, Name: "e2e-admission-probe"}}
+	if err := harness.Wait(ctx, "the replacement managers' webhooks to answer through their Service", 2*time.Minute, time.Second,
+		func(ctx context.Context) (bool, string, error) {
+			err := cluster.Client.Create(ctx, probe.DeepCopy(), client.DryRunAll)
+			return admissionAnswered(err), fmt.Sprintf("waiting for admission to answer: %v", err), nil
+		}); err != nil {
+		t.Fatal(err)
 	}
 }
