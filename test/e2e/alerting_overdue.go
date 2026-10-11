@@ -69,7 +69,11 @@ func alOverdueRecovery(history []client.Object, before alOverdueState) (alStalle
 	}
 	for _, object := range history {
 		r := alOverdueReading(object)
-		if before.resource.sameResource(r.resource) && !r.suspended && r.observed == before.observed && r.next.IsZero() &&
+		// The new claim either cleared the deadline or, as a Resolve now does,
+		// set the next refresh after its own start. The overdue deadline is
+		// before that start, so a status still carrying it is no recovery.
+		if before.resource.sameResource(r.resource) && !r.suspended && r.observed == before.observed &&
+			(r.next.IsZero() || r.next.After(r.resource.started)) &&
 			r.resource.ready() && r.resource.id != before.resource.id && r.resource.started.After(before.next) {
 			return r.resource, true
 		}

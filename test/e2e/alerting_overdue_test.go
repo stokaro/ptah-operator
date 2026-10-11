@@ -86,6 +86,24 @@ func TestOverdueNeedsAnEligibleDeadlineAndANewNativeClaim(t *testing.T) {
 			if _, ok := alOverdueRecovery([]client.Object{object}, before); ok {
 				t.Fatal("unchanged deadline counted as recovery")
 			}
+			// A Resolve sets the next refresh one interval after its start; a
+			// claim still carrying the overdue deadline is not a recovery.
+			for _, row := range []struct {
+				next time.Time
+				want bool
+			}{{started.Add(time.Minute), true}, {before.next, false}} {
+				claimed := recovered.DeepCopyObject().(client.Object)
+				next := metav1.NewTime(row.next)
+				switch r := claimed.(type) {
+				case *ptahv1.PtahSchema:
+					r.Status.NextReconciliationTime = &next
+				case *ptahv1.PtahMigration:
+					r.Status.NextReconciliationTime = &next
+				}
+				if _, ok := alOverdueRecovery([]client.Object{object, claimed}, before); ok != row.want {
+					t.Fatalf("recovery with next=%v accepted=%v, want %v", row.next, ok, row.want)
+				}
+			}
 			recovered.SetUID("replacement")
 			if _, ok := alOverdueRecovery([]client.Object{recovered}, before); ok {
 				t.Fatal("replacement resource counted as recovery")

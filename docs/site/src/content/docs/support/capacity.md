@@ -22,6 +22,9 @@ than as a limit.
 
 A resource that is converged still works. The operator re-reads it at
 `spec.interval`, and each pass runs the read-only operations its family needs.
+The interval runs from the start of one refresh to the start of the next. A
+refresh that takes longer than its interval starts the next one an interval
+after it ends, so a busy resource does not refresh back to back.
 
 | | `PtahSchema` | `PtahMigration` |
 | --- | --- | --- |

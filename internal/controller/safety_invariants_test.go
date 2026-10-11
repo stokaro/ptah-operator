@@ -1914,7 +1914,7 @@ func TestExpiredAwaitingApprovalRefreshesBeforeExactApproval(t *testing.T) {
 			}
 			actual := safetyGetSchema(t, api, schema)
 			if actual.Status.ActiveOperation == nil || actual.Status.ActiveOperation.Type != operatorv1alpha1.OperationResolve ||
-				actual.Status.Phase != operatorv1alpha1.PhaseResolving || actual.Status.NextReconciliationTime != nil ||
+				actual.Status.Phase != operatorv1alpha1.PhaseResolving || !schemaClaimDeadlineHeld(actual) ||
 				!reflect.DeepEqual(actual.Status.Plan, wantPlan) || actual.Status.Plan.Approval != nil {
 				t.Fatalf("expired AwaitingApproval status = %#v, want preserved plan and Resolve before approval", actual.Status)
 			}
@@ -1954,7 +1954,7 @@ func TestReadyToApplyRestartRefreshesExpiredPlanBeforeAutomaticApply(t *testing.
 			}
 			actual := safetyGetSchema(t, api, schema)
 			if actual.Status.ActiveOperation == nil || actual.Status.ActiveOperation.Type != operatorv1alpha1.OperationResolve ||
-				actual.Status.Phase != operatorv1alpha1.PhaseResolving || actual.Status.NextReconciliationTime != nil ||
+				actual.Status.Phase != operatorv1alpha1.PhaseResolving || !schemaClaimDeadlineHeld(actual) ||
 				!reflect.DeepEqual(actual.Status.Plan, wantPlan) || actual.Status.Plan.Approval != nil {
 				t.Fatalf("expired automatic plan was authorized: %#v, want preserved plan and Resolve", actual.Status)
 			}
@@ -2009,7 +2009,7 @@ func TestReadyToApplyAuthorizationUsesOneDurableTimestamp(t *testing.T) {
 			}
 			actual := safetyGetSchema(t, api, schema)
 			if actual.Status.ActiveOperation == nil || actual.Status.ActiveOperation.Type != test.expectedOperation ||
-				actual.Status.NextReconciliationTime != nil || !reflect.DeepEqual(actual.Status.Plan, wantPlan) ||
+				!schemaClaimDeadlineHeld(actual) || !reflect.DeepEqual(actual.Status.Plan, wantPlan) ||
 				actual.Status.Plan.Approval != nil {
 				t.Fatalf("automatic authorization boundary = %#v, want preserved plan and %s", actual.Status, test.expectedOperation)
 			}
@@ -2084,7 +2084,7 @@ func TestAwaitingApprovalAuthorizationUsesOneDurableTimestamp(t *testing.T) {
 			}
 			actual := safetyGetSchema(t, api, schema)
 			if actual.Status.ActiveOperation == nil || actual.Status.ActiveOperation.Type != test.expectedOperation ||
-				actual.Status.NextReconciliationTime != nil ||
+				!schemaClaimDeadlineHeld(actual) ||
 				!reflect.DeepEqual(actual.Status.Plan, wantPlan) {
 				t.Fatalf("authorization boundary status = %#v, want preserved plan and %s", actual.Status, test.expectedOperation)
 			}
@@ -2162,7 +2162,7 @@ func TestApprovalRevocationPreservesRefreshDeadlineAcrossRestart(t *testing.T) {
 			}
 			if restartResult.RequeueAfter != statusPatchRequeue || afterRestart.Status.ActiveOperation == nil ||
 				afterRestart.Status.ActiveOperation.Type != operatorv1alpha1.OperationResolve ||
-				afterRestart.Status.NextReconciliationTime != nil {
+				!schemaClaimDeadlineHeld(afterRestart) {
 				t.Fatalf("restart did not refresh due approval state: result %#v, status %#v", restartResult, afterRestart.Status)
 			}
 		})

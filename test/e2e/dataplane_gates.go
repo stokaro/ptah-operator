@@ -95,8 +95,8 @@ func chainRank(operation string) int {
 }
 
 // orderedRefreshChains holds the schema's Jobs since the refresh checkpoint to
-// exactly three read-only chains, in order, each Resolve at least one interval
-// after the one before it. The Jobs are dated by their own creation time,
+// exactly three read-only chains, in order, each Resolve one interval or more
+// after the one before it, within the second its Job's creation time carries. The Jobs are dated by their own creation time,
 // which is when the controller started each chain, rather than by when the
 // proof noticed them.
 func orderedRefreshChains(records []observedJob, intervalSeconds int64) error {
@@ -122,7 +122,11 @@ func orderedRefreshChains(records []observedJob, intervalSeconds int64) error {
 	if !slices.Equal(operations, want) {
 		return fmt.Errorf("the Jobs since the checkpoint ran %v, not three ordered chains", operations)
 	}
-	interval := time.Duration(intervalSeconds) * time.Second
+	// The interval runs from one Resolve claim to the next. A Job follows its
+	// claim by the dispatch latency and its creation time carries whole
+	// seconds, so a Resolve claimed exactly one interval after the last can
+	// show a Job one second short of it.
+	interval := time.Duration(intervalSeconds)*time.Second - time.Second
 	for index := 1; index < len(resolves); index++ {
 		if resolves[index].Sub(resolves[index-1]) < interval {
 			return fmt.Errorf("Resolve %d started %s after the one before it, inside the %s interval",
