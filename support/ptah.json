@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "lastVerified": "2026-10-10",
+  "lastVerified": "2026-10-11",
   "axis": "Operator version to the Ptah build the operator executes, identified by the digest-pinned executorImage and the ptahVersion bound beside it. It is not the Ptah CLI a person used to build the OCI artifact. The runner is not a third axis: it is built from the operator source this row names, and the exact protocol both halves speak is in runnerProtocolVersion.",
   "releases": [
     {
@@ -9,6 +9,35 @@
       "documentation": {
         "published": true,
         "source": "master"
+      },
+      "declared": {
+        "range": null,
+        "statement": "No range is claimed. The chart ships no executor default, installation requires both a digest-pinned executorImage and the ptahVersion verified from that image's provenance, and the supported build is exactly the one the lifecycle matrix exercised."
+      },
+      "verified": [
+        {
+          "ptahRelease": "v0.13.0",
+          "ptahCommit": "eb69f8c4435643c5c9f3fbd1c9953b9ba0f44b6f",
+          "ptahDescribe": "v0.13.0",
+          "ptahImage": "ghcr.io/stokaro/ptah@sha256:f68968558f0634c1e388f2be3f8d9d0f7c5916631abe16c5bae55d21e8e909c0",
+          "runnerProtocolVersion": 1,
+          "evidence": "kubernetes-e2e",
+          "scope": "The complete OCI resolution and verification, observation, planning, approval, apply, failure-recovery and convergence lifecycle against PostgreSQL and MySQL, on every supported Kubernetes minor, for both artifact formats this operator reads: application/vnd.stokaro.ptah.schema.v1 for a declared schema, whose declared rows converge on both engines, and application/vnd.stokaro.ptah.migrations.v1 for a versioned migration directory, whose history read, approval gate and applied sequence run against PostgreSQL and MySQL."
+        }
+      ],
+      "limitations": [
+        "The verified build is the Ptah v0.13.0 release image, ghcr.io/stokaro/ptah:0.13.0 pinned by digest, run as Ptah published it: the operator builds no executor of its own. It contains stokaro/ptah#3777 and #3794, the complete `--json` documents of `schema plan` and `schema apply` that the operator reads on every declared-schema Plan and Apply. An executor without #3777, v0.9.0 included, rejects `--json` with exit code 2.",
+        "The migration machine contracts -- `migrations status --json` carrying contract_version and a per-migration record, and `migrations up --json` carrying an outcome -- reached Ptah after v0.3.0-201, and `migrations up --expect-sequence`, which the operator passes on every migration Apply, reached it in v0.9.0. A build older than v0.9.0 resolves and verifies a migration artifact and then fails at its own history document or at the flag every migration Apply passes, so the versioned workflow needs at least v0.9.0 rather than any build that has the commands.",
+        "The verified scope is the operator's database support window, PostgreSQL 17.x and MySQL 8.4.x LTS. Other engines Ptah addresses are unverified here, whatever the Ptah build.",
+        "The published verified set is a repository document. It is not compiled into the manager, and nothing compares a running executor's ptahVersion against it, so a combination outside this set is outside what the matrix measured rather than something the operator refuses. What is refused before a database is mutated is a change of any bound execution component between the plan and the apply -- Ptah, the executor image, the runner protocol version, the controller-state version -- checked before the Job is created. The manager's image and revision and the runner image are recorded and not bound: a manager release that changes only them applies the plans and approvals its predecessor left. What is refused after a Job has run is a runner speaking another protocol version, which is a rejected result frame rather than a prevented mutation. Pinning both the executor image and its ptahVersion at install is a requirement on whoever installs, not a check at runtime."
+      ]
+    },
+    {
+      "operator": "v0.2.1",
+      "stage": "released",
+      "documentation": {
+        "published": true,
+        "source": "v0.2.1"
       },
       "declared": {
         "range": null,
