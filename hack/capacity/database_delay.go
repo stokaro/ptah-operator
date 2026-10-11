@@ -10,9 +10,11 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"time"
 
 	"github.com/stokaro/ptah-operator/internal/runner"
@@ -24,6 +26,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
@@ -251,18 +254,13 @@ func (s *scenarios) databaseDelay(ctx context.Context) (resultErr error) {
 		}
 	}()
 
-	direct, err := services.Create(ctx, &corev1.Service{
-		ObjectMeta: metav1.ObjectMeta{Name: db.name + "-direct", Namespace: db.namespace, Labels: map[string]string{databaseDelayLabel: "direct"}},
-		Spec: corev1.ServiceSpec{Selector: db.labels(), Ports: []corev1.ServicePort{{
-			Name: db.portName, Port: db.port, TargetPort: intstr.FromString(db.portName),
-		}}},
-	}, metav1.CreateOptions{})
+	// The proxy reaches the database by its Pod address. A Service selecting the
+	// database's labels would also select the proxy, which carries them so the
+	// operation Pods' egress policies admit it, and a session could loop back.
+	upstream, err := s.databasePodAddress(ctx, db)
 	if err != nil {
-		return fmt.Errorf("create the direct database Service: %w", err)
+		return err
 	}
-	created = append(created, s.deleteByUID("Service", direct.Name, direct.UID, func(ctx context.Context, opts metav1.DeleteOptions) error {
-		return services.Delete(ctx, direct.Name, opts)
-	}, proof))
 
 	policies := s.clientset.NetworkingV1().NetworkPolicies(db.namespace)
 	port := intstr.FromInt32(db.port)
@@ -284,9 +282,20 @@ func (s *scenarios) databaseDelay(ctx context.Context) (resultErr error) {
 	created = append(created, s.deleteByUID("NetworkPolicy", policy.Name, policy.UID, func(ctx context.Context, opts metav1.DeleteOptions) error {
 		return policies.Delete(ctx, policy.Name, opts)
 	}, proof))
+	// The lab's network step denies all egress from the fixture namespace, the
+	// proxy's own. Without this the proxy accepted every session and could not
+	// reach the database, so it delayed nothing and the scenario measured the
+	// denial instead.
+	egress, err := policies.Create(ctx, delayProxyEgress(db), metav1.CreateOptions{})
+	if err != nil {
+		return fmt.Errorf("let the proxy reach DNS and the database: %w", err)
+	}
+	created = append(created, s.deleteByUID("NetworkPolicy", egress.Name, egress.UID, func(ctx context.Context, opts metav1.DeleteOptions) error {
+		return policies.Delete(ctx, egress.Name, opts)
+	}, proof))
 
 	deployments := s.clientset.AppsV1().Deployments(db.namespace)
-	proxy, err := deployments.Create(ctx, s.delayProxyDeployment(db, delay), metav1.CreateOptions{})
+	proxy, err := deployments.Create(ctx, s.delayProxyDeployment(db, delay, upstream), metav1.CreateOptions{})
 	if err != nil {
 		return fmt.Errorf("create the database delay proxy: %w", err)
 	}
@@ -374,7 +383,7 @@ func (s *scenarios) requireDelayedFamilies(proof *databaseDelayProof) error {
 	return nil
 }
 
-func (s *scenarios) delayProxyDeployment(db capacityDatabase, delay time.Duration) *appsv1.Deployment {
+func (s *scenarios) delayProxyDeployment(db capacityDatabase, delay time.Duration, upstream string) *appsv1.Deployment {
 	replicas := int32(1)
 	grace := int64(900)
 	noEscalation, nonRoot := false, true
@@ -400,7 +409,7 @@ func (s *scenarios) delayProxyDeployment(db capacityDatabase, delay time.Duratio
 						ImagePullPolicy: corev1.PullIfNotPresent,
 						Command: []string{"/e2e-delay-proxy",
 							"-listen", fmt.Sprintf(":%d", db.port),
-							"-upstream", fmt.Sprintf("%s-direct.%s.svc.cluster.local:%d", db.name, db.namespace, db.port),
+							"-upstream", upstream,
 							"-delay", delay.String(),
 							"-health", fmt.Sprintf("127.0.0.1:%d", databaseDelayHealth)},
 						Ports:          []corev1.ContainerPort{{Name: db.portName, ContainerPort: db.port}},
@@ -614,4 +623,54 @@ func (s *scenarios) removeDelayProxy(db capacityDatabase, uid types.UID, proof *
 			}
 		}
 	}
+}
+
+// delayProxyEgress lets the delay proxy reach the database Pod and nothing
+// else.
+func delayProxyEgress(db capacityDatabase) *networkingv1.NetworkPolicy {
+	tcp, port := corev1.ProtocolTCP, intstr.FromInt32(db.port)
+	return &networkingv1.NetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "capacity-database-delay-egress", Namespace: db.namespace},
+		Spec: networkingv1.NetworkPolicySpec{
+			PodSelector: metav1.LabelSelector{MatchLabels: map[string]string{databaseDelayLabel: "true"}},
+			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeEgress},
+			Egress: []networkingv1.NetworkPolicyEgressRule{{
+				To:    []networkingv1.NetworkPolicyPeer{{PodSelector: &metav1.LabelSelector{MatchLabels: db.labels()}}},
+				Ports: []networkingv1.NetworkPolicyPort{{Protocol: &tcp, Port: &port}},
+			}},
+		},
+	}
+}
+
+// databasePodAddress is the one ready database Pod's address and port. The
+// proxy, which carries the same labels plus its own, is not a candidate.
+func (s *scenarios) databasePodAddress(ctx context.Context, db capacityDatabase) (string, error) {
+	pods, err := s.clientset.CoreV1().Pods(db.namespace).List(ctx, metav1.ListOptions{LabelSelector: labels.SelectorFromSet(db.labels()).String()})
+	if err != nil {
+		return "", fmt.Errorf("list the database Pods: %w", err)
+	}
+	address, err := readyDatabaseAddress(pods.Items)
+	if err != nil {
+		return "", err
+	}
+	return net.JoinHostPort(address, strconv.Itoa(int(db.port))), nil
+}
+
+// readyDatabaseAddress picks the single ready Pod that is not a delay proxy.
+func readyDatabaseAddress(pods []corev1.Pod) (string, error) {
+	var found []string
+	for _, pod := range pods {
+		if _, proxy := pod.Labels[databaseDelayLabel]; proxy || pod.DeletionTimestamp != nil || pod.Status.PodIP == "" {
+			continue
+		}
+		for _, condition := range pod.Status.Conditions {
+			if condition.Type == corev1.PodReady && condition.Status == corev1.ConditionTrue {
+				found = append(found, pod.Status.PodIP)
+			}
+		}
+	}
+	if len(found) != 1 {
+		return "", fmt.Errorf("the database delay needs exactly one ready database Pod, found %d", len(found))
+	}
+	return found[0], nil
 }
