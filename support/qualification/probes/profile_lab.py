@@ -510,9 +510,16 @@ class Lab:
         self.finish('prepare', workload=str(workload_file), workloadSHA256=sha(workload_file.read_bytes()), varied=varied, tools=tools)
 
     def push_lab_inputs(self, engine):
-        """The two artifacts of each family a workload without populated inputs moves between."""
+        """The two artifacts of each family a workload without populated inputs moves between.
+
+        They are published, named and signed the way the populated inputs are:
+        pushed through the loopback tunnel, referenced at the HTTPS authority the
+        bootstrap granted, and signed with the lab key its verification policies
+        require. An unsigned artifact at the plain registry fails every Resolve.
+        """
         env = self.env
         credentials = json.loads(Path(env['E2E_REGISTRY_CREDENTIALS_FILE']).read_text())
+        os.environ.update(PTAH_OCI_USERNAME=credentials['username'], PTAH_OCI_PASSWORD=credentials['password'])
         child = self.child_env({'PTAH_OCI_USERNAME': credentials['username'], 'PTAH_OCI_PASSWORD': credentials['password']})
         mysql = engine == 'MySQL'
         schemas = ROOT / ('support/capacity/mysql/schemas' if mysql else 'demo/schemas')
@@ -534,9 +541,18 @@ class Lab:
                                                          '--migrations-dir', str(directory), '--dir-format', 'ptah', '--version', f'{version}-{tag}',
                                                          '--plain-http'], env=child).decode()
             refs[f'migration-{version}'] = re.search(r'^Digest: (sha256:[0-9a-f]{64})$', out, re.M)[1]
-        host = env['E2E_REGISTRY_HOST']
-        self.state['labInputs'] = {key: f'oci://{host}/{"schemas" if key.startswith("schema") else "migrations"}/capacity@{digest}'
-                                   for key, digest in refs.items()}
+        from capacity_workload import sign_artifact
+        bootstrap = json.loads((self.dir / 'capacity-bootstrap.json').read_text())
+        host = bootstrap.get('artifactRegistry', {}).get('host', env['E2E_REGISTRY_HOST'])
+        repository = lambda key: 'schemas' if key.startswith('schema') else 'migrations'
+        signatures = {}
+        for key, digest in refs.items():
+            signature = sign_artifact(f'oci://{registry}/{repository(key)}/capacity@{digest}', self.dir,
+                                      lambda label, args, env=None: self.run('sign-' + key + '-' + label.split()[0], args, env=env))
+            if signature is not None:
+                signatures[key] = signature
+        self.state['labInputs'] = {key: f'oci://{host}/{repository(key)}/capacity@{digest}' for key, digest in refs.items()}
+        self.state['labInputSignatures'] = signatures
         self.save()
 
     # network --------------------------------------------------------------
