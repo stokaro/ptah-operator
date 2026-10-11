@@ -241,7 +241,16 @@ func (s *scenarios) convergenceTargets(ctx context.Context, references map[strin
 				if err != nil || digestOf(reference) == "" || changed && reference != want {
 					return nil, fmt.Errorf("workload input does not match the requested artifact: %s/%s", namespace, item.GetName())
 				}
-				targets = append(targets, batchTarget{family: family.name, resource: family.resource, namespace: namespace, name: item.GetName(), uid: item.GetUID(), generation: item.GetGeneration(), reference: reference, applied: family.name == "schema"})
+				// A churn replacement that found its database already at the desired
+				// schema converges without an Apply and records no status.applied, as
+				// the churn rounds accept. Its proof is the scoped InSync reading and
+				// the source digest; an applied record that exists must still name the
+				// desired artifact.
+				_, hasApplied, err := unstructured.NestedMap(item.Object, "status", "applied")
+				if err != nil {
+					return nil, fmt.Errorf("read %s/%s applied record: %w", namespace, item.GetName(), err)
+				}
+				targets = append(targets, batchTarget{family: family.name, resource: family.resource, namespace: namespace, name: item.GetName(), uid: item.GetUID(), generation: item.GetGeneration(), reference: reference, applied: family.name == "schema" && hasApplied})
 			}
 		}
 	}

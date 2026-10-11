@@ -209,3 +209,56 @@ func TestOutageDoesNotDeleteExistingSecondNamespacePolicy(t *testing.T) {
 		t.Fatal("created policy was not removed", deleted)
 	}
 }
+
+// The registry-outage recovery collected every schema as needing an applied
+// record. A churn replacement that adopted a database already at its desired
+// schema has none, so the 0.2.0 soak waited five minutes for a resource that
+// had recovered in 73 seconds. Only a schema that has an applied record when
+// the targets are collected is held to it.
+func TestConvergenceRequiresAnAppliedRecordOnlyWhereOneExists(t *testing.T) {
+	s := twoNamespaceScenarios()
+	s.in.databaseSecret = "db-%d"
+	s.in.schemaRefs[0] = "oci://registry/schema@sha256:" + strings.Repeat("a", 64)
+	s.in.migrationRefs[0] = "oci://registry/migration@sha256:" + strings.Repeat("b", 64)
+	objects := []runtime.Object{}
+	for i := range 10 {
+		schemaObject := s.schemaObject(i)
+		if i != 8 {
+			if err := unstructured.SetNestedField(schemaObject.Object, "sha256:"+strings.Repeat("a", 64), "status", "applied", "artifactDigest"); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for _, obj := range []*unstructured.Unstructured{schemaObject, s.migrationObject(s.migrationName(i), 10+i, "Always", true)} {
+			obj.SetUID(types.UID(obj.GetKind() + obj.GetName()))
+			obj.SetGeneration(1)
+			objects = append(objects, obj)
+		}
+	}
+	s.dynamic = dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{schemaResource: "PtahSchemaList", migrationResource: "PtahMigrationList"}, objects...)
+	targets, err := s.convergenceTargets(context.Background(), nil)
+	if err != nil || len(targets) != 20 {
+		t.Fatal("complete fleet refused", len(targets), err)
+	}
+	checked := 0
+	for _, target := range targets {
+		switch {
+		case target.family == "migration":
+			if target.applied {
+				t.Errorf("%s: a migration was held to a schema applied record", target.name)
+			}
+		case target.name == s.schemaName(8):
+			if target.applied {
+				t.Error("an adopted replacement with no applied record was held to one")
+			}
+			checked++
+		default:
+			if !target.applied {
+				t.Errorf("%s: a schema with an applied record was released from it", target.name)
+			}
+			checked++
+		}
+	}
+	if checked != 10 {
+		t.Fatalf("checked %d schemas, want 10", checked)
+	}
+}
