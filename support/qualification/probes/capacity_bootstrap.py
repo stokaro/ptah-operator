@@ -304,8 +304,12 @@ class Bootstrap:
                         'args': ['--max-connections=500'] if mysql else ['-c', 'max_connections=500'],
                         'env': [{'name': 'MYSQL_ROOT_PASSWORD' if mysql else 'POSTGRES_PASSWORD', 'valueFrom': {
                             'secretKeyRef': {'name': name + '-admin', 'key': 'password'}}}],
-                        'resources': {'requests': {'cpu': '100m', 'memory': '256Mi'},
-                                      'limits': {'cpu': '2', 'memory': '1Gi'}},
+                        # One server holds every resource's database. On the frozen
+                        # MySQL soak, mysqld reached its earlier 1Gi limit by round six
+                        # and the kernel OOM-killed it; 4Gi leaves the fixture, not the
+                        # operator, out of the measurement.
+                        'resources': {'requests': {'cpu': '100m', 'memory': '512Mi'},
+                                      'limits': {'cpu': '2', 'memory': '4Gi'}},
                         'ports': [{'name': port_name, 'containerPort': port}],
                         'readinessProbe': {'exec': {'command': ready}, 'periodSeconds': 3}
                     }]}}}))
