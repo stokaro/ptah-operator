@@ -319,6 +319,20 @@ class BootstrapTests(unittest.TestCase):
         b.prepare({'schemas': 1, 'migrations': 1})
         self.assertFalse(any(obj['kind'] in ('RoleBinding', 'ClusterRoleBinding') for obj in b.objects.values()))
 
+    def test_database_readiness_waits_for_the_server_on_tcp(self):
+        # The 0.2.1 arm64 soak cell's first admin psql found no socket: the
+        # image's temporary init server, which listens on the socket alone,
+        # had passed a socket probe and then stopped.
+        for engine, name in (('PostgreSQL', 'capacity-postgres'), ('MySQL', 'capacity-mysql')):
+            with self.subTest(engine=engine):
+                self.setUp()
+                b = self.bootstrap
+                b.prepare({'engine': engine, 'schemas': 1, 'migrations': 1})
+                fixture = b.state['fixtureNamespace']
+                container = b.objects['Deployment', fixture, name]['spec']['template']['spec']['containers'][0]
+                probe = ' '.join(container['readinessProbe']['exec']['command'])
+                self.assertRegex(probe, r'-h ?127\.0\.0\.1')
+
     def test_mysql_uses_database_scoped_users_and_matching_service(self):
         b = self.bootstrap
         namespaces = b.prepare({'engine': 'MySQL', 'schemas': 10, 'migrations': 10})

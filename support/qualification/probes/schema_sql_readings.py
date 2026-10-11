@@ -79,14 +79,15 @@ class Lab:
         self.server = server
         deadline = time.time() + 180
         while time.time() < deadline:
-            probe = ['pg_isready', '-U', ACCOUNT, '-d', self.database] if self.engine == 'postgresql' else \
-                ['mysql', '-uroot', f'-p{self.password}', '-e', 'SELECT 1']
+            # Over TCP: the image's temporary init server listens on the
+            # socket alone and answers a socket probe just before it stops.
+            probe = ['pg_isready', '-h', '127.0.0.1', '-U', ACCOUNT, '-d', self.database] if self.engine == 'postgresql' else \
+                ['mysql', '-h127.0.0.1', '-uroot', f'-p{self.password}', '-e', 'SELECT 1']
             if run(self.docker + ['exec', server] + probe, check=False).returncode == 0:
                 break
             time.sleep(2)
         else:
             raise RuntimeError(f'{self.engine} did not start')
-        time.sleep(3)
         if self.engine == 'mysql':
             # The image's own initialization connected through the socket; the
             # journal begins empty for the readings.

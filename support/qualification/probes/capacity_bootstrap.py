@@ -290,7 +290,11 @@ class Bootstrap:
         port_name = 'mysql' if mysql else 'postgresql'
         image = self.env['E2E_MYSQL_IMAGE' if mysql else 'E2E_POSTGRES_IMAGE']
         admin = ['sh', '-c', 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysql -u root --batch'] if mysql else ['psql', '-U', 'postgres', '-v', 'ON_ERROR_STOP=1']
-        ready = ['sh', '-c', 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysql -h 127.0.0.1 -u root --execute="SELECT 1"'] if mysql else ['pg_isready', '-U', 'postgres']
+        # Ready means the final server, which is the only one on TCP. Both
+        # images first run a temporary server on the Unix socket alone for
+        # their init scripts, and a socket probe passes against it moments
+        # before it stops.
+        ready = ['sh', '-c', 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysql -h 127.0.0.1 -u root --execute="SELECT 1"'] if mysql else ['pg_isready', '-h', '127.0.0.1', '-U', 'postgres']
         self.create(self.object(fixture, 'Secret', name + '-admin',
                                 stringData={'password': password}))
         labels = {'app.kubernetes.io/name': name}
