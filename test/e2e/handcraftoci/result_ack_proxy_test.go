@@ -260,7 +260,10 @@ func TestResultACKProxyDropsOnlyFirstDurableResponse(t *testing.T) {
 	}
 	done := make(chan result, 1)
 	go func() { response, err := f.put(f.body); done <- result{response, err} }()
-	deadline := time.Now().Add(time.Second)
+	// The retry runs on its own goroutine and HTTP connection. A loaded CI
+	// runner took longer than a second to deliver it to the fixture (master
+	// run 38169875041); the bound is how long to wait, not what is asserted.
+	deadline := time.Now().Add(10 * time.Second)
 	var evidence ackEvidence
 	for time.Now().Before(deadline) {
 		if err := json.Unmarshal(f.admin(http.MethodGet, "/evidence").Body.Bytes(), &evidence); err != nil {
@@ -272,7 +275,8 @@ func TestResultACKProxyDropsOnlyFirstDurableResponse(t *testing.T) {
 		time.Sleep(time.Millisecond)
 	}
 	if !evidence.Dropped || len(evidence.Attempts) != 2 || evidence.Preflights != 1 || evidence.Released || evidence.Attempts[0].Receipt != evidence.Attempts[1].Receipt {
-		t.Fatal("fixture did not observe two identical durable receipts")
+		t.Fatalf("fixture did not observe two identical durable receipts: dropped=%t attempts=%d preflights=%d released=%t",
+			evidence.Dropped, len(evidence.Attempts), evidence.Preflights, evidence.Released)
 	}
 	select {
 	case <-done:
