@@ -211,3 +211,61 @@ func TestAMutatingClaimThatMayHaveDispatchedIsNeverDispatchedAgain(t *testing.T)
 		t.Fatal("a read-only claim was refused like a mutating one")
 	}
 }
+
+// shutdownTrace cancels the reconcile's context the moment the claim is
+// marked, as a manager stopping right then does, and remembers whether the
+// steps after the mark still had a live context.
+type shutdownTrace struct {
+	familyTrace
+	cancel      context.CancelFunc
+	createAlive bool
+}
+
+func (f *shutdownTrace) Mark(ctx context.Context) error {
+	err := f.familyTrace.Mark(ctx)
+	f.cancel()
+	return err
+}
+
+func (f *shutdownTrace) Create(ctx context.Context, job *batchv1.Job) error {
+	f.createAlive = ctx.Err() == nil
+	if !f.createAlive {
+		f.calls = append(f.calls, "create interrupted")
+		return ctx.Err()
+	}
+	return f.familyTrace.Create(ctx, job)
+}
+
+// The 0.2.1 restart burst left an approved migration Blocked: a manager that
+// was stopping marked the Apply and lost its create, and a marked claim with
+// no Job is a run only a person can account for. A dispatch that has started
+// now finishes, and a manager already stopping does not start one.
+func TestADispatchThatStartedFinishesWhenTheManagerStops(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	family := &shutdownTrace{familyTrace: familyTrace{claim: mutatingClaim()}, cancel: cancel}
+	if _, err := (mutationlifecycle.Driver{}).Dispatch(ctx, family); err != nil {
+		t.Fatalf("Dispatch() error = %v", err)
+	}
+	if !family.createAlive || slices.Contains(family.calls, "unaccounted") {
+		t.Fatalf("the shutdown interrupted a dispatch it had already marked: %v", family.calls)
+	}
+	if want := []string{"authorize", "lease", "stage", "build", "consume", "mark", "create", "confirm", "record"}; !slices.Equal(family.calls, want) {
+		t.Fatalf("the family was asked %v, want %v", family.calls, want)
+	}
+}
+
+func TestAStoppingManagerDoesNotStartADispatch(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	family := &familyTrace{claim: mutatingClaim()}
+	if _, err := (mutationlifecycle.Driver{}).Dispatch(ctx, family); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Dispatch() on a stopping manager error = %v, want context.Canceled", err)
+	}
+	if slices.Contains(family.calls, "mark") || slices.Contains(family.calls, "create") {
+		t.Fatalf("a stopping manager started a dispatch: %v", family.calls)
+	}
+}
