@@ -11,6 +11,8 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/util/retry"
 )
 
 type soakWorkload struct {
@@ -129,31 +131,11 @@ func (s *scenarios) changeRound(ctx context.Context, round int) (err error) {
 				resource, name, field, reference = migrationResource, s.migrationName(index), "artifact", s.migrationReference(index, round)
 			}
 			client := s.dynamic.Resource(resource).Namespace(s.in.namespaceFor(index))
-			old, err := client.Get(ctx, name, metav1.GetOptions{})
-			if err != nil {
-				return err
-			}
-			previous, _, err := unstructured.NestedString(old.Object, "spec", field, "ociRef")
-			if err != nil {
-				return err
-			}
 			wantPrevious := s.schemaReference(index, round-1)
 			if family == "migration" {
 				wantPrevious = s.migrationReference(index, round-1)
 			}
-			if old.GetUID() == "" || old.GetResourceVersion() == "" || old.GetDeletionTimestamp() != nil || previous != wantPrevious {
-				return fmt.Errorf("%s does not hold the previous round's original input", name)
-			}
-			// UID and resourceVersion preconditions prevent a read/write race from
-			// changing a replacement or overwriting an intervening spec edit.
-			raw, err := json.Marshal(map[string]any{"metadata": map[string]any{"uid": string(old.GetUID()), "resourceVersion": old.GetResourceVersion()}, "spec": map[string]any{field: map[string]any{"ociRef": reference}}})
-			if err != nil {
-				return err
-			}
-			if start.IsZero() {
-				start = time.Now().UTC()
-			}
-			object, err := client.Patch(ctx, name, types.MergePatchType, raw, metav1.PatchOptions{})
+			old, object, err := moveRoundInput(ctx, client, name, field, wantPrevious, reference, &start)
 			if err != nil {
 				return err
 			}
@@ -167,6 +149,41 @@ func (s *scenarios) changeRound(ctx context.Context, round int) (err error) {
 		return err
 	}
 	return s.verifyInputPlans(ctx, round)
+}
+
+// moveRoundInput moves one resource's input from the previous round's
+// reference to this round's, and returns the resource before and after. The
+// operator's status writes move resourceVersion too, so a conflict is usually
+// one of them. Each attempt reads the resource again and checks it still holds
+// the previous round's input, so a retry never overwrites another spec edit or
+// a replacement. start is set at the first write attempt.
+func moveRoundInput(ctx context.Context, client dynamic.ResourceInterface, name, field, wantPrevious, reference string, start *time.Time) (old, object *unstructured.Unstructured, err error) {
+	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		var err error
+		old, err = client.Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		previous, _, err := unstructured.NestedString(old.Object, "spec", field, "ociRef")
+		if err != nil {
+			return err
+		}
+		if old.GetUID() == "" || old.GetResourceVersion() == "" || old.GetDeletionTimestamp() != nil || previous != wantPrevious {
+			return fmt.Errorf("%s does not hold the previous round's original input", name)
+		}
+		// UID and resourceVersion preconditions prevent a read/write race from
+		// changing a replacement or overwriting an intervening spec edit.
+		raw, err := json.Marshal(map[string]any{"metadata": map[string]any{"uid": string(old.GetUID()), "resourceVersion": old.GetResourceVersion()}, "spec": map[string]any{field: map[string]any{"ociRef": reference}}})
+		if err != nil {
+			return err
+		}
+		if start.IsZero() {
+			*start = time.Now().UTC()
+		}
+		object, err = client.Patch(ctx, name, types.MergePatchType, raw, metav1.PatchOptions{})
+		return err
+	})
+	return old, object, err
 }
 
 func (s *scenarios) checkpointDatabase(ctx context.Context, round int, name string) error {
