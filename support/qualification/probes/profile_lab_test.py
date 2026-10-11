@@ -3,12 +3,14 @@ import copy
 import hashlib
 import io
 import json
+import os
 from pathlib import Path
 import tarfile
 import tempfile
 import unittest
+from unittest import mock
 
-from profile_lab import (QUOTA, archive, database_service, preflight_failures, profile_freeze, profile_values,
+from profile_lab import (QUOTA, Lab, archive, database_service, preflight_failures, profile_freeze, profile_values,
                          read_environment, receive, registry_secrets, write_environment)
 from profile_network import bind_policy, task_expectations
 
@@ -190,6 +192,48 @@ class NetworkTest(unittest.TestCase):
         self.assertEqual(rule['to'][0]['podSelector'], {'matchLabels': {'app.kubernetes.io/name': 'capacity-mysql'}})
         self.assertEqual(bound['spec']['podSelector'], database['spec']['podSelector'])
         self.assertEqual(database['spec']['egress'][0]['ports'][0]['port'], 5432, 'binding changed the documented example')
+
+
+class LabInputsTest(unittest.TestCase):
+    """Inputs for a workload without populated ones are reached the way the
+    bootstrap grants: at its HTTPS authority, signed with the lab key."""
+
+    def test_lab_inputs_name_the_granted_authority_and_are_signed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            lab_dir = Path(directory) / 'lab'
+            lab_dir.mkdir()
+            credentials = Path(directory) / 'credentials.json'
+            credentials.write_text(json.dumps({'username': 'u', 'password': 'p'}))
+            write_environment(lab_dir / 'profile.environment', {
+                'E2E_REGISTRY_CREDENTIALS_FILE': str(credentials), 'E2E_REGISTRY_HOST_ADDRESS': '127.0.0.1:5000',
+                'E2E_REGISTRY_HOST': 'e2e-registry.ns.svc.cluster.local:5000', 'E2E_DOCKER_CONFIG': directory,
+                'E2E_DOCKER_CONTEXT': 'c', 'E2E_DOCKER_ENDPOINT': 'ssh://h'})
+            (lab_dir / 'capacity-bootstrap.json').write_text(json.dumps(
+                {'artifactRegistry': {'host': 'e2e-registry-tls.ns.svc.cluster.local:5443'}}))
+            pushed = []
+
+            def run(name, args, data=None, timeout=120, env=None, cwd=None):
+                pushed.append(args)
+                return f'Digest: sha256:{len(pushed):064x}\n'.encode()
+
+            signed = []
+
+            def sign(reference, signing_directory, command):
+                signed.append(reference)
+                return {'manifestDigest': reference.rsplit('@', 1)[1]}
+
+            lab = Lab(lab_dir)
+            lab.run = run
+            with mock.patch.dict(os.environ, {}), mock.patch('capacity_workload.sign_artifact', sign):
+                lab.push_lab_inputs('PostgreSQL')
+            self.assertEqual(len(pushed), 4)
+            self.assertTrue(all('oci://127.0.0.1:5000/' in ' '.join(args) for args in pushed))
+            self.assertEqual(sorted(lab.state['labInputs']), ['migration-v1', 'migration-v2', 'schema-v1', 'schema-v2'])
+            for key, reference in lab.state['labInputs'].items():
+                self.assertTrue(reference.startswith('oci://e2e-registry-tls.ns.svc.cluster.local:5443/'), reference)
+                self.assertEqual(lab.state['labInputSignatures'][key]['manifestDigest'], reference.rsplit('@', 1)[1])
+            self.assertEqual(len(signed), 4)
+            self.assertTrue(all(reference.startswith('oci://127.0.0.1:5000/') for reference in signed))
 
 
 if __name__ == '__main__':

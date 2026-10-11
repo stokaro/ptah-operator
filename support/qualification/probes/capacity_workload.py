@@ -27,6 +27,43 @@ def sha(raw):
     return hashlib.sha256(raw).hexdigest()
 
 
+def sign_artifact(reference, directory, command):
+    """Sign one published digest with the lab key and verify the signature.
+
+    command(label, args, env) runs a tool, returns its stdout and raises on a
+    nonzero exit. Returns None when the lab signs nothing.
+    """
+    keys = [os.environ.get('CAPACITY_SIGNING_KEY'), os.environ.get('CAPACITY_SIGNING_PUBLIC_KEY')]
+    if bool(keys[0]) != bool(keys[1]):
+        raise ValueError('signed capacity artifacts require both signing key and public key')
+    if not keys[0]:
+        return None
+    # Publication uses the lab's encrypted loopback tunnel. The operator
+    # uses the separate HTTPS authority recorded in its input catalog.
+    authority, _, identity = reference.removeprefix('oci://').partition('@')
+    registry = authority.split('/')[0]
+    if not re.fullmatch(r'(?:localhost|127\.0\.0\.1):[0-9]{1,5}', registry) or not re.fullmatch(r'sha256:[0-9a-f]{64}', identity):
+        raise ValueError('capacity signing requires the loopback registry and an exact digest')
+    cosign = os.environ.get('CAPACITY_COSIGN', 'cosign')
+    with tempfile.TemporaryDirectory(prefix='signer-auth-', dir=directory) as auth_directory:
+        auth = base64.b64encode((os.environ['PTAH_OCI_USERNAME'] + ':' + os.environ['PTAH_OCI_PASSWORD']).encode()).decode()
+        path = Path(auth_directory) / 'config.json'
+        path.write_text(json.dumps({'auths': {registry: {'auth': auth}}}))
+        path.chmod(0o600)
+        env = dict(os.environ, DOCKER_CONFIG=auth_directory, COSIGN_EXPERIMENTAL='1')
+        common = ['--allow-http-registry', '--new-bundle-format=false']
+        target = reference.removeprefix('oci://')
+        command('sign workload digest', [cosign, 'sign', '--key', keys[0], '--yes',
+            '--tlog-upload=false', '--use-signing-config=false', '--registry-referrers-mode=oci-1-1', *common, target], env)
+        raw = command('verify workload signature', [cosign, 'verify', '--key', keys[1],
+            '--experimental-oci11', '--insecure-ignore-tlog', *common, target], env)
+        claims = json.loads(raw)
+        if not claims or any(claim.get('critical', {}).get('image', {}).get('docker-manifest-digest') != identity for claim in claims):
+            raise ValueError('signature verification did not return the exact workload digest')
+        return {'manifestDigest': identity, 'publicKeySHA256': sha(Path(keys[1]).read_bytes()),
+                'verificationSHA256': sha(raw), 'signatureArtifactType': 'application/vnd.dev.cosign.artifact.sig.v1+json'}
+
+
 def calibration(engine):
     value = json.loads((ROOT / 'support/capacity/input-calibration.json').read_text())
     pin = json.loads((ROOT / 'support/ptah.json').read_text())['releases'][0]['verified'][0]['ptahCommit']
@@ -97,35 +134,7 @@ class Workload:
         return result.stdout
 
     def sign_artifact(self, reference):
-        keys = [os.environ.get('CAPACITY_SIGNING_KEY'), os.environ.get('CAPACITY_SIGNING_PUBLIC_KEY')]
-        if bool(keys[0]) != bool(keys[1]):
-            raise ValueError('signed capacity artifacts require both signing key and public key')
-        if not keys[0]:
-            return None
-        # Publication uses the lab's encrypted loopback tunnel. The operator
-        # uses the separate HTTPS authority recorded in its input catalog.
-        authority, _, identity = reference.removeprefix('oci://').partition('@')
-        registry = authority.split('/')[0]
-        if not re.fullmatch(r'(?:localhost|127\.0\.0\.1):[0-9]{1,5}', registry) or not re.fullmatch(r'sha256:[0-9a-f]{64}', identity):
-            raise ValueError('capacity signing requires the loopback registry and an exact digest')
-        cosign = os.environ.get('CAPACITY_COSIGN', 'cosign')
-        with tempfile.TemporaryDirectory(prefix='signer-auth-', dir=self.root) as directory:
-            auth = base64.b64encode((os.environ['PTAH_OCI_USERNAME'] + ':' + os.environ['PTAH_OCI_PASSWORD']).encode()).decode()
-            path = Path(directory) / 'config.json'
-            path.write_text(json.dumps({'auths': {registry: {'auth': auth}}}))
-            path.chmod(0o600)
-            env = dict(os.environ, DOCKER_CONFIG=directory, COSIGN_EXPERIMENTAL='1')
-            common = ['--allow-http-registry', '--new-bundle-format=false']
-            target = reference.removeprefix('oci://')
-            self.command('sign workload digest', [cosign, 'sign', '--key', keys[0], '--yes',
-                '--tlog-upload=false', '--use-signing-config=false', '--registry-referrers-mode=oci-1-1', *common, target], env)
-            raw = self.command('verify workload signature', [cosign, 'verify', '--key', keys[1],
-                '--experimental-oci11', '--insecure-ignore-tlog', *common, target], env)
-            claims = json.loads(raw)
-            if not claims or any(claim.get('critical', {}).get('image', {}).get('docker-manifest-digest') != identity for claim in claims):
-                raise ValueError('signature verification did not return the exact workload digest')
-            return {'manifestDigest': identity, 'publicKeySHA256': sha(Path(keys[1]).read_bytes()),
-                    'verificationSHA256': sha(raw), 'signatureArtifactType': 'application/vnd.dev.cosign.artifact.sig.v1+json'}
+        return sign_artifact(reference, self.root, self.command)
 
     def credential(self, row):
         secret = self.bootstrap.read('secret', 'capacity-db-' + str(row['index']), row['namespace'])
