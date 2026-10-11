@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -247,13 +248,33 @@ func (d Driver) Dispatch(ctx context.Context, family Family) (reconcile.Result, 
 		return reconcile.Result{}, ErrMayHaveDispatched
 	}
 	pass := &dispatchPass{family: family}
+	stepCtx := ctx
 	for _, step := range d.sequence() {
-		if outcome := pass.run(ctx, step); outcome.stop {
+		if step == StepMark && family.Claim().HoldsLock {
+			// A manager that is stopping does not start a dispatch: nothing has
+			// marked the claim yet, so the next leader dispatches it whole.
+			if err := ctx.Err(); err != nil {
+				return reconcile.Result{}, err
+			}
+			// From the mark on, a create the shutdown interrupted would be an
+			// outcome nobody established, which only a person can clear. The
+			// mark, create, read-back and record take milliseconds, so they run
+			// to the end on a context the shutdown does not cancel.
+			critical, cancel := context.WithTimeout(context.WithoutCancel(ctx), dispatchCriticalSection)
+			defer cancel()
+			stepCtx = critical
+		}
+		if outcome := pass.run(stepCtx, step); outcome.stop {
 			return outcome.result, outcome.err
 		}
 	}
 	return pass.result, pass.err
 }
+
+// dispatchCriticalSection bounds the mark-to-record steps once they no longer
+// follow the reconcile's cancellation. It is shorter than the manager's
+// graceful shutdown, so a stopping manager still finishes them and exits.
+const dispatchCriticalSection = 15 * time.Second
 
 type dispatchPass struct {
 	family   Family

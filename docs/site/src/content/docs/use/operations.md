@@ -75,9 +75,12 @@ must never overlap behind the webhook Service.
 
 The leader holds its Lease for 60 seconds and renews it within 45, so an API
 server that stalls for less than that does not restart it. A manager that
-stops releases the Lease once its reconcilers have returned: a restart or an
-upgrade hands over at once, and only a manager that dies holding the Lease
-waits for it to run out, about a minute.
+stops releases the Lease once its reconcilers have returned, within 20 seconds
+and so inside the Pod's grace period: a restart or an upgrade hands over at
+once, and only a manager that dies holding the Lease waits for it to run out,
+about a minute. A stopping manager starts no new Job, and one whose dispatch
+had already begun finishes creating it, so the next leader adopts that Job
+instead of recording a run nobody accounted for.
 
 Supply digest-pinned manager, executor and runner images. The chart refuses all
 three when only a tag is supplied, and there is no local-tag mode:

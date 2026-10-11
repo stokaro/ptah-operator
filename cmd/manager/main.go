@@ -164,6 +164,11 @@ func main() {
 	utilruntime.Must(operatorv1alpha1.AddToScheme(scheme))
 
 	leaseDuration, renewDeadline, retryPeriod := 60*time.Second, 45*time.Second, 2*time.Second
+	// The release happens after every runnable has stopped, so the stop has
+	// to end inside the Pod's 30-second grace period. At controller-runtime's
+	// own 30 seconds the kill and the release raced, and a manager the kubelet
+	// killed first left its successor waiting out the whole lease.
+	shutdownTimeout := 20 * time.Second
 	manager, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                  scheme,
 		Cache:                   managercache.Options(),
@@ -183,6 +188,7 @@ func main() {
 		RenewDeadline:                 &renewDeadline,
 		RetryPeriod:                   &retryPeriod,
 		LeaderElectionReleaseOnCancel: true,
+		GracefulShutdownTimeout:       &shutdownTimeout,
 		WebhookServer: webhook.NewServer(webhook.Options{
 			Port: webhookPort, CertDir: webhookCertDir,
 		}),
