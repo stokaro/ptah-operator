@@ -123,7 +123,34 @@ function measurement(row) {
   );
 }
 
-function section(entry) {
+// The three prose fields of a version, compared after the same whitespace
+// folding the page applies.
+const FIELDS = {
+  declared: (entry) => ({ range: entry.declared?.range ?? null, statement: prose(entry.declared?.statement) }),
+  verified: (entry) => ({
+    verified: (entry.verified ?? []).map((row) => measurement(row)),
+    reason: prose(entry.unverifiedReason),
+  }),
+  limitations: (entry) => (entry.limitations ?? []).map(prose),
+};
+
+// anchor is the heading slug the site gives a version's section: lowercase,
+// punctuation dropped, so `### v0.2.0` is #v020.
+function anchor(entry) {
+  return prose(entry.operator).toLowerCase().replace(/[^a-z0-9 -]/g, '').replace(/ /g, '-');
+}
+
+// sameAs names the first earlier version whose field reads exactly like this
+// one's. A release and the development state that run one build carry the
+// same prose, and printing it twice makes the page say each sentence twice;
+// the later section points at the earlier one instead.
+function sameAs(field, entry, earlier) {
+  const key = JSON.stringify(FIELDS[field](entry));
+  const match = earlier.find((other) => JSON.stringify(FIELDS[field](other)) === key);
+  return match ? `the same as [\`${prose(match.operator)}\`](#${anchor(match)}).` : null;
+}
+
+function section(entry, earlier) {
   const lines = [`### ${prose(entry.operator)}`, ''];
   const stage = entry.stage === 'development' ? 'The development state.' : 'A released version.';
   const url = guideURL(entry);
@@ -132,10 +159,13 @@ function section(entry) {
   const range = entry.declared?.range ?? null;
   const statement = prose(entry.declared?.statement);
   const declared = range === null ? statement : [`\`${prose(range)}\`.`, statement].filter(Boolean).join(' ');
-  lines.push(`**Declared:** ${declared}`, '');
+  lines.push(`**Declared:** ${sameAs('declared', entry, earlier) ?? declared}`, '');
 
   const verified = entry.verified ?? [];
-  if (verified.length === 0) {
+  const sameVerified = sameAs('verified', entry, earlier);
+  if (sameVerified) {
+    lines.push(`**Verified:** ${sameVerified}`, '');
+  } else if (verified.length === 0) {
     lines.push(`**Verified:** nothing. ${prose(entry.unverifiedReason)}`, '');
   } else {
     lines.push('**Verified:**', '', ...verified.map(measurement), '');
@@ -143,7 +173,12 @@ function section(entry) {
 
   const limitations = entry.limitations ?? [];
   if (limitations.length > 0) {
-    lines.push('**Limitations:**', '', ...limitations.map((limitation) => `- ${prose(limitation)}`), '');
+    const sameLimitations = sameAs('limitations', entry, earlier);
+    if (sameLimitations) {
+      lines.push(`**Limitations:** ${sameLimitations}`, '');
+    } else {
+      lines.push('**Limitations:**', '', ...limitations.map((limitation) => `- ${prose(limitation)}`), '');
+    }
   }
   return lines;
 }
@@ -163,7 +198,7 @@ export function render(catalog) {
     ...releases.map(summaryRow),
     '',
   ];
-  for (const entry of releases) lines.push(...section(entry));
+  releases.forEach((entry, index) => lines.push(...section(entry, releases.slice(0, index))));
 
   const evidence = Object.entries(catalog.evidence ?? {});
   if (evidence.length > 0) {
@@ -243,12 +278,29 @@ function selftest() {
         verified: [],
         unverifiedReason: 'the suite has not run against it',
       },
+      {
+        operator: 'v0.3.0',
+        stage: 'released',
+        documentation: { published: false },
+        declared: { range: null, statement: 'no  range is\nclaimed' },
+        verified: [
+          {
+            ptahRelease: null,
+            ptahCommit: commit,
+            ptahDescribe: 'v0.3.0-201-g0123456789',
+            runnerProtocolVersion: 5,
+            evidence: 'kubernetes-e2e',
+            scope: 'the lifecycle',
+          },
+        ],
+        limitations: ['run `ptah migrations up` with the flag'],
+      },
     ],
     evidence: { 'kubernetes-e2e': { what: 'the suite', pin: 'one declaration' } },
   };
   const block = render(check(catalog));
   const rows = block.split('\n').filter((line) => line.startsWith('| `'));
-  if (rows.length !== 3) throw new Error(`the summary has ${rows.length} rows for three versions`);
+  if (rows.length !== 4) throw new Error(`the summary has ${rows.length} rows for four versions`);
   const [edge, released, absent] = rows;
 
   // Verified, and not a release: the describe string names it, and the row
@@ -275,6 +327,21 @@ function selftest() {
   if (block.includes('operator.ptah.run/v0.1.0/')) throw new Error('an unpublished guide was linked anyway');
   // Prose stays on one line and keeps its Markdown.
   if (!block.includes('- run `ptah migrations up` with the flag')) throw new Error('a limitation broke across lines');
+  // A version that reads exactly like an earlier one points at it instead of
+  // saying every sentence again; a version that differs keeps its own prose.
+  const repeat = block.slice(block.indexOf('### v0.3.0'));
+  for (const field of ['Declared', 'Verified', 'Limitations']) {
+    if (!repeat.includes(`**${field}:** the same as [\`edge\`](#edge).`)) {
+      throw new Error(`a repeated ${field} field was printed again rather than referenced`);
+    }
+  }
+  if (block.split('the lifecycle').length !== 3 || block.split('with the flag').length !== 2) {
+    throw new Error('a repeated version printed its prose twice');
+  }
+  if (block.slice(block.indexOf('### v0.2.0'), block.indexOf('### v0.1.0')).includes('the same as')) {
+    throw new Error('a version with prose of its own was referenced to another');
+  }
+  if (anchor({ operator: 'v0.2.0' }) !== 'v020') throw new Error('a version anchor is not the heading slug');
   if (!block.includes('- `kubernetes-e2e`: the suite one declaration')) throw new Error('the evidence is not described');
 
   // The refusals: shapes that would render as a claim nobody made.
@@ -307,7 +374,7 @@ function selftest() {
 
   console.log(
     'build-ptah-compatibility.mjs --selftest: OK (declared, verified, release and commit pin, absent, ' +
-      'guide links, one-line prose, refusals, staleness)',
+      'guide links, one-line prose, repeated versions, refusals, staleness)',
   );
 }
 
