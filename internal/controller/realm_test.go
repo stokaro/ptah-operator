@@ -933,8 +933,10 @@ func TestRealmRecheckDeadlineClearsOnFreshResolveAfterGrant(t *testing.T) {
 				}
 				operation, next, started := read()
 				if operation == "Resolve" {
-					if next != nil || started == nil || !started.Time.Equal(now) {
-						t.Fatal("recovery did not clear the deadline at the native claim time")
+					// The realm recheck deadline gives way to the refresh cadence,
+					// one interval after this Resolve's own start.
+					if next == nil || !next.Time.Equal(now.Add(time.Minute)) || started == nil || !started.Time.Equal(now) {
+						t.Fatal("recovery did not replace the realm deadline with the cadence from the native claim time")
 					}
 					return
 				}

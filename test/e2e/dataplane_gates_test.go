@@ -175,6 +175,12 @@ func TestOrderedRefreshChainsRequiresThreeSpacedChains(t *testing.T) {
 	if err := orderedRefreshChains(sameSecond, blockedRefreshSeconds); err != nil {
 		t.Fatalf("chains whose Jobs share a second were refused: %v", err)
 	}
+	// The cadence runs from claim to claim; a Job dated one second short of
+	// the interval is a Resolve claimed on time.
+	onCadence := []time.Duration{0, (blockedRefreshSeconds - 1) * time.Second, (2*blockedRefreshSeconds - 1) * time.Second}
+	if err := orderedRefreshChains(chainRecords(onCadence, operations...), blockedRefreshSeconds); err != nil {
+		t.Fatalf("chains on the cadence were refused: %v", err)
+	}
 	for _, test := range []struct {
 		name    string
 		records []observedJob
@@ -185,7 +191,7 @@ func TestOrderedRefreshChainsRequiresThreeSpacedChains(t *testing.T) {
 		{"an Apply among them", append(chainRecords(spaced, operations...), observedJob{
 			UID: "apply", Operation: "apply", Created: gateNow.Add(300 * time.Second).Format(time.RFC3339),
 		})},
-		{"chains closer than the interval", chainRecords([]time.Duration{0, 89 * time.Second, 190 * time.Second}, operations...)},
+		{"chains closer than the interval", chainRecords([]time.Duration{0, 88 * time.Second, 190 * time.Second}, operations...)},
 		{"Verify ahead of Resolve", chainRecords(spaced, "verify", "resolve", "observe", "plan")},
 		{"no creation time", func() []observedJob {
 			records := chainRecords(spaced, operations...)

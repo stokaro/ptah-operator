@@ -1294,7 +1294,7 @@ func (r *SchemaReconciler) blockVerification(
 	}
 	operation := schema.Status.ActiveOperation
 	now := metav1.NewTime(r.now())
-	next := metav1.NewTime(r.now().Add(interval(schema)))
+	next := cycleDeadline(schema.Status.NextReconciliationTime, r.now(), interval(schema))
 	before := schema.DeepCopy()
 	schema.Status.ObservedGeneration = schema.Generation
 	schema.Status.LastAttemptTime = &now
@@ -1357,7 +1357,7 @@ func (r *SchemaReconciler) refuseProtectedTable(
 	}
 	operation := schema.Status.ActiveOperation
 	now := metav1.NewTime(r.now())
-	next := metav1.NewTime(r.now().Add(interval(schema)))
+	next := cycleDeadline(schema.Status.NextReconciliationTime, r.now(), interval(schema))
 	before := schema.DeepCopy()
 	schema.Status.Plan = nil
 	schema.Status.LastAttemptTime = &now
@@ -1462,7 +1462,7 @@ func (r *SchemaReconciler) consumeResultWithTransport(ctx context.Context, schem
 		}
 		schema.Status.Phase = operatorv1alpha1.PhaseVerifying
 		// Persist when the next step became due before retiring this claim.
-		schema.Status.NextReconciliationTime = &now
+		schema.Status.NextReconciliationTime = handoffDeadline(schema.Status.NextReconciliationTime, now)
 		setCondition(schema, operatorv1alpha1.ConditionArtifactResolved, metav1.ConditionTrue, operatorv1alpha1.ReasonDigestPinned, "Desired OCI reference resolved to immutable content")
 		setCondition(schema, operatorv1alpha1.ConditionArtifactVerified, metav1.ConditionFalse, operatorv1alpha1.ReasonPending, "Resolved content has not been verified")
 	case operatorv1alpha1.OperationVerify:
@@ -1480,7 +1480,7 @@ func (r *SchemaReconciler) consumeResultWithTransport(ctx context.Context, schem
 		schema.Status.Source.VerificationPolicyDigest = result.VerificationPolicyDigest
 		schema.Status.Source.VerifiedAt = &now
 		schema.Status.Phase = operatorv1alpha1.PhaseObserving
-		schema.Status.NextReconciliationTime = &now
+		schema.Status.NextReconciliationTime = handoffDeadline(schema.Status.NextReconciliationTime, now)
 		setCondition(schema, operatorv1alpha1.ConditionArtifactVerified, metav1.ConditionTrue, operatorv1alpha1.ReasonPolicySatisfied, "Artifact type and verification policy were satisfied")
 	case operatorv1alpha1.OperationObserve:
 		if result.Stdout != "" || result.CoordinationDigest == "" || result.TargetIdentityDigest == "" ||
@@ -1532,7 +1532,7 @@ func (r *SchemaReconciler) consumeResultWithTransport(ctx context.Context, schem
 		setCondition(schema, operatorv1alpha1.ConditionDriftDetected, metav1.ConditionUnknown, operatorv1alpha1.ReasonScopedPlanPending, "Raw drift was recorded; the authoritative managed scope is being planned")
 		setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionUnknown, operatorv1alpha1.ReasonScopedPlanPending, "Convergence is unknown until scoped planning completes")
 		setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonScopedPlanPending, "A read-only scoped plan is required")
-		schema.Status.NextReconciliationTime = &now
+		schema.Status.NextReconciliationTime = handoffDeadline(schema.Status.NextReconciliationTime, now)
 		if pending == nil {
 			schema.Status.Phase = operatorv1alpha1.PhasePlanning
 		} else {
@@ -1591,7 +1591,7 @@ func (r *SchemaReconciler) consumeResultWithTransport(ctx context.Context, schem
 				completedProofPolicyErr == nil && completedProofExecutionBindingErr == nil {
 				schema.Status.Phase = operatorv1alpha1.PhaseInSync
 				schema.Status.LastSuccessfulReconciliation = &now
-				next := metav1.NewTime(r.now().Add(interval(schema)))
+				next := cycleDeadline(schema.Status.NextReconciliationTime, r.now(), interval(schema))
 				schema.Status.NextReconciliationTime = &next
 				convergenceReason := operatorv1alpha1.ReasonScopedConverged
 				convergenceMessage := "A stable scoped plan proves convergence"
@@ -1668,6 +1668,9 @@ func (r *SchemaReconciler) consumeResultWithTransport(ctx context.Context, schem
 				}
 				schema.Status.Plan = currentPlanStatus(published)
 				setPlanPolicyStatus(schema, published)
+				// A published plan waits a full interval for its approval before
+				// the next refresh, so the window an approver has is not shortened
+				// by how long the cycle took.
 				next := metav1.NewTime(now.Add(interval(schema)))
 				schema.Status.NextReconciliationTime = &next
 				setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionTrue, operatorv1alpha1.ReasonPublished, "Exact plan bytes are stored in immutable chunks")
@@ -2135,7 +2138,8 @@ func (r *SchemaReconciler) claimAt(
 	if pending := schema.Status.PendingObservation; pending != nil && kind.ServesProof {
 		schema.Status.ObservedGeneration = pending.ApplyGeneration
 	}
-	schema.Status.NextReconciliationTime = nil
+	schema.Status.NextReconciliationTime = claimDeadline(schema.Status.NextReconciliationTime,
+		operation == operatorv1alpha1.OperationResolve, kind.Mutating, active.StartedAt.Time, interval(schema))
 	if schema.Status.PendingObservation != nil && kind.ServesProof {
 		schema.Status.Phase = operatorv1alpha1.PhaseVerifyingConvergence
 	} else {
@@ -3172,7 +3176,7 @@ func (r *SchemaReconciler) approvalBecameInvalid(ctx context.Context, schema *op
 func (r *SchemaReconciler) waitBlocked(ctx context.Context, schema *operatorv1alpha1.PtahSchema, reason operatorv1alpha1.ConditionReason, message string) (ctrl.Result, error) {
 	before := schema.DeepCopy()
 	now := r.now()
-	next := metav1.NewTime(now.Add(interval(schema)))
+	next := cycleDeadline(schema.Status.NextReconciliationTime, now, interval(schema))
 	schema.Status.Phase = operatorv1alpha1.PhaseBlocked
 	schema.Status.NextReconciliationTime = &next
 	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, reason, message)

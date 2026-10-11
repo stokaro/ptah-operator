@@ -2523,7 +2523,7 @@ func TestDueBlockedPolicyClaimsResolveWithoutClearingCurrentPlan(t *testing.T) {
 				t.Fatal(err)
 			}
 			if actual.Status.ActiveOperation == nil || actual.Status.ActiveOperation.Type != operatorv1alpha1.OperationResolve ||
-				actual.Status.Phase != operatorv1alpha1.PhaseResolving || actual.Status.NextReconciliationTime != nil ||
+				actual.Status.Phase != operatorv1alpha1.PhaseResolving || !schemaClaimDeadlineHeld(actual) ||
 				!reflect.DeepEqual(actual.Status.Plan, wantPlan) {
 				t.Fatalf("due blocked refresh status = %#v", actual.Status)
 			}

@@ -634,7 +634,9 @@ func (r *MigrationReconciler) claimMigration(
 	before := migration.DeepCopy()
 	migration.Status.ActiveOperation = operation
 	migration.Status.ObservedGeneration = migration.Generation
-	migration.Status.NextReconciliationTime = nil
+	migration.Status.NextReconciliationTime = claimDeadline(migration.Status.NextReconciliationTime,
+		operationType == operatorv1alpha1.MigrationOperationResolve, mutationlifecycle.MigrationOperation(operationType).Mutating,
+		operation.StartedAt.Time, migrationInterval(migration))
 	migration.Status.Phase = mutationlifecycle.MigrationOperation(operationType).Phase
 	setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionTrue,
 		operatorv1alpha1.ReasonOperationInProgress, fmt.Sprintf("%s operation is in progress", operationType))
@@ -1018,14 +1020,22 @@ func (r *MigrationReconciler) consumeMigrationResult(
 	default:
 		return r.retryMigrationOperation(ctx, migration, job, fmt.Errorf("unsupported migration operation %q", operation.Type))
 	}
-	// Intermediate steps are due now. Keep that deadline in the same status
-	// write that retires the claim so the handoff remains measurable.
-	next := metav1.NewTime(r.now())
-	if migration.Status.Phase != operatorv1alpha1.MigrationPhaseVerifying &&
-		migration.Status.Phase != operatorv1alpha1.MigrationPhaseReading {
-		next = metav1.NewTime(next.Add(migrationInterval(migration)))
+	// Intermediate steps are due now, unless the cycle carries a later deadline
+	// for the next refresh. Keep the deadline in the same status write that
+	// retires the claim so the handoff remains measurable.
+	if migration.Status.Phase == operatorv1alpha1.MigrationPhaseVerifying ||
+		migration.Status.Phase == operatorv1alpha1.MigrationPhaseReading {
+		migration.Status.NextReconciliationTime = handoffDeadline(migration.Status.NextReconciliationTime, metav1.NewTime(r.now()))
+	} else if migration.Status.Phase == operatorv1alpha1.MigrationPhaseInSync ||
+		migration.Status.Phase == operatorv1alpha1.MigrationPhaseBlocked {
+		next := cycleDeadline(migration.Status.NextReconciliationTime, r.now(), migrationInterval(migration))
+		migration.Status.NextReconciliationTime = &next
+	} else {
+		// A plan about to be published waits a full interval for its approval,
+		// so the approver's window is not shortened by the cycle's own length.
+		next := metav1.NewTime(r.now().Add(migrationInterval(migration)))
+		migration.Status.NextReconciliationTime = &next
 	}
-	migration.Status.NextReconciliationTime = &next
 	if err := r.markJobHarvested(ctx, job); err != nil {
 		return ctrl.Result{}, err
 	}
