@@ -16,20 +16,27 @@ release that says so, and this is where it is said. A version that asks
 nothing of you says so in as many words, rather than leaving you to read it
 out of silence.
 
+## 0.2.1
+
+**Before you upgrade.** Nothing has to change. One behavior does:
+`spec.interval` now runs from the start of one refresh to the start of the
+next, as the API describes it. 0.2.0 waited one interval after each refresh
+finished, so the refresh's own Jobs lengthened every period.
+
+At the same interval a converged resource now refreshes more often. With the
+default 10m and a refresh of about a minute, that is about one Job in ten more.
+Raise `spec.interval` if that load matters. A published plan still waits a full
+interval for its approval, and a refresh that takes longer than its interval
+waits one interval after it ends rather than starting the next at once.
+
 ## 0.2.0
 
 **Before you upgrade.** There is no earlier published release to upgrade from.
-This version is under development. The build is being stabilized before
-publication.
 
-The source acceptance matrix covers Kubernetes 1.35, 1.36, and 1.37. Publication
-still has to prove the signed image and chart digests, anonymous image access,
-and the immutable release transaction against the shipped bytes. The
-[production qualification record](https://github.com/stokaro/ptah-operator/issues/242)
-remains open: the `lab-20` profile is not assessed, and it excludes database
-restore/RTO and production capacity/soak qualification. Follow the
-[release preparation checks](../releases/#prepare-a-release) before
-creating the tag.
+0.2.0 is the first published release. Its images, chart and clients were
+qualified on their own digests across Kubernetes 1.35, 1.36 and 1.37 on amd64
+and arm64, and published as an immutable release; see
+[Releases and provenance](../releases/) to verify them.
 
 Installing it is [Install](../../start/install/), and the database privileges
 it needs before the first schema converges are
