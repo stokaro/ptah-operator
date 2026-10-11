@@ -73,6 +73,12 @@ cluster with one operator release and one replica. The manager Deployment uses
 when it does not hold the reconciliation Lease, so an old and a new revision
 must never overlap behind the webhook Service.
 
+The leader holds its Lease for 60 seconds and renews it within 45, so an API
+server that stalls for less than that does not restart it. A manager that
+stops releases the Lease once its reconcilers have returned: a restart or an
+upgrade hands over at once, and only a manager that dies holding the Lease
+waits for it to run out, about a minute.
+
 Supply digest-pinned manager, executor and runner images. The chart refuses all
 three when only a tag is supplied, and there is no local-tag mode:
 `image.allowMutableTag` and `image.testIdentityDigest` are not chart values, so

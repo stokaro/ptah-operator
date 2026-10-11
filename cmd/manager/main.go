@@ -163,6 +163,7 @@ func main() {
 	utilruntime.Must(corev1.AddToScheme(scheme))
 	utilruntime.Must(operatorv1alpha1.AddToScheme(scheme))
 
+	leaseDuration, renewDeadline, retryPeriod := 60*time.Second, 45*time.Second, 2*time.Second
 	manager, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                  scheme,
 		Cache:                   managercache.Options(),
@@ -172,6 +173,16 @@ func main() {
 		LeaderElection:          leaderElection,
 		LeaderElectionID:        leaderElectionID,
 		LeaderElectionNamespace: targetLockNamespace,
+		// The defaults (15 s lease, 10 s renew deadline) restart the leader
+		// whenever the API server stalls for ten seconds, which storing plans
+		// at the declared ceiling did on a kind control plane (#619). A
+		// manager that stops releases the Lease once its reconcilers have
+		// returned, so a rolling restart or an upgrade hands over at once and
+		// only a manager that dies holding it waits out the lease.
+		LeaseDuration:                 &leaseDuration,
+		RenewDeadline:                 &renewDeadline,
+		RetryPeriod:                   &retryPeriod,
+		LeaderElectionReleaseOnCancel: true,
 		WebhookServer: webhook.NewServer(webhook.Options{
 			Port: webhookPort, CertDir: webhookCertDir,
 		}),
