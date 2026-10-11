@@ -32,6 +32,12 @@ Raise `spec.interval` if that load matters. A published plan still waits a full
 interval for its approval, and a refresh that takes longer than its interval
 waits one interval after it ends rather than starting the next at once.
 
+The manager's leader Lease now lasts 60 seconds and is renewed within 45, up
+from 15 and 10, and a manager that stops releases it. An API server stall
+shorter than 45 seconds no longer restarts the leader, and a restart or an
+upgrade hands over without waiting out the Lease. A manager that dies without
+stopping is replaced after about a minute instead of 15 seconds.
+
 ## 0.2.0
 
 **Before you upgrade.** There is no earlier published release to upgrade from.
