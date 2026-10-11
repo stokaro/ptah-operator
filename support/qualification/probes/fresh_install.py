@@ -5,10 +5,11 @@ Issue #582 asks for the installation and the first schema to work as written,
 with the released artifacts and nothing the acceptance lab sets up. This reads
 the guide's own fenced commands out of the documentation at the release commit
 and runs them in order: verify the release, install by digest, confirm the
-installation, then the first schema on PostgreSQL and on MySQL.
+installation, then the first schema on the engine the run names. Each engine
+runs on its own fresh cluster, the way a reader picks one.
 
 What a reader brings is provided as a fixture and kept apart from the guide: a
-database server for each engine with an owner login, an anonymous registry the
+database server for that engine with an owner login, an anonymous registry the
 cluster can read, and the schema published to it with the pinned Ptah. Every
 place the guide asks the reader to substitute a value is listed in the
 transcript beside the value used. A command that differs from the published
@@ -64,6 +65,39 @@ def blocks(markdown, heading, language='sh'):
     return found
 
 
+# What each engine's server needs as a fixture: its image variable, port, data
+# directory and the administrator password variable its image reads.
+SERVERS = {
+    'postgresql': {'name': 'postgres', 'image': 'GUIDE_POSTGRES_IMAGE', 'port': 5432,
+                   'data': '/var/lib/postgresql/data', 'password': 'POSTGRES_PASSWORD'},
+    'mysql': {'name': 'mysql', 'image': 'GUIDE_MYSQL_IMAGE', 'port': 3306,
+              'data': '/var/lib/mysql', 'password': 'MYSQL_ROOT_PASSWORD'},
+}
+
+
+def fixture_deployment(namespace, name, image, port, env, data=None):
+    """One fixture server and its Service.
+
+    A database keeps its data on an emptyDir, as the acceptance suite's do, and
+    is ready only once its port accepts connections. Without the probe a
+    rollout reports a server ready while its image is still initializing.
+    """
+    labels = {'app': name}
+    container = {'name': name, 'image': image, 'env': env, 'ports': [{'containerPort': port}],
+                 'readinessProbe': {'tcpSocket': {'port': port}, 'periodSeconds': 2}}
+    spec = {'containers': [container]}
+    if data:
+        container['volumeMounts'] = [{'name': 'data', 'mountPath': data}]
+        spec['volumes'] = [{'name': 'data', 'emptyDir': {}}]
+    return [
+        {'apiVersion': 'apps/v1', 'kind': 'Deployment', 'metadata': {'name': name, 'namespace': namespace},
+         'spec': {'replicas': 1, 'selector': {'matchLabels': labels},
+                  'template': {'metadata': {'labels': labels}, 'spec': spec}}},
+        {'apiVersion': 'v1', 'kind': 'Service', 'metadata': {'name': name, 'namespace': namespace},
+         'spec': {'selector': labels, 'ports': [{'port': port, 'targetPort': port}]}},
+    ]
+
+
 def substitute(text, replacements):
     """Replace each placeholder exactly once, and refuse one that is missing."""
     for old, new in replacements:
@@ -104,6 +138,9 @@ class Walkthrough:
         self.tag = args.tag
         if not re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+', self.tag):
             raise ValueError('the walkthrough installs a published release tag')
+        if args.engine not in SERVERS:
+            raise ValueError(f'the walkthrough runs one of {sorted(SERVERS)}')
+        self.engine = args.engine
         self.work = Path(args.work).resolve()
         self.work.mkdir(mode=0o700, parents=True, exist_ok=False)
         self.transcript = Transcript(args.evidence)
@@ -155,53 +192,61 @@ class Walkthrough:
         self.transcript.record(step='crds-established', count=len(established), names=sorted(established))
 
     def fixture(self):
-        """Stand up what a reader brings: databases and an anonymous registry."""
-        images = {
-            'postgres': os.environ['GUIDE_POSTGRES_IMAGE'],
-            'mysql': os.environ['GUIDE_MYSQL_IMAGE'],
-            'registry': os.environ['GUIDE_REGISTRY_IMAGE'],
-        }
+        """Stand up what a reader brings: a database server and an anonymous registry."""
+        server = SERVERS[self.engine]
+        images = {server['name']: os.environ[server['image']], 'registry': os.environ['GUIDE_REGISTRY_IMAGE']}
         for value in images.values():
             if not re.fullmatch(r'[^@\s]+@sha256:[0-9a-f]{64}', value):
                 raise ValueError('fixture images must be pinned by digest')
-        self.passwords = {'postgres': secrets.token_hex(16), 'mysql': secrets.token_hex(16),
-                          'application-postgres': secrets.token_hex(16), 'application-mysql': secrets.token_hex(16)}
+        self.passwords = {'admin': secrets.token_hex(16), 'application': secrets.token_hex(16)}
         manifests = [
             {'apiVersion': 'v1', 'kind': 'Namespace', 'metadata': {'name': self.fixtures}},
             {'apiVersion': 'v1', 'kind': 'Secret', 'metadata': {'name': 'admin', 'namespace': self.fixtures},
-             'stringData': {'postgres': self.passwords['postgres'], 'mysql': self.passwords['mysql']}},
+             'stringData': {'password': self.passwords['admin']}},
+            *fixture_deployment(self.fixtures, server['name'], images[server['name']], server['port'],
+                                [{'name': server['password'], 'valueFrom': {'secretKeyRef': {'name': 'admin', 'key': 'password'}}}],
+                                data=server['data']),
+            *fixture_deployment(self.fixtures, 'registry', images['registry'], 5000, []),
         ]
-        for name, image, port, env in (
-                ('postgres', images['postgres'], 5432, [{'name': 'POSTGRES_PASSWORD', 'valueFrom': {'secretKeyRef': {'name': 'admin', 'key': 'postgres'}}}]),
-                ('mysql', images['mysql'], 3306, [{'name': 'MYSQL_ROOT_PASSWORD', 'valueFrom': {'secretKeyRef': {'name': 'admin', 'key': 'mysql'}}}]),
-                ('registry', images['registry'], 5000, [])):
-            labels = {'app': name}
-            manifests.append({'apiVersion': 'apps/v1', 'kind': 'Deployment', 'metadata': {'name': name, 'namespace': self.fixtures},
-                              'spec': {'replicas': 1, 'selector': {'matchLabels': labels}, 'template': {'metadata': {'labels': labels},
-                                       'spec': {'containers': [{'name': name, 'image': image, 'env': env, 'ports': [{'containerPort': port}]}]}}}})
-            manifests.append({'apiVersion': 'v1', 'kind': 'Service', 'metadata': {'name': name, 'namespace': self.fixtures},
-                              'spec': {'selector': labels, 'ports': [{'port': port, 'targetPort': port}]}})
         self.kubectl('apply', '-f', '-', stdin='\n---\n'.join(json.dumps(m) for m in manifests))
-        for name in ('postgres', 'mysql', 'registry'):
-            self.kubectl('-n', self.fixtures, 'rollout', 'status', f'deployment/{name}', '--timeout=300s')
-        self.transcript.record(step='fixture', note='A database server for each engine and an anonymous plain-HTTP registry, as the reader brings them.', images=images)
+        for name in (server['name'], 'registry'):
+            result = self.kubectl('-n', self.fixtures, 'rollout', 'status', f'deployment/{name}', '--timeout=300s', check=False)
+            if result.returncode:
+                self.diagnose(name)
+                raise RuntimeError(f'the {name} fixture did not become ready: {result.stderr}')
+        self.transcript.record(step='fixture', note=f'A {self.engine} server and an anonymous plain-HTTP registry, as the reader brings them.',
+                               images=images)
+
+    def diagnose(self, deployment):
+        """Keep what the fixture's Pods said, so a failed run explains itself."""
+        report = []
+        for args in (['get', 'pods', '-o', 'wide'], ['describe', f'deployment/{deployment}'], ['describe', 'pods', '-l', f'app={deployment}'],
+                     ['logs', f'deployment/{deployment}', '--tail=200'], ['logs', f'deployment/{deployment}', '--previous', '--tail=200']):
+            result = self.kubectl('-n', self.fixtures, *args, check=False)
+            report.append(f'$ kubectl -n {self.fixtures} {" ".join(args)}\n{result.stdout}{result.stderr}')
+        path = self.transcript.directory / f'fixture-{deployment}-diagnostics.txt'
+        path.write_text('\n'.join(report))
+        self.transcript.record(step='fixture-diagnostics', deployment=deployment, output=path.name)
 
     def admin_sql(self, engine, statements):
         if engine == 'postgresql':
             command = ['psql', '-v', 'ON_ERROR_STOP=1', '-U', 'postgres']
         else:
-            command = ['sh', '-c', 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysql -u root --batch --skip-column-names']
-        deployment = 'postgres' if engine == 'postgresql' else 'mysql'
+            # Over TCP: the server's socket path is whatever the image's my.cnf
+            # says, which need not be where the client looks by default.
+            command = ['sh', '-c', 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysql -h 127.0.0.1 -P 3306 -u root --batch --skip-column-names']
+        deployment = SERVERS[engine]['name']
         for attempt in range(30):
             result = self.kubectl('-n', self.fixtures, 'exec', '-i', f'deploy/{deployment}', '--', *command, stdin=statements, check=False)
             if result.returncode == 0:
                 return result.stdout
             time.sleep(5)
+        self.diagnose(deployment)
         raise RuntimeError(f'{engine} administration failed: {result.stderr}')
 
     def database_url(self, engine):
         """Create the owner login the databases page asks for, and its URL."""
-        password = self.passwords['application-' + ('postgres' if engine == 'postgresql' else 'mysql')]
+        password = self.passwords['application']
         if engine == 'postgresql':
             self.admin_sql(engine, f"CREATE ROLE application LOGIN PASSWORD '{password}';\nCREATE DATABASE application OWNER application;\n")
             return f'postgres://application:{password}@postgres.{self.fixtures}.svc.cluster.local:5432/application?sslmode=disable'
@@ -336,23 +381,24 @@ class Walkthrough:
             time.sleep(5)
         raise RuntimeError(f'the schema did not reach {kind}={value} {reason}')
 
-    def reset_namespace(self):
-        self.kubectl('delete', 'namespace', 'application', '--wait=true', '--timeout=1800s', check=False)
-
+    # The guide's resource is `application` in namespace `application` for either
+    # engine, and it says to choose one manifest. A reader does one engine per
+    # installation, so each engine gets a fresh cluster. Reusing the namespace is
+    # not an option: deleting it waits for the result records' one-hour
+    # retention window before the namespace can go.
     def run(self):
         identities = self.verify_and_install()
         self.confirm_installed()
         self.fixture()
         self.examples()
-        self.first_schema('postgresql')
-        self.reset_namespace()
-        self.first_schema('mysql')
-        self.transcript.record(step='complete', tag=self.tag, releaseSource=self.source, **identities)
+        self.first_schema(self.engine)
+        self.transcript.record(step='complete', tag=self.tag, engine=self.engine, releaseSource=self.source, **identities)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--tag', required=True)
+    parser.add_argument('--engine', required=True, choices=sorted(SERVERS))
     parser.add_argument('--work', required=True)
     parser.add_argument('--evidence', required=True)
     args = parser.parse_args()
