@@ -148,6 +148,14 @@ func verifyProbeState(object client.Object, p Probe, after time.Time, previously
 			if !previouslyVerified || !ordinaryRead {
 				return errors.New("schema probe has unverified or mutating work")
 			}
+		} else {
+			// Between two steps of a read the controller has harvested one Job
+			// and not yet claimed the next: no operation, a read phase, and a
+			// Ready that says work is in progress. That is still the same read.
+			switch v.Status.Phase {
+			case ptahv1.PhaseResolving, ptahv1.PhaseVerifying, ptahv1.PhaseObserving, ptahv1.PhasePlanning:
+				ordinaryRead = true
+			}
 		}
 		observed, conditions = v.Status.ObservedGeneration, v.Status.Conditions
 		fresh = v.Status.Target.LastObservedAt != nil && v.Status.Target.LastObservedAt.After(after) && !v.Status.Target.LastObservedAt.After(time.Now())
@@ -162,6 +170,11 @@ func verifyProbeState(object client.Object, p Probe, after time.Time, previously
 			}
 			if !previouslyVerified || !ordinaryRead {
 				return errors.New("migration probe has unverified or mutating work")
+			}
+		} else {
+			switch v.Status.Phase {
+			case ptahv1.MigrationPhaseResolving, ptahv1.MigrationPhaseVerifying, ptahv1.MigrationPhaseReading, ptahv1.MigrationPhasePlanning:
+				ordinaryRead = true
 			}
 		}
 		observed, conditions = v.Status.ObservedGeneration, v.Status.Conditions

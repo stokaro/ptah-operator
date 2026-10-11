@@ -361,3 +361,80 @@ func TestVerifiedMigrationMayContinueHistoryButNotApplyOrRetry(t *testing.T) {
 		t.Fatal("cached progress hid retry backoff")
 	}
 }
+
+// Between two steps of a read the controller has harvested one Job and not yet
+// claimed the next. A tick that landed there used to discard a probe's verified
+// boundary, and recovery then waited a whole cycle for the next idle period:
+// upgrade-alerts missed its bound by one cycle that way (#624).
+func TestVerifiedProbeKeepsItsBoundaryBetweenTheStepsOfARead(t *testing.T) {
+	after := time.Now().Add(-time.Hour)
+	inProgress := []metav1.Condition{{Type: ptahv1.ConditionReady, Status: metav1.ConditionFalse, Reason: "OperationInProgress", ObservedGeneration: 1}}
+
+	schemaProbe := Probe{Kind: "PtahSchema", Namespace: "workloads", Name: "schema", UID: "schema-uid", Generation: 1}
+	schema := func(phase ptahv1.ReconciliationPhase) *ptahv1.PtahSchema {
+		v := &ptahv1.PtahSchema{ObjectMeta: metav1.ObjectMeta{Namespace: schemaProbe.Namespace, Name: schemaProbe.Name, UID: types.UID(schemaProbe.UID), Generation: 1}}
+		stamp := metav1.NewTime(after.Add(time.Minute))
+		v.Status.ObservedGeneration, v.Status.Phase, v.Status.Target.LastObservedAt, v.Status.Conditions = 1, phase, &stamp, inProgress
+		return v
+	}
+	for _, phase := range []ptahv1.ReconciliationPhase{ptahv1.PhaseResolving, ptahv1.PhaseVerifying, ptahv1.PhaseObserving, ptahv1.PhasePlanning} {
+		if err := verifyProbeState(schema(phase), schemaProbe, after, true); err != nil {
+			t.Errorf("verified schema lost its boundary between steps in %s: %v", phase, err)
+		}
+		if err := verifyProbe(schema(phase), schemaProbe, after); err == nil {
+			t.Errorf("unverified schema accepted between steps in %s", phase)
+		}
+	}
+	for _, phase := range []ptahv1.ReconciliationPhase{ptahv1.PhaseApplying, ptahv1.PhaseVerifyingConvergence, ptahv1.PhaseReadyToApply, ptahv1.PhaseFailed} {
+		if err := verifyProbeState(schema(phase), schemaProbe, after, true); err == nil {
+			t.Errorf("verified schema accepted in %s with Ready in progress", phase)
+		}
+	}
+
+	migrationProbe := Probe{Kind: "PtahMigration", Namespace: "workloads", Name: "migration", UID: "migration-uid", Generation: 1}
+	migration := func(phase ptahv1.MigrationPhase) *ptahv1.PtahMigration {
+		v := &ptahv1.PtahMigration{ObjectMeta: metav1.ObjectMeta{Namespace: migrationProbe.Namespace, Name: migrationProbe.Name, UID: types.UID(migrationProbe.UID), Generation: 1}}
+		v.Status.ObservedGeneration, v.Status.Phase, v.Status.Conditions = 1, phase, inProgress
+		v.Status.History = &ptahv1.MigrationHistoryStatus{ObservedAt: metav1.NewTime(after.Add(time.Minute))}
+		return v
+	}
+	for _, phase := range []ptahv1.MigrationPhase{ptahv1.MigrationPhaseResolving, ptahv1.MigrationPhaseVerifying, ptahv1.MigrationPhaseReading, ptahv1.MigrationPhasePlanning} {
+		if err := verifyProbeState(migration(phase), migrationProbe, after, true); err != nil {
+			t.Errorf("verified migration lost its boundary between steps in %s: %v", phase, err)
+		}
+		if err := verifyProbe(migration(phase), migrationProbe, after); err == nil {
+			t.Errorf("unverified migration accepted between steps in %s", phase)
+		}
+	}
+	for _, phase := range []ptahv1.MigrationPhase{ptahv1.MigrationPhaseApplying, ptahv1.MigrationPhaseVerifyingHistory, ptahv1.MigrationPhaseFailed} {
+		if err := verifyProbeState(migration(phase), migrationProbe, after, true); err == nil {
+			t.Errorf("verified migration accepted in %s with Ready in progress", phase)
+		}
+	}
+}
+
+// The verifier keeps a probe it verified at an idle boundary when a later tick
+// finds it between two steps of its next read, and still reports recovery.
+func TestRecoveryKeepsVerifiedProgressAcrossAReadHandoff(t *testing.T) {
+	s, objects, scheme := recoveryFixture(t)
+	probe := objects[len(objects)-1].(*ptahv1.PtahSchema)
+	c := &admissionClient{Client: fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(probe).WithObjects(objects...).Build()}
+	var verifier recoveryVerifier
+	if err := verifier.verify(t.Context(), c, s); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Get(t.Context(), client.ObjectKeyFromObject(probe), probe); err != nil {
+		t.Fatal(err)
+	}
+	probe.Status.Phase = ptahv1.PhasePlanning
+	probe.Status.Conditions = []metav1.Condition{{Type: ptahv1.ConditionReady, Status: metav1.ConditionFalse, Reason: "ScopedPlanPending", ObservedGeneration: probe.Generation}}
+	if err := c.Status().Update(t.Context(), probe); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifier.verify(t.Context(), c, s); err != nil {
+		t.Fatalf("a read handoff discarded verified post-hook progress: %v", err)
+	}
+	if !verifier.probes[string(probe.UID)] {
+		t.Fatal("the verifier forgot the probe it kept")
+	}
+}

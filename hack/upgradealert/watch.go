@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -69,6 +70,7 @@ func (o *observer) loseHistory() error {
 func (o *observer) segment(ctx context.Context, stream watch.Interface) error {
 	recovery := time.NewTicker(2 * time.Second)
 	defer recovery.Stop()
+	var refused string
 	for {
 		select {
 		case <-ctx.Done():
@@ -119,6 +121,12 @@ func (o *observer) segment(ctx context.Context, stream watch.Interface) error {
 			err := o.recovery.verify(checkCtx, o.resources, s)
 			cancel()
 			if err != nil {
+				// Say why recovery is not yet verified, once per change, so a
+				// slow recovery names the check that held it.
+				if err.Error() != refused {
+					refused = err.Error()
+					log.Printf("recovery not verified: %v", err)
+				}
 				continue
 			}
 			// A fresh Job read prevents clearing over a retry already visible to the
