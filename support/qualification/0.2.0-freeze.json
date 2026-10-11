@@ -1,18 +1,18 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-10-11T17:41:40.064351+00:00",
+  "frozenAt": "2026-10-11T18:04:52.927775+00:00",
   "profileSourceCommit": "1259f4d59343fef049307085e3ea77d2971677cb",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
   "sourceFiles": [
     {
       "path": "support/qualification/0.2.0.md",
-      "sha256": "daa5c086a4982f87a224476b27364ba8e7cd64324f236f9ff642b028734caf8e"
+      "sha256": "ffb6a40278928be22f91acf2307afc7da38968d3a2f7bced47d4a8754d26931c"
     },
     {
       "path": "support/qualification/0.2.0-coverage.md",
-      "sha256": "2ba82aaf557ae9d5fc7824106347bb9a277fb54b50b7810530c47d7cb97fa7ad"
+      "sha256": "31476b050610af3184ccffbeaebc1d7a334480e7f249500c794db525239b0c87"
     },
     {
       "path": "support/qualification/0.2.0-monitoring.yaml",
@@ -79,10 +79,10 @@
     "disposition": "v0.2.0 is the published predecessor of the v0.2.1 candidate. The upgrade from it is walked through both releases' guides by support/qualification/probes/fresh_install.py --upgrade-from on both platforms; the synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 44,
+  "revision": 45,
   "supersedes": {
-    "freezeCommit": "403b214fc98fa073f023281ab2957fdd64c22b6b",
-    "sha256": "ff5ae793855fbb842842e5c28878a648229dcdcc52d429a7ac5ea6b5d192602d"
+    "freezeCommit": "e8999555475ae4d06118461de62cd3a68c6f07c1",
+    "sha256": "be0ce25f1d8b2e0792065fbcbf6735361b1a3cfbcc038518479f2059c0dc6822"
   },
-  "revisionReason": "Declare the published v0.2.1 in support/ptah.json, as the release procedure asks once the tag exists, and record v0.2.0 as its published predecessor. The 0.2.0 profile qualifies the v0.2.1 candidate after the 0.2.0 soak found that spec.interval did not run start to start; the edge pin, the profile, its targets and every other input are unchanged, and the 0.2.1 qualification runs measure revision 43."
+  "revisionReason": "Owner decision on 2026-10-11: measure capacity at the edges of the support window, the oldest minor with PostgreSQL on both architectures and the newest with MySQL on arm64, instead of every minor, engine and architecture; run recovery as each loss and backup timing once on the newest minor with engine and family rotating; and run the documented installation, fresh and as an upgrade from the published predecessor, on the newest minor of each architecture. The functional matrix still covers every cell. Thresholds, targets, observation windows and every other input are unchanged."
 }
