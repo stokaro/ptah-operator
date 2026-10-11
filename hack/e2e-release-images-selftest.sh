@@ -59,9 +59,11 @@ RUNTIME_PATHS_LINE=$(grep -E '^RELEASE_RUNTIME_PATHS=' "$ROOT_DIR/hack/e2e-kind.
 printf '%s\n' "$RUNTIME_PATHS_LINE" >>"$FUNCTIONS_FILE"
 
 # A repository whose first commit is the release source, whose second changes
-# only the harness, and whose third changes a runtime source.
+# only the harness, whose third adds the release's row to the support catalog,
+# as the release procedure does after tagging, and whose fourth changes a
+# runtime source.
 REPOSITORY=$WORK_DIR/repository
-mkdir -p "$REPOSITORY/internal/controller" "$REPOSITORY/hack" "$REPOSITORY/charts/ptah-operator"
+mkdir -p "$REPOSITORY/internal/controller" "$REPOSITORY/hack" "$REPOSITORY/charts/ptah-operator" "$REPOSITORY/support"
 git -C "$REPOSITORY" init --quiet
 git -C "$REPOSITORY" config user.email selftest@example.invalid
 git -C "$REPOSITORY" config user.name selftest
@@ -69,12 +71,16 @@ git -C "$REPOSITORY" config commit.gpgsign false
 printf 'package controller\n' >"$REPOSITORY/internal/controller/reconcile.go"
 printf 'name: ptah-operator\n' >"$REPOSITORY/charts/ptah-operator/Chart.yaml"
 printf '#!/bin/sh\n' >"$REPOSITORY/hack/e2e-kind.sh"
+printf '{"releases": [{"operator": "edge"}]}\n' >"$REPOSITORY/support/ptah.json"
 git -C "$REPOSITORY" add -A
 git -C "$REPOSITORY" commit --quiet -m release
 RELEASE_COMMIT=$(git -C "$REPOSITORY" rev-parse HEAD)
 printf '#!/bin/sh\n# a harness change\n' >"$REPOSITORY/hack/e2e-kind.sh"
 git -C "$REPOSITORY" commit --quiet -am harness
 HARNESS_COMMIT=$(git -C "$REPOSITORY" rev-parse HEAD)
+printf '{"releases": [{"operator": "edge"}, {"operator": "v0.2.0"}]}\n' >"$REPOSITORY/support/ptah.json"
+git -C "$REPOSITORY" commit --quiet -am catalog
+CATALOG_COMMIT=$(git -C "$REPOSITORY" rev-parse HEAD)
 printf 'package controller\n// a runtime change\n' >"$REPOSITORY/internal/controller/reconcile.go"
 git -C "$REPOSITORY" commit --quiet -am runtime
 RUNTIME_COMMIT=$(git -C "$REPOSITORY" rev-parse HEAD)
@@ -154,6 +160,11 @@ printf '%s\n' "$own" | grep -qF "candidate=$HARNESS_COMMIT" ||
 # The release source itself is admitted too: no change is no change.
 expect_admitted 'the release source as harness' \
 	'CONTROLLER_REVISION=$RELEASE_COMMIT; read_release_manifest' >/dev/null
+# The release's own catalog row, added after the tag, changes no runtime byte.
+# A moved executor pin is still refused: the manifest's executor has to be the
+# one the catalog pins, which the executor rows below hold.
+expect_admitted 'a catalog row added after the tag' \
+	'CONTROLLER_REVISION=$CATALOG_COMMIT; read_release_manifest' >/dev/null
 
 expect_refused 'a runtime change' 'internal/controller/reconcile.go' \
 	'CONTROLLER_REVISION=$RUNTIME_COMMIT; read_release_manifest'

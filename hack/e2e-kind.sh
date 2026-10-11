@@ -480,8 +480,11 @@ release_manifest_field() {
 
 # What every runtime byte and the chart are built from. A harness commit may
 # differ from the release source only outside these paths, so the phases assert
-# against the code the prepared images were built from.
-RELEASE_RUNTIME_PATHS='api cmd internal config charts go.mod go.sum Dockerfile support/ptah.json'
+# against the code the prepared images were built from. support/ptah.json is not
+# one of them: its runtime input is the executor pin, which read_release_manifest
+# compares field by field, and the release procedure adds the release's own row
+# to the catalog after tagging.
+RELEASE_RUNTIME_PATHS='api cmd internal config charts go.mod go.sum Dockerfile'
 RELEASE_SOURCE_SHA=
 RELEASE_OPERATOR_IMAGE=
 RELEASE_EXECUTOR_IMAGE=
