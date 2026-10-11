@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-10-10T23:09:03.111540+00:00",
+  "frozenAt": "2026-10-11T17:41:40.064351+00:00",
   "profileSourceCommit": "1259f4d59343fef049307085e3ea77d2971677cb",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
@@ -28,7 +28,7 @@
     },
     {
       "path": "support/ptah.json",
-      "sha256": "aac1be11029a87cbc41009d3e1834e650d39306f23d5254b0a0051910c565193"
+      "sha256": "6de59f82d5ab3456e7224d13f6c09d2f52948e448751ea4a0e76eb8b4a52d74c"
     },
     {
       "path": "docs/site/src/content/docs/support/databases.md",
@@ -71,18 +71,18 @@
     "sourceChanges": "Move plan-store alerting from lifecycle to certificates and PostgreSQL reference data from certificates to data-plane. Master CI run 37420035400 passed in 92m45s; its slowest lifecycle spent 20m02s on plan-store alerting before the upgrade fault window. Rebalance the existing nine suites without adding phases or scenarios. All 17 phases, 345 scenario/engine/family rows, supported minors and platforms, observation windows, and Q-01 through Q-12 targets remain unchanged. Revision 42 changes only the line naming the Ptah build under test, now the v0.13.0 release image; no phase, scenario, cell, platform or target changes."
   },
   "publishedPredecessors": {
-    "checkedAt": "2026-09-29T19:00:03+00:00",
+    "checkedAt": "2026-10-11T17:41:40+00:00",
     "repository": "stokaro/ptah-operator",
-    "releaseCount": 0,
-    "tagCount": 0,
-    "evidence": "Authenticated GitHub releases and tags API reads returned empty inventories before this freeze.",
-    "disposition": "No published predecessor. Synthetic transition, refusal and recovery proofs remain required."
+    "releaseCount": 2,
+    "tagCount": 2,
+    "evidence": "Authenticated GitHub releases and tags API reads returned v0.2.0 and v0.2.1, both published immutable releases, when this revision was recorded.",
+    "disposition": "v0.2.0 is the published predecessor of the v0.2.1 candidate. The upgrade from it is walked through both releases' guides by support/qualification/probes/fresh_install.py --upgrade-from on both platforms; the synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 43,
+  "revision": 44,
   "supersedes": {
-    "freezeCommit": "b98f92bed240a4a34cde9c6bf5bc0cdc07da6d96",
-    "sha256": "b29e2927431da6c34e64b2996e002a77933eafc5eedd17474f2d24a4dabf3300"
+    "freezeCommit": "403b214fc98fa073f023281ab2957fdd64c22b6b",
+    "sha256": "ff5ae793855fbb842842e5c28878a648229dcdcc52d429a7ac5ea6b5d192602d"
   },
-  "revisionReason": "Declare the published v0.2.0 in support/ptah.json, as the release procedure asks once the tag exists, and drop the limitation that the scope was measured against v0.7.0, which the release's manifest-backed matrix repeated with v0.13.0. The edge pin, the profile, its targets and every other input are unchanged; qualification measured revision 42 at b98f92be."
+  "revisionReason": "Declare the published v0.2.1 in support/ptah.json, as the release procedure asks once the tag exists, and record v0.2.0 as its published predecessor. The 0.2.0 profile qualifies the v0.2.1 candidate after the 0.2.0 soak found that spec.interval did not run start to start; the edge pin, the profile, its targets and every other input are unchanged, and the 0.2.1 qualification runs measure revision 43."
 }
