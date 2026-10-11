@@ -25,6 +25,13 @@ row that matches is where to go.
 | Storage growing with every plan | [Plan retention](#plan-retention), then [Pruning stored plans](#pruning-stored-plans) |
 | Whether the operator can run SQL nobody approved | [Execution guarantees](../../reference/guarantees/) |
 
+When a procedure does not reach the outcome it states, stop instead of
+improvising a cleanup this page does not describe, and escalate. First go to
+whoever owns the installation in your organization. Then go to the project:
+open an issue at https://github.com/stokaro/ptah-operator/issues with the
+resource's YAML, its Events and the procedure you followed, with database URLs
+and other credentials removed.
+
 Before anything else, do not delete a `PtahMigration` to clear a state you do
 not like. Its record of an Apply nobody accounted for goes with it, and that
 record is what a person needs to find out whether the database was changed.
