@@ -156,17 +156,30 @@ func TestTheRecordListsWhatNothingExercises(t *testing.T) {
 	if !strings.Contains(record, "### Not yet exercised") {
 		t.Fatal("the record no longer lists what nothing in the tree exercises")
 	}
-	listed := 0
+	examined, listed := 0, 0
 	for _, entry := range requirements {
+		examined++
+		gap := "- **" + entry.id + "**: "
 		if entry.untested == "" {
+			if strings.Contains(record, gap) {
+				t.Errorf("the record lists a gap for %s, which declares none", entry.id)
+			}
 			continue
 		}
 		listed++
-		if !strings.Contains(record, "- **"+entry.id+"**: "+entry.untested+".") {
+		if !strings.Contains(record, gap+entry.untested+".") {
 			t.Errorf("the record does not list what %s leaves unexercised", entry.id)
 		}
 	}
-	if listed == 0 {
-		t.Fatal("no requirement lists a gap, so this check read nothing")
+	// Twelve requirements, PA-01 through PA-12: an empty table would otherwise
+	// pass as a record with no gaps.
+	if examined != 12 {
+		t.Fatalf("examined %d requirements, want the 12 the record declares", examined)
+	}
+	if listed == 0 && !strings.Contains(record, everyRequirementExercised) {
+		t.Error("the record lists no gap and does not say that none is left")
+	}
+	if listed > 0 && strings.Contains(record, everyRequirementExercised) {
+		t.Error("the record lists gaps and also says none is left")
 	}
 }
