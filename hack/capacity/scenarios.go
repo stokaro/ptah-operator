@@ -3,9 +3,13 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -321,9 +325,38 @@ func (s *scenarios) restart(ctx context.Context) error {
 	}
 	if err != nil {
 		outcome["error"] = err.Error()
+		s.keepManagerLogs("restart-burst")
 	}
 	s.mark("restart burst", start, outcome)
 	return err
+}
+
+// keepManagerLogs writes every manager container's current and previous log
+// into the private evidence. A failed scenario otherwise leaves nothing that
+// says what the replacement manager decided, once the lab is torn down.
+func (s *scenarios) keepManagerLogs(scenario string) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	pods, err := s.clientset.CoreV1().Pods(s.in.operatorNamespace).List(ctx, metav1.ListOptions{LabelSelector: s.in.managerSelector})
+	if err != nil {
+		slog.Warn("keep manager logs", "scenario", scenario, "error", err)
+		return
+	}
+	for _, pod := range pods.Items {
+		for _, previous := range []bool{false, true} {
+			raw, err := s.clientset.CoreV1().Pods(pod.Namespace).GetLogs(pod.Name, &corev1.PodLogOptions{Previous: previous}).DoRaw(ctx)
+			if err != nil {
+				continue
+			}
+			name := fmt.Sprintf("%s-%s.private.log", scenario, pod.Name)
+			if previous {
+				name = fmt.Sprintf("%s-%s-previous.private.log", scenario, pod.Name)
+			}
+			if err := os.WriteFile(filepath.Join(s.evidenceDir, name), raw, 0o600); err != nil {
+				slog.Warn("keep manager log", "file", name, "error", err)
+			}
+		}
+	}
 }
 
 // change moves a batch of each family to its second artifact at once.
