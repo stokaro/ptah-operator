@@ -21,6 +21,8 @@ REPO = Path(__file__).resolve().parents[3]
 # Kubernetes default grace period of the Pods it runs.
 EXECUTION_DEADLINE_SECONDS = 300
 POD_GRACE_SECONDS = 30
+# How long cleanup waits for the recovery namespace to finish terminating.
+NAMESPACE_SETTLE_SECONDS = 90
 OPERATOR_CRDS = frozenset(name + '.operator.ptah.run' for name in (
     'ptahschemas', 'ptahschemaplans', 'ptahschemaapprovals', 'ptahschemaplanchunks',
     'ptahmigrations', 'ptahmigrationplans', 'ptahmigrationapprovals',
@@ -1083,16 +1085,53 @@ class OperatorProbe(db.Probe):
         # exponentially, up to a minute, while finalized content remains, so a
         # namespace deleted around the resource stays Terminating well after
         # the resource let go. Delete the resource first, bounded by the
-        # execution deadline it may wait out and the Pod's grace period; the
-        # namespace then holds nothing that waits.
+        # execution deadline it may wait out and the Pod's grace period.
         resource = self.kubectl('remove owned recovery resource', [
             'delete', self.resource, '--all', '--wait=true',
             '--timeout=' + str(EXECUTION_DEADLINE_SECONDS + POD_GRACE_SECONDS) + 's'], required=False).returncode == 0
-        namespace = self.kubectl('remove owned recovery namespace',
-                                 ['delete', 'namespace', self.namespace, '--wait=true', '--timeout=90s'],
-                                 required=False).returncode == 0
-        return resource and namespace
+        if self.kubectl('request removal of the owned recovery namespace',
+                        ['delete', 'namespace', self.namespace, '--wait=false'], required=False).returncode:
+            return False
+        # Durable result records outlive their resource by the retention
+        # window, at least an hour, and the operator's admission refuses their
+        # deletion until it has passed. A namespace that held them cannot be
+        # gone within the procedure, so it is clean once the API server reports
+        # those records as all that remains; the lab's teardown removes it.
+        deadline = time.monotonic() + NAMESPACE_SETTLE_SECONDS
+        while True:
+            read = self.kubectl('read the owned recovery namespace while it terminates',
+                                ['get', 'namespace', self.namespace, '-o', 'json', '--ignore-not-found'], required=False)
+            if read.returncode:
+                return False
+            if not read.stdout.strip():
+                self.report['namespaceCleanup'] = 'removed'
+                return resource
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(5)
+        records = self.kubectl('list result records the namespace retains', ['get', 'ptahresultrecords', '-o', 'name'],
+                               required=False)
+        if records.returncode or not records.stdout.strip() or not retention_holds(json.loads(read.stdout)):
+            return False
+        self.report['namespaceCleanup'] = ('terminating with only ' + str(len(records.stdout.split())) +
+            ' result records under the retention window; removed with the lab')
+        return resource
 
+
+def retention_holds(namespace):
+    """Whether the API server reports result retention as all that keeps the namespace.
+
+    The namespace controller names each resource type it could not delete. One
+    type, refused by the operator's retention admission, with no other content
+    remaining, is the namespace a durable result store leaves behind.
+    """
+    conditions = {c.get('type'): c for c in namespace.get('status', {}).get('conditions', [])}
+    failure, remaining = conditions.get('NamespaceDeletionContentFailure'), conditions.get('NamespaceContentRemaining')
+    message = (failure or {}).get('message', '')
+    return (namespace.get('status', {}).get('phase') == 'Terminating' and (failure or {}).get('status') == 'True' and
+            message.startswith('Failed to delete all resource types, 1 remaining: ') and
+            message.endswith('denied the request: result publication retention has not authorized deletion') and
+            (remaining or {}).get('status', 'False') == 'False')
 
 if __name__ == '__main__':
     os.umask(0o077)

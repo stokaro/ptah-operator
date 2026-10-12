@@ -1,0 +1,59 @@
+{
+  "apiVersion": "v1",
+  "kind": "Namespace",
+  "metadata": {
+    "creationTimestamp": "2026-10-12T07:09:21Z",
+    "deletionTimestamp": "2026-10-12T07:15:43Z",
+    "labels": {
+      "kubernetes.io/metadata.name": "ptah-020-restore-64238fdcb3"
+    },
+    "name": "ptah-020-restore-64238fdcb3",
+    "resourceVersion": "4897",
+    "uid": "521f87e1-7f6f-45db-9070-2c7ba7d22f9d"
+  },
+  "spec": {
+    "finalizers": [
+      "kubernetes"
+    ]
+  },
+  "status": {
+    "conditions": [
+      {
+        "lastTransitionTime": "2026-10-12T07:15:48Z",
+        "message": "All resources successfully discovered",
+        "reason": "ResourcesDiscovered",
+        "status": "False",
+        "type": "NamespaceDeletionDiscoveryFailure"
+      },
+      {
+        "lastTransitionTime": "2026-10-12T07:15:48Z",
+        "message": "All legacy kube types successfully parsed",
+        "reason": "ParsedGroupVersions",
+        "status": "False",
+        "type": "NamespaceDeletionGroupVersionParsingFailure"
+      },
+      {
+        "lastTransitionTime": "2026-10-12T07:15:48Z",
+        "message": "Failed to delete all resource types, 1 remaining: admission webhook \"vcontrollerwrite.operator.ptah.run\" denied the request: result publication retention has not authorized deletion",
+        "reason": "ContentDeletionFailed",
+        "status": "True",
+        "type": "NamespaceDeletionContentFailure"
+      },
+      {
+        "lastTransitionTime": "2026-10-12T07:15:48Z",
+        "message": "All content successfully removed",
+        "reason": "ContentRemoved",
+        "status": "False",
+        "type": "NamespaceContentRemaining"
+      },
+      {
+        "lastTransitionTime": "2026-10-12T07:15:48Z",
+        "message": "All content-preserving finalizers finished",
+        "reason": "ContentHasNoFinalizers",
+        "status": "False",
+        "type": "NamespaceFinalizersRemaining"
+      }
+    ],
+    "phase": "Terminating"
+  }
+}
