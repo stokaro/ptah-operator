@@ -17,6 +17,9 @@ from operator_restore import OPERATOR_CRDS, OperatorProbe, REPO, db
 from restore_during_apply import ApplyLoss
 
 
+REPLACEMENT_HOST_SETTINGS = ('E2E_DIRECT_HOST_ACCESS', 'E2E_PREBUILT_IMAGE_DIR')
+
+
 class ClusterRestoreProbe(OperatorProbe):
     cold_cluster_recovery = True
 
@@ -260,6 +263,9 @@ class ClusterRestoreProbe(OperatorProbe):
             self.check('the source execution is fenced before replacement provisioning',
                        ApplyLoss.replacement_is_fenced(self.report))
         environment = {k: v for k, v in os.environ.items() if not k.startswith('E2E_')}
+        # Keep host access and the images built before loss. Source cluster
+        # identities, credentials and output paths must not reach its replacement.
+        environment.update({k: os.environ[k] for k in REPLACEMENT_HOST_SETTINGS if os.environ.get(k)})
         environment.update(DOCKER_CONTEXT=db.DOCKER_CONTEXT,
                            K8S_VERSION=self.source_cluster['kubernetesVersion'],
                            E2E_RUN_ID='cold-restore-' + self.prefix.removeprefix('ptah-020-restore-'),
@@ -291,13 +297,18 @@ class ClusterRestoreProbe(OperatorProbe):
         if result:
             raise RuntimeError('Replacement cluster provisioning failed; private bootstrap diagnostics retained')
         target = dict(line.split('=', 1) for line in self.target_environment.read_text().splitlines() if '=' in line)
-        self.check('replacement uses the same explicit Docker endpoint and operator revision',
-                   target['E2E_DOCKER_ENDPOINT'] == self.source_envs['E2E_DOCKER_ENDPOINT'] and
-                   target['E2E_CONTROLLER_REVISION'] == self.source_envs['E2E_CONTROLLER_REVISION'] and
-                   target['E2E_PTAH_REVISION'] == self.source_envs['E2E_PTAH_REVISION'])
+        self.check('replacement uses the same explicit Docker endpoint',
+                   target['E2E_DOCKER_ENDPOINT'] == self.source_envs['E2E_DOCKER_ENDPOINT'])
+        self.check('replacement bootstrap uses the current committed source',
+                   target['E2E_CONTROLLER_REVISION'] == self.report['sourceCommit'])
         self.ensure_api_connection(target, 'replacement')
         if getattr(self, 'release_runtime', None):
             self.release_runtime.install(target, 'replacement')
+        # The source already runs the selected release. Its replacement starts
+        # with the harness build, then installs those authenticated release bytes.
+        self.check('replacement uses the same operator and Ptah revisions',
+                   target['E2E_CONTROLLER_REVISION'] == self.source_envs['E2E_CONTROLLER_REVISION'] and
+                   target['E2E_PTAH_REVISION'] == self.source_envs['E2E_PTAH_REVISION'])
         self.envs = target
         if self.source_result_delivery:
             self.enable_result_delivery(target)

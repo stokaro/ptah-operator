@@ -306,7 +306,7 @@ class ReleaseRuntimeTest(unittest.TestCase):
         for mismatch in (False, True):
             with self.subTest(mismatch=mismatch):
                 p = object.__new__(ClusterRestoreProbe)
-                p.root = self.root; p.report = {'steps': [], 'checks': {}}
+                p.root = self.root; p.report = {'steps': [], 'checks': {}, 'sourceCommit': 'a' * 40}
                 p.prefix = 'ptah-020-restore-runtime'; p.timing = 'idle'; p.loss = 'operator'
                 p.target_environment = self.root / 'target-environment'
                 p.source_cluster = {'kubernetesVersion': '1.37.0'}
