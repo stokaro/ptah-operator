@@ -1,10 +1,25 @@
 package mutationlifecycle_test
 
 import (
+	"context"
+	"errors"
+	"fmt"
+	"net"
 	"testing"
+
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"github.com/stokaro/ptah-operator/internal/mutationlifecycle"
 )
+
+func allAnswers() []mutationlifecycle.CreateAnswer {
+	return []mutationlifecycle.CreateAnswer{
+		mutationlifecycle.AnswerUnknown,
+		mutationlifecycle.AnswerNameTaken,
+		mutationlifecycle.AnswerRefused,
+	}
+}
 
 func allStages() []mutationlifecycle.DispatchStage {
 	return []mutationlifecycle.DispatchStage{
@@ -25,11 +40,16 @@ func TestAMutatingClaimIsNeverToldToDispatchAgain(t *testing.T) {
 	t.Parallel()
 
 	for _, stage := range allStages() {
-		for _, alreadyExists := range []bool{false, true} {
-			disposition := mutationlifecycle.DispatchFailure(stage, true, alreadyExists)
+		for _, answer := range allAnswers() {
+			disposition := mutationlifecycle.DispatchFailure(stage, true, answer)
 			if disposition == mutationlifecycle.DispositionRetry {
-				t.Fatalf("a mutating claim failing at %q (alreadyExists=%t) was told to retry",
-					stage, alreadyExists)
+				t.Fatalf("a mutating claim failing at %q (answer %q) was told to retry", stage, answer)
+			}
+			// A withdrawal makes the one create again, so only the answer
+			// proving that no Job was stored may lead to it.
+			if disposition == mutationlifecycle.DispositionWithdraw &&
+				(stage != mutationlifecycle.StageCreate || answer != mutationlifecycle.AnswerRefused) {
+				t.Fatalf("a mutating claim failing at %q (answer %q) withdrew its mark", stage, answer)
 			}
 		}
 	}
@@ -40,11 +60,11 @@ func TestWhatEachDispatchFailureLeavesTheClaimOwing(t *testing.T) {
 	t.Parallel()
 
 	for _, row := range []struct {
-		name          string
-		stage         mutationlifecycle.DispatchStage
-		mutating      bool
-		alreadyExists bool
-		want          mutationlifecycle.Disposition
+		name     string
+		stage    mutationlifecycle.DispatchStage
+		mutating bool
+		answer   mutationlifecycle.CreateAnswer
+		want     mutationlifecycle.Disposition
 	}{
 		{
 			// The write may have landed and its answer did not come back.
@@ -56,8 +76,15 @@ func TestWhatEachDispatchFailureLeavesTheClaimOwing(t *testing.T) {
 			// The most dangerous answer: something holds the name, and it may
 			// be this claim's own Job from a pass whose answer was lost.
 			name:  "a mutating create refused because the name is taken",
-			stage: mutationlifecycle.StageCreate, mutating: true, alreadyExists: true,
+			stage: mutationlifecycle.StageCreate, mutating: true, answer: mutationlifecycle.AnswerNameTaken,
 			want: mutationlifecycle.DispositionUnaccounted,
+		},
+		{
+			// Nothing was stored, so nothing can run, and the claim keeps the
+			// approval it already spent.
+			name:  "a mutating create the API server refused before storing it",
+			stage: mutationlifecycle.StageCreate, mutating: true, answer: mutationlifecycle.AnswerRefused,
+			want: mutationlifecycle.DispositionWithdraw,
 		},
 		{
 			// dispatchStarted is already durable, so the next pass can still
@@ -82,8 +109,13 @@ func TestWhatEachDispatchFailureLeavesTheClaimOwing(t *testing.T) {
 		{
 			// Another attempt's Job. Re-running a read costs nothing.
 			name:  "a read-only create refused because the name is taken",
-			stage: mutationlifecycle.StageCreate, alreadyExists: true,
+			stage: mutationlifecycle.StageCreate, answer: mutationlifecycle.AnswerNameTaken,
 			want: mutationlifecycle.DispositionRetry,
+		},
+		{
+			name:  "a read-only create the API server refused before storing it",
+			stage: mutationlifecycle.StageCreate, answer: mutationlifecycle.AnswerRefused,
+			want: mutationlifecycle.DispositionRequeue,
 		},
 		{
 			name:  "a read-only confirmation read that failed",
@@ -99,10 +131,14 @@ func TestWhatEachDispatchFailureLeavesTheClaimOwing(t *testing.T) {
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
 
-			got := mutationlifecycle.DispatchFailure(row.stage, row.mutating, row.alreadyExists)
+			answer := row.answer
+			if answer == "" {
+				answer = mutationlifecycle.AnswerUnknown
+			}
+			got := mutationlifecycle.DispatchFailure(row.stage, row.mutating, answer)
 			if got != row.want {
-				t.Fatalf("DispatchFailure(%q, mutating=%t, alreadyExists=%t) = %q, want %q",
-					row.stage, row.mutating, row.alreadyExists, got, row.want)
+				t.Fatalf("DispatchFailure(%q, mutating=%t, %q) = %q, want %q",
+					row.stage, row.mutating, answer, got, row.want)
 			}
 		})
 	}
@@ -115,10 +151,58 @@ func TestAnUnknownDispatchStageIsNeverARetry(t *testing.T) {
 	t.Parallel()
 
 	for _, mutating := range []bool{false, true} {
-		got := mutationlifecycle.DispatchFailure("a stage added later", mutating, true)
-		if got == mutationlifecycle.DispositionRetry {
-			t.Fatalf("an unrecognised stage (mutating=%t) was told to retry", mutating)
+		for _, answer := range allAnswers() {
+			got := mutationlifecycle.DispatchFailure("a stage added later", mutating, answer)
+			if got == mutationlifecycle.DispositionRetry || got == mutationlifecycle.DispositionWithdraw {
+				t.Fatalf("an unrecognised stage (mutating=%t, answer %q) = %q", mutating, answer, got)
+			}
 		}
+	}
+}
+
+// webhookUnreachable is the error the API server returns when an admission
+// webhook that fails closed cannot be called, as the 0.2.2 restart burst
+// produced it for the manager's own Job-write webhook.
+func webhookUnreachable() error {
+	return apierrors.NewInternalError(fmt.Errorf(`failed calling webhook "vcontrollerwrite.operator.ptah.run": failed to call webhook: ` +
+		`Post "https://ptah-operator-webhook.ptah-system.svc:443/validate-operator-controller-write?timeout=10s": no endpoints available`))
+}
+
+// What each failed create proves. A refusal has to be an answer the API
+// server gives before it writes; everything that can follow the write, or
+// says nothing at all, stays unknown.
+func TestWhatAFailedCreateProves(t *testing.T) {
+	t.Parallel()
+
+	jobs := schema.GroupResource{Group: "batch", Resource: "jobs"}
+	for _, row := range []struct {
+		name string
+		err  error
+		want mutationlifecycle.CreateAnswer
+	}{
+		{"an unreachable webhook that fails closed", webhookUnreachable(), mutationlifecycle.AnswerRefused},
+		{"the same, wrapped by the caller", fmt.Errorf("create Apply Job: %w", webhookUnreachable()), mutationlifecycle.AnswerRefused},
+		{"a webhook denial", apierrors.NewForbidden(jobs, "apply", errors.New("admission webhook denied the request")), mutationlifecycle.AnswerRefused},
+		{"an invalid Job", apierrors.NewInvalid(schema.GroupKind{Group: "batch", Kind: "Job"}, "apply", nil), mutationlifecycle.AnswerRefused},
+		{"a missing namespace", apierrors.NewNotFound(schema.GroupResource{Resource: "namespaces"}, "team-a"), mutationlifecycle.AnswerRefused},
+		{"shed by priority and fairness", apierrors.NewTooManyRequests("too many requests", 1), mutationlifecycle.AnswerRefused},
+		{"a name already taken", apierrors.NewAlreadyExists(jobs, "apply"), mutationlifecycle.AnswerNameTaken},
+		{"a server timeout", apierrors.NewServerTimeout(jobs, "create", 1), mutationlifecycle.AnswerUnknown},
+		{"a gateway timeout", apierrors.NewTimeoutError("request did not complete", 1), mutationlifecycle.AnswerUnknown},
+		{"an internal error from storage", apierrors.NewInternalError(errors.New("etcdserver: request timed out")), mutationlifecycle.AnswerUnknown},
+		{"a webhook named only in the message", apierrors.NewInternalError(errors.New(`storage after failed calling webhook "x"`)), mutationlifecycle.AnswerUnknown},
+		{"service unavailable", apierrors.NewServiceUnavailable("unavailable"), mutationlifecycle.AnswerUnknown},
+		{"a conflict that is not the name", apierrors.NewConflict(jobs, "apply", errors.New("conflict")), mutationlifecycle.AnswerUnknown},
+		{"a dropped connection", &net.OpError{Op: "read", Net: "tcp", Err: errors.New("connection reset by peer")}, mutationlifecycle.AnswerUnknown},
+		{"a deadline", context.DeadlineExceeded, mutationlifecycle.AnswerUnknown},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := mutationlifecycle.ClassifyCreate(row.err); got != row.want {
+				t.Fatalf("ClassifyCreate(%v) = %q, want %q", row.err, got, row.want)
+			}
+		})
 	}
 }
 

@@ -215,6 +215,12 @@ func (d *migrationDispatch) Mark(ctx context.Context) error {
 	return d.r.patchMigrationStatus(ctx, before, d.migration)
 }
 
+func (d *migrationDispatch) Withdraw(ctx context.Context) error {
+	before := d.migration.DeepCopy()
+	d.operation().DispatchStarted = false
+	return d.r.patchMigrationStatus(ctx, before, d.migration)
+}
+
 func (d *migrationDispatch) Create(ctx context.Context, job *batchv1.Job) error {
 	return d.r.Client.Create(ctx, job)
 }
