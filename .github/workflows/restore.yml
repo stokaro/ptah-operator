@@ -18,6 +18,10 @@ on:
         description: JSON list of recovery cells, such as ["mysql-schema-operator-idle"]
         required: true
         type: string
+      evidence_recipient:
+        description: Public age recipient whose private key is retained outside CI
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -103,6 +107,14 @@ jobs:
             sudo apt-get update
             sudo apt-get install --yes age
           fi
+      - name: Validate the evidence encryption recipient
+        env:
+          EVIDENCE_RECIPIENT: ${{ inputs.evidence_recipient }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$EVIDENCE_RECIPIENT" == age1* ]]
+          printf '%s' 'recovery evidence recipient check' | age -r "$EVIDENCE_RECIPIENT" >/dev/null
       - name: Configure explicit Docker context
         id: docker-context
         timeout-minutes: 5
@@ -186,13 +198,38 @@ jobs:
           python3 support/qualification/probes/restore_matrix.py --context "$DOCKER_CONTEXT" \
             --kubernetes "$KUBERNETES_VERSION" --release-assets "$RUNNER_TEMP/release" \
             --cell "$CELL" --out "$RUNNER_TEMP/restore"
+      - name: Encrypt the complete recovery evidence
+        id: seal-evidence
+        if: ${{ !cancelled() && steps.recovery.outcome != 'skipped' }}
+        env:
+          EVIDENCE_RECIPIENT: ${{ inputs.evidence_recipient }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          restricted="$RUNNER_TEMP/restore-restricted"
+          mkdir -p "$restricted"
+          # Includes backups, their temporary restore identities and private
+          # diagnostics. Only ciphertext leaves the runner; its decryption key
+          # is retained by the caller and is never passed to this workflow.
+          tar -C "$RUNNER_TEMP" -czf - restore |
+            age -r "$EVIDENCE_RECIPIENT" -o "$restricted/restore.tar.gz.age"
+          printf '%s\n' "$EVIDENCE_RECIPIENT" > "$restricted/recipient.txt"
+          (cd "$restricted" && sha256sum restore.tar.gz.age recipient.txt > SHA256SUMS)
+      - name: Upload the encrypted recovery evidence
+        if: ${{ !cancelled() && steps.seal-evidence.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: restore-restricted-${{ matrix.cell }}
+          path: ${{ runner.temp }}/restore-restricted
+          if-no-files-found: error
       - name: Keep the cell's public record
         if: ${{ !cancelled() && steps.recovery.outcome != 'skipped' }}
         shell: bash
         run: |
           set -euo pipefail
-          # The procedure's report and the matrix verdict only. Backups, keys,
-          # credentials and raw logs stay on the runner and go with it.
+          # The procedure's report and the matrix verdict only. Private files
+          # belong exclusively to the separately encrypted evidence artifact.
           record="$RUNNER_TEMP/restore-record"
           mkdir -p "$record"
           cd "$RUNNER_TEMP/restore"
