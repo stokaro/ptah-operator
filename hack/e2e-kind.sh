@@ -188,7 +188,7 @@ printf '%s\n' "$CONTROLLER_STATE_VERSION" | grep -Eq '^[1-9][0-9]*$' ||
 
 for requested_phase in $E2E_DIAGNOSIS_SKIP_PHASES; do
 	case $requested_phase in
-		upgrade | ha | assert | cert-rotation | dataplane | migrations | uninstall) ;;
+		upgrade | ha | assert | cert-rotation | dataplane | migrations | uninstall | reference-data-postgresql | reference-data-mysql) ;;
 		*) fail "E2E_DIAGNOSIS_SKIP_PHASES names $requested_phase, which is not a lifecycle phase" ;;
 	esac
 done

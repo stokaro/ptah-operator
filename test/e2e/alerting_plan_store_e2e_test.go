@@ -229,8 +229,9 @@ func (a *alertingRun) planStoreLarge() {
 	a.check(err, "derive full-size native payloads")
 	largeRef := publish("large", repeated, suffix)
 	var large []*ptahv1.PtahSchemaPlan
-	// Prepare below the threshold, then start the measured history before the
-	// final two plans can cross it. No alert deadline starts at a later poll.
+	// Prepare below the threshold, then measure the plan that crosses it.
+	// Export each immutable payload once, before pruning; reading it again
+	// during publication adds API load unrelated to alert delivery.
 	allocate := func(start, end int) {
 		for i := start; i < end; {
 			var batch []*ptahv1.PtahSchema
@@ -239,12 +240,7 @@ func (a *alertingRun) planStoreLarge() {
 				i++
 			}
 			for _, s := range batch {
-				p := ready(s)
-				e := a.readPlanStoreExport(p)
-				doc, err := e.document()
-				a.check(err, "reconstruct the actual stored payload")
-				a.check(executablePlanAtLimit(p, doc, "postgres", repeated, suffix), "require real full-size executable plan bytes")
-				large = append(large, p)
+				large = append(large, ready(s))
 			}
 		}
 	}
@@ -302,7 +298,10 @@ func (a *alertingRun) planStoreLarge() {
 		}
 		nextHistory = time.Now().Add(alScrapeInterval)
 	}
-	allocate(15, alPlanStoreCount)
+	// Sixteen full-size plans plus the retained calibration plans cross the
+	// budget. Hold the next publication until that delivery is proved, so it
+	// cannot compete with the healthy API census required by this window.
+	allocate(15, 16)
 	nextHistory = time.Time{}
 	a.check(harness.Wait(a.ctx, "the retained-plan notification", alDetectionSlack, alDeliveryPoll, func(context.Context) (bool, string, error) {
 		check()
@@ -316,6 +315,7 @@ func (a *alertingRun) planStoreLarge() {
 			a.fatalf("plan-store alert acquired unbounded or inapplicable label %s", key)
 		}
 	}
+	allocate(16, alPlanStoreCount)
 	var total int64
 	for _, p := range large {
 		total += p.Spec.Size
@@ -353,6 +353,9 @@ func (a *alertingRun) planStoreLarge() {
 		s := read(&ptahv1.PtahSchema{ObjectMeta: metav1.ObjectMeta{Namespace: p.Namespace, Name: p.Spec.SchemaRef.Name, UID: p.Spec.SchemaRef.UID}})
 		a.check(alPlanMayPrune(p, s, pins), "refuse every pinned or active deletion")
 		e := a.readPlanStoreExport(p)
+		doc, err := e.document()
+		a.check(err, "reconstruct the actual stored payload")
+		a.check(executablePlanAtLimit(p, doc, "postgres", repeated, suffix), "require real full-size executable plan bytes")
 		archive, err := e.archive()
 		a.check(err, "export exact historical plan bytes")
 		path := filepath.Join(a.workDir, string(p.UID)+".plan.json.gz")
