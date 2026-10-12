@@ -59,6 +59,12 @@ func (p Policy) AuthorizeDelete(ctx context.Context, record *api.PtahResultRecor
 	if p.Reader == nil || p.Window < resultretention.MinimumWindow || record == nil || record.UID == "" {
 		return ErrRetained
 	}
+	// Every record keeps at least the current policy window from its own
+	// server timestamp. No retirement or pin reading can authorize an earlier
+	// deletion. Reaching this bound still requires every live check below.
+	if !record.CreationTimestamp.IsZero() && p.now().Before(record.CreationTimestamp.Add(p.Window)) {
+		return resultretention.ErrWindow
+	}
 	b, err := RootBinding(record)
 	var marker *api.PtahResultRecord
 	if record.Spec.Type == "chunk" || record.Spec.Type == "complete" {
