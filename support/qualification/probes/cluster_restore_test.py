@@ -262,6 +262,86 @@ class RestoreDockerContextTest(unittest.TestCase):
             self.assertIn('inspect', command.call_args.args[1])
 
 
+class ReplacementRuntimeTest(unittest.TestCase):
+    def provision(self, root, released=True, bootstrap_change=None, installed_change=None):
+        probe = object.__new__(ClusterRestoreProbe)
+        probe.root = root
+        probe.prefix = 'ptah-020-restore-owned'
+        probe.loss, probe.timing = 'operator', 'idle'
+        probe.report = {'steps': [], 'checks': {}, 'sourceCommit': 'harness-source'}
+        probe.source_cluster = {'kubernetesVersion': '1.37.0', 'platform': 'linux/arm64',
+                                'uid': 'source-uid', 'kindName': 'ptah-e2e-source'}
+        probe.source_envs = {'E2E_DOCKER_ENDPOINT': 'ssh://recorded-host',
+                            'E2E_CONTROLLER_REVISION': 'release-source' if released else 'harness-source',
+                            'E2E_PTAH_REVISION': 'release-ptah' if released else 'harness-ptah'}
+        target = {'E2E_DOCKER_ENDPOINT': 'ssh://recorded-host',
+                  'E2E_CONTROLLER_REVISION': 'harness-source', 'E2E_PTAH_REVISION': 'harness-ptah',
+                  'E2E_KIND_CLUSTER_NAME': 'ptah-e2e-target',
+                  'E2E_CONTROLLER_IMAGE': 'bootstrap-operator', 'E2E_EXECUTOR_IMAGE': 'bootstrap-executor'}
+        target.update(bootstrap_change or {})
+        probe.target_environment = root / 'target-environment'
+        probe.target_environment.write_text(''.join(f'{key}={value}\n' for key, value in target.items()))
+        probe.source_result_delivery = False
+        probe.target_active = False
+        probe.ensure_api_connection = Mock()
+        probe.release_runtime = Mock() if released else None
+        if released:
+            def install(environment, name):
+                probe.ensure_api_connection.assert_called_once_with(environment, 'replacement')
+                self.assertEqual(name, 'replacement')
+                environment.update(E2E_CONTROLLER_REVISION='release-source', E2E_PTAH_REVISION='release-ptah',
+                                   E2E_CONTROLLER_IMAGE='released-operator', E2E_EXECUTOR_IMAGE='released-executor')
+                environment.update(installed_change or {})
+            probe.release_runtime.install.side_effect = install
+        probe.read = Mock(side_effect=[{'metadata': {'uid': 'target-uid'}}, {'items': [
+            {'status': {'nodeInfo': {'kubeletVersion': 'v1.37.0', 'operatingSystem': 'linux', 'architecture': 'arm64'}}}
+            for _ in range(4)]}])
+        probe.release_state = Mock(return_value={})
+        probe.command = Mock(return_value=subprocess.CompletedProcess([], 0, b'fixture-recipient'))
+        probe.encrypted = Mock()
+        process = Mock(); process.wait.return_value = 0
+        return probe, process
+
+    def test_release_is_installed_before_comparing_recovered_runtime(self):
+        with tempfile.TemporaryDirectory() as directory:
+            probe, process = self.provision(Path(directory))
+            with patch('cluster_restore.subprocess.Popen', return_value=process):
+                probe.provision_target()
+            probe.release_runtime.install.assert_called_once()
+            self.assertTrue(probe.target_active)
+            self.assertEqual(probe.envs['E2E_CONTROLLER_REVISION'], 'release-source')
+            self.assertEqual(probe.envs['E2E_PTAH_REVISION'], 'release-ptah')
+
+    def test_development_restore_keeps_matching_revisions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            probe, process = self.provision(Path(directory), released=False)
+            with patch('cluster_restore.subprocess.Popen', return_value=process):
+                probe.provision_target()
+            self.assertTrue(probe.target_active)
+            self.assertEqual(probe.envs['E2E_CONTROLLER_REVISION'], 'harness-source')
+
+    def test_wrong_bootstrap_revision_is_refused_before_release_install(self):
+        with tempfile.TemporaryDirectory() as directory:
+            probe, process = self.provision(Path(directory), bootstrap_change={'E2E_CONTROLLER_REVISION': 'wrong'})
+            with patch('cluster_restore.subprocess.Popen', return_value=process):
+                with self.assertRaises(RuntimeError):
+                    probe.provision_target()
+            probe.ensure_api_connection.assert_not_called()
+            probe.release_runtime.install.assert_not_called()
+            probe.read.assert_not_called()
+
+    def test_wrong_installed_revision_is_refused_before_restoring_state(self):
+        for key in ('E2E_CONTROLLER_REVISION', 'E2E_PTAH_REVISION'):
+            with self.subTest(key=key), tempfile.TemporaryDirectory() as directory:
+                probe, process = self.provision(Path(directory), installed_change={key: 'wrong'})
+                with patch('cluster_restore.subprocess.Popen', return_value=process):
+                    with self.assertRaises(RuntimeError):
+                        probe.provision_target()
+                probe.release_runtime.install.assert_called_once()
+                probe.read.assert_not_called()
+                self.assertFalse(probe.target_active)
+
+
 class ColdRestoreContractTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

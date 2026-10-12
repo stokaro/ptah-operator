@@ -297,13 +297,18 @@ class ClusterRestoreProbe(OperatorProbe):
         if result:
             raise RuntimeError('Replacement cluster provisioning failed; private bootstrap diagnostics retained')
         target = dict(line.split('=', 1) for line in self.target_environment.read_text().splitlines() if '=' in line)
-        self.check('replacement uses the same explicit Docker endpoint and operator revision',
-                   target['E2E_DOCKER_ENDPOINT'] == self.source_envs['E2E_DOCKER_ENDPOINT'] and
-                   target['E2E_CONTROLLER_REVISION'] == self.source_envs['E2E_CONTROLLER_REVISION'] and
-                   target['E2E_PTAH_REVISION'] == self.source_envs['E2E_PTAH_REVISION'])
+        self.check('replacement uses the same explicit Docker endpoint',
+                   target['E2E_DOCKER_ENDPOINT'] == self.source_envs['E2E_DOCKER_ENDPOINT'])
+        self.check('replacement bootstrap uses the current committed source',
+                   target['E2E_CONTROLLER_REVISION'] == self.report['sourceCommit'])
         self.ensure_api_connection(target, 'replacement')
         if getattr(self, 'release_runtime', None):
             self.release_runtime.install(target, 'replacement')
+        # The source already runs the selected release. Its replacement starts
+        # with the harness build, then installs those authenticated release bytes.
+        self.check('replacement uses the same operator and Ptah revisions',
+                   target['E2E_CONTROLLER_REVISION'] == self.source_envs['E2E_CONTROLLER_REVISION'] and
+                   target['E2E_PTAH_REVISION'] == self.source_envs['E2E_PTAH_REVISION'])
         self.envs = target
         if self.source_result_delivery:
             self.enable_result_delivery(target)
