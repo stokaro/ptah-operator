@@ -51,6 +51,7 @@ func main() {
 
 func run() error {
 	var (
+		reevaluatePath    = flag.String("reevaluate-cycles", "", "judge a retained soak report.json against the current cycle target, print the verdict as JSON and exit; needs no cluster")
 		faultBaselinePath = flag.String("retention-fault-baseline", "", "run only the retention fault on the exact resumed fleet in a prior maintenance inventory; requires a fresh output and checkpoint directory")
 		kubeconfig        = flag.String("kubeconfig", os.Getenv("KUBECONFIG"), "kubeconfig of the lab cluster")
 		authorConfig      = flag.String("author-kubeconfig", os.Getenv("CAPACITY_AUTHOR_KUBECONFIG"), "optional same-cluster kubeconfig for the desired-state author; requires a distinct approver")
@@ -82,6 +83,9 @@ func run() error {
 	flag.StringVar(&in.registryEgressPolicies, "registry-egress-policies", "", "comma-separated registry-only egress policies to withdraw in each workload namespace during the outage")
 	flag.StringVar(&in.fixtureImage, "fixture-image", os.Getenv("E2E_FIXTURE_IMAGE"), "the lab's fixture image, which carries the database delay proxy")
 	flag.Parse()
+	if *reevaluatePath != "" {
+		return reevaluateCycles(*reevaluatePath, os.Stdout)
+	}
 	if *authorConfig != "" && *approverConfig == "" {
 		return errors.New("author-kubeconfig requires approver-kubeconfig")
 	}

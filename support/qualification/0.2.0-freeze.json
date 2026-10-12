@@ -1,14 +1,14 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-10-12T07:23:10.252118+00:00",
+  "frozenAt": "2026-10-12T07:38:27.042986+00:00",
   "profileSourceCommit": "1259f4d59343fef049307085e3ea77d2971677cb",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
   "sourceFiles": [
     {
       "path": "support/qualification/0.2.0.md",
-      "sha256": "ffb6a40278928be22f91acf2307afc7da38968d3a2f7bced47d4a8754d26931c"
+      "sha256": "7b4bdc6a02b9d46b8bcf5f3239701a85002dd3622d5d5357a648ce401420da06"
     },
     {
       "path": "support/qualification/0.2.0-coverage.md",
@@ -79,10 +79,10 @@
     "disposition": "v0.2.1 is the published predecessor of the v0.2.2 candidate. The upgrade from it is walked through both releases' guides by support/qualification/probes/fresh_install.py --upgrade-from on both platforms; the synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 47,
+  "revision": 48,
   "supersedes": {
-    "freezeCommit": "4d70f4fd48979447e7e89feb047806ebfd99f6aa",
-    "sha256": "c3ac91022803b07b4cd1b7b7850a1427d946b9bec9ee995e6c2aa21fdf302878"
+    "freezeCommit": "a44f065c292e79c4d89a3a06af38646dffa0cc8e",
+    "sha256": "b4686ad5328015284b885d5cc608d91b4f7da5ccdd1133b678b55663122c86c4"
   },
-  "revisionReason": "Record the kindnet correction built with the golang 1.27.2 builder image (#639); the corrected kindnet source, its pinned recipe and every other input are unchanged. Qualification runs measured revisions 45 and 46."
+  "revisionReason": "Owner decision on 2026-10-12: hold the soak's 30 read-only cycles to the slots the rounds do not change, and hold each slot a round moves to converging on all nine changes with at least one read-only cycle after every change. Every soak measured under revisions 45 to 47 failed only that count, and only on the moved slots, which nine Apply rounds leave short of 30 by construction. Runs measured before keep their verdicts; their reports are judged again by hack/capacity -reevaluate-cycles. The workload, thresholds and every other input are unchanged."
 }

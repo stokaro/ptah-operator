@@ -80,6 +80,11 @@ type completedCycle struct {
 	Operations                []cycleOperation `json:"operations"`
 }
 
+// within says whether the cycle ran inside the window and was confirmed in it.
+func (c completedCycle) within(w window) bool {
+	return !c.StartedAt.Before(w.Start) && !c.CompletedAt.After(w.End) && !c.ConfirmedAt.IsZero() && !c.ConfirmedAt.After(w.End)
+}
+
 type cycleLifetime struct {
 	Family        string     `json:"family"`
 	Namespace     string     `json:"namespace"`
@@ -314,7 +319,7 @@ func cyclesInWindow(w window, evidence cycleEvidence) ([]resourceCycleCount, []s
 		counts[key] = &resourceCycleCount{Family: life.Family, Namespace: life.Namespace, Name: life.Name, UID: life.UID}
 	}
 	for _, cycle := range evidence.Completed {
-		if cycle.StartedAt.Before(w.Start) || cycle.CompletedAt.After(w.End) || cycle.ConfirmedAt.IsZero() || cycle.ConfirmedAt.After(w.End) {
+		if !cycle.within(w) {
 			continue
 		}
 		key := cycle.Family + "/" + cycle.Namespace + "/" + cycle.Name + "/" + cycle.UID
