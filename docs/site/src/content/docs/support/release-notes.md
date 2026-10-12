@@ -16,6 +16,20 @@ release that says so, and this is where it is said. A version that asks
 nothing of you says so in as many words, rather than leaving you to read it
 out of silence.
 
+## 0.2.3
+
+**Before you upgrade.** Nothing has to change. The manager image is new again,
+so keep `--force-conflicts` on the upgrade.
+
+Replacing every manager at once while an approval arrives no longer blocks the
+migration or schema. Deleting all manager Pods removes the endpoints of the
+manager's own Job-write webhook before either process is told to stop, so a
+leader still dispatching had its Job create refused and left an approved Apply
+that only a person could acknowledge. A create the API server refused before
+storing it proves no Job exists, so the dispatch is now withdrawn and made
+again by the next leader under the same approval. A create whose outcome is
+uncertain, such as a timeout, still blocks for a person, as before.
+
 ## 0.2.2
 
 **Before you upgrade.** Nothing has to change. As from 0.2.0, the manager image
