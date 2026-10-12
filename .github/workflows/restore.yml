@@ -1,0 +1,207 @@
+name: Recovery cells
+
+# One recovery cell per job, on a hosted runner against its own Docker daemon.
+# A cold cell's recovery clock includes provisioning a replacement cluster, and
+# a workstation driving a remote daemon over SSH spends most of that time
+# streaming images through itself. Here the daemon is local, and the task
+# images are built once, before any loss, so the clock measures the recovery.
+# support/qualification/0.2.0-recovery.md is the procedure each cell runs.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published release tag to recover, such as v0.2.2
+        required: true
+        type: string
+      cells:
+        description: JSON list of recovery cells, such as ["mysql-schema-operator-idle"]
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  attestations: read
+
+concurrency:
+  group: restore-${{ github.ref }}-${{ inputs.tag }}-${{ inputs.cells }}
+  cancel-in-progress: true
+
+env:
+  GOFLAGS: -mod=readonly
+
+jobs:
+  cell:
+    name: Recover ${{ matrix.cell }} on ${{ inputs.tag }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        cell: ${{ fromJSON(inputs.cells) }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate the selected cells and tag
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          RECOVERY_CELLS: ${{ inputs.cells }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          python3 - <<'PYTHON'
+          import json, os, sys
+          sys.path.insert(0, 'support/qualification/probes')
+          from restore_matrix import cells, cell_name
+          selected = json.loads(os.environ['RECOVERY_CELLS'])
+          allowed = {cell_name(cell) for cell in cells()}
+          if (not isinstance(selected, list) or not selected
+                  or not all(isinstance(cell, str) and cell in allowed for cell in selected)
+                  or len(selected) != len(set(selected))):
+              raise SystemExit('Select a nonempty list of distinct declared recovery cells')
+          PYTHON
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Read the newest supported minor
+        id: support
+        shell: bash
+        run: |
+          set -euo pipefail
+          newest="$(go run ./hack/verify-kubernetes-support.go -output=matrix | jq -c 'last')"
+          for field in kind_version kubernetes_version node_image; do
+            printf '%s=%s\n' "$field" "$(jq -er --arg field "$field" '.[$field]' <<<"$newest")" >> "$GITHUB_OUTPUT"
+          done
+      - name: Set up Helm
+        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4
+        with:
+          version: v4.3.0
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+      - name: Install kind, the matching kubectl and age
+        shell: bash
+        run: |
+          set -euo pipefail
+          go install "sigs.k8s.io/kind@${{ steps.support.outputs.kind_version }}"
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          install_dir="$RUNNER_TEMP/bin"
+          mkdir -p "$install_dir"
+          base_url="https://dl.k8s.io/release/v${{ steps.support.outputs.kubernetes_version }}/bin/linux/$(go env GOHOSTARCH)"
+          curl --fail --location --silent --show-error --output "$install_dir/kubectl" "$base_url/kubectl"
+          curl --fail --location --silent --show-error --output "$RUNNER_TEMP/kubectl.sha256" "$base_url/kubectl.sha256"
+          echo "$(<"$RUNNER_TEMP/kubectl.sha256")  $install_dir/kubectl" | sha256sum --check
+          chmod 0755 "$install_dir/kubectl"
+          echo "$install_dir" >> "$GITHUB_PATH"
+          if ! command -v age-keygen >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install --yes age
+          fi
+      - name: Configure explicit Docker context
+        id: docker-context
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v htpasswd >/dev/null || [[ ! -x /usr/sbin/sshd ]]; then
+            sudo apt-get update
+            sudo apt-get install --yes apache2-utils openssh-server
+          fi
+          ssh_key="$RUNNER_TEMP/ptah-restore-ssh"
+          known_hosts="$RUNNER_TEMP/ptah-restore-known-hosts"
+          install -d -m 0700 "$HOME/.ssh"
+          ssh-keygen -q -t ed25519 -N '' -f "$ssh_key"
+          install -m 0600 "$ssh_key.pub" "$HOME/.ssh/authorized_keys"
+          sudo systemctl restart ssh
+          ssh-keyscan -H 127.0.0.1 > "$known_hosts"
+          {
+            printf '%s\n' 'Host ptah-ci-docker'
+            printf '%s\n' '  HostName 127.0.0.1'
+            printf '  User %s\n' "$USER"
+            printf '  IdentityFile %s\n' "$ssh_key"
+            printf '%s\n' '  IdentitiesOnly yes'
+            printf '%s\n' '  StrictHostKeyChecking yes'
+            printf '  UserKnownHostsFile %s\n' "$known_hosts"
+          } > "$HOME/.ssh/config"
+          chmod 0600 "$HOME/.ssh/config"
+          context_name="ptah-ci-restore"
+          docker context create "$context_name" --docker host=ssh://ptah-ci-docker
+          docker --context "$context_name" info >/dev/null
+          printf 'name=%s\n' "$context_name" >> "$GITHUB_OUTPUT"
+      - name: Download the release and check harness compatibility
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir "$RUNNER_TEMP/release"
+          (cd "$RUNNER_TEMP/release" && sha256sum --check --strict SHA256SUMS)
+          # Refuse an incompatible harness before spending time on a cluster.
+          # The recovery procedure still authenticates the complete asset set.
+          python3 - <<'PYTHON'
+          import os, subprocess, sys
+          from pathlib import Path
+          sys.path.insert(0, 'support/qualification/probes')
+          from restore_runtime import ReleaseRuntime, release_runtime_paths
+          runtime = ReleaseRuntime(None, Path(os.environ['RUNNER_TEMP']) / 'release')
+          if runtime.tag != os.environ['RELEASE_TAG']:
+              raise SystemExit('The downloaded manifest names another release')
+          subprocess.run(['git', 'merge-base', '--is-ancestor', runtime.source, 'HEAD'], check=True)
+          changed = subprocess.check_output([
+              'git', 'diff', '--name-only', runtime.source, 'HEAD', '--', *release_runtime_paths()], text=True)
+          if changed.strip():
+              raise SystemExit('Use a harness ref with unchanged release runtime sources:\n' + changed)
+          PYTHON
+      - name: Build the task images once, before any loss
+        env:
+          DOCKER_CONTEXT: ${{ steps.docker-context.outputs.name }}
+          E2E_DIRECT_HOST_ACCESS: "1"
+          E2E_IMAGE_EXPORT_DIR: ${{ runner.temp }}/task-images
+          E2E_RUN_ID: restore-${{ github.run_id }}-${{ github.run_attempt }}-images
+          E2E_STOP_AFTER: images
+          KIND_NODE_IMAGE: ${{ steps.support.outputs.node_image }}
+          K8S_VERSION: ${{ steps.support.outputs.kubernetes_version }}
+        shell: bash
+        run: make e2e
+      - name: Run the recovery cell
+        id: recovery
+        env:
+          DOCKER_CONTEXT: ${{ steps.docker-context.outputs.name }}
+          E2E_DIRECT_HOST_ACCESS: "1"
+          E2E_PREBUILT_IMAGE_DIR: ${{ runner.temp }}/task-images
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CELL: ${{ matrix.cell }}
+          KUBERNETES_VERSION: ${{ steps.support.outputs.kubernetes_version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 support/qualification/probes/restore_matrix.py --context "$DOCKER_CONTEXT" \
+            --kubernetes "$KUBERNETES_VERSION" --release-assets "$RUNNER_TEMP/release" \
+            --cell "$CELL" --out "$RUNNER_TEMP/restore"
+      - name: Keep the cell's public record
+        if: ${{ !cancelled() && steps.recovery.outcome != 'skipped' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The procedure's report and the matrix verdict only. Backups, keys,
+          # credentials and raw logs stay on the runner and go with it.
+          record="$RUNNER_TEMP/restore-record"
+          mkdir -p "$record"
+          cd "$RUNNER_TEMP/restore"
+          find . \( -name matrix.json -o -name result.json -o -name 'timings.jsonl' -o -name 'target-timings.jsonl' \) \
+            -not -name '*.private*' -print0 | xargs -0 -r cp --parents -t "$record"
+      - name: Upload the cell's public record
+        if: ${{ !cancelled() && steps.recovery.outcome != 'skipped' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: restore-${{ matrix.cell }}
+          path: ${{ runner.temp }}/restore-record
+          if-no-files-found: error

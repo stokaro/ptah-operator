@@ -17,6 +17,9 @@ from operator_restore import OPERATOR_CRDS, OperatorProbe, REPO, db
 from restore_during_apply import ApplyLoss
 
 
+REPLACEMENT_HOST_SETTINGS = ('E2E_DIRECT_HOST_ACCESS', 'E2E_PREBUILT_IMAGE_DIR')
+
+
 class ClusterRestoreProbe(OperatorProbe):
     cold_cluster_recovery = True
 
@@ -260,6 +263,9 @@ class ClusterRestoreProbe(OperatorProbe):
             self.check('the source execution is fenced before replacement provisioning',
                        ApplyLoss.replacement_is_fenced(self.report))
         environment = {k: v for k, v in os.environ.items() if not k.startswith('E2E_')}
+        # Keep host access and the images built before loss. Source cluster
+        # identities, credentials and output paths must not reach its replacement.
+        environment.update({k: os.environ[k] for k in REPLACEMENT_HOST_SETTINGS if os.environ.get(k)})
         environment.update(DOCKER_CONTEXT=db.DOCKER_CONTEXT,
                            K8S_VERSION=self.source_cluster['kubernetesVersion'],
                            E2E_RUN_ID='cold-restore-' + self.prefix.removeprefix('ptah-020-restore-'),
