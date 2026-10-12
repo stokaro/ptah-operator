@@ -25,6 +25,7 @@ func (publicPinAdmission) ValidateCreate(context.Context, *corev1.Secret) error 
 type enrollmentBoundaryClient struct {
 	client.Client
 	beforeCreate  func()
+	afterCreate   func()
 	afterReadback func()
 }
 
@@ -34,7 +35,13 @@ func (c *enrollmentBoundaryClient) Create(ctx context.Context, object client.Obj
 		c.beforeCreate = nil
 		action()
 	}
-	return c.Client.Create(ctx, object, options...)
+	err := c.Client.Create(ctx, object, options...)
+	if err == nil && c.afterCreate != nil {
+		action := c.afterCreate
+		c.afterCreate = nil
+		action()
+	}
+	return err
 }
 
 func (c *enrollmentBoundaryClient) Get(ctx context.Context, key client.ObjectKey, object client.Object, options ...client.GetOption) error {
@@ -52,7 +59,7 @@ func TestPublicPodPinAuthorityAtAdmissionAndReturn(t *testing.T) {
 	previous := controllerWriteValidator.ResultCredentials
 	controllerWriteValidator.ResultCredentials = publicPinAdmission{resultcredentials.PodBindings{Reader: admin}}
 	defer func() { controllerWriteValidator.ResultCredentials = previous }()
-	for _, boundary := range []string{"valid", "before CREATE", "after readback"} {
+	for _, boundary := range []string{"valid", "before CREATE", "after CREATE", "after existing read"} {
 		t.Run(boundary, func(t *testing.T) {
 			f, identity, store := publicationFixture(t, false)
 			apiClient := &enrollmentBoundaryClient{Client: store.Client}
@@ -65,10 +72,16 @@ func TestPublicPodPinAuthorityAtAdmissionAndReturn(t *testing.T) {
 			if boundary == "before CREATE" {
 				apiClient.beforeCreate = revoke
 			}
-			if boundary == "after readback" {
-				apiClient.afterReadback = revoke
+			if boundary == "after CREATE" {
+				apiClient.afterCreate = revoke
 			}
 			pins := resultcredentials.PodBindings{Writer: apiClient, Reader: apiClient}
+			if boundary == "after existing read" {
+				if _, err := pins.Ensure(t.Context(), identity); err != nil {
+					t.Fatal(err)
+				}
+				apiClient.afterReadback = revoke
+			}
 			credential, err := pins.Ensure(t.Context(), identity)
 			key := client.ObjectKey{Namespace: f.namespace, Name: jobconfig.CredentialName(identity.Binding.UID, identity.Binding.OperationID, identity.Binding.JobName)}
 			stored := &api.PtahResultRecord{}
@@ -83,7 +96,7 @@ func TestPublicPodPinAuthorityAtAdmissionAndReturn(t *testing.T) {
 				if revocations != 1 || credential.UID != "" || !apierrors.IsNotFound(readErr) {
 					t.Fatalf("revoked CREATE persisted a pin: revoked=%d credential=%+v readback=%v", revocations, credential, readErr)
 				}
-			case "after readback":
+			case "after CREATE", "after existing read":
 				if revocations != 1 || !errors.Is(err, resultdelivery.ErrAuthority) || credential.UID != "" || readErr != nil {
 					t.Fatalf("revocation after persistence authorized return: revoked=%d credential=%+v error=%v readback=%v", revocations, credential, err, readErr)
 				}

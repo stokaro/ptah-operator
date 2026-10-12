@@ -7,8 +7,11 @@ import (
 	"time"
 
 	api "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/resultcredentials"
 	"github.com/stokaro/ptah-operator/internal/resultdelivery/jobconfig"
+	"github.com/stokaro/ptah-operator/internal/resultdelivery/resulttest"
 	"github.com/stokaro/ptah-operator/internal/resultretention"
+	"github.com/stokaro/ptah-operator/internal/resultstore"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -319,5 +322,75 @@ func TestRetirementDeletionReadsItsAbsentSourceOnce(t *testing.T) {
 				t.Fatal("restored source authorized retirement deletion")
 			}
 		})
+	}
+}
+
+func TestCredentialDeletionReadsItsAbsentIntentSourceOnce(t *testing.T) {
+	f := resulttest.New(t, "schema-plan-dev-fence-scheduling")
+	c := &observedClient{Client: f.Client(t), now: time.Date(2026, 10, 3, 10, 0, 0, 0, time.UTC)}
+	credential, err := (resultcredentials.PodBindings{Writer: c, Reader: c}).Ensure(t.Context(), f.Identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := &api.PtahResultRecord{}
+	if err := c.Get(t.Context(), client.ObjectKey{Namespace: f.Job.Namespace, Name: credential.Name}, root); err != nil {
+		t.Fatal(err)
+	}
+	f.Subject.(*api.PtahSchema).Status.ActiveOperation = nil
+	if err := c.Update(t.Context(), f.Subject); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Client.Delete(t.Context(), f.Job); err != nil {
+		t.Fatal(err)
+	}
+	intentName, _ := resultstore.Name(f.Identity.Binding)
+	marker, err := resultretention.Record(f.Identity.Binding, resultretention.Source{Name: intentName, UID: "original-intent", Type: "intent"}, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Create(t.Context(), marker); err != nil {
+		t.Fatal(err)
+	}
+	c.now = c.now.Add(2 * time.Hour)
+	reader := &policyReads{Reader: c, gets: map[client.ObjectKey]int{}}
+	policy := Policy{Reader: reader, Window: time.Hour, Now: func() time.Time { return c.now }}
+	source := client.ObjectKey{Namespace: marker.Namespace, Name: intentName}
+	if err := policy.AuthorizeDelete(t.Context(), root); err != nil {
+		t.Fatal(err)
+	}
+	if got := reader.gets[source]; got != 1 {
+		t.Errorf("credential read its absent intent source %d times; want one final absence check", got)
+	}
+	reader.fail = source
+	if err := policy.AuthorizeDelete(t.Context(), root); !errors.Is(err, errWrite) {
+		t.Fatalf("unavailable intent authorized deletion: %v", err)
+	}
+	reader.fail = client.ObjectKey{}
+	restored := &api.PtahResultRecord{ObjectMeta: metav1.ObjectMeta{Namespace: source.Namespace, Name: source.Name, UID: "restored-intent"}}
+	if err := c.Client.Create(t.Context(), restored); err != nil {
+		t.Fatal(err)
+	}
+	if err := policy.AuthorizeDelete(t.Context(), root); err == nil {
+		t.Fatal("restored intent authorized credential deletion")
+	}
+}
+
+func TestCollectorUsesThePersistedRetirementCreateResponse(t *testing.T) {
+	f := fixture(t)
+	reader := &policyReads{Reader: f.c, gets: map[client.ObjectKey]int{}}
+	f.p.Reader = reader
+	collector := f.collector(t)
+	if err := collector.Step(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if got := reader.gets[client.ObjectKeyFromObject(f.marker)]; got != 1 {
+		t.Errorf("new retirement required %d GETs; want only the initial absence check", got)
+	}
+	marker := &api.PtahResultRecord{}
+	if err := f.c.Get(t.Context(), client.ObjectKeyFromObject(f.marker), marker); err != nil {
+		t.Fatal(err)
+	}
+	if marker.UID == "" || marker.CreationTimestamp.IsZero() || len(f.c.deletes) != 0 {
+		t.Fatal("retirement did not retain evidence using server identity and time")
 	}
 }

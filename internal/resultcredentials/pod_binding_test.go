@@ -217,11 +217,11 @@ func TestPodBindingChecksAuthorityAtTheWriteAndReturnBoundaries(t *testing.T) {
 						t.Fatal("valid operation was refused", err)
 					}
 					// Four reads authorize return. A new pin also needs the
-					// admission check and persisted readback; the caller must not
+					// admission check; the caller must not
 					// repeat the admission check before submitting CREATE.
 					budget := 5
 					if !existing {
-						budget = 10
+						budget = 9
 					}
 					if reads > budget {
 						t.Fatalf("enrollment used %d reads, budget %d", reads, budget)
