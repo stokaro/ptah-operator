@@ -418,3 +418,33 @@ class ColdRestoreTunnelTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class ReleaseRecordTest(unittest.TestCase):
+    def test_an_unchanged_release_reads_the_same_while_its_live_objects_move(self):
+        environment = {'E2E_KUBECONFIG': '/source/kubeconfig', 'E2E_OPERATOR_NAMESPACE': 'source-system',
+                       'E2E_HELM_RELEASE': 'source-release'}
+        stored = {'name': 'source-release', 'version': 3, 'info': {'status': 'deployed', 'last_deployed': '2026-10-12T08:34:58+02:00'}}
+        def reading(renewed):
+            def command(action, args, *rest, **options):
+                if 'status' in args:
+                    status = copy.deepcopy(stored)
+                    status['info']['resources'] = {'v1/Lease': [{'spec': {'renewTime': renewed}}]}
+                    return subprocess.CompletedProcess(args, 0, json.dumps(status).encode())
+                if 'values' in args:
+                    return subprocess.CompletedProcess(args, 0, b'{"replicaCount": 2}')
+                return subprocess.CompletedProcess(args, 0, b'MANIFEST:\nkind: Deployment\n')
+            return command
+        records = []
+        for renewed in ('2026-10-12T06:35:00Z', '2026-10-12T06:42:00Z'):
+            probe = object.__new__(ClusterRestoreProbe)
+            probe.report = {'checks': {}}
+            probe.persist = Mock()
+            probe.command = reading(renewed)
+            records.append(probe.release_state(environment))
+        self.assertEqual(records[0], records[1])
+        self.assertNotIn('resources', records[0]['status']['info'])
+        # What Helm stored still decides: another revision is another release.
+        probe.command = lambda action, args, *rest, **options: subprocess.CompletedProcess(args, 0, json.dumps(
+            dict(stored, version=4)).encode() if 'status' in args else (b'{"replicaCount": 2}' if 'values' in args else b'MANIFEST:\n'))
+        self.assertNotEqual(probe.release_state(environment), records[0])
