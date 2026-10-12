@@ -53,8 +53,9 @@ func RootBinding(record *api.PtahResultRecord) (resultstore.Binding, error) {
 }
 
 // AuthorizeDelete is the admission verdict, regardless of the DELETE
-// caller. Neither a collector's cached decision nor an administrator's identity
-// replaces these current checks. Every API failure retains the evidence.
+// caller. record is the API server's stored admission object. Neither a
+// collector's cached decision nor an administrator's identity replaces these
+// current checks. Every API failure retains the evidence.
 func (p Policy) AuthorizeDelete(ctx context.Context, record *api.PtahResultRecord) error {
 	if p.Reader == nil || p.Window < resultretention.MinimumWindow || record == nil || record.UID == "" {
 		return ErrRetained
@@ -67,6 +68,11 @@ func (p Policy) AuthorizeDelete(ctx context.Context, record *api.PtahResultRecor
 	}
 	b, err := RootBinding(record)
 	var marker *api.PtahResultRecord
+	if record.Spec.Type == "retired" {
+		// Admission already supplied this exact immutable retirement. Other
+		// deletions still read it directly; no reading spans two verdicts.
+		marker = record
+	}
 	if record.Spec.Type == "chunk" || record.Spec.Type == "complete" {
 		if len(record.OwnerReferences) != 1 || record.OwnerReferences[0].Kind != "PtahResultRecord" {
 			return ErrRetained
@@ -101,11 +107,17 @@ func (p Policy) AuthorizeDelete(ctx context.Context, record *api.PtahResultRecor
 		}
 	}
 	r, err := resultretention.Decode(marker)
-	if err != nil || r.Binding != b || (record.Name == r.Source.Name && record.UID != r.Source.UID) || (record.Spec.Type == "retired" && record.UID != marker.UID) {
+	if err != nil || r.Binding != b || (record.Name == r.Source.Name && record.UID != r.Source.UID) {
 		return ErrRetained
 	}
-	source := &api.PtahResultRecord{}
-	sourceErr := p.Reader.Get(ctx, client.ObjectKey{Namespace: b.Namespace, Name: r.Source.Name}, source)
+	// The stored DELETE object is also the current source when their names
+	// match. Its UID, type, and full binding still have to match retirement.
+	source := record
+	var sourceErr error
+	if record.Name != r.Source.Name {
+		source = &api.PtahResultRecord{}
+		sourceErr = p.Reader.Get(ctx, client.ObjectKey{Namespace: b.Namespace, Name: r.Source.Name}, source)
+	}
 	if sourceErr == nil {
 		sourceBinding, err := RootBinding(source)
 		if err != nil || source.UID != r.Source.UID || source.Spec.Type != r.Source.Type || sourceBinding != b {

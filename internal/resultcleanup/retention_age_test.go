@@ -34,9 +34,9 @@ func TestYoungRecordDeletionRefusesWithoutAPIReads(t *testing.T) {
 			// Reaching the earliest deadline is not permission to delete. The
 			// existing live authority checks must resume and fail closed.
 			f.c.now = deadline
-			reader.fail = client.ObjectKeyFromObject(f.marker)
+			reader.fail = client.ObjectKeyFromObject(f.f.Subject)
 			if err := f.p.AuthorizeDelete(t.Context(), &record); !errors.Is(err, errWrite) {
-				t.Errorf("expired %s skipped the unavailable current retirement: %v", record.Spec.Type, err)
+				t.Errorf("expired %s skipped the unavailable current recovery pins: %v", record.Spec.Type, err)
 			}
 			reader.fail = client.ObjectKey{}
 		})

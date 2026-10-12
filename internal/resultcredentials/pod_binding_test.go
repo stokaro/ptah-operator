@@ -205,6 +205,7 @@ func TestPodBindingChecksAuthorityAtTheWriteAndReturnBoundaries(t *testing.T) {
 							return base.List(ctx, list, opts...)
 						},
 					})
+					pins.Writer = admittedPodBindingClient{Client: c, reader: pins.Reader}
 					credential, err := pins.Ensure(t.Context(), f.Identity)
 					if revoked {
 						if err == nil || credential.UID != "" || c.creates.Load() != createsBefore {
@@ -215,11 +216,12 @@ func TestPodBindingChecksAuthorityAtTheWriteAndReturnBoundaries(t *testing.T) {
 					if err != nil || credential.UID == "" {
 						t.Fatal("valid operation was refused", err)
 					}
-					// One seven-read authority check before return; creating a pin
-					// also needs a check before CREATE and its persisted readback.
-					budget := 8
+					// Four reads authorize return. A new pin also needs the
+					// admission check and persisted readback; the caller must not
+					// repeat the admission check before submitting CREATE.
+					budget := 5
 					if !existing {
-						budget = 16
+						budget = 10
 					}
 					if reads > budget {
 						t.Fatalf("enrollment used %d reads, budget %d", reads, budget)

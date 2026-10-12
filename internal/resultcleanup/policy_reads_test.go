@@ -32,10 +32,10 @@ func TestCollectorReusesItsRetirementRead(t *testing.T) {
 	if len(f.c.deletes) != 5 || len(remaining(t, f.c)) != 0 {
 		t.Fatalf("incomplete collection: deleted %v", f.c.deletes)
 	}
-	// Each DELETE independently reads the marker and current recovery pins.
-	// The collector needs one pin preflight, one marker read to process the
-	// listed record. That record already carries the final DELETE's UID/RV.
-	if got, want := reader.gets[client.ObjectKeyFromObject(f.marker)], len(f.c.deletes)+1; got != want {
+	// The collector reads the marker once, and every other object's DELETE
+	// reads it again. The marker's own admission uses the API-supplied object.
+	// Every DELETE still independently reads current recovery pins.
+	if got, want := reader.gets[client.ObjectKeyFromObject(f.marker)], len(f.c.deletes); got != want {
 		t.Errorf("retirement reads: %d, want %d", got, want)
 	}
 	if got, want := reader.gets[client.ObjectKeyFromObject(f.f.Subject)], len(f.c.deletes)+1; got != want {
@@ -223,5 +223,43 @@ func TestDeletionStillReadsOwnerWhenRetirementHasAnotherSource(t *testing.T) {
 	}
 	if reader.gets[owner] != 1 || reader.gets[client.ObjectKey{Namespace: target.Namespace, Name: credentialName}] != 1 {
 		t.Fatalf("expected current source and owner reads: %v", reader.gets)
+	}
+}
+
+func TestDeleteAdmissionDoesNotReloadItsOwnImmutableObject(t *testing.T) {
+	for _, role := range []string{"intent", "retired"} {
+		t.Run(role, func(t *testing.T) {
+			f := fixture(t)
+			f.retire(t)
+			var target api.PtahResultRecord
+			for _, record := range remaining(t, f.c) {
+				if record.Spec.Type == role {
+					target = record
+					continue
+				}
+				if role == "intent" && record.Spec.Type == "retired" {
+					continue
+				}
+				if err := f.c.Client.Delete(t.Context(), &record); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if target.UID == "" {
+				t.Fatal("missing API admission object")
+			}
+			reader := &policyReads{Reader: f.c, gets: map[client.ObjectKey]int{}}
+			f.p.Reader = reader
+			if err := f.p.AuthorizeDelete(t.Context(), &target); err != nil {
+				t.Fatal(err)
+			}
+			if got := reader.gets[client.ObjectKeyFromObject(&target)]; got != 0 {
+				t.Fatalf("admission reloaded its API-supplied immutable %s %d times", role, got)
+			}
+			// Authority from other objects remains live and fail-closed.
+			reader.fail = client.ObjectKeyFromObject(f.f.Subject)
+			if err := f.p.AuthorizeDelete(t.Context(), &target); !errors.Is(err, errWrite) {
+				t.Fatalf("%s skipped its current recovery-pin read: %v", role, err)
+			}
+		})
 	}
 }
