@@ -2,6 +2,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 from restore_matrix import Matrix, cell_name, cells, command, digest_tree, shares_lab
 
@@ -51,6 +52,39 @@ class MatrixTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 Matrix(args)
             self.assertFalse((Path(directory) / 'run').exists())
+
+    def test_shared_lab_teardown_controls_the_matrix_verdict(self):
+        for removed in (True, False):
+            with self.subTest(removed=removed):
+                matrix = object.__new__(Matrix)
+                matrix.cells = [{}]
+                matrix.shared = Path('/owned/environment')
+                matrix.summary = {'cells': []}
+                matrix.run_cell = Mock(return_value=True)
+                matrix.teardown = Mock(return_value=removed)
+                matrix.save = Mock()
+                self.assertEqual(matrix.run(), removed)
+                self.assertEqual(matrix.summary['status'], 'PASS' if removed else 'FAIL')
+                self.assertEqual(matrix.summary['sharedTeardownSucceeded'], removed)
+
+    def test_owned_lab_teardown_failure_fails_a_successful_restore(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cell = next(c for c in cells() if c['loss'] == 'operator' and c['timing'] == 'idle')
+            args = SimpleNamespace(out=str(Path(directory) / 'run'), context='diabolocom',
+                                   kubernetes='1.37.0', release_assets=directory,
+                                   prepared_manifest_sha256=None, cell=[cell_name(cell)])
+            matrix = Matrix(args)
+            environment = Path(directory) / 'environment'
+            matrix.bootstrap = Mock(return_value=environment)
+            matrix.teardown = Mock(return_value=False)
+            with patch('restore_matrix.subprocess.run', return_value=SimpleNamespace(
+                    returncode=0, stdout='{"status":"PASS"}\n')):
+                self.assertFalse(matrix.run_cell(cell))
+            record = matrix.summary['cells'][0]
+            self.assertEqual(record['verdict']['status'], 'PASS')
+            self.assertEqual(record['status'], 'FAIL')
+            self.assertFalse(record['teardownSucceeded'])
+            matrix.teardown.assert_called_once_with(environment)
 
     def test_retained_files_are_hashed_by_path(self):
         with tempfile.TemporaryDirectory() as directory:

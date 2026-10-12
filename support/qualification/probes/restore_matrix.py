@@ -146,6 +146,9 @@ class Matrix:
         finally:
             if own:
                 record['teardownSucceeded'] = self.teardown(environment)
+                if not record['teardownSucceeded']:
+                    record['status'] = 'FAIL'
+                    record['cleanupFailure'] = 'The owned lab could not be removed'
             record['finishedAt'] = now()
             self.summary['cells'].append(record)
             self.save()
@@ -159,9 +162,11 @@ class Matrix:
         finally:
             if self.shared is not None:
                 self.summary['sharedTeardownSucceeded'] = self.teardown(self.shared)
-            self.summary.update(finishedAt=now(), passed=passed, total=len(self.cells))
+            succeeded = passed == len(self.cells) and self.summary.get('sharedTeardownSucceeded', True)
+            self.summary.update(finishedAt=now(), passed=passed, total=len(self.cells),
+                                status='PASS' if succeeded else 'FAIL')
             self.save()
-        return passed == len(self.cells)
+        return self.summary['status'] == 'PASS'
 
 
 def main():
