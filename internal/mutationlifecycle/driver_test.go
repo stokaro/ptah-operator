@@ -8,7 +8,9 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
@@ -45,9 +47,11 @@ func TestTheDispatchOrderIsTheOneThePageStates(t *testing.T) {
 // familyTrace is a family whose every step proceeds and whose Job is created,
 // read back and recorded, and which writes down the order it was asked in.
 type familyTrace struct {
-	claim mutationlifecycle.Claim
-	calls []string
-	stop  string
+	claim       mutationlifecycle.Claim
+	calls       []string
+	stop        string
+	createErr   error
+	withdrawErr error
 }
 
 func (f *familyTrace) called(name string) mutationlifecycle.Outcome {
@@ -90,8 +94,15 @@ func (f *familyTrace) Mark(context.Context) error {
 	}
 	return nil
 }
+func (f *familyTrace) Withdraw(context.Context) error {
+	f.calls = append(f.calls, "withdraw")
+	return f.withdrawErr
+}
 func (f *familyTrace) Create(_ context.Context, job *batchv1.Job) error {
 	f.calls = append(f.calls, "create")
+	if f.createErr != nil {
+		return f.createErr
+	}
 	job.UID = "job-uid"
 	return nil
 }
@@ -267,5 +278,91 @@ func TestAStoppingManagerDoesNotStartADispatch(t *testing.T) {
 	}
 	if slices.Contains(family.calls, "mark") || slices.Contains(family.calls, "create") {
 		t.Fatalf("a stopping manager started a dispatch: %v", family.calls)
+	}
+}
+
+// The 0.2.2 restart burst replaced every manager while an approval landed:
+// the stopping leader marked the Apply and its create was refused, because
+// the manager's own Job-write webhook had no endpoint left. A refused create
+// stored nothing, so the claim takes its mark back instead of becoming a run
+// only a person can account for, and the next pass makes the create under the
+// approval it already spent.
+func TestARefusedCreateWithdrawsTheMark(t *testing.T) {
+	t.Parallel()
+
+	family := &familyTrace{claim: mutatingClaim(), createErr: webhookUnreachable()}
+	if _, err := (mutationlifecycle.Driver{}).Dispatch(context.Background(), family); err == nil {
+		t.Fatal("a refused create let the pass report success")
+	}
+	if want := []string{"authorize", "lease", "stage", "build", "consume", "mark", "create", "withdraw"}; !slices.Equal(family.calls, want) {
+		t.Fatalf("the family was asked %v, want %v", family.calls, want)
+	}
+}
+
+// Everything else a create can answer may follow the write, and the claim is
+// retired as before: withdrawing would let the next pass create beside a Job
+// that may be running.
+func TestAnUncertainCreateIsStillUnaccounted(t *testing.T) {
+	t.Parallel()
+
+	for _, createErr := range []error{
+		apierrors.NewServerTimeout(schema.GroupResource{Group: "batch", Resource: "jobs"}, "create", 1),
+		apierrors.NewAlreadyExists(schema.GroupResource{Group: "batch", Resource: "jobs"}, "job"),
+		context.DeadlineExceeded,
+	} {
+		family := &familyTrace{claim: mutatingClaim(), createErr: createErr}
+		if _, err := (mutationlifecycle.Driver{}).Dispatch(context.Background(), family); err != nil {
+			t.Fatalf("Dispatch() with create error %v = %v, want the claim retired", createErr, err)
+		}
+		if slices.Contains(family.calls, "withdraw") || !slices.Contains(family.calls, "unaccounted") {
+			t.Fatalf("a create that answered %v led to %v", createErr, family.calls)
+		}
+	}
+}
+
+// A withdrawal that does not land leaves the mark, and nothing else in this
+// pass decides the claim: the next pass finds a marked claim with no Job and
+// retires it, which is what a refused create did before withdrawal existed.
+func TestAWithdrawalThatFailsLeavesTheClaimToTheNextPass(t *testing.T) {
+	t.Parallel()
+
+	family := &familyTrace{claim: mutatingClaim(), createErr: webhookUnreachable(), withdrawErr: errors.New("status write failed")}
+	if _, err := (mutationlifecycle.Driver{}).Dispatch(context.Background(), family); err == nil {
+		t.Fatal("a failed withdrawal let the pass report success")
+	}
+	if slices.Contains(family.calls, "unaccounted") || slices.Contains(family.calls, "retry") {
+		t.Fatalf("a pass whose withdrawal failed went on to %v", family.calls)
+	}
+}
+
+// refusedShutdownTrace is the restart burst itself: the manager starts
+// stopping the moment the claim is marked, and the create is refused.
+type refusedShutdownTrace struct {
+	familyTrace
+	cancel        context.CancelFunc
+	withdrawAlive bool
+}
+
+func (f *refusedShutdownTrace) Mark(ctx context.Context) error {
+	err := f.familyTrace.Mark(ctx)
+	f.cancel()
+	return err
+}
+
+func (f *refusedShutdownTrace) Withdraw(ctx context.Context) error {
+	f.withdrawAlive = ctx.Err() == nil
+	return f.familyTrace.Withdraw(ctx)
+}
+
+func TestAStoppingManagerStillWithdrawsARefusedDispatch(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	family := &refusedShutdownTrace{familyTrace: familyTrace{claim: mutatingClaim(), createErr: webhookUnreachable()}, cancel: cancel}
+	if _, err := (mutationlifecycle.Driver{}).Dispatch(ctx, family); err == nil {
+		t.Fatal("a refused create let the pass report success")
+	}
+	if !family.withdrawAlive || slices.Contains(family.calls, "unaccounted") {
+		t.Fatalf("a stopping manager could not take back its refused dispatch: %v", family.calls)
 	}
 }

@@ -248,6 +248,14 @@ func (d *schemaDispatch) Mark(ctx context.Context) error {
 	return d.r.patchStatus(ctx, before, d.schema)
 }
 
+// Withdraw clears only the marker. A Plan's key digest stays; the next Mark
+// writes this process's digest again before the next create.
+func (d *schemaDispatch) Withdraw(ctx context.Context) error {
+	before := d.schema.DeepCopy()
+	d.operation().DispatchStarted = false
+	return d.r.patchStatus(ctx, before, d.schema)
+}
+
 func (d *schemaDispatch) Create(ctx context.Context, job *batchv1.Job) error {
 	return d.r.Client.Create(ctx, job)
 }

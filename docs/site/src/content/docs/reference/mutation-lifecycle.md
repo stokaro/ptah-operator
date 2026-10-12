@@ -228,9 +228,21 @@ cannot authorize a second dispatch.
 
 ## Create, confirm, record
 
-One create per claim. Any error from it, `AlreadyExists` included, is an
+One create per claim. An error from it, `AlreadyExists` included, is an
 uncertain outcome rather than a retry: a retry would rename the claim and
 dispatch beside a Job that may already be running SQL.
+
+The one exception is a create the API server refused before storing it:
+authentication, authorization, validation or admission turned it away, or
+priority and fairness shed it. A webhook that fails closed and cannot be
+called is such a refusal. Nothing stands under the reserved name, so the claim
+withdraws its marker and is back where a process that stopped between spending
+its approval and marking leaves it; the next pass makes the create under the
+approval already spent. A timeout or any other server error may follow the
+write and stays uncertain. `mutationlifecycle.ClassifyCreate` decides which
+answer a failed create gave. Replacing every manager at once is when this
+happens: the replaced managers' webhook endpoints go first, and a leader not
+yet told to stop can still be dispatching.
 
 The created Job is read back and its whole intent compared against what the
 builder produced -- owner reference, labels, annotations and a semantic

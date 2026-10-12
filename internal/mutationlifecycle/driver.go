@@ -9,7 +9,6 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
@@ -196,6 +195,9 @@ type Family interface {
 	// Mark persists the dispatch marker, with whatever the family records at
 	// the same boundary.
 	Mark(ctx context.Context) error
+	// Withdraw clears the dispatch marker after the API server refused the
+	// claim's one create before storing it.
+	Withdraw(ctx context.Context) error
 	// Create creates the Job.
 	Create(ctx context.Context, job *batchv1.Job) error
 	// Confirm reads the created Job back from the API server.
@@ -386,13 +388,23 @@ func (p *dispatchPass) create(ctx context.Context, claim Claim) Outcome {
 		return outcome
 	}
 	if err := p.family.Create(ctx, job); err != nil {
-		switch DispatchFailure(StageCreate, claim.Mutating, apierrors.IsAlreadyExists(err)) {
+		switch DispatchFailure(StageCreate, claim.Mutating, ClassifyCreate(err)) {
 		case DispositionUnaccounted:
 			// Including AlreadyExists. A Job standing under the name the claim
 			// reserved may be one this claim created on a pass whose answer
 			// was lost, and retrying would dispatch beside it.
 			return Stop(p.family.Unaccounted(ctx, nil,
 				fmt.Errorf("the %s Job create result is uncertain: %w", claim.Type, err)))
+		case DispositionWithdraw:
+			// The API server refused the create before storing it, so no Job
+			// stands under the name. A withdrawal that does not land leaves
+			// the mark, and the next pass retires the claim as it always has.
+			if withdrawErr := p.family.Withdraw(ctx); withdrawErr != nil {
+				return Stop(reconcile.Result{}, fmt.Errorf(
+					"withdraw the %s dispatch after its create was refused: %w", claim.Type, errors.Join(withdrawErr, err)))
+			}
+			return Stop(reconcile.Result{}, fmt.Errorf(
+				"the API server refused the %s Job create before storing it; dispatch withdrawn: %w", claim.Type, err))
 		case DispositionRetry:
 			return Stop(p.family.Retry(ctx, errors.New("the claimed Job name was occupied during dispatch")))
 		}
@@ -408,7 +420,7 @@ func (p *dispatchPass) confirm(ctx context.Context, claim Claim) Outcome {
 	}
 	read, err := p.family.Confirm(ctx, p.created)
 	if err != nil {
-		if DispatchFailure(StageConfirm, claim.Mutating, false) == DispositionUnaccounted {
+		if DispatchFailure(StageConfirm, claim.Mutating, AnswerUnknown) == DispositionUnaccounted {
 			return Stop(p.family.Unaccounted(ctx, nil,
 				fmt.Errorf("cannot confirm the dispatched %s Job: %w", claim.Type, err)))
 		}
@@ -418,7 +430,7 @@ func (p *dispatchPass) confirm(ctx context.Context, claim Claim) Outcome {
 	}
 	if err := p.family.Intent(read, p.expected); err != nil {
 		failure := fmt.Errorf("the created %s Job failed immutable intent validation: %w", claim.Type, err)
-		if DispatchFailure(StageIntent, claim.Mutating, false) == DispositionUnaccounted {
+		if DispatchFailure(StageIntent, claim.Mutating, AnswerUnknown) == DispositionUnaccounted {
 			// The Job exists by now and its executor may already be opening the
 			// database, so the claim is not free to walk away from it.
 			return Stop(p.family.Unaccounted(ctx, read, failure))
