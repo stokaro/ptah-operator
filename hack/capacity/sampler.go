@@ -100,37 +100,55 @@ type sampler struct {
 	jobs    map[string]*jobRecord
 }
 
+// start completes the baseline before the caller can create workload objects.
+// Starting a sampler goroutine alone lets cold start race its first API scrape.
+func (s *sampler) start(ctx context.Context, finish <-chan struct{}) (<-chan error, error) {
+	err := s.collect(ctx)
+	if err == nil {
+		rows, _ := s.snapshot()
+		if len(rows) == 0 {
+			err = fmt.Errorf("initial capacity collection produced no sample")
+		} else if _, _, valid := requestReadBounds(rows[len(rows)-1]); !valid {
+			err = fmt.Errorf("initial capacity collection has no complete API request counters")
+		}
+	}
+	done := make(chan error, 1)
+	go func() { done <- s.run(ctx, finish) }()
+	return done, err
+}
+
+func (s *sampler) collect(ctx context.Context) error {
+	budget := s.collectionTimeout
+	if budget <= 0 {
+		budget = 30 * time.Second
+	}
+	reading, cancel := context.WithTimeout(ctx, budget)
+	defer cancel()
+	return s.take(reading)
+}
+
 // run stops scheduling periodic reads when finish closes, lets the current
 // bounded read finish, and collects one final inventory. Scenario completion
 // must not cancel the evidence of operations that completed just before it.
 func (s *sampler) run(ctx context.Context, finish <-chan struct{}) error {
 	ticker := time.NewTicker(s.every)
 	defer ticker.Stop()
-	budget := s.collectionTimeout
-	if budget <= 0 {
-		budget = 30 * time.Second
-	}
-	collect := func() error {
-		reading, cancel := context.WithTimeout(ctx, budget)
-		defer cancel()
-		return s.take(reading)
-	}
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-finish:
-			return collect()
+			return s.collect(ctx)
 		default:
 		}
 		// Periodic failures remain in the samples. A failed final inventory
 		// also fails the run, since no subsequent collection can fill it in.
-		_ = collect()
+		_ = s.collect(ctx)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-finish:
-			return collect()
+			return s.collect(ctx)
 		case <-ticker.C:
 		}
 	}
