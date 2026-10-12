@@ -200,7 +200,10 @@ func (c *Collector) process(ctx context.Context, meta metav1.PartialObjectMetada
 		marker, err = resultretention.Record(b, resultretention.Source{Name: record.Name, UID: record.UID, Type: record.Spec.Type}, c.policy.Window)
 		if err == nil {
 			err = c.writer.Create(ctx, marker)
-			if err == nil || apierrors.IsAlreadyExists(err) {
+			// A successful CREATE returns the stored object, including its
+			// server UID and retention timestamp. A concurrent writer instead
+			// requires a fresh read of the winning immutable record.
+			if apierrors.IsAlreadyExists(err) {
 				err = c.policy.Reader.Get(ctx, client.ObjectKey{Namespace: b.Namespace, Name: name}, marker)
 			}
 		}

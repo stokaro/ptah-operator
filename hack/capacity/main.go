@@ -266,8 +266,8 @@ func run() error {
 	sampling, stopSampling := context.WithCancel(ctx)
 	defer stopSampling()
 	finishSampling := make(chan struct{})
-	done := make(chan error, 1)
-	go func() { done <- watch.run(sampling, finishSampling) }()
+	done, initialErr := watch.start(sampling, finishSampling)
+	setupErr = errors.Join(setupErr, initialErr)
 
 	steps := &scenarios{faultBaseline: baseline, faultProbe: faultProbe, sampleSnapshot: func() []sample { samples, _ := watch.snapshot(); return samples }, checkpoint: checkpoint, evidenceDir: *outDir, restartJobs: func() []jobRecord {
 		_, jobs := watch.snapshot()

@@ -4016,6 +4016,7 @@ func (r *SchemaReconciler) SetupWithManager(manager ctrl.Manager) error {
 		},
 	})
 	return ctrl.NewControllerManagedBy(manager).
+		WithOptions(queueOptions()).
 		For(&operatorv1alpha1.PtahSchema{}, builder.WithPredicates(primaryEvents)).
 		Owns(&batchv1.Job{}, builder.WithPredicates(operationJobEvents())).
 		Watches(&operatorv1alpha1.PtahSchemaApproval{}, mapApproval).

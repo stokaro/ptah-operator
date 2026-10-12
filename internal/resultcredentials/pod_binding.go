@@ -79,8 +79,9 @@ func (p PodBindings) Ensure(ctx context.Context, identity resultdelivery.Identit
 		return Credential{}, ErrCredential
 	}
 	check := (resultauthority.Authorizer{Reader: p.Reader}).Check
-	// Reading the immutable pin grants no authority. Check before creating a
-	// missing pin and after verifying the persisted winner, just before return.
+	// The mandatory admission guard checks current authority before CREATE
+	// persists a pin. Do not duplicate that check in the caller. Reading the
+	// winner grants no authority: recheck it after persistence, just before return.
 	expected, err := podBindingRecord(identity)
 	if err != nil {
 		return Credential{}, err
@@ -89,14 +90,18 @@ func (p PodBindings) Ensure(ctx context.Context, identity resultdelivery.Identit
 	stored := &api.PtahResultRecord{}
 	err = p.Reader.Get(ctx, key, stored)
 	if apierrors.IsNotFound(err) {
-		if err := check(ctx, identity); err != nil {
+		err = p.Writer.Create(ctx, expected)
+		switch {
+		case err == nil:
+			// CREATE returns the persisted immutable pin with its server UID.
+			// Validate that response and recheck live authority below.
+			stored = expected
+		case apierrors.IsAlreadyExists(err):
+			// A concurrent enrollment won. Only its persisted binding counts.
+			err = p.Reader.Get(ctx, key, stored)
+		default:
 			return Credential{}, err
 		}
-		if err := p.Writer.Create(ctx, expected); err != nil && !apierrors.IsAlreadyExists(err) {
-			return Credential{}, err
-		}
-		// The persisted winner, not a CREATE response, fixes the first Pod.
-		err = p.Reader.Get(ctx, key, stored)
 	}
 	if err != nil {
 		return Credential{}, err

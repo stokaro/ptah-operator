@@ -77,7 +77,8 @@ var (
 	manager managerConfig
 	// admin reads and writes as the envtest administrator. The handlers read
 	// through it too: the manager hands them its uncached API reader.
-	admin client.Client
+	admin                    client.Client
+	controllerWriteValidator *controllerwrite.Validator
 	// approvalHandlers and migrationApprovalHandlers are the exact handler
 	// values serveManagerHandlers registered, kept so a test that needs the
 	// installation's four-eyes control on for its own requests can flip
@@ -410,10 +411,11 @@ func serveManagerHandlers() (func(), error) {
 		return nil, err
 	}
 	resultCleanup := cleanupPolicy()
+	controllerWriteValidator = &controllerwrite.Validator{
+		Reader: admin, Jobs: manager.builder(), ManagerUsername: manager.username, ResultCredentials: resultCredentialIssuer, ResultCleanup: &resultCleanup,
+	}
 	server.Register(validateControllerWritePath, &cradmission.Webhook{Handler: &controllerwrite.ValidationHandler{
-		Validator: &controllerwrite.Validator{
-			Reader: admin, Jobs: manager.builder(), ManagerUsername: manager.username, ResultCredentials: resultCredentialIssuer, ResultCleanup: &resultCleanup,
-		},
+		Validator: controllerWriteValidator,
 	}})
 
 	ctx, cancel := context.WithCancel(context.Background())
