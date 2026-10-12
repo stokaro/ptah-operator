@@ -24,7 +24,7 @@ permissions:
   attestations: read
 
 concurrency:
-  group: restore-${{ github.ref }}-${{ inputs.tag }}-${{ inputs.cells }}
+  group: restore-${{ github.ref }}-${{ inputs.tag }}
   cancel-in-progress: true
 
 env:
