@@ -1952,6 +1952,7 @@ func (r *MigrationReconciler) SetupWithManager(manager ctrl.Manager) error {
 		return fmt.Errorf("index migrations by verification policy: %w", err)
 	}
 	return ctrl.NewControllerManagedBy(manager).
+		WithOptions(queueOptions()).
 		For(&operatorv1alpha1.PtahMigration{}, builder.WithPredicates(predicate.Or(
 			predicate.GenerationChangedPredicate{},
 			predicate.AnnotationChangedPredicate{},
