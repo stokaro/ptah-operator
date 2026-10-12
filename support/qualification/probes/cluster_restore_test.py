@@ -216,6 +216,28 @@ class RestoreDockerContextTest(unittest.TestCase):
                     probe.provision_target()
             self.assertEqual(start.call_args.kwargs['env']['DOCKER_CONTEXT'], 'diabolocom')
 
+    def test_replacement_bootstrap_keeps_the_host_settings_and_nothing_of_the_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            probe = object.__new__(ClusterRestoreProbe)
+            probe.timing = 'idle'
+            probe.root = Path(directory); probe.report = {'steps': []}
+            probe.source_cluster = {'kubernetesVersion': '1.37.0'}
+            probe.prefix = 'ptah-020-restore-owned'
+            probe.target_environment = probe.root / 'target-environment'
+            process = Mock(); process.wait.return_value = 1
+            ambient = {'E2E_DIRECT_HOST_ACCESS': '1', 'E2E_PREBUILT_IMAGE_DIR': '/runner/task-images',
+                       'E2E_KUBECONFIG': '/source/kubeconfig', 'E2E_KIND_CLUSTER_NAME': 'ptah-e2e-source',
+                       'E2E_IMAGE_EXPORT_DIR': '/source/export', 'E2E_CONTROLLER_IMAGE': 'source-only-image'}
+            with patch.object(db, 'DOCKER_CONTEXT', 'ptah-ci-restore'), patch.dict(os.environ, ambient), patch(
+                    'cluster_restore.subprocess.Popen', return_value=process) as start:
+                with self.assertRaisesRegex(RuntimeError, 'provisioning failed'):
+                    probe.provision_target()
+            env = start.call_args.kwargs['env']
+            self.assertEqual((env['E2E_DIRECT_HOST_ACCESS'], env['E2E_PREBUILT_IMAGE_DIR']), ('1', '/runner/task-images'))
+            for key in ('E2E_KUBECONFIG', 'E2E_IMAGE_EXPORT_DIR', 'E2E_CONTROLLER_IMAGE'):
+                self.assertNotIn(key, env)
+            self.assertNotEqual(env.get('E2E_KIND_CLUSTER_NAME'), 'ptah-e2e-source')
+
     def test_in_flight_replacement_never_starts_without_the_execution_fence(self):
         with tempfile.TemporaryDirectory() as directory:
             probe = object.__new__(ClusterRestoreProbe)
