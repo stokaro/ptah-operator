@@ -17,6 +17,10 @@ from restore_during_apply import ApplyLoss, terminal_apply_pods
 from restore_runtime import ReleaseRuntime
 
 REPO = Path(__file__).resolve().parents[3]
+# The recovery resource's spec.execution.activeDeadlineSeconds, and the
+# Kubernetes default grace period of the Pods it runs.
+EXECUTION_DEADLINE_SECONDS = 300
+POD_GRACE_SECONDS = 30
 OPERATOR_CRDS = frozenset(name + '.operator.ptah.run' for name in (
     'ptahschemas', 'ptahschemaplans', 'ptahschemaapprovals', 'ptahschemaplanchunks',
     'ptahmigrations', 'ptahmigrationplans', 'ptahmigrationapprovals',
@@ -800,7 +804,7 @@ class OperatorProbe(db.Probe):
             target_secret = self.secret('restore-target', {'url': url})
             ref = self.publish(1)
             source_field = 'desired' if self.family == 'schema' else 'artifact'
-            resource = self.create(self.obj(self.kind, self.name, {'target': {'engine': 'PostgreSQL' if self.engine == 'postgresql' else 'MySQL', 'urlFrom': {'name': 'restore-target', 'key': 'url'}, 'coordinationKey': self.prefix}, source_field: self.source_spec(ref), 'policy': {'apply': 'OnApproval', 'transactionMode': 'file' if self.engine == 'postgresql' else 'none'}, 'interval': '1h', 'execution': {'activeDeadlineSeconds': 300, 'connectTimeout': '10s', 'failureRetryInterval': '5s', 'imagePullSecrets': [{'name': 'restore-pull'}]}}, api=self.api))
+            resource = self.create(self.obj(self.kind, self.name, {'target': {'engine': 'PostgreSQL' if self.engine == 'postgresql' else 'MySQL', 'urlFrom': {'name': 'restore-target', 'key': 'url'}, 'coordinationKey': self.prefix}, source_field: self.source_spec(ref), 'policy': {'apply': 'OnApproval', 'transactionMode': 'file' if self.engine == 'postgresql' else 'none'}, 'interval': '1h', 'execution': {'activeDeadlineSeconds': EXECUTION_DEADLINE_SECONDS, 'connectTimeout': '10s', 'failureRetryInterval': '5s', 'imagePullSecrets': [{'name': 'restore-pull'}]}}, api=self.api))
             self.uid = resource['metadata']['uid']
             original_uid = self.uid
             self.resource_uids = {self.uid}
@@ -1073,9 +1077,21 @@ class OperatorProbe(db.Probe):
                 raise RuntimeError('owned database resource cleanup failed')
 
     def cleanup_namespace(self):
-        return self.kubectl('remove owned recovery namespace',
-                            ['delete', 'namespace', self.namespace, '--wait=true', '--timeout=90s'],
-                            required=False).returncode == 0
+        # The recovery resource keeps its finalizer while a Job holding the
+        # database lock can still run: the Observe that proves the fresh Apply
+        # starts just as the checks end. The namespace controller backs off
+        # exponentially, up to a minute, while finalized content remains, so a
+        # namespace deleted around the resource stays Terminating well after
+        # the resource let go. Delete the resource first, bounded by the
+        # execution deadline it may wait out and the Pod's grace period; the
+        # namespace then holds nothing that waits.
+        resource = self.kubectl('remove owned recovery resource', [
+            'delete', self.resource, '--all', '--wait=true',
+            '--timeout=' + str(EXECUTION_DEADLINE_SECONDS + POD_GRACE_SECONDS) + 's'], required=False).returncode == 0
+        namespace = self.kubectl('remove owned recovery namespace',
+                                 ['delete', 'namespace', self.namespace, '--wait=true', '--timeout=90s'],
+                                 required=False).returncode == 0
+        return resource and namespace
 
 
 if __name__ == '__main__':
