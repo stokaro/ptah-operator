@@ -189,6 +189,11 @@ class ClusterRestoreProbe(OperatorProbe):
         release = environment['E2E_HELM_RELEASE']
         status = json.loads(self.command('record the installed Helm release state', helm + ['status', release, '-o', 'json']).stdout)
         self.check('the archived Helm release is deployed', status.get('info', {}).get('status') == 'deployed')
+        # Helm 4 adds the release's live objects to status: Pods, the leader
+        # Lease, Deployment status. They move on every read, so a release that
+        # did not change would read as changed between two checkpoints. The
+        # archive keeps what Helm stored about the release.
+        status.get('info', {}).pop('resources', None)
         values = json.loads(self.command('record all effective release values', helm + ['get', 'values', release, '--all', '-o', 'json']).stdout)
         manifest = self.command('archive the stored release manifests and hooks', helm + ['get', 'all', release]).stdout.decode()
         self.check('the release archive includes effective values and stored manifests', bool(values) and bool(manifest.strip()))
