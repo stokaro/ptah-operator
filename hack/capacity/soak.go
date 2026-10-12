@@ -277,27 +277,10 @@ func (s *scenarios) validateSoakCycles(evidence cycleEvidence) error {
 	if err := s.validateChurnEvidence(evidence); err != nil {
 		problems = append(problems, err.Error())
 	}
-	totals := map[string]int{}
+	problems = append(problems, s.cycleTargetProblems(*w, counts, evidence)...)
 	byUID := map[string]int{}
 	for _, c := range counts {
-		totals[c.Family+"/"+c.Namespace+"/"+c.Name] += c.Completed
 		byUID[c.UID] = c.Completed
-	}
-	for _, family := range []string{"schema", "migration"} {
-		for i := range 10 {
-			name := s.schemaName(i)
-			if family == "migration" {
-				name = s.migrationName(i)
-			}
-			key := family + "/" + s.in.namespaceFor(i) + "/" + name
-			if totals[key] < s.load.Soak.MinimumCycles {
-				problems = append(problems, fmt.Sprintf("%s completed %d read-only cycles, need %d", key, totals[key], s.load.Soak.MinimumCycles))
-			}
-			delete(totals, key)
-		}
-	}
-	if len(totals) > 0 {
-		problems = append(problems, "soak counted an undeclared workload slot")
 	}
 	for _, life := range evidence.Lifetimes {
 		begin, end := life.CreatedAt, w.End
@@ -316,4 +299,91 @@ func (s *scenarios) validateSoakCycles(evidence cycleEvidence) error {
 		failures = append(failures, errors.New(p))
 	}
 	return errors.Join(failures...)
+}
+
+// cycleTargetProblems holds each declared slot to the soak's cycle target, as
+// profile revision 48 states it. A slot the rounds never change must complete
+// MinimumCycles read-only cycles. A slot the rounds move to a new artifact
+// spends two to three intervals of every round on its plan, approval, Apply
+// and the Observe that proves it, so nine rounds leave it short of that count
+// by construction. It must instead come back to read-only refresh after every
+// change: one read-only cycle that starts after the round converged and ends
+// before the next round, or the soak, does.
+func (s *scenarios) cycleTargetProblems(w window, counts []resourceCycleCount, evidence cycleEvidence) []string {
+	totals := map[string]int{}
+	for _, c := range counts {
+		totals[c.Family+"/"+c.Namespace+"/"+c.Name] += c.Completed
+	}
+	updates, problems := soakUpdates(s.windows, s.load.Soak.Rounds)
+	for _, family := range []string{"schema", "migration"} {
+		for i := range 10 {
+			name := s.schemaName(i)
+			if family == "migration" {
+				name = s.migrationName(i)
+			}
+			key := family + "/" + s.in.namespaceFor(i) + "/" + name
+			switch {
+			case i < s.load.ChangeBatch:
+				if len(updates) == s.load.Soak.Rounds {
+					problems = append(problems, movedSlotProblems(key, w, updates, evidence.Completed)...)
+				}
+			case totals[key] < s.load.Soak.MinimumCycles:
+				problems = append(problems, fmt.Sprintf("%s completed %d read-only cycles, need %d", key, totals[key], s.load.Soak.MinimumCycles))
+			}
+			delete(totals, key)
+		}
+	}
+	if len(totals) > 0 {
+		problems = append(problems, "soak counted an undeclared workload slot")
+	}
+	return problems
+}
+
+// soakUpdates returns the soak's update rounds in order. Each must have run
+// once and converged before the next began; a moved slot is measured in the
+// gaps between them.
+func soakUpdates(windows []window, rounds int) ([]window, []string) {
+	var out []window
+	var problems []string
+	for round := 1; round <= rounds; round++ {
+		name := fmt.Sprintf("soak update %02d", round)
+		var found []window
+		for _, w := range windows {
+			if w.Name == name {
+				found = append(found, w)
+			}
+		}
+		if len(found) != 1 || found[0].Outcome["converged"] == "" || found[0].Outcome["error"] != "" || found[0].End.Before(found[0].Start) {
+			problems = append(problems, fmt.Sprintf("%s did not run once and converge", name))
+			continue
+		}
+		if len(out) > 0 && found[0].Start.Before(out[len(out)-1].End) {
+			problems = append(problems, fmt.Sprintf("%s started before the previous round converged", name))
+		}
+		out = append(out, found[0])
+	}
+	return out, problems
+}
+
+// movedSlotProblems reports each gap after an update round in which the slot
+// completed no read-only cycle.
+func movedSlotProblems(key string, soak window, updates []window, completed []completedCycle) []string {
+	var problems []string
+	for k, round := range updates {
+		from, to, until := round.End, soak.End, "the end of the soak"
+		if k+1 < len(updates) {
+			to, until = updates[k+1].Start, fmt.Sprintf("update round %d", k+2)
+		}
+		found := false
+		for _, c := range completed {
+			if c.Family+"/"+c.Namespace+"/"+c.Name == key && c.within(soak) && !c.StartedAt.Before(from) && !c.CompletedAt.After(to) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			problems = append(problems, fmt.Sprintf("%s completed no read-only cycle between update round %d converging and %s", key, k+1, until))
+		}
+	}
+	return problems
 }
