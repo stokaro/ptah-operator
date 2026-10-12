@@ -23,3 +23,10 @@ on operator commit `4560860c717b5a69ed0bafecb12378b6728b72f4` during the
 PostgreSQL schema namespace-restore pilot. It retains public CA certificates,
 not private keys. The cold-restore controls allow regenerated API identities,
 service addresses and CAs while requiring the admission rules to remain equal.
+
+`restore/namespace-held-by-result-retention.json` is the recovery namespace of
+the 0.2.2 PostgreSQL schema database-loss cell, read on Kubernetes 1.37.0
+linux/amd64 on October 12, 2026, 95 seconds after its deletion was requested,
+from release v0.2.2 (`81b154ef69ae709a4a1aa39bab9db93fedb9b10d`). Its durable
+result records were the only content left, refused by the retention admission.
+Managed fields were omitted.

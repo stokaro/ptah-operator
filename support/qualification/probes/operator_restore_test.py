@@ -4,9 +4,10 @@ import json
 from pathlib import Path
 import subprocess
 import unittest
+from unittest.mock import patch
 import tempfile
 
-from operator_restore import EXECUTION_DEADLINE_SECONDS, OperatorProbe, POD_GRACE_SECONDS
+from operator_restore import EXECUTION_DEADLINE_SECONDS, OperatorProbe, POD_GRACE_SECONDS, retention_holds
 
 
 class ResultBackupInventoryTest(unittest.TestCase):
@@ -232,27 +233,71 @@ if __name__ == '__main__':
     unittest.main()
 
 
+HELD = json.loads((Path(__file__).resolve().parent / 'testdata/restore/namespace-held-by-result-retention.json').read_text())
+
+
 class CleanupTest(unittest.TestCase):
-    def probe(self, failing=()):
+    def probe(self, failing=(), namespace=None, records=b'ptahresultrecord.operator.ptah.run/r-1\n'):
         probe = object.__new__(OperatorProbe)
-        probe.namespace, probe.resource, probe.calls = 'ptah-020-restore-test', 'ptahschemas', []
+        probe.namespace, probe.resource, probe.calls, probe.report = 'ptah-020-restore-test', 'ptahschemas', [], {}
         def kubectl(action, args, data=None, required=True):
             probe.calls.append((action, args))
-            return subprocess.CompletedProcess(args, 1 if action in failing else 0)
+            if action in failing:
+                return subprocess.CompletedProcess(args, 1, b'')
+            if args[:2] == ['get', 'namespace']:
+                return subprocess.CompletedProcess(args, 0, json.dumps(namespace).encode() if namespace else b'')
+            if args[:2] == ['get', 'ptahresultrecords']:
+                return subprocess.CompletedProcess(args, 0, records)
+            return subprocess.CompletedProcess(args, 0, b'')
         probe.kubectl = kubectl
         return probe
 
-    def test_the_resource_goes_before_its_namespace_within_its_own_deadline(self):
+    def test_the_resource_goes_first_and_a_namespace_that_is_gone_is_clean(self):
         probe = self.probe()
         self.assertTrue(probe.cleanup_namespace())
-        (first, resource), (second, namespace) = probe.calls
+        (_, resource), (_, namespace), (_, read) = probe.calls
         self.assertEqual(resource[:4], ['delete', 'ptahschemas', '--all', '--wait=true'])
         self.assertEqual(resource[4], '--timeout=%ds' % (EXECUTION_DEADLINE_SECONDS + POD_GRACE_SECONDS))
-        self.assertEqual(namespace[:3], ['delete', 'namespace', 'ptah-020-restore-test'])
+        self.assertEqual(namespace, ['delete', 'namespace', 'ptah-020-restore-test', '--wait=false'])
+        self.assertEqual(read[:3], ['get', 'namespace', 'ptah-020-restore-test'])
+        self.assertEqual(probe.report['namespaceCleanup'], 'removed')
 
-    def test_either_removal_failing_fails_the_cleanup_and_both_are_tried(self):
-        for failing in ('remove owned recovery resource', 'remove owned recovery namespace'):
-            with self.subTest(failing=failing):
-                probe = self.probe({failing})
-                self.assertFalse(probe.cleanup_namespace())
-                self.assertEqual(len(probe.calls), 2)
+    def test_a_namespace_held_only_by_result_retention_is_clean(self):
+        with patch('operator_restore.NAMESPACE_SETTLE_SECONDS', 0), patch('operator_restore.time.sleep'):
+            probe = self.probe(namespace=HELD)
+            self.assertTrue(probe.cleanup_namespace())
+        self.assertIn('1 result records under the retention window', probe.report['namespaceCleanup'])
+
+    def test_anything_else_holding_the_namespace_fails_the_cleanup(self):
+        other = copy.deepcopy(HELD)
+        for condition in other['status']['conditions']:
+            if condition['type'] == 'NamespaceContentRemaining':
+                condition.update(status='True', message='Some resources are remaining: pods has 1 resource instances')
+        with patch('operator_restore.NAMESPACE_SETTLE_SECONDS', 0), patch('operator_restore.time.sleep'):
+            for name, probe in {'other content': self.probe(namespace=other),
+                                'no records listed': self.probe(namespace=HELD, records=b''),
+                                'resource removal failed': self.probe(failing={'remove owned recovery resource'}),
+                                'namespace removal refused': self.probe(failing={'request removal of the owned recovery namespace'}),
+                                'namespace unreadable': self.probe(failing={'read the owned recovery namespace while it terminates'})}.items():
+                with self.subTest(name=name):
+                    self.assertFalse(probe.cleanup_namespace())
+
+    def test_retention_is_read_from_the_api_servers_own_verdict(self):
+        self.assertTrue(retention_holds(HELD))
+        def changed(edit):
+            namespace = copy.deepcopy(HELD)
+            edit(namespace)
+            return namespace
+        def condition(namespace, kind):
+            return next(c for c in namespace['status']['conditions'] if c['type'] == kind)
+        for name, namespace in {
+            'two types refused': changed(lambda n: condition(n, 'NamespaceDeletionContentFailure').update(
+                message=condition(n, 'NamespaceDeletionContentFailure')['message'].replace('1 remaining', '2 remaining'))),
+            'another denial': changed(lambda n: condition(n, 'NamespaceDeletionContentFailure').update(
+                message='Failed to delete all resource types, 1 remaining: admission webhook "x" denied the request: no')),
+            'content remains': changed(lambda n: condition(n, 'NamespaceContentRemaining').update(status='True')),
+            'no failure recorded': changed(lambda n: condition(n, 'NamespaceDeletionContentFailure').update(status='False')),
+            'not terminating': changed(lambda n: n['status'].update(phase='Active')),
+        }.items():
+            with self.subTest(name=name):
+                self.assertFalse(retention_holds(namespace))
