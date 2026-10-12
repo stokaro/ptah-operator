@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-10-12T02:49:20.821677+00:00",
+  "frozenAt": "2026-10-12T07:23:10.252118+00:00",
   "profileSourceCommit": "1259f4d59343fef049307085e3ea77d2971677cb",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
@@ -36,7 +36,7 @@
     },
     {
       "path": "support/qualification/kindnet/Dockerfile",
-      "sha256": "6f5eaf1ab567804da95d13d9e5299f729810081703fa5ee8b0ca96177ae67b91"
+      "sha256": "1ba3dbc97813245c36cc24de92993bc6227ca75d288c8e1990c0f2b7ee607379"
     },
     {
       "path": "support/qualification/kindnet/pending-pod.patch",
@@ -79,10 +79,10 @@
     "disposition": "v0.2.1 is the published predecessor of the v0.2.2 candidate. The upgrade from it is walked through both releases' guides by support/qualification/probes/fresh_install.py --upgrade-from on both platforms; the synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 46,
+  "revision": 47,
   "supersedes": {
-    "freezeCommit": "da879902d23aada8355d2ceb7435b3a00dbd35a3",
-    "sha256": "39ca18f354f9dbf0888164a0d83e6925ab9ac4213fb9f3ee7261742236503dcc"
+    "freezeCommit": "4d70f4fd48979447e7e89feb047806ebfd99f6aa",
+    "sha256": "c3ac91022803b07b4cd1b7b7850a1427d946b9bec9ee995e6c2aa21fdf302878"
   },
-  "revisionReason": "Declare the published v0.2.2 in support/ptah.json, as the release procedure asks once the tag exists, and record v0.2.1 as its published predecessor. The 0.2.0 profile qualifies the v0.2.2 candidate after the 0.2.1 restart burst found that a stopping manager could interrupt a dispatch it had started; the edge pin, the profile, its targets and every other input are unchanged, and the 0.2.2 qualification runs measure revision 45."
+  "revisionReason": "Record the kindnet correction built with the golang 1.27.2 builder image (#639); the corrected kindnet source, its pinned recipe and every other input are unchanged. Qualification runs measured revisions 45 and 46."
 }
