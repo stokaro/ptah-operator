@@ -263,3 +263,61 @@ func TestDeleteAdmissionDoesNotReloadItsOwnImmutableObject(t *testing.T) {
 		})
 	}
 }
+
+// A retirement can disappear only after both roots have disappeared. Its
+// source read must be the final absence check, not an earlier duplicate.
+func TestRetirementDeletionReadsItsAbsentSourceOnce(t *testing.T) {
+	for _, sourceType := range []string{"intent", "credential"} {
+		t.Run(sourceType, func(t *testing.T) {
+			f := fixture(t)
+			if sourceType == "credential" {
+				b := f.f.Identity.Binding
+				var err error
+				f.marker, err = resultretention.Record(b, resultretention.Source{
+					Name: jobconfig.CredentialName(b.UID, b.OperationID, b.JobName),
+					UID:  "original-credential", Type: "credential",
+				}, f.p.Window)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			f.retire(t)
+			for _, record := range remaining(t, f.c) {
+				if record.Spec.Type != "retired" {
+					if err := f.c.Client.Delete(t.Context(), &record); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			r, err := resultretention.Decode(f.marker)
+			if err != nil {
+				t.Fatal(err)
+			}
+			source := client.ObjectKey{Namespace: f.marker.Namespace, Name: r.Source.Name}
+			reader := &policyReads{Reader: f.c, gets: map[client.ObjectKey]int{}}
+			f.p.Reader = reader
+			if err := f.p.AuthorizeDelete(t.Context(), f.marker); err != nil {
+				t.Fatal(err)
+			}
+			if got := reader.gets[source]; got != 1 {
+				t.Errorf("retirement read its absent %s source %d times; want one final absence check", sourceType, got)
+			}
+			reader.fail = source
+			if err := f.p.AuthorizeDelete(t.Context(), f.marker); !errors.Is(err, errWrite) {
+				t.Fatalf("unavailable source authorized deletion: %v", err)
+			}
+			reader.fail = client.ObjectKey{}
+			// Even a foreign object restored under that name must keep the
+			// retirement. No absence verdict survives another admission call.
+			restored := &api.PtahResultRecord{ObjectMeta: metav1.ObjectMeta{
+				Namespace: source.Namespace, Name: source.Name, UID: "restored-source",
+			}}
+			if err := f.c.Client.Create(t.Context(), restored); err != nil {
+				t.Fatal(err)
+			}
+			if err := f.p.AuthorizeDelete(t.Context(), f.marker); err == nil {
+				t.Fatal("restored source authorized retirement deletion")
+			}
+		})
+	}
+}

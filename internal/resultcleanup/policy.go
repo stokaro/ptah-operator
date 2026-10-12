@@ -114,16 +114,20 @@ func (p Policy) AuthorizeDelete(ctx context.Context, record *api.PtahResultRecor
 	// match. Its UID, type, and full binding still have to match retirement.
 	source := record
 	var sourceErr error
-	if record.Name != r.Source.Name {
+	// A retirement can be deleted only after both possible source roots
+	// are absent. deletionOrder reads them at the end of this verdict; an
+	// earlier source read cannot authorize that deletion and only repeats it.
+	needsSource := record.Spec.Type != "retired"
+	if needsSource && record.Name != r.Source.Name {
 		source = &api.PtahResultRecord{}
 		sourceErr = p.Reader.Get(ctx, client.ObjectKey{Namespace: b.Namespace, Name: r.Source.Name}, source)
 	}
-	if sourceErr == nil {
+	if needsSource && sourceErr == nil {
 		sourceBinding, err := RootBinding(source)
 		if err != nil || source.UID != r.Source.UID || source.Spec.Type != r.Source.Type || sourceBinding != b {
 			return ErrRetained
 		}
-	} else if !apierrors.IsNotFound(sourceErr) {
+	} else if sourceErr != nil && !apierrors.IsNotFound(sourceErr) {
 		return sourceErr
 	}
 	if record.Spec.Type == "chunk" || record.Spec.Type == "complete" {
