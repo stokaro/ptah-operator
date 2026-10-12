@@ -2,10 +2,11 @@ import copy
 import base64
 import json
 from pathlib import Path
+import subprocess
 import unittest
 import tempfile
 
-from operator_restore import OperatorProbe
+from operator_restore import EXECUTION_DEADLINE_SECONDS, OperatorProbe, POD_GRACE_SECONDS
 
 
 class ResultBackupInventoryTest(unittest.TestCase):
@@ -229,3 +230,29 @@ class RebuildTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class CleanupTest(unittest.TestCase):
+    def probe(self, failing=()):
+        probe = object.__new__(OperatorProbe)
+        probe.namespace, probe.resource, probe.calls = 'ptah-020-restore-test', 'ptahschemas', []
+        def kubectl(action, args, data=None, required=True):
+            probe.calls.append((action, args))
+            return subprocess.CompletedProcess(args, 1 if action in failing else 0)
+        probe.kubectl = kubectl
+        return probe
+
+    def test_the_resource_goes_before_its_namespace_within_its_own_deadline(self):
+        probe = self.probe()
+        self.assertTrue(probe.cleanup_namespace())
+        (first, resource), (second, namespace) = probe.calls
+        self.assertEqual(resource[:4], ['delete', 'ptahschemas', '--all', '--wait=true'])
+        self.assertEqual(resource[4], '--timeout=%ds' % (EXECUTION_DEADLINE_SECONDS + POD_GRACE_SECONDS))
+        self.assertEqual(namespace[:3], ['delete', 'namespace', 'ptah-020-restore-test'])
+
+    def test_either_removal_failing_fails_the_cleanup_and_both_are_tried(self):
+        for failing in ('remove owned recovery resource', 'remove owned recovery namespace'):
+            with self.subTest(failing=failing):
+                probe = self.probe({failing})
+                self.assertFalse(probe.cleanup_namespace())
+                self.assertEqual(len(probe.calls), 2)

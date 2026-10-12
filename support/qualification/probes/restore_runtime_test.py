@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from operator_restore import OperatorProbe
-from restore_runtime import EXECUTOR_REPOSITORY, ReleaseRuntime, REPOSITORY
+from restore_runtime import EXECUTOR_REPOSITORY, ReleaseRuntime, REPOSITORY, ROOT, release_runtime_paths
 
 TAG = 'v0.2.0'
 
@@ -42,6 +42,8 @@ class ReleaseRuntimeTest(unittest.TestCase):
                          'approvals': {'requireDistinctApprover': True}, 'resources': {'limits': {'memory': '256Mi'}}}
         self.runtime = ReleaseRuntime(self.probe, self.root)
         self.installed = False
+        self.harness_descends = True
+        self.harness_runtime_changes = []
 
     def write_manifest(self):
         (self.root / 'release-manifest.txt').write_text(''.join(k + '=' + v + '\n' for k, v in self.fields.items()))
@@ -62,7 +64,12 @@ class ReleaseRuntimeTest(unittest.TestCase):
     def command(self, action, args):
         self.calls.append(args)
         result = b''
-        if args[:3] == ['gh', 'release', 'view']:
+        if args[:3] == ['git', '-C', str(ROOT)]:
+            if args[3] == 'merge-base' and not self.harness_descends:
+                raise RuntimeError(action + ' failed; private diagnostics retained')
+            if args[3] == 'diff':
+                result = ''.join(path + '\n' for path in self.harness_runtime_changes).encode()
+        elif args[:3] == ['gh', 'release', 'view']:
             result = b'1234'
         elif args[:2] == ['gh', 'api']:
             result = json.dumps(self.draft).encode() if '/releases/' in args[-1] else ('a' * 40).encode()
@@ -77,7 +84,7 @@ class ReleaseRuntimeTest(unittest.TestCase):
         return subprocess.CompletedProcess(args, 0, result)
 
     def test_manifest_refusals_happen_before_any_command(self):
-        for key, value in [('source-sha', 'e' * 40), ('source-ref', 'refs/heads/untrusted'),
+        for key, value in [('source-sha', 'e' * 39), ('source-sha', 'E' * 40), ('source-ref', 'refs/heads/untrusted'),
                            ('version', 'dev'), ('image', 'ghcr.io/stokaro/ptah-operator:latest'),
                            ('executor', 'example.com/executor@' + self.digest),
                            ('executor', 'ghcr.io/' + REPOSITORY + '-executor@' + self.digest),
@@ -127,6 +134,46 @@ class ReleaseRuntimeTest(unittest.TestCase):
                 self.assertEqual(command[command.index(flag) + 1], value)
         self.assertEqual(len([a for a in self.calls if a[:2] == ['cosign', 'verify']]), 1)
         self.assertTrue(self.runtime.authenticated)
+        # The harness is the release source here, so there is nothing to compare.
+        self.assertFalse(any(c[:1] == ['git'] for c in self.calls))
+
+    def test_a_later_harness_recovers_the_release_it_was_given(self):
+        self.probe.report['sourceCommit'] = 'f' * 40
+        self.runtime.authenticate()
+        ancestry, diff = [c for c in self.calls if c[:1] == ['git']]
+        self.assertEqual(ancestry[3:], ['merge-base', '--is-ancestor', 'a' * 40, 'f' * 40])
+        self.assertEqual(diff[3:diff.index('--') + 1], ['diff', '--name-only', 'a' * 40, 'f' * 40, '--'])
+        self.assertEqual(diff[diff.index('--') + 1:], release_runtime_paths())
+        # Every release identity is the manifest's source, never the harness.
+        verify = next(c for c in self.calls if c[:3] == ['go', 'run', './hack/releaseverify'])
+        self.assertEqual(verify[verify.index('-source-sha') + 1], 'a' * 40)
+        self.assertTrue(all(c[c.index('--source-digest') + 1] == 'a' * 40
+                            for c in self.calls if c[:3] == ['gh', 'attestation', 'verify']))
+        self.assertEqual(self.probe.report['releaseRuntime']['source'], 'a' * 40)
+        self.assertEqual(self.probe.report['releaseRuntime']['harness'], 'f' * 40)
+        self.assertTrue(self.runtime.authenticated)
+
+    def test_a_harness_off_the_release_line_or_changing_its_runtime_is_refused(self):
+        self.probe.report['sourceCommit'] = 'f' * 40
+        for descends, changes, message in [(False, [], 'descends from the release source failed'),
+                                           (True, ['internal/controller/schema_controller.go'], 'changes runtime sources')]:
+            with self.subTest(message=message):
+                self.harness_descends, self.harness_runtime_changes = descends, changes
+                self.calls.clear()
+                runtime = ReleaseRuntime(self.probe, self.root)
+                with self.assertRaisesRegex(RuntimeError, message):
+                    runtime.authenticate()
+                self.assertFalse(runtime.authenticated)
+                # Nothing about the release is read before the harness is accepted.
+                self.assertTrue(all(c[:1] == ['git'] for c in self.calls))
+
+    def test_the_runtime_paths_are_the_e2e_drivers(self):
+        paths = release_runtime_paths()
+        self.assertTrue({'api', 'cmd', 'internal', 'charts', 'go.mod', 'Dockerfile'} <= set(paths))
+        (self.root / 'hack').mkdir()
+        (self.root / 'hack/e2e-kind.sh').write_text("RELEASE_SOURCE_SHA=\n")
+        with self.assertRaisesRegex(ValueError, 'declares no release runtime paths'):
+            release_runtime_paths(self.root)
 
     def test_each_failed_trust_command_prevents_installation(self):
         self.runtime.authenticate(); count = len(self.calls)

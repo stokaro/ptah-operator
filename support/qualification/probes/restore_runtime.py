@@ -11,6 +11,20 @@ REPOSITORY = 'stokaro/ptah-operator'
 # authenticated manifest names it by digest; its signature is Ptah's, not this
 # repository's release workflow's.
 EXECUTOR_REPOSITORY = 'stokaro/ptah'
+ROOT = Path(__file__).resolve().parents[3]
+
+
+def release_runtime_paths(root=ROOT):
+    """The paths a release's runtime is built from, as the e2e driver declares them.
+
+    The manifest-backed acceptance run refuses a harness that changes any of
+    them relative to the release source. Recovery holds its harness to the same
+    list rather than to a second copy of it.
+    """
+    match = re.search(r"^RELEASE_RUNTIME_PATHS='([^']+)'$", (root / 'hack/e2e-kind.sh').read_text(), re.M)
+    if not match:
+        raise ValueError('hack/e2e-kind.sh declares no release runtime paths')
+    return match.group(1).split()
 
 
 class ReleaseRuntime:
@@ -43,10 +57,14 @@ class ReleaseRuntime:
         if self.source_ref not in ('refs/tags/' + self.tag, 'refs/heads/master'):
             raise ValueError('Recovery requires the exact release tag or protected master build ref')
         expected = {'source-repository': REPOSITORY,
-                    'source-sha': probe.report['sourceCommit'],
                     'chart-asset': self.chart.name, 'chart-asset-sha256': self.hashes[self.chart.name]}
         if any(self.fields.get(key) != value for key, value in expected.items()):
             raise ValueError('Recovery release assets do not match the selected source and chart')
+        # The release source is what the authenticated manifest names. The
+        # harness running the recovery is checked against it in authenticate().
+        self.source = self.fields.get('source-sha', '')
+        if not re.fullmatch(r'[0-9a-f]{40}', self.source):
+            raise ValueError('The release manifest names no source commit')
         for key, image in (('image', REPOSITORY), ('executor', EXECUTOR_REPOSITORY)):
             if not re.fullmatch('ghcr.io/' + re.escape(image) + r'@sha256:[0-9a-f]{64}', self.fields.get(key, '')):
                 raise ValueError('Recovery requires the release repository and exact image digests')
@@ -60,16 +78,37 @@ class ReleaseRuntime:
         if any(self.sha(self.directory / name) != value for name, value in self.hashes.items()):
             raise RuntimeError('The authenticated recovery release assets changed')
 
+    def check_harness(self):
+        """Hold the harness to the rule the manifest-backed acceptance run uses.
+
+        The harness may be a later commit than the release, so a defect in the
+        recovery procedure is fixed without cutting a release. It must descend
+        from the release source and change none of the paths the release's
+        runtime is built from; what runs in the cluster is the release's own
+        authenticated bytes either way.
+        """
+        p = self.probe
+        harness = p.report['sourceCommit']
+        if harness == self.source:
+            return
+        p.command('confirm the harness descends from the release source', [
+            'git', '-C', str(ROOT), 'merge-base', '--is-ancestor', self.source, harness])
+        changed = p.command('list release runtime sources the harness changed', [
+            'git', '-C', str(ROOT), 'diff', '--name-only', self.source, harness, '--'] + release_runtime_paths()).stdout.decode().split()
+        if changed:
+            raise RuntimeError('The harness changes runtime sources of the release: ' + ' '.join(changed))
+
     def authenticate(self):
         p = self.probe
         self.unchanged()
+        self.check_harness()
         # Use the existing release contract and consumer commands. No local
         # signature, relaxed source identity, or unsigned mode stands in for it.
+        source = self.source
         p.command('validate the complete recovery release asset inventory', [
             'go', 'run', './hack/releaseverify', '-tag', self.tag,
-            '-source-sha', p.report['sourceCommit'], '-source-ref', self.source_ref, '-manifest', str(self.manifest),
+            '-source-sha', source, '-source-ref', self.source_ref, '-manifest', str(self.manifest),
             '-checksums', str(self.directory / 'SHA256SUMS'), '-chart', str(self.chart)])
-        source = p.report['sourceCommit']
         if self.prepared_manifest_sha256 is None:
             tagged_source = p.command('resolve the immutable recovery release source', [
                 'gh', 'api', 'repos/' + REPOSITORY + '/commits/' + self.tag, '--jq', '.sha']).stdout.decode().strip()
@@ -97,7 +136,8 @@ class ReleaseRuntime:
         self.image_digests = {key: self.read_image_digests(self.fields[key]) for key in ('image', 'executor')}
         self.unchanged()
         self.authenticated = True
-        p.report['releaseRuntime'] = {'source': source, 'sourceRef': self.source_ref, 'tag': self.tag, 'assets': dict(self.hashes),
+        p.report['releaseRuntime'] = {'source': source, 'harness': p.report['sourceCommit'],
+            'sourceRef': self.source_ref, 'tag': self.tag, 'assets': dict(self.hashes),
             'operatorImage': self.fields['image'], 'runnerImage': self.fields['image'],
             'executorImage': self.fields['executor'], 'installations': [],
             'publicationState': 'signed-draft' if self.prepared_manifest_sha256 else 'immutable-release',
@@ -116,7 +156,7 @@ class ReleaseRuntime:
             'repos/' + REPOSITORY + '/releases/' + release_id]).stdout)
         if (release.get('draft') is not True or release.get('immutable') is not False
                 or release.get('tag_name') != self.tag or release.get('body') != self.manifest.read_text()
-                or release.get('target_commitish') != self.probe.report['sourceCommit']):
+                or release.get('target_commitish') != self.source):
             raise RuntimeError('The prepared release state or manifest differs from the selected recovery kit')
         names = {self.chart.name, self.manifest.name, 'SHA256SUMS', 'acceptance-evidence.tar.gz',
                  'kubectl-ptah-darwin-amd64', 'kubectl-ptah-darwin-arm64',
