@@ -137,6 +137,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:6666174cc1dcb15a5f1049bc3cb6a63e04374ced40aa74844fea2ad2eae16413",
       "reason": "Authenticate result PUTs before reading their bounded bodies, then check authentication and live operation authority immediately before durable publication and again before chunk completion. Removing the earlier duplicate authority read changes receiver-side API demand, not runner commands, HEAD preflight authorization, payload validation, wire documents, receipts, upload bounds, or retry behavior. Unauthorized publication remains refused at its write boundary; runner protocol 1 is unchanged."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:8331dfbbfea8c14444867091a8087e60092db5527c12a6d2a9c0ef250ace547b",
+      "reason": "Bound connection establishment by the existing per-attempt timeout so a stalled dial cannot occupy every result-delivery retry. Preflight and result upload keep their overall deadlines, attempt count, payload and receipt formats, authentication, live authority checks, and child-execution boundary. Transport retries do not rerun SQL. This restores the intended retry behavior without changing the protocol-1 contract."
     }
   ]
 }
