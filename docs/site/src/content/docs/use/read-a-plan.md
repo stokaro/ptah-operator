@@ -6,12 +6,13 @@ description: See the SQL the operator would run, or the SQL the last apply ran, 
 The SQL the operator applies is not in a status field or the manager's log. It
 is a document the operator publishes into immutable `PtahSchemaPlanChunk` objects, bound to a
 `PtahSchemaPlan` by index, key, size and digest, and read back only after every
-one of those bindings has held. On its way there it passes through the Plan
-Pod's log sealed to the manager's own key, so that log no longer carries the
-plan; [Pod logs carry a sealed plan](../security/#pod-logs-carry-plans) says
-what still does. An Apply projects the verified chunks into immutable
-ConfigMaps for its Pod to mount. Those projections are created only when the
-Apply is dispatched.
+one of those bindings has held. The Plan runner first delivers the result over
+TLS to the receiver, which persists it in confidential `PtahResultRecord`
+objects before acknowledging it. The controller validates that stored result
+before publishing the plan chunks. [Plan results stay out of logs](../security/#pod-logs-carry-plans)
+describes this default delivery path and the separate legacy log transport. An
+Apply projects the verified chunks into immutable ConfigMaps for its Pod to
+mount. Those projections are created only when the Apply is dispatched.
 
 `kubectl ptah` is how you read it. It reads Kubernetes objects and never
 creates or changes a resource, starts a Job, or connects to your database.

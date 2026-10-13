@@ -9,7 +9,7 @@ changing it, start from [Operations](../../use/operations/).
 
 One rule generates most of the rest: **the controller never touches a
 database, and the process that touches a database never holds a Kubernetes
-credential.** Almost every boundary below is that rule being enforced
+API credential.** Almost every boundary below is that rule being enforced
 somewhere.
 
 
@@ -25,7 +25,7 @@ to look when something is wrong. Each row is argued for further down the page.
 | How is it made available? | Replicas within that one release. One is the active reconciler through a leader-election Lease; every ready replica serves the webhooks. |
 | What contends with what? | Every resource addressing one database, whatever namespace it is in. They take turns through a Lease in one configurable coordination namespace. |
 | What touches a database? | Only a Job, one per operation, in the resource's own namespace. The manager never opens a database connection. |
-| What holds Kubernetes credentials? | Only the control plane. An operation Pod is given a database credential and no Kubernetes one, which is the rule the rest of this page enforces. |
+| What can call the Kubernetes API? | Only the control plane. Operation Pods disable automatic API-token mounting. Their explicit Pod-bound token authenticates result delivery only; its audience must not be accepted by the Kubernetes API. See [Plan results stay out of logs](../../use/security/#pod-logs-carry-plans). |
 | What stops SQL nobody approved? | For each family, a named enforcement point: [Execution guarantees](../guarantees/). |
 | Where do I look when an Apply is uncertain? | The resource's own status, and [A migration run nobody accounted for](../../use/operations/#a-migration-run-nobody-accounted-for) for the family that cannot resolve it alone. |
 
@@ -43,7 +43,7 @@ uses all five. Each links to the section that goes into it.
 | Term | What it is | Where it lives |
 | --- | --- | --- |
 | Operation claim | One unit of work a controller has decided to do -- its type, a deterministic id, the inputs it was computed from, and the Job it will dispatch. Persisted before the Job exists, so a restart finds the claim rather than a Job nobody expected. | `status.activeOperation`; [One operation, end to end](../execution/#one-operation-end-to-end) |
-| Result frame | The structured envelope a runner writes to stdout: the protocol version, the operation it answers, its id, the child's exit code, and whatever that operation produced. The controller reads the frame, never the child's own output. A digest-bound summary of it goes to the container's termination message, for a migration Apply whose log is gone. | `internal/runner`, `runner.ProtocolVersion`; [One operation, end to end](../execution/#one-operation-end-to-end) |
+| Result frame | The structured result document: protocol version, operation identity, child exit code and operation-specific output. By default, the receiver persists it in `PtahResultRecord` objects before acknowledgment, and a background consumer validates it for the controller. Only legacy delivery writes the frame to stdout. | `internal/runner`, `runner.ProtocolVersion`; [One operation, end to end](../execution/#one-operation-end-to-end) |
 | Realm | The set of resources that can mutate one physical database, whatever URL each of them uses to reach it. | [Concurrency and coordination](../execution/#concurrency-and-coordination) |
 | Post-Apply verification | Reading the database back after a mutation to confirm what it did, as distinct from what the run claimed. | [The schema lifecycle](../reconciliation/#the-schema-lifecycle), [The migration lifecycle](../reconciliation/#the-migration-lifecycle) |
 | Protected table | A table a verification policy refuses to let a plan change, by name. Refusal happens where the plan is computed, so no SQL is produced for it. | `protectedTables`; [Declarative reference data](../plans-and-approvals/#declarative-reference-data) |
@@ -70,18 +70,20 @@ last two are about *when*: one bounds a lock, the other bounds a build.
 flowchart LR
   subgraph cp["Control plane"]
     manager["manager<br/>reconcilers + webhooks"]
+    receiver["result receiver<br/>in manager"]
     rotator["ptah-cert-rotator"]
     crd["ptah-crd-manager<br/>Helm hooks"]
   end
 
   subgraph api["Kubernetes API"]
     kinds["PtahSchema, PtahMigration<br/>plans, approvals"]
+    results["PtahResultRecord"]
     guards["typed policies<br/>+ webhooks"]
     leases["Leases"]
   end
 
   subgraph dp["Data plane, one Job per operation"]
-    runner["ptah-runner<br/>bounds and frames"]
+    runner["ptah-runner<br/>bounds output"]
     ptah["Ptah executor"]
   end
 
@@ -95,7 +97,9 @@ flowchart LR
   runner --> ptah
   ptah --> registry
   ptah --> database
-  dp -->|"framed result"| manager
+  dp -->|"result over TLS"| receiver
+  receiver -->|"persist before acknowledgment"| results
+  results -->|"background read"| manager
   rotator --> guards
   crd --> kinds
 
@@ -103,9 +107,9 @@ flowchart LR
   class cp,api,dp plane
 ```
 
-The manager decides and records. It creates Jobs, and it reads back a framed
-result. It holds no database credential and has no permission to read the
-Secret that carries one.
+The manager decides and records. It creates Jobs and reads persisted results
+through bounded background consumers. It holds no database credential and has
+no permission to read the Secret that carries one.
 
 Five programs ship from `cmd/`:
 
@@ -119,10 +123,11 @@ Five programs ship from `cmd/`:
 
 ### What the manager keeps in memory
 
-A watch is a cache, and a cache holds whole objects. The manager watches both
-resource families, their plans and approvals, the Jobs it owns, and -- across
-every namespace -- ConfigMaps, because a changed verification policy has to
-wake the resources bound to it.
+A watch is a cache, and a cache holds whole objects. The controllers register
+watches for both resource families, their approvals, migration run
+acknowledgments, realms and the Jobs they own. They also watch ConfigMaps
+across every namespace, because a changed verification policy has to wake the
+resources bound to it.
 
 That last watch is the one whose size nobody chooses. It would otherwise hold
 every application ConfigMap in the cluster and the ConfigMaps each Apply
