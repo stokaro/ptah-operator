@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"time"
@@ -79,7 +80,11 @@ func newSender(endpoint string, identity Identity, tlsConfig *tls.Config, retry 
 	config := tlsConfig.Clone()
 	config.MinVersion = tls.VersionTLS13
 	config.ServerName = parsed.Hostname()
+	// Transport can keep dialing after a request times out. Bound the dial
+	// itself so it cannot hold the only connection slot across every retry.
+	dialer := &net.Dialer{Timeout: retry.AttemptTimeout}
 	transport := &http.Transport{TLSClientConfig: config, TLSHandshakeTimeout: retry.AttemptTimeout,
+		DialContext:           dialer.DialContext,
 		ResponseHeaderTimeout: retry.AttemptTimeout, MaxConnsPerHost: 1, MaxIdleConnsPerHost: 1,
 		IdleConnTimeout: 30 * time.Second, DisableCompression: true}
 	name, _ := resultstore.Name(identity.Binding)
