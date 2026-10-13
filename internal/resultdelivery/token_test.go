@@ -115,7 +115,7 @@ func TestTokenRotationAfterLostAcknowledgmentPreservesReceipt(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, stored, err := store.Load(t.Context(), identity.Binding)
-	if err != nil || !bytes.Equal(got, payload) || stored != receipt || uploads.Load() != 2 || reads.Load() != 3 || authentications.Load() != authorizations.Load() || authentications.Load() < 5 {
+	if err != nil || !bytes.Equal(got, payload) || stored != receipt || uploads.Load() != 2 || reads.Load() != 3 || authentications.Load() != 5 || authorizations.Load() != 3 {
 		t.Fatalf("rotation/lost acknowledgment changed publication: err=%v uploads=%d reads=%d checks=%d/%d", err, uploads.Load(), reads.Load(), authentications.Load(), authorizations.Load())
 	}
 	if receipt != firstReceipt {

@@ -192,8 +192,8 @@ func TestLostAcknowledgmentOnlyRedeliversSavedBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Each upload checks before reading its body and before durable commit.
-	if requests.Load() != 2 || authorizations.Load() != 4 {
+	// Both the first commit and redelivery check current authority at publication.
+	if requests.Load() != 2 || authorizations.Load() != 2 {
 		t.Fatalf("requests=%d authority checks=%d", requests.Load(), authorizations.Load())
 	}
 	got, stored, err := store.Load(t.Context(), identity.Binding)
@@ -277,7 +277,11 @@ func TestConflictingPayloadGetsOneDefinitiveRefusal(t *testing.T) {
 }
 
 func TestAuthorityRecheckedAtPublicationBoundary(t *testing.T) {
-	for _, row := range publicationRefusals() {
+	for _, row := range []publicationRefusal{
+		{"inline/before write", false, 1},
+		{"chunked/before first write", true, 1},
+		{"chunked/before completion", true, 2},
+	} {
 		t.Run(row.name, func(t *testing.T) {
 			identity := testIdentity()
 			store := testStore(t)
@@ -442,13 +446,14 @@ func TestSlowUploadReleasesSlotAndSaturationDoesNotQueue(t *testing.T) {
 	store := testStore(t)
 	certs := testCertificates(t, identity)
 	entered := make(chan struct{}, 1)
-	receiver := testReceiver(t, store, func(context.Context, Identity) error {
+	receiver := testReceiver(t, store, func(context.Context, Identity) error { return nil }, 500*time.Millisecond)
+	receiver.config.VerifyClient = func(*tls.ConnectionState) error {
 		select {
 		case entered <- struct{}{}:
 		default:
 		}
 		return nil
-	}, 500*time.Millisecond)
+	}
 	server := startReceiver(t, receiver, certs, nil)
 	sender := testSender(t, server.URL, identity, certs)
 	payload := testPayload(t, identity)
@@ -603,8 +608,8 @@ func TestTransientAuthorityFailureRetriesAndDefinitiveDenialDoesNot(t *testing.T
 	if _, err := testSender(t, server.URL, identity, certs).Send(t.Context(), testPayload(t, identity)); err != nil {
 		t.Fatalf("temporary API outage stopped delivery: %v", err)
 	}
-	if calls.Load() != 3 {
-		t.Fatalf("authority calls=%d, want one transient failure and two successful checks", calls.Load())
+	if calls.Load() != 2 {
+		t.Fatalf("authority calls=%d, want one transient failure and one successful publication check", calls.Load())
 	}
 }
 
