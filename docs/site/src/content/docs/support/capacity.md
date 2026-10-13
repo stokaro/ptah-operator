@@ -342,6 +342,15 @@ both counts, and their actual deadline still determines scheduled overdue.
 The full workload and 90-minute soak remain required for 0.2.0 qualification.
 A successful metrics collection does not establish a capacity bound.
 
+The native profile lab sends the collector's requests through the cluster's
+API load balancer. Each Ptah resource write closes its connection afterward,
+so the next write can reach another API server and supply an admission sample
+there. The request, actor, CA verification, and workload stay the same. Reads
+and watches retain connection reuse. This applies to the test client; manager
+connections keep their installed behavior. The report records the test client's
+write-connection policy, and admission percentiles still require at least 20
+observations on each API server in the measured window.
+
 ## Repeated updates and retention maintenance
 
 `CAPACITY_VARIED_INPUTS=1 CAPACITY_WORKLOAD=support/capacity/soak.json`

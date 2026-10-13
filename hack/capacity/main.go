@@ -168,6 +168,7 @@ func run() error {
 	// The tool reads the cluster more often than a controller would, and a
 	// throttled reader would report its own queueing as the operator's.
 	config.QPS, config.Burst = 50, 100
+	distributeCapacityWrites(config)
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		return err
@@ -217,6 +218,7 @@ func run() error {
 	environment["expectedAPIServers"] = *apiCount
 	recordHostCapacity(environment, host)
 	environment["expectedManagers"] = *managerCount
+	environment["workloadWriteConnections"] = "close after each Ptah resource write"
 	watch := &sampler{
 		expectedAPIServers: *apiCount,
 		expectedManagers:   *managerCount,
