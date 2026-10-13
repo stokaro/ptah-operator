@@ -56,13 +56,14 @@ answers a different question, and each is invalidated by a different event.
 | Identity | Answers | Invalidated by |
 | --- | --- | --- |
 | Coordination identity | Which realm a resource claims -- derived from `spec.target.engine` and either the namespace with `spec.target.coordinationKey` or the `PtahRealm` in `spec.target.realmRef`, and from nothing a credential carries | Editing any of those fields, which moves the resource to another realm |
-| Target identity | Which database a run actually reached, derived by the Pod from the URL it resolved | The URL resolving somewhere else: another host, port or database |
+| Target identity | The effective engine, host and port, database, username, and execution-relevant connection parameters derived from the Pod's resolved database URL | Changing a bound value. Password rotation alone leaves it unchanged; replacing a backend behind an unchanged route is outside this identity |
 | Lease epoch | Which uninterrupted interval of realm ownership a claim holds | The Lease lapsing and being acquired again, which loses continuity and discards any result produced across the change |
 | Execution binding epoch | Which set of execution components a plan was computed under -- controller-state version, Ptah version, executor image, runner protocol. The manager's image and revision and the runner image are recorded on plans and Jobs and are not in it | Any one of those four changing, which retires the plans computed under the old set. A manager release that changes none of them keeps the epoch. A schema names what the retired epoch left behind -- its plan and the Job its claim dispatched -- in `status.pendingBindingRetirement` until both are tidied, and rotates no further until then ([Retire an execution binding](../mutation-lifecycle/#retire-an-execution-binding)) |
 
-The first two are about *where*: one is configured, the other is observed, and
-a plan binds both so a redirect between planning and applying is refused. The
-last two are about *when*: one bounds a lock, the other bounds a build.
+Coordination identity selects the shared lock. Target identity binds the route
+and SQL session context supplied to the runner; it does not identify a physical
+database instance. The Lease epoch tracks continuous lock ownership, while the
+execution binding tracks the components that may run an approved plan.
 
 ## The shape of the system
 
@@ -291,10 +292,9 @@ reconciles a Deployment into Pods or garbage-collects by owner reference.
 What proves the claims on this page is the acceptance matrix, one job per
 supported Kubernetes minor and suite, against kind with a real registry,
 PostgreSQL and MySQL. `support/e2e-suites.json` is the single place the suites
-and their phases are written down: the lifecycle suite proves install, the CRD
-upgrade path and uninstall; certificates proves rotation and recovery from a
-corrupt CA; data-plane proves both engines end to end plus restart and fault
-injection; and one suite per engine proves versioned migrations and declared
-reference data. The strict `Kubernetes support gate` is what says they passed,
+and their phases are written down. `make acceptance-coverage` lists each
+supported minor and suite, its phases, resource families, engine inputs and
+scenarios, and the CI job that supplies its evidence. The strict
+`Kubernetes support gate` is what says they passed,
 and it fails on a skipped job, an incomplete matrix or a missing result rather
 than reporting green.
