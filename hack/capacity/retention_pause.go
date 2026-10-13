@@ -59,63 +59,74 @@ func (s *scenarios) exportAndSuspend(ctx context.Context, family string, index, 
 	return s.exportAndSuspendTo(ctx, family, index, round, filepath.Join(s.evidenceDir, "retention", fmt.Sprintf("round-%02d", round)))
 }
 
+var errMaintenancePending = errors.New("resource still has active or unobserved work")
+
 func (s *scenarios) exportAndSuspendTo(ctx context.Context, family string, index, round int, directory string) (pausedResource, retentionArchive, error) {
+	for attempt := 0; ; attempt++ {
+		paused, archive, err := s.tryExportAndSuspendTo(ctx, family, index, round, attempt, directory)
+		if !errors.Is(err, errMaintenancePending) && !apierrors.IsConflict(err) {
+			return paused, archive, err
+		}
+		if err := waitCapacityPoll(ctx); err != nil {
+			return pausedResource{}, retentionArchive{}, fmt.Errorf("maintenance %s slot %d did not become idle: %w", family, index, err)
+		}
+	}
+}
+
+// Try one current read and guarded write. A busy or conflicting resource must
+// not hold already idle resources behind it while their peers are suspended.
+func (s *scenarios) tryExportAndSuspendTo(ctx context.Context, family string, index, round, attempt int, directory string) (pausedResource, retentionArchive, error) {
 	resource, name, field, reference := schemaResource, s.schemaName(index), "desired", s.schemaReference(index, round)
 	if family == "migration" {
 		resource, name, field, reference = migrationResource, s.migrationName(index), "artifact", s.migrationReference(index, round)
 	}
 	target := batchTarget{family: family, resource: resource, namespace: s.in.namespaceFor(index), name: name, reference: reference}
 	client := s.dynamic.Resource(resource).Namespace(target.namespace)
-	for attempt := 0; ; attempt++ {
-		if err := ctx.Err(); err != nil {
-			return pausedResource{}, retentionArchive{}, err
-		}
-		original, err := client.Get(ctx, name, metav1.GetOptions{})
-		if err != nil {
-			return pausedResource{}, retentionArchive{}, err
-		}
-		current, _, err := unstructured.NestedString(original.Object, "spec", field, "ociRef")
-		suspended, _, suspendErr := unstructured.NestedBool(original.Object, "spec", "suspend")
-		if err != nil || suspendErr != nil || suspended || current != reference || original.GetUID() == "" || original.GetResourceVersion() == "" || original.GetLabels()[capacityLabel] != s.load.Name {
-			return pausedResource{}, retentionArchive{}, fmt.Errorf("maintenance %s changed its identity, input or suspension", name)
-		}
-		if !inactiveForMaintenance(original) {
-			if err := waitCapacityPoll(ctx); err != nil {
-				return pausedResource{}, retentionArchive{}, fmt.Errorf("maintenance %s did not become idle: %w", name, err)
-			}
-			continue
-		}
-		path, digest, _, err := s.exportOwnedPlans(ctx, original, family, directory, fmt.Sprintf("%s-%s-attempt-%d.json", family, name, attempt))
-		if err != nil {
-			return pausedResource{}, retentionArchive{}, err
-		}
-		target.uid, target.generation = original.GetUID(), original.GetGeneration()+1
-		spec, found, err := unstructured.NestedMap(original.Object, "spec")
-		if err != nil || !found {
-			return pausedResource{}, retentionArchive{}, fmt.Errorf("maintenance resource lacks spec")
-		}
-		spec["suspend"] = true
-		paused := pausedResource{target, spec}
-		relative, err := filepath.Rel(s.evidenceDir, path)
-		archive := retentionArchive{relative, digest}
-		if err != nil || !filepath.IsLocal(relative) {
-			return pausedResource{}, archive, fmt.Errorf("maintenance export escaped its directory")
-		}
-		raw, _ := json.Marshal(map[string]any{"metadata": map[string]any{"uid": original.GetUID(), "resourceVersion": original.GetResourceVersion()}, "spec": map[string]any{"suspend": true}})
-		updated, err := client.Patch(ctx, name, types.MergePatchType, raw, metav1.PatchOptions{})
-		if apierrors.IsConflict(err) {
-			continue
-		}
-		// A transport error can hide a successful write. Keep its original
-		// identity in the recovery set before returning the error.
-		if err != nil {
-			return paused, archive, err
-		}
-		if updated.GetUID() != target.uid || updated.GetNamespace() != target.namespace || updated.GetName() != target.name || updated.GetGeneration() != target.generation || !reflect.DeepEqual(updated.Object["spec"], spec) {
-			return paused, archive, fmt.Errorf("suspension changed resource identity or unrelated spec")
-		}
-		return paused, archive, nil
+	if err := ctx.Err(); err != nil {
+		return pausedResource{}, retentionArchive{}, err
 	}
+	original, err := client.Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return pausedResource{}, retentionArchive{}, err
+	}
+	current, _, err := unstructured.NestedString(original.Object, "spec", field, "ociRef")
+	suspended, _, suspendErr := unstructured.NestedBool(original.Object, "spec", "suspend")
+	if err != nil || suspendErr != nil || suspended || current != reference || original.GetUID() == "" || original.GetResourceVersion() == "" || original.GetLabels()[capacityLabel] != s.load.Name {
+		return pausedResource{}, retentionArchive{}, fmt.Errorf("maintenance %s changed its identity, input or suspension", name)
+	}
+	if !inactiveForMaintenance(original) {
+		return pausedResource{}, retentionArchive{}, errMaintenancePending
+	}
+	path, digest, _, err := s.exportOwnedPlans(ctx, original, family, directory, fmt.Sprintf("%s-%s-attempt-%d.json", family, name, attempt))
+	if err != nil {
+		return pausedResource{}, retentionArchive{}, err
+	}
+	target.uid, target.generation = original.GetUID(), original.GetGeneration()+1
+	spec, found, err := unstructured.NestedMap(original.Object, "spec")
+	if err != nil || !found {
+		return pausedResource{}, retentionArchive{}, fmt.Errorf("maintenance resource lacks spec")
+	}
+	spec["suspend"] = true
+	paused := pausedResource{target, spec}
+	relative, err := filepath.Rel(s.evidenceDir, path)
+	archive := retentionArchive{relative, digest}
+	if err != nil || !filepath.IsLocal(relative) {
+		return pausedResource{}, archive, fmt.Errorf("maintenance export escaped its directory")
+	}
+	raw, _ := json.Marshal(map[string]any{"metadata": map[string]any{"uid": original.GetUID(), "resourceVersion": original.GetResourceVersion()}, "spec": map[string]any{"suspend": true}})
+	updated, err := client.Patch(ctx, name, types.MergePatchType, raw, metav1.PatchOptions{})
+	if apierrors.IsConflict(err) {
+		return pausedResource{}, retentionArchive{}, err
+	}
+	// A transport error can hide a successful write. Keep its original
+	// identity in the recovery set before returning the error.
+	if err != nil {
+		return paused, archive, err
+	}
+	if updated.GetUID() != target.uid || updated.GetNamespace() != target.namespace || updated.GetName() != target.name || updated.GetGeneration() != target.generation || !reflect.DeepEqual(updated.Object["spec"], spec) {
+		return paused, archive, fmt.Errorf("suspension changed resource identity or unrelated spec")
+	}
+	return paused, archive, nil
 }
 
 // Suspension stops dispatch through the controller's own gate. Also inspect

@@ -349,7 +349,10 @@ selects the populated 90-minute workload. Each ten-minute round updates five
 resources of each family, replaces two idle resources of each family, and
 checks the databases before and after those changes.
 
-The round then exports retained plans and suspends all twenty resources. It
+The round then exports retained plans and suspends all twenty resources. Each
+pass suspends every idle resource before waiting for busy resources or retrying
+conflicting writes. Requests remain sequential, so one busy resource does not
+extend its peers' suspension by holding the rest of the fleet behind it. It
 waits for the controllers to acknowledge suspension and for every workload Job
 and Pod to finish. Managers remain running. Before each obsolete-plan deletion,
 the collector re-reads every documented retention pin, including the unresolved
