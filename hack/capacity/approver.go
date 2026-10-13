@@ -34,6 +34,7 @@ func capacityApprover(ctx context.Context, path string, workload *rest.Config, f
 		return nil, nil, fmt.Errorf("approver kubeconfig must name the workload API endpoint")
 	}
 	config.QPS, config.Burst = workload.QPS, workload.Burst
+	distributeCapacityWrites(config)
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	author, err := capacityUsername(ctx, workload)

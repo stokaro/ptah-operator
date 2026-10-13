@@ -25,6 +25,7 @@ func capacityAuthor(ctx context.Context, path string, installer *rest.Config) (d
 		return nil, nil, "", fmt.Errorf("author kubeconfig must name the workload API endpoint")
 	}
 	config.QPS, config.Burst = installer.QPS, installer.Burst
+	distributeCapacityWrites(config)
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	installationUser, err := capacityUsername(ctx, installer)

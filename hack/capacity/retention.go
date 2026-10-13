@@ -260,19 +260,9 @@ func (s *scenarios) maintenance(ctx context.Context, round int) (err error) {
 		s.retentionProofs = append(s.retentionProofs, proof)
 		s.mark(fmt.Sprintf("soak maintenance %02d", round), proof.StartedAt, outcome)
 	}()
-	for _, family := range []string{"schema", "migration"} {
-		for index := range 10 {
-			resource, archive, e := s.exportAndSuspend(ctx, family, index, round)
-			if resource.target.uid != "" {
-				paused = append(paused, resource)
-			}
-			if archive.Path != "" {
-				proof.Archives = append(proof.Archives, archive)
-			}
-			if e != nil {
-				return e
-			}
-		}
+	paused, proof.Archives, err = s.suspendMaintenance(ctx, round)
+	if err != nil {
+		return err
 	}
 	if err := s.pruneMaintenance(ctx, paused, &proof); err != nil {
 		return err

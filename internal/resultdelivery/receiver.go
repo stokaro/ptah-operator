@@ -143,7 +143,7 @@ func (r *Receiver) ServeHTTP(w http.ResponseWriter, request *http.Request) {
 		refuse(http.StatusInternalServerError)
 		return
 	}
-	check := func(ctx context.Context) error {
+	authenticate := func(ctx context.Context) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -162,6 +162,12 @@ func (r *Receiver) ServeHTTP(w http.ResponseWriter, request *http.Request) {
 				}
 			}
 		}
+		return ctx.Err()
+	}
+	check := func(ctx context.Context) error {
+		if err := authenticate(ctx); err != nil {
+			return err
+		}
 		if err := r.config.Authorize(ctx, identity); err != nil {
 			return err
 		}
@@ -174,7 +180,16 @@ func (r *Receiver) ServeHTTP(w http.ResponseWriter, request *http.Request) {
 			refuse(http.StatusServiceUnavailable)
 		}
 	}
-	if err := check(ctx); err != nil {
+	// Authenticate before accepting a bounded body. Publication rechecks both
+	// authentication and live authority immediately before its first write,
+	// and again before committing chunks. A pre-body authority read cannot
+	// authorize that later write and would duplicate its live API checks.
+	// HEAD has no publication boundary, so it performs both checks here.
+	initialCheck := authenticate
+	if preflight {
+		initialCheck = check
+	}
+	if err := initialCheck(ctx); err != nil {
 		authorityError(err)
 		return
 	}

@@ -401,10 +401,10 @@ func (m *migrationRun) partialRunBlocksAndRecovers() {
 	}
 	m.publish("v4", m.fixtureDir(""), m.reference(""))
 
-	m.waitForPhase(ptahv1alpha1.MigrationPhaseInSync)
-	if !recoveredAfterPartial(m.migration(migration).Status) {
-		m.fatalf("%s did not recover on its own reading of a database somebody fixed", migration)
-	}
+	m.waitForMigration(migration, "a recovered History reading after the partial migration was repaired", migrationPoll,
+		func(resource *ptahv1alpha1.PtahMigration) bool {
+			return recoveredAfterPartial(resource.Status)
+		})
 	m.assertDatabaseMigrated()
 	if m.widgetColumnCount("weight", "") != "0" {
 		m.fatalf("%s kept the column the partial migration added after it was dropped", m.engine.name)

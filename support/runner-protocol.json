@@ -132,6 +132,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:c01611df557a6e4ebfa624f99e20db12d890aae234b2701a44eedb90aa2a0f5b",
       "reason": "Update sigs.k8s.io/controller-runtime to v0.25.2 and k8s.io/utils to its October 7 revision (#641). The runner links controller-runtime's client, scheme and metrics packages; v0.25.2 corrects how subresource create options are applied and adds a metric for the experimental read-your-writes client, and neither changes what the runner accepts, enforces or returns. Runner commands, payloads, result validation, delivery identity, SQL authority and retry limits are unchanged."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:6666174cc1dcb15a5f1049bc3cb6a63e04374ced40aa74844fea2ad2eae16413",
+      "reason": "Authenticate result PUTs before reading their bounded bodies, then check authentication and live operation authority immediately before durable publication and again before chunk completion. Removing the earlier duplicate authority read changes receiver-side API demand, not runner commands, HEAD preflight authorization, payload validation, wire documents, receipts, upload bounds, or retry behavior. Unauthorized publication remains refused at its write boundary; runner protocol 1 is unchanged."
     }
   ]
 }

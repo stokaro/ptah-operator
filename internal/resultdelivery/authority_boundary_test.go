@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
+	"net/http"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -55,6 +57,85 @@ func (p publicationBoundary) PublishAuthorized(ctx context.Context, binding resu
 type publicationWriteBoundary struct {
 	client.Client
 	after func(client.Object)
+}
+
+type uploadReadBoundary struct {
+	io.ReadCloser
+	afterRead func()
+}
+
+func (b uploadReadBoundary) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	if n > 0 {
+		b.afterRead()
+	}
+	return n, err
+}
+
+func TestUploadAuthenticatesBeforeBodyAndRejectsRevokedAuthorityAfterBody(t *testing.T) {
+	for _, chunked := range []bool{false, true} {
+		for _, authenticated := range []bool{false, true} {
+			name := "inline"
+			if chunked {
+				name = "chunked"
+			}
+			if authenticated {
+				name += "/revoked while reading"
+			} else {
+				name += "/invalid token"
+			}
+			t.Run(name, func(t *testing.T) {
+				identity := testIdentity()
+				store, certs := testStore(t), testCertificates(t, identity)
+				var bodyRead, revoked atomic.Bool
+				var authorizations atomic.Int32
+				receiver, err := NewReceiver(ReceiverConfig{Store: store, MaxConcurrent: 1, Timeout: time.Second,
+					AuthenticateToken: func(context.Context, string, Identity) error {
+						if !authenticated {
+							return ErrAuthority
+						}
+						return nil
+					}, Authorize: func(context.Context, Identity) error {
+						authorizations.Add(1)
+						if revoked.Load() {
+							return ErrAuthority
+						}
+						return nil
+					}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				server := startTokenReceiver(t, receiver, certs, func(next http.Handler) http.Handler {
+					return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						r.Body = uploadReadBoundary{ReadCloser: r.Body, afterRead: func() {
+							bodyRead.Store(true)
+							revoked.Store(true)
+						}}
+						next.ServeHTTP(w, r)
+					})
+				})
+				payload := testPayload(t, identity)
+				if chunked {
+					payload = testChunkedPayload(t, identity)
+				}
+				sender := testTokenSender(t, server.URL, identity, certs, func() (string, error) { return "bound.token", nil })
+				if _, err := sender.Send(t.Context(), payload); err == nil || err.Error() != "result receiver returned HTTP 403" {
+					t.Fatalf("refused upload was acknowledged: %v", err)
+				}
+				wantChecks := int32(0)
+				if authenticated {
+					wantChecks = 1
+				}
+				if bodyRead.Load() != authenticated || authorizations.Load() != wantChecks {
+					t.Fatalf("body read=%v authority checks=%d; authenticated=%v", bodyRead.Load(), authorizations.Load(), authenticated)
+				}
+				records := &api.PtahResultRecordList{}
+				if err := store.Reader.List(t.Context(), records); err != nil || len(records.Items) != 0 {
+					t.Fatalf("refused upload left persistent records: %d, %v", len(records.Items), err)
+				}
+			})
+		}
+	}
 }
 
 func (c publicationWriteBoundary) Create(ctx context.Context, object client.Object, options ...client.CreateOption) error {

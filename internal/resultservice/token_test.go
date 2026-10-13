@@ -18,6 +18,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/resultdelivery/resulttest"
 	"github.com/stokaro/ptah-operator/internal/runner"
 	authenticationv1 "k8s.io/api/authentication/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -30,6 +31,26 @@ func (f tokenReviewFunc) Create(ctx context.Context, review *authenticationv1.To
 }
 
 type withoutSecretWrites struct{ *identifyingAPI }
+
+type publicationAuthorityReads struct {
+	client.Reader
+	jobs atomic.Int64
+	pods atomic.Int64
+}
+
+func (r *publicationAuthorityReads) Get(ctx context.Context, key client.ObjectKey, object client.Object, options ...client.GetOption) error {
+	if _, ok := object.(*batchv1.Job); ok {
+		r.jobs.Add(1)
+	}
+	return r.Reader.Get(ctx, key, object, options...)
+}
+
+func (r *publicationAuthorityReads) List(ctx context.Context, list client.ObjectList, options ...client.ListOption) error {
+	if _, ok := list.(*corev1.PodList); ok {
+		r.pods.Add(1)
+	}
+	return r.Reader.List(ctx, list, options...)
+}
 
 func (c withoutSecretWrites) Create(ctx context.Context, obj client.Object, opts ...client.CreateOption) error {
 	if _, secret := obj.(*corev1.Secret); secret {
@@ -57,7 +78,8 @@ func TestPodTokenServicePinsPublishesAndRestartsWithoutSecrets(t *testing.T) {
 			Extra: map[string]authenticationv1.ExtraValue{"authentication.kubernetes.io/pod-name": {f.Pod.Name}, "authentication.kubernetes.io/pod-uid": {string(f.Pod.UID)}},
 		}}}, nil
 	})
-	s, err := New(config, c, noSecrets{Reader: c})
+	reader := &publicationAuthorityReads{Reader: noSecrets{Reader: c}}
+	s, err := New(config, c, reader)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,9 +124,16 @@ func TestPodTokenServicePinsPublishesAndRestartsWithoutSecrets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	jobsBefore, podsBefore := reader.jobs.Load(), reader.pods.Load()
 	first, err := sender.Send(t.Context(), payload)
 	if err != nil {
 		t.Fatal(err)
+	}
+	// Exercise the real token verifier, pin reader, and live claim checker.
+	// An inline upload needs one authority check immediately before its write;
+	// authenticating the body must not repeat those Job/Pod API reads.
+	if jobs, pods := reader.jobs.Load()-jobsBefore, reader.pods.Load()-podsBefore; jobs != 1 || pods != 1 {
+		t.Fatalf("inline publication repeated authority reads: Jobs=%d Pod lists=%d", jobs, pods)
 	}
 	stop()
 	s, err = New(config, c, noSecrets{Reader: c})

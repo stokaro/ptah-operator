@@ -78,9 +78,9 @@ The database went from empty to holding the table:
 kubectl -n "$NAMESPACE" exec deploy/demo-psql -- psql -c '\dt'
 ```
 
-Read what the operator actually ran. The SQL lives in controller-owned
-ConfigMaps rather than in a status field or the manager's log, and
-[`kubectl ptah`](../../use/read-a-plan/) reads it back:
+Read what the operator actually ran. The SQL is stored in immutable
+`PtahSchemaPlanChunk` objects. [`kubectl ptah`](../../use/read-a-plan/)
+reconstructs the plan and verifies its chunks before printing it:
 
 ```sh
 export PATH="$(demo/bin/lab tools):$PATH"

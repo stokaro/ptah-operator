@@ -622,7 +622,7 @@ class Lab:
                                                                          development=bootstrap['development'])).encode()
         for role, key in (('installer', 'E2E_KUBECONFIG'), ('author', 'CAPACITY_AUTHOR_KUBECONFIG'), ('approver', 'CAPACITY_APPROVER_KUBECONFIG')):
             config = json.loads(self.run('flatten-' + role, ['kubectl', '--kubeconfig', env[key], 'config', 'view', '--raw', '--flatten', '-o', 'json']))
-            config['clusters'][0]['cluster']['server'] = 'https://127.0.0.1:6443'
+            config['clusters'][0]['cluster']['server'] = 'https://' + env['E2E_KIND_CLUSTER_NAME'] + '-external-load-balancer:6443'
             files['access/' + role + '.json'] = json.dumps(config).encode()
         argv = ['/usr/local/bin/capacity', '-kubeconfig', '/access/installer.json',
                 '-author-kubeconfig', '/access/author.json', '-approver-kubeconfig', '/access/approver.json',
