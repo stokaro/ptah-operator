@@ -147,14 +147,14 @@ Phases that share mutable state stay together: the CRD upgrade and the uninstall
 that follows it and the schema faults and their shared watches. MySQL and external PostgreSQL
 stay with schema faults because their closing assertions must still hold after
 fault injection. They run in `schema-faults`. The data-plane job runs the ordinary
-PostgreSQL lifecycle, plan-size boundaries, and admission rows. Certificate
-rotation, reference-data acceptance on both engines, and certificate-expiry
-alerts share `certificates`. The reference-data rows use separate databases and
-need no migration acceptance. Alerting runs in lifecycle before the final next-release
-upgrade and uninstall. It publishes and plans its own schema and migration
+PostgreSQL lifecycle and reference data, plan-size boundaries, and admission
+rows. Certificate rotation, MySQL reference data, plan-storage alerts, and
+certificate-expiry alerts share `certificates`. The reference-data rows use
+separate databases and need no migration acceptance. Alerting runs in lifecycle
+before the final next-release upgrade and uninstall. It publishes and plans its own schema and migration
 producers, then suspends them; it does not wait for either engine's migration
 or reference-data acceptance. Operation incidents run in `alerting-operations`;
-plan storage, scrape/admission loss, manager loss, and interrupted upgrades stay
+scrape/admission loss, manager loss, and interrupted upgrades stay
 in `lifecycle`. Separate clusters let those groups overlap without global faults
 contaminating another incident's history. Each group owns its producer identities
 and monitoring namespace, so the unpartitioned driver also runs them safely.
@@ -167,8 +167,8 @@ databases, so both engines run in `migration-authority`. Their Secret names
 include the resource family to prevent collisions. Neither runtime phase
 repeats the migration lifecycle.
 
-The two migration engines run in separate suites. Reference data runs in the
-certificates suite so it adds no serial work to either migration suite.
+The two migration engines run in separate suites. Reference-data acceptance
+runs outside those suites, so it adds no serial work to either migration suite.
 The engine is a phase input rather than a default: the driver names it,
 and a phase asked to run with none refuses instead of covering one engine and
 reporting two.
