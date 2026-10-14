@@ -52,9 +52,24 @@ test-qualification-probes:
 # verify job's limit is budgeted against, so a hung suite prints its goroutines
 # before the job is canceled.
 # ENVTEST_BIN_DIR empty keeps setup-envtest's own store, shared with other
-# checkouts; CI names a directory it caches.
+# checkouts; CI names a directory it caches. setup-envtest itself is installed
+# into that directory under its version, so a restored cache answers without the
+# module proxy: the tool's module is not in go.sum, so the Go module cache never
+# held it, and a proxy stream error failed master run 38568646901. Only a cache
+# that lacks it downloads it, and that download is retried.
 test-envtest:
-	@assets="$$($(GO) run sigs.k8s.io/controller-runtime/tools/setup-envtest@$(SETUP_ENVTEST_VERSION) \
+	@tool="$(GO) run sigs.k8s.io/controller-runtime/tools/setup-envtest@$(SETUP_ENVTEST_VERSION)"; \
+	if [ -n "$(ENVTEST_BIN_DIR)" ]; then \
+		tool="$(abspath $(ENVTEST_BIN_DIR))/setup-envtest-$(SETUP_ENVTEST_VERSION)"; \
+		for attempt in 1 2 3; do \
+			[ -x "$$tool" ] && break; \
+			GOBIN="$(abspath $(ENVTEST_BIN_DIR))/.install" $(GO) install \
+				sigs.k8s.io/controller-runtime/tools/setup-envtest@$(SETUP_ENVTEST_VERSION) && \
+				mv "$(abspath $(ENVTEST_BIN_DIR))/.install/setup-envtest" "$$tool" && rmdir "$(abspath $(ENVTEST_BIN_DIR))/.install" || sleep 10; \
+		done; \
+		[ -x "$$tool" ] || { echo "could not install setup-envtest $(SETUP_ENVTEST_VERSION)" >&2; exit 1; }; \
+	fi; \
+	assets="$$($$tool \
 		use $(ENVTEST_KUBERNETES_VERSION) --index "$(ENVTEST_INDEX)" \
 		$(if $(ENVTEST_BIN_DIR),--bin-dir "$(ENVTEST_BIN_DIR)") -p path)" || exit $$?; \
 	KUBEBUILDER_ASSETS="$$assets" PTAH_REQUIRE_ENVTEST=1 $(GO) test -count=1 -timeout=10m ./test/envtest/...
