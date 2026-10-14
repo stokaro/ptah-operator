@@ -5,8 +5,10 @@ import copy
 from contextlib import contextmanager
 import json
 import hashlib
+import io
 import os
 from pathlib import Path
+import tarfile
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -283,6 +285,75 @@ class WorkloadTests(unittest.TestCase):
             self.assertEqual(len(processes), 2)
             self.assertTrue(all(p.stopped for p in processes))
             self.assertEqual(len(list(root.glob('database-forward-*.private.log'))), 2)
+
+    def lab_workload(self, parent, engine):
+        root = Path(parent) / 'inputs'
+        (root / 'migration-128-0').mkdir(parents=True)
+        (root / 'migration-128-0' / '0001_capacity.up.sql').write_text('SELECT 1;\n')
+        workload = Workload(self.state(parent, engine), root)
+        workload.toolbox = {'docker': ['docker', '--context', 'lab'], 'container': 'toolbox-1'}
+        return workload, root
+
+    def test_a_lab_toolbox_runs_ptah_on_the_service_address_with_the_url_on_stdin(self):
+        for engine in ('PostgreSQL', 'MySQL'):
+            with self.subTest(engine=engine), tempfile.TemporaryDirectory() as parent:
+                workload, root = self.lab_workload(parent, engine)
+                row = workload.databases[17]
+                password = 'b' * 48
+                port = 3306 if engine == 'MySQL' else 5432
+                host = workload.deployment + '.owned-fixture.svc.cluster.local'
+                secret = (f'mysql://{row["username"]}:{password}@tcp({host}:3306)/{row["database"]}' if engine == 'MySQL' else
+                          f'postgres://{row["username"]}:{password}@{host}:5432/{row["database"]}?sslmode=disable')
+
+                def read(resource, name, namespace):
+                    if resource == 'secret':
+                        return {'data': {'url': base64.b64encode(secret.encode()).decode()}}
+                    self.assertEqual((resource, name, namespace), ('service', workload.deployment, 'owned-fixture'))
+                    return {'spec': {'clusterIP': '10.96.0.42', 'ports': [{'port': port}]}}
+
+                calls = []
+
+                def command(label, args, env=None, data=None):
+                    calls.append((label, args, data))
+                    return b''
+
+                directory = str(root / 'migration-128-0')
+                with patch.object(workload.bootstrap, 'read', side_effect=read), \
+                        patch.object(workload, 'command', side_effect=command), \
+                        patch('capacity_workload.subprocess.Popen') as popen:
+                    for _ in range(2):
+                        workload.forwarded(lambda: workload.ptah(row, ['migrations', 'up', '--migrations-dir', directory,
+                                                                       '--to-version', '127']))
+                    popen.assert_not_called()
+                staged = [c for c in calls if c[0] == 'stage input in the lab']
+                runs = [c for c in calls if c[0] == 'native Ptah in the lab']
+                self.assertEqual(len(staged), 1)
+                self.assertEqual(len(runs), 2)
+                with tarfile.open(fileobj=io.BytesIO(staged[0][2])) as tar:
+                    self.assertEqual(sorted(tar.getnames()), ['migration-128-0', 'migration-128-0/0001_capacity.up.sql'])
+                _, args, data = runs[0]
+                self.assertEqual(args[:6], ['docker', '--context', 'lab', 'exec', '-i', 'toolbox-1'])
+                self.assertEqual(args[args.index('--migrations-dir') + 1], '/work/inputs/migration-128-0')
+                self.assertFalse(any(password in arg for arg in args))
+                address = (f'mysql://{row["username"]}:{password}@tcp(10.96.0.42:3306)/{row["database"]}' if engine == 'MySQL' else
+                           f'postgres://{row["username"]}:{password}@10.96.0.42:5432/{row["database"]}?sslmode=disable')
+                self.assertEqual(data, (address + '\n').encode())
+
+    def test_a_lab_toolbox_refuses_outside_inputs_and_a_service_without_an_address(self):
+        with tempfile.TemporaryDirectory() as parent:
+            workload, root = self.lab_workload(parent, 'PostgreSQL')
+            (Path(parent) / 'elsewhere').mkdir()
+            with patch.object(workload, 'command') as command:
+                for source in (Path(parent) / 'elsewhere', root, root / 'migration-128-0' / '0001_capacity.up.sql'):
+                    with self.subTest(source=source), self.assertRaises(ValueError):
+                        workload.stage(source)
+                command.assert_not_called()
+            for spec in ({'clusterIP': 'None', 'ports': [{'port': 5432}]}, {'clusterIP': '10.96.0.42', 'ports': [{'port': 3306}]},
+                         {'ports': [{'port': 5432}]}):
+                workload.service = None
+                with self.subTest(spec=spec), patch.object(workload.bootstrap, 'read', return_value={'spec': spec}), \
+                        self.assertRaisesRegex(ValueError, 'no IPv4 cluster address'):
+                    workload.service_address()
 
     def test_invalid_checkpoint_and_round_fail_before_any_database_command(self):
         with tempfile.TemporaryDirectory() as parent:

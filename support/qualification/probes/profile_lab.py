@@ -28,6 +28,7 @@ kubeconfigs and keys stay in the lab directory, which is private.
 
 import argparse
 import base64
+import contextlib
 import copy
 import datetime
 import hashlib
@@ -502,12 +503,36 @@ class Lab:
             os.environ.update(PTAH_OCI_USERNAME=credentials['username'], PTAH_OCI_PASSWORD=credentials['password'],
                               PTAH_OCI_REGISTRY=env['E2E_REGISTRY_HOST_ADDRESS'])
             from capacity_workload import Workload
-            catalog = Workload(self.dir / 'capacity-bootstrap.json', self.dir / 'inputs').prepare()
+            inputs = Workload(self.dir / 'capacity-bootstrap.json', self.dir / 'inputs')
+            with self.lab_toolbox('prepare') as toolbox:
+                inputs.toolbox = toolbox
+                catalog = inputs.prepare()
             if len(catalog['schemas']) != workload['schemas'] or len(catalog['migrations']) != workload['migrations']:
                 raise RuntimeError('the prepared inputs do not cover the workload')
         else:
             self.push_lab_inputs(workload['engine'] if 'engine' in workload else 'PostgreSQL')
-        self.finish('prepare', workload=str(workload_file), workloadSHA256=sha(workload_file.read_bytes()), varied=varied, tools=tools)
+        self.finish('prepare', workload=str(workload_file), workloadSHA256=sha(workload_file.read_bytes()), varied=varied, tools=tools,
+                    toolbox=self.state.get('prepareToolbox'))
+
+    @contextlib.contextmanager
+    def lab_toolbox(self, purpose):
+        """A toolbox container in the control-plane node's network for the duration of one step.
+
+        The node's network reaches the lab's Services directly, so what runs in
+        it does not depend on the machine that started the lab."""
+        tag, image_id = self.toolbox()
+        docker = ['docker', '--context', self.env['E2E_DOCKER_CONTEXT']]
+        node = self.env['E2E_KIND_CLUSTER_NAME'] + '-control-plane'
+        name = f'ptah-capacity-{purpose}-' + uuid.uuid4().hex[:12]
+        container = self.run('toolbox-' + purpose, docker + ['run', '-d', '--name', name,
+                                                            '--label', 'operator.ptah.run/capacity-toolbox=' + name,
+                                                            '--network', 'container:' + node, tag, 'sleep', 'infinity']).decode().strip()
+        self.state[purpose + 'Toolbox'] = {'container': name, 'toolbox': tag, 'toolboxImageID': image_id}
+        self.save()
+        try:
+            yield {'docker': docker, 'container': container}
+        finally:
+            subprocess.run(docker + ['rm', '-f', container], capture_output=True, env=self.child_env())
 
     def push_lab_inputs(self, engine):
         """The two artifacts of each family a workload without populated inputs moves between.
@@ -685,6 +710,11 @@ class Lab:
     def down(self):
         env = self.env
         environment = self.dir / 'environment'
+        # A prepare step stopped before its own cleanup leaves its toolbox.
+        recorded = self.state.get('prepareToolbox')
+        if recorded:
+            subprocess.run(['docker', '--context', env['E2E_DOCKER_CONTEXT'], 'rm', '-f', recorded['container']],
+                           capture_output=True, env=self.child_env())
         result = subprocess.run([str(ROOT / 'demo/bin/lab'), 'down'], cwd=ROOT,
                                 env=dict(os.environ, LAB_ENVIRONMENT=str(environment), DOCKER_CONTEXT=env['E2E_DOCKER_CONTEXT']),
                                 capture_output=True)
