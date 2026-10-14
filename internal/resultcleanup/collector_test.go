@@ -257,6 +257,15 @@ func (r *cleanupReadCounter) Get(ctx context.Context, key client.ObjectKey, obje
 }
 
 func TestIntentDefersItsCredentialScanUntilTheRetirementDeadline(t *testing.T) {
+	for _, retainedAttempts := range []int{0, 2400} {
+		t.Run(fmt.Sprintf("retained-attempts=%d", retainedAttempts), func(t *testing.T) {
+			testIntentDefersCredential(t, retainedAttempts)
+		})
+	}
+}
+
+func testIntentDefersCredential(t *testing.T, retainedAttempts int) {
+	t.Helper()
 	f := resulttest.New(t, "schema-plan-dev-fence-scheduling")
 	c := &observedClient{Client: f.Client(t), now: time.Date(2026, 10, 7, 0, 0, 0, 0, time.UTC)}
 	credential, err := (resultcredentials.PodBindings{Writer: c, Reader: c}).Ensure(t.Context(), f.Identity)
@@ -297,6 +306,16 @@ func TestIntentDefersItsCredentialScanUntilTheRetirementDeadline(t *testing.T) {
 	collector, err := New(c, p, nil)
 	if err != nil {
 		t.Fatal(err)
+	}
+	// The measured twenty-resource fleet retains over 2,300 attempts within
+	// the one-hour window. Each intent also defers its credential scan. Fill
+	// those scheduling hints without creating thousands of unrelated payloads.
+	for i := range retainedAttempts {
+		deadline := c.now.Add(time.Hour)
+		collector.deferUntil(retryHintKey{uid: types.UID(fmt.Sprintf("other-intent-%d", i))}, deadline)
+		collector.deferUntil(retryHintKey{credential: client.ObjectKey{
+			Namespace: "other", Name: fmt.Sprintf("other-credential-%d", i),
+		}}, deadline)
 	}
 	collector.pending = []metav1.PartialObjectMetadata{{ObjectMeta: intent.ObjectMeta}}
 	if err := collector.Step(t.Context()); err != nil {
@@ -393,7 +412,7 @@ func TestYoungRetirementMetadataNeedsNoRetryHint(t *testing.T) {
 }
 
 func TestFullRetryHintsKeepUnexpiredRecordsDeferred(t *testing.T) {
-	for _, expired := range []int{0, 2048} {
+	for _, expired := range []int{0, maxRetryHints / 2} {
 		t.Run(fmt.Sprintf("expired=%d", expired), func(t *testing.T) {
 			f := fixture(t)
 			if err := f.c.Create(t.Context(), f.marker); err != nil {
@@ -404,7 +423,7 @@ func TestFullRetryHintsKeepUnexpiredRecordsDeferred(t *testing.T) {
 			c := f.collector(t)
 			deadline := f.c.now.Add(time.Hour)
 			c.next[retryHintKey{uid: f.marker.UID}] = deadline
-			for i := 1; i < 4096; i++ {
+			for i := 1; i < maxRetryHints; i++ {
 				next := deadline
 				if i <= expired {
 					next = f.c.now
@@ -427,7 +446,7 @@ func TestFullRetryHintsKeepUnexpiredRecordsDeferred(t *testing.T) {
 			if reader.gets != before {
 				t.Fatalf("retained root was read %d times before its deadline after hint overflow", reader.gets-before)
 			}
-			if len(c.next) > 4096 {
+			if len(c.next) > maxRetryHints {
 				t.Fatalf("retry hints exceeded their memory bound: %d", len(c.next))
 			}
 			// The hint never authorizes deletion. At its deadline, a newly

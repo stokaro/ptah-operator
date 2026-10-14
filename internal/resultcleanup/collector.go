@@ -20,6 +20,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+// One retained attempt can need both an intent-UID hint and a credential-name
+// hint. The twenty-resource qualification fleet retains over 2,300 attempts
+// inside its one-hour window. Keep both hints without evicting live deadlines;
+// overflow still falls back to the complete policy, never an early deletion.
+const maxRetryHints = 8192
+
 // Collector scans metadata in bounded pages outside both reconciliation
 // workers. It keeps no payload cache. The API's required admission guard
 // authorizes each UID-bound DELETE with current reads; the collector does not
@@ -144,7 +150,7 @@ func (c *Collector) Step(ctx context.Context) error {
 }
 
 func (c *Collector) deferUntil(key retryHintKey, next time.Time) {
-	if len(c.next) >= 4096 {
+	if len(c.next) >= maxRetryHints {
 		now := c.policy.now()
 		for key, deadline := range c.next {
 			if !now.Before(deadline) {
@@ -154,7 +160,7 @@ func (c *Collector) deferUntil(key retryHintKey, next time.Time) {
 	}
 	// Never evict an unexpired hint to fit a new one. An uncached root still
 	// passes the complete policy, and hints never authorize a deletion.
-	if len(c.next) < 4096 {
+	if len(c.next) < maxRetryHints {
 		c.next[key] = next
 	}
 }
