@@ -26,6 +26,14 @@ import (
 // overflow still falls back to the complete policy, never an early deletion.
 const maxRetryHints = 8192
 
+// Start advances one step every five seconds. Expired results must not turn a
+// metadata page into a burst of DELETEs and their admission reads while the
+// controllers are dispatching current work. Count attempted writes, including
+// refusals; an unfinished publication continues through the same live guards.
+const maxDeletesPerStep = 10
+
+var errDeleteBudget = errors.New("result cleanup deletion budget exhausted")
+
 // Collector scans metadata in bounded pages outside both reconciliation
 // workers. It keeps no payload cache. The API's required admission guard
 // authorizes each UID-bound DELETE with current reads; the collector does not
@@ -38,6 +46,7 @@ type Collector struct {
 	pending      []metav1.PartialObjectMetadata
 	next         map[retryHintKey]time.Time
 	operations   *prometheus.CounterVec
+	deleteBudget *int // Set only during the serial Step call.
 }
 
 type retryHintKey struct {
@@ -77,7 +86,7 @@ func (c *Collector) Start(ctx context.Context) error {
 }
 
 func (c *Collector) observe(action string, err error) {
-	if c.operations == nil {
+	if c.operations == nil || errors.Is(err, errDeleteBudget) {
 		return
 	}
 	outcome := "success"
@@ -94,10 +103,14 @@ func retained(err error) bool {
 	return errors.Is(err, ErrRetained) || errors.Is(err, resultretention.ErrPinned) || errors.Is(err, resultretention.ErrWindow)
 }
 
-// Step visits at most one 64-object metadata page, retaining the unfinished
-// page across a deadline. Errors on one attempt do not starve later attempts.
+// Step visits at most one 64-object metadata page and attempts at most ten
+// DELETEs, retaining the unfinished page across a deadline or write budget.
+// Errors on one attempt do not starve later attempts.
 // Start calls it serially; tests can advance a complete scan without sleeping.
 func (c *Collector) Step(ctx context.Context) error {
+	remaining := maxDeletesPerStep
+	c.deleteBudget = &remaining
+	defer func() { c.deleteBudget = nil }()
 	if len(c.pending) == 0 {
 		queries := []labels.Selector{
 			selector(resultstore.LabelRecord, selection.In, "intent", "retired"),
@@ -123,6 +136,9 @@ func (c *Collector) Step(ctx context.Context) error {
 		if err := ctx.Err(); err != nil {
 			return errors.Join(append(failures, err)...)
 		}
+		if remaining == 0 {
+			return errors.Join(failures...)
+		}
 		meta := c.pending[0]
 		c.pending = c.pending[1:]
 		// The server timestamp already proves that a young retirement cannot
@@ -141,6 +157,13 @@ func (c *Collector) Step(ctx context.Context) error {
 			continue
 		}
 		next, err := c.process(ctx, meta)
+		if errors.Is(err, errDeleteBudget) {
+			// The page cursor has already advanced. Keep this exact root at
+			// the front instead of waiting for another scan or a retry hint.
+			// Its next pass re-reads current identities, pins, and members.
+			c.pending = append([]metav1.PartialObjectMetadata{meta}, c.pending...)
+			return errors.Join(failures...)
+		}
 		if err != nil && !retained(err) {
 			failures = append(failures, err)
 		}
@@ -218,7 +241,7 @@ func (c *Collector) process(ctx context.Context, meta metav1.PartialObjectMetada
 			if err := c.policy.AuthorizeForegroundRetirement(ctx, record); err != nil {
 				return retry, err
 			}
-			err = c.writer.Delete(ctx, record, &client.DeleteOptions{
+			err = c.deleteRecord(ctx, record, &client.DeleteOptions{
 				Preconditions:     &metav1.Preconditions{UID: &record.UID, ResourceVersion: &record.ResourceVersion},
 				PropagationPolicy: ptr.To(metav1.DeletePropagationForeground),
 			})
@@ -331,7 +354,7 @@ func (c *Collector) removeMetadata(ctx context.Context, meta metav1.ObjectMeta) 
 	// unavailable webhook leaves it intact; no collector decision bypasses it.
 	record := &api.PtahResultRecord{ObjectMeta: meta}
 	options := &client.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &record.UID, ResourceVersion: &record.ResourceVersion}, PropagationPolicy: ptr.To(metav1.DeletePropagationBackground)}
-	if err := c.writer.Delete(ctx, record, options); err != nil && !apierrors.IsNotFound(err) {
+	if err := c.deleteRecord(ctx, record, options); err != nil && !apierrors.IsNotFound(err) {
 		return err
 	}
 	// The same metadata page may still contain this root's retirement entry.
@@ -344,4 +367,14 @@ func (c *Collector) removeMetadata(ctx context.Context, meta metav1.ObjectMeta) 
 		c.deferUntil(retryHintKey{credential: client.ObjectKeyFromObject(record)}, c.policy.now().Add(30*time.Second))
 	}
 	return nil
+}
+
+func (c *Collector) deleteRecord(ctx context.Context, record *api.PtahResultRecord, options ...client.DeleteOption) error {
+	if c.deleteBudget != nil {
+		if *c.deleteBudget == 0 {
+			return errDeleteBudget
+		}
+		*c.deleteBudget -= 1
+	}
+	return c.writer.Delete(ctx, record, options...)
 }

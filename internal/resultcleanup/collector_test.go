@@ -90,6 +90,11 @@ type cleanupFixture struct {
 
 func fixture(t *testing.T) cleanupFixture {
 	t.Helper()
+	return fixtureWithPayload(t, bytes.Repeat([]byte("x"), resultstore.ChunkBytes+1))
+}
+
+func fixtureWithPayload(t *testing.T, payload []byte) cleanupFixture {
+	t.Helper()
 	f := resulttest.New(t, "schema-plan-dev-fence-scheduling")
 	// The consumed result has no active claim and its Job has already expired.
 	f.Subject.(*api.PtahSchema).Status.ActiveOperation = nil
@@ -99,7 +104,6 @@ func fixture(t *testing.T) cleanupFixture {
 	}
 	c := &observedClient{Client: base, now: time.Date(2026, 10, 2, 10, 0, 0, 0, time.UTC)}
 	store := resultstore.Store{Client: c, Reader: c}
-	payload := bytes.Repeat([]byte("x"), resultstore.ChunkBytes+1)
 	if _, err := store.Publish(t.Context(), f.Identity.Binding, payload, fmt.Sprintf("sha256:%x", sha256.Sum256(payload))); err != nil {
 		t.Fatal(err)
 	}
@@ -187,6 +191,56 @@ func TestRetirementStartsAtPersistedMarker(t *testing.T) {
 	}
 	if len(remaining(t, f.c)) != 0 {
 		t.Fatal("eligible publication was not collected")
+	}
+}
+
+func TestCollectionBoundsDeleteBurstsAndResumesWithCurrentPins(t *testing.T) {
+	f := fixtureWithPayload(t, bytes.Repeat([]byte("x"), 12*resultstore.ChunkBytes))
+	f.retire(t)
+	c := f.collector(t)
+	if err := c.Step(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(f.c.deletes); n == 0 || n > 10 {
+		t.Fatalf("one collection step issued %d deletes; want progress within a ten-delete budget", n)
+	}
+	left := len(remaining(t, f.c))
+	if left == 0 || len(c.pending) == 0 {
+		t.Fatal("the unfinished publication was not retained for the next step")
+	}
+	// A batch boundary is not an authorization lease. A restored claim must
+	// protect the remaining bytes even though this collector started pruning.
+	subject := f.f.Subject.(*api.PtahSchema)
+	subject.Status.ActiveOperation = &api.ActiveOperationStatus{ID: f.f.Identity.Binding.OperationID}
+	if err := f.c.Update(t.Context(), subject); err != nil {
+		t.Fatal(err)
+	}
+	f.c.now = f.c.now.Add(5 * time.Second)
+	if err := c.Step(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if len(remaining(t, f.c)) != left {
+		t.Fatal("resuming a batch bypassed the restored recovery pin")
+	}
+	subject.Status.ActiveOperation = nil
+	if err := f.c.Update(t.Context(), subject); err != nil {
+		t.Fatal(err)
+	}
+	for step := 0; step < 12 && len(remaining(t, f.c)) != 0; step++ {
+		f.c.now = f.c.now.Add(5 * time.Second)
+		before := len(f.c.deletes)
+		if err := c.Step(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if n := len(f.c.deletes) - before; n > 10 {
+			t.Fatalf("resumed collection issued %d deletes in one step", n)
+		}
+	}
+	if len(remaining(t, f.c)) != 0 {
+		t.Fatal("bounded collection never finished the eligible publication")
+	}
+	if f.c.deletes[0] != "complete" || f.c.deletes[len(f.c.deletes)-1] != "retired" {
+		t.Fatalf("batching changed deletion order: %v", f.c.deletes)
 	}
 }
 
