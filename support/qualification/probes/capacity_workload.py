@@ -8,11 +8,13 @@ soak, churn, approval, retention and overload scenarios are separate obligations
 import argparse
 import base64
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
 import re
 import subprocess
+import tarfile
 import tempfile
 import time
 
@@ -122,9 +124,19 @@ class Workload:
         self.fixture = self.state['fixtureNamespace']
         self.log_index = 0
         self.port = None
+        # A toolbox container on the control-plane node's network, as
+        # {'docker': [...], 'container': id}, runs native Ptah inside the lab.
+        # Ptah pings a migration run's advisory-lock session every second and
+        # stops the run when a ping takes ten seconds, so that session must not
+        # cross a port-forward, the API server and a tunnel from the machine
+        # that started the lab: one stalled hop there ended a 128-migration
+        # population. Without one, Ptah runs here through a port-forward.
+        self.toolbox = None
+        self.service = None
+        self.staged = set()
 
-    def command(self, label, args, env=None):
-        result = subprocess.run(args, env=env, capture_output=True, timeout=180)
+    def command(self, label, args, env=None, data=None):
+        result = subprocess.run(args, env=env, input=data, capture_output=True, timeout=180)
         self.log_index += 1
         prefix = self.root / f'command-{os.getpid()}-{self.log_index:04d}'
         prefix.with_suffix('.stdout.private').write_bytes(result.stdout)
@@ -162,6 +174,8 @@ class Workload:
                                        '--', 'sh', '-c', script, 'capacity-sql', row['username'], row['database']], raw, timeout=120)
 
     def ptah(self, row, args):
+        if self.toolbox is not None:
+            return self.ptah_in_lab(row, args)
         if self.port is None:
             raise RuntimeError('no owned database port-forward is active')
         password = self.credential(row)
@@ -170,7 +184,51 @@ class Workload:
         env = dict(os.environ, PTAH_DB_URL=url, PTAH_CONNECT_TIMEOUT='10s', PTAH_LOCK_TIMEOUT='30s')
         return self.command('native Ptah', ['ptah', *args], env)
 
+    def ptah_in_lab(self, row, args):
+        password = self.credential(row)
+        host, port = self.service_address()
+        url = (f'mysql://{row["username"]}:{password}@tcp({host}:{port})/{row["database"]}' if self.mysql else
+               f'postgres://{row["username"]}:{password}@{host}:{port}/{row["database"]}?sslmode=disable')
+        staged = [self.stage(arg) if before in ('--migrations-dir', '--dir') else arg
+                  for before, arg in zip([None, *args], args)]
+        # The URL carries the generated password, so it travels on stdin.
+        script = ('IFS= read -r PTAH_DB_URL; export PTAH_DB_URL PTAH_CONNECT_TIMEOUT=10s PTAH_LOCK_TIMEOUT=30s; '
+                  'exec ptah "$@"')
+        return self.command('native Ptah in the lab', [*self.toolbox['docker'], 'exec', '-i', self.toolbox['container'],
+                                                       'sh', '-c', script, 'ptah', *staged], data=(url + '\n').encode())
+
+    def service_address(self):
+        """The database Service's cluster address, which the node's network routes to the server."""
+        if self.service is None:
+            service = self.bootstrap.read('service', self.deployment, self.fixture)
+            address = service.get('spec', {}).get('clusterIP', '')
+            port = 3306 if self.mysql else 5432
+            if not re.fullmatch(r'(?:[0-9]{1,3}\.){3}[0-9]{1,3}', address) or \
+                    port not in [p.get('port') for p in service['spec'].get('ports', [])]:
+                raise ValueError('the database Service has no IPv4 cluster address on its engine port')
+            self.service = (address, port)
+        return self.service
+
+    def stage(self, source):
+        """Copy one input directory under this run's inputs into the toolbox, once."""
+        path = Path(source).resolve()
+        relative = path.relative_to(self.root).as_posix()
+        if not path.is_dir() or relative == '.':
+            raise ValueError('only an input directory under the run is staged into the lab')
+        target = '/work/inputs/' + relative
+        if target not in self.staged:
+            buffer = io.BytesIO()
+            with tarfile.open(fileobj=buffer, mode='w') as tar:
+                tar.add(path, arcname=relative)
+            self.command('stage input in the lab', [*self.toolbox['docker'], 'exec', '-i', self.toolbox['container'],
+                                                    'sh', '-c', 'mkdir -p /work/inputs && tar -x -C /work/inputs'],
+                         data=buffer.getvalue())
+            self.staged.add(target)
+        return target
+
     def forwarded(self, action):
+        if self.toolbox is not None:
+            return action()
         with tempfile.NamedTemporaryFile(mode='wb', prefix='database-forward-', suffix='.private.log',
                                          dir=self.root, delete=False) as output:
             log = Path(output.name)
