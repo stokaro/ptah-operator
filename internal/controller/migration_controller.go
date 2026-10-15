@@ -634,9 +634,10 @@ func (r *MigrationReconciler) claimMigration(
 	before := migration.DeepCopy()
 	migration.Status.ActiveOperation = operation
 	migration.Status.ObservedGeneration = migration.Generation
+	slot, slotted := refreshSlot(ctx, r.Client, migration.UID, migrationInterval(migration))
 	migration.Status.NextReconciliationTime = claimDeadline(migration.Status.NextReconciliationTime,
 		operationType == operatorv1alpha1.MigrationOperationResolve, mutationlifecycle.MigrationOperation(operationType).Mutating,
-		operation.StartedAt.Time, migrationInterval(migration))
+		operation.StartedAt.Time, migrationInterval(migration), slot, slotted)
 	migration.Status.Phase = mutationlifecycle.MigrationOperation(operationType).Phase
 	setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionTrue,
 		operatorv1alpha1.ReasonOperationInProgress, fmt.Sprintf("%s operation is in progress", operationType))

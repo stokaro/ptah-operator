@@ -2138,8 +2138,9 @@ func (r *SchemaReconciler) claimAt(
 	if pending := schema.Status.PendingObservation; pending != nil && kind.ServesProof {
 		schema.Status.ObservedGeneration = pending.ApplyGeneration
 	}
+	slot, slotted := refreshSlot(ctx, r.Client, schema.UID, interval(schema))
 	schema.Status.NextReconciliationTime = claimDeadline(schema.Status.NextReconciliationTime,
-		operation == operatorv1alpha1.OperationResolve, kind.Mutating, active.StartedAt.Time, interval(schema))
+		operation == operatorv1alpha1.OperationResolve, kind.Mutating, active.StartedAt.Time, interval(schema), slot, slotted)
 	if schema.Status.PendingObservation != nil && kind.ServesProof {
 		schema.Status.Phase = operatorv1alpha1.PhaseVerifyingConvergence
 	} else {
