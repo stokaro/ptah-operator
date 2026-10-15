@@ -125,14 +125,15 @@ class Workload:
         self.log_index = 0
         self.port = None
         # A toolbox container on the control-plane node's network, as
-        # {'docker': [...], 'container': id}, runs native Ptah inside the lab.
-        # Ptah pings a migration run's advisory-lock session every second and
-        # stops the run when a ping takes ten seconds, so that session must not
-        # cross a port-forward, the API server and a tunnel from the machine
-        # that started the lab: one stalled hop there ended a 128-migration
-        # population. Without one, Ptah runs here through a port-forward.
+        # {'docker': [...], 'container': id, 'kubeconfig': path inside it},
+        # runs native Ptah and its port-forward inside the lab. Ptah pings a
+        # migration run's advisory-lock session every second and stops the run
+        # when a ping takes ten seconds, so that session must not cross the
+        # tunnel from the machine that started the lab: one stalled hop there
+        # ended a 128-migration population. The database admits only the
+        # workload namespaces, so the forward still enters the server's Pod
+        # through the kubelet. Without a toolbox, both run here.
         self.toolbox = None
-        self.service = None
         self.staged = set()
 
     def command(self, label, args, env=None, data=None):
@@ -185,10 +186,11 @@ class Workload:
         return self.command('native Ptah', ['ptah', *args], env)
 
     def ptah_in_lab(self, row, args):
+        if self.port is None:
+            raise RuntimeError('no owned database port-forward is active in the lab')
         password = self.credential(row)
-        host, port = self.service_address()
-        url = (f'mysql://{row["username"]}:{password}@tcp({host}:{port})/{row["database"]}' if self.mysql else
-               f'postgres://{row["username"]}:{password}@{host}:{port}/{row["database"]}?sslmode=disable')
+        url = (f'mysql://{row["username"]}:{password}@tcp(127.0.0.1:{self.port})/{row["database"]}' if self.mysql else
+               f'postgres://{row["username"]}:{password}@127.0.0.1:{self.port}/{row["database"]}?sslmode=disable')
         staged = [self.stage(arg) if before in ('--migrations-dir', '--dir') else arg
                   for before, arg in zip([None, *args], args)]
         # The URL carries the generated password, so it travels on stdin.
@@ -196,18 +198,6 @@ class Workload:
                   'exec ptah "$@"')
         return self.command('native Ptah in the lab', [*self.toolbox['docker'], 'exec', '-i', self.toolbox['container'],
                                                        'sh', '-c', script, 'ptah', *staged], data=(url + '\n').encode())
-
-    def service_address(self):
-        """The database Service's cluster address, which the node's network routes to the server."""
-        if self.service is None:
-            service = self.bootstrap.read('service', self.deployment, self.fixture)
-            address = service.get('spec', {}).get('clusterIP', '')
-            port = 3306 if self.mysql else 5432
-            if not re.fullmatch(r'(?:[0-9]{1,3}\.){3}[0-9]{1,3}', address) or \
-                    port not in [p.get('port') for p in service['spec'].get('ports', [])]:
-                raise ValueError('the database Service has no IPv4 cluster address on its engine port')
-            self.service = (address, port)
-        return self.service
 
     def stage(self, source):
         """Copy one input directory under this run's inputs into the toolbox, once."""
@@ -226,9 +216,38 @@ class Workload:
             self.staged.add(target)
         return target
 
+    def forwarded_in_lab(self, action):
+        """Run action while a port-forward to the owned database runs inside the toolbox."""
+        docker, container = self.toolbox['docker'], self.toolbox['container']
+        self.log_index += 1
+        name = f'/work/forward-{self.log_index:04d}'
+        start = (f'echo $$ > {name}.pid; exec kubectl --kubeconfig "$1" -n "$2" port-forward --address 127.0.0.1 '
+                 f'"service/$3" "0:$4" > {name}.log 2>&1')
+        self.command('start the lab port-forward', [*docker, 'exec', '-d', container, 'sh', '-c', start, 'forward',
+                                                    self.toolbox['kubeconfig'], self.fixture, self.deployment,
+                                                    '3306' if self.mysql else '5432'])
+        log = b''
+        try:
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline:
+                log = subprocess.run([*docker, 'exec', container, 'cat', name + '.log'], capture_output=True, timeout=30).stdout
+                match = re.search(rb'Forwarding from 127\.0\.0\.1:([0-9]+) ->', log)
+                if match:
+                    self.port = int(match[1])
+                    break
+                time.sleep(0.5)
+            else:
+                raise RuntimeError('the lab database port-forward did not become ready')
+            return action()
+        finally:
+            self.port = None
+            subprocess.run([*docker, 'exec', container, 'sh', '-c', f'kill "$(cat {name}.pid)"'], capture_output=True, timeout=30)
+            log = subprocess.run([*docker, 'exec', container, 'cat', name + '.log'], capture_output=True, timeout=30).stdout or log
+            (self.root / f'database-forward-lab-{self.log_index:04d}.private.log').write_bytes(log)
+
     def forwarded(self, action):
         if self.toolbox is not None:
-            return action()
+            return self.forwarded_in_lab(action)
         with tempfile.NamedTemporaryFile(mode='wb', prefix='database-forward-', suffix='.private.log',
                                          dir=self.root, delete=False) as output:
             log = Path(output.name)

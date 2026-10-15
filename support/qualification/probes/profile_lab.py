@@ -530,7 +530,14 @@ class Lab:
         self.state[purpose + 'Toolbox'] = {'container': name, 'toolbox': tag, 'toolboxImageID': image_id}
         self.save()
         try:
-            yield {'docker': docker, 'container': container}
+            # The installer's kubeconfig, flattened and pointed at the lab's own
+            # load balancer, as the measurement's toolbox receives it.
+            config = json.loads(self.run('flatten-installer-' + purpose, ['kubectl', '--kubeconfig', self.env['E2E_KUBECONFIG'], 'config', 'view', '--raw', '--flatten', '-o', 'json']))
+            config['clusters'][0]['cluster']['server'] = 'https://' + self.env['E2E_KIND_CLUSTER_NAME'] + '-external-load-balancer:6443'
+            self.run('toolbox-access-' + purpose, docker + ['exec', '-i', container, 'tar', '-xzf', '-', '-C', '/'],
+                     archive({'access/installer.json': json.dumps(config).encode()}))
+            self.run('toolbox-access-mode-' + purpose, docker + ['exec', container, 'chmod', '-R', 'go-rwx', '/access'])
+            yield {'docker': docker, 'container': container, 'kubeconfig': '/access/installer.json'}
         finally:
             subprocess.run(docker + ['rm', '-f', container], capture_output=True, env=self.child_env())
 
