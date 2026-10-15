@@ -16,6 +16,22 @@ release that says so, and this is where it is said. A version that asks
 nothing of you says so in as many words, rather than leaving you to read it
 out of silence.
 
+## 0.2.4
+
+**Before you upgrade.** Nothing has to change. This upgrade swaps the manager
+image as well, and `--force-conflicts` stays on the command.
+
+Schemas and migrations that share an interval no longer refresh at the same
+moment. Each Resolve set the next refresh exactly one interval after it
+started, so resources created together stayed in step for as long as they
+lived, and every interval began with the whole fleet's API traffic at once.
+Each of them now takes an evenly spaced slot in its interval, in UID order,
+and a refresh that started well past its slot sets the next one later onto it.
+The next refresh is never earlier than one interval after the last; aligning
+can lengthen one or two cycles by at most half an interval, after a resource
+joins or leaves the fleet or drifts from its slot. A resource alone in its
+interval keeps the plain cadence.
+
 ## 0.2.3
 
 **Before you upgrade.** Nothing has to change. The manager image is new again,

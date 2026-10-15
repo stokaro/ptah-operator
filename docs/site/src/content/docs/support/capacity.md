@@ -26,6 +26,12 @@ The interval runs from the start of one refresh to the start of the next. A
 refresh that takes longer than its interval starts the next one an interval
 after it ends, so a busy resource does not refresh back to back.
 
+Resources that share an interval take evenly spaced slots in it, in UID order,
+so a fleet created together does not refresh together. A refresh that started
+well past its slot moves the next one later onto it, by at most half an
+interval; the next refresh is never earlier than one interval after the last.
+A resource alone in its interval keeps the plain cadence.
+
 | | `PtahSchema` | `PtahMigration` |
 | --- | --- | --- |
 | Operations per refresh | Resolve, Verify, Observe, Plan | Resolve, Verify, History |
