@@ -291,42 +291,55 @@ class WorkloadTests(unittest.TestCase):
         (root / 'migration-128-0').mkdir(parents=True)
         (root / 'migration-128-0' / '0001_capacity.up.sql').write_text('SELECT 1;\n')
         workload = Workload(self.state(parent, engine), root)
-        workload.toolbox = {'docker': ['docker', '--context', 'lab'], 'container': 'toolbox-1'}
+        workload.toolbox = {'docker': ['docker', '--context', 'lab'], 'container': 'toolbox-1', 'kubeconfig': '/access/installer.json'}
         return workload, root
 
-    def test_a_lab_toolbox_runs_ptah_on_the_service_address_with_the_url_on_stdin(self):
+    def test_a_lab_toolbox_forwards_and_runs_ptah_inside_the_lab_with_the_url_on_stdin(self):
         for engine in ('PostgreSQL', 'MySQL'):
             with self.subTest(engine=engine), tempfile.TemporaryDirectory() as parent:
                 workload, root = self.lab_workload(parent, engine)
                 row = workload.databases[17]
                 password = 'b' * 48
-                port = 3306 if engine == 'MySQL' else 5432
+                engine_port = '3306' if engine == 'MySQL' else '5432'
                 host = workload.deployment + '.owned-fixture.svc.cluster.local'
                 secret = (f'mysql://{row["username"]}:{password}@tcp({host}:3306)/{row["database"]}' if engine == 'MySQL' else
                           f'postgres://{row["username"]}:{password}@{host}:5432/{row["database"]}?sslmode=disable')
-
-                def read(resource, name, namespace):
-                    if resource == 'secret':
-                        return {'data': {'url': base64.b64encode(secret.encode()).decode()}}
-                    self.assertEqual((resource, name, namespace), ('service', workload.deployment, 'owned-fixture'))
-                    return {'spec': {'clusterIP': '10.96.0.42', 'ports': [{'port': port}]}}
-
-                calls = []
+                commands, executed = [], []
 
                 def command(label, args, env=None, data=None):
-                    calls.append((label, args, data))
+                    commands.append((label, args, data))
                     return b''
 
+                class Done:
+                    def __init__(self, stdout):
+                        self.stdout = stdout
+
+                def run(args, **options):
+                    executed.append(args)
+                    if args[-2] == 'cat' and args[-1].startswith('/work/forward-') and args[-1].endswith('.log'):
+                        return Done(f'Forwarding from 127.0.0.1:41234 -> {engine_port}\n'.encode())
+                    return Done(b'')
+
                 directory = str(root / 'migration-128-0')
-                with patch.object(workload.bootstrap, 'read', side_effect=read), \
+                with patch.object(workload.bootstrap, 'read', return_value={'data': {'url': base64.b64encode(secret.encode()).decode()}}), \
                         patch.object(workload, 'command', side_effect=command), \
+                        patch('capacity_workload.subprocess.run', side_effect=run), \
                         patch('capacity_workload.subprocess.Popen') as popen:
                     for _ in range(2):
                         workload.forwarded(lambda: workload.ptah(row, ['migrations', 'up', '--migrations-dir', directory,
                                                                        '--to-version', '127']))
+                    with self.assertRaisesRegex(ValueError, 'population failed'):
+                        workload.forwarded(lambda: (_ for _ in ()).throw(ValueError('population failed')))
                     popen.assert_not_called()
-                staged = [c for c in calls if c[0] == 'stage input in the lab']
-                runs = [c for c in calls if c[0] == 'native Ptah in the lab']
+                self.assertIsNone(workload.port)
+                starts = [c for c in commands if c[0] == 'start the lab port-forward']
+                staged = [c for c in commands if c[0] == 'stage input in the lab']
+                runs = [c for c in commands if c[0] == 'native Ptah in the lab']
+                self.assertEqual(len(starts), 3)
+                self.assertEqual(starts[0][1][:7], ['docker', '--context', 'lab', 'exec', '-d', 'toolbox-1', 'sh'])
+                self.assertEqual(starts[0][1][-4:], ['/access/installer.json', 'owned-fixture', workload.deployment, engine_port])
+                kills = [a for a in executed if 'kill' in ' '.join(a)]
+                self.assertEqual(len(kills), 3)
                 self.assertEqual(len(staged), 1)
                 self.assertEqual(len(runs), 2)
                 with tarfile.open(fileobj=io.BytesIO(staged[0][2])) as tar:
@@ -335,11 +348,12 @@ class WorkloadTests(unittest.TestCase):
                 self.assertEqual(args[:6], ['docker', '--context', 'lab', 'exec', '-i', 'toolbox-1'])
                 self.assertEqual(args[args.index('--migrations-dir') + 1], '/work/inputs/migration-128-0')
                 self.assertFalse(any(password in arg for arg in args))
-                address = (f'mysql://{row["username"]}:{password}@tcp(10.96.0.42:3306)/{row["database"]}' if engine == 'MySQL' else
-                           f'postgres://{row["username"]}:{password}@10.96.0.42:5432/{row["database"]}?sslmode=disable')
+                address = (f'mysql://{row["username"]}:{password}@tcp(127.0.0.1:41234)/{row["database"]}' if engine == 'MySQL' else
+                           f'postgres://{row["username"]}:{password}@127.0.0.1:41234/{row["database"]}?sslmode=disable')
                 self.assertEqual(data, (address + '\n').encode())
+                self.assertEqual(len(list(root.glob('database-forward-lab-*.private.log'))), 3)
 
-    def test_a_lab_toolbox_refuses_outside_inputs_and_a_service_without_an_address(self):
+    def test_a_lab_toolbox_refuses_outside_inputs_and_ptah_without_a_forward(self):
         with tempfile.TemporaryDirectory() as parent:
             workload, root = self.lab_workload(parent, 'PostgreSQL')
             (Path(parent) / 'elsewhere').mkdir()
@@ -347,13 +361,9 @@ class WorkloadTests(unittest.TestCase):
                 for source in (Path(parent) / 'elsewhere', root, root / 'migration-128-0' / '0001_capacity.up.sql'):
                     with self.subTest(source=source), self.assertRaises(ValueError):
                         workload.stage(source)
+                with self.assertRaisesRegex(RuntimeError, 'no owned database port-forward is active in the lab'):
+                    workload.ptah(workload.databases[10], ['migrations', 'status'])
                 command.assert_not_called()
-            for spec in ({'clusterIP': 'None', 'ports': [{'port': 5432}]}, {'clusterIP': '10.96.0.42', 'ports': [{'port': 3306}]},
-                         {'ports': [{'port': 5432}]}):
-                workload.service = None
-                with self.subTest(spec=spec), patch.object(workload.bootstrap, 'read', return_value={'spec': spec}), \
-                        self.assertRaisesRegex(ValueError, 'no IPv4 cluster address'):
-                    workload.service_address()
 
     def test_invalid_checkpoint_and_round_fail_before_any_database_command(self):
         with tempfile.TemporaryDirectory() as parent:

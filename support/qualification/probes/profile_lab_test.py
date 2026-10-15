@@ -241,24 +241,35 @@ class LabInputsTest(unittest.TestCase):
             lab_dir.mkdir()
             write_environment(lab_dir / 'profile.environment', {
                 'E2E_DOCKER_CONTEXT': 'c', 'E2E_KIND_CLUSTER_NAME': 'ptah-lab', 'E2E_DOCKER_CONFIG': directory,
-                'E2E_DOCKER_ENDPOINT': 'ssh://h'})
+                'E2E_DOCKER_ENDPOINT': 'ssh://h', 'E2E_KUBECONFIG': 'installer.kubeconfig'})
             lab = Lab(lab_dir)
             lab.toolbox = lambda: ('ptah-capacity-toolbox:abc', 'sha256:' + 'c' * 64)
-            started = []
-            lab.run = lambda name, args, **options: started.append(args) or b'container-1\n'
+            calls = {}
+
+            def run(name, args, data=None, **options):
+                calls[name] = (args, data)
+                if name.startswith('flatten-installer-'):
+                    return json.dumps({'clusters': [{'cluster': {'server': 'https://127.0.0.1:41000'}}]}).encode()
+                return b'container-1\n'
+
+            lab.run = run
             removed = []
             with mock.patch('profile_lab.subprocess.run', side_effect=lambda args, **options: removed.append(args)):
                 with self.assertRaisesRegex(RuntimeError, 'population failed'):
                     with lab.lab_toolbox('prepare') as toolbox:
-                        self.assertEqual(toolbox, {'docker': ['docker', '--context', 'c'], 'container': 'container-1'})
+                        self.assertEqual(toolbox, {'docker': ['docker', '--context', 'c'], 'container': 'container-1',
+                                                   'kubeconfig': '/access/installer.json'})
                         raise RuntimeError('population failed')
-            self.assertEqual(len(started), 1)
-            self.assertEqual(started[0][started[0].index('--network') + 1], 'container:ptah-lab-control-plane')
+            started = calls['toolbox-prepare'][0]
+            self.assertEqual(started[started.index('--network') + 1], 'container:ptah-lab-control-plane')
+            self.assertEqual(calls['flatten-installer-prepare'][0][:3], ['kubectl', '--kubeconfig', 'installer.kubeconfig'])
+            with tarfile.open(fileobj=io.BytesIO(calls['toolbox-access-prepare'][1])) as tar:
+                config = json.loads(tar.extractfile('access/installer.json').read())
+            self.assertEqual(config['clusters'][0]['cluster']['server'], 'https://ptah-lab-external-load-balancer:6443')
             self.assertEqual(removed, [['docker', '--context', 'c', 'rm', '-f', 'container-1']])
             recorded = json.loads((lab_dir / 'lab.json').read_text())['prepareToolbox']
             self.assertEqual(recorded['toolbox'], 'ptah-capacity-toolbox:abc')
             self.assertTrue(recorded['container'].startswith('ptah-capacity-prepare-'))
-
 
 if __name__ == '__main__':
     unittest.main()
