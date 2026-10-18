@@ -416,7 +416,13 @@ func (d *dataPlane) assertPrivilegedPlanWaitsUnderAlways(schema, publishReferenc
 	}
 
 	// A quiet cadence before the approval, so no refresh can land between the
-	// approval and its Apply and spend it on a reading.
+	// approval and its Apply and spend it on a reading. It is set between two
+	// scheduled refreshes: one already running when the generation changes
+	// ends in a stale plan and another chain, and the gate read in between
+	// would be refused as no longer awaiting approval.
+	d.waitForSchema(schema, "the held plan with its next refresh half an interval away", func(s *ptahv1alpha1.PtahSchema) bool {
+		return privilegedApprovalGate(s, digest) && betweenRefreshes(s, time.Now(), blockedRefreshSeconds*time.Second/2)
+	})
 	d.patchSchema(schema, map[string]any{"spec": map[string]any{"interval": quiescentInterval}})
 	quietGeneration := d.schema(schema).Generation
 	d.waitForPrivilegedGate(schema, digest, before, "the same plan held at the quiet cadence",
