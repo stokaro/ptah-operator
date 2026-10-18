@@ -662,6 +662,37 @@ func TestSamePlanHeld(t *testing.T) {
 	}
 }
 
+func TestBetweenRefreshes(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 10, 15, 10, 0, 0, 0, time.UTC)
+	headroom := 45 * time.Second
+	idle := heldSchema(4, "plan-uid", externalDigest('6'), now.Add(headroom))
+	if !betweenRefreshes(idle, now, headroom) {
+		t.Error("an idle schema with its refresh the headroom away was refused")
+	}
+	for name, mutate := range map[string]func(*ptahv1alpha1.PtahSchema){
+		"a refresh in flight": func(s *ptahv1alpha1.PtahSchema) {
+			s.Status.ActiveOperation = &ptahv1alpha1.ActiveOperationStatus{Type: ptahv1alpha1.OperationResolve}
+		},
+		"a pending observation": func(s *ptahv1alpha1.PtahSchema) {
+			s.Status.PendingObservation = &ptahv1alpha1.PendingObservationStatus{}
+		},
+		"a pending lock release": func(s *ptahv1alpha1.PtahSchema) {
+			s.Status.PendingLockRelease = &ptahv1alpha1.TargetLockReleaseStatus{}
+		},
+		"the refresh too near": func(s *ptahv1alpha1.PtahSchema) {
+			s.Status.NextReconciliationTime = ptr.To(metav1.NewTime(now.Add(headroom - time.Second)))
+		},
+		"no scheduled refresh": func(s *ptahv1alpha1.PtahSchema) { s.Status.NextReconciliationTime = nil },
+	} {
+		schema := idle.DeepCopy()
+		mutate(schema)
+		if betweenRefreshes(schema, now, headroom) {
+			t.Errorf("%s was read as between refreshes", name)
+		}
+	}
+}
+
 func TestApprovalAbsenceAndPrivilegeEvents(t *testing.T) {
 	t.Parallel()
 	approval := func(name string, uid types.UID) ptahv1alpha1.PtahSchemaApproval {

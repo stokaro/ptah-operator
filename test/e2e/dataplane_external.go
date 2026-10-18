@@ -494,6 +494,16 @@ func samePlanHeldAfter(planUID, fingerprint string, after time.Time) func(*ptahv
 	}
 }
 
+// betweenRefreshes is a schema with nothing in flight whose next scheduled
+// refresh is at least headroom away. A spec change that lands while a
+// scheduled refresh runs makes that chain's plan stale and starts another, and
+// a gate read in between shows a plan the next Resolve is about to replace.
+func betweenRefreshes(schema *ptahv1alpha1.PtahSchema, now time.Time, headroom time.Duration) bool {
+	status := schema.Status
+	return status.ActiveOperation == nil && status.PendingObservation == nil && status.PendingLockRelease == nil &&
+		status.NextReconciliationTime != nil && status.NextReconciliationTime.Sub(now) >= headroom
+}
+
 // samePlanHeldAtGeneration is the privileged gate read at a generation the row
 // set: the same plan, held after the spec changed.
 func samePlanHeldAtGeneration(planUID, fingerprint string, generation int64) func(*ptahv1alpha1.PtahSchema) bool {
