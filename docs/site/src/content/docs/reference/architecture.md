@@ -273,6 +273,7 @@ is the one to change when the contract changes.
 | Durable manager-state contract | `internal/controllerstate` |
 | Certificate lifecycle | `internal/certrotation` |
 | CRD, RBAC and release lifecycle | `internal/crdupgrade` |
+| Reading a stored plan back, for `kubectl ptah` and other programs | `pkg/planread` |
 | Read-only views behind `kubectl ptah` | `internal/planview`, `internal/schemaview`, `internal/migrationview` |
 | Bounded-cardinality metrics | `internal/telemetry` |
 | What the manager caches from a watch | `internal/managercache` |

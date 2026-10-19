@@ -23,6 +23,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/migrationview"
 	"github.com/stokaro/ptah-operator/internal/planview"
 	"github.com/stokaro/ptah-operator/internal/schemaview"
+	"github.com/stokaro/ptah-operator/pkg/planread"
 )
 
 // version is stamped at release time. A build from a checkout says so.
@@ -106,9 +107,9 @@ func plan(ctx context.Context, arguments []string, stdout, stderr io.Writer) int
 		fmt.Fprintf(stderr, "kubectl-ptah: --current and --applied are two different plans; ask for one\n")
 		return exitUsage
 	}
-	selection := planview.Current
+	selection := planread.Current
 	if *applied {
-		selection = planview.Applied
+		selection = planread.Applied
 	}
 	format := planview.Format(*output)
 	if !known(format) {
@@ -125,10 +126,10 @@ func plan(ctx context.Context, arguments []string, stdout, stderr io.Writer) int
 	ctx, cancel := context.WithTimeout(ctx, *timeout)
 	defer cancel()
 
-	view, err := planview.Load(ctx, reader, resolved, flags.Arg(0), selection)
+	view, err := planread.Load(ctx, reader, resolved, flags.Arg(0), selection)
 	if err != nil {
 		fmt.Fprintf(stderr, "kubectl-ptah: %v\n", err)
-		if errors.Is(err, planview.ErrNoPlan) || errors.Is(err, planview.ErrSchemaNotFound) {
+		if errors.Is(err, planread.ErrNoPlan) || errors.Is(err, planread.ErrSchemaNotFound) {
 			return exitAbsent
 		}
 		return exitFailed

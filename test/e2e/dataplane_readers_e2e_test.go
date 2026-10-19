@@ -19,7 +19,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
-	"github.com/stokaro/ptah-operator/internal/planview"
+	"github.com/stokaro/ptah-operator/pkg/planread"
 	"github.com/stokaro/ptah-operator/test/e2e/harness"
 )
 
@@ -30,10 +30,10 @@ import (
 func (d *dataPlane) pendingSQLReadAuthorization(schema string) func() {
 	diagnostic := d.installReaderExample(schema, "diagnostic-reader-role.yaml", "diagnostic", "<diagnostic-reader-group>")
 	reviewer := d.installReaderExample(schema, "approver-plan-reader-role.yaml", "reviewer", "<plan-reviewer-group>")
-	verify := func(selection planview.Selection) types.UID {
-		expected, err := planview.Load(d.ctx, d.cluster.Client, d.in.TestNamespace, schema, selection)
+	verify := func(selection planread.Selection) types.UID {
+		expected, err := planread.Load(d.ctx, d.cluster.Client, d.in.TestNamespace, schema, selection)
 		d.check(err, "read the %s plan of %s as the administrator", selection, schema)
-		if expected.PlanUID == "" || len(expected.Document) == 0 || expected.StatementCount == 0 {
+		if expected.PlanUID == "" || len(expected.Document) == 0 || len(expected.Statements) == 0 {
 			d.fatalf("%s has no nonempty %s plan to test SQL access", schema, selection)
 		}
 		plan := d.schemaPlan(expected.PlanName)
@@ -42,11 +42,11 @@ func (d *dataPlane) pendingSQLReadAuthorization(schema string) func() {
 		if metadata.UID != expected.PlanUID {
 			d.fatalf("the diagnostic reader read another plan manifest")
 		}
-		refused, err := planview.Load(d.ctx, diagnostic, d.in.TestNamespace, schema, selection)
+		refused, err := planread.Load(d.ctx, diagnostic, d.in.TestNamespace, schema, selection)
 		if !apierrors.IsForbidden(err) || len(refused.Document) != 0 {
 			d.fatalf("the diagnostic reader did not receive Forbidden with no SQL for %s's %s plan: %v", schema, selection, err)
 		}
-		read, err := planview.Load(d.ctx, reviewer, d.in.TestNamespace, schema, selection)
+		read, err := planread.Load(d.ctx, reviewer, d.in.TestNamespace, schema, selection)
 		d.check(err, "the plan reviewer must reconstruct %s's %s plan", schema, selection)
 		if read.PlanUID != expected.PlanUID || read.ContentDigest != expected.ContentDigest || !bytes.Equal(read.Document, expected.Document) {
 			d.fatalf("the plan reviewer did not reconstruct the exact %s plan of %s", selection, schema)
@@ -55,7 +55,7 @@ func (d *dataPlane) pendingSQLReadAuthorization(schema string) func() {
 			err := diagnostic.Get(d.ctx, types.NamespacedName{Namespace: plan.Namespace, Name: ref.Name}, &ptahv1alpha1.PtahSchemaPlanChunk{})
 			d.requireForbiddenRead(err, "a plan chunk as the diagnostic reader")
 		}
-		if selection == planview.Current {
+		if selection == planread.Current {
 			d.assertPlanNotProjected(plan.Name)
 		} else {
 			d.assertPlanProjected(plan)
@@ -66,10 +66,10 @@ func (d *dataPlane) pendingSQLReadAuthorization(schema string) func() {
 				}
 			}
 		}
-		d.logf("PASS %s %s plan %s: diagnostic metadata allowed, SQL refused; reviewer read %d statements from %d chunks", schema, selection, plan.UID, read.StatementCount, len(plan.Spec.Chunks))
+		d.logf("PASS %s %s plan %s: diagnostic metadata allowed, SQL refused; reviewer read %d statements from %d chunks", schema, selection, plan.UID, len(read.Statements), len(plan.Spec.Chunks))
 		return expected.PlanUID
 	}
-	pendingUID := verify(planview.Current)
+	pendingUID := verify(planread.Current)
 	d.requireForbiddenRead(diagnostic.List(d.ctx, &ptahv1alpha1.PtahSchemaPlanChunkList{}, client.InNamespace(d.in.TestNamespace)), "listing SQL chunks as the diagnostic reader")
 	for _, reader := range []client.Client{diagnostic, reviewer} {
 		for _, name := range []string{pgSecret, mysqlSecret} {
@@ -78,7 +78,7 @@ func (d *dataPlane) pendingSQLReadAuthorization(schema string) func() {
 	}
 
 	return func() {
-		if verify(planview.Applied) != pendingUID {
+		if verify(planread.Applied) != pendingUID {
 			d.fatalf("the applied SQL authorization check read a different plan from the pending check")
 		}
 	}
