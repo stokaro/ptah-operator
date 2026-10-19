@@ -497,8 +497,11 @@ func (d *dataPlane) assertGrantOnlyChangePlansUnderAlways(schema, publishReferen
 	}})
 	d.assertAlwaysPolicyKept(schema, quiescentInterval)
 
+	// The gate also holds between two operations of a refresh, where the
+	// approval webhook refuses an approval; the row approves from the phase
+	// the webhook admits.
 	gate := d.waitForHeldPlan(schema, before,
-		func(s *ptahv1alpha1.PtahSchema) bool { return grantOnlyApprovalGate(s, digest) }, nil,
+		func(s *ptahv1alpha1.PtahSchema) bool { return grantOnlyApprovalGate(s, digest) }, planAwaitingApproval,
 		"grant-only approval gate", heldPlanMessages{
 			failedWhile: "its grant-only plan",
 			timedOut:    " to observe its grant-only change as drift in no category, plan Grant and hold it for a person",

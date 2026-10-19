@@ -654,11 +654,29 @@ func TestSamePlanHeld(t *testing.T) {
 		}
 	}
 	atGeneration := samePlanHeldAtGeneration("plan-uid", externalDigest('6'), 5)
-	if !atGeneration(heldSchema(5, "plan-uid", externalDigest('6'), deadline)) {
-		t.Error("the same plan at the generation was not matched")
+	awaiting := heldSchema(5, "plan-uid", externalDigest('6'), deadline)
+	awaiting.Status.Phase = ptahv1alpha1.PhaseAwaitingApproval
+	awaiting.Status.Plan.Name = "ptah-plan-held"
+	if !atGeneration(awaiting) {
+		t.Error("the same plan awaiting approval at the generation was not matched")
 	}
-	if atGeneration(heldSchema(4, "plan-uid", externalDigest('6'), deadline)) {
-		t.Error("a reading from before the spec change was matched")
+	before := awaiting.DeepCopy()
+	before.Generation = 4
+	// Between the Resolve and the Verify the spec change started: the same
+	// plan, nothing running, and the phase the webhook refuses an approval in.
+	// CI run 39184775590 approved from this reading and was refused.
+	between := awaiting.DeepCopy()
+	between.Status.Phase = ptahv1alpha1.PhaseVerifying
+	running := awaiting.DeepCopy()
+	running.Status.ActiveOperation = &ptahv1alpha1.ActiveOperationStatus{Type: ptahv1alpha1.OperationResolve}
+	for name, schema := range map[string]*ptahv1alpha1.PtahSchema{
+		"a reading from before the spec change":      before,
+		"a reading between two refresh operations":   between,
+		"a reading with a refresh operation running": running,
+	} {
+		if atGeneration(schema) {
+			t.Errorf("%s was matched as the plan held at the generation", name)
+		}
 	}
 }
 
