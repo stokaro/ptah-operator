@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"io"
 	"net/netip"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -25,6 +27,28 @@ type mysqlStatementRecord struct {
 const mysqlJournalTime = "2006-01-02T15:04:05.000000"
 
 var mysqlAuditIdentifier = regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
+
+// mysqlJournalSummary reads the length and SHA-256 the server Pod printed for
+// the journal file it wrote: "<bytes>\n<hex digest>\n".
+func mysqlJournalSummary(raw []byte) (int, string, error) {
+	fields := strings.Fields(string(raw))
+	if len(fields) != 2 {
+		return 0, "", errors.New("MySQL statement journal summary is not a length and a digest")
+	}
+	size, err := strconv.Atoi(fields[0])
+	if err != nil || size < 0 || !regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(fields[1]) {
+		return 0, "", errors.New("MySQL statement journal summary is malformed")
+	}
+	return size, fields[1], nil
+}
+
+// mysqlJournalComplete says whether a read of the journal file is the whole
+// file the Pod wrote. An exec stream can end before its last bytes arrive, and
+// a journal cut at a record boundary would parse while missing statements.
+func mysqlJournalComplete(raw []byte, size int, digest string) bool {
+	sum := sha256.Sum256(raw)
+	return len(raw) == size && hex.EncodeToString(sum[:]) == digest
+}
 
 func mysqlStatementJournal(raw []byte) ([]mysqlStatementRecord, error) {
 	var records []mysqlStatementRecord

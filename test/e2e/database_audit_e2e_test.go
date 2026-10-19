@@ -152,10 +152,36 @@ func (a *databaseSQLAudit) mysqlStatementSnapshot() []mysqlStatementRecord {
 		a.t.Fatal("MySQL statement snapshot requested for another engine")
 	}
 	a.start()
-	raw := a.exec("sh", "-ec", `MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=tcp -h 127.0.0.1 -uroot -NBr -e "$1"`, "sh",
+	// The query writes one snapshot to a private file in the server Pod, which
+	// prints its length and digest; the file is then read until a read matches
+	// both. Reading the query's output directly lost the end of the journal
+	// when the exec stream closed early, and the audit refused a run it could
+	// not read. Retrying the read never takes a second snapshot.
+	path := fmt.Sprintf("/tmp/ptah-mysql-journal-%d", time.Now().UnixNano())
+	summary := a.exec("sh", "-ec", `umask 077
+MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=tcp -h 127.0.0.1 -uroot -NBr -e "$1" > "$2.partial"
+mv "$2.partial" "$2"
+wc -c < "$2"
+sha256sum "$2" | cut -d' ' -f1`, "sh",
 		`SELECT IF(@@general_log=1 AND FIND_IN_SET('TABLE',@@log_output)>0,1,0);
 SELECT JSON_OBJECT('time',DATE_FORMAT(event_time,'%Y-%m-%dT%H:%i:%s.%f'),'thread',thread_id,'client',user_host,'type',command_type,'argumentHex',HEX(argument))
-FROM mysql.general_log ORDER BY event_time,thread_id`)
+FROM mysql.general_log ORDER BY event_time,thread_id`, path)
+	size, digest, err := mysqlJournalSummary(summary)
+	if err != nil {
+		a.t.Fatal(err)
+	}
+	var raw []byte
+	for attempt := 0; attempt < 5 && raw == nil; attempt++ {
+		if read := a.exec("cat", path); mysqlJournalComplete(read, size, digest) {
+			raw = read
+		} else {
+			time.Sleep(time.Second)
+		}
+	}
+	a.exec("rm", "-f", path)
+	if raw == nil {
+		a.t.Fatal("MySQL statement journal could not be read back complete")
+	}
 	if !bytes.HasPrefix(raw, []byte("1\n")) {
 		a.t.Fatal("MySQL statement journal logging is not enabled")
 	}
