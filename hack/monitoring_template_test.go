@@ -4,6 +4,8 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+
+	"sigs.k8s.io/yaml"
 )
 
 // The ServiceMonitor is the chart's answer to "how is this scraped", and every
@@ -34,7 +36,12 @@ func TestTheServiceMonitorIsAbsentUntilItIsAskedFor(t *testing.T) {
 	}
 }
 
-func TestTheServiceMonitorSelectsTheManagerPodsAndTheMetricsPort(t *testing.T) {
+// A ServiceMonitor selects Services by the Services' own labels, not by the
+// Pods behind them. The webhook, result and metrics Services all select the
+// manager Pods, so the selector has to name what only the metrics Service
+// carries. v0.2.4 shipped a selector of Pod labels, which matched no Service:
+// Prometheus had no target, and only a deployment check found it.
+func TestTheServiceMonitorSelectsTheMetricsServiceAndNoOther(t *testing.T) {
 	t.Parallel()
 	rendered, err := renderChartForMonitoring(t, []string{
 		"monitoring.serviceMonitor.enabled=true",
@@ -44,14 +51,42 @@ func TestTheServiceMonitorSelectsTheManagerPodsAndTheMetricsPort(t *testing.T) {
 		t.Fatalf("enabling the ServiceMonitor does not render: %v\n%s", err, rendered)
 	}
 	monitor := documentOfKind(t, rendered, "ServiceMonitor")
-	for _, wanted := range []string{
-		"app.kubernetes.io/component: controller", // the manager Pods, not the webhook Service
-		"port: metrics",
-		"release: kube-prometheus-stack", // what a Prometheus selects the object by
-	} {
-		if !strings.Contains(monitor, wanted) {
-			t.Errorf("the ServiceMonitor does not carry %q:\n%s", wanted, monitor)
+	var parsed struct {
+		Spec struct {
+			Selector struct {
+				MatchLabels map[string]string `json:"matchLabels"`
+			} `json:"selector"`
+			Endpoints []struct {
+				Port string `json:"port"`
+			} `json:"endpoints"`
+		} `json:"spec"`
+	}
+	if err := yaml.Unmarshal([]byte(monitor), &parsed); err != nil {
+		t.Fatalf("the ServiceMonitor does not parse: %v\n%s", err, monitor)
+	}
+	selector := parsed.Spec.Selector.MatchLabels
+	if len(selector) == 0 {
+		t.Fatalf("the ServiceMonitor selects every Service in the namespace:\n%s", monitor)
+	}
+	services := renderedServices(t, rendered)
+	selected := 0
+	for name, labels := range services {
+		if !selects(selector, labels) {
+			continue
 		}
+		selected++
+		if !strings.HasSuffix(name, "-metrics") {
+			t.Errorf("the ServiceMonitor selects Service %s, which is not the metrics Service", name)
+		}
+	}
+	if selected != 1 {
+		t.Errorf("the ServiceMonitor selects %d of the %d rendered Services, want the metrics Service alone; selector %v", selected, len(services), selector)
+	}
+	if len(parsed.Spec.Endpoints) != 1 || parsed.Spec.Endpoints[0].Port != "metrics" {
+		t.Errorf("the ServiceMonitor does not scrape the port named metrics:\n%s", monitor)
+	}
+	if !strings.Contains(monitor, "release: kube-prometheus-stack") { // what a Prometheus selects the object by
+		t.Errorf("the ServiceMonitor does not carry the labels it was given:\n%s", monitor)
 	}
 	// An interval nobody asked for is a decision about somebody else's
 	// Prometheus, so an unset one renders nothing at all.
@@ -60,6 +95,55 @@ func TestTheServiceMonitorSelectsTheManagerPodsAndTheMetricsPort(t *testing.T) {
 			t.Errorf("the ServiceMonitor pins %s without being asked to:\n%s", absent, monitor)
 		}
 	}
+}
+
+// The selector shipped in v0.2.4 must read as selecting nothing, and the
+// metrics Service's labels as selected, or the test above proves nothing.
+func TestSelectsRefusesTheSelectorThatShipped(t *testing.T) {
+	t.Parallel()
+	shipped := map[string]string{"app.kubernetes.io/name": "ptah-operator", "app.kubernetes.io/instance": "ptah-operator", "app.kubernetes.io/component": "controller"}
+	metricsService := map[string]string{"app.kubernetes.io/name": "ptah-operator", "app.kubernetes.io/instance": "ptah-operator", "app.kubernetes.io/managed-by": "Helm"}
+	if selects(shipped, metricsService) {
+		t.Error("a selector naming a label the Service lacks was read as selecting it")
+	}
+	if !selects(map[string]string{"app.kubernetes.io/name": "ptah-operator"}, metricsService) {
+		t.Error("a selector the Service's labels contain was read as not selecting it")
+	}
+}
+
+// selects reports whether a matchLabels selector selects an object with these labels.
+func selects(selector, labels map[string]string) bool {
+	for key, value := range selector {
+		if labels[key] != value {
+			return false
+		}
+	}
+	return true
+}
+
+// renderedServices returns every rendered Service's labels by name.
+func renderedServices(t *testing.T, rendered string) map[string]map[string]string {
+	t.Helper()
+	services := map[string]map[string]string{}
+	for _, document := range strings.Split(rendered, "\n---\n") {
+		if !strings.Contains(document, "kind: Service\n") {
+			continue
+		}
+		var service struct {
+			Metadata struct {
+				Name   string            `json:"name"`
+				Labels map[string]string `json:"labels"`
+			} `json:"metadata"`
+		}
+		if err := yaml.Unmarshal([]byte(document), &service); err != nil {
+			t.Fatalf("a rendered Service does not parse: %v\n%s", err, document)
+		}
+		services[service.Metadata.Name] = service.Metadata.Labels
+	}
+	if len(services) < 2 {
+		t.Fatalf("the render holds %d Services; the test needs the metrics Service and at least one other", len(services))
+	}
+	return services
 }
 
 func TestTheServiceMonitorCarriesTheScrapeTimingWhenItIsGiven(t *testing.T) {
