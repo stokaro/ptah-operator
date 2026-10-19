@@ -1,8 +1,11 @@
 package e2e
 
 import (
+	"bytes"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -229,6 +232,39 @@ func TestMySQLStatementJournalPreservesCompleteRecords(t *testing.T) {
 		}
 		if _, err := mysqlStatementJournal(encoded); err == nil || strings.Contains(err.Error(), "private-audit-password") {
 			t.Fatalf("invalid %s passed or exposed data", field)
+		}
+	}
+}
+
+func TestMySQLJournalReadback(t *testing.T) {
+	t.Parallel()
+	journal := []byte("1\n{\"time\":\"2026-10-19T00:36:36.000000\"}\n")
+	sum := sha256.Sum256(journal)
+	digest := hex.EncodeToString(sum[:])
+	size, read, err := mysqlJournalSummary([]byte(fmt.Sprintf("%d\n%s\n", len(journal), digest)))
+	if err != nil || size != len(journal) || read != digest {
+		t.Fatalf("summary = %d %q %v", size, read, err)
+	}
+	if !mysqlJournalComplete(journal, size, digest) {
+		t.Fatal("the whole journal was not accepted")
+	}
+	for name, cut := range map[string][]byte{
+		"cut inside the last record": journal[:len(journal)-5],
+		"cut at a record boundary":   journal[:2],
+		"empty":                      nil,
+	} {
+		if mysqlJournalComplete(cut, size, digest) {
+			t.Errorf("%s was accepted as the whole journal", name)
+		}
+	}
+	flipped := bytes.Clone(journal)
+	flipped[3] ^= 1
+	if mysqlJournalComplete(flipped, size, digest) {
+		t.Error("a journal with changed bytes of the same length was accepted")
+	}
+	for _, summary := range []string{"", "12", "12 notadigest", "-1 " + digest, fmt.Sprintf("%d %s extra", size, digest)} {
+		if _, _, err := mysqlJournalSummary([]byte(summary)); err == nil {
+			t.Errorf("summary %q was accepted", summary)
 		}
 	}
 }
