@@ -24,6 +24,16 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 app.kubernetes.io/component: controller
 {{- end -}}
 
+{{- /* The labels that tell the metrics Service apart from the webhook and
+      result Services, which select the same manager Pods. A ServiceMonitor
+      selects Services by their own labels, not by the Pods behind them, so
+      the metrics Service carries these and the ServiceMonitor selects them. */ -}}
+{{- define "ptah-operator.metricsServiceLabels" -}}
+app.kubernetes.io/name: {{ include "ptah-operator.name" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/component: metrics
+{{- end -}}
+
 {{- /* The controller runs as one ServiceAccount in every release, so its
       username is stable across upgrades. */ -}}
 {{- define "ptah-operator.serviceAccountName" -}}

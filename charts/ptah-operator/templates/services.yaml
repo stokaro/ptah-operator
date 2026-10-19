@@ -21,6 +21,7 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "ptah-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: metrics
 spec:
   selector:
     {{- include "ptah-operator.selectorLabels" . | nindent 4 }}

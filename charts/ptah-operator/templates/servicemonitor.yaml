@@ -22,7 +22,7 @@ spec:
       - {{ .Release.Namespace }}
   selector:
     matchLabels:
-      {{- include "ptah-operator.selectorLabels" . | nindent 6 }}
+      {{- include "ptah-operator.metricsServiceLabels" . | nindent 6 }}
   endpoints:
     - port: metrics
       path: /metrics
