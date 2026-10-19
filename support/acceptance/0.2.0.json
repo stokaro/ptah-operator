@@ -66,6 +66,13 @@
       "detection": "kube-apiserver request metrics or a Metadata audit of the manager identity show the burst; until #657 is resolved, schedule control-plane upgrades away from heavy change windows."
     },
     {
+      "requirement": "PA-09",
+      "scope": "Alerting is supported with a ServiceMonitor the deployer applies to select the metrics Service by its own labels (app.kubernetes.io/name and app.kubernetes.io/instance, port metrics), as #673 gives it. The chart's own ServiceMonitor in v0.2.4 selects no Service, so monitoring.serviceMonitor alone scrapes nothing and PtahOperatorUnresolvedApply cannot fire; #672 fixes the chart for the next release.",
+      "owner": "Ptah Engineering",
+      "reviewBy": "2026-11-30",
+      "detection": "PtahOperatorUnresolvedViewNotSynced fires while no manager is scraped, and Prometheus lists no target in the release namespace. The initial deployment check delivered the lost-view alert and its resolution to a receiver with the workaround applied."
+    },
+    {
       "requirement": "PA-11",
       "scope": "The pinned executor, Ptah v0.13.0, is supported only as the operator runs it: a short-lived operation Job with a deadline, no listening socket, and client traffic to the configured registry and database. Ptah server commands and other uses of that image are outside the supported use, because its Go 1.27.1 and x/net v0.59.0 build carries later advisories (#610).",
       "owner": "Ptah Engineering",
