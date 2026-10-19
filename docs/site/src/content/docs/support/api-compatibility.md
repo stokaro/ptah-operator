@@ -126,6 +126,19 @@ plan and its approval. The schema-history verifier refuses a set that added or
 removed a kind, so one cannot appear or disappear without that refusal being
 addressed deliberately.
 
+## Go packages for other programs
+
+Two packages outside `internal/` are there for programs that read what the
+operator stored. `pkg/planread` reads a schema plan back through the store's
+own checks; `kubectl ptah plan` reads through it, so there is one reader.
+`pkg/planread/planreadtest` holds the stored states such a reader has to
+answer, each with the answer `planread` gives, so a program that wraps the
+reader can run the same cases. A test refuses an exported declaration in
+either package that names an internal type.
+
+They stand where `v1alpha1` stands: no compatibility promise. Pin the module
+version and read what a release changed before you move to it.
+
 ## Before v1
 
 There are no deprecations. A field that has to go, goes, in a release that

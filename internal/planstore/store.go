@@ -53,6 +53,23 @@ const (
 // derived from the plan, so only another plan, with another name, can.
 var ErrProjectionConflict = errors.New("plan projection conflicts with an existing ConfigMap")
 
+// ErrVerification marks a stored plan that Load refused: a manifest, ordering,
+// UID, size or digest that does not hold, or a committed chunk that is gone.
+// The refusal keeps its own message; this only lets a caller tell it from an
+// error the API returned.
+var ErrVerification = errors.New("stored plan failed verification")
+
+// verification carries ErrVerification without changing the message it wraps.
+type verification struct{ err error }
+
+func (v verification) Error() string { return v.err.Error() }
+
+func (v verification) Unwrap() error { return v.err }
+
+func (v verification) Is(target error) bool { return target == ErrVerification }
+
+func refused(err error) error { return verification{err: err} }
+
 var (
 	sha256Pattern             = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 	executionBindingIDPattern = regexp.MustCompile(`^v1-[0-9a-f]{32}$`)
@@ -259,6 +276,10 @@ func (s Store) Publish(
 
 // Load reconstructs a Ready plan after checking manifest, object UIDs, sizes,
 // and every digest through direct API reads.
+//
+// A refusal on any of those checks carries ErrVerification, and so does a
+// committed chunk that is no longer there. An error the API returned for a
+// read, such as Forbidden, is returned as it is and does not.
 func (s Store) Load(ctx context.Context, plan *operatorv1alpha1.PtahSchemaPlan) ([]byte, error) {
 	if s.Reader == nil {
 		if s.Client == nil {
@@ -270,14 +291,14 @@ func (s Store) Load(ctx context.Context, plan *operatorv1alpha1.PtahSchemaPlan) 
 		return nil, fmt.Errorf("persisted plan is required")
 	}
 	if err := validatePlanContract(plan.Spec); err != nil {
-		return nil, err
+		return nil, refused(err)
 	}
 	if plan.Status.ObservedGeneration != plan.Generation ||
 		!meta.IsStatusConditionTrue(plan.Status.Conditions, operatorv1alpha1.ConditionPlanStorageReady) {
-		return nil, fmt.Errorf("plan storage is not committed")
+		return nil, refused(fmt.Errorf("plan storage is not committed"))
 	}
 	if len(plan.Spec.Chunks) == 0 || len(plan.Spec.Chunks) != len(plan.Status.PublishedChunks) {
-		return nil, fmt.Errorf("plan chunk manifest and committed status do not match")
+		return nil, refused(fmt.Errorf("plan chunk manifest and committed status do not match"))
 	}
 
 	published := append([]operatorv1alpha1.PublishedPlanChunkStatus(nil), plan.Status.PublishedChunks...)
@@ -286,26 +307,32 @@ func (s Store) Load(ctx context.Context, plan *operatorv1alpha1.PtahSchemaPlan) 
 	for index, ref := range plan.Spec.Chunks {
 		committed := published[index]
 		if ref.Index != int32(index) || committed.Index != int32(index) || committed.Name != ref.Name || committed.UID == "" {
-			return nil, fmt.Errorf("plan chunk %d has an invalid ordering or commit binding", index)
+			return nil, refused(fmt.Errorf("plan chunk %d has an invalid ordering or commit binding", index))
 		}
 		chunk := &operatorv1alpha1.PtahSchemaPlanChunk{}
 		if err := s.Reader.Get(ctx, types.NamespacedName{Namespace: plan.Namespace, Name: ref.Name}, chunk); err != nil {
-			return nil, fmt.Errorf("read committed plan chunk %d: %w", index, err)
+			err = fmt.Errorf("read committed plan chunk %d: %w", index, err)
+			// The status says this chunk was written and verified. Its absence
+			// is a plan that no longer holds together, not a read to retry.
+			if apierrors.IsNotFound(err) {
+				return nil, refused(err)
+			}
+			return nil, err
 		}
 		if chunk.UID != committed.UID {
-			return nil, fmt.Errorf("plan chunk %d was replaced", index)
+			return nil, refused(fmt.Errorf("plan chunk %d was replaced", index))
 		}
 		data := chunk.Spec.Data
 		if err := verifyChunk(plan, ref, data, chunk); err != nil {
-			return nil, err
+			return nil, refused(err)
 		}
 		if content.Len()+len(data) > MaxPlanBytes {
-			return nil, fmt.Errorf("reconstructed plan exceeds %d bytes", MaxPlanBytes)
+			return nil, refused(fmt.Errorf("reconstructed plan exceeds %d bytes", MaxPlanBytes))
 		}
 		_, _ = content.Write(data)
 	}
 	if int64(content.Len()) != plan.Spec.Size || fingerprint.DigestBytes(content.Bytes()) != plan.Spec.ContentDigest {
-		return nil, fmt.Errorf("reconstructed plan does not match its content binding")
+		return nil, refused(fmt.Errorf("reconstructed plan does not match its content binding"))
 	}
 	return content.Bytes(), nil
 }

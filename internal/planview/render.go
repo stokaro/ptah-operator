@@ -1,3 +1,8 @@
+// Package planview prints a plan for `kubectl ptah plan`.
+//
+// Reading the plan is not this package's job: pkg/planread resolves it,
+// reconstructs it and verifies it, and only a plan that held every check
+// reaches Render.
 package planview
 
 import (
@@ -5,7 +10,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/stokaro/ptah-operator/internal/dataplane"
+	"github.com/stokaro/ptah-operator/pkg/planread"
 )
 
 // Format is how a reader asked to see a plan.
@@ -23,20 +28,20 @@ const (
 // Formats are the accepted values, in the order the help lists them.
 var Formats = []Format{Text, SQL, JSON}
 
-// Render writes one view in the requested format.
+// Render writes one plan in the requested format.
 //
 // Every format is written from the document the store verified. The JSON one
 // is that document unchanged rather than a re-serialization of the decoded
 // plan, so what a reader saves still matches the content digest above it.
-func Render(out io.Writer, view View, format Format) error {
+func Render(out io.Writer, plan planread.Plan, format Format) error {
 	switch format {
 	case Text:
-		return renderText(out, view)
+		return renderText(out, plan)
 	case SQL:
-		_, err := io.WriteString(out, dataplane.StatementsSQL(view.Plan))
+		_, err := io.WriteString(out, plan.SQL())
 		return err
 	case JSON:
-		document := view.Document
+		document := plan.Document
 		if len(document) == 0 || document[len(document)-1] != '\n' {
 			document = append(append([]byte(nil), document...), '\n')
 		}
@@ -51,13 +56,13 @@ func Render(out io.Writer, view View, format Format) error {
 // an approval, and then any kind this plugin reads in the SQL that the record
 // lacks, marked as such: a reader told the plan waited for a kind nobody
 // recorded would be told something that did not happen.
-func privilegesLine(view View) string {
+func privilegesLine(plan planread.Plan) string {
 	var parts []string
-	if len(view.PrivilegeChanges) > 0 {
-		parts = append(parts, strings.Join(view.PrivilegeChanges, ", "))
+	if len(plan.PrivilegeChanges) > 0 {
+		parts = append(parts, strings.Join(plan.PrivilegeChanges, ", "))
 	}
-	if len(view.UnrecordedPrivilegeChanges) > 0 {
-		parts = append(parts, strings.Join(view.UnrecordedPrivilegeChanges, ", ")+
+	if len(plan.UnrecordedPrivilegeChanges) > 0 {
+		parts = append(parts, strings.Join(plan.UnrecordedPrivilegeChanges, ", ")+
 			" (read by this plugin, not recorded)")
 	}
 	if len(parts) == 0 {
@@ -71,7 +76,7 @@ func privilegesLine(view View) string {
 // The chunk names are deliberately absent. They are how the plan is stored, not
 // what it says, and a reader who needs them is diagnosing the store rather than
 // reading a plan.
-func renderText(out io.Writer, view View) error {
+func renderText(out io.Writer, plan planread.Plan) error {
 	var text strings.Builder
 	field := func(name, value string) {
 		if value == "" {
@@ -79,22 +84,22 @@ func renderText(out io.Writer, view View) error {
 		}
 		fmt.Fprintf(&text, "%-16s%s\n", name+":", value)
 	}
-	field("Schema", view.Namespace+"/"+view.Schema)
-	field("Plan", string(view.Selection)+" ("+view.PlanName+")")
-	field("Fingerprint", view.Fingerprint)
-	field("Content digest", view.ContentDigest)
-	field("Dialect", view.Dialect)
-	field("Statements", fmt.Sprintf("%d", view.StatementCount))
-	field("Destructive", fmt.Sprintf("%t", view.Destructive))
-	field("Privileges", privilegesLine(view))
-	if !view.CreatedAt.IsZero() {
-		field("Stored", view.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"))
+	field("Schema", plan.Namespace+"/"+plan.Schema)
+	field("Plan", string(plan.Selection)+" ("+plan.PlanName+")")
+	field("Fingerprint", plan.Fingerprint)
+	field("Content digest", plan.ContentDigest)
+	field("Dialect", plan.Dialect)
+	field("Statements", fmt.Sprintf("%d", len(plan.Statements)))
+	field("Destructive", fmt.Sprintf("%t", plan.Destructive))
+	field("Privileges", privilegesLine(plan))
+	if !plan.CreatedAt.IsZero() {
+		field("Stored", plan.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"))
 	}
-	if view.CompletedAt != nil && !view.CompletedAt.IsZero() {
-		field("Applied", view.CompletedAt.UTC().Format("2006-01-02T15:04:05Z"))
+	if plan.CompletedAt != nil && !plan.CompletedAt.IsZero() {
+		field("Applied", plan.CompletedAt.UTC().Format("2006-01-02T15:04:05Z"))
 	}
 	text.WriteString("\n")
-	text.WriteString(dataplane.StatementsSQL(view.Plan))
+	text.WriteString(plan.SQL())
 	_, err := io.WriteString(out, text.String())
 	return err
 }

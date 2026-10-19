@@ -8,7 +8,19 @@ import (
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/planview"
+	"github.com/stokaro/ptah-operator/pkg/planread"
+	"github.com/stokaro/ptah-operator/pkg/planread/planreadtest"
 )
+
+// load reads a schema's plan the way the plugin does before rendering it.
+func load(t *testing.T, lab *planreadtest.Lab, selection planread.Selection) planread.Plan {
+	t.Helper()
+	plan, err := planread.Load(context.Background(), lab.Client(), planreadtest.Namespace, "storefront", selection)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	return plan
+}
 
 // The SQL a reader pipes somewhere else is the SQL the plan holds: the same
 // statements, in the same order, with nothing re-split on a semicolon. A
@@ -22,13 +34,10 @@ func TestRenderSQLKeepsTheStatementsThePlanHolds(t *testing.T) {
 		"COMMENT ON TABLE customers IS 'one; two; three'",
 		"-- a comment with a semicolon;\nALTER TABLE customers ADD COLUMN email TEXT",
 	}
-	lab := newLab(t, "storefront")
-	plan, _ := lab.store(t, statements, "v1")
-	lab.current(t, plan)
-	view, err := planview.Load(context.Background(), lab.reader(), "application", "storefront", planview.Current)
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
+	lab := planreadtest.NewLab(t, "storefront")
+	plan, _ := lab.Publish(t, statements, "v1")
+	lab.SetCurrent(t, plan)
+	view := load(t, lab, planread.Current)
 
 	var rendered bytes.Buffer
 	if err := planview.Render(&rendered, view, planview.SQL); err != nil {
@@ -53,13 +62,10 @@ func TestRenderSQLKeepsTheStatementsThePlanHolds(t *testing.T) {
 // matches the content digest printed beside it.
 func TestRenderJSONIsTheStoredDocument(t *testing.T) {
 	t.Parallel()
-	lab := newLab(t, "storefront")
-	plan, document := lab.store(t, []string{"CREATE TABLE customers (id BIGINT PRIMARY KEY)"}, "v1")
-	lab.current(t, plan)
-	view, err := planview.Load(context.Background(), lab.reader(), "application", "storefront", planview.Current)
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
+	lab := planreadtest.NewLab(t, "storefront")
+	plan, document := lab.Publish(t, []string{"CREATE TABLE customers (id BIGINT PRIMARY KEY)"}, "v1")
+	lab.SetCurrent(t, plan)
+	view := load(t, lab, planread.Current)
 
 	var rendered bytes.Buffer
 	if err := planview.Render(&rendered, view, planview.JSON); err != nil {
@@ -76,13 +82,10 @@ func TestRenderJSONIsTheStoredDocument(t *testing.T) {
 // says nothing about how it is stored.
 func TestRenderTextNamesThePlanAndNotItsChunks(t *testing.T) {
 	t.Parallel()
-	lab := newLab(t, "storefront")
-	plan, _ := lab.store(t, []string{"CREATE TABLE customers (id BIGINT PRIMARY KEY)"}, "v1")
-	lab.applied(t, plan)
-	view, err := planview.Load(context.Background(), lab.reader(), "application", "storefront", planview.Applied)
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
+	lab := planreadtest.NewLab(t, "storefront")
+	plan, _ := lab.Publish(t, []string{"CREATE TABLE customers (id BIGINT PRIMARY KEY)"}, "v1")
+	lab.SetApplied(t, plan)
+	view := load(t, lab, planread.Applied)
 
 	var rendered bytes.Buffer
 	if err := planview.Render(&rendered, view, planview.Text); err != nil {
@@ -164,14 +167,11 @@ func TestRenderTextNamesThePrivilegeChanges(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			lab := newLab(t, "storefront")
-			plan := lab.storeDocument(t, planDocument(t, test.statements), "v1",
+			lab := planreadtest.NewLab(t, "storefront")
+			plan := lab.PublishDocument(t, planreadtest.Document(t, test.statements), "v1",
 				func(spec *operatorv1alpha1.PtahSchemaPlanSpec) { spec.PrivilegeChanges = test.recorded })
-			lab.current(t, plan)
-			view, err := planview.Load(context.Background(), lab.reader(), "application", "storefront", planview.Current)
-			if err != nil {
-				t.Fatalf("Load() error = %v", err)
-			}
+			lab.SetCurrent(t, plan)
+			view := load(t, lab, planread.Current)
 			var rendered bytes.Buffer
 			if err := planview.Render(&rendered, view, planview.Text); err != nil {
 				t.Fatalf("Render(text) error = %v", err)

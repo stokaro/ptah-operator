@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -194,6 +195,101 @@ func TestLoadRejectsReplacedChunk(t *testing.T) {
 	if _, err := store.Load(context.Background(), published); err == nil {
 		t.Fatal("Load() accepted a delete-and-recreate chunk")
 	}
+}
+
+// A caller has to tell a plan that failed its checks from a read the API
+// refused: one is a plan nobody should read, the other is a reader without the
+// grant. The refusal keeps its message either way.
+func TestLoadTellsAVerificationRefusalFromAnAPIError(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name         string
+		arrange      func(t *testing.T, store Store, plan *operatorv1alpha1.PtahSchemaPlan, chunks [][]byte) Store
+		verification bool
+		apiCheck     func(error) bool
+		message      string
+	}{
+		{
+			name: "a replaced chunk",
+			arrange: func(t *testing.T, store Store, plan *operatorv1alpha1.PtahSchemaPlan, chunks [][]byte) Store {
+				deleteChunk(t, store, plan)
+				if err := store.Client.Create(context.Background(), DesiredChunk(plan, plan.Spec.Chunks[0], chunks[0])); err != nil {
+					t.Fatal(err)
+				}
+				return store
+			},
+			verification: true,
+			message:      "plan chunk 0 was replaced",
+		},
+		{
+			name: "a committed chunk that is gone",
+			arrange: func(t *testing.T, store Store, plan *operatorv1alpha1.PtahSchemaPlan, _ [][]byte) Store {
+				deleteChunk(t, store, plan)
+				return store
+			},
+			verification: true,
+			apiCheck:     apierrors.IsNotFound,
+		},
+		{
+			name: "a reader without the grant on chunks",
+			arrange: func(t *testing.T, store Store, _ *operatorv1alpha1.PtahSchemaPlan, _ [][]byte) Store {
+				store.Reader = chunkForbiddingReader{Reader: store.Reader}
+				return store
+			},
+			verification: false,
+			apiCheck:     apierrors.IsForbidden,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			schema, desired, chunks := fixture(t, []byte("small exact plan"))
+			store := fakeStore(t, schema)
+			published, err := store.Publish(context.Background(), desired, chunks)
+			if err != nil {
+				t.Fatal(err)
+			}
+			store = test.arrange(t, store, published, chunks)
+
+			content, err := store.Load(context.Background(), published)
+			if err == nil || content != nil {
+				t.Fatalf("Load() = %d bytes, %v; want a refusal and no bytes", len(content), err)
+			}
+			if got := errors.Is(err, ErrVerification); got != test.verification {
+				t.Fatalf("errors.Is(%v, ErrVerification) = %t, want %t", err, got, test.verification)
+			}
+			if test.apiCheck != nil && !test.apiCheck(err) {
+				t.Fatalf("Load() error %v lost the API status it wraps", err)
+			}
+			if test.message != "" && err.Error() != test.message {
+				t.Fatalf("Load() said %q, want the refusal's own message %q", err, test.message)
+			}
+		})
+	}
+}
+
+func deleteChunk(t *testing.T, store Store, plan *operatorv1alpha1.PtahSchemaPlan) {
+	t.Helper()
+	chunk := &operatorv1alpha1.PtahSchemaPlanChunk{}
+	key := client.ObjectKey{Namespace: plan.Namespace, Name: plan.Spec.Chunks[0].Name}
+	if err := store.Client.Get(context.Background(), key, chunk); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Client.Delete(context.Background(), chunk); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// chunkForbiddingReader answers a chunk read the way the API server answers a
+// reader bound to a role without the chunk rule.
+type chunkForbiddingReader struct{ client.Reader }
+
+func (r chunkForbiddingReader) Get(ctx context.Context, key client.ObjectKey, object client.Object, options ...client.GetOption) error {
+	if _, ok := object.(*operatorv1alpha1.PtahSchemaPlanChunk); ok {
+		resource := operatorv1alpha1.GroupVersion.WithResource("ptahschemaplanchunks").GroupResource()
+		return apierrors.NewForbidden(resource, key.Name, errors.New("no rule grants it"))
+	}
+	return r.Reader.Get(ctx, key, object, options...)
 }
 
 func TestLoadRejectsInexactChunkOwnerReference(t *testing.T) {

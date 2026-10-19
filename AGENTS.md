@@ -14,8 +14,11 @@ and `PtahMigration`, `PtahMigrationPlan`, `PtahMigrationApproval` and
 database, and `PtahResultRecord`, the immutable records an operation Pod
 delivers its result through. The work happens in `internal/`, which holds the
 controllers, admission, certificate rotation, the CRD upgrade path, the plan
-store and the runner. Five programs ship from `cmd/`: the manager, the
-certificate rotator, the CRD manager, the runner and the `kubectl ptah` plugin.
+store and the runner. `pkg/planread` is the one package meant for other
+modules: it reads a stored plan through the store's checks, for `kubectl ptah`
+and for the optional console in stokaro/ptah-console.
+Five programs ship from `cmd/`: the manager, the certificate rotator, the CRD
+manager, the runner and the `kubectl ptah` plugin.
 
 [The architecture page](docs/site/src/content/docs/reference/architecture.md)
 says how those pieces fit together and which invariant each one holds.
