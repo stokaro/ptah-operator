@@ -5,7 +5,9 @@ Report only: the run lists what the scanners find and decides nothing. It reads
 a release manifest and scans each platform image of the operator and of the
 Ptah executor the manifest names with Trivy, every binary inside them and the
 client binaries released beside the manifest with govulncheck in binary mode,
-and the operator source in source mode. The source scan runs inside the
+and the operator source in source mode. Trivy reads every image against one
+vulnerability database, downloaded once into a volume, and the summary records
+which. The source scan runs inside the
 operator Dockerfile's own builder stage, built from the release source, so it
 loads the Go and the modules that compiled the binaries. Raw scanner output is
 kept beside a summary.
@@ -26,6 +28,7 @@ import re
 import subprocess
 import sys
 import tarfile
+import time
 
 ROOT = Path(__file__).resolve().parents[3]
 PLATFORMS = ('linux/amd64', 'linux/arm64')
@@ -33,6 +36,8 @@ BINARIES = {'image': ['manager', 'ptah-runner', 'ptah-cert-rotator', 'ptah-crd-m
             'executor': ['usr/local/bin/ptah']}
 TRIVY = 'aquasec/trivy:0.74.0'
 GOVULNCHECK = 'golang.org/x/vuln/cmd/govulncheck@v1.8.0'
+TRIVY_CACHE = '/trivy-cache'
+TRIVY_DB_ATTEMPTS = 3
 
 
 def sha(raw):
@@ -106,6 +111,14 @@ def trivy_findings(report):
     return sorted(found)
 
 
+def trivy_database(version):
+    """The vulnerability database a Trivy version report says is in its cache."""
+    db = version.get('VulnerabilityDB') or {}
+    if not db.get('Version') or not db.get('UpdatedAt'):
+        raise ValueError('the Trivy cache holds no vulnerability database')
+    return {'version': db['Version'], 'updatedAt': db['UpdatedAt'], 'downloadedAt': db.get('DownloadedAt')}
+
+
 class Scan:
     def __init__(self, args):
         self.manifest = Path(args.manifest).resolve()
@@ -115,6 +128,7 @@ class Scan:
         self.out.mkdir(mode=0o700, parents=True, exist_ok=False)
         self.docker = ['docker', '--context', args.context]
         self.images = []
+        self.volumes = []
         self.summary = {'schemaVersion': 3, 'startedAt': datetime.datetime.now(datetime.timezone.utc).isoformat(),
                         'manifestSHA256': sha(self.manifest.read_bytes()), 'releaseSource': self.fields['source-sha'],
                         'targets': [], 'clients': [], 'sources': []}
@@ -139,6 +153,11 @@ class Scan:
         digest = json.loads(self.run('trivy-inspect', self.docker + ['image', 'inspect', TRIVY]).stdout)[0]['RepoDigests']
         version = json.loads(self.run('trivy-version', self.docker + ['run', '--rm', TRIVY, 'version', '--format', 'json']).stdout)
         self.trivy = next(d for d in digest if d.startswith('aquasec/trivy@'))
+        volume = f"ptah-release-scan-trivy-{self.fields['source-sha'][:12]}"
+        self.run('trivy-volume', self.docker + ['volume', 'create', volume])
+        self.volumes.append(volume)
+        self.trivy_run = self.docker + ['run', '--rm', '-v', f'{volume}:{TRIVY_CACHE}', self.trivy]
+        database = self.trivy_database()
         source = self.out / 'operator-source'
         source.mkdir(mode=0o700)
         archive = subprocess.run(['git', '-C', str(ROOT), 'archive', self.fields['source-sha']], capture_output=True, check=True).stdout
@@ -153,7 +172,25 @@ class Scan:
         self.scanner = tag
         govulncheck = self.run('govulncheck-version', self.docker + ['run', '--rm', tag, 'govulncheck', '-version']).stdout.decode()
         self.summary['scanners'] = {'govulncheck': GOVULNCHECK, 'govulncheckVersion': govulncheck.strip().splitlines(),
-                                    'trivy': self.trivy, 'trivyVersion': version}
+                                    'trivy': self.trivy, 'trivyVersion': version, 'trivyDatabase': database}
+
+    def trivy_database(self):
+        """Download the vulnerability database once, so every image is read against the same one.
+
+        A fresh container per image fetched it once per image, and one failed
+        fetch from the mirror ended the whole scan. The download is retried;
+        each attempt keeps its output.
+        """
+        for attempt in range(1, TRIVY_DB_ATTEMPTS + 1):
+            result = self.run(f'trivy-db-{attempt}', self.trivy_run + ['image', '--download-db-only', '--quiet',
+                                                                       '--cache-dir', TRIVY_CACHE], check=False)
+            if result.returncode == 0:
+                break
+            if attempt == TRIVY_DB_ATTEMPTS:
+                raise RuntimeError(f'trivy-db exited {result.returncode} on {attempt} attempts')
+            time.sleep(30)
+        version = self.run('trivy-db-version', self.trivy_run + ['version', '--cache-dir', TRIVY_CACHE, '--format', 'json'])
+        return trivy_database(json.loads(version.stdout))
 
     def binary_findings(self, name, binary):
         """Every binary-mode finding for one file, read by the pinned scanner over stdin."""
@@ -192,8 +229,8 @@ class Scan:
         for path, binary in binaries.items():
             record['binaries'].append({'path': path, 'sha256': sha(binary.read_bytes()),
                                        'findings': self.binary_findings(f'govulncheck-{slug}-{binary.name}', binary)})
-        trivy = self.run(f'trivy-{slug}', self.docker + ['run', '--rm', self.trivy, 'image', '--quiet', '--format', 'json',
-                                                        '--platform', platform, reference], timeout=3600)
+        trivy = self.run(f'trivy-{slug}', self.trivy_run + ['image', '--quiet', '--format', 'json', '--cache-dir', TRIVY_CACHE,
+                                                           '--skip-db-update', '--platform', platform, reference], timeout=3600)
         report = json.loads(trivy.stdout)
         record['trivy'] = {'findings': trivy_findings(report), 'os': report.get('Metadata', {}).get('OS')}
         self.summary['targets'].append(record)
@@ -226,6 +263,8 @@ class Scan:
         finally:
             for image in reversed(self.images):
                 subprocess.run(self.docker + ['rmi', image], capture_output=True)
+            for volume in self.volumes:
+                subprocess.run(self.docker + ['volume', 'rm', volume], capture_output=True)
         self.summary['finishedAt'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
         (self.out / 'summary.json').write_text(json.dumps(self.summary, indent=2) + '\n')
         print(json.dumps({

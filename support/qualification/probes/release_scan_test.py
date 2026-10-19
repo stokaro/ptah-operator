@@ -3,7 +3,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from release_scan import client_assets, decode_stream, govulncheck_findings, manifest_fields, trivy_findings
+from release_scan import client_assets, decode_stream, govulncheck_findings, manifest_fields, trivy_database, trivy_findings
 
 STREAM = b'''{"config":{"protocol_version":"v1.0.0","scanner_name":"govulncheck"}}
 {"osv":{"id":"GO-2026-0001"}}
@@ -28,6 +28,15 @@ class ReleaseScanTest(unittest.TestCase):
                               {'Vulnerabilities': [{'VulnerabilityID': 'CVE-2026-1'}, {'VulnerabilityID': 'CVE-2026-2'}]}]}
         self.assertEqual(trivy_findings(report), ['CVE-2026-1', 'CVE-2026-2'])
         self.assertEqual(trivy_findings({}), [])
+
+    def test_the_trivy_database_is_read_from_the_version_report(self):
+        report = {'Version': '0.74.0', 'VulnerabilityDB': {'Version': 2, 'UpdatedAt': '2026-10-19T00:41:12Z',
+                                                           'DownloadedAt': '2026-10-19T04:20:01Z'}}
+        self.assertEqual(trivy_database(report),
+                         {'version': 2, 'updatedAt': '2026-10-19T00:41:12Z', 'downloadedAt': '2026-10-19T04:20:01Z'})
+        for empty in ({'Version': '0.74.0'}, {'VulnerabilityDB': {'Version': 2}}, {'VulnerabilityDB': {'UpdatedAt': 'x'}}):
+            with self.assertRaises(ValueError):
+                trivy_database(empty)
 
     def test_the_manifest_must_name_pinned_images_once(self):
         good = ('source-sha=' + 'a' * 40 + '\nimage=ghcr.io/stokaro/ptah-operator@sha256:' + 'b' * 64 +
