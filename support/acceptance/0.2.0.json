@@ -57,7 +57,22 @@
       "evidence": "Public bundle: https://github.com/stokaro/ptah-operator/releases/tag/qualification-0.2.4, an immutable release whose assets were downloaded anonymously and matched their checksums. Restricted bundle: 13 age-encrypted archives on the evidence host, each read back, decrypted with the retained identity and refused to an unprivileged user (custody records under custody/ in the public bundle). This record and its decision are in the public bundle and at support/acceptance/0.2.0.json in the repository."
     }
   },
-  "exclusions": [],
+  "exclusions": [
+    {
+      "requirement": "PA-08",
+      "scope": "The 7,000-request budget is claimed for the profile workloads: steady change, backlog and churn. It is not claimed while a kube-apiserver restarts or the controller manager fails over, when the managers re-read every resource at once (#657); a control-plane upgrade can exceed the budget for a short time.",
+      "owner": "Ptah Engineering",
+      "reviewBy": "2026-11-30",
+      "detection": "kube-apiserver request metrics or a Metadata audit of the manager identity show the burst; until #657 is resolved, schedule control-plane upgrades away from heavy change windows."
+    },
+    {
+      "requirement": "PA-11",
+      "scope": "The pinned executor, Ptah v0.13.0, is supported only as the operator runs it: a short-lived operation Job with a deadline, no listening socket, and client traffic to the configured registry and database. Ptah server commands and other uses of that image are outside the supported use, because its Go 1.27.1 and x/net v0.59.0 build carries later advisories (#610).",
+      "owner": "Ptah Engineering",
+      "reviewBy": "2026-11-30",
+      "detection": "support/qualification/probes/release_scan.py reports the executor findings on every release; the operator invokes only the client commands its Jobs run, and #610 moves the pin to a patched Ptah release."
+    }
+  ],
   "decision": "Accepted for the stated profile",
   "handoff": {
     "engineeringOwner": "Ptah Engineering",
