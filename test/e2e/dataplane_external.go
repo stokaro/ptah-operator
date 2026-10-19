@@ -505,11 +505,17 @@ func betweenRefreshes(schema *ptahv1alpha1.PtahSchema, now time.Time, headroom t
 }
 
 // samePlanHeldAtGeneration is the privileged gate read at a generation the row
-// set: the same plan, held after the spec changed.
+// set: the same plan, held after the spec changed, with the schema at
+// AwaitingApproval and nothing running. The spec change starts a refresh of
+// its own, and between two of its operations the gate still holds -- the same
+// plan, no active operation -- while the phase is Verifying. The approval
+// webhook refuses an approval there as not awaiting approval, so the row
+// approves only from the phase the webhook admits.
 func samePlanHeldAtGeneration(planUID, fingerprint string, generation int64) func(*ptahv1alpha1.PtahSchema) bool {
 	return func(schema *ptahv1alpha1.PtahSchema) bool {
 		plan := schema.Status.Plan
-		return schema.Generation == generation && plan != nil && string(plan.UID) == planUID && plan.Fingerprint == fingerprint
+		return schema.Generation == generation && plan != nil && string(plan.UID) == planUID &&
+			plan.Fingerprint == fingerprint && planAwaitingApproval(schema)
 	}
 }
 
