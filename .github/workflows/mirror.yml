@@ -1,0 +1,150 @@
+name: Docker Hub mirror
+
+# The released operator image, copied to docker.io/stokaro/ptah-operator
+# without changing a byte, for clusters that pull without signing in. GHCR
+# stays the documented source, and the mirror serves the same digest, so the
+# attestations, which are keyed by digest, verify through either name.
+#
+# It runs after every Release run that succeeded on a tag, which is how
+# publication runs, and on request for a tag. It copies only a published,
+# immutable release: a draft's manifest is not final. The manifest is
+# authenticated the way the release guide does it before its image reference
+# is read, and the mirror is checked the way a reader pulls it, without
+# signing in.
+
+on:
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published release tag to mirror, such as v0.2.5
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docker-hub-mirror
+  cancel-in-progress: false
+
+env:
+  GOFLAGS: -mod=readonly
+  MIRROR: registry-1.docker.io/stokaro/ptah-operator
+
+jobs:
+  mirror:
+    name: Mirror ${{ inputs.tag || github.event.workflow_run.head_branch }} to Docker Hub
+    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'workflow_dispatch' && startsWith(github.event.workflow_run.head_branch, 'v'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: read
+      attestations: read
+    env:
+      TAG: ${{ inputs.tag || github.event.workflow_run.head_branch }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+      - name: Authenticate the published release
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "not a release tag: $TAG" >&2; exit 1; }
+          state="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,isImmutable --jq '"draft=\(.isDraft) immutable=\(.isImmutable)"')"
+          if [[ "$state" != "draft=false immutable=true" ]]; then
+            # A Release run on a tag also prepares and re-verifies drafts.
+            if [[ "$GITHUB_EVENT_NAME" == workflow_run ]]; then
+              echo "::notice::$TAG is not published ($state); nothing to mirror"
+              printf 'published=false\n' >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "$TAG is not a published immutable release ($state)" >&2
+            exit 1
+          fi
+          version="${TAG#v}"
+          source_sha="$(gh api "repos/$GITHUB_REPOSITORY/commits/$TAG" --jq .sha)"
+          gh release verify "$TAG" --repo "$GITHUB_REPOSITORY"
+          dir="$RUNNER_TEMP/release"
+          mkdir -p "$dir"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern release-manifest.txt --dir "$dir"
+          manifest="$dir/release-manifest.txt"
+          gh release verify-asset "$TAG" "$manifest" --repo "$GITHUB_REPOSITORY"
+          source_ref="$(sed -n 's/^source-ref=//p' "$manifest")"
+          case "$source_ref" in
+            "refs/tags/$TAG"|refs/heads/master) ;;
+            *) echo "unexpected release producer ref: $source_ref" >&2; exit 1 ;;
+          esac
+          signer=(--repo "$GITHUB_REPOSITORY" --source-ref "$source_ref" --source-digest "$source_sha"
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml")
+          gh attestation verify "$manifest" "${signer[@]}"
+          grep -Fx "version=$version" "$manifest"
+          grep -Fx "source-sha=$source_sha" "$manifest"
+          image="$(sed -n 's/^image=//p' "$manifest")"
+          [[ "$image" =~ ^ghcr\.io/stokaro/ptah-operator@sha256:[0-9a-f]{64}$ ]] || {
+            echo "the manifest names no operator image by digest: $image" >&2
+            exit 1
+          }
+          gh attestation verify "oci://$image" "${signer[@]}"
+          {
+            printf 'published=true\n'
+            printf 'version=%s\n' "$version"
+            printf 'image=%s\n' "$image"
+            printf 'source-ref=%s\n' "$source_ref"
+            printf 'source-sha=%s\n' "$source_sha"
+          } >> "$GITHUB_OUTPUT"
+      - name: Copy the image to Docker Hub
+        if: steps.release.outputs.published == 'true'
+        env:
+          IMAGE: ${{ steps.release.outputs.image }}
+          VERSION: ${{ steps.release.outputs.version }}
+          DOCKER_HUB_USER: ${{ secrets.DOCKER_HUB_USER }}
+          DOCKER_HUB_TOKEN: ${{ secrets.DOCKER_HUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          credentials="$RUNNER_TEMP/credentials"
+          mkdir -m 0700 "$credentials"
+          trap 'rm -rf "$credentials"' EXIT
+          printf '%s' "$GH_TOKEN" > "$credentials/ghcr"
+          printf '%s' "$DOCKER_HUB_TOKEN" > "$credentials/docker-hub"
+          go run ./hack/imagecopy \
+            -from "$IMAGE" \
+            -from-username "$GITHUB_ACTOR" -from-password-file "$credentials/ghcr" \
+            -to "$MIRROR:$VERSION" \
+            -to-username "$DOCKER_HUB_USER" -to-password-file "$credentials/docker-hub" \
+            -require-platforms linux/amd64,linux/arm64
+      # Anonymous on purpose: the job holds a push credential, and a check that
+      # used it would pass for an image the public cannot pull.
+      - name: Check the mirror the way a reader pulls it
+        if: steps.release.outputs.published == 'true'
+        env:
+          IMAGE: ${{ steps.release.outputs.image }}
+          VERSION: ${{ steps.release.outputs.version }}
+          SOURCE_REF: ${{ steps.release.outputs.source-ref }}
+          SOURCE_SHA: ${{ steps.release.outputs.source-sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          repository="${MIRROR#*/}"
+          accept='application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json'
+          token="$(curl -fsS "https://auth.docker.io/token?service=registry.docker.io&scope=repository:$repository:pull" | jq -er .token)"
+          served="$(curl -fsSI -H "Authorization: Bearer $token" -H "Accept: $accept" \
+            "https://registry-1.docker.io/v2/$repository/manifests/$VERSION" |
+            tr -d '\r' | sed -n 's/^[Dd]ocker-[Cc]ontent-[Dd]igest: //p')"
+          printf 'docker.io/%s:%s serves %s\n' "$repository" "$VERSION" "${served:-nothing}"
+          [[ "$served" == "${IMAGE##*@}" ]] || { echo "the mirror does not serve ${IMAGE##*@}" >&2; exit 1; }
+          gh attestation verify "oci://docker.io/$repository@$served" \
+            --repo "$GITHUB_REPOSITORY" --source-ref "$SOURCE_REF" --source-digest "$SOURCE_SHA" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml"
