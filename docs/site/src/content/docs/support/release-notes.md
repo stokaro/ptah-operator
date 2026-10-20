@@ -16,6 +16,30 @@ release that says so, and this is where it is said. A version that asks
 nothing of you says so in as many words, rather than leaving you to read it
 out of silence.
 
+## 0.2.5
+
+**Before you upgrade.** Nothing has to change. The manager image is new, so
+keep `--force-conflicts` on the upgrade.
+
+The chart's ServiceMonitor now selects the metrics Service. In 0.2.4 it
+selected Services by a label only the manager Pods carry, so
+`monitoring.serviceMonitor.enabled` gave Prometheus no target and every alert
+rule read an absent series. The metrics Service now carries
+`app.kubernetes.io/component: metrics`, and the ServiceMonitor selects that.
+A ServiceMonitor you wrote yourself to work around it keeps working; remove it
+once the chart's own one is scraped, so the managers are not scraped twice.
+
+A failed or partial migration run now names the migration it stopped in, in
+`status.lastRun.message` and in its `MigrationRunFinished` Event: its version,
+the description Ptah reads from its file name, and for a partial run how many
+of its statements it committed. The message still carries nothing the
+database said.
+
+`pkg/planread` is new. It reads a stored schema plan through the same checks
+`kubectl ptah plan` makes, for a Go program that shows plans, such as the
+optional console in stokaro/ptah-console. Nothing in the operator's own
+behavior changes with it.
+
 ## 0.2.4
 
 **Before you upgrade.** Nothing has to change. This upgrade swaps the manager
