@@ -101,7 +101,7 @@ generate:
 # controller-gen and the stamp once left six CRDs without their schema-version
 # annotations, which read as an ordinary diff and were committed (#682).
 manifests:
-	@crds=$$(mktemp -d) && trap 'rm -rf "$$crds"' EXIT && \
+	@crds=$$(mktemp -d); \
 	$(GO) run sigs.k8s.io/controller-tools/cmd/controller-gen@$(CONTROLLER_GEN_VERSION) \
 		crd:maxDescLen=0 paths=./api/... output:crd:artifacts:config="$$crds" && \
 	GO="$(GO)" sh hack/stamp-crd-schema-version.sh \
@@ -109,13 +109,12 @@ manifests:
 	for file in config/crd/bases/*.yaml; do \
 		[ -e "$$crds/$${file##*/}" ] || rm -f "$$file"; \
 	done && \
-	for file in "$$crds"/*.yaml; do mv -f "$$file" config/crd/bases/; done
-	@mkdir -p charts/ptah-operator/crds
-	@rm -f charts/ptah-operator/crds/*.yaml
-	@cp config/crd/bases/*.yaml charts/ptah-operator/crds/
-	@mkdir -p internal/crdupgrade/assets
-	@rm -f internal/crdupgrade/assets/*.yaml
-	@cp config/crd/bases/*.yaml internal/crdupgrade/assets/
+	for file in "$$crds"/*.yaml; do mv -f "$$file" config/crd/bases/; done && \
+	mkdir -p charts/ptah-operator/crds internal/crdupgrade/assets && \
+	rm -f charts/ptah-operator/crds/*.yaml internal/crdupgrade/assets/*.yaml && \
+	cp config/crd/bases/*.yaml charts/ptah-operator/crds/ && \
+	cp config/crd/bases/*.yaml internal/crdupgrade/assets/; \
+	status=$$?; rm -rf "$$crds"; exit $$status
 
 # The chart's admission policies are written once, in Go, and the templates
 # that ship them are generated from those definitions: hack/chartpolicies
