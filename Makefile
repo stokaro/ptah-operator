@@ -96,11 +96,20 @@ generate:
 	$(GO) run sigs.k8s.io/controller-tools/cmd/controller-gen@$(CONTROLLER_GEN_VERSION) \
 		object:headerFile=hack/boilerplate.go.txt paths=./api/...
 
+# The CRDs are generated and stamped in a directory of their own, and each
+# reaches config/crd/bases whole, by a rename. A run stopped between
+# controller-gen and the stamp once left six CRDs without their schema-version
+# annotations, which read as an ordinary diff and were committed (#682).
 manifests:
+	@crds=$$(mktemp -d) && trap 'rm -rf "$$crds"' EXIT && \
 	$(GO) run sigs.k8s.io/controller-tools/cmd/controller-gen@$(CONTROLLER_GEN_VERSION) \
-		crd:maxDescLen=0 paths=./api/... output:crd:artifacts:config=config/crd/bases
+		crd:maxDescLen=0 paths=./api/... output:crd:artifacts:config="$$crds" && \
 	GO="$(GO)" sh hack/stamp-crd-schema-version.sh \
-		$(CRD_SCHEMA_VERSION) $(CONTROLLER_STATE_VERSION) config/crd/bases/*.yaml
+		$(CRD_SCHEMA_VERSION) $(CONTROLLER_STATE_VERSION) "$$crds"/*.yaml && \
+	for file in config/crd/bases/*.yaml; do \
+		[ -e "$$crds/$${file##*/}" ] || rm -f "$$file"; \
+	done && \
+	for file in "$$crds"/*.yaml; do mv -f "$$file" config/crd/bases/; done
 	@mkdir -p charts/ptah-operator/crds
 	@rm -f charts/ptah-operator/crds/*.yaml
 	@cp config/crd/bases/*.yaml charts/ptah-operator/crds/
