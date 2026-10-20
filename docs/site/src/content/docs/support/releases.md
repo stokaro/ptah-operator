@@ -461,8 +461,10 @@ gh attestation verify "oci://$image" \
   --signer-workflow "$repository/.github/workflows/release.yml"
 ```
 
-Cosign provides an independent signature check. Bind its certificate identity
-to the authenticated producer ref:
+Cosign provides an independent signature check. The release signs with Cosign
+v3, which stores the signature as a Sigstore bundle, so verify with Cosign v3
+or later: Cosign v2.5 finds no signature on the image. Bind its certificate
+identity to the authenticated producer ref:
 
 ```sh
 identity="https://github.com/$repository/.github/workflows/release.yml@$source_ref"
