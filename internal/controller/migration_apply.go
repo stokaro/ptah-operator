@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -1144,12 +1146,77 @@ func migrationRunMessage(report dataplane.MigrationRunReport) string {
 	case dataplane.MigrationOutcomeDryRun:
 		return "The run was a dry run and changed nothing"
 	case dataplane.MigrationOutcomeFailed:
-		return fmt.Sprintf("A migration failed and committed nothing; %d migrations before it are recorded applied", len(report.Applied))
+		return fmt.Sprintf("%s failed and committed nothing; %d migrations before it are recorded applied",
+			stoppedMigrationName(report), len(report.Applied))
 	case dataplane.MigrationOutcomePartial:
+		if dirty := dirtyRevision(report); dirty != nil && dirty.Total > 0 {
+			return fmt.Sprintf("%s committed %d of its %d statements and not the rest; retrying the file would run them twice",
+				migrationName(report, dirty.Version), dirty.Applied, dirty.Total)
+		}
 		return "A migration committed some of its statements and not the rest; retrying the file would run them twice"
 	default:
 		return "The database's own account of the run could not be read"
 	}
+}
+
+// migrationDescriptionBytes bounds the description a run message quotes, so
+// the whole sentence fits the 256 bytes the MigrationRunFinished Event keeps.
+const migrationDescriptionBytes = 64
+
+// stoppedMigrationName names the migration a failed run stopped in, from the
+// run's own report: the revision row it left dirty, or, where it left none,
+// the first version it selected and did not apply. The engine's message about
+// why stays out (#69); the version and the description the artifact gave it
+// carry no row, and they tell a reader which file to open (#678).
+func stoppedMigrationName(report dataplane.MigrationRunReport) string {
+	if dirty := dirtyRevision(report); dirty != nil {
+		return migrationName(report, dirty.Version)
+	}
+	for _, version := range report.Planned {
+		if !slices.Contains(report.Applied, version) {
+			return migrationName(report, version)
+		}
+	}
+	return "A migration"
+}
+
+func dirtyRevision(report dataplane.MigrationRunReport) *dataplane.MigrationDirty {
+	if report.Status == nil {
+		return nil
+	}
+	return report.Status.DirtyRevision
+}
+
+// migrationName is "Migration 2 (Read Ledger)", or "Migration 2" for a
+// version the report describes nowhere.
+func migrationName(report dataplane.MigrationRunReport, version int64) string {
+	name := "Migration " + strconv.FormatInt(version, 10)
+	if report.Status == nil {
+		return name
+	}
+	for _, record := range report.Status.Migrations {
+		if record.Version != version {
+			continue
+		}
+		description := strings.TrimSpace(strings.Map(func(r rune) rune {
+			if unicode.IsControl(r) {
+				return ' '
+			}
+			return r
+		}, strings.ToValidUTF8(record.Description, "�")))
+		if description == "" {
+			return name
+		}
+		if len(description) > migrationDescriptionBytes {
+			cut := migrationDescriptionBytes
+			for !utf8.RuneStart(description[cut]) {
+				cut--
+			}
+			description = description[:cut] + "..."
+		}
+		return name + " (" + description + ")"
+	}
+	return name
 }
 
 func migrationRunEventType(outcome operatorv1alpha1.MigrationRunOutcome) string {
