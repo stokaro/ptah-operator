@@ -64,12 +64,12 @@ preflight fails closed and requires a new release commit.
 ## Prepare a release
 
 Signed preparation uploads a draft and digest-addressed images without creating
-the Git tag or publishing the official release. Before preparing `v0.2.4`:
+the Git tag or publishing the official release. Before preparing `v0.2.5`:
 
 1. Merge the changes through a pull request, then wait for the complete CI
    run on that exact `master` commit. Record the commit and run URL. The pull
    request run alone cannot authorize publication.
-2. Run `go run ./hack/releaseverify -tag v0.2.4` at that commit. The chart
+2. Run `go run ./hack/releaseverify -tag v0.2.5` at that commit. The chart
    version, `appVersion`, default image tag, and release notes must name the
    same version. Keep the installed-chart and lifecycle artifacts from its CI
    run; preflight checks their bytes and expiration.
@@ -114,7 +114,7 @@ Request publication from that tag with the recorded manifest digest:
 
 ```sh
 qualified_manifest_sha256='replace-with-the-recorded-64-character-digest'
-gh workflow run release.yml --ref v0.2.4 \
+gh workflow run release.yml --ref v0.2.5 \
   -f action=publish -f manifest_sha256="$qualified_manifest_sha256"
 ```
 
@@ -138,7 +138,7 @@ image digests and chart. Those checks require the
 published bytes; preparation and source CI cannot stand in for them. Once the
 tag exists, add its compatibility row to `support/ptah.json` with the executor
 pin and measured scope from that tag. Set `documentation.published` to `true`
-and `documentation.source` to `v0.2.4` to build its guide from the tag. Do
+and `documentation.source` to `v0.2.5` to build its guide from the tag. Do
 not declare a published guide before the tag exists.
 
 ## Acceptance evidence
@@ -392,7 +392,7 @@ every other ref is refused, and attestations still require the resolved release
 commit and the exact signer workflow:
 
 ```sh
-tag=v0.2.4
+tag=v0.2.5
 version=${tag#v}
 repository=stokaro/ptah-operator
 source_sha="$(gh api "repos/$repository/commits/$tag" --jq .sha)"
