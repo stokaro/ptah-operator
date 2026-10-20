@@ -503,6 +503,16 @@ helm upgrade --install ptah-operator \
   --set-string "execution.ptahVersion=$ptah_version"
 ```
 
+From v0.2.5 the image is also on Docker Hub, as
+`docker.io/stokaro/ptah-operator:<version>`, for a cluster that pulls without
+signing in. `.github/workflows/mirror.yml` copies it there without changing a
+byte once the release is published, so it is the same digest, and the
+attestations above, which are keyed by digest, verify it under either name. To
+pull from Docker Hub, set `image.repository` to
+`docker.io/stokaro/ptah-operator` and give `execution.runnerImage` as
+`docker.io/stokaro/ptah-operator@` followed by the same digest. Docker Hub
+limits anonymous pulls; GHCR does not.
+
 `execution.ptahVersion` has no chart default and is not inferred from the image
 reference. Set it to the version identity established by the provenance of the
 exact executor digest. For the executor a release publishes, that is
