@@ -119,6 +119,37 @@ func TestStoppedRunRecordedRefusesEachClause(t *testing.T) {
 	}
 }
 
+func TestStoppedRunNamesItsMigrationRefusesEachClause(t *testing.T) {
+	t.Parallel()
+	const named = `{"status":{"lastRun":{"outcome":"Failed","jobUID":"u-apply","appliedVersions":[1],
+  "message":"Migration 2 (Wait To Be Stopped) failed and committed nothing; 1 migrations before it are recorded applied"}}}`
+	accepts := func(migration *ptahv1alpha1.PtahMigration) bool {
+		return stoppedRunNamesItsMigration(migration.Status.LastRun, 2)
+	}
+	message := func(text string) func(*ptahv1alpha1.PtahMigration) {
+		return func(m *ptahv1alpha1.PtahMigration) { m.Status.LastRun.Message = text }
+	}
+	mfRefusesEach(t, named, accepts, []mfMutation{
+		{"no run recorded", func(m *ptahv1alpha1.PtahMigration) { m.Status.LastRun = nil }},
+		{"no message", message("")},
+		{"the message before #678", message(
+			"A migration failed and committed nothing; 1 migrations before it are recorded applied")},
+		{"the version without its description", message(
+			"Migration 2 failed and committed nothing; 1 migrations before it are recorded applied")},
+		{"an empty description", message(
+			"Migration 2 () failed and committed nothing; 1 migrations before it are recorded applied")},
+		{"another version", message(
+			"Migration 3 (Wait To Be Stopped) failed and committed nothing; 2 migrations before it are recorded applied")},
+		{"another count", message(
+			"Migration 2 (Wait To Be Stopped) failed and committed nothing; 0 migrations before it are recorded applied")},
+		{"a version that only starts with the one stopped", message(
+			"Migration 21 (x) failed and committed nothing; 1 migrations before it are recorded applied")},
+		{"a partial run's message", message(
+			"Migration 2 (Wait To Be Stopped) committed 1 of its 2 statements and not the rest; " +
+				"retrying the file would run them twice")},
+	})
+}
+
 // The readings the self-test held migration-lost-log-run-recorded.jq to,
 // judged with stoppedAt=3, digest=sha256:ff and the job u-isolated-apply.
 var mfLostLogReadings = []mfReading{

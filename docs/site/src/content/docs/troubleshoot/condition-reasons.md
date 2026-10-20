@@ -112,14 +112,17 @@ rather than of a broken statement:
 
 ```
 lastRun: outcome Failed
-"A migration failed and committed nothing; 0 migrations before it are recorded applied"
+"Migration 1 (Create Widgets) failed and committed nothing; 0 migrations before it are recorded applied"
 ```
+
+The message names the migration the run stopped in, by its version and the
+description Ptah reads from its file name. It does not carry what Ptah or the
+database said, because that sentence can quote a row, and nothing the operator
+publishes carries one: not the status, not an Event, not the Pod log.
 
 On MySQL or MariaDB the usual cause is the transaction mode. Those engines have
 no transactional DDL, so Ptah will not run a file it cannot witness as one unit
-and says so before any statement executes. The resource reports the refusal
-faithfully; what it cannot show you is the sentence, because the container that
-holds the database URL does not put its output in a status.
+and says so before any statement executes.
 
 Name the mode and the run proceeds:
 
@@ -133,8 +136,10 @@ spec:
 says what that costs — with no transaction to unwind, a file that fails halfway
 leaves what it already committed.
 
-A run that failed on a statement looks different: migrations before the failing
-one are recorded applied, and the count in the message is not zero.
+A run that failed on a statement says the same, with the migration it failed
+in and the count of those before it that it applied. The statement the
+database refused is in that file, and running the file against a copy of the
+database shows why.
 
 ## A change a policy fences off
 

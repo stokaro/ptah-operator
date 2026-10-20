@@ -215,7 +215,7 @@ func TestMigrationApplyEvidenceDecidesWhatHappensNext(t *testing.T) {
 			wantPhase:             operatorv1alpha1.MigrationPhaseVerifyingHistory,
 			wantProgressing:       metav1.ConditionTrue,
 			wantProgressingReason: operatorv1alpha1.ReasonVerifyingConvergence,
-			wantMessage:           "A migration failed and committed nothing",
+			wantMessage:           "Migration 3 failed and committed nothing",
 		},
 		{
 			// The history was restored backwards after the plan approved [3],
