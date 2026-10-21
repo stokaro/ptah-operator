@@ -1,0 +1,35 @@
+# The Prometheus Operator stack the monitoring deployment check installs
+# (support/qualification/probes/monitoring_check.py). Prometheus selects every
+# ServiceMonitor and PrometheusRule, so the release's own objects are what it
+# reads, and it scrapes and evaluates every 5 seconds as the profile's alert
+# targets require. Alertmanager waits 5 seconds per group and sends every
+# notification, resolutions included, to the in-cluster receiver the check
+# deploys beside it.
+grafana:
+  enabled: false
+nodeExporter:
+  enabled: false
+prometheus:
+  prometheusSpec:
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    scrapeInterval: 5s
+    evaluationInterval: 5s
+alertmanager:
+  config:
+    global:
+      resolve_timeout: 1m
+    route:
+      receiver: webhook
+      group_by: ['alertname']
+      group_wait: 5s
+      group_interval: 10s
+      repeat_interval: 1h
+    receivers:
+      # The chart's default routes send Watchdog and InfoInhibitor to "null".
+      - name: 'null'
+      - name: webhook
+        webhook_configs:
+          - url: http://ptah-receiver.monitoring.svc:8080/
+            send_resolved: true

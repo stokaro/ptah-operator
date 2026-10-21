@@ -30,3 +30,14 @@ linux/amd64 on October 12, 2026, 95 seconds after its deletion was requested,
 from release v0.2.2 (`81b154ef69ae709a4a1aa39bab9db93fedb9b10d`). Its durable
 result records were the only content left, refused by the retention admission.
 Managed fields were omitted.
+
+`monitoring-check/` holds readings of the v0.2.4 monitoring deployment check on
+kind with Kubernetes 1.35.8, October 19, 2026, with kube-prometheus-stack
+92.10.1 and release v0.2.4 (`d1859174288e7f67873c9f15950b7e6fabf8fd58`).
+`receiver-v0.2.4.jsonl` is the receiver's log of the run that passed, and
+`receiver-v0.2.4-first-attempt.jsonl` the log of the first attempt, which
+passed on the startup incident's resolution and was discarded.
+`targets-v0.2.4.json` is Prometheus's active targets, trimmed to the scrape
+pool, address, health and identifying labels, read while the chart's own
+ServiceMonitor was the only one in the release namespace: it selected no
+Service, so no target there.

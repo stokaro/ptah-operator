@@ -20,6 +20,15 @@ name: Fresh installation
 # its own guide and converges the schema on it, then upgrades to the tag as the
 # operations guide describes and requires the runtime on the tag's image with
 # the schema still converged, refreshed by the new manager.
+#
+# A fresh installation also runs the monitoring deployment check on a third
+# cluster: the guide's installation with the profile's monitoring values beside
+# a Prometheus Operator stack, scraped through the chart's own ServiceMonitor,
+# with the lost-view alert and its resolution delivered to a receiver.
+# support/qualification/probes/monitoring_check.py says what it requires. It is
+# PA-09's evidence that the chart's monitoring works as shipped, which the CI
+# alerting suites do not measure: they scrape the managers with a Prometheus
+# configuration of their own (#673, #675).
 
 on:
   workflow_dispatch:
@@ -170,6 +179,25 @@ jobs:
             --tag "$GUIDE_TAG" --engine mysql "${upgrade[@]}" \
             --work "$RUNNER_TEMP/guide-mysql" \
             --evidence "$RUNNER_TEMP/guide-evidence/mysql"
+      # The check installs no database, so it runs whether or not either
+      # engine passed. An upgrade run leaves it to the fresh run of the tag.
+      - name: Install with the chart's monitoring and deliver the lost-view alert
+        if: ${{ !cancelled() && inputs.upgrade_from == '' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GUIDE_TAG: ${{ inputs.tag }}
+          NODE_IMAGE: ${{ steps.support.outputs.node_image }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          kind delete cluster --name ptah-guide-postgresql
+          kind delete cluster --name ptah-guide-mysql
+          kind create cluster --name ptah-guide-monitoring --image "$NODE_IMAGE" --wait 5m
+          kubectl get nodes -o wide
+          GUIDE_BIN="$RUNNER_TEMP/bin" python3 support/qualification/probes/monitoring_check.py \
+            --tag "$GUIDE_TAG" \
+            --work "$RUNNER_TEMP/guide-monitoring" \
+            --evidence "$RUNNER_TEMP/guide-evidence/monitoring"
       - name: Preserve the transcript
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -183,3 +211,4 @@ jobs:
         run: |
           kind delete cluster --name ptah-guide-postgresql
           kind delete cluster --name ptah-guide-mysql
+          kind delete cluster --name ptah-guide-monitoring

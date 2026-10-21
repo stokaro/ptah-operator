@@ -178,6 +178,14 @@ def upgrade_command(install, operations):
     return substitute(install, [(last, last.rstrip('\n') + ' \\\n  --force-conflicts\n')])
 
 
+def with_values(install, path):
+    """The release's installation command with one values file added after
+    the guide's own flags. Helm applies --set-string over any values file, so
+    the file cannot change the digests the guide installs."""
+    last = '  --set-string "execution.ptahVersion=$ptah_version"\n'
+    return substitute(install, [(last, last.rstrip('\n') + f' \\\n  --values {shlex.quote(str(path))}\n')])
+
+
 def substitute(text, replacements):
     """Replace each placeholder exactly once, and refuse one that is missing."""
     for old, new in replacements:
@@ -221,7 +229,9 @@ class Walkthrough:
                 raise ValueError('the walkthrough installs a published release tag')
         if self.predecessor == self.tag:
             raise ValueError('an upgrade needs a predecessor other than the target')
-        if args.engine not in SERVERS:
+        # A walkthrough that converges no schema, such as the monitoring
+        # check, names no engine.
+        if args.engine is not None and args.engine not in SERVERS:
             raise ValueError(f'the walkthrough runs one of {sorted(SERVERS)}')
         self.engine = args.engine
         self.work = Path(args.work).resolve()
@@ -230,6 +240,9 @@ class Walkthrough:
         self.env = dict(os.environ)
         self.fixtures = 'ptah-guide-fixtures'
         self.source = None
+        # Values files the installation adds after the guide's own flags,
+        # each recorded in the transcript as a substitution.
+        self.values = []
 
     def docs(self, page):
         if self.source is None:
@@ -259,6 +272,10 @@ class Walkthrough:
         if upgrade:
             install = upgrade_command(install, self.docs('use/operations.md'))
             self.transcript.record(step='substitute-upgrade', source='use/operations.md#upgrade-run', added='--force-conflicts')
+        for values in self.values:
+            install = with_values(install, values)
+            self.transcript.record(step='substitute-values', source='support/releases.md#install-by-digest',
+                                   added=f'--values {values}')
         # The blocks share one shell: the installation reads the image, executor
         # and version the verification established.
         script = verify + install + 'printf "image=%s\\nexecutor=%s\\nptah_version=%s\\n" "$image" "$executor" "$ptah_version"\n'
