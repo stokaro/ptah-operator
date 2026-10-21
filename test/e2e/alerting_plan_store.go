@@ -24,8 +24,12 @@ import (
 const (
 	alPlanStoreAlert  = "PtahOperatorPlanStoreLarge"
 	alPlanStoreMetric = "ptah_operator_stored_plan_bytes"
-	alPlanStoreLimit  = int64(128 << 20)
-	alPlanStoreCount  = 17
+	// alViewReadFailuresMetric counts the leader's scrapes whose state read
+	// failed. Such a scrape omits the plan-store gauge by design, and the
+	// chart's rule holds an incident through the omission.
+	alViewReadFailuresMetric = "ptah_operator_unresolved_view_read_failures_total"
+	alPlanStoreLimit         = int64(128 << 20)
+	alPlanStoreCount         = 17
 )
 
 type alPlanKey struct{ family, namespace, name string }
@@ -233,11 +237,11 @@ func alQueryPlanStoreHistory(ctx context.Context, query func(context.Context, ti
 		}
 		// A timed-out retry must retain the last response for diagnosis.
 		body = snapshot
-		groups, err := alSplitHistorySnapshot(body, alScrapeJob, []string{alPlanStoreMetric, "up", "scrape_duration_seconds"})
+		groups, err := alSplitHistorySnapshot(body, alScrapeJob, alPlanStoreHistoryMetrics)
 		if err != nil {
 			return err
 		}
-		history, err = alReadPlanStoreWindow(groups[alPlanStoreMetric], groups["up"], groups["scrape_duration_seconds"], pods, leader, started, at, recovery)
+		history, err = alReadPlanStoreWindow(groups[alPlanStoreMetric], groups["up"], groups["scrape_duration_seconds"], groups[alViewReadFailuresMetric], pods, leader, started, at, recovery)
 		return err
 	}
 	if err := read(ctx); !errors.Is(err, errAlHistoryNotFresh) {
@@ -255,18 +259,33 @@ func alQueryPlanStoreHistory(ctx context.Context, query func(context.Context, ti
 	return history, body, err
 }
 
-func alReadPlanStoreHistory(gaugeBody, upBody, durationBody []byte, pods []string, leader string, started, queriedAt time.Time) (alPlanStoreHistory, error) {
-	return alReadPlanStoreWindow(gaugeBody, upBody, durationBody, pods, leader, started, queriedAt, false)
+// alPlanStoreHistoryMetrics are the series one history snapshot reads.
+var alPlanStoreHistoryMetrics = []string{alPlanStoreMetric, "up", "scrape_duration_seconds", alViewReadFailuresMetric}
+
+// failuresBody is the leader's read-failure counter. A nil body declares no
+// failure, so every scrape must then carry the gauge.
+func alReadPlanStoreHistory(gaugeBody, upBody, durationBody, failuresBody []byte, pods []string, leader string, started, queriedAt time.Time) (alPlanStoreHistory, error) {
+	return alReadPlanStoreWindow(gaugeBody, upBody, durationBody, failuresBody, pods, leader, started, queriedAt, false)
 }
 
 // Recovery starts from a fresh above-threshold baseline immediately before
 // pruning. The earlier firing window already established the crossing. Export
 // and replacement work between those events cannot extend either deadline.
-func alReadPlanStoreRecoveryHistory(gaugeBody, upBody, durationBody []byte, pods []string, leader string, started, queriedAt time.Time) (alPlanStoreHistory, error) {
-	return alReadPlanStoreWindow(gaugeBody, upBody, durationBody, pods, leader, started, queriedAt, true)
+func alReadPlanStoreRecoveryHistory(gaugeBody, upBody, durationBody, failuresBody []byte, pods []string, leader string, started, queriedAt time.Time) (alPlanStoreHistory, error) {
+	return alReadPlanStoreWindow(gaugeBody, upBody, durationBody, failuresBody, pods, leader, started, queriedAt, true)
 }
 
-func alReadPlanStoreWindow(gaugeBody, upBody, durationBody []byte, pods []string, leader string, started, queriedAt time.Time, recovery bool) (alPlanStoreHistory, error) {
+// alReadPlanStoreWindow reads the leader's plan bytes at every scrape since
+// the fault started.
+//
+// A scrape whose state read failed omits the gauge: the operator never
+// publishes a partial census, and the chart's rule holds an incident through
+// the omission. Such a scrape is accepted only where the leader declared it, by
+// a read-failure counter that rose in that same scrape, and it establishes
+// nothing: a crossing or a clearing is bracketed by the readings on either side
+// of it, which starts each deadline no later than an exact reading would. An
+// omission nothing declared still fails the proof.
+func alReadPlanStoreWindow(gaugeBody, upBody, durationBody, failuresBody []byte, pods []string, leader string, started, queriedAt time.Time, recovery bool) (alPlanStoreHistory, error) {
 	h := alPlanStoreHistory{}
 	health, err := alReadScrapeHistory(upBody, durationBody, pods, leader, started, queriedAt)
 	if err != nil {
@@ -284,9 +303,12 @@ func alReadPlanStoreWindow(gaugeBody, upBody, durationBody []byte, pods []string
 		return h, errors.New("plan bytes must come from the original leader alone")
 	}
 	since := started.Add(-2 * alScrapeInterval)
-	// Health already proves a fresh committed scrape. Its gauge must match
-	// those exact timestamps below; a missing gauge is not a pending scrape.
-	values, err := alNativeSamples(series[0], since, queriedAt, true, false)
+	// Health already proves a fresh committed scrape. Every gauge sample must
+	// match one of those exact timestamps below, and every scrape must carry
+	// the gauge or declare its failed read; a missing gauge is not a pending
+	// scrape. Gaps are judged against the scrapes, so the parser checks only
+	// order: a gap boundary at queriedAt exempts every sample.
+	values, err := alNativeSamples(series[0], queriedAt, queriedAt, true, false)
 	if err != nil {
 		return h, err
 	}
@@ -312,36 +334,98 @@ func alReadPlanStoreWindow(gaugeBody, upBody, durationBody []byte, pods []string
 			}
 		}
 	}
-	for len(times) > 1 && !times[1].at.After(since) {
+	// The baseline is the last reading at or before since, and the scrapes
+	// from it on are the ones the gauge must account for.
+	for len(times) != 0 && times[0].at.Before(values[0].at) {
 		times = times[1:]
 	}
-	if len(values) != len(times) {
-		return h, errors.New("plan bytes omitted a native scrape")
+	if len(times) == 0 || !times[0].at.Equal(values[0].at) {
+		return h, errors.New("plan bytes lost their scrape identity")
 	}
-	for i, v := range values {
-		if !v.at.Equal(times[i].at) {
-			return h, errors.New("plan bytes lost their scrape identity")
+	failures, err := alReadFailureCounts(failuresBody, leader, health.leaderInstance, queriedAt)
+	if err != nil {
+		return h, err
+	}
+	next := 0
+	var previous alAdmissionSample
+	for i, scrape := range times {
+		if next == len(values) || !values[next].at.Equal(scrape.at) {
+			if next < len(values) && values[next].at.Before(scrape.at) {
+				return h, errors.New("plan bytes lost their scrape identity")
+			}
+			// times[0] is the baseline reading, so i is at least 1 here.
+			now, counted := failures[scrape.at.UnixNano()]
+			before, wasCounted := failures[times[i-1].at.UnixNano()]
+			if !counted || !wasCounted || now <= before {
+				return h, errors.New("plan bytes omitted a native scrape")
+			}
+			continue
 		}
+		v := values[next]
+		next++
 		above := v.value > float64(alPlanStoreLimit)
 		if !v.at.After(started) && above != recovery {
 			return h, errors.New("plan store disagrees with its pre-fault baseline")
 		}
+		completed := v.at.Add(time.Duration(scrape.value * float64(time.Second)))
 		if above {
 			if !h.clearedLower.IsZero() {
 				return h, errors.New("plan bytes crossed the limit again after pruning")
 			}
 			if !recovery && h.crossedLower.IsZero() {
-				if i == 0 {
+				if previous.at.IsZero() {
 					return h, errors.New("plan store has no below-limit baseline")
 				}
-				h.crossedLower, h.crossedUpper = values[i-1].at, v.at.Add(time.Duration(times[i].value*float64(time.Second)))
+				h.crossedLower, h.crossedUpper = previous.at, completed
 			}
 		} else if (recovery || !h.crossedLower.IsZero()) && h.clearedLower.IsZero() {
-			h.clearedLower, h.clearedUpper = values[i-1].at, v.at.Add(time.Duration(times[i].value*float64(time.Second)))
+			h.clearedLower, h.clearedUpper = previous.at, completed
 		}
 		h.latest = int64(v.value)
+		previous = v
 	}
+	if next != len(values) {
+		return h, errors.New("plan bytes lost their scrape identity")
+	}
+	// What a failed read did not observe is not covered: the history ends
+	// at the last scrape that carried the gauge.
+	h.through = earlierTime(h.through, previous.at)
 	return h, nil
+}
+
+// alReadFailureCounts reads the leader's read-failure counter by scrape
+// timestamp. A scrape declared its failed read when the counter rose from the
+// scrape before it. A nil body declares no failure.
+func alReadFailureCounts(body []byte, leader, instance string, queriedAt time.Time) (map[int64]float64, error) {
+	counts := map[int64]float64{}
+	if body == nil {
+		return counts, nil
+	}
+	series, err := alAdmissionNativeMatrix(body)
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range series {
+		if row.Metric["__name__"] != alViewReadFailuresMetric || row.Metric["job"] != alScrapeJob {
+			return nil, errors.New("read failures include another metric or scrape job")
+		}
+		if row.Metric["pod"] != leader {
+			continue
+		}
+		if row.Metric["instance"] != instance {
+			return nil, errors.New("read failures must come from the original leader")
+		}
+		// Only order is checked here: a missing counter sample declares
+		// nothing, so the scrape beside it cannot pass as declared.
+		samples, err := alNativeSamples(row, queriedAt, queriedAt, true, false)
+		if err != nil {
+			return nil, err
+		}
+		for _, sample := range samples {
+			counts[sample.at.UnixNano()] = sample.value
+		}
+	}
+	return counts, nil
 }
 
 // Retain the original firing and every later receiver notification while

@@ -430,7 +430,9 @@ func (a *alertingRun) planStoreLarge() {
 		}), "finish one original payload before pruning the next")
 	}
 	resolved, _ := a.waitForDeliveryWithCheck(alMatch{status: "resolved", alertName: alPlanStoreAlert, labels: map[string]string{"operator_namespace": a.in.OperatorNamespace, "operator_metrics_service": a.metricsService}}, "the plan-store recovery notification", alDetectionSlack, index+1, check)
-	a.check(harness.Wait(a.ctx, "native plan-store recovery samples", 2*alScrapeInterval+alScrapeTimeout, time.Second, func(context.Context) (bool, string, error) {
+	// The extra interval is for a scrape that declared a failed read, which
+	// covers nothing and leaves the history at the reading before it.
+	a.check(harness.Wait(a.ctx, "native plan-store recovery samples", 3*alScrapeInterval+alScrapeTimeout, time.Second, func(context.Context) (bool, string, error) {
 		check()
 		history = a.planStoreRecoveryHistory(names, leader, recoveryStarted, "")
 		return !history.through.Before(resolved.ReceivedAt), "waiting for the native recovery scrape", nil
@@ -562,13 +564,22 @@ func (a *alertingRun) planStoreFiringHistory(pods []string, leader string, start
 	a.t.Helper()
 	// Include a complete scrape from each manager after the receiver timestamp,
 	// even if the test notices that notification much later during publication.
+	// A scrape that declared a failed read observed nothing, so the history
+	// then ends at the reading before it: read one scrape later until a
+	// reading covers the delivery, within the detection slack.
 	at := firing.ReceivedAt.Add(alAdmissionSampleGap)
-	if delay := time.Until(at); delay > 0 {
-		a.sleep(delay)
+	deadline := at.Add(alDetectionSlack)
+	for {
+		if delay := time.Until(at); delay > 0 {
+			a.sleep(delay)
+		}
+		history, err := a.readPlanStoreHistory(pods, leader, started, at, "firing", false)
+		a.check(err, "validate complete plan-store histories through firing delivery")
+		if !history.through.Before(firing.ReceivedAt) || !at.Before(deadline) {
+			return history
+		}
+		at = at.Add(alScrapeInterval)
 	}
-	history, err := a.readPlanStoreHistory(pods, leader, started, at, "firing", false)
-	a.check(err, "validate complete plan-store histories through firing delivery")
-	return history
 }
 
 func (a *alertingRun) planStoreRecoveryHistory(pods []string, leader string, started time.Time, label string) alPlanStoreHistory {
@@ -582,7 +593,7 @@ func (a *alertingRun) readPlanStoreHistory(pods []string, leader string, started
 	a.t.Helper()
 	history, body, err := alQueryPlanStoreHistory(a.ctx, func(ctx context.Context, queriedAt time.Time) ([]byte, error) {
 		return a.prometheus(ctx, "/api/v1/query", map[string]string{
-			"query": alHistorySnapshotQuery(alScrapeJob, "", []string{alPlanStoreMetric, "up", "scrape_duration_seconds"}),
+			"query": alHistorySnapshotQuery(alScrapeJob, "", alPlanStoreHistoryMetrics),
 			"time":  queriedAt.Format(time.RFC3339Nano),
 		})
 	}, pods, leader, started, at, recovery)

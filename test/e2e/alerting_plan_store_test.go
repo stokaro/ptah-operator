@@ -2,8 +2,11 @@ package e2e
 
 import (
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"maps"
+	"slices"
+	"sort"
 	"testing"
 	"time"
 
@@ -245,7 +248,7 @@ func TestAlPlanStoreMeasuresNativeCrossingAndRecovery(t *testing.T) {
 		return gauges, up, durations
 	}
 	read := func(g, u, d []alAdmissionSeries) (alPlanStoreHistory, error) {
-		return alReadPlanStoreHistory(alAdmissionHistoryBodyForTest(t, g), alAdmissionHistoryBodyForTest(t, u), alAdmissionHistoryBodyForTest(t, d), []string{"leader", "follower"}, "leader", start, at)
+		return alReadPlanStoreHistory(alAdmissionHistoryBodyForTest(t, g), alAdmissionHistoryBodyForTest(t, u), alAdmissionHistoryBodyForTest(t, d), nil, []string{"leader", "follower"}, "leader", start, at)
 	}
 	g, u, d := fixture()
 	h, err := read(g, u, d)
@@ -303,6 +306,152 @@ func TestAlPlanStoreMeasuresNativeCrossingAndRecovery(t *testing.T) {
 	if alPlanStoreResolved(firing, resolved, h, start.Add(16*time.Second)) {
 		t.Fatal("late resolution accepted")
 	}
+}
+
+func TestAlPlanStoreBracketsADeclaredReadFailure(t *testing.T) {
+	start := time.Unix(1800000000, 0).UTC()
+	at := start.Add(46 * time.Second)
+	// The same native transitions as above: the store crosses at +5 s and
+	// clears at +20 s. A failed read at gap omits the gauge; declare names
+	// the scrape whose read-failure counter rises on the declaring Pod.
+	type fixture struct{ gauge, up, durations, failures []alAdmissionSeries }
+	build := func(gap, declare time.Duration, declaring string) fixture {
+		var f fixture
+		for i, pod := range []string{"leader", "follower"} {
+			labels := map[string]string{"job": alScrapeJob, "pod": pod, "instance": fmt.Sprintf("10.0.0.%d:8080", i)}
+			series := func(metric string) alAdmissionSeries {
+				m := maps.Clone(labels)
+				m["__name__"] = metric
+				return alAdmissionSeries{Metric: m}
+			}
+			u, d, g, c := series("up"), series("scrape_duration_seconds"), series(alPlanStoreMetric), series(alViewReadFailuresMetric)
+			failures := 3
+			for second := -15; second <= 45; second += 5 {
+				offset := time.Duration(second) * time.Second
+				when := start.Add(offset)
+				size := alPlanStoreLimit
+				if second > 0 && second < 20 {
+					size++
+				}
+				if second >= 20 {
+					size--
+				}
+				if pod == declaring && offset == declare {
+					failures++
+				}
+				u.Values = append(u.Values, alAdmissionHistorySampleForTest(when, "1"))
+				d.Values = append(d.Values, alAdmissionHistorySampleForTest(when, "0.125"))
+				c.Values = append(c.Values, alAdmissionHistorySampleForTest(when, fmt.Sprint(failures)))
+				if offset != gap {
+					g.Values = append(g.Values, alAdmissionHistorySampleForTest(when, fmt.Sprint(size)))
+				}
+			}
+			f.up, f.durations, f.failures = append(f.up, u), append(f.durations, d), append(f.failures, c)
+			if pod == "leader" {
+				f.gauge = append(f.gauge, g)
+			}
+		}
+		return f
+	}
+	read := func(f fixture) (alPlanStoreHistory, error) {
+		return alReadPlanStoreHistory(alAdmissionHistoryBodyForTest(t, f.gauge), alAdmissionHistoryBodyForTest(t, f.up), alAdmissionHistoryBodyForTest(t, f.durations),
+			alAdmissionHistoryBodyForTest(t, f.failures), []string{"leader", "follower"}, "leader", start, at)
+	}
+	exact, err := read(build(-time.Hour, -time.Hour, "leader"))
+	if err != nil || !exact.crossedLower.Equal(start) || !exact.through.Equal(start.Add(45*time.Second)) {
+		t.Fatalf("history without a failed read = %+v, %v", exact, err)
+	}
+	for _, row := range []struct {
+		name         string
+		gap          time.Duration
+		lower, upper time.Time
+		cleared      time.Time
+		clearedUpper time.Time
+		through      time.Time
+		delivered    bool
+	}{
+		// The reading before the crossing failed: the bracket opens one
+		// scrape earlier, and so does the delivery deadline.
+		{"before the crossing", 0, start.Add(-5 * time.Second), start.Add(5*time.Second + 125*time.Millisecond), start.Add(15 * time.Second), start.Add(20*time.Second + 125*time.Millisecond), start.Add(45 * time.Second), false},
+		{"at the crossing", 5 * time.Second, start, start.Add(10*time.Second + 125*time.Millisecond), start.Add(15 * time.Second), start.Add(20*time.Second + 125*time.Millisecond), start.Add(45 * time.Second), true},
+		{"before the clearing", 15 * time.Second, start, start.Add(5*time.Second + 125*time.Millisecond), start.Add(10 * time.Second), start.Add(20*time.Second + 125*time.Millisecond), start.Add(45 * time.Second), true},
+		// A failed latest read leaves the history at the reading before it.
+		{"at the latest scrape", 45 * time.Second, start, start.Add(5*time.Second + 125*time.Millisecond), start.Add(15 * time.Second), start.Add(20*time.Second + 125*time.Millisecond), start.Add(40 * time.Second), false},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			h, err := read(build(row.gap, row.gap, "leader"))
+			if err != nil || !h.crossedLower.Equal(row.lower) || !h.crossedUpper.Equal(row.upper) || !h.clearedLower.Equal(row.cleared) ||
+				!h.clearedUpper.Equal(row.clearedUpper) || !h.through.Equal(row.through) || h.latest != alPlanStoreLimit-1 {
+				t.Fatalf("declared failed read = %+v, %v", h, err)
+			}
+			// Received just after 40 s: inside the exact bracket's deadline,
+			// past the one a failed read before the crossing opens, and past
+			// a history that a failed latest read ended at 40 s.
+			firing := alDelivery{StartsAt: start.Add(5 * time.Second), ReceivedAt: start.Add(40*time.Second + time.Nanosecond)}
+			if alPlanStoreDelivered(firing, h) != row.delivered {
+				t.Fatalf("delivery at %s accepted=%t, want %t", firing.ReceivedAt, !row.delivered, row.delivered)
+			}
+			for _, mutation := range []string{"undeclared", "declared one scrape late", "declared one scrape early", "declared by the follower", "no count before", "no count at"} {
+				t.Run(mutation, func(t *testing.T) {
+					declare, declaring := row.gap, "leader"
+					switch mutation {
+					case "undeclared":
+						declare = -time.Hour
+					case "declared one scrape late":
+						declare += alScrapeInterval
+					case "declared one scrape early":
+						declare -= alScrapeInterval
+					case "declared by the follower":
+						declaring = "follower"
+					}
+					f := build(row.gap, declare, declaring)
+					drop := func(offset time.Duration) {
+						want := alAdmissionHistorySampleForTest(start.Add(offset), "0")[0]
+						var kept [][]json.RawMessage
+						for _, sample := range f.failures[0].Values {
+							if string(sample[0]) != string(want) {
+								kept = append(kept, sample)
+							}
+						}
+						f.failures[0].Values = kept
+					}
+					switch mutation {
+					case "no count before":
+						drop(row.gap - alScrapeInterval)
+					case "no count at":
+						drop(row.gap)
+					}
+					if _, err := read(f); err == nil || err.Error() != "plan bytes omitted a native scrape" {
+						t.Fatalf("an omission the leader did not declare was accepted: %v", err)
+					}
+				})
+			}
+		})
+	}
+	// A reading no scrape produced is refused whether it fills a declared gap
+	// or follows the last scrape.
+	for name, offset := range map[string]time.Duration{"reading inside the gap": 5*time.Second + 500*time.Millisecond, "reading after the last scrape": 45*time.Second + 500*time.Millisecond} {
+		t.Run(name, func(t *testing.T) {
+			f := build(5*time.Second, 5*time.Second, "leader")
+			values := f.gauge[0].Values
+			// Fixture timestamps share one width, so they sort as text.
+			position := sort.Search(len(values), func(i int) bool {
+				return string(values[i][0]) > string(alAdmissionHistorySampleForTest(start.Add(offset), "0")[0])
+			})
+			values = slices.Insert(values, position, alAdmissionHistorySampleForTest(start.Add(offset), fmt.Sprint(alPlanStoreLimit+1)))
+			f.gauge[0].Values = values
+			if _, err := read(f); err == nil || err.Error() != "plan bytes lost their scrape identity" {
+				t.Fatalf("a reading without a scrape was accepted: %v", err)
+			}
+		})
+	}
+	t.Run("counter from another instance", func(t *testing.T) {
+		f := build(5*time.Second, 5*time.Second, "leader")
+		f.failures[0].Metric["instance"] = "other"
+		if _, err := read(f); err == nil {
+			t.Fatal("another target's counter declared the leader's failure")
+		}
+	})
 }
 
 func TestAlPlanExportAcceptsReorderedCommitRecords(t *testing.T) {

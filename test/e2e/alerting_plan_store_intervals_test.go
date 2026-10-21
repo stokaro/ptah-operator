@@ -58,13 +58,13 @@ func TestAlPlanStoreFiringWindowEndsAtNativeDelivery(t *testing.T) {
 			}
 			series[i].Values = values
 		}
-		groups, err := alSplitHistorySnapshot(alAdmissionHistoryBodyForTest(t, series), alScrapeJob, []string{alPlanStoreMetric, "up", "scrape_duration_seconds"})
+		groups, err := alSplitHistorySnapshot(alAdmissionHistoryBodyForTest(t, series), alScrapeJob, alPlanStoreHistoryMetrics)
 		if err != nil {
 			t.Fatal(err)
 		}
-		return alReadPlanStoreHistory(groups[alPlanStoreMetric], groups["up"], groups["scrape_duration_seconds"], pods, leader, started, at)
+		return alReadPlanStoreHistory(groups[alPlanStoreMetric], groups["up"], groups["scrape_duration_seconds"], groups[alViewReadFailuresMetric], pods, leader, started, at)
 	}
-	if _, err := read(instant("2026-10-09T02:13:21.600Z"), ""); err == nil || !strings.Contains(err.Error(), "missing scrapes") {
+	if _, err := read(instant("2026-10-09T02:13:21.600Z"), ""); err == nil || !strings.Contains(err.Error(), "plan bytes omitted a native scrape") {
 		t.Fatalf("extending the original interval no longer reproduces the CI failure: %v", err)
 	}
 	at := firing.ReceivedAt.Add(alAdmissionSampleGap)
@@ -98,6 +98,79 @@ func TestAlPlanStoreFiringWindowEndsAtNativeDelivery(t *testing.T) {
 	}
 }
 
+func TestAlPlanStoreAcceptsTheCIReadFailureOnlyWhenDeclared(t *testing.T) {
+	t.Parallel()
+	// CI 39574268971, job 119153391560: the leader's scrape at 10:27:38.622
+	// took 3.006 s, the snapshot read's own timeout, and carried no plan
+	// bytes. The query predates reading the failure counter, so each row adds
+	// the counter the scrapes carried: one per scrape and Pod, rising on the
+	// leader at the failed read unless the row moves or removes it.
+	body, err := os.ReadFile("../../testdata/e2e/readings/prometheus-plan-store-declared-read-failure.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	instant := func(value string) time.Time {
+		t.Helper()
+		at, err := time.Parse(time.RFC3339Nano, value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return at
+	}
+	leader := "ptah-runtime-generated-name-prefix-boundary-proof-24132eb4cbjcr"
+	follower := "ptah-runtime-generated-name-prefix-boundary-proof-24132eb4c95dk"
+	started := instant("2026-10-21T10:27:50.344131437Z")
+	at := instant("2026-10-21T10:27:50.344133739Z")
+	read := func(declaring, rise string) (alPlanStoreHistory, error) {
+		t.Helper()
+		series, err := alAdmissionNativeMatrix(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var counters []alAdmissionSeries
+		for _, s := range series {
+			if s.Metric["__name__"] != "scrape_duration_seconds" || declaring == "" {
+				continue
+			}
+			c := alAdmissionSeries{Metric: maps.Clone(s.Metric)}
+			c.Metric["__name__"] = alViewReadFailuresMetric
+			count := 0
+			for _, sample := range s.Values {
+				if s.Metric["pod"] == declaring && string(sample[0]) == rise {
+					count++
+				}
+				c.Values = append(c.Values, []json.RawMessage{sample[0], json.RawMessage(fmt.Sprintf("%q", fmt.Sprint(count)))})
+			}
+			counters = append(counters, c)
+		}
+		groups, err := alSplitHistorySnapshot(alAdmissionHistoryBodyForTest(t, append(series, counters...)), alScrapeJob, alPlanStoreHistoryMetrics)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return alReadPlanStoreHistory(groups[alPlanStoreMetric], groups["up"], groups["scrape_duration_seconds"], groups[alViewReadFailuresMetric], []string{leader, follower}, leader, started, at)
+	}
+	if _, err := read("", ""); err == nil || err.Error() != "plan bytes omitted a native scrape" {
+		t.Fatalf("the CI reading without its counter no longer reproduces the omission: %v", err)
+	}
+	h, err := read(leader, "1792578458.622")
+	// The failed read is in the middle: the history still reaches both Pods'
+	// scrapes after 10:27:48.
+	if err != nil || h.latest != 125839948 || !h.crossedLower.IsZero() || !h.through.After(time.Unix(1792578468, 0)) {
+		t.Fatalf("baseline across the declared failed read = %+v, %v", h, err)
+	}
+	for _, row := range []struct{ name, declaring, rise string }{
+		{"no failure counted", leader, ""},
+		{"counted one scrape later", leader, "1792578463.622"},
+		{"counted by the follower", follower, "1792578458.369"},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			if _, err := read(row.declaring, row.rise); err == nil || err.Error() != "plan bytes omitted a native scrape" {
+				t.Fatalf("an omission the leader did not declare was accepted: %v", err)
+			}
+		})
+	}
+}
+
 func TestAlPlanStoreRecoveryWindowFromNativeScrapes(t *testing.T) {
 	t.Parallel()
 	// Native samples from CI 37287095881, job 111691203546. The excerpt
@@ -106,7 +179,7 @@ func TestAlPlanStoreRecoveryWindowFromNativeScrapes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	groups, err := alSplitHistorySnapshot(body, alScrapeJob, []string{alPlanStoreMetric, "up", "scrape_duration_seconds"})
+	groups, err := alSplitHistorySnapshot(body, alScrapeJob, alPlanStoreHistoryMetrics)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,9 +187,9 @@ func TestAlPlanStoreRecoveryWindowFromNativeScrapes(t *testing.T) {
 	pods := []string{leader, "ptah-runtime-generated-name-prefix-boundary-proof-e94b5d90bzpk4"}
 	at := time.Unix(1791204717, 0).UTC()
 	read := func(started time.Time) (alPlanStoreHistory, error) {
-		return alReadPlanStoreRecoveryHistory(groups[alPlanStoreMetric], groups["up"], groups["scrape_duration_seconds"], pods, leader, started, at)
+		return alReadPlanStoreRecoveryHistory(groups[alPlanStoreMetric], groups["up"], groups["scrape_duration_seconds"], groups[alViewReadFailuresMetric], pods, leader, started, at)
 	}
-	if _, err := read(at.Add(-100 * time.Second)); err == nil || !strings.Contains(err.Error(), "missing scrapes") {
+	if _, err := read(at.Add(-100 * time.Second)); err == nil || !strings.Contains(err.Error(), "plan bytes omitted a native scrape") {
 		t.Fatalf("a gap inside the measured window passed: %v", err)
 	}
 	h, err := read(at)
@@ -134,7 +207,7 @@ func TestAlPlanStoreRecoveryRejectsTheCurrentCIMissingGauge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	groups, err := alSplitHistorySnapshot(body, alScrapeJob, []string{alPlanStoreMetric, "up", "scrape_duration_seconds"})
+	groups, err := alSplitHistorySnapshot(body, alScrapeJob, alPlanStoreHistoryMetrics)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +215,7 @@ func TestAlPlanStoreRecoveryRejectsTheCurrentCIMissingGauge(t *testing.T) {
 	pods := []string{leader, "ptah-runtime-generated-name-prefix-boundary-proof-aaf9efect5pps"}
 	at := time.Unix(1791219460, 999000227).UTC()
 	for _, started := range []time.Time{at.Add(-20 * time.Second), at} {
-		_, err := alReadPlanStoreRecoveryHistory(groups[alPlanStoreMetric], groups["up"], groups["scrape_duration_seconds"], pods, leader, started, at)
+		_, err := alReadPlanStoreRecoveryHistory(groups[alPlanStoreMetric], groups["up"], groups["scrape_duration_seconds"], groups[alViewReadFailuresMetric], pods, leader, started, at)
 		if err == nil || !strings.Contains(err.Error(), "plan bytes omitted a native scrape") {
 			t.Fatalf("missing native gauge supplied recovery authority: %v", err)
 		}
@@ -178,7 +251,7 @@ func TestAlPlanStoreRecoveryKeepsNativeDeadlines(t *testing.T) {
 		return gauge, up, durations
 	}
 	read := func(g, u, d []alAdmissionSeries) (alPlanStoreHistory, error) {
-		return alReadPlanStoreRecoveryHistory(alAdmissionHistoryBodyForTest(t, g), alAdmissionHistoryBodyForTest(t, u), alAdmissionHistoryBodyForTest(t, d), []string{"leader", "follower"}, "leader", start, at)
+		return alReadPlanStoreRecoveryHistory(alAdmissionHistoryBodyForTest(t, g), alAdmissionHistoryBodyForTest(t, u), alAdmissionHistoryBodyForTest(t, d), nil, []string{"leader", "follower"}, "leader", start, at)
 	}
 	g, u, d := fixture()
 	h, err := read(g, u, d)

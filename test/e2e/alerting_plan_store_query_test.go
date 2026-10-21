@@ -25,11 +25,11 @@ func TestAlPlanStoreWaitsForTheOriginalScrapeCommit(t *testing.T) {
 	pods := []string{leader, "ptah-runtime-generated-name-prefix-boundary-proof-52dd5e22p698k"}
 	at := time.Unix(1791384206, 689510281).UTC()
 	started := time.Unix(1791384200, 335828091).UTC()
-	groups, err := alSplitHistorySnapshot(body, alScrapeJob, []string{alPlanStoreMetric, "up", "scrape_duration_seconds"})
+	groups, err := alSplitHistorySnapshot(body, alScrapeJob, alPlanStoreHistoryMetrics)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := alReadPlanStoreRecoveryHistory(groups[alPlanStoreMetric], groups["up"], groups["scrape_duration_seconds"], pods, leader, started, at); !errors.Is(err, errAlHistoryNotFresh) {
+	if _, err := alReadPlanStoreRecoveryHistory(groups[alPlanStoreMetric], groups["up"], groups["scrape_duration_seconds"], groups[alViewReadFailuresMetric], pods, leader, started, at); !errors.Is(err, errAlHistoryNotFresh) {
 		t.Fatalf("original native snapshot no longer reproduces the failure: %v", err)
 	}
 	// Model the still-running scrape committing its matching native samples.
