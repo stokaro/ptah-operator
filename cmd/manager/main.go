@@ -27,6 +27,7 @@ import (
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	approvaladmission "github.com/stokaro/ptah-operator/internal/admission"
+	"github.com/stokaro/ptah-operator/internal/apipace"
 	"github.com/stokaro/ptah-operator/internal/controller"
 	"github.com/stokaro/ptah-operator/internal/controllerstate"
 	"github.com/stokaro/ptah-operator/internal/controllerwrite"
@@ -169,7 +170,8 @@ func main() {
 	// own 30 seconds the kill and the release raced, and a manager the kubelet
 	// killed first left its successor waiting out the whole lease.
 	shutdownTimeout := 20 * time.Second
-	manager, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+	// One request budget for the whole process; see internal/apipace.
+	manager, err := ctrl.NewManager(apipace.Config(ctrl.GetConfigOrDie()), ctrl.Options{
 		Scheme:                  scheme,
 		Cache:                   managercache.Options(),
 		Client:                  managercache.ClientOptions(),

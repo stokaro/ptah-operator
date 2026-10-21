@@ -67,6 +67,22 @@ status of every resource it watches, the Jobs it dispatched and the policy
 objects it reads, so the number that matters is the one your resource count
 produces, and nothing here establishes it.
 
+Each manager process sends at most 80 requests a second to the API server,
+with a burst of 40 after a quiet period, and every client in the process draws
+from that one allowance: reconciliation, its cache, leader election, admission and result
+delivery. The 0.2.0 profile allows the managers 7,000 requests in any 60
+seconds. The leader can use at most 4,840 of them. The follower's requests are
+the admission reads and result deliveries the leader's work causes, measured at
+about a third of the leader's.
+
+The limit is what keeps a backlog inside that budget. After a controller-manager
+leader change, the Job controller records no completion for minutes and then
+records them all together, and an unpaced manager did those minutes of work in
+one ([#657](https://github.com/stokaro/ptah-operator/issues/657)). Paced, the
+same work takes longer. A request waits for its turn rather than failing, and a
+manager has too few concurrent callers for that wait to reach a deadline. The
+limit is fixed in the manager and has no setting.
+
 ## What storage grows with
 
 A plan is immutable, and a new fingerprint publishes a new one. Nothing is
