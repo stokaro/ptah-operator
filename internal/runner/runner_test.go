@@ -1963,7 +1963,9 @@ func TestApplyReadsItsReportOnEveryExit(t *testing.T) {
 		{name: "no changes", stdout: outcome(dataplane.SchemaApplyOutcomeNoChanges), wantCode: "invalid_apply_output"},
 		{
 			name: "a newer contract version", wantCode: "invalid_apply_output",
-			stdout: report(func(value *dataplane.SchemaApplyReport) { value.ContractVersion = dataplane.SupportedSchemaApplyContract + 1 }),
+			stdout: report(func(value *dataplane.SchemaApplyReport) {
+				value.ContractVersion = dataplane.SupportedSchemaApplyContract + 1
+			}),
 		},
 		{
 			name: "the version Ptah v0.13.0 printed", wantCode: "invalid_apply_output",
