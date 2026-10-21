@@ -111,15 +111,21 @@ function summaryRow(entry) {
   return `| \`${cell(entry.operator)}\` | ${declared} | ${measured} | ${guide} |`;
 }
 
-function measurement(row) {
+// measurement is one verified build. A scope an earlier version already
+// states is referenced rather than repeated: the development state and a
+// release that ran another build through the same suite measure the same
+// thing, and the build is what differs.
+function measurement(row, earlier = []) {
   const identity = row.ptahRelease
     ? `Ptah \`${prose(row.ptahRelease)}\``
     : `\`${prose(row.ptahDescribe)}\`, which is not a Ptah release`;
   const commit = prose(row.ptahCommit);
+  const scope = prose(row.scope);
+  const match = earlier.find((other) => (other.verified ?? []).some((candidate) => prose(candidate.scope) === scope));
   return (
     `- ${identity}. Commit [\`${commit}\`](${PTAH_COMMIT_URL}${commit}), ` +
     `runner protocol version ${row.runnerProtocolVersion}, evidence \`${prose(row.evidence)}\`. ` +
-    prose(row.scope)
+    (match ? `The scope is the same as for [\`${prose(match.operator)}\`](#${anchor(match)}).` : scope)
   );
 }
 
@@ -168,7 +174,7 @@ function section(entry, earlier) {
   } else if (verified.length === 0) {
     lines.push(`**Verified:** nothing. ${prose(entry.unverifiedReason)}`, '');
   } else {
-    lines.push('**Verified:**', '', ...verified.map(measurement), '');
+    lines.push('**Verified:**', '', ...verified.map((row) => measurement(row, earlier)), '');
   }
 
   const limitations = entry.limitations ?? [];
@@ -295,12 +301,29 @@ function selftest() {
         ],
         limitations: ['run `ptah migrations up` with the flag'],
       },
+      {
+        operator: 'v0.4.0',
+        stage: 'released',
+        documentation: { published: false },
+        declared: { range: null, statement: 'no range is claimed' },
+        verified: [
+          {
+            ptahRelease: 'v0.9.0',
+            ptahCommit: commit.replace('1', 'e'),
+            ptahDescribe: 'v0.9.0',
+            runnerProtocolVersion: 5,
+            evidence: 'kubernetes-e2e',
+            scope: 'the lifecycle',
+          },
+        ],
+        limitations: ['run `ptah migrations up` with the flag'],
+      },
     ],
     evidence: { 'kubernetes-e2e': { what: 'the suite', pin: 'one declaration' } },
   };
   const block = render(check(catalog));
   const rows = block.split('\n').filter((line) => line.startsWith('| `'));
-  if (rows.length !== 4) throw new Error(`the summary has ${rows.length} rows for four versions`);
+  if (rows.length !== 5) throw new Error(`the summary has ${rows.length} rows for five versions`);
   const [edge, released, absent] = rows;
 
   // Verified, and not a release: the describe string names it, and the row
@@ -329,7 +352,7 @@ function selftest() {
   if (!block.includes('- run `ptah migrations up` with the flag')) throw new Error('a limitation broke across lines');
   // A version that reads exactly like an earlier one points at it instead of
   // saying every sentence again; a version that differs keeps its own prose.
-  const repeat = block.slice(block.indexOf('### v0.3.0'));
+  const repeat = block.slice(block.indexOf('### v0.3.0'), block.indexOf('### v0.4.0'));
   for (const field of ['Declared', 'Verified', 'Limitations']) {
     if (!repeat.includes(`**${field}:** the same as [\`edge\`](#edge).`)) {
       throw new Error(`a repeated ${field} field was printed again rather than referenced`);
@@ -340,6 +363,13 @@ function selftest() {
   }
   if (block.slice(block.indexOf('### v0.2.0'), block.indexOf('### v0.1.0')).includes('the same as')) {
     throw new Error('a version with prose of its own was referenced to another');
+  }
+  // Another build through the same suite names its build and references the
+  // scope and limitations it shares, so no sentence is said twice.
+  const rebuilt = block.slice(block.indexOf('### v0.4.0'));
+  if (!rebuilt.includes('Ptah `v0.9.0`') || !rebuilt.includes('The scope is the same as for [`edge`](#edge).') ||
+      !rebuilt.includes('**Limitations:** the same as [`edge`](#edge).')) {
+    throw new Error('a version that ran another build repeated or lost its shared prose');
   }
   if (anchor({ operator: 'v0.2.0' }) !== 'v020') throw new Error('a version anchor is not the heading slug');
   if (!block.includes('- `kubernetes-e2e`: the suite one declaration')) throw new Error('the evidence is not described');

@@ -20,9 +20,6 @@ var (
 	exclusionAdd = regexp.MustCompile(`(?i)^\s*ALTER\s+TABLE\s+` + exclusionQualifier +
 		`(?:e2e_widgets|"e2e_widgets"|` + "`e2e_widgets`" + `)\s+ADD\s+(?:COLUMN\s+)?` +
 		`(?:fault_token|"fault_token"|` + "`fault_token`" + `)\s+(?:text|varchar\s*\(255\))(?:\s+NULL)?\s*;?\s*$`)
-	exclusionPrimaryKeyDrop = regexp.MustCompile(`(?i)^\s*ALTER\s+TABLE\s+` + exclusionQualifier +
-		`(?:e2e_excluded_policy_keep|"e2e_excluded_policy_keep")\s+DROP\s+CONSTRAINT\s+(?:IF\s+EXISTS\s+)?` +
-		`(?:e2e_excluded_policy_keep_pkey|"e2e_excluded_policy_keep_pkey")\s*;?\s*$`)
 )
 
 func changedExcludedPolicyPlan(old, current *ptahv1alpha1.PtahSchemaPlan) error {
@@ -53,14 +50,17 @@ func excludedPolicyDocuments(old, current planDocument) error {
 	if old.FormatVersion != 1 || current.FormatVersion != 1 || old.Dialect != current.Dialect ||
 		(old.Dialect != "postgres" && old.Dialect != "mysql") ||
 		len(old.Exclude) != 0 || !slices.Equal(current.Exclude, []string{excludedPolicyTable}) ||
-		!isTrue(old.Destructive) || !isFalse(current.Destructive) || len(old.Statements) < 2 || len(old.Statements) > 3 || len(current.Statements) != 1 {
+		!isTrue(old.Destructive) || !isFalse(current.Destructive) || len(old.Statements) != 2 || len(current.Statements) != 1 {
 		return errors.New("the native plans do not carry the original and narrowed scopes")
 	}
 	kept := exclusionPlanSQL(current.Statements[0].SQL)
 	if !exclusionAdd.MatchString(kept) {
 		return errors.New("the narrowed plan does not only add the fixture column")
 	}
-	drops, retained, constraintDrops := 0, 0, 0
+	// Ptah v0.14.0 drops the excluded table alone on both engines; the
+	// PostgreSQL primary-key removal that v0.13.0 planned ahead of the drop is
+	// gone, so a plan that still carries one is not the pinned executor's.
+	drops, retained := 0, 0
 	for _, statement := range old.Statements {
 		sql := exclusionPlanSQL(statement.SQL)
 		switch {
@@ -68,13 +68,11 @@ func excludedPolicyDocuments(old, current planDocument) error {
 			drops++
 		case sql == kept:
 			retained++
-		case old.Dialect == "postgres" && exclusionPrimaryKeyDrop.MatchString(sql):
-			constraintDrops++
 		default:
 			return errors.New("the original plan contains work outside the excluded table and retained column")
 		}
 	}
-	if drops != 1 || retained != 1 || constraintDrops > 1 {
+	if drops != 1 || retained != 1 {
 		return errors.New("the original plan did not drop the excluded table and add the same fixture column")
 	}
 	return nil

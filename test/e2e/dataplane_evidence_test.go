@@ -299,10 +299,7 @@ func TestTerminalPodEvidenceNeedsEveryContainerTerminated(t *testing.T) {
 
 func admittedPod() *corev1.Pod {
 	identity := controllerIdentity{image: "manager@sha256:" + strings.Repeat("a", 64), revision: "abc", stateVersion: "3"}
-	resources := corev1.ResourceRequirements{
-		Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("10m"), corev1.ResourceMemory: resource.MustParse("16Mi")},
-		Limits:   corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("100m"), corev1.ResourceMemory: resource.MustParse("64Mi")},
-	}
+	resources := *operationContainerDefaults.DeepCopy()
 	seconds := ptr.To[int64](300)
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: evidencePodName, Namespace: "test", UID: evidencePodUID,
@@ -384,7 +381,7 @@ func TestPodAdmissionRetainsTheJobsDeclaredResourcesAndUnsetDefaults(t *testing.
 	}
 	for name, mutate := range map[string]func(*corev1.Pod){
 		"overwritten declared limit": func(p *corev1.Pod) {
-			p.Spec.Containers[0].Resources.Limits[corev1.ResourceMemory] = resource.MustParse("64Mi")
+			p.Spec.Containers[0].Resources.Limits[corev1.ResourceMemory] = *operationContainerDefaults.Limits.Memory()
 		},
 		"overwritten declared request": func(p *corev1.Pod) {
 			p.Spec.Containers[0].Resources.Requests[corev1.ResourceMemory] = resource.MustParse("16Mi")

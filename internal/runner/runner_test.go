@@ -601,7 +601,7 @@ func TestPlanRequiresNativeDryRunToMatchReviewedStatements(t *testing.T) {
 	)
 	dryRun := func(edit func(*dataplane.SchemaApplyReport)) scriptedResponse {
 		report := dataplane.SchemaApplyReport{
-			ContractVersion: 1,
+			ContractVersion: dataplane.SupportedSchemaApplyContract,
 			Outcome:         dataplane.SchemaApplyOutcomeDryRun,
 			PlanName:        "operator-plan",
 			PlanDigest:      sha256Digest([]byte(plan)),
@@ -804,16 +804,18 @@ func TestObservePublishesCanonicalFindingSummaries(t *testing.T) {
 	}
 }
 
-// A report holds each category at most once, so the largest one the runner can
-// be handed names every category in the vocabulary. The frame carries all of
-// them, and their counts are the report's count: the summaries are never a
-// prefix. If the vocabulary outgrows the bound a frame and the status share,
-// this fails at the frame, and the summaries would need a way to say that
-// some were left out.
+// A report holds each category at most once, so the largest report without a
+// kind names every category in the vocabulary, the qualified ones bare. The
+// frame carries all of them, and their counts are the report's count: the
+// summaries are never a prefix. If the vocabulary outgrows the bound a frame
+// and the status share, this fails at the frame, and the summaries would need
+// a way to say that some were left out. Kinds can take a report past the bound
+// on their own; such a frame is refused, as TestObserveRefusesMoreFindingsThanAFrameHolds
+// shows.
 func TestObserveFramesEveryCategoryOfTheLargestReport(t *testing.T) {
 	t.Parallel()
 
-	categories := dataplane.DriftFindingCategories()
+	categories := append(dataplane.DriftFindingCategories(), dataplane.DriftFindingQualifiedCategories()...)
 	if len(categories) == 0 {
 		t.Fatal("the drift vocabulary is empty, so this test would frame nothing")
 	}
@@ -909,7 +911,7 @@ func TestObserveFramesEveryCategoryThePinnedPtahEmits(t *testing.T) {
 	for _, category := range pinnedPtahDriftCategories(t) {
 		t.Run(category, func(t *testing.T) {
 			t.Parallel()
-			operationID := "observe-pinned-" + strings.ReplaceAll(category, "_", "-")
+			operationID := "observe-pinned-" + strings.NewReplacer("_", "-", ":", "-", ".", "-", "/", "-").Replace(category)
 			report := fmt.Sprintf(`{"drift":true,"failed":true,"failure_threshold":"all","highest_severity":"warning","dialect":"postgres","findings":[{"category":%q,"count":3,"severity":"warning"}],"diff":{"changed":true}}`,
 				category)
 			result := Run(context.Background(), Config{
@@ -930,8 +932,10 @@ func TestObserveFramesEveryCategoryThePinnedPtahEmits(t *testing.T) {
 	}
 }
 
-// pinnedPtahDriftCategories reads the categories the pinned Ptah can emit, and
-// refuses a list with nothing in it: a loop over no category proves nothing.
+// pinnedPtahDriftCategories reads the categories the pinned Ptah can emit, a
+// qualified one both bare and with the kind Ptah v0.14.0 wrote for a
+// PostgreSQL extension, and refuses a list with nothing in it: a loop over no
+// category proves nothing.
 func pinnedPtahDriftCategories(t *testing.T) []string {
 	t.Helper()
 	content, err := os.ReadFile(filepath.Join("..", "..", "support", "ptah-drift-categories.json"))
@@ -940,14 +944,72 @@ func pinnedPtahDriftCategories(t *testing.T) []string {
 	}
 	var vendored struct {
 		Categories []string `json:"categories"`
+		Qualified  []string `json:"qualified"`
 	}
 	if err := json.Unmarshal(content, &vendored); err != nil {
 		t.Fatal(err)
 	}
-	if len(vendored.Categories) == 0 {
-		t.Fatal("support/ptah-drift-categories.json lists no category")
+	if len(vendored.Categories) == 0 || len(vendored.Qualified) == 0 {
+		t.Fatal("support/ptah-drift-categories.json lists no category or no qualified category")
 	}
-	return vendored.Categories
+	categories := slices.Clone(vendored.Categories)
+	for _, category := range vendored.Qualified {
+		categories = append(categories, category, category+":ptah.run/pgextension/extension-change")
+	}
+	return categories
+}
+
+// TestObserveFramesPtahsFeatureCategory runs the drift document Ptah v0.14.0
+// printed for an extension the database lacks (see internal/dataplane/testdata)
+// through the runner, and holds the frame the controller parses to the
+// category Ptah wrote, kind included.
+func TestObserveFramesPtahsFeatureCategory(t *testing.T) {
+	t.Parallel()
+
+	report, err := os.ReadFile(filepath.Join("..", "dataplane", "testdata", "drift-feature-extension.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := Run(context.Background(), Config{
+		Operation: OperationObserve, Environment: withRunnerProtocol(databaseEnvironment("observe-feature-extension")),
+		Executor: &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: string(report), exitCode: 1}}},
+	})
+	frame, err := MarshalFrame(result)
+	if err != nil {
+		t.Fatalf("MarshalFrame() error = %v; result %#v", err, result.Error)
+	}
+	parsed, err := ParseResultFor(frame, OperationObserve, "observe-feature-extension")
+	if err != nil {
+		t.Fatalf("ParseResultFor() error = %v", err)
+	}
+	want := []DriftFindingSummary{{Category: "feature_changes:ptah.run/pgextension/extension-change", Count: 1, Severity: "safe"}}
+	if !parsed.ObservedDrift || parsed.DriftFindingCount != 1 || !reflect.DeepEqual(parsed.DriftFindings, want) {
+		t.Fatalf("the controller parsed drift %t, count %d, findings %#v; want %#v",
+			parsed.ObservedDrift, parsed.DriftFindingCount, parsed.DriftFindings, want)
+	}
+}
+
+// TestObserveRefusesMoreFindingsThanAFrameHolds sends a report whose kinds
+// take it one category past the bound the frame and the status share. The
+// runner refuses it whole rather than frame a prefix that would understate the
+// count and could hide the highest severity.
+func TestObserveRefusesMoreFindingsThanAFrameHolds(t *testing.T) {
+	t.Parallel()
+
+	findings := make([]string, 0, maxDriftFindings+1)
+	for index := range maxDriftFindings + 1 {
+		findings = append(findings, fmt.Sprintf(`{"category":"feature_changes:example.org/kind/k%03d","count":1,"severity":"safe"}`, index))
+	}
+	report := `{"drift":true,"failed":true,"failure_threshold":"all","highest_severity":"safe","dialect":"postgres","findings":[` +
+		strings.Join(findings, ",") + `],"diff":{"changed":true}}`
+	result := Run(context.Background(), Config{
+		Operation: OperationObserve, Environment: withRunnerProtocol(databaseEnvironment("observe-too-many-findings")),
+		Executor: &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: report, exitCode: 1}}},
+	})
+	if result.Error == nil || result.Error.Code != "invalid_observed_state" ||
+		!strings.Contains(result.Error.Message, "names 129 categories, more than the 128") || len(result.DriftFindings) != 0 {
+		t.Fatalf("Run() = error %#v with %d findings, want the report refused", result.Error, len(result.DriftFindings))
+	}
 }
 
 func TestObserveRejectsUnknownIdentifierFindingCategory(t *testing.T) {
@@ -1374,7 +1436,7 @@ func TestApplyNeverPublishesNativeFailureDiagnostics(t *testing.T) {
 			name: "a failure report quoting the statement",
 			response: scriptedResponse{
 				stdout: encodeApplyReport(t, dataplane.SchemaApplyReport{
-					ContractVersion: 1, Outcome: dataplane.SchemaApplyOutcomeFailed,
+					ContractVersion: dataplane.SupportedSchemaApplyContract, Outcome: dataplane.SchemaApplyOutcomeFailed,
 					Error: "the planned changes cannot run inside a transaction\n" + failedStatement,
 				}),
 				exitCode: 1,
@@ -1385,7 +1447,7 @@ func TestApplyNeverPublishesNativeFailureDiagnostics(t *testing.T) {
 			name: "an unknown outcome quoting the statement",
 			response: scriptedResponse{
 				stdout: encodeApplyReport(t, dataplane.SchemaApplyReport{
-					ContractVersion: 1, Outcome: dataplane.SchemaApplyOutcomeUnknown,
+					ContractVersion: dataplane.SupportedSchemaApplyContract, Outcome: dataplane.SchemaApplyOutcomeUnknown,
 					Statements: []string{failedStatement}, Error: "apply schema changes: " + failedStatement,
 				}),
 				exitCode: 1,
@@ -1765,7 +1827,7 @@ func TestApplyFailureIsUncertainAndMustNotBeReplayed(t *testing.T) {
 	}
 	executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{
 		stdout: encodeApplyReport(t, dataplane.SchemaApplyReport{
-			ContractVersion: 1, Outcome: dataplane.SchemaApplyOutcomeUnknown,
+			ContractVersion: dataplane.SupportedSchemaApplyContract, Outcome: dataplane.SchemaApplyOutcomeUnknown,
 			PlanDigest: sha256Digest(plan), Error: "connection lost",
 		}),
 		stderr:   "connection lost",
@@ -1806,7 +1868,7 @@ func TestApplyNativeStalePlanAfterDispatchStillHasUnknownOutcome(t *testing.T) {
 			}
 			executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{
 				stdout: encodeApplyReport(t, dataplane.SchemaApplyReport{
-					ContractVersion: 1,
+					ContractVersion: dataplane.SupportedSchemaApplyContract,
 					Outcome:         dataplane.SchemaApplyOutcomeRefused,
 					PlanName:        "operator-plan",
 					PlanDigest:      sha256Digest(plan),
@@ -1849,7 +1911,7 @@ func TestApplyReadsItsReportOnEveryExit(t *testing.T) {
 	approved := sha256Digest([]byte(plan))
 	report := func(edit func(*dataplane.SchemaApplyReport)) string {
 		value := dataplane.SchemaApplyReport{
-			ContractVersion: 1,
+			ContractVersion: dataplane.SupportedSchemaApplyContract,
 			Outcome:         dataplane.SchemaApplyOutcomeApplied,
 			PlanName:        "operator-plan",
 			PlanDigest:      approved,
@@ -1901,7 +1963,13 @@ func TestApplyReadsItsReportOnEveryExit(t *testing.T) {
 		{name: "no changes", stdout: outcome(dataplane.SchemaApplyOutcomeNoChanges), wantCode: "invalid_apply_output"},
 		{
 			name: "a newer contract version", wantCode: "invalid_apply_output",
-			stdout: report(func(value *dataplane.SchemaApplyReport) { value.ContractVersion = 2 }),
+			stdout: report(func(value *dataplane.SchemaApplyReport) {
+				value.ContractVersion = dataplane.SupportedSchemaApplyContract + 1
+			}),
+		},
+		{
+			name: "the version Ptah v0.13.0 printed", wantCode: "invalid_apply_output",
+			stdout: report(func(value *dataplane.SchemaApplyReport) { value.ContractVersion = 1 }),
 		},
 		{name: "an outcome nobody declared", stdout: outcome("partial"), wantCode: "invalid_apply_output"},
 		{
@@ -2061,7 +2129,7 @@ func TestPlanReportsAFencedRefusalAsItsOwnOutcome(t *testing.T) {
 		{
 			name: "the fence refused the plan",
 			response: scriptedResponse{
-				stdout: `{"contract_version":1,"outcome":"refused","refusal":{"code":"protected-table",` +
+				stdout: `{"contract_version":2,"outcome":"refused","refusal":{"code":"protected-table",` +
 					`"tables":["countries","ref.regions"]},"error":"` + fenceSentence + `"}`,
 				stderr:   "error: " + fenceSentence + "\n",
 				exitCode: 2,
@@ -2072,7 +2140,7 @@ func TestPlanReportsAFencedRefusalAsItsOwnOutcome(t *testing.T) {
 		{
 			name: "the fence refused the plan and gave no sentence",
 			response: scriptedResponse{
-				stdout: `{"contract_version":1,"outcome":"refused","refusal":{"code":"protected-table",` +
+				stdout: `{"contract_version":2,"outcome":"refused","refusal":{"code":"protected-table",` +
 					`"tables":["countries","ref.regions"]}}`,
 				exitCode: 2,
 			},
@@ -2082,7 +2150,7 @@ func TestPlanReportsAFencedRefusalAsItsOwnOutcome(t *testing.T) {
 		{
 			name: "a refusal of a kind this runner does not know",
 			response: scriptedResponse{
-				stdout:   `{"contract_version":1,"outcome":"refused","refusal":{"code":"quota-exceeded"},"error":"quota"}`,
+				stdout:   `{"contract_version":2,"outcome":"refused","refusal":{"code":"quota-exceeded"},"error":"quota"}`,
 				exitCode: 2,
 			},
 			wantCode: "plan_refused",
@@ -2091,7 +2159,7 @@ func TestPlanReportsAFencedRefusalAsItsOwnOutcome(t *testing.T) {
 		{
 			name: "the plan failed while standard error reads like a fence",
 			response: scriptedResponse{
-				stdout:   `{"contract_version":1,"outcome":"failed","error":"connect to --db-url: dial tcp: connection refused"}`,
+				stdout:   `{"contract_version":2,"outcome":"failed","error":"connect to --db-url: dial tcp: connection refused"}`,
 				stderr:   "error: " + fenceSentence + "\n",
 				exitCode: 1,
 			},
@@ -2182,7 +2250,7 @@ func TestPlanNoChangesComesFromTheReport(t *testing.T) {
 		{
 			name: "a report naming a saved plan",
 			responses: []scriptedResponse{
-				{stdout: `{"contract_version":1,"outcome":"no-changes","plan_path":"/tmp/plan.json"}`},
+				{stdout: `{"contract_version":2,"outcome":"no-changes","plan_path":"/tmp/plan.json"}`},
 			},
 		},
 	} {
@@ -2224,7 +2292,10 @@ func TestPlanRefusesAReportItCannotAccountFor(t *testing.T) {
 		response scriptedResponse
 	}{
 		{name: "a newer contract version", response: respond(func(outputPath string) string {
-			return strings.Replace(planReport(outputPath, plan), `"contract_version":1`, `"contract_version":2`, 1)
+			return strings.Replace(planReport(outputPath, plan), `"contract_version":2`, `"contract_version":3`, 1)
+		})},
+		{name: "the version Ptah v0.13.0 printed", response: respond(func(outputPath string) string {
+			return strings.Replace(planReport(outputPath, plan), `"contract_version":2`, `"contract_version":1`, 1)
 		})},
 		{name: "an outcome nobody declared", response: respond(func(outputPath string) string {
 			return strings.Replace(planReport(outputPath, plan), `"outcome":"changes"`, `"outcome":"partial"`, 1)
@@ -3273,14 +3344,14 @@ func planResponse(plan string) scriptedResponse {
 // plan embedded as it is.
 func planReport(outputPath, plan string) string {
 	return fmt.Sprintf(
-		`{"contract_version":1,"outcome":"changes","plan_digest":%q,"plan_path":%q,"plan":%s}`+"\n",
+		`{"contract_version":2,"outcome":"changes","plan_digest":%q,"plan_path":%q,"plan":%s}`+"\n",
 		sha256Digest([]byte(plan)), outputPath, strings.TrimSpace(plan),
 	)
 }
 
 // planNoChangesReport is what a plan read prints when the database already
 // matches: no plan, and nothing saved.
-const planNoChangesReport = `{"contract_version":1,"outcome":"no-changes"}` + "\n"
+const planNoChangesReport = `{"contract_version":2,"outcome":"no-changes"}` + "\n"
 
 func planNoChangesResponse() scriptedResponse {
 	return scriptedResponse{stdout: planNoChangesReport, stderr: "Schema is synced, no changes to be made.\n"}
@@ -3292,7 +3363,7 @@ func applyReport(t *testing.T, outcome, plan string) string {
 	t.Helper()
 	decoded := mustDecodePlan(t, plan)
 	return encodeApplyReport(t, dataplane.SchemaApplyReport{
-		ContractVersion: 1,
+		ContractVersion: dataplane.SupportedSchemaApplyContract,
 		Outcome:         outcome,
 		PlanName:        decoded.Name,
 		PlanDigest:      sha256Digest([]byte(plan)),
@@ -3373,6 +3444,83 @@ func TestMigrationRunRedactsTheDatabasesFreeTextError(t *testing.T) {
 	}
 	if bytes.Contains(frame, []byte(declaredRowValue)) {
 		t.Fatalf("the framed result -- what reaches the Pod log -- carries the database's free-text error: %s", frame)
+	}
+}
+
+// TestMigrationRunCarriesTheFailedStatementThroughTheFrame follows the
+// failure Ptah writes from the child's output to what the controller parses:
+// the statement and the database's code arrive, and the sentence beside them,
+// which quotes the row, does not (#678).
+func TestMigrationRunCarriesTheFailedStatementThroughTheFrame(t *testing.T) {
+	t.Parallel()
+
+	// Ptah v0.14.0's account of a MySQL run stopped by a duplicate key; see
+	// internal/dataplane/testdata.
+	document, err := os.ReadFile(filepath.Join("..", "dataplane", "testdata", "migrations-up-partial-mysql.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const declaredRowValue = "Duplicate entry '1' for key 'ledger.PRIMARY'"
+	if !bytes.Contains(document, []byte(declaredRowValue)) {
+		t.Fatal("the captured document no longer quotes the row, so this test proves nothing about redaction")
+	}
+	executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: string(document), exitCode: 2}}}
+	result := Run(context.Background(), Config{
+		Operation:   OperationMigrationApply,
+		Environment: withRunnerProtocol(migrationApplyEnvironment(t, "migration-failed-statement")),
+		Executor:    executor,
+	})
+	frame, err := MarshalFrame(result)
+	if err != nil {
+		t.Fatalf("MarshalFrame() error = %v", err)
+	}
+	if bytes.Contains(frame, []byte(declaredRowValue)) {
+		t.Fatalf("the framed result carries the database's free-text error: %s", frame)
+	}
+	parsed, err := ParseResult(frame)
+	if err != nil {
+		t.Fatalf("ParseResult() error = %v", err)
+	}
+	want := dataplane.MigrationRunFailure{Version: 2, Statement: 3, Statements: 4, SQLState: "23000", ErrorNumber: 1062}
+	if parsed.MigrationRun == nil || parsed.MigrationRun.Failure == nil || *parsed.MigrationRun.Failure != want {
+		t.Fatalf("the controller parsed migration run %#v, want failure %+v", parsed.MigrationRun, want)
+	}
+}
+
+// TestMigrationRunRefusesAFailureThatContradictsIt is the runner's half of
+// the decoder's refusal. The same failed run is carried when its failure names
+// the migration it left unapplied, and dropped when the failure names one it
+// applied, so the frame goes on claiming an uncertain mutation as it does for
+// a child whose output could not be read.
+func TestMigrationRunRefusesAFailureThatContradictsIt(t *testing.T) {
+	t.Parallel()
+
+	for _, row := range []struct {
+		name    string
+		version string
+		carried bool
+	}{
+		{name: "the failure is in the migration the run left unapplied", version: "4", carried: true},
+		{name: "the failure is in a migration the run applied", version: "3", carried: false},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			document := `{"contract_version":1,"direction":"up","outcome":"failed","planned":[3,4],"applied":[3],` +
+				`"failure":{"version":` + row.version + `,"statement":1,"statements":1,"sqlstate":"42P01"},` +
+				`"status":{"contract_version":1,"current_version":3,"total_migrations":4,"has_pending_changes":true}}`
+			executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: document, exitCode: 1}}}
+			result := Run(context.Background(), Config{
+				Operation:   OperationMigrationApply,
+				Environment: withRunnerProtocol(migrationApplyEnvironment(t, "migration-failure-"+row.version)),
+				Executor:    executor,
+			})
+			if carried := result.MigrationRun != nil; carried != row.carried {
+				t.Fatalf("Run() carried the report: %t, want %t", carried, row.carried)
+			}
+			if result.Uncertain == row.carried {
+				t.Fatalf("Run() Uncertain = %t, want %t", result.Uncertain, !row.carried)
+			}
+		})
 	}
 }
 

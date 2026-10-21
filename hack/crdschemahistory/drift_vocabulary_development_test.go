@@ -5,12 +5,16 @@ import (
 	"testing"
 )
 
+// driftVocabularyExtensionCommit is #606, which made the extension. The tree
+// has moved past it since, so the extension is read where it was made.
+const driftVocabularyExtensionCommit = "b98f92bed240a4a34cde9c6bf5bc0cdc07da6d96"
+
 func TestDriftVocabularyDevelopmentExtensionIsExact(t *testing.T) {
 	before, err := readGitFiles(context.Background(), "../..", developmentTreeCommit, "config/crd/bases")
 	if err != nil {
 		t.Fatal(err)
 	}
-	after, err := readWorkingTreeFiles("../..", "config/crd/bases")
+	after, err := readGitFiles(context.Background(), "../..", driftVocabularyExtensionCommit, "config/crd/bases")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -387,7 +387,8 @@ func (m *migrationRun) stoppedApplyProof() {
 		m.mfPrintLastRun(name, recorded)
 		m.fatalf("%s did not record the account its stopped run gave", name)
 	}
-	if !stoppedRunNamesItsMigration(recorded.Status.LastRun, 2) {
+	// The sleep is the stopped migration's only statement.
+	if !stoppedRunNamesItsMigration(recorded.Status.LastRun, 2, 1, 1) {
 		m.mfPrintLastRun(name, recorded)
 		m.fatalf("%s's record does not name the migration its run stopped in", name)
 	}

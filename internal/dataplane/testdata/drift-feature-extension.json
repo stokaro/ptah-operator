@@ -1,0 +1,93 @@
+{
+  "drift": true,
+  "failed": true,
+  "failure_threshold": "all",
+  "highest_severity": "safe",
+  "dialect": "postgres",
+  "findings": [
+    {
+      "category": "feature_changes:ptah.run/pgextension/extension-change",
+      "count": 1,
+      "severity": "safe"
+    }
+  ],
+  "diff": {
+    "feature_changes": [
+      {
+        "subject": {
+          "kind": "ptah.run/pgextension/extension",
+          "name": {
+            "source": "pg_trgm",
+            "normalized": "pg_trgm"
+          }
+        },
+        "value": {
+          "format": 1,
+          "owner": "ptah.run/pgextension",
+          "kind": "ptah.run/pgextension/extension-change",
+          "representation": "change",
+          "version": 1,
+          "definition": "sha256:aaea258c2dcc40969ef87697b4d1fae167d443099e9c1485943224088eac9052",
+          "payload": {
+            "after": {
+              "if_not_exists": true
+            },
+            "before": null,
+            "comment": false,
+            "schema": ""
+          }
+        }
+      }
+    ],
+    "identifier_semantics": {
+      "default_schema": "public",
+      "index_namespace": "schema",
+      "index_names": "exact",
+      "table_names": "exact",
+      "column_names": "exact"
+    },
+    "tables_added": null,
+    "tables_removed": null,
+    "tables_modified": null,
+    "enums_added": null,
+    "enums_removed": null,
+    "enums_modified": null,
+    "indexes_added": null,
+    "indexes_removed": null,
+    "index_visibility_changed": null,
+    "functions_added": null,
+    "functions_removed": null,
+    "functions_modified": null,
+    "sequences_added": null,
+    "sequences_removed": null,
+    "sequences_modified": null,
+    "views_added": null,
+    "views_removed": null,
+    "views_modified": null,
+    "materialized_views_added": null,
+    "materialized_views_removed": null,
+    "materialized_views_modified": null,
+    "triggers_added": null,
+    "triggers_removed": null,
+    "triggers_modified": null,
+    "rls_policies_added": null,
+    "rls_policies_removed": null,
+    "rls_policies_modified": null,
+    "object_comments_changed": null,
+    "rls_enabled_tables_added": null,
+    "rls_enabled_tables_removed": null,
+    "rls_force_changed": null,
+    "roles_added": null,
+    "roles_removed": null,
+    "roles_modified": null,
+    "grants_added": null,
+    "grants_removed": null,
+    "grant_options_added": null,
+    "grant_options_revoked": null,
+    "constraints_added": null,
+    "constraints_removed": null,
+    "foreign_keys_removed_with_tables": null,
+    "constraint_comments_changed": null,
+    "constraints_validated": null
+  }
+}

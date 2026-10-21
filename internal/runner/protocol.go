@@ -167,9 +167,10 @@ type DriftFindingSummary struct {
 
 // maxDriftFindings bounds the summaries one frame carries, as
 // status.target.driftFindings bounds them. A report holds each category at
-// most once, and the whole vocabulary fits under the bound, so the summaries
-// are always the complete report and their counts always sum to
-// DriftFindingCount.
+// most once, and every category without a kind fits under the bound, so the
+// summaries are the complete report and their counts sum to
+// DriftFindingCount. A report whose kinds take it past the bound is refused
+// before it is framed.
 const maxDriftFindings = 128
 
 // Result is the complete credential-free result emitted by ptah-runner.

@@ -464,9 +464,17 @@ func (d *dataPlane) assertPlanProjected(plan *ptahv1alpha1.PtahSchemaPlan) {
 // planned, pending or claimed.
 func (d *dataPlane) assertConvergenceResultPair(schema string, observeCheckpoint, planCheckpoint checkpoint, after *checkpoint) {
 	d.t.Helper()
+	d.assertConvergenceOf(d.schema(schema), observeCheckpoint, planCheckpoint, after)
+}
+
+// assertConvergenceOf is assertConvergenceResultPair for a schema document the
+// caller already holds, such as the one a wait matched.
+func (d *dataPlane) assertConvergenceOf(document *ptahv1alpha1.PtahSchema, observeCheckpoint, planCheckpoint checkpoint, after *checkpoint) {
+	d.t.Helper()
+	schema := document.Name
 	observe := d.captureOneNewJobResult(schema, "observe", observeCheckpoint, after)
 	plan := d.captureOneNewJobResult(schema, "plan", planCheckpoint, after)
-	if err := convergedResults(d.schema(schema), observe, plan); err != nil {
+	if err := convergedResults(document, observe, plan); err != nil {
 		d.fatalf("%s did not prove convergence with exact Observe and NoChanges Plan results: %v", schema, err)
 	}
 }
@@ -638,15 +646,21 @@ func (d *dataPlane) assertCoordinationLeaseBoundary(key string, before checkpoin
 // waitForInSync waits for the schema to converge on the digest after an Apply
 // and holds what it applied to this manager, and the cycle that proved it to a
 // converged Observe and a NoChanges Plan.
+//
+// The convergence is judged on the document that matched and on the Jobs that
+// existed when it did. A converged schema keeps reconciling at its interval,
+// so a later read can land in the next cycle, holding its observation or its
+// operation, and a later Job count can include that cycle's Jobs.
 func (d *dataPlane) waitForInSync(schema, digest string, observeCheckpoint, planCheckpoint checkpoint) {
 	d.t.Helper()
 	matched := d.waitForSchema(schema, "post-apply convergence for "+digest, func(s *ptahv1alpha1.PtahSchema) bool {
 		return inSync(s, digest)
 	})
+	after := d.checkpointJobs(schema, "")
 	if err := appliedBound(matched, d.controller, d.stateVersion()); err != nil {
 		d.fatalf("%s applied evidence is not bound to the exact controller identity: %v", schema, err)
 	}
-	d.assertConvergenceResultPair(schema, observeCheckpoint, planCheckpoint, nil)
+	d.assertConvergenceOf(matched, observeCheckpoint, planCheckpoint, &after)
 }
 
 // assertPeriodicNoop proves the persisted timer alone starts a read-only cycle

@@ -2,6 +2,8 @@ package dataplane
 
 import (
 	"fmt"
+	"math"
+	"regexp"
 	"slices"
 )
 
@@ -120,7 +122,57 @@ type MigrationRunReport struct {
 	Planned         []int64                `json:"planned,omitempty"`
 	Applied         []int64                `json:"applied,omitempty"`
 	Error           string                 `json:"error,omitempty"`
+	Failure         *MigrationRunFailure   `json:"failure,omitempty"`
 	Status          *MigrationStatusReport `json:"status,omitempty"`
+}
+
+// MigrationRunFailure is the statement a run stopped at and the code the
+// database answered with. Ptah writes it only when a statement reached the
+// database and failed. Unlike Error it carries no text, so it names no row and
+// may reach status and Events (#69, #678).
+type MigrationRunFailure struct {
+	Version    int64 `json:"version"`
+	Statement  int   `json:"statement"`
+	Statements int   `json:"statements"`
+	// SQLState is empty when the server gave no answer, and ErrorNumber is
+	// zero on every protocol but MySQL's.
+	SQLState    string `json:"sqlstate,omitempty"`
+	ErrorNumber int    `json:"error_number,omitempty"`
+}
+
+// maxMigrationStatements bounds the statement counts a failure may report.
+// The run message quotes both, and the bound keeps it inside the 256 bytes an
+// Event keeps; no migration file comes near it.
+const maxMigrationStatements = math.MaxInt32
+
+// sqlStatePattern is the SQLSTATE form the SQL standard defines: a class and a
+// subclass of digits and capital letters, five characters in all.
+var sqlStatePattern = regexp.MustCompile(`^[0-9A-Z]{5}$`)
+
+// validate holds a failure to the run that reported it. A failure on a run
+// that applied everything, or in a migration it did not select or did apply,
+// contradicts the document it came in, and that document is refused whole.
+// Nothing here quotes the SQLSTATE back, because a value that failed its form
+// could be anything.
+func (f MigrationRunFailure) validate(report MigrationRunReport) error {
+	if report.Outcome == MigrationOutcomeApplied || report.Outcome == MigrationOutcomeUpToDate {
+		return fmt.Errorf("migration run reports outcome %q and a failed statement", report.Outcome)
+	}
+	if !slices.Contains(report.Planned, f.Version) || slices.Contains(report.Applied, f.Version) {
+		return fmt.Errorf("migration run reports a statement of version %d failed, "+
+			"and that version is not one it selected and left unapplied", f.Version)
+	}
+	if f.Statement < 1 || f.Statement > f.Statements || f.Statements > maxMigrationStatements {
+		return fmt.Errorf("migration run reports statement %d of %d failed", f.Statement, f.Statements)
+	}
+	if f.SQLState != "" && !sqlStatePattern.MatchString(f.SQLState) {
+		return fmt.Errorf("migration run reports a SQLSTATE that is not five digits or capital letters")
+	}
+	if f.ErrorNumber < 0 || f.ErrorNumber > math.MaxUint16 {
+		return fmt.Errorf("migration run reports error number %d, which the two bytes MySQL sends cannot hold",
+			f.ErrorNumber)
+	}
+	return nil
 }
 
 // Pending names the versions the next run would execute, in the order Ptah
@@ -274,6 +326,11 @@ func DecodeMigrationRun(data []byte) (MigrationRunReport, error) {
 				"migration run reports version %d applied and never planned",
 				version,
 			)
+		}
+	}
+	if report.Failure != nil {
+		if err := report.Failure.validate(report); err != nil {
+			return MigrationRunReport{}, err
 		}
 	}
 	return report, nil

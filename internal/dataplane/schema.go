@@ -15,8 +15,12 @@ const (
 	// outcome gains a value. A document announcing another version is refused
 	// rather than read for the fields this operator recognizes, because those
 	// fields may already mean something else.
-	SupportedSchemaPlanContract  = 1
-	SupportedSchemaApplyContract = 1
+	//
+	// Version 2 is Ptah v0.14.0's. It changed the shape of undecided, which
+	// this operator does not read, and added provider_diagnostic; every field
+	// and outcome read here means what it meant in version 1.
+	SupportedSchemaPlanContract  = 2
+	SupportedSchemaApplyContract = 2
 )
 
 // Outcomes a plan document reports.

@@ -7,8 +7,8 @@ Kubernetes acceptance or a production qualification result.
 
 ## Identity and procedure
 
-Captured on October 10, 2026 with the executor `support/ptah.json` pins: the
-Ptah v0.13.0 release image, commit `eb69f8c4435643c5c9f3fbd1c9953b9ba0f44b6f`.
+Captured on October 21, 2026 with the executor `support/ptah.json` pins: the
+Ptah v0.14.0 release image, commit `e046527f79c58651d2082dce65b5ceb48dbc2606`.
 [`schema-sql-capture.json`](schema-sql-capture.json) records the executor and
 server images, every command's exit status and record count, and the SHA-256 of
 each reading and saved plan.
@@ -32,13 +32,13 @@ runs in its own container, and every container, anonymous volume and network the
 run created is removed.
 
 Before these readings replaced the earlier ones, the same procedure ran with the
-executor built from the previous pin, `f6e562c5`. It reproduced every earlier
-checked-in reading record for record, PostgreSQL parameters included, and both
-saved exclusion plans byte for byte. That is what makes the new readings a
-statement about the executor rather than about a different procedure.
+executor of the previous pin, the Ptah v0.13.0 release image. It reproduced every
+earlier checked-in reading record for record, PostgreSQL parameters included,
+and all four saved exclusion plans byte for byte. That is what makes the new
+readings a statement about the executor rather than about a different procedure.
 
-`--contract` writes the contract from a directory of readings. Run on the earlier
-readings, it reproduced the earlier contract's 78 declarations exactly.
+`--contract` writes the contract from a directory of readings. Run on the
+v0.13.0 readings, it reproduced the earlier contract byte for byte.
 
 ## Permitted work and source review
 
@@ -48,29 +48,33 @@ parameters and MySQL protocol commands byte for byte. Only the declaration's
 quoted MySQL database placeholder is expanded to the controlled fixture
 identifier. Received SQL is never normalized.
 
-Against the previous pin, v0.13.0 rewrote twelve PostgreSQL inspection queries
-(columns, tables, indexes, constraints, routines, views, role scope and default
-privileges) and added a global default privileges read. On MySQL it rewrote the
-column, table, index, constraint and view reads and added a check for the
-`information_schema.STATISTICS` columns it can use. Every added declaration is a
-catalog read: none contains a write, DDL, grant or transaction-control keyword
-outside comments and literals.
+Against the previous pin, v0.14.0 changed seven declarations and kept the count
+at 80. On PostgreSQL the column read takes a domain column's NOT NULL from the
+column rather than from the type's effective nullability, the range type read
+qualifies operator class and collation by schema, the exclusion constraint read
+adds the backing index, and the row-level security policy read was rewritten for
+its new owner: the same catalog, with roles as JSON, the raw command and the
+permissive flag. On MySQL the `information_schema.STATISTICS` column check and
+both forms of the index read add the `EXPRESSION` column. Every changed
+declaration is a catalog read: none contains a write, DDL, grant or
+transaction-control keyword outside comments and literals. The migration History
+and restored-history readings are unchanged record for record.
 
 The reviewed source is the pinned commit:
 
-- PostgreSQL's [schema reader](https://github.com/stokaro/ptah/blob/eb69f8c4435643c5c9f3fbd1c9953b9ba0f44b6f/internal/dbschema/postgres/reader.go)
+- PostgreSQL's [schema reader](https://github.com/stokaro/ptah/blob/e046527f79c58651d2082dce65b5ceb48dbc2606/internal/dbschema/postgres/reader.go)
   reads namespaces, columns, types, table statistics, indexes, constraints,
   extensions, routines, views, triggers, sequences, policies, roles, owners,
   grants, default privileges and membership from PostgreSQL catalogs. Catalog
   functions such as `pg_get_expr` return definitions; the fixture queries do not
   execute those definitions.
-- PostgreSQL's [column spelling probe](https://github.com/stokaro/ptah/blob/eb69f8c4435643c5c9f3fbd1c9953b9ba0f44b6f/internal/dbexprprobe/column_spellings.go)
+- PostgreSQL's [column spelling probe](https://github.com/stokaro/ptah/blob/e046527f79c58651d2082dce65b5ceb48dbc2606/internal/dbexprprobe/column_spellings.go)
   creates exactly `pg_temp.ptah_column_probe_0` with `id bigint`, with or without
   `enabled boolean` in the declared fixture variants, reads its type
   definitions, and rolls back to its savepoint. This exact temporary probe is
   permitted; permanent DDL, changed columns or defaults, arbitrary functions and
   COMMIT are not.
-- MySQL's [schema reader](https://github.com/stokaro/ptah/blob/eb69f8c4435643c5c9f3fbd1c9953b9ba0f44b6f/internal/dbschema/mysql/reader.go)
+- MySQL's [schema reader](https://github.com/stokaro/ptah/blob/e046527f79c58651d2082dce65b5ceb48dbc2606/internal/dbschema/mysql/reader.go)
   reads columns, tables, enum columns, indexes, check and key constraints, views,
   triggers, routine parameters and routines from `information_schema`. Its
   prepared queries and their expanded executions are distinct entries. The
@@ -105,10 +109,11 @@ Apply exited 2 and the allowed Apply exited 0. Only that final Apply restored
 `enabled` and added `fault_token`; the control rows survived every sequence, and
 the exclusion plans keep the excluded table's drop out of the narrowed plan.
 
-The native PostgreSQL exclusion plan first adds the managed column, then drops
-the excluded table's primary-key constraint, then drops that table; MySQL has
-only the addition and the table drop. Both narrowed plans contain only the
-column addition.
+Both native exclusion plans add the managed column and then drop the excluded
+table. v0.13.0's PostgreSQL plan dropped the table's primary-key constraint
+before the table, and v0.14.0's does not. Both narrowed plans contain only the
+column addition. v0.14.0 also sends each planned statement with the plan's
+comments in front of it, so the allowed Apply's journal shows them.
 
 ## Operations
 

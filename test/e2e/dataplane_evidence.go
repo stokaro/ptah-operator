@@ -427,14 +427,21 @@ func podAdmissionApplied(job *batchv1.Job, pod *corev1.Pod, identity controllerI
 		hasToleration(spec.Tolerations, admissionRuntimeTaint, corev1.TaintEffectNoSchedule, nil)
 }
 
+// operationContainerDefaults is what the test namespace's LimitRange gives a
+// container of an operation Pod that declares no resources of its own. The
+// memory limit is 128Mi since the executor moved to Ptah v0.14.0, whose working
+// set is about twice v0.13.0's: reference-data and alerting Observes that fit
+// in 64Mi under v0.13.0 were OOMKilled under v0.14.0.
+var operationContainerDefaults = corev1.ResourceRequirements{
+	Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("10m"), corev1.ResourceMemory: resource.MustParse("16Mi")},
+	Limits:   corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("100m"), corev1.ResourceMemory: resource.MustParse("128Mi")},
+}
+
 func admittedContainerResources(actual, declared []corev1.Container) bool {
 	if len(actual) != len(declared) {
 		return false
 	}
-	defaults := corev1.ResourceRequirements{
-		Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("10m"), corev1.ResourceMemory: resource.MustParse("16Mi")},
-		Limits:   corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("100m"), corev1.ResourceMemory: resource.MustParse("64Mi")},
-	}
+	defaults := *operationContainerDefaults.DeepCopy()
 	expected := map[string]corev1.ResourceRequirements{}
 	for _, container := range declared {
 		if container.Name == "" {

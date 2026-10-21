@@ -459,9 +459,15 @@ func (d *dataPlane) createAdmissionFixtures() {
 			"apiVersion": "v1", "kind": "LimitRange",
 			"metadata": map[string]any{"namespace": d.in.TestNamespace, "name": "ptah-operation-defaults"},
 			"spec": map[string]any{"limits": []any{map[string]any{
-				"type":           "Container",
-				"defaultRequest": map[string]any{"cpu": "10m", "memory": "16Mi"},
-				"default":        map[string]any{"cpu": "100m", "memory": "64Mi"},
+				"type": "Container",
+				"defaultRequest": map[string]any{
+					"cpu":    operationContainerDefaults.Requests.Cpu().String(),
+					"memory": operationContainerDefaults.Requests.Memory().String(),
+				},
+				"default": map[string]any{
+					"cpu":    operationContainerDefaults.Limits.Cpu().String(),
+					"memory": operationContainerDefaults.Limits.Memory().String(),
+				},
 			}}},
 		},
 		map[string]any{

@@ -21,11 +21,11 @@ things, and [the next section](#three-states-kept-apart) says what.
 <!-- BEGIN GENERATED COMPATIBILITY -->
 **Axis:** Operator version to the Ptah build the operator executes, identified by the digest-pinned executorImage and the ptahVersion bound beside it. It is not the Ptah CLI a person used to build the OCI artifact. The runner is not a third axis: it is built from the operator source this row names, and the exact protocol both halves speak is in runnerProtocolVersion.
 
-**Last measured:** 2026-10-20.
+**Last measured:** 2026-10-21.
 
 | Operator | Declared range | Verified builds | Guide |
 | --- | --- | --- | --- |
-| `edge` | No range | `v0.13.0` | [edge](https://operator.ptah.run/edge/) |
+| `edge` | No range | `v0.14.0` | [edge](https://operator.ptah.run/edge/) |
 | `v0.2.5` | No range | `v0.13.0` | [v0.2.5](https://operator.ptah.run/v0.2.5/) |
 | `v0.2.4` | No range | `v0.13.0` | [v0.2.4](https://operator.ptah.run/v0.2.4/) |
 | `v0.2.3` | No range | `v0.13.0` | [v0.2.3](https://operator.ptah.run/v0.2.3/) |
@@ -41,11 +41,11 @@ The development state. Its guide is at [https://operator.ptah.run/edge/](https:/
 
 **Verified:**
 
-- Ptah `v0.13.0`. Commit [`eb69f8c4435643c5c9f3fbd1c9953b9ba0f44b6f`](https://github.com/stokaro/ptah/commit/eb69f8c4435643c5c9f3fbd1c9953b9ba0f44b6f), runner protocol version 1, evidence `kubernetes-e2e`. The complete OCI resolution and verification, observation, planning, approval, apply, failure-recovery and convergence lifecycle against PostgreSQL and MySQL, on every supported Kubernetes minor, for both artifact formats this operator reads: application/vnd.stokaro.ptah.schema.v1 for a declared schema, whose declared rows converge on both engines, and application/vnd.stokaro.ptah.migrations.v1 for a versioned migration directory, whose history read, approval gate and applied sequence run against PostgreSQL and MySQL.
+- Ptah `v0.14.0`. Commit [`e046527f79c58651d2082dce65b5ceb48dbc2606`](https://github.com/stokaro/ptah/commit/e046527f79c58651d2082dce65b5ceb48dbc2606), runner protocol version 1, evidence `kubernetes-e2e`. The complete OCI resolution and verification, observation, planning, approval, apply, failure-recovery and convergence lifecycle against PostgreSQL and MySQL, on every supported Kubernetes minor, for both artifact formats this operator reads: application/vnd.stokaro.ptah.schema.v1 for a declared schema, whose declared rows converge on both engines, and application/vnd.stokaro.ptah.migrations.v1 for a versioned migration directory, whose history read, approval gate and applied sequence run against PostgreSQL and MySQL.
 
 **Limitations:**
 
-- The verified build is the Ptah v0.13.0 release image, ghcr.io/stokaro/ptah:0.13.0 pinned by digest, run as Ptah published it: the operator builds no executor of its own. It contains stokaro/ptah#3777 and #3794, the complete `--json` documents of `schema plan` and `schema apply` that the operator reads on every declared-schema Plan and Apply. An executor without #3777, v0.9.0 included, rejects `--json` with exit code 2.
+- The verified build is the release image of the Ptah version under Verified, pinned by digest and run as Ptah published it: the operator builds no executor of its own. It contains stokaro/ptah#3777 and #3794, the complete `--json` documents of `schema plan` and `schema apply` that the operator reads on every declared-schema Plan and Apply. An executor without #3777, v0.9.0 included, rejects `--json` with exit code 2.
 - The migration machine contracts -- `migrations status --json` carrying contract_version and a per-migration record, and `migrations up --json` carrying an outcome -- reached Ptah after v0.3.0-201, and `migrations up --expect-sequence`, which the operator passes on every migration Apply, reached it in v0.9.0. A build older than v0.9.0 resolves and verifies a migration artifact and then fails at its own history document or at the flag every migration Apply passes, so the versioned workflow needs at least v0.9.0 rather than any build that has the commands.
 - The verified scope is the operator's database support window, PostgreSQL 17.x and MySQL 8.4.x LTS. Other engines Ptah addresses are unverified here, whatever the Ptah build.
 - The published verified set is a repository document. It is not compiled into the manager, and nothing compares a running executor's ptahVersion against it, so a combination outside this set is outside what the matrix measured rather than something the operator refuses. What is refused before a database is mutated is a change of any bound execution component between the plan and the apply -- Ptah, the executor image, the runner protocol version, the controller-state version -- checked before the Job is created. The manager's image and revision and the runner image are recorded and not bound: a manager release that changes only them applies the plans and approvals its predecessor left. What is refused after a Job has run is a runner speaking another protocol version, which is a rejected result frame rather than a prevented mutation. Pinning both the executor image and its ptahVersion at install is a requirement on whoever installs, not a check at runtime.
@@ -56,7 +56,9 @@ A released version. Its guide is at [https://operator.ptah.run/v0.2.5/](https://
 
 **Declared:** the same as [`edge`](#edge).
 
-**Verified:** the same as [`edge`](#edge).
+**Verified:**
+
+- Ptah `v0.13.0`. Commit [`eb69f8c4435643c5c9f3fbd1c9953b9ba0f44b6f`](https://github.com/stokaro/ptah/commit/eb69f8c4435643c5c9f3fbd1c9953b9ba0f44b6f), runner protocol version 1, evidence `kubernetes-e2e`. The scope is the same as for [`edge`](#edge).
 
 **Limitations:** the same as [`edge`](#edge).
 
@@ -66,7 +68,7 @@ A released version. Its guide is at [https://operator.ptah.run/v0.2.4/](https://
 
 **Declared:** the same as [`edge`](#edge).
 
-**Verified:** the same as [`edge`](#edge).
+**Verified:** the same as [`v0.2.5`](#v025).
 
 **Limitations:** the same as [`edge`](#edge).
 
@@ -76,7 +78,7 @@ A released version. Its guide is at [https://operator.ptah.run/v0.2.3/](https://
 
 **Declared:** the same as [`edge`](#edge).
 
-**Verified:** the same as [`edge`](#edge).
+**Verified:** the same as [`v0.2.5`](#v025).
 
 **Limitations:** the same as [`edge`](#edge).
 
@@ -86,7 +88,7 @@ A released version. Its guide is at [https://operator.ptah.run/v0.2.2/](https://
 
 **Declared:** the same as [`edge`](#edge).
 
-**Verified:** the same as [`edge`](#edge).
+**Verified:** the same as [`v0.2.5`](#v025).
 
 **Limitations:** the same as [`edge`](#edge).
 
@@ -96,7 +98,7 @@ A released version. Its guide is at [https://operator.ptah.run/v0.2.1/](https://
 
 **Declared:** the same as [`edge`](#edge).
 
-**Verified:** the same as [`edge`](#edge).
+**Verified:** the same as [`v0.2.5`](#v025).
 
 **Limitations:** the same as [`edge`](#edge).
 
@@ -106,7 +108,7 @@ A released version. Its guide is at [https://operator.ptah.run/v0.2.0/](https://
 
 **Declared:** the same as [`edge`](#edge).
 
-**Verified:** the same as [`edge`](#edge).
+**Verified:** the same as [`v0.2.5`](#v025).
 
 **Limitations:** the same as [`edge`](#edge).
 
@@ -191,19 +193,23 @@ was last measured, not when the file was last touched.
 
 The drift finding categories the pinned build can emit are recorded in
 `support/ptah-drift-categories.json`, with the digests of the Ptah files that
-produce them. The job that builds the shared task images compares the record
-with the pinned source. A new pin whose drift command, row summary or schema classifier
-changed fails there until the record is rewritten:
+produce them: the drift command, the schema classifier and its feature
+findings, the row summary and the undecided note. The record lists the fixed
+categories and, separately, the qualified ones Ptah writes bare or followed by
+`:<kind>`. The job that builds the shared task images compares the record
+with the pinned source. A new pin that changed any of those files fails there
+until the record is rewritten:
 
 ```sh
 go run ./hack/ptahdriftcategories -ptah <Ptah checkout> -write
 ```
 
-A unit test holds the operator's vocabulary to the recorded list, because the
+A unit test holds the operator's vocabulary to the recorded lists, because the
 operator refuses a drift report that names a category it does not know. A
 category the new build adds therefore joins the vocabulary, the `PtahSchema`
-status enum and the CRD schema version in the same change. A pin that leaves
-those files alone needs no edit.
+status pattern and the CRD schema version in the same change. The pattern keeps
+every category an earlier release stored, so a summary written before an
+upgrade still validates. A pin that leaves those files alone needs no edit.
 
 Any change to the file changes the table, so regenerate it in the same commit:
 

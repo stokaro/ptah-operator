@@ -49,6 +49,12 @@ func TestVendoredCategoriesAreTheOperatorVocabulary(t *testing.T) {
 	if got := dataplane.DriftFindingCategories(); !reflect.DeepEqual(got, vendored.Categories) {
 		t.Fatalf("operator vocabulary = %q\npinned Ptah emits    %q", got, vendored.Categories)
 	}
+	if len(vendored.Qualified) == 0 {
+		t.Fatal("the vendored file lists no qualified category")
+	}
+	if got := dataplane.DriftFindingQualifiedCategories(); !reflect.DeepEqual(got, vendored.Qualified) {
+		t.Fatalf("operator qualified vocabulary = %q\npinned Ptah qualifies     %q", got, vendored.Qualified)
+	}
 	digest := regexp.MustCompile(`^[0-9a-f]{64}$`)
 	paths := make([]string, 0, len(vendored.Sources))
 	for _, file := range vendored.Sources {
@@ -126,6 +132,42 @@ func TestExtract(t *testing.T) {
 	}
 }
 
+func TestExtractConstant(t *testing.T) {
+	t.Parallel()
+
+	got, err := ExtractConstant([]byte("// FindingCategory is the category.\nconst FindingCategory = \"undecided\"\n"), "FindingCategory")
+	if err != nil || !reflect.DeepEqual(got, []string{"undecided"}) {
+		t.Fatalf("ExtractConstant() = %q, %v; want undecided", got, err)
+	}
+	for name, source := range map[string]string{
+		"absent":          "const OtherCategory = \"undecided\"\n",
+		"not a literal":   "const FindingCategory = prefix + \"undecided\"\n",
+		"declared twice":  "const FindingCategory = \"undecided\"\nvar FindingCategory = \"other\"\n",
+		"not a lowercase": "const FindingCategory = \"Undecided Objects\"\n",
+	} {
+		if got, err := ExtractConstant([]byte(source), "FindingCategory"); err == nil {
+			t.Errorf("%s: ExtractConstant() = %q, want an error", name, got)
+		}
+	}
+}
+
+func TestExtractQualified(t *testing.T) {
+	t.Parallel()
+
+	source := "add(findings, \"feature_changes\"+suffix, 1, Destructive)\n" +
+		"add(findings, \"feature_changes:\"+kind, 1, severity)\n" +
+		"case schemaext.AccessWidens:\n\treturn \"feature_access_widened\"\n" +
+		"strings.HasPrefix(finding.Category, \"feature_changes:\")\n" +
+		"add(findings, \"tables_added\", 1, Safe)\n"
+	got, err := ExtractQualified([]byte(source))
+	if want := []string{"feature_access_widened", "feature_changes"}; err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("ExtractQualified() = %q, %v; want %q", got, err, want)
+	}
+	if got, err := ExtractQualified([]byte("add(findings, \"tables_added\", 1, Safe)\n")); err == nil {
+		t.Fatalf("ExtractQualified() of a file with no feature category = %q, want an error", got)
+	}
+}
+
 func TestCompareNamesEveryDifference(t *testing.T) {
 	t.Parallel()
 
@@ -135,6 +177,7 @@ func TestCompareNamesEveryDifference(t *testing.T) {
 			{Path: "migration/safety/safety.go", SHA256: strings.Repeat("b", 64)},
 		},
 		Categories: []string{"rls_force_added", "tables_added"},
+		Qualified:  []string{"feature_changes"},
 	}
 	if err := Compare(base, base); err != nil {
 		t.Fatalf("Compare(identical) = %v", err)
@@ -146,6 +189,7 @@ func TestCompareNamesEveryDifference(t *testing.T) {
 			{Path: "internal/datamigrate/datamigrate.go", SHA256: strings.Repeat("d", 64)},
 		},
 		Categories: []string{"rls_force_removed", "tables_added"},
+		Qualified:  []string{"feature_access_widened"},
 	}
 	err := Compare(base, computed)
 	if err == nil {
@@ -156,6 +200,8 @@ func TestCompareNamesEveryDifference(t *testing.T) {
 		"internal/datamigrate/datamigrate.go is not recorded",
 		"Ptah emits rls_force_removed",
 		"Ptah no longer emits rls_force_added",
+		"Ptah emits feature_access_widened with a kind",
+		"Ptah no longer emits feature_changes with a kind",
 	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("Compare() error %q does not say %q", err, want)
@@ -180,6 +226,8 @@ func TestRunFollowsThePinnedCommit(t *testing.T) {
 	writeFile(t, checkout, "internal/cli/drift/drift.go", "package drift\n")
 	writeFile(t, checkout, "internal/datamigrate/datamigrate.go",
 		"addFinding(&findings, \"data_rows_inserted\", n, safety.Safe)\n")
+	writeFile(t, checkout, "internal/undecidednote/undecidednote.go", "const FindingCategory = \"undecided\"\n")
+	writeFile(t, checkout, "migration/safety/features.go", "add(findings, \"feature_changes:\"+kind, 1, severity)\n")
 	writeFile(t, checkout, "migration/safety/safety.go",
 		"add(&findings, \"tables_added\", n, Safe)\nadd(&findings, \"rls_force_added\", n, Safe)\n")
 	first := commitAll(t, checkout, "first")
@@ -198,8 +246,11 @@ func TestRunFollowsThePinnedCommit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{"data_rows_inserted", "rls_force_added", "tables_added"}; !reflect.DeepEqual(written.Categories, want) {
+	if want := []string{"data_rows_inserted", "rls_force_added", "tables_added", "undecided"}; !reflect.DeepEqual(written.Categories, want) {
 		t.Fatalf("written categories = %q, want %q", written.Categories, want)
+	}
+	if want := []string{"feature_changes"}; !reflect.DeepEqual(written.Qualified, want) {
+		t.Fatalf("written qualified categories = %q, want %q", written.Qualified, want)
 	}
 	if err := run(context.Background(), []string{"-ptah", checkout}, root, &out); err != nil {
 		t.Fatalf("run() against the commit it was written from = %v", err)

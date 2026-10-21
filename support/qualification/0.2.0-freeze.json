@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-10-21T07:38:14.472633+00:00",
+  "frozenAt": "2026-10-21T15:52:05.617926+00:00",
   "profileSourceCommit": "1259f4d59343fef049307085e3ea77d2971677cb",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
@@ -28,7 +28,7 @@
     },
     {
       "path": "support/ptah.json",
-      "sha256": "c5979192b733feb7ce76c318c4ee94c4a30600d3260310faa438cbd556460334"
+      "sha256": "5a0be3e8d2a060e4fe798ac5191293c000cfc9c7b481681f63ea6a0b0dec3c40"
     },
     {
       "path": "docs/site/src/content/docs/support/databases.md",
@@ -53,7 +53,7 @@
   ],
   "functionalMatrix": {
     "path": "support/qualification/0.2.0-functional-matrix.md",
-    "sha256": "f19fc04e419a9e21c694b7bc7203cba7cecab36862fd7db6c5d1091f53b86cde",
+    "sha256": "0b7e1a420bceb3e7a569161130c38386f128a6b57eb1c761fd3c13975b24b4f7",
     "generatedFromCommit": "a8b90b5816e9e45d6ba97a1bf006918896d892e3",
     "command": "go run ./hack/acceptancecoverage",
     "kubernetesMinors": [
@@ -79,10 +79,10 @@
     "disposition": "v0.2.4 is the published predecessor of the v0.2.5 candidate. The upgrade from it is walked through both releases' guides by support/qualification/probes/fresh_install.py --upgrade-from on both platforms; the synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 52,
+  "revision": 53,
   "supersedes": {
-    "freezeCommit": "b89c87286253cfe97f4e28d5db21c6064c5a2bad",
-    "sha256": "0afe1fb7e7af8a76f6e040b2e7aab9399167d81e6c0c3c6a54bccc580f9ff41f"
+    "freezeCommit": "0894e705f494c59fb7c022f4336c983198eea4a1",
+    "sha256": "618fe13bcf1e6107aa1fc39c37c11a3c8b236a39621a9fb3e09b23c632da1b31"
   },
-  "revisionReason": "Name the monitoring deployment check (support/qualification/probes/monitoring_check.py, run by .github/workflows/fresh-install.yml) as Q-09 evidence for PA-09 (#675): on the published release digests, every manager scraped through the chart's own ServiceMonitor and the all-manager-loss alert and its resolution delivered to a receiver. v0.2.4 passed every alerting suite while its ServiceMonitor selected no Service (#673). Thresholds, targets and every other input are unchanged."
+  "revisionReason": "Move the edge row of support/ptah.json to the Ptah v0.14.0 release image (#678), whose run document names a failed statement and the database's code, and make the row's build limitation name no version so the released rows share it. The released rows keep Ptah v0.13.0, and the functional matrix names the new build under test. The profile, its targets and every other input are unchanged."
 }

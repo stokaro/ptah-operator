@@ -2,13 +2,14 @@ package crd_test
 
 import (
 	"context"
-	"encoding/json"
 	"strings"
 	"testing"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/stokaro/ptah-operator/internal/dataplane"
 )
 
 func finding(category string) map[string]any {
@@ -39,9 +40,21 @@ func TestPtahSchemaStatusRefusesAMalformedDriftSummary(t *testing.T) {
 			want:   cause{"status.target.driftFindings[1]", "Duplicate value"},
 		},
 		{
-			name:   "a category outside its enum",
+			name:   "a category outside its pattern",
 			target: map[string]any{"driftFindingCount": int64(1), "driftFindings": []any{finding("views_added")}},
-			want:   cause{"status.target.driftFindings[0].category", "Unsupported value"},
+			want:   cause{"status.target.driftFindings[0].category", "should match"},
+		},
+		{
+			name:   "a feature category whose kind has no path",
+			target: map[string]any{"driftFindingCount": int64(1), "driftFindings": []any{finding("feature_changes:ptah.run")}},
+			want:   cause{"status.target.driftFindings[0].category", "should match"},
+		},
+		{
+			name: "a feature category longer than its bound",
+			target: map[string]any{"driftFindingCount": int64(1), "driftFindings": []any{
+				finding("feature_changes:ptah.run/" + strings.Repeat("k", 130)),
+			}},
+			want: cause{"status.target.driftFindings[0].category", "may not be more than 153 bytes"},
 		},
 		{
 			name:   "a severity outside its enum",
@@ -75,6 +88,27 @@ func TestPtahSchemaStatusRefusesAMalformedDriftSummary(t *testing.T) {
 		}, "status", "target")
 		if err := api.Status().Update(context.Background(), observed, client.DryRunAll); err != nil {
 			t.Fatalf("the API server refused a well-formed drift summary on PtahSchema %s: %v", schema.GetName(), err)
+		}
+	})
+
+	// The pattern admits the feature categories with their kind, the undecided
+	// category, and a category only an earlier Ptah emitted: a summary an
+	// earlier manager stored still has to validate when anything rewrites the
+	// status.
+	t.Run("feature, undecided and earlier categories are published", func(t *testing.T) {
+		t.Parallel()
+		observed := reread(t, schema)
+		set(t, observed, map[string]any{
+			"driftFindingCount": int64(4),
+			"driftFindings": []any{
+				finding("extensions_added"),
+				finding("feature_access_widened:ptah.run/pgdefaultprivilege/default-privilege"),
+				finding("feature_changes:ptah.run/pgextension/extension-change"),
+				merged(finding("undecided"), map[string]any{"severity": "warning"}),
+			},
+		}, "status", "target")
+		if err := api.Status().Update(context.Background(), observed, client.DryRunAll); err != nil {
+			t.Fatalf("the API server refused feature, undecided and earlier categories on PtahSchema %s: %v", schema.GetName(), err)
 		}
 	})
 
@@ -201,19 +235,23 @@ func TestPtahSchemaStatusRefusesAMalformedBindingRetirement(t *testing.T) {
 	}
 }
 
-// Summaries are keyed by category, so the largest summary the schema can be
-// sent names every category once. It publishes, which is why the list needs
-// no way to say it was cut short: the controller copies the runner's
-// summaries, which are the whole report, and the whole report fits. The row
-// holds the enum to the list's bound, so the day the vocabulary outgrows it
-// the row says a complete report no longer publishes.
+// Summaries are keyed by category, so the largest summary the runner frames
+// without a kind names every category of the vocabulary once, the qualified
+// ones bare. It publishes, which is why the list needs no way to say it was cut
+// short: the controller copies the runner's summaries, which are the whole
+// report, and the runner refuses a report larger than the bound. The row holds
+// the vocabulary to the list's bound and to the installed pattern, so the day
+// either stops taking it the row says a complete report no longer publishes.
 func TestEveryDriftCategoryPublishesInOneSummary(t *testing.T) {
 	plane.Require(t)
 	t.Parallel()
 
-	categories := driftCategories(t)
+	categories := append(dataplane.DriftFindingCategories(), dataplane.DriftFindingQualifiedCategories()...)
+	if len(categories) == 0 {
+		t.Fatal("the drift vocabulary is empty, so this row would measure nothing")
+	}
 	if bound := driftFindingsBound(t); int64(len(categories)) > bound {
-		t.Fatalf("the drift category enum has %d values and status.target.driftFindings holds %d, so a report "+
+		t.Fatalf("the drift vocabulary has %d categories and status.target.driftFindings holds %d, so a report "+
 			"that names every category no longer publishes", len(categories), bound)
 	}
 
@@ -262,27 +300,6 @@ func driftFindingsBound(t *testing.T) int64 {
 		t.Fatal("status.target.driftFindings declares no maxItems")
 	}
 	return *findings.MaxItems
-}
-
-// driftCategories is the category enum of the installed CRD.
-func driftCategories(t *testing.T) []string {
-	t.Helper()
-	findings := driftFindings(t)
-	if findings.Items == nil || findings.Items.Schema == nil {
-		t.Fatal("status.target.driftFindings declares no item schema")
-	}
-	var categories []string
-	for _, value := range findings.Items.Schema.Properties["category"].Enum {
-		var name string
-		if err := json.Unmarshal(value.Raw, &name); err != nil {
-			t.Fatalf("read a drift category out of the CRD: %v", err)
-		}
-		categories = append(categories, name)
-	}
-	if len(categories) == 0 {
-		t.Fatal("the PtahSchema CRD declares no drift categories, so this row would measure nothing")
-	}
-	return categories
 }
 
 func TestPtahMigrationPlanStatusKeysConditionsByType(t *testing.T) {
