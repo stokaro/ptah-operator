@@ -16,30 +16,19 @@ const digest = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef012345678
 func TestDriftFindingVocabulary(t *testing.T) {
 	t.Parallel()
 
-	if dataplane.DriftFindingVocabularyVersion != 1 {
-		t.Fatalf("DriftFindingVocabularyVersion = %d, want 1", dataplane.DriftFindingVocabularyVersion)
+	if dataplane.DriftFindingVocabularyVersion != 2 {
+		t.Fatalf("DriftFindingVocabularyVersion = %d, want 2", dataplane.DriftFindingVocabularyVersion)
 	}
 	want := []string{
-		"async_replications_added", "async_replications_modified", "async_replications_removed",
 		"columns_added", "columns_modified", "columns_removed", "constraints_added",
-		"constraints_removed", "coordination_nodes_added", "coordination_nodes_modified",
-		"coordination_nodes_removed", "data_rows_deleted", "data_rows_inserted", "data_rows_updated",
-		"enum_values_added", "enum_values_removed", "enums_added", "enums_removed",
-		"extensions_added", "extensions_modified", "extensions_removed",
-		"external_data_sources_added", "external_data_sources_changed",
-		"external_data_sources_removed", "external_tables_added", "external_tables_changed",
-		"external_tables_removed", "functions_added", "functions_modified", "functions_removed",
-		"indexes_added", "indexes_removed", "resource_pool_classifiers_added",
-		"resource_pool_classifiers_modified", "resource_pool_classifiers_removed",
-		"resource_pools_added", "resource_pools_modified", "resource_pools_removed",
-		"rls_enabled_tables_added", "rls_enabled_tables_removed", "rls_force_added",
-		"rls_force_removed", "rls_policies_added", "rls_policies_modified", "rls_policies_removed",
-		"roles_added", "roles_modified", "roles_removed", "schemas_added", "schemas_modified",
-		"schemas_removed", "secrets_added", "secrets_removed", "secrets_rotated",
+		"constraints_removed", "data_rows_deleted", "data_rows_inserted", "data_rows_updated",
+		"enum_values_added", "enum_values_removed", "enums_added", "enums_removed", "functions_added",
+		"functions_modified", "functions_removed", "indexes_added", "indexes_removed",
+		"rls_enabled_tables_added", "rls_enabled_tables_removed", "rls_force_added", "rls_force_removed",
+		"rls_policies_added", "rls_policies_modified", "rls_policies_removed", "roles_added",
+		"roles_modified", "roles_removed", "schemas_added", "schemas_modified", "schemas_removed",
 		"table_constraints_added", "table_constraints_removed", "tables_added", "tables_removed",
-		"topic_consumers_removed", "topics_added", "topics_modified", "topics_removed",
-		"transfers_added", "transfers_modified", "transfers_removed", "unique_protections_removed",
-		"vector_dimension_changed",
+		"undecided", "unique_protections_removed", "vector_dimension_changed",
 	}
 	got := dataplane.DriftFindingCategories()
 	if !reflect.DeepEqual(got, want) {
@@ -64,6 +53,55 @@ func TestDriftFindingVocabulary(t *testing.T) {
 	if dataplane.IsKnownDriftFindingCategory("private_schema_name") ||
 		dataplane.IsKnownDriftFindingCategory("another_private_category") {
 		t.Fatal("mutating DriftFindingCategories() result changed category membership")
+	}
+}
+
+// A qualified category is admitted bare or with a kind of the expected form
+// and length, and refused with anything else after the colon. Each refusal is
+// a near miss of an admitted value.
+func TestDriftFindingQualifiedCategories(t *testing.T) {
+	t.Parallel()
+
+	want := []string{"feature_access_narrowed", "feature_access_unchanged", "feature_access_unknown",
+		"feature_access_widened", "feature_changes"}
+	if got := dataplane.DriftFindingQualifiedCategories(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("DriftFindingQualifiedCategories() = %q, want %q", got, want)
+	}
+	longest := strings.Repeat("a", 60) + ".io/" + strings.Repeat("b", dataplane.MaxDriftFindingKindBytes-64)
+	for _, category := range []string{
+		"feature_changes",
+		"feature_access_unknown",
+		"feature_changes:ptah.run/pgextension/extension-change",
+		"feature_access_widened:ptah.run/pgdefaultprivilege/default-privilege",
+		"feature_changes:ptah.run/clickhouse/view-storage/v1",
+		"feature_changes:example.org/fixture/retention_Object.v2",
+		"feature_changes:" + longest,
+	} {
+		if !dataplane.IsKnownDriftFindingCategory(category) {
+			t.Errorf("the vocabulary refused %q", category)
+		}
+	}
+	for _, category := range []string{
+		"feature_changes:",
+		"feature_changes:" + longest + "b",
+		"feature_changes:ptah.run",
+		"feature_changes:ptahrun/extension",
+		"feature_changes:Ptah.run/extension",
+		"feature_changes:-ptah.run/extension",
+		"feature_changes:ptah.run/.hidden",
+		"feature_changes:ptah.run/../extension",
+		"feature_changes:ptah.run//extension",
+		"feature_changes:ptah.run/extension/",
+		"feature_changes:ptah.run/ext ension",
+		"feature_changes:ptah.run/ext\\ension",
+		"feature_changes:ptah.run/extension:again",
+		"feature_change:ptah.run/extension",
+		"tables_added:ptah.run/extension",
+		"Feature_changes",
+	} {
+		if dataplane.IsKnownDriftFindingCategory(category) {
+			t.Errorf("the vocabulary accepted %q", category)
+		}
 	}
 }
 

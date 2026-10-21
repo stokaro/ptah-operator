@@ -101,12 +101,12 @@ type declaredBreak struct {
 
 // declaredBreaks lists every break made on purpose, oldest first.
 //
-// It is empty. A declaration names a schema version, and the versions the
-// earlier declarations named belong to the history that restarted at 1 (see
+// A declaration names a schema version, and the versions the declarations
+// before the restart named belong to the history that restarted at 1 (see
 // historyRestarts): kept, they would excuse their transitions again when the
 // new history reached their numbers. A break made after the restart is
 // declared here for the version that makes it.
-var declaredBreaks []declaredBreak
+var declaredBreaks = []declaredBreak{driftFeatureCategoriesBreak}
 
 // validateDeclaredBreaks refuses a declaration list that could excuse more
 // than it says: a declaration without a version, a reason or a transition,

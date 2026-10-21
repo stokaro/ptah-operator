@@ -77,7 +77,7 @@ code and held there by a check:
 | Migration plan contract | `migrationplan.ContractVersion`, which the `PtahMigrationPlan` `spec.contractVersion` bound repeats | The same for a migration plan. |
 | Realm digest contract | `coordinationContractVersion` in `internal/fingerprint` | How a coordination key or a `PtahRealm` becomes the digest that names a database. |
 | Runner protocol | `runner.ProtocolVersion`, recorded in `support/runner-protocol.json` and in the `edge` row of `support/ptah.json` | What the runner accepts, enforces and returns. `hack/verifyrunnerprotocol` holds it to the runner's source. |
-| Drift vocabulary | `dataplane.DriftFindingVocabularyVersion` | The closed set of drift finding categories. |
+| Drift vocabulary | `dataplane.DriftFindingVocabularyVersion` | The closed set of drift finding categories, and the form of the kind a feature category may carry. |
 | Admission contract | `CurrentAdmissionContractVersion` in `internal/crdupgrade`, stamped on both webhook configurations as `operator.ptah.run/admission-contract-version` | The admission configuration every release serves. |
 | Certificate staging format | `certrotation.StagingFormat`, the `format` key of the rotator's staging Secret | The record a certificate rotation resumes from after a restart. |
 | Admission snapshot format | `podintent.SnapshotVersion`, which the `admissionSnapshot.version` enum in an operation's status repeats | The Pod admission rules an operation's snapshot was taken under. |

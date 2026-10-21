@@ -101,3 +101,25 @@ func TestDriftReportDigestIgnoresRowDrift(t *testing.T) {
 			driftedDigest, convergedDigest)
 	}
 }
+
+// The fixture is a `ptah schema drift --format json` document, captured from
+// the Ptah v0.14.0 release image against PostgreSQL 17: the desired schema
+// declares pg_trgm and the database lacks it. Ptah's extension owner reports it
+// under feature_changes with the type of object after a colon. `sources` and
+// `database_url` were removed after the capture, as above, and nothing else.
+func TestDecodeDriftAcceptsAFeatureCategoryWithItsKind(t *testing.T) {
+	t.Parallel()
+
+	data, err := os.ReadFile("testdata/drift-feature-extension.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := dataplane.DecodeDrift(data, 1)
+	if err != nil {
+		t.Fatalf("DecodeDrift() rejected Ptah's report of an extension the database lacks: %v", err)
+	}
+	want := dataplane.DriftFinding{Category: "feature_changes:ptah.run/pgextension/extension-change", Count: 1, Severity: "safe"}
+	if len(report.Findings) != 1 || report.Findings[0] != want {
+		t.Fatalf("findings = %+v, want %+v", report.Findings, want)
+	}
+}

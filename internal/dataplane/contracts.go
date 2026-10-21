@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/stokaro/ptah-operator/internal/ocireference"
@@ -29,24 +30,26 @@ const (
 	// vocabulary itself, at both ends: a controller decoding a report and a
 	// controller parsing a result frame each ask IsKnownDriftFindingCategory,
 	// and an unknown category is refused there rather than compared here.
-	DriftFindingVocabularyVersion = 1
+	//
+	// Version 2 is Ptah v0.14.0's: the feature categories, which may carry a
+	// kind, replace the per-object categories of extensions and YDB objects.
+	DriftFindingVocabularyVersion = 2
+
+	// MaxDriftFindingKindBytes bounds the kind a qualified category carries.
+	// The longest qualified category is 25 bytes before the kind, so a category
+	// the vocabulary admits is at most 153 bytes.
+	MaxDriftFindingKindBytes = 128
 )
 
 var (
 	mediaTypePattern               = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}$`)
 	verificationRequirementPattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
 	driftFindingCategories         = []string{
-		"async_replications_added",
-		"async_replications_modified",
-		"async_replications_removed",
 		"columns_added",
 		"columns_modified",
 		"columns_removed",
 		"constraints_added",
 		"constraints_removed",
-		"coordination_nodes_added",
-		"coordination_nodes_modified",
-		"coordination_nodes_removed",
 		"data_rows_deleted",
 		"data_rows_inserted",
 		"data_rows_updated",
@@ -54,26 +57,11 @@ var (
 		"enum_values_removed",
 		"enums_added",
 		"enums_removed",
-		"extensions_added",
-		"extensions_modified",
-		"extensions_removed",
-		"external_data_sources_added",
-		"external_data_sources_changed",
-		"external_data_sources_removed",
-		"external_tables_added",
-		"external_tables_changed",
-		"external_tables_removed",
 		"functions_added",
 		"functions_modified",
 		"functions_removed",
 		"indexes_added",
 		"indexes_removed",
-		"resource_pool_classifiers_added",
-		"resource_pool_classifiers_modified",
-		"resource_pool_classifiers_removed",
-		"resource_pools_added",
-		"resource_pools_modified",
-		"resource_pools_removed",
 		"rls_enabled_tables_added",
 		"rls_enabled_tables_removed",
 		"rls_force_added",
@@ -87,23 +75,31 @@ var (
 		"schemas_added",
 		"schemas_modified",
 		"schemas_removed",
-		"secrets_added",
-		"secrets_removed",
-		"secrets_rotated",
 		"table_constraints_added",
 		"table_constraints_removed",
 		"tables_added",
 		"tables_removed",
-		"topic_consumers_removed",
-		"topics_added",
-		"topics_modified",
-		"topics_removed",
-		"transfers_added",
-		"transfers_modified",
-		"transfers_removed",
+		"undecided",
 		"unique_protections_removed",
 		"vector_dimension_changed",
 	}
+	// driftFindingQualifiedCategories are written bare or followed by
+	// ":<kind>", where the kind names the type of object a feature owner
+	// planned, such as ptah.run/pgextension/extension-change. A type is not an
+	// object: the kind names no table, role or row.
+	driftFindingQualifiedCategories = []string{
+		"feature_access_narrowed",
+		"feature_access_unchanged",
+		"feature_access_unknown",
+		"feature_access_widened",
+		"feature_changes",
+	}
+	// driftFindingKindPattern is the kind a qualified category may carry: a
+	// lowercase dotted domain, then one or more path segments. It is narrower
+	// than what Ptah accepts as a kind, which admits any character but space,
+	// control and backslash; every kind Ptah's own feature owners declare fits
+	// it, and a kind outside it is refused as an unknown category is.
+	driftFindingKindPattern = regexp.MustCompile(`^` + DriftFindingKindPattern + `$`)
 	driftFindingCategorySet = func() map[string]struct{} {
 		categories := make(map[string]struct{}, len(driftFindingCategories))
 		for _, category := range driftFindingCategories {
@@ -113,27 +109,45 @@ var (
 	}()
 )
 
-// DriftFindingCategories returns a copy of the closed machine vocabulary.
+// DriftFindingKindPattern is the unanchored form of driftFindingKindPattern,
+// which the PtahSchema status pattern repeats.
+const DriftFindingKindPattern = `[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+(/[A-Za-z0-9_-][A-Za-z0-9._-]*)+`
+
+// DriftFindingCategories returns a copy of the closed machine vocabulary's
+// fixed categories.
 //
 // It is the list the pinned Ptah can emit: support/ptah-drift-categories.json
 // records that list, and hack/ptahdriftcategories holds the record to the
 // pinned source. An unknown category is refused rather than published or
-// dropped. The status enum could not store it, and leaving it out would
+// dropped. The status pattern could not store it, and leaving it out would
 // understate the report's count and its highest severity.
 //
-// Extending the list moves DriftFindingVocabularyVersion, the PtahSchema
-// status enum and the CRD schema version together. The frame version stays:
+// Changing the list moves DriftFindingVocabularyVersion, the PtahSchema
+// status pattern and the CRD schema version together. The frame version stays:
 // a controller that predates a category refuses a frame carrying it, which is
 // the refusal a version mismatch would give.
 func DriftFindingCategories() []string {
 	return append([]string(nil), driftFindingCategories...)
 }
 
+// DriftFindingQualifiedCategories returns a copy of the categories a report
+// writes either bare or followed by ":<kind>".
+func DriftFindingQualifiedCategories() []string {
+	return append([]string(nil), driftFindingQualifiedCategories...)
+}
+
 // IsKnownDriftFindingCategory reports whether category belongs to the closed
-// v1 machine vocabulary.
+// machine vocabulary: a fixed category, or a qualified one, bare or with a
+// kind of the expected form and length.
 func IsKnownDriftFindingCategory(category string) bool {
-	_, known := driftFindingCategorySet[category]
-	return known
+	if _, known := driftFindingCategorySet[category]; known {
+		return true
+	}
+	base, kind, qualified := strings.Cut(category, ":")
+	if !slices.Contains(driftFindingQualifiedCategories, base) {
+		return false
+	}
+	return !qualified || (len(kind) <= MaxDriftFindingKindBytes && driftFindingKindPattern.MatchString(kind))
 }
 
 type ResolveReport struct {

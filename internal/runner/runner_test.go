@@ -804,16 +804,18 @@ func TestObservePublishesCanonicalFindingSummaries(t *testing.T) {
 	}
 }
 
-// A report holds each category at most once, so the largest one the runner can
-// be handed names every category in the vocabulary. The frame carries all of
-// them, and their counts are the report's count: the summaries are never a
-// prefix. If the vocabulary outgrows the bound a frame and the status share,
-// this fails at the frame, and the summaries would need a way to say that
-// some were left out.
+// A report holds each category at most once, so the largest report without a
+// kind names every category in the vocabulary, the qualified ones bare. The
+// frame carries all of them, and their counts are the report's count: the
+// summaries are never a prefix. If the vocabulary outgrows the bound a frame
+// and the status share, this fails at the frame, and the summaries would need
+// a way to say that some were left out. Kinds can take a report past the bound
+// on their own; such a frame is refused, as TestObserveRefusesMoreFindingsThanAFrameHolds
+// shows.
 func TestObserveFramesEveryCategoryOfTheLargestReport(t *testing.T) {
 	t.Parallel()
 
-	categories := dataplane.DriftFindingCategories()
+	categories := append(dataplane.DriftFindingCategories(), dataplane.DriftFindingQualifiedCategories()...)
 	if len(categories) == 0 {
 		t.Fatal("the drift vocabulary is empty, so this test would frame nothing")
 	}
@@ -909,7 +911,7 @@ func TestObserveFramesEveryCategoryThePinnedPtahEmits(t *testing.T) {
 	for _, category := range pinnedPtahDriftCategories(t) {
 		t.Run(category, func(t *testing.T) {
 			t.Parallel()
-			operationID := "observe-pinned-" + strings.ReplaceAll(category, "_", "-")
+			operationID := "observe-pinned-" + strings.NewReplacer("_", "-", ":", "-", ".", "-", "/", "-").Replace(category)
 			report := fmt.Sprintf(`{"drift":true,"failed":true,"failure_threshold":"all","highest_severity":"warning","dialect":"postgres","findings":[{"category":%q,"count":3,"severity":"warning"}],"diff":{"changed":true}}`,
 				category)
 			result := Run(context.Background(), Config{
@@ -930,8 +932,10 @@ func TestObserveFramesEveryCategoryThePinnedPtahEmits(t *testing.T) {
 	}
 }
 
-// pinnedPtahDriftCategories reads the categories the pinned Ptah can emit, and
-// refuses a list with nothing in it: a loop over no category proves nothing.
+// pinnedPtahDriftCategories reads the categories the pinned Ptah can emit, a
+// qualified one both bare and with the kind Ptah v0.14.0 wrote for a
+// PostgreSQL extension, and refuses a list with nothing in it: a loop over no
+// category proves nothing.
 func pinnedPtahDriftCategories(t *testing.T) []string {
 	t.Helper()
 	content, err := os.ReadFile(filepath.Join("..", "..", "support", "ptah-drift-categories.json"))
@@ -940,14 +944,72 @@ func pinnedPtahDriftCategories(t *testing.T) []string {
 	}
 	var vendored struct {
 		Categories []string `json:"categories"`
+		Qualified  []string `json:"qualified"`
 	}
 	if err := json.Unmarshal(content, &vendored); err != nil {
 		t.Fatal(err)
 	}
-	if len(vendored.Categories) == 0 {
-		t.Fatal("support/ptah-drift-categories.json lists no category")
+	if len(vendored.Categories) == 0 || len(vendored.Qualified) == 0 {
+		t.Fatal("support/ptah-drift-categories.json lists no category or no qualified category")
 	}
-	return vendored.Categories
+	categories := slices.Clone(vendored.Categories)
+	for _, category := range vendored.Qualified {
+		categories = append(categories, category, category+":ptah.run/pgextension/extension-change")
+	}
+	return categories
+}
+
+// TestObserveFramesPtahsFeatureCategory runs the drift document Ptah v0.14.0
+// printed for an extension the database lacks (see internal/dataplane/testdata)
+// through the runner, and holds the frame the controller parses to the
+// category Ptah wrote, kind included.
+func TestObserveFramesPtahsFeatureCategory(t *testing.T) {
+	t.Parallel()
+
+	report, err := os.ReadFile(filepath.Join("..", "dataplane", "testdata", "drift-feature-extension.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := Run(context.Background(), Config{
+		Operation: OperationObserve, Environment: withRunnerProtocol(databaseEnvironment("observe-feature-extension")),
+		Executor: &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: string(report), exitCode: 1}}},
+	})
+	frame, err := MarshalFrame(result)
+	if err != nil {
+		t.Fatalf("MarshalFrame() error = %v; result %#v", err, result.Error)
+	}
+	parsed, err := ParseResultFor(frame, OperationObserve, "observe-feature-extension")
+	if err != nil {
+		t.Fatalf("ParseResultFor() error = %v", err)
+	}
+	want := []DriftFindingSummary{{Category: "feature_changes:ptah.run/pgextension/extension-change", Count: 1, Severity: "safe"}}
+	if !parsed.ObservedDrift || parsed.DriftFindingCount != 1 || !reflect.DeepEqual(parsed.DriftFindings, want) {
+		t.Fatalf("the controller parsed drift %t, count %d, findings %#v; want %#v",
+			parsed.ObservedDrift, parsed.DriftFindingCount, parsed.DriftFindings, want)
+	}
+}
+
+// TestObserveRefusesMoreFindingsThanAFrameHolds sends a report whose kinds
+// take it one category past the bound the frame and the status share. The
+// runner refuses it whole rather than frame a prefix that would understate the
+// count and could hide the highest severity.
+func TestObserveRefusesMoreFindingsThanAFrameHolds(t *testing.T) {
+	t.Parallel()
+
+	findings := make([]string, 0, maxDriftFindings+1)
+	for index := range maxDriftFindings + 1 {
+		findings = append(findings, fmt.Sprintf(`{"category":"feature_changes:example.org/kind/k%03d","count":1,"severity":"safe"}`, index))
+	}
+	report := `{"drift":true,"failed":true,"failure_threshold":"all","highest_severity":"safe","dialect":"postgres","findings":[` +
+		strings.Join(findings, ",") + `],"diff":{"changed":true}}`
+	result := Run(context.Background(), Config{
+		Operation: OperationObserve, Environment: withRunnerProtocol(databaseEnvironment("observe-too-many-findings")),
+		Executor: &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: report, exitCode: 1}}},
+	})
+	if result.Error == nil || result.Error.Code != "invalid_observed_state" ||
+		!strings.Contains(result.Error.Message, "names 129 categories, more than the 128") || len(result.DriftFindings) != 0 {
+		t.Fatalf("Run() = error %#v with %d findings, want the report refused", result.Error, len(result.DriftFindings))
+	}
 }
 
 func TestObserveRejectsUnknownIdentifierFindingCategory(t *testing.T) {

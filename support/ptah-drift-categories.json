@@ -1,31 +1,33 @@
 {
-  "comment": "The drift finding categories the Ptah build pinned in support/ptah.json can emit, and the digests of the files that produce them. Written by `go run ./hack/ptahdriftcategories -ptah <checkout> -write`; CI compares it with the pinned source. internal/dataplane's vocabulary and the PtahSchema status enum have to equal this list.",
+  "comment": "The drift finding categories the Ptah build pinned in support/ptah.json can emit, and the digests of the files that produce them. A qualified category is written bare or followed by \":<kind>\". Written by `go run ./hack/ptahdriftcategories -ptah <checkout> -write`; CI compares it with the pinned source. internal/dataplane's vocabulary has to equal these lists, and the PtahSchema status pattern has to admit them.",
   "sources": [
     {
       "path": "internal/cli/drift/drift.go",
-      "sha256": "4bda9d83ab9a180c46ca5968d68c194414805868231688b2d4503eaef3a9d9e4"
+      "sha256": "54d87b36885694092bd3e32529adc69146d617814a3cb27915b439134c66d49f"
     },
     {
       "path": "internal/datamigrate/datamigrate.go",
-      "sha256": "ec5375e88d22b60e08f8fb5553bd56bef7688ece68bcb7ad60e76abea20f29bb"
+      "sha256": "69a744f110fd50d308bbd06a9e23fc169756ab3f765516971f768fe939f86190"
+    },
+    {
+      "path": "internal/undecidednote/undecidednote.go",
+      "sha256": "d06a9de6d602c215ad8d38593bddf0e160d933685f910d8ef452b318f972e088"
+    },
+    {
+      "path": "migration/safety/features.go",
+      "sha256": "e63b391344e5db351d5d678ae5c83f86656b3bb6fa6a2530167570fb48fc2db4"
     },
     {
       "path": "migration/safety/safety.go",
-      "sha256": "9347c0c965d6ba2127d8170d935bde2fe0c6ec02bb4bafa4d06fc5aa13814880"
+      "sha256": "ff28a4ca28e0c4eff9ae4c874850c475ed6fa35f3b9652aced5bc0a02140e03a"
     }
   ],
   "categories": [
-    "async_replications_added",
-    "async_replications_modified",
-    "async_replications_removed",
     "columns_added",
     "columns_modified",
     "columns_removed",
     "constraints_added",
     "constraints_removed",
-    "coordination_nodes_added",
-    "coordination_nodes_modified",
-    "coordination_nodes_removed",
     "data_rows_deleted",
     "data_rows_inserted",
     "data_rows_updated",
@@ -33,26 +35,11 @@
     "enum_values_removed",
     "enums_added",
     "enums_removed",
-    "extensions_added",
-    "extensions_modified",
-    "extensions_removed",
-    "external_data_sources_added",
-    "external_data_sources_changed",
-    "external_data_sources_removed",
-    "external_tables_added",
-    "external_tables_changed",
-    "external_tables_removed",
     "functions_added",
     "functions_modified",
     "functions_removed",
     "indexes_added",
     "indexes_removed",
-    "resource_pool_classifiers_added",
-    "resource_pool_classifiers_modified",
-    "resource_pool_classifiers_removed",
-    "resource_pools_added",
-    "resource_pools_modified",
-    "resource_pools_removed",
     "rls_enabled_tables_added",
     "rls_enabled_tables_removed",
     "rls_force_added",
@@ -66,21 +53,19 @@
     "schemas_added",
     "schemas_modified",
     "schemas_removed",
-    "secrets_added",
-    "secrets_removed",
-    "secrets_rotated",
     "table_constraints_added",
     "table_constraints_removed",
     "tables_added",
     "tables_removed",
-    "topic_consumers_removed",
-    "topics_added",
-    "topics_modified",
-    "topics_removed",
-    "transfers_added",
-    "transfers_modified",
-    "transfers_removed",
+    "undecided",
     "unique_protections_removed",
     "vector_dimension_changed"
+  ],
+  "qualified": [
+    "feature_access_narrowed",
+    "feature_access_unchanged",
+    "feature_access_unknown",
+    "feature_access_widened",
+    "feature_changes"
   ]
 }

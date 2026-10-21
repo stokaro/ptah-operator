@@ -1003,9 +1003,19 @@ the resource generation; condition messages are diagnostic text, not an API.
 `status.target.driftFindings` is a canonical summary of the most recent raw
 Observe result, one entry for each category the report found. Entries are
 ordered by descending severity and then category and contain no object names
-or SQL. The list is never cut short: the category vocabulary fits under its
-bound of 64 entries, so `driftFindingCount` is always the sum of the entries'
-counts. A subsequent scoped Plan deliberately does not replace this raw
+or SQL. A change to an object one of Ptah's feature owners plans, such as a
+PostgreSQL extension, is counted under `feature_changes` followed by the type of
+object, as in `feature_changes:ptah.run/pgextension/extension-change`, and an
+owner's verdict on whether the change widens access under
+`feature_access_widened`, `feature_access_narrowed`,
+`feature_access_unchanged` or `feature_access_unknown` with the same suffix.
+The type names a kind of object, never the object. Objects the comparison could
+not decide are counted under `undecided`, with severity `warning`.
+
+The list is never cut short. It holds up to 128 entries, and every category
+without a type fits under that bound, so `driftFindingCount` is always the sum
+of the entries' counts. A report whose types take it past 128 categories is
+refused, and Observe fails rather than publish part of it. A subsequent scoped Plan deliberately does not replace this raw
 observation summary: the `DriftDetected` condition describes the authoritative
 managed scope, while `status.target` remains evidence for the observation
 identified by `driftReportDigest` and `lastObservedAt`.

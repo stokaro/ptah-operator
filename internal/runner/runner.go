@@ -1131,6 +1131,13 @@ func normalizeDriftSummary(report dataplane.DriftReport) (string, int32, []Drift
 		}
 		return severity, 0, nil, nil
 	}
+	// A kind can split one feature category into many, so a report can name
+	// more categories than a frame holds. A prefix would understate the count
+	// and could leave out the highest severity, so the report is refused.
+	if len(report.Findings) > maxDriftFindings {
+		return "", 0, nil, fmt.Errorf("drift report names %d categories, more than the %d a result carries",
+			len(report.Findings), maxDriftFindings)
+	}
 	count, err := driftFindingCount(report)
 	if err != nil {
 		return "", 0, nil, err

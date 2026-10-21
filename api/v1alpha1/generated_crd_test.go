@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"runtime"
 	"slices"
 	"strconv"
@@ -210,8 +211,10 @@ func TestGeneratedCRDsUseThePrivilegeChangeVocabulary(t *testing.T) {
 
 // status.target.driftFindings is the complete report, never a prefix of it:
 // the summaries are keyed by category, and the bound holds one summary for
-// every category the vocabulary has. A vocabulary that outgrew the bound would
-// make a complete report unpublishable.
+// every fixed category and every bare qualified one. The category's pattern
+// admits whatever the decoder admits, so a report the runner framed is never
+// refused when it is stored; it also admits what an earlier release stored,
+// which hack/crdschemahistory holds.
 func TestGeneratedPtahSchemaCRDUsesTheClosedDriftCategoryVocabulary(t *testing.T) {
 	t.Parallel()
 
@@ -229,33 +232,45 @@ func TestGeneratedPtahSchemaCRDUsesTheClosedDriftCategoryVocabulary(t *testing.T
 		t.Errorf("status.target.driftFindings is not a list keyed by category: list type %v, keys %q",
 			findings.XListType, findings.XListMapKeys)
 	}
-	if vocabulary := len(dataplane.DriftFindingCategories()); findings.MaxItems == nil || *findings.MaxItems < int64(vocabulary) {
-		t.Errorf("status.target.driftFindings holds at most %v summaries, fewer than the %d categories a report can name",
+	fixed, qualified := dataplane.DriftFindingCategories(), dataplane.DriftFindingQualifiedCategories()
+	if vocabulary := len(fixed) + len(qualified); findings.MaxItems == nil || *findings.MaxItems < int64(vocabulary) {
+		t.Errorf("status.target.driftFindings holds at most %v summaries, fewer than the %d categories a report can name bare",
 			findings.MaxItems, vocabulary)
 	}
-	categories := findings.Items.Schema.Properties["category"].Enum
-	seen := make(map[string]struct{}, len(categories))
-	got := make([]string, 0, len(categories))
-	for _, raw := range categories {
-		category, ok := raw.(string)
-		if !ok {
-			t.Fatalf("generated drift category enum contains non-string value %#v", raw)
-		}
-		if !dataplane.IsKnownDriftFindingCategory(category) {
-			t.Errorf("generated drift category enum contains runtime-unknown value %q", category)
-			continue
-		}
-		if _, duplicate := seen[category]; duplicate {
-			t.Errorf("generated drift category enum repeats %q", category)
-		}
-		seen[category] = struct{}{}
-		got = append(got, category)
+	category := findings.Items.Schema.Properties["category"]
+	if len(category.Enum) != 0 {
+		t.Errorf("the category is an enum again, which cannot hold a kind: %q", category.Enum)
 	}
-	want := dataplane.DriftFindingCategories()
-	slices.Sort(got)
-	slices.Sort(want)
-	if !slices.Equal(got, want) {
-		t.Fatalf("generated drift category enum = %q, runtime vocabulary = %q", got, want)
+	pattern, err := regexp.Compile(category.Pattern)
+	if err != nil {
+		t.Fatalf("the category pattern does not compile: %v", err)
+	}
+	longestBase := 0
+	admitted := slices.Clone(fixed)
+	for _, base := range qualified {
+		longestBase = max(longestBase, len(base))
+		admitted = append(admitted, base, base+":ptah.run/pgextension/extension-change",
+			base+":"+strings.Repeat("a", 60)+".io/"+strings.Repeat("b", dataplane.MaxDriftFindingKindBytes-64))
+	}
+	if limit := int64(longestBase + 1 + dataplane.MaxDriftFindingKindBytes); category.MaxLength == nil || *category.MaxLength < limit {
+		t.Errorf("the category holds at most %v bytes, fewer than the %d the decoder admits", category.MaxLength, limit)
+	}
+	for _, value := range admitted {
+		if !dataplane.IsKnownDriftFindingCategory(value) {
+			t.Fatalf("the decoder refuses %q, so this row proves nothing about the pattern", value)
+		}
+		if !pattern.MatchString(value) {
+			t.Errorf("the category pattern refuses %q, which the decoder admits", value)
+		}
+	}
+	for _, value := range []string{"private_schema_name", "tables-added", "feature_changes:", "feature_changes:ptah.run",
+		"feature_other:ptah.run/x", "tables_added:ptah.run/x"} {
+		if dataplane.IsKnownDriftFindingCategory(value) {
+			t.Fatalf("the decoder admits %q, so this row proves nothing about the pattern", value)
+		}
+		if pattern.MatchString(value) {
+			t.Errorf("the category pattern admits %q, which the decoder refuses", value)
+		}
 	}
 }
 
