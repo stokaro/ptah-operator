@@ -208,7 +208,9 @@ app.kubernetes.io/component: metrics
       (printf "--default-unreachable-toleration-seconds=%v" .Values.admission.defaultUnreachableTolerationSeconds)
       (printf "--extended-resource-toleration-enabled=%t" .Values.admission.extendedResourceTolerationEnabled)
       (printf "--always-pull-images-enabled=%t" .Values.admission.alwaysPullImagesEnabled)
-      (printf "--require-distinct-approver=%t" .Values.approvals.requireDistinctApprover) -}}
+      (printf "--require-distinct-approver=%t" .Values.approvals.requireDistinctApprover)
+      (printf "--api-requests-per-second=%v" .Values.apiRequests.perSecond)
+      (printf "--api-request-burst=%v" .Values.apiRequests.burst) -}}
 {{- if .Values.resultDelivery.enabled -}}
 {{- $args = concat $args (list
       (printf "--result-endpoint=https://%s.%s.svc" (include "ptah-operator.resultServiceName" .) .Release.Namespace)

@@ -78,6 +78,9 @@ reader of a converged schema can see exactly what produced it.
 | `resources.requests.memory` | `96Mi` | Memory request for the manager container. |
 | `resources.limits` |  | The ceiling. CPU is deliberately unlimited: throttling a leader is how a Lease is lost. |
 | `resources.limits.memory` | `256Mi` | Memory limit for the manager container. |
+| `apiRequests` |  | How fast each manager process sends requests to the Kubernetes API server. Every client in the process draws from this one allowance. The defaults keep the 0.2.0 profile's 7,000 requests a minute across both replicas, the follower's admission and result traffic included. Raise them for an installation larger than the profile, where a backlog would otherwise take longer to clear, and leave the API server's priority and fairness room for the rate you choose. |
+| `apiRequests.perSecond` | `80` | Requests a second one manager process sustains. |
+| `apiRequests.burst` | `40` | Requests it may send at once after a quiet period. |
 | `nodeSelector` | `{}` | Node labels the manager and rotator Pods are scheduled onto. |
 | `tolerations` | `[]` | Taints the manager and rotator Pods tolerate, beside the ones admission.defaultTolerations describes. |
 | `affinity` | `{}` | Affinity for the manager and rotator Pods. Replicas already spread across nodes by default; this is for anything narrower. |

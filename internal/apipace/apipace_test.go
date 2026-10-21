@@ -17,10 +17,13 @@ import (
 // QPS. The bucket has to win over that, and reach every client built from the
 // config rather than each client building its own.
 func TestEveryClientSharesTheOneBucket(t *testing.T) {
-	config := apipace.Config(&rest.Config{Host: "https://api.invalid", QPS: -1})
+	config, err := apipace.Config(&rest.Config{Host: "https://api.invalid", QPS: -1}, 150, 75)
+	if err != nil {
+		t.Fatal(err)
+	}
 	limiter, ok := config.RateLimiter.(flowcontrol.RateLimiter)
-	if !ok || limiter.QPS() != apipace.RequestsPerSecond {
-		t.Fatalf("the config carries no %d-per-second bucket: %#v", apipace.RequestsPerSecond, config.RateLimiter)
+	if !ok || limiter.QPS() != 150 {
+		t.Fatalf("the config carries no 150-per-second bucket: %#v", config.RateLimiter)
 	}
 	if rest.CopyConfig(config).RateLimiter != limiter {
 		t.Fatal("a copied config built its own bucket")
@@ -49,11 +52,19 @@ func TestEveryClientSharesTheOneBucket(t *testing.T) {
 	}
 }
 
-func TestTheBucketBoundsAMinuteToTheLeadersShare(t *testing.T) {
+func TestARateThatNeverFillsIsRefused(t *testing.T) {
+	for _, rate := range [][2]int{{0, 40}, {80, 0}, {-1, 40}} {
+		if config, err := apipace.Config(&rest.Config{}, rate[0], rate[1]); err == nil || config != nil {
+			t.Errorf("rate %d with burst %d was accepted", rate[0], rate[1])
+		}
+	}
+}
+
+func TestTheDefaultBoundsAMinuteToTheLeadersShare(t *testing.T) {
 	// The leader's worst minute: the sustained rate plus one full burst. The
 	// follower's share, measured at about a third of the leader's, has to fit
 	// beside it inside the profile's 7,000.
-	leader := apipace.RequestsPerSecond*60 + apipace.Burst
+	leader := apipace.DefaultRequestsPerSecond*60 + apipace.DefaultBurst
 	if leader+leader/3 > 7000 {
 		t.Fatalf("a %d-request leader minute leaves the follower no room under 7,000", leader)
 	}
