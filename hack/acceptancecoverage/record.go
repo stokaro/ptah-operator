@@ -143,7 +143,11 @@ var requirements = []requirement{
 			"the overdue, lock-release, plan-store, failure-rate, view-read and upgrade alerts in `test/e2e/alerting_overdue_e2e_test.go`, " +
 			"`test/e2e/alerting_lock_e2e_test.go`, `test/e2e/alerting_plan_store_e2e_test.go`, `test/e2e/alerting_failures_e2e_test.go`, " +
 			"`test/e2e/alerting_view_read_e2e_test.go` and `test/e2e/alerting_upgrade_e2e_test.go` with `hack/upgradealert`, " +
-			"and ordinary approval waits kept from paging in `test/e2e/alerting_negative_e2e_test.go`",
+			"and ordinary approval waits kept from paging in `test/e2e/alerting_negative_e2e_test.go`, " +
+			"and on the published release, `support/qualification/probes/monitoring_check.py`, which " +
+			"`.github/workflows/fresh-install.yml` runs to install the guide's release with the profile's monitoring values beside " +
+			"a Prometheus Operator stack, scrape every manager through the chart's own ServiceMonitor and deliver the lost-view alert " +
+			"and its resolution to a receiver",
 		""},
 	{"PA-10", "Make documentation executable and usable",
 		"the documented install and primary examples executed from a fresh environment on the candidate's versions",
