@@ -671,6 +671,17 @@ across namespaces. The manager has no cluster-wide Lease rule and no Lease
 access in unrelated namespaces. Certificate rotation uses a different
 ServiceAccount and its exact release-namespace Lease grant.
 
+### Operation Pod memory
+
+The runner and Ptah share one container in every operation Pod, so
+`spec.execution.resources`, or a LimitRange default where it is unset, bounds
+them together. Ptah v0.14.0 needs about twice the memory v0.13.0 did: for the
+small schemas of the acceptance suite, Observe and Plan take between 24 and
+32 MiB on their own, where v0.13.0 took less than 16 MiB. A 64Mi limit that
+v0.13.0 fit in kills v0.14.0's Observe and Plan Pods; the Pod reads
+`OOMKilled`, and the resource reports that the runner's result frame was not
+found. The acceptance suite gives the container 128Mi.
+
 ### Kubernetes admission configuration
 
 The operator persists a bounded snapshot of built-in Pod admission before it
