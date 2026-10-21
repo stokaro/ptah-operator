@@ -336,6 +336,21 @@
     "resources": {
       "type": "object"
     },
+    "apiRequests": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["perSecond", "burst"],
+      "properties": {
+        "perSecond": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "burst": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
     "nodeSelector": {
       "type": "object",
       "additionalProperties": {

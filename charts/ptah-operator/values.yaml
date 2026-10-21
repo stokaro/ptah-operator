@@ -166,6 +166,19 @@ resources:
     # Memory limit for the manager container.
     memory: 256Mi
 
+# How fast each manager process sends requests to the Kubernetes API server.
+# Every client in the process draws from this one allowance. The defaults keep
+# the 0.2.0 profile's 7,000 requests a minute across both replicas, the
+# follower's admission and result traffic included. Raise them for an
+# installation larger than the profile, where a backlog would otherwise take
+# longer to clear, and leave the API server's priority and fairness room for
+# the rate you choose.
+apiRequests:
+  # Requests a second one manager process sustains.
+  perSecond: 80
+  # Requests it may send at once after a quiet period.
+  burst: 40
+
 # Node labels the manager and rotator Pods are scheduled onto.
 nodeSelector: {}
 # Taints the manager and rotator Pods tolerate, beside the ones

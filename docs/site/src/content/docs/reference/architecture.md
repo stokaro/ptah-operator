@@ -277,6 +277,7 @@ is the one to change when the contract changes.
 | Read-only views behind `kubectl ptah` | `internal/planview`, `internal/schemaview`, `internal/migrationview` |
 | Bounded-cardinality metrics | `internal/telemetry` |
 | What the manager caches from a watch | `internal/managercache` |
+| How fast a manager process calls the API server | `internal/apipace` |
 
 ## How this is proven
 

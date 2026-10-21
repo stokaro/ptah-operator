@@ -1737,6 +1737,41 @@ grep -F 'path: /mutate-operator-ptah-run-v1alpha1-ptahmigration' "$DISTINCT_APPR
 	printf '%s\n' 'e2e static: --require-distinct-approver=true does not reach the manager and both runtime-verify hooks' >&2
 	exit 1
 }
+# apiRequests reaches the manager's two rate flags, once each: the defaults
+# and an installation's own values alike. A rate below one is refused before
+# anything renders, because a bucket that never fills stops the manager.
+for flag in '--api-requests-per-second=80' '--api-request-burst=40'; do
+	[ "$(grep -Fc -- "\"$flag\"" "$DISTINCT_APPROVER_OFF_RENDER")" -eq 1 ] || {
+		printf 'e2e static: the default %s does not reach the manager once\n' "$flag" >&2
+		exit 1
+	}
+done
+API_REQUESTS_RENDER=$WORK_DIR/full-api-requests.yaml
+helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" \
+	--namespace ptah-e2e \
+	--set-string image.digest=sha256:2222222222222222222222222222222222222222222222222222222222222222 \
+	--set-string execution.executorImage=e2e.invalid/executor@sha256:0000000000000000000000000000000000000000000000000000000000000000 \
+	--set-string execution.runnerImage=e2e.invalid/runner@sha256:1111111111111111111111111111111111111111111111111111111111111111 \
+	--set-string execution.ptahVersion="$STATIC_PTAH_VERSION" \
+	--set apiRequests.perSecond=150 --set apiRequests.burst=75 >"$API_REQUESTS_RENDER"
+for flag in '--api-requests-per-second=150' '--api-request-burst=75'; do
+	[ "$(grep -Fc -- "\"$flag\"" "$API_REQUESTS_RENDER")" -eq 1 ] || {
+		printf 'e2e static: apiRequests does not set %s on the manager\n' "$flag" >&2
+		exit 1
+	}
+done
+for refused in 'apiRequests.perSecond=0' 'apiRequests.burst=0'; do
+	if helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" \
+		--namespace ptah-e2e \
+		--set-string image.digest=sha256:2222222222222222222222222222222222222222222222222222222222222222 \
+		--set-string execution.executorImage=e2e.invalid/executor@sha256:0000000000000000000000000000000000000000000000000000000000000000 \
+		--set-string execution.runnerImage=e2e.invalid/runner@sha256:1111111111111111111111111111111111111111111111111111111111111111 \
+		--set-string execution.ptahVersion="$STATIC_PTAH_VERSION" \
+		--set "$refused" >/dev/null 2>&1; then
+		printf 'e2e static: the chart rendered %s, a rate that never fills\n' "$refused" >&2
+		exit 1
+	fi
+done
 grep -F -- '--mutating-webhook-names=mapproval.operator.ptah.run,mmigrationapproval.operator.ptah.run,mmigrationrunacknowledgment.operator.ptah.run,mschemawriter.operator.ptah.run,mmigrationwriter.operator.ptah.run' \
 	"$DISTINCT_APPROVER_ON_RENDER" >/dev/null ||
 	{

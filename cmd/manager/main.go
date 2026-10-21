@@ -27,6 +27,7 @@ import (
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	approvaladmission "github.com/stokaro/ptah-operator/internal/admission"
+	"github.com/stokaro/ptah-operator/internal/apipace"
 	"github.com/stokaro/ptah-operator/internal/controller"
 	"github.com/stokaro/ptah-operator/internal/controllerstate"
 	"github.com/stokaro/ptah-operator/internal/controllerwrite"
@@ -81,6 +82,7 @@ func main() {
 	var extendedResourceTolerationEnabled bool
 	var alwaysPullImagesEnabled bool
 	var requireDistinctApprover bool
+	var apiRequestsPerSecond, apiRequestBurst int
 
 	flag.StringVar(&metricsAddress, "metrics-bind-address", ":8080", "address for Prometheus metrics")
 	flag.StringVar(&probeAddress, "health-probe-bind-address", ":8081", "address for health probes")
@@ -103,6 +105,8 @@ func main() {
 	flag.BoolVar(&extendedResourceTolerationEnabled, "extended-resource-toleration-enabled", false, "whether kube-apiserver enables ExtendedResourceToleration admission")
 	flag.BoolVar(&alwaysPullImagesEnabled, "always-pull-images-enabled", false, "whether kube-apiserver enables AlwaysPullImages admission")
 	flag.BoolVar(&requireDistinctApprover, "require-distinct-approver", false, "refuse an approval whose approver is the identity that last wrote the resource's spec")
+	flag.IntVar(&apiRequestsPerSecond, "api-requests-per-second", apipace.DefaultRequestsPerSecond, "Kubernetes API requests this process sustains a second, shared by every client")
+	flag.IntVar(&apiRequestBurst, "api-request-burst", apipace.DefaultBurst, "Kubernetes API requests this process may send at once after a quiet period")
 	zapOptions := zap.Options{Development: false}
 	zapOptions.BindFlags(flag.CommandLine)
 	flag.Parse()
@@ -169,7 +173,13 @@ func main() {
 	// own 30 seconds the kill and the release raced, and a manager the kubelet
 	// killed first left its successor waiting out the whole lease.
 	shutdownTimeout := 20 * time.Second
-	manager, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+	// One request budget for the whole process; see internal/apipace.
+	apiConfig, err := apipace.Config(ctrl.GetConfigOrDie(), apiRequestsPerSecond, apiRequestBurst)
+	if err != nil {
+		log.Error(err, "invalid API request rate")
+		os.Exit(1)
+	}
+	manager, err := ctrl.NewManager(apiConfig, ctrl.Options{
 		Scheme:                  scheme,
 		Cache:                   managercache.Options(),
 		Client:                  managercache.ClientOptions(),
