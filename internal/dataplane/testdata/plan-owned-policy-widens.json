@@ -1,0 +1,21 @@
+{
+  "format_version": 1,
+  "name": "plan_871cf9af7dc2",
+  "dialect": "postgres",
+  "from_fingerprint": "sha256:814b65227634ce6b66c1cd4134540afd0169fd64a3cef8fdbf0b9c7289c874f7",
+  "to_fingerprint": "sha256:ad94cc426261b9a2087e18e32ee065ba0d8d300317eed1d9cbb8f240a0c757e4",
+  "destructive": true,
+  "statements": [
+    {
+      "transactions": [
+        "allowed"
+      ],
+      "sql": "CREATE POLICY \"e2e_policy_notes_owner\" ON \"e2e_policy_notes\"\n    USING (owner_name = current_user)",
+      "severity": "destructive",
+      "reason": "can widen access: a permissive policy can admit rows to the roles it names",
+      "owned": true,
+      "access": "widens",
+      "access_reason": "a permissive policy can admit rows to the roles it names"
+    }
+  ]
+}

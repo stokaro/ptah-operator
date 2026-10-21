@@ -2,6 +2,8 @@ package dataplane_test
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strconv"
@@ -266,6 +268,61 @@ func TestDecodePlanFailsClosed(t *testing.T) {
 	unknown := strings.Replace(base, `"destructive":false`, `"destructive":true,"future":1`, 1)
 	if _, err := dataplane.DecodePlan([]byte(unknown), "PostgreSQL"); err == nil {
 		t.Fatal("DecodePlan() accepted an unknown plan field")
+	}
+	unknownInStatement := strings.Replace(base, `"reason":"drops data"`, `"reason":"drops data","future":1`, 1)
+	if _, err := dataplane.DecodePlan([]byte(unknownInStatement), "PostgreSQL"); err == nil {
+		t.Fatal("DecodePlan() accepted an unknown statement field")
+	}
+}
+
+// The fixtures are plan files the Ptah v0.14.0 release image saved with
+// `schema plan --output` against PostgreSQL 17, stored as written: pg_trgm and
+// a table on an empty database; a table with a row-security policy on an empty
+// database; and the policy alone on a database that already held the table
+// with row security on. Ptah marks each statement its extension or policy
+// owner rendered, and the operator refused all three plans until the fields
+// were declared. Ptah's verdict reaches the plan through the severity alone:
+// the operator still reads the policy from the SQL when Ptah calls it safe.
+func TestDecodePlanCarriesTheStatementsAFeatureOwnerRendered(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		file        string
+		owned       int
+		severity    string
+		access      string
+		destructive bool
+		privileges  []string
+	}{
+		{"plan-owned-extension.json", 0, "safe", "", false, nil},
+		{"plan-owned-policy-new-table.json", 2, "safe", "unchanged", false, []string{dataplane.PrivilegeRowSecurityPolicy}},
+		{"plan-owned-policy-widens.json", 0, "destructive", "widens", true, []string{dataplane.PrivilegeRowSecurityPolicy}},
+	} {
+		t.Run(test.file, func(t *testing.T) {
+			t.Parallel()
+			data, err := os.ReadFile(filepath.Join("testdata", test.file))
+			if err != nil {
+				t.Fatal(err)
+			}
+			decoded, err := dataplane.DecodePlan(data, "PostgreSQL")
+			if err != nil {
+				t.Fatalf("DecodePlan() refused the plan Ptah saved: %v", err)
+			}
+			for index, statement := range decoded.Statements {
+				if statement.Owned != (index == test.owned) {
+					t.Errorf("statement %d owned = %t, want only statement %d owned", index, statement.Owned, test.owned)
+				}
+			}
+			owned := decoded.Statements[test.owned]
+			if !slices.Equal(owned.Transactions, []string{"allowed"}) || owned.Severity != test.severity ||
+				owned.Access != test.access || (owned.AccessReason == "") != (test.access == "") {
+				t.Errorf("owned statement = %+v, want transactions [allowed], severity %s and access %q with its reason",
+					owned, test.severity, test.access)
+			}
+			if decoded.Destructive != test.destructive || !slices.Equal(decoded.PrivilegeChanges, test.privileges) {
+				t.Errorf("plan destructive = %t and privilege changes %q, want %t and %q",
+					decoded.Destructive, decoded.PrivilegeChanges, test.destructive, test.privileges)
+			}
+		})
 	}
 }
 

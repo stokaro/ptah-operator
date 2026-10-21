@@ -203,6 +203,18 @@ type PlanStatement struct {
 	SQL      string `json:"sql"`
 	Severity string `json:"severity"`
 	Reason   string `json:"reason"`
+	// Transactions, Owned, Access and AccessReason are what Ptah v0.14.0
+	// records on a statement a feature owner rendered: CREATE EXTENSION, or a
+	// row-security policy. The strict decoder refused every such plan until
+	// they were declared. The operator reads none of them and carries the plan
+	// bytes as they are. Ptah folds the access assessment into Severity, and
+	// refuses a plan whose severity is lower than its assessment requires each
+	// time it reads one, so the plan Job's dry run checks the plan before the
+	// operator publishes it. The privilege kinds are still read from the SQL.
+	Transactions []string `json:"transactions,omitempty"`
+	Owned        bool     `json:"owned,omitempty"`
+	Access       string   `json:"access,omitempty"`
+	AccessReason string   `json:"access_reason,omitempty"`
 }
 
 type PlanFile struct {
