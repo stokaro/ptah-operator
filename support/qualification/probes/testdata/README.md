@@ -41,3 +41,9 @@ passed on the startup incident's resolution and was discarded.
 pool, address, health and identifying labels, read while the chart's own
 ServiceMonitor was the only one in the release namespace: it selected no
 Service, so no target there.
+
+The `-v0.2.5` readings are the check's own run on the published v0.2.5
+(`b4269ebd7853688b2a33ef8423bf579f913510e7`), linux/amd64, October 21, 2026,
+with kube-prometheus-stack 92.11.0, fresh-installation run 39563266483: the
+receiver's log, the active targets trimmed the same way, and the release's
+ServiceMonitor with its metadata trimmed to name, namespace and labels.

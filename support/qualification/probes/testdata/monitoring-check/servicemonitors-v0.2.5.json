@@ -1,0 +1,41 @@
+[
+  {
+    "apiVersion": "monitoring.coreos.com/v1",
+    "kind": "ServiceMonitor",
+    "metadata": {
+      "name": "ptah-operator-ptah-operator",
+      "namespace": "ptah-system",
+      "labels": {
+        "app.kubernetes.io/instance": "ptah-operator",
+        "app.kubernetes.io/managed-by": "Helm",
+        "app.kubernetes.io/name": "ptah-operator",
+        "app.kubernetes.io/version": "0.2.5",
+        "helm.sh/chart": "ptah-operator-0.2.5",
+        "qualification": "0.2.0"
+      }
+    },
+    "spec": {
+      "endpoints": [
+        {
+          "interval": "5s",
+          "path": "/metrics",
+          "port": "metrics",
+          "scheme": "http",
+          "scrapeTimeout": "4s"
+        }
+      ],
+      "namespaceSelector": {
+        "matchNames": [
+          "ptah-system"
+        ]
+      },
+      "selector": {
+        "matchLabels": {
+          "app.kubernetes.io/component": "metrics",
+          "app.kubernetes.io/instance": "ptah-operator",
+          "app.kubernetes.io/name": "ptah-operator"
+        }
+      }
+    }
+  }
+]

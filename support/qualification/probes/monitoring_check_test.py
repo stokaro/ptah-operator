@@ -8,7 +8,9 @@ from monitoring_check import (ALERT, RELEASE_NAMESPACE, chart_scrape_pool, deliv
                               receiver_manifests, scrape_findings)
 
 TESTDATA = Path(__file__).resolve().parent / 'testdata/monitoring-check'
-POOL = f'serviceMonitor/{RELEASE_NAMESPACE}/ptah-operator/0'
+POOL = f'serviceMonitor/{RELEASE_NAMESPACE}/ptah-operator-ptah-operator/0'
+# The v0.2.5 managers the check scraped on linux/amd64.
+MANAGERS = ['ptah-operator-ptah-operator-54588bff4f-9bqf6', 'ptah-operator-ptah-operator-54588bff4f-xh9zw']
 
 
 def instant(value):
@@ -66,6 +68,19 @@ class DeliveryTest(unittest.TestCase):
         self.assertEqual(notifications_from(log), [self.notifications[3]])
 
 
+class V025Test(unittest.TestCase):
+    """The check's own run on v0.2.5, linux/amd64: the managers were removed
+    at 08:07:59.6 and restored at 08:09:21.8, and the incident the removal
+    started fired and resolved with nothing before it."""
+
+    def test_the_run_reads_its_own_incident(self):
+        notifications = notifications_from((TESTDATA / 'receiver-v0.2.5.jsonl').read_text())
+        removed = instant('2026-10-21T08:07:59.608829+00:00')
+        restored = instant('2026-10-21T08:09:21.769655+00:00')
+        self.assertEqual(delivered(notifications, 'firing', removed, removed)['receivedAt'], '2026-10-21T08:09:17.583818+00:00')
+        self.assertEqual(delivered(notifications, 'resolved', removed, restored)['receivedAt'], '2026-10-21T08:09:37.584626+00:00')
+
+
 class FirstAttemptTest(unittest.TestCase):
     """The first v0.2.4 run, which passed and was wrong. It removed the
     managers at 11:08:49 and restored them in the same second, and took the
@@ -83,43 +98,57 @@ class FirstAttemptTest(unittest.TestCase):
 
 
 class ScrapeTest(unittest.TestCase):
-    """The v0.2.4 targets, read while that chart's ServiceMonitor was the only
-    one in the release namespace: it selected no Service, so Prometheus held
-    no target there."""
+    """Two readings of Prometheus's active targets. The v0.2.4 one was taken
+    while that chart's ServiceMonitor was the only one in the release
+    namespace: it selected no Service, so Prometheus held no target there. The
+    v0.2.5 one is the check's own, with both managers scraped through the
+    chart's ServiceMonitor."""
 
     def setUp(self):
-        self.targets = json.loads((TESTDATA / 'targets-v0.2.4.json').read_text())
-        self.managers = ['ptah-operator-7c9f8d7b5-a', 'ptah-operator-7c9f8d7b5-b']
+        self.v024 = json.loads((TESTDATA / 'targets-v0.2.4.json').read_text())
+        self.v025 = json.loads((TESTDATA / 'targets-v0.2.5.json').read_text())
 
-    def scraped(self, pods, pool=POOL, health='up'):
-        return self.targets + [{'scrapePool': pool, 'health': health, 'scrapeUrl': f'http://{pod}:8080/metrics',
-                                'labels': {'namespace': RELEASE_NAMESPACE, 'pod': pod}} for pod in pods]
+    def release_targets(self):
+        return [t for t in self.v025 if t['labels']['namespace'] == RELEASE_NAMESPACE]
 
     def test_the_v024_chart_reaches_no_manager(self):
-        self.assertEqual(scrape_findings(self.targets, self.managers, POOL), [
-            f'manager Pod {pod} has no up target in {POOL}' for pod in self.managers])
+        self.assertEqual(scrape_findings(self.v024, MANAGERS, POOL), [
+            f'manager Pod {pod} has no up target in {POOL}' for pod in MANAGERS])
 
-    def test_every_manager_scraped_through_the_chart_passes(self):
-        self.assertEqual(scrape_findings(self.scraped(self.managers), self.managers, POOL), [])
+    def test_the_v025_chart_reaches_every_manager(self):
+        self.assertEqual(len(self.release_targets()), 2)
+        self.assertEqual(scrape_findings(self.v025, MANAGERS, POOL), [])
 
     def test_a_manager_left_out_or_down_is_a_finding(self):
-        self.assertEqual(scrape_findings(self.scraped(self.managers[:1]), self.managers, POOL),
-                         [f'manager Pod {self.managers[1]} has no up target in {POOL}'])
-        self.assertEqual(len(scrape_findings(self.scraped(self.managers, health='down'), self.managers, POOL)), 2)
+        missing = [t for t in self.v025 if t['labels'].get('pod') != MANAGERS[1]]
+        self.assertEqual(scrape_findings(missing, MANAGERS, POOL), [f'manager Pod {MANAGERS[1]} has no up target in {POOL}'])
+        down = copy.deepcopy(self.v025)
+        for target in down:
+            if target['labels']['namespace'] == RELEASE_NAMESPACE:
+                target['health'] = 'down'
+        self.assertEqual(len(scrape_findings(down, MANAGERS, POOL)), 2)
+
+    def test_a_manager_the_reading_does_not_know_is_a_finding(self):
+        self.assertEqual(scrape_findings(self.v025, MANAGERS + ['ptah-operator-ptah-operator-54588bff4f-later'], POOL),
+                         [f'manager Pod ptah-operator-ptah-operator-54588bff4f-later has no up target in {POOL}'])
 
     def test_a_target_from_another_servicemonitor_is_a_finding(self):
         workaround = f'serviceMonitor/{RELEASE_NAMESPACE}/ptah-operator-metrics-deployer/0'
-        findings = scrape_findings(self.scraped(self.managers) + self.scraped(self.managers, pool=workaround)[len(self.targets):],
-                                   self.managers, POOL)
-        self.assertEqual(findings, [f"targets in {RELEASE_NAMESPACE} come from ['{workaround}']"])
+        extra = copy.deepcopy(self.release_targets())
+        for target in extra:
+            target['scrapePool'] = workaround
+        self.assertEqual(scrape_findings(self.v025 + extra, MANAGERS, POOL),
+                         [f"targets in {RELEASE_NAMESPACE} come from ['{workaround}']"])
 
     def test_no_manager_running_is_a_finding_and_not_a_pass(self):
-        self.assertEqual(scrape_findings(self.scraped([]), [], POOL), ['no manager Pod is running'])
+        self.assertEqual(scrape_findings(self.v025, [], POOL), ['no manager Pod is running'])
 
 
 class ServiceMonitorTest(unittest.TestCase):
-    chart = {'metadata': {'name': 'ptah-operator', 'labels': {
-        'app.kubernetes.io/instance': 'ptah-operator', 'app.kubernetes.io/managed-by': 'Helm'}}}
+    """The ServiceMonitor the v0.2.5 chart rendered, read by the check."""
+
+    def setUp(self):
+        self.chart = json.loads((TESTDATA / 'servicemonitors-v0.2.5.json').read_text())[0]
 
     def test_the_release_servicemonitor_names_the_pool(self):
         self.assertEqual(chart_scrape_pool([self.chart], 'ptah-operator'), POOL)
