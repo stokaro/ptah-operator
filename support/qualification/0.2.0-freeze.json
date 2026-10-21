@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-10-20T16:27:18.872940+00:00",
+  "frozenAt": "2026-10-21T07:38:14.472633+00:00",
   "profileSourceCommit": "1259f4d59343fef049307085e3ea77d2971677cb",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
@@ -12,7 +12,7 @@
     },
     {
       "path": "support/qualification/0.2.0-coverage.md",
-      "sha256": "31476b050610af3184ccffbeaebc1d7a334480e7f249500c794db525239b0c87"
+      "sha256": "20f9513c8b8de20bd864728e080e68ece67427fdb4c7d0f81684283054467a16"
     },
     {
       "path": "support/qualification/0.2.0-monitoring.yaml",
@@ -79,10 +79,10 @@
     "disposition": "v0.2.4 is the published predecessor of the v0.2.5 candidate. The upgrade from it is walked through both releases' guides by support/qualification/probes/fresh_install.py --upgrade-from on both platforms; the synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 51,
+  "revision": 52,
   "supersedes": {
-    "freezeCommit": "64f29066e2c41cb3de7fa7860c16272ce8b66b26",
-    "sha256": "5bbb5c7c21ad7cad7ed7dded77e4aae6ef8fdd6ad9744739a919c5cb68a19588"
+    "freezeCommit": "b89c87286253cfe97f4e28d5db21c6064c5a2bad",
+    "sha256": "0afe1fb7e7af8a76f6e040b2e7aab9399167d81e6c0c3c6a54bccc580f9ff41f"
   },
-  "revisionReason": "Declare the published v0.2.5 in support/ptah.json, as the release procedure asks once the tag exists, and record v0.2.4 as its published predecessor. The profile, its targets and every other input are unchanged; the 0.2.5 qualification runs measure revision 50, whose profile files are those of revision 48."
+  "revisionReason": "Name the monitoring deployment check (support/qualification/probes/monitoring_check.py, run by .github/workflows/fresh-install.yml) as Q-09 evidence for PA-09 (#675): on the published release digests, every manager scraped through the chart's own ServiceMonitor and the all-manager-loss alert and its resolution delivered to a receiver. v0.2.4 passed every alerting suite while its ServiceMonitor selected no Service (#673). Thresholds, targets and every other input are unchanged."
 }
