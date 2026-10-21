@@ -10,7 +10,9 @@ two PostgreSQL migrations, so History reads an existing revision table; its
 statements include everything it sends to an empty database, where it stops
 after asking whether the table exists.
 
-- Ptah source: `eb69f8c4435643c5c9f3fbd1c9953b9ba0f44b6f`, the v0.13.0 release image `support/ptah.json` pins
+- Ptah source: `eb69f8c4435643c5c9f3fbd1c9953b9ba0f44b6f`, the v0.13.0 release image. On 2026-10-21 the
+  same probe run with the v0.14.0 release image `support/ptah.json` now pins (`e046527f`) produced this
+  reading record for record, so it stands for that executor unchanged
 - Server image: `postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73`
 - Client address: `10.244.3.97`
 - Isolated database: `ptah_e2e_retarget`
@@ -20,12 +22,12 @@ from its cluster run, so the tests' identities stay. Run with the executor built
 from the previous pin on an empty database, the same probe reproduced that
 earlier 17-record reading exactly.
 
-The permitted statements are reviewed against the pinned Ptah implementation:
+The permitted statements are reviewed against the pinned Ptah implementation, v0.14.0:
 
-- [Connection detection](https://github.com/stokaro/ptah/blob/eb69f8c4435643c5c9f3fbd1c9953b9ba0f44b6f/dbschema/connection.go) reads the server version, current schema and TimescaleDB presence. The PostgreSQL driver's ping sends `-- ping`.
-- [Metadata ownership](https://github.com/stokaro/ptah/blob/eb69f8c4435643c5c9f3fbd1c9953b9ba0f44b6f/migration/migrator/metadata_owner.go) checks ownership of the exact default revision table.
-- [The migrator](https://github.com/stokaro/ptah/blob/eb69f8c4435643c5c9f3fbd1c9953b9ba0f44b6f/migration/migrator/migrator.go) counts the default table in `information_schema.tables` and reads its columns from `SELECT * FROM "schema_migrations" WHERE 1 = 0`.
-- [History selection](https://github.com/stokaro/ptah/blob/eb69f8c4435643c5c9f3fbd1c9953b9ba0f44b6f/migration/migrator/revisions.go) reads the existing revision rows in order.
+- [Connection detection](https://github.com/stokaro/ptah/blob/e046527f79c58651d2082dce65b5ceb48dbc2606/dbschema/connection.go) reads the server version, current schema and TimescaleDB presence. The PostgreSQL driver's ping sends `-- ping`.
+- [Metadata ownership](https://github.com/stokaro/ptah/blob/e046527f79c58651d2082dce65b5ceb48dbc2606/migration/migrator/metadata_owner.go) checks ownership of the exact default revision table.
+- [The migrator](https://github.com/stokaro/ptah/blob/e046527f79c58651d2082dce65b5ceb48dbc2606/migration/migrator/migrator.go) counts the default table in `information_schema.tables` and reads its columns from `SELECT * FROM "schema_migrations" WHERE 1 = 0`.
+- [History selection](https://github.com/stokaro/ptah/blob/e046527f79c58651d2082dce65b5ceb48dbc2606/migration/migrator/revisions.go) reads the existing revision rows in order.
 
 v0.13.0's History no longer creates the table or checks its version type and
 columns. The predicate keeps those statements, because the Apply it also

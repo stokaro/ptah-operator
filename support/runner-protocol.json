@@ -147,6 +147,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:5117a2bae65cd0108acd9e977060b66a979c973f8e8f30a3c1f1e5e001f1d378",
       "reason": "Update oras.land/oras-go/v2 from v2.6.2 to v2.6.4 (#664). The runner links its errdef, content and registry packages and three internal ones to parse references, and all six are byte-identical between the two versions; the fixes are in the file and OCI stores, the remote auth client and the retry policy, which the runner does not link. The digest moved because go.sum did. Runner commands, payloads, result validation, delivery identity, SQL authority and retry limits are unchanged."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:698aeaee649ee5eb0b7ab9682d6abdbb58c22f8470cfcbdfa7c380bd52908a53",
+      "reason": "Take Ptah v0.14.0's run and drift documents (#678). A migration run report may carry Ptah's failure object, the failed statement's position and the database's SQLSTATE and error number with no text; the runner holds it to the run, carries it in the result frame, and refuses a document it contradicts. The drift vocabulary takes v0.14.0's categories: feature_changes and feature_access_<effect>, bare or with a kind, and undecided, and 31 per-object categories leave it. A report naming more categories than a frame holds is refused before it is framed. An older controller ignores the failure object and refuses a frame naming a category it does not know, as with every vocabulary change. The executor image changes in the same release, which retires every plan and approval made under the old one, so no approval crosses this change. Runner commands, payloads, delivery identity, SQL authority and retry limits are unchanged."
     }
   ]
 }

@@ -11,8 +11,9 @@ whether the table exists.
 
 - MySQL: `8.4.11`
 - Server image: `mysql:8.4@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb`
-- Executor: the Ptah v0.13.0 release image `support/ptah.json` pins
-- Ptah source: `eb69f8c4435643c5c9f3fbd1c9953b9ba0f44b6f`
+- Executor: the Ptah v0.13.0 release image, source `eb69f8c4435643c5c9f3fbd1c9953b9ba0f44b6f`. On
+  2026-10-21 the same probe run with the v0.14.0 release image `support/ptah.json` now pins
+  (`e046527f`) produced this reading record for record, so it stands for that executor unchanged
 - Client address: `172.19.0.3`
 - Database: `ptah_audit_history`
 
@@ -33,9 +34,9 @@ adds those two reads.
 The exact statements and bound parameters are reviewed against the pinned
 Ptah implementation:
 
-- [Connection detection](https://github.com/stokaro/ptah/blob/eb69f8c4435643c5c9f3fbd1c9953b9ba0f44b6f/dbschema/connection.go) reads the server version.
-- [The migrator](https://github.com/stokaro/ptah/blob/eb69f8c4435643c5c9f3fbd1c9953b9ba0f44b6f/migration/migrator/migrator.go) asks whether the default revision table exists, checks its engine and reads its columns from an empty result.
-- [History selection](https://github.com/stokaro/ptah/blob/eb69f8c4435643c5c9f3fbd1c9953b9ba0f44b6f/migration/migrator/revisions.go) reads the existing revision rows. MySQL table inspection also reads the session foreign-key restriction and the default revision table's CREATE statement.
+- [Connection detection](https://github.com/stokaro/ptah/blob/e046527f79c58651d2082dce65b5ceb48dbc2606/dbschema/connection.go) reads the server version.
+- [The migrator](https://github.com/stokaro/ptah/blob/e046527f79c58651d2082dce65b5ceb48dbc2606/migration/migrator/migrator.go) asks whether the default revision table exists, checks its engine and reads its columns from an empty result.
+- [History selection](https://github.com/stokaro/ptah/blob/e046527f79c58651d2082dce65b5ceb48dbc2606/migration/migrator/revisions.go) reads the existing revision rows. MySQL table inspection also reads the session foreign-key restriction and the default revision table's CREATE statement.
 
 The refusal predicate checks the command type, exact SQL and expanded bound
 parameters, authenticated account, connection lifecycle and exact Job/Pod

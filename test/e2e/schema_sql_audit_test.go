@@ -224,7 +224,7 @@ func TestSchemaSQLPlanValidation(t *testing.T) {
 					}
 					statement = string(decoded)
 				}
-				if !strings.HasPrefix(statement, "ALTER TABLE ") {
+				if !strings.HasPrefix(sqlAfterLeadingComments(statement), "ALTER TABLE ") {
 					continue
 				}
 				ddl++
@@ -680,4 +680,20 @@ func TestSchemaSQLResultControlsRequireEachExactJobAndPod(t *testing.T) {
 	if schemaRequiredSQLControls(clients, counts, required) == nil {
 		t.Fatal("ambiguous client identity passed")
 	}
+}
+
+// sqlAfterLeadingComments is a statement without the comment lines in front
+// of it. Ptah v0.14.0 sends a planned statement with the plan's own comments
+// ahead of it ("-- ALTER statements: --"), so a row that picks the Apply's DDL
+// out of a journal reads past them. The statement the predicate judges is
+// still the whole one the server received.
+func sqlAfterLeadingComments(statement string) string {
+	for strings.HasPrefix(statement, "--") {
+		_, rest, found := strings.Cut(statement, "\n")
+		if !found {
+			return ""
+		}
+		statement = rest
+	}
+	return statement
 }

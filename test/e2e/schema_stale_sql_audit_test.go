@@ -99,7 +99,7 @@ func TestSchemaStaleSQLUsesExactRefusedApply(t *testing.T) {
 			ddl := 0
 			for _, line := range bytes.Split(bytes.TrimSpace(applied), []byte("\n")) {
 				command, statement := schemaJournalStatement(t, engine, line)
-				if !strings.HasPrefix(statement, "ALTER TABLE ") {
+				if !strings.HasPrefix(sqlAfterLeadingComments(statement), "ALTER TABLE ") {
 					continue
 				}
 				ddl++

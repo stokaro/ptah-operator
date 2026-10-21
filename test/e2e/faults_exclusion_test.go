@@ -48,12 +48,12 @@ func TestExcludedPolicyDocumentsFromNativePlans(t *testing.T) {
 				"extra constraint": func(o, _ *planDocument) {
 					o.Statements = append(o.Statements, planStatement{SQL: `ALTER TABLE "e2e_excluded_policy_keep" DROP CONSTRAINT "another_constraint"`})
 				},
-				"PostgreSQL constraint on MySQL": func(o, n *planDocument) {
-					o.Dialect, n.Dialect = "mysql", "mysql"
-					if engine == "mysql" {
-						o.Statements = append(o.Statements, planStatement{SQL: `ALTER TABLE "e2e_excluded_policy_keep" DROP CONSTRAINT "e2e_excluded_policy_keep_pkey"`})
-					}
+				// v0.13.0 removed the primary key ahead of the drop on
+				// PostgreSQL; the pinned executor does not.
+				"primary-key removal before the drop": func(o, _ *planDocument) {
+					o.Statements = append([]planStatement{{SQL: `ALTER TABLE "e2e_excluded_policy_keep" DROP CONSTRAINT IF EXISTS "e2e_excluded_policy_keep_pkey"`}}, o.Statements...)
 				},
+				"the drop twice without the retained addition": func(o, _ *planDocument) { o.Statements[0] = o.Statements[1] },
 			} {
 				old, current := read("wide"), read("narrow")
 				edit(&old, &current)
@@ -61,18 +61,13 @@ func TestExcludedPolicyDocumentsFromNativePlans(t *testing.T) {
 					t.Errorf("accepted %s", name)
 				}
 			}
-			if engine == "postgresql" {
-				for _, from := range []string{"e2e_excluded_policy_keep_pkey", `"e2e_excluded_policy_keep"`} {
-					old, current := read("wide"), read("narrow")
-					old.Statements[1].SQL = strings.ReplaceAll(old.Statements[1].SQL, from, "unrelated")
-					if excludedPolicyDocuments(old, current) == nil {
-						t.Errorf("accepted changed primary-key removal: %s", from)
-					}
-				}
+			for _, from := range []string{"e2e_excluded_policy_keep", "fault_token"} {
 				old, current := read("wide"), read("narrow")
-				old.Statements[0] = old.Statements[1]
+				for index := range old.Statements {
+					old.Statements[index].SQL = strings.ReplaceAll(old.Statements[index].SQL, from, "unrelated")
+				}
 				if excludedPolicyDocuments(old, current) == nil {
-					t.Error("accepted duplicate constraint removal without the retained addition")
+					t.Errorf("accepted a plan that names %s nowhere", from)
 				}
 			}
 		})
