@@ -2,6 +2,7 @@ package dataplane_test
 
 import (
 	"encoding/json"
+	"os"
 	"testing"
 
 	"github.com/stokaro/ptah-operator/internal/dataplane"
@@ -167,6 +168,101 @@ func TestDecodeMigrationRun_ReadsTheEvidence(t *testing.T) {
 	}
 }
 
+// runWithFailure is a run document carrying the failure given, for the rows
+// that hold a failure to the run around it.
+func runWithFailure(outcome, planned, applied, failure string) string {
+	return `{"contract_version":1,"direction":"up","outcome":"` + outcome + `","planned":` + planned +
+		`,"applied":` + applied + `,"failure":` + failure + `}`
+}
+
+// The two fixtures are `ptah migrations up --json` documents, captured from
+// the Ptah v0.14.0 release image (ghcr.io/stokaro/ptah@sha256:6c7a5d62...)
+// against PostgreSQL 17 and MySQL 8.4 and stored as it printed them. Both run two migrations; the second fails. On PostgreSQL its
+// second of three statements reads a table that does not exist, and the run
+// commits nothing of it. On MySQL its first statement creates a table, so the
+// duplicate key that stops its third of four leaves two committed: a partial
+// run, and an error sentence that quotes the row.
+func loadMigrationRun(t *testing.T, name string) []byte {
+	t.Helper()
+	data, err := os.ReadFile("testdata/" + name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
+// TestDecodeMigrationRun_ReadsPtahsFailure reads the failure out of what
+// Ptah actually printed for each engine the operator supports.
+func TestDecodeMigrationRun_ReadsPtahsFailure(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		file    string
+		outcome string
+		want    dataplane.MigrationRunFailure
+	}{
+		{
+			file:    "migrations-up-failed-postgres.json",
+			outcome: dataplane.MigrationOutcomeFailed,
+			want:    dataplane.MigrationRunFailure{Version: 2, Statement: 2, Statements: 3, SQLState: "42P01"},
+		},
+		{
+			file:    "migrations-up-partial-mysql.json",
+			outcome: dataplane.MigrationOutcomePartial,
+			want:    dataplane.MigrationRunFailure{Version: 2, Statement: 3, Statements: 4, SQLState: "23000", ErrorNumber: 1062},
+		},
+	} {
+		t.Run(test.file, func(t *testing.T) {
+			t.Parallel()
+			report, err := dataplane.DecodeMigrationRun(loadMigrationRun(t, test.file))
+			if err != nil {
+				t.Fatalf("DecodeMigrationRun() error = %v", err)
+			}
+			if report.Outcome != test.outcome || report.Failure == nil || *report.Failure != test.want {
+				t.Fatalf("outcome %q failure %+v, want %q %+v", report.Outcome, report.Failure, test.outcome, test.want)
+			}
+		})
+	}
+}
+
+// TestDecodeMigrationRun_ReadsTheFailedStatement reads a failure on the
+// outcomes and at the bounds the captures above do not reach.
+func TestDecodeMigrationRun_ReadsTheFailedStatement(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name     string
+		document string
+		want     dataplane.MigrationRunFailure
+	}{
+		{
+			name: "a lost connection leaves no answer",
+			document: runWithFailure("unknown", `[2]`, `[]`,
+				`{"version":2,"version_key":"2","statement":1,"statements":1}`),
+			want: dataplane.MigrationRunFailure{Version: 2, Statement: 1, Statements: 1},
+		},
+		{
+			name: "the largest counts and number the decoder admits",
+			document: runWithFailure("failed", `[2]`, `[]`,
+				`{"version":2,"statement":2147483647,"statements":2147483647,"sqlstate":"HY000","error_number":65535}`),
+			want: dataplane.MigrationRunFailure{
+				Version: 2, Statement: 2147483647, Statements: 2147483647, SQLState: "HY000", ErrorNumber: 65535,
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			report, err := dataplane.DecodeMigrationRun([]byte(test.document))
+			if err != nil {
+				t.Fatalf("DecodeMigrationRun() error = %v", err)
+			}
+			if report.Failure == nil || *report.Failure != test.want {
+				t.Fatalf("failure = %+v, want %+v", report.Failure, test.want)
+			}
+		})
+	}
+}
+
 func TestDecodeMigrationRun_FailurePath(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -187,6 +283,69 @@ func TestDecodeMigrationRun_FailurePath(t *testing.T) {
 			name:     "applied what it never planned",
 			document: `{"contract_version":1,"direction":"up","outcome":"applied","planned":[1],"applied":[1,2]}`,
 			message:  "migration run reports version 2 applied and never planned",
+		},
+		{
+			name:     "a failed statement in a run that applied everything",
+			document: runWithFailure("applied", `[2]`, `[2]`, `{"version":2,"statement":1,"statements":1}`),
+			message:  `migration run reports outcome "applied" and a failed statement`,
+		},
+		{
+			name:     "a failed statement in a run that was up to date",
+			document: runWithFailure("up-to-date", `[2]`, `[]`, `{"version":2,"statement":1,"statements":1}`),
+			message:  `migration run reports outcome "up-to-date" and a failed statement`,
+		},
+		{
+			name:     "a failed statement in a version the run did not select",
+			document: runWithFailure("failed", `[2]`, `[]`, `{"version":3,"statement":1,"statements":1}`),
+			message: "migration run reports a statement of version 3 failed, " +
+				"and that version is not one it selected and left unapplied",
+		},
+		{
+			name:     "a failed statement in a version the run applied",
+			document: runWithFailure("failed", `[1,2]`, `[1]`, `{"version":1,"statement":1,"statements":1}`),
+			message: "migration run reports a statement of version 1 failed, " +
+				"and that version is not one it selected and left unapplied",
+		},
+		{
+			name:     "statement zero",
+			document: runWithFailure("failed", `[2]`, `[]`, `{"version":2,"statement":0,"statements":3}`),
+			message:  "migration run reports statement 0 of 3 failed",
+		},
+		{
+			name:     "a statement past the last one",
+			document: runWithFailure("failed", `[2]`, `[]`, `{"version":2,"statement":4,"statements":3}`),
+			message:  "migration run reports statement 4 of 3 failed",
+		},
+		{
+			name:     "more statements than an int32 counts",
+			document: runWithFailure("failed", `[2]`, `[]`, `{"version":2,"statement":1,"statements":2147483648}`),
+			message:  "migration run reports statement 1 of 2147483648 failed",
+		},
+		{
+			name:     "a SQLSTATE in lower case",
+			document: runWithFailure("failed", `[2]`, `[]`, `{"version":2,"statement":1,"statements":1,"sqlstate":"42p01"}`),
+			message:  "migration run reports a SQLSTATE that is not five digits or capital letters",
+		},
+		{
+			name:     "a SQLSTATE of four characters",
+			document: runWithFailure("failed", `[2]`, `[]`, `{"version":2,"statement":1,"statements":1,"sqlstate":"42P0"}`),
+			message:  "migration run reports a SQLSTATE that is not five digits or capital letters",
+		},
+		{
+			name: "a SQLSTATE that carries a value",
+			document: runWithFailure("failed", `[2]`, `[]`,
+				`{"version":2,"statement":1,"statements":1,"sqlstate":"23505: Key (email)=(alice@example.com)"}`),
+			message: "migration run reports a SQLSTATE that is not five digits or capital letters",
+		},
+		{
+			name:     "a negative error number",
+			document: runWithFailure("failed", `[2]`, `[]`, `{"version":2,"statement":1,"statements":1,"error_number":-1}`),
+			message:  "migration run reports error number -1, which the two bytes MySQL sends cannot hold",
+		},
+		{
+			name:     "an error number past two bytes",
+			document: runWithFailure("failed", `[2]`, `[]`, `{"version":2,"statement":1,"statements":1,"error_number":65536}`),
+			message:  "migration run reports error number 65536, which the two bytes MySQL sends cannot hold",
 		},
 	}
 

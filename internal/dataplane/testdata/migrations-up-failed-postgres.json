@@ -1,0 +1,78 @@
+{
+  "contract_version": 1,
+  "direction": "up",
+  "outcome": "failed",
+  "planned": [
+    1,
+    2
+  ],
+  "planned_keys": [
+    "1",
+    "2"
+  ],
+  "applied": [
+    1
+  ],
+  "applied_keys": [
+    "1"
+  ],
+  "error": "failed to apply migration 2: failed to execute migration SQL: SQL execution failed: ERROR: relation \"ledger_entries\" does not exist (SQLSTATE 42P01)\nSQL: SELECT count(*) FROM ledger_entries",
+  "failure": {
+    "version": 2,
+    "version_key": "2",
+    "statement": 2,
+    "statements": 3,
+    "sqlstate": "42P01"
+  },
+  "status": {
+    "current_version": 1,
+    "applied_migrations": [
+      1
+    ],
+    "applied_migration_keys": [
+      "1"
+    ],
+    "pending_migrations": [
+      2
+    ],
+    "pending_migration_keys": [
+      "2"
+    ],
+    "out_of_order_migrations": [],
+    "total_migrations": 2,
+    "has_pending_changes": true,
+    "dirty_revision": {
+      "version": 2,
+      "description": "Read Ledger",
+      "state": "failed",
+      "direction": "up",
+      "applied": 0,
+      "total": 3,
+      "error": "failed to execute migration SQL: SQL execution failed: ERROR: relation \"ledger_entries\" does not exist (SQLSTATE 42P01)\nSQL: SELECT count(*) FROM ledger_entries",
+      "error_stmt": "SELECT count(*) FROM ledger_entries",
+      "execution_time": 8000000,
+      "checksum": "9bfd30b0a665a04d3ab1773875f97e10839dcfa4c75c87d47901846ac135e13e",
+      "applied_at": "2026-10-21T14:54:39.982064Z",
+      "dirty": true
+    },
+    "contract_version": 1,
+    "migrations": [
+      {
+        "version": 1,
+        "version_key": "1",
+        "description": "Create Journal",
+        "checksum": "7e1b886aaeecb4ff35f9c0cdd01a06aac0822947141a5307a7f3cb10b3932616",
+        "applied_checksum": "7e1b886aaeecb4ff35f9c0cdd01a06aac0822947141a5307a7f3cb10b3932616",
+        "state": "applied"
+      },
+      {
+        "version": 2,
+        "version_key": "2",
+        "description": "Read Ledger",
+        "checksum": "9bfd30b0a665a04d3ab1773875f97e10839dcfa4c75c87d47901846ac135e13e",
+        "state": "dirty"
+      }
+    ],
+    "current_version_key": "2"
+  }
+}

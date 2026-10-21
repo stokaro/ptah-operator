@@ -3376,6 +3376,83 @@ func TestMigrationRunRedactsTheDatabasesFreeTextError(t *testing.T) {
 	}
 }
 
+// TestMigrationRunCarriesTheFailedStatementThroughTheFrame follows the
+// failure Ptah writes from the child's output to what the controller parses:
+// the statement and the database's code arrive, and the sentence beside them,
+// which quotes the row, does not (#678).
+func TestMigrationRunCarriesTheFailedStatementThroughTheFrame(t *testing.T) {
+	t.Parallel()
+
+	// Ptah v0.14.0's account of a MySQL run stopped by a duplicate key; see
+	// internal/dataplane/testdata.
+	document, err := os.ReadFile(filepath.Join("..", "dataplane", "testdata", "migrations-up-partial-mysql.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const declaredRowValue = "Duplicate entry '1' for key 'ledger.PRIMARY'"
+	if !bytes.Contains(document, []byte(declaredRowValue)) {
+		t.Fatal("the captured document no longer quotes the row, so this test proves nothing about redaction")
+	}
+	executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: string(document), exitCode: 2}}}
+	result := Run(context.Background(), Config{
+		Operation:   OperationMigrationApply,
+		Environment: withRunnerProtocol(migrationApplyEnvironment(t, "migration-failed-statement")),
+		Executor:    executor,
+	})
+	frame, err := MarshalFrame(result)
+	if err != nil {
+		t.Fatalf("MarshalFrame() error = %v", err)
+	}
+	if bytes.Contains(frame, []byte(declaredRowValue)) {
+		t.Fatalf("the framed result carries the database's free-text error: %s", frame)
+	}
+	parsed, err := ParseResult(frame)
+	if err != nil {
+		t.Fatalf("ParseResult() error = %v", err)
+	}
+	want := dataplane.MigrationRunFailure{Version: 2, Statement: 3, Statements: 4, SQLState: "23000", ErrorNumber: 1062}
+	if parsed.MigrationRun == nil || parsed.MigrationRun.Failure == nil || *parsed.MigrationRun.Failure != want {
+		t.Fatalf("the controller parsed migration run %#v, want failure %+v", parsed.MigrationRun, want)
+	}
+}
+
+// TestMigrationRunRefusesAFailureThatContradictsIt is the runner's half of
+// the decoder's refusal. The same failed run is carried when its failure names
+// the migration it left unapplied, and dropped when the failure names one it
+// applied, so the frame goes on claiming an uncertain mutation as it does for
+// a child whose output could not be read.
+func TestMigrationRunRefusesAFailureThatContradictsIt(t *testing.T) {
+	t.Parallel()
+
+	for _, row := range []struct {
+		name    string
+		version string
+		carried bool
+	}{
+		{name: "the failure is in the migration the run left unapplied", version: "4", carried: true},
+		{name: "the failure is in a migration the run applied", version: "3", carried: false},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			document := `{"contract_version":1,"direction":"up","outcome":"failed","planned":[3,4],"applied":[3],` +
+				`"failure":{"version":` + row.version + `,"statement":1,"statements":1,"sqlstate":"42P01"},` +
+				`"status":{"contract_version":1,"current_version":3,"total_migrations":4,"has_pending_changes":true}}`
+			executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: document, exitCode: 1}}}
+			result := Run(context.Background(), Config{
+				Operation:   OperationMigrationApply,
+				Environment: withRunnerProtocol(migrationApplyEnvironment(t, "migration-failure-"+row.version)),
+				Executor:    executor,
+			})
+			if carried := result.MigrationRun != nil; carried != row.carried {
+				t.Fatalf("Run() carried the report: %t, want %t", carried, row.carried)
+			}
+			if result.Uncertain == row.carried {
+				t.Fatalf("Run() Uncertain = %t, want %t", result.Uncertain, !row.carried)
+			}
+		})
+	}
+}
+
 // TestMigrationHistoryRedactsTheDirtyRevisionError is the read-only twin: a
 // history read that finds an existing dirty revision must not carry forward
 // whatever database error left it dirty, since a migration-history operation

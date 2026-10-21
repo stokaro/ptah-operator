@@ -1,0 +1,79 @@
+{
+  "contract_version": 1,
+  "direction": "up",
+  "outcome": "partial",
+  "planned": [
+    1,
+    2
+  ],
+  "planned_keys": [
+    "1",
+    "2"
+  ],
+  "applied": [
+    1
+  ],
+  "applied_keys": [
+    "1"
+  ],
+  "error": "failed to apply migration 2: failed to execute migration SQL: SQL execution failed: Error 1062 (23000): Duplicate entry '1' for key 'ledger.PRIMARY'\nSQL: INSERT INTO ledger VALUES (1)",
+  "failure": {
+    "version": 2,
+    "version_key": "2",
+    "statement": 3,
+    "statements": 4,
+    "sqlstate": "23000",
+    "error_number": 1062
+  },
+  "status": {
+    "current_version": 1,
+    "applied_migrations": [
+      1
+    ],
+    "applied_migration_keys": [
+      "1"
+    ],
+    "pending_migrations": [
+      2
+    ],
+    "pending_migration_keys": [
+      "2"
+    ],
+    "out_of_order_migrations": [],
+    "total_migrations": 2,
+    "has_pending_changes": true,
+    "dirty_revision": {
+      "version": 2,
+      "description": "Fill Ledger",
+      "state": "failed",
+      "direction": "up",
+      "applied": 2,
+      "total": 4,
+      "error": "failed to execute migration SQL: SQL execution failed: Error 1062 (23000): Duplicate entry '1' for key 'ledger.PRIMARY'\nSQL: INSERT INTO ledger VALUES (1)",
+      "error_stmt": "INSERT INTO ledger VALUES (1)",
+      "execution_time": 26000000,
+      "checksum": "partial:h1:TJqpfPVKMrbkviVn5fzUT7Y7vRtu+l91DcHG7UPSi4Q=",
+      "applied_at": "2026-10-21T14:54:42Z",
+      "dirty": true
+    },
+    "contract_version": 1,
+    "migrations": [
+      {
+        "version": 1,
+        "version_key": "1",
+        "description": "Create Journal",
+        "checksum": "b7e3d83d6fd22faa53d4131301194cc91e14db21868ccc1043676bc91c544ed5",
+        "applied_checksum": "b7e3d83d6fd22faa53d4131301194cc91e14db21868ccc1043676bc91c544ed5",
+        "state": "applied"
+      },
+      {
+        "version": 2,
+        "version_key": "2",
+        "description": "Fill Ledger",
+        "checksum": "ae47c7fdeb056c96413a8ecb757575e4eaf722844930832e4828ab7f28c3b125",
+        "state": "dirty"
+      }
+    ],
+    "current_version_key": "2"
+  }
+}

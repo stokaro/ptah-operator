@@ -1146,12 +1146,27 @@ func migrationRunMessage(report dataplane.MigrationRunReport) string {
 	case dataplane.MigrationOutcomeDryRun:
 		return "The run was a dry run and changed nothing"
 	case dataplane.MigrationOutcomeFailed:
-		return fmt.Sprintf("%s failed and committed nothing; %d migrations before it are recorded applied",
-			stoppedMigrationName(report), len(report.Applied))
+		version, found := stoppedMigration(report)
+		if !found {
+			return fmt.Sprintf("A migration failed and committed nothing; %d migrations before it are recorded applied",
+				len(report.Applied))
+		}
+		where := ""
+		if failure := failureIn(report, version); failure != nil {
+			where = fmt.Sprintf(" at statement %d of %d%s", failure.Statement, failure.Statements, databaseAnswer(*failure))
+		}
+		return fmt.Sprintf("%s failed%s and committed nothing; %d migrations before it are recorded applied",
+			migrationName(report, version), where, len(report.Applied))
 	case dataplane.MigrationOutcomePartial:
 		if dirty := dirtyRevision(report); dirty != nil && dirty.Total > 0 {
-			return fmt.Sprintf("%s committed %d of its %d statements and not the rest; retrying the file would run them twice",
-				migrationName(report, dirty.Version), dirty.Applied, dirty.Total)
+			// The statements before the failed one are what the dirty row
+			// counts, so only the database's answer is added.
+			rest := " and not the rest"
+			if failure := failureIn(report, dirty.Version); failure != nil && databaseAnswer(*failure) != "" {
+				rest = ", then failed" + databaseAnswer(*failure)
+			}
+			return fmt.Sprintf("%s committed %d of its %d statements%s; retrying the file would run them twice",
+				migrationName(report, dirty.Version), dirty.Applied, dirty.Total, rest)
 		}
 		return "A migration committed some of its statements and not the rest; retrying the file would run them twice"
 	default:
@@ -1163,21 +1178,47 @@ func migrationRunMessage(report dataplane.MigrationRunReport) string {
 // the whole sentence fits the 256 bytes the MigrationRunFinished Event keeps.
 const migrationDescriptionBytes = 64
 
-// stoppedMigrationName names the migration a failed run stopped in, from the
-// run's own report: the revision row it left dirty, or, where it left none,
-// the first version it selected and did not apply. The engine's message about
-// why stays out (#69); the version and the description the artifact gave it
-// carry no row, and they tell a reader which file to open (#678).
-func stoppedMigrationName(report dataplane.MigrationRunReport) string {
+// stoppedMigration is the migration a failed run stopped in, from the run's
+// own report: the revision row it left dirty, or, where it left none, the
+// first version it selected and did not apply. The engine's message about why
+// stays out (#69); the version and the description the artifact gave it carry
+// no row, and they tell a reader which file to open (#678).
+func stoppedMigration(report dataplane.MigrationRunReport) (int64, bool) {
 	if dirty := dirtyRevision(report); dirty != nil {
-		return migrationName(report, dirty.Version)
+		return dirty.Version, true
 	}
 	for _, version := range report.Planned {
 		if !slices.Contains(report.Applied, version) {
-			return migrationName(report, version)
+			return version, true
 		}
 	}
-	return "A migration"
+	return 0, false
+}
+
+// failureIn is the run's failure when it is about the migration the message
+// names, and nil otherwise, so a sentence never puts one migration's name and
+// another's statement together.
+func failureIn(report dataplane.MigrationRunReport, version int64) *dataplane.MigrationRunFailure {
+	if report.Failure == nil || report.Failure.Version != version {
+		return nil
+	}
+	return report.Failure
+}
+
+// databaseAnswer is the code the database gave for the failed statement, and
+// nothing when it gave none, as after a lost connection. The runner admitted
+// only a five-character SQLSTATE and a number, so neither can carry a row.
+func databaseAnswer(failure dataplane.MigrationRunFailure) string {
+	switch {
+	case failure.SQLState != "" && failure.ErrorNumber > 0:
+		return fmt.Sprintf(" with SQLSTATE %s (error %d)", failure.SQLState, failure.ErrorNumber)
+	case failure.SQLState != "":
+		return " with SQLSTATE " + failure.SQLState
+	case failure.ErrorNumber > 0:
+		return fmt.Sprintf(" with error %d", failure.ErrorNumber)
+	default:
+		return ""
+	}
 }
 
 func dirtyRevision(report dataplane.MigrationRunReport) *dataplane.MigrationDirty {
