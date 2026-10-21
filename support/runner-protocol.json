@@ -150,8 +150,8 @@
     },
     {
       "protocolVersion": 1,
-      "sourceDigest": "sha256:698aeaee649ee5eb0b7ab9682d6abdbb58c22f8470cfcbdfa7c380bd52908a53",
-      "reason": "Take Ptah v0.14.0's run and drift documents (#678). A migration run report may carry Ptah's failure object, the failed statement's position and the database's SQLSTATE and error number with no text; the runner holds it to the run, carries it in the result frame, and refuses a document it contradicts. The drift vocabulary takes v0.14.0's categories: feature_changes and feature_access_<effect>, bare or with a kind, and undecided, and 31 per-object categories leave it. A report naming more categories than a frame holds is refused before it is framed. An older controller ignores the failure object and refuses a frame naming a category it does not know, as with every vocabulary change. The executor image changes in the same release, which retires every plan and approval made under the old one, so no approval crosses this change. Runner commands, payloads, delivery identity, SQL authority and retry limits are unchanged."
+      "sourceDigest": "sha256:8ac1d79ac2dcc650e27f89feabcf865f98e9f89b30b1d8e66204a17b3cc6d7d7",
+      "reason": "Take Ptah v0.14.0's documents (#678). A migration run report may carry Ptah's failure object, the failed statement's position and the database's SQLSTATE and error number with no text; the runner holds it to the run, carries it in the result frame, and refuses a document it contradicts. The drift vocabulary takes v0.14.0's categories: feature_changes and feature_access_<effect>, bare or with a kind, and undecided, and 31 per-object categories leave it. A report naming more categories than a frame holds is refused before framing. Schema plan and apply reports are read at their contract version 2, whose changes touch no field the runner reads. An older controller ignores the failure object and refuses a frame naming a category it does not know. The executor image changes in the same release, which retires every plan and approval made under the old one. Commands, payloads, delivery identity, SQL authority and retry limits are unchanged."
     }
   ]
 }

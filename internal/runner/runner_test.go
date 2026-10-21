@@ -601,7 +601,7 @@ func TestPlanRequiresNativeDryRunToMatchReviewedStatements(t *testing.T) {
 	)
 	dryRun := func(edit func(*dataplane.SchemaApplyReport)) scriptedResponse {
 		report := dataplane.SchemaApplyReport{
-			ContractVersion: 1,
+			ContractVersion: dataplane.SupportedSchemaApplyContract,
 			Outcome:         dataplane.SchemaApplyOutcomeDryRun,
 			PlanName:        "operator-plan",
 			PlanDigest:      sha256Digest([]byte(plan)),
@@ -1436,7 +1436,7 @@ func TestApplyNeverPublishesNativeFailureDiagnostics(t *testing.T) {
 			name: "a failure report quoting the statement",
 			response: scriptedResponse{
 				stdout: encodeApplyReport(t, dataplane.SchemaApplyReport{
-					ContractVersion: 1, Outcome: dataplane.SchemaApplyOutcomeFailed,
+					ContractVersion: dataplane.SupportedSchemaApplyContract, Outcome: dataplane.SchemaApplyOutcomeFailed,
 					Error: "the planned changes cannot run inside a transaction\n" + failedStatement,
 				}),
 				exitCode: 1,
@@ -1447,7 +1447,7 @@ func TestApplyNeverPublishesNativeFailureDiagnostics(t *testing.T) {
 			name: "an unknown outcome quoting the statement",
 			response: scriptedResponse{
 				stdout: encodeApplyReport(t, dataplane.SchemaApplyReport{
-					ContractVersion: 1, Outcome: dataplane.SchemaApplyOutcomeUnknown,
+					ContractVersion: dataplane.SupportedSchemaApplyContract, Outcome: dataplane.SchemaApplyOutcomeUnknown,
 					Statements: []string{failedStatement}, Error: "apply schema changes: " + failedStatement,
 				}),
 				exitCode: 1,
@@ -1827,7 +1827,7 @@ func TestApplyFailureIsUncertainAndMustNotBeReplayed(t *testing.T) {
 	}
 	executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{
 		stdout: encodeApplyReport(t, dataplane.SchemaApplyReport{
-			ContractVersion: 1, Outcome: dataplane.SchemaApplyOutcomeUnknown,
+			ContractVersion: dataplane.SupportedSchemaApplyContract, Outcome: dataplane.SchemaApplyOutcomeUnknown,
 			PlanDigest: sha256Digest(plan), Error: "connection lost",
 		}),
 		stderr:   "connection lost",
@@ -1868,7 +1868,7 @@ func TestApplyNativeStalePlanAfterDispatchStillHasUnknownOutcome(t *testing.T) {
 			}
 			executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{
 				stdout: encodeApplyReport(t, dataplane.SchemaApplyReport{
-					ContractVersion: 1,
+					ContractVersion: dataplane.SupportedSchemaApplyContract,
 					Outcome:         dataplane.SchemaApplyOutcomeRefused,
 					PlanName:        "operator-plan",
 					PlanDigest:      sha256Digest(plan),
@@ -1911,7 +1911,7 @@ func TestApplyReadsItsReportOnEveryExit(t *testing.T) {
 	approved := sha256Digest([]byte(plan))
 	report := func(edit func(*dataplane.SchemaApplyReport)) string {
 		value := dataplane.SchemaApplyReport{
-			ContractVersion: 1,
+			ContractVersion: dataplane.SupportedSchemaApplyContract,
 			Outcome:         dataplane.SchemaApplyOutcomeApplied,
 			PlanName:        "operator-plan",
 			PlanDigest:      approved,
@@ -1963,7 +1963,11 @@ func TestApplyReadsItsReportOnEveryExit(t *testing.T) {
 		{name: "no changes", stdout: outcome(dataplane.SchemaApplyOutcomeNoChanges), wantCode: "invalid_apply_output"},
 		{
 			name: "a newer contract version", wantCode: "invalid_apply_output",
-			stdout: report(func(value *dataplane.SchemaApplyReport) { value.ContractVersion = 2 }),
+			stdout: report(func(value *dataplane.SchemaApplyReport) { value.ContractVersion = dataplane.SupportedSchemaApplyContract + 1 }),
+		},
+		{
+			name: "the version Ptah v0.13.0 printed", wantCode: "invalid_apply_output",
+			stdout: report(func(value *dataplane.SchemaApplyReport) { value.ContractVersion = 1 }),
 		},
 		{name: "an outcome nobody declared", stdout: outcome("partial"), wantCode: "invalid_apply_output"},
 		{
@@ -2123,7 +2127,7 @@ func TestPlanReportsAFencedRefusalAsItsOwnOutcome(t *testing.T) {
 		{
 			name: "the fence refused the plan",
 			response: scriptedResponse{
-				stdout: `{"contract_version":1,"outcome":"refused","refusal":{"code":"protected-table",` +
+				stdout: `{"contract_version":2,"outcome":"refused","refusal":{"code":"protected-table",` +
 					`"tables":["countries","ref.regions"]},"error":"` + fenceSentence + `"}`,
 				stderr:   "error: " + fenceSentence + "\n",
 				exitCode: 2,
@@ -2134,7 +2138,7 @@ func TestPlanReportsAFencedRefusalAsItsOwnOutcome(t *testing.T) {
 		{
 			name: "the fence refused the plan and gave no sentence",
 			response: scriptedResponse{
-				stdout: `{"contract_version":1,"outcome":"refused","refusal":{"code":"protected-table",` +
+				stdout: `{"contract_version":2,"outcome":"refused","refusal":{"code":"protected-table",` +
 					`"tables":["countries","ref.regions"]}}`,
 				exitCode: 2,
 			},
@@ -2144,7 +2148,7 @@ func TestPlanReportsAFencedRefusalAsItsOwnOutcome(t *testing.T) {
 		{
 			name: "a refusal of a kind this runner does not know",
 			response: scriptedResponse{
-				stdout:   `{"contract_version":1,"outcome":"refused","refusal":{"code":"quota-exceeded"},"error":"quota"}`,
+				stdout:   `{"contract_version":2,"outcome":"refused","refusal":{"code":"quota-exceeded"},"error":"quota"}`,
 				exitCode: 2,
 			},
 			wantCode: "plan_refused",
@@ -2153,7 +2157,7 @@ func TestPlanReportsAFencedRefusalAsItsOwnOutcome(t *testing.T) {
 		{
 			name: "the plan failed while standard error reads like a fence",
 			response: scriptedResponse{
-				stdout:   `{"contract_version":1,"outcome":"failed","error":"connect to --db-url: dial tcp: connection refused"}`,
+				stdout:   `{"contract_version":2,"outcome":"failed","error":"connect to --db-url: dial tcp: connection refused"}`,
 				stderr:   "error: " + fenceSentence + "\n",
 				exitCode: 1,
 			},
@@ -2244,7 +2248,7 @@ func TestPlanNoChangesComesFromTheReport(t *testing.T) {
 		{
 			name: "a report naming a saved plan",
 			responses: []scriptedResponse{
-				{stdout: `{"contract_version":1,"outcome":"no-changes","plan_path":"/tmp/plan.json"}`},
+				{stdout: `{"contract_version":2,"outcome":"no-changes","plan_path":"/tmp/plan.json"}`},
 			},
 		},
 	} {
@@ -2286,7 +2290,10 @@ func TestPlanRefusesAReportItCannotAccountFor(t *testing.T) {
 		response scriptedResponse
 	}{
 		{name: "a newer contract version", response: respond(func(outputPath string) string {
-			return strings.Replace(planReport(outputPath, plan), `"contract_version":1`, `"contract_version":2`, 1)
+			return strings.Replace(planReport(outputPath, plan), `"contract_version":2`, `"contract_version":3`, 1)
+		})},
+		{name: "the version Ptah v0.13.0 printed", response: respond(func(outputPath string) string {
+			return strings.Replace(planReport(outputPath, plan), `"contract_version":2`, `"contract_version":1`, 1)
 		})},
 		{name: "an outcome nobody declared", response: respond(func(outputPath string) string {
 			return strings.Replace(planReport(outputPath, plan), `"outcome":"changes"`, `"outcome":"partial"`, 1)
@@ -3335,14 +3342,14 @@ func planResponse(plan string) scriptedResponse {
 // plan embedded as it is.
 func planReport(outputPath, plan string) string {
 	return fmt.Sprintf(
-		`{"contract_version":1,"outcome":"changes","plan_digest":%q,"plan_path":%q,"plan":%s}`+"\n",
+		`{"contract_version":2,"outcome":"changes","plan_digest":%q,"plan_path":%q,"plan":%s}`+"\n",
 		sha256Digest([]byte(plan)), outputPath, strings.TrimSpace(plan),
 	)
 }
 
 // planNoChangesReport is what a plan read prints when the database already
 // matches: no plan, and nothing saved.
-const planNoChangesReport = `{"contract_version":1,"outcome":"no-changes"}` + "\n"
+const planNoChangesReport = `{"contract_version":2,"outcome":"no-changes"}` + "\n"
 
 func planNoChangesResponse() scriptedResponse {
 	return scriptedResponse{stdout: planNoChangesReport, stderr: "Schema is synced, no changes to be made.\n"}
@@ -3354,7 +3361,7 @@ func applyReport(t *testing.T, outcome, plan string) string {
 	t.Helper()
 	decoded := mustDecodePlan(t, plan)
 	return encodeApplyReport(t, dataplane.SchemaApplyReport{
-		ContractVersion: 1,
+		ContractVersion: dataplane.SupportedSchemaApplyContract,
 		Outcome:         outcome,
 		PlanName:        decoded.Name,
 		PlanDigest:      sha256Digest([]byte(plan)),

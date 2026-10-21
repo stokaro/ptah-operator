@@ -1,0 +1,9 @@
+{
+  "contract_version": 2,
+  "outcome": "dry-run",
+  "plan_name": "plan_8b24d027856d",
+  "plan_digest": "sha256:9fb6bc62fc4d5d3705c805f05b8dfd2275dff7b3322ea7f12a083b8cdcc65903",
+  "statements": [
+    "-- Add/modify columns for table: items\n-- ALTER statements: --\nALTER TABLE \"items\" ADD COLUMN \"name\" text"
+  ]
+}

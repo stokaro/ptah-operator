@@ -1,0 +1,21 @@
+{
+  "contract_version": 2,
+  "outcome": "changes",
+  "plan_digest": "sha256:9fb6bc62fc4d5d3705c805f05b8dfd2275dff7b3322ea7f12a083b8cdcc65903",
+  "plan_path": "/w/plan.json",
+  "plan": {
+    "format_version": 1,
+    "name": "plan_8b24d027856d",
+    "dialect": "postgres",
+    "from_fingerprint": "sha256:89575115ce2cc0acb20273a4a3eb379d86985ffacfa48d70d3ab49f300c2870d",
+    "to_fingerprint": "sha256:e4bb28bbd71299aa6dd7329588e8056340c3da3259d300150de970e9b989b0b6",
+    "destructive": false,
+    "statements": [
+      {
+        "sql": "-- Add/modify columns for table: items\n-- ALTER statements: --\nALTER TABLE \"items\" ADD COLUMN \"name\" text",
+        "severity": "safe",
+        "reason": "does not remove data or tighten constraints"
+      }
+    ]
+  }
+}
