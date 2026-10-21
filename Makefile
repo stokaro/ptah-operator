@@ -92,17 +92,44 @@ fmt-check:
 	@test -z "$$(gofmt -l $$(find . -name '*.go' -not -path './vendor/*'))" || \
 		{ gofmt -l $$(find . -name '*.go' -not -path './vendor/*'); exit 1; }
 
-generate:
-	$(GO) run sigs.k8s.io/controller-tools/cmd/controller-gen@$(CONTROLLER_GEN_VERSION) \
+# controller-gen is installed once per version, and every generator recipe runs
+# that binary. Each recipe used to `go run` it at its version, which in CI
+# fetched it from the module proxy in every job: the shared Go cache is saved by
+# whichever job runs first and rarely holds it. One reset stream from
+# proxy.golang.org failed the documentation job of run 39659906945. The
+# download is verified against the Go checksum database, so a retry can only
+# fetch the same bytes or fail again. The binary is moved into place only after
+# a successful install, so an interrupted one leaves nothing make would take
+# for it. hack/verify-kubernetes-support.go refuses a target named by a
+# variable, so the target is the phony controller-gen, which does nothing when
+# this version's binary is already there.
+CONTROLLER_GEN := bin/controller-gen-$(CONTROLLER_GEN_VERSION)
+
+.PHONY: controller-gen
+controller-gen:
+	@if [ -x "$(CONTROLLER_GEN)" ]; then exit 0; fi; \
+	mkdir -p bin; tmp=$$(mktemp -d bin/.controller-gen.XXXXXX); attempt=1; \
+	until GOBIN="$(CURDIR)/$$tmp" $(GO) install sigs.k8s.io/controller-tools/cmd/controller-gen@$(CONTROLLER_GEN_VERSION); do \
+		[ $$attempt -lt 3 ] || break; \
+		echo "install attempt $$attempt of controller-gen $(CONTROLLER_GEN_VERSION) failed; retrying" >&2; \
+		attempt=$$((attempt + 1)); sleep 5; \
+	done; \
+	if [ ! -x "$$tmp/controller-gen" ]; then \
+		echo "controller-gen $(CONTROLLER_GEN_VERSION) could not be installed in $$attempt attempts" >&2; false; \
+	fi && mv -f "$$tmp/controller-gen" "$(CONTROLLER_GEN)"; \
+	status=$$?; rm -rf "$$tmp"; exit $$status
+
+generate: controller-gen
+	$(CONTROLLER_GEN) \
 		object:headerFile=hack/boilerplate.go.txt paths=./api/...
 
 # The CRDs are generated and stamped in a directory of their own, and each
 # reaches config/crd/bases whole, by a rename. A run stopped between
 # controller-gen and the stamp once left six CRDs without their schema-version
 # annotations, which read as an ordinary diff and were committed (#682).
-manifests:
+manifests: controller-gen
 	@crds=$$(mktemp -d); \
-	$(GO) run sigs.k8s.io/controller-tools/cmd/controller-gen@$(CONTROLLER_GEN_VERSION) \
+	$(CONTROLLER_GEN) \
 		crd:maxDescLen=0 paths=./api/... output:crd:artifacts:config="$$crds" && \
 	GO="$(GO)" sh hack/stamp-crd-schema-version.sh \
 		$(CRD_SCHEMA_VERSION) $(CONTROLLER_STATE_VERSION) "$$crds"/*.yaml && \
@@ -132,19 +159,22 @@ chart-policies:
 # same generator once more into a directory nothing keeps, reads the schemas
 # with their doc comments, and writes the pages. -write updates them;
 # docs-reference-check refuses a page the API has moved past.
-docs-reference:
+#
+# A generator that fails stops the recipe with its own error. Before, the
+# reference tool ran on the empty directory and said only that it held no CRD.
+docs-reference: controller-gen
 	@tmp=$$(mktemp -d); \
-	$(GO) run sigs.k8s.io/controller-tools/cmd/controller-gen@$(CONTROLLER_GEN_VERSION) \
-		crd paths=./api/... output:crd:artifacts:config=$$tmp; \
+	$(CONTROLLER_GEN) \
+		crd paths=./api/... output:crd:artifacts:config=$$tmp && \
 	$(GO) run ./hack/crdreference -crds $$tmp \
 		-examples docs/reference-examples \
 		-out docs/site/src/content/docs/reference -write; \
 	status=$$?; rm -rf $$tmp; exit $$status
 
-docs-reference-check:
+docs-reference-check: controller-gen
 	@tmp=$$(mktemp -d); \
-	$(GO) run sigs.k8s.io/controller-tools/cmd/controller-gen@$(CONTROLLER_GEN_VERSION) \
-		crd paths=./api/... output:crd:artifacts:config=$$tmp; \
+	$(CONTROLLER_GEN) \
+		crd paths=./api/... output:crd:artifacts:config=$$tmp && \
 	$(GO) run ./hack/crdreference -crds $$tmp \
 		-examples docs/reference-examples \
 		-out docs/site/src/content/docs/reference -require-descriptions; \
