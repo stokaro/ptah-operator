@@ -1,0 +1,273 @@
+{
+  "status": {
+    "observedGeneration": 1,
+    "phase": "Planning",
+    "executionBinding": {
+      "epoch": "v1-58a4886bd24872eb7700f478bccfe606",
+      "controllerStateVersion": 1,
+      "ptahVersion": "v0.14.0",
+      "executorImage": "e2e-registry.ptah-test-a-1-35-8-ci-39685906128-1-1-35-data-plane-c8041fbc70.svc.cluster.local:5000/ptah-executor@sha256:6c7a5d628a9507cfeb93d819c3816589053fd95834fc5cf1ad1231e8f6f56102",
+      "runnerProtocolVersion": 1
+    },
+    "source": {
+      "requestedReference": "oci://e2e-registry.ptah-test-a-1-35-8-ci-39685906128-1-1-35-data-plane-c8041fbc70.svc.cluster.local:5000/schemas/extension-postgresql:stable",
+      "resolvedReference": "oci://e2e-registry.ptah-test-a-1-35-8-ci-39685906128-1-1-35-data-plane-c8041fbc70.svc.cluster.local:5000/schemas/extension-postgresql@sha256:9ad3b271fa08397f4b10abe86232ce3ace3a16743c1fbdd88d1051301568227a",
+      "digest": "sha256:9ad3b271fa08397f4b10abe86232ce3ace3a16743c1fbdd88d1051301568227a",
+      "mediaType": "application/vnd.oci.image.manifest.v1+json",
+      "artifactType": "application/vnd.stokaro.ptah.schema.v1",
+      "size": 813,
+      "verified": true,
+      "verificationPolicyUID": "5577150e-d8bf-4ec8-8c4e-a8805b102012",
+      "verificationPolicyDigest": "sha256:c84039b250125e32f0d51caea6afd1d13ebe4e5e0f90d382ee3be2c027574007",
+      "resolvedAt": "2026-10-21T23:18:44Z",
+      "verifiedAt": "2026-10-21T23:18:56Z"
+    },
+    "target": {
+      "engine": "PostgreSQL",
+      "coordinationDigest": "sha256:0655a55c3789def5e0be2eae7b05226cc8b9937b25be7e259c6a2e8a123e7131",
+      "identityDigest": "sha256:3bf1d39861277563b309c1cecd5588bef607c25528f0a46647e67105def0adfa",
+      "driftReportDigest": "sha256:fc910f19bc890c6b31dc09171d244173f45a71f0a743f01f44690290796358fe",
+      "lastObservedAt": "2026-10-21T23:19:10Z",
+      "highestDriftSeverity": "safe",
+      "driftFindingCount": 1,
+      "driftFindings": [
+        {
+          "category": "feature_changes:ptah.run/pgextension/extension-change",
+          "count": 1,
+          "severity": "safe"
+        }
+      ]
+    },
+    "applied": {
+      "artifactDigest": "sha256:9ad3b271fa08397f4b10abe86232ce3ace3a16743c1fbdd88d1051301568227a",
+      "planRef": {
+        "name": "ptah-plan-41ce325ebb5efc619a491e0c",
+        "uid": "19385514-839f-4f83-8237-443979283d54"
+      },
+      "planFingerprint": "sha256:41ce325ebb5efc619a491e0cb5144b52f3585231486a6a7826148e2f1566a549",
+      "coordinationDigest": "sha256:0655a55c3789def5e0be2eae7b05226cc8b9937b25be7e259c6a2e8a123e7131",
+      "targetIdentityDigest": "sha256:3bf1d39861277563b309c1cecd5588bef607c25528f0a46647e67105def0adfa",
+      "executionBindingID": "v1-58a4886bd24872eb7700f478bccfe606",
+      "controllerImage": "e2e-registry.ptah-test-a-1-35-8-ci-39685906128-1-1-35-data-plane-c8041fbc70.svc.cluster.local:5000/ptah-operator@sha256:e71930d4a7a781ba1723e0b838dbb1f6955352747a6a47af85c479bc9fe263e1",
+      "controllerRevision": "90d8dec17075d612a2f9ea7e940ea983bfcf1ac0",
+      "controllerStateVersion": 1,
+      "ptahVersion": "v0.14.0",
+      "executorImage": "e2e-registry.ptah-test-a-1-35-8-ci-39685906128-1-1-35-data-plane-c8041fbc70.svc.cluster.local:5000/ptah-executor@sha256:6c7a5d628a9507cfeb93d819c3816589053fd95834fc5cf1ad1231e8f6f56102",
+      "runnerImage": "e2e-registry.ptah-test-a-1-35-8-ci-39685906128-1-1-35-data-plane-c8041fbc70.svc.cluster.local:5000/ptah-runner@sha256:e71930d4a7a781ba1723e0b838dbb1f6955352747a6a47af85c479bc9fe263e1",
+      "runnerProtocolVersion": 1,
+      "dispatchedBy": {
+        "controllerImage": "e2e-registry.ptah-test-a-1-35-8-ci-39685906128-1-1-35-data-plane-c8041fbc70.svc.cluster.local:5000/ptah-operator@sha256:e71930d4a7a781ba1723e0b838dbb1f6955352747a6a47af85c479bc9fe263e1",
+        "controllerRevision": "90d8dec17075d612a2f9ea7e940ea983bfcf1ac0",
+        "runnerImage": "e2e-registry.ptah-test-a-1-35-8-ci-39685906128-1-1-35-data-plane-c8041fbc70.svc.cluster.local:5000/ptah-runner@sha256:e71930d4a7a781ba1723e0b838dbb1f6955352747a6a47af85c479bc9fe263e1"
+      },
+      "completedAt": "2026-10-21T23:17:33Z"
+    },
+    "activeOperation": {
+      "type": "Plan",
+      "id": "sha256:041a6606f6e869ae3b58f13371e47fde9cffbf99e29d9b1f7061504d61c537a2",
+      "inputFingerprint": "sha256:0ba949276a9627c558408a0981df1a1c464f433cecde1f1d1432cb57594e83c7",
+      "jobName": "ptah-plan-e2e-extension-postgresql-fd1d67ec0c7bfc7d",
+      "jobUID": "bd6df552-6066-4c3c-9f84-752f56bf82ba",
+      "startedAt": "2026-10-21T23:19:10Z",
+      "attempt": 1,
+      "executionBindingID": "v1-58a4886bd24872eb7700f478bccfe606",
+      "admissionSnapshot": {
+        "version": "v1",
+        "digest": "sha256:66dd4e0042cf2ccf457e6b73a4cac485c44a26747faa991739f04d9fcff5a9aa",
+        "templateDigest": "sha256:f7641d04d8552b7465ce4f55d39732632bc853f4d5081620f7237e65d87184fd",
+        "serviceAccount": {
+          "object": {
+            "name": "default",
+            "uid": "0c44f3e0-868e-4981-a397-1d6eac320e1f",
+            "resourceVersion": "1731"
+          },
+          "imagePullSecrets": [
+            {
+              "name": "e2e-registry-pull"
+            }
+          ]
+        },
+        "limitRanges": [
+          {
+            "object": {
+              "name": "ptah-operation-defaults",
+              "uid": "b5ecaf13-f6a1-4521-92dd-4f72c252e955",
+              "resourceVersion": "1729"
+            },
+            "defaultRequests": {
+              "cpu": "10m",
+              "memory": "16Mi"
+            },
+            "defaultLimits": {
+              "cpu": "100m",
+              "memory": "128Mi"
+            }
+          }
+        ],
+        "runtimeClass": {
+          "object": {
+            "name": "ptah-e2e-runtime",
+            "uid": "ce390349-9ea6-4814-b4a8-fe7acf6fa574",
+            "resourceVersion": "1730"
+          },
+          "handler": "runc",
+          "overheadDefined": true,
+          "overhead": {
+            "memory": "8Mi"
+          },
+          "nodeSelector": {
+            "kubernetes.io/os": "linux"
+          },
+          "tolerations": [
+            {
+              "key": "operator.ptah.run/e2e-runtime",
+              "operator": "Exists",
+              "effect": "NoSchedule"
+            }
+          ]
+        },
+        "priorityClass": {
+          "value": 0,
+          "preemptionPolicy": "PreemptLowerPriority"
+        },
+        "defaultTolerationsEnabled": true,
+        "defaultNotReadyTolerationSeconds": 300,
+        "defaultUnreachableTolerationSeconds": 300,
+        "extendedResourceTolerationEnabled": false,
+        "alwaysPullImagesEnabled": false
+      },
+      "dispatchStarted": true,
+      "coordinationDigest": "sha256:0655a55c3789def5e0be2eae7b05226cc8b9937b25be7e259c6a2e8a123e7131",
+      "targetIdentityDigest": "sha256:3bf1d39861277563b309c1cecd5588bef607c25528f0a46647e67105def0adfa",
+      "target": {
+        "engine": "PostgreSQL",
+        "urlFrom": {
+          "name": "e2e-postgresql-extension-db",
+          "key": "url"
+        }
+      },
+      "observationSeverity": "all",
+      "observationConnectTimeout": "30s",
+      "observationLockTimeout": "30s",
+      "source": {
+        "resolvedReference": "oci://e2e-registry.ptah-test-a-1-35-8-ci-39685906128-1-1-35-data-plane-c8041fbc70.svc.cluster.local:5000/schemas/extension-postgresql@sha256:9ad3b271fa08397f4b10abe86232ce3ace3a16743c1fbdd88d1051301568227a",
+        "digest": "sha256:9ad3b271fa08397f4b10abe86232ce3ace3a16743c1fbdd88d1051301568227a",
+        "registryAuthFrom": {
+          "name": "e2e-registry-auth",
+          "mode": "Environment",
+          "usernameKey": "username",
+          "passwordKey": "password",
+          "tokenKey": "token",
+          "dockerConfigJSONKey": ".dockerconfigjson"
+        },
+        "transport": {
+          "plainHTTP": true
+        }
+      },
+      "leaseDurationSeconds": 360,
+      "leaseEpoch": "v1-c131a0c99af6532e6b8044314359200b",
+      "planSealPublicKeyDigest": "sha256:3f2e16aeadf3c286fb9d86ebd147effd172b75560f5fb49c0bae31e8ebc26330"
+    },
+    "lastAttemptTime": "2026-10-21T23:19:10Z",
+    "lastSuccessfulReconciliation": "2026-10-21T23:17:33Z",
+    "nextReconciliationTime": "2026-10-21T23:19:33Z",
+    "conditions": [
+      {
+        "type": "EngineSupported",
+        "status": "True",
+        "observedGeneration": 1,
+        "lastTransitionTime": "2026-10-21T23:16:06Z",
+        "reason": "SupportedEngine",
+        "message": "Database engine \"PostgreSQL\" is supported"
+      },
+      {
+        "type": "Ready",
+        "status": "False",
+        "observedGeneration": 1,
+        "lastTransitionTime": "2026-10-21T23:18:33Z",
+        "reason": "OperationInProgress",
+        "message": "Plan operation is in progress"
+      },
+      {
+        "type": "ReconciliationFailed",
+        "status": "False",
+        "observedGeneration": 1,
+        "lastTransitionTime": "2026-10-21T23:16:17Z",
+        "reason": "Succeeded",
+        "message": "The latest operation completed"
+      },
+      {
+        "type": "ArtifactResolved",
+        "status": "True",
+        "observedGeneration": 1,
+        "lastTransitionTime": "2026-10-21T23:18:44Z",
+        "reason": "DigestPinned",
+        "message": "Desired OCI reference resolved to immutable content"
+      },
+      {
+        "type": "ArtifactVerified",
+        "status": "True",
+        "observedGeneration": 1,
+        "lastTransitionTime": "2026-10-21T23:18:56Z",
+        "reason": "PolicySatisfied",
+        "message": "Artifact type and verification policy were satisfied"
+      },
+      {
+        "type": "DatabaseReachable",
+        "status": "True",
+        "observedGeneration": 1,
+        "lastTransitionTime": "2026-10-21T23:16:43Z",
+        "reason": "Observed",
+        "message": "Database schema was observed"
+      },
+      {
+        "type": "DriftDetected",
+        "status": "Unknown",
+        "observedGeneration": 1,
+        "lastTransitionTime": "2026-10-21T23:19:10Z",
+        "reason": "ScopedPlanPending",
+        "message": "Raw drift was recorded; the authoritative managed scope is being planned"
+      },
+      {
+        "type": "InSync",
+        "status": "Unknown",
+        "observedGeneration": 1,
+        "lastTransitionTime": "2026-10-21T23:18:33Z",
+        "reason": "ScopedPlanPending",
+        "message": "Convergence is unknown until scoped planning completes"
+      },
+      {
+        "type": "ApprovalRequired",
+        "status": "False",
+        "observedGeneration": 1,
+        "lastTransitionTime": "2026-10-21T23:17:01Z",
+        "reason": "Satisfied",
+        "message": "Current plan approval requirements are satisfied"
+      },
+      {
+        "type": "PlanReady",
+        "status": "Unknown",
+        "observedGeneration": 1,
+        "lastTransitionTime": "2026-10-21T23:18:33Z",
+        "reason": "SourceRefreshPending",
+        "message": "Plan currentness is unknown until source refresh and read-only reconciliation complete"
+      },
+      {
+        "type": "Suspended",
+        "status": "False",
+        "observedGeneration": 1,
+        "lastTransitionTime": "2026-10-21T23:17:00Z",
+        "reason": "Active",
+        "message": "Reconciliation is active"
+      },
+      {
+        "type": "Applying",
+        "status": "False",
+        "observedGeneration": 1,
+        "lastTransitionTime": "2026-10-21T23:17:12Z",
+        "reason": "JobCompleted",
+        "message": "Apply Job completed; convergence observation is pending"
+      }
+    ]
+  }
+}

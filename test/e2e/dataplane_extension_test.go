@@ -8,17 +8,6 @@ import (
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 )
 
-const extensionDigest = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
-
-func extensionSchema(t *testing.T, document string) *ptahv1alpha1.PtahSchema {
-	t.Helper()
-	schema := &ptahv1alpha1.PtahSchema{}
-	if err := json.Unmarshal([]byte(document), schema); err != nil {
-		t.Fatalf("decode %s: %v", document, err)
-	}
-	return schema
-}
-
 // The category the row waits for is the one Ptah v0.14.0 printed for an
 // extension the database lacked, which the runner's own tests frame.
 func TestPgExtensionChangeIsTheCategoryPtahPrinted(t *testing.T) {
@@ -40,38 +29,66 @@ func TestPgExtensionChangeIsTheCategoryPtahPrinted(t *testing.T) {
 	}
 }
 
+// The accepted reading is the status the row matched on Kubernetes 1.35.8. Each
+// refused reading is that status with the one field the mistake would change.
 func TestDroppedExtensionObservedRefusesEveryOtherReading(t *testing.T) {
 	t.Parallel()
-	const dropped = `{"status":{"source":{"digest":"` + extensionDigest + `"},"target":{"highestDriftSeverity":"safe",
-  "driftFindingCount":1,"driftFindings":[{"category":"feature_changes:ptah.run/pgextension/extension-change","count":1,"severity":"safe"}]}}}`
-	if !droppedExtensionObserved(extensionSchema(t, dropped), extensionDigest) {
+	body, err := os.ReadFile("../../testdata/e2e/readings/postgresql-extension-drift.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	native := &ptahv1alpha1.PtahSchema{}
+	if err := json.Unmarshal(body, native); err != nil {
+		t.Fatal(err)
+	}
+	digest := native.Status.Source.Digest
+	if digest == "" || native.Status.Applied == nil || native.Status.Applied.ArtifactDigest != digest {
+		t.Fatalf("the reading was not taken after the artifact %q was applied", digest)
+	}
+	if !droppedExtensionObserved(native, digest) {
 		t.Fatal("the reading of the dropped extension was refused")
 	}
-	for _, reading := range []struct{ name, document string }{
-		{"the converged schema, which found nothing", `{"status":{"source":{"digest":"` + extensionDigest + `"},"target":{}}}`},
-		{"the observation before the first Apply, which also lacked the table", `{"status":{"source":{"digest":"` + extensionDigest + `"},
-  "target":{"highestDriftSeverity":"safe","driftFindingCount":2,"driftFindings":[
-  {"category":"feature_changes:ptah.run/pgextension/extension-change","count":1,"severity":"safe"},
-  {"category":"tables_added","count":1,"severity":"safe"}]}}}`},
-		{"the category Ptah v0.13.0 wrote", `{"status":{"source":{"digest":"` + extensionDigest + `"},"target":{"highestDriftSeverity":"safe",
-  "driftFindingCount":1,"driftFindings":[{"category":"extensions_added","count":1,"severity":"safe"}]}}}`},
-		{"the category without its kind", `{"status":{"source":{"digest":"` + extensionDigest + `"},"target":{"highestDriftSeverity":"safe",
-  "driftFindingCount":1,"driftFindings":[{"category":"feature_changes","count":1,"severity":"safe"}]}}}`},
-		{"another kind of the same owner", `{"status":{"source":{"digest":"` + extensionDigest + `"},"target":{"highestDriftSeverity":"safe",
-  "driftFindingCount":1,"driftFindings":[{"category":"feature_changes:ptah.run/pgextension/extension","count":1,"severity":"safe"}]}}}`},
-		{"two extensions", `{"status":{"source":{"digest":"` + extensionDigest + `"},"target":{"highestDriftSeverity":"safe",
-  "driftFindingCount":2,"driftFindings":[{"category":"feature_changes:ptah.run/pgextension/extension-change","count":2,"severity":"safe"}]}}}`},
-		{"a finding counted twice in the total", `{"status":{"source":{"digest":"` + extensionDigest + `"},"target":{"highestDriftSeverity":"safe",
-  "driftFindingCount":2,"driftFindings":[{"category":"feature_changes:ptah.run/pgextension/extension-change","count":1,"severity":"safe"}]}}}`},
-		{"another severity", `{"status":{"source":{"digest":"` + extensionDigest + `"},"target":{"highestDriftSeverity":"warning",
-  "driftFindingCount":1,"driftFindings":[{"category":"feature_changes:ptah.run/pgextension/extension-change","count":1,"severity":"warning"}]}}}`},
-		{"another artifact", `{"status":{"source":{"digest":"sha256:2222222222222222222222222222222222222222222222222222222222222222"},
-  "target":{"highestDriftSeverity":"safe","driftFindingCount":1,
-  "driftFindings":[{"category":"feature_changes:ptah.run/pgextension/extension-change","count":1,"severity":"safe"}]}}}`},
+	finding := func(category string, count int32, severity string) ptahv1alpha1.DriftFindingStatus {
+		return ptahv1alpha1.DriftFindingStatus{Category: category, Count: count, Severity: severity}
+	}
+	for _, reading := range []struct {
+		name   string
+		mutate func(*ptahv1alpha1.PtahSchemaStatus)
+	}{
+		{"the converged schema, which found nothing", func(s *ptahv1alpha1.PtahSchemaStatus) {
+			s.Target.HighestDriftSeverity, s.Target.DriftFindingCount, s.Target.DriftFindings = "", 0, nil
+		}},
+		{"the observation before the first Apply, which also lacked the table", func(s *ptahv1alpha1.PtahSchemaStatus) {
+			s.Target.DriftFindingCount = 2
+			s.Target.DriftFindings = append(s.Target.DriftFindings, finding("tables_added", 1, "safe"))
+		}},
+		{"the category Ptah v0.13.0 wrote", func(s *ptahv1alpha1.PtahSchemaStatus) {
+			s.Target.DriftFindings[0].Category = "extensions_added"
+		}},
+		{"the category without its kind", func(s *ptahv1alpha1.PtahSchemaStatus) {
+			s.Target.DriftFindings[0].Category = "feature_changes"
+		}},
+		{"another kind of the same owner", func(s *ptahv1alpha1.PtahSchemaStatus) {
+			s.Target.DriftFindings[0].Category = "feature_changes:ptah.run/pgextension/extension"
+		}},
+		{"two extensions", func(s *ptahv1alpha1.PtahSchemaStatus) {
+			s.Target.DriftFindingCount, s.Target.DriftFindings[0].Count = 2, 2
+		}},
+		{"a finding counted twice in the total", func(s *ptahv1alpha1.PtahSchemaStatus) {
+			s.Target.DriftFindingCount = 2
+		}},
+		{"another severity", func(s *ptahv1alpha1.PtahSchemaStatus) {
+			s.Target.HighestDriftSeverity, s.Target.DriftFindings[0].Severity = "warning", "warning"
+		}},
+		{"another artifact", func(s *ptahv1alpha1.PtahSchemaStatus) {
+			s.Source.Digest = "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+		}},
 	} {
 		t.Run(reading.name, func(t *testing.T) {
 			t.Parallel()
-			if droppedExtensionObserved(extensionSchema(t, reading.document), extensionDigest) {
+			schema := native.DeepCopy()
+			reading.mutate(&schema.Status)
+			if droppedExtensionObserved(schema, digest) {
 				t.Errorf("a reading of %s was accepted", reading.name)
 			}
 		})

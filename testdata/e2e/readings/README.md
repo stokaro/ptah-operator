@@ -39,3 +39,16 @@ planning fourteen seconds after reading the database while `Ready=False` kept
 its pre-upgrade transition time. `PlanReady=True` and `Progressing=False` date
 the completed cycle. The projection omits artifact and target configuration and unrelated status
 fields. No credentials or plan payloads are included.
+
+`postgresql-extension-drift.json` is the status the data-plane row
+`postgresql-extension-drift` matched on Kubernetes 1.35.8, in CI job
+119523276862 of run 39685906128. The run built `90d8dec1`, the merge of
+`d156c8fa` onto `6e5df759`, with the Ptah v0.14.0 executor. It is stored as the
+row printed it. After the schema converged on its artifact, the extension was
+dropped by hand, and the next Observe stored one safe finding,
+`feature_changes:ptah.run/pgextension/extension-change`, counted once; the jobs
+for Kubernetes 1.36 and 1.37 printed the same finding. The schema had already
+started the Plan that follows the drift, so the phase reads `Planning`.
+`TestDroppedExtensionObservedRefusesEveryOtherReading` accepts this reading and
+refuses copies of it that change the one field each mistake would change. It
+names Secrets only by name and key and holds no credentials or plan SQL.
