@@ -84,17 +84,23 @@ func stoppedRunRecorded(status ptahv1alpha1.PtahMigrationStatus, jobUID string, 
 }
 
 // stoppedRunNamesItsMigration is the message a run stopped in migration
-// stoppedAt leaves in its record: that version, the description the artifact
-// gave it, and the versions applied before it (#678). The description is
-// spelled by Ptah, so the row asks that there is one rather than how it reads.
-func stoppedRunNamesItsMigration(run *ptahv1alpha1.MigrationRunStatus, stoppedAt int64) bool {
+// stoppedAt, at statement of statements, leaves in its record: that version,
+// the description the artifact gave it, the statement Ptah's failure named,
+// and the versions applied before it (#678). The description is spelled by
+// Ptah, so the row asks that there is one rather than how it reads. Whether a
+// canceled statement comes back with a database code depends on how each
+// driver cancels, so the row admits one of the shapes the controller writes
+// and does not ask for it.
+func stoppedRunNamesItsMigration(run *ptahv1alpha1.MigrationRunStatus, stoppedAt, statement, statements int64) bool {
 	if run == nil {
 		return false
 	}
-	prefix := fmt.Sprintf("Migration %d (", stoppedAt)
-	suffix := fmt.Sprintf(") failed and committed nothing; %d migrations before it are recorded applied", max(stoppedAt-1, 0))
-	return len(run.Message) > len(prefix)+len(suffix) &&
-		strings.HasPrefix(run.Message, prefix) && strings.HasSuffix(run.Message, suffix)
+	pattern := regexp.MustCompile(fmt.Sprintf(
+		`^Migration %d \(.+\) failed at statement %d of %d`+
+			`(?: with (?:SQLSTATE [0-9A-Z]{5}(?: \(error [1-9][0-9]*\))?|error [1-9][0-9]*))?`+
+			` and committed nothing; %d migrations before it are recorded applied$`,
+		stoppedAt, statement, statements, max(stoppedAt-1, 0)))
+	return pattern.MatchString(run.Message)
 }
 
 // lostLogRunRecorded is what
