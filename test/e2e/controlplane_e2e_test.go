@@ -365,8 +365,11 @@ func (p *controlPlanePhase) realmAuthorization(t *testing.T) {
 // planChunkAuthorization holds the manager to what it does with a plan's
 // bytes. They are PtahSchemaPlanChunk objects it writes when it publishes the
 // plan and reads back by name, uncached; it never lists or watches them, and
-// never changes one. The ConfigMaps an Apply mounts the plan through are the
-// one ConfigMap write it keeps, and it creates them and changes none.
+// never changes one. The ConfigMaps an Apply mounts the plan through, and the
+// snapshots of a ConfigMap source, are the ConfigMaps it writes: it creates
+// them and changes none. It deletes a snapshot nothing names any more, and
+// RBAC cannot grant delete on a shape, so the snapshot delete guard refuses
+// the manager every other ConfigMap delete.
 func (p *controlPlanePhase) planChunkAuthorization(t *testing.T) {
 	chunk := func(verb string) authorizationv1.ResourceAttributes {
 		return authorizationv1.ResourceAttributes{Verb: verb, Group: "operator.ptah.run", Resource: "ptahschemaplanchunks"}
@@ -384,10 +387,44 @@ func (p *controlPlanePhase) planChunkAuthorization(t *testing.T) {
 	if !p.canI(t, authorizationv1.ResourceAttributes{Verb: "create", Resource: "configmaps"}) {
 		p.fatalf(t, "controller service account cannot create ConfigMaps, so no Apply Pod can mount its plan")
 	}
-	for _, verb := range []string{"update", "patch", "delete", "deletecollection"} {
+	if !p.canI(t, authorizationv1.ResourceAttributes{Verb: "delete", Resource: "configmaps"}) {
+		p.fatalf(t, "controller service account cannot delete ConfigMaps, so a snapshot nothing names is never removed")
+	}
+	for _, verb := range []string{"update", "patch", "deletecollection"} {
 		if p.canI(t, authorizationv1.ResourceAttributes{Verb: verb, Resource: "configmaps"}) {
-			p.fatalf(t, "controller service account can %s ConfigMaps, and it only ever creates them", verb)
+			p.fatalf(t, "controller service account can %s ConfigMaps, and it only creates and deletes them", verb)
 		}
+	}
+	p.snapshotDeleteGuard(t)
+}
+
+// snapshotDeleteGuard sends the manager's delete of a ConfigMap that is not a
+// snapshot, as a server-side dry run, and requires the snapshot delete guard
+// to refuse it by its own message: RBAC admits the delete, so the guard is
+// the only thing between the manager and every ConfigMap in the cluster.
+func (p *controlPlanePhase) snapshotDeleteGuard(t *testing.T) {
+	ordinary := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Namespace: p.in.TestNamespace, Name: "ptah-e2e-not-a-snapshot"},
+		Data:       map[string]string{"note": "an application's ConfigMap"},
+	}
+	if err := p.cluster.Client.Create(p.ctx, ordinary, client.FieldOwner(harness.FieldOwner)); err != nil && !apierrors.IsAlreadyExists(err) {
+		p.fatalf(t, "could not create the ordinary ConfigMap: %v", err)
+	}
+	defer func() { _ = p.cluster.Client.Delete(p.ctx, ordinary) }()
+	manager, err := p.cluster.As(rest.ImpersonationConfig{UserName: p.serviceAccount})
+	if err != nil {
+		p.fatalf(t, "could not build a client that acts as %s: %v", p.serviceAccount, err)
+	}
+	err = manager.Delete(p.ctx, ordinary.DeepCopy(), client.DryRunAll)
+	if err == nil {
+		p.fatalf(t, "%s deleted an ordinary ConfigMap: the snapshot delete guard did not refuse it", p.serviceAccount)
+	}
+	const refusal = "Ptah controller snapshot delete guard refused to delete a ConfigMap that is not a source snapshot"
+	if !strings.Contains(err.Error(), refusal) {
+		p.fatalf(t, "the manager's delete of an ordinary ConfigMap failed, but not by the snapshot delete guard: %v", err)
+	}
+	if err := p.cluster.Client.Get(p.ctx, client.ObjectKeyFromObject(ordinary), &corev1.ConfigMap{}); err != nil {
+		p.fatalf(t, "the ordinary ConfigMap is gone after the refused delete: %v", err)
 	}
 }
 
