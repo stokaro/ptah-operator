@@ -533,6 +533,28 @@ An operation Pod checks the snapshot against the content digest the operation
 was bound to before the container holding the database URL starts, so a
 snapshot replaced after a plan was approved is refused rather than read.
 
+## Git sources
+
+A Git source is trusted by whoever may push to the ref it names: they may
+change the desired state, and so what an approval is asked for, as whoever may
+write a source ConfigMap may. Name a branch only where pushes to it are
+reviewed, or name a tag or a commit. It has no verification policy, and the
+API refuses one beside it.
+
+The manager never reads the repository or the credential Secret. The Secret
+names its own scope in fixed keys a resource's author cannot choose: `host`,
+the only `host[:port]` the credential is sent to, and `caSHA256` or
+`knownHostsSHA256`, the digests of the trust it may be sent under. A resource
+that names the Secret with another URL, CA or known-hosts file is refused in
+the Pod before Ptah starts. A credential goes in the Secret, never in the URL,
+which the API refuses with one. Over `ssh://` the known hosts are required:
+the fetch never trusts a host key on first use.
+
+What a fetch reads is bounded: one commit, fetched shallowly; the selected path
+only, at most 1,000 files and 64 MiB; no submodule, symbolic link or LFS
+pointer, each refused by name; no checkout, hook or filter, so a repository
+cannot run anything in the Pod.
+
 ## Plan and approval visibility
 
 Plan chunks contain schema-changing SQL, not credentials. They are

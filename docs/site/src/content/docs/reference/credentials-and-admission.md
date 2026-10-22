@@ -28,6 +28,8 @@ contract that keeps it true. The operational view is
 | Migration History main | no | target only | local migration directory |
 | Migration Apply main | no | target only | local migration directory |
 | Snapshot copy init, ConfigMap source | no | no | the source snapshot ConfigMap, checked against the bound content digest |
+| Resolve main, Git source | Git credential and its grants | no | the repository, ref and path, and the optional CA or known hosts |
+| Git fetch init, Git source | Git credential and its grants | no | the bound commit, checked against the bound content digest |
 
 The controller sees only Secret names and keys; Kubernetes resolves those
 selectors in the Job Pod. A migration reads a local directory rather than an
@@ -40,6 +42,16 @@ registry credential anywhere: the manager reads the ConfigMap and writes the
 snapshot, and the Observe, Plan, History and migration Apply Pods replace the
 authority guard and the fetch with one init container that checks the
 snapshot and copies it into the same local file or directory.
+
+A resource whose source is Git has a Resolve Job and no Verify Job. Its
+credential reaches two places and no other: the Resolve Job's operation
+container, which holds no database credential, and the Git fetch init
+container that replaces the authority guard and the fetch in every later
+operation. The runner in either one refuses a credential unless the Secret's
+`host` key names the repository's authority, and a CA bundle or known-hosts
+file unless the Secret holds its digest, before Ptah starts; Ptah reads private
+copies of the trust files and never sees the grants. The container that holds
+the database URL mounts only the fetched files, read-only.
 
 For Resolve and Verify, the runner replaces a mounted custom CA ConfigMap
 projection with a private snapshot before starting Ptah. For Observe and Plan,

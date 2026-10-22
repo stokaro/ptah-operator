@@ -65,6 +65,41 @@ spec:
           path: 0000000002_add_item_sku.up.sql
 ```
 
+### From a tag of a Git repository, over SSH
+
+The migration directory is a directory of a Git repository at the commit a
+tag names. The fetch never trusts a host key on first use, so an `ssh://`
+repository names its known hosts. The Secret `inventory-deploy-key` holds
+`sshPrivateKey`, `host: git.example.com` and `knownHostsSHA256`, the digest
+of the known-hosts file the key may be used with.
+
+```yaml
+apiVersion: operator.ptah.run/v1alpha1
+kind: PtahMigration
+metadata:
+  name: inventory
+  namespace: application
+spec:
+  target:
+    engine: PostgreSQL
+    coordinationKey: production/inventory-primary
+    urlFrom:
+      name: inventory-database
+      key: url
+  artifact:
+    git:
+      url: ssh://git@git.example.com/acme/inventory.git
+      ref:
+        tag: v1.4.0
+      path: db/migrations
+      authFrom:
+        name: inventory-deploy-key
+      transport:
+        knownHostsFrom:
+          name: git-example-known-hosts
+          key: known_hosts
+```
+
 ### Beside a PtahSchema, over one database
 
 Both resources live in one namespace, name the same `coordinationKey` and set

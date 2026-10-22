@@ -74,6 +74,41 @@ spec:
           path: 0000000002_add_item_sku.up.sql
 ```
 
+### From a tag of a Git repository, over SSH
+
+The migration directory is a directory of a Git repository at the commit a
+tag names. The fetch never trusts a host key on first use, so an `ssh://`
+repository names its known hosts. The Secret `inventory-deploy-key` holds
+`sshPrivateKey`, `host: git.example.com` and `knownHostsSHA256`, the digest
+of the known-hosts file the key may be used with.
+
+```yaml
+apiVersion: operator.ptah.run/v1alpha1
+kind: PtahMigration
+metadata:
+  name: inventory
+  namespace: application
+spec:
+  target:
+    engine: PostgreSQL
+    coordinationKey: production/inventory-primary
+    urlFrom:
+      name: inventory-database
+      key: url
+  artifact:
+    git:
+      url: ssh://git@git.example.com/acme/inventory.git
+      ref:
+        tag: v1.4.0
+      path: db/migrations
+      authFrom:
+        name: inventory-deploy-key
+      transport:
+        knownHostsFrom:
+          name: git-example-known-hosts
+          key: known_hosts
+```
+
 ### Beside a PtahSchema, over one database
 
 Both resources live in one namespace, name the same `coordinationKey` and set
@@ -227,6 +262,24 @@ spec:
 | `spec.artifact.configMap.items[].key` | `string`, required | Key in the ConfigMap's data or binaryData. |
 | `spec.artifact.configMap.items[].path` | `string`, required | Path is the file the key becomes: relative, separated by "/", with no empty, "." or ".." element, no backslash and no control character. An element longer than 255 bytes, or a path that is a file and a directory at once, is refused when the source is read. |
 | `spec.artifact.configMap.name` | `string`, required | Name of the ConfigMap, in this resource's namespace. |
+| `spec.artifact.git` | `object` | Git selects a file or a directory of one commit of a Git repository. The manager never reads the repository or its credential: a Job's fetch container fetches the commit through Ptah, and every later operation fetches the same commit again and refuses any other content. |
+| `spec.artifact.git.authFrom` | `object` | AuthFrom names the Secret the fetch container reads the credential from. The manager never reads it. |
+| `spec.artifact.git.authFrom.name` | `string`, required | Name of the Secret, in this resource's namespace. |
+| `spec.artifact.git.path` | `string`, required | Path is what the commit's tree selects: the schema file, or the migration directory, where "." is the root. Relative, separated by "/", with no empty or ".." element, no backslash and no control character. |
+| `spec.artifact.git.ref` | `object`, required | Ref says which commit: a branch or a tag, polled at the resource's interval, or a commit. |
+| `spec.artifact.git.ref.branch` | `string` | Branch is read at its tip, again at every interval. |
+| `spec.artifact.git.ref.commit` | `string` | Commit is one commit, by its full 40-character id. A server gives a commit no branch or tag points at only when it allows fetching commits by id. |
+| `spec.artifact.git.ref.tag` | `string` | Tag is read at the commit it names, again at every interval. |
+| `spec.artifact.git.transport` | `object` | Transport pins whom the fetch talks to: the CA an https:// server's certificate chains to, or the host keys an ssh:// server presents. |
+| `spec.artifact.git.transport.caFrom` | `object` | CAFrom selects the only roots an https:// server's certificate may chain to. With authFrom, its Secret must hold caSHA256 with the selected bytes' digest. |
+| `spec.artifact.git.transport.caFrom.key` | `string`, required | The key to select from the ConfigMap's Data field. Keys in the BinaryData field are not currently propagated to container env vars. |
+| `spec.artifact.git.transport.caFrom.name` | `string`, default `` | Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
+| `spec.artifact.git.transport.caFrom.optional` | `boolean` | Specify whether the ConfigMap or its key must be defined |
+| `spec.artifact.git.transport.knownHostsFrom` | `object` | KnownHostsFrom selects the host keys an ssh:// server may present; a fetch never trusts a key on first use. With authFrom, its Secret must hold knownHostsSHA256 with the selected bytes' digest. |
+| `spec.artifact.git.transport.knownHostsFrom.key` | `string`, required | The key to select from the ConfigMap's Data field. Keys in the BinaryData field are not currently propagated to container env vars. |
+| `spec.artifact.git.transport.knownHostsFrom.name` | `string`, default `` | Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
+| `spec.artifact.git.transport.knownHostsFrom.optional` | `boolean` | Specify whether the ConfigMap or its key must be defined |
+| `spec.artifact.git.url` | `string`, required | URL of the repository: https:// or ssh://, with no credential, query or fragment. |
 | `spec.artifact.ociRef` | `string` | OCIRef is a desired-schema artifact reference. It may name a tag or a digest; every later operation receives only the resolved digest. |
 | `spec.artifact.registryAuthFrom` | `object` | RegistryAuthFrom names the Secret an operation Pod reads the registry credential from. The process that runs SQL never receives it. |
 | `spec.artifact.registryAuthFrom.dockerConfigJSONKey` | `string`, default `.dockerconfigjson` | DockerConfigJSONKey is the Secret key holding a Docker config document. |
@@ -458,6 +511,26 @@ spec:
 | `status.activeOperation.retryNotBefore` | `string` | RetryNotBefore is when a retried attempt may be dispatched. A retry carries the delay the resource asked for, and carrying it here rather than in a requeue is what makes it survive a restart and an early Job or watch event: those re-enter reconciliation at once, and a delay that lived only in a requeue would be lost with the queue. Absent on a first attempt, which waits for nothing. |
 | `status.activeOperation.source` | `object` | Source is the credential-free artifact binding this operation uses: the resolved digest and the selectors needed to fetch it. Every operation after Resolve carries one, so a newer generation cannot send newly selected credentials to the old artifact's registry. |
 | `status.activeOperation.source.digest` | `string` | Digest is that digest on its own. |
+| `status.activeOperation.source.git` | `object` | Git is the commit a Git source resolved to, where to fetch it from, and the content it must give. |
+| `status.activeOperation.source.git.authFrom` | `object` | AuthFrom names the credential Secret. It is a selector, never the credential. |
+| `status.activeOperation.source.git.authFrom.name` | `string`, required | Name of the Secret, in this resource's namespace. |
+| `status.activeOperation.source.git.commit` | `string`, required | Commit is the full id of the commit. |
+| `status.activeOperation.source.git.contentDigest` | `string`, required | ContentDigest is the content digest of the selected files. |
+| `status.activeOperation.source.git.path` | `string`, required | Path is what the commit's tree selects. |
+| `status.activeOperation.source.git.ref` | `object`, required | Ref is the branch or tag that named the commit when it resolved, or the commit itself. A fetch reads the commit by the ref while the ref still points at it. |
+| `status.activeOperation.source.git.ref.branch` | `string` | Branch is read at its tip, again at every interval. |
+| `status.activeOperation.source.git.ref.commit` | `string` | Commit is one commit, by its full 40-character id. A server gives a commit no branch or tag points at only when it allows fetching commits by id. |
+| `status.activeOperation.source.git.ref.tag` | `string` | Tag is read at the commit it names, again at every interval. |
+| `status.activeOperation.source.git.transport` | `object` | Transport pins the server. |
+| `status.activeOperation.source.git.transport.caFrom` | `object` | CAFrom selects the only roots an https:// server's certificate may chain to. With authFrom, its Secret must hold caSHA256 with the selected bytes' digest. |
+| `status.activeOperation.source.git.transport.caFrom.key` | `string`, required | The key to select from the ConfigMap's Data field. Keys in the BinaryData field are not currently propagated to container env vars. |
+| `status.activeOperation.source.git.transport.caFrom.name` | `string`, default `` | Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
+| `status.activeOperation.source.git.transport.caFrom.optional` | `boolean` | Specify whether the ConfigMap or its key must be defined |
+| `status.activeOperation.source.git.transport.knownHostsFrom` | `object` | KnownHostsFrom selects the host keys an ssh:// server may present; a fetch never trusts a key on first use. With authFrom, its Secret must hold knownHostsSHA256 with the selected bytes' digest. |
+| `status.activeOperation.source.git.transport.knownHostsFrom.key` | `string`, required | The key to select from the ConfigMap's Data field. Keys in the BinaryData field are not currently propagated to container env vars. |
+| `status.activeOperation.source.git.transport.knownHostsFrom.name` | `string`, default `` | Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
+| `status.activeOperation.source.git.transport.knownHostsFrom.optional` | `boolean` | Specify whether the ConfigMap or its key must be defined |
+| `status.activeOperation.source.git.url` | `string`, required | URL of the repository. |
 | `status.activeOperation.source.registryAuthFrom` | `object` | RegistryAuthFrom names the Secret an operation Pod reads the registry credential from. It is a selector, never the credential. |
 | `status.activeOperation.source.registryAuthFrom.dockerConfigJSONKey` | `string`, default `.dockerconfigjson` | DockerConfigJSONKey is the Secret key holding a Docker config document. |
 | `status.activeOperation.source.registryAuthFrom.mode` | `string`, one of `Environment`, `DockerConfigJSON`, default `Environment` | Mode says how the credential reaches the executor: as environment variables, or as a Docker config file. |
@@ -487,6 +560,26 @@ spec:
 | `status.activeOperation.type` | `string`, required, one of `Resolve`, `Verify`, `History`, `Apply` | Type is the operation this claim authorizes. |
 | `status.artifact` | `object` | Artifact is the resolved, credential-free artifact binding every later operation of this cycle uses. A tag resolves once; the digest is what travels. |
 | `status.artifact.digest` | `string` | Digest is that digest on its own. |
+| `status.artifact.git` | `object` | Git is the commit a Git source resolved to, where to fetch it from, and the content it must give. |
+| `status.artifact.git.authFrom` | `object` | AuthFrom names the credential Secret. It is a selector, never the credential. |
+| `status.artifact.git.authFrom.name` | `string`, required | Name of the Secret, in this resource's namespace. |
+| `status.artifact.git.commit` | `string`, required | Commit is the full id of the commit. |
+| `status.artifact.git.contentDigest` | `string`, required | ContentDigest is the content digest of the selected files. |
+| `status.artifact.git.path` | `string`, required | Path is what the commit's tree selects. |
+| `status.artifact.git.ref` | `object`, required | Ref is the branch or tag that named the commit when it resolved, or the commit itself. A fetch reads the commit by the ref while the ref still points at it. |
+| `status.artifact.git.ref.branch` | `string` | Branch is read at its tip, again at every interval. |
+| `status.artifact.git.ref.commit` | `string` | Commit is one commit, by its full 40-character id. A server gives a commit no branch or tag points at only when it allows fetching commits by id. |
+| `status.artifact.git.ref.tag` | `string` | Tag is read at the commit it names, again at every interval. |
+| `status.artifact.git.transport` | `object` | Transport pins the server. |
+| `status.artifact.git.transport.caFrom` | `object` | CAFrom selects the only roots an https:// server's certificate may chain to. With authFrom, its Secret must hold caSHA256 with the selected bytes' digest. |
+| `status.artifact.git.transport.caFrom.key` | `string`, required | The key to select from the ConfigMap's Data field. Keys in the BinaryData field are not currently propagated to container env vars. |
+| `status.artifact.git.transport.caFrom.name` | `string`, default `` | Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
+| `status.artifact.git.transport.caFrom.optional` | `boolean` | Specify whether the ConfigMap or its key must be defined |
+| `status.artifact.git.transport.knownHostsFrom` | `object` | KnownHostsFrom selects the host keys an ssh:// server may present; a fetch never trusts a key on first use. With authFrom, its Secret must hold knownHostsSHA256 with the selected bytes' digest. |
+| `status.artifact.git.transport.knownHostsFrom.key` | `string`, required | The key to select from the ConfigMap's Data field. Keys in the BinaryData field are not currently propagated to container env vars. |
+| `status.artifact.git.transport.knownHostsFrom.name` | `string`, default `` | Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
+| `status.artifact.git.transport.knownHostsFrom.optional` | `boolean` | Specify whether the ConfigMap or its key must be defined |
+| `status.artifact.git.url` | `string`, required | URL of the repository. |
 | `status.artifact.registryAuthFrom` | `object` | RegistryAuthFrom names the Secret an operation Pod reads the registry credential from. It is a selector, never the credential. |
 | `status.artifact.registryAuthFrom.dockerConfigJSONKey` | `string`, default `.dockerconfigjson` | DockerConfigJSONKey is the Secret key holding a Docker config document. |
 | `status.artifact.registryAuthFrom.mode` | `string`, one of `Environment`, `DockerConfigJSON`, default `Environment` | Mode says how the credential reaches the executor: as environment variables, or as a Docker config file. |
