@@ -1594,14 +1594,14 @@ const (
 type ConditionReason string
 
 const (
-	ReasonActive                       ConditionReason = "Active"
-	ReasonApplyDisabled                ConditionReason = "ApplyDisabled"
-	ReasonApplyOutcomeUnknown          ConditionReason = "ApplyOutcomeUnknown"
-	ReasonApplyPending                 ConditionReason = "ApplyPending"
-	ReasonApprovalRevoked              ConditionReason = "ApprovalRevoked"
-	ReasonApprovedPlan                 ConditionReason = "ApprovedPlan"
-	ReasonArtifactUnverified           ConditionReason = "ArtifactUnverified"
-	ReasonAwaitingApproval             ConditionReason = "AwaitingApproval"
+	ReasonActive              ConditionReason = "Active"
+	ReasonApplyDisabled       ConditionReason = "ApplyDisabled"
+	ReasonApplyOutcomeUnknown ConditionReason = "ApplyOutcomeUnknown"
+	ReasonApplyPending        ConditionReason = "ApplyPending"
+	ReasonApprovalRevoked     ConditionReason = "ApprovalRevoked"
+	ReasonApprovedPlan        ConditionReason = "ApprovedPlan"
+	ReasonArtifactUnverified  ConditionReason = "ArtifactUnverified"
+	ReasonAwaitingApproval    ConditionReason = "AwaitingApproval"
 	// ReasonCommitResolved says a Git source's ref was read at a commit, and
 	// the content digest of the files it selects there recorded.
 	ReasonCommitResolved               ConditionReason = "CommitResolved"
