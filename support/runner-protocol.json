@@ -162,6 +162,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:4fd31c3d427ba9803a322c3da91ff2e80a38640fcc76e14e1b67d5115f655d56",
       "reason": "Copy a ConfigMap source's snapshot (#698). A new mode, --materialize-source-snapshot with --materialize-to and --content-digest, runs in an init container: it reads the mounted snapshot, refuses it unless the manifest gives the bound content digest, every file has the size and SHA-256 its line names, the manifest is canonical and no other key is present, and only then copies the files into the source volume. It opens no connection and reads no credential. Nothing a plan or an approval made under protocol 1 relies on changed: the operation modes, their commands, payloads, result frames, delivery identity, SQL authority and retry limits are as they were, and an OCI source is fetched as before. A runner without the mode refuses the unknown flag before the container that holds the database URL starts."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:d65c5000b8be5ff973368a64658cc87555f3cbcff47f4c8c03faa7f1055d78ad",
+      "reason": "Resolve and fetch a Git source (#699). A Resolve operation given a Git source runs Ptah's git pull and returns the commit and the content digest in two new result fields, resolvedCommit and resolvedContentDigest, which the parser admits only on a Resolve and never beside OCI descriptor evidence; a new mode, --fetch-git-source, runs in an init container, pulls the bound commit held to its digest, reads the written files back and copies them only if they give it. Both refuse a credential its Secret does not grant for the URL's host, or trust files whose digests it does not grant, before Ptah runs, with invalid_git_access as a pre-child refusal. Nothing a plan or an approval made under protocol 1 relies on changed: OCI and ConfigMap operations, their commands, payloads, result frames, delivery identity, SQL authority and retry limits are as they were. An older manager ignores the two fields and never sends a Git source."
     }
   ]
 }
