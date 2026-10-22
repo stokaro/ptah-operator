@@ -97,10 +97,9 @@ reaches it only from Jobs, through Ptah's pull. Resolve is a Job that fetches
 the commit the ref names, a branch at its tip, a tag at the commit it names,
 or a commit by its id, and reports that commit and the content digest of the
 selected files, computed as for a ConfigMap source. The status records the
-repository, ref and path it answered beside them. There is no verification
-policy for such a source, so there is no Verify step and no
-`ArtifactVerified` condition; `ArtifactResolved` says `CommitResolved` and
-names the commit.
+repository, ref and path it answered beside them. As with a ConfigMap source,
+observation follows Resolve directly, with no verification policy to check;
+`ArtifactResolved` says `CommitResolved` and names the commit.
 
 Every later operation that reads the files fetches that commit again, in an
 init container that holds the credential, and refuses content other than the

@@ -698,6 +698,39 @@ var ConfigMapSources = define[ConfigMapSourceInputs](Phase{
 	},
 })
 
+// GitSourceInputs is what the driver hands the Git source phase. It runs in
+// the namespace the data plane stood up, on its PostgreSQL server, and serves
+// its repository from the fixture image.
+type GitSourceInputs struct {
+	// Kubeconfig names the cluster the driver stood up.
+	Kubeconfig string `env:"E2E_KUBECONFIG"`
+	// TestNamespace is the namespace the data plane stood up in preparation,
+	// with its PostgreSQL server, the Secret that holds its password and the
+	// registry pull Secret.
+	TestNamespace string `env:"E2E_TEST_NAMESPACE"`
+	// FixtureImage carries the Git server.
+	FixtureImage string `env:"E2E_FIXTURE_IMAGE"`
+}
+
+// GitSources proves a schema and a migration sequence whose source is Git: a
+// schema from a branch over HTTPS with a token and a CA, applied through the
+// commit a Resolve Job found and the fetch every later Job made; the branch
+// moving to a commit that changes no selected file, which plans nothing, and
+// to one that changes the schema, which plans and applies; a migration
+// directory from a tag over SSH with a deploy key and pinned known hosts; and
+// a credential granted for another host, refused before Ptah runs.
+var GitSources = define[GitSourceInputs](Phase{
+	Name:    "git-sources",
+	Test:    "TestGitSources",
+	Timeout: 60 * time.Minute,
+	Scenarios: []string{
+		"git-schema",
+		"git-schema-moves",
+		"git-migration-ssh",
+		"git-credential-refused",
+	},
+})
+
 // all is every phase the harness carries, in the order the driver runs them.
 var all = []Phase{
 	Upgrade.Phase,
@@ -714,6 +747,7 @@ var all = []Phase{
 	ReferenceDataPostgreSQL.Phase,
 	ReferenceDataMySQL.Phase,
 	ConfigMapSources.Phase,
+	GitSources.Phase,
 	AlertingCertificates.Phase,
 	AlertingOperations.Phase,
 	Alerting.Phase,

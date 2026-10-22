@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-10-23T08:22:31.746502+00:00",
+  "frozenAt": "2026-10-23T09:42:34.162768+00:00",
   "profileSourceCommit": "1259f4d59343fef049307085e3ea77d2971677cb",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
@@ -24,7 +24,7 @@
     },
     {
       "path": "support/e2e-suites.json",
-      "sha256": "24ae5a159c06c874f46188bb676a03af7d0d567a39115c58836129ddcdfc9c33"
+      "sha256": "74a483cf0ea6fd85c550b89b4c96893b220f30a23794f81f42fab7f6175cae69"
     },
     {
       "path": "support/ptah.json",
@@ -53,7 +53,7 @@
   ],
   "functionalMatrix": {
     "path": "support/qualification/0.2.0-functional-matrix.md",
-    "sha256": "0ceb5d092a50d65f1507d1b028d8a6caf3d9019759a5948e0e627df2552a3079",
+    "sha256": "632b4f9cd83544e34a3ade527110b091ac9d7447b967c537f4a03ca33c2c678d",
     "generatedFromCommit": "a8b90b5816e9e45d6ba97a1bf006918896d892e3",
     "command": "go run ./hack/acceptancecoverage",
     "kubernetesMinors": [
@@ -68,7 +68,7 @@
     "cellsPerPlatform": 27,
     "requiredCells": 54,
     "additionalRequirements": "Q-01 through Q-12 in support/qualification/0.2.0-coverage.md remain required; the functional matrix alone is insufficient.",
-    "sourceChanges": "Move plan-store alerting from lifecycle to certificates and PostgreSQL reference data from certificates to data-plane. Master CI run 37420035400 passed in 92m45s; its slowest lifecycle spent 20m02s on plan-store alerting before the upgrade fault window. Rebalance the existing nine suites without adding phases or scenarios. All 17 phases, 345 scenario/engine/family rows, supported minors and platforms, observation windows, and Q-01 through Q-12 targets remain unchanged. Revision 42 changes only the line naming the Ptah build under test, now the v0.13.0 release image; no phase, scenario, cell, platform or target changes. Revision 54 adds the data-plane scenario postgresql-extension-drift, which stores Ptah v0.14.0's feature category for a dropped PostgreSQL extension through a cluster; phases, suites, cells, platforms and targets are unchanged. Revision 55 adds the phase configmap-sources to the schema-approvals suite: a schema and a migration sequence read from ConfigMaps with no registry, edits to a selected and an unselected key, snapshot retention, and a replaced snapshot the Pod refuses. Suites, cells, platforms and targets are unchanged."
+    "sourceChanges": "Move plan-store alerting from lifecycle to certificates and PostgreSQL reference data from certificates to data-plane. Master CI run 37420035400 passed in 92m45s; its slowest lifecycle spent 20m02s on plan-store alerting before the upgrade fault window. Rebalance the existing nine suites without adding phases or scenarios. All 17 phases, 345 scenario/engine/family rows, supported minors and platforms, observation windows, and Q-01 through Q-12 targets remain unchanged. Revision 42 changes only the line naming the Ptah build under test, now the v0.13.0 release image; no phase, scenario, cell, platform or target changes. Revision 54 adds the data-plane scenario postgresql-extension-drift, which stores Ptah v0.14.0's feature category for a dropped PostgreSQL extension through a cluster; phases, suites, cells, platforms and targets are unchanged. Revision 55 adds the phase configmap-sources to the schema-approvals suite: a schema and a migration sequence read from ConfigMaps with no registry, edits to a selected and an unselected key, snapshot retention, and a replaced snapshot the Pod refuses. Suites, cells, platforms and targets are unchanged. Revision 57 adds the phase git-sources to the schema-approvals suite: a schema and a migration sequence read from Git over HTTPS and SSH, a branch that moves without and with a selected change, and a credential granted for another host. Suites, cells, platforms and targets are unchanged."
   },
   "publishedPredecessors": {
     "checkedAt": "2026-10-23T08:22:31+00:00",
@@ -79,10 +79,10 @@
     "disposition": "v0.2.5 is the published predecessor of the v0.2.6 candidate. The upgrade from it is walked through both releases' guides by support/qualification/probes/fresh_install.py --upgrade-from on both platforms; the synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 56,
+  "revision": 57,
   "supersedes": {
-    "freezeCommit": "e9543f6db1c2924f1020e3910a73b998338b1d9b",
-    "sha256": "48edf873b6646790ed87711538d909b77daf7f256f99740d46e3530b10d38869"
+    "freezeCommit": "90ceaeeab6a19783a2072cd2673577490d683e80",
+    "sha256": "2e375f4b8efeaf14d7d21af4ffe134b622bc3b8e55708a2cd8a84b62fe39a9b8"
   },
-  "revisionReason": "Declare the published v0.2.6 in support/ptah.json, as the release procedure asks once the tag exists, and record v0.2.5 as its published predecessor. The profile, its targets and every other input are unchanged; the 0.2.6 qualification runs measure revision 54, whose profile and monitoring files are those of revision 48."
+  "revisionReason": "Add the phase git-sources to the schema-approvals suite (#699): a schema from a Git branch over HTTPS with a token and a CA, the branch moving to a commit that changes no selected file and then to one that changes the schema, a migration directory from a tag over SSH with a deploy key and pinned known hosts, and a credential granted for another host refused before Ptah runs. The functional matrix lists the phase on each minor's schema-approvals line. Suites, cells, the profile, its targets and every other input are unchanged."
 }

@@ -34,6 +34,8 @@ var phaseFamilies = map[string][]string{
 	"reference-data-mysql":         {"PtahSchema"},
 	// A schema and a migration sequence, each read from a ConfigMap.
 	"configmap-sources": {"PtahMigration", "PtahSchema"},
+	// A schema and a migration sequence, each read from Git.
+	"git-sources": {"PtahMigration", "PtahSchema"},
 	// The alerts it drives to a receiver are about both families: an Apply
 	// nobody accounted for is a migration's, the stalled operation a schema's.
 	"alerting-operations":   {"PtahMigration", "PtahSchema"},

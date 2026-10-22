@@ -3261,6 +3261,13 @@ E2E_KUBECONFIG=$KUBECONFIG_FILE \
 E2E_TEST_NAMESPACE=$TEST_NAMESPACE \
 	run_recorded_phase configmap-sources run_go_phase configmap-sources
 
+# A schema and a migration sequence whose source is Git, served from the
+# fixture image inside the test namespace, on the prepared PostgreSQL server.
+E2E_KUBECONFIG=$KUBECONFIG_FILE \
+E2E_TEST_NAMESPACE=$TEST_NAMESPACE \
+E2E_FIXTURE_IMAGE=$E2E_FIXTURE_IMAGE \
+	run_recorded_phase git-sources run_go_phase git-sources
+
 # Alerting creates its own native producers from the prepared databases and
 # registry. Operation incidents have their own suite; infrastructure faults run
 # in lifecycle before uninstall. All alert phases run sequentially when no suite is selected.

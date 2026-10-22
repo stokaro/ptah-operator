@@ -87,8 +87,8 @@
     {
       "name": "schema-approvals",
       "slug": "schema-approvals",
-      "summary": "Schema approval bindings and runtime refusals on both engines, and ConfigMap sources",
-      "phases": ["schema-approvals", "configmap-sources"],
+      "summary": "Schema approval bindings and runtime refusals on both engines, and ConfigMap and Git sources",
+      "phases": ["schema-approvals", "configmap-sources", "git-sources"],
       "prepare": ["assert", "dataplane"]
     },
     {
