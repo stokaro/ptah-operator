@@ -120,7 +120,7 @@ func TestFetchGitSourceRefusesOtherContent(t *testing.T) {
 		},
 		{
 			name:        "an ungranted credential",
-			environment: gitFetchEnvironment("directory", "db", digest, envGitPassword+"=token"),
+			environment: gitFetchEnvironment("directory", "db", digest, EnvGitPassword+"=token"),
 			refusal:     "not granted for the source's host",
 		},
 	} {

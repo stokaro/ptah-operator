@@ -53,9 +53,9 @@ const (
 
 	// The credential variables Ptah reads. The kubelet sets them from the
 	// credential Secret, in the fetch container only.
-	envGitUsername   = "PTAH_GIT_USERNAME"
-	envGitPassword   = "PTAH_GIT_PASSWORD" // #nosec G101 -- the name of a variable, not a credential
-	envGitSSHKeyFile = "PTAH_GIT_SSH_KEY_FILE"
+	EnvGitUsername   = "PTAH_GIT_USERNAME"
+	EnvGitPassword   = "PTAH_GIT_PASSWORD" // #nosec G101 -- the name of a variable, not a credential
+	EnvGitSSHKeyFile = "PTAH_GIT_SSH_KEY_FILE"
 
 	maxGitTrustBytes int64 = 1 << 20
 )
@@ -149,7 +149,7 @@ func PrepareGitSourceAccess(source GitSource, environment []string, tempDir stri
 		return gitTrust{}, nil, err
 	}
 	values := environmentMap(environment)
-	credentialed := values[envGitUsername] != "" || values[envGitPassword] != "" || values[envGitSSHKeyFile] != ""
+	credentialed := values[EnvGitUsername] != "" || values[EnvGitPassword] != "" || values[EnvGitSSHKeyFile] != ""
 	if credentialed {
 		if grant := strings.ToLower(values[EnvGitHostGrant]); grant == "" || grant != source.authority() {
 			return gitTrust{}, nil, errors.New("the Git credential is not granted for the source's host")

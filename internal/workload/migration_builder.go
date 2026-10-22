@@ -173,6 +173,17 @@ func migrationDataPlane(
 		if migration.Spec.Artifact.ConfigMap != nil {
 			return nil, nil, nil, nil, errors.New("a ConfigMap source is read by the manager and has no Resolve or Verify Job")
 		}
+		if git := migration.Spec.Artifact.Git; git != nil {
+			if operation.Type == operatorv1alpha1.MigrationOperationVerify {
+				return nil, nil, nil, nil, errors.New("a Git source has no verification policy and no Verify Job")
+			}
+			var err error
+			environment, volumes, mounts, err = addGitAccess(gitResolveRequest(*git, false), environment, volumes, mounts)
+			if err != nil {
+				return nil, nil, nil, nil, err
+			}
+			break
+		}
 		// Only these two reach the registry from the main container, and
 		// neither is given a database credential: the registry and the database
 		// are never open to the same process.
@@ -382,7 +393,7 @@ func validateMigration(migration *operatorv1alpha1.PtahMigration) error {
 	if !executionBindingIDPattern.MatchString(migration.Status.ExecutionBinding.Epoch) {
 		return errors.New("migration execution binding epoch is invalid")
 	}
-	if migration.Spec.Artifact.ConfigMap != nil {
+	if migration.Spec.Artifact.ConfigMap != nil || migration.Spec.Artifact.Git != nil {
 		return nil
 	}
 	return validateRequestedReference(migration.Spec.Artifact.OCIRef)

@@ -85,6 +85,18 @@ const (
 	// lowercase SHA-256 digest of the selected ConfigMap bytes. It is
 	// intentionally not selectable by a PtahSchema author.
 	RegistryCASHA256SecretKey = "caSHA256"
+
+	// The fixed keys of a Git credential Secret. GitHostSecretKey is the
+	// authority, host[:port], the credential owner grants the credential
+	// for; GitCASHA256SecretKey and GitKnownHostsSHA256SecretKey are the
+	// "sha256:" digests of the trust it may be sent under. A resource's
+	// author selects the Secret, never the keys.
+	GitUsernameSecretKey         = "username"
+	GitPasswordSecretKey         = "password"
+	GitSSHPrivateKeySecretKey    = "sshPrivateKey"
+	GitHostSecretKey             = "host"
+	GitCASHA256SecretKey         = "caSHA256"
+	GitKnownHostsSHA256SecretKey = "knownHostsSHA256"
 )
 
 // PtahSchemaSpec declares one desired schema and one database target.
@@ -368,6 +380,8 @@ type GitAuthSource struct {
 }
 
 // GitTransportSpec pins the server a Git fetch talks to.
+// +kubebuilder:validation:XValidation:rule="!has(self.caFrom) || (self.caFrom.name.size() > 0 && self.caFrom.key.size() > 0 && (!has(self.caFrom.optional) || !self.caFrom.optional))",message="caFrom must name a required ConfigMap key"
+// +kubebuilder:validation:XValidation:rule="!has(self.knownHostsFrom) || (self.knownHostsFrom.name.size() > 0 && self.knownHostsFrom.key.size() > 0 && (!has(self.knownHostsFrom.optional) || !self.knownHostsFrom.optional))",message="knownHostsFrom must name a required ConfigMap key"
 type GitTransportSpec struct {
 	// CAFrom selects the only roots an https:// server's certificate may
 	// chain to. With authFrom, its Secret must hold caSHA256 with the
@@ -461,8 +475,16 @@ type SourceSnapshotBinding struct {
 	SchemaFile string `json:"schemaFile,omitempty"`
 }
 
-// GitSourceRevision is the commit a Git source last resolved to.
+// GitSourceRevision is the commit a Git source last resolved to, and what
+// was asked for: another repository, ref or path in the spec is another
+// source, and is resolved before anything reads it.
 type GitSourceRevision struct {
+	// URL of the repository.
+	URL string `json:"url"`
+	// Ref is the branch, tag or commit that was resolved.
+	Ref GitRef `json:"ref"`
+	// Path is what the commit's tree selects.
+	Path string `json:"path"`
 	// Commit is the full id of the commit the ref named.
 	// +kubebuilder:validation:Pattern=`^[0-9a-f]{40}$`
 	Commit string `json:"commit"`

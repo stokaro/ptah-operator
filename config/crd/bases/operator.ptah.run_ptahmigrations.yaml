@@ -5,7 +5,7 @@ metadata:
   annotations:
     operator.ptah.run/controller-state-version: "1"
     operator.ptah.run/crd-schema-version: "4"
-    operator.ptah.run/crd-schema-digest: "sha256:0d169b13310f165c1c63e9111d279a76a5077af2bc13d8aa5f90014e58a00f81"
+    operator.ptah.run/crd-schema-digest: "sha256:5c7cf04341da6aa94663b25e2d57d1db2f1c17ce7241f6a68cf846498eddf5d4"
     controller-gen.kubebuilder.io/version: v0.22.0
   name: ptahmigrations.operator.ptah.run
 spec:
@@ -152,6 +152,15 @@ spec:
                             type: object
                             x-kubernetes-map-type: atomic
                         type: object
+                        x-kubernetes-validations:
+                        - message: caFrom must name a required ConfigMap key
+                          rule: '!has(self.caFrom) || (self.caFrom.name.size() > 0
+                            && self.caFrom.key.size() > 0 && (!has(self.caFrom.optional)
+                            || !self.caFrom.optional))'
+                        - message: knownHostsFrom must name a required ConfigMap key
+                          rule: '!has(self.knownHostsFrom) || (self.knownHostsFrom.name.size()
+                            > 0 && self.knownHostsFrom.key.size() > 0 && (!has(self.knownHostsFrom.optional)
+                            || !self.knownHostsFrom.optional))'
                       url:
                         maxLength: 2048
                         minLength: 9
@@ -1281,6 +1290,16 @@ spec:
                                 type: object
                                 x-kubernetes-map-type: atomic
                             type: object
+                            x-kubernetes-validations:
+                            - message: caFrom must name a required ConfigMap key
+                              rule: '!has(self.caFrom) || (self.caFrom.name.size()
+                                > 0 && self.caFrom.key.size() > 0 && (!has(self.caFrom.optional)
+                                || !self.caFrom.optional))'
+                            - message: knownHostsFrom must name a required ConfigMap
+                                key
+                              rule: '!has(self.knownHostsFrom) || (self.knownHostsFrom.name.size()
+                                > 0 && self.knownHostsFrom.key.size() > 0 && (!has(self.knownHostsFrom.optional)
+                                || !self.knownHostsFrom.optional))'
                           url:
                             type: string
                         required:
@@ -1478,6 +1497,15 @@ spec:
                             type: object
                             x-kubernetes-map-type: atomic
                         type: object
+                        x-kubernetes-validations:
+                        - message: caFrom must name a required ConfigMap key
+                          rule: '!has(self.caFrom) || (self.caFrom.name.size() > 0
+                            && self.caFrom.key.size() > 0 && (!has(self.caFrom.optional)
+                            || !self.caFrom.optional))'
+                        - message: knownHostsFrom must name a required ConfigMap key
+                          rule: '!has(self.knownHostsFrom) || (self.knownHostsFrom.name.size()
+                            > 0 && self.knownHostsFrom.key.size() > 0 && (!has(self.knownHostsFrom.optional)
+                            || !self.knownHostsFrom.optional))'
                       url:
                         type: string
                     required:

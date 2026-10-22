@@ -17,7 +17,7 @@ var protectedEnvironmentKeys = []string{
 	EnvDevelopmentDatabaseURL,
 	EnvOCIPassword,
 	EnvOCIToken,
-	envGitPassword,
+	EnvGitPassword,
 }
 
 type Redactor struct {

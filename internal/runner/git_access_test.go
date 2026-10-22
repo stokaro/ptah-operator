@@ -79,34 +79,34 @@ func TestPrepareGitSourceAccessHoldsTheCredentialToItsGrants(t *testing.T) {
 	}{
 		{name: "anonymous https", source: https},
 		{name: "anonymous https with a CA", source: https, environment: []string{EnvGitCASourceFile + "=" + caFile}},
-		{name: "granted password", source: https, environment: []string{envGitPassword + "=token", EnvGitHostGrant + "=GIT.EXAMPLE.COM"}},
+		{name: "granted password", source: https, environment: []string{EnvGitPassword + "=token", EnvGitHostGrant + "=GIT.EXAMPLE.COM"}},
 		{name: "granted password and CA", source: https, environment: []string{
-			envGitPassword + "=token", EnvGitHostGrant + "=git.example.com",
+			EnvGitPassword + "=token", EnvGitHostGrant + "=git.example.com",
 			EnvGitCASourceFile + "=" + caFile, EnvGitCASHA256Grant + "=" + gitTestDigest(ca),
 		}},
 		{name: "granted ssh key", source: ssh, environment: []string{
-			envGitSSHKeyFile + "=/credentials/git/ssh", EnvGitHostGrant + "=git.example.com:2222",
+			EnvGitSSHKeyFile + "=/credentials/git/ssh", EnvGitHostGrant + "=git.example.com:2222",
 			EnvGitKnownHostsSourceFile + "=" + knownHostsFile, EnvGitKnownHostsSHA256Grant + "=" + gitTestDigest(knownHosts),
 		}},
-		{name: "credential without a grant", source: https, environment: []string{envGitPassword + "=token"},
+		{name: "credential without a grant", source: https, environment: []string{EnvGitPassword + "=token"},
 			refusal: "not granted for the source's host"},
-		{name: "credential granted for another host", source: https, environment: []string{envGitUsername + "=bot", EnvGitHostGrant + "=attacker.example"},
+		{name: "credential granted for another host", source: https, environment: []string{EnvGitUsername + "=bot", EnvGitHostGrant + "=attacker.example"},
 			refusal: "not granted for the source's host"},
 		{name: "ssh grant without its port", source: ssh, environment: []string{
-			envGitSSHKeyFile + "=/credentials/git/ssh", EnvGitHostGrant + "=git.example.com",
+			EnvGitSSHKeyFile + "=/credentials/git/ssh", EnvGitHostGrant + "=git.example.com",
 			EnvGitKnownHostsSourceFile + "=" + knownHostsFile, EnvGitKnownHostsSHA256Grant + "=" + gitTestDigest(knownHosts),
 		}, refusal: "not granted for the source's host"},
 		{name: "grant without a credential", source: https, environment: []string{EnvGitHostGrant + "=git.example.com"},
 			refusal: "without a credential"},
 		{name: "credential with an ungranted CA", source: https, environment: []string{
-			envGitPassword + "=token", EnvGitHostGrant + "=git.example.com", EnvGitCASourceFile + "=" + caFile,
+			EnvGitPassword + "=token", EnvGitHostGrant + "=git.example.com", EnvGitCASourceFile + "=" + caFile,
 		}, refusal: "not the one the credential's owner granted"},
 		{name: "credential with another CA", source: https, environment: []string{
-			envGitPassword + "=token", EnvGitHostGrant + "=git.example.com",
+			EnvGitPassword + "=token", EnvGitHostGrant + "=git.example.com",
 			EnvGitCASourceFile + "=" + caFile, EnvGitCASHA256Grant + "=" + gitTestDigest([]byte("other")),
 		}, refusal: "not the one the credential's owner granted"},
 		{name: "CA grant without the CA", source: https, environment: []string{
-			envGitPassword + "=token", EnvGitHostGrant + "=git.example.com", EnvGitCASHA256Grant + "=" + gitTestDigest(ca),
+			EnvGitPassword + "=token", EnvGitHostGrant + "=git.example.com", EnvGitCASHA256Grant + "=" + gitTestDigest(ca),
 		}, refusal: "without the certificate authority"},
 		{name: "ssh without known hosts", source: ssh, refusal: "needs known hosts"},
 		{name: "unreadable CA", source: https, environment: []string{EnvGitCASourceFile + "=" + filepath.Join(directory, "missing")},
@@ -156,7 +156,7 @@ func TestPrepareGitSourceAccessCopiesTheCheckedBytes(t *testing.T) {
 	ca := []byte("granted CA\n")
 	caFile := writeGitTrustSource(t, directory, "ca.pem", ca)
 	trust, cleanup, err := PrepareGitSourceAccess(GitSource{URL: gitTestURL, Branch: "main", Path: "db"}, []string{
-		envGitPassword + "=token", EnvGitHostGrant + "=git.example.com",
+		EnvGitPassword + "=token", EnvGitHostGrant + "=git.example.com",
 		EnvGitCASourceFile + "=" + caFile, EnvGitCASHA256Grant + "=" + gitTestDigest(ca),
 	}, directory)
 	if err != nil {
@@ -239,7 +239,7 @@ func TestRunnerResolvesAGitSourceWithoutHandingPtahTheGrants(t *testing.T) {
 				t.Errorf("the pull ran as %q", spec.Args)
 			}
 			values := environmentMap(spec.Env)
-			if values[envGitPassword] != "token" {
+			if values[EnvGitPassword] != "token" {
 				t.Error("Ptah did not receive the credential it authenticates with")
 			}
 			for _, name := range []string{EnvGitHostGrant, EnvGitURL, EnvGitBranch, EnvGitPath, EnvGitSelects} {
@@ -251,7 +251,7 @@ func TestRunnerResolvesAGitSourceWithoutHandingPtahTheGrants(t *testing.T) {
 	}}}
 	result := Run(t.Context(), Config{
 		Operation:   OperationResolve,
-		Environment: gitResolveEnvironment(envGitPassword+"=token", EnvGitHostGrant+"=git.example.com"),
+		Environment: gitResolveEnvironment(EnvGitPassword+"=token", EnvGitHostGrant+"=git.example.com"),
 		Executor:    executor,
 		TempDir:     t.TempDir(),
 	})
@@ -275,7 +275,7 @@ func TestRunnerRefusesAnUngrantedGitCredentialBeforePtahRuns(t *testing.T) {
 	executor := &scriptedExecutor{t: t}
 	result := Run(t.Context(), Config{
 		Operation:   OperationResolve,
-		Environment: gitResolveEnvironment(envGitPassword+"=token", EnvGitHostGrant+"=attacker.example"),
+		Environment: gitResolveEnvironment(EnvGitPassword+"=token", EnvGitHostGrant+"=attacker.example"),
 		Executor:    executor,
 		TempDir:     t.TempDir(),
 	})

@@ -4176,7 +4176,7 @@ func artifactAccessBinding(schema *operatorv1alpha1.PtahSchema) *operatorv1alpha
 	if schema == nil {
 		return nil
 	}
-	if access := sourcebinding.SchemaAccess(schema.Status.Source); access != nil {
+	if access := sourcebinding.SchemaAccess(schema.Spec.Desired, schema.Status.Source); access != nil {
 		return access
 	}
 	binding := &operatorv1alpha1.SourceAccessBinding{
