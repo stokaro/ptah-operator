@@ -27,7 +27,7 @@ func TestRunningMigrationPlanRequiresItsOwnPublishedArtifact(t *testing.T) {
 	resource := &ptahv1alpha1.PtahMigration{ObjectMeta: metav1.ObjectMeta{Name: "running", Namespace: "test", UID: "migration", Generation: 2},
 		Status: ptahv1alpha1.PtahMigrationStatus{ObservedGeneration: 2, Phase: ptahv1alpha1.MigrationPhaseAwaitingApproval,
 			Plan:     &ptahv1alpha1.ImmutableObjectReference{Name: plan.Name, UID: plan.UID},
-			Artifact: &ptahv1alpha1.OCIArtifactAccessBinding{Digest: digest},
+			Artifact: &ptahv1alpha1.SourceAccessBinding{Digest: digest},
 		}}
 	resource.Spec.Artifact.OCIRef = reference
 	if err := runningMigrationApprovalPlan(resource, plan, reference, digest, []int64{2, 3}); err != nil {
@@ -201,7 +201,7 @@ func runningMigrationExecutorFixture() (*ptahv1alpha1.PtahMigration, *ptahv1alph
 		StartedAt: metav1.NewTime(at), ExecutionNotAfter: &horizon, DispatchStarted: true,
 		ExecutionBindingID: ftEpoch, PlanRef: before.Status.Plan.DeepCopy(),
 		AdmissionSnapshot: &ptahv1alpha1.PodAdmissionSnapshot{}, LeaseEpoch: ftEpoch, LeaseDurationSeconds: 360,
-		Source: &ptahv1alpha1.OCIArtifactAccessBinding{}, Target: &ptahv1alpha1.DatabaseTargetBinding{},
+		Source: &ptahv1alpha1.SourceAccessBinding{}, Target: &ptahv1alpha1.DatabaseTargetBinding{},
 	}
 	held := before.DeepCopy()
 	held.ResourceVersion, held.Status.Plan = "20", nil

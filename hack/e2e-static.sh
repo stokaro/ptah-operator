@@ -2388,7 +2388,7 @@ hook_service_account_name=$(awk '
 [ "$(grep -Fc -- \
 	"operator.ptah.run/hook-service-account-name: \"$hook_service_account_name\"" \
 	"$ADMISSION_RENDER")" -eq 2 ]
-# The release keeps nine admission policies -- six on the manager's own
+# The release keeps ten admission policies -- seven on the manager's own
 # writes, the apply-policy guard, and the two that keep status and the copy of
 # an unresolved run the manager's -- and each is an ordinary release object: no
 # hook annotation, no keep policy and no parameter. Their
@@ -2402,12 +2402,12 @@ controller_guard_policy_names() {
     ' "$1" | sort
 }
 controller_guard_names=$(controller_guard_policy_names "$CRD_FULL_RENDER")
-[ "$(printf '%s\n' "$controller_guard_names" | grep -c .)" -eq 9 ] || {
-	printf '%s\n' 'e2e static: the release does not render exactly nine admission policies' >&2
+[ "$(printf '%s\n' "$controller_guard_names" | grep -c .)" -eq 10 ] || {
+	printf '%s\n' 'e2e static: the release does not render exactly ten admission policies' >&2
 	exit 1
 }
-[ "$(grep -Fxc 'kind: ValidatingAdmissionPolicyBinding' "$CRD_FULL_RENDER")" -eq 9 ] || {
-	printf '%s\n' 'e2e static: the release does not render exactly nine admission policy bindings' >&2
+[ "$(grep -Fxc 'kind: ValidatingAdmissionPolicyBinding' "$CRD_FULL_RENDER")" -eq 10 ] || {
+	printf '%s\n' 'e2e static: the release does not render exactly ten admission policy bindings' >&2
 	exit 1
 }
 for controller_guard_family in \
@@ -2415,6 +2415,7 @@ for controller_guard_family in \
 	job-write-guard \
 	chunk-write-guard \
 	projection-write-guard \
+	snapshot-delete-guard \
 	plan-write-guard \
 	migration-plan-write-guard \
 	apply-policy-guard \
@@ -2488,11 +2489,11 @@ grep -F -- 'expression: "[\"platform:apply-policy\", \"system:serviceaccounts:fl
 	printf '%s\n' 'e2e static: the exempt groups an installer names do not reach the apply-policy guard' >&2
 	exit 1
 }
-# Off, the release renders the other eight policies and no trace of this one,
+# Off, the release renders the other nine policies and no trace of this one,
 # so an upgrade that turns it off removes it.
-[ "$(controller_guard_policy_names "$APPLY_POLICY_GUARD_OFF_RENDER" | grep -c .)" -eq 8 ] &&
-	[ "$(grep -Fxc 'kind: ValidatingAdmissionPolicyBinding' "$APPLY_POLICY_GUARD_OFF_RENDER")" -eq 8 ] || {
-	printf '%s\n' 'e2e static: turning the apply-policy guard off does not leave exactly the other eight policies' >&2
+[ "$(controller_guard_policy_names "$APPLY_POLICY_GUARD_OFF_RENDER" | grep -c .)" -eq 9 ] &&
+	[ "$(grep -Fxc 'kind: ValidatingAdmissionPolicyBinding' "$APPLY_POLICY_GUARD_OFF_RENDER")" -eq 9 ] || {
+	printf '%s\n' 'e2e static: turning the apply-policy guard off does not leave exactly the other nine policies' >&2
 	exit 1
 }
 if grep -F 'apply-policy-guard' "$APPLY_POLICY_GUARD_OFF_RENDER" >/dev/null; then
@@ -2524,8 +2525,10 @@ grep -F -- \
 # read from the constant rather than restated.
 plan_contract_version=$(sed -n 's/^[[:space:]]*CurrentPlanContractVersion int32 = \([1-9][0-9]*\)$/\1/p' \
 	"$ROOT_DIR/internal/fingerprint/fingerprint.go")
-[ -n "$plan_contract_version" ] || {
-	printf '%s\n' 'e2e static: internal/fingerprint/fingerprint.go declares no plan contract version' >&2
+source_plan_contract_version=$(sed -n 's/^[[:space:]]*SourcePlanContractVersion int32 = \([1-9][0-9]*\)$/\1/p' \
+	"$ROOT_DIR/internal/fingerprint/fingerprint.go")
+[ -n "$plan_contract_version" ] && [ -n "$source_plan_contract_version" ] || {
+	printf '%s\n' 'e2e static: internal/fingerprint/fingerprint.go declares no plan contract versions' >&2
 	exit 1
 }
 for controller_object_marker in \
@@ -2547,7 +2550,9 @@ for controller_object_marker in \
 	'dyn(object).spec.ttlSecondsAfterFinished == 300' \
 	'dyn(object).binaryData[\"chunk\"].size() <= 699052' \
 	'dyn(object).spec.data.size() <= 699052' \
-	"dyn(object).spec.contractVersion == $plan_contract_version && has(dyn(dyn(object).spec).controllerImage)" \
+	"dyn(object).spec.contractVersion in [$plan_contract_version, $source_plan_contract_version] && has(dyn(dyn(object).spec).controllerImage)" \
+	'volume.name == \"source-snapshot\" && has(volume.configMap)' \
+	'Ptah controller snapshot delete guard refused to delete a ConfigMap that is not a source snapshot' \
 	'Ptah controller Job write guard rejected an unsafe workload shape' \
 	'Ptah controller chunk write guard rejected an unsafe PtahSchemaPlanChunk shape' \
 	'Ptah controller projection write guard rejected an unsafe ConfigMap shape' \
@@ -2557,11 +2562,13 @@ for controller_object_marker in \
 		exit 1
 	}
 done
-# Only the current Job envelope and plan contract are admitted: a Job without
-# controller provenance is refused, and each plan kind names exactly one
-# contract, so no second version rides beside the current one.
-[ "$(grep -o 'dyn(object).spec.contractVersion == ' "$CONTROLLER_OBJECT_GUARD_RENDER" | wc -l | tr -d '[:space:]')" -eq 2 ] || {
-	printf '%s\n' 'e2e static: the plan guards do not name exactly one contract per plan kind' >&2
+# Only the current Job envelope and the two plan contracts are admitted: a Job
+# without controller provenance is refused, and each plan kind names exactly
+# the contract of an OCI plan and the one of a ConfigMap plan, each with the
+# fields it binds, so no other version rides beside them.
+[ "$(grep -o 'dyn(object).spec.contractVersion in \[' "$CONTROLLER_OBJECT_GUARD_RENDER" | wc -l | tr -d '[:space:]')" -eq 2 ] &&
+	[ "$(grep -o 'dyn(object).spec.contractVersion == ' "$CONTROLLER_OBJECT_GUARD_RENDER" | wc -l | tr -d '[:space:]')" -eq 4 ] || {
+	printf '%s\n' 'e2e static: the plan guards do not name exactly the two contracts per plan kind' >&2
 	exit 1
 }
 for retired_controller_object_marker in \

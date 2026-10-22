@@ -446,7 +446,7 @@ func TestModifiedRefusal(t *testing.T) {
 	t.Parallel()
 	fixture := func() ptahv1alpha1.PtahMigrationStatus {
 		return ptahv1alpha1.PtahMigrationStatus{
-			Artifact: &ptahv1alpha1.OCIArtifactAccessBinding{Digest: "sha256:ee"},
+			Artifact: &ptahv1alpha1.SourceAccessBinding{Digest: "sha256:ee"},
 			History:  &ptahv1alpha1.MigrationHistoryStatus{CurrentVersion: 3, ModifiedVersions: []int64{1}},
 			Conditions: []metav1.Condition{
 				mrCondition("Blocked", metav1.ConditionTrue, "HistoryModified", "migration 1 changed"),

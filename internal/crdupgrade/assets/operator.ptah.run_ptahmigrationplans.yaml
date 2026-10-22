@@ -4,8 +4,8 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     operator.ptah.run/controller-state-version: "1"
-    operator.ptah.run/crd-schema-version: "2"
-    operator.ptah.run/crd-schema-digest: "sha256:bd3dd4a8c79182fec93e420242d2246aabf1d5e5fb78898c369a944ad489a245"
+    operator.ptah.run/crd-schema-version: "3"
+    operator.ptah.run/crd-schema-digest: "sha256:b6d0348d0e90200a2400604edc3113908492e5d1d64dbac71b980d400c0c2fa8"
     controller-gen.kubebuilder.io/version: v0.22.0
   name: ptahmigrationplans.operator.ptah.run
 spec:
@@ -48,7 +48,7 @@ spec:
                 type: string
               contractVersion:
                 format: int32
-                maximum: 1
+                maximum: 2
                 minimum: 1
                 type: integer
               controllerImage:
@@ -137,6 +137,24 @@ spec:
                 format: int32
                 minimum: 1
                 type: integer
+              source:
+                properties:
+                  contentDigest:
+                    pattern: ^sha256:[0-9a-f]{64}$
+                    type: string
+                  kind:
+                    enum:
+                    - ConfigMap
+                    type: string
+                  revision:
+                    maxLength: 128
+                    minLength: 1
+                    type: string
+                required:
+                - contentDigest
+                - kind
+                - revision
+                type: object
               targetIdentityDigest:
                 type: string
               verificationPolicyDigest:
@@ -144,7 +162,6 @@ spec:
               verificationPolicyUID:
                 type: string
             required:
-            - artifactDigest
             - contractVersion
             - controllerImage
             - controllerRevision
@@ -163,12 +180,16 @@ spec:
             - runnerImage
             - runnerProtocolVersion
             - targetIdentityDigest
-            - verificationPolicyDigest
-            - verificationPolicyUID
             type: object
             x-kubernetes-validations:
             - message: a plan is immutable; generate a new plan instead
               rule: self == oldSelf
+            - message: contract version 1 binds artifactDigest and a verification
+                policy; contract version 2 binds source
+              rule: 'self.contractVersion == 1 ? (has(self.artifactDigest) && has(self.verificationPolicyUID)
+                && has(self.verificationPolicyDigest) && !has(self.source)) : (has(self.source)
+                && !has(self.artifactDigest) && !has(self.verificationPolicyUID) &&
+                !has(self.verificationPolicyDigest))'
           status:
             properties:
               conditions:

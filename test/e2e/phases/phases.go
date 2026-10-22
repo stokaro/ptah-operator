@@ -668,6 +668,36 @@ var Uninstall = define[UninstallInputs](Phase{
 	},
 })
 
+// ConfigMapSourceInputs is what the driver hands the ConfigMap source phase.
+// It runs in the namespace the data plane stood up, on its PostgreSQL server,
+// and reaches no registry: that a resource whose source is a ConfigMap needs
+// none is part of what it proves.
+type ConfigMapSourceInputs struct {
+	// Kubeconfig names the cluster the driver stood up.
+	Kubeconfig string `env:"E2E_KUBECONFIG"`
+	// TestNamespace is the namespace the data plane stood up in preparation,
+	// with its PostgreSQL server and the Secret that holds its password.
+	TestNamespace string `env:"E2E_TEST_NAMESPACE"`
+}
+
+// ConfigMapSources proves a schema and a migration sequence whose source is
+// a ConfigMap: each applied with no registry, through a snapshot the manager
+// wrote and the operation Pods checked; an edit to a selected key planning
+// again and retiring the snapshot nothing names, and an edit to an unselected
+// key planning nothing; and a snapshot replaced after approval refused by the
+// Pod before the operation container starts.
+var ConfigMapSources = define[ConfigMapSourceInputs](Phase{
+	Name:    "configmap-sources",
+	Test:    "TestConfigMapSources",
+	Timeout: 60 * time.Minute,
+	Scenarios: []string{
+		"configmap-schema",
+		"configmap-schema-edits",
+		"configmap-migration",
+		"configmap-snapshot-refused",
+	},
+})
+
 // all is every phase the harness carries, in the order the driver runs them.
 var all = []Phase{
 	Upgrade.Phase,
@@ -683,6 +713,7 @@ var all = []Phase{
 	MigrationRuntimeMySQL.Phase,
 	ReferenceDataPostgreSQL.Phase,
 	ReferenceDataMySQL.Phase,
+	ConfigMapSources.Phase,
 	AlertingCertificates.Phase,
 	AlertingOperations.Phase,
 	Alerting.Phase,

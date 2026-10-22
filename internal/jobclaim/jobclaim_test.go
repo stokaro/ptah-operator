@@ -105,7 +105,7 @@ func schemaFamily(t *testing.T) family {
 				},
 				CoordinationKey: "tenant-a/orders-primary",
 			},
-			Desired:   operatorv1alpha1.OCIArtifactSourceSpec{OCIRef: "oci://registry.test/acme/orders-schema:stable"},
+			Desired:   operatorv1alpha1.SourceSpec{OCIRef: "oci://registry.test/acme/orders-schema:stable"},
 			Execution: operatorv1alpha1.ExecutionSpec{ServiceAccountName: "ptah-orders"},
 		},
 		Status: operatorv1alpha1.PtahSchemaStatus{ExecutionBinding: bindingAt(epochInForce)},
@@ -149,9 +149,9 @@ func migrationFamily(t *testing.T) family {
 				Engine:  operatorv1alpha1.DatabaseEnginePostgreSQL,
 				URLFrom: corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "database"}, Key: "url"},
 			},
-			Artifact: operatorv1alpha1.OCIArtifactSourceSpec{
+			Artifact: operatorv1alpha1.SourceSpec{
 				OCIRef: "oci://registry.test/acme/orders-migrations:stable",
-				VerificationPolicyFrom: corev1.ConfigMapKeySelector{
+				VerificationPolicyFrom: &corev1.ConfigMapKeySelector{
 					LocalObjectReference: corev1.LocalObjectReference{Name: "verification"}, Key: "policy.yaml",
 				},
 			},
@@ -166,7 +166,7 @@ func migrationFamily(t *testing.T) family {
 		operation := &operatorv1alpha1.MigrationOperationStatus{
 			Type: operatorv1alpha1.MigrationOperationHistory, ID: digest('8'), InputFingerprint: digest('a'),
 			ExecutionBindingID: epoch, Attempt: 1, StartedAt: metav1.Now(),
-			Source: &operatorv1alpha1.OCIArtifactAccessBinding{
+			Source: &operatorv1alpha1.SourceAccessBinding{
 				ResolvedReference: "oci://registry.test/acme/orders-migrations@" + digest('4'),
 				Digest:            digest('4'),
 			},

@@ -189,7 +189,7 @@ func goldenJobCases() []goldenJobCase {
 			build: func() (*batchv1.Job, error) {
 				schema := sourceContractSchemaFixture(operatorv1alpha1.RegistryAuthDockerConfigJSON)
 				operation := operationFixture(operatorv1alpha1.OperationPlan)
-				operation.Source = &operatorv1alpha1.OCIArtifactAccessBinding{
+				operation.Source = &operatorv1alpha1.SourceAccessBinding{
 					ResolvedReference: schema.Status.Source.ResolvedReference,
 					Digest:            schema.Status.Source.Digest,
 					RegistryAuthFrom:  schema.Spec.Desired.RegistryAuthFrom.DeepCopy(),

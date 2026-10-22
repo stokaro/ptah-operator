@@ -62,6 +62,7 @@ spec:
       transactionMode: file
   contractVersion: 1
   artifactDigest: sha256:d4735e3a265e16eee03f59718b9b5d03019c07d8b6c51f90da3a666eec13ab35
+  verificationPolicyUID: 7c9e6679-7425-40de-944b-e07fc1f90ae7
   verificationPolicyDigest: sha256:084fed08b978af4d7d196a7446a86b58009e636b611db16211b65a9aadff29c5
   coordinationDigest: sha256:e7f6c011776e8db7cd330b54174fd76f7d0216b612387a5ffcfb81e6f0919683
   targetIdentityDigest: sha256:67586e98fad27da0b9968bc039a1ef34c939b9b8e523a8bef89d478608c5ecf6
@@ -133,6 +134,7 @@ spec:
       transactionMode: file
   contractVersion: 1
   artifactDigest: sha256:d4735e3a265e16eee03f59718b9b5d03019c07d8b6c51f90da3a666eec13ab35
+  verificationPolicyUID: 7c9e6679-7425-40de-944b-e07fc1f90ae7
   verificationPolicyDigest: sha256:084fed08b978af4d7d196a7446a86b58009e636b611db16211b65a9aadff29c5
   coordinationDigest: sha256:e7f6c011776e8db7cd330b54174fd76f7d0216b612387a5ffcfb81e6f0919683
   targetIdentityDigest: sha256:67586e98fad27da0b9968bc039a1ef34c939b9b8e523a8bef89d478608c5ecf6
@@ -174,6 +176,7 @@ spec:
       transactionMode: none
   contractVersion: 1
   artifactDigest: sha256:d4735e3a265e16eee03f59718b9b5d03019c07d8b6c51f90da3a666eec13ab35
+  verificationPolicyUID: 7c9e6679-7425-40de-944b-e07fc1f90ae7
   verificationPolicyDigest: sha256:084fed08b978af4d7d196a7446a86b58009e636b611db16211b65a9aadff29c5
   coordinationDigest: sha256:e7f6c011776e8db7cd330b54174fd76f7d0216b612387a5ffcfb81e6f0919683
   targetIdentityDigest: sha256:67586e98fad27da0b9968bc039a1ef34c939b9b8e523a8bef89d478608c5ecf6
@@ -190,8 +193,8 @@ spec:
 
 | Field | Type | What it does |
 | --- | --- | --- |
-| `spec.artifactDigest` | `string`, required | ArtifactDigest is the OCI migration artifact this plan reads its files from, pinned to content rather than to the tag it was resolved through. |
-| `spec.contractVersion` | `integer`, required | ContractVersion versions plan publication separately from the Kubernetes API version. |
+| `spec.artifactDigest` | `string` | This resource requires: contract version 1 binds artifactDigest and a verification policy; contract version 2 binds source. ArtifactDigest is the OCI migration artifact this plan reads its files from, pinned to content rather than to the tag it was resolved through. |
+| `spec.contractVersion` | `integer`, required | This resource requires: contract version 1 binds artifactDigest and a verification policy; contract version 2 binds source. ContractVersion versions plan publication separately from the Kubernetes API version. Version 1 is a plan computed from an OCI artifact, and binds artifactDigest and the verification policy. Version 2 is a plan computed from a ConfigMap, and binds source instead. A manager that knows only version 1 refuses a version 2 plan. |
 | `spec.controllerImage` | `string`, required | ControllerImage is the digest-pinned manager that published this plan. It is a record, not a binding: the fingerprint leaves it out, and a later manager may apply the plan. |
 | `spec.controllerRevision` | `string`, required | ControllerRevision is that manager's revision, recorded the same way. |
 | `spec.controllerStateVersion` | `integer`, required | ControllerStateVersion is the state semantics that manager writes. |
@@ -216,9 +219,13 @@ spec:
 | `spec.ptahVersion` | `string`, required | PtahVersion is the Ptah build that computed the sequence. |
 | `spec.runnerImage` | `string`, required | RunnerImage is the digest-pinned runner image of the manager that published this plan, recorded and not bound. |
 | `spec.runnerProtocolVersion` | `integer`, required | RunnerProtocolVersion is the runner protocol the plan binds: what the runner enforces inside the Pod and the result frame it returns. |
+| `spec.source` | `object` | This resource requires: contract version 1 binds artifactDigest and a verification policy; contract version 2 binds source. Source is the ConfigMap source this plan reads its files from: the ConfigMap's UID and the content digest of the selected files. |
+| `spec.source.contentDigest` | `string`, required | ContentDigest is the content digest of the files the plan was computed from. |
+| `spec.source.kind` | `string`, required, one of `ConfigMap` | Kind of source the plan was computed from. |
+| `spec.source.revision` | `string`, required | Revision is the source object the files were read from. For a ConfigMap it is the ConfigMap's UID: an edit to a key the source does not select keeps the plan, while another ConfigMap, or the same name deleted and created again, retires it even when the files match. |
 | `spec.targetIdentityDigest` | `string`, required | TargetIdentityDigest identifies the database it was computed against without carrying anything that could reach it. |
-| `spec.verificationPolicyDigest` | `string`, required | VerificationPolicyDigest is that policy's content at the time. |
-| `spec.verificationPolicyUID` | `string`, required | VerificationPolicyUID is the policy object that accepted the artifact. |
+| `spec.verificationPolicyDigest` | `string` | This resource requires: contract version 1 binds artifactDigest and a verification policy; contract version 2 binds source. VerificationPolicyDigest is that policy's content at the time. |
+| `spec.verificationPolicyUID` | `string` | This resource requires: contract version 1 binds artifactDigest and a verification policy; contract version 2 binds source. VerificationPolicyUID is the policy object that accepted the artifact. |
 
 ## status
 

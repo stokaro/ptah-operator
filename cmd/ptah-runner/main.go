@@ -48,6 +48,9 @@ func run(ctx context.Context, arguments []string, stdout, stderr io.Writer, envi
 	resultCredentials := flags.String("result-credentials", "", "directory containing result-delivery tls.crt, tls.key, and ca.crt")
 	resultToken := flags.String("result-token", "", "path to the projected receiver-audience Pod token")
 	snapshotOCICATo := flags.String("snapshot-oci-ca-to", "", "copy a validated OCI CA to an exclusive snapshot path")
+	materializeSnapshot := flags.String("materialize-source-snapshot", "", "check a mounted ConfigMap source snapshot and copy its files")
+	materializeTo := flags.String("materialize-to", "", "directory a checked source snapshot is copied into")
+	contentDigest := flags.String("content-digest", "", "content digest the source snapshot must hold")
 	if err := flags.Parse(arguments); err != nil {
 		return 2
 	}
@@ -63,6 +66,36 @@ func run(ctx context.Context, arguments []string, stdout, stderr io.Writer, envi
 			return 2
 		}
 		if err := installSelf(*installTo); err != nil {
+			_, _ = fmt.Fprintln(stderr, "ptah-runner: "+err.Error())
+			return 2
+		}
+		return 0
+	}
+	materializeFlags := map[string]bool{"materialize-source-snapshot": true, "materialize-to": true, "content-digest": true}
+	materializeMode := false
+	flags.Visit(func(current *flag.Flag) {
+		if materializeFlags[current.Name] {
+			materializeMode = true
+		}
+	})
+	if materializeMode {
+		unexpectedFlag := false
+		flags.Visit(func(current *flag.Flag) {
+			if !materializeFlags[current.Name] {
+				unexpectedFlag = true
+			}
+		})
+		if unexpectedFlag || flags.NArg() != 0 || *materializeSnapshot == "" || *materializeTo == "" || *contentDigest == "" {
+			_, _ = fmt.Fprintln(stderr, "ptah-runner: snapshot mode takes exactly --materialize-source-snapshot, --materialize-to and --content-digest")
+			return 2
+		}
+		// The copy is what the process holding the database URL reads next,
+		// so it is held to the protocol as the main run is.
+		if err := runner.CheckProtocolBinding(environment); err != nil {
+			_, _ = fmt.Fprintln(stderr, "ptah-runner: "+runner.CodeRunnerProtocolMismatch+": "+err.Error())
+			return 2
+		}
+		if err := runner.MaterializeSourceSnapshot(*materializeSnapshot, *materializeTo, *contentDigest); err != nil {
 			_, _ = fmt.Fprintln(stderr, "ptah-runner: "+err.Error())
 			return 2
 		}

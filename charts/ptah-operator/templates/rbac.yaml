@@ -114,14 +114,17 @@ rules:
   - apiGroups: ["scheduling.k8s.io"]
     resources: ["priorityclasses"]
     verbs: ["get", "list"]
-  # get, list and watch read the verification policies resources name, and
-  # wake them when one changes. create is for one thing: an Apply Pod holds no
-  # Kubernetes API credential and the kubelet projects no custom resource, so the
-  # manager writes the plan an Apply runs into immutable ConfigMaps the Pod
-  # mounts, just before it creates the Job. They are deleted with the plan.
+  # get, list and watch read the verification policies and ConfigMap sources
+  # resources name, and wake them when one changes. An operation Pod holds no
+  # Kubernetes API credential and the kubelet projects no custom resource, so
+  # the manager creates two kinds of immutable ConfigMap a Pod mounts: the plan
+  # an Apply runs, just before it creates the Job, deleted with the plan; and
+  # the snapshot of a ConfigMap source, which every operation reads. delete is
+  # for that snapshot alone, once nothing names it; the controller object guard
+  # refuses the manager every other ConfigMap delete.
   - apiGroups: [""]
     resources: ["configmaps"]
-    verbs: ["get", "list", "watch", "create"]
+    verbs: ["get", "list", "watch", "create", "delete"]
   # list is how a Job whose Pod the API server refuses is explained: the Job
   # controller's FailedCreate Event is the only record, and the manager reads
   # it for the Job it dispatched, by the Job's UID, to report the refusal as a

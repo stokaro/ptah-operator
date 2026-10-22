@@ -125,7 +125,7 @@ func TestApprovalCreateRejectsFuturePlanContract(t *testing.T) {
 	if err := api.Get(context.Background(), key, plan); err != nil {
 		t.Fatal(err)
 	}
-	plan.Spec.ContractVersion = fingerprint.CurrentPlanContractVersion + 1
+	plan.Spec.ContractVersion = fingerprint.SourcePlanContractVersion + 1
 	if err := api.Update(context.Background(), plan); err != nil {
 		t.Fatal(err)
 	}
@@ -567,8 +567,8 @@ func readyFixture(
 				Engine:          operatorv1alpha1.DatabaseEnginePostgreSQL,
 				CoordinationKey: "prod/team-a/app",
 			},
-			Desired: operatorv1alpha1.OCIArtifactSourceSpec{
-				VerificationPolicyFrom: corev1.ConfigMapKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "policy"}, Key: "policy.yaml"},
+			Desired: operatorv1alpha1.SourceSpec{
+				VerificationPolicyFrom: &corev1.ConfigMapKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "policy"}, Key: "policy.yaml"},
 			},
 		},
 		Status: operatorv1alpha1.PtahSchemaStatus{

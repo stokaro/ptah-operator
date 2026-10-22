@@ -1650,7 +1650,7 @@ func schemaFixture(operationType operatorv1alpha1.OperationType) *operatorv1alph
 		operation.JobUID = "job-uid"
 		operation.CoordinationDigest = schema.Status.Target.CoordinationDigest
 		operation.TargetIdentityDigest = schema.Status.Target.IdentityDigest
-		operation.Source = &operatorv1alpha1.OCIArtifactAccessBinding{Digest: schema.Status.Source.Digest}
+		operation.Source = &operatorv1alpha1.SourceAccessBinding{Digest: schema.Status.Source.Digest}
 		operation.PlanSealPublicKeyDigest = testPlanSealPublicKeyDigest()
 	}
 	schema.Status.ActiveOperation = operation

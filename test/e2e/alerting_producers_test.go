@@ -22,7 +22,7 @@ func TestAlProducerRequiresNativePlanAndExactInputs(t *testing.T) {
 			case *ptahv1.PtahSchema:
 				v.Status.Source.Digest, v.Status.ExecutionBinding = digest, binding
 			case *ptahv1.PtahMigration:
-				v.Status.Artifact = &ptahv1.OCIArtifactAccessBinding{Digest: digest}
+				v.Status.Artifact = &ptahv1.SourceAccessBinding{Digest: digest}
 				v.Status.ExecutionBinding = binding
 			}
 			if !alProducerReady(object, digest, executor) {

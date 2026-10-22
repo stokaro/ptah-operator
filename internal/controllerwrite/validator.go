@@ -32,6 +32,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/resultcleanup"
 	"github.com/stokaro/ptah-operator/internal/resultdelivery"
 	"github.com/stokaro/ptah-operator/internal/resultstore"
+	"github.com/stokaro/ptah-operator/internal/sourcebinding"
 	"github.com/stokaro/ptah-operator/internal/workload"
 )
 
@@ -166,7 +167,7 @@ func (v *Validator) Validate(ctx context.Context, req admissionv1.AdmissionReque
 			return err
 		}
 		if req.Operation != admissionv1.Create {
-			return denyf("operator manager may only create immutable plan projection ConfigMaps")
+			return denyf("operator manager may only create immutable plan projection and source snapshot ConfigMaps")
 		}
 		return v.validateProjectionCreate(ctx, req)
 	case planChunkResource:
@@ -647,7 +648,8 @@ func validatePlanMetadata(plan *operatorv1alpha1.PtahSchemaPlan, schema *operato
 }
 
 func validatePlanShape(plan *operatorv1alpha1.PtahSchemaPlan, schema *operatorv1alpha1.PtahSchema) error {
-	if plan.Spec.ContractVersion != fingerprint.CurrentPlanContractVersion {
+	if err := fingerprint.ValidatePlanContractVersion(plan.Spec.ContractVersion); err != nil ||
+		plan.Spec.ContractVersion != sourcebinding.ContractVersion(plan.Spec.Source) {
 		return fmt.Errorf("plan contract version %d is not current", plan.Spec.ContractVersion)
 	}
 	if plan.Spec.Size < 1 || plan.Spec.Size > plancontract.MaxExecutableBytes {
@@ -666,10 +668,17 @@ func validatePlanShape(plan *operatorv1alpha1.PtahSchemaPlan, schema *operatorv1
 		}
 		remaining -= expectedSize
 	}
-	if remaining != 0 || !isSHA256Digest(plan.Spec.ContentDigest) || !isSHA256Digest(plan.Spec.ArtifactDigest) ||
+	if remaining != 0 || !isSHA256Digest(plan.Spec.ContentDigest) ||
 		!isSHA256Digest(plan.Spec.CoordinationDigest) || !isSHA256Digest(plan.Spec.TargetIdentityDigest) ||
 		!isSHA256Digest(plan.Spec.ActualStateFingerprint) || !isSHA256Digest(plan.Spec.DesiredStateFingerprint) ||
-		!isSHA256Digest(plan.Spec.PolicyFingerprint) || !isSHA256Digest(plan.Spec.VerificationPolicyDigest) {
+		!isSHA256Digest(plan.Spec.PolicyFingerprint) {
+		return errors.New("plan contains an invalid digest binding")
+	}
+	if source := plan.Spec.Source; source != nil {
+		if source.Kind != operatorv1alpha1.SourceKindConfigMap || source.Revision == "" || !isSHA256Digest(source.ContentDigest) {
+			return errors.New("plan contains an invalid source binding")
+		}
+	} else if !isSHA256Digest(plan.Spec.ArtifactDigest) || !isSHA256Digest(plan.Spec.VerificationPolicyDigest) {
 		return errors.New("plan contains an invalid digest binding")
 	}
 	if plan.Spec.StatementCount < 1 {
@@ -694,7 +703,7 @@ func validatePlanPublicationContext(plan *operatorv1alpha1.PtahSchemaPlan, schem
 	if operation == nil || operation.Type != operatorv1alpha1.OperationPlan || operation.JobName == "" || operation.JobUID == "" {
 		return errors.New("schema has no completed active Plan Job identity")
 	}
-	if operation.Source == nil || operation.Source.Digest != plan.Spec.ArtifactDigest ||
+	if operation.Source == nil || !sourcebinding.AccessGives(*operation.Source, plan.Spec.ArtifactDigest, plan.Spec.Source) ||
 		operation.CoordinationDigest != plan.Spec.CoordinationDigest ||
 		operation.TargetIdentityDigest != plan.Spec.TargetIdentityDigest ||
 		operation.ExecutionBindingID != plan.Spec.ExecutionBindingID {
@@ -707,7 +716,9 @@ func validatePlanPublicationContext(plan *operatorv1alpha1.PtahSchemaPlan, schem
 		binding.RunnerProtocolVersion != plan.Spec.RunnerProtocolVersion {
 		return errors.New("plan differs from the schema's durable execution binding")
 	}
-	if !schema.Status.Source.Verified || schema.Status.Source.Digest != plan.Spec.ArtifactDigest ||
+	statusArtifact, statusSource := sourcebinding.SchemaPlanSource(schema.Status.Source)
+	if !sourcebinding.SchemaSourceReady(schema.Spec.Desired, schema.Status.Source) ||
+		!sourcebinding.SamePlanSource(plan.Spec.ArtifactDigest, plan.Spec.Source, statusArtifact, statusSource) ||
 		schema.Status.Source.VerificationPolicyUID != plan.Spec.VerificationPolicyUID ||
 		schema.Status.Source.VerificationPolicyDigest != plan.Spec.VerificationPolicyDigest ||
 		schema.Status.Target.CoordinationDigest != plan.Spec.CoordinationDigest ||

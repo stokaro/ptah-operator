@@ -180,6 +180,10 @@ func TestPlanBindingEveryInputInvalidatesFingerprint(t *testing.T) {
 			v.PrivilegeChanges = append(append([]string(nil), v.PrivilegeChanges...), "Role")
 		},
 		"StatementCount": func(v *fingerprint.PlanBinding) { v.StatementCount++ },
+		// A version 1 binding has no source, so the case turns it into the
+		// version 2 binding of the same plan. TestPlanBindingHoldsTheSourceToItsContract
+		// changes each source field of a version 2 binding.
+		"Source": func(v *fingerprint.PlanBinding) { *v = completeSourcePlanBinding() },
 	}
 	// Keyed by field name, and checked against the type: a field added to the
 	// binding with no case here fails instead of going unmeasured. Prose keys
@@ -290,7 +294,7 @@ func TestPlanBindingLeavesTheManagerOut(t *testing.T) {
 // manager reads. Every other version is refused before any field is looked at,
 // so a plan of any other contract is never given an identity under today's
 // approval semantics.
-func TestPlanBindingAcceptsOnlyTheCurrentContract(t *testing.T) {
+func TestPlanBindingAcceptsOnlyTheContractsItWrites(t *testing.T) {
 	t.Parallel()
 
 	current := completePlanBinding()
@@ -304,7 +308,7 @@ func TestPlanBindingAcceptsOnlyTheCurrentContract(t *testing.T) {
 		t.Fatalf("current fingerprint = %q, want %q", got, currentPlanBindingFingerprint)
 	}
 
-	for _, version := range []int32{fingerprint.CurrentPlanContractVersion - 1, fingerprint.CurrentPlanContractVersion + 1} {
+	for _, version := range []int32{fingerprint.CurrentPlanContractVersion - 1, fingerprint.SourcePlanContractVersion + 1} {
 		other := current
 		other.ContractVersion = version
 		if _, err := other.Fingerprint(); err == nil || !strings.Contains(err.Error(), "unsupported plan contract version") {
@@ -313,6 +317,9 @@ func TestPlanBindingAcceptsOnlyTheCurrentContract(t *testing.T) {
 		if err := fingerprint.ValidatePlanContractVersion(version); err == nil {
 			t.Fatalf("ValidatePlanContractVersion(%d) accepted a version this manager does not write", version)
 		}
+	}
+	if err := fingerprint.ValidatePlanContractVersion(fingerprint.SourcePlanContractVersion); err != nil {
+		t.Fatalf("ValidatePlanContractVersion(source): %v", err)
 	}
 	if err := fingerprint.ValidatePlanContractVersion(fingerprint.CurrentPlanContractVersion); err != nil {
 		t.Fatalf("ValidatePlanContractVersion(current): %v", err)
@@ -382,24 +389,99 @@ func TestPlanBindingRefusesAnIncompleteBinding(t *testing.T) {
 	t.Parallel()
 
 	// A plan that is not destructive and changes no privilege is the common
-	// case, so the zero value of these two is a reading, not a gap.
-	readings := map[string]bool{"Destructive": true, "PrivilegeChanges": true}
-	bindingType := reflect.TypeOf(fingerprint.PlanBinding{})
-	for index := range bindingType.NumField() {
-		field := bindingType.Field(index)
-		if readings[field.Name] {
-			continue
-		}
-		t.Run(field.Name, func(t *testing.T) {
-			t.Parallel()
-
-			binding := completePlanBinding()
-			reflect.ValueOf(&binding).Elem().Field(index).Set(reflect.Zero(field.Type))
-			if _, err := binding.Fingerprint(); err == nil {
-				t.Fatalf("a binding with no %s was given a fingerprint", field.Name)
+	// case, so the zero value of these two is a reading, not a gap. Each
+	// contract version also leaves out the fields the other one binds.
+	for version, absent := range map[string]map[string]bool{
+		"artifact": {"Destructive": true, "PrivilegeChanges": true, "Source": true},
+		"source": {
+			"Destructive": true, "PrivilegeChanges": true,
+			"ArtifactDigest": true, "VerificationPolicyUID": true, "VerificationPolicyDigest": true,
+		},
+	} {
+		bindingType := reflect.TypeOf(fingerprint.PlanBinding{})
+		checked := 0
+		for index := range bindingType.NumField() {
+			field := bindingType.Field(index)
+			if absent[field.Name] {
+				continue
 			}
-		})
+			checked++
+			t.Run(version+"/"+field.Name, func(t *testing.T) {
+				t.Parallel()
+
+				binding := completePlanBinding()
+				if version == "source" {
+					binding = completeSourcePlanBinding()
+				}
+				if _, err := binding.Fingerprint(); err != nil {
+					t.Fatalf("the complete binding was refused: %v", err)
+				}
+				reflect.ValueOf(&binding).Elem().Field(index).Set(reflect.Zero(field.Type))
+				if _, err := binding.Fingerprint(); err == nil {
+					t.Fatalf("a binding with no %s was given a fingerprint", field.Name)
+				}
+			})
+		}
+		if checked < 15 {
+			t.Fatalf("%s: checked %d fields", version, checked)
+		}
 	}
+}
+
+// A version 2 plan binds its source in place of the artifact and the policy,
+// and a binding that mixes the two contracts has no identity.
+func TestPlanBindingHoldsTheSourceToItsContract(t *testing.T) {
+	t.Parallel()
+
+	source := completeSourcePlanBinding()
+	digest, err := source.Fingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact, err := completePlanBinding().Fingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if digest == artifact {
+		t.Fatal("a source plan and an artifact plan share a fingerprint")
+	}
+	for name, mutate := range map[string]func(*fingerprint.PlanBinding){
+		"source on version 1":          func(b *fingerprint.PlanBinding) { b.ContractVersion = fingerprint.CurrentPlanContractVersion },
+		"artifact digest on version 2": func(b *fingerprint.PlanBinding) { b.ArtifactDigest = "sha256:artifact" },
+		"policy UID on version 2":      func(b *fingerprint.PlanBinding) { b.VerificationPolicyUID = "uid" },
+		"policy digest on version 2":   func(b *fingerprint.PlanBinding) { b.VerificationPolicyDigest = "sha256:policy" },
+		"no source kind":               func(b *fingerprint.PlanBinding) { b.Source.Kind = "" },
+		"no source revision":           func(b *fingerprint.PlanBinding) { b.Source.Revision = "" },
+		"no content digest":            func(b *fingerprint.PlanBinding) { b.Source.ContentDigest = "" },
+		"version 3":                    func(b *fingerprint.PlanBinding) { b.ContractVersion = 3 },
+	} {
+		binding := completeSourcePlanBinding()
+		mutate(&binding)
+		if _, err := binding.Fingerprint(); err == nil {
+			t.Errorf("%s was given a fingerprint", name)
+		}
+	}
+	for name, mutate := range map[string]func(*fingerprint.PlanBinding){
+		"revision":       func(b *fingerprint.PlanBinding) { b.Source.Revision = "another-uid" },
+		"content digest": func(b *fingerprint.PlanBinding) { b.Source.ContentDigest = "sha256:other" },
+	} {
+		binding := completeSourcePlanBinding()
+		mutate(&binding)
+		other, err := binding.Fingerprint()
+		if err != nil || other == digest {
+			t.Errorf("another %s kept the fingerprint: %v", name, err)
+		}
+	}
+}
+
+func completeSourcePlanBinding() fingerprint.PlanBinding {
+	binding := completePlanBinding()
+	binding.ContractVersion = fingerprint.SourcePlanContractVersion
+	binding.ArtifactDigest = ""
+	binding.VerificationPolicyUID = ""
+	binding.VerificationPolicyDigest = ""
+	binding.Source = &fingerprint.PlanSource{Kind: "ConfigMap", Revision: "configmap-uid", ContentDigest: "sha256:content"}
+	return binding
 }
 
 // completePlanBinding is a binding every check accepts, which is what makes a

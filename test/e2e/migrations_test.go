@@ -321,7 +321,7 @@ func mtCondition(kind string, status metav1.ConditionStatus, reason string) meta
 func mtAwaiting() *ptahv1alpha1.PtahMigration {
 	return &ptahv1alpha1.PtahMigration{Status: ptahv1alpha1.PtahMigrationStatus{
 		Phase:            ptahv1alpha1.MigrationPhaseAwaitingApproval,
-		Artifact:         &ptahv1alpha1.OCIArtifactAccessBinding{Digest: mtDigest},
+		Artifact:         &ptahv1alpha1.SourceAccessBinding{Digest: mtDigest},
 		ExecutionBinding: &ptahv1alpha1.ExecutionBindingStatus{ControllerStateVersion: 2},
 		History: &ptahv1alpha1.MigrationHistoryStatus{
 			ContractVersion: 1, PendingCount: 3, Fingerprint: builderDigest('2'), TargetIdentityDigest: builderDigest('3'),
@@ -477,7 +477,7 @@ func mtSettled() *ptahv1alpha1.PtahMigration {
 	finished := metav1.NewTime(time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC))
 	return &ptahv1alpha1.PtahMigration{Status: ptahv1alpha1.PtahMigrationStatus{
 		Phase:    ptahv1alpha1.MigrationPhaseInSync,
-		Artifact: &ptahv1alpha1.OCIArtifactAccessBinding{Digest: mtDigest},
+		Artifact: &ptahv1alpha1.SourceAccessBinding{Digest: mtDigest},
 		History:  &ptahv1alpha1.MigrationHistoryStatus{ContractVersion: 1, CurrentVersion: 3, AppliedCount: 3},
 		LastRun: &ptahv1alpha1.MigrationRunStatus{
 			Outcome: ptahv1alpha1.MigrationRunOutcomeApplied, JobName: "ptah-m-apply-x", JobUID: "apply-uid",

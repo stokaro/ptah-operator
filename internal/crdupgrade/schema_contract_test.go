@@ -78,9 +78,13 @@ func TestGeneratedExecutionIdentityContract(t *testing.T) {
 	// here: a contract that moved in Go alone would publish plans the API
 	// server refuses.
 	contractVersion := schemaProperty(t, planRoot, "spec", "contractVersion")
-	want := strconv.Itoa(int(fingerprint.CurrentPlanContractVersion))
-	if len(contractVersion.Enum) != 1 || string(contractVersion.Enum[0].Raw) != want {
-		t.Fatalf("PtahSchemaPlan spec.contractVersion enum = %v, want exactly [%s]", contractVersion.Enum, want)
+	want := []string{
+		strconv.Itoa(int(fingerprint.CurrentPlanContractVersion)),
+		strconv.Itoa(int(fingerprint.SourcePlanContractVersion)),
+	}
+	if len(contractVersion.Enum) != len(want) || string(contractVersion.Enum[0].Raw) != want[0] ||
+		string(contractVersion.Enum[1].Raw) != want[1] {
+		t.Fatalf("PtahSchemaPlan spec.contractVersion enum = %v, want exactly %v", contractVersion.Enum, want)
 	}
 }
 

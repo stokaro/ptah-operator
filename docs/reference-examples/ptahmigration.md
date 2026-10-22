@@ -30,6 +30,41 @@ spec:
       key: policy.yaml
 ```
 
+### From a ConfigMap, with no registry
+
+The migration directory is a set of keys in a ConfigMap in the same
+namespace. A key cannot hold "/", so `items` names the file each key becomes,
+and a key the list leaves out is not part of the sequence. The manager copies
+the selected files into an immutable snapshot that the history read and the
+Apply both check against its content digest; there is no verification policy.
+Whoever may write the ConfigMap may change what runs, so grant it as you grant
+this resource.
+
+```yaml
+apiVersion: operator.ptah.run/v1alpha1
+kind: PtahMigration
+metadata:
+  name: inventory
+  namespace: application
+spec:
+  target:
+    engine: PostgreSQL
+    coordinationKey: production/inventory-primary
+    urlFrom:
+      name: inventory-database
+      key: url
+  artifact:
+    configMap:
+      name: inventory-migrations
+      items:
+        - key: 0000000001-up
+          path: 0000000001_create_items.up.sql
+        - key: 0000000001-down
+          path: 0000000001_create_items.down.sql
+        - key: 0000000002-up
+          path: 0000000002_add_item_sku.up.sql
+```
+
 ### Beside a PtahSchema, over one database
 
 Both resources live in one namespace, name the same `coordinationKey` and set

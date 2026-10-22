@@ -139,6 +139,7 @@ func (b Builder) BuildMigration(
 			source:        *operation.Source,
 			containerName: migrationFetchContainerName,
 			args:          []string{"migrations", "pull", operation.Source.ResolvedReference, "--out", migrationsPath},
+			destination:   migrationsPath,
 		}
 	}
 	return b.buildOperationJob(job)
@@ -169,6 +170,9 @@ func migrationDataPlane(
 
 	switch operation.Type {
 	case operatorv1alpha1.MigrationOperationResolve, operatorv1alpha1.MigrationOperationVerify:
+		if migration.Spec.Artifact.ConfigMap != nil {
+			return nil, nil, nil, nil, errors.New("a ConfigMap source is read by the manager and has no Resolve or Verify Job")
+		}
 		// Only these two reach the registry from the main container, and
 		// neither is given a database credential: the registry and the database
 		// are never open to the same process.
@@ -378,6 +382,9 @@ func validateMigration(migration *operatorv1alpha1.PtahMigration) error {
 	if !executionBindingIDPattern.MatchString(migration.Status.ExecutionBinding.Epoch) {
 		return errors.New("migration execution binding epoch is invalid")
 	}
+	if migration.Spec.Artifact.ConfigMap != nil {
+		return nil
+	}
 	return validateRequestedReference(migration.Spec.Artifact.OCIRef)
 }
 
@@ -403,6 +410,9 @@ func validateMigrationOperation(operation operatorv1alpha1.MigrationOperationSta
 		}
 		if err := validateArtifactAccessBinding(*operation.Source); err != nil {
 			return err
+		}
+		if operation.Source.Snapshot != nil && operation.Source.Snapshot.SchemaFile != "" {
+			return errors.New("a migration snapshot binding names no schema file")
 		}
 	}
 	return nil

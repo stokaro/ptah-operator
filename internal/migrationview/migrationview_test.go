@@ -214,7 +214,7 @@ func fixture() (*operatorv1alpha1.PtahMigration, *operatorv1alpha1.PtahMigration
 		ObjectMeta: metav1.ObjectMeta{Namespace: "team-a", Name: "orders", UID: types.UID("migration-uid")},
 		Status: operatorv1alpha1.PtahMigrationStatus{
 			Phase: operatorv1alpha1.MigrationPhaseAwaitingApproval,
-			Artifact: &operatorv1alpha1.OCIArtifactAccessBinding{
+			Artifact: &operatorv1alpha1.SourceAccessBinding{
 				ResolvedReference: "oci://registry.example/acme/orders-migrations@" + digest, Digest: digest,
 			},
 			History: &operatorv1alpha1.MigrationHistoryStatus{

@@ -507,7 +507,7 @@ func TestBuildRejectsInvalidCoordinationKey(t *testing.T) {
 func TestBuildPostApplyObservationUsesPersistedTargetAndPolicy(t *testing.T) {
 	t.Parallel()
 	schema := schemaFixture()
-	originalSource := operatorv1alpha1.OCIArtifactAccessBinding{
+	originalSource := operatorv1alpha1.SourceAccessBinding{
 		ResolvedReference: schema.Status.Source.ResolvedReference,
 		Digest:            schema.Status.Source.Digest,
 		RegistryAuthFrom:  schema.Spec.Desired.RegistryAuthFrom.DeepCopy(),
@@ -1479,7 +1479,7 @@ func schemaFixture() *operatorv1alpha1.PtahSchema {
 					Key:                  "url",
 				},
 			},
-			Desired: operatorv1alpha1.OCIArtifactSourceSpec{
+			Desired: operatorv1alpha1.SourceSpec{
 				OCIRef: "oci://registry.example/acme/orders:stable",
 				RegistryAuthFrom: &operatorv1alpha1.RegistryAuthSource{
 					Name:        "registry",
@@ -1488,7 +1488,7 @@ func schemaFixture() *operatorv1alpha1.PtahSchema {
 					PasswordKey: "pass",
 					TokenKey:    "identity-token",
 				},
-				VerificationPolicyFrom: corev1.ConfigMapKeySelector{
+				VerificationPolicyFrom: &corev1.ConfigMapKeySelector{
 					LocalObjectReference: corev1.LocalObjectReference{Name: "verification"},
 					Key:                  "policy.yaml",
 				},
@@ -1591,7 +1591,7 @@ func operationFixture(operation operatorv1alpha1.OperationType) operatorv1alpha1
 			Engine:  schema.Spec.Target.Engine,
 			URLFrom: *schema.Spec.Target.URLFrom.DeepCopy(),
 		}
-		active.Source = &operatorv1alpha1.OCIArtifactAccessBinding{
+		active.Source = &operatorv1alpha1.SourceAccessBinding{
 			ResolvedReference: schema.Status.Source.ResolvedReference,
 			Digest:            schema.Status.Source.Digest,
 			RegistryAuthFrom:  schema.Spec.Desired.RegistryAuthFrom.DeepCopy(),

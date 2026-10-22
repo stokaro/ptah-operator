@@ -48,6 +48,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/resultconsumer"
 	"github.com/stokaro/ptah-operator/internal/runner"
 	"github.com/stokaro/ptah-operator/internal/schemaselector"
+	"github.com/stokaro/ptah-operator/internal/sourcebinding"
 	"github.com/stokaro/ptah-operator/internal/targetlock"
 	"github.com/stokaro/ptah-operator/internal/telemetry"
 	"github.com/stokaro/ptah-operator/internal/workload"
@@ -57,12 +58,14 @@ const (
 	activeOperationFinalizer = "operator.ptah.run/active-operation"
 	executorContainerName    = "ptah"
 	approvalSchemaIndex      = "spec.schemaRef.name"
-	schemaPolicyIndex        = "spec.desired.verificationPolicyFrom.name"
-	defaultInterval          = 10 * time.Minute
-	defaultFailureRetry      = 30 * time.Second
-	terminalPodGrace         = 10 * time.Second
-	jobCleanupTTLSeconds     = jobclaim.CleanupTTLSeconds
-	maxLockContentionPoll    = 5 * time.Second
+	// schemaPolicyIndex finds the schemas a ConfigMap change concerns: the
+	// verification policy of an OCI source, or a ConfigMap source itself.
+	schemaPolicyIndex     = "spec.desired.configMaps"
+	defaultInterval       = 10 * time.Minute
+	defaultFailureRetry   = 30 * time.Second
+	terminalPodGrace      = 10 * time.Second
+	jobCleanupTTLSeconds  = jobclaim.CleanupTTLSeconds
+	maxLockContentionPoll = 5 * time.Second
 	// statusPatchRequeue ends a pass whose last act was a status write the
 	// next pass has to start from, and asks for that pass at once. Neither
 	// primary watch passes a status-only update, so the write wakes nothing by
@@ -269,6 +272,14 @@ func (r *SchemaReconciler) reconcile(ctx context.Context, request ctrl.Request) 
 	}
 	setCondition(schema, operatorv1alpha1.ConditionSuspended, metav1.ConditionFalse, operatorv1alpha1.ReasonActive, "Reconciliation is active")
 	if schema.Status.ObservedGeneration != schema.Generation {
+		return r.claim(ctx, schema, operatorv1alpha1.OperationResolve)
+	}
+	if moved, movedErr := configMapSourceMoved(ctx, r.directReader(), schema.Namespace, schema.Spec.Desired.ConfigMap, schema.Status.Source.ConfigMap); movedErr != nil {
+		return ctrl.Result{}, movedErr
+	} else if moved {
+		// An edit to the source ConfigMap is read now rather than at the next
+		// interval. Unchanged selected bytes give the same snapshot, and the
+		// cycle that follows reaches the same plan.
 		return r.claim(ctx, schema, operatorv1alpha1.OperationResolve)
 	}
 
@@ -1235,6 +1246,13 @@ func (r *SchemaReconciler) verifiedSourcePolicyError(
 	ctx context.Context,
 	schema *operatorv1alpha1.PtahSchema,
 ) error {
+	if schema.Status.Source.Snapshot != nil {
+		// A ConfigMap source has no verification policy to have changed.
+		if schema.Spec.Desired.ConfigMap == nil {
+			return fmt.Errorf("the source is no longer the ConfigMap it was read from")
+		}
+		return nil
+	}
 	if !schema.Status.Source.Verified || schema.Status.Source.VerificationPolicyUID == "" ||
 		schema.Status.Source.VerificationPolicyDigest == "" {
 		return fmt.Errorf("verified source lacks an immutable verification policy binding")
@@ -1259,6 +1277,17 @@ func pendingProofPolicyBindingError(
 	schema *operatorv1alpha1.PtahSchema,
 	pending *operatorv1alpha1.PendingObservationStatus,
 ) error {
+	if schema != nil && pending != nil && pending.Plan.Source != nil {
+		// A plan computed from a ConfigMap binds no verification policy. The
+		// proof reads the snapshot the plan was computed from.
+		if !sourcebinding.AccessGives(pending.Source, pending.Plan.ArtifactDigest, pending.Plan.Source) ||
+			schema.Status.Source.Snapshot == nil || pending.Source.Snapshot == nil ||
+			schema.Status.Source.Snapshot.Name != pending.Source.Snapshot.Name ||
+			pending.Plan.CoordinationDigest != pending.CoordinationDigest {
+			return fmt.Errorf("post-apply proof policy or source snapshot is internally inconsistent")
+		}
+		return nil
+	}
 	if schema == nil || pending == nil || pending.Plan.VerificationPolicyUID == "" ||
 		pending.Plan.VerificationPolicyDigest == "" {
 		return fmt.Errorf("post-apply proof lacks an immutable verification policy binding")
@@ -1896,11 +1925,7 @@ func (r *SchemaReconciler) reconcileApproval(ctx context.Context, schema *operat
 	if err := r.ensureCurrentExecutionBinding(schema, plan); err != nil {
 		return r.executionBindingChanged(ctx, schema, err)
 	}
-	policyBinding, err := policy.ConfigMapBinding(ctx, r.directReader(), schema.Namespace, schema.Spec.Desired.VerificationPolicyFrom)
-	if err != nil || policyBinding.UID != plan.Spec.VerificationPolicyUID || policyBinding.Digest != plan.Spec.VerificationPolicyDigest {
-		if err == nil {
-			err = fmt.Errorf("verification policy object changed")
-		}
+	if err := r.planPolicyError(ctx, schema, plan); err != nil {
 		return r.verificationPolicyChanged(ctx, schema, err)
 	}
 	if plan.Spec.Destructive && !schema.Spec.Policy.AllowDestructive {
@@ -1987,6 +2012,12 @@ func (r *SchemaReconciler) claimAt(
 		// function is ever called. Requeuing rather than erroring keeps that
 		// true if it ever stops being true.
 		return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
+	}
+	if operation == operatorv1alpha1.OperationResolve && schema.Spec.Desired.ConfigMap != nil {
+		// A ConfigMap source is read by the manager itself: there is no
+		// registry to reach and no credential to keep apart, so Resolve is a
+		// read and a write here rather than a Job.
+		return r.resolveConfigMapSource(ctx, schema)
 	}
 	kind := mutationlifecycle.SchemaOperation(operation)
 	inputs, err := operationInputs(schema, operation)
@@ -2411,8 +2442,8 @@ func pendingObservationFor(
 		schema.Status.Plan.TargetIdentityDigest != operation.TargetIdentityDigest {
 		return nil, fmt.Errorf("cannot persist post-apply proof without the immutable current plan")
 	}
-	if operation.Source.Digest != schema.Status.Plan.ArtifactDigest ||
-		!strings.Contains(operation.Source.ResolvedReference, "@"+operation.Source.Digest) {
+	if !sourcebinding.AccessGives(*operation.Source, schema.Status.Plan.ArtifactDigest, schema.Status.Plan.Source) ||
+		(operation.Source.Snapshot == nil && !strings.Contains(operation.Source.ResolvedReference, "@"+operation.Source.Digest)) {
 		return nil, fmt.Errorf("cannot persist post-apply proof without immutable artifact access")
 	}
 	plan := *schema.Status.Plan
@@ -2875,10 +2906,11 @@ func (r *SchemaReconciler) publishPlan(ctx context.Context, schema *operatorv1al
 	if err != nil {
 		return nil, err
 	}
+	artifactDigest, source := sourcebinding.SchemaPlanSource(schema.Status.Source)
 	spec := operatorv1alpha1.PtahSchemaPlanSpec{
-		ContractVersion: fingerprint.CurrentPlanContractVersion, SchemaRef: operatorv1alpha1.ImmutableObjectReference{Name: schema.Name, UID: schema.UID},
+		ContractVersion: sourcebinding.ContractVersion(source), SchemaRef: operatorv1alpha1.ImmutableObjectReference{Name: schema.Name, UID: schema.UID},
 		ContentDigest:  contentDigest,
-		ArtifactDigest: schema.Status.Source.Digest, CoordinationDigest: schema.Status.Target.CoordinationDigest,
+		ArtifactDigest: artifactDigest, Source: source, CoordinationDigest: schema.Status.Target.CoordinationDigest,
 		TargetIdentityDigest:   schema.Status.Target.IdentityDigest,
 		ActualStateFingerprint: decoded.FromFingerprint, DesiredStateFingerprint: decoded.ToFingerprint,
 		PolicyFingerprint: policyFingerprint, VerificationPolicyUID: schema.Status.Source.VerificationPolicyUID,
@@ -2917,7 +2949,7 @@ func (r *SchemaReconciler) currentPlan(ctx context.Context, schema *operatorv1al
 		return nil, fmt.Errorf("current plan contract is not supported: %w", err)
 	}
 	if plan.UID != schema.Status.Plan.UID || plan.DeletionTimestamp != nil || plan.Spec.SchemaRef.UID != schema.UID ||
-		plan.Spec.Fingerprint != schema.Status.Plan.Fingerprint || plan.Spec.ArtifactDigest != schema.Status.Source.Digest ||
+		plan.Spec.Fingerprint != schema.Status.Plan.Fingerprint || !planSourceIsCurrent(schema, plan.Spec.ArtifactDigest, plan.Spec.Source) ||
 		plan.Spec.ExecutionBindingID == "" || plan.Spec.ExecutionBindingID != schema.Status.Plan.ExecutionBindingID ||
 		schema.Status.ExecutionBinding == nil || plan.Spec.ExecutionBindingID != schema.Status.ExecutionBinding.Epoch ||
 		plan.Spec.CoordinationDigest != schema.Status.Plan.CoordinationDigest ||
@@ -2947,7 +2979,7 @@ func (r *SchemaReconciler) ensureCurrentExecutionBinding(
 	if schema == nil || schema.Status.Plan == nil || schema.Status.ExecutionBinding == nil || plan == nil {
 		return fmt.Errorf("current plan execution binding is unavailable")
 	}
-	if plan.Spec.ContractVersion != fingerprint.CurrentPlanContractVersion {
+	if !sourcebinding.WrittenContract(plan.Spec.ContractVersion, plan.Spec.Source) {
 		return fmt.Errorf("current plan execution binding uses unsupported write contract %d", plan.Spec.ContractVersion)
 	}
 	status := schema.Status.Plan
@@ -3976,13 +4008,9 @@ func (r *SchemaReconciler) SetupWithManager(manager ctrl.Manager) error {
 		return fmt.Errorf("index approvals by schema: %w", err)
 	}
 	if err := manager.GetFieldIndexer().IndexField(context.Background(), &operatorv1alpha1.PtahSchema{}, schemaPolicyIndex, func(object client.Object) []string {
-		schema := object.(*operatorv1alpha1.PtahSchema)
-		if schema.Spec.Desired.VerificationPolicyFrom.Name == "" {
-			return nil
-		}
-		return []string{schema.Spec.Desired.VerificationPolicyFrom.Name}
+		return sourceConfigMapNames(object.(*operatorv1alpha1.PtahSchema).Spec.Desired)
 	}); err != nil {
-		return fmt.Errorf("index schemas by verification policy: %w", err)
+		return fmt.Errorf("index schemas by the ConfigMaps their source reads: %w", err)
 	}
 	mapApproval := handler.EnqueueRequestsFromMapFunc(func(_ context.Context, object client.Object) []reconcile.Request {
 		approval, ok := object.(*operatorv1alpha1.PtahSchemaApproval)
@@ -4081,12 +4109,13 @@ func operationInputs(schema *operatorv1alpha1.PtahSchema, operation operatorv1al
 			if err != nil {
 				return nil, fmt.Errorf("derive database coordination digest: %w", err)
 			}
-			if !schema.Status.Source.Verified {
+			if !schemaSourceReady(schema) {
 				return nil, fmt.Errorf("verified artifact is required before observation")
 			}
 			base["resolved_reference"] = schema.Status.Source.ResolvedReference
 			base["artifact_digest"] = schema.Status.Source.Digest
 			base["source_access"] = artifactAccessBinding(schema)
+			addConfigMapSourceInput(base, schema.Status.Source.ConfigMap)
 		}
 		base["target"] = target
 		base["coordination_digest"] = coordinationDigest
@@ -4112,13 +4141,14 @@ func operationInputs(schema *operatorv1alpha1.PtahSchema, operation operatorv1al
 			base["dev"] = pending.Dev
 			base["connect_timeout"] = pending.ConnectTimeout
 		} else {
-			if !schema.Status.Source.Verified || schema.Status.Target.CoordinationDigest == "" ||
+			if !schemaSourceReady(schema) || schema.Status.Target.CoordinationDigest == "" ||
 				schema.Status.Target.IdentityDigest == "" || schema.Status.Target.DriftReportDigest == "" {
 				return nil, fmt.Errorf("verified source and target observation are required before planning")
 			}
 			base["resolved_reference"] = schema.Status.Source.ResolvedReference
 			base["artifact_digest"] = schema.Status.Source.Digest
 			base["source_access"] = artifactAccessBinding(schema)
+			addConfigMapSourceInput(base, schema.Status.Source.ConfigMap)
 			base["coordination_digest"] = schema.Status.Target.CoordinationDigest
 			base["target_identity"] = schema.Status.Target.IdentityDigest
 			base["target"] = databaseTargetBinding(schema.Spec.Target)
@@ -4142,11 +4172,14 @@ func operationInputs(schema *operatorv1alpha1.PtahSchema, operation operatorv1al
 	return base, nil
 }
 
-func artifactAccessBinding(schema *operatorv1alpha1.PtahSchema) *operatorv1alpha1.OCIArtifactAccessBinding {
+func artifactAccessBinding(schema *operatorv1alpha1.PtahSchema) *operatorv1alpha1.SourceAccessBinding {
 	if schema == nil {
 		return nil
 	}
-	binding := &operatorv1alpha1.OCIArtifactAccessBinding{
+	if access := sourcebinding.SchemaAccess(schema.Status.Source); access != nil {
+		return access
+	}
+	binding := &operatorv1alpha1.SourceAccessBinding{
 		ResolvedReference: schema.Status.Source.ResolvedReference,
 		Digest:            schema.Status.Source.Digest,
 	}
@@ -4160,7 +4193,7 @@ func artifactAccessBinding(schema *operatorv1alpha1.PtahSchema) *operatorv1alpha
 func currentPlanStatus(plan *operatorv1alpha1.PtahSchemaPlan) *operatorv1alpha1.CurrentPlanStatus {
 	return &operatorv1alpha1.CurrentPlanStatus{
 		Name: plan.Name, UID: plan.UID, Fingerprint: plan.Spec.Fingerprint, ContentDigest: plan.Spec.ContentDigest,
-		ArtifactDigest: plan.Spec.ArtifactDigest, CoordinationDigest: plan.Spec.CoordinationDigest,
+		ArtifactDigest: plan.Spec.ArtifactDigest, Source: plan.Spec.Source.DeepCopy(), CoordinationDigest: plan.Spec.CoordinationDigest,
 		TargetIdentityDigest:   plan.Spec.TargetIdentityDigest,
 		ActualStateFingerprint: plan.Spec.ActualStateFingerprint, DesiredStateFingerprint: plan.Spec.DesiredStateFingerprint,
 		PolicyFingerprint: plan.Spec.PolicyFingerprint, VerificationPolicyUID: plan.Spec.VerificationPolicyUID,
@@ -4261,6 +4294,7 @@ func appliedStatusFor(plan operatorv1alpha1.CurrentPlanStatus, now metav1.Time) 
 	// controller has reached by now, which is not the plan this record is about.
 	return &operatorv1alpha1.AppliedStatus{
 		ArtifactDigest:     plan.ArtifactDigest,
+		Source:             plan.Source.DeepCopy(),
 		PlanRef:            operatorv1alpha1.ImmutableObjectReference{Name: plan.Name, UID: plan.UID},
 		PlanFingerprint:    plan.Fingerprint,
 		CoordinationDigest: plan.CoordinationDigest, TargetIdentityDigest: plan.TargetIdentityDigest,
@@ -4273,7 +4307,7 @@ func appliedStatusFor(plan operatorv1alpha1.CurrentPlanStatus, now metav1.Time) 
 }
 
 func pendingMatchesCurrentSchema(schema *operatorv1alpha1.PtahSchema, pending *operatorv1alpha1.PendingObservationStatus) bool {
-	if schema == nil || pending == nil || pending.ApplyGeneration != schema.Generation || !schema.Status.Source.Verified ||
+	if schema == nil || pending == nil || pending.ApplyGeneration != schema.Generation || !schemaSourceReady(schema) ||
 		schema.Status.Source.Digest != pending.Source.Digest || schema.Status.Source.ResolvedReference != pending.Source.ResolvedReference ||
 		schema.Status.Source.VerificationPolicyUID != pending.Plan.VerificationPolicyUID ||
 		schema.Status.Source.VerificationPolicyDigest != pending.Plan.VerificationPolicyDigest ||
@@ -4313,7 +4347,7 @@ func planDriftSummary(plan dataplane.PlanFile) (int32, string) {
 }
 
 func approvalMatches(approval *operatorv1alpha1.PtahSchemaApproval, schema *operatorv1alpha1.PtahSchema, plan *operatorv1alpha1.PtahSchemaPlan) bool {
-	if plan == nil || plan.Spec.ContractVersion != fingerprint.CurrentPlanContractVersion {
+	if plan == nil || !sourcebinding.WrittenContract(plan.Spec.ContractVersion, plan.Spec.Source) {
 		return false
 	}
 	return approvalMatchesPlanStatus(approval, schema, currentPlanStatus(plan))
@@ -4548,7 +4582,7 @@ func setCondition(schema *operatorv1alpha1.PtahSchema, conditionType string, sta
 }
 
 func markSourceRefreshPending(schema *operatorv1alpha1.PtahSchema) {
-	if schema.Status.Source.Digest == "" {
+	if !schemaSourceResolved(schema) {
 		return
 	}
 	setCondition(schema, operatorv1alpha1.ConditionArtifactResolved, metav1.ConditionUnknown, operatorv1alpha1.ReasonRefreshing, "Refreshing the requested OCI reference; the retained digest remains historical evidence")
@@ -4557,7 +4591,7 @@ func markSourceRefreshPending(schema *operatorv1alpha1.PtahSchema) {
 }
 
 func markSourceRefreshFailed(schema *operatorv1alpha1.PtahSchema) {
-	if schema.Status.Source.Digest == "" {
+	if !schemaSourceResolved(schema) {
 		setCondition(schema, operatorv1alpha1.ConditionArtifactResolved, metav1.ConditionFalse, operatorv1alpha1.ReasonResolveFailed, "The requested OCI reference could not be resolved")
 		setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse, operatorv1alpha1.ReasonSourceUnresolved, "No plan can be prepared until the requested OCI reference resolves")
 		setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionUnknown, operatorv1alpha1.ReasonSourceResolutionUnknown, "Convergence cannot be determined without a resolved source")
@@ -4569,7 +4603,7 @@ func markSourceRefreshFailed(schema *operatorv1alpha1.PtahSchema) {
 }
 
 func markSourceRefreshSuspended(schema *operatorv1alpha1.PtahSchema) {
-	if schema.Status.Source.Digest == "" {
+	if !schemaSourceResolved(schema) {
 		return
 	}
 	setCondition(schema, operatorv1alpha1.ConditionArtifactResolved, metav1.ConditionUnknown, operatorv1alpha1.ReasonRefreshSuspended, "Source refresh was suspended before dispatch; the retained digest remains historical evidence")

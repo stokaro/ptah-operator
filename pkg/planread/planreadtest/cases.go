@@ -7,6 +7,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/fingerprint"
 	"github.com/stokaro/ptah-operator/pkg/planread"
 )
 
@@ -229,7 +230,7 @@ func refusedPlans(t testing.TB) []Case {
 			Schema:      "storefront", Selection: planread.Current,
 			Objects: stored(func(lab *Lab, plan *operatorv1alpha1.PtahSchemaPlan) {
 				lab.EditManifest(t, plan, func(spec *operatorv1alpha1.PtahSchemaPlanSpec) {
-					spec.ContractVersion = planread.ContractVersion + 1
+					spec.ContractVersion = fingerprint.SourcePlanContractVersion + 1
 				})
 			}),
 			Want: Want{Err: planread.ErrUnsupported},

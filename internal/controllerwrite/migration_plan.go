@@ -10,6 +10,7 @@ import (
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/migrationplan"
+	"github.com/stokaro/ptah-operator/internal/sourcebinding"
 )
 
 var (
@@ -102,7 +103,8 @@ func validateMigrationPlanShape(
 	plan *operatorv1alpha1.PtahMigrationPlan,
 	migration *operatorv1alpha1.PtahMigration,
 ) error {
-	if plan.Spec.ContractVersion != migrationplan.ContractVersion {
+	if !migrationplan.SupportedContractVersion(plan.Spec.ContractVersion) ||
+		plan.Spec.ContractVersion != sourcebinding.ContractVersion(plan.Spec.Source) {
 		return errors.New("plan contract version is not the one this manager publishes")
 	}
 	binding := migration.Status.ExecutionBinding
@@ -120,7 +122,8 @@ func validateMigrationPlanShape(
 	if plan.Spec.TargetIdentityDigest != history.TargetIdentityDigest {
 		return errors.New("plan target identity does not match the database the history came from")
 	}
-	if plan.Spec.ArtifactDigest != artifact.Digest {
+	statusArtifact, statusSource := sourcebinding.MigrationPlanSource(artifact, migration.Status.ConfigMap)
+	if !sourcebinding.SamePlanSource(plan.Spec.ArtifactDigest, plan.Spec.Source, statusArtifact, statusSource) {
 		return errors.New("plan artifact digest does not match the resolved artifact")
 	}
 	if plan.Spec.ExecutionBindingID != binding.Epoch ||
@@ -145,6 +148,7 @@ func validateMigrationPlanShape(
 		HistoryFingerprint:       plan.Spec.HistoryFingerprint,
 		SequenceDigest:           sequenceDigest,
 		ArtifactDigest:           plan.Spec.ArtifactDigest,
+		Source:                   sourcebinding.Fingerprint(plan.Spec.Source),
 		CoordinationDigest:       plan.Spec.CoordinationDigest,
 		TargetIdentityDigest:     plan.Spec.TargetIdentityDigest,
 		PolicyFingerprint:        plan.Spec.PolicyFingerprint,

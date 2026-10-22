@@ -157,6 +157,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:5369044df41aaeea308c2ef7e004b9045c3d88c213d81b30c1debdce0d6920d5",
       "reason": "Read the plan statements Ptah v0.14.0 writes for a feature owner (#695). A statement that Ptah's extension or row-security policy owner rendered carries transactions, owned, access and access_reason, and the strict plan decoder refused every such plan, so a schema declaring a PostgreSQL extension or a policy could not plan or apply. The four fields are declared and nothing reads them: the plan bytes are carried as before, Ptah folds the access assessment into the severity and refuses a plan that understates it in the dry run the plan Job runs, and the privilege kinds are still read from the SQL. Any other unknown field is still refused. Commands, payloads, result frames, delivery identity, SQL authority and retry limits are unchanged."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:4fd31c3d427ba9803a322c3da91ff2e80a38640fcc76e14e1b67d5115f655d56",
+      "reason": "Copy a ConfigMap source's snapshot (#698). A new mode, --materialize-source-snapshot with --materialize-to and --content-digest, runs in an init container: it reads the mounted snapshot, refuses it unless the manifest gives the bound content digest, every file has the size and SHA-256 its line names, the manifest is canonical and no other key is present, and only then copies the files into the source volume. It opens no connection and reads no credential. Nothing a plan or an approval made under protocol 1 relies on changed: the operation modes, their commands, payloads, result frames, delivery identity, SQL authority and retry limits are as they were, and an OCI source is fetched as before. A runner without the mode refuses the unknown flag before the container that holds the database URL starts."
     }
   ]
 }

@@ -16,7 +16,8 @@ const (
 	prefix                      = "sha256:"
 	coordinationContractVersion = 1
 
-	// CurrentPlanContractVersion is the only plan fingerprint format. It binds
+	// CurrentPlanContractVersion is the plan contract of a plan computed from
+	// an OCI artifact. It binds
 	// what decides the plan's meaning when it runs: the durable execution
 	// epoch, the controller-state version, the Ptah version, the executor
 	// image and the runner protocol. It also binds what the manager reads out
@@ -28,7 +29,33 @@ const (
 	// the fingerprint, so a manager release that changes only them, and reads
 	// the plan the same way, keeps every plan and approval.
 	CurrentPlanContractVersion int32 = 1
+
+	// SourcePlanContractVersion is the plan contract of a plan computed from a
+	// ConfigMap. It binds everything version 1 binds, except that the source
+	// binding takes the place of the artifact digest and the verification
+	// policy, which such a source does not have. A version 1 plan's
+	// fingerprint is computed exactly as before, so a manager that writes
+	// both retires no plan and no approval a version 1 manager wrote; a
+	// manager that knows only version 1 refuses a version 2 plan.
+	SourcePlanContractVersion int32 = 2
 )
+
+// PlanSource is the source a version 2 plan binds: the kind of source, the
+// object the files were read from, and the content digest of the files.
+type PlanSource struct {
+	Kind          string `json:"kind"`
+	Revision      string `json:"revision"`
+	ContentDigest string `json:"content_digest"`
+}
+
+// PlanContractVersionFor is the contract version a plan bound to source
+// carries: version 2 when it names a source, version 1 when it does not.
+func PlanContractVersionFor(source *PlanSource) int32 {
+	if source != nil {
+		return SourcePlanContractVersion
+	}
+	return CurrentPlanContractVersion
+}
 
 var (
 	coordinationKeyPattern    = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9._:/-]{0,251}[a-z0-9])?$`)
@@ -164,22 +191,25 @@ func NormalizeSet(values []string) []string {
 // same content, and must derive a different plan rather than inherit one
 // whose approval and apply policy were decided on the older reading.
 type PlanBinding struct {
-	ContractVersion          int32  `json:"contract_version"`
-	SchemaUID                string `json:"schema_uid"`
-	PlanContentDigest        string `json:"plan_content_digest"`
-	ArtifactDigest           string `json:"artifact_digest"`
-	CoordinationDigest       string `json:"coordination_digest"`
-	TargetIdentityDigest     string `json:"target_identity_digest"`
-	ActualStateFingerprint   string `json:"actual_state_fingerprint"`
-	DesiredStateFingerprint  string `json:"desired_state_fingerprint"`
-	PolicyFingerprint        string `json:"policy_fingerprint"`
-	VerificationPolicyUID    string `json:"verification_policy_uid"`
-	VerificationPolicyDigest string `json:"verification_policy_digest"`
-	ExecutionBindingID       string `json:"execution_binding_id"`
-	ControllerStateVersion   int32  `json:"controller_state_version"`
-	PtahVersion              string `json:"ptah_version"`
-	ExecutorImage            string `json:"executor_image"`
-	RunnerProtocolVersion    int32  `json:"runner_protocol_version"`
+	ContractVersion   int32  `json:"contract_version"`
+	SchemaUID         string `json:"schema_uid"`
+	PlanContentDigest string `json:"plan_content_digest"`
+	ArtifactDigest    string `json:"artifact_digest"`
+	// Source is absent from a version 1 binding, so its canonical JSON, and
+	// with it every fingerprint a version 1 manager computed, is unchanged.
+	Source                   *PlanSource `json:"source,omitempty"`
+	CoordinationDigest       string      `json:"coordination_digest"`
+	TargetIdentityDigest     string      `json:"target_identity_digest"`
+	ActualStateFingerprint   string      `json:"actual_state_fingerprint"`
+	DesiredStateFingerprint  string      `json:"desired_state_fingerprint"`
+	PolicyFingerprint        string      `json:"policy_fingerprint"`
+	VerificationPolicyUID    string      `json:"verification_policy_uid"`
+	VerificationPolicyDigest string      `json:"verification_policy_digest"`
+	ExecutionBindingID       string      `json:"execution_binding_id"`
+	ControllerStateVersion   int32       `json:"controller_state_version"`
+	PtahVersion              string      `json:"ptah_version"`
+	ExecutorImage            string      `json:"executor_image"`
+	RunnerProtocolVersion    int32       `json:"runner_protocol_version"`
 
 	Destructive      bool     `json:"destructive"`
 	PrivilegeChanges []string `json:"privilege_changes"`
@@ -193,23 +223,23 @@ func (b PlanBinding) Fingerprint() (string, error) {
 		return "", err
 	}
 	required := map[string]string{
-		"schema UID":                 b.SchemaUID,
-		"plan content digest":        b.PlanContentDigest,
-		"artifact digest":            b.ArtifactDigest,
-		"coordination digest":        b.CoordinationDigest,
-		"target identity digest":     b.TargetIdentityDigest,
-		"actual state fingerprint":   b.ActualStateFingerprint,
-		"desired state fingerprint":  b.DesiredStateFingerprint,
-		"policy fingerprint":         b.PolicyFingerprint,
-		"verification policy UID":    b.VerificationPolicyUID,
-		"verification policy digest": b.VerificationPolicyDigest,
-		"Ptah version":               b.PtahVersion,
-		"executor image":             b.ExecutorImage,
+		"schema UID":                b.SchemaUID,
+		"plan content digest":       b.PlanContentDigest,
+		"coordination digest":       b.CoordinationDigest,
+		"target identity digest":    b.TargetIdentityDigest,
+		"actual state fingerprint":  b.ActualStateFingerprint,
+		"desired state fingerprint": b.DesiredStateFingerprint,
+		"policy fingerprint":        b.PolicyFingerprint,
+		"Ptah version":              b.PtahVersion,
+		"executor image":            b.ExecutorImage,
 	}
 	for name, value := range required {
 		if strings.TrimSpace(value) == "" {
 			return "", fmt.Errorf("%s is required", name)
 		}
+	}
+	if err := validatePlanSource(b.ContractVersion, b.ArtifactDigest, b.VerificationPolicyUID, b.VerificationPolicyDigest, b.Source); err != nil {
+		return "", err
 	}
 	if !executionBindingIDPattern.MatchString(b.ExecutionBindingID) {
 		return "", fmt.Errorf("a valid execution binding ID is required")
@@ -227,18 +257,57 @@ func (b PlanBinding) Fingerprint() (string, error) {
 	return DigestCanonicalJSON(b)
 }
 
-// ValidatePlanContractVersion accepts only the current plan contract. A plan
-// under any other version must not be interpreted using today's approval or
-// Apply semantics.
+// ValidatePlanContractVersion accepts the plan contracts this manager
+// writes. A plan under any other version must not be interpreted using
+// today's approval or Apply semantics.
 func ValidatePlanContractVersion(version int32) error {
-	if version != CurrentPlanContractVersion {
+	if version != CurrentPlanContractVersion && version != SourcePlanContractVersion {
 		return fmt.Errorf(
-			"unsupported plan contract version %d; the only supported version is %d",
+			"unsupported plan contract version %d; the supported versions are %d and %d",
 			version,
 			CurrentPlanContractVersion,
+			SourcePlanContractVersion,
 		)
 	}
 	return nil
+}
+
+// validatePlanSource holds a plan's source fields to its contract version:
+// version 1 binds the artifact digest and the verification policy and no
+// source, version 2 binds a complete source and none of the other three.
+func validatePlanSource(version int32, artifactDigest, policyUID, policyDigest string, source *PlanSource) error {
+	switch version {
+	case CurrentPlanContractVersion:
+		for name, value := range map[string]string{
+			"artifact digest":            artifactDigest,
+			"verification policy UID":    policyUID,
+			"verification policy digest": policyDigest,
+		} {
+			if strings.TrimSpace(value) == "" {
+				return fmt.Errorf("%s is required", name)
+			}
+		}
+		if source != nil {
+			return fmt.Errorf("a contract version %d plan binds no source", version)
+		}
+	case SourcePlanContractVersion:
+		if source == nil || source.Kind == "" || source.Revision == "" || !strings.HasPrefix(source.ContentDigest, prefix) {
+			return fmt.Errorf("a contract version %d plan binds a complete source", version)
+		}
+		if artifactDigest != "" || policyUID != "" || policyDigest != "" {
+			return fmt.Errorf("a contract version %d plan binds no artifact digest and no verification policy", version)
+		}
+	}
+	return nil
+}
+
+// ValidatePlanSource is validatePlanSource for a plan kind that keeps its own
+// binding, such as a migration plan.
+func ValidatePlanSource(version int32, artifactDigest, policyUID, policyDigest string, source *PlanSource) error {
+	if err := ValidatePlanContractVersion(version); err != nil {
+		return err
+	}
+	return validatePlanSource(version, artifactDigest, policyUID, policyDigest, source)
 }
 
 // OperationInput identifies one deterministic, crash-recoverable execution.

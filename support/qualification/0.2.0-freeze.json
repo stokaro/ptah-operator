@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-10-21T21:07:23.610013+00:00",
+  "frozenAt": "2026-10-22T10:10:50.096655+00:00",
   "profileSourceCommit": "1259f4d59343fef049307085e3ea77d2971677cb",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
@@ -24,7 +24,7 @@
     },
     {
       "path": "support/e2e-suites.json",
-      "sha256": "e36f09ced6f8725a433dae202a0f7a21149143ebbe2de0512edf75565b186967"
+      "sha256": "24ae5a159c06c874f46188bb676a03af7d0d567a39115c58836129ddcdfc9c33"
     },
     {
       "path": "support/ptah.json",
@@ -53,7 +53,7 @@
   ],
   "functionalMatrix": {
     "path": "support/qualification/0.2.0-functional-matrix.md",
-    "sha256": "221dc8cb92503a62c6c574ef052359eac84d2bfacb597e33606684595f75da2f",
+    "sha256": "0ceb5d092a50d65f1507d1b028d8a6caf3d9019759a5948e0e627df2552a3079",
     "generatedFromCommit": "a8b90b5816e9e45d6ba97a1bf006918896d892e3",
     "command": "go run ./hack/acceptancecoverage",
     "kubernetesMinors": [
@@ -68,7 +68,7 @@
     "cellsPerPlatform": 27,
     "requiredCells": 54,
     "additionalRequirements": "Q-01 through Q-12 in support/qualification/0.2.0-coverage.md remain required; the functional matrix alone is insufficient.",
-    "sourceChanges": "Move plan-store alerting from lifecycle to certificates and PostgreSQL reference data from certificates to data-plane. Master CI run 37420035400 passed in 92m45s; its slowest lifecycle spent 20m02s on plan-store alerting before the upgrade fault window. Rebalance the existing nine suites without adding phases or scenarios. All 17 phases, 345 scenario/engine/family rows, supported minors and platforms, observation windows, and Q-01 through Q-12 targets remain unchanged. Revision 42 changes only the line naming the Ptah build under test, now the v0.13.0 release image; no phase, scenario, cell, platform or target changes. Revision 54 adds the data-plane scenario postgresql-extension-drift, which stores Ptah v0.14.0's feature category for a dropped PostgreSQL extension through a cluster; phases, suites, cells, platforms and targets are unchanged."
+    "sourceChanges": "Move plan-store alerting from lifecycle to certificates and PostgreSQL reference data from certificates to data-plane. Master CI run 37420035400 passed in 92m45s; its slowest lifecycle spent 20m02s on plan-store alerting before the upgrade fault window. Rebalance the existing nine suites without adding phases or scenarios. All 17 phases, 345 scenario/engine/family rows, supported minors and platforms, observation windows, and Q-01 through Q-12 targets remain unchanged. Revision 42 changes only the line naming the Ptah build under test, now the v0.13.0 release image; no phase, scenario, cell, platform or target changes. Revision 54 adds the data-plane scenario postgresql-extension-drift, which stores Ptah v0.14.0's feature category for a dropped PostgreSQL extension through a cluster; phases, suites, cells, platforms and targets are unchanged. Revision 55 adds the phase configmap-sources to the schema-approvals suite: a schema and a migration sequence read from ConfigMaps with no registry, edits to a selected and an unselected key, snapshot retention, and a replaced snapshot the Pod refuses. Suites, cells, platforms and targets are unchanged."
   },
   "publishedPredecessors": {
     "checkedAt": "2026-10-20T16:27:18+00:00",
@@ -79,10 +79,10 @@
     "disposition": "v0.2.4 is the published predecessor of the v0.2.5 candidate. The upgrade from it is walked through both releases' guides by support/qualification/probes/fresh_install.py --upgrade-from on both platforms; the synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 54,
+  "revision": 55,
   "supersedes": {
-    "freezeCommit": "517718ec5407f54c22ada3fcc04ac45fdcffabf0",
-    "sha256": "ca172bce69a78b5d24265d2fb013fb766e91c679cbabfb20b895fc24a699e7eb"
+    "freezeCommit": "3878084acfaa8281db46be272559029497d33119",
+    "sha256": "c11c9368fb095a9b52ef65fb403cb6878ed17f14a86c6c735eaa28a044666a73"
   },
   "revisionReason": "Add the data-plane scenario postgresql-extension-drift (#678): a schema that declares the pg_trgm extension converges, the extension is dropped by hand, and the next Observe stores Ptah v0.14.0's category feature_changes:ptah.run/pgextension/extension-change. The functional matrix lists the scenario on each minor's data-plane line. Phases, suites, cells, the profile, its targets and every other input are unchanged."
 }

@@ -213,6 +213,67 @@ func bindingRefusals() []refusal {
 	}
 }
 
+// planSourceRefusals hold a plan's source fields to its contract version,
+// the same in a PtahSchemaPlan and a PtahMigrationPlan.
+func planSourceRefusals() []refusal {
+	const message = "contract version 1 binds artifactDigest and a verification policy; contract version 2 binds source"
+	source := map[string]any{"kind": "ConfigMap", "revision": "configmap-uid", "contentDigest": contentDigest}
+	asSource := func(t *testing.T, object *unstructured.Unstructured) {
+		set(t, object, int64(fingerprint.SourcePlanContractVersion), "spec", "contractVersion")
+		set(t, object, source, "spec", "source")
+		for _, field := range []string{"artifactDigest", "verificationPolicyUID", "verificationPolicyDigest"} {
+			unstructured.RemoveNestedField(object.Object, "spec", field)
+		}
+	}
+	return []refusal{
+		{
+			name:   "a version 1 plan without its artifact digest",
+			mutate: removing("spec", "artifactDigest"),
+			want:   []cause{{"spec", message}},
+		},
+		{
+			name:   "a version 1 plan without its verification policy",
+			mutate: removing("spec", "verificationPolicyUID"),
+			want:   []cause{{"spec", message}},
+		},
+		{
+			name:   "a version 1 plan binding a source",
+			mutate: setting(source, "spec", "source"),
+			want:   []cause{{"spec", message}},
+		},
+		{
+			name:   "a version 2 plan binding no source",
+			mutate: both(asSource, removing("spec", "source")),
+			want:   []cause{{"spec", message}},
+		},
+		{
+			name:   "a version 2 plan binding an artifact digest",
+			mutate: both(asSource, setting(contentDigest, "spec", "artifactDigest")),
+			want:   []cause{{"spec", message}},
+		},
+		{
+			name:   "a version 2 plan binding a verification policy",
+			mutate: both(asSource, setting(contentDigest, "spec", "verificationPolicyDigest")),
+			want:   []cause{{"spec", message}},
+		},
+		{
+			name:   "a source of another kind",
+			mutate: both(asSource, setting("Git", "spec", "source", "kind")),
+			want:   []cause{{"spec.source.kind", "Unsupported value"}},
+		},
+		{
+			name:   "a source without a revision",
+			mutate: both(asSource, setting("", "spec", "source", "revision")),
+			want:   []cause{{"spec.source.revision", "should be at least 1 chars long"}},
+		},
+		{
+			name:   "a source content digest outside its pattern",
+			mutate: both(asSource, setting("sha256:abc", "spec", "source", "contentDigest")),
+			want:   []cause{{"spec.source.contentDigest", "should match"}},
+		},
+	}
+}
+
 func TestPtahSchemaPlanRefusals(t *testing.T) {
 	plane.Require(t)
 	t.Parallel()
@@ -234,7 +295,7 @@ func TestPtahSchemaPlanRefusals(t *testing.T) {
 		},
 		refusal{
 			name:   "contractVersion outside its enum",
-			mutate: setting(int64(fingerprint.CurrentPlanContractVersion)+1, "spec", "contractVersion"),
+			mutate: setting(int64(fingerprint.SourcePlanContractVersion)+1, "spec", "contractVersion"),
 			want:   []cause{{"spec.contractVersion", "Unsupported value"}},
 		},
 		refusal{
@@ -296,6 +357,7 @@ func TestPtahSchemaPlanRefusals(t *testing.T) {
 			want:   []cause{{"spec.privilegeChanges[1]", "Duplicate value"}},
 		},
 	)
+	rows = append(rows, planSourceRefusals()...)
 	assertRefusals(t, basedOn("PtahSchemaPlan", namespace, "ptah-plan-71c480df93d6ae2f14efe3c4", schemaPlanSpec), rows)
 }
 
@@ -319,9 +381,9 @@ func TestPtahMigrationPlanRefusals(t *testing.T) {
 			want:   []cause{{"spec.migrationRef.name", "Required value"}},
 		},
 		refusal{
-			name:   "contractVersion past 1",
-			mutate: setting(int64(2), "spec", "contractVersion"),
-			want:   []cause{{"spec.contractVersion", "less than or equal to 1"}},
+			name:   "contractVersion past 2",
+			mutate: setting(int64(3), "spec", "contractVersion"),
+			want:   []cause{{"spec.contractVersion", "less than or equal to 2"}},
 		},
 		refusal{
 			name:   "createdAt that is not a time",
@@ -375,6 +437,7 @@ func TestPtahMigrationPlanRefusals(t *testing.T) {
 			want:   []cause{{"spec.runnerProtocolVersion", "greater than or equal to 1"}},
 		},
 	)
+	rows = append(rows, planSourceRefusals()...)
 	assertRefusals(t, basedOn("PtahMigrationPlan", namespace, "ptah-mplan-19581e27de7ced00ff1ce50b", migrationPlanSpec), rows)
 }
 

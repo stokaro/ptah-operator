@@ -23,8 +23,12 @@ import (
 
 const (
 	// ContractVersion versions migration plan publication separately from the
-	// Kubernetes API version.
-	ContractVersion int32 = 1
+	// Kubernetes API version. It is the contract of a plan computed from an
+	// OCI artifact; SourceContractVersion is the one of a plan computed from a
+	// ConfigMap, which binds its source in place of the artifact digest and
+	// the verification policy.
+	ContractVersion       int32 = fingerprint.CurrentPlanContractVersion
+	SourceContractVersion int32 = fingerprint.SourcePlanContractVersion
 
 	// LabelMigration names the PtahMigration a plan belongs to.
 	LabelMigration = workload.LabelMigration
@@ -50,10 +54,13 @@ var (
 // left out of here, so a manager release that changes only them finds the
 // same fingerprint, the same plan name and the same approvals.
 type Binding struct {
-	MigrationUID             types.UID
-	HistoryFingerprint       string
-	SequenceDigest           string
-	ArtifactDigest           string
+	MigrationUID       types.UID
+	HistoryFingerprint string
+	SequenceDigest     string
+	ArtifactDigest     string
+	// Source is the ConfigMap source a version 2 plan binds in place of the
+	// artifact digest and the verification policy.
+	Source                   *fingerprint.PlanSource
 	CoordinationDigest       string
 	TargetIdentityDigest     string
 	PolicyFingerprint        string
@@ -69,22 +76,24 @@ type Binding struct {
 // Fingerprint is the plan's identity. An approval names it, and everything the
 // plan was decided from is inside it.
 func (b Binding) Fingerprint() (string, error) {
+	version := b.ContractVersion()
 	for name, value := range map[string]string{
-		"migration UID":              string(b.MigrationUID),
-		"history fingerprint":        b.HistoryFingerprint,
-		"sequence digest":            b.SequenceDigest,
-		"artifact digest":            b.ArtifactDigest,
-		"coordination digest":        b.CoordinationDigest,
-		"target identity digest":     b.TargetIdentityDigest,
-		"policy fingerprint":         b.PolicyFingerprint,
-		"verification policy UID":    string(b.VerificationPolicyUID),
-		"verification policy digest": b.VerificationPolicyDigest,
-		"Ptah version":               b.PtahVersion,
-		"executor image":             b.ExecutorImage,
+		"migration UID":          string(b.MigrationUID),
+		"history fingerprint":    b.HistoryFingerprint,
+		"sequence digest":        b.SequenceDigest,
+		"coordination digest":    b.CoordinationDigest,
+		"target identity digest": b.TargetIdentityDigest,
+		"policy fingerprint":     b.PolicyFingerprint,
+		"Ptah version":           b.PtahVersion,
+		"executor image":         b.ExecutorImage,
 	} {
 		if strings.TrimSpace(value) == "" {
 			return "", fmt.Errorf("%s is required", name)
 		}
+	}
+	if err := fingerprint.ValidatePlanSource(version, b.ArtifactDigest,
+		string(b.VerificationPolicyUID), b.VerificationPolicyDigest, b.Source); err != nil {
+		return "", err
 	}
 	if !executionBindingIDPattern.MatchString(b.ExecutionBindingID) {
 		return "", errors.New("a valid execution binding ID is required")
@@ -95,23 +104,40 @@ func (b Binding) Fingerprint() (string, error) {
 	if b.RunnerProtocolVersion < 1 {
 		return "", errors.New("runner protocol version must be positive")
 	}
-	return fingerprint.DigestCanonicalJSON(map[string]any{
-		"contract_version":           ContractVersion,
-		"migration_uid":              string(b.MigrationUID),
-		"history_fingerprint":        b.HistoryFingerprint,
-		"sequence_digest":            b.SequenceDigest,
-		"artifact_digest":            b.ArtifactDigest,
-		"coordination_digest":        b.CoordinationDigest,
-		"target_identity_digest":     b.TargetIdentityDigest,
-		"policy_fingerprint":         b.PolicyFingerprint,
-		"verification_policy_uid":    string(b.VerificationPolicyUID),
-		"verification_policy_digest": b.VerificationPolicyDigest,
-		"execution_binding_id":       b.ExecutionBindingID,
-		"controller_state_version":   b.ControllerStateVersion,
-		"ptah_version":               b.PtahVersion,
-		"executor_image":             b.ExecutorImage,
-		"runner_protocol_version":    b.RunnerProtocolVersion,
-	})
+	document := map[string]any{
+		"contract_version":         version,
+		"migration_uid":            string(b.MigrationUID),
+		"history_fingerprint":      b.HistoryFingerprint,
+		"sequence_digest":          b.SequenceDigest,
+		"coordination_digest":      b.CoordinationDigest,
+		"target_identity_digest":   b.TargetIdentityDigest,
+		"policy_fingerprint":       b.PolicyFingerprint,
+		"execution_binding_id":     b.ExecutionBindingID,
+		"controller_state_version": b.ControllerStateVersion,
+		"ptah_version":             b.PtahVersion,
+		"executor_image":           b.ExecutorImage,
+		"runner_protocol_version":  b.RunnerProtocolVersion,
+	}
+	// A version 1 document is exactly the one a manager without ConfigMap
+	// sources hashed, so its fingerprint, its plan name and its approvals
+	// carry over.
+	if b.Source == nil {
+		document["artifact_digest"] = b.ArtifactDigest
+		document["verification_policy_uid"] = string(b.VerificationPolicyUID)
+		document["verification_policy_digest"] = b.VerificationPolicyDigest
+	} else {
+		document["source"] = *b.Source
+	}
+	return fingerprint.DigestCanonicalJSON(document)
+}
+
+// ContractVersion is the plan contract this binding is published under.
+func (b Binding) ContractVersion() int32 { return fingerprint.PlanContractVersionFor(b.Source) }
+
+// SupportedContractVersion reports whether this manager publishes and reads
+// migration plans of version.
+func SupportedContractVersion(version int32) bool {
+	return version == ContractVersion || version == SourceContractVersion
 }
 
 // Name is the plan's deterministic object name. Two publications of the same

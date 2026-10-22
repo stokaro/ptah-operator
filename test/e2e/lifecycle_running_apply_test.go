@@ -41,7 +41,7 @@ func predecessorApplyTestSchema() *ptahv1alpha1.PtahSchema {
 			Target: ptahv1alpha1.DatabaseTargetSpec{
 				Engine: ptahv1alpha1.DatabaseEnginePostgreSQL, CoordinationKey: "upgrade-proof",
 			},
-			Desired: ptahv1alpha1.OCIArtifactSourceSpec{
+			Desired: ptahv1alpha1.SourceSpec{
 				OCIRef: "oci://example.invalid/schema@" + predecessorApplyTestDigest('e'),
 			},
 			Policy: ptahv1alpha1.ReconciliationPolicy{

@@ -3253,6 +3253,12 @@ E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \
 E2E_ENGINE=mysql \
 	run_recorded_phase reference-data-mysql run_go_phase reference-data-mysql
 
+# A schema and a migration sequence whose source is a ConfigMap. They run on
+# the prepared PostgreSQL server and name no registry.
+E2E_KUBECONFIG=$KUBECONFIG_FILE \
+E2E_TEST_NAMESPACE=$TEST_NAMESPACE \
+	run_recorded_phase configmap-sources run_go_phase configmap-sources
+
 # Alerting creates its own native producers from the prepared databases and
 # registry. Operation incidents have their own suite; infrastructure faults run
 # in lifecycle before uninstall. All alert phases run sequentially when no suite is selected.

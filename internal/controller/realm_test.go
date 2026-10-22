@@ -35,9 +35,9 @@ func realmSchemaFixture(namespace, name, key string, shared bool) *operatorv1alp
 					LocalObjectReference: corev1.LocalObjectReference{Name: "database"}, Key: "url",
 				},
 			},
-			Desired: operatorv1alpha1.OCIArtifactSourceSpec{
+			Desired: operatorv1alpha1.SourceSpec{
 				OCIRef: "oci://registry.example/team/schema:stable",
-				VerificationPolicyFrom: corev1.ConfigMapKeySelector{
+				VerificationPolicyFrom: &corev1.ConfigMapKeySelector{
 					LocalObjectReference: corev1.LocalObjectReference{Name: "verification"}, Key: "policy.yaml",
 				},
 			},
@@ -515,9 +515,9 @@ func TestSchemaBlocksOnAContestedRealmWithoutDispatchingAJob(t *testing.T) {
 					LocalObjectReference: corev1.LocalObjectReference{Name: "database"}, Key: "url",
 				},
 			},
-			Artifact: operatorv1alpha1.OCIArtifactSourceSpec{
+			Artifact: operatorv1alpha1.SourceSpec{
 				OCIRef: "oci://registry.example/team/migrations:stable",
-				VerificationPolicyFrom: corev1.ConfigMapKeySelector{
+				VerificationPolicyFrom: &corev1.ConfigMapKeySelector{
 					LocalObjectReference: corev1.LocalObjectReference{Name: "verification"}, Key: "policy.yaml",
 				},
 			},

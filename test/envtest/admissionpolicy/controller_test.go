@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -67,7 +68,7 @@ func dryRunCreate(build func() (client.Object, error)) func(context.Context, cli
 	}
 }
 
-// controllerRows holds the six guards on the manager's own writes. Each one
+// controllerRows holds the seven guards on the manager's own writes. Each one
 // matches only the manager's ServiceAccount, lets through exactly what the
 // manager's code writes, and refuses the same write with one field changed.
 // An ordinary user's writes are outside them, which the widened-match
@@ -82,6 +83,7 @@ func controllerRows(t *testing.T, c *catalog) {
 	jobGuard := policy(t, "ptah-operator-job-write-guard-")
 	chunkGuard := policy(t, "ptah-operator-chunk-write-guard-")
 	projectionGuard := policy(t, "ptah-operator-projection-write-guard-")
+	snapshotDeleteGuard := policy(t, "ptah-operator-snapshot-delete-guard-")
 	planGuard := policy(t, "ptah-operator-plan-write-guard-")
 	migrationPlanGuard := policy(t, "ptah-operator-migration-plan-write-guard-")
 	manager := env.Manager()
@@ -266,6 +268,77 @@ func controllerRows(t *testing.T, c *catalog) {
 		})),
 	})
 
+	// ConfigMap sources: the snapshot the manager writes and later deletes,
+	// the Job that reads it, and the plans computed from it. Each refusal is a
+	// write the API server's own schema admits, so the guard is what refuses
+	// it.
+	const (
+		snapshotRow            = "manager writes the snapshot of a ConfigMap source"
+		snapshotDataRow        = "manager writes a source snapshot that also holds a data key"
+		snapshotOwnerRow       = "manager writes a source snapshot owned by a Deployment"
+		snapshotDeleteRow      = "manager deletes a source snapshot nothing names"
+		settingsDeleteRow      = "manager deletes a ConfigMap that is not a source snapshot"
+		userSettingsDeleteRow  = "ordinary user deletes a ConfigMap that is not a source snapshot"
+		snapshotJobRow         = "manager dispatches the Observe Job for a ConfigMap source"
+		snapshotJobVolumeRow   = "manager dispatches an Observe Job mounting a ConfigMap that is not a snapshot"
+		snapshotJobFetchRow    = "manager dispatches an Observe Job that copies a snapshot beside a registry credential"
+		sourcePlanRow          = "manager publishes a plan computed from a ConfigMap"
+		sourceMigrationPlanRow = "manager publishes a migration plan computed from a ConfigMap"
+	)
+	snapshot := func(edit func(*corev1.ConfigMap)) func() (client.Object, error) {
+		return func() (client.Object, error) {
+			object, _, err := sourceSnapshot("CREATE TABLE customers (id int);\n")
+			if err != nil {
+				return nil, err
+			}
+			if edit != nil {
+				edit(object)
+			}
+			return object, nil
+		}
+	}
+	c.row(policyenv.Row{Name: snapshotRow, Do: as(manager, dryRunCreate(snapshot(nil)))})
+	c.row(policyenv.Row{
+		Name: snapshotDataRow, Deny: []string{projectionGuard}, Message: "rejected an unsafe ConfigMap shape",
+		Do: as(manager, dryRunCreate(snapshot(func(object *corev1.ConfigMap) {
+			object.Data = map[string]string{"schema.sql": "DROP TABLE orders;\n"}
+		}))),
+	})
+	c.row(policyenv.Row{
+		Name: snapshotOwnerRow, Deny: []string{projectionGuard}, Message: "rejected an unsafe ConfigMap shape",
+		Do: as(manager, dryRunCreate(snapshot(func(object *corev1.ConfigMap) {
+			object.OwnerReferences[0].APIVersion = "apps/v1"
+			object.OwnerReferences[0].Kind = "Deployment"
+		}))),
+	})
+	c.row(policyenv.Row{Name: snapshotDeleteRow, Do: as(manager, dryRunDelete(tenantSnapshot))})
+	c.row(policyenv.Row{
+		Name: settingsDeleteRow, Deny: []string{snapshotDeleteGuard}, Message: "is not a source snapshot",
+		Do: as(manager, dryRunDelete(tenantSettings)),
+	})
+	c.row(policyenv.Row{Name: userSettingsDeleteRow, Do: as(policyenv.User(), dryRunDelete(tenantSettings))})
+	c.row(policyenv.Row{Name: snapshotJobRow, Do: as(manager, dryRunCreate(snapshotObserveJob(nil)))})
+	c.row(policyenv.Row{
+		Name: snapshotJobVolumeRow, Deny: []string{jobGuard}, Message: "rejected an unsafe workload shape",
+		Do: as(manager, dryRunCreate(snapshotObserveJob(func(job *batchv1.Job) {
+			for index := range job.Spec.Template.Spec.Volumes {
+				if volume := &job.Spec.Template.Spec.Volumes[index]; volume.ConfigMap != nil && volume.Name == "source-snapshot" {
+					volume.ConfigMap.Name = tenantSettings.Name
+				}
+			}
+		}))),
+	})
+	c.row(policyenv.Row{
+		Name: snapshotJobFetchRow, Deny: []string{jobGuard}, Message: "rejected an unsafe workload shape",
+		Do: as(manager, dryRunCreate(snapshotObserveJob(func(job *batchv1.Job) {
+			job.Spec.Template.Spec.Volumes = append(job.Spec.Template.Spec.Volumes, corev1.Volume{
+				Name: "registry-docker-config", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: "registry"}},
+			})
+		}))),
+	})
+	c.row(policyenv.Row{Name: sourcePlanRow, Do: as(manager, dryRunCreate(func() (client.Object, error) { return sourceSchemaPlan() }))})
+	c.row(policyenv.Row{Name: sourceMigrationPlanRow, Do: as(manager, dryRunCreate(func() (client.Object, error) { return sourceMigrationPlan() }))})
+
 	// A mutation that writes another release's value into a policy has to turn
 	// the row that carries that value from refused to admitted. Admits holds it
 	// to that: a policy the rewrite left malformed would refuse the row too,
@@ -303,8 +376,11 @@ func controllerRows(t *testing.T, c *catalog) {
 	})
 	c.mutation(policyenv.Mutation{
 		Name: "Job write guard binding dropped", Policies: []string{jobGuard},
-		Apply:  policyenv.DropBinding(jobGuard),
-		Breaks: []string{privilegedJobRow, reservedLabelJobRow, foreignImageJobRow, foreignStateJobRow},
+		Apply: policyenv.DropBinding(jobGuard),
+		Breaks: []string{
+			privilegedJobRow, reservedLabelJobRow, foreignImageJobRow, foreignStateJobRow,
+			snapshotJobVolumeRow, snapshotJobFetchRow,
+		},
 	})
 	c.mutation(carriesImage("Job write guard carries another manager's image", jobGuard, foreignImageJobRow))
 	c.mutation(carriesState("Job write guard carries another controller-state version", jobGuard, foreignStateJobRow))
@@ -314,7 +390,8 @@ func controllerRows(t *testing.T, c *catalog) {
 	})
 	c.mutation(policyenv.Mutation{
 		Name: "Job write guard refuses what it matches", Policies: []string{jobGuard},
-		Apply: policyenv.RefuseEverything(jobGuard), Breaks: []string{schemaJobRow, migrationJobRow, declaredMetadataJobRow},
+		Apply:  policyenv.RefuseEverything(jobGuard),
+		Breaks: []string{schemaJobRow, migrationJobRow, declaredMetadataJobRow, snapshotJobRow},
 	})
 	c.mutation(policyenv.Mutation{
 		Name: "chunk write guard binding dropped", Policies: []string{chunkGuard},
@@ -326,11 +403,12 @@ func controllerRows(t *testing.T, c *catalog) {
 	})
 	c.mutation(policyenv.Mutation{
 		Name: "projection write guard binding dropped", Policies: []string{projectionGuard},
-		Apply: policyenv.DropBinding(projectionGuard), Breaks: []string{notChunkRow},
+		Apply:  policyenv.DropBinding(projectionGuard),
+		Breaks: []string{notChunkRow, snapshotDataRow, snapshotOwnerRow},
 	})
 	c.mutation(policyenv.Mutation{
 		Name: "projection write guard refuses what it matches", Policies: []string{projectionGuard},
-		Apply: policyenv.RefuseEverything(projectionGuard), Breaks: []string{projectRow},
+		Apply: policyenv.RefuseEverything(projectionGuard), Breaks: []string{projectRow, snapshotRow},
 	})
 	c.mutation(policyenv.Mutation{
 		Name: "plan write guard binding dropped", Policies: []string{planGuard},
@@ -340,7 +418,7 @@ func controllerRows(t *testing.T, c *catalog) {
 	c.mutation(carriesState("plan write guard carries another controller-state version", planGuard, foreignStatePlanRow))
 	c.mutation(policyenv.Mutation{
 		Name: "plan write guard refuses what it matches", Policies: []string{planGuard},
-		Apply: policyenv.RefuseEverything(planGuard), Breaks: []string{publishRow},
+		Apply: policyenv.RefuseEverything(planGuard), Breaks: []string{publishRow, sourcePlanRow},
 	})
 	c.mutation(policyenv.Mutation{
 		Name: "migration plan write guard binding dropped", Policies: []string{migrationPlanGuard},
@@ -351,7 +429,20 @@ func controllerRows(t *testing.T, c *catalog) {
 	c.mutation(carriesState("migration plan write guard carries another controller-state version", migrationPlanGuard, foreignStateMigrationRow))
 	c.mutation(policyenv.Mutation{
 		Name: "migration plan write guard refuses what it matches", Policies: []string{migrationPlanGuard},
-		Apply: policyenv.RefuseEverything(migrationPlanGuard), Breaks: []string{migrationPlanRow},
+		Apply:  policyenv.RefuseEverything(migrationPlanGuard),
+		Breaks: []string{migrationPlanRow, sourceMigrationPlanRow},
+	})
+	c.mutation(policyenv.Mutation{
+		Name: "snapshot delete guard binding dropped", Policies: []string{snapshotDeleteGuard},
+		Apply: policyenv.DropBinding(snapshotDeleteGuard), Breaks: []string{settingsDeleteRow},
+	})
+	c.mutation(policyenv.Mutation{
+		Name: "snapshot delete guard matches every identity", Policies: []string{snapshotDeleteGuard},
+		Apply: policyenv.WidenMatch(snapshotDeleteGuard), Breaks: []string{userSettingsDeleteRow},
+	})
+	c.mutation(policyenv.Mutation{
+		Name: "snapshot delete guard refuses what it matches", Policies: []string{snapshotDeleteGuard},
+		Apply: policyenv.RefuseEverything(snapshotDeleteGuard), Breaks: []string{snapshotDeleteRow},
 	})
 }
 

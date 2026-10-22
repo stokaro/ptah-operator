@@ -2194,7 +2194,7 @@ func TestPostApplyObserveClaimPreservesConvergencePhase(t *testing.T) {
 		Plan: operatorv1alpha1.CurrentPlanStatus{
 			ArtifactDigest: testDigest, CoordinationDigest: testCoordinationDigest, TargetIdentityDigest: testDigest,
 		},
-		Source: operatorv1alpha1.OCIArtifactAccessBinding{
+		Source: operatorv1alpha1.SourceAccessBinding{
 			ResolvedReference: schema.Status.Source.ResolvedReference, Digest: testDigest,
 		},
 		Target: databaseTargetBinding(schema.Spec.Target), CoordinationDigest: testCoordinationDigest,
@@ -2630,9 +2630,9 @@ func schemaFixture() *operatorv1alpha1.PtahSchema {
 				Engine: operatorv1alpha1.DatabaseEnginePostgreSQL, CoordinationKey: testCoordinationKey,
 				URLFrom: corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "database"}, Key: "url"},
 			},
-			Desired: operatorv1alpha1.OCIArtifactSourceSpec{
+			Desired: operatorv1alpha1.SourceSpec{
 				OCIRef:                 "oci://registry.example/team/schema:stable",
-				VerificationPolicyFrom: corev1.ConfigMapKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "policy"}, Key: "policy.yaml"},
+				VerificationPolicyFrom: &corev1.ConfigMapKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "policy"}, Key: "policy.yaml"},
 			},
 		},
 		Status: operatorv1alpha1.PtahSchemaStatus{

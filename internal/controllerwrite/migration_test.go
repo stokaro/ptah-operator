@@ -270,9 +270,9 @@ func migrationJobFixtureWith(
 				Engine:  operatorv1alpha1.DatabaseEnginePostgreSQL,
 				URLFrom: corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "database"}, Key: "url"},
 			},
-			Artifact: operatorv1alpha1.OCIArtifactSourceSpec{
+			Artifact: operatorv1alpha1.SourceSpec{
 				OCIRef: "oci://registry.test/acme/orders-migrations:stable",
-				VerificationPolicyFrom: corev1.ConfigMapKeySelector{
+				VerificationPolicyFrom: &corev1.ConfigMapKeySelector{
 					LocalObjectReference: corev1.LocalObjectReference{Name: "verification"}, Key: "policy.yaml",
 				},
 			},
@@ -295,7 +295,7 @@ func migrationJobFixtureWith(
 		ExecutionBindingID: migration.Status.ExecutionBinding.Epoch,
 		Attempt:            1,
 		StartedAt:          metav1.Now(),
-		Source: &operatorv1alpha1.OCIArtifactAccessBinding{
+		Source: &operatorv1alpha1.SourceAccessBinding{
 			ResolvedReference: "oci://registry.test/acme/orders-migrations@" + digest('4'),
 			Digest:            digest('4'),
 		},

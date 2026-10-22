@@ -58,6 +58,7 @@ func TestConditionReasonWireContract(t *testing.T) {
 		{"resolve failed", operatorv1alpha1.ReasonResolveFailed, "ResolveFailed"},
 		{"runner protocol mismatch", operatorv1alpha1.ReasonRunnerProtocolMismatch, "RunnerProtocolMismatch"},
 		{"satisfied", operatorv1alpha1.ReasonSatisfied, "Satisfied"},
+		{"snapshot taken", operatorv1alpha1.ReasonSnapshotTaken, "SnapshotTaken"},
 		{"scoped changes", operatorv1alpha1.ReasonScopedChanges, "ScopedChanges"},
 		{"scoped converged", operatorv1alpha1.ReasonScopedConverged, "ScopedConverged"},
 		{"scoped plan pending", operatorv1alpha1.ReasonScopedPlanPending, "ScopedPlanPending"},

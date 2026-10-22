@@ -519,7 +519,7 @@ func migrationFixture() *operatorv1alpha1.PtahMigration {
 					Key:                  "url",
 				},
 			},
-			Artifact: operatorv1alpha1.OCIArtifactSourceSpec{
+			Artifact: operatorv1alpha1.SourceSpec{
 				OCIRef: "oci://registry.example/acme/orders-migrations:stable",
 				RegistryAuthFrom: &operatorv1alpha1.RegistryAuthSource{
 					Name:        "registry",
@@ -528,7 +528,7 @@ func migrationFixture() *operatorv1alpha1.PtahMigration {
 					PasswordKey: "pass",
 					TokenKey:    "identity-token",
 				},
-				VerificationPolicyFrom: corev1.ConfigMapKeySelector{
+				VerificationPolicyFrom: &corev1.ConfigMapKeySelector{
 					LocalObjectReference: corev1.LocalObjectReference{Name: "verification"},
 					Key:                  "policy.yaml",
 				},
@@ -553,7 +553,7 @@ func migrationFixture() *operatorv1alpha1.PtahMigration {
 				ExecutorImage:          "example.invalid/ptah@" + digest('d'),
 				RunnerProtocolVersion:  int32(runner.ProtocolVersion),
 			},
-			Artifact: &operatorv1alpha1.OCIArtifactAccessBinding{
+			Artifact: &operatorv1alpha1.SourceAccessBinding{
 				ResolvedReference: "oci://registry.example/acme/orders-migrations@" + digest('a'),
 				Digest:            digest('a'),
 			},
@@ -572,7 +572,7 @@ func migrationOperationFixture(operation operatorv1alpha1.MigrationOperationType
 		Attempt:            1,
 	}
 	if operation != operatorv1alpha1.MigrationOperationResolve {
-		claim.Source = &operatorv1alpha1.OCIArtifactAccessBinding{
+		claim.Source = &operatorv1alpha1.SourceAccessBinding{
 			ResolvedReference: migration.Status.Artifact.ResolvedReference,
 			Digest:            migration.Status.Artifact.Digest,
 			RegistryAuthFrom:  migration.Spec.Artifact.RegistryAuthFrom.DeepCopy(),

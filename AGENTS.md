@@ -348,7 +348,7 @@ worth stating here because no gate catches them:
 
 The chart's ValidatingAdmissionPolicies are written once, in Go:
 `internal/crdupgrade/controller_object_guard.go` and
-`controller_write_guard.go` hold the six guards on the manager's own writes,
+`controller_write_guard.go` hold the seven guards on the manager's own writes,
 `manager_state_guard.go` the two that keep status and a migration's
 unresolved-run copy the manager's alone, and
 `internal/certrotation/secret_create_guard.go` the certificate rotator's Secret
