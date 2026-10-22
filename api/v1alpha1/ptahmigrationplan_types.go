@@ -50,11 +50,15 @@ type PlannedMigration struct {
 // checksums and the history it was computed against. One kind carrying both
 // would make every field optional and dependent on which controller wrote it.
 // +kubebuilder:validation:XValidation:rule="self == oldSelf",message="a plan is immutable; generate a new plan instead"
+// +kubebuilder:validation:XValidation:rule="self.contractVersion == 1 ? (has(self.artifactDigest) && has(self.verificationPolicyUID) && has(self.verificationPolicyDigest) && !has(self.source)) : (has(self.source) && !has(self.artifactDigest) && !has(self.verificationPolicyUID) && !has(self.verificationPolicyDigest))",message="contract version 1 binds artifactDigest and a verification policy; contract version 2 binds source"
 type PtahMigrationPlanSpec struct {
 	// ContractVersion versions plan publication separately from the Kubernetes
-	// API version.
+	// API version. Version 1 is a plan computed from an OCI artifact, and
+	// binds artifactDigest and the verification policy. Version 2 is a plan
+	// computed from a ConfigMap, and binds source instead. A manager that
+	// knows only version 1 refuses a version 2 plan.
 	// +kubebuilder:validation:Minimum=1
-	// +kubebuilder:validation:Maximum=1
+	// +kubebuilder:validation:Maximum=2
 	ContractVersion int32 `json:"contractVersion"`
 
 	// MigrationRef is the PtahMigration this plan was computed for.
@@ -92,7 +96,12 @@ type PtahMigrationPlanSpec struct {
 
 	// ArtifactDigest is the OCI migration artifact this plan reads its files
 	// from, pinned to content rather than to the tag it was resolved through.
-	ArtifactDigest string `json:"artifactDigest"`
+	// +optional
+	ArtifactDigest string `json:"artifactDigest,omitempty"`
+	// Source is the ConfigMap source this plan reads its files from: the
+	// ConfigMap's UID and the content digest of the selected files.
+	// +optional
+	Source *PlanSourceBinding `json:"source,omitempty"`
 	// CoordinationDigest is the database realm this plan takes its turn in.
 	CoordinationDigest string `json:"coordinationDigest"`
 	// TargetIdentityDigest identifies the database it was computed against
@@ -103,9 +112,11 @@ type PtahMigrationPlanSpec struct {
 	PolicyFingerprint string `json:"policyFingerprint"`
 
 	// VerificationPolicyUID is the policy object that accepted the artifact.
-	VerificationPolicyUID types.UID `json:"verificationPolicyUID"`
+	// +optional
+	VerificationPolicyUID types.UID `json:"verificationPolicyUID,omitempty"`
 	// VerificationPolicyDigest is that policy's content at the time.
-	VerificationPolicyDigest string `json:"verificationPolicyDigest"`
+	// +optional
+	VerificationPolicyDigest string `json:"verificationPolicyDigest,omitempty"`
 
 	// ExecutionBindingID is the execution epoch the plan was computed under. It
 	// changes whenever a component that decides what the run means changes --

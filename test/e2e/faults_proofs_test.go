@@ -128,8 +128,8 @@ func proofTargetBinding() ptahv1alpha1.DatabaseTargetBinding {
 	}
 }
 
-func proofSourceBinding() ptahv1alpha1.OCIArtifactAccessBinding {
-	return ptahv1alpha1.OCIArtifactAccessBinding{
+func proofSourceBinding() ptahv1alpha1.SourceAccessBinding {
+	return ptahv1alpha1.SourceAccessBinding{
 		ResolvedReference: "oci://registry.invalid/schemas/fault-postgresql@" + proofDigest("a"),
 		Digest:            proofDigest("a"),
 	}

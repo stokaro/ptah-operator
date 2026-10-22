@@ -34,6 +34,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/planstore"
 	"github.com/stokaro/ptah-operator/internal/resultdelivery/jobconfig"
 	"github.com/stokaro/ptah-operator/internal/runner"
+	"github.com/stokaro/ptah-operator/internal/sourcebinding"
 )
 
 const (
@@ -90,19 +91,21 @@ const (
 	// which is what the runner's SIGTERM handling is for.
 	AnnotationSafeToEvict = "cluster-autoscaler.kubernetes.io/safe-to-evict"
 
-	mainContainerName    = "ptah"
-	initContainerName    = "install-runner"
-	guardContainerName   = "validate-source-authority"
-	fetchContainerName   = "fetch-schema"
-	runnerVolumeName     = "runner"
-	workVolumeName       = "work"
-	fetchWorkVolumeName  = "fetch-work"
-	policyVolumeName     = "verification-policy"
-	planVolumeName       = "plan"
-	sourceVolumeName     = "schema-source"
-	dockerVolumeName     = "registry-docker-config"
-	caVolumeName         = "registry-ca"
-	caSnapshotVolumeName = "registry-ca-snapshot"
+	mainContainerName     = "ptah"
+	initContainerName     = "install-runner"
+	guardContainerName    = "validate-source-authority"
+	fetchContainerName    = "fetch-schema"
+	snapshotContainerName = "copy-source-snapshot"
+	runnerVolumeName      = "runner"
+	workVolumeName        = "work"
+	fetchWorkVolumeName   = "fetch-work"
+	policyVolumeName      = "verification-policy"
+	planVolumeName        = "plan"
+	sourceVolumeName      = "schema-source"
+	snapshotVolumeName    = "source-snapshot"
+	dockerVolumeName      = "registry-docker-config"
+	caVolumeName          = "registry-ca"
+	caSnapshotVolumeName  = "registry-ca-snapshot"
 
 	runnerPath             = "/runner/ptah-runner"
 	ptahBinaryPath         = "/usr/local/bin/ptah"
@@ -111,6 +114,8 @@ const (
 	planPath               = "/plan"
 	sourcePath             = "/source"
 	sourceFilePath         = "/source/schema.hcl"
+	schemaSnapshotPath     = "/source/schema"
+	snapshotPath           = "/snapshot"
 	fetchWorkPath          = "/fetch-work"
 	dockerConfigPath       = "/credentials/docker"
 	caSourceFilePath       = "/credentials/ca-source/ca.pem"
@@ -279,8 +284,19 @@ func (b Builder) Build(
 	if err := jobInput.validate(); err != nil {
 		return nil, err
 	}
+	var source operatorv1alpha1.SourceAccessBinding
+	if operation.Type == operatorv1alpha1.OperationObserve || operation.Type == operatorv1alpha1.OperationPlan {
+		source, err = schemaFetchBinding(schema, operation)
+		if err != nil {
+			return nil, err
+		}
+		jobInput.schemaFile = sourceFilePath
+		if source.Snapshot != nil {
+			jobInput.schemaFile = schemaSnapshotPath + "/" + source.Snapshot.SchemaFile
+		}
+	}
 	if operation.Type == operatorv1alpha1.OperationApply &&
-		(plan.Spec.ContractVersion != fingerprint.CurrentPlanContractVersion ||
+		(!sourcebinding.WrittenContract(plan.Spec.ContractVersion, plan.Spec.Source) ||
 			plan.Spec.ControllerStateVersion != b.ControllerStateVersion ||
 			plan.Spec.PtahVersion != b.PtahVersion ||
 			plan.Spec.ExecutorImage != b.ExecutorImage ||
@@ -317,15 +333,14 @@ func (b Builder) Build(
 	if operation.Type == operatorv1alpha1.OperationObserve || operation.Type == operatorv1alpha1.OperationPlan {
 		// Registry credentials stay in the fetch pair: the operation container
 		// holds the database URL and reads only the verified, digest-pinned
-		// schema the fetch left behind.
-		source, err := schemaFetchBinding(schema, operation)
-		if err != nil {
-			return nil, err
-		}
+		// schema the fetch left behind. A ConfigMap source has no credential:
+		// its snapshot is checked against the bound content digest and copied
+		// in before the operation container starts.
 		job.fetch = &artifactFetchRequest{
 			source:        source,
 			containerName: fetchContainerName,
 			args:          []string{"schema", "pull", source.ResolvedReference, "--out", sourceFilePath},
+			destination:   schemaSnapshotPath,
 		}
 	}
 	return b.buildOperationJob(job)
@@ -338,9 +353,16 @@ type buildInput struct {
 	// planSealPublicKey is the manager's current public key, carried into a
 	// Plan Job's environment. No other operation reads it.
 	planSealPublicKey planseal.PublicKey
+	// schemaFile is where an Observe or Plan operation reads the desired
+	// schema: the file the fetch writes, or the file a snapshot holds.
+	schemaFile string
 }
 
 func (i buildInput) validate() error {
+	if i.schema.Spec.Desired.ConfigMap != nil &&
+		(i.operation.Type == operatorv1alpha1.OperationResolve || i.operation.Type == operatorv1alpha1.OperationVerify) {
+		return errors.New("a ConfigMap source is read by the manager and has no Resolve or Verify Job")
+	}
 	switch i.operation.Type {
 	case operatorv1alpha1.OperationResolve:
 		if i.plan != nil {
@@ -371,7 +393,7 @@ func (i buildInput) validate() error {
 		if i.operation.Source == nil {
 			return fmt.Errorf("%s operation requires immutable artifact access", i.operation.Type)
 		}
-		if err := validateArtifactAccessBinding(*i.operation.Source); err != nil {
+		if err := sourcebinding.ValidateAccess(*i.operation.Source); err != nil {
 			return err
 		}
 		if !sha256Pattern.MatchString(i.operation.CoordinationDigest) {
@@ -469,7 +491,7 @@ func (i buildInput) dataPlane() (
 			databaseEnv(runner.EnvDatabaseURL, target.URLFrom),
 			literalEnv(runner.EnvExpectedDatabaseEngine, string(target.Engine)),
 			literalEnv(runner.EnvCoordinationDigest, i.operation.CoordinationDigest),
-			literalEnv(runner.EnvSchemaFile, sourceFilePath),
+			literalEnv(runner.EnvSchemaFile, i.schemaFile),
 			literalEnv("PTAH_CONNECT_TIMEOUT", durationOrDefault(i.operation.ObservationConnectTimeout.Duration, 10*time.Second)),
 			literalEnv("PTAH_LOCK_TIMEOUT", durationOrDefault(i.operation.ObservationLockTimeout.Duration, 30*time.Second)),
 			literalEnv("PTAH_SEVERITY", stringOrDefault(i.operation.ObservationSeverity, "all")),
@@ -480,7 +502,7 @@ func (i buildInput) dataPlane() (
 			databaseEnv(runner.EnvDatabaseURL, target.URLFrom),
 			literalEnv(runner.EnvExpectedDatabaseEngine, string(target.Engine)),
 			literalEnv(runner.EnvCoordinationDigest, i.operation.CoordinationDigest),
-			literalEnv(runner.EnvSchemaFile, sourceFilePath),
+			literalEnv(runner.EnvSchemaFile, i.schemaFile),
 			literalEnv("PTAH_CONNECT_TIMEOUT", durationOrDefault(i.operation.ObservationConnectTimeout.Duration, 10*time.Second)),
 			literalEnv("PTAH_LOCK_TIMEOUT", durationOrDefault(i.operation.ObservationLockTimeout.Duration, 30*time.Second)),
 			literalEnv(runner.EnvPlanSealPublicKey, i.planSealPublicKey.Encode()),
@@ -548,8 +570,52 @@ func (i buildInput) dataPlane() (
 // credentials live, and the whole point of it is that the container which later
 // holds the database URL never sees them. A second copy would be a second place
 // for that separation to drift.
+// snapshotCopy builds the init container that checks a ConfigMap source's
+// snapshot against the bound content digest and copies its files into the
+// source volume. It is the runner, as the guard is, and it holds no
+// credential: the snapshot is mounted read-only, and the container that holds
+// the database URL starts only if every file gives the digest.
+func (b Builder) snapshotCopy(
+	snapshot operatorv1alpha1.SourceSnapshotBinding,
+	destination string,
+	resources corev1.ResourceRequirements,
+) (corev1.Container, []corev1.Volume) {
+	mode := int32(0o440)
+	volumes := []corev1.Volume{
+		{Name: sourceVolumeName, VolumeSource: corev1.VolumeSource{EmptyDir: memoryVolume(sourceVolumeBytes)}},
+		{Name: snapshotVolumeName, VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
+			LocalObjectReference: corev1.LocalObjectReference{Name: snapshot.Name},
+			DefaultMode:          &mode,
+		}}},
+	}
+	container := corev1.Container{
+		Name:            snapshotContainerName,
+		Image:           b.ExecutorImage,
+		ImagePullPolicy: corev1.PullIfNotPresent,
+		Command:         []string{runnerPath},
+		Args: []string{
+			"--materialize-source-snapshot", snapshotPath,
+			"--materialize-to", destination,
+			"--content-digest", snapshot.ContentDigest,
+		},
+		Env:             []corev1.EnvVar{runnerProtocolEnv()},
+		Resources:       resources,
+		SecurityContext: hardenedContainerContext(),
+		VolumeMounts: []corev1.VolumeMount{
+			{Name: runnerVolumeName, MountPath: "/runner", ReadOnly: true},
+			{Name: snapshotVolumeName, MountPath: snapshotPath, ReadOnly: true},
+			{Name: sourceVolumeName, MountPath: sourcePath},
+		},
+		// A refused snapshot is the one failure here a person has to read:
+		// the runner's refusal goes to the Pod's status, where kubectl
+		// describe shows it. It names paths and digests, never file bytes.
+		TerminationMessagePolicy: corev1.TerminationMessageFallbackToLogsOnError,
+	}
+	return container, volumes
+}
+
 func (b Builder) artifactFetch(
-	source operatorv1alpha1.OCIArtifactAccessBinding,
+	source operatorv1alpha1.SourceAccessBinding,
 	fetchName string,
 	fetchArgs []string,
 	resources corev1.ResourceRequirements,
@@ -660,22 +726,32 @@ func (b Builder) artifactFetch(
 func schemaFetchBinding(
 	schema *operatorv1alpha1.PtahSchema,
 	operation operatorv1alpha1.ActiveOperationStatus,
-) (operatorv1alpha1.OCIArtifactAccessBinding, error) {
+) (operatorv1alpha1.SourceAccessBinding, error) {
 	if (operation.Type == operatorv1alpha1.OperationObserve || operation.Type == operatorv1alpha1.OperationPlan) && operation.Source != nil {
 		source := *operation.Source.DeepCopy()
-		if err := validateArtifactAccessBinding(source); err != nil {
-			return operatorv1alpha1.OCIArtifactAccessBinding{}, err
+		if err := sourcebinding.ValidateAccess(source); err != nil {
+			return operatorv1alpha1.SourceAccessBinding{}, err
 		}
-		if pending := schema.Status.PendingObservation; pending != nil && source.Digest != pending.Plan.ArtifactDigest {
-			return operatorv1alpha1.OCIArtifactAccessBinding{}, errors.New("post-apply artifact access does not match the applied plan")
+		if source.Snapshot != nil && source.Snapshot.SchemaFile == "" {
+			return operatorv1alpha1.SourceAccessBinding{}, errors.New("a schema snapshot binding names the schema file")
+		}
+		if pending := schema.Status.PendingObservation; pending != nil &&
+			!sourcebinding.AccessGives(source, pending.Plan.ArtifactDigest, pending.Plan.Source) {
+			return operatorv1alpha1.SourceAccessBinding{}, errors.New("post-apply artifact access does not match the applied plan")
 		}
 		return source, nil
 	}
+	if access := sourcebinding.SchemaAccess(schema.Status.Source); access != nil {
+		if err := validatedSnapshotSource(schema); err != nil {
+			return operatorv1alpha1.SourceAccessBinding{}, err
+		}
+		return *access, nil
+	}
 	resolved, err := validatedVerifiedSource(schema)
 	if err != nil {
-		return operatorv1alpha1.OCIArtifactAccessBinding{}, err
+		return operatorv1alpha1.SourceAccessBinding{}, err
 	}
-	source := operatorv1alpha1.OCIArtifactAccessBinding{
+	source := operatorv1alpha1.SourceAccessBinding{
 		ResolvedReference: resolved,
 		Digest:            schema.Status.Source.Digest,
 	}
@@ -684,16 +760,13 @@ func schemaFetchBinding(
 	}
 	schema.Spec.Desired.Transport.DeepCopyInto(&source.Transport)
 	if err := validateArtifactAccessBinding(source); err != nil {
-		return operatorv1alpha1.OCIArtifactAccessBinding{}, err
+		return operatorv1alpha1.SourceAccessBinding{}, err
 	}
 	return source, nil
 }
 
-func validateArtifactAccessBinding(source operatorv1alpha1.OCIArtifactAccessBinding) error {
-	if err := ocireference.ValidatePinned(source.ResolvedReference, source.Digest); err != nil {
-		return errors.New("artifact access binding must contain a matching immutable SHA-256 reference")
-	}
-	return nil
+func validateArtifactAccessBinding(source operatorv1alpha1.SourceAccessBinding) error {
+	return sourcebinding.ValidateAccess(source)
 }
 
 func addRegistryAccess(
@@ -901,8 +974,36 @@ func validatedVerifiedSource(schema *operatorv1alpha1.PtahSchema) (string, error
 	return reference, nil
 }
 
-func validatePolicyReference(selector corev1.ConfigMapKeySelector) error {
-	if selector.Name == "" || selector.Key == "" {
+// validatedSnapshotSource accepts a schema whose ConfigMap source was read
+// and copied into a snapshot. It is the ConfigMap counterpart of
+// validatedVerifiedSource: such a source has no verification policy, and the
+// snapshot is what later operations read.
+func validatedSnapshotSource(schema *operatorv1alpha1.PtahSchema) error {
+	source := schema.Status.Source
+	if schema.Spec.Desired.ConfigMap == nil || source.ConfigMap == nil || source.Snapshot == nil {
+		return errors.New("database operation requires a ConfigMap source copied into a snapshot")
+	}
+	if source.ConfigMap.Name != schema.Spec.Desired.ConfigMap.Name || source.ConfigMap.UID == "" {
+		return errors.New("the snapshot was copied from another ConfigMap")
+	}
+	if source.Snapshot.SchemaFile == "" {
+		return errors.New("the schema snapshot names no schema file")
+	}
+	return sourcebinding.ValidateAccess(operatorv1alpha1.SourceAccessBinding{Snapshot: source.Snapshot})
+}
+
+// validatedReadySource accepts a schema whose source later operations may
+// read: a verified OCI artifact, or a ConfigMap source in a snapshot.
+func validatedReadySource(schema *operatorv1alpha1.PtahSchema) error {
+	if schema.Status.Source.Snapshot != nil {
+		return validatedSnapshotSource(schema)
+	}
+	_, err := validatedVerifiedSource(schema)
+	return err
+}
+
+func validatePolicyReference(selector *corev1.ConfigMapKeySelector) error {
+	if selector == nil || selector.Name == "" || selector.Key == "" {
 		return errors.New("verification policy ConfigMap name and key are required")
 	}
 	return nil
@@ -934,7 +1035,7 @@ func validateApplyPlan(schema *operatorv1alpha1.PtahSchema, plan *operatorv1alph
 			return errors.New("apply plan has an invalid published-chunk binding")
 		}
 	}
-	if _, err := validatedVerifiedSource(schema); err != nil {
+	if err := validatedReadySource(schema); err != nil {
 		return fmt.Errorf("apply plan source is no longer verified: %w", err)
 	}
 	if schema.Status.Plan == nil {
@@ -969,7 +1070,7 @@ func validateApplyPlan(schema *operatorv1alpha1.PtahSchema, plan *operatorv1alph
 	}
 	if current.Name != plan.Name || current.UID != plan.UID ||
 		current.Fingerprint != plan.Spec.Fingerprint || current.ContentDigest != plan.Spec.ContentDigest ||
-		current.ArtifactDigest != plan.Spec.ArtifactDigest ||
+		!sourcebinding.SamePlanSource(current.ArtifactDigest, current.Source, plan.Spec.ArtifactDigest, plan.Spec.Source) ||
 		current.CoordinationDigest != plan.Spec.CoordinationDigest ||
 		current.TargetIdentityDigest != plan.Spec.TargetIdentityDigest ||
 		current.ActualStateFingerprint != plan.Spec.ActualStateFingerprint ||
@@ -989,7 +1090,8 @@ func validateApplyPlan(schema *operatorv1alpha1.PtahSchema, plan *operatorv1alph
 		current.StatementCount != plan.Spec.StatementCount {
 		return errors.New("apply plan is not the schema current plan")
 	}
-	if plan.Spec.ArtifactDigest != schema.Status.Source.Digest ||
+	statusArtifact, statusSource := sourcebinding.SchemaPlanSource(schema.Status.Source)
+	if !sourcebinding.SamePlanSource(plan.Spec.ArtifactDigest, plan.Spec.Source, statusArtifact, statusSource) ||
 		plan.Spec.VerificationPolicyUID != schema.Status.Source.VerificationPolicyUID ||
 		plan.Spec.VerificationPolicyDigest != schema.Status.Source.VerificationPolicyDigest ||
 		plan.Spec.CoordinationDigest != schema.Status.Target.CoordinationDigest ||
@@ -1015,7 +1117,8 @@ func schemaCoordinationDigest(schema *operatorv1alpha1.PtahSchema) (string, erro
 	return digest, nil
 }
 
-func policyVolume(selector corev1.ConfigMapKeySelector) corev1.Volume {
+// policyVolume mounts a selector validatePolicyReference already accepted.
+func policyVolume(selector *corev1.ConfigMapKeySelector) corev1.Volume {
 	mode := int32(0o440)
 	return corev1.Volume{
 		Name: policyVolumeName,

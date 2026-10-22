@@ -39,6 +39,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/policy"
 	"github.com/stokaro/ptah-operator/internal/resultconsumer"
 	"github.com/stokaro/ptah-operator/internal/runner"
+	"github.com/stokaro/ptah-operator/internal/sourcebinding"
 	"github.com/stokaro/ptah-operator/internal/targetlock"
 	"github.com/stokaro/ptah-operator/internal/telemetry"
 	"github.com/stokaro/ptah-operator/internal/workload"
@@ -47,7 +48,9 @@ import (
 const (
 	migrationOperationFinalizer = "operator.ptah.run/migration-operation"
 	defaultMigrationInterval    = 10 * time.Minute
-	migrationPolicyIndex        = "spec.artifact.verificationPolicyFrom.name"
+	// migrationPolicyIndex finds the migrations a ConfigMap change concerns:
+	// the verification policy of an OCI source, or a ConfigMap source itself.
+	migrationPolicyIndex = "spec.artifact.configMaps"
 )
 
 // MigrationJobBuilder turns one already-persisted migration claim into a
@@ -228,6 +231,13 @@ func (r *MigrationReconciler) reconcile(ctx context.Context, request ctrl.Reques
 
 	now := r.now()
 	if migration.Status.ObservedGeneration != migration.Generation {
+		return r.claimMigration(ctx, migration, operatorv1alpha1.MigrationOperationResolve)
+	}
+	if moved, movedErr := configMapSourceMoved(ctx, r.directReader(), migration.Namespace, migration.Spec.Artifact.ConfigMap, migration.Status.ConfigMap); movedErr != nil {
+		return ctrl.Result{}, movedErr
+	} else if moved {
+		// An edit to the source ConfigMap is read now rather than at the next
+		// interval; unchanged selected files reach the same plan.
 		return r.claimMigration(ctx, migration, operatorv1alpha1.MigrationOperationResolve)
 	}
 	switch migration.Status.Phase {
@@ -587,6 +597,11 @@ func (r *MigrationReconciler) claimMigration(
 		// runs first and only reports itself unhandled once the binding is
 		// current, which requires it to be non-nil.
 		return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
+	}
+	if operationType == operatorv1alpha1.MigrationOperationResolve && migration.Spec.Artifact.ConfigMap != nil {
+		// A ConfigMap source is read by the manager: no registry, no
+		// credential, so no Resolve Job and no Verify step.
+		return r.resolveMigrationConfigMapSource(ctx, migration)
 	}
 	inputFingerprint, err := r.migrationInputFingerprint(ctx, migration, operationType)
 	if err != nil {
@@ -980,7 +995,7 @@ func (r *MigrationReconciler) consumeMigrationResult(
 		if _, err := ocireference.Parse(result.ResolvedReference); err != nil {
 			return r.retryMigrationOperation(ctx, migration, job, errors.New("the resolved reference is not a credential-free OCI reference"))
 		}
-		migration.Status.Artifact = &operatorv1alpha1.OCIArtifactAccessBinding{
+		migration.Status.Artifact = &operatorv1alpha1.SourceAccessBinding{
 			ResolvedReference: result.ResolvedReference,
 			Digest:            result.ResolvedDigest,
 			RegistryAuthFrom:  migration.Spec.Artifact.RegistryAuthFrom.DeepCopy(),
@@ -1278,11 +1293,16 @@ func (r *MigrationReconciler) publishMigrationPlan(
 	if err != nil {
 		return err
 	}
-	policyBinding, err := policy.ConfigMapBinding(
-		ctx, r.directReader(), migration.Namespace, migration.Spec.Artifact.VerificationPolicyFrom,
-	)
-	if err != nil {
-		return err
+	artifactDigest, source := sourcebinding.MigrationPlanSource(migration.Status.Artifact, migration.Status.ConfigMap)
+	var policyBinding policy.Binding
+	if source == nil {
+		// Only an OCI source has a verification policy to bind.
+		policyBinding, err = policy.ConfigMapBinding(
+			ctx, r.directReader(), migration.Namespace, migration.Spec.Artifact.VerificationPolicyFrom,
+		)
+		if err != nil {
+			return err
+		}
 	}
 	coordinationDigest, err := coordination.Digest(migration.Namespace, migration.Spec.Target)
 	if err != nil {
@@ -1300,7 +1320,8 @@ func (r *MigrationReconciler) publishMigrationPlan(
 		MigrationUID:             migration.UID,
 		HistoryFingerprint:       history.Fingerprint,
 		SequenceDigest:           sequenceDigest,
-		ArtifactDigest:           migration.Status.Artifact.Digest,
+		ArtifactDigest:           artifactDigest,
+		Source:                   sourcebinding.Fingerprint(source),
 		CoordinationDigest:       coordinationDigest,
 		TargetIdentityDigest:     history.TargetIdentityDigest,
 		PolicyFingerprint:        policyFingerprint,
@@ -1317,13 +1338,14 @@ func (r *MigrationReconciler) publishMigrationPlan(
 		return fmt.Errorf("derive the plan fingerprint: %w", err)
 	}
 	desired, err := migrationplan.Desired(migration, operatorv1alpha1.PtahMigrationPlanSpec{
-		ContractVersion:          migrationplan.ContractVersion,
+		ContractVersion:          planBinding.ContractVersion(),
 		MigrationRef:             operatorv1alpha1.ImmutableObjectReference{Name: migration.Name, UID: migration.UID},
 		Fingerprint:              planFingerprint,
 		Migrations:               planned,
 		HistoryFingerprint:       history.Fingerprint,
 		CurrentVersion:           history.CurrentVersion,
 		ArtifactDigest:           planBinding.ArtifactDigest,
+		Source:                   source,
 		CoordinationDigest:       planBinding.CoordinationDigest,
 		TargetIdentityDigest:     planBinding.TargetIdentityDigest,
 		PolicyFingerprint:        policyFingerprint,
@@ -1420,8 +1442,14 @@ func (r *MigrationReconciler) migrationInputFingerprint(
 	migration *operatorv1alpha1.PtahMigration,
 	operationType operatorv1alpha1.MigrationOperationType,
 ) (string, error) {
-	if _, err := ocireference.Parse(migration.Spec.Artifact.OCIRef); err != nil {
-		return "", errors.New("the artifact reference must be an OCI reference without credentials, whitespace, or query data")
+	if migration.Spec.Artifact.ConfigMap == nil {
+		if _, err := ocireference.Parse(migration.Spec.Artifact.OCIRef); err != nil {
+			return "", errors.New("the artifact reference must be an OCI reference without credentials, whitespace, or query data")
+		}
+	}
+	policyObject, policyKey := "", ""
+	if selector := migration.Spec.Artifact.VerificationPolicyFrom; selector != nil {
+		policyObject, policyKey = selector.Name, selector.Key
 	}
 	inputs := map[string]string{
 		"operation":       string(operationType),
@@ -1430,8 +1458,8 @@ func (r *MigrationReconciler) migrationInputFingerprint(
 		"engine":          string(migration.Spec.Target.Engine),
 		"target_secret":   migration.Spec.Target.URLFrom.Name,
 		"target_key":      migration.Spec.Target.URLFrom.Key,
-		"policy_object":   migration.Spec.Artifact.VerificationPolicyFrom.Name,
-		"policy_key":      migration.Spec.Artifact.VerificationPolicyFrom.Key,
+		"policy_object":   policyObject,
+		"policy_key":      policyKey,
 		"plain_http":      strconv.FormatBool(migration.Spec.Artifact.Transport.PlainHTTP),
 		"execution_id":    migrationBindingEpoch(migration),
 		"lock_timeout":    migration.Spec.Policy.LockTimeout.Duration.String(),
@@ -1448,6 +1476,17 @@ func (r *MigrationReconciler) migrationInputFingerprint(
 			return "", errors.New("the artifact has not been resolved to a digest")
 		}
 		inputs["resolved_digest"] = migration.Status.Artifact.Digest
+		// A ConfigMap source adds what it was read into; an OCI source adds
+		// nothing, so its inputs are the ones computed before this source
+		// existed.
+		if snapshot := migration.Status.Artifact.Snapshot; snapshot != nil {
+			inputs["source_snapshot"] = snapshot.Name
+			inputs["source_snapshot_uid"] = string(snapshot.UID)
+			inputs["source_content_digest"] = snapshot.ContentDigest
+			if revision := migration.Status.ConfigMap; revision != nil {
+				inputs["source_configmap_uid"] = string(revision.UID)
+			}
+		}
 	}
 	if operationType == operatorv1alpha1.MigrationOperationVerify {
 		binding, err := policy.ConfigMapBinding(ctx, r.directReader(), migration.Namespace, migration.Spec.Artifact.VerificationPolicyFrom)
@@ -1944,13 +1983,13 @@ func (r *MigrationReconciler) SetupWithManager(manager ctrl.Manager) error {
 		migrationPolicyIndex,
 		func(object client.Object) []string {
 			migration, ok := object.(*operatorv1alpha1.PtahMigration)
-			if !ok || migration.Spec.Artifact.VerificationPolicyFrom.Name == "" {
+			if !ok {
 				return nil
 			}
-			return []string{migration.Spec.Artifact.VerificationPolicyFrom.Name}
+			return sourceConfigMapNames(migration.Spec.Artifact)
 		},
 	); err != nil {
-		return fmt.Errorf("index migrations by verification policy: %w", err)
+		return fmt.Errorf("index migrations by the ConfigMaps their source reads: %w", err)
 	}
 	return ctrl.NewControllerManagedBy(manager).
 		WithOptions(queueOptions()).
@@ -2014,8 +2053,11 @@ func migrationForApproval(_ context.Context, object client.Object) []reconcile.R
 	}}}
 }
 
-func migrationSourceBinding(migration *operatorv1alpha1.PtahMigration) *operatorv1alpha1.OCIArtifactAccessBinding {
-	source := &operatorv1alpha1.OCIArtifactAccessBinding{
+func migrationSourceBinding(migration *operatorv1alpha1.PtahMigration) *operatorv1alpha1.SourceAccessBinding {
+	if snapshot := migration.Status.Artifact.Snapshot; snapshot != nil {
+		return &operatorv1alpha1.SourceAccessBinding{Snapshot: snapshot.DeepCopy()}
+	}
+	source := &operatorv1alpha1.SourceAccessBinding{
 		ResolvedReference: migration.Status.Artifact.ResolvedReference,
 		Digest:            migration.Status.Artifact.Digest,
 		RegistryAuthFrom:  migration.Spec.Artifact.RegistryAuthFrom.DeepCopy(),

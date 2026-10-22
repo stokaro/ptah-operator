@@ -4,8 +4,8 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     operator.ptah.run/controller-state-version: "1"
-    operator.ptah.run/crd-schema-version: "2"
-    operator.ptah.run/crd-schema-digest: "sha256:8489e5afa012c111b56f1893757832a1c6e6114d030d0f6569c1c0325c98be13"
+    operator.ptah.run/crd-schema-version: "3"
+    operator.ptah.run/crd-schema-digest: "sha256:a5d5ce1920ca3e29587eb3b7233990acd4e4d8b6db6646381c00401e75e70691"
     controller-gen.kubebuilder.io/version: v0.22.0
   name: ptahschemas.operator.ptah.run
 spec:
@@ -56,6 +56,40 @@ spec:
             properties:
               desired:
                 properties:
+                  configMap:
+                    properties:
+                      items:
+                        items:
+                          properties:
+                            key:
+                              maxLength: 253
+                              minLength: 1
+                              pattern: ^[-._a-zA-Z0-9]+$
+                              type: string
+                            path:
+                              maxLength: 1024
+                              minLength: 1
+                              pattern: ^(?:[^./\\\x00-\x1f\x7f][^/\\\x00-\x1f\x7f]*|\.[^./\\\x00-\x1f\x7f][^/\\\x00-\x1f\x7f]*|\.\.[^/\\\x00-\x1f\x7f]+)(?:/(?:[^./\\\x00-\x1f\x7f][^/\\\x00-\x1f\x7f]*|\.[^./\\\x00-\x1f\x7f][^/\\\x00-\x1f\x7f]*|\.\.[^/\\\x00-\x1f\x7f]+))*$
+                              type: string
+                          required:
+                          - key
+                          - path
+                          type: object
+                        maxItems: 1000
+                        minItems: 1
+                        type: array
+                        x-kubernetes-list-map-keys:
+                        - path
+                        x-kubernetes-list-type: map
+                      name:
+                        maxLength: 253
+                        minLength: 1
+                        pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                        type: string
+                    required:
+                    - items
+                    - name
+                    type: object
                   ociRef:
                     minLength: 7
                     pattern: ^oci://[^[:space:]?#]+$
@@ -120,10 +154,18 @@ spec:
                     - key
                     type: object
                     x-kubernetes-map-type: atomic
-                required:
-                - ociRef
-                - verificationPolicyFrom
                 type: object
+                x-kubernetes-validations:
+                - message: set exactly one of ociRef and configMap
+                  rule: has(self.ociRef) != has(self.configMap)
+                - message: verificationPolicyFrom is required with ociRef and refused
+                    with configMap
+                  rule: has(self.ociRef) == has(self.verificationPolicyFrom)
+                - message: registryAuthFrom is refused with configMap
+                  rule: has(self.ociRef) || !has(self.registryAuthFrom)
+                - message: transport is refused with configMap
+                  rule: has(self.ociRef) || !has(self.transport) || (!has(self.transport.caFrom)
+                    && (!has(self.transport.plainHTTP) || !self.transport.plainHTTP))
               dev:
                 properties:
                   urlFrom:
@@ -843,8 +885,12 @@ spec:
                 > 0 && (!has(self.target.urlFrom.optional) || !self.target.urlFrom.optional)
             - message: desired.verificationPolicyFrom must name a required ConfigMap
                 key
-              rule: self.desired.verificationPolicyFrom.name.size() > 0 && self.desired.verificationPolicyFrom.key.size()
-                > 0 && (!has(self.desired.verificationPolicyFrom.optional) || !self.desired.verificationPolicyFrom.optional)
+              rule: '!has(self.desired.verificationPolicyFrom) || (self.desired.verificationPolicyFrom.name.size()
+                > 0 && self.desired.verificationPolicyFrom.key.size() > 0 && (!has(self.desired.verificationPolicyFrom.optional)
+                || !self.desired.verificationPolicyFrom.optional))'
+            - message: desired.configMap selects exactly one file for a schema
+              rule: '!has(self.desired.configMap) || self.desired.configMap.items.size()
+                == 1'
             - message: dev.urlFrom must name a required Secret key
               rule: '!has(self.dev) || (self.dev.urlFrom.name.size() > 0 && self.dev.urlFrom.key.size()
                 > 0 && (!has(self.dev.urlFrom.optional) || !self.dev.urlFrom.optional))'
@@ -1172,6 +1218,24 @@ spec:
                         type: object
                       resolvedReference:
                         type: string
+                      snapshot:
+                        properties:
+                          contentDigest:
+                            pattern: ^sha256:[0-9a-f]{64}$
+                            type: string
+                          name:
+                            pattern: ^ptah-src-[0-9a-f]{24}$
+                            type: string
+                          schemaFile:
+                            maxLength: 1024
+                            type: string
+                          uid:
+                            type: string
+                        required:
+                        - contentDigest
+                        - name
+                        - uid
+                        type: object
                       transport:
                         properties:
                           caFrom:
@@ -1194,10 +1258,10 @@ spec:
                         x-kubernetes-validations:
                         - message: caFrom cannot be used with plainHTTP
                           rule: '!self.plainHTTP || !has(self.caFrom)'
-                    required:
-                    - digest
-                    - resolvedReference
                     type: object
+                    x-kubernetes-validations:
+                    - message: set exactly one of resolvedReference and snapshot
+                      rule: has(self.resolvedReference) != has(self.snapshot)
                   startedAt:
                     format: date-time
                     type: string
@@ -1318,10 +1382,27 @@ spec:
                   runnerProtocolVersion:
                     format: int32
                     type: integer
+                  source:
+                    properties:
+                      contentDigest:
+                        pattern: ^sha256:[0-9a-f]{64}$
+                        type: string
+                      kind:
+                        enum:
+                        - ConfigMap
+                        type: string
+                      revision:
+                        maxLength: 128
+                        minLength: 1
+                        type: string
+                    required:
+                    - contentDigest
+                    - kind
+                    - revision
+                    type: object
                   targetIdentityDigest:
                     type: string
                 required:
-                - artifactDigest
                 - completedAt
                 - controllerImage
                 - controllerRevision
@@ -1873,6 +1954,24 @@ spec:
                       runnerProtocolVersion:
                         format: int32
                         type: integer
+                      source:
+                        properties:
+                          contentDigest:
+                            pattern: ^sha256:[0-9a-f]{64}$
+                            type: string
+                          kind:
+                            enum:
+                            - ConfigMap
+                            type: string
+                          revision:
+                            maxLength: 128
+                            minLength: 1
+                            type: string
+                        required:
+                        - contentDigest
+                        - kind
+                        - revision
+                        type: object
                       statementCount:
                         format: int32
                         type: integer
@@ -1886,7 +1985,6 @@ spec:
                         type: string
                     required:
                     - actualStateFingerprint
-                    - artifactDigest
                     - contentDigest
                     - controllerImage
                     - controllerRevision
@@ -1906,8 +2004,6 @@ spec:
                     - statementCount
                     - targetIdentityDigest
                     - uid
-                    - verificationPolicyDigest
-                    - verificationPolicyUID
                     type: object
                   planRequired:
                     type: boolean
@@ -1948,6 +2044,24 @@ spec:
                         type: object
                       resolvedReference:
                         type: string
+                      snapshot:
+                        properties:
+                          contentDigest:
+                            pattern: ^sha256:[0-9a-f]{64}$
+                            type: string
+                          name:
+                            pattern: ^ptah-src-[0-9a-f]{24}$
+                            type: string
+                          schemaFile:
+                            maxLength: 1024
+                            type: string
+                          uid:
+                            type: string
+                        required:
+                        - contentDigest
+                        - name
+                        - uid
+                        type: object
                       transport:
                         properties:
                           caFrom:
@@ -1970,10 +2084,10 @@ spec:
                         x-kubernetes-validations:
                         - message: caFrom cannot be used with plainHTTP
                           rule: '!self.plainHTTP || !has(self.caFrom)'
-                    required:
-                    - digest
-                    - resolvedReference
                     type: object
+                    x-kubernetes-validations:
+                    - message: set exactly one of resolvedReference and snapshot
+                      rule: has(self.resolvedReference) != has(self.snapshot)
                   target:
                     properties:
                       engine:
@@ -2116,6 +2230,24 @@ spec:
                   runnerProtocolVersion:
                     format: int32
                     type: integer
+                  source:
+                    properties:
+                      contentDigest:
+                        pattern: ^sha256:[0-9a-f]{64}$
+                        type: string
+                      kind:
+                        enum:
+                        - ConfigMap
+                        type: string
+                      revision:
+                        maxLength: 128
+                        minLength: 1
+                        type: string
+                    required:
+                    - contentDigest
+                    - kind
+                    - revision
+                    type: object
                   statementCount:
                     format: int32
                     type: integer
@@ -2129,7 +2261,6 @@ spec:
                     type: string
                 required:
                 - actualStateFingerprint
-                - artifactDigest
                 - contentDigest
                 - controllerImage
                 - controllerRevision
@@ -2149,13 +2280,24 @@ spec:
                 - statementCount
                 - targetIdentityDigest
                 - uid
-                - verificationPolicyDigest
-                - verificationPolicyUID
                 type: object
               source:
                 properties:
                   artifactType:
                     type: string
+                  configMap:
+                    properties:
+                      name:
+                        type: string
+                      resourceVersion:
+                        type: string
+                      uid:
+                        type: string
+                    required:
+                    - name
+                    - resourceVersion
+                    - uid
+                    type: object
                   digest:
                     type: string
                   mediaType:
@@ -2170,6 +2312,24 @@ spec:
                   size:
                     format: int64
                     type: integer
+                  snapshot:
+                    properties:
+                      contentDigest:
+                        pattern: ^sha256:[0-9a-f]{64}$
+                        type: string
+                      name:
+                        pattern: ^ptah-src-[0-9a-f]{24}$
+                        type: string
+                      schemaFile:
+                        maxLength: 1024
+                        type: string
+                      uid:
+                        type: string
+                    required:
+                    - contentDigest
+                    - name
+                    - uid
+                    type: object
                   verificationPolicyDigest:
                     type: string
                   verificationPolicyUID:

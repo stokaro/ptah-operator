@@ -25,6 +25,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/coordination"
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
 	"github.com/stokaro/ptah-operator/internal/policy"
+	"github.com/stokaro/ptah-operator/internal/sourcebinding"
 )
 
 const maxRecordedGroups = 64
@@ -306,7 +307,8 @@ func (h *ApprovalHandler) validateBinding(
 	if err != nil {
 		return fmt.Errorf("derive current database coordination digest: %w", err)
 	}
-	if schema.Status.Source.Digest != plan.Spec.ArtifactDigest ||
+	statusArtifact, statusSource := sourcebinding.SchemaPlanSource(schema.Status.Source)
+	if !sourcebinding.SamePlanSource(plan.Spec.ArtifactDigest, plan.Spec.Source, statusArtifact, statusSource) ||
 		coordinationDigest != plan.Spec.CoordinationDigest ||
 		schema.Status.Target.CoordinationDigest != plan.Spec.CoordinationDigest ||
 		schema.Status.Target.IdentityDigest != plan.Spec.TargetIdentityDigest ||
@@ -315,6 +317,11 @@ func (h *ApprovalHandler) validateBinding(
 		schema.Status.ExecutionBinding.ExecutorImage != plan.Spec.ExecutorImage ||
 		schema.Status.ExecutionBinding.RunnerProtocolVersion != plan.Spec.RunnerProtocolVersion {
 		return fmt.Errorf("schema source or target changed after the plan was generated")
+	}
+	if plan.Spec.Source != nil {
+		// A plan computed from a ConfigMap binds no verification policy: the
+		// source binding compared above is what retires it.
+		return nil
 	}
 	policyBinding, err := policy.ConfigMapBinding(ctx, h.Reader, namespace, schema.Spec.Desired.VerificationPolicyFrom)
 	if err != nil {

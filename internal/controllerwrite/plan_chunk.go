@@ -17,6 +17,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
 	"github.com/stokaro/ptah-operator/internal/plancontract"
 	"github.com/stokaro/ptah-operator/internal/planstore"
+	"github.com/stokaro/ptah-operator/internal/sourcesnapshot"
 )
 
 var (
@@ -79,6 +80,9 @@ func (v *Validator) validateProjectionCreate(ctx context.Context, req admissionv
 	}
 	if err := validateRequestIdentity(req, &configMap.ObjectMeta); err != nil {
 		return err
+	}
+	if sourcesnapshot.IsName(configMap.Name) {
+		return v.validateSnapshotCreate(ctx, req, configMap)
 	}
 	plan, schema, err := v.chunkOwner(ctx, configMap.Namespace, configMap.OwnerReferences, "ConfigMap")
 	if err != nil {

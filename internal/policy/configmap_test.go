@@ -27,7 +27,7 @@ func TestConfigMapDigestUsesExactProjectedBytes(t *testing.T) {
 		Data:       map[string]string{"policy.yaml": "version: 1\n"},
 	}
 	reader := fake.NewClientBuilder().WithScheme(scheme).WithObjects(configMap).Build()
-	binding, err := ConfigMapBinding(context.Background(), reader, "team-a", corev1.ConfigMapKeySelector{
+	binding, err := ConfigMapBinding(context.Background(), reader, "team-a", &corev1.ConfigMapKeySelector{
 		LocalObjectReference: corev1.LocalObjectReference{Name: "policy"}, Key: "policy.yaml",
 	})
 	if err != nil {
@@ -62,7 +62,7 @@ func TestConfigMapBindingRejectsMutableOrUnidentifiedPolicy(t *testing.T) {
 				Data:       map[string]string{"policy.yaml": "version: 1\n"},
 			}
 			reader := fake.NewClientBuilder().WithScheme(scheme).WithObjects(configMap).Build()
-			_, err := ConfigMapBinding(context.Background(), reader, "team-a", corev1.ConfigMapKeySelector{
+			_, err := ConfigMapBinding(context.Background(), reader, "team-a", &corev1.ConfigMapKeySelector{
 				LocalObjectReference: corev1.LocalObjectReference{Name: "policy"}, Key: "policy.yaml",
 			})
 			if err == nil || !strings.Contains(err.Error(), test.want) {

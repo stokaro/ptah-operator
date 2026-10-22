@@ -27,7 +27,7 @@ func TestRetargetRecoveryNeedsAFreshDecisionAfterAccountingForTheRun(t *testing.
 		Status: ptahv1alpha1.PtahMigrationStatus{
 			ObservedGeneration: 1, Phase: ptahv1alpha1.MigrationPhaseAwaitingApproval,
 			Plan:     &ptahv1alpha1.ImmutableObjectReference{Name: plan.Name, UID: plan.UID},
-			Artifact: &ptahv1alpha1.OCIArtifactAccessBinding{Digest: plan.Spec.ArtifactDigest},
+			Artifact: &ptahv1alpha1.SourceAccessBinding{Digest: plan.Spec.ArtifactDigest},
 			History: &ptahv1alpha1.MigrationHistoryStatus{
 				ObservedAt: metav1.NewTime(resolvedAt.Add(2 * time.Second)), Fingerprint: plan.Spec.HistoryFingerprint,
 				TargetIdentityDigest: plan.Spec.TargetIdentityDigest,

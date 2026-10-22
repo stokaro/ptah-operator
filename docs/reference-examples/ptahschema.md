@@ -34,6 +34,38 @@ spec:
       key: policy.yaml
 ```
 
+### From a ConfigMap, with no registry
+
+The desired schema is one file in a ConfigMap in the same namespace, and its
+extension tells Ptah the format. There is no registry and no verification
+policy: the manager copies the selected file into an immutable snapshot, and
+every operation reads that snapshot after checking it against its content
+digest. An edit to the selected key is read at once and plans again; an edit
+to another key of the ConfigMap changes nothing. Whoever may write the
+ConfigMap may change the desired state, so grant it as you grant this
+resource.
+
+```yaml
+apiVersion: operator.ptah.run/v1alpha1
+kind: PtahSchema
+metadata:
+  name: inventory
+  namespace: application
+spec:
+  target:
+    engine: PostgreSQL
+    coordinationKey: production/inventory-primary
+    urlFrom:
+      name: inventory-database
+      key: url
+  desired:
+    configMap:
+      name: inventory-schema
+      items:
+        - key: schema.sql
+          path: schema.sql
+```
+
 ### An approved change on MySQL
 
 Publish the desired schema with `ptah schema push --dialect mysql` and use

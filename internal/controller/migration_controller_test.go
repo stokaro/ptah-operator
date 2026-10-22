@@ -818,9 +818,9 @@ func migrationFixture() *operatorv1alpha1.PtahMigration {
 					LocalObjectReference: corev1.LocalObjectReference{Name: "database"}, Key: "url",
 				},
 			},
-			Artifact: operatorv1alpha1.OCIArtifactSourceSpec{
+			Artifact: operatorv1alpha1.SourceSpec{
 				OCIRef: "oci://registry.example/team/migrations:stable",
-				VerificationPolicyFrom: corev1.ConfigMapKeySelector{
+				VerificationPolicyFrom: &corev1.ConfigMapKeySelector{
 					LocalObjectReference: corev1.LocalObjectReference{Name: "verification"}, Key: "policy.yaml",
 				},
 			},
@@ -853,8 +853,8 @@ func migrationExecutionBinding() *operatorv1alpha1.ExecutionBindingStatus {
 	}
 }
 
-func resolvedMigrationArtifact() *operatorv1alpha1.OCIArtifactAccessBinding {
-	return &operatorv1alpha1.OCIArtifactAccessBinding{
+func resolvedMigrationArtifact() *operatorv1alpha1.SourceAccessBinding {
+	return &operatorv1alpha1.SourceAccessBinding{
 		ResolvedReference: "oci://registry.example/team/migrations@" + testDigest,
 		Digest:            testDigest,
 	}

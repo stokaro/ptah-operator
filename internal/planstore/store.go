@@ -29,6 +29,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/controllerstate"
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
 	"github.com/stokaro/ptah-operator/internal/plancontract"
+	"github.com/stokaro/ptah-operator/internal/sourcebinding"
 )
 
 const (
@@ -100,6 +101,7 @@ func Binding(schemaUID types.UID, spec operatorv1alpha1.PtahSchemaPlanSpec) fing
 		SchemaUID:                string(schemaUID),
 		PlanContentDigest:        spec.ContentDigest,
 		ArtifactDigest:           spec.ArtifactDigest,
+		Source:                   sourcebinding.Fingerprint(spec.Source),
 		CoordinationDigest:       spec.CoordinationDigest,
 		TargetIdentityDigest:     spec.TargetIdentityDigest,
 		ActualStateFingerprint:   spec.ActualStateFingerprint,

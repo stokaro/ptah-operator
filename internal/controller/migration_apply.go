@@ -27,6 +27,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/mutationlifecycle"
 	"github.com/stokaro/ptah-operator/internal/policy"
 	"github.com/stokaro/ptah-operator/internal/runner"
+	"github.com/stokaro/ptah-operator/internal/sourcebinding"
 	"github.com/stokaro/ptah-operator/internal/targetlock"
 	"github.com/stokaro/ptah-operator/internal/telemetry"
 	"github.com/stokaro/ptah-operator/internal/workload"
@@ -85,7 +86,7 @@ func (r *MigrationReconciler) currentMigrationPlan(
 	if plan.UID != migration.Status.Plan.UID || plan.DeletionTimestamp != nil {
 		return nil, errors.New("the published plan was replaced or is being deleted")
 	}
-	if plan.Spec.ContractVersion != migrationplan.ContractVersion {
+	if !migrationplan.SupportedContractVersion(plan.Spec.ContractVersion) {
 		return nil, errors.New("the published plan uses a contract version this manager does not publish")
 	}
 	binding := migration.Status.ExecutionBinding
@@ -99,7 +100,8 @@ func (r *MigrationReconciler) currentMigrationPlan(
 	if plan.Spec.TargetIdentityDigest != history.TargetIdentityDigest {
 		return nil, errors.New("the database identity changed after the plan was published")
 	}
-	if plan.Spec.ArtifactDigest != migration.Status.Artifact.Digest {
+	statusArtifact, statusSource := sourcebinding.MigrationPlanSource(migration.Status.Artifact, migration.Status.ConfigMap)
+	if !sourcebinding.SamePlanSource(plan.Spec.ArtifactDigest, plan.Spec.Source, statusArtifact, statusSource) {
 		return nil, errors.New("the resolved artifact changed after the plan was published")
 	}
 	if plan.Spec.ExecutionBindingID != binding.Epoch ||
@@ -133,6 +135,11 @@ func (r *MigrationReconciler) verificationPolicyStillBinds(
 	migration *operatorv1alpha1.PtahMigration,
 	plan *operatorv1alpha1.PtahMigrationPlan,
 ) error {
+	if plan.Spec.Source != nil {
+		// A plan computed from a ConfigMap binds no verification policy; its
+		// source binding is compared with the resolved source instead.
+		return nil
+	}
 	binding, err := policy.ConfigMapBinding(
 		ctx, r.directReader(), migration.Namespace, migration.Spec.Artifact.VerificationPolicyFrom,
 	)

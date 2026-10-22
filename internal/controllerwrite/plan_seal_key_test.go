@@ -71,7 +71,7 @@ func realPlanSchemaFixture(t *testing.T) *operatorv1alpha1.PtahSchema {
 			LocalObjectReference: corev1.LocalObjectReference{Name: "database"}, Key: "url",
 		},
 	}
-	operation.Source = &operatorv1alpha1.OCIArtifactAccessBinding{
+	operation.Source = &operatorv1alpha1.SourceAccessBinding{
 		ResolvedReference: schema.Status.Source.ResolvedReference,
 		Digest:            schema.Status.Source.Digest,
 	}

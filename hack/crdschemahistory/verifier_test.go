@@ -104,7 +104,10 @@ func TestEvaluateTransition(t *testing.T) {
 			t.Parallel()
 			baseline := mustDecodeFixture(t, "baseline", test.baseline)
 			candidate := mustDecodeFixture(t, "candidate", test.candidate)
-			result, err := evaluateTransition(baseline, candidate)
+			// The fixtures make none of the breaks the repository declares,
+			// and a declaration for a fixture's version would claim
+			// transitions it does not make. These rows are about versions.
+			result, err := evaluateTransitionWith(baseline, candidate, nil, historyRestarts)
 			if test.wantError != "" {
 				if err == nil || !strings.Contains(err.Error(), test.wantError) {
 					t.Fatalf("evaluateTransition() error = %v, want substring %q", err, test.wantError)

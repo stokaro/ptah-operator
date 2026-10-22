@@ -53,13 +53,13 @@ func mtMigration() *ptahv1alpha1.PtahMigration {
 				Engine: ptahv1alpha1.DatabaseEnginePostgreSQL, CoordinationKey: "e2e/migrations/postgresql",
 				URLFrom: corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: mtDatabaseSecret}, Key: "url"},
 			},
-			Artifact: ptahv1alpha1.OCIArtifactSourceSpec{
+			Artifact: ptahv1alpha1.SourceSpec{
 				OCIRef: "oci://registry.ptah-e2e.svc.cluster.local:5000/migrations/postgresql:stable",
 				RegistryAuthFrom: &ptahv1alpha1.RegistryAuthSource{
 					Name: mtRegistrySecret, Mode: ptahv1alpha1.RegistryAuthEnvironment,
 					UsernameKey: "username", PasswordKey: "password",
 				},
-				VerificationPolicyFrom: corev1.ConfigMapKeySelector{
+				VerificationPolicyFrom: &corev1.ConfigMapKeySelector{
 					LocalObjectReference: corev1.LocalObjectReference{Name: migrationPolicy}, Key: migrationPolicyKey,
 				},
 				Transport: ptahv1alpha1.OCITransportSpec{PlainHTTP: true},
@@ -76,7 +76,7 @@ func mtMigration() *ptahv1alpha1.PtahMigration {
 				Epoch: "v1-33333333333333333333333333333333", ControllerStateVersion: 1, PtahVersion: "v0.3.0",
 				ExecutorImage: mtExecutorImage, RunnerProtocolVersion: int32(runner.ProtocolVersion),
 			},
-			Artifact: &ptahv1alpha1.OCIArtifactAccessBinding{
+			Artifact: &ptahv1alpha1.SourceAccessBinding{
 				ResolvedReference: "oci://registry.ptah-e2e.svc.cluster.local:5000/migrations/postgresql@" + builderDigest('a'),
 				Digest:            builderDigest('a'),
 			},
@@ -114,7 +114,7 @@ func mtBuiltJobs(t *testing.T) []batchv1.Job {
 			ExecutionBindingID: migration.Status.ExecutionBinding.Epoch, StartedAt: started, Attempt: 1,
 		}
 		if operation != ptahv1alpha1.MigrationOperationResolve {
-			claim.Source = &ptahv1alpha1.OCIArtifactAccessBinding{
+			claim.Source = &ptahv1alpha1.SourceAccessBinding{
 				ResolvedReference: migration.Status.Artifact.ResolvedReference, Digest: migration.Status.Artifact.Digest,
 				RegistryAuthFrom: migration.Spec.Artifact.RegistryAuthFrom.DeepCopy(), Transport: migration.Spec.Artifact.Transport,
 			}

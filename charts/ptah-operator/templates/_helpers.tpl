@@ -170,6 +170,10 @@ app.kubernetes.io/component: metrics
 {{- printf "ptah-operator-projection-write-guard-%s" (include "ptah-operator.releaseDigest" .) -}}
 {{- end -}}
 
+{{- define "ptah-operator.controllerSnapshotDeleteGuardPolicyName" -}}
+{{- printf "ptah-operator-snapshot-delete-guard-%s" (include "ptah-operator.releaseDigest" .) -}}
+{{- end -}}
+
 {{- define "ptah-operator.controllerPlanWriteGuardPolicyName" -}}
 {{- printf "ptah-operator-plan-write-guard-%s" (include "ptah-operator.releaseDigest" .) -}}
 {{- end -}}

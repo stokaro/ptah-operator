@@ -8,6 +8,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 
 	"github.com/stokaro/ptah-operator/internal/dataplane"
+	"github.com/stokaro/ptah-operator/internal/fingerprint"
 	"github.com/stokaro/ptah-operator/internal/migrationplan"
 )
 
@@ -83,6 +84,11 @@ func TestEveryInputOfAMigrationPlanIsInsideItsFingerprint(t *testing.T) {
 		t.Run(field.Name, func(t *testing.T) {
 			t.Parallel()
 
+			if field.Name == "Source" {
+				// A version 1 binding has no source; TestAMigrationPlanBindsItsSource
+				// changes each field of a version 2 one.
+				return
+			}
 			replacement, declared := alternatives[field.Name]
 			if !declared {
 				t.Fatalf("no alternative value is declared for %s, so nothing here reads it", field.Name)
@@ -108,21 +114,89 @@ func TestEveryInputOfAMigrationPlanIsInsideItsFingerprint(t *testing.T) {
 func TestAMigrationPlanRefusesAnIncompleteBinding(t *testing.T) {
 	t.Parallel()
 
-	bindingType := reflect.TypeOf(migrationplan.Binding{})
-	for index := range bindingType.NumField() {
-		field := bindingType.Field(index)
-		t.Run(field.Name, func(t *testing.T) {
-			t.Parallel()
-
-			mutated := completeBinding()
-			value := reflect.ValueOf(&mutated).Elem().Field(index)
-			value.Set(reflect.Zero(field.Type))
-
-			if _, err := mutated.Fingerprint(); err == nil {
-				t.Fatalf("a binding with no %s was given a fingerprint", field.Name)
+	// Each contract leaves out the fields the other one binds.
+	for version, absent := range map[string]map[string]bool{
+		"artifact": {"Source": true},
+		"source":   {"ArtifactDigest": true, "VerificationPolicyUID": true, "VerificationPolicyDigest": true},
+	} {
+		bindingType := reflect.TypeOf(migrationplan.Binding{})
+		for index := range bindingType.NumField() {
+			field := bindingType.Field(index)
+			if absent[field.Name] {
+				continue
 			}
-		})
+			t.Run(version+"/"+field.Name, func(t *testing.T) {
+				t.Parallel()
+
+				mutated := completeBinding()
+				if version == "source" {
+					mutated = completeSourceBinding()
+				}
+				if _, err := mutated.Fingerprint(); err != nil {
+					t.Fatalf("the complete binding was refused: %v", err)
+				}
+				value := reflect.ValueOf(&mutated).Elem().Field(index)
+				value.Set(reflect.Zero(field.Type))
+
+				if _, err := mutated.Fingerprint(); err == nil {
+					t.Fatalf("a binding with no %s was given a fingerprint", field.Name)
+				}
+			})
+		}
 	}
+}
+
+// A plan computed from a ConfigMap binds the source in place of the artifact
+// and the policy: another ConfigMap or other files make another plan, and a
+// binding that mixes the two contracts has no identity.
+func TestAMigrationPlanBindsItsSource(t *testing.T) {
+	t.Parallel()
+
+	source := completeSourceBinding()
+	baseline, err := source.Fingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if source.ContractVersion() != migrationplan.SourceContractVersion ||
+		completeBinding().ContractVersion() != migrationplan.ContractVersion {
+		t.Fatal("a binding does not carry the contract version of its source")
+	}
+	artifact, err := completeBinding().Fingerprint()
+	if err != nil || artifact == baseline {
+		t.Fatalf("a source plan and an artifact plan share a fingerprint: %v", err)
+	}
+	for name, mutate := range map[string]func(*migrationplan.Binding){
+		"revision":       func(b *migrationplan.Binding) { b.Source.Revision = "another-configmap-uid" },
+		"content digest": func(b *migrationplan.Binding) { b.Source.ContentDigest = digest('7') },
+	} {
+		mutated := completeSourceBinding()
+		mutate(&mutated)
+		got, err := mutated.Fingerprint()
+		if err != nil || got == baseline {
+			t.Errorf("another %s kept the fingerprint: %v", name, err)
+		}
+	}
+	for name, mutate := range map[string]func(*migrationplan.Binding){
+		"artifact digest": func(b *migrationplan.Binding) { b.ArtifactDigest = digest('c') },
+		"policy UID":      func(b *migrationplan.Binding) { b.VerificationPolicyUID = "uid" },
+		"policy digest":   func(b *migrationplan.Binding) { b.VerificationPolicyDigest = digest('0') },
+		"source kind":     func(b *migrationplan.Binding) { b.Source.Kind = "" },
+	} {
+		mutated := completeSourceBinding()
+		mutate(&mutated)
+		if _, err := mutated.Fingerprint(); err == nil {
+			t.Errorf("a source binding with a %s was given a fingerprint", name)
+		}
+	}
+}
+
+func completeSourceBinding() migrationplan.Binding {
+	binding := completeBinding()
+	binding.ArtifactDigest = ""
+	binding.VerificationPolicyUID = ""
+	binding.VerificationPolicyDigest = ""
+	binding.Source = &fingerprint.PlanSource{Kind: "ConfigMap", Revision: "configmap-uid", ContentDigest: digest('2')}
+	return binding
 }
 
 // A sequence the Apply Job could not carry is refused where it is selected,

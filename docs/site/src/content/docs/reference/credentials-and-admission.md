@@ -27,12 +27,19 @@ contract that keeps it true. The operational view is
 | Migration History/Apply fetch init | yes | no | digest-pinned migration directory |
 | Migration History main | no | target only | local migration directory |
 | Migration Apply main | no | target only | local migration directory |
+| Snapshot copy init, ConfigMap source | no | no | the source snapshot ConfigMap, checked against the bound content digest |
 
 The controller sees only Secret names and keys; Kubernetes resolves those
 selectors in the Job Pod. A migration reads a local directory rather than an
 OCI reference for the same reason the table splits every row: passing
 `oci://…` to the process that runs SQL would put registry and database
 credentials in one process.
+
+A resource whose source is a ConfigMap has no Resolve or Verify Job and no
+registry credential anywhere: the manager reads the ConfigMap and writes the
+snapshot, and the Observe, Plan, History and migration Apply Pods replace the
+authority guard and the fetch with one init container that checks the
+snapshot and copies it into the same local file or directory.
 
 For Resolve and Verify, the runner replaces a mounted custom CA ConfigMap
 projection with a private snapshot before starting Ptah. For Observe and Plan,
@@ -48,18 +55,21 @@ migration operation — and the runner redacts it alongside the target.
 
 The manager's own writes pass through two independent fail-closed layers.
 
-**Typed policies**, one per kind, reject objects outside their narrow
-structural form: Jobs, plan chunks, the ConfigMaps an Apply mounts a plan
-through, schema plans and migration plans, plus a sixth policy over
-`PtahSchema` and `PtahMigration` updates.
+**Typed policies**, one per kind and verb, reject objects outside their narrow
+structural form: Jobs, plan chunks, the ConfigMaps the manager creates -- a
+plan projection an Apply mounts or a source snapshot -- schema plans and
+migration plans, the deletion of a ConfigMap that is not a source snapshot,
+plus a seventh policy over `PtahSchema` and `PtahMigration` updates.
 One policy per kind avoids cross-type CEL assumptions. The Job policy admits a
 Job that satisfies the schema shape or the migration shape and nothing else.
 The policies are ordinary release objects, and an upgrade updates them in
 place. The Job, schema plan and migration plan policies carry the release's
 manager image and controller-state version as literals, so a Job or a plan
-stamped by another manager release is refused. The chunk and projection
-policies carry neither: each is bound to its plan by name and owner, and the
-plan names the manager. Nor does the policy over `PtahSchema` and `PtahMigration`
+stamped by another manager release is refused. The chunk, projection and
+snapshot policies carry neither: a chunk and its projection are bound to their
+plan by name and owner, and the plan names the manager; a snapshot is bound to
+its resource, and the controller-write webhook rebuilds its bytes from the
+source. Nor does the policy over `PtahSchema` and `PtahMigration`
 updates, which judges resources a person owns and no manager stamps.
 
 **Webhooks** perform the stronger semantic check by reading the owning resource

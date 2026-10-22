@@ -92,6 +92,7 @@ func templates(v values) []template {
 				{crdupgrade.ControllerJobWriteGuardPolicyName(v.ReleaseNamespace, v.ReleaseName), `include "ptah-operator.controllerJobWriteGuardPolicyName" .`},
 				{crdupgrade.ControllerChunkWriteGuardPolicyName(v.ReleaseNamespace, v.ReleaseName), `include "ptah-operator.controllerChunkWriteGuardPolicyName" .`},
 				{crdupgrade.ControllerProjectionWriteGuardPolicyName(v.ReleaseNamespace, v.ReleaseName), `include "ptah-operator.controllerProjectionWriteGuardPolicyName" .`},
+				{crdupgrade.ControllerSnapshotDeleteGuardPolicyName(v.ReleaseNamespace, v.ReleaseName), `include "ptah-operator.controllerSnapshotDeleteGuardPolicyName" .`},
 				{crdupgrade.ControllerPlanWriteGuardPolicyName(v.ReleaseNamespace, v.ReleaseName), `include "ptah-operator.controllerPlanWriteGuardPolicyName" .`},
 				{crdupgrade.ControllerMigrationPlanWriteGuardPolicyName(v.ReleaseNamespace, v.ReleaseName), `include "ptah-operator.controllerMigrationPlanWriteGuardPolicyName" .`},
 				{v.ReleaseNamespace, ".Release.Namespace"},

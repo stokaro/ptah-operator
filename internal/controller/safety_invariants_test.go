@@ -5268,7 +5268,7 @@ func safetyPostApplyObserveSchema(t *testing.T) *operatorv1alpha1.PtahSchema {
 			RunnerImage:              "example.invalid/operator@" + testDigest,
 			RunnerProtocolVersion:    int32(runner.ProtocolVersion),
 		},
-		Source: operatorv1alpha1.OCIArtifactAccessBinding{
+		Source: operatorv1alpha1.SourceAccessBinding{
 			ResolvedReference: schema.Status.Source.ResolvedReference,
 			Digest:            schema.Status.Source.Digest,
 		},

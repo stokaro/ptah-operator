@@ -16,6 +16,7 @@ stateDiagram-v2
   [*] --> Pending
   Pending --> Resolving
   Resolving --> Verifying: digest pinned
+  Resolving --> Observing: ConfigMap snapshot taken
   Verifying --> Observing: policy satisfied
   Observing --> Planning: drift read
   Planning --> InSync: no change
@@ -53,6 +54,40 @@ Approval is not an operation — it is a phase in which nothing runs.
   published.
 - **Apply** reconstructs and hashes the published bytes immediately before
   executing them.
+
+### A ConfigMap source
+
+A schema or a migration whose `configMap` names its files reaches no registry,
+and two of the operations above change for it. Resolve is not a Job: the
+manager reads the ConfigMap from the API server, takes the selected keys as
+files, and copies them into an immutable snapshot ConfigMap named
+`ptah-src-<hash>` that the resource owns, with a manifest of every file's path,
+size and SHA-256 beside them. The content digest is the SHA-256 of that
+manifest, so the same files give the same digest whatever key they came from.
+There is no verification policy for such a source, so there is no Verify step
+and no `ArtifactVerified` condition; `ArtifactResolved` says
+`SnapshotTaken`.
+
+Every later operation that reads the files mounts the snapshot, never the
+source ConfigMap. An init container in the Pod checks the snapshot against the
+content digest the operation was bound to, refuses one whose manifest or any
+file no longer gives it, and only then copies the files where the operation
+container reads them. A refusal stops the Pod before the container that holds
+the database URL starts, and the init container's status says which file
+failed.
+
+An edit to the source ConfigMap is read at once rather than at the next
+interval. An edit to a key the source does not select gives the same content
+digest, keeps the snapshot and the plan, and plans nothing new; an edit to a
+selected key gives a new snapshot and retires the plan. A plan binds the
+ConfigMap's UID and the content digest in place of an artifact digest, under
+plan contract version 2, so another ConfigMap with the same name retires it
+too. The manager deletes a snapshot once nothing names it any more.
+
+If a snapshot is deleted or replaced while an operation still needs it, that
+operation is refused rather than read from anywhere else. Putting back the
+exact bytes, or editing the source so that it is read again once nothing is in
+flight, lets it continue.
 
 After an Apply, `Observe` and `Plan` run again under the original Apply Lease.
 Only a new, coherent no-change plan establishes convergence: a process exit
@@ -92,6 +127,7 @@ stateDiagram-v2
   [*] --> Pending
   Pending --> Resolving
   Resolving --> Verifying: digest pinned
+  Resolving --> Reading: ConfigMap snapshot taken
   Verifying --> Reading: policy satisfied
   Reading --> InSync: nothing pending
   Reading --> Planning: pending versions
@@ -112,7 +148,9 @@ stateDiagram-v2
 
 Four operations run as Jobs: `Resolve`, `Verify`, `History`, `Apply`. Only
 `Apply` takes the database-realm Lease; reading history does not, because it
-mutates nothing.
+mutates nothing. A migration directory held in a ConfigMap is resolved by the
+manager into a snapshot, as [a schema's is](#a-configmap-source), and both
+`History` and `Apply` read the checked snapshot.
 
 Reading the history produces one of six verdicts, and the operator never
 guesses at any of them: the revision table is dirty; a recorded migration's

@@ -40,5 +40,8 @@ func setup() error {
 	if err != nil {
 		return err
 	}
-	return setupTenant(ctx)
+	if err := setupTenant(ctx); err != nil {
+		return err
+	}
+	return setupSnapshots(ctx)
 }

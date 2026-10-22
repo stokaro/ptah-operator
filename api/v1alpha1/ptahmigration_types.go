@@ -145,7 +145,7 @@ type MigrationOperationStatus struct {
 	// the resolved digest and the selectors needed to fetch it. Every operation
 	// after Resolve carries one, so a newer generation cannot send newly
 	// selected credentials to the old artifact's registry.
-	Source *OCIArtifactAccessBinding `json:"source,omitempty"`
+	Source *SourceAccessBinding `json:"source,omitempty"`
 
 	// Target is the key-free database binding, and CoordinationDigest the realm
 	// the operation serializes against.
@@ -241,17 +241,18 @@ type MigrationPolicy struct {
 // +kubebuilder:validation:XValidation:rule="!has(self.execution) || !has(self.execution.connectTimeout) || !has(self.execution.activeDeadlineSeconds) || duration(self.execution.connectTimeout).getMilliseconds() <= self.execution.activeDeadlineSeconds * 1000",message="execution.connectTimeout must not exceed execution.activeDeadlineSeconds"
 // +kubebuilder:validation:XValidation:rule="!has(self.policy) || !has(self.policy.lockTimeout) || !has(self.execution) || !has(self.execution.activeDeadlineSeconds) || duration(self.policy.lockTimeout).getMilliseconds() <= self.execution.activeDeadlineSeconds * 1000",message="policy.lockTimeout must not exceed execution.activeDeadlineSeconds"
 // +kubebuilder:validation:XValidation:rule="self.target.urlFrom.name.size() > 0 && self.target.urlFrom.key.size() > 0 && (!has(self.target.urlFrom.optional) || !self.target.urlFrom.optional)",message="target.urlFrom must name a required Secret key"
-// +kubebuilder:validation:XValidation:rule="self.artifact.verificationPolicyFrom.name.size() > 0 && self.artifact.verificationPolicyFrom.key.size() > 0 && (!has(self.artifact.verificationPolicyFrom.optional) || !self.artifact.verificationPolicyFrom.optional)",message="artifact.verificationPolicyFrom must name a required ConfigMap key"
+// +kubebuilder:validation:XValidation:rule="!has(self.artifact.verificationPolicyFrom) || (self.artifact.verificationPolicyFrom.name.size() > 0 && self.artifact.verificationPolicyFrom.key.size() > 0 && (!has(self.artifact.verificationPolicyFrom.optional) || !self.artifact.verificationPolicyFrom.optional))",message="artifact.verificationPolicyFrom must name a required ConfigMap key"
 // +kubebuilder:validation:XValidation:rule="!has(self.artifact.transport) || !has(self.artifact.transport.caFrom) || (self.artifact.transport.caFrom.name.size() > 0 && self.artifact.transport.caFrom.key.size() > 0 && (!has(self.artifact.transport.caFrom.optional) || !self.artifact.transport.caFrom.optional))",message="artifact.transport.caFrom must name a required ConfigMap key"
 type PtahMigrationSpec struct {
 	// Target is the database this sequence runs against, named through a Secret
 	// the manager never reads.
 	Target DatabaseTargetSpec `json:"target"`
 
-	// Artifact is the OCI migration directory this history is matched against.
-	// It reuses the schema path's credential-isolated source contract: fetching
-	// an artifact never hands registry credentials to the process that runs SQL.
-	Artifact OCIArtifactSourceSpec `json:"artifact"`
+	// Artifact is the migration directory this history is matched against:
+	// an OCI artifact or a ConfigMap. It reuses the schema path's source
+	// contract: fetching an artifact never hands registry credentials to the
+	// process that runs SQL.
+	Artifact SourceSpec `json:"artifact"`
 
 	// Policy decides what may run without a person: the apply mode, the
 	// approval requirement, and the locks a run takes.
@@ -513,7 +514,13 @@ type PtahMigrationStatus struct {
 	// Artifact is the resolved, credential-free artifact binding every later
 	// operation of this cycle uses. A tag resolves once; the digest is what
 	// travels.
-	Artifact *OCIArtifactAccessBinding `json:"artifact,omitempty"`
+	Artifact *SourceAccessBinding `json:"artifact,omitempty"`
+
+	// ConfigMap is the source ConfigMap status.artifact.snapshot was copied
+	// from, for a ConfigMap source: its name, UID and the resourceVersion
+	// that was read.
+	// +optional
+	ConfigMap *ConfigMapSourceRevision `json:"configMap,omitempty"`
 
 	// ExecutionBinding is what this resource's plans and approvals are bound
 	// to: the components that decide what a run means. It is the same contract

@@ -74,6 +74,7 @@ decision.
 | `ScopedChanges` | The authoritative managed scope differs from desired state. |
 | `ScopedConverged` | The authoritative managed scope has no changes. |
 | `ScopedPlanPending` | Raw observation completed and scoped planning remains pending. |
+| `SnapshotTaken` | A ConfigMap source was read and the files it selects were copied into the snapshot every later operation reads. |
 | `SourceFreshnessUnknown` | Currentness cannot be proven because source refresh did not complete. |
 | `SourceRefreshPending` | Dependent currentness is unknown during source refresh. |
 | `SourceResolutionUnknown` | Convergence cannot be evaluated without a resolved source. |

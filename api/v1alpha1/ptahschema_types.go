@@ -91,16 +91,17 @@ const (
 // +kubebuilder:validation:XValidation:rule="!has(self.execution) || !has(self.execution.connectTimeout) || !has(self.execution.activeDeadlineSeconds) || duration(self.execution.connectTimeout).getMilliseconds() <= self.execution.activeDeadlineSeconds * 1000",message="execution.connectTimeout must not exceed execution.activeDeadlineSeconds"
 // +kubebuilder:validation:XValidation:rule="!has(self.policy) || !has(self.policy.lockTimeout) || !has(self.execution) || !has(self.execution.activeDeadlineSeconds) || duration(self.policy.lockTimeout).getMilliseconds() <= self.execution.activeDeadlineSeconds * 1000",message="policy.lockTimeout must not exceed execution.activeDeadlineSeconds"
 // +kubebuilder:validation:XValidation:rule="self.target.urlFrom.name.size() > 0 && self.target.urlFrom.key.size() > 0 && (!has(self.target.urlFrom.optional) || !self.target.urlFrom.optional)",message="target.urlFrom must name a required Secret key"
-// +kubebuilder:validation:XValidation:rule="self.desired.verificationPolicyFrom.name.size() > 0 && self.desired.verificationPolicyFrom.key.size() > 0 && (!has(self.desired.verificationPolicyFrom.optional) || !self.desired.verificationPolicyFrom.optional)",message="desired.verificationPolicyFrom must name a required ConfigMap key"
+// +kubebuilder:validation:XValidation:rule="!has(self.desired.verificationPolicyFrom) || (self.desired.verificationPolicyFrom.name.size() > 0 && self.desired.verificationPolicyFrom.key.size() > 0 && (!has(self.desired.verificationPolicyFrom.optional) || !self.desired.verificationPolicyFrom.optional))",message="desired.verificationPolicyFrom must name a required ConfigMap key"
+// +kubebuilder:validation:XValidation:rule="!has(self.desired.configMap) || self.desired.configMap.items.size() == 1",message="desired.configMap selects exactly one file for a schema"
 // +kubebuilder:validation:XValidation:rule="!has(self.dev) || (self.dev.urlFrom.name.size() > 0 && self.dev.urlFrom.key.size() > 0 && (!has(self.dev.urlFrom.optional) || !self.dev.urlFrom.optional))",message="dev.urlFrom must name a required Secret key"
 // +kubebuilder:validation:XValidation:rule="!has(self.desired.transport) || !has(self.desired.transport.caFrom) || (self.desired.transport.caFrom.name.size() > 0 && self.desired.transport.caFrom.key.size() > 0 && (!has(self.desired.transport.caFrom.optional) || !self.desired.transport.caFrom.optional))",message="desired.transport.caFrom must name a required ConfigMap key"
 type PtahSchemaSpec struct {
 	// Target is the database to converge, named through a Secret the manager
 	// itself has no permission to read.
 	Target DatabaseTargetSpec `json:"target"`
-	// Desired is the OCI artifact that declares the schema, and the rows a
-	// declaration names, to converge it to.
-	Desired OCIArtifactSourceSpec `json:"desired"`
+	// Desired is the source that declares the schema, and the rows a
+	// declaration names, to converge it to: an OCI artifact or a ConfigMap.
+	Desired SourceSpec `json:"desired"`
 	// Dev is a scratch database Ptah may use where a comparison needs one. It
 	// is never the target, and nothing it holds is kept.
 	Dev *DatabaseTargetRef `json:"dev,omitempty"`
@@ -207,15 +208,29 @@ type DatabaseTargetRef struct {
 	URLFrom corev1.SecretKeySelector `json:"urlFrom"`
 }
 
-// OCIArtifactSourceSpec is the reusable, credential-isolated OCI source shape.
-// The schema and future versioned-migration APIs intentionally reuse the
-// transport contract while keeping their reconciliation lifecycles separate.
-type OCIArtifactSourceSpec struct {
+// SourceSpec names where the desired files come from: an OCI artifact, or a
+// ConfigMap in the resource's own namespace. The schema and the migration
+// APIs share it, and keep their reconciliation lifecycles separate.
+// +kubebuilder:validation:XValidation:rule="has(self.ociRef) != has(self.configMap)",message="set exactly one of ociRef and configMap"
+// +kubebuilder:validation:XValidation:rule="has(self.ociRef) == has(self.verificationPolicyFrom)",message="verificationPolicyFrom is required with ociRef and refused with configMap"
+// +kubebuilder:validation:XValidation:rule="has(self.ociRef) || !has(self.registryAuthFrom)",message="registryAuthFrom is refused with configMap"
+// +kubebuilder:validation:XValidation:rule="has(self.ociRef) || !has(self.transport) || (!has(self.transport.caFrom) && (!has(self.transport.plainHTTP) || !self.transport.plainHTTP))",message="transport is refused with configMap"
+type SourceSpec struct {
 	// OCIRef is a desired-schema artifact reference. It may name a tag or a
 	// digest; every later operation receives only the resolved digest.
+	// +optional
 	// +kubebuilder:validation:MinLength=7
 	// +kubebuilder:validation:Pattern=`^oci://[^[:space:]?#]+$`
-	OCIRef string `json:"ociRef"`
+	OCIRef string `json:"ociRef,omitempty"`
+
+	// ConfigMap selects files from a ConfigMap in this resource's namespace.
+	// Whoever may write that ConfigMap may change the desired state, exactly
+	// as whoever may write this resource can: Kubernetes RBAC on the
+	// namespace is what this source is trusted by. The manager copies the
+	// selected files into an immutable snapshot, and every operation reads
+	// the snapshot.
+	// +optional
+	ConfigMap *ConfigMapSourceSpec `json:"configMap,omitempty"`
 
 	// RegistryAuthFrom names the Secret an operation Pod reads the registry
 	// credential from. The process that runs SQL never receives it.
@@ -223,27 +238,140 @@ type OCIArtifactSourceSpec struct {
 
 	// VerificationPolicyFrom names the immutable ConfigMap holding the policy
 	// the artifact must satisfy. Editing it retires the plans computed under
-	// the previous version rather than letting them apply.
-	VerificationPolicyFrom corev1.ConfigMapKeySelector `json:"verificationPolicyFrom"`
+	// the previous version rather than letting them apply. It is required
+	// with ociRef and refused with configMap: its rules are about OCI
+	// artifacts, and a policy nothing evaluates would read as a gate.
+	// +optional
+	VerificationPolicyFrom *corev1.ConfigMapKeySelector `json:"verificationPolicyFrom,omitempty"`
 
 	// Transport is how the registry is reached: plain HTTP, a custom CA.
 	Transport OCITransportSpec `json:"transport,omitempty"`
 }
 
-// OCIArtifactAccessBinding is a credential-free, immutable snapshot of the
-// exact artifact and Kubernetes credential selectors needed to fetch it. It is
-// persisted across post-Apply proof so a newer generation cannot send newly
-// selected credentials to the old artifact's registry.
-type OCIArtifactAccessBinding struct {
+// ConfigMapSourceSpec selects files from one ConfigMap.
+type ConfigMapSourceSpec struct {
+	// Name of the ConfigMap, in this resource's namespace.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`
+	Name string `json:"name"`
+
+	// Items are the keys that become files, and the file each one becomes. A
+	// key cannot hold "/", so a nested directory is spelled out here. A key
+	// the list does not name is not part of the source, and editing it
+	// changes nothing. A schema selects exactly one file, whose extension
+	// tells Ptah its format; a migration directory selects up to 1,000.
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=1000
+	// +listType=map
+	// +listMapKey=path
+	Items []ConfigMapSourceItem `json:"items"`
+}
+
+// ConfigMapSourceItem maps one ConfigMap key to one file.
+type ConfigMapSourceItem struct {
+	// Key in the ConfigMap's data or binaryData.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^[-._a-zA-Z0-9]+$`
+	Key string `json:"key"`
+
+	// Path is the file the key becomes: relative, separated by "/", with no
+	// empty, "." or ".." element, no backslash and no control character. An
+	// element longer than 255 bytes, or a path that is a file and a directory
+	// at once, is refused when the source is read.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=1024
+	// +kubebuilder:validation:Pattern=`^(?:[^./\\\x00-\x1f\x7f][^/\\\x00-\x1f\x7f]*|\.[^./\\\x00-\x1f\x7f][^/\\\x00-\x1f\x7f]*|\.\.[^/\\\x00-\x1f\x7f]+)(?:/(?:[^./\\\x00-\x1f\x7f][^/\\\x00-\x1f\x7f]*|\.[^./\\\x00-\x1f\x7f][^/\\\x00-\x1f\x7f]*|\.\.[^/\\\x00-\x1f\x7f]+))*$`
+	Path string `json:"path"`
+}
+
+// SourceAccessBinding is the credential-free, immutable account of how an
+// operation reads the desired files: an OCI artifact pinned by digest with the
+// Kubernetes selectors needed to fetch it, or the snapshot a ConfigMap source
+// was copied into. It is persisted across post-Apply proof so a newer
+// generation cannot send newly selected credentials to the old artifact's
+// registry, or read files the plan was not computed from.
+// +kubebuilder:validation:XValidation:rule="has(self.resolvedReference) != has(self.snapshot)",message="set exactly one of resolvedReference and snapshot"
+type SourceAccessBinding struct {
 	// ResolvedReference is the artifact with its tag replaced by a digest.
-	ResolvedReference string `json:"resolvedReference"`
+	// +optional
+	ResolvedReference string `json:"resolvedReference,omitempty"`
 	// Digest is that digest on its own.
-	Digest string `json:"digest"`
+	// +optional
+	Digest string `json:"digest,omitempty"`
 	// RegistryAuthFrom names the Secret an operation Pod reads the registry
 	// credential from. It is a selector, never the credential.
 	RegistryAuthFrom *RegistryAuthSource `json:"registryAuthFrom,omitempty"`
 	// Transport is how the registry is reached: plain HTTP, a custom CA.
 	Transport OCITransportSpec `json:"transport,omitempty"`
+	// Snapshot is the immutable ConfigMap a ConfigMap source's files were
+	// copied into, and the content it must hold.
+	// +optional
+	Snapshot *SourceSnapshotBinding `json:"snapshot,omitempty"`
+}
+
+// SourceSnapshotBinding names the snapshot an operation reads a ConfigMap
+// source through, and the content it has to hold. The operation Pod checks
+// every file and the manifest against the content digest before the
+// operation starts, and refuses a snapshot that no longer gives it.
+type SourceSnapshotBinding struct {
+	// Name of the snapshot ConfigMap, in the resource's namespace.
+	// +kubebuilder:validation:Pattern=`^ptah-src-[0-9a-f]{24}$`
+	Name string `json:"name"`
+	// UID the snapshot had when it was bound. A snapshot deleted and written
+	// again under the same name is another object.
+	UID types.UID `json:"uid"`
+	// ContentDigest is the content digest of the selected files: the SHA-256
+	// of a manifest with one line per file, sorted by path, naming the
+	// file's SHA-256, its size and its path.
+	// +kubebuilder:validation:Pattern=`^sha256:[0-9a-f]{64}$`
+	ContentDigest string `json:"contentDigest"`
+	// SchemaFile is the path, inside the snapshot, of the one file a schema
+	// reads. A migration reads the whole directory and leaves it empty.
+	// +optional
+	// +kubebuilder:validation:MaxLength=1024
+	SchemaFile string `json:"schemaFile,omitempty"`
+}
+
+// ConfigMapSourceRevision is the ConfigMap a source was last read from.
+type ConfigMapSourceRevision struct {
+	// Name of the ConfigMap.
+	Name string `json:"name"`
+	// UID of the ConfigMap. Another ConfigMap under the same name is another
+	// source, and retires a plan computed from this one.
+	UID types.UID `json:"uid"`
+	// ResourceVersion is the version that was read. An edit to a key the
+	// source does not select moves it and changes no content.
+	ResourceVersion string `json:"resourceVersion"`
+}
+
+// SourceKind names a kind of source a plan can be bound to besides an OCI
+// artifact, which plans bind through artifactDigest.
+// +kubebuilder:validation:Enum=ConfigMap
+type SourceKind string
+
+const (
+	// SourceKindConfigMap is a ConfigMap in the resource's namespace.
+	SourceKindConfigMap SourceKind = "ConfigMap"
+)
+
+// PlanSourceBinding is what a plan computed from a source other than an OCI
+// artifact binds in place of artifactDigest.
+type PlanSourceBinding struct {
+	// Kind of source the plan was computed from.
+	Kind SourceKind `json:"kind"`
+	// Revision is the source object the files were read from. For a ConfigMap
+	// it is the ConfigMap's UID: an edit to a key the source does not select
+	// keeps the plan, while another ConfigMap, or the same name deleted and
+	// created again, retires it even when the files match.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=128
+	Revision string `json:"revision"`
+	// ContentDigest is the content digest of the files the plan was computed
+	// from.
+	// +kubebuilder:validation:Pattern=`^sha256:[0-9a-f]{64}$`
+	ContentDigest string `json:"contentDigest"`
 }
 
 // RegistryAuthSource describes a Secret without requiring the controller to
@@ -845,6 +973,16 @@ type SchemaSourceStatus struct {
 	ResolvedAt *metav1.Time `json:"resolvedAt,omitempty"`
 	// VerifiedAt is when the policy last accepted it.
 	VerifiedAt *metav1.Time `json:"verifiedAt,omitempty"`
+
+	// ConfigMap is the source ConfigMap the files were last read from, for a
+	// ConfigMap source. A ConfigMap source has no verification policy, so
+	// verified stays false; the snapshot below is what later operations read.
+	// +optional
+	ConfigMap *ConfigMapSourceRevision `json:"configMap,omitempty"`
+	// Snapshot is the immutable copy of the selected files, and their content
+	// digest, for a ConfigMap source.
+	// +optional
+	Snapshot *SourceSnapshotBinding `json:"snapshot,omitempty"`
 }
 
 // DriftFindingStatus is a bounded aggregate from the native drift report. It
@@ -919,8 +1057,14 @@ type CurrentPlanStatus struct {
 	Fingerprint string `json:"fingerprint"`
 	// ContentDigest is the digest of the plan bytes.
 	ContentDigest string `json:"contentDigest"`
-	// ArtifactDigest is the artifact the plan was computed from.
-	ArtifactDigest string `json:"artifactDigest"`
+	// ArtifactDigest is the OCI artifact the plan was computed from. A plan
+	// computed from another source binds source instead.
+	// +optional
+	ArtifactDigest string `json:"artifactDigest,omitempty"`
+	// Source is the source a plan computed from a ConfigMap binds in place of
+	// artifactDigest.
+	// +optional
+	Source *PlanSourceBinding `json:"source,omitempty"`
 	// CoordinationDigest is the database realm it takes its turn in.
 	CoordinationDigest string `json:"coordinationDigest"`
 	// TargetIdentityDigest is the database it was computed against.
@@ -931,10 +1075,13 @@ type CurrentPlanStatus struct {
 	DesiredStateFingerprint string `json:"desiredStateFingerprint"`
 	// PolicyFingerprint is the spec.policy it was computed under.
 	PolicyFingerprint string `json:"policyFingerprint"`
-	// VerificationPolicyUID is the policy object that accepted the artifact.
-	VerificationPolicyUID types.UID `json:"verificationPolicyUID"`
+	// VerificationPolicyUID is the policy object that accepted the artifact,
+	// for an OCI plan.
+	// +optional
+	VerificationPolicyUID types.UID `json:"verificationPolicyUID,omitempty"`
 	// VerificationPolicyDigest is that policy's content at the time.
-	VerificationPolicyDigest string `json:"verificationPolicyDigest"`
+	// +optional
+	VerificationPolicyDigest string `json:"verificationPolicyDigest,omitempty"`
 	// ExecutionBindingID is the execution epoch it belongs to.
 	// +kubebuilder:validation:Pattern=`^v1-[0-9a-f]{32}$`
 	ExecutionBindingID string `json:"executionBindingID"`
@@ -994,8 +1141,13 @@ type ConsumedApprovalStatus struct {
 
 // AppliedStatus is written only after post-apply observation proves convergence.
 type AppliedStatus struct {
-	// ArtifactDigest is the artifact that was applied.
-	ArtifactDigest string `json:"artifactDigest"`
+	// ArtifactDigest is the OCI artifact that was applied.
+	// +optional
+	ArtifactDigest string `json:"artifactDigest,omitempty"`
+	// Source is the source that was applied, for a plan computed from a
+	// ConfigMap.
+	// +optional
+	Source *PlanSourceBinding `json:"source,omitempty"`
 	// PlanRef names the stored plan this apply ran. It is what a reader
 	// addresses to see the SQL that was applied. It does not replace
 	// PlanFingerprint: the reference says which object to read and the
@@ -1106,7 +1258,7 @@ type PendingObservationStatus struct {
 	CoordinationDigest string `json:"coordinationDigest"`
 	// Source is the artifact access the proof needs to re-read the desired
 	// state. It holds Kubernetes selectors, never Secret contents.
-	Source OCIArtifactAccessBinding `json:"source"`
+	Source SourceAccessBinding `json:"source"`
 	// Dev is the scratch database the proof may use.
 	Dev *DatabaseTargetRef `json:"dev,omitempty"`
 	// PlanRequired records that the raw drift read completed and the same
@@ -1227,7 +1379,7 @@ type ActiveOperationStatus struct {
 	VerificationPolicyDigest string `json:"verificationPolicyDigest,omitempty"`
 	// Source snapshots artifact access for mandatory post-Apply observation.
 	// It contains Kubernetes selectors only, never Secret contents.
-	Source *OCIArtifactAccessBinding `json:"source,omitempty"`
+	Source *SourceAccessBinding `json:"source,omitempty"`
 	// LeaseDurationSeconds is how long the database lock was taken for.
 	// +kubebuilder:validation:Minimum=5
 	// +kubebuilder:validation:Maximum=86460
@@ -1317,23 +1469,26 @@ const (
 	ReasonResolveFailed                ConditionReason = "ResolveFailed"
 	ReasonRunnerProtocolMismatch       ConditionReason = "RunnerProtocolMismatch"
 	ReasonSatisfied                    ConditionReason = "Satisfied"
-	ReasonScopedChanges                ConditionReason = "ScopedChanges"
-	ReasonScopedConverged              ConditionReason = "ScopedConverged"
-	ReasonScopedPlanPending            ConditionReason = "ScopedPlanPending"
-	ReasonSourceFreshnessUnknown       ConditionReason = "SourceFreshnessUnknown"
-	ReasonSourceRefreshPending         ConditionReason = "SourceRefreshPending"
-	ReasonSourceResolutionUnknown      ConditionReason = "SourceResolutionUnknown"
-	ReasonSourceUnresolved             ConditionReason = "SourceUnresolved"
-	ReasonStale                        ConditionReason = "Stale"
-	ReasonStaleObservation             ConditionReason = "StaleObservation"
-	ReasonStalePlan                    ConditionReason = "StalePlan"
-	ReasonSucceeded                    ConditionReason = "Succeeded"
-	ReasonSupersededApproval           ConditionReason = "SupersededApproval"
-	ReasonSupportedEngine              ConditionReason = "SupportedEngine"
-	ReasonSuspended                    ConditionReason = "Suspended"
-	ReasonUnsupportedEngine            ConditionReason = "UnsupportedEngine"
-	ReasonVerifyingConvergence         ConditionReason = "VerifyingConvergence"
-	ReasonWaiting                      ConditionReason = "Waiting"
+	// ReasonSnapshotTaken says a ConfigMap source was read and its selected
+	// files copied into the snapshot every later operation reads.
+	ReasonSnapshotTaken           ConditionReason = "SnapshotTaken"
+	ReasonScopedChanges           ConditionReason = "ScopedChanges"
+	ReasonScopedConverged         ConditionReason = "ScopedConverged"
+	ReasonScopedPlanPending       ConditionReason = "ScopedPlanPending"
+	ReasonSourceFreshnessUnknown  ConditionReason = "SourceFreshnessUnknown"
+	ReasonSourceRefreshPending    ConditionReason = "SourceRefreshPending"
+	ReasonSourceResolutionUnknown ConditionReason = "SourceResolutionUnknown"
+	ReasonSourceUnresolved        ConditionReason = "SourceUnresolved"
+	ReasonStale                   ConditionReason = "Stale"
+	ReasonStaleObservation        ConditionReason = "StaleObservation"
+	ReasonStalePlan               ConditionReason = "StalePlan"
+	ReasonSucceeded               ConditionReason = "Succeeded"
+	ReasonSupersededApproval      ConditionReason = "SupersededApproval"
+	ReasonSupportedEngine         ConditionReason = "SupportedEngine"
+	ReasonSuspended               ConditionReason = "Suspended"
+	ReasonUnsupportedEngine       ConditionReason = "UnsupportedEngine"
+	ReasonVerifyingConvergence    ConditionReason = "VerifyingConvergence"
+	ReasonWaiting                 ConditionReason = "Waiting"
 )
 
 // +kubebuilder:validation:XValidation:rule="oldSelf.hasValue() || self.metadata.name.size() <= 63",message="metadata.name must be at most 63 bytes, because it is carried whole in the labels of the Jobs this resource dispatches",optionalOldSelf=true

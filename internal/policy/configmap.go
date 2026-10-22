@@ -22,8 +22,8 @@ type Binding struct {
 // ConfigMapBinding reads exactly the selected key and returns the immutable
 // object UID plus the digest of the bytes a ConfigMap volume would project.
 // Verification policies are public configuration, never credentials.
-func ConfigMapBinding(ctx context.Context, reader client.Reader, namespace string, selector corev1.ConfigMapKeySelector) (Binding, error) {
-	if reader == nil || namespace == "" || selector.Name == "" || selector.Key == "" {
+func ConfigMapBinding(ctx context.Context, reader client.Reader, namespace string, selector *corev1.ConfigMapKeySelector) (Binding, error) {
+	if reader == nil || namespace == "" || selector == nil || selector.Name == "" || selector.Key == "" {
 		return Binding{}, fmt.Errorf("verification policy reference is incomplete")
 	}
 	configMap := &corev1.ConfigMap{}

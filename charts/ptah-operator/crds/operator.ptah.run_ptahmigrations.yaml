@@ -4,8 +4,8 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     operator.ptah.run/controller-state-version: "1"
-    operator.ptah.run/crd-schema-version: "2"
-    operator.ptah.run/crd-schema-digest: "sha256:681554fea2f34a5565c9801608b4148614f110083d5b5ca02aeafe3bfe2596a0"
+    operator.ptah.run/crd-schema-version: "3"
+    operator.ptah.run/crd-schema-digest: "sha256:272b5a57d30dc15c945c858260a3d51cb72ae032c14104db540cc7e7884d1d66"
     controller-gen.kubebuilder.io/version: v0.22.0
   name: ptahmigrations.operator.ptah.run
 spec:
@@ -53,6 +53,40 @@ spec:
             properties:
               artifact:
                 properties:
+                  configMap:
+                    properties:
+                      items:
+                        items:
+                          properties:
+                            key:
+                              maxLength: 253
+                              minLength: 1
+                              pattern: ^[-._a-zA-Z0-9]+$
+                              type: string
+                            path:
+                              maxLength: 1024
+                              minLength: 1
+                              pattern: ^(?:[^./\\\x00-\x1f\x7f][^/\\\x00-\x1f\x7f]*|\.[^./\\\x00-\x1f\x7f][^/\\\x00-\x1f\x7f]*|\.\.[^/\\\x00-\x1f\x7f]+)(?:/(?:[^./\\\x00-\x1f\x7f][^/\\\x00-\x1f\x7f]*|\.[^./\\\x00-\x1f\x7f][^/\\\x00-\x1f\x7f]*|\.\.[^/\\\x00-\x1f\x7f]+))*$
+                              type: string
+                          required:
+                          - key
+                          - path
+                          type: object
+                        maxItems: 1000
+                        minItems: 1
+                        type: array
+                        x-kubernetes-list-map-keys:
+                        - path
+                        x-kubernetes-list-type: map
+                      name:
+                        maxLength: 253
+                        minLength: 1
+                        pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                        type: string
+                    required:
+                    - items
+                    - name
+                    type: object
                   ociRef:
                     minLength: 7
                     pattern: ^oci://[^[:space:]?#]+$
@@ -117,10 +151,18 @@ spec:
                     - key
                     type: object
                     x-kubernetes-map-type: atomic
-                required:
-                - ociRef
-                - verificationPolicyFrom
                 type: object
+                x-kubernetes-validations:
+                - message: set exactly one of ociRef and configMap
+                  rule: has(self.ociRef) != has(self.configMap)
+                - message: verificationPolicyFrom is required with ociRef and refused
+                    with configMap
+                  rule: has(self.ociRef) == has(self.verificationPolicyFrom)
+                - message: registryAuthFrom is refused with configMap
+                  rule: has(self.ociRef) || !has(self.registryAuthFrom)
+                - message: transport is refused with configMap
+                  rule: has(self.ociRef) || !has(self.transport) || (!has(self.transport.caFrom)
+                    && (!has(self.transport.plainHTTP) || !self.transport.plainHTTP))
               execution:
                 default: {}
                 properties:
@@ -793,8 +835,9 @@ spec:
                 > 0 && (!has(self.target.urlFrom.optional) || !self.target.urlFrom.optional)
             - message: artifact.verificationPolicyFrom must name a required ConfigMap
                 key
-              rule: self.artifact.verificationPolicyFrom.name.size() > 0 && self.artifact.verificationPolicyFrom.key.size()
-                > 0 && (!has(self.artifact.verificationPolicyFrom.optional) || !self.artifact.verificationPolicyFrom.optional)
+              rule: '!has(self.artifact.verificationPolicyFrom) || (self.artifact.verificationPolicyFrom.name.size()
+                > 0 && self.artifact.verificationPolicyFrom.key.size() > 0 && (!has(self.artifact.verificationPolicyFrom.optional)
+                || !self.artifact.verificationPolicyFrom.optional))'
             - message: artifact.transport.caFrom must name a required ConfigMap key
               rule: '!has(self.artifact.transport) || !has(self.artifact.transport.caFrom)
                 || (self.artifact.transport.caFrom.name.size() > 0 && self.artifact.transport.caFrom.key.size()
@@ -1111,6 +1154,24 @@ spec:
                         type: object
                       resolvedReference:
                         type: string
+                      snapshot:
+                        properties:
+                          contentDigest:
+                            pattern: ^sha256:[0-9a-f]{64}$
+                            type: string
+                          name:
+                            pattern: ^ptah-src-[0-9a-f]{24}$
+                            type: string
+                          schemaFile:
+                            maxLength: 1024
+                            type: string
+                          uid:
+                            type: string
+                        required:
+                        - contentDigest
+                        - name
+                        - uid
+                        type: object
                       transport:
                         properties:
                           caFrom:
@@ -1133,10 +1194,10 @@ spec:
                         x-kubernetes-validations:
                         - message: caFrom cannot be used with plainHTTP
                           rule: '!self.plainHTTP || !has(self.caFrom)'
-                    required:
-                    - digest
-                    - resolvedReference
                     type: object
+                    x-kubernetes-validations:
+                    - message: set exactly one of resolvedReference and snapshot
+                      rule: has(self.resolvedReference) != has(self.snapshot)
                   startedAt:
                     format: date-time
                     type: string
@@ -1211,6 +1272,24 @@ spec:
                     type: object
                   resolvedReference:
                     type: string
+                  snapshot:
+                    properties:
+                      contentDigest:
+                        pattern: ^sha256:[0-9a-f]{64}$
+                        type: string
+                      name:
+                        pattern: ^ptah-src-[0-9a-f]{24}$
+                        type: string
+                      schemaFile:
+                        maxLength: 1024
+                        type: string
+                      uid:
+                        type: string
+                    required:
+                    - contentDigest
+                    - name
+                    - uid
+                    type: object
                   transport:
                     properties:
                       caFrom:
@@ -1233,10 +1312,10 @@ spec:
                     x-kubernetes-validations:
                     - message: caFrom cannot be used with plainHTTP
                       rule: '!self.plainHTTP || !has(self.caFrom)'
-                required:
-                - digest
-                - resolvedReference
                 type: object
+                x-kubernetes-validations:
+                - message: set exactly one of resolvedReference and snapshot
+                  rule: has(self.resolvedReference) != has(self.snapshot)
               conditions:
                 items:
                   properties:
@@ -1277,6 +1356,19 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              configMap:
+                properties:
+                  name:
+                    type: string
+                  resourceVersion:
+                    type: string
+                  uid:
+                    type: string
+                required:
+                - name
+                - resourceVersion
+                - uid
+                type: object
               executionBinding:
                 properties:
                   controllerStateVersion:

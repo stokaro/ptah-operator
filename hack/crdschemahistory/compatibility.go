@@ -106,7 +106,7 @@ type declaredBreak struct {
 // historyRestarts): kept, they would excuse their transitions again when the
 // new history reached their numbers. A break made after the restart is
 // declared here for the version that makes it.
-var declaredBreaks = []declaredBreak{driftFeatureCategoriesBreak}
+var declaredBreaks = []declaredBreak{driftFeatureCategoriesBreak, configMapSourceBreak}
 
 // validateDeclaredBreaks refuses a declaration list that could excuse more
 // than it says: a declaration without a version, a reason or a transition,

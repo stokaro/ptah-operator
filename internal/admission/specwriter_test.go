@@ -33,9 +33,9 @@ func writerTestSchema(annotations map[string]string) *operatorv1alpha1.PtahSchem
 				Engine: operatorv1alpha1.DatabaseEnginePostgreSQL, CoordinationKey: "prod/team-a/app",
 				URLFrom: corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "app-db"}, Key: "url"},
 			},
-			Desired: operatorv1alpha1.OCIArtifactSourceSpec{
+			Desired: operatorv1alpha1.SourceSpec{
 				OCIRef: "oci://registry.test/acme/app:stable",
-				VerificationPolicyFrom: corev1.ConfigMapKeySelector{
+				VerificationPolicyFrom: &corev1.ConfigMapKeySelector{
 					LocalObjectReference: corev1.LocalObjectReference{Name: "policy"}, Key: "policy.yaml",
 				},
 			},
@@ -51,9 +51,9 @@ func writerTestMigration(annotations map[string]string) *operatorv1alpha1.PtahMi
 				Engine: operatorv1alpha1.DatabaseEnginePostgreSQL, CoordinationKey: "prod/team-a/app",
 				URLFrom: corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "app-db"}, Key: "url"},
 			},
-			Artifact: operatorv1alpha1.OCIArtifactSourceSpec{
+			Artifact: operatorv1alpha1.SourceSpec{
 				OCIRef: "oci://registry.test/acme/migrations:stable",
-				VerificationPolicyFrom: corev1.ConfigMapKeySelector{
+				VerificationPolicyFrom: &corev1.ConfigMapKeySelector{
 					LocalObjectReference: corev1.LocalObjectReference{Name: "policy"}, Key: "policy.yaml",
 				},
 			},

@@ -20,6 +20,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/coordination"
 	"github.com/stokaro/ptah-operator/internal/migrationplan"
 	"github.com/stokaro/ptah-operator/internal/policy"
+	"github.com/stokaro/ptah-operator/internal/sourcebinding"
 )
 
 // MigrationApprovalHandler stamps authenticated identity onto one migration
@@ -161,8 +162,8 @@ func (h *MigrationApprovalHandler) validateMigrationBinding(
 	if approval.Spec.PlanFingerprint != plan.Spec.Fingerprint {
 		return fmt.Errorf("approval plan fingerprint does not match the immutable plan")
 	}
-	if plan.Spec.ContractVersion != migrationplan.ContractVersion {
-		return fmt.Errorf("referenced plan contract version %d is not the one this manager publishes", plan.Spec.ContractVersion)
+	if !migrationplan.SupportedContractVersion(plan.Spec.ContractVersion) {
+		return fmt.Errorf("referenced plan contract version %d is not one this manager publishes", plan.Spec.ContractVersion)
 	}
 	if err := h.Execution.binds(
 		plan.Spec.ControllerStateVersion, plan.Spec.PtahVersion, plan.Spec.ExecutorImage, plan.Spec.RunnerProtocolVersion,
@@ -202,7 +203,9 @@ func (h *MigrationApprovalHandler) validateMigrationBinding(
 	if migration.Status.History.TargetIdentityDigest != plan.Spec.TargetIdentityDigest {
 		return fmt.Errorf("the database identity changed after the plan was generated")
 	}
-	if migration.Status.Artifact == nil || migration.Status.Artifact.Digest != plan.Spec.ArtifactDigest {
+	statusArtifact, statusSource := sourcebinding.MigrationPlanSource(migration.Status.Artifact, migration.Status.ConfigMap)
+	if migration.Status.Artifact == nil ||
+		!sourcebinding.SamePlanSource(plan.Spec.ArtifactDigest, plan.Spec.Source, statusArtifact, statusSource) {
 		return fmt.Errorf("the resolved artifact changed after the plan was generated")
 	}
 	binding := migration.Status.ExecutionBinding
@@ -220,12 +223,14 @@ func (h *MigrationApprovalHandler) validateMigrationBinding(
 	if coordinationDigest != plan.Spec.CoordinationDigest {
 		return fmt.Errorf("the declared coordination realm changed after the plan was generated")
 	}
-	policyBinding, err := policy.ConfigMapBinding(ctx, h.Reader, namespace, migration.Spec.Artifact.VerificationPolicyFrom)
-	if err != nil {
-		return err
-	}
-	if policyBinding.UID != plan.Spec.VerificationPolicyUID || policyBinding.Digest != plan.Spec.VerificationPolicyDigest {
-		return fmt.Errorf("the verification policy changed after the plan was generated")
+	if plan.Spec.Source == nil {
+		policyBinding, err := policy.ConfigMapBinding(ctx, h.Reader, namespace, migration.Spec.Artifact.VerificationPolicyFrom)
+		if err != nil {
+			return err
+		}
+		if policyBinding.UID != plan.Spec.VerificationPolicyUID || policyBinding.Digest != plan.Spec.VerificationPolicyDigest {
+			return fmt.Errorf("the verification policy changed after the plan was generated")
+		}
 	}
 	if h.RequireDistinctApprover {
 		if err := refuseSelfApproval("migration", migration.Annotations, approval.Spec.Approver); err != nil {

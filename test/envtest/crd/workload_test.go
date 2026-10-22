@@ -1,6 +1,7 @@
 package crd_test
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"testing"
@@ -290,26 +291,83 @@ func targetRefusals() []refusal {
 // spec.desired in a PtahSchema and spec.artifact in a PtahMigration.
 func artifactRefusals(source string) []refusal {
 	field := "spec." + source
-	return []refusal{
+	rows := []refusal{
 		{
 			name:   source + " is required",
 			mutate: removing("spec", source),
 			want:   []cause{{field, "Required value"}},
 		},
 		{
-			name:   source + ".ociRef is required",
+			name:   source + " with neither ociRef nor configMap",
 			mutate: removing("spec", source, "ociRef"),
-			want:   []cause{{field + ".ociRef", "Required value"}},
+			want: []cause{
+				{field, "set exactly one of ociRef and configMap"},
+				{field, "verificationPolicyFrom is required with ociRef and refused with configMap"},
+			},
 		},
+		{
+			name:   source + ".configMap beside ociRef",
+			mutate: setting(configMapSource(1), "spec", source, "configMap"),
+			want:   []cause{{field, "set exactly one of ociRef and configMap"}},
+		},
+		{
+			name:   source + ".configMap with a verification policy",
+			mutate: both(removing("spec", source, "ociRef"), setting(configMapSource(1), "spec", source, "configMap")),
+			want:   []cause{{field, "verificationPolicyFrom is required with ociRef and refused with configMap"}},
+		},
+		{
+			name:   source + ".configMap with registry credentials",
+			mutate: both(asConfigMapSource(source), setting(map[string]any{"name": "registry-credentials"}, "spec", source, "registryAuthFrom")),
+			want:   []cause{{field, "registryAuthFrom is refused with configMap"}},
+		},
+		{
+			name:   source + ".configMap over plain HTTP",
+			mutate: both(asConfigMapSource(source), setting(map[string]any{"plainHTTP": true}, "spec", source, "transport")),
+			want:   []cause{{field, "transport is refused with configMap"}},
+		},
+		{
+			name:   source + ".configMap with a registry CA",
+			mutate: both(asConfigMapSource(source), setting(map[string]any{"caFrom": map[string]any{"name": "registry-ca", "key": "ca.crt"}}, "spec", source, "transport")),
+			want:   []cause{{field, "transport is refused with configMap"}},
+		},
+		{
+			name:   source + ".configMap.name outside its pattern",
+			mutate: both(asConfigMapSource(source), setting("Schema", "spec", source, "configMap", "name")),
+			want:   []cause{{field + ".configMap.name", "should match"}},
+		},
+		{
+			name:   source + ".configMap selecting no file",
+			mutate: both(asConfigMapSource(source), setting([]any{}, "spec", source, "configMap", "items")),
+			want:   []cause{{field + ".configMap.items", "should have at least 1 items"}},
+		},
+		{
+			name:   source + ".configMap.items naming one path twice",
+			mutate: both(asConfigMapSource(source), setting([]any{item("a", "schema.sql"), item("b", "schema.sql")}, "spec", source, "configMap", "items")),
+			want:   []cause{{field + ".configMap.items[1]", "Duplicate value"}},
+		},
+		{
+			name:   source + ".configMap.items key outside its pattern",
+			mutate: both(asConfigMapSource(source), setting([]any{item("a/b", "schema.sql")}, "spec", source, "configMap", "items")),
+			want:   []cause{{field + ".configMap.items[0].key", "should match"}},
+		},
+	}
+	for _, path := range []string{"../schema.sql", "/schema.sql", "db//schema.sql", "db/./schema.sql", "db/..", "db\\schema.sql", "schema.sql\n", "db/"} {
+		rows = append(rows, refusal{
+			name:   fmt.Sprintf("%s.configMap.items path %q", source, path),
+			mutate: both(asConfigMapSource(source), setting([]any{item("schema", path)}, "spec", source, "configMap", "items")),
+			want:   []cause{{field + ".configMap.items[0].path", "should match"}},
+		})
+	}
+	return append(rows, []refusal{
 		{
 			name:   source + ".ociRef without the oci scheme",
 			mutate: setting("ghcr.io/example/schema:1.4.0", "spec", source, "ociRef"),
 			want:   []cause{{field + ".ociRef", "should match"}},
 		},
 		{
-			name:   source + ".verificationPolicyFrom is required",
+			name:   source + ".verificationPolicyFrom is required with ociRef",
 			mutate: removing("spec", source, "verificationPolicyFrom"),
-			want:   []cause{{field + ".verificationPolicyFrom", "Required value"}},
+			want:   []cause{{field, "verificationPolicyFrom is required with ociRef and refused with configMap"}},
 		},
 		{
 			name:   source + ".verificationPolicyFrom optional",
@@ -341,6 +399,27 @@ func artifactRefusals(source string) []refusal {
 			mutate: setting(map[string]any{"mode": "Environment"}, "spec", source, "registryAuthFrom"),
 			want:   []cause{{field + ".registryAuthFrom.name", "Required value"}},
 		},
+	}...)
+}
+
+// configMapSource selects count files from a ConfigMap.
+func configMapSource(count int) map[string]any {
+	items := make([]any, count)
+	for index := range items {
+		items[index] = item(fmt.Sprintf("file%d.sql", index), fmt.Sprintf("file%d.sql", index))
+	}
+	return map[string]any{"name": "orders-schema", "items": items}
+}
+
+func item(key, path string) map[string]any { return map[string]any{"key": key, "path": path} }
+
+// asConfigMapSource replaces the base resource's OCI source with a ConfigMap
+// that selects one file, which every rule admits.
+func asConfigMapSource(source string) func(*testing.T, *unstructured.Unstructured) {
+	return func(t *testing.T, object *unstructured.Unstructured) {
+		unstructured.RemoveNestedField(object.Object, "spec", source, "ociRef")
+		unstructured.RemoveNestedField(object.Object, "spec", source, "verificationPolicyFrom")
+		set(t, object, configMapSource(1), "spec", source, "configMap")
 	}
 }
 
@@ -351,6 +430,11 @@ func TestPtahSchemaRefusals(t *testing.T) {
 	namespace := newNamespace(t, "schema-refusals")
 	rows := append(targetRefusals(), artifactRefusals("desired")...)
 	rows = append(rows,
+		refusal{
+			name:   "desired.configMap selecting two files",
+			mutate: both(asConfigMapSource("desired"), setting(configMapSource(2), "spec", "desired", "configMap")),
+			want:   []cause{{"spec", "desired.configMap selects exactly one file for a schema"}},
+		},
 		refusal{
 			name:   "policy.driftSeverity outside its enum",
 			mutate: setting("warning", "spec", "policy", "driftSeverity"),

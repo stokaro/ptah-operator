@@ -173,9 +173,9 @@ func migrationPlanFixture(t *testing.T) (*operatorv1alpha1.PtahMigration, *opera
 				CoordinationKey: "tenant-a/orders",
 				URLFrom:         corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "database"}, Key: "url"},
 			},
-			Artifact: operatorv1alpha1.OCIArtifactSourceSpec{
+			Artifact: operatorv1alpha1.SourceSpec{
 				OCIRef: "oci://registry.test/acme/orders-migrations:stable",
-				VerificationPolicyFrom: corev1.ConfigMapKeySelector{
+				VerificationPolicyFrom: &corev1.ConfigMapKeySelector{
 					LocalObjectReference: corev1.LocalObjectReference{Name: "verification"}, Key: "policy.yaml",
 				},
 			},
@@ -188,7 +188,7 @@ func migrationPlanFixture(t *testing.T) (*operatorv1alpha1.PtahMigration, *opera
 				ExecutorImage:          "example.test/executor@" + digest('2'),
 				RunnerProtocolVersion:  int32(runner.ProtocolVersion),
 			},
-			Artifact: &operatorv1alpha1.OCIArtifactAccessBinding{
+			Artifact: &operatorv1alpha1.SourceAccessBinding{
 				ResolvedReference: "oci://registry.test/acme/orders-migrations@" + digest('4'),
 				Digest:            digest('4'),
 			},

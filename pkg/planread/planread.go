@@ -43,10 +43,15 @@ const (
 	MaxChunks = plancontract.MaxChunks
 	// MaxPlanBytes is the largest complete plan document.
 	MaxPlanBytes = plancontract.MaxExecutableBytes
-	// ContractVersion is the plan contract this build reads. A plan that
-	// records another one is refused with ErrUnsupported.
-	ContractVersion = fingerprint.CurrentPlanContractVersion
 )
+
+// SupportedContract reports whether this build reads plans of a contract
+// version: 1, a plan computed from an OCI artifact, and 2, a plan computed
+// from a ConfigMap. A plan that records another one is refused with
+// ErrUnsupported.
+func SupportedContract(version int32) bool {
+	return fingerprint.ValidatePlanContractVersion(version) == nil
+}
 
 // Selection is which stored plan a reader asked for.
 //
@@ -184,9 +189,9 @@ func Load(
 	if err != nil {
 		return Plan{}, err
 	}
-	if plan.Spec.ContractVersion != ContractVersion {
-		return Plan{}, fmt.Errorf("%w: %s records plan contract %d and this build reads %d",
-			ErrUnsupported, plan.Name, plan.Spec.ContractVersion, ContractVersion)
+	if !SupportedContract(plan.Spec.ContractVersion) {
+		return Plan{}, fmt.Errorf("%w: %s records plan contract %d, which this build does not read",
+			ErrUnsupported, plan.Name, plan.Spec.ContractVersion)
 	}
 
 	document, err := planstore.Store{Reader: reader}.Load(ctx, plan)

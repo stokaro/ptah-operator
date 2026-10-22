@@ -39,6 +39,41 @@ spec:
       key: policy.yaml
 ```
 
+### From a ConfigMap, with no registry
+
+The migration directory is a set of keys in a ConfigMap in the same
+namespace. A key cannot hold "/", so `items` names the file each key becomes,
+and a key the list leaves out is not part of the sequence. The manager copies
+the selected files into an immutable snapshot that the history read and the
+Apply both check against its content digest; there is no verification policy.
+Whoever may write the ConfigMap may change what runs, so grant it as you grant
+this resource.
+
+```yaml
+apiVersion: operator.ptah.run/v1alpha1
+kind: PtahMigration
+metadata:
+  name: inventory
+  namespace: application
+spec:
+  target:
+    engine: PostgreSQL
+    coordinationKey: production/inventory-primary
+    urlFrom:
+      name: inventory-database
+      key: url
+  artifact:
+    configMap:
+      name: inventory-migrations
+      items:
+        - key: 0000000001-up
+          path: 0000000001_create_items.up.sql
+        - key: 0000000001-down
+          path: 0000000001_create_items.down.sql
+        - key: 0000000002-up
+          path: 0000000002_add_item_sku.up.sql
+```
+
 ### Beside a PtahSchema, over one database
 
 Both resources live in one namespace, name the same `coordinationKey` and set
@@ -186,8 +221,13 @@ spec:
 
 | Field | Type | What it does |
 | --- | --- | --- |
-| `spec.artifact` | `object`, required | This resource requires: artifact.verificationPolicyFrom must name a required ConfigMap key; where `artifact.transport` and `artifact.transport.caFrom` are set, artifact.transport.caFrom must name a required ConfigMap key. Artifact is the OCI migration directory this history is matched against. It reuses the schema path's credential-isolated source contract: fetching an artifact never hands registry credentials to the process that runs SQL. |
-| `spec.artifact.ociRef` | `string`, required | OCIRef is a desired-schema artifact reference. It may name a tag or a digest; every later operation receives only the resolved digest. |
+| `spec.artifact` | `object`, required | This resource requires: where `artifact.verificationPolicyFrom` is set, artifact.verificationPolicyFrom must name a required ConfigMap key; where `artifact.transport` and `artifact.transport.caFrom` are set, artifact.transport.caFrom must name a required ConfigMap key. Artifact is the migration directory this history is matched against: an OCI artifact or a ConfigMap. It reuses the schema path's source contract: fetching an artifact never hands registry credentials to the process that runs SQL. |
+| `spec.artifact.configMap` | `object` | ConfigMap selects files from a ConfigMap in this resource's namespace. Whoever may write that ConfigMap may change the desired state, exactly as whoever may write this resource can: Kubernetes RBAC on the namespace is what this source is trusted by. The manager copies the selected files into an immutable snapshot, and every operation reads the snapshot. |
+| `spec.artifact.configMap.items` | `[]object`, required | Items are the keys that become files, and the file each one becomes. A key cannot hold "/", so a nested directory is spelled out here. A key the list does not name is not part of the source, and editing it changes nothing. A schema selects exactly one file, whose extension tells Ptah its format; a migration directory selects up to 1,000. |
+| `spec.artifact.configMap.items[].key` | `string`, required | Key in the ConfigMap's data or binaryData. |
+| `spec.artifact.configMap.items[].path` | `string`, required | Path is the file the key becomes: relative, separated by "/", with no empty, "." or ".." element, no backslash and no control character. An element longer than 255 bytes, or a path that is a file and a directory at once, is refused when the source is read. |
+| `spec.artifact.configMap.name` | `string`, required | Name of the ConfigMap, in this resource's namespace. |
+| `spec.artifact.ociRef` | `string` | OCIRef is a desired-schema artifact reference. It may name a tag or a digest; every later operation receives only the resolved digest. |
 | `spec.artifact.registryAuthFrom` | `object` | RegistryAuthFrom names the Secret an operation Pod reads the registry credential from. The process that runs SQL never receives it. |
 | `spec.artifact.registryAuthFrom.dockerConfigJSONKey` | `string`, default `.dockerconfigjson` | DockerConfigJSONKey is the Secret key holding a Docker config document. |
 | `spec.artifact.registryAuthFrom.mode` | `string`, one of `Environment`, `DockerConfigJSON`, default `Environment` | Mode says how the credential reaches the executor: as environment variables, or as a Docker config file. |
@@ -201,10 +241,10 @@ spec:
 | `spec.artifact.transport.caFrom.name` | `string`, default `` | This resource requires: where `artifact.transport` and `artifact.transport.caFrom` are set, artifact.transport.caFrom must name a required ConfigMap key. Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
 | `spec.artifact.transport.caFrom.optional` | `boolean` | This resource requires: where `artifact.transport` and `artifact.transport.caFrom` are set, artifact.transport.caFrom must name a required ConfigMap key. Specify whether the ConfigMap or its key must be defined |
 | `spec.artifact.transport.plainHTTP` | `boolean`, default `false` | PlainHTTP is intended only for explicitly trusted test or air-gapped networks. HTTPS remains the default. When registryAuthFrom is present, its Secret must also contain allowPlainHTTP with the exact value "true". |
-| `spec.artifact.verificationPolicyFrom` | `object`, required | This resource requires: artifact.verificationPolicyFrom must name a required ConfigMap key. VerificationPolicyFrom names the immutable ConfigMap holding the policy the artifact must satisfy. Editing it retires the plans computed under the previous version rather than letting them apply. |
-| `spec.artifact.verificationPolicyFrom.key` | `string`, required | This resource requires: artifact.verificationPolicyFrom must name a required ConfigMap key. The key to select from the ConfigMap's Data field. Keys in the BinaryData field are not currently propagated to container env vars. |
-| `spec.artifact.verificationPolicyFrom.name` | `string`, default `` | This resource requires: artifact.verificationPolicyFrom must name a required ConfigMap key. Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
-| `spec.artifact.verificationPolicyFrom.optional` | `boolean` | This resource requires: artifact.verificationPolicyFrom must name a required ConfigMap key. Specify whether the ConfigMap or its key must be defined |
+| `spec.artifact.verificationPolicyFrom` | `object` | This resource requires: where `artifact.verificationPolicyFrom` is set, artifact.verificationPolicyFrom must name a required ConfigMap key. VerificationPolicyFrom names the immutable ConfigMap holding the policy the artifact must satisfy. Editing it retires the plans computed under the previous version rather than letting them apply. It is required with ociRef and refused with configMap: its rules are about OCI artifacts, and a policy nothing evaluates would read as a gate. |
+| `spec.artifact.verificationPolicyFrom.key` | `string`, required | This resource requires: where `artifact.verificationPolicyFrom` is set, artifact.verificationPolicyFrom must name a required ConfigMap key. The key to select from the ConfigMap's Data field. Keys in the BinaryData field are not currently propagated to container env vars. |
+| `spec.artifact.verificationPolicyFrom.name` | `string`, default `` | This resource requires: where `artifact.verificationPolicyFrom` is set, artifact.verificationPolicyFrom must name a required ConfigMap key. Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
+| `spec.artifact.verificationPolicyFrom.optional` | `boolean` | This resource requires: where `artifact.verificationPolicyFrom` is set, artifact.verificationPolicyFrom must name a required ConfigMap key. Specify whether the ConfigMap or its key must be defined |
 | `spec.execution` | `object`, default `{}` | This resource requires: where `execution`, `execution.connectTimeout` and `execution.activeDeadlineSeconds` are set, execution.connectTimeout must not exceed execution.activeDeadlineSeconds; where `policy`, `policy.lockTimeout`, `execution` and `execution.activeDeadlineSeconds` are set, policy.lockTimeout must not exceed execution.activeDeadlineSeconds. Execution shapes the Job a run happens in: its deadlines, its resources and the scheduling it inherits. |
 | `spec.execution.activeDeadlineSeconds` | `integer`, default `900` | This resource requires: where `execution`, `execution.connectTimeout` and `execution.activeDeadlineSeconds` are set, execution.connectTimeout must not exceed execution.activeDeadlineSeconds; where `policy`, `policy.lockTimeout`, `execution` and `execution.activeDeadlineSeconds` are set, policy.lockTimeout must not exceed execution.activeDeadlineSeconds. ActiveDeadlineSeconds is how long one operation Job may run before Kubernetes ends it. An apply that hits this leaves an uncertain outcome, which returns to observation rather than to a replay. |
 | `spec.execution.affinity` | `object` | Affinity is scheduling affinity for those Pods. |
@@ -417,7 +457,7 @@ spec:
 | `status.activeOperation.planRef.uid` | `string`, required | UID the object had when the reference was written. An object deleted and recreated under the same name is a different object, and this says so. |
 | `status.activeOperation.retryNotBefore` | `string` | RetryNotBefore is when a retried attempt may be dispatched. A retry carries the delay the resource asked for, and carrying it here rather than in a requeue is what makes it survive a restart and an early Job or watch event: those re-enter reconciliation at once, and a delay that lived only in a requeue would be lost with the queue. Absent on a first attempt, which waits for nothing. |
 | `status.activeOperation.source` | `object` | Source is the credential-free artifact binding this operation uses: the resolved digest and the selectors needed to fetch it. Every operation after Resolve carries one, so a newer generation cannot send newly selected credentials to the old artifact's registry. |
-| `status.activeOperation.source.digest` | `string`, required | Digest is that digest on its own. |
+| `status.activeOperation.source.digest` | `string` | Digest is that digest on its own. |
 | `status.activeOperation.source.registryAuthFrom` | `object` | RegistryAuthFrom names the Secret an operation Pod reads the registry credential from. It is a selector, never the credential. |
 | `status.activeOperation.source.registryAuthFrom.dockerConfigJSONKey` | `string`, default `.dockerconfigjson` | DockerConfigJSONKey is the Secret key holding a Docker config document. |
 | `status.activeOperation.source.registryAuthFrom.mode` | `string`, one of `Environment`, `DockerConfigJSON`, default `Environment` | Mode says how the credential reaches the executor: as environment variables, or as a Docker config file. |
@@ -425,7 +465,12 @@ spec:
 | `status.activeOperation.source.registryAuthFrom.passwordKey` | `string`, default `password` | PasswordKey is the Secret key holding the password. |
 | `status.activeOperation.source.registryAuthFrom.tokenKey` | `string`, default `token` | TokenKey is the Secret key holding a bearer token, where one is used instead of a username and password. |
 | `status.activeOperation.source.registryAuthFrom.usernameKey` | `string`, default `username` | Environment mode supports username/password or an identity token. Keys are optional so a single Secret shape can use either credential form. UsernameKey is the Secret key holding the username. |
-| `status.activeOperation.source.resolvedReference` | `string`, required | ResolvedReference is the artifact with its tag replaced by a digest. |
+| `status.activeOperation.source.resolvedReference` | `string` | ResolvedReference is the artifact with its tag replaced by a digest. |
+| `status.activeOperation.source.snapshot` | `object` | Snapshot is the immutable ConfigMap a ConfigMap source's files were copied into, and the content it must hold. |
+| `status.activeOperation.source.snapshot.contentDigest` | `string`, required | ContentDigest is the content digest of the selected files: the SHA-256 of a manifest with one line per file, sorted by path, naming the file's SHA-256, its size and its path. |
+| `status.activeOperation.source.snapshot.name` | `string`, required | Name of the snapshot ConfigMap, in the resource's namespace. |
+| `status.activeOperation.source.snapshot.schemaFile` | `string` | SchemaFile is the path, inside the snapshot, of the one file a schema reads. A migration reads the whole directory and leaves it empty. |
+| `status.activeOperation.source.snapshot.uid` | `string`, required | UID the snapshot had when it was bound. A snapshot deleted and written again under the same name is another object. |
 | `status.activeOperation.source.transport` | `object` | Transport is how the registry is reached: plain HTTP, a custom CA. |
 | `status.activeOperation.source.transport.caFrom` | `object` | CAFrom selects a custom CA bundle. When registryAuthFrom is present, that same Secret must contain caSHA256 with the exact lowercase SHA-256 digest of the selected bytes. |
 | `status.activeOperation.source.transport.caFrom.key` | `string`, required | The key to select from the ConfigMap's Data field. Keys in the BinaryData field are not currently propagated to container env vars. |
@@ -441,7 +486,7 @@ spec:
 | `status.activeOperation.target.urlFrom.optional` | `boolean` | Specify whether the Secret or its key must be defined |
 | `status.activeOperation.type` | `string`, required, one of `Resolve`, `Verify`, `History`, `Apply` | Type is the operation this claim authorizes. |
 | `status.artifact` | `object` | Artifact is the resolved, credential-free artifact binding every later operation of this cycle uses. A tag resolves once; the digest is what travels. |
-| `status.artifact.digest` | `string`, required | Digest is that digest on its own. |
+| `status.artifact.digest` | `string` | Digest is that digest on its own. |
 | `status.artifact.registryAuthFrom` | `object` | RegistryAuthFrom names the Secret an operation Pod reads the registry credential from. It is a selector, never the credential. |
 | `status.artifact.registryAuthFrom.dockerConfigJSONKey` | `string`, default `.dockerconfigjson` | DockerConfigJSONKey is the Secret key holding a Docker config document. |
 | `status.artifact.registryAuthFrom.mode` | `string`, one of `Environment`, `DockerConfigJSON`, default `Environment` | Mode says how the credential reaches the executor: as environment variables, or as a Docker config file. |
@@ -449,7 +494,12 @@ spec:
 | `status.artifact.registryAuthFrom.passwordKey` | `string`, default `password` | PasswordKey is the Secret key holding the password. |
 | `status.artifact.registryAuthFrom.tokenKey` | `string`, default `token` | TokenKey is the Secret key holding a bearer token, where one is used instead of a username and password. |
 | `status.artifact.registryAuthFrom.usernameKey` | `string`, default `username` | Environment mode supports username/password or an identity token. Keys are optional so a single Secret shape can use either credential form. UsernameKey is the Secret key holding the username. |
-| `status.artifact.resolvedReference` | `string`, required | ResolvedReference is the artifact with its tag replaced by a digest. |
+| `status.artifact.resolvedReference` | `string` | ResolvedReference is the artifact with its tag replaced by a digest. |
+| `status.artifact.snapshot` | `object` | Snapshot is the immutable ConfigMap a ConfigMap source's files were copied into, and the content it must hold. |
+| `status.artifact.snapshot.contentDigest` | `string`, required | ContentDigest is the content digest of the selected files: the SHA-256 of a manifest with one line per file, sorted by path, naming the file's SHA-256, its size and its path. |
+| `status.artifact.snapshot.name` | `string`, required | Name of the snapshot ConfigMap, in the resource's namespace. |
+| `status.artifact.snapshot.schemaFile` | `string` | SchemaFile is the path, inside the snapshot, of the one file a schema reads. A migration reads the whole directory and leaves it empty. |
+| `status.artifact.snapshot.uid` | `string`, required | UID the snapshot had when it was bound. A snapshot deleted and written again under the same name is another object. |
 | `status.artifact.transport` | `object` | Transport is how the registry is reached: plain HTTP, a custom CA. |
 | `status.artifact.transport.caFrom` | `object` | CAFrom selects a custom CA bundle. When registryAuthFrom is present, that same Secret must contain caSHA256 with the exact lowercase SHA-256 digest of the selected bytes. |
 | `status.artifact.transport.caFrom.key` | `string`, required | The key to select from the ConfigMap's Data field. Keys in the BinaryData field are not currently propagated to container env vars. |
@@ -463,6 +513,10 @@ spec:
 | `status.conditions[].reason` | `string`, required | reason contains a programmatic identifier indicating the reason for the condition's last transition. Producers of specific condition types may define expected values and meanings for this field, and whether the values are considered a guaranteed API. The value should be a CamelCase string. This field may not be empty. |
 | `status.conditions[].status` | `string`, required, one of `True`, `False`, `Unknown` | status of the condition, one of True, False, Unknown. |
 | `status.conditions[].type` | `string`, required | type of condition in CamelCase or in foo.example.com/CamelCase. |
+| `status.configMap` | `object` | ConfigMap is the source ConfigMap status.artifact.snapshot was copied from, for a ConfigMap source: its name, UID and the resourceVersion that was read. |
+| `status.configMap.name` | `string`, required | Name of the ConfigMap. |
+| `status.configMap.resourceVersion` | `string`, required | ResourceVersion is the version that was read. An edit to a key the source does not select moves it and changes no content. |
+| `status.configMap.uid` | `string`, required | UID of the ConfigMap. Another ConfigMap under the same name is another source, and retires a plan computed from this one. |
 | `status.executionBinding` | `object` | ExecutionBinding is what this resource's plans and approvals are bound to: the components that decide what a run means. It is the same contract the schema path publishes, because the question it answers is the same one: a rollout that changed any of them has to invalidate a plan rather than execute it under new semantics. A manager upgrade that changes none of them leaves it, and every plan and approval, as they were. |
 | `status.executionBinding.controllerStateVersion` | `integer`, required | ControllerStateVersion versions manager-side reconciliation semantics independently of the data-plane runner protocol. |
 | `status.executionBinding.epoch` | `string`, required | Epoch is this binding's identity. It changes whenever a component below changes, a rollback to identical versions included, so evidence from before such a rollout is historical rather than current. |

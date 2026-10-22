@@ -511,6 +511,28 @@ a cross-host redirect. A client-certificate transport needs an executor
 contract that selects the certificate against the effective TLS authority on
 every handshake.
 
+## ConfigMap sources
+
+A source ConfigMap is trusted by Kubernetes RBAC on its namespace, as the
+resource that names it is: whoever may write the ConfigMap may change the
+desired state, and so what an approval is asked for. Grant writes to it as you
+grant writes to the resource. It has no verification policy, and the API
+refuses one beside it rather than accepting a gate nothing evaluates.
+
+The manager copies the selected files into a snapshot ConfigMap in the same
+namespace. Whoever may read ConfigMaps there could already read the source, so
+the snapshot adds no reader, except where a role grants the source ConfigMap
+by name alone. The controller-write webhook admits the snapshot only as it
+rebuilds it from the source that moment: the selected files of the ConfigMap
+the owning resource names, owned by that resource. The manager's RBAC grants
+`delete` on ConfigMaps for one purpose, removing a snapshot nothing names, and
+an admission policy refuses the manager the deletion of any ConfigMap that is
+not a snapshot.
+
+An operation Pod checks the snapshot against the content digest the operation
+was bound to before the container holding the database URL starts, so a
+snapshot replaced after a plan was approved is refused rather than read.
+
 ## Plan and approval visibility
 
 Plan chunks contain schema-changing SQL, not credentials. They are

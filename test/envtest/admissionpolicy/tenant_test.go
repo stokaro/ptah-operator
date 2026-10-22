@@ -262,7 +262,7 @@ func migrationResolveJobBuiltBy(builder workload.Builder) (*batchv1.Job, error) 
 		StartedAt:          metav1.NewTime(time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)),
 		CoordinationDigest: digest("6"),
 		AdmissionSnapshot:  &operatorv1alpha1.PodAdmissionSnapshot{Digest: digest("c"), TemplateDigest: digest("d")},
-		Source: &operatorv1alpha1.OCIArtifactAccessBinding{
+		Source: &operatorv1alpha1.SourceAccessBinding{
 			ResolvedReference: "oci://registry.example/acme/ledger-migrations@" + digest("4"),
 			Digest:            digest("4"),
 		},

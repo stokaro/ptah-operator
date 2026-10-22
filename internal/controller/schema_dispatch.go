@@ -102,11 +102,7 @@ func (d *schemaDispatch) Authorize(ctx context.Context) mutationlifecycle.Outcom
 	if err := planReadingMatches(schema, plan, content); err != nil {
 		return mutationlifecycle.Stop(r.applyBecameStale(ctx, schema, err))
 	}
-	binding, err := policy.ConfigMapBinding(ctx, r.directReader(), schema.Namespace, schema.Spec.Desired.VerificationPolicyFrom)
-	if err != nil || binding.UID != plan.Spec.VerificationPolicyUID || binding.Digest != plan.Spec.VerificationPolicyDigest {
-		if err == nil {
-			err = errors.New("verification policy object changed")
-		}
+	if err := r.planPolicyError(ctx, schema, plan); err != nil {
 		return mutationlifecycle.Stop(r.verificationPolicyChanged(ctx, schema, err))
 	}
 	if planRequiresApproval(schema, plan) {

@@ -53,8 +53,8 @@ func TestControllerObjectGuardsAreTypedExactAndFailClosed(t *testing.T) {
 
 	guard := testControllerObjectGuard()
 	entries := guard.entries()
-	if len(entries) != 5 {
-		t.Fatalf("controller object guard entries = %d, want five typed policies", len(entries))
+	if len(entries) != 6 {
+		t.Fatalf("controller object guard entries = %d, want six typed policies", len(entries))
 	}
 	wantGVK := map[string]struct {
 		apiGroup   string
@@ -105,7 +105,8 @@ func TestControllerObjectGuardsAreTypedExactAndFailClosed(t *testing.T) {
 			// read.
 			var wantVariables []admissionregistrationv1.Variable
 			if entry.component != controllerChunkWriteGuardComponent &&
-				entry.component != controllerProjectionWriteGuardComponent {
+				entry.component != controllerProjectionWriteGuardComponent &&
+				entry.component != controllerSnapshotDeleteGuardComponent {
 				wantVariables = []admissionregistrationv1.Variable{
 					{Name: "releaseControllerStateString", Expression: strconv.Quote(strconv.Itoa(int(guard.ControllerStateVersion)))},
 					{Name: "releaseControllerState", Expression: strconv.Itoa(int(guard.ControllerStateVersion))},
@@ -119,10 +120,15 @@ func TestControllerObjectGuardsAreTypedExactAndFailClosed(t *testing.T) {
 				t.Fatalf("controller object guard validations differ from its structural contract: %#v", native.Spec.Validations)
 			}
 		})
-		if _, exists := seenResources[entry.resource]; exists {
-			t.Fatalf("resource %q is mixed into more than one typed policy", entry.resource)
+		// ConfigMaps have two boundaries, one for each verb the manager
+		// holds, and no verb of a resource is guarded twice.
+		for _, operation := range entry.operations {
+			key := entry.resource + "/" + string(operation)
+			if _, exists := seenResources[key]; exists {
+				t.Fatalf("%s is mixed into more than one typed policy", key)
+			}
+			seenResources[key] = struct{}{}
 		}
-		seenResources[entry.resource] = struct{}{}
 	}
 }
 
@@ -253,13 +259,27 @@ func TestControllerObjectGuardCELContracts(t *testing.T) {
 		`object.metadata.ownerReferences[0].kind == "PtahSchemaPlan"`,
 		`dyn(object).immutable`,
 		`dyn(object).binaryData.size() == 1`,
+		`object.metadata.name.startsWith("ptah-src-") ? (`,
+		`object.metadata.name.matches("^ptah-src-[0-9a-f]{24}$")`,
+		`dyn(object).binaryData.all(key, key == "manifest" || key.matches("^f[0-9]{4}$"))`,
 	} {
 		if !strings.Contains(projection, marker) {
 			t.Fatalf("projection structural contract lacks %q", marker)
 		}
 	}
-	plan := strings.Join(validationExpressions(entries[3].validations), "\n")
-	currentContract := `dyn(object).spec.contractVersion == ` + strconv.Itoa(int(fingerprint.CurrentPlanContractVersion))
+	remove := strings.Join(validationExpressions(entries[3].validations), "\n")
+	for _, marker := range []string{
+		`oldObject != null && oldObject.metadata.name.matches("^ptah-src-[0-9a-f]{24}$")`,
+		`oldObject.metadata.ownerReferences[0].kind == "PtahSchema"`,
+		`oldObject.metadata.ownerReferences[0].kind == "PtahMigration"`,
+	} {
+		if !strings.Contains(remove, marker) {
+			t.Fatalf("snapshot delete contract lacks %q", marker)
+		}
+	}
+	plan := strings.Join(validationExpressions(entries[4].validations), "\n")
+	currentContract := `dyn(object).spec.contractVersion in [` + strconv.Itoa(int(fingerprint.CurrentPlanContractVersion)) +
+		`, ` + strconv.Itoa(int(fingerprint.SourcePlanContractVersion)) + `]`
 	for _, marker := range []string{
 		`object.metadata.labels.size() == 1`,
 		`dyn(object).spec.schemaRef.uid == object.metadata.ownerReferences[0].uid`,
@@ -281,8 +301,9 @@ func TestControllerObjectGuardCELContracts(t *testing.T) {
 			t.Fatalf("plan structural contract lacks %q", marker)
 		}
 	}
-	if strings.Count(plan, `contractVersion ==`) != 1 || strings.Contains(plan, `variables.previousRelease`) {
-		t.Fatal("plan structural contract admits a plan contract other than the current one")
+	if strings.Count(plan, `contractVersion in [`) != 1 || strings.Count(plan, `contractVersion ==`) != 2 ||
+		strings.Contains(plan, `variables.previousRelease`) {
+		t.Fatal("plan structural contract admits a plan contract other than the ones this manager writes")
 	}
 	for _, staticReference := range []string{
 		`dyn(object).spec.controllerImage`,

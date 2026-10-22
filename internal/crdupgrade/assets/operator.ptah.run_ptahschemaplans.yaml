@@ -4,8 +4,8 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     operator.ptah.run/controller-state-version: "1"
-    operator.ptah.run/crd-schema-version: "2"
-    operator.ptah.run/crd-schema-digest: "sha256:f99b633652aa4d3cf2007db93cc043ed9889fad39e6048588eb984131e86c600"
+    operator.ptah.run/crd-schema-version: "3"
+    operator.ptah.run/crd-schema-digest: "sha256:fe5e1360c16f795d2d55d10b116d5104309c9c9abf01152f18d8a43e91bdfa8c"
     controller-gen.kubebuilder.io/version: v0.22.0
   name: ptahschemaplans.operator.ptah.run
 spec:
@@ -88,6 +88,7 @@ spec:
               contractVersion:
                 enum:
                 - 1
+                - 2
                 format: int32
                 type: integer
               controllerImage:
@@ -157,6 +158,24 @@ spec:
                 maximum: 8388608
                 minimum: 1
                 type: integer
+              source:
+                properties:
+                  contentDigest:
+                    pattern: ^sha256:[0-9a-f]{64}$
+                    type: string
+                  kind:
+                    enum:
+                    - ConfigMap
+                    type: string
+                  revision:
+                    maxLength: 128
+                    minLength: 1
+                    type: string
+                required:
+                - contentDigest
+                - kind
+                - revision
+                type: object
               statementCount:
                 format: int32
                 type: integer
@@ -168,7 +187,6 @@ spec:
                 type: string
             required:
             - actualStateFingerprint
-            - artifactDigest
             - chunks
             - contentDigest
             - contractVersion
@@ -190,12 +208,16 @@ spec:
             - size
             - statementCount
             - targetIdentityDigest
-            - verificationPolicyDigest
-            - verificationPolicyUID
             type: object
             x-kubernetes-validations:
             - message: a plan is immutable; generate a new plan instead
               rule: self == oldSelf
+            - message: contract version 1 binds artifactDigest and a verification
+                policy; contract version 2 binds source
+              rule: 'self.contractVersion == 1 ? (has(self.artifactDigest) && has(self.verificationPolicyUID)
+                && has(self.verificationPolicyDigest) && !has(self.source)) : (has(self.source)
+                && !has(self.artifactDigest) && !has(self.verificationPolicyUID) &&
+                !has(self.verificationPolicyDigest))'
           status:
             properties:
               conditions:

@@ -43,6 +43,38 @@ spec:
       key: policy.yaml
 ```
 
+### From a ConfigMap, with no registry
+
+The desired schema is one file in a ConfigMap in the same namespace, and its
+extension tells Ptah the format. There is no registry and no verification
+policy: the manager copies the selected file into an immutable snapshot, and
+every operation reads that snapshot after checking it against its content
+digest. An edit to the selected key is read at once and plans again; an edit
+to another key of the ConfigMap changes nothing. Whoever may write the
+ConfigMap may change the desired state, so grant it as you grant this
+resource.
+
+```yaml
+apiVersion: operator.ptah.run/v1alpha1
+kind: PtahSchema
+metadata:
+  name: inventory
+  namespace: application
+spec:
+  target:
+    engine: PostgreSQL
+    coordinationKey: production/inventory-primary
+    urlFrom:
+      name: inventory-database
+      key: url
+  desired:
+    configMap:
+      name: inventory-schema
+      items:
+        - key: schema.sql
+          path: schema.sql
+```
+
 ### An approved change on MySQL
 
 Publish the desired schema with `ptah schema push --dialect mysql` and use
@@ -214,8 +246,13 @@ spec:
 
 | Field | Type | What it does |
 | --- | --- | --- |
-| `spec.desired` | `object`, required | This resource requires: desired.verificationPolicyFrom must name a required ConfigMap key; where `desired.transport` and `desired.transport.caFrom` are set, desired.transport.caFrom must name a required ConfigMap key. Desired is the OCI artifact that declares the schema, and the rows a declaration names, to converge it to. |
-| `spec.desired.ociRef` | `string`, required | OCIRef is a desired-schema artifact reference. It may name a tag or a digest; every later operation receives only the resolved digest. |
+| `spec.desired` | `object`, required | This resource requires: where `desired.verificationPolicyFrom` is set, desired.verificationPolicyFrom must name a required ConfigMap key; where `desired.configMap` is set, desired.configMap selects exactly one file for a schema; where `desired.transport` and `desired.transport.caFrom` are set, desired.transport.caFrom must name a required ConfigMap key. Desired is the source that declares the schema, and the rows a declaration names, to converge it to: an OCI artifact or a ConfigMap. |
+| `spec.desired.configMap` | `object` | This resource requires: where `desired.configMap` is set, desired.configMap selects exactly one file for a schema. ConfigMap selects files from a ConfigMap in this resource's namespace. Whoever may write that ConfigMap may change the desired state, exactly as whoever may write this resource can: Kubernetes RBAC on the namespace is what this source is trusted by. The manager copies the selected files into an immutable snapshot, and every operation reads the snapshot. |
+| `spec.desired.configMap.items` | `[]object`, required | This resource requires: where `desired.configMap` is set, desired.configMap selects exactly one file for a schema. Items are the keys that become files, and the file each one becomes. A key cannot hold "/", so a nested directory is spelled out here. A key the list does not name is not part of the source, and editing it changes nothing. A schema selects exactly one file, whose extension tells Ptah its format; a migration directory selects up to 1,000. |
+| `spec.desired.configMap.items[].key` | `string`, required | Key in the ConfigMap's data or binaryData. |
+| `spec.desired.configMap.items[].path` | `string`, required | Path is the file the key becomes: relative, separated by "/", with no empty, "." or ".." element, no backslash and no control character. An element longer than 255 bytes, or a path that is a file and a directory at once, is refused when the source is read. |
+| `spec.desired.configMap.name` | `string`, required | Name of the ConfigMap, in this resource's namespace. |
+| `spec.desired.ociRef` | `string` | OCIRef is a desired-schema artifact reference. It may name a tag or a digest; every later operation receives only the resolved digest. |
 | `spec.desired.registryAuthFrom` | `object` | RegistryAuthFrom names the Secret an operation Pod reads the registry credential from. The process that runs SQL never receives it. |
 | `spec.desired.registryAuthFrom.dockerConfigJSONKey` | `string`, default `.dockerconfigjson` | DockerConfigJSONKey is the Secret key holding a Docker config document. |
 | `spec.desired.registryAuthFrom.mode` | `string`, one of `Environment`, `DockerConfigJSON`, default `Environment` | Mode says how the credential reaches the executor: as environment variables, or as a Docker config file. |
@@ -229,10 +266,10 @@ spec:
 | `spec.desired.transport.caFrom.name` | `string`, default `` | This resource requires: where `desired.transport` and `desired.transport.caFrom` are set, desired.transport.caFrom must name a required ConfigMap key. Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
 | `spec.desired.transport.caFrom.optional` | `boolean` | This resource requires: where `desired.transport` and `desired.transport.caFrom` are set, desired.transport.caFrom must name a required ConfigMap key. Specify whether the ConfigMap or its key must be defined |
 | `spec.desired.transport.plainHTTP` | `boolean`, default `false` | PlainHTTP is intended only for explicitly trusted test or air-gapped networks. HTTPS remains the default. When registryAuthFrom is present, its Secret must also contain allowPlainHTTP with the exact value "true". |
-| `spec.desired.verificationPolicyFrom` | `object`, required | This resource requires: desired.verificationPolicyFrom must name a required ConfigMap key. VerificationPolicyFrom names the immutable ConfigMap holding the policy the artifact must satisfy. Editing it retires the plans computed under the previous version rather than letting them apply. |
-| `spec.desired.verificationPolicyFrom.key` | `string`, required | This resource requires: desired.verificationPolicyFrom must name a required ConfigMap key. The key to select from the ConfigMap's Data field. Keys in the BinaryData field are not currently propagated to container env vars. |
-| `spec.desired.verificationPolicyFrom.name` | `string`, default `` | This resource requires: desired.verificationPolicyFrom must name a required ConfigMap key. Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
-| `spec.desired.verificationPolicyFrom.optional` | `boolean` | This resource requires: desired.verificationPolicyFrom must name a required ConfigMap key. Specify whether the ConfigMap or its key must be defined |
+| `spec.desired.verificationPolicyFrom` | `object` | This resource requires: where `desired.verificationPolicyFrom` is set, desired.verificationPolicyFrom must name a required ConfigMap key. VerificationPolicyFrom names the immutable ConfigMap holding the policy the artifact must satisfy. Editing it retires the plans computed under the previous version rather than letting them apply. It is required with ociRef and refused with configMap: its rules are about OCI artifacts, and a policy nothing evaluates would read as a gate. |
+| `spec.desired.verificationPolicyFrom.key` | `string`, required | This resource requires: where `desired.verificationPolicyFrom` is set, desired.verificationPolicyFrom must name a required ConfigMap key. The key to select from the ConfigMap's Data field. Keys in the BinaryData field are not currently propagated to container env vars. |
+| `spec.desired.verificationPolicyFrom.name` | `string`, default `` | This resource requires: where `desired.verificationPolicyFrom` is set, desired.verificationPolicyFrom must name a required ConfigMap key. Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
+| `spec.desired.verificationPolicyFrom.optional` | `boolean` | This resource requires: where `desired.verificationPolicyFrom` is set, desired.verificationPolicyFrom must name a required ConfigMap key. Specify whether the ConfigMap or its key must be defined |
 | `spec.dev` | `object` | This resource requires: where `dev` is set, dev.urlFrom must name a required Secret key. Dev is a scratch database Ptah may use where a comparison needs one. It is never the target, and nothing it holds is kept. |
 | `spec.dev.urlFrom` | `object`, required | This resource requires: where `dev` is set, dev.urlFrom must name a required Secret key. URLFrom names the Secret key holding this database's connection URL. |
 | `spec.dev.urlFrom.key` | `string`, required | This resource requires: where `dev` is set, dev.urlFrom must name a required Secret key. The key of the secret to select from. Must be a valid secret key. |
@@ -458,7 +495,7 @@ spec:
 | `status.activeOperation.observationSeverity` | `string` | ObservationSeverity is the drift severity it was asked to report. |
 | `status.activeOperation.planSealPublicKeyDigest` | `string` | PlanSealPublicKeyDigest is the digest of the manager public key a Plan Job's runner was given to seal its plan payload, persisted immediately before the Job is created. A manager whose own current key no longer matches this digest -- because it restarted and generated a new one -- cannot open that Job's result and retries instead of waiting: Plan is read-only, so a fresh attempt sealed to the current key costs nothing the first attempt did not already cost. Plan operations only. |
 | `status.activeOperation.source` | `object` | Source snapshots artifact access for mandatory post-Apply observation. It contains Kubernetes selectors only, never Secret contents. |
-| `status.activeOperation.source.digest` | `string`, required | Digest is that digest on its own. |
+| `status.activeOperation.source.digest` | `string` | Digest is that digest on its own. |
 | `status.activeOperation.source.registryAuthFrom` | `object` | RegistryAuthFrom names the Secret an operation Pod reads the registry credential from. It is a selector, never the credential. |
 | `status.activeOperation.source.registryAuthFrom.dockerConfigJSONKey` | `string`, default `.dockerconfigjson` | DockerConfigJSONKey is the Secret key holding a Docker config document. |
 | `status.activeOperation.source.registryAuthFrom.mode` | `string`, one of `Environment`, `DockerConfigJSON`, default `Environment` | Mode says how the credential reaches the executor: as environment variables, or as a Docker config file. |
@@ -466,7 +503,12 @@ spec:
 | `status.activeOperation.source.registryAuthFrom.passwordKey` | `string`, default `password` | PasswordKey is the Secret key holding the password. |
 | `status.activeOperation.source.registryAuthFrom.tokenKey` | `string`, default `token` | TokenKey is the Secret key holding a bearer token, where one is used instead of a username and password. |
 | `status.activeOperation.source.registryAuthFrom.usernameKey` | `string`, default `username` | Environment mode supports username/password or an identity token. Keys are optional so a single Secret shape can use either credential form. UsernameKey is the Secret key holding the username. |
-| `status.activeOperation.source.resolvedReference` | `string`, required | ResolvedReference is the artifact with its tag replaced by a digest. |
+| `status.activeOperation.source.resolvedReference` | `string` | ResolvedReference is the artifact with its tag replaced by a digest. |
+| `status.activeOperation.source.snapshot` | `object` | Snapshot is the immutable ConfigMap a ConfigMap source's files were copied into, and the content it must hold. |
+| `status.activeOperation.source.snapshot.contentDigest` | `string`, required | ContentDigest is the content digest of the selected files: the SHA-256 of a manifest with one line per file, sorted by path, naming the file's SHA-256, its size and its path. |
+| `status.activeOperation.source.snapshot.name` | `string`, required | Name of the snapshot ConfigMap, in the resource's namespace. |
+| `status.activeOperation.source.snapshot.schemaFile` | `string` | SchemaFile is the path, inside the snapshot, of the one file a schema reads. A migration reads the whole directory and leaves it empty. |
+| `status.activeOperation.source.snapshot.uid` | `string`, required | UID the snapshot had when it was bound. A snapshot deleted and written again under the same name is another object. |
 | `status.activeOperation.source.transport` | `object` | Transport is how the registry is reached: plain HTTP, a custom CA. |
 | `status.activeOperation.source.transport.caFrom` | `object` | CAFrom selects a custom CA bundle. When registryAuthFrom is present, that same Secret must contain caSHA256 with the exact lowercase SHA-256 digest of the selected bytes. |
 | `status.activeOperation.source.transport.caFrom.key` | `string`, required | The key to select from the ConfigMap's Data field. Keys in the BinaryData field are not currently propagated to container env vars. |
@@ -486,7 +528,7 @@ spec:
 | `status.activeOperation.verificationPolicyDigest` | `string` | VerificationPolicyDigest is that ConfigMap's content at dispatch. |
 | `status.activeOperation.verificationPolicyUID` | `string` | VerificationPolicyUID and VerificationPolicyDigest bind a Verify Job to the immutable ConfigMap version inspected before dispatch. |
 | `status.applied` | `object` | Applied is the last apply that was independently observed to have converged, which is a different claim from a Job that exited zero. |
-| `status.applied.artifactDigest` | `string`, required | ArtifactDigest is the artifact that was applied. |
+| `status.applied.artifactDigest` | `string` | ArtifactDigest is the OCI artifact that was applied. |
 | `status.applied.completedAt` | `string`, required | CompletedAt is when convergence was independently observed, not when the Job exited. |
 | `status.applied.controllerImage` | `string`, required | ControllerImage is the digest-pinned manager that published the plan this apply ran. The manager that dispatched the Job is DispatchedBy. |
 | `status.applied.controllerRevision` | `string`, required | ControllerRevision is that manager's revision. |
@@ -505,6 +547,10 @@ spec:
 | `status.applied.ptahVersion` | `string`, required | PtahVersion is the Ptah build that executed the statements. |
 | `status.applied.runnerImage` | `string`, required | RunnerImage is the runner image of the manager that published the plan. |
 | `status.applied.runnerProtocolVersion` | `integer`, required | RunnerProtocolVersion is the runner protocol the apply ran under. |
+| `status.applied.source` | `object` | Source is the source that was applied, for a plan computed from a ConfigMap. |
+| `status.applied.source.contentDigest` | `string`, required | ContentDigest is the content digest of the files the plan was computed from. |
+| `status.applied.source.kind` | `string`, required, one of `ConfigMap` | Kind of source the plan was computed from. |
+| `status.applied.source.revision` | `string`, required | Revision is the source object the files were read from. For a ConfigMap it is the ConfigMap's UID: an edit to a key the source does not select keeps the plan, while another ConfigMap, or the same name deleted and created again, retires it even when the files match. |
 | `status.applied.targetIdentityDigest` | `string`, required | TargetIdentityDigest is the database it converged. |
 | `status.conditions` | `[]object` | Conditions are the readable verdicts: whether the engine is supported, the artifact resolved and verified, the database was reachable, drift was found, a plan is ready, an approval is required, the schema is in sync, and whether the last reconciliation failed. |
 | `status.conditions[].lastTransitionTime` | `string`, required | lastTransitionTime is the last time the condition transitioned from one status to another. This should be when the underlying condition changed. If that is not known, then using the time when the API field changed is acceptable. |
@@ -619,7 +665,7 @@ spec:
 | `status.pendingObservation.plan.approval.approver.username` | `string`, required | Username the API server authenticated the request as. |
 | `status.pendingObservation.plan.approval.name` | `string`, required | Name of the approval that authorized the apply. |
 | `status.pendingObservation.plan.approval.uid` | `string`, required | UID it had, so a recreated approval is not read as the same decision. |
-| `status.pendingObservation.plan.artifactDigest` | `string`, required | ArtifactDigest is the artifact the plan was computed from. |
+| `status.pendingObservation.plan.artifactDigest` | `string` | ArtifactDigest is the OCI artifact the plan was computed from. A plan computed from another source binds source instead. |
 | `status.pendingObservation.plan.contentDigest` | `string`, required | ContentDigest is the digest of the plan bytes. |
 | `status.pendingObservation.plan.controllerImage` | `string`, required | ControllerImage is the digest-pinned manager that published it, recorded and not bound. |
 | `status.pendingObservation.plan.controllerRevision` | `string`, required | ControllerRevision is that manager's revision. |
@@ -637,15 +683,19 @@ spec:
 | `status.pendingObservation.plan.ptahVersion` | `string`, required | PtahVersion is the Ptah build that computed the plan. |
 | `status.pendingObservation.plan.runnerImage` | `string`, required | RunnerImage is the runner image of the manager that published it, recorded and not bound. |
 | `status.pendingObservation.plan.runnerProtocolVersion` | `integer`, required | RunnerProtocolVersion is the runner protocol the plan binds. |
+| `status.pendingObservation.plan.source` | `object` | Source is the source a plan computed from a ConfigMap binds in place of artifactDigest. |
+| `status.pendingObservation.plan.source.contentDigest` | `string`, required | ContentDigest is the content digest of the files the plan was computed from. |
+| `status.pendingObservation.plan.source.kind` | `string`, required, one of `ConfigMap` | Kind of source the plan was computed from. |
+| `status.pendingObservation.plan.source.revision` | `string`, required | Revision is the source object the files were read from. For a ConfigMap it is the ConfigMap's UID: an edit to a key the source does not select keeps the plan, while another ConfigMap, or the same name deleted and created again, retires it even when the files match. |
 | `status.pendingObservation.plan.statementCount` | `integer`, required | StatementCount is how many statements it holds. The statements themselves are not here: read them with kubectl ptah plan. |
 | `status.pendingObservation.plan.targetIdentityDigest` | `string`, required | TargetIdentityDigest is the database it was computed against. |
 | `status.pendingObservation.plan.uid` | `string`, required | UID it had when this record was written. |
-| `status.pendingObservation.plan.verificationPolicyDigest` | `string`, required | VerificationPolicyDigest is that policy's content at the time. |
-| `status.pendingObservation.plan.verificationPolicyUID` | `string`, required | VerificationPolicyUID is the policy object that accepted the artifact. |
+| `status.pendingObservation.plan.verificationPolicyDigest` | `string` | VerificationPolicyDigest is that policy's content at the time. |
+| `status.pendingObservation.plan.verificationPolicyUID` | `string` | VerificationPolicyUID is the policy object that accepted the artifact, for an OCI plan. |
 | `status.pendingObservation.planRequired` | `boolean` | PlanRequired records that the raw drift read completed and the same immutable proof inputs now require authoritative managed-scope planning. |
 | `status.pendingObservation.protectedTables` | `[]string` | ProtectedTables is the fence the in-flight plan was computed under. A policy edit while a plan is pending must not let it execute against a fence it never saw. |
 | `status.pendingObservation.source` | `object`, required | Source is the artifact access the proof needs to re-read the desired state. It holds Kubernetes selectors, never Secret contents. |
-| `status.pendingObservation.source.digest` | `string`, required | Digest is that digest on its own. |
+| `status.pendingObservation.source.digest` | `string` | Digest is that digest on its own. |
 | `status.pendingObservation.source.registryAuthFrom` | `object` | RegistryAuthFrom names the Secret an operation Pod reads the registry credential from. It is a selector, never the credential. |
 | `status.pendingObservation.source.registryAuthFrom.dockerConfigJSONKey` | `string`, default `.dockerconfigjson` | DockerConfigJSONKey is the Secret key holding a Docker config document. |
 | `status.pendingObservation.source.registryAuthFrom.mode` | `string`, one of `Environment`, `DockerConfigJSON`, default `Environment` | Mode says how the credential reaches the executor: as environment variables, or as a Docker config file. |
@@ -653,7 +703,12 @@ spec:
 | `status.pendingObservation.source.registryAuthFrom.passwordKey` | `string`, default `password` | PasswordKey is the Secret key holding the password. |
 | `status.pendingObservation.source.registryAuthFrom.tokenKey` | `string`, default `token` | TokenKey is the Secret key holding a bearer token, where one is used instead of a username and password. |
 | `status.pendingObservation.source.registryAuthFrom.usernameKey` | `string`, default `username` | Environment mode supports username/password or an identity token. Keys are optional so a single Secret shape can use either credential form. UsernameKey is the Secret key holding the username. |
-| `status.pendingObservation.source.resolvedReference` | `string`, required | ResolvedReference is the artifact with its tag replaced by a digest. |
+| `status.pendingObservation.source.resolvedReference` | `string` | ResolvedReference is the artifact with its tag replaced by a digest. |
+| `status.pendingObservation.source.snapshot` | `object` | Snapshot is the immutable ConfigMap a ConfigMap source's files were copied into, and the content it must hold. |
+| `status.pendingObservation.source.snapshot.contentDigest` | `string`, required | ContentDigest is the content digest of the selected files: the SHA-256 of a manifest with one line per file, sorted by path, naming the file's SHA-256, its size and its path. |
+| `status.pendingObservation.source.snapshot.name` | `string`, required | Name of the snapshot ConfigMap, in the resource's namespace. |
+| `status.pendingObservation.source.snapshot.schemaFile` | `string` | SchemaFile is the path, inside the snapshot, of the one file a schema reads. A migration reads the whole directory and leaves it empty. |
+| `status.pendingObservation.source.snapshot.uid` | `string`, required | UID the snapshot had when it was bound. A snapshot deleted and written again under the same name is another object. |
 | `status.pendingObservation.source.transport` | `object` | Transport is how the registry is reached: plain HTTP, a custom CA. |
 | `status.pendingObservation.source.transport.caFrom` | `object` | CAFrom selects a custom CA bundle. When registryAuthFrom is present, that same Secret must contain caSHA256 with the exact lowercase SHA-256 digest of the selected bytes. |
 | `status.pendingObservation.source.transport.caFrom.key` | `string`, required | The key to select from the ConfigMap's Data field. Keys in the BinaryData field are not currently propagated to container env vars. |
@@ -677,7 +732,7 @@ spec:
 | `status.plan.approval.approver.username` | `string`, required | Username the API server authenticated the request as. |
 | `status.plan.approval.name` | `string`, required | Name of the approval that authorized the apply. |
 | `status.plan.approval.uid` | `string`, required | UID it had, so a recreated approval is not read as the same decision. |
-| `status.plan.artifactDigest` | `string`, required | ArtifactDigest is the artifact the plan was computed from. |
+| `status.plan.artifactDigest` | `string` | ArtifactDigest is the OCI artifact the plan was computed from. A plan computed from another source binds source instead. |
 | `status.plan.contentDigest` | `string`, required | ContentDigest is the digest of the plan bytes. |
 | `status.plan.controllerImage` | `string`, required | ControllerImage is the digest-pinned manager that published it, recorded and not bound. |
 | `status.plan.controllerRevision` | `string`, required | ControllerRevision is that manager's revision. |
@@ -695,19 +750,32 @@ spec:
 | `status.plan.ptahVersion` | `string`, required | PtahVersion is the Ptah build that computed the plan. |
 | `status.plan.runnerImage` | `string`, required | RunnerImage is the runner image of the manager that published it, recorded and not bound. |
 | `status.plan.runnerProtocolVersion` | `integer`, required | RunnerProtocolVersion is the runner protocol the plan binds. |
+| `status.plan.source` | `object` | Source is the source a plan computed from a ConfigMap binds in place of artifactDigest. |
+| `status.plan.source.contentDigest` | `string`, required | ContentDigest is the content digest of the files the plan was computed from. |
+| `status.plan.source.kind` | `string`, required, one of `ConfigMap` | Kind of source the plan was computed from. |
+| `status.plan.source.revision` | `string`, required | Revision is the source object the files were read from. For a ConfigMap it is the ConfigMap's UID: an edit to a key the source does not select keeps the plan, while another ConfigMap, or the same name deleted and created again, retires it even when the files match. |
 | `status.plan.statementCount` | `integer`, required | StatementCount is how many statements it holds. The statements themselves are not here: read them with kubectl ptah plan. |
 | `status.plan.targetIdentityDigest` | `string`, required | TargetIdentityDigest is the database it was computed against. |
 | `status.plan.uid` | `string`, required | UID it had when this record was written. |
-| `status.plan.verificationPolicyDigest` | `string`, required | VerificationPolicyDigest is that policy's content at the time. |
-| `status.plan.verificationPolicyUID` | `string`, required | VerificationPolicyUID is the policy object that accepted the artifact. |
+| `status.plan.verificationPolicyDigest` | `string` | VerificationPolicyDigest is that policy's content at the time. |
+| `status.plan.verificationPolicyUID` | `string` | VerificationPolicyUID is the policy object that accepted the artifact, for an OCI plan. |
 | `status.source` | `object` | Source is what the desired artifact resolved and verified to. |
 | `status.source.artifactType` | `string` | ArtifactType says which format this is: a declared schema or a versioned migration directory. |
+| `status.source.configMap` | `object` | ConfigMap is the source ConfigMap the files were last read from, for a ConfigMap source. A ConfigMap source has no verification policy, so verified stays false; the snapshot below is what later operations read. |
+| `status.source.configMap.name` | `string`, required | Name of the ConfigMap. |
+| `status.source.configMap.resourceVersion` | `string`, required | ResourceVersion is the version that was read. An edit to a key the source does not select moves it and changes no content. |
+| `status.source.configMap.uid` | `string`, required | UID of the ConfigMap. Another ConfigMap under the same name is another source, and retires a plan computed from this one. |
 | `status.source.digest` | `string` | Digest is that digest on its own. |
 | `status.source.mediaType` | `string` | MediaType is the manifest's media type. |
 | `status.source.requestedReference` | `string` | RequestedReference is what spec.desired asked for, tag and all. |
 | `status.source.resolvedAt` | `string` | ResolvedAt is when the tag was last resolved. |
 | `status.source.resolvedReference` | `string` | ResolvedReference is the same artifact with the tag replaced by the digest it resolved to. Every later read uses this. |
 | `status.source.size` | `integer` | Size is the manifest's size in bytes. |
+| `status.source.snapshot` | `object` | Snapshot is the immutable copy of the selected files, and their content digest, for a ConfigMap source. |
+| `status.source.snapshot.contentDigest` | `string`, required | ContentDigest is the content digest of the selected files: the SHA-256 of a manifest with one line per file, sorted by path, naming the file's SHA-256, its size and its path. |
+| `status.source.snapshot.name` | `string`, required | Name of the snapshot ConfigMap, in the resource's namespace. |
+| `status.source.snapshot.schemaFile` | `string` | SchemaFile is the path, inside the snapshot, of the one file a schema reads. A migration reads the whole directory and leaves it empty. |
+| `status.source.snapshot.uid` | `string`, required | UID the snapshot had when it was bound. A snapshot deleted and written again under the same name is another object. |
 | `status.source.verificationPolicyDigest` | `string` | VerificationPolicyDigest is that policy's content at the time. |
 | `status.source.verificationPolicyUID` | `string` | VerificationPolicyUID is the policy object that accepted it. |
 | `status.source.verified` | `boolean` | Verified says the verification policy accepted it. It goes false again when the policy changes, because the old answer was about the old rules. |

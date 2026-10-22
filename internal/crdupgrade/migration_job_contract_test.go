@@ -148,9 +148,9 @@ func contractMigrationFixture(
 				Engine:  operatorv1alpha1.DatabaseEnginePostgreSQL,
 				URLFrom: corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "database"}, Key: "url"},
 			},
-			Artifact: operatorv1alpha1.OCIArtifactSourceSpec{
+			Artifact: operatorv1alpha1.SourceSpec{
 				OCIRef: "oci://registry.test/acme/orders-migrations:stable",
-				VerificationPolicyFrom: corev1.ConfigMapKeySelector{
+				VerificationPolicyFrom: &corev1.ConfigMapKeySelector{
 					LocalObjectReference: corev1.LocalObjectReference{Name: "verification"}, Key: "policy.yaml",
 				},
 			},
@@ -175,7 +175,7 @@ func contractMigrationFixture(
 		StartedAt:          metav1.Now(),
 		CoordinationDigest: sha('6'),
 		AdmissionSnapshot:  &operatorv1alpha1.PodAdmissionSnapshot{Digest: sha('c'), TemplateDigest: sha('d')},
-		Source: &operatorv1alpha1.OCIArtifactAccessBinding{
+		Source: &operatorv1alpha1.SourceAccessBinding{
 			ResolvedReference: "oci://registry.test/acme/orders-migrations@" + sha('4'),
 			Digest:            sha('4'),
 		},
@@ -207,9 +207,9 @@ func contractSchemaFixture(
 				CoordinationKey: "tenant-a/orders-primary",
 				URLFrom:         corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "database"}, Key: "url"},
 			},
-			Desired: operatorv1alpha1.OCIArtifactSourceSpec{
+			Desired: operatorv1alpha1.SourceSpec{
 				OCIRef: "oci://registry.test/acme/orders:stable",
-				VerificationPolicyFrom: corev1.ConfigMapKeySelector{
+				VerificationPolicyFrom: &corev1.ConfigMapKeySelector{
 					LocalObjectReference: corev1.LocalObjectReference{Name: "verification"}, Key: "policy.yaml",
 				},
 			},

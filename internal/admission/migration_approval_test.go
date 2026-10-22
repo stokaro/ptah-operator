@@ -370,9 +370,9 @@ func migrationApprovalFixture(
 			Target: operatorv1alpha1.DatabaseTargetSpec{
 				Engine: operatorv1alpha1.DatabaseEnginePostgreSQL, CoordinationKey: "prod/team-a/app",
 			},
-			Artifact: operatorv1alpha1.OCIArtifactSourceSpec{
+			Artifact: operatorv1alpha1.SourceSpec{
 				OCIRef: "oci://registry.test/acme/migrations:stable",
-				VerificationPolicyFrom: corev1.ConfigMapKeySelector{
+				VerificationPolicyFrom: &corev1.ConfigMapKeySelector{
 					LocalObjectReference: corev1.LocalObjectReference{Name: "policy"}, Key: "policy.yaml",
 				},
 			},
@@ -386,7 +386,7 @@ func migrationApprovalFixture(
 				ExecutorImage:         "example.invalid/ptah@sha256:executor",
 				RunnerProtocolVersion: int32(runner.ProtocolVersion),
 			},
-			Artifact: &operatorv1alpha1.OCIArtifactAccessBinding{
+			Artifact: &operatorv1alpha1.SourceAccessBinding{
 				ResolvedReference: "oci://registry.test/acme/migrations@" + artifactDigest,
 				Digest:            artifactDigest,
 			},

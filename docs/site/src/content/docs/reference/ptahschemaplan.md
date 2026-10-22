@@ -190,14 +190,14 @@ spec:
 | Field | Type | What it does |
 | --- | --- | --- |
 | `spec.actualStateFingerprint` | `string`, required | ActualStateFingerprint is the observed database state the plan was computed from. Drift since then retires the plan rather than applying it. |
-| `spec.artifactDigest` | `string`, required | ArtifactDigest is the OCI artifact this plan was computed from, pinned to content rather than to the tag it was resolved through. |
+| `spec.artifactDigest` | `string` | This resource requires: contract version 1 binds artifactDigest and a verification policy; contract version 2 binds source. ArtifactDigest is the OCI artifact this plan was computed from, pinned to content rather than to the tag it was resolved through. |
 | `spec.chunks` | `[]object`, required | Chunks are the PtahSchemaPlanChunk objects the plan bytes are stored in. The plan is the concatenation of their data in index order, and nothing reads them without checking each digest and size. |
 | `spec.chunks[].digest` | `string`, required | Digest of this chunk's bytes, checked when the plan is read back. |
 | `spec.chunks[].index` | `integer`, required | Index of this chunk in the plan, counting from zero. The chunks are concatenated in this order and in no other. |
 | `spec.chunks[].name` | `string`, required | Name of the PtahSchemaPlanChunk holding this chunk. An Apply projects the chunk into its Pod through an immutable ConfigMap of the same name. |
 | `spec.chunks[].size` | `integer`, required | Size of this chunk in bytes, checked with the digest. |
 | `spec.contentDigest` | `string`, required | ContentDigest is the digest of the plan bytes the chunks reconstruct. |
-| `spec.contractVersion` | `integer`, required, one of `1` | ContractVersion versions plan publication and reconstruction separately from the Kubernetes API version. Version 1 is the only one. |
+| `spec.contractVersion` | `integer`, required, one of `1`, `2` | This resource requires: contract version 1 binds artifactDigest and a verification policy; contract version 2 binds source. ContractVersion versions plan publication and reconstruction separately from the Kubernetes API version. Version 1 is a plan computed from an OCI artifact, and binds artifactDigest and the verification policy. Version 2 is a plan computed from a ConfigMap, and binds source instead. A manager that knows only version 1 refuses a version 2 plan. |
 | `spec.controllerImage` | `string`, required | ControllerImage is the digest-pinned manager that published this plan. It is a record, not a binding: the fingerprint leaves it out, and a later manager may apply the plan. |
 | `spec.controllerRevision` | `string`, required | ControllerRevision is that manager's revision, recorded the same way. |
 | `spec.controllerStateVersion` | `integer`, required | ControllerStateVersion is the state semantics that manager writes, so a plan is never applied by a controller that reads status differently. |
@@ -217,10 +217,14 @@ spec:
 | `spec.schemaRef.name` | `string`, required | Name of the referenced object in the same namespace. |
 | `spec.schemaRef.uid` | `string`, required | UID the object had when the reference was written. An object deleted and recreated under the same name is a different object, and this says so. |
 | `spec.size` | `integer`, required | Size is the length of those bytes, summed across the chunks. |
+| `spec.source` | `object` | This resource requires: contract version 1 binds artifactDigest and a verification policy; contract version 2 binds source. Source is the ConfigMap source this plan was computed from: the ConfigMap's UID and the content digest of the selected files. |
+| `spec.source.contentDigest` | `string`, required | ContentDigest is the content digest of the files the plan was computed from. |
+| `spec.source.kind` | `string`, required, one of `ConfigMap` | Kind of source the plan was computed from. |
+| `spec.source.revision` | `string`, required | Revision is the source object the files were read from. For a ConfigMap it is the ConfigMap's UID: an edit to a key the source does not select keeps the plan, while another ConfigMap, or the same name deleted and created again, retires it even when the files match. |
 | `spec.statementCount` | `integer`, required | StatementCount is how many statements the plan holds. Read them with kubectl ptah plan rather than by fetching the chunks. |
 | `spec.targetIdentityDigest` | `string`, required | TargetIdentityDigest identifies the database this plan was computed against without carrying anything that could reach it. |
-| `spec.verificationPolicyDigest` | `string`, required | VerificationPolicyDigest is that policy's content, so replacing the object or editing it in place both retire the plan. |
-| `spec.verificationPolicyUID` | `string`, required | VerificationPolicyUID is the policy object that accepted the artifact. |
+| `spec.verificationPolicyDigest` | `string` | This resource requires: contract version 1 binds artifactDigest and a verification policy; contract version 2 binds source. VerificationPolicyDigest is that policy's content, so replacing the object or editing it in place both retire the plan. |
+| `spec.verificationPolicyUID` | `string` | This resource requires: contract version 1 binds artifactDigest and a verification policy; contract version 2 binds source. VerificationPolicyUID is the policy object that accepted the artifact. |
 
 ## status
 

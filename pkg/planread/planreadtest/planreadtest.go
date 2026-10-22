@@ -91,7 +91,7 @@ func (l *Lab) PublishDocument(
 		t.Fatal(err)
 	}
 	spec := operatorv1alpha1.PtahSchemaPlanSpec{
-		ContractVersion:          planread.ContractVersion,
+		ContractVersion:          fingerprint.CurrentPlanContractVersion,
 		SchemaRef:                operatorv1alpha1.ImmutableObjectReference{Name: l.schema.Name, UID: l.schema.UID},
 		ArtifactDigest:           "sha256:artifact-" + marker,
 		CoordinationDigest:       coordination,
