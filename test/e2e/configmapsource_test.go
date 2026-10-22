@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"os"
 	"testing"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -129,7 +130,11 @@ func TestSnapshotJobRefusesARegistryPath(t *testing.T) {
 
 func TestSnapshotRefusedNeedsTheCopyToRefuseAndTheOperationNotToStart(t *testing.T) {
 	t.Parallel()
-	refusal := "ptah-runner: source_snapshot_mismatch: snapshot does not hold the bound content: schema.sql does not match its manifest line"
+	reading, err := os.ReadFile("../../testdata/e2e/readings/configmap-snapshot-refusal.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	refusal := string(reading)
 	pod := func(copyExit int32, message string, mainState corev1.ContainerState) *corev1.Pod {
 		return &corev1.Pod{Status: corev1.PodStatus{
 			InitContainerStatuses: []corev1.ContainerStatus{
@@ -144,10 +149,11 @@ func TestSnapshotRefusedNeedsTheCopyToRefuseAndTheOperationNotToStart(t *testing
 		t.Fatalf("the refusal was not recognized: %v %q", refused, message)
 	}
 	for name, candidate := range map[string]*corev1.Pod{
-		"a copy that succeeded":     pod(0, "", waiting),
-		"another failure":           pod(2, "ptah-runner: snapshot mode takes exactly three flags", waiting),
-		"an operation that started": pod(2, refusal, corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}),
-		"an operation that ended":   pod(2, refusal, corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{}}),
+		"a copy that succeeded":       pod(0, "", waiting),
+		"another failure":             pod(2, "ptah-runner: snapshot mode takes exactly three flags", waiting),
+		"a copy that failed to write": pod(2, "ptah-runner: source_snapshot_mismatch: create /source/schema/schema.sql: permission denied", waiting),
+		"an operation that started":   pod(2, refusal, corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}),
+		"an operation that ended":     pod(2, refusal, corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{}}),
 	} {
 		if refused, _ := snapshotRefused(candidate); refused {
 			t.Errorf("snapshotRefused accepted %s", name)

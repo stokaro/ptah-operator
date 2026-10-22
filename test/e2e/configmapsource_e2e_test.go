@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strings"
 	"testing"
 	"time"
 
@@ -590,9 +589,6 @@ func (c *configMapRun) replacedSnapshotRefused() {
 		}
 		return false, fmt.Sprintf("%d observe Pods, none refused", len(pods.Items))
 	})
-	if !strings.Contains(refusal, bound.ContentDigest) && !strings.Contains(refusal, "does not match") {
-		c.fatalf("the refusal does not say what failed: %s", refusal)
-	}
 	if outstanding := c.schema(); outstanding.Status.PendingObservation == nil {
 		c.fatalf("the proof was settled while it could not read its snapshot")
 	}
