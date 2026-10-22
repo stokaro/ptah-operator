@@ -5,7 +5,7 @@ metadata:
   annotations:
     operator.ptah.run/controller-state-version: "1"
     operator.ptah.run/crd-schema-version: "4"
-    operator.ptah.run/crd-schema-digest: "sha256:503f1235ee3e8e115e2a44654aba7b210a5c98aa0ff7af365aa8edca1a8a3c62"
+    operator.ptah.run/crd-schema-digest: "sha256:7aa5f1f711c4234ed92fbf5b9a4f455858b9ee2e73d13c36953c5775d1f716b5"
     controller-gen.kubebuilder.io/version: v0.22.0
   name: ptahschemas.operator.ptah.run
 spec:
@@ -254,11 +254,11 @@ spec:
                   rule: '[has(self.ociRef), has(self.configMap), has(self.git)].filter(set,
                     set).size() == 1'
                 - message: verificationPolicyFrom is required with ociRef and refused
-                    with configMap
+                    with configMap and git
                   rule: has(self.ociRef) == has(self.verificationPolicyFrom)
-                - message: registryAuthFrom is refused with configMap
+                - message: registryAuthFrom is refused with configMap and git
                   rule: has(self.ociRef) || !has(self.registryAuthFrom)
-                - message: transport is refused with configMap
+                - message: transport is refused with configMap and git
                   rule: has(self.ociRef) || !has(self.transport) || (!has(self.transport.caFrom)
                     && (!has(self.transport.plainHTTP) || !self.transport.plainHTTP))
               dev:
@@ -986,6 +986,8 @@ spec:
             - message: desired.configMap selects exactly one file for a schema
               rule: '!has(self.desired.configMap) || self.desired.configMap.items.size()
                 == 1'
+            - message: desired.git.path selects one file for a schema
+              rule: '!has(self.desired.git) || self.desired.git.path != ''.'''
             - message: dev.urlFrom must name a required Secret key
               rule: '!has(self.dev) || (self.dev.urlFrom.name.size() > 0 && self.dev.urlFrom.key.size()
                 > 0 && (!has(self.dev.urlFrom.optional) || !self.dev.urlFrom.optional))'

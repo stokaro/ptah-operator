@@ -5,7 +5,7 @@ metadata:
   annotations:
     operator.ptah.run/controller-state-version: "1"
     operator.ptah.run/crd-schema-version: "4"
-    operator.ptah.run/crd-schema-digest: "sha256:5c7cf04341da6aa94663b25e2d57d1db2f1c17ce7241f6a68cf846498eddf5d4"
+    operator.ptah.run/crd-schema-digest: "sha256:05b6db55f8cba6df5b33aaac69403711b8dae4e92c19bbbb5683a891f5764c09"
     controller-gen.kubebuilder.io/version: v0.22.0
   name: ptahmigrations.operator.ptah.run
 spec:
@@ -251,11 +251,11 @@ spec:
                   rule: '[has(self.ociRef), has(self.configMap), has(self.git)].filter(set,
                     set).size() == 1'
                 - message: verificationPolicyFrom is required with ociRef and refused
-                    with configMap
+                    with configMap and git
                   rule: has(self.ociRef) == has(self.verificationPolicyFrom)
-                - message: registryAuthFrom is refused with configMap
+                - message: registryAuthFrom is refused with configMap and git
                   rule: has(self.ociRef) || !has(self.registryAuthFrom)
-                - message: transport is refused with configMap
+                - message: transport is refused with configMap and git
                   rule: has(self.ociRef) || !has(self.transport) || (!has(self.transport.caFrom)
                     && (!has(self.transport.plainHTTP) || !self.transport.plainHTTP))
               execution:

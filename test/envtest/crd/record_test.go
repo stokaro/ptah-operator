@@ -258,7 +258,7 @@ func planSourceRefusals() []refusal {
 		},
 		{
 			name:   "a source of another kind",
-			mutate: both(asSource, setting("Git", "spec", "source", "kind")),
+			mutate: both(asSource, setting("Helm", "spec", "source", "kind")),
 			want:   []cause{{"spec.source.kind", "Unsupported value"}},
 		},
 		{

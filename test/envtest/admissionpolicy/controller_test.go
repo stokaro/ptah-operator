@@ -337,6 +337,79 @@ func controllerRows(t *testing.T, c *catalog) {
 		}))),
 	})
 	c.row(policyenv.Row{Name: sourcePlanRow, Do: as(manager, dryRunCreate(func() (client.Object, error) { return sourceSchemaPlan() }))})
+
+	// Git sources: the Resolve Job holds the credential in its operation
+	// container; every later operation fetches the commit in an init
+	// container beside nothing of a registry or a snapshot.
+	const (
+		gitResolveJobRow        = "manager dispatches the Resolve Job for a Git source"
+		gitObserveJobRow        = "manager dispatches the Observe Job for a Git source"
+		gitObserveRegistryRow   = "manager dispatches an Observe Job that fetches a Git source beside a registry credential"
+		gitObserveSnapshotRow   = "manager dispatches an Observe Job that fetches a Git source beside a snapshot"
+		gitCredentialOnSnapshot = "manager dispatches a ConfigMap-source Observe Job mounting a Git credential"
+		ociObserveJobRow        = "manager dispatches the Observe Job for an OCI source"
+		gitCredentialOnOCIJob   = "manager dispatches an OCI Observe Job mounting a Git credential"
+		verifyJobRow            = "manager dispatches a Job for an operation that reaches no repository"
+		gitCredentialOnVerify   = "manager dispatches a Job for an operation that reaches no repository, mounting a Git credential"
+		gitCredentialAsConfig   = "manager dispatches a Resolve Job mounting its Git credential from a ConfigMap"
+	)
+	c.row(policyenv.Row{Name: gitResolveJobRow, Do: as(manager, dryRunCreate(gitSchemaJob(operatorv1alpha1.OperationResolve, nil)))})
+	c.row(policyenv.Row{Name: gitObserveJobRow, Do: as(manager, dryRunCreate(gitSchemaJob(operatorv1alpha1.OperationObserve, nil)))})
+	c.row(policyenv.Row{
+		Name: gitObserveRegistryRow, Deny: []string{jobGuard}, Message: "rejected an unsafe workload shape",
+		Do: as(manager, dryRunCreate(gitSchemaJob(operatorv1alpha1.OperationObserve, func(job *batchv1.Job) {
+			job.Spec.Template.Spec.Volumes = append(job.Spec.Template.Spec.Volumes, corev1.Volume{
+				Name: "registry-docker-config", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: "registry"}},
+			})
+		}))),
+	})
+	c.row(policyenv.Row{
+		Name: gitObserveSnapshotRow, Deny: []string{jobGuard}, Message: "rejected an unsafe workload shape",
+		Do: as(manager, dryRunCreate(gitSchemaJob(operatorv1alpha1.OperationObserve, func(job *batchv1.Job) {
+			job.Spec.Template.Spec.Volumes = append(job.Spec.Template.Spec.Volumes, corev1.Volume{
+				Name: "source-snapshot", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
+					LocalObjectReference: corev1.LocalObjectReference{Name: tenantSnapshot.Name},
+				}},
+			})
+		}))),
+	})
+	c.row(policyenv.Row{
+		Name: gitCredentialOnSnapshot, Deny: []string{jobGuard}, Message: "rejected an unsafe workload shape",
+		Do: as(manager, dryRunCreate(snapshotObserveJob(withGitCredential))),
+	})
+	c.row(policyenv.Row{Name: ociObserveJobRow, Do: as(manager, dryRunCreate(ociObserveJob(nil)))})
+	c.row(policyenv.Row{
+		Name: gitCredentialOnOCIJob, Deny: []string{jobGuard}, Message: "rejected an unsafe workload shape",
+		Do: as(manager, dryRunCreate(ociObserveJob(withGitCredential))),
+	})
+	c.row(policyenv.Row{Name: verifyJobRow, Do: as(manager, dryRunCreate(func() (client.Object, error) {
+		job, err := resolveJob()
+		if err == nil {
+			asVerifyJob(job)
+		}
+		return job, err
+	}))})
+	c.row(policyenv.Row{
+		Name: gitCredentialOnVerify, Deny: []string{jobGuard}, Message: "rejected an unsafe workload shape",
+		Do: as(manager, dryRunCreate(func() (client.Object, error) {
+			job, err := resolveJob()
+			if err == nil {
+				asVerifyJob(job)
+				withGitCredential(job)
+			}
+			return job, err
+		})),
+	})
+	c.row(policyenv.Row{
+		Name: gitCredentialAsConfig, Deny: []string{jobGuard}, Message: "rejected an unsafe workload shape",
+		Do: as(manager, dryRunCreate(gitSchemaJob(operatorv1alpha1.OperationResolve, func(job *batchv1.Job) {
+			job.Spec.Template.Spec.Volumes = append(job.Spec.Template.Spec.Volumes, corev1.Volume{
+				Name: "git-credentials", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
+					LocalObjectReference: corev1.LocalObjectReference{Name: "git-token"},
+				}},
+			})
+		}))),
+	})
 	c.row(policyenv.Row{Name: sourceMigrationPlanRow, Do: as(manager, dryRunCreate(func() (client.Object, error) { return sourceMigrationPlan() }))})
 
 	// A mutation that writes another release's value into a policy has to turn

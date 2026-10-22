@@ -32,6 +32,11 @@ func TestGitSourceBreakHoldsForEveryVersion3Object(t *testing.T) {
 	if !evaluateRule(t, ruleOneOfThreeSources, map[string]any{"git": git}) {
 		t.Errorf("%q refuses a Git source", ruleOneOfThreeSources)
 	}
+	for _, source := range append(sources, map[string]any{"git": git}) {
+		if !evaluateRule(t, ruleSchemaGitFile, map[string]any{"desired": source}) {
+			t.Errorf("%q refuses the schema spec desiring %v", ruleSchemaGitFile, source)
+		}
+	}
 
 	for _, refused := range []struct {
 		rule string
@@ -42,12 +47,13 @@ func TestGitSourceBreakHoldsForEveryVersion3Object(t *testing.T) {
 		{ruleOneOfThreeSources, map[string]any{"ociRef": "oci://registry.example/schema:1", "git": git}},
 		{ruleOneOfThreeBindings, map[string]any{}},
 		{ruleOneOfThreeBindings, map[string]any{"snapshot": map[string]any{"name": "ptah-src-0"}, "git": git}},
+		{ruleSchemaGitFile, map[string]any{"desired": map[string]any{"git": map[string]any{"url": git["url"], "ref": git["ref"], "path": "."}}}},
 	} {
 		if evaluateRule(t, refused.rule, refused.self) {
 			t.Errorf("%q admits %v", refused.rule, refused.self)
 		}
 	}
-	if len(gitSourceBreak.transitions) != 6 {
-		t.Fatalf("the break declares %d transitions, the union makes 6", len(gitSourceBreak.transitions))
+	if len(gitSourceBreak.transitions) != 7 {
+		t.Fatalf("the break declares %d transitions, the union and the schema's file rule make 7", len(gitSourceBreak.transitions))
 	}
 }

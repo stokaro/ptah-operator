@@ -105,6 +105,7 @@ const (
 // +kubebuilder:validation:XValidation:rule="self.target.urlFrom.name.size() > 0 && self.target.urlFrom.key.size() > 0 && (!has(self.target.urlFrom.optional) || !self.target.urlFrom.optional)",message="target.urlFrom must name a required Secret key"
 // +kubebuilder:validation:XValidation:rule="!has(self.desired.verificationPolicyFrom) || (self.desired.verificationPolicyFrom.name.size() > 0 && self.desired.verificationPolicyFrom.key.size() > 0 && (!has(self.desired.verificationPolicyFrom.optional) || !self.desired.verificationPolicyFrom.optional))",message="desired.verificationPolicyFrom must name a required ConfigMap key"
 // +kubebuilder:validation:XValidation:rule="!has(self.desired.configMap) || self.desired.configMap.items.size() == 1",message="desired.configMap selects exactly one file for a schema"
+// +kubebuilder:validation:XValidation:rule="!has(self.desired.git) || self.desired.git.path != '.'",message="desired.git.path selects one file for a schema"
 // +kubebuilder:validation:XValidation:rule="!has(self.dev) || (self.dev.urlFrom.name.size() > 0 && self.dev.urlFrom.key.size() > 0 && (!has(self.dev.urlFrom.optional) || !self.dev.urlFrom.optional))",message="dev.urlFrom must name a required Secret key"
 // +kubebuilder:validation:XValidation:rule="!has(self.desired.transport) || !has(self.desired.transport.caFrom) || (self.desired.transport.caFrom.name.size() > 0 && self.desired.transport.caFrom.key.size() > 0 && (!has(self.desired.transport.caFrom.optional) || !self.desired.transport.caFrom.optional))",message="desired.transport.caFrom must name a required ConfigMap key"
 type PtahSchemaSpec struct {
@@ -225,9 +226,9 @@ type DatabaseTargetRef struct {
 // repository. The schema and the migration APIs share it, and keep their
 // reconciliation lifecycles separate.
 // +kubebuilder:validation:XValidation:rule="[has(self.ociRef), has(self.configMap), has(self.git)].filter(set, set).size() == 1",message="set exactly one of ociRef, configMap and git"
-// +kubebuilder:validation:XValidation:rule="has(self.ociRef) == has(self.verificationPolicyFrom)",message="verificationPolicyFrom is required with ociRef and refused with configMap"
-// +kubebuilder:validation:XValidation:rule="has(self.ociRef) || !has(self.registryAuthFrom)",message="registryAuthFrom is refused with configMap"
-// +kubebuilder:validation:XValidation:rule="has(self.ociRef) || !has(self.transport) || (!has(self.transport.caFrom) && (!has(self.transport.plainHTTP) || !self.transport.plainHTTP))",message="transport is refused with configMap"
+// +kubebuilder:validation:XValidation:rule="has(self.ociRef) == has(self.verificationPolicyFrom)",message="verificationPolicyFrom is required with ociRef and refused with configMap and git"
+// +kubebuilder:validation:XValidation:rule="has(self.ociRef) || !has(self.registryAuthFrom)",message="registryAuthFrom is refused with configMap and git"
+// +kubebuilder:validation:XValidation:rule="has(self.ociRef) || !has(self.transport) || (!has(self.transport.caFrom) && (!has(self.transport.plainHTTP) || !self.transport.plainHTTP))",message="transport is refused with configMap and git"
 type SourceSpec struct {
 	// OCIRef is a desired-schema artifact reference. It may name a tag or a
 	// digest; every later operation receives only the resolved digest.
