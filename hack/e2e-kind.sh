@@ -2502,6 +2502,8 @@ tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)e2e-alert-sink$' ||
 	fail "the isolated fixture image does not contain /e2e-alert-sink"
 tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)e2e-upgrade-observer$' ||
 	fail "the isolated fixture image does not contain /e2e-upgrade-observer"
+tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)e2e-git-server$' ||
+	fail "the isolated fixture image does not contain /e2e-git-server"
 tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)e2e-protocol-runner$' ||
 	fail "the isolated fixture image does not contain the unsupported runner"
 tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)e2e-protocol-runner\.json$' ||
