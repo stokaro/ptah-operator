@@ -146,9 +146,9 @@ func planSourceIsCurrent(schema *operatorv1alpha1.PtahSchema, artifactDigest str
 }
 
 // schemaSourceResolved reports whether the schema's source was ever read: an
-// OCI digest or a ConfigMap snapshot.
+// OCI digest, a ConfigMap snapshot or a Git commit.
 func schemaSourceResolved(schema *operatorv1alpha1.PtahSchema) bool {
-	return schema.Status.Source.Digest != "" || schema.Status.Source.Snapshot != nil
+	return schema.Status.Source.Digest != "" || schema.Status.Source.Snapshot != nil || schema.Status.Source.Git != nil
 }
 
 // schemaSourceReady reports whether later operations may read the schema's

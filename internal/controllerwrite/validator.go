@@ -675,7 +675,9 @@ func validatePlanShape(plan *operatorv1alpha1.PtahSchemaPlan, schema *operatorv1
 		return errors.New("plan contains an invalid digest binding")
 	}
 	if source := plan.Spec.Source; source != nil {
-		if source.Kind != operatorv1alpha1.SourceKindConfigMap || source.Revision == "" || !isSHA256Digest(source.ContentDigest) {
+		knownKind := (source.Kind == operatorv1alpha1.SourceKindConfigMap && source.Revision != "") ||
+			(source.Kind == operatorv1alpha1.SourceKindGit && isSHA256Digest(source.Revision))
+		if !knownKind || !isSHA256Digest(source.ContentDigest) {
 			return errors.New("plan contains an invalid source binding")
 		}
 	} else if !isSHA256Digest(plan.Spec.ArtifactDigest) || !isSHA256Digest(plan.Spec.VerificationPolicyDigest) {

@@ -1602,6 +1602,9 @@ const (
 	ReasonApprovedPlan                 ConditionReason = "ApprovedPlan"
 	ReasonArtifactUnverified           ConditionReason = "ArtifactUnverified"
 	ReasonAwaitingApproval             ConditionReason = "AwaitingApproval"
+	// ReasonCommitResolved says a Git source's ref was read at a commit, and
+	// the content digest of the files it selects there recorded.
+	ReasonCommitResolved               ConditionReason = "CommitResolved"
 	ReasonConfigurationError           ConditionReason = "ConfigurationError"
 	ReasonConvergedAfterUnknownOutcome ConditionReason = "ConvergedAfterUnknownOutcome"
 	ReasonCurrentPlan                  ConditionReason = "CurrentPlan"
