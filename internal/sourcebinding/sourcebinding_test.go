@@ -186,19 +186,25 @@ func TestValidateAccessHoldsAGitCommit(t *testing.T) {
 		t.Fatalf("ssh Git binding refused: %v", err)
 	}
 	for name, edit := range map[string]func(*operatorv1alpha1.SourceAccessBinding){
-		"a Git commit and a snapshot":    func(b *operatorv1alpha1.SourceAccessBinding) { b.Snapshot = snapshot() },
-		"a Git commit and a digest":      func(b *operatorv1alpha1.SourceAccessBinding) { b.Digest = artifact },
-		"a plain-HTTP registry":          func(b *operatorv1alpha1.SourceAccessBinding) { b.Transport.PlainHTTP = true },
-		"another scheme":                 func(b *operatorv1alpha1.SourceAccessBinding) { b.Git.URL = "git://git.example.com/acme/app.git" },
-		"a query":                        func(b *operatorv1alpha1.SourceAccessBinding) { b.Git.URL += "?ref=main" },
-		"a password in an ssh:// URL":    func(b *operatorv1alpha1.SourceAccessBinding) { b.Git.URL = "ssh://git:x@git.example.com/a.git" },
-		"two refs":                       func(b *operatorv1alpha1.SourceAccessBinding) { b.Git.Ref.Tag = "v1" },
-		"no ref":                         func(b *operatorv1alpha1.SourceAccessBinding) { b.Git.Ref = operatorv1alpha1.GitRef{} },
-		"a ref commit other than bound":  func(b *operatorv1alpha1.SourceAccessBinding) { b.Git.Ref = operatorv1alpha1.GitRef{Commit: content[7:47]} },
-		"an uppercase commit":            func(b *operatorv1alpha1.SourceAccessBinding) { b.Git.Commit = "3F1C2B0A9D8E7F6A5B4C3D2E1F0A9B8C7D6E5F4A" },
-		"an escaping path":               func(b *operatorv1alpha1.SourceAccessBinding) { b.Git.Path = "../schema.hcl" },
-		"an unnamed credential":          func(b *operatorv1alpha1.SourceAccessBinding) { b.Git.AuthFrom = &operatorv1alpha1.GitAuthSource{Name: " "} },
-		"known hosts over https://":      func(b *operatorv1alpha1.SourceAccessBinding) { b.Git.Transport.KnownHostsFrom = known },
+		"a Git commit and a snapshot": func(b *operatorv1alpha1.SourceAccessBinding) { b.Snapshot = snapshot() },
+		"a Git commit and a digest":   func(b *operatorv1alpha1.SourceAccessBinding) { b.Digest = artifact },
+		"a plain-HTTP registry":       func(b *operatorv1alpha1.SourceAccessBinding) { b.Transport.PlainHTTP = true },
+		"another scheme":              func(b *operatorv1alpha1.SourceAccessBinding) { b.Git.URL = "git://git.example.com/acme/app.git" },
+		"a query":                     func(b *operatorv1alpha1.SourceAccessBinding) { b.Git.URL += "?ref=main" },
+		"a password in an ssh:// URL": func(b *operatorv1alpha1.SourceAccessBinding) { b.Git.URL = "ssh://git:x@git.example.com/a.git" },
+		"two refs":                    func(b *operatorv1alpha1.SourceAccessBinding) { b.Git.Ref.Tag = "v1" },
+		"no ref":                      func(b *operatorv1alpha1.SourceAccessBinding) { b.Git.Ref = operatorv1alpha1.GitRef{} },
+		"a ref commit other than bound": func(b *operatorv1alpha1.SourceAccessBinding) {
+			b.Git.Ref = operatorv1alpha1.GitRef{Commit: content[7:47]}
+		},
+		"an uppercase commit": func(b *operatorv1alpha1.SourceAccessBinding) {
+			b.Git.Commit = "3F1C2B0A9D8E7F6A5B4C3D2E1F0A9B8C7D6E5F4A"
+		},
+		"an escaping path": func(b *operatorv1alpha1.SourceAccessBinding) { b.Git.Path = "../schema.hcl" },
+		"an unnamed credential": func(b *operatorv1alpha1.SourceAccessBinding) {
+			b.Git.AuthFrom = &operatorv1alpha1.GitAuthSource{Name: " "}
+		},
+		"known hosts over https://": func(b *operatorv1alpha1.SourceAccessBinding) { b.Git.Transport.KnownHostsFrom = known },
 		"a CA without a key": func(b *operatorv1alpha1.SourceAccessBinding) {
 			b.Git.Transport.CAFrom = &corev1.ConfigMapKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "ca"}}
 		},
