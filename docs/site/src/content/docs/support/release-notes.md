@@ -16,6 +16,52 @@ release that says so, and this is where it is said. A version that asks
 nothing of you says so in as many words, rather than leaving you to read it
 out of silence.
 
+## 0.2.6
+
+**Before you upgrade.** The manager image is new, so keep `--force-conflicts`
+on the upgrade, and check the following.
+
+- **Operation Pod memory.** The executor is now Ptah v0.14.0, which needs
+  about twice the memory v0.13.0 did. The runner and Ptah share the operation
+  container, and a 64Mi limit that 0.2.5 fit in gets Observe and Plan Pods
+  OOM-killed; the resource then reports that the runner's result frame was not
+  found. If `spec.execution.resources`, or the LimitRange default where it is
+  unset, gives the container less than 128Mi, raise it to 128Mi, which is what
+  the acceptance suite runs with.
+- **Drift categories.** `status.target.driftFindings[].category` now holds the
+  category exactly as Ptah reports it. Ptah v0.14.0 hands PostgreSQL extensions
+  and the YDB objects to feature owners and counts a change to one under
+  `feature_changes` followed by the type of object, as in
+  `feature_changes:ptah.run/pgextension/extension-change`, and an owner's
+  access verdict under `feature_access_widened`, `feature_access_narrowed`,
+  `feature_access_unchanged` or `feature_access_unknown`. Thirty-one
+  per-object categories, such as `extensions_added`, are no longer written. An
+  alert rule, dashboard or script that matches those names stops matching.
+  Objects the comparison could not decide are counted under `undecided`; 0.2.5
+  refused a report that held it, and the Observe failed.
+- **Approvals.** A new executor retires the execution binding, so a plan
+  waiting for approval is planned again and needs a new approval. Applied
+  state is not touched.
+
+A failed or partial migration run now also says where in the migration it
+stopped and what the database answered, without the database's text:
+
+```text
+Migration 2 (Read Ledger) failed at statement 2 of 3 with SQLSTATE 42P01 and committed nothing; ...
+Migration 2 (Fill Ledger) committed 2 of its 4 statements, then failed with SQLSTATE 23000 (error 1062); ...
+```
+
+Each manager process now paces its requests to the Kubernetes API server:
+80 a second with a burst of 40, shared by every client in the process, so one
+process sends at most 4,840 in any minute. After a controller-manager leader
+change, the Job controller can hold back Job completions for minutes and then
+report them at once; the work they wake is now spread over the following
+minutes instead of sent in one. An installation larger than the 0.2.0 profile
+can raise `apiRequests.perSecond` and `apiRequests.burst`.
+
+The binaries are built with Go 1.27.3, which fixes GO-2026-6809 in
+`crypto/x509`, a path the manager reaches.
+
 ## 0.2.5
 
 **Before you upgrade.** Nothing has to change. The manager image is new, so
