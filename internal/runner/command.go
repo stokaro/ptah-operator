@@ -252,6 +252,18 @@ func childEnvironment(environment []string) []string {
 		EnvOCICASHA256Grant,
 		EnvPlanSealPublicKey,
 		EnvSealedPlanJobName,
+		EnvGitURL,
+		EnvGitBranch,
+		EnvGitTag,
+		EnvGitCommit,
+		EnvGitPath,
+		EnvExpectedContentDigest,
+		EnvGitSelects,
+		EnvGitHostGrant,
+		EnvGitCASHA256Grant,
+		EnvGitKnownHostsSHA256Grant,
+		EnvGitCASourceFile,
+		EnvGitKnownHostsSourceFile,
 	)
 }
 

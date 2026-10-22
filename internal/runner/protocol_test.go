@@ -558,6 +558,26 @@ func TestParserRejectsImpossibleSuccessfulResultShapes(t *testing.T) {
 				ChildExitCode: 1},
 		},
 		{
+			name: "Git resolution with an abbreviated commit",
+			result: Result{ProtocolVersion: ProtocolVersion, Operation: OperationResolve, OperationID: "resolve-git-short",
+				ResolvedCommit: "3f1c2b0", ResolvedContentDigest: digest},
+		},
+		{
+			name: "Git resolution without its content digest",
+			result: Result{ProtocolVersion: ProtocolVersion, Operation: OperationResolve, OperationID: "resolve-git-no-digest",
+				ResolvedCommit: strings.Repeat("a", 40)},
+		},
+		{
+			name: "Git resolution beside OCI descriptor evidence",
+			result: Result{ProtocolVersion: ProtocolVersion, Operation: OperationResolve, OperationID: "resolve-git-and-oci",
+				ResolvedCommit: strings.Repeat("a", 40), ResolvedContentDigest: digest, ResolvedDigest: digest},
+		},
+		{
+			name: "Git resolution on an unrelated operation",
+			result: Result{ProtocolVersion: ProtocolVersion, Operation: OperationObserve, OperationID: "observe-git",
+				CoordinationDigest: digest, ResolvedCommit: strings.Repeat("a", 40), ResolvedContentDigest: digest},
+		},
+		{
 			name: "migration history success without its report",
 			result: Result{ProtocolVersion: ProtocolVersion, Operation: OperationMigrationHistory,
 				OperationID: "history-no-report", ChildExitCode: 0, CoordinationDigest: digest},
@@ -1019,4 +1039,16 @@ func TestParseSaysWhyItRejectedTheLastFrame(t *testing.T) {
 			t.Fatalf("err = %q, want it to name the version mismatch", err.Error())
 		}
 	})
+}
+
+// A Git resolution is the one successful resolve that carries no OCI
+// descriptor; the parser admits it with a full commit and a content digest.
+func TestParserAdmitsAGitResolution(t *testing.T) {
+	t.Parallel()
+	result := Result{ProtocolVersion: ProtocolVersion, Operation: OperationResolve, OperationID: "resolve-git",
+		ResolvedCommit: strings.Repeat("a", 40), ResolvedContentDigest: "sha256:" + strings.Repeat("9", 64)}
+	frame := handcraftedIntegrityValidFrame(t, result)
+	if parsed, err := ParseResultFor(frame, OperationResolve, "resolve-git"); err != nil || parsed.ResolvedCommit != result.ResolvedCommit {
+		t.Fatalf("ParseResultFor() = %#v, %v", parsed, err)
+	}
 }
