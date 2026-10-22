@@ -11,6 +11,8 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/runner"
+	"github.com/stokaro/ptah-operator/internal/sourcecontent"
 	"github.com/stokaro/ptah-operator/internal/sourcesnapshot"
 )
 
@@ -33,10 +35,15 @@ const (
 	// the phase: every read the phase sees is one an edit caused.
 	configMapInterval = "1h"
 	// snapshotCopyContainer is the init container that checks a snapshot and
-	// copies it, and snapshotMismatchCode the refusal it reports.
+	// copies it.
 	snapshotCopyContainer = "copy-source-snapshot"
-	snapshotMismatchCode  = "source_snapshot_mismatch"
 )
+
+// snapshotContentRefusal is what the copy reports when the snapshot does not
+// hold the bound content, whichever check found it: the refusal code and the
+// content-mismatch text. The same code with any other text is a copy that
+// failed to write, which says nothing about the content.
+var snapshotContentRefusal = runner.CodeSourceSnapshotMismatch + ": " + sourcecontent.ErrContentMismatch.Error()
 
 // configMapSchemaRevisions are the desired schema the phase declares, in
 // order: a table, then a column on it, then an index the refusal row plans.
@@ -139,7 +146,7 @@ func snapshotRefused(pod *corev1.Pod) (bool, string) {
 		if status.Name != snapshotCopyContainer || terminated == nil || terminated.ExitCode == 0 {
 			continue
 		}
-		if strings.Contains(terminated.Message, snapshotMismatchCode) {
+		if strings.Contains(terminated.Message, snapshotContentRefusal) {
 			refused, message = true, terminated.Message
 		}
 	}
