@@ -1537,5 +1537,8 @@ func runGitResolve(ctx context.Context, config Config, environment []string, sou
 	}
 	result.ResolvedCommit = report.Commit
 	result.ResolvedContentDigest = report.ContentDigest
+	for _, file := range report.Files {
+		result.ResolvedContentBytes += file.Size
+	}
 	return result
 }

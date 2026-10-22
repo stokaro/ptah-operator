@@ -26,6 +26,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
 	"github.com/stokaro/ptah-operator/internal/policy"
 	"github.com/stokaro/ptah-operator/internal/sourcebinding"
+	"github.com/stokaro/ptah-operator/internal/sourcepolicy"
 )
 
 const maxRecordedGroups = 64
@@ -319,9 +320,10 @@ func (h *ApprovalHandler) validateBinding(
 		return fmt.Errorf("schema source or target changed after the plan was generated")
 	}
 	if plan.Spec.Source != nil {
-		// A plan computed from a ConfigMap binds no verification policy: the
-		// source binding compared above is what retires it.
-		return nil
+		// A plan computed from a ConfigMap or Git binds no verification
+		// policy: the source binding compared above, and the source policy it
+		// was checked against, are what retire it.
+		return sourcepolicy.StillBinds(ctx, h.Reader, namespace, schema.Spec.Desired.SourcePolicyFrom, plan.Spec.Source.Policy)
 	}
 	policyBinding, err := policy.ConfigMapBinding(ctx, h.Reader, namespace, schema.Spec.Desired.VerificationPolicyFrom)
 	if err != nil {

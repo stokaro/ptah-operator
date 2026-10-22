@@ -558,6 +558,34 @@ only, at most 1,000 files and 64 MiB; no submodule, symbolic link or LFS
 pointer, each refused by name; no checkout, hook or filter, so a repository
 cannot run anything in the Pod.
 
+## Source policies
+
+A team that wants to bound what its ConfigMap and Git sources may name sets
+`sourcePolicyFrom` on the resource: an immutable ConfigMap holding a YAML
+document with up to three rules.
+
+```yaml
+allowedGitHosts:          # the only host[:port] a Git source may name
+  - git.example.com
+allowedConfigMaps:        # the only ConfigMaps a ConfigMap source may name
+  - inventory-schema
+maxContentBytes: 1048576  # the most the selected files may hold together
+```
+
+A rule that is absent refuses nothing, and a list that is present and empty
+allows nothing of its kind. A field the document does not define is refused,
+so a misspelled rule is not read as one kept. The manager reads the policy,
+never the source's credential: a Git host it does not allow gets no Resolve
+Job, so the credential is never sent there; a ConfigMap it does not allow, or
+files that hold too much, leave no snapshot; a Git commit whose selected files
+hold too much is not recorded. The refusal names the rule.
+
+A plan binds the policy's object and bytes beside the source. Another policy,
+the same bytes in another ConfigMap included, retires the plan, and so does
+naming a policy where none was or dropping one; approval and Apply check the
+live policy again. The API refuses `sourcePolicyFrom` beside `ociRef`: an OCI
+source has its verification policy.
+
 ## Plan and approval visibility
 
 Plan chunks contain schema-changing SQL, not credentials. They are

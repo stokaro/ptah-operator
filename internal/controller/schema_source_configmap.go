@@ -15,6 +15,7 @@ import (
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/policy"
 	"github.com/stokaro/ptah-operator/internal/sourcebinding"
+	"github.com/stokaro/ptah-operator/internal/sourcepolicy"
 	"github.com/stokaro/ptah-operator/internal/sourcesnapshot"
 )
 
@@ -28,7 +29,14 @@ import (
 // more are deleted once the status that stops naming them is stored.
 func (r *SchemaReconciler) resolveConfigMapSource(ctx context.Context, schema *operatorv1alpha1.PtahSchema) (ctrl.Result, error) {
 	owner := sourcesnapshot.Owner{Kind: "PtahSchema", Name: schema.Name, UID: schema.UID}
-	resolved, err := readConfigMapSource(ctx, r.directReader(), r.Client, schema.Namespace, owner, *schema.Spec.Desired.ConfigMap, true)
+	policy, policyBinding, err := sourcePolicyFor(ctx, r.directReader(), schema.Namespace, schema.Spec.Desired)
+	if err != nil {
+		if errors.Is(err, errSourceRefused) {
+			return r.configMapSourceRefused(ctx, schema, err)
+		}
+		return ctrl.Result{}, err
+	}
+	resolved, err := readConfigMapSource(ctx, r.directReader(), r.Client, schema.Namespace, owner, *schema.Spec.Desired.ConfigMap, true, policy)
 	if err != nil {
 		if errors.Is(err, errSourceRefused) {
 			return r.configMapSourceRefused(ctx, schema, err)
@@ -39,11 +47,13 @@ func (r *SchemaReconciler) resolveConfigMapSource(ctx context.Context, schema *o
 	before := schema.DeepCopy()
 	previous := schema.Status.Source
 	changed := previous.ConfigMap == nil || previous.Snapshot == nil ||
-		previous.ConfigMap.UID != resolved.revision.UID || *previous.Snapshot != resolved.snapshot
+		previous.ConfigMap.UID != resolved.revision.UID || *previous.Snapshot != resolved.snapshot ||
+		!sourcebinding.SamePolicy(previous.SourcePolicy, policyBinding)
 	schema.Status.Source = operatorv1alpha1.SchemaSourceStatus{
-		ConfigMap:  &resolved.revision,
-		Snapshot:   &resolved.snapshot,
-		ResolvedAt: &now,
+		ConfigMap:    &resolved.revision,
+		Snapshot:     &resolved.snapshot,
+		ResolvedAt:   &now,
+		SourcePolicy: policyBinding,
 	}
 	if changed {
 		if err := r.markRecordedApprovalStale(ctx, schema); err != nil {
@@ -90,7 +100,9 @@ func schemaSnapshotHolders(schema *operatorv1alpha1.PtahSchema) []*operatorv1alp
 	return holders
 }
 
-// configMapSourceRefused records a ConfigMap source that gives no snapshot.
+// configMapSourceRefused records a source the manager refuses before or
+// without a Job: a ConfigMap that gives no snapshot, or a source its policy
+// refuses.
 // The resource is retried at its failure interval, and sooner when the
 // ConfigMap or the resource is edited. A snapshot read earlier stays as
 // historical evidence, as a retained OCI digest does.
@@ -102,15 +114,19 @@ func (r *SchemaReconciler) configMapSourceRefused(ctx context.Context, schema *o
 	schema.Status.LastAttemptTime = &now
 	next := metav1.NewTime(now.Add(failureRetry(schema)))
 	schema.Status.NextReconciliationTime = &next
+	kind := "ConfigMap"
+	if schema.Spec.Desired.Git != nil {
+		kind = "Git"
+	}
 	if schemaSourceResolved(schema) {
 		setCondition(schema, operatorv1alpha1.ConditionArtifactResolved, metav1.ConditionUnknown, operatorv1alpha1.ReasonRefreshFailed,
-			"The ConfigMap source could not be read again; the retained snapshot remains historical evidence")
+			"The "+kind+" source could not be read again; what was resolved before remains historical evidence")
 	} else {
 		setCondition(schema, operatorv1alpha1.ConditionArtifactResolved, metav1.ConditionFalse, operatorv1alpha1.ReasonResolveFailed,
-			"The ConfigMap source could not be read")
+			"The "+kind+" source could not be read")
 	}
 	setFailure(schema, operatorv1alpha1.ReasonConfigurationError, failure)
-	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonConfigurationError, "The ConfigMap source could not be read")
+	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonConfigurationError, "The "+kind+" source could not be read")
 	if err := r.patchStatus(ctx, before, schema); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -126,7 +142,7 @@ func (r *SchemaReconciler) planPolicyError(ctx context.Context, schema *operator
 		if !planSourceIsCurrent(schema, plan.Spec.ArtifactDigest, plan.Spec.Source) {
 			return errors.New("the plan was computed from another source")
 		}
-		return nil
+		return sourcepolicy.StillBinds(ctx, r.directReader(), schema.Namespace, schema.Spec.Desired.SourcePolicyFrom, plan.Spec.Source.Policy)
 	}
 	binding, err := policy.ConfigMapBinding(ctx, r.directReader(), schema.Namespace, schema.Spec.Desired.VerificationPolicyFrom)
 	if err != nil {

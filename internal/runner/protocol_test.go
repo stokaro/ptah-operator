@@ -573,6 +573,17 @@ func TestParserRejectsImpossibleSuccessfulResultShapes(t *testing.T) {
 				ResolvedCommit: strings.Repeat("a", 40), ResolvedContentDigest: digest, ResolvedDigest: digest},
 		},
 		{
+			name: "a content size without a Git resolution",
+			result: Result{ProtocolVersion: ProtocolVersion, Operation: OperationResolve, OperationID: "resolve-size-only",
+				ResolvedDigest: digest, ResolvedReference: "oci://registry.example/team/schema@" + digest,
+				ResolvedMediaType: "application/vnd.oci.image.manifest.v1+json", ResolvedSize: 1, ResolvedContentBytes: 10},
+		},
+		{
+			name: "a negative content size",
+			result: Result{ProtocolVersion: ProtocolVersion, Operation: OperationResolve, OperationID: "resolve-negative-size",
+				ResolvedCommit: strings.Repeat("a", 40), ResolvedContentDigest: digest, ResolvedContentBytes: -1},
+		},
+		{
 			name: "Git resolution on an unrelated operation",
 			result: Result{ProtocolVersion: ProtocolVersion, Operation: OperationObserve, OperationID: "observe-git",
 				CoordinationDigest: digest, ResolvedCommit: strings.Repeat("a", 40), ResolvedContentDigest: digest},

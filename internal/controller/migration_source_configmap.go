@@ -21,7 +21,14 @@ import (
 // policy, so there is no Verify step and no ArtifactVerified condition.
 func (r *MigrationReconciler) resolveMigrationConfigMapSource(ctx context.Context, migration *operatorv1alpha1.PtahMigration) (ctrl.Result, error) {
 	owner := sourcesnapshot.Owner{Kind: "PtahMigration", Name: migration.Name, UID: migration.UID}
-	resolved, err := readConfigMapSource(ctx, r.directReader(), r.Client, migration.Namespace, owner, *migration.Spec.Artifact.ConfigMap, false)
+	policy, policyBinding, err := sourcePolicyFor(ctx, r.directReader(), migration.Namespace, migration.Spec.Artifact)
+	if err != nil {
+		if errors.Is(err, errSourceRefused) {
+			return r.migrationOperationFailure(ctx, migration, err)
+		}
+		return ctrl.Result{}, err
+	}
+	resolved, err := readConfigMapSource(ctx, r.directReader(), r.Client, migration.Namespace, owner, *migration.Spec.Artifact.ConfigMap, false, policy)
 	if err != nil {
 		if errors.Is(err, errSourceRefused) {
 			return r.migrationOperationFailure(ctx, migration, err)
@@ -31,6 +38,7 @@ func (r *MigrationReconciler) resolveMigrationConfigMapSource(ctx context.Contex
 	before := migration.DeepCopy()
 	migration.Status.Artifact = &operatorv1alpha1.SourceAccessBinding{Snapshot: resolved.snapshot.DeepCopy()}
 	migration.Status.ConfigMap = resolved.revision.DeepCopy()
+	migration.Status.SourcePolicy = policyBinding
 	migration.Status.ObservedGeneration = migration.Generation
 	now := r.now()
 	slot, slotted := refreshSlot(ctx, r.Client, migration.UID, migrationInterval(migration))

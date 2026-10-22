@@ -40,6 +40,7 @@ func TestGitSources(t *testing.T) {
 	}{
 		{"git-schema", c.schemaFromGit},
 		{"git-schema-moves", c.schemaFollowsItsBranch},
+		{"git-source-policy", c.sourcePolicy},
 		{"git-schema-pinned", c.schemaAtAPinnedCommit},
 		{"git-force-push", c.forcePushedBranch},
 		{"git-migration-ssh", c.migrationOverSSH},
@@ -381,6 +382,9 @@ func (c *gitRun) reset() {
 	for _, approval := range []string{"e2e-git-schema-v1", "e2e-git-schema-v2", "e2e-git-schema-v3", "e2e-git-pinned-v1"} {
 		objects = append(objects, &ptahv1alpha1.PtahSchemaApproval{ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: approval}})
 	}
+	for _, name := range []string{gitOpenPolicy, gitClosedPolicy} {
+		objects = append(objects, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: name}})
+	}
 	for _, object := range objects {
 		c.deleteAndWait(object)
 	}
@@ -662,6 +666,78 @@ func (c *gitRun) forcePushedBranch() {
 		c.fatalf("the refused pinned schema published %d plans", plans-pinnedPlans)
 	}
 	c.logf("PASS after a force-push the branch planned %s and the commit it replaced was refused: %s", replacement, refusal)
+}
+
+// sourcePolicy names a source policy on the Git schema. One that allows the
+// schema's host is checked at the Resolve the edit causes and recorded beside
+// the commit; one that allows another host is refused before a Resolve Job is
+// made, so the credential is never sent anywhere.
+func (c *gitRun) sourcePolicy() {
+	c.t.Helper()
+	immutable := true
+	for name, document := range map[string]string{
+		gitOpenPolicy:   "allowedGitHosts:\n  - " + c.host + "\nmaxContentBytes: 4096\n",
+		gitClosedPolicy: "allowedGitHosts:\n  - git.example.com\n",
+	} {
+		c.check(c.cluster.Client.Create(c.ctx, &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Namespace: c.in.TestNamespace, Name: name},
+			Immutable:  &immutable, Data: map[string]string{"policy.yaml": document},
+		}, client.FieldOwner(harness.FieldOwner)), "create source policy %s", name)
+	}
+	open := &corev1.ConfigMap{}
+	c.check(c.get(gitOpenPolicy, open), "read source policy %s", gitOpenPolicy)
+	before := c.waitForSchema("the schema to be in sync", inSyncSchema)
+	plans := c.planCount(labelSchema, gitSchema, &ptahv1alpha1.PtahSchemaPlanList{})
+
+	c.setSourcePolicy(gitOpenPolicy)
+	bound := c.waitForSchema("the open policy to be checked and recorded", func(schema *ptahv1alpha1.PtahSchema) bool {
+		return schema.Generation > before.Generation && schema.Status.Source.SourcePolicy != nil &&
+			schema.Status.Source.SourcePolicy.UID == open.UID && inSyncSchema(schema)
+	})
+	if bound.Status.Source.Git == nil || bound.Status.Source.Git.Commit != c.commit(2) {
+		c.fatalf("the policy's Resolve read %+v, want commit %s", bound.Status.Source.Git, c.commit(2))
+	}
+	if after := c.planCount(labelSchema, gitSchema, &ptahv1alpha1.PtahSchemaPlanList{}); after != plans {
+		c.fatalf("naming a policy that allows the source published %d plans against a converged database", after-plans)
+	}
+
+	resolves := c.jobCount(labelSchema, gitSchema, "resolve")
+	c.setSourcePolicy(gitClosedPolicy)
+	var refusal string
+	c.wait("the closed policy to refuse the host", func() (bool, string) {
+		schema := c.schemaNamed(gitSchema)
+		failed := meta.FindStatusCondition(schema.Status.Conditions, ptahv1alpha1.ConditionReconciliationFailed)
+		if schema.Status.Phase != ptahv1alpha1.PhaseFailed || failed == nil || failed.Status != metav1.ConditionTrue {
+			return false, string(schema.Status.Phase)
+		}
+		refusal = failed.Message
+		return strings.Contains(refusal, "allowedGitHosts does not name "+c.host), refusal
+	})
+	if after := c.jobCount(labelSchema, gitSchema, "resolve"); after != resolves {
+		c.fatalf("a host the policy refuses got %d Resolve Jobs", after-resolves)
+	}
+	c.setSourcePolicy(gitOpenPolicy)
+	c.waitForSchema("the open policy to hold again", func(schema *ptahv1alpha1.PtahSchema) bool {
+		return schema.Status.Source.SourcePolicy != nil && schema.Status.Source.SourcePolicy.UID == open.UID && inSyncSchema(schema)
+	})
+	c.logf("PASS a source policy bound into the resolution, and refused a host it does not allow before any Job: %s", refusal)
+}
+
+// setSourcePolicy names a source policy on the Git schema.
+func (c *gitRun) setSourcePolicy(name string) {
+	c.t.Helper()
+	patch := client.RawPatch(types.MergePatchType,
+		[]byte(`{"spec":{"desired":{"sourcePolicyFrom":{"name":"`+name+`","key":"policy.yaml"}}}}`))
+	c.check(c.cluster.Client.Patch(c.ctx, &ptahv1alpha1.PtahSchema{ObjectMeta: metav1.ObjectMeta{Namespace: c.in.TestNamespace, Name: gitSchema}},
+		patch, client.FieldOwner(harness.FieldOwner)), "name source policy %s on %s", name, gitSchema)
+}
+
+func (c *gitRun) jobCount(label, name, operation string) int {
+	c.t.Helper()
+	jobs := &batchv1.JobList{}
+	c.check(c.cluster.Client.List(c.ctx, jobs, client.InNamespace(c.in.TestNamespace),
+		client.MatchingLabels{label: name, labelOperation: operation}), "list the %s Jobs of %s", operation, name)
+	return len(jobs.Items)
 }
 
 // migrationOverSSH applies a migration directory at the commit a tag names,

@@ -4,8 +4,8 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     operator.ptah.run/controller-state-version: "1"
-    operator.ptah.run/crd-schema-version: "4"
-    operator.ptah.run/crd-schema-digest: "sha256:05b6db55f8cba6df5b33aaac69403711b8dae4e92c19bbbb5683a891f5764c09"
+    operator.ptah.run/crd-schema-version: "5"
+    operator.ptah.run/crd-schema-digest: "sha256:8e9998097aa3ca6099d053b23cf1b2c855c5cecd513406de5e5e441916d21f51"
     controller-gen.kubebuilder.io/version: v0.22.0
   name: ptahmigrations.operator.ptah.run
 spec:
@@ -210,6 +210,19 @@ spec:
                     required:
                     - name
                     type: object
+                  sourcePolicyFrom:
+                    properties:
+                      key:
+                        type: string
+                      name:
+                        default: ""
+                        type: string
+                      optional:
+                        type: boolean
+                    required:
+                    - key
+                    type: object
+                    x-kubernetes-map-type: atomic
                   transport:
                     properties:
                       caFrom:
@@ -258,6 +271,12 @@ spec:
                 - message: transport is refused with configMap and git
                   rule: has(self.ociRef) || !has(self.transport) || (!has(self.transport.caFrom)
                     && (!has(self.transport.plainHTTP) || !self.transport.plainHTTP))
+                - message: sourcePolicyFrom is for configMap and git sources
+                  rule: '!has(self.sourcePolicyFrom) || !has(self.ociRef)'
+                - message: sourcePolicyFrom must name a required ConfigMap key
+                  rule: '!has(self.sourcePolicyFrom) || (self.sourcePolicyFrom.name.size()
+                    > 0 && self.sourcePolicyFrom.key.size() > 0 && (!has(self.sourcePolicyFrom.optional)
+                    || !self.sourcePolicyFrom.optional))'
               execution:
                 default: {}
                 properties:
@@ -1888,6 +1907,17 @@ spec:
                   rule: 'self.resolution == ''Acknowledged'' ? has(self.acknowledgmentRef)
                     && has(self.acknowledgedBy) : !has(self.acknowledgmentRef) &&
                     !has(self.acknowledgedBy)'
+              sourcePolicy:
+                properties:
+                  digest:
+                    pattern: ^sha256:[0-9a-f]{64}$
+                    type: string
+                  uid:
+                    type: string
+                required:
+                - digest
+                - uid
+                type: object
               unresolvedRun:
                 properties:
                   dispatchedBy:

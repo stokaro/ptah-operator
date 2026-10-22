@@ -89,6 +89,11 @@ The credential Secret `inventory-git` holds `password` (a token here) and
 `caSHA256`, the digest of the CA bundle it may be sent under. The manager
 never reads the Secret or the repository.
 
+The team's source policy `team-source-policy`, an immutable ConfigMap, allows
+only `git.example.com` and at most 1 MiB of selected files; another host is
+refused before a Job is made, and a plan binds the policy, so replacing it
+retires the plan.
+
 ```yaml
 apiVersion: operator.ptah.run/v1alpha1
 kind: PtahSchema
@@ -114,6 +119,9 @@ spec:
         caFrom:
           name: git-example-ca
           key: ca.pem
+    sourcePolicyFrom:
+      name: team-source-policy
+      key: policy.yaml
   interval: 5m
 ```
 
@@ -320,6 +328,10 @@ spec:
 | `spec.desired.registryAuthFrom.passwordKey` | `string`, default `password` | PasswordKey is the Secret key holding the password. |
 | `spec.desired.registryAuthFrom.tokenKey` | `string`, default `token` | TokenKey is the Secret key holding a bearer token, where one is used instead of a username and password. |
 | `spec.desired.registryAuthFrom.usernameKey` | `string`, default `username` | Environment mode supports username/password or an identity token. Keys are optional so a single Secret shape can use either credential form. UsernameKey is the Secret key holding the username. |
+| `spec.desired.sourcePolicyFrom` | `object` | SourcePolicyFrom names the immutable ConfigMap holding what a team refuses for a ConfigMap or Git source: the hosts a Git source may name, the ConfigMaps a ConfigMap source may name, and the most the selected files may hold. A plan binds the policy's object and bytes, so another policy retires it. An OCI source has its verification policy instead, and the API refuses this beside ociRef. |
+| `spec.desired.sourcePolicyFrom.key` | `string`, required | The key to select from the ConfigMap's Data field. Keys in the BinaryData field are not currently propagated to container env vars. |
+| `spec.desired.sourcePolicyFrom.name` | `string`, default `` | Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
+| `spec.desired.sourcePolicyFrom.optional` | `boolean` | Specify whether the ConfigMap or its key must be defined |
 | `spec.desired.transport` | `object` | This resource requires: where `desired.transport` and `desired.transport.caFrom` are set, desired.transport.caFrom must name a required ConfigMap key. Transport is how the registry is reached: plain HTTP, a custom CA. |
 | `spec.desired.transport.caFrom` | `object` | This resource requires: where `desired.transport` and `desired.transport.caFrom` are set, desired.transport.caFrom must name a required ConfigMap key. CAFrom selects a custom CA bundle. When registryAuthFrom is present, that same Secret must contain caSHA256 with the exact lowercase SHA-256 digest of the selected bytes. |
 | `spec.desired.transport.caFrom.key` | `string`, required | This resource requires: where `desired.transport` and `desired.transport.caFrom` are set, desired.transport.caFrom must name a required ConfigMap key. The key to select from the ConfigMap's Data field. Keys in the BinaryData field are not currently propagated to container env vars. |
@@ -630,6 +642,9 @@ spec:
 | `status.applied.source` | `object` | Source is the source that was applied, for a plan computed from a ConfigMap. |
 | `status.applied.source.contentDigest` | `string`, required | ContentDigest is the content digest of the files the plan was computed from. |
 | `status.applied.source.kind` | `string`, required, one of `ConfigMap`, `Git` | Kind of source the plan was computed from. |
+| `status.applied.source.policy` | `object` | Policy is the source policy the source was checked against, when the resource names one. |
+| `status.applied.source.policy.digest` | `string`, required | Digest is "sha256:" and the SHA-256 of the policy document. |
+| `status.applied.source.policy.uid` | `string`, required | UID of the policy ConfigMap. Another ConfigMap under the same name is another policy. |
 | `status.applied.source.revision` | `string`, required | Revision is the source object the files were read from. For a ConfigMap it is the ConfigMap's UID: an edit to a key the source does not select keeps the plan, while another ConfigMap, or the same name deleted and created again, retires it even when the files match. For Git it is "sha256:" and the SHA-256 of the repository URL and the selected path, joined by a newline: another repository or another path retires the plan even when the files match, while a commit that leaves the selected files as they were keeps it, as an edit to an unselected key keeps a ConfigMap's. |
 | `status.applied.targetIdentityDigest` | `string`, required | TargetIdentityDigest is the database it converged. |
 | `status.conditions` | `[]object` | Conditions are the readable verdicts: whether the engine is supported, the artifact resolved and verified, the database was reachable, drift was found, a plan is ready, an approval is required, the schema is in sync, and whether the last reconciliation failed. |
@@ -766,6 +781,9 @@ spec:
 | `status.pendingObservation.plan.source` | `object` | Source is the source a plan computed from a ConfigMap binds in place of artifactDigest. |
 | `status.pendingObservation.plan.source.contentDigest` | `string`, required | ContentDigest is the content digest of the files the plan was computed from. |
 | `status.pendingObservation.plan.source.kind` | `string`, required, one of `ConfigMap`, `Git` | Kind of source the plan was computed from. |
+| `status.pendingObservation.plan.source.policy` | `object` | Policy is the source policy the source was checked against, when the resource names one. |
+| `status.pendingObservation.plan.source.policy.digest` | `string`, required | Digest is "sha256:" and the SHA-256 of the policy document. |
+| `status.pendingObservation.plan.source.policy.uid` | `string`, required | UID of the policy ConfigMap. Another ConfigMap under the same name is another policy. |
 | `status.pendingObservation.plan.source.revision` | `string`, required | Revision is the source object the files were read from. For a ConfigMap it is the ConfigMap's UID: an edit to a key the source does not select keeps the plan, while another ConfigMap, or the same name deleted and created again, retires it even when the files match. For Git it is "sha256:" and the SHA-256 of the repository URL and the selected path, joined by a newline: another repository or another path retires the plan even when the files match, while a commit that leaves the selected files as they were keeps it, as an edit to an unselected key keeps a ConfigMap's. |
 | `status.pendingObservation.plan.statementCount` | `integer`, required | StatementCount is how many statements it holds. The statements themselves are not here: read them with kubectl ptah plan. |
 | `status.pendingObservation.plan.targetIdentityDigest` | `string`, required | TargetIdentityDigest is the database it was computed against. |
@@ -853,6 +871,9 @@ spec:
 | `status.plan.source` | `object` | Source is the source a plan computed from a ConfigMap binds in place of artifactDigest. |
 | `status.plan.source.contentDigest` | `string`, required | ContentDigest is the content digest of the files the plan was computed from. |
 | `status.plan.source.kind` | `string`, required, one of `ConfigMap`, `Git` | Kind of source the plan was computed from. |
+| `status.plan.source.policy` | `object` | Policy is the source policy the source was checked against, when the resource names one. |
+| `status.plan.source.policy.digest` | `string`, required | Digest is "sha256:" and the SHA-256 of the policy document. |
+| `status.plan.source.policy.uid` | `string`, required | UID of the policy ConfigMap. Another ConfigMap under the same name is another policy. |
 | `status.plan.source.revision` | `string`, required | Revision is the source object the files were read from. For a ConfigMap it is the ConfigMap's UID: an edit to a key the source does not select keeps the plan, while another ConfigMap, or the same name deleted and created again, retires it even when the files match. For Git it is "sha256:" and the SHA-256 of the repository URL and the selected path, joined by a newline: another repository or another path retires the plan even when the files match, while a commit that leaves the selected files as they were keeps it, as an edit to an unselected key keeps a ConfigMap's. |
 | `status.plan.statementCount` | `integer`, required | StatementCount is how many statements it holds. The statements themselves are not here: read them with kubectl ptah plan. |
 | `status.plan.targetIdentityDigest` | `string`, required | TargetIdentityDigest is the database it was computed against. |
@@ -885,6 +906,9 @@ spec:
 | `status.source.snapshot.name` | `string`, required | Name of the snapshot ConfigMap, in the resource's namespace. |
 | `status.source.snapshot.schemaFile` | `string` | SchemaFile is the path, inside the snapshot, of the one file a schema reads. A migration reads the whole directory and leaves it empty. |
 | `status.source.snapshot.uid` | `string`, required | UID the snapshot had when it was bound. A snapshot deleted and written again under the same name is another object. |
+| `status.source.sourcePolicy` | `object` | SourcePolicy is the source policy the last resolution was checked against, when the spec names one. |
+| `status.source.sourcePolicy.digest` | `string`, required | Digest is "sha256:" and the SHA-256 of the policy document. |
+| `status.source.sourcePolicy.uid` | `string`, required | UID of the policy ConfigMap. Another ConfigMap under the same name is another policy. |
 | `status.source.verificationPolicyDigest` | `string` | VerificationPolicyDigest is that policy's content at the time. |
 | `status.source.verificationPolicyUID` | `string` | VerificationPolicyUID is the policy object that accepted it. |
 | `status.source.verified` | `boolean` | Verified says the verification policy accepted it. It goes false again when the policy changes, because the old answer was about the old rules. |

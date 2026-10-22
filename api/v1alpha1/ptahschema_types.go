@@ -229,6 +229,8 @@ type DatabaseTargetRef struct {
 // +kubebuilder:validation:XValidation:rule="has(self.ociRef) == has(self.verificationPolicyFrom)",message="verificationPolicyFrom is required with ociRef and refused with configMap and git"
 // +kubebuilder:validation:XValidation:rule="has(self.ociRef) || !has(self.registryAuthFrom)",message="registryAuthFrom is refused with configMap and git"
 // +kubebuilder:validation:XValidation:rule="has(self.ociRef) || !has(self.transport) || (!has(self.transport.caFrom) && (!has(self.transport.plainHTTP) || !self.transport.plainHTTP))",message="transport is refused with configMap and git"
+// +kubebuilder:validation:XValidation:rule="!has(self.sourcePolicyFrom) || !has(self.ociRef)",message="sourcePolicyFrom is for configMap and git sources"
+// +kubebuilder:validation:XValidation:rule="!has(self.sourcePolicyFrom) || (self.sourcePolicyFrom.name.size() > 0 && self.sourcePolicyFrom.key.size() > 0 && (!has(self.sourcePolicyFrom.optional) || !self.sourcePolicyFrom.optional))",message="sourcePolicyFrom must name a required ConfigMap key"
 type SourceSpec struct {
 	// OCIRef is a desired-schema artifact reference. It may name a tag or a
 	// digest; every later operation receives only the resolved digest.
@@ -264,6 +266,15 @@ type SourceSpec struct {
 	// artifacts, and a policy nothing evaluates would read as a gate.
 	// +optional
 	VerificationPolicyFrom *corev1.ConfigMapKeySelector `json:"verificationPolicyFrom,omitempty"`
+
+	// SourcePolicyFrom names the immutable ConfigMap holding what a team
+	// refuses for a ConfigMap or Git source: the hosts a Git source may
+	// name, the ConfigMaps a ConfigMap source may name, and the most the
+	// selected files may hold. A plan binds the policy's object and bytes,
+	// so another policy retires it. An OCI source has its verification
+	// policy instead, and the API refuses this beside ociRef.
+	// +optional
+	SourcePolicyFrom *corev1.ConfigMapKeySelector `json:"sourcePolicyFrom,omitempty"`
 
 	// Transport is how the registry is reached: plain HTTP, a custom CA.
 	Transport OCITransportSpec `json:"transport,omitempty"`
@@ -542,6 +553,21 @@ type PlanSourceBinding struct {
 	// from.
 	// +kubebuilder:validation:Pattern=`^sha256:[0-9a-f]{64}$`
 	ContentDigest string `json:"contentDigest"`
+	// Policy is the source policy the source was checked against, when the
+	// resource names one.
+	// +optional
+	Policy *SourcePolicyBinding `json:"policy,omitempty"`
+}
+
+// SourcePolicyBinding is the source policy a resolution was checked against:
+// the ConfigMap's UID and the digest of the selected bytes.
+type SourcePolicyBinding struct {
+	// UID of the policy ConfigMap. Another ConfigMap under the same name is
+	// another policy.
+	UID types.UID `json:"uid"`
+	// Digest is "sha256:" and the SHA-256 of the policy document.
+	// +kubebuilder:validation:Pattern=`^sha256:[0-9a-f]{64}$`
+	Digest string `json:"digest"`
 }
 
 // RegistryAuthSource describes a Secret without requiring the controller to
@@ -1158,6 +1184,10 @@ type SchemaSourceStatus struct {
 	// policy, so verified stays false.
 	// +optional
 	Git *GitSourceRevision `json:"git,omitempty"`
+	// SourcePolicy is the source policy the last resolution was checked
+	// against, when the spec names one.
+	// +optional
+	SourcePolicy *SourcePolicyBinding `json:"sourcePolicy,omitempty"`
 }
 
 // DriftFindingStatus is a bounded aggregate from the native drift report. It

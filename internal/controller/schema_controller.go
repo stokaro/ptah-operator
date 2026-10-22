@@ -274,6 +274,14 @@ func (r *SchemaReconciler) reconcile(ctx context.Context, request ctrl.Request) 
 	if schema.Status.ObservedGeneration != schema.Generation {
 		return r.claim(ctx, schema, operatorv1alpha1.OperationResolve)
 	}
+	if moved, movedErr := sourcePolicyMoved(ctx, r.directReader(), schema.Namespace, schema.Spec.Desired,
+		schema.Status.Source.SourcePolicy, schemaSourceResolved(schema)); movedErr != nil {
+		return ctrl.Result{}, movedErr
+	} else if moved {
+		// Another source policy is read now, and the source checked against
+		// it: a plan made under the old one does not apply.
+		return r.claim(ctx, schema, operatorv1alpha1.OperationResolve)
+	}
 	if moved, movedErr := configMapSourceMoved(ctx, r.directReader(), schema.Namespace, schema.Spec.Desired.ConfigMap, schema.Status.Source.ConfigMap); movedErr != nil {
 		return ctrl.Result{}, movedErr
 	} else if moved {
@@ -1479,14 +1487,25 @@ func (r *SchemaReconciler) consumeResultWithTransport(ctx context.Context, schem
 			if err != nil {
 				return r.retryOperation(ctx, schema, job, err)
 			}
-			if gitResolutionChanged(schema.Status.Source.Git, revision) {
+			policy, policyBinding, err := sourcePolicyFor(ctx, r.directReader(), schema.Namespace, schema.Spec.Desired)
+			if err == nil {
+				err = checkGitSource(policy, git, result.ResolvedContentBytes)
+			}
+			if err != nil {
+				if errors.Is(err, errSourceRefused) {
+					return r.retryOperationAs(ctx, schema, job, operatorv1alpha1.ReasonConfigurationError, err, nil)
+				}
+				return ctrl.Result{}, err
+			}
+			if gitResolutionChanged(schema.Status.Source.Git, revision) ||
+				!sourcebinding.SamePolicy(schema.Status.Source.SourcePolicy, policyBinding) {
 				if err := r.markRecordedApprovalStale(ctx, schema); err != nil {
 					return ctrl.Result{}, err
 				}
 				schema.Status.Plan = nil
 				schema.Status.Applied = nil
 			}
-			schema.Status.Source = operatorv1alpha1.SchemaSourceStatus{Git: &revision, ResolvedAt: &now}
+			schema.Status.Source = operatorv1alpha1.SchemaSourceStatus{Git: &revision, ResolvedAt: &now, SourcePolicy: policyBinding}
 			// A Git source has no verification policy, so there is no Verify
 			// step: observation reads the commit next.
 			schema.Status.Phase = operatorv1alpha1.PhaseObserving
@@ -2056,6 +2075,20 @@ func (r *SchemaReconciler) claimAt(
 		// registry to reach and no credential to keep apart, so Resolve is a
 		// read and a write here rather than a Job.
 		return r.resolveConfigMapSource(ctx, schema)
+	}
+	if git := schema.Spec.Desired.Git; operation == operatorv1alpha1.OperationResolve && git != nil {
+		// A host the source policy does not allow gets no Job: the
+		// credential is never sent there.
+		policy, _, err := sourcePolicyFor(ctx, r.directReader(), schema.Namespace, schema.Spec.Desired)
+		if err == nil {
+			err = checkGitSource(policy, git, 0)
+		}
+		if err != nil {
+			if errors.Is(err, errSourceRefused) {
+				return r.configMapSourceRefused(ctx, schema, err)
+			}
+			return ctrl.Result{}, err
+		}
 	}
 	kind := mutationlifecycle.SchemaOperation(operation)
 	inputs, err := operationInputs(schema, operation)
@@ -4172,6 +4205,9 @@ func operationInputs(schema *operatorv1alpha1.PtahSchema, operation operatorv1al
 			base["artifact_digest"] = schema.Status.Source.Digest
 			base["source_access"] = artifactAccessBinding(schema)
 			addConfigMapSourceInput(base, schema.Status.Source.ConfigMap)
+			if policy := schema.Status.Source.SourcePolicy; policy != nil {
+				base["source_policy"] = policy
+			}
 		}
 		base["target"] = target
 		base["coordination_digest"] = coordinationDigest
@@ -4205,6 +4241,9 @@ func operationInputs(schema *operatorv1alpha1.PtahSchema, operation operatorv1al
 			base["artifact_digest"] = schema.Status.Source.Digest
 			base["source_access"] = artifactAccessBinding(schema)
 			addConfigMapSourceInput(base, schema.Status.Source.ConfigMap)
+			if policy := schema.Status.Source.SourcePolicy; policy != nil {
+				base["source_policy"] = policy
+			}
 			base["coordination_digest"] = schema.Status.Target.CoordinationDigest
 			base["target_identity"] = schema.Status.Target.IdentityDigest
 			base["target"] = databaseTargetBinding(schema.Spec.Target)

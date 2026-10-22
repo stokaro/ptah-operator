@@ -255,7 +255,8 @@ func TestRunnerResolvesAGitSourceWithoutHandingPtahTheGrants(t *testing.T) {
 		Executor:    executor,
 		TempDir:     t.TempDir(),
 	})
-	if result.Error != nil || result.ResolvedCommit != gitTestCommit || result.ResolvedContentDigest != digest || result.ResolvedDigest != "" {
+	if result.Error != nil || result.ResolvedCommit != gitTestCommit || result.ResolvedContentDigest != digest || result.ResolvedDigest != "" ||
+		result.ResolvedContentBytes != int64(len(files[0].Data)) {
 		t.Fatalf("Run() = %#v", result)
 	}
 	if len(executor.calls) != 1 {

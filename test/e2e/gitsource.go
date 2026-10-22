@@ -67,6 +67,9 @@ const (
 	gitElsewhereCredential = "e2e-git-token-elsewhere"
 	gitDeployKeyCredential = "e2e-git-deploy-key"
 	gitCAConfigMap         = "e2e-git-ca"
+	// gitOpenPolicy allows the server's host, and gitClosedPolicy another.
+	gitOpenPolicy          = "e2e-git-source-policy"
+	gitClosedPolicy        = "e2e-git-source-policy-closed"
 	gitKnownHostsConfigMap = "e2e-git-known-hosts"
 	// gitOtherHostsConfigMap pins a host key the server does not hold, and
 	// gitOtherHostsCredential grants the deploy key under it.

@@ -80,6 +80,11 @@ The credential Secret `inventory-git` holds `password` (a token here) and
 `caSHA256`, the digest of the CA bundle it may be sent under. The manager
 never reads the Secret or the repository.
 
+The team's source policy `team-source-policy`, an immutable ConfigMap, allows
+only `git.example.com` and at most 1 MiB of selected files; another host is
+refused before a Job is made, and a plan binds the policy, so replacing it
+retires the plan.
+
 ```yaml
 apiVersion: operator.ptah.run/v1alpha1
 kind: PtahSchema
@@ -105,6 +110,9 @@ spec:
         caFrom:
           name: git-example-ca
           key: ca.pem
+    sourcePolicyFrom:
+      name: team-source-policy
+      key: policy.yaml
   interval: 5m
 ```
 
