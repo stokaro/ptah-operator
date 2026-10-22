@@ -4,8 +4,8 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     operator.ptah.run/controller-state-version: "1"
-    operator.ptah.run/crd-schema-version: "3"
-    operator.ptah.run/crd-schema-digest: "sha256:272b5a57d30dc15c945c858260a3d51cb72ae032c14104db540cc7e7884d1d66"
+    operator.ptah.run/crd-schema-version: "4"
+    operator.ptah.run/crd-schema-digest: "sha256:0d169b13310f165c1c63e9111d279a76a5077af2bc13d8aa5f90014e58a00f81"
     controller-gen.kubebuilder.io/version: v0.22.0
   name: ptahmigrations.operator.ptah.run
 spec:
@@ -87,6 +87,91 @@ spec:
                     - items
                     - name
                     type: object
+                  git:
+                    properties:
+                      authFrom:
+                        properties:
+                          name:
+                            maxLength: 253
+                            minLength: 1
+                            type: string
+                        required:
+                        - name
+                        type: object
+                      path:
+                        maxLength: 1024
+                        minLength: 1
+                        pattern: ^(\.|(?:[^./\\\x00-\x1f\x7f][^/\\\x00-\x1f\x7f]*|\.[^./\\\x00-\x1f\x7f][^/\\\x00-\x1f\x7f]*|\.\.[^/\\\x00-\x1f\x7f]+)(?:/(?:[^./\\\x00-\x1f\x7f][^/\\\x00-\x1f\x7f]*|\.[^./\\\x00-\x1f\x7f][^/\\\x00-\x1f\x7f]*|\.\.[^/\\\x00-\x1f\x7f]+))*)$
+                        type: string
+                      ref:
+                        properties:
+                          branch:
+                            maxLength: 255
+                            minLength: 1
+                            pattern: ^[^[:space:][:cntrl:]~^:?*\[\\]+$
+                            type: string
+                          commit:
+                            pattern: ^[0-9a-f]{40}$
+                            type: string
+                          tag:
+                            maxLength: 255
+                            minLength: 1
+                            pattern: ^[^[:space:][:cntrl:]~^:?*\[\\]+$
+                            type: string
+                        type: object
+                        x-kubernetes-validations:
+                        - message: set exactly one of branch, tag and commit
+                          rule: '[has(self.branch), has(self.tag), has(self.commit)].filter(set,
+                            set).size() == 1'
+                      transport:
+                        properties:
+                          caFrom:
+                            properties:
+                              key:
+                                type: string
+                              name:
+                                default: ""
+                                type: string
+                              optional:
+                                type: boolean
+                            required:
+                            - key
+                            type: object
+                            x-kubernetes-map-type: atomic
+                          knownHostsFrom:
+                            properties:
+                              key:
+                                type: string
+                              name:
+                                default: ""
+                                type: string
+                              optional:
+                                type: boolean
+                            required:
+                            - key
+                            type: object
+                            x-kubernetes-map-type: atomic
+                        type: object
+                      url:
+                        maxLength: 2048
+                        minLength: 9
+                        pattern: ^(https://[^@/[:space:]?#]+|ssh://([^:@/[:space:]?#]+@)?[^@/[:space:]?#]+)/[^[:space:]?#]+$
+                        type: string
+                    required:
+                    - path
+                    - ref
+                    - url
+                    type: object
+                    x-kubernetes-validations:
+                    - message: an ssh:// repository needs transport.knownHostsFrom
+                      rule: '!self.url.startsWith(''ssh://'') || (has(self.transport)
+                        && has(self.transport.knownHostsFrom))'
+                    - message: transport.knownHostsFrom is for an ssh:// repository
+                      rule: self.url.startsWith('ssh://') || !has(self.transport)
+                        || !has(self.transport.knownHostsFrom)
+                    - message: transport.caFrom is for an https:// repository
+                      rule: '!self.url.startsWith(''ssh://'') || !has(self.transport)
+                        || !has(self.transport.caFrom)'
                   ociRef:
                     minLength: 7
                     pattern: ^oci://[^[:space:]?#]+$
@@ -153,8 +238,9 @@ spec:
                     x-kubernetes-map-type: atomic
                 type: object
                 x-kubernetes-validations:
-                - message: set exactly one of ociRef and configMap
-                  rule: has(self.ociRef) != has(self.configMap)
+                - message: set exactly one of ociRef, configMap and git
+                  rule: '[has(self.ociRef), has(self.configMap), has(self.git)].filter(set,
+                    set).size() == 1'
                 - message: verificationPolicyFrom is required with ociRef and refused
                     with configMap
                   rule: has(self.ociRef) == has(self.verificationPolicyFrom)
@@ -1127,6 +1213,83 @@ spec:
                     properties:
                       digest:
                         type: string
+                      git:
+                        properties:
+                          authFrom:
+                            properties:
+                              name:
+                                maxLength: 253
+                                minLength: 1
+                                type: string
+                            required:
+                            - name
+                            type: object
+                          commit:
+                            pattern: ^[0-9a-f]{40}$
+                            type: string
+                          contentDigest:
+                            pattern: ^sha256:[0-9a-f]{64}$
+                            type: string
+                          path:
+                            type: string
+                          ref:
+                            properties:
+                              branch:
+                                maxLength: 255
+                                minLength: 1
+                                pattern: ^[^[:space:][:cntrl:]~^:?*\[\\]+$
+                                type: string
+                              commit:
+                                pattern: ^[0-9a-f]{40}$
+                                type: string
+                              tag:
+                                maxLength: 255
+                                minLength: 1
+                                pattern: ^[^[:space:][:cntrl:]~^:?*\[\\]+$
+                                type: string
+                            type: object
+                            x-kubernetes-validations:
+                            - message: set exactly one of branch, tag and commit
+                              rule: '[has(self.branch), has(self.tag), has(self.commit)].filter(set,
+                                set).size() == 1'
+                          transport:
+                            properties:
+                              caFrom:
+                                properties:
+                                  key:
+                                    type: string
+                                  name:
+                                    default: ""
+                                    type: string
+                                  optional:
+                                    type: boolean
+                                required:
+                                - key
+                                type: object
+                                x-kubernetes-map-type: atomic
+                              knownHostsFrom:
+                                properties:
+                                  key:
+                                    type: string
+                                  name:
+                                    default: ""
+                                    type: string
+                                  optional:
+                                    type: boolean
+                                required:
+                                - key
+                                type: object
+                                x-kubernetes-map-type: atomic
+                            type: object
+                          url:
+                            type: string
+                        required:
+                        - commit
+                        - contentDigest
+                        - path
+                        - ref
+                        - url
+                        type: object
                       registryAuthFrom:
                         properties:
                           dockerConfigJSONKey:
@@ -1196,8 +1359,10 @@ spec:
                           rule: '!self.plainHTTP || !has(self.caFrom)'
                     type: object
                     x-kubernetes-validations:
-                    - message: set exactly one of resolvedReference and snapshot
-                      rule: has(self.resolvedReference) != has(self.snapshot)
+                    - message: set exactly one of resolvedReference, snapshot and
+                        git
+                      rule: '[has(self.resolvedReference), has(self.snapshot), has(self.git)].filter(set,
+                        set).size() == 1'
                   startedAt:
                     format: date-time
                     type: string
@@ -1245,6 +1410,83 @@ spec:
                 properties:
                   digest:
                     type: string
+                  git:
+                    properties:
+                      authFrom:
+                        properties:
+                          name:
+                            maxLength: 253
+                            minLength: 1
+                            type: string
+                        required:
+                        - name
+                        type: object
+                      commit:
+                        pattern: ^[0-9a-f]{40}$
+                        type: string
+                      contentDigest:
+                        pattern: ^sha256:[0-9a-f]{64}$
+                        type: string
+                      path:
+                        type: string
+                      ref:
+                        properties:
+                          branch:
+                            maxLength: 255
+                            minLength: 1
+                            pattern: ^[^[:space:][:cntrl:]~^:?*\[\\]+$
+                            type: string
+                          commit:
+                            pattern: ^[0-9a-f]{40}$
+                            type: string
+                          tag:
+                            maxLength: 255
+                            minLength: 1
+                            pattern: ^[^[:space:][:cntrl:]~^:?*\[\\]+$
+                            type: string
+                        type: object
+                        x-kubernetes-validations:
+                        - message: set exactly one of branch, tag and commit
+                          rule: '[has(self.branch), has(self.tag), has(self.commit)].filter(set,
+                            set).size() == 1'
+                      transport:
+                        properties:
+                          caFrom:
+                            properties:
+                              key:
+                                type: string
+                              name:
+                                default: ""
+                                type: string
+                              optional:
+                                type: boolean
+                            required:
+                            - key
+                            type: object
+                            x-kubernetes-map-type: atomic
+                          knownHostsFrom:
+                            properties:
+                              key:
+                                type: string
+                              name:
+                                default: ""
+                                type: string
+                              optional:
+                                type: boolean
+                            required:
+                            - key
+                            type: object
+                            x-kubernetes-map-type: atomic
+                        type: object
+                      url:
+                        type: string
+                    required:
+                    - commit
+                    - contentDigest
+                    - path
+                    - ref
+                    - url
+                    type: object
                   registryAuthFrom:
                     properties:
                       dockerConfigJSONKey:
@@ -1314,8 +1556,9 @@ spec:
                       rule: '!self.plainHTTP || !has(self.caFrom)'
                 type: object
                 x-kubernetes-validations:
-                - message: set exactly one of resolvedReference and snapshot
-                  rule: has(self.resolvedReference) != has(self.snapshot)
+                - message: set exactly one of resolvedReference, snapshot and git
+                  rule: '[has(self.resolvedReference), has(self.snapshot), has(self.git)].filter(set,
+                    set).size() == 1'
               conditions:
                 items:
                   properties:

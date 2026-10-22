@@ -4,8 +4,8 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     operator.ptah.run/controller-state-version: "1"
-    operator.ptah.run/crd-schema-version: "3"
-    operator.ptah.run/crd-schema-digest: "sha256:b6d0348d0e90200a2400604edc3113908492e5d1d64dbac71b980d400c0c2fa8"
+    operator.ptah.run/crd-schema-version: "4"
+    operator.ptah.run/crd-schema-digest: "sha256:1ce4fecfa111d4dbe71debc1db0b2bb6f68a5e2c2574118a83b4c5b22b3f8278"
     controller-gen.kubebuilder.io/version: v0.22.0
   name: ptahmigrationplans.operator.ptah.run
 spec:
@@ -145,6 +145,7 @@ spec:
                   kind:
                     enum:
                     - ConfigMap
+                    - Git
                     type: string
                   revision:
                     maxLength: 128
