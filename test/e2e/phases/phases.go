@@ -223,7 +223,8 @@ type DataPlaneInputs struct {
 }
 
 // DataPlane proves the PostgreSQL lifecycle, both engines' size limits,
-// four-eyes approval, and Pod metadata. It also prepares the other suites.
+// four-eyes approval, Pod metadata, and a PostgreSQL extension's drift in
+// Ptah's feature categories. It also prepares the other suites.
 var DataPlane = define[DataPlaneInputs](Phase{
 	Name:         "dataplane",
 	Test:         "TestDataPlane",
@@ -236,6 +237,7 @@ var DataPlane = define[DataPlaneInputs](Phase{
 		"closing-audits",
 		"four-eyes-distinct-approver",
 		"pod-metadata-admission",
+		"postgresql-extension-drift",
 	},
 	Preparation: 1,
 })

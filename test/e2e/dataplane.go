@@ -59,6 +59,8 @@ const (
 	fourEyesPGSecret           = "e2e-postgresql-four-eyes-db"
 	podMetadataPGDatabase      = "ptah_e2e_pod_metadata"
 	podMetadataPGSecret        = "e2e-postgresql-pod-metadata-db"
+	extensionPGDatabase        = "ptah_e2e_extension"
+	extensionPGSecret          = "e2e-postgresql-extension-db"
 	mysqlUser                  = "ptah_e2e"
 	mysqlDatabase              = "ptah_e2e"
 	mysqlSecret                = "e2e-mysql-db"
@@ -122,6 +124,7 @@ type fixtureCredentials struct {
 	customCAPGURL     string
 	fourEyesPGURL     string
 	podMetadataPGURL  string
+	extensionPGURL    string
 	mysqlPassword     string
 	mysqlRootPassword string
 	mysqlURL          string
@@ -141,6 +144,7 @@ func deriveFixtureCredentials(namespace string) fixtureCredentials {
 		customCAPGURL:     pgURL(customCAPGDatabase),
 		fourEyesPGURL:     pgURL(fourEyesPGDatabase),
 		podMetadataPGURL:  pgURL(podMetadataPGDatabase),
+		extensionPGURL:    pgURL(extensionPGDatabase),
 		mysqlPassword:     mysqlPassword,
 		mysqlRootPassword: "e2eMyRoot" + suffix + "Q7",
 		mysqlURL: "mysql://" + mysqlUser + ":" + mysqlPassword + "@tcp(" + mysqlService + "." + namespace +

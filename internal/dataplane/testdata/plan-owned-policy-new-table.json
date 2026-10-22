@@ -1,0 +1,31 @@
+{
+  "format_version": 1,
+  "name": "plan_0f1898810b0b",
+  "dialect": "postgres",
+  "from_fingerprint": "sha256:b53f16e6e4f3187bd68e99db9d33403d529c47336604bfeaeb46582515f9efa8",
+  "to_fingerprint": "sha256:ad94cc426261b9a2087e18e32ee065ba0d8d300317eed1d9cbb8f240a0c757e4",
+  "destructive": false,
+  "statements": [
+    {
+      "sql": "-- POSTGRES TABLE: e2e_policy_notes --\nCREATE TABLE \"e2e_policy_notes\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"owner_name\" text NOT NULL\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "ALTER TABLE \"e2e_policy_notes\" ENABLE ROW LEVEL SECURITY",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "transactions": [
+        "allowed"
+      ],
+      "sql": "CREATE POLICY \"e2e_policy_notes_owner\" ON \"e2e_policy_notes\"\n    USING (owner_name = current_user)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints",
+      "owned": true,
+      "access": "unchanged",
+      "access_reason": "the table is created by this plan, so no role could read it before"
+    }
+  ]
+}

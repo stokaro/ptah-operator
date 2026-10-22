@@ -1,0 +1,24 @@
+{
+  "format_version": 1,
+  "name": "plan_e20b909081d4",
+  "dialect": "postgres",
+  "from_fingerprint": "sha256:b53f16e6e4f3187bd68e99db9d33403d529c47336604bfeaeb46582515f9efa8",
+  "to_fingerprint": "sha256:17a798203d7c2b27eb23a82ff6210116e039fa1df7589fbb2df021724c16332a",
+  "destructive": false,
+  "statements": [
+    {
+      "transactions": [
+        "allowed"
+      ],
+      "sql": "CREATE EXTENSION IF NOT EXISTS \"pg_trgm\"",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints",
+      "owned": true
+    },
+    {
+      "sql": "-- POSTGRES TABLE: e2e_extension_widgets --\nCREATE TABLE \"e2e_extension_widgets\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" text NOT NULL\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    }
+  ]
+}

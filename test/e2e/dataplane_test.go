@@ -42,14 +42,16 @@ func TestFixtureCredentialsDeriveFromTheNamespace(t *testing.T) {
 		"custom CA":    credentials.customCAPGURL,
 		"four-eyes":    credentials.fourEyesPGURL,
 		"Pod metadata": credentials.podMetadataPGURL,
+		"extension":    credentials.extensionPGURL,
 	} {
 		if !strings.HasPrefix(url, "postgres://ptah_e2e:e2ePg216964841Q7@e2e-postgresql.ptah-e2e-12345.svc.cluster.local:5432/ptah_e2e") ||
 			!strings.HasSuffix(url, "?sslmode=disable") {
 			t.Errorf("%s URL = %s", name, url)
 		}
 	}
-	databases := []string{credentials.pgURL, credentials.customCAPGURL, credentials.fourEyesPGURL, credentials.podMetadataPGURL}
-	if len(slices.Compact(slices.Sorted(slices.Values(databases)))) != 4 {
+	databases := []string{credentials.pgURL, credentials.customCAPGURL, credentials.fourEyesPGURL, credentials.podMetadataPGURL,
+		credentials.extensionPGURL}
+	if len(slices.Compact(slices.Sorted(slices.Values(databases)))) != len(databases) {
 		t.Fatalf("two rows share a database: %v", databases)
 	}
 	if credentials.mysqlURL != "mysql://ptah_e2e:e2eMy216964841Q7@tcp(e2e-mysql.ptah-e2e-12345.svc.cluster.local:3306)/ptah_e2e" {
@@ -62,12 +64,12 @@ func TestFixtureCredentialsDeriveFromTheNamespace(t *testing.T) {
 // e2e_widgets and blocks.
 func TestIsolatedDatabasesAreNotTheLifecycles(t *testing.T) {
 	t.Parallel()
-	for _, database := range []string{customCAPGDatabase, fourEyesPGDatabase, podMetadataPGDatabase} {
+	for _, database := range []string{customCAPGDatabase, fourEyesPGDatabase, podMetadataPGDatabase, extensionPGDatabase} {
 		if database == pgDatabase || !strings.HasPrefix(database, "ptah_e2e_") {
 			t.Errorf("database %s is the lifecycle's or outside the ptah_e2e_ prefix", database)
 		}
 	}
-	for _, secret := range []string{customCAPGSecret, fourEyesPGSecret, podMetadataPGSecret} {
+	for _, secret := range []string{customCAPGSecret, fourEyesPGSecret, podMetadataPGSecret, extensionPGSecret} {
 		if secret == pgSecret {
 			t.Errorf("Secret %s is the lifecycle's", secret)
 		}

@@ -184,7 +184,7 @@ func TestReferenceInputsOK(t *testing.T) {
 // declares really do not exist when it starts.
 func TestReferenceDatabaseIsItsOwn(t *testing.T) {
 	t.Parallel()
-	for _, other := range []string{pgDatabase, mysqlDatabase, customCAPGDatabase, fourEyesPGDatabase, podMetadataPGDatabase, "ptah_e2e_migrations"} {
+	for _, other := range []string{pgDatabase, mysqlDatabase, customCAPGDatabase, fourEyesPGDatabase, podMetadataPGDatabase, extensionPGDatabase, "ptah_e2e_migrations"} {
 		if referenceDatabase == other {
 			t.Fatalf("the reference-data proof shares database %s with another phase", other)
 		}

@@ -152,6 +152,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:8ac1d79ac2dcc650e27f89feabcf865f98e9f89b30b1d8e66204a17b3cc6d7d7",
       "reason": "Take Ptah v0.14.0's documents (#678). A migration run report may carry Ptah's failure object, the failed statement's position and the database's SQLSTATE and error number with no text; the runner holds it to the run, carries it in the result frame, and refuses a document it contradicts. The drift vocabulary takes v0.14.0's categories: feature_changes and feature_access_<effect>, bare or with a kind, and undecided, and 31 per-object categories leave it. A report naming more categories than a frame holds is refused before framing. Schema plan and apply reports are read at their contract version 2, whose changes touch no field the runner reads. An older controller ignores the failure object and refuses a frame naming a category it does not know. The executor image changes in the same release, which retires every plan and approval made under the old one. Commands, payloads, delivery identity, SQL authority and retry limits are unchanged."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:5369044df41aaeea308c2ef7e004b9045c3d88c213d81b30c1debdce0d6920d5",
+      "reason": "Read the plan statements Ptah v0.14.0 writes for a feature owner (#695). A statement that Ptah's extension or row-security policy owner rendered carries transactions, owned, access and access_reason, and the strict plan decoder refused every such plan, so a schema declaring a PostgreSQL extension or a policy could not plan or apply. The four fields are declared and nothing reads them: the plan bytes are carried as before, Ptah folds the access assessment into the severity and refuses a plan that understates it in the dry run the plan Job runs, and the privilege kinds are still read from the SQL. Any other unknown field is still refused. Commands, payloads, result frames, delivery identity, SQL authority and retry limits are unchanged."
     }
   ]
 }
