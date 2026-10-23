@@ -105,14 +105,14 @@ func TestPlanSourcesFollowTheResolvedSource(t *testing.T) {
 		t.Fatal("another ConfigMap with the same files gave the same plan source")
 	}
 	access := &operatorv1alpha1.SourceAccessBinding{Snapshot: snapshot()}
-	if digest, source := sourcebinding.MigrationPlanSource(access, &revision); digest != "" || source == nil {
+	if digest, source := sourcebinding.MigrationPlanSource(access, &revision, nil); digest != "" || source == nil {
 		t.Fatalf("MigrationPlanSource(ConfigMap) = %q, %#v", digest, source)
 	}
-	if digest, source := sourcebinding.MigrationPlanSource(access, nil); digest != "" || source != nil {
+	if digest, source := sourcebinding.MigrationPlanSource(access, nil, nil); digest != "" || source != nil {
 		t.Fatalf("MigrationPlanSource(snapshot without its ConfigMap) = %q, %#v, want nothing", digest, source)
 	}
 	ociAccess := oci()
-	if digest, source := sourcebinding.MigrationPlanSource(&ociAccess, nil); digest != artifact || source != nil {
+	if digest, source := sourcebinding.MigrationPlanSource(&ociAccess, nil, nil); digest != artifact || source != nil {
 		t.Fatalf("MigrationPlanSource(OCI) = %q, %#v", digest, source)
 	}
 }

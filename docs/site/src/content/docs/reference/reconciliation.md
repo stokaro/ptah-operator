@@ -134,6 +134,17 @@ binds the SHA-256 of the repository URL and the path, with the content digest,
 in place of an artifact digest, under plan contract version 2, so another
 repository or path retires it even when the files match.
 
+### A source policy
+
+A ConfigMap or Git source may name a source policy with `sourcePolicyFrom`.
+Resolve checks the source against it: a ConfigMap's name and size before a
+snapshot is written, a Git host before the Resolve Job is made, and the size
+of a commit's selected files before the commit is recorded. A refused source
+fails with the rule named and plans nothing. The policy is recorded beside the
+resolution and bound into every plan computed from it, and a policy replaced
+in the cluster is read at once: the source is resolved again under it, and
+the plan made under the old one retires.
+
 After an Apply, `Observe` and `Plan` run again under the original Apply Lease.
 Only a new, coherent no-change plan establishes convergence: a process exit
 never establishes that the database changed the way the plan said it would.

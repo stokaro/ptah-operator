@@ -62,29 +62,42 @@ func ConfigMapPlanSource(revision operatorv1alpha1.ConfigMapSourceRevision, snap
 // ConfigMap one. A ConfigMap source that has not been read yet binds nothing.
 func SchemaPlanSource(status operatorv1alpha1.SchemaSourceStatus) (string, *operatorv1alpha1.PlanSourceBinding) {
 	if git := status.Git; git != nil {
-		return "", GitPlanSource(git.URL, git.Path, git.ContentDigest)
+		return "", withPolicy(GitPlanSource(git.URL, git.Path, git.ContentDigest), status.SourcePolicy)
 	}
 	if status.ConfigMap != nil && status.Snapshot != nil {
-		return "", ConfigMapPlanSource(*status.ConfigMap, *status.Snapshot)
+		return "", withPolicy(ConfigMapPlanSource(*status.ConfigMap, *status.Snapshot), status.SourcePolicy)
 	}
 	return status.Digest, nil
+}
+
+// withPolicy is a plan source bound to the source policy it was checked
+// against, if any.
+func withPolicy(source *operatorv1alpha1.PlanSourceBinding, policy *operatorv1alpha1.SourcePolicyBinding) *operatorv1alpha1.PlanSourceBinding {
+	if policy != nil {
+		source.Policy = policy.DeepCopy()
+	}
+	return source
 }
 
 // MigrationPlanSource is what a plan computed from a migration's resolved
 // source binds: the artifact digest of an OCI source, or the source binding
 // of a ConfigMap one.
-func MigrationPlanSource(artifact *operatorv1alpha1.SourceAccessBinding, revision *operatorv1alpha1.ConfigMapSourceRevision) (string, *operatorv1alpha1.PlanSourceBinding) {
+func MigrationPlanSource(
+	artifact *operatorv1alpha1.SourceAccessBinding,
+	revision *operatorv1alpha1.ConfigMapSourceRevision,
+	policy *operatorv1alpha1.SourcePolicyBinding,
+) (string, *operatorv1alpha1.PlanSourceBinding) {
 	if artifact == nil {
 		return "", nil
 	}
 	if git := artifact.Git; git != nil {
-		return "", GitPlanSource(git.URL, git.Path, git.ContentDigest)
+		return "", withPolicy(GitPlanSource(git.URL, git.Path, git.ContentDigest), policy)
 	}
 	if artifact.Snapshot != nil {
 		if revision == nil {
 			return "", nil
 		}
-		return "", ConfigMapPlanSource(*revision, *artifact.Snapshot)
+		return "", withPolicy(ConfigMapPlanSource(*revision, *artifact.Snapshot), policy)
 	}
 	return artifact.Digest, nil
 }
@@ -95,7 +108,11 @@ func Fingerprint(source *operatorv1alpha1.PlanSourceBinding) *fingerprint.PlanSo
 	if source == nil {
 		return nil
 	}
-	return &fingerprint.PlanSource{Kind: string(source.Kind), Revision: source.Revision, ContentDigest: source.ContentDigest}
+	bound := &fingerprint.PlanSource{Kind: string(source.Kind), Revision: source.Revision, ContentDigest: source.ContentDigest}
+	if policy := source.Policy; policy != nil {
+		bound.PolicyUID, bound.PolicyDigest = string(policy.UID), policy.Digest
+	}
+	return bound
 }
 
 // ContractVersion is the plan contract a plan bound to source carries.
@@ -110,8 +127,18 @@ func WrittenContract(version int32, source *operatorv1alpha1.PlanSourceBinding) 
 	return fingerprint.ValidatePlanContractVersion(version) == nil && version == ContractVersion(source)
 }
 
-// Equal reports whether two plan source bindings name the same source.
+// Equal reports whether two plan source bindings name the same source, and
+// the same source policy.
 func Equal(a, b *operatorv1alpha1.PlanSourceBinding) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.Kind == b.Kind && a.Revision == b.Revision && a.ContentDigest == b.ContentDigest && SamePolicy(a.Policy, b.Policy)
+}
+
+// SamePolicy reports whether two source policy bindings name the same
+// policy, or are both absent.
+func SamePolicy(a, b *operatorv1alpha1.SourcePolicyBinding) bool {
 	if a == nil || b == nil {
 		return a == b
 	}

@@ -4,8 +4,8 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     operator.ptah.run/controller-state-version: "1"
-    operator.ptah.run/crd-schema-version: "4"
-    operator.ptah.run/crd-schema-digest: "sha256:7aa5f1f711c4234ed92fbf5b9a4f455858b9ee2e73d13c36953c5775d1f716b5"
+    operator.ptah.run/crd-schema-version: "5"
+    operator.ptah.run/crd-schema-digest: "sha256:8ac69b55255fc7f90e708f904eeefee6cd6001f763f38bd5670aac2d03d389fe"
     controller-gen.kubebuilder.io/version: v0.22.0
   name: ptahschemas.operator.ptah.run
 spec:
@@ -213,6 +213,19 @@ spec:
                     required:
                     - name
                     type: object
+                  sourcePolicyFrom:
+                    properties:
+                      key:
+                        type: string
+                      name:
+                        default: ""
+                        type: string
+                      optional:
+                        type: boolean
+                    required:
+                    - key
+                    type: object
+                    x-kubernetes-map-type: atomic
                   transport:
                     properties:
                       caFrom:
@@ -261,6 +274,12 @@ spec:
                 - message: transport is refused with configMap and git
                   rule: has(self.ociRef) || !has(self.transport) || (!has(self.transport.caFrom)
                     && (!has(self.transport.plainHTTP) || !self.transport.plainHTTP))
+                - message: sourcePolicyFrom is for configMap and git sources
+                  rule: '!has(self.sourcePolicyFrom) || !has(self.ociRef)'
+                - message: sourcePolicyFrom must name a required ConfigMap key
+                  rule: '!has(self.sourcePolicyFrom) || (self.sourcePolicyFrom.name.size()
+                    > 0 && self.sourcePolicyFrom.key.size() > 0 && (!has(self.sourcePolicyFrom.optional)
+                    || !self.sourcePolicyFrom.optional))'
               dev:
                 properties:
                   urlFrom:
@@ -1578,6 +1597,17 @@ spec:
                         - ConfigMap
                         - Git
                         type: string
+                      policy:
+                        properties:
+                          digest:
+                            pattern: ^sha256:[0-9a-f]{64}$
+                            type: string
+                          uid:
+                            type: string
+                        required:
+                        - digest
+                        - uid
+                        type: object
                       revision:
                         maxLength: 128
                         minLength: 1
@@ -2151,6 +2181,17 @@ spec:
                             - ConfigMap
                             - Git
                             type: string
+                          policy:
+                            properties:
+                              digest:
+                                pattern: ^sha256:[0-9a-f]{64}$
+                                type: string
+                              uid:
+                                type: string
+                            required:
+                            - digest
+                            - uid
+                            type: object
                           revision:
                             maxLength: 128
                             minLength: 1
@@ -2517,6 +2558,17 @@ spec:
                         - ConfigMap
                         - Git
                         type: string
+                      policy:
+                        properties:
+                          digest:
+                            pattern: ^sha256:[0-9a-f]{64}$
+                            type: string
+                          uid:
+                            type: string
+                        required:
+                        - digest
+                        - uid
+                        type: object
                       revision:
                         maxLength: 128
                         minLength: 1
@@ -2645,6 +2697,17 @@ spec:
                     required:
                     - contentDigest
                     - name
+                    - uid
+                    type: object
+                  sourcePolicy:
+                    properties:
+                      digest:
+                        pattern: ^sha256:[0-9a-f]{64}$
+                        type: string
+                      uid:
+                        type: string
+                    required:
+                    - digest
                     - uid
                     type: object
                   verificationPolicyDigest:

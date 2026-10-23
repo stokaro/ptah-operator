@@ -198,8 +198,11 @@ type Result struct {
 	// ResolvedCommit and ResolvedContentDigest are what resolving a Git
 	// source found: the commit its ref named, and the content digest of the
 	// selected files there.
-	ResolvedCommit           string      `json:"resolvedCommit,omitempty"`
-	ResolvedContentDigest    string      `json:"resolvedContentDigest,omitempty"`
+	ResolvedCommit        string `json:"resolvedCommit,omitempty"`
+	ResolvedContentDigest string `json:"resolvedContentDigest,omitempty"`
+	// ResolvedContentBytes is how much the selected files hold together,
+	// which a source policy may bound.
+	ResolvedContentBytes     int64       `json:"resolvedContentBytes,omitempty"`
 	VerificationRequirements []string    `json:"verificationRequirements,omitempty"`
 	PlanContentDigest        string      `json:"planContentDigest,omitempty"`
 	PlanOutcome              PlanOutcome `json:"planOutcome,omitempty"`
@@ -791,6 +794,9 @@ func validateResult(result Result, options ParseOptions) error {
 		}
 	}
 	gitResolution := result.ResolvedCommit != "" || result.ResolvedContentDigest != ""
+	if result.ResolvedContentBytes < 0 || (result.ResolvedContentBytes != 0 && !gitResolution) {
+		return fmt.Errorf("%w: content size without a Git resolution", ErrMalformedFrame)
+	}
 	if result.Operation == OperationResolve {
 		switch {
 		case result.Error != nil:

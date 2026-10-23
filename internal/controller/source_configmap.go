@@ -12,15 +12,16 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/sourcepolicy"
 	"github.com/stokaro/ptah-operator/internal/sourcesnapshot"
 )
 
-// errSourceRefused marks a ConfigMap source that, as configured, gives no
-// snapshot: a missing ConfigMap or key, a path the rules refuse, or a
-// selection too large for one ConfigMap. Reading it again changes nothing
-// until somebody edits the source or the resource, and either edit wakes the
-// resource.
-var errSourceRefused = errors.New("ConfigMap source refused")
+// errSourceRefused marks a source that, as configured, gives nothing to plan
+// from: a missing ConfigMap or key, a path the rules refuse, a selection too
+// large for one ConfigMap, or a ConfigMap or Git source its source policy
+// refuses. Reading it again changes nothing until somebody edits the source,
+// the policy or the resource, and each of those edits wakes the resource.
+var errSourceRefused = errors.New("source refused")
 
 // configMapSource is what reading a ConfigMap source gave: the ConfigMap it
 // read, and the snapshot that now holds the selected files.
@@ -43,7 +44,13 @@ func readConfigMapSource(
 	owner sourcesnapshot.Owner,
 	spec operatorv1alpha1.ConfigMapSourceSpec,
 	schemaFile bool,
+	policy *sourcepolicy.Policy,
 ) (configMapSource, error) {
+	if policy != nil {
+		if err := policy.CheckConfigMap(spec.Name); err != nil {
+			return configMapSource{}, fmt.Errorf("%w: %w", errSourceRefused, err)
+		}
+	}
 	source := &corev1.ConfigMap{}
 	if err := reader.Get(ctx, client.ObjectKey{Namespace: namespace, Name: spec.Name}, source); err != nil {
 		if apierrors.IsNotFound(err) {
@@ -57,6 +64,16 @@ func readConfigMapSource(
 	files, err := sourcesnapshot.Select(source, spec.Items)
 	if err != nil {
 		return configMapSource{}, fmt.Errorf("%w: %w", errSourceRefused, err)
+	}
+	if policy != nil {
+		size := int64(0)
+		for _, file := range files {
+			size += int64(len(file.Data))
+		}
+		// Before the snapshot is written: a refused source leaves nothing.
+		if err := policy.CheckContentBytes(size); err != nil {
+			return configMapSource{}, fmt.Errorf("%w: %w", errSourceRefused, err)
+		}
 	}
 	built, digest, err := sourcesnapshot.Build(namespace, owner, files)
 	if err != nil {
@@ -185,6 +202,9 @@ func sourceConfigMapNames(spec operatorv1alpha1.SourceSpec) []string {
 	}
 	if spec.ConfigMap != nil && spec.ConfigMap.Name != "" {
 		names = append(names, spec.ConfigMap.Name)
+	}
+	if spec.SourcePolicyFrom != nil && spec.SourcePolicyFrom.Name != "" {
+		names = append(names, spec.SourcePolicyFrom.Name)
 	}
 	return names
 }

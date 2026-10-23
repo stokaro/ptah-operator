@@ -21,6 +21,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/migrationplan"
 	"github.com/stokaro/ptah-operator/internal/policy"
 	"github.com/stokaro/ptah-operator/internal/sourcebinding"
+	"github.com/stokaro/ptah-operator/internal/sourcepolicy"
 )
 
 // MigrationApprovalHandler stamps authenticated identity onto one migration
@@ -203,7 +204,7 @@ func (h *MigrationApprovalHandler) validateMigrationBinding(
 	if migration.Status.History.TargetIdentityDigest != plan.Spec.TargetIdentityDigest {
 		return fmt.Errorf("the database identity changed after the plan was generated")
 	}
-	statusArtifact, statusSource := sourcebinding.MigrationPlanSource(migration.Status.Artifact, migration.Status.ConfigMap)
+	statusArtifact, statusSource := sourcebinding.MigrationPlanSource(migration.Status.Artifact, migration.Status.ConfigMap, migration.Status.SourcePolicy)
 	if migration.Status.Artifact == nil ||
 		!sourcebinding.SamePlanSource(plan.Spec.ArtifactDigest, plan.Spec.Source, statusArtifact, statusSource) {
 		return fmt.Errorf("the resolved artifact changed after the plan was generated")
@@ -223,7 +224,11 @@ func (h *MigrationApprovalHandler) validateMigrationBinding(
 	if coordinationDigest != plan.Spec.CoordinationDigest {
 		return fmt.Errorf("the declared coordination realm changed after the plan was generated")
 	}
-	if plan.Spec.Source == nil {
+	if plan.Spec.Source != nil {
+		if err := sourcepolicy.StillBinds(ctx, h.Reader, namespace, migration.Spec.Artifact.SourcePolicyFrom, plan.Spec.Source.Policy); err != nil {
+			return err
+		}
+	} else {
 		policyBinding, err := policy.ConfigMapBinding(ctx, h.Reader, namespace, migration.Spec.Artifact.VerificationPolicyFrom)
 		if err != nil {
 			return err

@@ -122,7 +122,7 @@ func validateMigrationPlanShape(
 	if plan.Spec.TargetIdentityDigest != history.TargetIdentityDigest {
 		return errors.New("plan target identity does not match the database the history came from")
 	}
-	statusArtifact, statusSource := sourcebinding.MigrationPlanSource(artifact, migration.Status.ConfigMap)
+	statusArtifact, statusSource := sourcebinding.MigrationPlanSource(artifact, migration.Status.ConfigMap, migration.Status.SourcePolicy)
 	if !sourcebinding.SamePlanSource(plan.Spec.ArtifactDigest, plan.Spec.Source, statusArtifact, statusSource) {
 		return errors.New("plan artifact digest does not match the resolved artifact")
 	}

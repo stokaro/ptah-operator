@@ -522,6 +522,11 @@ type PtahMigrationStatus struct {
 	// +optional
 	ConfigMap *ConfigMapSourceRevision `json:"configMap,omitempty"`
 
+	// SourcePolicy is the source policy the last resolution was checked
+	// against, when the spec names one.
+	// +optional
+	SourcePolicy *SourcePolicyBinding `json:"sourcePolicy,omitempty"`
+
 	// ExecutionBinding is what this resource's plans and approvals are bound
 	// to: the components that decide what a run means. It is the same contract
 	// the schema path publishes, because the question it answers is the same

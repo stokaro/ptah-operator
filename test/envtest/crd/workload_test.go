@@ -521,6 +521,22 @@ func gitRefusals(source string) []refusal {
 			want: []cause{{git + ".transport", "knownHostsFrom must name a required ConfigMap key"}},
 		},
 		{
+			name:   source + ".sourcePolicyFrom beside ociRef",
+			mutate: setting(map[string]any{"name": "source-policy", "key": "policy.yaml"}, "spec", source, "sourcePolicyFrom"),
+			want:   []cause{{field, "sourcePolicyFrom is for configMap and git sources"}},
+		},
+		{
+			name: source + ".sourcePolicyFrom optional",
+			mutate: both(asGitSource(source), setting(map[string]any{"name": "source-policy", "key": "policy.yaml", "optional": true},
+				"spec", source, "sourcePolicyFrom")),
+			want: []cause{{field, "sourcePolicyFrom must name a required ConfigMap key"}},
+		},
+		{
+			name:   source + ".sourcePolicyFrom without a key",
+			mutate: both(asGitSource(source), setting(map[string]any{"name": "source-policy", "key": ""}, "spec", source, "sourcePolicyFrom")),
+			want:   []cause{{field, "sourcePolicyFrom must name a required ConfigMap key"}},
+		},
+		{
 			name:   source + ".git.authFrom.name empty",
 			mutate: both(asGitSource(source), setting(map[string]any{"name": ""}, "spec", source, "git", "authFrom")),
 			want:   []cause{{git + ".authFrom.name", "should be at least 1 chars long"}},

@@ -46,6 +46,11 @@ type PlanSource struct {
 	Kind          string `json:"kind"`
 	Revision      string `json:"revision"`
 	ContentDigest string `json:"content_digest"`
+	// PolicyUID and PolicyDigest are the source policy the source was
+	// checked against. A plan with none binds exactly what it bound before
+	// source policies existed.
+	PolicyUID    string `json:"policy_uid,omitempty"`
+	PolicyDigest string `json:"policy_digest,omitempty"`
 }
 
 // PlanContractVersionFor is the contract version a plan bound to source
@@ -293,6 +298,10 @@ func validatePlanSource(version int32, artifactDigest, policyUID, policyDigest s
 	case SourcePlanContractVersion:
 		if source == nil || source.Kind == "" || source.Revision == "" || !strings.HasPrefix(source.ContentDigest, prefix) {
 			return fmt.Errorf("a contract version %d plan binds a complete source", version)
+		}
+		if (source.PolicyUID == "") != (source.PolicyDigest == "") ||
+			(source.PolicyDigest != "" && !strings.HasPrefix(source.PolicyDigest, prefix)) {
+			return fmt.Errorf("a contract version %d plan binds a source policy by its UID and digest or not at all", version)
 		}
 		if artifactDigest != "" || policyUID != "" || policyDigest != "" {
 			return fmt.Errorf("a contract version %d plan binds no artifact digest and no verification policy", version)

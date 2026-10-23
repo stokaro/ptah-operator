@@ -240,6 +240,14 @@ func (r *MigrationReconciler) reconcile(ctx context.Context, request ctrl.Reques
 		// interval; unchanged selected files reach the same plan.
 		return r.claimMigration(ctx, migration, operatorv1alpha1.MigrationOperationResolve)
 	}
+	if moved, movedErr := sourcePolicyMoved(ctx, r.directReader(), migration.Namespace, migration.Spec.Artifact,
+		migration.Status.SourcePolicy, migration.Status.Artifact != nil); movedErr != nil {
+		return ctrl.Result{}, movedErr
+	} else if moved {
+		// Another source policy is read now, and the source checked against
+		// it: a plan made under the old one does not apply.
+		return r.claimMigration(ctx, migration, operatorv1alpha1.MigrationOperationResolve)
+	}
 	switch migration.Status.Phase {
 	case operatorv1alpha1.MigrationPhaseVerifying:
 		return r.claimMigration(ctx, migration, operatorv1alpha1.MigrationOperationVerify)
@@ -602,6 +610,20 @@ func (r *MigrationReconciler) claimMigration(
 		// A ConfigMap source is read by the manager: no registry, no
 		// credential, so no Resolve Job and no Verify step.
 		return r.resolveMigrationConfigMapSource(ctx, migration)
+	}
+	if git := migration.Spec.Artifact.Git; operationType == operatorv1alpha1.MigrationOperationResolve && git != nil {
+		// A host the source policy does not allow gets no Job: the
+		// credential is never sent there.
+		policy, _, err := sourcePolicyFor(ctx, r.directReader(), migration.Namespace, migration.Spec.Artifact)
+		if err == nil {
+			err = checkGitSource(policy, git, 0)
+		}
+		if err != nil {
+			if errors.Is(err, errSourceRefused) {
+				return r.migrationOperationFailure(ctx, migration, err)
+			}
+			return ctrl.Result{}, err
+		}
 	}
 	inputFingerprint, err := r.migrationInputFingerprint(ctx, migration, operationType)
 	if err != nil {
@@ -994,8 +1016,19 @@ func (r *MigrationReconciler) consumeMigrationResult(
 			if err != nil {
 				return r.retryMigrationOperation(ctx, migration, job, err)
 			}
+			policy, policyBinding, err := sourcePolicyFor(ctx, r.directReader(), migration.Namespace, migration.Spec.Artifact)
+			if err == nil {
+				err = checkGitSource(policy, git, result.ResolvedContentBytes)
+			}
+			if err != nil {
+				if errors.Is(err, errSourceRefused) {
+					return r.retryMigrationOperation(ctx, migration, job, err)
+				}
+				return ctrl.Result{}, err
+			}
 			migration.Status.Artifact = &operatorv1alpha1.SourceAccessBinding{Git: sourcebinding.GitAccess(*git, revision)}
 			migration.Status.ConfigMap = nil
+			migration.Status.SourcePolicy = policyBinding
 			// A Git source has no verification policy, so there is no Verify
 			// step: the history is read next.
 			migration.Status.Phase = operatorv1alpha1.MigrationPhaseReading
@@ -1309,7 +1342,7 @@ func (r *MigrationReconciler) publishMigrationPlan(
 	if err != nil {
 		return err
 	}
-	artifactDigest, source := sourcebinding.MigrationPlanSource(migration.Status.Artifact, migration.Status.ConfigMap)
+	artifactDigest, source := sourcebinding.MigrationPlanSource(migration.Status.Artifact, migration.Status.ConfigMap, migration.Status.SourcePolicy)
 	var policyBinding policy.Binding
 	if source == nil {
 		// Only an OCI source has a verification policy to bind.
@@ -1502,6 +1535,11 @@ func (r *MigrationReconciler) migrationInputFingerprint(
 			if revision := migration.Status.ConfigMap; revision != nil {
 				inputs["source_configmap_uid"] = string(revision.UID)
 			}
+		}
+		// A source policy adds the policy the source was checked against.
+		if policy := migration.Status.SourcePolicy; policy != nil {
+			inputs["source_policy_uid"] = string(policy.UID)
+			inputs["source_policy_digest"] = policy.Digest
 		}
 		// A Git source adds the commit it was resolved to and its content.
 		if git := migration.Status.Artifact.Git; git != nil {

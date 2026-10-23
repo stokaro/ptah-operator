@@ -222,6 +222,9 @@ spec:
 | `spec.source` | `object` | This resource requires: contract version 1 binds artifactDigest and a verification policy; contract version 2 binds source. Source is the ConfigMap source this plan reads its files from: the ConfigMap's UID and the content digest of the selected files. |
 | `spec.source.contentDigest` | `string`, required | ContentDigest is the content digest of the files the plan was computed from. |
 | `spec.source.kind` | `string`, required, one of `ConfigMap`, `Git` | Kind of source the plan was computed from. |
+| `spec.source.policy` | `object` | Policy is the source policy the source was checked against, when the resource names one. |
+| `spec.source.policy.digest` | `string`, required | Digest is "sha256:" and the SHA-256 of the policy document. |
+| `spec.source.policy.uid` | `string`, required | UID of the policy ConfigMap. Another ConfigMap under the same name is another policy. |
 | `spec.source.revision` | `string`, required | Revision is the source object the files were read from. For a ConfigMap it is the ConfigMap's UID: an edit to a key the source does not select keeps the plan, while another ConfigMap, or the same name deleted and created again, retires it even when the files match. For Git it is "sha256:" and the SHA-256 of the repository URL and the selected path, joined by a newline: another repository or another path retires the plan even when the files match, while a commit that leaves the selected files as they were keeps it, as an edit to an unselected key keeps a ConfigMap's. |
 | `spec.targetIdentityDigest` | `string`, required | TargetIdentityDigest identifies the database it was computed against without carrying anything that could reach it. |
 | `spec.verificationPolicyDigest` | `string` | This resource requires: contract version 1 binds artifactDigest and a verification policy; contract version 2 binds source. VerificationPolicyDigest is that policy's content at the time. |

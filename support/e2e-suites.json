@@ -58,8 +58,8 @@
     {
       "name": "lifecycle",
       "slug": "lifecycle",
-      "summary": "Installation, the CRD upgrade path, leader failover, infrastructure alert delivery, and uninstall",
-      "phases": ["upgrade", "ha", "alerting", "uninstall"],
+      "summary": "Installation, the CRD upgrade path, leader failover, PostgreSQL reference data, infrastructure alert delivery, and uninstall",
+      "phases": ["upgrade", "ha", "reference-data-postgresql", "alerting", "uninstall"],
       "prepare": ["assert", "dataplane"]
     },
     {
@@ -101,8 +101,8 @@
     {
       "name": "data-plane",
       "slug": "data-plane",
-      "summary": "The control-plane contract, PostgreSQL lifecycle and reference data, plan-size and admission boundaries, and ConfigMap and Git sources",
-      "phases": ["assert", "dataplane", "reference-data-postgresql", "configmap-sources", "git-sources"],
+      "summary": "The control-plane contract, the PostgreSQL lifecycle, plan-size and admission boundaries, and ConfigMap and Git sources",
+      "phases": ["assert", "dataplane", "configmap-sources", "git-sources"],
       "prepare": []
     },
     {

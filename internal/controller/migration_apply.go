@@ -28,6 +28,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/policy"
 	"github.com/stokaro/ptah-operator/internal/runner"
 	"github.com/stokaro/ptah-operator/internal/sourcebinding"
+	"github.com/stokaro/ptah-operator/internal/sourcepolicy"
 	"github.com/stokaro/ptah-operator/internal/targetlock"
 	"github.com/stokaro/ptah-operator/internal/telemetry"
 	"github.com/stokaro/ptah-operator/internal/workload"
@@ -100,7 +101,7 @@ func (r *MigrationReconciler) currentMigrationPlan(
 	if plan.Spec.TargetIdentityDigest != history.TargetIdentityDigest {
 		return nil, errors.New("the database identity changed after the plan was published")
 	}
-	statusArtifact, statusSource := sourcebinding.MigrationPlanSource(migration.Status.Artifact, migration.Status.ConfigMap)
+	statusArtifact, statusSource := sourcebinding.MigrationPlanSource(migration.Status.Artifact, migration.Status.ConfigMap, migration.Status.SourcePolicy)
 	if !sourcebinding.SamePlanSource(plan.Spec.ArtifactDigest, plan.Spec.Source, statusArtifact, statusSource) {
 		return nil, errors.New("the resolved artifact changed after the plan was published")
 	}
@@ -136,9 +137,10 @@ func (r *MigrationReconciler) verificationPolicyStillBinds(
 	plan *operatorv1alpha1.PtahMigrationPlan,
 ) error {
 	if plan.Spec.Source != nil {
-		// A plan computed from a ConfigMap binds no verification policy; its
-		// source binding is compared with the resolved source instead.
-		return nil
+		// A plan computed from a ConfigMap or Git binds no verification
+		// policy; its source binding is compared with the resolved source,
+		// and its source policy with the one the migration names now.
+		return sourcepolicy.StillBinds(ctx, r.directReader(), migration.Namespace, migration.Spec.Artifact.SourcePolicyFrom, plan.Spec.Source.Policy)
 	}
 	binding, err := policy.ConfigMapBinding(
 		ctx, r.directReader(), migration.Namespace, migration.Spec.Artifact.VerificationPolicyFrom,
