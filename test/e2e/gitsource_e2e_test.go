@@ -617,9 +617,12 @@ func (c *gitRun) schemaAtAPinnedCommit() {
 // forcePushedBranch rewrites main: the commit both schemas read is replaced by
 // one that adds a second column, and is gone from the server. The schema that
 // follows main resolves the replacement, plans it and applies it. The schema
-// pinned to the replaced commit is refused at its Resolve: the server, like
-// most, gives a commit only at a branch or tag, and none names it now. It
-// keeps the commit it applied and publishes no plan.
+// pinned to the replaced commit is refused at its Resolve: the fixture server
+// does not say it gives commits by id, and no branch or tag names the commit
+// now. It keeps the commit it applied and publishes no plan. On this server
+// an ordinary push on top of the commit would refuse it the same way, so the
+// row proves the refusal and what the pinned schema keeps, not that the
+// force-push caused it.
 func (c *gitRun) forcePushedBranch() {
 	c.t.Helper()
 	following := c.waitForSchema("the schema to be in sync", inSyncSchema)

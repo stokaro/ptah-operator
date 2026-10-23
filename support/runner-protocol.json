@@ -177,6 +177,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:7d866abe93dc887372241dea68f0b33e2b9fe489769e9247ab7131109f812994",
       "reason": "Name why a Git pull failed (#699). When Ptah's git pull exits non-zero at a Resolve or in the fetch container, the runner's error message, and the fetch container's termination message, now end with the last line Ptah wrote to standard error, redacted as the main run's output is and bounded to 512 bytes: a submodule or a Git LFS pointer at the selected path, a host key the known hosts do not pin, a commit the server no longer has. The error code, child_exit at a Resolve and git_source_refused in the fetch, is unchanged. Nothing a plan or an approval made under protocol 1 relies on changed: the operation modes, their commands, payloads, result frames, delivery identity, SQL authority and retry limits are as they were."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:2534bd01c2aac71dffa715c8370ffb1bb9914866669c51f0ecff383411d591e4",
+      "reason": "Document when a Git source pinned to a commit is refused (#699). Only the doc comment on the API's ref.commit field changed: it now says that Ptah asks the server for the commit by its id, that unless a branch or tag points at the commit it asks only a server that says it gives commits by id, so on any other Resolve refuses the commit once its branch moves on, and that a tag holds one commit on every server. The CRDs carry no descriptions, and the runner's code, its modes, commands, payloads, result frames, delivery identity, SQL authority and retry limits are as they were."
     }
   ]
 }

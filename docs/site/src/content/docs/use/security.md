@@ -538,7 +538,10 @@ snapshot replaced after a plan was approved is refused rather than read.
 A Git source is trusted by whoever may push to the ref it names: they may
 change the desired state, and so what an approval is asked for, as whoever may
 write a source ConfigMap may. Name a branch only where pushes to it are
-reviewed, or name a tag or a commit. It has no verification policy, and the
+reviewed, or name a tag or a commit. A commit holds only on a server that says it
+gives commits by id; on any other it is refused once its branch moves on, as
+[A Git source](../../reference/reconciliation/#a-git-source) says, and a tag is
+the pin that holds. It has no verification policy, and the
 API refuses one beside it.
 
 The manager never reads the repository or the credential Secret. The Secret

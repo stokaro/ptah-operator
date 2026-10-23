@@ -300,7 +300,7 @@ spec:
 | `spec.desired.git.path` | `string`, required | This resource requires: where `desired.git` is set, desired.git.path selects one file for a schema. Path is what the commit's tree selects: the schema file, or the migration directory, where "." is the root. Relative, separated by "/", with no empty or ".." element, no backslash and no control character. |
 | `spec.desired.git.ref` | `object`, required | Ref says which commit: a branch or a tag, polled at the resource's interval, or a commit. |
 | `spec.desired.git.ref.branch` | `string` | Branch is read at its tip, again at every interval. |
-| `spec.desired.git.ref.commit` | `string` | Commit is one commit, by its full 40-character id. A server gives a commit no branch or tag points at only when it allows fetching commits by id. |
+| `spec.desired.git.ref.commit` | `string` | Commit is one commit, by its full 40-character id, which Ptah asks the server for by that id. Unless a branch or tag points at it, Ptah asks only a server that says it gives commits by id; on any other, Resolve refuses the commit once its branch moves past it. A tag holds one commit on every server. |
 | `spec.desired.git.ref.tag` | `string` | Tag is read at the commit it names, again at every interval. |
 | `spec.desired.git.transport` | `object` | Transport pins whom the fetch talks to: the CA an https:// server's certificate chains to, or the host keys an ssh:// server presents. |
 | `spec.desired.git.transport.caFrom` | `object` | CAFrom selects the only roots an https:// server's certificate may chain to. With authFrom, its Secret must hold caSHA256 with the selected bytes' digest. |
@@ -564,7 +564,7 @@ spec:
 | `status.activeOperation.source.git.path` | `string`, required | Path is what the commit's tree selects. |
 | `status.activeOperation.source.git.ref` | `object`, required | Ref is the branch or tag that named the commit when it resolved, or the commit itself. A fetch reads the commit by the ref while the ref still points at it. |
 | `status.activeOperation.source.git.ref.branch` | `string` | Branch is read at its tip, again at every interval. |
-| `status.activeOperation.source.git.ref.commit` | `string` | Commit is one commit, by its full 40-character id. A server gives a commit no branch or tag points at only when it allows fetching commits by id. |
+| `status.activeOperation.source.git.ref.commit` | `string` | Commit is one commit, by its full 40-character id, which Ptah asks the server for by that id. Unless a branch or tag points at it, Ptah asks only a server that says it gives commits by id; on any other, Resolve refuses the commit once its branch moves past it. A tag holds one commit on every server. |
 | `status.activeOperation.source.git.ref.tag` | `string` | Tag is read at the commit it names, again at every interval. |
 | `status.activeOperation.source.git.transport` | `object` | Transport pins the server. |
 | `status.activeOperation.source.git.transport.caFrom` | `object` | CAFrom selects the only roots an https:// server's certificate may chain to. With authFrom, its Secret must hold caSHA256 with the selected bytes' digest. |
@@ -784,7 +784,7 @@ spec:
 | `status.pendingObservation.source.git.path` | `string`, required | Path is what the commit's tree selects. |
 | `status.pendingObservation.source.git.ref` | `object`, required | Ref is the branch or tag that named the commit when it resolved, or the commit itself. A fetch reads the commit by the ref while the ref still points at it. |
 | `status.pendingObservation.source.git.ref.branch` | `string` | Branch is read at its tip, again at every interval. |
-| `status.pendingObservation.source.git.ref.commit` | `string` | Commit is one commit, by its full 40-character id. A server gives a commit no branch or tag points at only when it allows fetching commits by id. |
+| `status.pendingObservation.source.git.ref.commit` | `string` | Commit is one commit, by its full 40-character id, which Ptah asks the server for by that id. Unless a branch or tag points at it, Ptah asks only a server that says it gives commits by id; on any other, Resolve refuses the commit once its branch moves past it. A tag holds one commit on every server. |
 | `status.pendingObservation.source.git.ref.tag` | `string` | Tag is read at the commit it names, again at every interval. |
 | `status.pendingObservation.source.git.transport` | `object` | Transport pins the server. |
 | `status.pendingObservation.source.git.transport.caFrom` | `object` | CAFrom selects the only roots an https:// server's certificate may chain to. With authFrom, its Secret must hold caSHA256 with the selected bytes' digest. |
@@ -872,7 +872,7 @@ spec:
 | `status.source.git.path` | `string`, required | Path is what the commit's tree selects. |
 | `status.source.git.ref` | `object`, required | Ref is the branch, tag or commit that was resolved. |
 | `status.source.git.ref.branch` | `string` | Branch is read at its tip, again at every interval. |
-| `status.source.git.ref.commit` | `string` | Commit is one commit, by its full 40-character id. A server gives a commit no branch or tag points at only when it allows fetching commits by id. |
+| `status.source.git.ref.commit` | `string` | Commit is one commit, by its full 40-character id, which Ptah asks the server for by that id. Unless a branch or tag points at it, Ptah asks only a server that says it gives commits by id; on any other, Resolve refuses the commit once its branch moves past it. A tag holds one commit on every server. |
 | `status.source.git.ref.tag` | `string` | Tag is read at the commit it names, again at every interval. |
 | `status.source.git.url` | `string`, required | URL of the repository. |
 | `status.source.mediaType` | `string` | MediaType is the manifest's media type. |

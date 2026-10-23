@@ -268,7 +268,7 @@ spec:
 | `spec.artifact.git.path` | `string`, required | Path is what the commit's tree selects: the schema file, or the migration directory, where "." is the root. Relative, separated by "/", with no empty or ".." element, no backslash and no control character. |
 | `spec.artifact.git.ref` | `object`, required | Ref says which commit: a branch or a tag, polled at the resource's interval, or a commit. |
 | `spec.artifact.git.ref.branch` | `string` | Branch is read at its tip, again at every interval. |
-| `spec.artifact.git.ref.commit` | `string` | Commit is one commit, by its full 40-character id. A server gives a commit no branch or tag points at only when it allows fetching commits by id. |
+| `spec.artifact.git.ref.commit` | `string` | Commit is one commit, by its full 40-character id, which Ptah asks the server for by that id. Unless a branch or tag points at it, Ptah asks only a server that says it gives commits by id; on any other, Resolve refuses the commit once its branch moves past it. A tag holds one commit on every server. |
 | `spec.artifact.git.ref.tag` | `string` | Tag is read at the commit it names, again at every interval. |
 | `spec.artifact.git.transport` | `object` | Transport pins whom the fetch talks to: the CA an https:// server's certificate chains to, or the host keys an ssh:// server presents. |
 | `spec.artifact.git.transport.caFrom` | `object` | CAFrom selects the only roots an https:// server's certificate may chain to. With authFrom, its Secret must hold caSHA256 with the selected bytes' digest. |
@@ -519,7 +519,7 @@ spec:
 | `status.activeOperation.source.git.path` | `string`, required | Path is what the commit's tree selects. |
 | `status.activeOperation.source.git.ref` | `object`, required | Ref is the branch or tag that named the commit when it resolved, or the commit itself. A fetch reads the commit by the ref while the ref still points at it. |
 | `status.activeOperation.source.git.ref.branch` | `string` | Branch is read at its tip, again at every interval. |
-| `status.activeOperation.source.git.ref.commit` | `string` | Commit is one commit, by its full 40-character id. A server gives a commit no branch or tag points at only when it allows fetching commits by id. |
+| `status.activeOperation.source.git.ref.commit` | `string` | Commit is one commit, by its full 40-character id, which Ptah asks the server for by that id. Unless a branch or tag points at it, Ptah asks only a server that says it gives commits by id; on any other, Resolve refuses the commit once its branch moves past it. A tag holds one commit on every server. |
 | `status.activeOperation.source.git.ref.tag` | `string` | Tag is read at the commit it names, again at every interval. |
 | `status.activeOperation.source.git.transport` | `object` | Transport pins the server. |
 | `status.activeOperation.source.git.transport.caFrom` | `object` | CAFrom selects the only roots an https:// server's certificate may chain to. With authFrom, its Secret must hold caSHA256 with the selected bytes' digest. |
@@ -568,7 +568,7 @@ spec:
 | `status.artifact.git.path` | `string`, required | Path is what the commit's tree selects. |
 | `status.artifact.git.ref` | `object`, required | Ref is the branch or tag that named the commit when it resolved, or the commit itself. A fetch reads the commit by the ref while the ref still points at it. |
 | `status.artifact.git.ref.branch` | `string` | Branch is read at its tip, again at every interval. |
-| `status.artifact.git.ref.commit` | `string` | Commit is one commit, by its full 40-character id. A server gives a commit no branch or tag points at only when it allows fetching commits by id. |
+| `status.artifact.git.ref.commit` | `string` | Commit is one commit, by its full 40-character id, which Ptah asks the server for by that id. Unless a branch or tag points at it, Ptah asks only a server that says it gives commits by id; on any other, Resolve refuses the commit once its branch moves past it. A tag holds one commit on every server. |
 | `status.artifact.git.ref.tag` | `string` | Tag is read at the commit it names, again at every interval. |
 | `status.artifact.git.transport` | `object` | Transport pins the server. |
 | `status.artifact.git.transport.caFrom` | `object` | CAFrom selects the only roots an https:// server's certificate may chain to. With authFrom, its Secret must hold caSHA256 with the selected bytes' digest. |

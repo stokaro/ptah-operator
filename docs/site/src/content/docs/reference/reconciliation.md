@@ -106,14 +106,27 @@ init container that holds the credential, and refuses content other than the
 recorded digest: Ptah's pull is held to it, and the runner reads back what Ptah
 wrote and checks it again before it copies the files where the operation
 container reads them. The commit is fetched by the ref that named it while the
-ref still points there, and by its id afterwards where the server allows it; a
-commit that is no longer reachable, because the branch was force-pushed, is
-refused, and the next Resolve reads the ref again. A resource pinned to that
-commit is refused at its Resolve and keeps what it applied. A refused pull says
-why in `ReconciliationFailed`, with the last line Ptah wrote: a submodule or an
-LFS pointer at the selected path, a host key the known hosts do not pin, a
-commit no branch or tag names on a server that gives commits only at a branch
-or tag.
+ref still points there. Afterwards it is fetched by its id where the server
+allows that, and otherwise along the ref's history, deeper each time within the
+fetch budget. A commit that is no longer reachable, because the branch was
+force-pushed, is refused, and the next Resolve reads the ref again.
+
+A resource pinned to a commit names no branch or tag to look along, so Ptah
+asks the server for the commit by its id, and only when the server's
+advertisement allows it: a branch or a lightweight tag points at the commit,
+or the server says it gives any reachable commit by id (Git's
+`uploadpack.allowReachableSHA1InWant` or `uploadpack.allowAnySHA1InWant`, both
+off by default). Otherwise Resolve is refused before anything is fetched. On a
+server that does not say so, an ordinary push on top of the pinned commit
+refuses the next Resolve just as a force-push does, and a commit that is not
+already at a branch tip is refused at the first one. The resource keeps what it
+applied. A tag stays on one commit on every server: to hold a resource at one
+commit there, name the tag.
+
+A refused pull says why in `ReconciliationFailed`, with the last line Ptah
+wrote: a submodule or an LFS pointer at the selected path, a host key the known
+hosts do not pin, a commit no branch or tag names on a server that gives
+commits only at a branch or tag.
 
 A branch or a tag is read again at every interval. A commit that leaves the
 selected files as they were keeps the plan; other files retire it. A plan

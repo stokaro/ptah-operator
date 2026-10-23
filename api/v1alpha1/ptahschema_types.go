@@ -358,9 +358,11 @@ type GitRef struct {
 	// +kubebuilder:validation:MaxLength=255
 	// +kubebuilder:validation:Pattern=`^[^[:space:][:cntrl:]~^:?*\[\\]+$`
 	Tag string `json:"tag,omitempty"`
-	// Commit is one commit, by its full 40-character id. A server gives a
-	// commit no branch or tag points at only when it allows fetching commits
-	// by id.
+	// Commit is one commit, by its full 40-character id, which Ptah asks the
+	// server for by that id. Unless a branch or tag points at it, Ptah asks
+	// only a server that says it gives commits by id; on any other, Resolve
+	// refuses the commit once its branch moves past it. A tag holds one
+	// commit on every server.
 	// +optional
 	// +kubebuilder:validation:Pattern=`^[0-9a-f]{40}$`
 	Commit string `json:"commit,omitempty"`
