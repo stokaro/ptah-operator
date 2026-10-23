@@ -762,7 +762,10 @@ func schemaFetchBinding(
 		return source, nil
 	}
 	if access := sourcebinding.SchemaAccess(schema.Spec.Desired, schema.Status.Source); access != nil {
-		if err := validatedSnapshotSource(schema); err != nil {
+		if err := validatedReadySource(schema); err != nil {
+			return operatorv1alpha1.SourceAccessBinding{}, err
+		}
+		if err := sourcebinding.ValidateAccess(*access); err != nil {
 			return operatorv1alpha1.SourceAccessBinding{}, err
 		}
 		return *access, nil
@@ -1013,8 +1016,16 @@ func validatedSnapshotSource(schema *operatorv1alpha1.PtahSchema) error {
 }
 
 // validatedReadySource accepts a schema whose source later operations may
-// read: a verified OCI artifact, or a ConfigMap source in a snapshot.
+// read: a verified OCI artifact, a ConfigMap source in a snapshot, or a Git
+// commit resolved for the source the spec names. A Git source has no
+// verification policy, so it is never Verified.
 func validatedReadySource(schema *operatorv1alpha1.PtahSchema) error {
+	if schema.Status.Source.Git != nil {
+		if !sourcebinding.GitResolved(schema.Spec.Desired.Git, schema.Status.Source.Git) {
+			return errors.New("the Git commit was resolved for another source")
+		}
+		return nil
+	}
 	if schema.Status.Source.Snapshot != nil {
 		return validatedSnapshotSource(schema)
 	}

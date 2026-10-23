@@ -9,7 +9,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/fingerprint"
 	"github.com/stokaro/ptah-operator/internal/runner"
+	"github.com/stokaro/ptah-operator/internal/sourcebinding"
 )
 
 const gitCommit = "3f1c2b0a9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a"
@@ -287,6 +289,55 @@ func TestBuildFetchesAGitSourceBeforeTheOperation(t *testing.T) {
 			}
 			assertGitFetch(t, job, migrationsPath, gitSelectsDirectory)
 		})
+	}
+}
+
+// gitPlanFixture is planFixture for a schema whose source is Git: contract
+// version 2, with the source bound in place of the artifact digest and the
+// verification policy.
+func gitPlanFixture(schema *operatorv1alpha1.PtahSchema, builder Builder) *operatorv1alpha1.PtahSchemaPlan {
+	plan := planFixture(schema, builder)
+	git := schema.Status.Source.Git
+	source := sourcebinding.GitPlanSource(git.URL, git.Path, git.ContentDigest)
+	plan.Spec.ContractVersion = fingerprint.SourcePlanContractVersion
+	plan.Spec.ArtifactDigest, plan.Spec.Source = "", source
+	plan.Spec.VerificationPolicyUID, plan.Spec.VerificationPolicyDigest = "", ""
+	current := schema.Status.Plan
+	current.ArtifactDigest, current.Source = "", source.DeepCopy()
+	current.VerificationPolicyUID, current.VerificationPolicyDigest = "", ""
+	return plan
+}
+
+// A Git source is never Verified: it has no verification policy. The Apply
+// that follows its plan reads the plan's bytes alone, so it fetches nothing
+// and carries nothing of Git or of a registry.
+func TestBuildAppliesAPlanComputedFromAGitSource(t *testing.T) {
+	t.Parallel()
+	builder := builderFixture()
+	spec := gitHTTPSSpec("db/schema.hcl")
+	schema := gitSchemaFixture(spec)
+	job, err := builder.Build(schema, operationFixture(operatorv1alpha1.OperationApply), gitPlanFixture(schema, builder))
+	if err != nil {
+		t.Fatalf("Build() of a Git source's Apply = %v", err)
+	}
+	assertNoRegistry(t, job)
+	podSpec := job.Spec.Template.Spec
+	for _, container := range append(slices.Clone(podSpec.InitContainers), podSpec.Containers...) {
+		for _, variable := range container.Env {
+			if strings.HasPrefix(variable.Name, "PTAH_OPERATOR_GIT_") || strings.HasPrefix(variable.Name, "PTAH_GIT_") {
+				t.Errorf("the Apply container %s carries %s", container.Name, variable.Name)
+			}
+		}
+	}
+
+	// A commit resolved for a path the spec no longer names is not the
+	// source the plan may be applied from.
+	moved := gitSchemaFixture(spec.DeepCopy())
+	plan := gitPlanFixture(moved, builder)
+	moved.Spec.Desired.Git.Path = "db/other.hcl"
+	if _, err := builder.Build(moved, operationFixture(operatorv1alpha1.OperationApply), plan); err == nil ||
+		!strings.Contains(err.Error(), "resolved for another source") {
+		t.Errorf("Build() of an Apply whose Git resolution answers another path = %v, want the refusal naming it", err)
 	}
 }
 
