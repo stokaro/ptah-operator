@@ -15,6 +15,7 @@ import (
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/filemode"
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 	gitssh "github.com/go-git/go-git/v5/plumbing/transport/ssh"
@@ -223,4 +224,45 @@ func writeKey(t *testing.T, file string) ed25519.PrivateKey {
 		t.Fatal(err)
 	}
 	return key
+}
+
+// A tree with a submodule is served with the link and without what it links
+// to, which the repository does not hold; a client reads the link.
+func TestTheServerSendsASubmoduleAsALink(t *testing.T) {
+	t.Parallel()
+	linked := "0123456789abcdef0123456789abcdef01234567"
+	file := filepath.Join(t.TempDir(), "spec.json")
+	spec := `{"commits": [{"message": "m", "files": {"db/schema.sql": "CREATE TABLE a (id int);\n"}, ` +
+		`"submodules": {"db/vendor": "` + linked + `"}}], "branches": {"main": 0}}`
+	if err := os.WriteFile(file, []byte(spec), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := &server{repositoryPath: "/acme/app.git"}
+	if err := s.reload(file); err != nil {
+		t.Fatal(err)
+	}
+	url, ca := serveHTTPS(t, s)
+	repository, err := git.CloneContext(context.Background(), memory.NewStorage(), nil, &git.CloneOptions{
+		URL: url, Auth: &githttp.BasicAuth{Username: "e2e", Password: "e2e-token"}, CABundle: ca,
+		ReferenceName: plumbing.NewBranchReferenceName("main"), SingleBranch: true, Depth: 1, NoCheckout: true, Tags: git.NoTags,
+	})
+	if err != nil {
+		t.Fatalf("fetch a tree with a submodule: %v", err)
+	}
+	head, err := repository.Head()
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit, err := repository.CommitObject(head.Hash())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tree, err := commit.Tree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, err := tree.FindEntry("db/vendor")
+	if err != nil || entry.Mode != filemode.Submodule || entry.Hash.String() != linked {
+		t.Fatalf("db/vendor = %+v, %v; want the link to %s", entry, err, linked)
+	}
 }

@@ -9,6 +9,7 @@ import (
 	"sort"
 
 	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/filemode"
 	"github.com/go-git/go-git/v5/plumbing/format/packfile"
 	"github.com/go-git/go-git/v5/plumbing/format/pktline"
 	"github.com/go-git/go-git/v5/plumbing/object"
@@ -195,6 +196,11 @@ func reachable(repository *served, commits []plumbing.Hash) ([]plumbing.Hash, er
 			return err
 		}
 		for _, entry := range tree.Entries {
+			if entry.Mode == filemode.Submodule {
+				// A submodule links to a commit of another repository, and
+				// Git sends the link, not what it links to.
+				continue
+			}
 			if entry.Mode.IsFile() {
 				add(entry.Hash)
 				continue

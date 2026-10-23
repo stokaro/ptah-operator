@@ -716,9 +716,12 @@ type GitSourceInputs struct {
 // schema from a branch over HTTPS with a token and a CA, applied through the
 // commit a Resolve Job found and the fetch every later Job made; the branch
 // moving to a commit that changes no selected file, which plans nothing, and
-// to one that changes the schema, which plans and applies; a migration
-// directory from a tag over SSH with a deploy key and pinned known hosts; and
-// a credential granted for another host, refused before Ptah runs.
+// to one that changes the schema, which plans and applies; a schema pinned to
+// a commit; a force-push that replaces that commit, which the branch follows
+// and the pinned schema's Resolve refuses; a migration directory from a tag
+// over SSH with a deploy key and pinned known hosts; a credential granted for
+// another host, refused before Ptah runs; and a submodule, an LFS pointer and
+// a host key the known hosts do not pin, each refused at its Resolve.
 var GitSources = define[GitSourceInputs](Phase{
 	Name:    "git-sources",
 	Test:    "TestGitSources",
@@ -726,8 +729,11 @@ var GitSources = define[GitSourceInputs](Phase{
 	Scenarios: []string{
 		"git-schema",
 		"git-schema-moves",
+		"git-schema-pinned",
+		"git-force-push",
 		"git-migration-ssh",
 		"git-credential-refused",
+		"git-source-refused",
 	},
 })
 

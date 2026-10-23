@@ -41,6 +41,16 @@ const (
 	gitSchemaSecret      = "e2e-git-schema-database"
 	gitMigrationSecret   = "e2e-git-migration-database"
 
+	// gitPinnedSchema reads one commit by its id, into a database of its own.
+	gitPinnedSchema   = "e2e-git-pinned"
+	gitPinnedDatabase = "ptah_e2e_git_pinned"
+	gitPinnedSecret   = "e2e-git-pinned-database"
+	// The sources Ptah refuses to read: a submodule, an LFS pointer, and a
+	// server whose host key is not the one the known hosts name.
+	gitSubmoduleSchema = "e2e-git-submodule"
+	gitLFSSchema       = "e2e-git-lfs"
+	gitHostKeySchema   = "e2e-git-host-key"
+
 	// gitServer is the fixture Deployment and Service; gitServerSecret holds
 	// its TLS key, token and SSH keys, and gitSpecConfigMap the repository.
 	gitServer        = "e2e-git"
@@ -54,6 +64,10 @@ const (
 	gitDeployKeyCredential = "e2e-git-deploy-key"
 	gitCAConfigMap         = "e2e-git-ca"
 	gitKnownHostsConfigMap = "e2e-git-known-hosts"
+	// gitOtherHostsConfigMap pins a host key the server does not hold, and
+	// gitOtherHostsCredential grants the deploy key under it.
+	gitOtherHostsConfigMap  = "e2e-git-known-hosts-other"
+	gitOtherHostsCredential = "e2e-git-deploy-key-other-hosts"
 
 	gitSchemaPath    = "db/schema.sql"
 	gitMigrationPath = "db/migrations"
@@ -63,11 +77,24 @@ const (
 	gitInterval = "1h"
 )
 
+// What only the refused sources select: a submodule that links to a commit
+// this repository does not hold, as a real one would not, and a Git LFS
+// pointer file as Git LFS writes one.
+const (
+	gitSubmodulePath   = "db/vendor"
+	gitSubmoduleCommit = "0123456789abcdef0123456789abcdef01234567"
+	gitLFSPath         = "db/lfs.sql"
+	gitLFSPointer      = "version https://git-lfs.github.com/spec/v1\n" +
+		"oid sha256:4d7a214614ab2935c943f9e0ff69d22eadbb8f32b1258daaa5e2ca24d17e2393\nsize 12345\n"
+)
+
 // gitSchemaRevisions are the desired schema the phase declares, in order: a
-// table, then a column on it.
+// table, then a column on it, then, after the history is rewritten, a second
+// column.
 var gitSchemaRevisions = []string{
 	"CREATE TABLE e2e_git_items (\n  id bigint NOT NULL PRIMARY KEY,\n  name text NOT NULL\n);\n",
 	"CREATE TABLE e2e_git_items (\n  id bigint NOT NULL PRIMARY KEY,\n  name text NOT NULL,\n  sku text\n);\n",
+	"CREATE TABLE e2e_git_items (\n  id bigint NOT NULL PRIMARY KEY,\n  name text NOT NULL,\n  sku text,\n  code text\n);\n",
 }
 
 var gitMigrationFiles = map[string]string{
@@ -78,23 +105,36 @@ var gitMigrationFiles = map[string]string{
 // gitRepositorySpec is the repository the server holds, with main at the
 // commit at index main. Commit 0 creates the table, commit 1 changes only a
 // file no resource selects, and commit 2 adds the column; the tag v1 names
-// commit 0, whose migration directory the migration reads.
+// commit 0, whose migration directory the migration reads. Every commit also
+// holds a submodule and an LFS pointer, which only the refused sources select.
 func gitRepositorySpec(main int) gitrepo.Spec {
+	return gitrepo.Spec{Commits: gitCommits(false), Branches: map[string]int{"main": main}, Tags: map[string]int{"v1": 0}}
+}
+
+// gitRewrittenSpec is the repository after a force-push: commit 2 is replaced
+// by one that adds a second column, main names the replacement, and the
+// replaced commit is no longer on the server.
+func gitRewrittenSpec() gitrepo.Spec {
+	return gitrepo.Spec{Commits: gitCommits(true), Branches: map[string]int{"main": 2}, Tags: map[string]int{"v1": 0}}
+}
+
+func gitCommits(rewritten bool) []gitrepo.CommitSpec {
 	files := func(schema, readme string) map[string]string {
-		selected := map[string]string{gitSchemaPath: schema, "README": readme}
+		selected := map[string]string{gitSchemaPath: schema, "README": readme, gitLFSPath: gitLFSPointer}
 		for name, content := range gitMigrationFiles {
 			selected[gitMigrationPath+"/"+name] = content
 		}
 		return selected
 	}
-	return gitrepo.Spec{
-		Commits: []gitrepo.CommitSpec{
-			{Message: "Create the items table", Files: files(gitSchemaRevisions[0], "first\n")},
-			{Message: "Say more in the README", Files: files(gitSchemaRevisions[0], "second\n")},
-			{Message: "Add the sku column", Files: files(gitSchemaRevisions[1], "second\n")},
-		},
-		Branches: map[string]int{"main": main},
-		Tags:     map[string]int{"v1": 0},
+	submodules := map[string]string{gitSubmodulePath: gitSubmoduleCommit}
+	last := gitrepo.CommitSpec{Message: "Add the sku column", Files: files(gitSchemaRevisions[1], "second\n"), Submodules: submodules}
+	if rewritten {
+		last = gitrepo.CommitSpec{Message: "Add the sku and code columns", Files: files(gitSchemaRevisions[2], "second\n"), Submodules: submodules}
+	}
+	return []gitrepo.CommitSpec{
+		{Message: "Create the items table", Files: files(gitSchemaRevisions[0], "first\n"), Submodules: submodules},
+		{Message: "Say more in the README", Files: files(gitSchemaRevisions[0], "second\n"), Submodules: submodules},
+		last,
 	}
 }
 
@@ -233,6 +273,8 @@ type gitServerKeys struct {
 	token                         string
 	hostKeyPEM, clientKeyPEM      []byte
 	authorizedKey, knownHosts     []byte
+	// otherKnownHosts pins a host key the server does not hold.
+	otherKnownHosts []byte
 }
 
 func newGitServerKeys(host string, names ...string) (gitServerKeys, error) {
@@ -305,6 +347,11 @@ func newGitServerKeys(host string, names ...string) (gitServerKeys, error) {
 	keys.hostKeyPEM, keys.clientKeyPEM = hostKeyPEM, clientKeyPEM
 	keys.authorizedKey = ssh.MarshalAuthorizedKey(clientPublic)
 	keys.knownHosts = []byte(knownhosts.Line([]string{host}, hostPublic) + "\n")
+	_, otherPublic, err := sshKey()
+	if err != nil {
+		return keys, err
+	}
+	keys.otherKnownHosts = []byte(knownhosts.Line([]string{host}, otherPublic) + "\n")
 	return keys, nil
 }
 

@@ -30,10 +30,13 @@ type Spec struct {
 	Tags     map[string]int `json:"tags"`
 }
 
-// CommitSpec is one commit: its message and every file of its tree.
+// CommitSpec is one commit: its message, every file of its tree, and the
+// submodules in it, each a path and the commit id it links to. A submodule's
+// commit is not in this repository, as it would not be in a real one.
 type CommitSpec struct {
-	Message string            `json:"message"`
-	Files   map[string]string `json:"files"`
+	Message    string            `json:"message"`
+	Files      map[string]string `json:"files"`
+	Submodules map[string]string `json:"submodules,omitempty"`
 }
 
 // Repository is a built Spec.
@@ -86,7 +89,7 @@ func Build(spec Spec) (*Repository, error) {
 	repository := &Repository{storage: memory.NewStorage(), refs: map[plumbing.ReferenceName]plumbing.Hash{}}
 	var parent plumbing.Hash
 	for index, commit := range spec.Commits {
-		tree, err := repository.writeTree(commit.Files)
+		tree, err := repository.writeTree(commit.Files, commit.Submodules)
 		if err != nil {
 			return nil, fmt.Errorf("commit %d: %w", index, err)
 		}
@@ -123,19 +126,53 @@ func (r *Repository) write(value encodable) (plumbing.Hash, error) {
 	return r.storage.SetEncodedObject(encoded)
 }
 
-// writeTree writes the trees of a set of files and returns the root's id.
-func (r *Repository) writeTree(files map[string]string) (plumbing.Hash, error) {
+// writeTree writes the trees of a set of files and submodules and returns
+// the root's id.
+func (r *Repository) writeTree(files, submodules map[string]string) (plumbing.Hash, error) {
 	type directory struct {
 		files       map[string]plumbing.Hash
+		links       map[string]plumbing.Hash
 		directories map[string]*directory
 	}
 	newDirectory := func() *directory {
-		return &directory{files: map[string]plumbing.Hash{}, directories: map[string]*directory{}}
+		return &directory{files: map[string]plumbing.Hash{}, links: map[string]plumbing.Hash{}, directories: map[string]*directory{}}
 	}
 	root := newDirectory()
-	for name, content := range files {
+	clean := func(name string) error {
 		if name == "" || strings.HasPrefix(name, "/") || path.Clean(name) != name || name == ".." || strings.HasPrefix(name, "../") {
-			return plumbing.ZeroHash, fmt.Errorf("the file name %q is not a clean relative path", name)
+			return fmt.Errorf("the file name %q is not a clean relative path", name)
+		}
+		return nil
+	}
+	parent := func(name string) (*directory, string) {
+		current := root
+		elements := strings.Split(name, "/")
+		for _, element := range elements[:len(elements)-1] {
+			next, ok := current.directories[element]
+			if !ok {
+				next = newDirectory()
+				current.directories[element] = next
+			}
+			current = next
+		}
+		return current, elements[len(elements)-1]
+	}
+	for name, commit := range submodules {
+		if err := clean(name); err != nil {
+			return plumbing.ZeroHash, err
+		}
+		if _, isFile := files[name]; isFile {
+			return plumbing.ZeroHash, fmt.Errorf("%s is both a file and a submodule", name)
+		}
+		if !plumbing.IsHash(commit) {
+			return plumbing.ZeroHash, fmt.Errorf("the submodule %s links to %q, which is not a commit id", name, commit)
+		}
+		directory, base := parent(name)
+		directory.links[base] = plumbing.NewHash(commit)
+	}
+	for name, content := range files {
+		if err := clean(name); err != nil {
+			return plumbing.ZeroHash, err
 		}
 		blob := r.storage.NewEncodedObject()
 		blob.SetType(plumbing.BlobObject)
@@ -153,23 +190,17 @@ func (r *Repository) writeTree(files map[string]string) (plumbing.Hash, error) {
 		if err != nil {
 			return plumbing.ZeroHash, err
 		}
-		current := root
-		elements := strings.Split(name, "/")
-		for _, element := range elements[:len(elements)-1] {
-			next, ok := current.directories[element]
-			if !ok {
-				next = newDirectory()
-				current.directories[element] = next
-			}
-			current = next
-		}
-		current.files[elements[len(elements)-1]] = hash
+		current, base := parent(name)
+		current.files[base] = hash
 	}
 	var write func(*directory) (plumbing.Hash, error)
 	write = func(current *directory) (plumbing.Hash, error) {
 		tree := &object.Tree{}
 		for name, hash := range current.files {
 			tree.Entries = append(tree.Entries, object.TreeEntry{Name: name, Mode: filemode.Regular, Hash: hash})
+		}
+		for name, hash := range current.links {
+			tree.Entries = append(tree.Entries, object.TreeEntry{Name: name, Mode: filemode.Submodule, Hash: hash})
 		}
 		for name, child := range current.directories {
 			hash, err := write(child)

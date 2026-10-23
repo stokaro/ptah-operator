@@ -54,6 +54,22 @@ func TestTheGitRepositoryMovesWhatThePhaseExpects(t *testing.T) {
 	if document, err := gitSpecDocument(gitRepositorySpec(1)); err != nil || document == "" {
 		t.Fatalf("the spec document: %v", err)
 	}
+	// The force-push keeps the first two commits and replaces the third, so
+	// the commit both schemas read is no longer on the server.
+	rewritten, err := gitrepo.Build(gitRewrittenSpec())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rewritten.Commit(0) != built.Commit(0) || rewritten.Commit(1) != built.Commit(1) || rewritten.Commit(2) == built.Commit(2) {
+		t.Fatal("the rewritten history does not replace commit 2 alone")
+	}
+	if main := rewritten.Refs()["refs/heads/main"]; main != rewritten.Commit(2) {
+		t.Fatalf("main names %s after the force-push, not the replacement", main)
+	}
+	third, _ := gitSchemaContent(2)
+	if third == second || third == "" {
+		t.Fatalf("the replacement's schema digest %q is not new", third)
+	}
 }
 
 func TestGitResolvedToNeedsTheCommitTheContentAndTheSource(t *testing.T) {
@@ -222,6 +238,18 @@ func TestGitServerKeysFitTogether(t *testing.T) {
 	}
 	if callback(host+":22", address, clientSigner.PublicKey()) == nil {
 		t.Fatal("the known hosts accept another key")
+	}
+	// The other known hosts pin a key the server does not hold.
+	other := filepath.Join(t.TempDir(), "known_hosts")
+	if err := os.WriteFile(other, keys.otherKnownHosts, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	otherCallback, err := knownhosts.New(other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if otherCallback(host+":22", address, hostSigner.PublicKey()) == nil {
+		t.Fatal("the other known hosts accept the server's host key")
 	}
 	if keys.token == "" || grantDigest(keys.caPEM) == grantDigest(keys.knownHosts) {
 		t.Fatal("the token or the grants are empty")
