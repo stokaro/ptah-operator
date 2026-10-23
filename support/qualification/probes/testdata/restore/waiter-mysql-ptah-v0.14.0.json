@@ -1,0 +1,1 @@
+{"query": "-- Modify table: recovery_canary\\n-- ALTER statements: --\\nALTER TABLE `recovery_canary` ADD COLUMN `recovered` INTEGER NOT NULL DEFAULT 1", "state": "Waiting for table metadata lock", "client": "172.19.0.4", "session": 11}
