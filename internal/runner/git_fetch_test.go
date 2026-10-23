@@ -110,8 +110,8 @@ func TestFetchGitSourceRefusesOtherContent(t *testing.T) {
 		{
 			name:        "a pull that failed",
 			environment: gitFetchEnvironment("directory", "db", digest),
-			response:    scriptedResponse{exitCode: 1, stderr: "the branch was force-pushed"},
-			refusal:     "exited with code 1",
+			response:    scriptedResponse{exitCode: 1, stderr: "Error: object not found: the branch was force-pushed\n"},
+			refusal:     "ptah exited with code 1: object not found: the branch was force-pushed",
 		},
 		{
 			name:        "no bound commit",

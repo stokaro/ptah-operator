@@ -172,6 +172,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:2a1f0d6a55355c70c1eb75d85130e65d75bb1269a85afa100aaaeb6fc0d648aa",
       "reason": "Read Ptah v0.15.0's schema apply document. Ptah moved `schema apply --json` to contract version 3, which lists the planned operations as units, each with its SQL or a native operation's summary, in place of version 2's statements. The runner now reads version 3 and compares the SQL of each unit with the reviewed plan's statements when it validates a plan, and refuses a unit with no SQL as it refuses any other mismatch. Outcome, plan digest and refusal mean what they meant. Nothing a plan or an approval made under protocol 1 relies on changed: the operation modes, their commands, payloads, result frames, delivery identity, SQL authority and retry limits are as they were. The executor is a bound component, so a plan made under Ptah v0.14.0 is not applied under v0.15.0."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:7d866abe93dc887372241dea68f0b33e2b9fe489769e9247ab7131109f812994",
+      "reason": "Name why a Git pull failed (#699). When Ptah's git pull exits non-zero at a Resolve or in the fetch container, the runner's error message, and the fetch container's termination message, now end with the last line Ptah wrote to standard error, redacted as the main run's output is and bounded to 512 bytes: a submodule or a Git LFS pointer at the selected path, a host key the known hosts do not pin, a commit the server no longer has. The error code, child_exit at a Resolve and git_source_refused in the fetch, is unchanged. Nothing a plan or an approval made under protocol 1 relies on changed: the operation modes, their commands, payloads, result frames, delivery identity, SQL authority and retry limits are as they were."
     }
   ]
 }

@@ -1512,16 +1512,21 @@ func runGitResolve(ctx context.Context, config Config, environment []string, sou
 		setResultError(&result, "credential_in_arguments", err, redactor, config.Diagnostics)
 		return result
 	}
-	outcome := executeReportCommand(ctx, config, spec, config.MaxResultBytes)
-	result.ChildExitCode = outcome.exitCode
-	if !outcomeSucceeded(&result, outcome, redactor, config.Diagnostics) {
+	stdout, stderr := newBoundedBuffer(config.MaxResultBytes), newBoundedBuffer(maxGitStderrBytes)
+	exitCode, err := config.Executor.Execute(ctx, spec, stdout, stderr)
+	result.ChildExitCode = exitCode
+	if err == nil && exitCode != 0 {
+		setResultError(&result, "child_exit", gitPullExit(exitCode, stderr.bytes(), redactor), redactor, config.Diagnostics)
 		return result
 	}
-	if outcome.stdout.dropped() > 0 {
+	if !outcomeSucceeded(&result, commandOutcome{exitCode: exitCode, err: err, stdout: stdout, stderr: stderr}, redactor, config.Diagnostics) {
+		return result
+	}
+	if stdout.dropped() > 0 {
 		setResultError(&result, "invalid_resolve_output", errors.New("the Git pull report exceeded the result limit"), redactor, config.Diagnostics)
 		return result
 	}
-	report, err := dataplane.DecodeGitPull(outcome.stdout.bytes(), source.reference(), source.Path)
+	report, err := dataplane.DecodeGitPull(stdout.bytes(), source.reference(), source.Path)
 	if err != nil {
 		setResultError(&result, "invalid_resolve_output", err, redactor, config.Diagnostics)
 		return result

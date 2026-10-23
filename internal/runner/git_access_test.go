@@ -352,3 +352,61 @@ func TestRunnerRefusesAGitSourceOutsideAResolve(t *testing.T) {
 		})
 	}
 }
+
+// A failed Git pull names Ptah's reason in the result, since the resource's
+// status is where a person learns that the selected path is a submodule or
+// that the host key does not match. The reason is the last line Ptah wrote,
+// redacted and bounded; nothing else of standard error is kept.
+func TestRunnerNamesWhyAGitPullFailed(t *testing.T) {
+	t.Parallel()
+	for _, row := range []struct {
+		name        string
+		environment []string
+		stderr      string
+		want        string
+		refuse      string
+	}{
+		{
+			name:        "a submodule at the selected path",
+			environment: gitResolveEnvironment(),
+			stderr:      "Usage: ptah schema pull\nerror: selected path is a submodule: db/schema.hcl\n",
+			want:        "ptah exited with code 1: selected path is a submodule: db/schema.hcl",
+			refuse:      "Usage:",
+		},
+		{
+			name:        "a credential echoed back",
+			environment: gitResolveEnvironment(EnvGitPassword+"=hunter2-token", EnvGitHostGrant+"=git.example.com"),
+			stderr:      "Error: authentication failed for hunter2-token\n",
+			want:        "ptah exited with code 1: authentication failed for ",
+			refuse:      "hunter2-token",
+		},
+		{
+			name:        "nothing on standard error",
+			environment: gitResolveEnvironment(),
+			want:        "ptah exited with code 1",
+		},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			result := Run(t.Context(), Config{
+				Operation:   OperationResolve,
+				Environment: row.environment,
+				Executor:    &scriptedExecutor{t: t, responses: []scriptedResponse{{exitCode: 1, stderr: row.stderr}}},
+				TempDir:     t.TempDir(),
+			})
+			if result.Error == nil || result.Error.Code != "child_exit" || !strings.HasPrefix(result.Error.Message, row.want) {
+				t.Fatalf("Run() error = %+v, want child_exit starting %q", result.Error, row.want)
+			}
+			if row.refuse != "" && strings.Contains(result.Error.Message, row.refuse) {
+				t.Fatalf("the reason kept %q: %q", row.refuse, result.Error.Message)
+			}
+			if row.stderr == "" && result.Error.Message != row.want {
+				t.Fatalf("an empty standard error gave the reason %q", result.Error.Message)
+			}
+		})
+	}
+	long := strings.Repeat("x", 4*maxGitRefusalBytes)
+	if message := gitPullExit(2, []byte("Error: "+long+"\n"), NewRedactor(nil)).Error(); len(message) > len("ptah exited with code 2: ")+maxGitRefusalBytes {
+		t.Fatalf("a long reason was kept whole: %d bytes", len(message))
+	}
+}

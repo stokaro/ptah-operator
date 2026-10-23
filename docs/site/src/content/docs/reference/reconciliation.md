@@ -108,7 +108,11 @@ wrote and checks it again before it copies the files where the operation
 container reads them. The commit is fetched by the ref that named it while the
 ref still points there, and by its id afterwards where the server allows it; a
 commit that is no longer reachable, because the branch was force-pushed, is
-refused, and the next Resolve reads the ref again.
+refused, and the next Resolve reads the ref again. A resource pinned to that
+commit is refused at its Resolve and keeps what it applied. A refused pull says
+why in `ReconciliationFailed`, with the last line Ptah wrote: a submodule or an
+LFS pointer at the selected path, a host key the known hosts do not pin, a
+commit the server no longer has.
 
 A branch or a tag is read again at every interval. A commit that leaves the
 selected files as they were keeps the plan; other files retire it. A plan
