@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-10-23T18:21:38.933979+00:00",
+  "frozenAt": "2026-10-23T19:03:27.459307+00:00",
   "profileSourceCommit": "1259f4d59343fef049307085e3ea77d2971677cb",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
@@ -53,7 +53,7 @@
   ],
   "functionalMatrix": {
     "path": "support/qualification/0.2.0-functional-matrix.md",
-    "sha256": "6a04ceb35ea846ba95e9378bb0c3dee35b73ae1d0594754c8b5cf1b71fb991f7",
+    "sha256": "cb9c1a00832763cf8cb923c08c26f65868145b6ef0bd20604019ba1c1d6fa9d3",
     "generatedFromCommit": "a8b90b5816e9e45d6ba97a1bf006918896d892e3",
     "command": "go run ./hack/acceptancecoverage",
     "kubernetesMinors": [

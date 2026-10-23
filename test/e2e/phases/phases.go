@@ -731,9 +731,9 @@ var GitSources = define[GitSourceInputs](Phase{
 	Scenarios: []string{
 		"git-schema",
 		"git-schema-moves",
-		"git-source-policy",
 		"git-schema-pinned",
 		"git-force-push",
+		"git-source-policy",
 		"git-migration-ssh",
 		"git-credential-refused",
 		"git-source-refused",

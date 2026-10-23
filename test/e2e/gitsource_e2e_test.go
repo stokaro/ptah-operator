@@ -40,9 +40,9 @@ func TestGitSources(t *testing.T) {
 	}{
 		{"git-schema", c.schemaFromGit},
 		{"git-schema-moves", c.schemaFollowsItsBranch},
-		{"git-source-policy", c.sourcePolicy},
 		{"git-schema-pinned", c.schemaAtAPinnedCommit},
 		{"git-force-push", c.forcePushedBranch},
+		{"git-source-policy", c.sourcePolicy},
 		{"git-migration-ssh", c.migrationOverSSH},
 		{"git-credential-refused", c.credentialForAnotherHost},
 		{"git-source-refused", c.refusedSources},
@@ -671,7 +671,9 @@ func (c *gitRun) forcePushedBranch() {
 // sourcePolicy names a source policy on the Git schema. One that allows the
 // schema's host is checked at the Resolve the edit causes and recorded beside
 // the commit; one that allows another host is refused before a Resolve Job is
-// made, so the credential is never sent anywhere.
+// made, so the credential is never sent anywhere. It runs after the rows that
+// read the schema's applied record: a new policy retires the plan, and the
+// applied record with it.
 func (c *gitRun) sourcePolicy() {
 	c.t.Helper()
 	immutable := true
@@ -694,8 +696,8 @@ func (c *gitRun) sourcePolicy() {
 		return schema.Generation > before.Generation && schema.Status.Source.SourcePolicy != nil &&
 			schema.Status.Source.SourcePolicy.UID == open.UID && inSyncSchema(schema)
 	})
-	if bound.Status.Source.Git == nil || bound.Status.Source.Git.Commit != c.commit(2) {
-		c.fatalf("the policy's Resolve read %+v, want commit %s", bound.Status.Source.Git, c.commit(2))
+	if bound.Status.Source.Git == nil || before.Status.Source.Git == nil || bound.Status.Source.Git.Commit != before.Status.Source.Git.Commit {
+		c.fatalf("the policy's Resolve read %+v, want the commit the schema was at, %+v", bound.Status.Source.Git, before.Status.Source.Git)
 	}
 	if after := c.planCount(labelSchema, gitSchema, &ptahv1alpha1.PtahSchemaPlanList{}); after != plans {
 		c.fatalf("naming a policy that allows the source published %d plans against a converged database", after-plans)
