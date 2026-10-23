@@ -187,6 +187,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:0f5ad0a077a808f90ca96db233dd8895a96c6ecb3bf8bb30c9164eabfb5ba378",
       "reason": "Name a plan the API server refuses to store (#711). The API gains the condition reason PlanPublicationRefused, which the manager sets when it retries a Plan whose plan an admission policy or webhook, a quota, RBAC or the object's size refused. The runner neither sets nor reads condition reasons; its modes, commands, payloads, result frames, delivery identity, SQL authority and retry limits are as they were."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:c2e9973e81f03994b4aadc8b6501f3cb807041045ee86cc5bddfa02a61a1c1f0",
+      "reason": "Report how much a Git source's selected files hold (#700). A Git resolution also returns resolvedContentBytes, the sum of the file sizes Ptah's pull reported, which a source policy may bound; the parser refuses it beside no Git resolution and refuses a negative value. The API gains sourcePolicyFrom, which the runner does not read. Nothing else changed: commands, payloads, the OCI and ConfigMap paths, delivery identity, SQL authority and retry limits are as they were, and an older manager ignores the field."
     }
   ]
 }
