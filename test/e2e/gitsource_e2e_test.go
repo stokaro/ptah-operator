@@ -719,9 +719,16 @@ func (c *gitRun) sourcePolicy() {
 	if made := jobsOutside(resolves, c.resolveJobs()); len(made) > 0 {
 		c.fatalf("a host the policy refuses got Resolve Jobs %v", made)
 	}
-	c.setSourcePolicy(gitOpenPolicy)
-	c.waitForSchema("the open policy to hold again", func(schema *ptahv1alpha1.PtahSchema) bool {
-		return schema.Status.Source.SourcePolicy != nil && schema.Status.Source.SourcePolicy.UID == open.UID && inSyncSchema(schema)
+	// The closed policy's refusal stays in the status until the edit back is
+	// resolved, so only a failure of the generation that edit made is one.
+	reopened := c.setSourcePolicy(gitOpenPolicy)
+	c.wait("the open policy to hold again", func() (bool, string) {
+		schema := c.schemaNamed(gitSchema)
+		if schema.Status.ObservedGeneration >= reopened && schema.Status.Phase == ptahv1alpha1.PhaseFailed {
+			c.fatalf("%s failed under the open policy again: %v", gitSchema, schema.Status.Conditions)
+		}
+		return schema.Status.ObservedGeneration >= reopened && schema.Status.Source.SourcePolicy != nil &&
+			schema.Status.Source.SourcePolicy.UID == open.UID && inSyncSchema(schema), string(schema.Status.Phase)
 	})
 	// The edit back to the open policy is resolved by a Job again, so the
 	// reading that found none under the closed one could see one.
@@ -731,13 +738,15 @@ func (c *gitRun) sourcePolicy() {
 	c.logf("PASS a source policy bound into the resolution, and refused a host it does not allow before any Job: %s", refusal)
 }
 
-// setSourcePolicy names a source policy on the Git schema.
-func (c *gitRun) setSourcePolicy(name string) {
+// setSourcePolicy names a source policy on the Git schema, and returns the
+// generation the edit made.
+func (c *gitRun) setSourcePolicy(name string) int64 {
 	c.t.Helper()
 	patch := client.RawPatch(types.MergePatchType,
 		[]byte(`{"spec":{"desired":{"sourcePolicyFrom":{"name":"`+name+`","key":"policy.yaml"}}}}`))
-	c.check(c.cluster.Client.Patch(c.ctx, &ptahv1alpha1.PtahSchema{ObjectMeta: metav1.ObjectMeta{Namespace: c.in.TestNamespace, Name: gitSchema}},
-		patch, client.FieldOwner(harness.FieldOwner)), "name source policy %s on %s", name, gitSchema)
+	schema := &ptahv1alpha1.PtahSchema{ObjectMeta: metav1.ObjectMeta{Namespace: c.in.TestNamespace, Name: gitSchema}}
+	c.check(c.cluster.Client.Patch(c.ctx, schema, patch, client.FieldOwner(harness.FieldOwner)), "name source policy %s on %s", name, gitSchema)
+	return schema.Generation
 }
 
 // resolveJobs reads the live Resolve Jobs of the Git schema.

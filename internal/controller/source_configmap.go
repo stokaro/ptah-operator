@@ -16,12 +16,12 @@ import (
 	"github.com/stokaro/ptah-operator/internal/sourcesnapshot"
 )
 
-// errSourceRefused marks a ConfigMap source that, as configured, gives no
-// snapshot: a missing ConfigMap or key, a path the rules refuse, or a
-// selection too large for one ConfigMap. Reading it again changes nothing
-// until somebody edits the source or the resource, and either edit wakes the
-// resource.
-var errSourceRefused = errors.New("ConfigMap source refused")
+// errSourceRefused marks a source that, as configured, gives nothing to plan
+// from: a missing ConfigMap or key, a path the rules refuse, a selection too
+// large for one ConfigMap, or a ConfigMap or Git source its source policy
+// refuses. Reading it again changes nothing until somebody edits the source,
+// the policy or the resource, and each of those edits wakes the resource.
+var errSourceRefused = errors.New("source refused")
 
 // configMapSource is what reading a ConfigMap source gave: the ConfigMap it
 // read, and the snapshot that now holds the selected files.
