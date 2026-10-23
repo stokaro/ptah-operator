@@ -9,6 +9,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/sourcebinding"
 )
 
 const gitSourceCommit = "3f1c2b0a9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a"
@@ -23,6 +24,12 @@ func gitSourceSpec() *operatorv1alpha1.GitSourceSpec {
 			LocalObjectReference: corev1.LocalObjectReference{Name: "git-ca"}, Key: "ca.pem",
 		}},
 	}
+}
+
+// gitPlanSource is what a plan computed from the tenant's Git source binds.
+func gitPlanSource() *operatorv1alpha1.PlanSourceBinding {
+	spec := gitSourceSpec()
+	return sourcebinding.GitPlanSource(spec.URL, spec.Path, digest("7"))
 }
 
 // gitSchemaJob is a Job the manager dispatches for the tenant schema whose

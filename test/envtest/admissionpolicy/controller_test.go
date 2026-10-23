@@ -336,22 +336,28 @@ func controllerRows(t *testing.T, c *catalog) {
 			})
 		}))),
 	})
-	c.row(policyenv.Row{Name: sourcePlanRow, Do: as(manager, dryRunCreate(func() (client.Object, error) { return sourceSchemaPlan() }))})
+	c.row(policyenv.Row{Name: sourcePlanRow, Do: as(manager, dryRunCreate(func() (client.Object, error) {
+		return sourceSchemaPlan(configMapPlanSource())
+	}))})
 
 	// Git sources: the Resolve Job holds the credential in its operation
 	// container; every later operation fetches the commit in an init
 	// container beside nothing of a registry or a snapshot.
 	const (
-		gitResolveJobRow        = "manager dispatches the Resolve Job for a Git source"
-		gitObserveJobRow        = "manager dispatches the Observe Job for a Git source"
-		gitObserveRegistryRow   = "manager dispatches an Observe Job that fetches a Git source beside a registry credential"
-		gitObserveSnapshotRow   = "manager dispatches an Observe Job that fetches a Git source beside a snapshot"
-		gitCredentialOnSnapshot = "manager dispatches a ConfigMap-source Observe Job mounting a Git credential"
-		ociObserveJobRow        = "manager dispatches the Observe Job for an OCI source"
-		gitCredentialOnOCIJob   = "manager dispatches an OCI Observe Job mounting a Git credential"
-		verifyJobRow            = "manager dispatches a Job for an operation that reaches no repository"
-		gitCredentialOnVerify   = "manager dispatches a Job for an operation that reaches no repository, mounting a Git credential"
-		gitCredentialAsConfig   = "manager dispatches a Resolve Job mounting its Git credential from a ConfigMap"
+		gitResolveJobRow          = "manager dispatches the Resolve Job for a Git source"
+		gitPlanRow                = "manager publishes a plan computed from a Git source"
+		gitMigrationPlanRow       = "manager publishes a migration plan computed from a Git source"
+		gitBranchPlanRow          = "manager publishes a Git plan whose revision is not a digest"
+		gitBranchMigrationPlanRow = "manager publishes a Git migration plan whose revision is not a digest"
+		gitObserveJobRow          = "manager dispatches the Observe Job for a Git source"
+		gitObserveRegistryRow     = "manager dispatches an Observe Job that fetches a Git source beside a registry credential"
+		gitObserveSnapshotRow     = "manager dispatches an Observe Job that fetches a Git source beside a snapshot"
+		gitCredentialOnSnapshot   = "manager dispatches a ConfigMap-source Observe Job mounting a Git credential"
+		ociObserveJobRow          = "manager dispatches the Observe Job for an OCI source"
+		gitCredentialOnOCIJob     = "manager dispatches an OCI Observe Job mounting a Git credential"
+		verifyJobRow              = "manager dispatches a Job for an operation that reaches no repository"
+		gitCredentialOnVerify     = "manager dispatches a Job for an operation that reaches no repository, mounting a Git credential"
+		gitCredentialAsConfig     = "manager dispatches a Resolve Job mounting its Git credential from a ConfigMap"
 	)
 	c.row(policyenv.Row{Name: gitResolveJobRow, Do: as(manager, dryRunCreate(gitSchemaJob(operatorv1alpha1.OperationResolve, nil)))})
 	c.row(policyenv.Row{Name: gitObserveJobRow, Do: as(manager, dryRunCreate(gitSchemaJob(operatorv1alpha1.OperationObserve, nil)))})
@@ -410,7 +416,31 @@ func controllerRows(t *testing.T, c *catalog) {
 			})
 		}))),
 	})
-	c.row(policyenv.Row{Name: sourceMigrationPlanRow, Do: as(manager, dryRunCreate(func() (client.Object, error) { return sourceMigrationPlan() }))})
+	c.row(policyenv.Row{Name: sourceMigrationPlanRow, Do: as(manager, dryRunCreate(func() (client.Object, error) {
+		return sourceMigrationPlan(configMapPlanSource())
+	}))})
+	// A plan computed from a Git source binds the digest of its repository
+	// and path as its revision, and a plan that names anything else is not one
+	// the manager computed.
+	c.row(policyenv.Row{Name: gitPlanRow, Do: as(manager, dryRunCreate(func() (client.Object, error) {
+		return sourceSchemaPlan(gitPlanSource())
+	}))})
+	c.row(policyenv.Row{Name: gitMigrationPlanRow, Do: as(manager, dryRunCreate(func() (client.Object, error) {
+		return sourceMigrationPlan(gitPlanSource())
+	}))})
+	branchRevision := func() *operatorv1alpha1.PlanSourceBinding {
+		source := gitPlanSource()
+		source.Revision = "main"
+		return source
+	}
+	c.row(policyenv.Row{
+		Name: gitBranchPlanRow, Deny: []string{planGuard}, Message: "rejected an unsafe manifest shape",
+		Do: as(manager, dryRunCreate(func() (client.Object, error) { return sourceSchemaPlan(branchRevision()) })),
+	})
+	c.row(policyenv.Row{
+		Name: gitBranchMigrationPlanRow, Deny: []string{migrationPlanGuard}, Message: "rejected an unsafe manifest shape",
+		Do: as(manager, dryRunCreate(func() (client.Object, error) { return sourceMigrationPlan(branchRevision()) })),
+	})
 
 	// A mutation that writes another release's value into a policy has to turn
 	// the row that carries that value from refused to admitted. Admits holds it
@@ -485,25 +515,25 @@ func controllerRows(t *testing.T, c *catalog) {
 	})
 	c.mutation(policyenv.Mutation{
 		Name: "plan write guard binding dropped", Policies: []string{planGuard},
-		Apply: policyenv.DropBinding(planGuard), Breaks: []string{foreignPlanRow, foreignStatePlanRow},
+		Apply: policyenv.DropBinding(planGuard), Breaks: []string{foreignPlanRow, foreignStatePlanRow, gitBranchPlanRow},
 	})
 	c.mutation(carriesImage("plan write guard carries another manager's image", planGuard, foreignPlanRow))
 	c.mutation(carriesState("plan write guard carries another controller-state version", planGuard, foreignStatePlanRow))
 	c.mutation(policyenv.Mutation{
 		Name: "plan write guard refuses what it matches", Policies: []string{planGuard},
-		Apply: policyenv.RefuseEverything(planGuard), Breaks: []string{publishRow, sourcePlanRow},
+		Apply: policyenv.RefuseEverything(planGuard), Breaks: []string{publishRow, sourcePlanRow, gitPlanRow},
 	})
 	c.mutation(policyenv.Mutation{
 		Name: "migration plan write guard binding dropped", Policies: []string{migrationPlanGuard},
 		Apply:  policyenv.DropBinding(migrationPlanGuard),
-		Breaks: []string{foreignMigrationRow, foreignStateMigrationRow},
+		Breaks: []string{foreignMigrationRow, foreignStateMigrationRow, gitBranchMigrationPlanRow},
 	})
 	c.mutation(carriesImage("migration plan write guard carries another manager's image", migrationPlanGuard, foreignMigrationRow))
 	c.mutation(carriesState("migration plan write guard carries another controller-state version", migrationPlanGuard, foreignStateMigrationRow))
 	c.mutation(policyenv.Mutation{
 		Name: "migration plan write guard refuses what it matches", Policies: []string{migrationPlanGuard},
 		Apply:  policyenv.RefuseEverything(migrationPlanGuard),
-		Breaks: []string{migrationPlanRow, sourceMigrationPlanRow},
+		Breaks: []string{migrationPlanRow, sourceMigrationPlanRow, gitMigrationPlanRow},
 	})
 	c.mutation(policyenv.Mutation{
 		Name: "snapshot delete guard binding dropped", Policies: []string{snapshotDeleteGuard},
