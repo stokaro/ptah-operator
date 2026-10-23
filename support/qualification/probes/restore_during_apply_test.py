@@ -8,6 +8,8 @@ from unittest.mock import Mock, patch
 from operator_restore import OperatorProbe
 from restore_during_apply import ApplyLoss, executor_node_address, fixture_waiter, running_apply, terminal_apply_pods
 
+TESTDATA = Path(__file__).parent / 'testdata/restore'
+
 
 class ApplyLossBoundaryTest(unittest.TestCase):
     def setUp(self):
@@ -59,6 +61,26 @@ class ApplyLossBoundaryTest(unittest.TestCase):
                     if defect == 'missing-session': changed.pop('session')
                     if defect == 'not-blocked': changed.update(blockers=[], state='executing')
                     self.assertFalse(fixture_waiter(changed, '10.244.1.5', 17, engine))
+
+    def test_server_wait_accepts_the_comment_lines_ptah_sends_before_the_ddl(self):
+        """Ptah v0.14.0 sends the plan's comment lines with each statement.
+        The rows are the probe's own reading of a session it held on that DDL,
+        PostgreSQL 17 through psql and MySQL 8.4 through the batch client."""
+        for engine in ('postgresql', 'mysql'):
+            with self.subTest(engine=engine):
+                row = json.loads((TESTDATA / f'waiter-{engine}-ptah-v0.14.0.json').read_text())
+                holder = row['blockers'][0] if engine == 'postgresql' else 17
+                newline = '\n' if engine == 'postgresql' else '\\n'
+                self.assertTrue(row['query'].startswith('-- '))
+                self.assertTrue(fixture_waiter(row, row['client'], holder, engine))
+                for defect in ('comments-only', 'commented-other-table', 'second-statement', 'ddl-only-in-a-comment'):
+                    changed = copy.deepcopy(row)
+                    statement = changed['query'][changed['query'].index('ALTER TABLE'):]
+                    if defect == 'comments-only': changed['query'] = changed['query'].replace(statement, '')
+                    if defect == 'commented-other-table': changed['query'] = changed['query'].replace('recovery_canary`', 'other_table`').replace('"recovery_canary"', '"other_table"')
+                    if defect == 'second-statement': changed['query'] += '; SELECT 1'
+                    if defect == 'ddl-only-in-a-comment': changed['query'] = changed['query'].replace(statement, '-- ' + statement + newline + 'SELECT 1')
+                    self.assertFalse(fixture_waiter(changed, row['client'], holder, engine), defect)
 
     def test_stop_proof_requires_every_native_container_and_each_original_job(self):
         jobs = {self.job['metadata']['uid']}

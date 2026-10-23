@@ -47,3 +47,12 @@ The `-v0.2.5` readings are the check's own run on the published v0.2.5
 with kube-prometheus-stack 92.11.0, fresh-installation run 39563266483: the
 receiver's log, the active targets trimmed the same way, and the release's
 ServiceMonitor with its metadata trimmed to name, namespace and labels.
+
+`restore/waiter-postgresql-ptah-v0.14.0.json` and
+`restore/waiter-mysql-ptah-v0.14.0.json` are the in-flight Apply's server wait
+as `restore_during_apply.ApplyLoss.waiters` reads it, taken on October 23, 2026
+from PostgreSQL 17 (psql `-At`) and MySQL 8.4 (`--batch --skip-column-names`).
+A session held a lock on `recovery_canary` while the Ptah v0.14.0 release image
+(`sha256:6c7a5d62…`) applied the fixture's revision 2 with `ptah schema apply`.
+Ptah v0.14.0 sends the plan's comment lines with the statement; v0.13.0 sent the
+bare `ALTER TABLE`. Only the account filter differs from the probe's query.
