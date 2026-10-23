@@ -23,6 +23,7 @@ func TestConditionReasonWireContract(t *testing.T) {
 		{"approved plan", operatorv1alpha1.ReasonApprovedPlan, "ApprovedPlan"},
 		{"artifact unverified", operatorv1alpha1.ReasonArtifactUnverified, "ArtifactUnverified"},
 		{"awaiting approval", operatorv1alpha1.ReasonAwaitingApproval, "AwaitingApproval"},
+		{"commit resolved", operatorv1alpha1.ReasonCommitResolved, "CommitResolved"},
 		{"configuration error", operatorv1alpha1.ReasonConfigurationError, "ConfigurationError"},
 		{"converged after unknown outcome", operatorv1alpha1.ReasonConvergedAfterUnknownOutcome, "ConvergedAfterUnknownOutcome"},
 		{"current plan", operatorv1alpha1.ReasonCurrentPlan, "CurrentPlan"},

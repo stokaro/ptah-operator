@@ -87,8 +87,8 @@
     {
       "name": "schema-approvals",
       "slug": "schema-approvals",
-      "summary": "Schema approval bindings and runtime refusals on both engines, and ConfigMap sources",
-      "phases": ["schema-approvals", "configmap-sources"],
+      "summary": "Schema approval bindings and runtime refusals on both engines",
+      "phases": ["schema-approvals"],
       "prepare": ["assert", "dataplane"]
     },
     {
@@ -101,8 +101,8 @@
     {
       "name": "data-plane",
       "slug": "data-plane",
-      "summary": "The control-plane contract, PostgreSQL lifecycle and reference data, and plan-size and admission boundaries",
-      "phases": ["assert", "dataplane", "reference-data-postgresql"],
+      "summary": "The control-plane contract, PostgreSQL lifecycle and reference data, plan-size and admission boundaries, and ConfigMap and Git sources",
+      "phases": ["assert", "dataplane", "reference-data-postgresql", "configmap-sources", "git-sources"],
       "prepare": []
     },
     {

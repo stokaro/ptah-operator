@@ -106,9 +106,12 @@ type artifactFetchRequest struct {
 	source        operatorv1alpha1.SourceAccessBinding
 	containerName string
 	args          []string
-	// destination is the directory under the source volume a snapshot is
-	// copied into.
+	// destination is the directory under the source volume a snapshot or a
+	// Git commit is copied into.
 	destination string
+	// schema says the source is a schema file rather than a migration
+	// directory.
+	schema bool
 }
 
 // buildOperationJob is the one place an operation Job and its Pod are shaped.
@@ -199,11 +202,19 @@ func (b Builder) buildOperationJob(spec operationJob) (*batchv1.Job, error) {
 		VolumeMounts:    []corev1.VolumeMount{{Name: runnerVolumeName, MountPath: "/runner"}},
 	}}
 	if fetch := spec.fetch; fetch != nil {
-		if fetch.source.Snapshot != nil {
+		switch {
+		case fetch.source.Git != nil:
+			fetchContainer, fetchVolumes, err := b.gitFetch(*fetch.source.Git, fetch.schema, fetch.destination, resources)
+			if err != nil {
+				return nil, err
+			}
+			initContainers = append(initContainers, fetchContainer)
+			volumes = append(volumes, fetchVolumes...)
+		case fetch.source.Snapshot != nil:
 			copyContainer, copyVolumes := b.snapshotCopy(*fetch.source.Snapshot, fetch.destination, resources)
 			initContainers = append(initContainers, copyContainer)
 			volumes = append(volumes, copyVolumes...)
-		} else {
+		default:
 			guard, fetchContainer, fetchVolumes, err := b.artifactFetch(fetch.source, fetch.containerName, fetch.args, resources)
 			if err != nil {
 				return nil, err

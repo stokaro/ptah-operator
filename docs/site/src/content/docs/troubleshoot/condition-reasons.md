@@ -24,6 +24,7 @@ decision.
 | `ApprovedPlan` | The exact current approved plan is applying. |
 | `ArtifactUnverified` | No plan is usable because artifact verification did not succeed. |
 | `AwaitingApproval` | The current immutable plan needs a new exact approval. |
+| `CommitResolved` | A Git source's ref was read at a commit, and the content digest of the files it selects there was recorded. |
 | `ConfigurationError` | Controller-side configuration or declared input is invalid. |
 | `ConvergedAfterUnknownOutcome` | Read-only proof found convergence after an unattributable Apply outcome. |
 | `CurrentPlan` | An approval exactly matches the current immutable plan. |

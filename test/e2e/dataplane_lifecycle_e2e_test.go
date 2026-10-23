@@ -85,7 +85,7 @@ func (d *dataPlane) runEngineLifecycle(slug, engine, dialect, secret string) {
 	d.assertDatabaseColumn(slug, "name", 0)
 	planV1 := d.plan
 	assertAppliedSQLReadAuthorization := d.pendingSQLReadAuthorization(schema)
-	d.assertJobIsolation(schema, secret, false, nil)
+	isolated := d.assertJobIsolation(schema, secret, false, nil)
 	d.assertNoNewJobs(schema, "apply", v1Apply)
 	v1PostObserve := d.checkpointJobs(schema, "observe")
 	v1PostPlan := d.checkpointJobs(schema, "plan")
@@ -98,7 +98,10 @@ func (d *dataPlane) runEngineLifecycle(slug, engine, dialect, secret string) {
 	assertAppliedSQLReadAuthorization()
 	d.assertOneNewJob(schema, "apply", v1Apply)
 	d.assertCoordinationLeaseBoundary(key, leases)
-	d.assertJobIsolation(schema, secret, true, nil)
+	// The Resolve and Verify Jobs held above can outlive their cleanup TTL
+	// while the Apply converges, so they are read as kept beside the live
+	// Apply, Observe and Plan Jobs.
+	d.assertJobIsolation(schema, secret, true, keptAndLiveJobs(isolated, d.liveSchemaJobs(schema)))
 	d.assertDatabaseColumn(slug, "name", 1)
 	d.assertDatabaseColumn(slug, "note", 0)
 	if slug == "mysql" {

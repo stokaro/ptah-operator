@@ -989,6 +989,22 @@ func (r *MigrationReconciler) consumeMigrationResult(
 	var pendingPlanReport *dataplane.MigrationStatusReport
 	switch operation.Type {
 	case operatorv1alpha1.MigrationOperationResolve:
+		if git := migration.Spec.Artifact.Git; git != nil {
+			revision, err := gitResolution(git, result)
+			if err != nil {
+				return r.retryMigrationOperation(ctx, migration, job, err)
+			}
+			migration.Status.Artifact = &operatorv1alpha1.SourceAccessBinding{Git: sourcebinding.GitAccess(*git, revision)}
+			migration.Status.ConfigMap = nil
+			// A Git source has no verification policy, so there is no Verify
+			// step: the history is read next.
+			migration.Status.Phase = operatorv1alpha1.MigrationPhaseReading
+			meta.RemoveStatusCondition(&migration.Status.Conditions, operatorv1alpha1.ConditionMigrationArtifactVerified)
+			setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionTrue,
+				operatorv1alpha1.ReasonCommitResolved,
+				fmt.Sprintf("The Git ref resolved to commit %s; the history is read next", revision.Commit))
+			break
+		}
 		if !sha256DigestPattern.MatchString(result.ResolvedDigest) || result.ResolvedReference == "" {
 			return r.retryMigrationOperation(ctx, migration, job, errors.New("the resolve result carries no immutable reference"))
 		}
@@ -1442,7 +1458,7 @@ func (r *MigrationReconciler) migrationInputFingerprint(
 	migration *operatorv1alpha1.PtahMigration,
 	operationType operatorv1alpha1.MigrationOperationType,
 ) (string, error) {
-	if migration.Spec.Artifact.ConfigMap == nil {
+	if migration.Spec.Artifact.ConfigMap == nil && migration.Spec.Artifact.Git == nil {
 		if _, err := ocireference.Parse(migration.Spec.Artifact.OCIRef); err != nil {
 			return "", errors.New("the artifact reference must be an OCI reference without credentials, whitespace, or query data")
 		}
@@ -1487,6 +1503,23 @@ func (r *MigrationReconciler) migrationInputFingerprint(
 				inputs["source_configmap_uid"] = string(revision.UID)
 			}
 		}
+		// A Git source adds the commit it was resolved to and its content.
+		if git := migration.Status.Artifact.Git; git != nil {
+			inputs["source_git_url"] = git.URL
+			inputs["source_git_path"] = git.Path
+			inputs["source_git_commit"] = git.Commit
+			inputs["source_content_digest"] = git.ContentDigest
+		}
+	}
+	if git := migration.Spec.Artifact.Git; git != nil {
+		// The repository, ref, path, credential and trust a Resolve Job is
+		// built from: an edit to any of them makes a running Resolve's result
+		// stale.
+		source, err := fingerprint.DigestCanonicalJSON(git)
+		if err != nil {
+			return "", fmt.Errorf("digest the Git source: %w", err)
+		}
+		inputs["git_source"] = source
 	}
 	if operationType == operatorv1alpha1.MigrationOperationVerify {
 		binding, err := policy.ConfigMapBinding(ctx, r.directReader(), migration.Namespace, migration.Spec.Artifact.VerificationPolicyFrom)
@@ -2056,6 +2089,17 @@ func migrationForApproval(_ context.Context, object client.Object) []reconcile.R
 func migrationSourceBinding(migration *operatorv1alpha1.PtahMigration) *operatorv1alpha1.SourceAccessBinding {
 	if snapshot := migration.Status.Artifact.Snapshot; snapshot != nil {
 		return &operatorv1alpha1.SourceAccessBinding{Snapshot: snapshot.DeepCopy()}
+	}
+	if git := migration.Status.Artifact.Git; git != nil {
+		// The commit and content a resolution found, with the credential
+		// and trust selectors the spec names now, as an OCI source takes its
+		// registry selectors from the spec.
+		binding := git.DeepCopy()
+		if spec := migration.Spec.Artifact.Git; spec != nil {
+			binding.AuthFrom = spec.AuthFrom.DeepCopy()
+			binding.Transport = *spec.Transport.DeepCopy()
+		}
+		return &operatorv1alpha1.SourceAccessBinding{Git: binding}
 	}
 	source := &operatorv1alpha1.SourceAccessBinding{
 		ResolvedReference: migration.Status.Artifact.ResolvedReference,

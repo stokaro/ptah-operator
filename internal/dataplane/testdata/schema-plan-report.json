@@ -1,18 +1,18 @@
 {
   "contract_version": 2,
   "outcome": "changes",
-  "plan_digest": "sha256:9fb6bc62fc4d5d3705c805f05b8dfd2275dff7b3322ea7f12a083b8cdcc65903",
+  "plan_digest": "sha256:abd0a1b39d694f9aad5b77ec30e8369d4e369964e699b1c330fab81752b6690d",
   "plan_path": "/w/plan.json",
   "plan": {
     "format_version": 1,
-    "name": "plan_8b24d027856d",
+    "name": "plan_630995a42695",
     "dialect": "postgres",
-    "from_fingerprint": "sha256:89575115ce2cc0acb20273a4a3eb379d86985ffacfa48d70d3ab49f300c2870d",
-    "to_fingerprint": "sha256:e4bb28bbd71299aa6dd7329588e8056340c3da3259d300150de970e9b989b0b6",
+    "from_fingerprint": "sha256:fe0a5fb0b916d8dbf035ed4628c530a10ddfc7bc1156f6e1a7884d425105f21d",
+    "to_fingerprint": "sha256:cb9386e767e4248e4f271933a5dd6a5f7eed02900eaf876e1c63831ac4d308af",
     "destructive": false,
     "statements": [
       {
-        "sql": "-- Add/modify columns for table: items\n-- ALTER statements: --\nALTER TABLE \"items\" ADD COLUMN \"name\" text",
+        "sql": "-- Add/modify columns for table: items\n-- ALTER statements: --\nALTER TABLE \"items\" ADD COLUMN \"note\" TEXT",
         "severity": "safe",
         "reason": "does not remove data or tighten constraints"
       }

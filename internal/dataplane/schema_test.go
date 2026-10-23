@@ -1,6 +1,7 @@
 package dataplane_test
 
 import (
+	"errors"
 	"os"
 	"slices"
 	"strings"
@@ -148,26 +149,26 @@ func TestDecodeSchemaApplyReadsEachOutcome(t *testing.T) {
 	}{
 		{
 			name: "applied",
-			document: `{"contract_version":2,"outcome":"applied","plan_name":"p","plan_digest":"` + digest +
-				`","statements":["CREATE TABLE t (id bigint)"],"later":1}`,
+			document: `{"contract_version":3,"outcome":"applied","plan_name":"p","plan_digest":"` + digest +
+				`","units":[{"sql":"CREATE TABLE t (id bigint)"}],"later":1}`,
 			outcome: dataplane.SchemaApplyOutcomeApplied,
 		},
 		{
 			name: "a dry run",
-			document: `{"contract_version":2,"outcome":"dry-run","plan_name":"p","plan_digest":"` + digest +
-				`","statements":["CREATE TABLE t (id bigint)"]}`,
+			document: `{"contract_version":3,"outcome":"dry-run","plan_name":"p","plan_digest":"` + digest +
+				`","units":[{"sql":"CREATE TABLE t (id bigint)"}]}`,
 			outcome: dataplane.SchemaApplyOutcomeDryRun,
 		},
 		{
 			name: "a plan whose declared rows moved",
-			document: `{"contract_version":2,"outcome":"refused","plan_name":"p","plan_digest":"` + digest +
+			document: `{"contract_version":3,"outcome":"refused","plan_name":"p","plan_digest":"` + digest +
 				`","refusal":{"code":"stale-plan","changed":"rows","plan_fingerprint":"` + digest +
 				`","database_fingerprint":"` + digest + `"},"error":"stale"}`,
 			outcome: dataplane.SchemaApplyOutcomeRefused,
 		},
 		{
 			name:     "an outcome nobody can know",
-			document: `{"contract_version":2,"outcome":"unknown","statements":["SELECT 1"],"error":"connection lost"}`,
+			document: `{"contract_version":3,"outcome":"unknown","units":[{"sql":"SELECT 1"}],"error":"connection lost"}`,
 			outcome:  dataplane.SchemaApplyOutcomeUnknown,
 		},
 	} {
@@ -187,12 +188,13 @@ func TestDecodeSchemaApplyReadsEachOutcome(t *testing.T) {
 func TestDecodeSchemaApplyRefusesWhatItCannotAccountFor(t *testing.T) {
 	t.Parallel()
 
-	applied := `{"contract_version":2,"outcome":"applied","plan_name":"p","plan_digest":"` + digest + `"}`
+	applied := `{"contract_version":3,"outcome":"applied","plan_name":"p","plan_digest":"` + digest + `"}`
 	for name, document := range map[string]string{
-		"a newer contract version":     strings.Replace(applied, `"contract_version":2`, `"contract_version":3`, 1),
-		"the version v0.13.0 printed":  strings.Replace(applied, `"contract_version":2`, `"contract_version":1`, 1),
+		"a newer contract version":     strings.Replace(applied, `"contract_version":3`, `"contract_version":4`, 1),
+		"the version v0.14.0 printed":  strings.Replace(applied, `"contract_version":3`, `"contract_version":2`, 1),
+		"the version v0.13.0 printed":  strings.Replace(applied, `"contract_version":3`, `"contract_version":1`, 1),
 		"an unknown outcome":           strings.Replace(applied, `"outcome":"applied"`, `"outcome":"partial"`, 1),
-		"a refusal without its reason": `{"contract_version":2,"outcome":"refused"}`,
+		"a refusal without its reason": `{"contract_version":3,"outcome":"refused"}`,
 		"a refusal on a success":       strings.Replace(applied, `"plan_name"`, `"refusal":{"code":"stale-plan"},"plan_name"`, 1),
 		"a digest that is not one":     strings.Replace(applied, digest, "sha256:"+strings.Repeat("A", 64), 1),
 		"a second JSON value":          applied + "\n" + applied,
@@ -208,11 +210,12 @@ func TestDecodeSchemaApplyRefusesWhatItCannotAccountFor(t *testing.T) {
 	}
 }
 
-// The two fixtures are the documents the Ptah v0.14.0 release image printed for
+// The two fixtures are the documents the Ptah v0.15.0 release image printed for
 // one added column on PostgreSQL 17: `schema plan --output /w/plan.json --json`
 // and `schema apply --plan /w/plan.json --dry-run --json`, stored as printed.
-// v0.13.0 printed version 1 of both; a decoder held only to fixtures written
-// here would not have noticed the version move.
+// v0.13.0 printed version 1 of both and v0.14.0 version 2 of both; v0.15.0
+// moved only the apply document, to version 3. A decoder held only to fixtures
+// written here would not have noticed either move.
 func TestDecodeSchemaReportsPtahPrinted(t *testing.T) {
 	t.Parallel()
 
@@ -235,7 +238,37 @@ func TestDecodeSchemaReportsPtahPrinted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DecodeSchemaApply() refused what Ptah printed: %v", err)
 	}
-	if applied.Outcome != dataplane.SchemaApplyOutcomeDryRun || applied.PlanDigest != planned.PlanDigest || len(applied.Statements) != 1 {
+	listed, err := applied.SQLStatements()
+	if err != nil || applied.Outcome != dataplane.SchemaApplyOutcomeDryRun || applied.PlanDigest != planned.PlanDigest || len(listed) != 1 {
 		t.Fatalf("dry-run report = %+v, want the plan %s listed", applied, planned.PlanDigest)
+	}
+}
+
+// A dry run is checked against the reviewed plan statement by statement, so a
+// unit that carries no SQL, a native provider operation in particular, has to
+// be refused rather than dropped from the comparison.
+func TestSchemaApplySQLStatementsRefusesAUnitWithoutSQL(t *testing.T) {
+	t.Parallel()
+
+	read := func(units string) ([]string, error) {
+		report, err := dataplane.DecodeSchemaApply([]byte(`{"contract_version":3,"outcome":"dry-run","plan_name":"p","plan_digest":"` +
+			digest + `","units":` + units + `}`))
+		if err != nil {
+			t.Fatalf("DecodeSchemaApply() error = %v", err)
+		}
+		return report.SQLStatements()
+	}
+	listed, err := read(`[{"sql":"CREATE TABLE a (id bigint)"},{"sql":"CREATE TABLE b (id bigint)"}]`)
+	if err != nil || !slices.Equal(listed, []string{"CREATE TABLE a (id bigint)", "CREATE TABLE b (id bigint)"}) {
+		t.Fatalf("SQLStatements() = %q, %v", listed, err)
+	}
+	for name, units := range map[string]string{
+		"a native operation":          `[{"sql":"CREATE TABLE a (id bigint)"},{"native":{"kind":"provider/table","severity":"safe","reason":"new"}}]`,
+		"a native operation with SQL": `[{"sql":"CREATE TABLE a (id bigint)","native":{"kind":"provider/table","severity":"safe","reason":"new"}}]`,
+		"a unit with nothing":         `[{}]`,
+	} {
+		if listed, err := read(units); !errors.Is(err, dataplane.ErrNativeApplyUnit) {
+			t.Errorf("SQLStatements() accepted %s as %q, %v", name, listed, err)
+		}
 	}
 }

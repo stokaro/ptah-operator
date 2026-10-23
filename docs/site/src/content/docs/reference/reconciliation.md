@@ -17,6 +17,7 @@ stateDiagram-v2
   Pending --> Resolving
   Resolving --> Verifying: digest pinned
   Resolving --> Observing: ConfigMap snapshot taken
+  Resolving --> Observing: Git commit resolved
   Verifying --> Observing: policy satisfied
   Observing --> Planning: drift read
   Planning --> InSync: no change
@@ -89,6 +90,50 @@ operation is refused rather than read from anywhere else. Putting back the
 exact bytes, or editing the source so that it is read again once nothing is in
 flight, lets it continue.
 
+### A Git source
+
+A schema or a migration whose `git` names a repository, a ref and a path
+reaches it only from Jobs, through Ptah's pull. Resolve is a Job that fetches
+the commit the ref names, a branch at its tip, a tag at the commit it names,
+or a commit by its id, and reports that commit and the content digest of the
+selected files, computed as for a ConfigMap source. The status records the
+repository, ref and path it answered beside them. As with a ConfigMap source,
+observation follows Resolve directly, with no verification policy to check;
+`ArtifactResolved` says `CommitResolved` and names the commit.
+
+Every later operation that reads the files fetches that commit again, in an
+init container that holds the credential, and refuses content other than the
+recorded digest: Ptah's pull is held to it, and the runner reads back what Ptah
+wrote and checks it again before it copies the files where the operation
+container reads them. The commit is fetched by the ref that named it while the
+ref still points there. Afterwards it is fetched by its id where the server
+allows that, and otherwise along the ref's history, deeper each time within the
+fetch budget. A commit that is no longer reachable, because the branch was
+force-pushed, is refused, and the next Resolve reads the ref again.
+
+A resource pinned to a commit names no branch or tag to look along, so Ptah
+asks the server for the commit by its id, and only when the server's
+advertisement allows it: a branch or a lightweight tag points at the commit,
+or the server says it gives any reachable commit by id (Git's
+`uploadpack.allowReachableSHA1InWant` or `uploadpack.allowAnySHA1InWant`, both
+off by default). Otherwise Resolve is refused before anything is fetched. On a
+server that does not say so, an ordinary push on top of the pinned commit
+refuses the next Resolve just as a force-push does, and a commit that is not
+already at a branch tip is refused at the first one. The resource keeps what it
+applied. A tag stays on one commit on every server: to hold a resource at one
+commit there, name the tag.
+
+A refused pull says why in `ReconciliationFailed`, with the last line Ptah
+wrote: a submodule or an LFS pointer at the selected path, a host key the known
+hosts do not pin, a commit no branch or tag names on a server that gives
+commits only at a branch or tag.
+
+A branch or a tag is read again at every interval. A commit that leaves the
+selected files as they were keeps the plan; other files retire it. A plan
+binds the SHA-256 of the repository URL and the path, with the content digest,
+in place of an artifact digest, under plan contract version 2, so another
+repository or path retires it even when the files match.
+
 After an Apply, `Observe` and `Plan` run again under the original Apply Lease.
 Only a new, coherent no-change plan establishes convergence: a process exit
 never establishes that the database changed the way the plan said it would.
@@ -128,6 +173,7 @@ stateDiagram-v2
   Pending --> Resolving
   Resolving --> Verifying: digest pinned
   Resolving --> Reading: ConfigMap snapshot taken
+  Resolving --> Reading: Git commit resolved
   Verifying --> Reading: policy satisfied
   Reading --> InSync: nothing pending
   Reading --> Planning: pending versions
@@ -150,7 +196,8 @@ Four operations run as Jobs: `Resolve`, `Verify`, `History`, `Apply`. Only
 `Apply` takes the database-realm Lease; reading history does not, because it
 mutates nothing. A migration directory held in a ConfigMap is resolved by the
 manager into a snapshot, as [a schema's is](#a-configmap-source), and both
-`History` and `Apply` read the checked snapshot.
+`History` and `Apply` read the checked snapshot. One held in Git is resolved by
+a Job and fetched again by both, as [a schema's is](#a-git-source).
 
 Reading the history produces one of six verdicts, and the operator never
 guesses at any of them: the revision table is dirty; a recorded migration's

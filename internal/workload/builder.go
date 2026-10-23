@@ -291,8 +291,11 @@ func (b Builder) Build(
 			return nil, err
 		}
 		jobInput.schemaFile = sourceFilePath
-		if source.Snapshot != nil {
+		switch {
+		case source.Snapshot != nil:
 			jobInput.schemaFile = schemaSnapshotPath + "/" + source.Snapshot.SchemaFile
+		case source.Git != nil:
+			jobInput.schemaFile = gitSchemaFile(schemaSnapshotPath, *source.Git)
 		}
 	}
 	if operation.Type == operatorv1alpha1.OperationApply &&
@@ -341,6 +344,7 @@ func (b Builder) Build(
 			containerName: fetchContainerName,
 			args:          []string{"schema", "pull", source.ResolvedReference, "--out", sourceFilePath},
 			destination:   schemaSnapshotPath,
+			schema:        true,
 		}
 	}
 	return b.buildOperationJob(job)
@@ -363,10 +367,16 @@ func (i buildInput) validate() error {
 		(i.operation.Type == operatorv1alpha1.OperationResolve || i.operation.Type == operatorv1alpha1.OperationVerify) {
 		return errors.New("a ConfigMap source is read by the manager and has no Resolve or Verify Job")
 	}
+	if i.schema.Spec.Desired.Git != nil && i.operation.Type == operatorv1alpha1.OperationVerify {
+		return errors.New("a Git source has no verification policy and no Verify Job")
+	}
 	switch i.operation.Type {
 	case operatorv1alpha1.OperationResolve:
 		if i.plan != nil {
 			return errors.New("resolve operation cannot carry a plan")
+		}
+		if i.schema.Spec.Desired.Git != nil {
+			return nil
 		}
 		return validateRequestedReference(i.schema.Spec.Desired.OCIRef)
 	case operatorv1alpha1.OperationVerify:
@@ -454,8 +464,8 @@ func (i buildInput) dataPlane() (
 	var mounts []corev1.VolumeMount
 	annotations := map[string]string{}
 
-	mainUsesRegistry := i.operation.Type == operatorv1alpha1.OperationResolve ||
-		i.operation.Type == operatorv1alpha1.OperationVerify
+	mainUsesRegistry := (i.operation.Type == operatorv1alpha1.OperationResolve ||
+		i.operation.Type == operatorv1alpha1.OperationVerify) && i.schema.Spec.Desired.Git == nil
 	if mainUsesRegistry {
 		environment = append(environment, literalEnv("PTAH_PLAIN_HTTP", strconv.FormatBool(i.schema.Spec.Desired.Transport.PlainHTTP)))
 		var err error
@@ -474,6 +484,16 @@ func (i buildInput) dataPlane() (
 
 	switch i.operation.Type {
 	case operatorv1alpha1.OperationResolve:
+		if git := i.schema.Spec.Desired.Git; git != nil {
+			// Ptah's pull reaches the repository from the operation
+			// container, which holds no database credential.
+			var err error
+			environment, volumes, mounts, err = addGitAccess(gitResolveRequest(*git, true), environment, volumes, mounts)
+			if err != nil {
+				return nil, nil, nil, nil, err
+			}
+			break
+		}
 		environment = append(environment, literalEnv(runner.EnvRequestedReference, i.schema.Spec.Desired.OCIRef))
 	case operatorv1alpha1.OperationVerify:
 		resolved, _ := validatedResolvedReference(i.schema)
@@ -741,8 +761,11 @@ func schemaFetchBinding(
 		}
 		return source, nil
 	}
-	if access := sourcebinding.SchemaAccess(schema.Status.Source); access != nil {
-		if err := validatedSnapshotSource(schema); err != nil {
+	if access := sourcebinding.SchemaAccess(schema.Spec.Desired, schema.Status.Source); access != nil {
+		if err := validatedReadySource(schema); err != nil {
+			return operatorv1alpha1.SourceAccessBinding{}, err
+		}
+		if err := sourcebinding.ValidateAccess(*access); err != nil {
 			return operatorv1alpha1.SourceAccessBinding{}, err
 		}
 		return *access, nil
@@ -993,8 +1016,16 @@ func validatedSnapshotSource(schema *operatorv1alpha1.PtahSchema) error {
 }
 
 // validatedReadySource accepts a schema whose source later operations may
-// read: a verified OCI artifact, or a ConfigMap source in a snapshot.
+// read: a verified OCI artifact, a ConfigMap source in a snapshot, or a Git
+// commit resolved for the source the spec names. A Git source has no
+// verification policy, so it is never Verified.
 func validatedReadySource(schema *operatorv1alpha1.PtahSchema) error {
+	if schema.Status.Source.Git != nil {
+		if !sourcebinding.GitResolved(schema.Spec.Desired.Git, schema.Status.Source.Git) {
+			return errors.New("the Git commit was resolved for another source")
+		}
+		return nil
+	}
 	if schema.Status.Source.Snapshot != nil {
 		return validatedSnapshotSource(schema)
 	}

@@ -66,6 +66,48 @@ spec:
           path: schema.sql
 ```
 
+### From a branch of a Git repository
+
+The desired schema is one file of a Git repository, read at the commit
+`main` points at and again at every interval. A Resolve Job fetches it
+through Ptah and records the commit and the content digest of the file; every
+later operation fetches that commit again and refuses any other content. A
+commit that leaves the file as it was keeps the plan. There is no
+verification policy.
+
+The credential Secret `inventory-git` holds `password` (a token here) and
+`host: git.example.com`, the only host the fetch sends it to, and
+`caSHA256`, the digest of the CA bundle it may be sent under. The manager
+never reads the Secret or the repository.
+
+```yaml
+apiVersion: operator.ptah.run/v1alpha1
+kind: PtahSchema
+metadata:
+  name: inventory
+  namespace: application
+spec:
+  target:
+    engine: PostgreSQL
+    coordinationKey: production/inventory-primary
+    urlFrom:
+      name: inventory-database
+      key: url
+  desired:
+    git:
+      url: https://git.example.com/acme/inventory.git
+      ref:
+        branch: main
+      path: db/schema.sql
+      authFrom:
+        name: inventory-git
+      transport:
+        caFrom:
+          name: git-example-ca
+          key: ca.pem
+  interval: 5m
+```
+
 ### An approved change on MySQL
 
 Publish the desired schema with `ptah schema push --dialect mysql` and use

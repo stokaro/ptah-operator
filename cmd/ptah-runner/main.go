@@ -51,6 +51,7 @@ func run(ctx context.Context, arguments []string, stdout, stderr io.Writer, envi
 	materializeSnapshot := flags.String("materialize-source-snapshot", "", "check a mounted ConfigMap source snapshot and copy its files")
 	materializeTo := flags.String("materialize-to", "", "directory a checked source snapshot is copied into")
 	contentDigest := flags.String("content-digest", "", "content digest the source snapshot must hold")
+	fetchGitSource := flags.String("fetch-git-source", "", "fetch the resolved commit of a Git source into this directory")
 	if err := flags.Parse(arguments); err != nil {
 		return 2
 	}
@@ -66,6 +67,36 @@ func run(ctx context.Context, arguments []string, stdout, stderr io.Writer, envi
 			return 2
 		}
 		if err := installSelf(*installTo); err != nil {
+			_, _ = fmt.Fprintln(stderr, "ptah-runner: "+err.Error())
+			return 2
+		}
+		return 0
+	}
+	fetchMode := false
+	flags.Visit(func(current *flag.Flag) {
+		if current.Name == "fetch-git-source" {
+			fetchMode = true
+		}
+	})
+	if fetchMode {
+		unexpectedFlag := false
+		flags.Visit(func(current *flag.Flag) {
+			if current.Name != "fetch-git-source" && current.Name != "ptah-binary" {
+				unexpectedFlag = true
+			}
+		})
+		if unexpectedFlag || flags.NArg() != 0 || *fetchGitSource == "" {
+			_, _ = fmt.Fprintln(stderr, "ptah-runner: Git fetch mode takes only --fetch-git-source and --ptah-binary")
+			return 2
+		}
+		// The fetch holds the Git credential and writes what the process
+		// holding the database URL reads next, so it is held to the protocol
+		// as the main run is.
+		if err := runner.CheckProtocolBinding(environment); err != nil {
+			_, _ = fmt.Fprintln(stderr, "ptah-runner: "+runner.CodeRunnerProtocolMismatch+": "+err.Error())
+			return 2
+		}
+		if err := runner.FetchGitSource(ctx, *ptahBinary, environment, *fetchGitSource, "", runner.OSExecutor{}, stderr); err != nil {
 			_, _ = fmt.Fprintln(stderr, "ptah-runner: "+err.Error())
 			return 2
 		}

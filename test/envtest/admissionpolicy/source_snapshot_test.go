@@ -110,21 +110,27 @@ func snapshotObserveJob(edit func(*batchv1.Job)) func() (client.Object, error) {
 	}
 }
 
-// sourceSchemaPlan is a plan computed from a ConfigMap: contract version 2,
-// the source in place of the artifact digest and the verification policy.
-func sourceSchemaPlan() (*operatorv1alpha1.PtahSchemaPlan, error) {
+// configMapPlanSource is what a plan computed from a ConfigMap binds.
+func configMapPlanSource() *operatorv1alpha1.PlanSourceBinding {
+	return &operatorv1alpha1.PlanSourceBinding{
+		Kind: operatorv1alpha1.SourceKindConfigMap, Revision: "configmap-uid", ContentDigest: digest("4"),
+	}
+}
+
+// sourceSchemaPlan is a plan computed from a ConfigMap or a Git source:
+// contract version 2, the source in place of the artifact digest and the
+// verification policy.
+func sourceSchemaPlan(source *operatorv1alpha1.PlanSourceBinding) (*operatorv1alpha1.PtahSchemaPlan, error) {
 	identity := make([]byte, 32)
 	if _, err := rand.Read(identity); err != nil {
 		return nil, err
 	}
 	builder := managerBuilder()
 	spec := operatorv1alpha1.PtahSchemaPlanSpec{
-		ContractVersion: fingerprint.SourcePlanContractVersion,
-		SchemaRef:       operatorv1alpha1.ImmutableObjectReference{Name: tenantSchema.Name, UID: tenantSchema.UID},
-		Fingerprint:     "sha256:" + hex.EncodeToString(identity),
-		Source: &operatorv1alpha1.PlanSourceBinding{
-			Kind: operatorv1alpha1.SourceKindConfigMap, Revision: "configmap-uid", ContentDigest: digest("4"),
-		},
+		ContractVersion:         fingerprint.SourcePlanContractVersion,
+		SchemaRef:               operatorv1alpha1.ImmutableObjectReference{Name: tenantSchema.Name, UID: tenantSchema.UID},
+		Fingerprint:             "sha256:" + hex.EncodeToString(identity),
+		Source:                  source,
 		CoordinationDigest:      digest("6"),
 		TargetIdentityDigest:    digest("7"),
 		ActualStateFingerprint:  digest("8"),
@@ -145,15 +151,15 @@ func sourceSchemaPlan() (*operatorv1alpha1.PtahSchemaPlan, error) {
 	return plan, err
 }
 
-// sourceMigrationPlan is a migration plan computed from a ConfigMap.
-func sourceMigrationPlan() (*operatorv1alpha1.PtahMigrationPlan, error) {
+// sourceMigrationPlan is a migration plan computed from a ConfigMap or a Git
+// source.
+func sourceMigrationPlan(source *operatorv1alpha1.PlanSourceBinding) (*operatorv1alpha1.PtahMigrationPlan, error) {
 	builder := managerBuilder()
 	planned := []operatorv1alpha1.PlannedMigration{{Version: 1, Checksum: digest("1")}}
 	sequence, err := migrationplan.SequenceDigest(planned)
 	if err != nil {
 		return nil, err
 	}
-	source := &operatorv1alpha1.PlanSourceBinding{Kind: operatorv1alpha1.SourceKindConfigMap, Revision: "configmap-uid", ContentDigest: digest("4")}
 	binding := migrationplan.Binding{
 		MigrationUID:           tenantMigration.UID,
 		HistoryFingerprint:     digest("5"),

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -219,6 +220,15 @@ func Run(ctx context.Context, config Config) Result {
 	}
 	if config.Executor == nil {
 		config.Executor = OSExecutor{StopDelay: ChildStopDelay(terminationGrace)}
+	}
+	// A Git source resolves through Ptah's own pull, which the operation
+	// reaches with the credential its fetch container holds and nothing else.
+	if source, isGit := GitSourceFromEnvironment(environment); isGit {
+		if config.Operation != OperationResolve || inputs.RequestedReference != "" {
+			setResultError(&result, "invalid_configuration", errors.New("a Git source reaches only a Resolve operation, and only alone"), redactor, config.Diagnostics)
+			return result
+		}
+		return runGitResolve(ctx, config, environment, source, redactor, result)
 	}
 	// Every operation that reaches the registry prepares its access first: the
 	// authority check, the authenticated-plain-HTTP refusal and the verified CA
@@ -788,7 +798,9 @@ func validatePlanDryRun(
 	case report.PlanDigest != contentDigest:
 		setResultError(result, "invalid_plan_output", errors.New("plan validation read a plan other than the one saved"), redactor, config.Diagnostics)
 		return false
-	case !slices.Equal(report.Statements, planStatements(plan)):
+	}
+	listed, err := report.SQLStatements()
+	if err != nil || !slices.Equal(listed, planStatements(plan)) {
 		setResultError(result, "invalid_plan_output", errors.New("native dry run does not list the reviewed plan statements"), redactor, config.Diagnostics)
 		return false
 	}
@@ -1467,4 +1479,63 @@ func digestFromReference(reference string) (string, error) {
 		return "", errors.New("SHA-256 digest not found")
 	}
 	return strings.ToLower(matches[0]), nil
+}
+
+// runGitResolve fetches the commit a Git source's ref names, through Ptah's
+// pull, into a directory of its own that nothing else reads, and reports the
+// commit and the content digest of the selected files. Every later operation
+// fetches that commit again and is held to that digest.
+func runGitResolve(ctx context.Context, config Config, environment []string, source GitSource, redactor Redactor, result Result) Result {
+	trust, cleanupTrust, err := PrepareGitSourceAccess(source, environment, config.TempDir)
+	if err != nil {
+		setResultError(&result, "invalid_git_access", err, redactor, config.Diagnostics)
+		return result
+	}
+	defer cleanupTrust()
+	scratch, err := os.MkdirTemp(config.TempDir, "ptah-git-resolve-*")
+	if err != nil {
+		setResultError(&result, "execution_error", errors.New("create the Git resolve directory"), redactor, config.Diagnostics)
+		return result
+	}
+	defer func() { _ = os.RemoveAll(scratch) }()
+	out := filepath.Join(scratch, "migrations")
+	if source.Schema {
+		out = filepath.Join(scratch, path.Base(source.Path))
+	}
+	spec, err := GitPull(config.PtahBinary, source, out, trust)
+	if err != nil {
+		setResultError(&result, "invalid_input", err, redactor, config.Diagnostics)
+		return result
+	}
+	spec.Env = childEnvironment(environment)
+	if err := ensureNoCredentialsInArguments(spec.Args, environmentMap(environment)); err != nil {
+		setResultError(&result, "credential_in_arguments", err, redactor, config.Diagnostics)
+		return result
+	}
+	stdout, stderr := newBoundedBuffer(config.MaxResultBytes), newBoundedBuffer(maxGitStderrBytes)
+	exitCode, err := config.Executor.Execute(ctx, spec, stdout, stderr)
+	result.ChildExitCode = exitCode
+	if err == nil && exitCode != 0 {
+		setResultError(&result, "child_exit", gitPullExit(exitCode, stderr.bytes(), redactor), redactor, config.Diagnostics)
+		return result
+	}
+	if !outcomeSucceeded(&result, commandOutcome{exitCode: exitCode, err: err, stdout: stdout, stderr: stderr}, redactor, config.Diagnostics) {
+		return result
+	}
+	if stdout.dropped() > 0 {
+		setResultError(&result, "invalid_resolve_output", errors.New("the Git pull report exceeded the result limit"), redactor, config.Diagnostics)
+		return result
+	}
+	report, err := dataplane.DecodeGitPull(stdout.bytes(), source.reference(), source.Path)
+	if err != nil {
+		setResultError(&result, "invalid_resolve_output", err, redactor, config.Diagnostics)
+		return result
+	}
+	if source.Commit != "" && report.Commit != source.Commit {
+		setResultError(&result, "invalid_resolve_output", errors.New("the pull read another commit than the one asked for"), redactor, config.Diagnostics)
+		return result
+	}
+	result.ResolvedCommit = report.Commit
+	result.ResolvedContentDigest = report.ContentDigest
+	return result
 }

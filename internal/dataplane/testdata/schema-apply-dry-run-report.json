@@ -1,9 +1,11 @@
 {
-  "contract_version": 2,
+  "contract_version": 3,
   "outcome": "dry-run",
-  "plan_name": "plan_8b24d027856d",
-  "plan_digest": "sha256:9fb6bc62fc4d5d3705c805f05b8dfd2275dff7b3322ea7f12a083b8cdcc65903",
-  "statements": [
-    "-- Add/modify columns for table: items\n-- ALTER statements: --\nALTER TABLE \"items\" ADD COLUMN \"name\" text"
+  "plan_name": "plan_630995a42695",
+  "plan_digest": "sha256:abd0a1b39d694f9aad5b77ec30e8369d4e369964e699b1c330fab81752b6690d",
+  "units": [
+    {
+      "sql": "-- Add/modify columns for table: items\n-- ALTER statements: --\nALTER TABLE \"items\" ADD COLUMN \"note\" TEXT"
+    }
   ]
 }

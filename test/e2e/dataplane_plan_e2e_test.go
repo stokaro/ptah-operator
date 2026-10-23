@@ -547,19 +547,26 @@ func (d *dataPlane) assertApprovalConsumed(approval, planUID string) {
 
 // assertJobIsolation holds the schema's Jobs, live or as kept evidence, to
 // keeping the registry credential and the database URL in separate
-// containers.
-func (d *dataPlane) assertJobIsolation(schema, secret string, requireApply bool, archived []batchv1.Job) {
+// containers, and returns the Jobs it held.
+func (d *dataPlane) assertJobIsolation(schema, secret string, requireApply bool, archived []batchv1.Job) []batchv1.Job {
 	d.t.Helper()
 	jobs := archived
 	if jobs == nil {
-		live := &batchv1.JobList{}
-		d.check(d.list(live, client.MatchingLabels{labelSchema: schema}),
-			"%s live Jobs could not be read for isolation evidence", schema)
-		jobs = live.Items
+		jobs = d.liveSchemaJobs(schema)
 	}
 	if !controllerJobIsolation(jobs, secret, registryAuthSecret, requireApply) {
 		d.fatalf("%s Jobs did not isolate authenticated registry access from database credentials", schema)
 	}
+	return jobs
+}
+
+// liveSchemaJobs is every Job of the schema the namespace holds now.
+func (d *dataPlane) liveSchemaJobs(schema string) []batchv1.Job {
+	d.t.Helper()
+	live := &batchv1.JobList{}
+	d.check(d.list(live, client.MatchingLabels{labelSchema: schema}),
+		"%s live Jobs could not be read for isolation evidence", schema)
+	return live.Items
 }
 
 // assertSourceJobIsolation holds the schema's Resolve and Verify Jobs to
@@ -699,9 +706,11 @@ func (d *dataPlane) assertReadOnlyCycleBetween(schema string, before, after chec
 
 // setReconcileIntervalAndAssertNoop moves the schema to a new interval while
 // its status writes are held, so the one cycle the generation change starts
-// is the only one, and proves that cycle read-only and converged. Unless the
-// writes are to stay held, it then takes the quiescent checkpoint the periodic
-// no-op proof counts from and gives the writes back.
+// is the only one, and proves that cycle read-only and converged. The writes
+// are held again before the timer starts the next cycle, which the interval
+// has to leave time for. Unless the writes are to stay held, it then takes the
+// quiescent checkpoint the periodic no-op proof counts from and gives the
+// writes back.
 func (d *dataPlane) setReconcileIntervalAndAssertNoop(schema, digest, interval string, keepPaused bool) {
 	d.t.Helper()
 	if d.schemaInterval(schema) == interval {

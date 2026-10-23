@@ -85,6 +85,18 @@ const (
 	// lowercase SHA-256 digest of the selected ConfigMap bytes. It is
 	// intentionally not selectable by a PtahSchema author.
 	RegistryCASHA256SecretKey = "caSHA256"
+
+	// The fixed keys of a Git credential Secret. GitHostSecretKey is the
+	// authority, host[:port], the credential owner grants the credential
+	// for; GitCASHA256SecretKey and GitKnownHostsSHA256SecretKey are the
+	// "sha256:" digests of the trust it may be sent under. A resource's
+	// author selects the Secret, never the keys.
+	GitUsernameSecretKey         = "username"
+	GitPasswordSecretKey         = "password"
+	GitSSHPrivateKeySecretKey    = "sshPrivateKey"
+	GitHostSecretKey             = "host"
+	GitCASHA256SecretKey         = "caSHA256"
+	GitKnownHostsSHA256SecretKey = "knownHostsSHA256"
 )
 
 // PtahSchemaSpec declares one desired schema and one database target.
@@ -93,6 +105,7 @@ const (
 // +kubebuilder:validation:XValidation:rule="self.target.urlFrom.name.size() > 0 && self.target.urlFrom.key.size() > 0 && (!has(self.target.urlFrom.optional) || !self.target.urlFrom.optional)",message="target.urlFrom must name a required Secret key"
 // +kubebuilder:validation:XValidation:rule="!has(self.desired.verificationPolicyFrom) || (self.desired.verificationPolicyFrom.name.size() > 0 && self.desired.verificationPolicyFrom.key.size() > 0 && (!has(self.desired.verificationPolicyFrom.optional) || !self.desired.verificationPolicyFrom.optional))",message="desired.verificationPolicyFrom must name a required ConfigMap key"
 // +kubebuilder:validation:XValidation:rule="!has(self.desired.configMap) || self.desired.configMap.items.size() == 1",message="desired.configMap selects exactly one file for a schema"
+// +kubebuilder:validation:XValidation:rule="!has(self.desired.git) || self.desired.git.path != '.'",message="desired.git.path selects one file for a schema"
 // +kubebuilder:validation:XValidation:rule="!has(self.dev) || (self.dev.urlFrom.name.size() > 0 && self.dev.urlFrom.key.size() > 0 && (!has(self.dev.urlFrom.optional) || !self.dev.urlFrom.optional))",message="dev.urlFrom must name a required Secret key"
 // +kubebuilder:validation:XValidation:rule="!has(self.desired.transport) || !has(self.desired.transport.caFrom) || (self.desired.transport.caFrom.name.size() > 0 && self.desired.transport.caFrom.key.size() > 0 && (!has(self.desired.transport.caFrom.optional) || !self.desired.transport.caFrom.optional))",message="desired.transport.caFrom must name a required ConfigMap key"
 type PtahSchemaSpec struct {
@@ -208,13 +221,14 @@ type DatabaseTargetRef struct {
 	URLFrom corev1.SecretKeySelector `json:"urlFrom"`
 }
 
-// SourceSpec names where the desired files come from: an OCI artifact, or a
-// ConfigMap in the resource's own namespace. The schema and the migration
-// APIs share it, and keep their reconciliation lifecycles separate.
-// +kubebuilder:validation:XValidation:rule="has(self.ociRef) != has(self.configMap)",message="set exactly one of ociRef and configMap"
-// +kubebuilder:validation:XValidation:rule="has(self.ociRef) == has(self.verificationPolicyFrom)",message="verificationPolicyFrom is required with ociRef and refused with configMap"
-// +kubebuilder:validation:XValidation:rule="has(self.ociRef) || !has(self.registryAuthFrom)",message="registryAuthFrom is refused with configMap"
-// +kubebuilder:validation:XValidation:rule="has(self.ociRef) || !has(self.transport) || (!has(self.transport.caFrom) && (!has(self.transport.plainHTTP) || !self.transport.plainHTTP))",message="transport is refused with configMap"
+// SourceSpec names where the desired files come from: an OCI artifact, a
+// ConfigMap in the resource's own namespace, or one commit of a Git
+// repository. The schema and the migration APIs share it, and keep their
+// reconciliation lifecycles separate.
+// +kubebuilder:validation:XValidation:rule="[has(self.ociRef), has(self.configMap), has(self.git)].filter(set, set).size() == 1",message="set exactly one of ociRef, configMap and git"
+// +kubebuilder:validation:XValidation:rule="has(self.ociRef) == has(self.verificationPolicyFrom)",message="verificationPolicyFrom is required with ociRef and refused with configMap and git"
+// +kubebuilder:validation:XValidation:rule="has(self.ociRef) || !has(self.registryAuthFrom)",message="registryAuthFrom is refused with configMap and git"
+// +kubebuilder:validation:XValidation:rule="has(self.ociRef) || !has(self.transport) || (!has(self.transport.caFrom) && (!has(self.transport.plainHTTP) || !self.transport.plainHTTP))",message="transport is refused with configMap and git"
 type SourceSpec struct {
 	// OCIRef is a desired-schema artifact reference. It may name a tag or a
 	// digest; every later operation receives only the resolved digest.
@@ -231,6 +245,13 @@ type SourceSpec struct {
 	// the snapshot.
 	// +optional
 	ConfigMap *ConfigMapSourceSpec `json:"configMap,omitempty"`
+
+	// Git selects a file or a directory of one commit of a Git repository.
+	// The manager never reads the repository or its credential: a Job's fetch
+	// container fetches the commit through Ptah, and every later operation
+	// fetches the same commit again and refuses any other content.
+	// +optional
+	Git *GitSourceSpec `json:"git,omitempty"`
 
 	// RegistryAuthFrom names the Secret an operation Pod reads the registry
 	// credential from. The process that runs SQL never receives it.
@@ -286,13 +307,104 @@ type ConfigMapSourceItem struct {
 	Path string `json:"path"`
 }
 
+// GitSourceSpec selects a file or a directory of a Git repository.
+// +kubebuilder:validation:XValidation:rule="!self.url.startsWith('ssh://') || (has(self.transport) && has(self.transport.knownHostsFrom))",message="an ssh:// repository needs transport.knownHostsFrom"
+// +kubebuilder:validation:XValidation:rule="self.url.startsWith('ssh://') || !has(self.transport) || !has(self.transport.knownHostsFrom)",message="transport.knownHostsFrom is for an ssh:// repository"
+// +kubebuilder:validation:XValidation:rule="!self.url.startsWith('ssh://') || !has(self.transport) || !has(self.transport.caFrom)",message="transport.caFrom is for an https:// repository"
+type GitSourceSpec struct {
+	// URL of the repository: https:// or ssh://, with no credential, query or
+	// fragment.
+	// +kubebuilder:validation:MinLength=9
+	// +kubebuilder:validation:MaxLength=2048
+	// +kubebuilder:validation:Pattern=`^(https://[^@/[:space:]?#]+|ssh://([^:@/[:space:]?#]+@)?[^@/[:space:]?#]+)/[^[:space:]?#]+$`
+	URL string `json:"url"`
+
+	// Ref says which commit: a branch or a tag, polled at the resource's
+	// interval, or a commit.
+	Ref GitRef `json:"ref"`
+
+	// Path is what the commit's tree selects: the schema file, or the
+	// migration directory, where "." is the root. Relative, separated by
+	// "/", with no empty or ".." element, no backslash and no control
+	// character.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=1024
+	// +kubebuilder:validation:Pattern=`^(\.|(?:[^./\\\x00-\x1f\x7f][^/\\\x00-\x1f\x7f]*|\.[^./\\\x00-\x1f\x7f][^/\\\x00-\x1f\x7f]*|\.\.[^/\\\x00-\x1f\x7f]+)(?:/(?:[^./\\\x00-\x1f\x7f][^/\\\x00-\x1f\x7f]*|\.[^./\\\x00-\x1f\x7f][^/\\\x00-\x1f\x7f]*|\.\.[^/\\\x00-\x1f\x7f]+))*)$`
+	Path string `json:"path"`
+
+	// AuthFrom names the Secret the fetch container reads the credential
+	// from. The manager never reads it.
+	// +optional
+	AuthFrom *GitAuthSource `json:"authFrom,omitempty"`
+
+	// Transport pins whom the fetch talks to: the CA an https:// server's
+	// certificate chains to, or the host keys an ssh:// server presents.
+	// +optional
+	Transport GitTransportSpec `json:"transport,omitempty"`
+}
+
+// GitRef names one commit: exactly one of a branch, a tag and a commit id.
+// +kubebuilder:validation:XValidation:rule="[has(self.branch), has(self.tag), has(self.commit)].filter(set, set).size() == 1",message="set exactly one of branch, tag and commit"
+type GitRef struct {
+	// Branch is read at its tip, again at every interval.
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=255
+	// +kubebuilder:validation:Pattern=`^[^[:space:][:cntrl:]~^:?*\[\\]+$`
+	Branch string `json:"branch,omitempty"`
+	// Tag is read at the commit it names, again at every interval.
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=255
+	// +kubebuilder:validation:Pattern=`^[^[:space:][:cntrl:]~^:?*\[\\]+$`
+	Tag string `json:"tag,omitempty"`
+	// Commit is one commit, by its full 40-character id, which Ptah asks the
+	// server for by that id. Unless a branch or tag points at it, Ptah asks
+	// only a server that says it gives commits by id; on any other, Resolve
+	// refuses the commit once its branch moves past it. A tag holds one
+	// commit on every server.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^[0-9a-f]{40}$`
+	Commit string `json:"commit,omitempty"`
+}
+
+// GitAuthSource names the Secret a Git fetch authenticates with. Its keys are
+// fixed: username and password for https:// (a token goes in password),
+// sshPrivateKey for ssh://, and host, the authority host[:port] the
+// credential is for, which the fetch holds the URL to. caSHA256 or
+// knownHostsSHA256, when present, is the SHA-256 of the trust the transport
+// selects: the Secret's owner, not the resource's author, decides whom the
+// credential is sent to.
+type GitAuthSource struct {
+	// Name of the Secret, in this resource's namespace.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	Name string `json:"name"`
+}
+
+// GitTransportSpec pins the server a Git fetch talks to.
+// +kubebuilder:validation:XValidation:rule="!has(self.caFrom) || (self.caFrom.name.size() > 0 && self.caFrom.key.size() > 0 && (!has(self.caFrom.optional) || !self.caFrom.optional))",message="caFrom must name a required ConfigMap key"
+// +kubebuilder:validation:XValidation:rule="!has(self.knownHostsFrom) || (self.knownHostsFrom.name.size() > 0 && self.knownHostsFrom.key.size() > 0 && (!has(self.knownHostsFrom.optional) || !self.knownHostsFrom.optional))",message="knownHostsFrom must name a required ConfigMap key"
+type GitTransportSpec struct {
+	// CAFrom selects the only roots an https:// server's certificate may
+	// chain to. With authFrom, its Secret must hold caSHA256 with the
+	// selected bytes' digest.
+	// +optional
+	CAFrom *corev1.ConfigMapKeySelector `json:"caFrom,omitempty"`
+	// KnownHostsFrom selects the host keys an ssh:// server may present; a
+	// fetch never trusts a key on first use. With authFrom, its Secret must
+	// hold knownHostsSHA256 with the selected bytes' digest.
+	// +optional
+	KnownHostsFrom *corev1.ConfigMapKeySelector `json:"knownHostsFrom,omitempty"`
+}
+
 // SourceAccessBinding is the credential-free, immutable account of how an
 // operation reads the desired files: an OCI artifact pinned by digest with the
 // Kubernetes selectors needed to fetch it, or the snapshot a ConfigMap source
 // was copied into. It is persisted across post-Apply proof so a newer
 // generation cannot send newly selected credentials to the old artifact's
 // registry, or read files the plan was not computed from.
-// +kubebuilder:validation:XValidation:rule="has(self.resolvedReference) != has(self.snapshot)",message="set exactly one of resolvedReference and snapshot"
+// +kubebuilder:validation:XValidation:rule="[has(self.resolvedReference), has(self.snapshot), has(self.git)].filter(set, set).size() == 1",message="set exactly one of resolvedReference, snapshot and git"
 type SourceAccessBinding struct {
 	// ResolvedReference is the artifact with its tag replaced by a digest.
 	// +optional
@@ -309,6 +421,38 @@ type SourceAccessBinding struct {
 	// copied into, and the content it must hold.
 	// +optional
 	Snapshot *SourceSnapshotBinding `json:"snapshot,omitempty"`
+	// Git is the commit a Git source resolved to, where to fetch it from,
+	// and the content it must give.
+	// +optional
+	Git *GitSourceBinding `json:"git,omitempty"`
+}
+
+// GitSourceBinding is what an operation fetches a Git source by: the
+// repository, the ref that named the commit, the commit, the selected path,
+// and the selectors of the credential and the trust. The operation fetches
+// that commit again and refuses content other than ContentDigest.
+type GitSourceBinding struct {
+	// URL of the repository.
+	URL string `json:"url"`
+	// Ref is the branch or tag that named the commit when it resolved, or
+	// the commit itself. A fetch reads the commit by the ref while the ref
+	// still points at it.
+	Ref GitRef `json:"ref"`
+	// Commit is the full id of the commit.
+	// +kubebuilder:validation:Pattern=`^[0-9a-f]{40}$`
+	Commit string `json:"commit"`
+	// Path is what the commit's tree selects.
+	Path string `json:"path"`
+	// ContentDigest is the content digest of the selected files.
+	// +kubebuilder:validation:Pattern=`^sha256:[0-9a-f]{64}$`
+	ContentDigest string `json:"contentDigest"`
+	// AuthFrom names the credential Secret. It is a selector, never the
+	// credential.
+	// +optional
+	AuthFrom *GitAuthSource `json:"authFrom,omitempty"`
+	// Transport pins the server.
+	// +optional
+	Transport GitTransportSpec `json:"transport,omitempty"`
 }
 
 // SourceSnapshotBinding names the snapshot an operation reads a ConfigMap
@@ -334,6 +478,25 @@ type SourceSnapshotBinding struct {
 	SchemaFile string `json:"schemaFile,omitempty"`
 }
 
+// GitSourceRevision is the commit a Git source last resolved to, and what
+// was asked for: another repository, ref or path in the spec is another
+// source, and is resolved before anything reads it.
+type GitSourceRevision struct {
+	// URL of the repository.
+	URL string `json:"url"`
+	// Ref is the branch, tag or commit that was resolved.
+	Ref GitRef `json:"ref"`
+	// Path is what the commit's tree selects.
+	Path string `json:"path"`
+	// Commit is the full id of the commit the ref named.
+	// +kubebuilder:validation:Pattern=`^[0-9a-f]{40}$`
+	Commit string `json:"commit"`
+	// ContentDigest is the content digest of the selected files at that
+	// commit.
+	// +kubebuilder:validation:Pattern=`^sha256:[0-9a-f]{64}$`
+	ContentDigest string `json:"contentDigest"`
+}
+
 // ConfigMapSourceRevision is the ConfigMap a source was last read from.
 type ConfigMapSourceRevision struct {
 	// Name of the ConfigMap.
@@ -348,12 +511,14 @@ type ConfigMapSourceRevision struct {
 
 // SourceKind names a kind of source a plan can be bound to besides an OCI
 // artifact, which plans bind through artifactDigest.
-// +kubebuilder:validation:Enum=ConfigMap
+// +kubebuilder:validation:Enum=ConfigMap;Git
 type SourceKind string
 
 const (
 	// SourceKindConfigMap is a ConfigMap in the resource's namespace.
 	SourceKindConfigMap SourceKind = "ConfigMap"
+	// SourceKindGit is one commit of a Git repository.
+	SourceKindGit SourceKind = "Git"
 )
 
 // PlanSourceBinding is what a plan computed from a source other than an OCI
@@ -364,7 +529,12 @@ type PlanSourceBinding struct {
 	// Revision is the source object the files were read from. For a ConfigMap
 	// it is the ConfigMap's UID: an edit to a key the source does not select
 	// keeps the plan, while another ConfigMap, or the same name deleted and
-	// created again, retires it even when the files match.
+	// created again, retires it even when the files match. For Git it is
+	// "sha256:" and the SHA-256 of the repository URL and the selected path,
+	// joined by a newline: another repository or another path retires the
+	// plan even when the files match, while a commit that leaves the
+	// selected files as they were keeps it, as an edit to an unselected key
+	// keeps a ConfigMap's.
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=128
 	Revision string `json:"revision"`
@@ -983,6 +1153,11 @@ type SchemaSourceStatus struct {
 	// digest, for a ConfigMap source.
 	// +optional
 	Snapshot *SourceSnapshotBinding `json:"snapshot,omitempty"`
+	// Git is the commit a Git source last resolved to, and the content
+	// digest of the selected files there. A Git source has no verification
+	// policy, so verified stays false.
+	// +optional
+	Git *GitSourceRevision `json:"git,omitempty"`
 }
 
 // DriftFindingStatus is a bounded aggregate from the native drift report. It
@@ -1430,6 +1605,7 @@ const (
 	ReasonApprovedPlan                 ConditionReason = "ApprovedPlan"
 	ReasonArtifactUnverified           ConditionReason = "ArtifactUnverified"
 	ReasonAwaitingApproval             ConditionReason = "AwaitingApproval"
+	ReasonCommitResolved               ConditionReason = "CommitResolved"
 	ReasonConfigurationError           ConditionReason = "ConfigurationError"
 	ReasonConvergedAfterUnknownOutcome ConditionReason = "ConvergedAfterUnknownOutcome"
 	ReasonCurrentPlan                  ConditionReason = "CurrentPlan"

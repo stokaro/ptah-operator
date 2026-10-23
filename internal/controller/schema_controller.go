@@ -1253,6 +1253,13 @@ func (r *SchemaReconciler) verifiedSourcePolicyError(
 		}
 		return nil
 	}
+	if schema.Status.Source.Git != nil {
+		// Nor has a Git source.
+		if !sourcebinding.GitResolved(schema.Spec.Desired.Git, schema.Status.Source.Git) {
+			return fmt.Errorf("the source is no longer the Git source it was resolved from")
+		}
+		return nil
+	}
 	if !schema.Status.Source.Verified || schema.Status.Source.VerificationPolicyUID == "" ||
 		schema.Status.Source.VerificationPolicyDigest == "" {
 		return fmt.Errorf("verified source lacks an immutable verification policy binding")
@@ -1281,8 +1288,7 @@ func pendingProofPolicyBindingError(
 		// A plan computed from a ConfigMap binds no verification policy. The
 		// proof reads the snapshot the plan was computed from.
 		if !sourcebinding.AccessGives(pending.Source, pending.Plan.ArtifactDigest, pending.Plan.Source) ||
-			schema.Status.Source.Snapshot == nil || pending.Source.Snapshot == nil ||
-			schema.Status.Source.Snapshot.Name != pending.Source.Snapshot.Name ||
+			!proofReadsTheCurrentSource(schema.Status.Source, pending.Source) ||
 			pending.Plan.CoordinationDigest != pending.CoordinationDigest {
 			return fmt.Errorf("post-apply proof policy or source snapshot is internally inconsistent")
 		}
@@ -1468,6 +1474,28 @@ func (r *SchemaReconciler) consumeResultWithTransport(ctx context.Context, schem
 
 	switch schema.Status.ActiveOperation.Type {
 	case operatorv1alpha1.OperationResolve:
+		if git := schema.Spec.Desired.Git; git != nil {
+			revision, err := gitResolution(git, result)
+			if err != nil {
+				return r.retryOperation(ctx, schema, job, err)
+			}
+			if gitResolutionChanged(schema.Status.Source.Git, revision) {
+				if err := r.markRecordedApprovalStale(ctx, schema); err != nil {
+					return ctrl.Result{}, err
+				}
+				schema.Status.Plan = nil
+				schema.Status.Applied = nil
+			}
+			schema.Status.Source = operatorv1alpha1.SchemaSourceStatus{Git: &revision, ResolvedAt: &now}
+			// A Git source has no verification policy, so there is no Verify
+			// step: observation reads the commit next.
+			schema.Status.Phase = operatorv1alpha1.PhaseObserving
+			schema.Status.NextReconciliationTime = handoffDeadline(schema.Status.NextReconciliationTime, now)
+			setCondition(schema, operatorv1alpha1.ConditionArtifactResolved, metav1.ConditionTrue, operatorv1alpha1.ReasonCommitResolved,
+				fmt.Sprintf("The Git ref resolved to commit %s", revision.Commit))
+			meta.RemoveStatusCondition(&schema.Status.Conditions, operatorv1alpha1.ConditionArtifactVerified)
+			break
+		}
 		if result.Stdout != "" || ocireference.ValidateResolution(
 			schema.Spec.Desired.OCIRef, result.ResolvedReference, result.ResolvedDigest,
 		) != nil {
@@ -2443,7 +2471,8 @@ func pendingObservationFor(
 		return nil, fmt.Errorf("cannot persist post-apply proof without the immutable current plan")
 	}
 	if !sourcebinding.AccessGives(*operation.Source, schema.Status.Plan.ArtifactDigest, schema.Status.Plan.Source) ||
-		(operation.Source.Snapshot == nil && !strings.Contains(operation.Source.ResolvedReference, "@"+operation.Source.Digest)) {
+		(operation.Source.Snapshot == nil && operation.Source.Git == nil &&
+			!strings.Contains(operation.Source.ResolvedReference, "@"+operation.Source.Digest)) {
 		return nil, fmt.Errorf("cannot persist post-apply proof without immutable artifact access")
 	}
 	plan := *schema.Status.Plan
@@ -4073,6 +4102,12 @@ func operationInputs(schema *operatorv1alpha1.PtahSchema, operation operatorv1al
 	base["execution_binding"] = *schema.Status.ExecutionBinding.DeepCopy()
 	switch operation {
 	case operatorv1alpha1.OperationResolve:
+		if git := schema.Spec.Desired.Git; git != nil {
+			// An OCI source's inputs stay the ones a manager without Git
+			// sources computed.
+			base["git_source"] = git
+			break
+		}
 		base["requested_reference"] = schema.Spec.Desired.OCIRef
 		base["registry_auth"] = schema.Spec.Desired.RegistryAuthFrom
 		base["transport"] = schema.Spec.Desired.Transport
@@ -4176,7 +4211,7 @@ func artifactAccessBinding(schema *operatorv1alpha1.PtahSchema) *operatorv1alpha
 	if schema == nil {
 		return nil
 	}
-	if access := sourcebinding.SchemaAccess(schema.Status.Source); access != nil {
+	if access := sourcebinding.SchemaAccess(schema.Spec.Desired, schema.Status.Source); access != nil {
 		return access
 	}
 	binding := &operatorv1alpha1.SourceAccessBinding{
@@ -4581,23 +4616,35 @@ func setCondition(schema *operatorv1alpha1.PtahSchema, conditionType string, sta
 	})
 }
 
+// refreshWording names what a refresh reads: the OCI reference, or the Git
+// ref. An OCI source keeps the words it always had.
+func refreshWording(schema *operatorv1alpha1.PtahSchema, oci, git string) string {
+	if schema.Spec.Desired.Git != nil {
+		return git
+	}
+	return oci
+}
+
 func markSourceRefreshPending(schema *operatorv1alpha1.PtahSchema) {
 	if !schemaSourceResolved(schema) {
 		return
 	}
-	setCondition(schema, operatorv1alpha1.ConditionArtifactResolved, metav1.ConditionUnknown, operatorv1alpha1.ReasonRefreshing, "Refreshing the requested OCI reference; the retained digest remains historical evidence")
+	setCondition(schema, operatorv1alpha1.ConditionArtifactResolved, metav1.ConditionUnknown, operatorv1alpha1.ReasonRefreshing, refreshWording(schema, "Refreshing the requested OCI reference; the retained digest remains historical evidence",
+		"Refreshing the Git ref; the retained commit remains historical evidence"))
 	setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionUnknown, operatorv1alpha1.ReasonSourceRefreshPending, "Plan currentness is unknown until source refresh and read-only reconciliation complete")
 	setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionUnknown, operatorv1alpha1.ReasonSourceRefreshPending, "Convergence is unknown until source refresh and read-only reconciliation complete")
 }
 
 func markSourceRefreshFailed(schema *operatorv1alpha1.PtahSchema) {
 	if !schemaSourceResolved(schema) {
-		setCondition(schema, operatorv1alpha1.ConditionArtifactResolved, metav1.ConditionFalse, operatorv1alpha1.ReasonResolveFailed, "The requested OCI reference could not be resolved")
-		setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse, operatorv1alpha1.ReasonSourceUnresolved, "No plan can be prepared until the requested OCI reference resolves")
+		setCondition(schema, operatorv1alpha1.ConditionArtifactResolved, metav1.ConditionFalse, operatorv1alpha1.ReasonResolveFailed, refreshWording(schema, "The requested OCI reference could not be resolved", "The Git ref could not be resolved"))
+		setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse, operatorv1alpha1.ReasonSourceUnresolved, refreshWording(schema, "No plan can be prepared until the requested OCI reference resolves",
+			"No plan can be prepared until the Git ref resolves"))
 		setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionUnknown, operatorv1alpha1.ReasonSourceResolutionUnknown, "Convergence cannot be determined without a resolved source")
 		return
 	}
-	setCondition(schema, operatorv1alpha1.ConditionArtifactResolved, metav1.ConditionUnknown, operatorv1alpha1.ReasonRefreshFailed, "The requested OCI reference could not be refreshed; the retained digest remains historical evidence")
+	setCondition(schema, operatorv1alpha1.ConditionArtifactResolved, metav1.ConditionUnknown, operatorv1alpha1.ReasonRefreshFailed, refreshWording(schema, "The requested OCI reference could not be refreshed; the retained digest remains historical evidence",
+		"The Git ref could not be resolved again; the retained commit remains historical evidence"))
 	setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionUnknown, operatorv1alpha1.ReasonSourceFreshnessUnknown, "Plan currentness is unknown because source freshness could not be established")
 	setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionUnknown, operatorv1alpha1.ReasonSourceFreshnessUnknown, "Convergence is unknown because source freshness could not be established")
 }

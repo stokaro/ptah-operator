@@ -50,6 +50,7 @@ var (
 	ErrInvalidPath  = errors.New("invalid source path")
 	ErrDuplicate    = errors.New("duplicate source path")
 	ErrPathConflict = errors.New("source path is both a file and a directory")
+	ErrInvalidEntry = errors.New("invalid manifest entry")
 )
 
 // File is one selected file: its path inside the source and its exact bytes.
@@ -70,32 +71,12 @@ func Manifest(files []File) ([]byte, error) {
 	sorted := make([]File, len(files))
 	copy(sorted, files)
 	slices.SortFunc(sorted, func(a, b File) int { return strings.Compare(a.Path, b.Path) })
+	paths := make([]string, len(sorted))
 	for i, file := range sorted {
-		if err := validPath(file.Path); err != nil {
-			return nil, err
-		}
-		if i == 0 {
-			continue
-		}
-		previous := sorted[i-1].Path
-		if previous == file.Path {
-			return nil, fmt.Errorf("%w: %q", ErrDuplicate, file.Path)
-		}
+		paths[i] = file.Path
 	}
-	// A file "a" and a file "a/b" cannot both exist. Every path that has "a"
-	// as a directory sorts after "a/" and before "a0", so checking each path
-	// against the paths that follow it until the prefix no longer matches is
-	// enough.
-	for i, file := range sorted {
-		directory := file.Path + "/"
-		for _, later := range sorted[i+1:] {
-			if !strings.HasPrefix(later.Path, file.Path) {
-				break
-			}
-			if strings.HasPrefix(later.Path, directory) {
-				return nil, fmt.Errorf("%w: %q", ErrPathConflict, file.Path)
-			}
-		}
+	if err := checkSortedPaths(paths); err != nil {
+		return nil, err
 	}
 	var manifest strings.Builder
 	for _, file := range sorted {
@@ -108,6 +89,36 @@ func Manifest(files []File) ([]byte, error) {
 		manifest.WriteByte('\n')
 	}
 	return []byte(manifest.String()), nil
+}
+
+// checkSortedPaths refuses a sorted set of paths the rules do not admit: an
+// invalid path, the same path twice, or a path that is both a file and a
+// directory.
+func checkSortedPaths(paths []string) error {
+	for i, path := range paths {
+		if err := validPath(path); err != nil {
+			return err
+		}
+		if i > 0 && paths[i-1] == path {
+			return fmt.Errorf("%w: %q", ErrDuplicate, path)
+		}
+	}
+	// A file "a" and a file "a/b" cannot both exist. Every path that has "a"
+	// as a directory sorts after "a/" and before "a0", so checking each path
+	// against the paths that follow it until the prefix no longer matches is
+	// enough.
+	for i, path := range paths {
+		directory := path + "/"
+		for _, later := range paths[i+1:] {
+			if !strings.HasPrefix(later, path) {
+				break
+			}
+			if strings.HasPrefix(later, directory) {
+				return fmt.Errorf("%w: %q", ErrPathConflict, path)
+			}
+		}
+	}
+	return nil
 }
 
 // Digest returns the content digest of files: "sha256:" and the hex SHA-256 of
@@ -149,4 +160,50 @@ func validPath(path string) error {
 		}
 	}
 	return nil
+}
+
+// Entry is one line of a manifest as a report states it: the path, the size
+// and the SHA-256 of the file's bytes, without the bytes.
+type Entry struct {
+	Path   string
+	Size   int64
+	SHA256 string
+}
+
+// DigestOfEntries returns the content digest a set of manifest entries
+// gives, refusing a set the rules do not admit. A report that lists its files
+// can be held to the digest it names without the files themselves.
+func DigestOfEntries(entries []Entry) (string, error) {
+	if len(entries) == 0 {
+		return "", ErrEmpty
+	}
+	if len(entries) > MaxFiles {
+		return "", fmt.Errorf("%w: %d, at most %d", ErrTooManyFiles, len(entries), MaxFiles)
+	}
+	sorted := slices.Clone(entries)
+	slices.SortFunc(sorted, func(a, b Entry) int { return strings.Compare(a.Path, b.Path) })
+	paths := make([]string, len(sorted))
+	for i, entry := range sorted {
+		paths[i] = entry.Path
+	}
+	if err := checkSortedPaths(paths); err != nil {
+		return "", err
+	}
+	var manifest strings.Builder
+	for _, entry := range sorted {
+		if entry.Size < 0 || len(entry.SHA256) != sha256.Size*2 || strings.ToLower(entry.SHA256) != entry.SHA256 {
+			return "", fmt.Errorf("%w: %q has no valid size and SHA-256", ErrInvalidEntry, entry.Path)
+		}
+		if _, err := hex.DecodeString(entry.SHA256); err != nil {
+			return "", fmt.Errorf("%w: %q has no valid SHA-256", ErrInvalidEntry, entry.Path)
+		}
+		manifest.WriteString(entry.SHA256)
+		manifest.WriteByte(' ')
+		manifest.WriteString(strconv.FormatInt(entry.Size, 10))
+		manifest.WriteByte(' ')
+		manifest.WriteString(entry.Path)
+		manifest.WriteByte('\n')
+	}
+	sum := sha256.Sum256([]byte(manifest.String()))
+	return prefix + hex.EncodeToString(sum[:]), nil
 }

@@ -301,34 +301,34 @@ func artifactRefusals(source string) []refusal {
 			name:   source + " with neither ociRef nor configMap",
 			mutate: removing("spec", source, "ociRef"),
 			want: []cause{
-				{field, "set exactly one of ociRef and configMap"},
-				{field, "verificationPolicyFrom is required with ociRef and refused with configMap"},
+				{field, "set exactly one of ociRef, configMap and git"},
+				{field, "verificationPolicyFrom is required with ociRef and refused with configMap and git"},
 			},
 		},
 		{
 			name:   source + ".configMap beside ociRef",
 			mutate: setting(configMapSource(1), "spec", source, "configMap"),
-			want:   []cause{{field, "set exactly one of ociRef and configMap"}},
+			want:   []cause{{field, "set exactly one of ociRef, configMap and git"}},
 		},
 		{
 			name:   source + ".configMap with a verification policy",
 			mutate: both(removing("spec", source, "ociRef"), setting(configMapSource(1), "spec", source, "configMap")),
-			want:   []cause{{field, "verificationPolicyFrom is required with ociRef and refused with configMap"}},
+			want:   []cause{{field, "verificationPolicyFrom is required with ociRef and refused with configMap and git"}},
 		},
 		{
 			name:   source + ".configMap with registry credentials",
 			mutate: both(asConfigMapSource(source), setting(map[string]any{"name": "registry-credentials"}, "spec", source, "registryAuthFrom")),
-			want:   []cause{{field, "registryAuthFrom is refused with configMap"}},
+			want:   []cause{{field, "registryAuthFrom is refused with configMap and git"}},
 		},
 		{
 			name:   source + ".configMap over plain HTTP",
 			mutate: both(asConfigMapSource(source), setting(map[string]any{"plainHTTP": true}, "spec", source, "transport")),
-			want:   []cause{{field, "transport is refused with configMap"}},
+			want:   []cause{{field, "transport is refused with configMap and git"}},
 		},
 		{
 			name:   source + ".configMap with a registry CA",
 			mutate: both(asConfigMapSource(source), setting(map[string]any{"caFrom": map[string]any{"name": "registry-ca", "key": "ca.crt"}}, "spec", source, "transport")),
-			want:   []cause{{field, "transport is refused with configMap"}},
+			want:   []cause{{field, "transport is refused with configMap and git"}},
 		},
 		{
 			name:   source + ".configMap.name outside its pattern",
@@ -358,6 +358,7 @@ func artifactRefusals(source string) []refusal {
 			want:   []cause{{field + ".configMap.items[0].path", "should match"}},
 		})
 	}
+	rows = append(rows, gitRefusals(source)...)
 	return append(rows, []refusal{
 		{
 			name:   source + ".ociRef without the oci scheme",
@@ -367,7 +368,7 @@ func artifactRefusals(source string) []refusal {
 		{
 			name:   source + ".verificationPolicyFrom is required with ociRef",
 			mutate: removing("spec", source, "verificationPolicyFrom"),
-			want:   []cause{{field, "verificationPolicyFrom is required with ociRef and refused with configMap"}},
+			want:   []cause{{field, "verificationPolicyFrom is required with ociRef and refused with configMap and git"}},
 		},
 		{
 			name:   source + ".verificationPolicyFrom optional",
@@ -423,6 +424,128 @@ func asConfigMapSource(source string) func(*testing.T, *unstructured.Unstructure
 	}
 }
 
+// gitSource selects a path of a branch over https://.
+func gitSource(path string) map[string]any {
+	return map[string]any{"url": "https://git.example.com/acme/app.git", "ref": map[string]any{"branch": "main"}, "path": path}
+}
+
+// asGitSource replaces the base resource's OCI source with a Git branch over
+// https://, which every rule admits.
+func asGitSource(source string) func(*testing.T, *unstructured.Unstructured) {
+	return func(t *testing.T, object *unstructured.Unstructured) {
+		unstructured.RemoveNestedField(object.Object, "spec", source, "ociRef")
+		unstructured.RemoveNestedField(object.Object, "spec", source, "verificationPolicyFrom")
+		set(t, object, gitSource("db/schema.hcl"), "spec", source, "git")
+	}
+}
+
+// gitRefusals are the rules of a Git source, which read the same under
+// spec.desired and spec.artifact.
+func gitRefusals(source string) []refusal {
+	field := "spec." + source
+	git := field + ".git"
+	knownHosts := map[string]any{"knownHostsFrom": map[string]any{"name": "git-hosts", "key": "known_hosts"}}
+	rows := []refusal{
+		{
+			name:   source + ".git beside ociRef",
+			mutate: setting(gitSource("db/schema.hcl"), "spec", source, "git"),
+			want:   []cause{{field, "set exactly one of ociRef, configMap and git"}},
+		},
+		{
+			name:   source + ".git beside configMap",
+			mutate: both(asGitSource(source), setting(configMapSource(1), "spec", source, "configMap")),
+			want:   []cause{{field, "set exactly one of ociRef, configMap and git"}},
+		},
+		{
+			name:   source + ".git with a verification policy",
+			mutate: both(removing("spec", source, "ociRef"), setting(gitSource("db/schema.hcl"), "spec", source, "git")),
+			want:   []cause{{field, "verificationPolicyFrom is required with ociRef and refused with configMap and git"}},
+		},
+		{
+			name:   source + ".git with registry credentials",
+			mutate: both(asGitSource(source), setting(map[string]any{"name": "registry-credentials"}, "spec", source, "registryAuthFrom")),
+			want:   []cause{{field, "registryAuthFrom is refused with configMap and git"}},
+		},
+		{
+			name:   source + ".git with a registry transport",
+			mutate: both(asGitSource(source), setting(map[string]any{"plainHTTP": true}, "spec", source, "transport")),
+			want:   []cause{{field, "transport is refused with configMap and git"}},
+		},
+		{
+			name:   source + ".git.ref naming a branch and a tag",
+			mutate: both(asGitSource(source), setting(map[string]any{"branch": "main", "tag": "v1"}, "spec", source, "git", "ref")),
+			want:   []cause{{git + ".ref", "set exactly one of branch, tag and commit"}},
+		},
+		{
+			name:   source + ".git.ref naming nothing",
+			mutate: both(asGitSource(source), setting(map[string]any{}, "spec", source, "git", "ref")),
+			want:   []cause{{git + ".ref", "set exactly one of branch, tag and commit"}},
+		},
+		{
+			name:   source + ".git.ref.commit abbreviated",
+			mutate: both(asGitSource(source), setting(map[string]any{"commit": "3f1c2b0"}, "spec", source, "git", "ref")),
+			want:   []cause{{git + ".ref.commit", "should match"}},
+		},
+		{
+			name:   source + ".git.ref.branch with a space",
+			mutate: both(asGitSource(source), setting(map[string]any{"branch": "my branch"}, "spec", source, "git", "ref")),
+			want:   []cause{{git + ".ref.branch", "should match"}},
+		},
+		{
+			name:   source + ".git ssh:// without known hosts",
+			mutate: both(asGitSource(source), setting("ssh://git@git.example.com/acme/app.git", "spec", source, "git", "url")),
+			want:   []cause{{git, "an ssh:// repository needs transport.knownHostsFrom"}},
+		},
+		{
+			name:   source + ".git https:// with known hosts",
+			mutate: both(asGitSource(source), setting(knownHosts, "spec", source, "git", "transport")),
+			want:   []cause{{git, "transport.knownHostsFrom is for an ssh:// repository"}},
+		},
+		{
+			name: source + ".git ssh:// with a CA",
+			mutate: both(asGitSource(source), both(setting("ssh://git@git.example.com/acme/app.git", "spec", source, "git", "url"),
+				setting(map[string]any{"knownHostsFrom": knownHosts["knownHostsFrom"], "caFrom": map[string]any{"name": "git-ca", "key": "ca.pem"}},
+					"spec", source, "git", "transport"))),
+			want: []cause{{git, "transport.caFrom is for an https:// repository"}},
+		},
+		{
+			name: source + ".git.transport.caFrom optional",
+			mutate: both(asGitSource(source), setting(map[string]any{"caFrom": map[string]any{"name": "git-ca", "key": "ca.pem", "optional": true}},
+				"spec", source, "git", "transport")),
+			want: []cause{{git + ".transport", "caFrom must name a required ConfigMap key"}},
+		},
+		{
+			name: source + ".git.transport.knownHostsFrom without a key",
+			mutate: both(asGitSource(source), both(setting("ssh://git@git.example.com/acme/app.git", "spec", source, "git", "url"),
+				setting(map[string]any{"knownHostsFrom": map[string]any{"name": "git-hosts", "key": ""}}, "spec", source, "git", "transport"))),
+			want: []cause{{git + ".transport", "knownHostsFrom must name a required ConfigMap key"}},
+		},
+		{
+			name:   source + ".git.authFrom.name empty",
+			mutate: both(asGitSource(source), setting(map[string]any{"name": ""}, "spec", source, "git", "authFrom")),
+			want:   []cause{{git + ".authFrom.name", "should be at least 1 chars long"}},
+		},
+	}
+	for _, url := range []string{
+		"git+https://git.example.com/acme/app.git", "http://git.example.com/acme/app.git", "https://bot:token@git.example.com/acme/app.git",
+		"https://git.example.com/acme/app.git?ref=main", "https://git.example.com", "file:///srv/app.git",
+	} {
+		rows = append(rows, refusal{
+			name:   fmt.Sprintf("%s.git.url %q", source, url),
+			mutate: both(asGitSource(source), setting(url, "spec", source, "git", "url")),
+			want:   []cause{{git + ".url", "should match"}},
+		})
+	}
+	for _, path := range []string{"../schema.hcl", "/schema.hcl", "db//schema.hcl", "db/./schema.hcl", "db\\schema.hcl", "db/"} {
+		rows = append(rows, refusal{
+			name:   fmt.Sprintf("%s.git.path %q", source, path),
+			mutate: both(asGitSource(source), setting(path, "spec", source, "git", "path")),
+			want:   []cause{{git + ".path", "should match"}},
+		})
+	}
+	return rows
+}
+
 func TestPtahSchemaRefusals(t *testing.T) {
 	plane.Require(t)
 	t.Parallel()
@@ -430,6 +553,11 @@ func TestPtahSchemaRefusals(t *testing.T) {
 	namespace := newNamespace(t, "schema-refusals")
 	rows := append(targetRefusals(), artifactRefusals("desired")...)
 	rows = append(rows,
+		refusal{
+			name:   "desired.git selecting the repository root",
+			mutate: both(asGitSource("desired"), setting(".", "spec", "desired", "git", "path")),
+			want:   []cause{{"spec", "desired.git.path selects one file for a schema"}},
+		},
 		refusal{
 			name:   "desired.configMap selecting two files",
 			mutate: both(asConfigMapSource("desired"), setting(configMapSource(2), "spec", "desired", "configMap")),

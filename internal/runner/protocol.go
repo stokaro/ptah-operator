@@ -195,11 +195,16 @@ type Result struct {
 	ResolvedReference        string                `json:"resolvedReference,omitempty"`
 	ResolvedMediaType        string                `json:"resolvedMediaType,omitempty"`
 	ResolvedSize             int64                 `json:"resolvedSize,omitempty"`
-	VerificationRequirements []string              `json:"verificationRequirements,omitempty"`
-	PlanContentDigest        string                `json:"planContentDigest,omitempty"`
-	PlanOutcome              PlanOutcome           `json:"planOutcome,omitempty"`
-	MutationStarted          bool                  `json:"mutationStarted,omitempty"`
-	Uncertain                bool                  `json:"uncertain,omitempty"`
+	// ResolvedCommit and ResolvedContentDigest are what resolving a Git
+	// source found: the commit its ref named, and the content digest of the
+	// selected files there.
+	ResolvedCommit           string      `json:"resolvedCommit,omitempty"`
+	ResolvedContentDigest    string      `json:"resolvedContentDigest,omitempty"`
+	VerificationRequirements []string    `json:"verificationRequirements,omitempty"`
+	PlanContentDigest        string      `json:"planContentDigest,omitempty"`
+	PlanOutcome              PlanOutcome `json:"planOutcome,omitempty"`
+	MutationStarted          bool        `json:"mutationStarted,omitempty"`
+	Uncertain                bool        `json:"uncertain,omitempty"`
 	// MigrationHistory is the history a migration-history operation read, and
 	// MigrationRun the evidence a migration-apply operation left. Both are the
 	// documents Ptah produced, validated before they were carried here: the
@@ -737,7 +742,7 @@ func validateResult(result Result, options ParseOptions) error {
 			return fmt.Errorf("%w: invalid truncation metadata", ErrMalformedFrame)
 		}
 	}
-	if result.Error != nil && result.Error.Code == "invalid_oci_access" {
+	if result.Error != nil && (result.Error.Code == "invalid_oci_access" || result.Error.Code == "invalid_git_access") {
 		preChildOperation := result.Operation == OperationResolve || result.Operation == OperationVerify
 		expected := Result{
 			ProtocolVersion: result.ProtocolVersion,
@@ -747,7 +752,7 @@ func validateResult(result Result, options ParseOptions) error {
 			Error:           result.Error,
 		}
 		if !preChildOperation || !reflect.DeepEqual(result, expected) {
-			return fmt.Errorf("%w: invalid OCI access result lacks an exact pre-child binding", ErrMalformedFrame)
+			return fmt.Errorf("%w: invalid source access result lacks an exact pre-child binding", ErrMalformedFrame)
 		}
 	}
 	if result.Error == nil {
@@ -785,8 +790,18 @@ func validateResult(result Result, options ParseOptions) error {
 			return fmt.Errorf("%w: invalid %s digest", ErrMalformedFrame, name)
 		}
 	}
+	gitResolution := result.ResolvedCommit != "" || result.ResolvedContentDigest != ""
 	if result.Operation == OperationResolve {
-		if result.Error == nil {
+		switch {
+		case result.Error != nil:
+		case gitResolution:
+			if !gitCommitID.MatchString(result.ResolvedCommit) || !validProtocolDigest(result.ResolvedContentDigest) {
+				return fmt.Errorf("%w: successful Git resolution lacks a commit and a content digest", ErrMalformedFrame)
+			}
+			if result.ResolvedReference != "" || result.ResolvedMediaType != "" || result.ResolvedDigest != "" || result.ResolvedSize != 0 {
+				return fmt.Errorf("%w: Git resolution carries OCI descriptor metadata", ErrMalformedFrame)
+			}
+		default:
 			if result.ResolvedReference == "" || result.ResolvedMediaType == "" || result.ResolvedDigest == "" || result.ResolvedSize < 0 {
 				return fmt.Errorf("%w: successful resolution lacks typed descriptor evidence", ErrMalformedFrame)
 			}
@@ -794,8 +809,8 @@ func validateResult(result Result, options ParseOptions) error {
 				return fmt.Errorf("%w: invalid resolved reference", ErrMalformedFrame)
 			}
 		}
-	} else if result.ResolvedReference != "" || result.ResolvedMediaType != "" || result.ResolvedSize != 0 {
-		return fmt.Errorf("%w: resolved descriptor metadata on a non-resolve operation", ErrMalformedFrame)
+	} else if result.ResolvedReference != "" || result.ResolvedMediaType != "" || result.ResolvedSize != 0 || gitResolution {
+		return fmt.Errorf("%w: resolved source metadata on a non-resolve operation", ErrMalformedFrame)
 	}
 	if result.ResolvedDigest != "" && result.Operation != OperationResolve && result.Operation != OperationVerify {
 		return fmt.Errorf("%w: resolved digest on an unrelated operation", ErrMalformedFrame)
