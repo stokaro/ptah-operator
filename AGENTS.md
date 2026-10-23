@@ -150,8 +150,8 @@ Phases that share mutable state stay together: the CRD upgrade and the uninstall
 that follows it and the schema faults and their shared watches. MySQL and external PostgreSQL
 stay with schema faults because their closing assertions must still hold after
 fault injection. They run in `schema-faults`. The data-plane job runs the ordinary
-PostgreSQL lifecycle and reference data, plan-size boundaries, and admission
-rows. Certificate rotation, MySQL reference data, plan-storage alerts, and
+PostgreSQL lifecycle and reference data, plan-size boundaries, admission rows,
+and the ConfigMap and Git sources, which read their own databases. Certificate rotation, MySQL reference data, plan-storage alerts, and
 certificate-expiry alerts share `certificates`. The reference-data rows use
 separate databases and need no migration acceptance. Alerting runs in lifecycle
 before the final next-release upgrade and uninstall. It publishes and plans its own schema and migration
