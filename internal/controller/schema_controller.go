@@ -1825,6 +1825,11 @@ func (r *SchemaReconciler) consumeResultWithTransport(ctx context.Context, schem
 	if err := r.retireClaim(ctx, before, schema, mutationlifecycle.DispositionAccounted); err != nil {
 		return ctrl.Result{}, err
 	}
+	if operation != nil && operation.Type == operatorv1alpha1.OperationResolve {
+		// A Git or OCI resolution names no snapshot, so one a ConfigMap
+		// source left goes now that the status no longer names it.
+		r.retireSchemaSnapshots(ctx, schema)
+	}
 	if r.Telemetry != nil {
 		if observedDrift != nil {
 			outcome := telemetry.DriftInSync
