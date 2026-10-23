@@ -1,0 +1,1 @@
+{"session" : 147, "query" : "-- Add/modify columns for table: recovery_canary\n-- ALTER statements: --\nALTER TABLE \"recovery_canary\" ADD COLUMN \"recovered\" INTEGER NOT NULL DEFAULT 1", "blockers" : [146], "client" : "172.19.0.3"}

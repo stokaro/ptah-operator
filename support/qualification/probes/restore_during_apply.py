@@ -73,13 +73,21 @@ def executor_node_address(pod, node):
     return address
 
 
+# Ptah v0.14.0 sends each planned statement after the plan's comment lines,
+# and the MySQL batch client prints a newline inside the JSON it reads as the
+# two characters backslash and n.
+LEADING_COMMENTS = re.compile(r'^(?:\s*--[^\n]*?(?:\n|\\n))+')
+
+
 def fixture_waiter(row, pod_ip, holder, engine, node_ip=None):
     """Match fixture DDL, including kind's SNAT on external database traffic.
 
     The dedicated account and watched single Apply identify the writer. A node
     address alone cannot identify a Pod; the caller must retain both controls.
+    Comment lines before the statement are not part of it.
     """
-    query = ' '.join((row.get('query') or '').replace('"', '').replace('`', '').strip().rstrip(';').split())
+    text = LEADING_COMMENTS.sub('', row.get('query') or '', count=1)
+    query = ' '.join(text.replace('"', '').replace('`', '').strip().rstrip(';').split())
     if (type(row.get('session')) is not int or row['session'] <= 0 or row['session'] == holder or
             not pod_ip or not row.get('client') or row['client'] not in (pod_ip, node_ip) or ';' in query or
             not re.fullmatch(r'ALTER TABLE (?:public\.)?recovery_canary ADD (?:COLUMN )?recovered .+', query, re.I)):
