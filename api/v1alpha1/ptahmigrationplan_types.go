@@ -55,8 +55,8 @@ type PtahMigrationPlanSpec struct {
 	// ContractVersion versions plan publication separately from the Kubernetes
 	// API version. Version 1 is a plan computed from an OCI artifact, and
 	// binds artifactDigest and the verification policy. Version 2 is a plan
-	// computed from a ConfigMap, and binds source instead. A manager that
-	// knows only version 1 refuses a version 2 plan.
+	// computed from a ConfigMap or a Git commit, and binds source instead. A
+	// manager that knows only version 1 refuses a version 2 plan.
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=2
 	ContractVersion int32 `json:"contractVersion"`

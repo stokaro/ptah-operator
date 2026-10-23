@@ -639,7 +639,7 @@ spec:
 | `status.applied.ptahVersion` | `string`, required | PtahVersion is the Ptah build that executed the statements. |
 | `status.applied.runnerImage` | `string`, required | RunnerImage is the runner image of the manager that published the plan. |
 | `status.applied.runnerProtocolVersion` | `integer`, required | RunnerProtocolVersion is the runner protocol the apply ran under. |
-| `status.applied.source` | `object` | Source is the source that was applied, for a plan computed from a ConfigMap. |
+| `status.applied.source` | `object` | Source is the source that was applied, for a plan computed from a ConfigMap or a Git commit. |
 | `status.applied.source.contentDigest` | `string`, required | ContentDigest is the content digest of the files the plan was computed from. |
 | `status.applied.source.kind` | `string`, required, one of `ConfigMap`, `Git` | Kind of source the plan was computed from. |
 | `status.applied.source.policy` | `object` | Policy is the source policy the source was checked against, when the resource names one. |
@@ -778,7 +778,7 @@ spec:
 | `status.pendingObservation.plan.ptahVersion` | `string`, required | PtahVersion is the Ptah build that computed the plan. |
 | `status.pendingObservation.plan.runnerImage` | `string`, required | RunnerImage is the runner image of the manager that published it, recorded and not bound. |
 | `status.pendingObservation.plan.runnerProtocolVersion` | `integer`, required | RunnerProtocolVersion is the runner protocol the plan binds. |
-| `status.pendingObservation.plan.source` | `object` | Source is the source a plan computed from a ConfigMap binds in place of artifactDigest. |
+| `status.pendingObservation.plan.source` | `object` | Source is the source a plan computed from a ConfigMap or a Git commit binds in place of artifactDigest. |
 | `status.pendingObservation.plan.source.contentDigest` | `string`, required | ContentDigest is the content digest of the files the plan was computed from. |
 | `status.pendingObservation.plan.source.kind` | `string`, required, one of `ConfigMap`, `Git` | Kind of source the plan was computed from. |
 | `status.pendingObservation.plan.source.policy` | `object` | Policy is the source policy the source was checked against, when the resource names one. |
@@ -868,7 +868,7 @@ spec:
 | `status.plan.ptahVersion` | `string`, required | PtahVersion is the Ptah build that computed the plan. |
 | `status.plan.runnerImage` | `string`, required | RunnerImage is the runner image of the manager that published it, recorded and not bound. |
 | `status.plan.runnerProtocolVersion` | `integer`, required | RunnerProtocolVersion is the runner protocol the plan binds. |
-| `status.plan.source` | `object` | Source is the source a plan computed from a ConfigMap binds in place of artifactDigest. |
+| `status.plan.source` | `object` | Source is the source a plan computed from a ConfigMap or a Git commit binds in place of artifactDigest. |
 | `status.plan.source.contentDigest` | `string`, required | ContentDigest is the content digest of the files the plan was computed from. |
 | `status.plan.source.kind` | `string`, required, one of `ConfigMap`, `Git` | Kind of source the plan was computed from. |
 | `status.plan.source.policy` | `object` | Policy is the source policy the source was checked against, when the resource names one. |

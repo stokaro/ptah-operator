@@ -1266,8 +1266,8 @@ type CurrentPlanStatus struct {
 	// computed from another source binds source instead.
 	// +optional
 	ArtifactDigest string `json:"artifactDigest,omitempty"`
-	// Source is the source a plan computed from a ConfigMap binds in place of
-	// artifactDigest.
+	// Source is the source a plan computed from a ConfigMap or a Git commit
+	// binds in place of artifactDigest.
 	// +optional
 	Source *PlanSourceBinding `json:"source,omitempty"`
 	// CoordinationDigest is the database realm it takes its turn in.
@@ -1350,7 +1350,7 @@ type AppliedStatus struct {
 	// +optional
 	ArtifactDigest string `json:"artifactDigest,omitempty"`
 	// Source is the source that was applied, for a plan computed from a
-	// ConfigMap.
+	// ConfigMap or a Git commit.
 	// +optional
 	Source *PlanSourceBinding `json:"source,omitempty"`
 	// PlanRef names the stored plan this apply ran. It is what a reader

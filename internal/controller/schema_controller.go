@@ -1293,8 +1293,8 @@ func pendingProofPolicyBindingError(
 	pending *operatorv1alpha1.PendingObservationStatus,
 ) error {
 	if schema != nil && pending != nil && pending.Plan.Source != nil {
-		// A plan computed from a ConfigMap binds no verification policy. The
-		// proof reads the snapshot the plan was computed from.
+		// A plan computed from a ConfigMap or Git binds no verification
+		// policy. The proof reads the source the plan was computed from.
 		if !sourcebinding.AccessGives(pending.Source, pending.Plan.ArtifactDigest, pending.Plan.Source) ||
 			!proofReadsTheCurrentSource(schema.Status.Source, pending.Source) ||
 			pending.Plan.CoordinationDigest != pending.CoordinationDigest {
