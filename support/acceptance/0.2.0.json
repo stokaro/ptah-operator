@@ -1,93 +1,71 @@
 {
-  "managerImageDigest": "sha256:aac29bcab22696673b5591657d78c5372e545c9fc043161b5bb40cc9e85cc33c",
-  "runnerImageDigest": "sha256:aac29bcab22696673b5591657d78c5372e545c9fc043161b5bb40cc9e85cc33c",
-  "executorImageDigest": "sha256:f68968558f0634c1e388f2be3f8d9d0f7c5916631abe16c5bae55d21e8e909c0",
-  "chartDigest": "sha256:61b842a9b031bff40b24a0c10cc79a561b7cb64e07caa18da65ac83ec1c279b8",
-  "installationValues": "The v0.2.4 chart asset installed by digest with the executor image and ptahVersion v0.13.0 the release manifest names (release-manifest.txt sha256:ebf96e065a21a5c70a5e68bfba8029581ac31db124640f14ef8227e66b144916). Qualification labs add the profile settings of support/qualification/0.2.0.md: two manager replicas, restricted Pod Security on the release and workload namespaces, the frozen ResourceQuota, the kindnet NetworkPolicy build and support/qualification/0.2.0-monitoring.yaml. Each capacity lab keeps its effective Helm values and rendered manifest in the restricted evidence store.",
-  "operatingTargets": "support/qualification/0.2.0.md sha256:7b4bdc6a02b9d46b8bcf5f3239701a85002dd3622d5d5357a648ce401420da06, support/qualification/0.2.0-coverage.md sha256:31476b050610af3184ccffbeaebc1d7a334480e7f249500c794db525239b0c87, support/qualification/0.2.0-monitoring.yaml sha256:464b4352a25ecb1ed41379034d056056bb3744ade566f4b1938558b3cbc8ae65. The 0.2.4 runs measured freeze revision 49 at d1859174, whose profile files are those of revision 48; revision 50 adds only the v0.2.4 catalog row.",
+  "managerImageDigest": "sha256:75ade2a618b25f114d15b550dc992afdc7f33fe239e971fe5b276daf51813857",
+  "runnerImageDigest": "sha256:75ade2a618b25f114d15b550dc992afdc7f33fe239e971fe5b276daf51813857",
+  "executorImageDigest": "sha256:6c7a5d628a9507cfeb93d819c3816589053fd95834fc5cf1ad1231e8f6f56102",
+  "chartDigest": "sha256:92d17aa0b6ebfa1304689b019d270e27b148caf4afea785f3751754e0ed171f5",
+  "installationValues": "The v0.2.6 chart asset installed by digest with the executor image and ptahVersion v0.14.0 the release manifest names (release-manifest.txt sha256:2f85b6ddb4ecc5d4878a9d994150bc9f4934d5034bfea00dc1af275b45117a24). Qualification labs add the profile settings of support/qualification/0.2.0.md: two manager replicas, restricted Pod Security on the release and workload namespaces, the frozen ResourceQuota, the kindnet NetworkPolicy build and support/qualification/0.2.0-monitoring.yaml. Each capacity lab keeps its effective Helm values and rendered manifest in the restricted evidence store.",
+  "operatingTargets": "support/qualification/0.2.0.md sha256:7b4bdc6a02b9d46b8bcf5f3239701a85002dd3622d5d5357a648ce401420da06, support/qualification/0.2.0-coverage.md sha256:20f9513c8b8de20bd864728e080e68ece67427fdb4c7d0f81684283054467a16, support/qualification/0.2.0-monitoring.yaml sha256:464b4352a25ecb1ed41379034d056056bb3744ade566f4b1938558b3cbc8ae65. The 0.2.6 runs measured freeze revision 54 at bc874159. Its profile and monitoring files are those of revision 48; its coverage file adds the PostgreSQL extension drift scenario (#678) and the monitoring deployment check as PA-09 evidence (#675). Revisions 55 and 56 change no profile file: 55 adds the ConfigMap source scenarios after the release commit (#702), and 56 adds the v0.2.6 catalog row.",
   "recoveryObjectives": "Predeclared operator-state and database RPO: 5 minutes each. Operator-state-only loss RTO: 15 minutes with the database available. Database or combined-loss RTO: 30 minutes through application-service restoration, including manual work and verification. Procedure and timing boundaries: support/qualification/0.2.0.md.",
-  "runEvidence": "Release transaction 38699615146 from d1859174 (tag v0.2.4), published by run 39215485952 and re-verified from the tag by 39214596338. Manifest-backed acceptance matrix on the release's own digests: amd64 CI 39184792094 (harness ef9f68ba, no runtime change from the source) and arm64 CI 38714365984, 54 of 54 cells and every declared scenario in its phase window. Installation from the published guide: 39216106322 (fresh on amd64), 39216111992 (fresh on arm64), 39216109320 (over v0.2.3 on amd64), 39216114555 (over v0.2.3 on arm64). Demonstration on the release digests: 38714370026. Capacity, recovery and the evidence bundles: see PA-07, PA-08 and PA-12.",
+  "runEvidence": "Release transaction 39749825299 from bc874159 (tag v0.2.6), published by run 39913965717 and re-verified from the tag by 39913965329. Manifest-backed acceptance matrix on the release's own digests from the release source: amd64 CI 39753549451 and arm64 CI 39753553357, 54 of 54 cells and every declared scenario in its phase window. Installation from the published guide: 39916358113 (fresh on amd64), 39916364664 (fresh on arm64), 39923890536 (over v0.2.5 on amd64), 39923893894 (over v0.2.5 on arm64); the first upgrade runs, 39916361220 and 39916367748, were refused by a probe that required the predecessor's execution epoch although the executor moved, fixed in #706. Demonstration on the release digests: 39753556902. Capacity, recovery and the evidence bundles: see PA-07, PA-08 and PA-12.",
   "requirements": {
     "PA-01": {
       "disposition": "Accepted for the stated profile",
-      "evidence": "Release manifest sha256:ebf96e065a21a5c70a5e68bfba8029581ac31db124640f14ef8227e66b144916 names every digest above; the coverage table below is the 54-cell matrix CI 39184792094 (linux/amd64) and 38714365984 (linux/arm64) ran on those digests, attempt 1, with each job ID and log hash in functional/<arch>/coverage-audit.json of the public bundle."
+      "evidence": "Release manifest sha256:2f85b6ddb4ecc5d4878a9d994150bc9f4934d5034bfea00dc1af275b45117a24 names every digest above; the coverage table below is the 54-cell matrix CI 39753549451 (linux/amd64) and 39753553357 (linux/arm64) ran on those digests, attempt 1, with each job ID and log hash in functional/<arch>/coverage-audit.json of the public bundle."
     },
     "PA-02": {
       "disposition": "Accepted for the stated profile",
-      "evidence": "Every approval-binding and drift refusal refused with zero unauthorized statements received by the database server, each with a positive control, and each fresh approval executed, on both engines and families in all 54 cells of CI 39184792094 and 38714365984 (data-plane, schema-approvals, schema-faults, migration-authority and both migration suites)."
+      "evidence": "Every approval-binding and drift refusal refused with zero unauthorized statements received by the database server, each with a positive control, and each fresh approval executed, on both engines and families in all 54 cells of CI 39753549451 and 39753553357 (data-plane, schema-approvals, schema-faults, migration-authority and both migration suites)."
     },
     "PA-03": {
       "disposition": "Accepted for the stated profile",
-      "evidence": "Faults before Job creation, after dispatch, during SQL, after SQL before persistence and during lock release, with process, leader and node loss, deletion, suspension and changed bindings, showed no overlap or replay in all 54 cells of CI 39184792094 and 38714365984; the three capacity soaks repeated an all-manager restart burst on both engines without a lost or replayed operation."
+      "evidence": "Faults before Job creation, after dispatch, during SQL, after SQL before persistence and during lock release, with process, leader and node loss, deletion, suspension and changed bindings, showed no overlap or replay in all 54 cells of CI 39753549451 and 39753553357; the three capacity soaks repeated an all-manager restart burst on both engines without a lost or replayed operation."
     },
     "PA-04": {
       "disposition": "Accepted for the stated profile",
-      "evidence": "Functional refusal, retry and hung-result rows passed in CI 39184792094 and 38714365984. Each of the three capacity soaks converged after cold start, every churn round, the registry outage, the all-manager replacement and the 30-second database delay within their frozen targets; overload at 40 resources recovered after returning to 20 within 5 minutes (amd64 1.35 PostgreSQL 2m32s, arm64 1.35 PostgreSQL 2m25s, arm64 1.37 MySQL 1m47s)."
+      "evidence": "Functional refusal, retry and hung-result rows passed in CI 39753549451 and 39753553357. Each of the three capacity soaks converged after cold start, every churn round, the registry outage, the all-manager replacement and the 30-second database delay within their frozen targets; overload at 40 resources recovered after returning to 20 within 5 minutes (amd64 1.35 PostgreSQL 2m22s, arm64 1.35 PostgreSQL 1m49s, arm64 1.37 MySQL 2m44s)."
     },
     "PA-05": {
       "disposition": "Accepted for the stated profile",
-      "evidence": "Boundary-value API cases, the installed RBAC and admission identities, the documented reader Roles, credential scans and the egress example enforced by the CNI passed in CI 39184792094 and 38714365984. Every capacity lab ran restricted Pod Security, the frozen ResourceQuota and the kindnet NetworkPolicy build, checked by the lab preflight."
+      "evidence": "Boundary-value API cases, the installed RBAC and admission identities, the documented reader Roles, credential scans and the egress example enforced by the CNI passed in CI 39753549451 and 39753553357. Every capacity lab ran restricted Pod Security, the frozen ResourceQuota and the kindnet NetworkPolicy build, checked by the lab preflight."
     },
     "PA-06": {
       "disposition": "Accepted for the stated profile",
-      "evidence": "Install, upgrade, late-failure recovery, rollback refusal, uninstall, reinstall over retained CRDs and the quota- and Pod Security-constrained exported-chart install passed on 1.35, 1.36 and 1.37 on both architectures. The published guide installed v0.2.4 fresh and as an upgrade over the published v0.2.3 on both architectures: 39216106322 (fresh on amd64), 39216111992 (fresh on arm64), 39216109320 (over v0.2.3 on amd64), 39216114555 (over v0.2.3 on arm64)."
+      "evidence": "Install, upgrade, late-failure recovery, rollback refusal, uninstall, reinstall over retained CRDs and the quota- and Pod Security-constrained exported-chart install passed on 1.35, 1.36 and 1.37 on both architectures. The published guide installed v0.2.6 fresh and as an upgrade over the published v0.2.5 on both architectures: 39916358113 (fresh on amd64), 39916364664 (fresh on arm64), 39923890536 (over v0.2.5 on amd64), 39923893894 (over v0.2.5 on arm64). The upgrade moved the executor from Ptah v0.13.0 to v0.14.0; the schema stayed in sync for its applied record under the new execution epoch, with no new plan."
     },
     "PA-07": {
       "disposition": "Accepted for the stated profile",
-      "evidence": "Nine recovery cells passed on published v0.2.2 with 698 assertions, each within its objectives (RTO 130 to 592 seconds against 900 or 1800, database RPO under 60 seconds). The applicability chain carries them to d1859174: the runtime changes since are the result-cleanup deletion budget (#655), the refresh slots (#661) and the chart version, which change when expired results are removed and when a read-only refresh starts, not the restore procedures, stored formats or recovery decisions. Records: recovery/ in the public bundle."
+      "evidence": "The nine owner-approved recovery cells ran on the published v0.2.6 in Recovery cells runs 39916446006 and 39929447531, one job per cell on Kubernetes 1.37: operator-state, database and combined loss, each idle, during Apply and with a backup behind the database, engine and family rotating. The first run failed the two schema cells during Apply in the probe, which did not read the comment lines Ptah v0.14.0 sends before a DDL and so never found the blocked Apply; #708 fixed the probe and the second run, from the tag with only that change, ran them again. All nine passed with 698 checks, every one within its objectives: recovery 110 to 612 seconds against 900 or 1,800, database RPO bound 58 seconds or less, functional restore and cleanup passing. Records: recovery/ in the public bundle; the complete evidence, age-encrypted on the runner, is in the restricted store."
     },
     "PA-08": {
       "disposition": "Accepted for the stated profile",
-      "evidence": "Soak, backlog and overload passed every driver check at the support window's edges: 1.35 PostgreSQL on amd64 and arm64, 1.37 MySQL on arm64. Exact manager API demand from Metadata audit on all three API servers, complete for every manager process, peaks inside the measured windows at amd64 1.35 PostgreSQL 6,735, arm64 1.35 PostgreSQL 6,483, arm64 1.37 MySQL 6,627 for the soaks and amd64 1.35 PostgreSQL 5,890, arm64 1.35 PostgreSQL 6,161, arm64 1.37 MySQL 5,839 for the backlogs, requests per 60 seconds against 7,000. Overload is outside the profile and judged by refusal, safety and recovery. 0.2.3 exceeded the budget once on the MySQL soak (7,236); #661 spaces the refresh cycles of a fleet sharing an interval. A burst after measurement during API-server restarts is follow-up #657."
+      "evidence": "Soak, backlog and overload passed every driver check at the support window's edges: 1.35 PostgreSQL on amd64 and arm64, 1.37 MySQL on arm64. Exact manager API demand from Metadata audit on all three API servers, complete for every manager process, peaks inside the measured windows at amd64 1.35 PostgreSQL 6,342, arm64 1.35 PostgreSQL 6,288, arm64 1.37 MySQL 6,361 for the soaks and amd64 1.35 PostgreSQL 5,804, arm64 1.35 PostgreSQL 5,722, arm64 1.37 MySQL 5,721 for the backlogs, requests per 60 seconds against 7,000. After each measurement the audit tool restored the three API servers one at a time; the busiest 60 seconds reaching into that restart period was 5,532 across all nine cells, where 0.2.3 had sent 7,131 (#657, paced by #691). Overload is outside the profile and judged by refusal, safety and recovery."
     },
     "PA-09": {
       "disposition": "Accepted for the stated profile",
-      "evidence": "Every alert row fired and resolved at the receiver within its frozen target, with ordinary approval waits kept from paging, in the lifecycle, alerting-operations and certificates cells of CI 39184792094 and 38714365984."
+      "evidence": "Every alert row fired and resolved at the receiver within its frozen target, with ordinary approval waits kept from paging, in the lifecycle, alerting-operations and certificates cells of CI 39753549451 and 39753553357. The monitoring deployment check installed the published v0.2.6 from its guide with the profile's monitoring values beside a Prometheus Operator stack, scraped every manager through the chart's own ServiceMonitor, and delivered the lost-view alert and its resolution to a receiver, in runs 39916358113 (amd64) and 39916364664 (arm64) (#675)."
     },
     "PA-10": {
       "disposition": "Accepted for the stated profile",
-      "evidence": "The published guide ran verbatim on fresh clusters for PostgreSQL and MySQL on both architectures, including the shipped kubectl-ptah reading the plan: 39216106322 (fresh on amd64), 39216111992 (fresh on arm64), 39216109320 (over v0.2.3 on amd64), 39216114555 (over v0.2.3 on arm64). All demonstration scenarios ran on the release digests (38714370026). The four signed kubectl-ptah assets read a real applied plan, schema and migration on measured capacity labs: darwin-amd64 (Darwin amd64 through Rosetta on Apple Silicon on the Docker host), darwin-arm64 (native Darwin arm64 on the Docker host), linux-amd64 (native Linux amd64), linux-arm64 (native Linux arm64)."
+      "evidence": "The published guide ran verbatim on fresh clusters for PostgreSQL and MySQL on both architectures, including the shipped kubectl-ptah reading the plan: 39916358113 (fresh on amd64), 39916364664 (fresh on arm64), 39923890536 (over v0.2.5 on amd64), 39923893894 (over v0.2.5 on arm64). All demonstration scenarios ran on the release digests (39753556902). The four signed kubectl-ptah assets read a real applied plan, schema and migration on measured capacity labs: darwin-amd64 (Darwin amd64 through Rosetta on Apple Silicon on the Docker host), darwin-arm64 (native Darwin arm64 on the Docker host), linux-amd64 (native Linux amd64), linux-arm64 (native Linux arm64)."
     },
     "PA-11": {
       "disposition": "Accepted for the stated profile",
-      "evidence": "All eight published assets are byte-identical to the qualified draft; checksums, attestations naming d1859174 and the anonymous cosign signature verified after publication. The report-only scan of every shipped image and binary reached nothing in source; the executor findings remain follow-up #610."
+      "evidence": "All eight published assets are byte-identical to the qualified draft; checksums, attestations naming bc874159 and the anonymous cosign signature verified after publication. The report-only scan of every shipped image and binary reached nothing in source. The executor binary, Ptah v0.14.0, keeps only the module-level GO-2026-5932, so the advisories of #610 are gone. The executor's Alpine zlib and musl findings and the operator base image's ca-certificates advisory DSA-6572-1 are not reachable in the admitted profile: both programs an operation Pod runs are static Go binaries, and no operator TLS client reads the system roots (release/scan/exposure-analysis.md). #705 moves the base image to the fixed ca-certificates."
     },
     "PA-12": {
       "disposition": "Accepted for the stated profile",
-      "evidence": "Public bundle: https://github.com/stokaro/ptah-operator/releases/tag/qualification-0.2.4, an immutable release whose assets were downloaded anonymously and matched their checksums. Restricted bundle: 13 age-encrypted archives on the evidence host, each read back, decrypted with the retained identity and refused to an unprivileged user (custody records under custody/ in the public bundle). This record and its decision are in the public bundle and at support/acceptance/0.2.0.json in the repository."
+      "evidence": "Public bundle: https://github.com/stokaro/ptah-operator/releases/tag/qualification-0.2.6, an immutable release whose assets were downloaded anonymously and matched their checksums. Restricted bundle: 13 age-encrypted archives on the evidence host, each read back, decrypted with the retained identity and refused to an unprivileged user (custody records under custody/ in the public bundle). This record and its decision are in the public bundle and at support/acceptance/0.2.0.json in the repository."
     }
   },
-  "exclusions": [
-    {
-      "requirement": "PA-08",
-      "scope": "The 7,000-request budget is claimed for the profile workloads: steady change, backlog and churn. It is not claimed while a kube-apiserver restarts or the controller manager fails over, when the managers re-read every resource at once (#657); a control-plane upgrade can exceed the budget for a short time.",
-      "owner": "Ptah Engineering",
-      "reviewBy": "2026-11-30",
-      "detection": "kube-apiserver request metrics or a Metadata audit of the manager identity show the burst; until #657 is resolved, schedule control-plane upgrades away from heavy change windows."
-    },
-    {
-      "requirement": "PA-09",
-      "scope": "Alerting is supported with a ServiceMonitor the deployer applies to select the metrics Service by its own labels (app.kubernetes.io/name and app.kubernetes.io/instance, port metrics), as #673 gives it. The chart's own ServiceMonitor in v0.2.4 selects no Service, so monitoring.serviceMonitor alone scrapes nothing and PtahOperatorUnresolvedApply cannot fire; #672 fixes the chart for the next release.",
-      "owner": "Ptah Engineering",
-      "reviewBy": "2026-11-30",
-      "detection": "PtahOperatorUnresolvedViewNotSynced fires while no manager is scraped, and Prometheus lists no target in the release namespace. The initial deployment check delivered the lost-view alert and its resolution to a receiver with the workaround applied."
-    },
-    {
-      "requirement": "PA-11",
-      "scope": "The pinned executor, Ptah v0.13.0, is supported only as the operator runs it: a short-lived operation Job with a deadline, no listening socket, and client traffic to the configured registry and database. Ptah server commands and other uses of that image are outside the supported use, because its Go 1.27.1 and x/net v0.59.0 build carries later advisories (#610).",
-      "owner": "Ptah Engineering",
-      "reviewBy": "2026-11-30",
-      "detection": "support/qualification/probes/release_scan.py reports the executor findings on every release; the operator invokes only the client commands its Jobs run, and #610 moves the pin to a patched Ptah release."
-    }
-  ],
+  "exclusions": [],
   "decision": "Accepted for the stated profile",
   "handoff": {
     "engineeringOwner": "Ptah Engineering",
     "operationsOwner": "Ptah Engineering",
     "evidenceOwner": "Ptah Engineering",
-    "decisionDate": "2026-10-19",
-    "acceptedScope": "The exact v0.2.4 artifacts named above, installed with the recorded values, under the frozen 0.2.0 profile (revision 48 targets): 20 resources, PostgreSQL 17 and MySQL 8.4 LTS, Kubernetes 1.35 to 1.37 on linux/amd64 and linux/arm64.",
-    "evidenceLocation": "https://github.com/stokaro/ptah-operator/releases/tag/qualification-0.2.4; restricted archives under /home/buster/ptah-operator-evidence/0.2.4/qualification on the evidence host.",
+    "decisionDate": "2026-10-23",
+    "acceptedScope": "The exact v0.2.6 artifacts named above, installed with the recorded values, under the frozen 0.2.0 profile (revision 48 targets): 20 resources, PostgreSQL 17 and MySQL 8.4 LTS, Kubernetes 1.35 to 1.37 on linux/amd64 and linux/arm64.",
+    "evidenceLocation": "https://github.com/stokaro/ptah-operator/releases/tag/qualification-0.2.6; restricted archives under /home/buster/ptah-operator-evidence/0.2.6/qualification on the evidence host.",
     "incidentContact": "Ptah Engineering",
     "recoveryAccess": "Restricted archives decrypt with the retained age identity held by Ptah Engineering; access to the evidence host is limited to its owner account.",
     "reassessmentTriggers": "Changes to shipped bytes, declared scope, installation authority or network settings, workload or retention limits, recovery objectives, or a relevant security finding require an applicability review and reruns of the affected evidence.",
