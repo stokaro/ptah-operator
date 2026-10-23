@@ -605,7 +605,7 @@ func TestPlanRequiresNativeDryRunToMatchReviewedStatements(t *testing.T) {
 			Outcome:         dataplane.SchemaApplyOutcomeDryRun,
 			PlanName:        "operator-plan",
 			PlanDigest:      sha256Digest([]byte(plan)),
-			Statements:      []string{"CREATE TABLE first_table (id bigint)", "CREATE TABLE second_table (id bigint)"},
+			Units:           sqlUnits("CREATE TABLE first_table (id bigint)", "CREATE TABLE second_table (id bigint)"),
 		}
 		edit(&report)
 		return scriptedResponse{stdout: encodeApplyReport(t, report)}
@@ -615,13 +615,16 @@ func TestPlanRequiresNativeDryRunToMatchReviewedStatements(t *testing.T) {
 		validation scriptedResponse
 	}{
 		{name: "another statement", validation: dryRun(func(report *dataplane.SchemaApplyReport) {
-			report.Statements[1] = "CREATE TABLE other_table (id bigint)"
+			report.Units[1].SQL = "CREATE TABLE other_table (id bigint)"
 		})},
 		{name: "the statements reordered", validation: dryRun(func(report *dataplane.SchemaApplyReport) {
-			report.Statements[0], report.Statements[1] = report.Statements[1], report.Statements[0]
+			report.Units[0], report.Units[1] = report.Units[1], report.Units[0]
 		})},
 		{name: "a statement missing", validation: dryRun(func(report *dataplane.SchemaApplyReport) {
-			report.Statements = report.Statements[:1]
+			report.Units = report.Units[:1]
+		})},
+		{name: "a native operation in place of a statement", validation: dryRun(func(report *dataplane.SchemaApplyReport) {
+			report.Units[1] = dataplane.SchemaApplyUnit{Native: json.RawMessage(`{"kind":"provider/table","severity":"safe","reason":"new table"}`)}
 		})},
 		{name: "another plan read", validation: dryRun(func(report *dataplane.SchemaApplyReport) {
 			report.PlanDigest = sha256Digest([]byte("another plan"))
@@ -629,7 +632,7 @@ func TestPlanRequiresNativeDryRunToMatchReviewedStatements(t *testing.T) {
 		{name: "a plan that went stale", validation: func() scriptedResponse {
 			response := dryRun(func(report *dataplane.SchemaApplyReport) {
 				report.Outcome = dataplane.SchemaApplyOutcomeRefused
-				report.Statements = nil
+				report.Units = nil
 				report.Refusal = &dataplane.SchemaRefusal{Code: dataplane.SchemaRefusalStalePlan, Changed: "schema"}
 			})
 			response.exitCode = 2
@@ -1448,7 +1451,7 @@ func TestApplyNeverPublishesNativeFailureDiagnostics(t *testing.T) {
 			response: scriptedResponse{
 				stdout: encodeApplyReport(t, dataplane.SchemaApplyReport{
 					ContractVersion: dataplane.SupportedSchemaApplyContract, Outcome: dataplane.SchemaApplyOutcomeUnknown,
-					Statements: []string{failedStatement}, Error: "apply schema changes: " + failedStatement,
+					Units: sqlUnits(failedStatement), Error: "apply schema changes: " + failedStatement,
 				}),
 				exitCode: 1,
 			},
@@ -1915,7 +1918,7 @@ func TestApplyReadsItsReportOnEveryExit(t *testing.T) {
 			Outcome:         dataplane.SchemaApplyOutcomeApplied,
 			PlanName:        "operator-plan",
 			PlanDigest:      approved,
-			Statements:      []string{"CREATE TABLE report_rows (id bigint)"},
+			Units:           sqlUnits("CREATE TABLE report_rows (id bigint)"),
 		}
 		edit(&value)
 		return encodeApplyReport(t, value)
@@ -1923,7 +1926,7 @@ func TestApplyReadsItsReportOnEveryExit(t *testing.T) {
 	refusal := func(code string) string {
 		return report(func(value *dataplane.SchemaApplyReport) {
 			value.Outcome = dataplane.SchemaApplyOutcomeRefused
-			value.Statements = nil
+			value.Units = nil
 			value.Refusal = &dataplane.SchemaRefusal{Code: code}
 			value.Error = "refused"
 		})
@@ -3367,8 +3370,18 @@ func applyReport(t *testing.T, outcome, plan string) string {
 		Outcome:         outcome,
 		PlanName:        decoded.Name,
 		PlanDigest:      sha256Digest([]byte(plan)),
-		Statements:      planStatements(decoded),
+		Units:           sqlUnits(planStatements(decoded)...),
 	})
+}
+
+// sqlUnits lists statements the way an apply document of contract version 3
+// does, one unit each.
+func sqlUnits(statements ...string) []dataplane.SchemaApplyUnit {
+	units := make([]dataplane.SchemaApplyUnit, len(statements))
+	for i, statement := range statements {
+		units[i].SQL = statement
+	}
+	return units
 }
 
 // encodeApplyReport indents a report the way Ptah does. It leaves HTML

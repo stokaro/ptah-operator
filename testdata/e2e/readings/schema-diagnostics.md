@@ -7,8 +7,8 @@ Kubernetes acceptance or a production qualification result.
 
 ## Identity and procedure
 
-Captured on October 21, 2026 with the executor `support/ptah.json` pins: the
-Ptah v0.14.0 release image, commit `e046527f79c58651d2082dce65b5ceb48dbc2606`.
+Captured on October 23, 2026 with the executor `support/ptah.json` pins: the
+Ptah v0.15.0 release image, commit `6ba0a93a44d3decd6782d88e57b88151edd4c788`.
 [`schema-sql-capture.json`](schema-sql-capture.json) records the executor and
 server images, every command's exit status and record count, and the SHA-256 of
 each reading and saved plan.
@@ -32,13 +32,13 @@ runs in its own container, and every container, anonymous volume and network the
 run created is removed.
 
 Before these readings replaced the earlier ones, the same procedure ran with the
-executor of the previous pin, the Ptah v0.13.0 release image. It reproduced every
+executor of the previous pin, the Ptah v0.14.0 release image. It reproduced every
 earlier checked-in reading record for record, PostgreSQL parameters included,
 and all four saved exclusion plans byte for byte. That is what makes the new
 readings a statement about the executor rather than about a different procedure.
 
 `--contract` writes the contract from a directory of readings. Run on the
-v0.13.0 readings, it reproduced the earlier contract byte for byte.
+v0.14.0 readings, it reproduced the earlier contract byte for byte.
 
 ## Permitted work and source review
 
@@ -48,8 +48,10 @@ parameters and MySQL protocol commands byte for byte. Only the declaration's
 quoted MySQL database placeholder is expanded to the controlled fixture
 identifier. Received SQL is never normalized.
 
-Against the previous pin, v0.14.0 changed seven declarations and kept the count
-at 80. On PostgreSQL the column read takes a domain column's NOT NULL from the
+Against the previous pin, v0.15.0 changed nothing here. Every reading carries
+the same statements in the same order; the MySQL journals differ only in their
+timestamps and one thread number, and the contract only in the commit it names.
+Against v0.13.0, v0.14.0 changed seven declarations and kept the count at 80. On PostgreSQL the column read takes a domain column's NOT NULL from the
 column rather than from the type's effective nullability, the range type read
 qualifies operator class and collation by schema, the exclusion constraint read
 adds the backing index, and the row-level security policy read was rewritten for

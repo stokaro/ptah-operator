@@ -1,6 +1,8 @@
 package dataplane
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"slices"
@@ -16,11 +18,17 @@ const (
 	// rather than read for the fields this operator recognizes, because those
 	// fields may already mean something else.
 	//
-	// Version 2 is Ptah v0.14.0's. It changed the shape of undecided, which
-	// this operator does not read, and added provider_diagnostic; every field
-	// and outcome read here means what it meant in version 1.
+	// Plan version 2 is Ptah v0.14.0's and v0.15.0's. It changed the shape of
+	// undecided, which this operator does not read, and added
+	// provider_diagnostic; every field and outcome read here means what it
+	// meant in version 1.
+	//
+	// Apply version 3 is Ptah v0.15.0's. It lists the planned operations as
+	// units, each with its SQL or a native operation's summary, where version 2
+	// listed statements. Outcome, plan digest and refusal mean what they meant
+	// in version 2.
 	SupportedSchemaPlanContract  = 2
-	SupportedSchemaApplyContract = 2
+	SupportedSchemaApplyContract = 3
 )
 
 // Outcomes a plan document reports.
@@ -104,13 +112,37 @@ type SchemaPlanReport struct {
 
 // SchemaApplyReport is Ptah's `schema apply --json` document.
 type SchemaApplyReport struct {
-	ContractVersion int            `json:"contract_version"`
-	Outcome         string         `json:"outcome"`
-	PlanName        string         `json:"plan_name,omitempty"`
-	PlanDigest      string         `json:"plan_digest,omitempty"`
-	Statements      []string       `json:"statements,omitempty"`
-	Refusal         *SchemaRefusal `json:"refusal,omitempty"`
-	Error           string         `json:"error,omitempty"`
+	ContractVersion int               `json:"contract_version"`
+	Outcome         string            `json:"outcome"`
+	PlanName        string            `json:"plan_name,omitempty"`
+	PlanDigest      string            `json:"plan_digest,omitempty"`
+	Units           []SchemaApplyUnit `json:"units,omitempty"`
+	Refusal         *SchemaRefusal    `json:"refusal,omitempty"`
+	Error           string            `json:"error,omitempty"`
+}
+
+// SchemaApplyUnit is one planned operation an apply document lists: its SQL,
+// or a summary of a native provider operation that has none.
+type SchemaApplyUnit struct {
+	SQL    string          `json:"sql,omitempty"`
+	Native json.RawMessage `json:"native,omitempty"`
+}
+
+// ErrNativeApplyUnit is a listed operation that is not SQL. This operator
+// plans and reviews SQL statements, so it cannot account for one.
+var ErrNativeApplyUnit = errors.New("schema apply lists an operation that is not SQL")
+
+// SQLStatements is the SQL of each listed unit, in order. A unit that is a
+// native operation, or that has no SQL, is refused rather than skipped.
+func (r SchemaApplyReport) SQLStatements() ([]string, error) {
+	statements := make([]string, 0, len(r.Units))
+	for _, unit := range r.Units {
+		if len(unit.Native) != 0 || unit.SQL == "" {
+			return nil, ErrNativeApplyUnit
+		}
+		statements = append(statements, unit.SQL)
+	}
+	return statements, nil
 }
 
 // DecodeSchemaPlan reads one plan document and refuses anything it cannot

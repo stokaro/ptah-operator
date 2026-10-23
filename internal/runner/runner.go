@@ -798,7 +798,9 @@ func validatePlanDryRun(
 	case report.PlanDigest != contentDigest:
 		setResultError(result, "invalid_plan_output", errors.New("plan validation read a plan other than the one saved"), redactor, config.Diagnostics)
 		return false
-	case !slices.Equal(report.Statements, planStatements(plan)):
+	}
+	listed, err := report.SQLStatements()
+	if err != nil || !slices.Equal(listed, planStatements(plan)) {
 		setResultError(result, "invalid_plan_output", errors.New("native dry run does not list the reviewed plan statements"), redactor, config.Diagnostics)
 		return false
 	}
