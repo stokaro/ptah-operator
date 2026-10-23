@@ -20,9 +20,16 @@ import (
 // schema from one to another relies on the two being different, so a spec
 // patch is a generation change and not a no-op; TestDataPlaneIntervalsDiffer
 // holds them to that.
+//
+// A proof that holds the status writes after a cycle converges has to do it
+// before the timer starts the next one, and the timer is due one interval
+// after the cycle's Resolve was claimed. A read-only cycle on a loaded CI node
+// takes most of a minute: at 1m the gap was six seconds, and the next cycle
+// started before the writes were held (CI run 39982951630). reconcileInterval
+// and tagMoveInterval leave more than a minute.
 const (
-	reconcileInterval      = "1m"
-	tagMoveInterval        = "2m"
+	reconcileInterval      = "2m"
+	tagMoveInterval        = "3m"
 	approvalInterval       = "5m"
 	staleApprovalInterval  = "4m"
 	quiescentInterval      = "30m"

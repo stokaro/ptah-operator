@@ -706,9 +706,11 @@ func (d *dataPlane) assertReadOnlyCycleBetween(schema string, before, after chec
 
 // setReconcileIntervalAndAssertNoop moves the schema to a new interval while
 // its status writes are held, so the one cycle the generation change starts
-// is the only one, and proves that cycle read-only and converged. Unless the
-// writes are to stay held, it then takes the quiescent checkpoint the periodic
-// no-op proof counts from and gives the writes back.
+// is the only one, and proves that cycle read-only and converged. The writes
+// are held again before the timer starts the next cycle, which the interval
+// has to leave time for. Unless the writes are to stay held, it then takes the
+// quiescent checkpoint the periodic no-op proof counts from and gives the
+// writes back.
 func (d *dataPlane) setReconcileIntervalAndAssertNoop(schema, digest, interval string, keepPaused bool) {
 	d.t.Helper()
 	if d.schemaInterval(schema) == interval {
