@@ -94,6 +94,7 @@ func TestResultACKProxyForwardsRotatedPodTokensWithoutRetainingThem(t *testing.T
 	if res, err := f.put(f.body); err == nil || res != nil || f.calls.Load() != 1 {
 		t.Fatal("the original successful receipt was not dropped")
 	}
+	f.requireDropSettled(t)
 	f.token = rotatedToken
 	expectedToken.Store(rotatedToken)
 	type result struct {
@@ -231,6 +232,21 @@ func (f *ackFixture) put(body []byte) (*http.Response, error) {
 	return f.client.Do(req)
 }
 
+// requireDropSettled holds the order the retry depends on: by the time the
+// client sees the first response dropped, the fixture has recorded the drop
+// and freed its slot. A slot still held then refused the retry as busy, and
+// nothing sent it again (master runs 38169875041 and 40041277611).
+func (f *ackFixture) requireDropSettled(t *testing.T) {
+	t.Helper()
+	var evidence ackEvidence
+	if err := json.Unmarshal(f.admin(http.MethodGet, "/evidence").Body.Bytes(), &evidence); err != nil {
+		t.Fatal(err)
+	}
+	if !evidence.Dropped || len(f.proxy.slot) != 0 {
+		t.Fatalf("the client saw the drop first: dropped=%t slot held=%t", evidence.Dropped, len(f.proxy.slot) != 0)
+	}
+}
+
 func (f *ackFixture) admin(method, path string) *httptest.ResponseRecorder {
 	w := httptest.NewRecorder()
 	f.proxy.admin(w, httptest.NewRequest(method, path, nil))
@@ -254,15 +270,15 @@ func TestResultACKProxyDropsOnlyFirstDurableResponse(t *testing.T) {
 	if response, err = f.put(f.body); err == nil || response != nil || f.calls.Load() != 1 {
 		t.Fatal("first successful backend receipt reached the client")
 	}
+	f.requireDropSettled(t)
 	type result struct {
 		response *http.Response
 		err      error
 	}
 	done := make(chan result, 1)
 	go func() { response, err := f.put(f.body); done <- result{response, err} }()
-	// The retry runs on its own goroutine and HTTP connection. A loaded CI
-	// runner took longer than a second to deliver it to the fixture (master
-	// run 38169875041); the bound is how long to wait, not what is asserted.
+	// The retry runs on its own goroutine and HTTP connection; the bound is
+	// how long to wait for it, not what is asserted.
 	deadline := time.Now().Add(10 * time.Second)
 	var evidence ackEvidence
 	for time.Now().Before(deadline) {

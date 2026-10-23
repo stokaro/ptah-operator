@@ -132,11 +132,12 @@ func (p *resultACKProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	select {
 	case p.slot <- struct{}{}:
-		defer func() { <-p.slot }()
 	default:
 		http.Error(w, "fixture busy", http.StatusServiceUnavailable)
 		return
 	}
+	free := sync.OnceFunc(func() { <-p.slot })
+	defer free()
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 50_397_184))
 	if err != nil || r.ContentLength != int64(len(body)) || (r.Method == http.MethodHead && len(body) != 0) || (r.Method == http.MethodPut && (len(body) == 0 || r.Header.Get(resultDigestHeader) != digest(body))) {
 		http.Error(w, "invalid fixture payload", http.StatusBadRequest)
@@ -247,10 +248,14 @@ func (p *resultACKProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "fixture cannot drop response", http.StatusInternalServerError)
 			return
 		}
-		_ = conn.Close() // No status or response bytes reached the original runner.
+		// The drop is what makes the runner retry, so it is recorded and the
+		// slot freed before the connection closes. Freed after, a retry that
+		// arrived first was refused as busy and never forwarded.
 		p.mu.Lock()
 		p.evidence.Dropped = true
 		p.mu.Unlock()
+		free()
+		_ = conn.Close() // No status or response bytes reached the original runner.
 		return
 	}
 	select {
