@@ -47,8 +47,8 @@ const (
 
 // SupportedContract reports whether this build reads plans of a contract
 // version: 1, a plan computed from an OCI artifact, and 2, a plan computed
-// from a ConfigMap. A plan that records another one is refused with
-// ErrUnsupported.
+// from a ConfigMap or a Git commit. A plan that records another one is
+// refused with ErrUnsupported.
 func SupportedContract(version int32) bool {
 	return fingerprint.ValidatePlanContractVersion(version) == nil
 }

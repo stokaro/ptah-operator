@@ -135,8 +135,8 @@ func (r *SchemaReconciler) configMapSourceRefused(ctx context.Context, schema *o
 
 // planPolicyError reports a plan whose source authority no longer holds: for
 // a plan computed from an OCI artifact, the verification policy object it was
-// accepted under changed; for one computed from a ConfigMap, the resolved
-// source is no longer the one it binds.
+// accepted under changed; for one computed from a ConfigMap or Git, the
+// resolved source is no longer the one it binds.
 func (r *SchemaReconciler) planPolicyError(ctx context.Context, schema *operatorv1alpha1.PtahSchema, plan *operatorv1alpha1.PtahSchemaPlan) error {
 	if plan.Spec.Source != nil {
 		if !planSourceIsCurrent(schema, plan.Spec.ArtifactDigest, plan.Spec.Source) {

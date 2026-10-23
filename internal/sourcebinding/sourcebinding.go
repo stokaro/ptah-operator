@@ -59,7 +59,7 @@ func ConfigMapPlanSource(revision operatorv1alpha1.ConfigMapSourceRevision, snap
 
 // SchemaPlanSource is what a plan computed from a schema's resolved source
 // binds: the artifact digest of an OCI source, or the source binding of a
-// ConfigMap one. A ConfigMap source that has not been read yet binds nothing.
+// ConfigMap or Git one. A source that has not been read yet binds nothing.
 func SchemaPlanSource(status operatorv1alpha1.SchemaSourceStatus) (string, *operatorv1alpha1.PlanSourceBinding) {
 	if git := status.Git; git != nil {
 		return "", withPolicy(GitPlanSource(git.URL, git.Path, git.ContentDigest), status.SourcePolicy)
@@ -81,7 +81,7 @@ func withPolicy(source *operatorv1alpha1.PlanSourceBinding, policy *operatorv1al
 
 // MigrationPlanSource is what a plan computed from a migration's resolved
 // source binds: the artifact digest of an OCI source, or the source binding
-// of a ConfigMap one.
+// of a ConfigMap or Git one.
 func MigrationPlanSource(
 	artifact *operatorv1alpha1.SourceAccessBinding,
 	revision *operatorv1alpha1.ConfigMapSourceRevision,
