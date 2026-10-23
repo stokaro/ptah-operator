@@ -701,7 +701,10 @@ func (c *gitRun) sourcePolicy() {
 		c.fatalf("naming a policy that allows the source published %d plans against a converged database", after-plans)
 	}
 
-	resolves := c.jobCount(labelSchema, gitSchema, "resolve")
+	resolves := map[types.UID]bool{}
+	for _, job := range c.resolveJobs() {
+		resolves[job.UID] = true
+	}
 	c.setSourcePolicy(gitClosedPolicy)
 	var refusal string
 	c.wait("the closed policy to refuse the host", func() (bool, string) {
@@ -713,13 +716,18 @@ func (c *gitRun) sourcePolicy() {
 		refusal = failed.Message
 		return strings.Contains(refusal, "allowedGitHosts does not name "+c.host), refusal
 	})
-	if after := c.jobCount(labelSchema, gitSchema, "resolve"); after != resolves {
-		c.fatalf("a host the policy refuses got %d Resolve Jobs", after-resolves)
+	if made := jobsOutside(resolves, c.resolveJobs()); len(made) > 0 {
+		c.fatalf("a host the policy refuses got Resolve Jobs %v", made)
 	}
 	c.setSourcePolicy(gitOpenPolicy)
 	c.waitForSchema("the open policy to hold again", func(schema *ptahv1alpha1.PtahSchema) bool {
 		return schema.Status.Source.SourcePolicy != nil && schema.Status.Source.SourcePolicy.UID == open.UID && inSyncSchema(schema)
 	})
+	// The edit back to the open policy is resolved by a Job again, so the
+	// reading that found none under the closed one could see one.
+	if made := jobsOutside(resolves, c.resolveJobs()); len(made) == 0 {
+		c.fatalf("naming the open policy again made no Resolve Job the phase could read")
+	}
 	c.logf("PASS a source policy bound into the resolution, and refused a host it does not allow before any Job: %s", refusal)
 }
 
@@ -732,12 +740,13 @@ func (c *gitRun) setSourcePolicy(name string) {
 		patch, client.FieldOwner(harness.FieldOwner)), "name source policy %s on %s", name, gitSchema)
 }
 
-func (c *gitRun) jobCount(label, name, operation string) int {
+// resolveJobs reads the live Resolve Jobs of the Git schema.
+func (c *gitRun) resolveJobs() []batchv1.Job {
 	c.t.Helper()
 	jobs := &batchv1.JobList{}
 	c.check(c.cluster.Client.List(c.ctx, jobs, client.InNamespace(c.in.TestNamespace),
-		client.MatchingLabels{label: name, labelOperation: operation}), "list the %s Jobs of %s", operation, name)
-	return len(jobs.Items)
+		client.MatchingLabels{labelSchema: gitSchema, labelOperation: "resolve"}), "list the Resolve Jobs of %s", gitSchema)
+	return jobs.Items
 }
 
 // migrationOverSSH applies a migration directory at the commit a tag names,

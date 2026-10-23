@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -14,6 +15,8 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/sourcebinding"
@@ -183,6 +186,32 @@ func TestGitResolveJobNeedsTheRepositoryAndNoDatabase(t *testing.T) {
 	} {
 		if gitResolveJob(job) == nil {
 			t.Errorf("gitResolveJob accepted %s", name)
+		}
+	}
+}
+
+// A Job deleted after its TTL is no Job made, and a Job made while another
+// was deleted is one, which comparing counts missed.
+func TestJobsOutsideNamesOnlyJobsMadeSinceTheFirstReading(t *testing.T) {
+	t.Parallel()
+	job := func(name string, uid types.UID) batchv1.Job {
+		return batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: name, UID: uid}}
+	}
+	before := map[types.UID]bool{"uid-1": true, "uid-2": true}
+	for name, test := range map[string]struct {
+		jobs []batchv1.Job
+		want []string
+	}{
+		"both still there":      {jobs: []batchv1.Job{job("resolve-1", "uid-1"), job("resolve-2", "uid-2")}},
+		"one deleted":           {jobs: []batchv1.Job{job("resolve-1", "uid-1")}},
+		"both deleted":          {},
+		"one made":              {jobs: []batchv1.Job{job("resolve-1", "uid-1"), job("resolve-2", "uid-2"), job("resolve-3", "uid-3")}, want: []string{"resolve-3"}},
+		"one made, one deleted": {jobs: []batchv1.Job{job("resolve-1", "uid-1"), job("resolve-3", "uid-3")}, want: []string{"resolve-3"}},
+		"a name made again":     {jobs: []batchv1.Job{job("resolve-1", "uid-1"), job("resolve-2", "uid-4")}, want: []string{"resolve-2"}},
+		"one made from nothing": {jobs: []batchv1.Job{job("resolve-3", "uid-3")}, want: []string{"resolve-3"}},
+	} {
+		if made := jobsOutside(before, test.jobs); !slices.Equal(made, test.want) {
+			t.Errorf("%s: jobsOutside named %v, want %v", name, made, test.want)
 		}
 	}
 }

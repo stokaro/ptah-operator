@@ -22,6 +22,7 @@ import (
 	"golang.org/x/crypto/ssh/knownhosts"
 
 	batchv1 "k8s.io/api/batch/v1"
+	"k8s.io/apimachinery/pkg/types"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/sourcebinding"
@@ -269,6 +270,21 @@ func gitResolveJob(job *batchv1.Job) error {
 		return fmt.Errorf("the Resolve Job names the repository=%v and a database=%v", repository, database)
 	}
 	return nil
+}
+
+// jobsOutside names the Jobs whose identity before does not hold. A finished
+// Job is deleted a few minutes after its result is read, so two readings of a
+// resource's Jobs are compared by identity, never by count: a Job deleted
+// between them is not one that was never made, and one deleted as another
+// was made would hide it.
+func jobsOutside(before map[types.UID]bool, jobs []batchv1.Job) []string {
+	var made []string
+	for index := range jobs {
+		if !before[jobs[index].UID] {
+			made = append(made, jobs[index].Name)
+		}
+	}
+	return made
 }
 
 // gitServerKeys is everything the phase generates for its Git server: a CA
