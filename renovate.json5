@@ -104,6 +104,17 @@
       matchPackageNames: ['ghcr.io/stokaro/ptah-operator'],
       enabled: false,
     },
+    {
+      // The qualification lab's kindnetd is the image kind v0.33.0 ships, with
+      // one resolver fix built over it (`support/qualification/kindnet`). It
+      // is pinned by digest with no tag on purpose: it has to stay that kind
+      // release's image, and it moves only when the kind release it corrects
+      // moves. Without a tag Renovate can find no newer digest, and reported
+      // `Could not determine new digest for update (docker package
+      // docker.io/kindest/kindnetd)` on every run.
+      matchPackageNames: ['docker.io/kindest/kindnetd'],
+      enabled: false,
+    },
   ],
   customManagers: [
     {
