@@ -1,0 +1,12 @@
+# The fields of the Ptah resources that name a ConfigMap, so that Kustomize
+# rewrites them to the name a generator gave it.
+nameReference:
+  - kind: ConfigMap
+    version: v1
+    fieldSpecs:
+      - group: operator.ptah.run
+        kind: PtahSchema
+        path: spec/desired/configMap/name
+      - group: operator.ptah.run
+        kind: PtahMigration
+        path: spec/artifact/configMap/name

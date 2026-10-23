@@ -1,0 +1,30 @@
+# A schema and a migration sequence delivered from ConfigMaps that Kustomize
+# generates from files in this directory. Render it with
+#
+#   kubectl kustomize examples/configmap-kustomize
+#
+# The generator appends a hash of the content to each ConfigMap's name, and
+# ptah-references.yaml tells Kustomize which fields of the Ptah resources name
+# a ConfigMap, so they follow the new name. Without it the resources would
+# keep naming the bare generator name, which no rendered ConfigMap has.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: application
+resources:
+  - ptahschema.yaml
+  - ptahmigration.yaml
+configurations:
+  - ptah-references.yaml
+generatorOptions:
+  # Each change of content is a new ConfigMap, so none needs to be writable.
+  immutable: true
+configMapGenerator:
+  - name: inventory-schema
+    files:
+      - schema.sql=db/schema.sql
+  - name: orders-migrations
+    files:
+      - db/migrations/0000000001_create_orders.up.sql
+      - db/migrations/0000000001_create_orders.down.sql
+      - db/migrations/0000000002_add_order_total.up.sql
+      - db/migrations/0000000002_add_order_total.down.sql

@@ -1,0 +1,25 @@
+apiVersion: operator.ptah.run/v1alpha1
+kind: PtahMigration
+metadata:
+  name: orders
+spec:
+  target:
+    engine: PostgreSQL
+    coordinationKey: production/orders-primary
+    urlFrom:
+      name: orders-database
+      key: url
+  artifact:
+    configMap:
+      name: orders-migrations
+      # Each generated key is the file's name, and each file keeps it. A new
+      # migration is a line in the generator and an item here.
+      items:
+        - key: 0000000001_create_orders.up.sql
+          path: 0000000001_create_orders.up.sql
+        - key: 0000000001_create_orders.down.sql
+          path: 0000000001_create_orders.down.sql
+        - key: 0000000002_add_order_total.up.sql
+          path: 0000000002_add_order_total.up.sql
+        - key: 0000000002_add_order_total.down.sql
+          path: 0000000002_add_order_total.down.sql

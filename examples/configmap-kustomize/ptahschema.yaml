@@ -1,0 +1,17 @@
+apiVersion: operator.ptah.run/v1alpha1
+kind: PtahSchema
+metadata:
+  name: inventory
+spec:
+  target:
+    engine: PostgreSQL
+    coordinationKey: production/inventory-primary
+    urlFrom:
+      name: inventory-database
+      key: url
+  desired:
+    configMap:
+      name: inventory-schema
+      items:
+        - key: schema.sql
+          path: schema.sql

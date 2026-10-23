@@ -1,0 +1,33 @@
+{{- /*
+The ConfigMap is immutable and named by a hash of its content, so a changed
+schema file is a new ConfigMap and a new name in the PtahSchema. Helm deletes
+the previous ConfigMap on upgrade; the operator no longer needs it once the
+new one is resolved, because every operation reads its own snapshot.
+*/ -}}
+{{- $data := (.Files.Glob "files/schema.sql").AsConfig -}}
+{{- $name := printf "%s-schema-%s" .Release.Name ($data | sha256sum | trunc 10) -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}
+immutable: true
+data:
+{{ $data | indent 2 }}
+---
+apiVersion: operator.ptah.run/v1alpha1
+kind: PtahSchema
+metadata:
+  name: {{ .Release.Name }}
+spec:
+  target:
+    engine: PostgreSQL
+    coordinationKey: {{ .Values.schema.coordinationKey }}
+    urlFrom:
+      name: {{ .Values.schema.databaseSecret }}
+      key: url
+  desired:
+    configMap:
+      name: {{ $name }}
+      items:
+        - key: schema.sql
+          path: schema.sql
