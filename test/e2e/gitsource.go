@@ -50,6 +50,10 @@ const (
 	gitSubmoduleSchema = "e2e-git-submodule"
 	gitLFSSchema       = "e2e-git-lfs"
 	gitHostKeySchema   = "e2e-git-host-key"
+	// gitRefusedKey is the realm every refused schema claims, apart from the
+	// schema in sync on the phase's database. Each is refused at its Resolve,
+	// before anything reads a database.
+	gitRefusedKey = "ptah_e2e_git_refused"
 
 	// gitServer is the fixture Deployment and Service; gitServerSecret holds
 	// its TLS key, token and SSH keys, and gitSpecConfigMap the repository.

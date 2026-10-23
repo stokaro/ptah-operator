@@ -712,10 +712,13 @@ func (c *gitRun) migrationOverSSH() {
 
 // credentialForAnotherHost names a credential whose owner granted it for
 // another host. The Resolve Job refuses it before Ptah runs, and nothing
-// reaches the database.
+// reaches the database. The schema still in sync on the phase's database
+// holds that realm, so the refused one takes a key of its own, as the
+// refused sources do: sharing it would block both before any Resolve.
 func (c *gitRun) credentialForAnotherHost() {
 	c.t.Helper()
-	c.check(c.create(c.schemaDocument(gitRefusedSchema, gitElsewhereCredential)), "create PtahSchema %s", gitRefusedSchema)
+	c.check(c.create(c.schemaDocumentFor(gitRefusedSchema, gitSchemaSecret, gitRefusedKey,
+		c.httpsSource(gitSchemaPath, gitElsewhereCredential))), "create PtahSchema %s", gitRefusedSchema)
 	refusal := c.refusedAtResolve(gitRefusedSchema, "not granted for the source's host")
 	schema := c.onlyResolved(gitRefusedSchema)
 	c.deleteAndWait(schema)
@@ -785,7 +788,7 @@ func (c *gitRun) refusedSources() {
 	} {
 		// The Resolve refuses before anything reads the database; a key of
 		// their own keeps them from sharing the schema's coordination.
-		c.check(c.create(c.schemaDocumentFor(row.name, gitSchemaSecret, "ptah_e2e_git_refused", row.source)), "create PtahSchema %s", row.name)
+		c.check(c.create(c.schemaDocumentFor(row.name, gitSchemaSecret, gitRefusedKey, row.source)), "create PtahSchema %s", row.name)
 		refusal := c.refusedAtResolve(row.name, row.want)
 		c.deleteAndWait(c.onlyResolved(row.name))
 		c.logf("PASS %s was refused at its Resolve: %s", row.name, refusal)
