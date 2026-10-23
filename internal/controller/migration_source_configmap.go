@@ -52,15 +52,23 @@ func (r *MigrationReconciler) resolveMigrationConfigMapSource(ctx context.Contex
 	if err := r.patchMigrationStatus(ctx, before, migration); err != nil {
 		return ctrl.Result{}, err
 	}
-	keep := []string{resolved.snapshot.Name}
+	r.retireMigrationSnapshots(ctx, migration)
+	ctrl.LoggerFrom(ctx).Info("ConfigMap source read", "configMap", resolved.revision.Name,
+		"snapshot", resolved.snapshot.Name, "contentDigest", resolved.snapshot.ContentDigest)
+	return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
+}
+
+// retireMigrationSnapshots deletes the migration's snapshots its stored status
+// no longer names: neither the artifact nor the active operation. It runs
+// after every resolution is stored, as retireSchemaSnapshots does for a
+// schema.
+func (r *MigrationReconciler) retireMigrationSnapshots(ctx context.Context, migration *operatorv1alpha1.PtahMigration) {
+	owner := sourcesnapshot.Owner{Kind: "PtahMigration", Name: migration.Name, UID: migration.UID}
+	keep := snapshotNames(migration.Status.Artifact)
 	if operation := migration.Status.ActiveOperation; operation != nil {
 		keep = append(keep, snapshotNames(operation.Source)...)
 	}
 	if err := retireSnapshots(ctx, r.directReader(), r.Client, migration.Namespace, owner, sourcesnapshot.LabelMigration, keep...); err != nil {
-		// The snapshot stays until the next read retires it; nothing reads it.
 		r.event(migration, corev1.EventTypeWarning, "SourceSnapshotRetirementFailed", "%s", bounded(err.Error(), 512))
 	}
-	ctrl.LoggerFrom(ctx).Info("ConfigMap source read", "configMap", resolved.revision.Name,
-		"snapshot", resolved.snapshot.Name, "contentDigest", resolved.snapshot.ContentDigest)
-	return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
 }

@@ -25,8 +25,7 @@ import (
 // a source, so there is no Verify step.
 //
 // Content that did not change keeps the plan, and another ConfigMap or other
-// content retires it, as a moved OCI digest does. Snapshots nothing names any
-// more are deleted once the status that stops naming them is stored.
+// content retires it, as a moved OCI digest does.
 func (r *SchemaReconciler) resolveConfigMapSource(ctx context.Context, schema *operatorv1alpha1.PtahSchema) (ctrl.Result, error) {
 	owner := sourcesnapshot.Owner{Kind: "PtahSchema", Name: schema.Name, UID: schema.UID}
 	policy, policyBinding, err := sourcePolicyFor(ctx, r.directReader(), schema.Namespace, schema.Spec.Desired)
@@ -77,14 +76,27 @@ func (r *SchemaReconciler) resolveConfigMapSource(ctx context.Context, schema *o
 	if err := r.patchStatus(ctx, before, schema); err != nil {
 		return ctrl.Result{}, err
 	}
-	keep := append([]string{resolved.snapshot.Name}, snapshotNames(schemaSnapshotHolders(schema)...)...)
-	if err := retireSnapshots(ctx, r.directReader(), r.Client, schema.Namespace, owner, sourcesnapshot.LabelSchema, keep...); err != nil {
-		// The snapshot stays until the next read retires it; nothing reads it.
-		r.event(schema, corev1.EventTypeWarning, "SourceSnapshotRetirementFailed", "%s", bounded(err.Error(), 512))
-	}
+	r.retireSchemaSnapshots(ctx, schema)
 	ctrl.LoggerFrom(ctx).Info("ConfigMap source read", "configMap", resolved.revision.Name,
 		"snapshot", resolved.snapshot.Name, "contentDigest", resolved.snapshot.ContentDigest)
 	return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
+}
+
+// retireSchemaSnapshots deletes the schema's snapshots its stored status no
+// longer names. It runs after every resolution is stored, whatever the source
+// is now: a schema that moved from a ConfigMap to Git or OCI would otherwise
+// keep a copy of files it no longer reads until it is deleted. A snapshot
+// that could not be deleted stays until the next resolution retires it, and
+// nothing reads it.
+func (r *SchemaReconciler) retireSchemaSnapshots(ctx context.Context, schema *operatorv1alpha1.PtahSchema) {
+	owner := sourcesnapshot.Owner{Kind: "PtahSchema", Name: schema.Name, UID: schema.UID}
+	keep := snapshotNames(schemaSnapshotHolders(schema)...)
+	if snapshot := schema.Status.Source.Snapshot; snapshot != nil {
+		keep = append(keep, snapshot.Name)
+	}
+	if err := retireSnapshots(ctx, r.directReader(), r.Client, schema.Namespace, owner, sourcesnapshot.LabelSchema, keep...); err != nil {
+		r.event(schema, corev1.EventTypeWarning, "SourceSnapshotRetirementFailed", "%s", bounded(err.Error(), 512))
+	}
 }
 
 // schemaSnapshotHolders is every access binding of the schema that may name a

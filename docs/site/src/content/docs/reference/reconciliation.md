@@ -83,7 +83,9 @@ digest, keeps the snapshot and the plan, and plans nothing new; an edit to a
 selected key gives a new snapshot and retires the plan. A plan binds the
 ConfigMap's UID and the content digest in place of an artifact digest, under
 plan contract version 2, so another ConfigMap with the same name retires it
-too. The manager deletes a snapshot once nothing names it any more.
+too. The manager deletes a snapshot once nothing names it any more, checking
+after each resolution is stored. A resource whose source moves to Git or OCI
+loses its last snapshot with the first resolution of the new source.
 
 If a snapshot is deleted or replaced while an operation still needs it, that
 operation is refused rather than read from anywhere else. Putting back the

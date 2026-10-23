@@ -1049,6 +1049,10 @@ func (r *MigrationReconciler) consumeMigrationResult(
 			Digest:            result.ResolvedDigest,
 			RegistryAuthFrom:  migration.Spec.Artifact.RegistryAuthFrom.DeepCopy(),
 		}
+		// An OCI source reads no ConfigMap and takes no source policy, so
+		// what an earlier ConfigMap or Git source recorded goes with it.
+		migration.Status.ConfigMap = nil
+		migration.Status.SourcePolicy = nil
 		migration.Spec.Artifact.Transport.DeepCopyInto(&migration.Status.Artifact.Transport)
 		migration.Status.Phase = operatorv1alpha1.MigrationPhaseVerifying
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationArtifactVerified, metav1.ConditionUnknown,
@@ -1106,6 +1110,11 @@ func (r *MigrationReconciler) consumeMigrationResult(
 	}
 	if err := r.retireMigrationClaim(ctx, before, migration, mutationlifecycle.DispositionAccounted, false); err != nil {
 		return ctrl.Result{}, err
+	}
+	if operation.Type == operatorv1alpha1.MigrationOperationResolve {
+		// A Git or OCI resolution names no snapshot, so one a ConfigMap
+		// source left goes now that the status no longer names it.
+		r.retireMigrationSnapshots(ctx, migration)
 	}
 	r.observeMigrationOperation(operation, telemetry.OperationSucceeded)
 	if pendingPlanReport != nil {
