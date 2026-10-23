@@ -73,8 +73,8 @@ func TestASuiteCatalogThatCannotBeExecutedIsRefused(t *testing.T) {
 		wantError string
 	}{
 		"a phase claimed by two suites": {
-			old:       `"phases": ["assert", "dataplane", "reference-data-postgresql", "configmap-sources", "git-sources"],`,
-			new:       `"phases": ["assert", "dataplane", "reference-data-postgresql", "configmap-sources", "git-sources", "migrations-mysql"],`,
+			old:       `"phases": ["assert", "dataplane", "configmap-sources", "git-sources"],`,
+			new:       `"phases": ["assert", "dataplane", "configmap-sources", "git-sources", "migrations-mysql"],`,
 			wantError: `phase "migrations-mysql" is claimed by both`,
 		},
 		"a suite that runs nothing": {
@@ -93,7 +93,7 @@ func TestASuiteCatalogThatCannotBeExecutedIsRefused(t *testing.T) {
 			wantError: `a job, a run id and an artifact are named after the slug`,
 		},
 		"a suite that says nothing about itself": {
-			old:       `"summary": "The control-plane contract, PostgreSQL lifecycle and reference data, plan-size and admission boundaries, and ConfigMap and Git sources",`,
+			old:       `"summary": "The control-plane contract, the PostgreSQL lifecycle, plan-size and admission boundaries, and ConfigMap and Git sources",`,
 			new:       `"summary": "  ",`,
 			wantError: `says nothing about what it runs`,
 		},
@@ -312,9 +312,9 @@ func TestTheIsolationWorkerFollowsThePhasesThatIsolateANode(t *testing.T) {
 			wantError: `suite "migrations-mysql" runs migrations-mysql, which isolates a node, and does not declare isolationWorker`,
 		},
 		"a suite that pays for a node nothing isolates": {
-			old: `"phases": ["assert", "dataplane", "reference-data-postgresql", "configmap-sources", "git-sources"],
+			old: `"phases": ["assert", "dataplane", "configmap-sources", "git-sources"],
       "prepare": []`,
-			new: `"phases": ["assert", "dataplane", "reference-data-postgresql", "configmap-sources", "git-sources"],
+			new: `"phases": ["assert", "dataplane", "configmap-sources", "git-sources"],
       "prepare": [],
       "isolationWorker": true`,
 			wantError: `suite "data-plane" declares isolationWorker and runs no phase that isolates a node`,
@@ -323,9 +323,9 @@ func TestTheIsolationWorkerFollowsThePhasesThatIsolateANode(t *testing.T) {
 		// mode, so a suite that prepares with a phase that isolates a node
 		// needs the node as much as the suite that covers it.
 		"a suite that prepares with a phase that isolates a node": {
-			old: `"phases": ["assert", "dataplane", "reference-data-postgresql", "configmap-sources", "git-sources"],
+			old: `"phases": ["assert", "dataplane", "configmap-sources", "git-sources"],
       "prepare": []`,
-			new: `"phases": ["assert", "dataplane", "reference-data-postgresql", "configmap-sources", "git-sources"],
+			new: `"phases": ["assert", "dataplane", "configmap-sources", "git-sources"],
       "prepare": ["migrations-postgresql"]`,
 			wantError: `suite "data-plane" runs migrations-postgresql, which isolates a node, and does not declare isolationWorker`,
 		},
