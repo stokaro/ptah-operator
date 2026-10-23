@@ -51,6 +51,7 @@ decision.
 | `OutcomeUnknown` | Apply attribution is uncertain and only read-only proof may proceed. |
 | `Pending` | Resolved artifact content has not yet been verified. |
 | `PlanNoLongerCurrent` | An approval's plan binding is no longer current. |
+| `PlanPublicationRefused` | The API server refused to store the plan a Plan operation computed: an admission policy or webhook, a quota, RBAC, or the object's size. The message carries the refusal. The Plan runs again after `spec.execution.failureRetryInterval`, so a policy or quota that stops refusing lets the next plan through. |
 | `PlanReady` | An exact immutable plan is ready for approval. |
 | `PodAdmissionRefused` | The operation's Job cannot create its Pod because the API server refused it; the message carries the refusal. The operation stays claimed, the Job keeps its deadline, and the Job controller keeps trying, so a policy that stops refusing lets it through. Declare what the Pod has to carry in `spec.execution.podMetadata`, or change the policy. |
 | `PolicyBlocked` | Destructive-change policy blocks the current plan. |

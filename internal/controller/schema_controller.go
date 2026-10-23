@@ -1721,7 +1721,17 @@ func (r *SchemaReconciler) consumeResultWithTransport(ctx context.Context, schem
 			} else {
 				published, err := r.publishPlan(ctx, schema, decoded, planDocument)
 				if err != nil {
-					return ctrl.Result{}, err
+					if !planPublicationRefused(err) {
+						return ctrl.Result{}, err
+					}
+					// The Job is already harvested. Holding the claim against a
+					// refusal would meet it on every pass until the Job's cleanup
+					// took the result, and the retry after that would name a
+					// missing Job instead of the refusal. The Plan is retried as a
+					// failed one, with the refusal on the resource.
+					failure := fmt.Errorf("publish the plan: %w", err)
+					r.event(schema, corev1.EventTypeWarning, "PlanPublicationRefused", "%s", bounded(failure.Error(), 512))
+					return r.retryOperationAs(ctx, schema, job, operatorv1alpha1.ReasonPlanPublicationRefused, failure, nil)
 				}
 				schema.Status.Plan = currentPlanStatus(published)
 				setPlanPolicyStatus(schema, published)
@@ -2914,6 +2924,17 @@ func (r *SchemaReconciler) discardStaleOperation(ctx context.Context, schema *op
 		return ctrl.Result{}, err
 	}
 	return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
+}
+
+// planPublicationRefused reports whether the API server refused to store a
+// plan, rather than failed to answer: an admission policy or webhook, a quota,
+// RBAC, or the object's size or shape. Asking again gets the same answer until
+// whatever refused changes, so the refusal belongs on the resource. Anything
+// else, a conflict, a timeout, an unavailable server or an error of the store's
+// own, is not one.
+func planPublicationRefused(err error) bool {
+	return apierrors.IsForbidden(err) || apierrors.IsInvalid(err) ||
+		apierrors.IsRequestEntityTooLargeError(err) || apierrors.IsBadRequest(err)
 }
 
 func (r *SchemaReconciler) publishPlan(ctx context.Context, schema *operatorv1alpha1.PtahSchema, decoded dataplane.PlanFile, content []byte) (*operatorv1alpha1.PtahSchemaPlan, error) {
