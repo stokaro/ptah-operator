@@ -1,5 +1,6 @@
 import copy
 import datetime
+import json
 from pathlib import Path
 import unittest
 
@@ -109,19 +110,38 @@ class RuntimeTest(unittest.TestCase):
 STARTED = datetime.datetime(2026, 10, 11, 12, 0, 0, tzinfo=datetime.timezone.utc)
 APPLIED = {'planRef': {'name': 'application-1', 'uid': 'u1'}, 'completedAt': '2026-10-11T11:40:00Z'}
 EPOCH = 'v1-' + 'a' * 32
-BEFORE = {'applied': APPLIED, 'executionBinding': {'epoch': EPOCH}}
+EXECUTOR = 'ghcr.io/stokaro/ptah@sha256:' + 'e' * 64
+OTHER_EXECUTOR = 'ghcr.io/stokaro/ptah@sha256:' + 'f' * 64
+BINDING = {'controllerStateVersion': 1, 'executorImage': EXECUTOR, 'ptahVersion': 'v0.13.0', 'runnerProtocolVersion': 1,
+           'epoch': EPOCH}
+BEFORE = {'applied': APPLIED, 'executionBinding': BINDING}
+MOVED = Path(__file__).parent / 'testdata/fresh-install/upgrade-moved-executor.json'
 
 
-def schema(finished='2026-10-11T12:08:30Z', phase='InSync', applied=APPLIED, status='True', reason='ScopedConverged', epoch=EPOCH):
+def schema(finished='2026-10-11T12:08:30Z', phase='InSync', applied=APPLIED, status='True', reason='ScopedConverged',
+           binding=BINDING):
     return {'status': {'phase': phase, 'applied': copy.deepcopy(applied), 'lastSuccessfulReconciliation': finished,
-                       'executionBinding': {'epoch': epoch} if epoch else None,
+                       'executionBinding': copy.deepcopy(binding),
                        'conditions': [{'type': 'Ready', 'status': 'True', 'reason': 'Converged'},
                                       {'type': 'InSync', 'status': status, 'reason': reason}]}}
 
 
+def moved():
+    """The v0.2.6 upgrade over v0.2.5, which moved the executor from Ptah
+    v0.13.0 to v0.14.0, as the probe read it in run 39916361220."""
+    reading = json.loads(MOVED.read_text())
+    started = datetime.datetime.fromisoformat(reading['started'])
+    return reading['after'], reading['before'], started, reading['candidate']
+
+
 class ConvergedAfterTest(unittest.TestCase):
     def test_a_refresh_the_new_manager_finished_in_sync_for_the_same_record_passes(self):
-        self.assertTrue(converged_after(schema(), BEFORE, STARTED))
+        self.assertTrue(converged_after(schema(), BEFORE, STARTED, EXECUTOR, 'v0.13.0'))
+
+    def test_an_upgrade_that_moves_the_executor_passes_under_a_new_epoch(self):
+        after, before, started, candidate = moved()
+        self.assertNotEqual(after['status']['executionBinding']['epoch'], before['executionBinding']['epoch'])
+        self.assertTrue(converged_after(after, before, started, candidate['executor'], candidate['ptah_version']))
 
     def test_readings_that_do_not_show_it_are_refused(self):
         cases = {
@@ -130,13 +150,29 @@ class ConvergedAfterTest(unittest.TestCase):
             'no completed refresh': schema(finished=None),
             'a plan waiting for approval': schema(phase='AwaitingApproval'),
             'another applied record': schema(applied={**APPLIED, 'planRef': {'name': 'application-2', 'uid': 'u2'}}),
-            'a new execution epoch': schema(epoch='v1-' + 'b' * 32),
-            'no execution binding': schema(epoch=None),
+            'a new execution epoch for the same executor': schema(binding={**BINDING, 'epoch': 'v1-' + 'b' * 32}),
+            'another executor under the same epoch': schema(binding={**BINDING, 'executorImage': OTHER_EXECUTOR}),
+            'no execution binding': schema(binding=None),
             'not in sync': schema(status='False', reason='PlanRequired'),
             'in sync for another reason': schema(reason='Converged'),
         }
         for name, reading in cases.items():
-            self.assertFalse(converged_after(reading, BEFORE, STARTED), name)
+            self.assertFalse(converged_after(reading, BEFORE, STARTED, EXECUTOR, 'v0.13.0'), name)
+
+    def test_a_moved_executor_is_refused_where_the_binding_does_not_follow_it(self):
+        after, before, started, candidate = moved()
+        status = after['status']
+        cases = {
+            "the predecessor's epoch": {**status['executionBinding'], 'epoch': before['executionBinding']['epoch']},
+            "the predecessor's executor": {**before['executionBinding'], 'epoch': status['executionBinding']['epoch']},
+            'another Ptah version': {**status['executionBinding'], 'ptahVersion': 'v0.13.0'},
+        }
+        for name, binding in cases.items():
+            reading = copy.deepcopy(after)
+            reading['status']['executionBinding'] = binding
+            self.assertFalse(converged_after(reading, before, started, candidate['executor'], candidate['ptah_version']), name)
+        self.assertFalse(converged_after(after, before, started, OTHER_EXECUTOR, candidate['ptah_version']),
+                         'a candidate that installs another executor')
 
 
 class PublishedGuideTest(unittest.TestCase):

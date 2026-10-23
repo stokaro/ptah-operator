@@ -1,0 +1,199 @@
+{
+  "source": "stokaro/ptah-operator Fresh installation run 39916361220 (v0.2.6 over v0.2.5, amd64, PostgreSQL): transcript.jsonl steps predecessor-converged, runtime-on-candidate and release-identities, and the status the run reported when the probe refused it. The predecessor binding is the applied record's bound components with the epoch the transcript recorded.",
+  "started": "2026-10-23T07:18:42+00:00",
+  "candidate": {
+    "executor": "ghcr.io/stokaro/ptah@sha256:6c7a5d628a9507cfeb93d819c3816589053fd95834fc5cf1ad1231e8f6f56102",
+    "ptah_version": "v0.14.0"
+  },
+  "before": {
+    "applied": {
+      "artifactDigest": "sha256:0ebc89088ed43561acdd32d1610066a9023ed5e2892184e8749a3b72b97fc836",
+      "completedAt": "2026-10-23T07:17:55Z",
+      "controllerImage": "ghcr.io/stokaro/ptah-operator@sha256:d93fb764491ced96bbffcfaa3ef11601976ad9616fd66c14e175a789cbde12f0",
+      "controllerRevision": "b4269ebd7853688b2a33ef8423bf579f913510e7",
+      "controllerStateVersion": 1,
+      "coordinationDigest": "sha256:b7f2da5f188d7868c39589c739cc38932680ff09e95635e3a189bdb35c65256c",
+      "dispatchedBy": {
+        "controllerImage": "ghcr.io/stokaro/ptah-operator@sha256:d93fb764491ced96bbffcfaa3ef11601976ad9616fd66c14e175a789cbde12f0",
+        "controllerRevision": "b4269ebd7853688b2a33ef8423bf579f913510e7",
+        "runnerImage": "ghcr.io/stokaro/ptah-operator@sha256:d93fb764491ced96bbffcfaa3ef11601976ad9616fd66c14e175a789cbde12f0"
+      },
+      "executionBindingID": "v1-048d7d51bee858e0d4851c4c4e507b53",
+      "executorImage": "ghcr.io/stokaro/ptah@sha256:f68968558f0634c1e388f2be3f8d9d0f7c5916631abe16c5bae55d21e8e909c0",
+      "planFingerprint": "sha256:2c55696f8429aeb544d9ab9ba7096d03464d9956bc59f1bac0e75b736082ce64",
+      "planRef": {
+        "name": "ptah-plan-2c55696f8429aeb544d9ab9b",
+        "uid": "9d770242-5b8c-488d-a969-ab6737c0676a"
+      },
+      "ptahVersion": "v0.13.0",
+      "runnerImage": "ghcr.io/stokaro/ptah-operator@sha256:d93fb764491ced96bbffcfaa3ef11601976ad9616fd66c14e175a789cbde12f0",
+      "runnerProtocolVersion": 1,
+      "targetIdentityDigest": "sha256:faf26207e5a71af7f2b87d18579cf11dc286e675641f2e7489f46ec36d970f92"
+    },
+    "executionBinding": {
+      "controllerStateVersion": 1,
+      "executorImage": "ghcr.io/stokaro/ptah@sha256:f68968558f0634c1e388f2be3f8d9d0f7c5916631abe16c5bae55d21e8e909c0",
+      "ptahVersion": "v0.13.0",
+      "runnerProtocolVersion": 1,
+      "epoch": "v1-048d7d51bee858e0d4851c4c4e507b53"
+    }
+  },
+  "after": {
+    "status": {
+      "applied": {
+        "artifactDigest": "sha256:0ebc89088ed43561acdd32d1610066a9023ed5e2892184e8749a3b72b97fc836",
+        "completedAt": "2026-10-23T07:17:55Z",
+        "controllerImage": "ghcr.io/stokaro/ptah-operator@sha256:d93fb764491ced96bbffcfaa3ef11601976ad9616fd66c14e175a789cbde12f0",
+        "controllerRevision": "b4269ebd7853688b2a33ef8423bf579f913510e7",
+        "controllerStateVersion": 1,
+        "coordinationDigest": "sha256:b7f2da5f188d7868c39589c739cc38932680ff09e95635e3a189bdb35c65256c",
+        "dispatchedBy": {
+          "controllerImage": "ghcr.io/stokaro/ptah-operator@sha256:d93fb764491ced96bbffcfaa3ef11601976ad9616fd66c14e175a789cbde12f0",
+          "controllerRevision": "b4269ebd7853688b2a33ef8423bf579f913510e7",
+          "runnerImage": "ghcr.io/stokaro/ptah-operator@sha256:d93fb764491ced96bbffcfaa3ef11601976ad9616fd66c14e175a789cbde12f0"
+        },
+        "executionBindingID": "v1-048d7d51bee858e0d4851c4c4e507b53",
+        "executorImage": "ghcr.io/stokaro/ptah@sha256:f68968558f0634c1e388f2be3f8d9d0f7c5916631abe16c5bae55d21e8e909c0",
+        "planFingerprint": "sha256:2c55696f8429aeb544d9ab9ba7096d03464d9956bc59f1bac0e75b736082ce64",
+        "planRef": {
+          "name": "ptah-plan-2c55696f8429aeb544d9ab9b",
+          "uid": "9d770242-5b8c-488d-a969-ab6737c0676a"
+        },
+        "ptahVersion": "v0.13.0",
+        "runnerImage": "ghcr.io/stokaro/ptah-operator@sha256:d93fb764491ced96bbffcfaa3ef11601976ad9616fd66c14e175a789cbde12f0",
+        "runnerProtocolVersion": 1,
+        "targetIdentityDigest": "sha256:faf26207e5a71af7f2b87d18579cf11dc286e675641f2e7489f46ec36d970f92"
+      },
+      "conditions": [
+        {
+          "lastTransitionTime": "2026-10-23T07:16:34Z",
+          "message": "Database engine \"PostgreSQL\" is supported",
+          "observedGeneration": 1,
+          "reason": "SupportedEngine",
+          "status": "True",
+          "type": "EngineSupported"
+        },
+        {
+          "lastTransitionTime": "2026-10-23T07:39:24Z",
+          "message": "Schema is in sync",
+          "observedGeneration": 1,
+          "reason": "InSync",
+          "status": "True",
+          "type": "Ready"
+        },
+        {
+          "lastTransitionTime": "2026-10-23T07:16:47Z",
+          "message": "The latest operation completed",
+          "observedGeneration": 1,
+          "reason": "Succeeded",
+          "status": "False",
+          "type": "ReconciliationFailed"
+        },
+        {
+          "lastTransitionTime": "2026-10-23T07:38:52Z",
+          "message": "Desired OCI reference resolved to immutable content",
+          "observedGeneration": 1,
+          "reason": "DigestPinned",
+          "status": "True",
+          "type": "ArtifactResolved"
+        },
+        {
+          "lastTransitionTime": "2026-10-23T07:39:01Z",
+          "message": "Artifact type and verification policy were satisfied",
+          "observedGeneration": 1,
+          "reason": "PolicySatisfied",
+          "status": "True",
+          "type": "ArtifactVerified"
+        },
+        {
+          "lastTransitionTime": "2026-10-23T07:19:37Z",
+          "message": "Database schema was observed",
+          "observedGeneration": 1,
+          "reason": "Observed",
+          "status": "True",
+          "type": "DatabaseReachable"
+        },
+        {
+          "lastTransitionTime": "2026-10-23T07:39:24Z",
+          "message": "The authoritative managed scope has no changes",
+          "observedGeneration": 1,
+          "reason": "ScopedConverged",
+          "status": "False",
+          "type": "DriftDetected"
+        },
+        {
+          "lastTransitionTime": "2026-10-23T07:39:24Z",
+          "message": "A stable scoped plan proves convergence",
+          "observedGeneration": 1,
+          "reason": "ScopedConverged",
+          "status": "True",
+          "type": "InSync"
+        },
+        {
+          "lastTransitionTime": "2026-10-23T07:17:21Z",
+          "message": "Any approval for the previous execution binding is stale",
+          "observedGeneration": 1,
+          "reason": "ExecutionBindingChanged",
+          "status": "False",
+          "type": "ApprovalRequired"
+        },
+        {
+          "lastTransitionTime": "2026-10-23T07:39:24Z",
+          "message": "No executable plan is required",
+          "observedGeneration": 1,
+          "reason": "NoChanges",
+          "status": "False",
+          "type": "PlanReady"
+        },
+        {
+          "lastTransitionTime": "2026-10-23T07:17:17Z",
+          "message": "Reconciliation is active",
+          "observedGeneration": 1,
+          "reason": "Active",
+          "status": "False",
+          "type": "Suspended"
+        },
+        {
+          "lastTransitionTime": "2026-10-23T07:17:31Z",
+          "message": "No Apply operation is authorized under the previous execution binding",
+          "observedGeneration": 1,
+          "reason": "ExecutionBindingChanged",
+          "status": "False",
+          "type": "Applying"
+        }
+      ],
+      "executionBinding": {
+        "controllerStateVersion": 1,
+        "epoch": "v1-9755be307ffb4e3eccf2d43aa1b6843c",
+        "executorImage": "ghcr.io/stokaro/ptah@sha256:6c7a5d628a9507cfeb93d819c3816589053fd95834fc5cf1ad1231e8f6f56102",
+        "ptahVersion": "v0.14.0",
+        "runnerProtocolVersion": 1
+      },
+      "lastAttemptTime": "2026-10-23T07:39:24Z",
+      "lastSuccessfulReconciliation": "2026-10-23T07:39:24Z",
+      "nextReconciliationTime": "2026-10-23T07:48:44Z",
+      "observedGeneration": 1,
+      "phase": "InSync",
+      "source": {
+        "artifactType": "application/vnd.stokaro.ptah.schema.v1",
+        "digest": "sha256:0ebc89088ed43561acdd32d1610066a9023ed5e2892184e8749a3b72b97fc836",
+        "mediaType": "application/vnd.oci.image.manifest.v1+json",
+        "requestedReference": "oci://registry.ptah-guide-fixtures.svc.cluster.local:5000/application-schema-postgresql@sha256:0ebc89088ed43561acdd32d1610066a9023ed5e2892184e8749a3b72b97fc836",
+        "resolvedAt": "2026-10-23T07:38:52Z",
+        "resolvedReference": "oci://registry.ptah-guide-fixtures.svc.cluster.local:5000/application-schema-postgresql@sha256:0ebc89088ed43561acdd32d1610066a9023ed5e2892184e8749a3b72b97fc836",
+        "size": 932,
+        "verificationPolicyDigest": "sha256:786f0487eda07317e875b5562939b60822f320f13624de3cbb526f9a93bc2704",
+        "verificationPolicyUID": "d4f15eb4-3073-40d2-ad91-afd650de15c6",
+        "verified": true,
+        "verifiedAt": "2026-10-23T07:39:01Z"
+      },
+      "target": {
+        "coordinationDigest": "sha256:b7f2da5f188d7868c39589c739cc38932680ff09e95635e3a189bdb35c65256c",
+        "driftReportDigest": "sha256:4f0aab62c3b67a606b49d09e36b398a0761065862b2aa1da47438105c886694c",
+        "engine": "PostgreSQL",
+        "identityDigest": "sha256:faf26207e5a71af7f2b87d18579cf11dc286e675641f2e7489f46ec36d970f92",
+        "lastObservedAt": "2026-10-23T07:39:13Z"
+      }
+    }
+  }
+}

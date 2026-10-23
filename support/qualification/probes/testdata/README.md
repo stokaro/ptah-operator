@@ -47,3 +47,12 @@ The `-v0.2.5` readings are the check's own run on the published v0.2.5
 with kube-prometheus-stack 92.11.0, fresh-installation run 39563266483: the
 receiver's log, the active targets trimmed the same way, and the release's
 ServiceMonitor with its metadata trimmed to name, namespace and labels.
+
+`fresh-install/upgrade-moved-executor.json` is the v0.2.6 upgrade over v0.2.5
+on Kubernetes 1.37 linux/amd64 with PostgreSQL, from Fresh installation run
+39916361220 on October 23, 2026. The upgrade moved the executor from Ptah
+v0.13.0 to v0.14.0. `after` is the schema status the probe refused, copied from
+the run's log. `before` is the predecessor's applied record and its bound
+components, with the epoch the transcript recorded. `started` and `candidate`
+are the transcript's `runtime-on-candidate` and last `release-identities`
+steps.

@@ -147,24 +147,31 @@ def runtime_findings(deployments, pods, digest):
     return findings, examined
 
 
-def converged_after(schema, before, started):
+def converged_after(schema, before, started, executor, ptah_version):
     """Whether a schema reading shows a refresh that began on the new runtime
     and found nothing to do.
 
     The refresh has to have finished after the newest runtime Pod started, so
     the reading is the new manager's rather than the predecessor's. The schema
-    has to be in sync for the applied record it had before the upgrade, under
-    the same execution epoch: a release that changes only the manager and its
-    runner invalidates nothing.
+    has to be in sync for the applied record it had before the upgrade, and
+    bound to the executor the candidate installs. The execution epoch follows
+    the bound components: a release that changes only the manager and its
+    runner keeps the epoch and invalidates nothing, and a release that moves
+    the executor starts a new one.
     """
     status = schema.get('status', {})
     finished = status.get('lastSuccessfulReconciliation')
     if not finished or timestamp(finished) <= started:
         return False
     in_sync = [c for c in status.get('conditions', []) if c['type'] == 'InSync']
-    epoch = (status.get('executionBinding') or {}).get('epoch')
+    binding, previous = status.get('executionBinding') or {}, before['executionBinding']
+    epoch = binding.get('epoch')
+    if epoch is None or binding.get('executorImage') != executor or binding.get('ptahVersion') != ptah_version:
+        return False
+    components = lambda b: {k: v for k, v in b.items() if k != 'epoch'}
+    if (epoch == previous['epoch']) != (components(binding) == components(previous)):
+        return False
     return (status.get('phase') == 'InSync' and status.get('applied') == before['applied'] and bool(in_sync)
-            and epoch is not None and epoch == before['executionBinding']['epoch']
             and in_sync[0]['status'] == 'True' and in_sync[0]['reason'] == 'ScopedConverged')
 
 
@@ -316,7 +323,7 @@ class Walkthrough:
         plans = json.loads(self.kubectl('-n', 'application', 'get', 'ptahschemaplans', '-o', 'json').stdout)['items']
         return schema, sorted(p['metadata']['uid'] for p in plans)
 
-    def still_converged(self, before, started, timeout=1500):
+    def still_converged(self, before, started, identities, timeout=1500):
         """Wait for the new manager to refresh the schema and find it converged.
 
         The schema refreshes at its interval, which the predecessor scheduled,
@@ -326,7 +333,7 @@ class Walkthrough:
         deadline, reading = time.monotonic() + timeout, schema
         while time.monotonic() < deadline:
             reading, now_plans = self.schema_reading()
-            if converged_after(reading, schema['status'], started):
+            if converged_after(reading, schema['status'], started, identities['executor'], identities['ptah_version']):
                 if now_plans != plans:
                     raise RuntimeError(f'the upgrade added plans: before {plans}, after {now_plans}')
                 break
@@ -579,7 +586,7 @@ class Walkthrough:
             raise ValueError('the predecessor and the target run the same manager image; the drill measures an upgrade that changes it')
         self.confirm_installed()
         started = self.runtime_on(identities['image'])
-        self.still_converged(before, started)
+        self.still_converged(before, started, identities)
         self.transcript.record(step='complete', tag=self.tag, upgradedFrom=self.predecessor, engine=self.engine,
                                releaseSource=self.source, **identities)
 
