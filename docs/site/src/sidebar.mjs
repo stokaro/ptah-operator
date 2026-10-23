@@ -38,6 +38,7 @@ export const sidebar = [
     label: 'Use',
     items: [
       { label: 'Configuration', link: '/use/configuration/' },
+      { label: 'Deliver from a ConfigMap or Git', link: '/use/sources/' },
       { label: 'Read a plan', link: '/use/read-a-plan/' },
       { label: 'Run versioned migrations', link: '/use/migrations/' },
       { label: 'Manage reference data', link: '/use/reference-data/' },

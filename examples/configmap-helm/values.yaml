@@ -1,0 +1,6 @@
+schema:
+  coordinationKey: production/inventory-primary
+  databaseSecret: inventory-database
+migrations:
+  coordinationKey: production/orders-primary
+  databaseSecret: orders-database

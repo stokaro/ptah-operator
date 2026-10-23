@@ -1,0 +1,5 @@
+apiVersion: v2
+name: inventory-database
+description: A schema and a migration sequence delivered to the Ptah operator from ConfigMaps.
+type: application
+version: 0.1.0
