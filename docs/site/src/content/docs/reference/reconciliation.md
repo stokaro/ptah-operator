@@ -112,7 +112,8 @@ refused, and the next Resolve reads the ref again. A resource pinned to that
 commit is refused at its Resolve and keeps what it applied. A refused pull says
 why in `ReconciliationFailed`, with the last line Ptah wrote: a submodule or an
 LFS pointer at the selected path, a host key the known hosts do not pin, a
-commit the server no longer has.
+commit no branch or tag names on a server that gives commits only at a branch
+or tag.
 
 A branch or a tag is read again at every interval. A commit that leaves the
 selected files as they were keeps the plan; other files retire it. A plan

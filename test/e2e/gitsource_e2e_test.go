@@ -617,8 +617,9 @@ func (c *gitRun) schemaAtAPinnedCommit() {
 // forcePushedBranch rewrites main: the commit both schemas read is replaced by
 // one that adds a second column, and is gone from the server. The schema that
 // follows main resolves the replacement, plans it and applies it. The schema
-// pinned to the replaced commit is refused at its Resolve: it keeps the commit
-// it applied and publishes no plan.
+// pinned to the replaced commit is refused at its Resolve: the server, like
+// most, gives a commit only at a branch or tag, and none names it now. It
+// keeps the commit it applied and publishes no plan.
 func (c *gitRun) forcePushedBranch() {
 	c.t.Helper()
 	following := c.waitForSchema("the schema to be in sync", inSyncSchema)
@@ -646,7 +647,7 @@ func (c *gitRun) forcePushedBranch() {
 	}
 
 	c.resolveNowFor(gitPinnedSchema, "59m")
-	refusal := c.refusedAtResolve(gitPinnedSchema, "fetch "+gone)
+	refusal := c.refusedAtResolve(gitPinnedSchema, "no branch or tag names commit "+gone)
 	after := c.schemaNamed(gitPinnedSchema)
 	if after.Status.Source.Git == nil || after.Status.Source.Git.Commit != gone {
 		c.fatalf("the refused pinned schema reports the source %+v, want the commit it applied, %s", after.Status.Source.Git, gone)
