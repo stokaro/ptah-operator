@@ -182,6 +182,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:2534bd01c2aac71dffa715c8370ffb1bb9914866669c51f0ecff383411d591e4",
       "reason": "Document when a Git source pinned to a commit is refused (#699). Only the doc comment on the API's ref.commit field changed: it now says that Ptah asks the server for the commit by its id, that unless a branch or tag points at the commit it asks only a server that says it gives commits by id, so on any other Resolve refuses the commit once its branch moves on, and that a tag holds one commit on every server. The CRDs carry no descriptions, and the runner's code, its modes, commands, payloads, result frames, delivery identity, SQL authority and retry limits are as they were."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:0f5ad0a077a808f90ca96db233dd8895a96c6ecb3bf8bb30c9164eabfb5ba378",
+      "reason": "Name a plan the API server refuses to store (#711). The API gains the condition reason PlanPublicationRefused, which the manager sets when it retries a Plan whose plan an admission policy or webhook, a quota, RBAC or the object's size refused. The runner neither sets nor reads condition reasons; its modes, commands, payloads, result frames, delivery identity, SQL authority and retry limits are as they were."
     }
   ]
 }

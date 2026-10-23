@@ -1626,6 +1626,7 @@ const (
 	ReasonOutcomeUnknown               ConditionReason = "OutcomeUnknown"
 	ReasonPending                      ConditionReason = "Pending"
 	ReasonPlanNoLongerCurrent          ConditionReason = "PlanNoLongerCurrent"
+	ReasonPlanPublicationRefused       ConditionReason = "PlanPublicationRefused"
 	ReasonPlanReady                    ConditionReason = "PlanReady"
 	ReasonPodAdmissionRefused          ConditionReason = "PodAdmissionRefused"
 	ReasonPolicyBlocked                ConditionReason = "PolicyBlocked"
