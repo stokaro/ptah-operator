@@ -693,6 +693,47 @@ func TestControllerJobIsolationFilter(t *testing.T) {
 	})
 }
 
+// TestKeptAndLiveJobs holds the isolation proof that runs after an Apply to
+// the Jobs it reads: the Resolve and Verify Jobs an earlier proof kept, which
+// the cleanup TTL may have deleted since, and the live copy of every Job the
+// namespace still holds, which a kept copy never stands in for.
+func TestKeptAndLiveJobs(t *testing.T) {
+	t.Parallel()
+	all := controllerJobFixture(t).jobs()
+	var kept, live []batchv1.Job
+	for _, job := range all {
+		switch job.Labels["operator.ptah.run/operation"] {
+		case "resolve", "verify":
+			kept = append(kept, job)
+		default:
+			live = append(live, job)
+		}
+	}
+	if len(kept) != 2 || len(live) != len(all)-2 {
+		t.Fatalf("the fixture holds %d Resolve and Verify Jobs of %d, want 2", len(kept), len(all))
+	}
+	if acceptsJobs(live) {
+		t.Fatal("isolation accepted Jobs with no Resolve or Verify among them")
+	}
+	if !acceptsJobs(keptAndLiveJobs(kept, live)) {
+		t.Fatal("isolation refused the live Jobs beside the kept Resolve and Verify")
+	}
+	if got := keptAndLiveJobs(all, all); len(got) != len(all) {
+		t.Fatalf("a Job both kept and live was read %d times among %d, want once each", len(got), len(all))
+	}
+
+	broken := controllerJobFixture(t)
+	plan := broken.itemWith("plan")
+	broken.keep(notNamed("PTAH_EXPECTED_DATABASE_ENGINE"), "items", plan, "spec", "template", "spec", "containers", 0, "env")
+	if acceptsJobs(keptAndLiveJobs(all, broken.jobs())) {
+		t.Fatal("a kept copy stood in for a live Job that lost its isolation")
+	}
+}
+
+func acceptsJobs(jobs []batchv1.Job) bool {
+	return controllerJobIsolation(jobs, "database-url", "registry-auth", true)
+}
+
 func acceptsCustomCAPods(f fixture) bool {
 	return customCAPodIsolation(f.pods(), customCAPodIsolationInputs{
 		databaseSecret:    "database-url",

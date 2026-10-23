@@ -455,6 +455,25 @@ func controllerJobIsolation(jobs []batchv1.Job, databaseSecret, registrySecret s
 		(!requireApply || every("apply", s.applyJobIsolated))
 }
 
+// keptAndLiveJobs is every Job the namespace holds now and every Job an
+// earlier proof held that it no longer does, once each by UID: where both
+// hold a Job, the live copy is the one read. A finished Job outlives its
+// harvest by the cleanup TTL alone, so the Resolve and Verify Jobs an earlier
+// proof held can be gone by the time an Apply has converged.
+func keptAndLiveJobs(kept, live []batchv1.Job) []batchv1.Job {
+	jobs := slices.Clone(live)
+	present := make(map[types.UID]bool, len(live))
+	for index := range live {
+		present[live[index].UID] = true
+	}
+	for index := range kept {
+		if !present[kept[index].UID] {
+			jobs = append(jobs, kept[index])
+		}
+	}
+	return jobs
+}
+
 // sourceJobIsolationInputs are what the source isolation reads besides the
 // Jobs.
 type sourceJobIsolationInputs struct {
