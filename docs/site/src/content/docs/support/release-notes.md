@@ -64,6 +64,15 @@ each entry. A failed migration run now also names, in `status.lastRun.failure`,
 the version it stopped in, the statement's position and the engine's SQLSTATE
 or error number, never the engine's message.
 
+After a person changes the database outside the operator, such as clearing a
+dirty revision row with `ptah migrations repair`, the annotation
+`operator.ptah.run/read-requested-at`, set to an RFC 3339 instant, asks the
+resource to read it now instead of at `nextReconciliationTime`. It is answered
+once per value, when no operation is running, recorded in
+`status.lastReadRequest`, and never starts a mutating operation;
+[Reconciliation](../../reference/reconciliation/#reading-again-on-request) says
+in which phases and how.
+
 A Plan whose publication the API server refuses, by admission, quota, RBAC or
 size, now fails with the reason `PlanPublicationRefused` and the refusal in its
 message. 0.2.6 retried it until the Plan Job was gone and then reported the Job
