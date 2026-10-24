@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -181,9 +182,16 @@ func (r *watchRecorder[T]) withheld(count int, resourceVersion string) error {
 	if !withheld {
 		return nil
 	}
-	return fmt.Errorf("the API server serving the %s watch has not delivered the heartbeat write it acknowledged %s ago at resourceVersion %s; the segment that ended delivered %d events and left the watch at resourceVersion %s",
-		r.name, time.Since(owed.At).Round(time.Second), owed.ResourceVersion, count, resourceVersion)
+	return &withheldWriteError{fmt.Sprintf("the API server serving the %s watch has not delivered the heartbeat write it acknowledged %s ago at resourceVersion %s; the segment that ended delivered %d events and left the watch at resourceVersion %s",
+		r.name, time.Since(owed.At).Round(time.Second), owed.ResourceVersion, count, resourceVersion)}
 }
+
+// withheldWriteError is a watch that stopped delivering writes the cluster
+// went on acknowledging. What it does not say is which API server stopped,
+// and logWatchCaches is what reads that.
+type withheldWriteError struct{ message string }
+
+func (e *withheldWriteError) Error() string { return e.message }
 
 func (r *watchRecorder[T]) fail(err error) {
 	r.mu.Lock()
@@ -311,7 +319,7 @@ func (f *faultRun) assertWatchesAlive() {
 	f.assertHeartbeatAlive()
 	for _, r := range f.recorders {
 		if err := r.alive(); err != nil {
-			f.fatalf("%v", err)
+			f.watchFailed(err)
 		}
 	}
 }
@@ -321,7 +329,55 @@ func (f *faultRun) assertWatchAlive(r recorder) {
 	f.t.Helper()
 	f.assertHeartbeatAlive()
 	if err := r.alive(); err != nil {
-		f.fatalf("%v", err)
+		f.watchFailed(err)
+	}
+}
+
+// watchFailed ends the scenario with a watch's failure, and first logs every
+// API server's watch caches when the watch was withheld writes.
+func (f *faultRun) watchFailed(err error) {
+	f.t.Helper()
+	var withheld *withheldWriteError
+	if errors.As(err, &withheld) {
+		f.logWatchCaches()
+	}
+	f.fatalf("%v", err)
+}
+
+// watchCacheResources are the collections the fault watches read, as the API
+// server's watch cache metrics label them.
+var watchCacheResources = []string{
+	`group="batch",resource="jobs"`, `group="",resource="pods"`, `group="coordination.k8s.io",resource="leases"`,
+	`group="operator.ptah.run",resource="ptahschemas"`, `group="operator.ptah.run",resource="ptahschemaapprovals"`,
+}
+
+// logWatchCaches logs the resourceVersion each API server's watch cache has
+// reached for every watched collection. Each API server keeps its own cache,
+// and a watch is served by the one its connection reached, so the one whose
+// cache stopped reads behind the others.
+func (f *faultRun) logWatchCaches() {
+	f.t.Helper()
+	pods := &corev1.PodList{}
+	if err := f.cluster.Client.List(f.ctx, pods, client.InNamespace(metav1.NamespaceSystem),
+		client.MatchingLabels{"component": "kube-apiserver"}); err != nil {
+		f.logf("list the API server Pods to read their watch caches: %v", err)
+		return
+	}
+	if len(pods.Items) == 0 {
+		f.logf("found no API server Pod to read the watch caches of")
+	}
+	for _, pod := range pods.Items {
+		metrics, err := f.cluster.Raw(f.ctx, "/api/v1/namespaces/kube-system/pods/https:"+pod.Name+":6443/proxy/metrics")
+		if err != nil {
+			f.logf("read the watch caches of %s: %v", pod.Name, err)
+			continue
+		}
+		for line := range strings.SplitSeq(string(metrics), "\n") {
+			if rest, ok := strings.CutPrefix(line, "apiserver_watch_cache_resource_version{"); ok &&
+				slices.ContainsFunc(watchCacheResources, func(labels string) bool { return strings.HasPrefix(rest, labels+"}") }) {
+				f.logf("%s %s", pod.Name, line)
+			}
+		}
 	}
 }
 
