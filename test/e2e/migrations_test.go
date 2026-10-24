@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -526,6 +527,35 @@ func TestSettledInSync(t *testing.T) {
 			"blocked":                  func(m *ptahv1alpha1.PtahMigration) { m.Status.Conditions[2].Status = metav1.ConditionTrue },
 			"no conditions":            func(m *ptahv1alpha1.PtahMigration) { m.Status.Conditions = nil },
 		})
+}
+
+func mtRecorded() *ptahv1alpha1.PtahMigration {
+	migration := mtSettled()
+	for _, version := range []int64{3, 2, 1} {
+		migration.Status.History.Revisions = append(migration.Status.History.Revisions, ptahv1alpha1.MigrationRevisionStatus{
+			Version: version, Checksum: fmt.Sprintf("h1:%d", version), State: ptahv1alpha1.MigrationRevisionApplied,
+		})
+	}
+	return migration
+}
+
+func TestRevisionsRecordTheSequence(t *testing.T) {
+	t.Parallel()
+	mtRefusesEach(t, mtRecorded, revisionsRecordTheSequence, map[string]func(*ptahv1alpha1.PtahMigration){
+		"no history":   func(m *ptahv1alpha1.PtahMigration) { m.Status.History = nil },
+		"no revisions": func(m *ptahv1alpha1.PtahMigration) { m.Status.History.Revisions = nil },
+		"oldest first": func(m *ptahv1alpha1.PtahMigration) { slices.Reverse(m.Status.History.Revisions) },
+		"two rows":     func(m *ptahv1alpha1.PtahMigration) { m.Status.History.Revisions = m.Status.History.Revisions[:2] },
+		"a fourth row": func(m *ptahv1alpha1.PtahMigration) {
+			m.Status.History.Revisions = append([]ptahv1alpha1.MigrationRevisionStatus{{
+				Version: 4, Checksum: "h1:4", State: ptahv1alpha1.MigrationRevisionApplied,
+			}}, m.Status.History.Revisions...)
+		},
+		"a modified row": func(m *ptahv1alpha1.PtahMigration) {
+			m.Status.History.Revisions[1].State = ptahv1alpha1.MigrationRevisionModified
+		},
+		"a row with no checksum": func(m *ptahv1alpha1.PtahMigration) { m.Status.History.Revisions[2].Checksum = "" },
+	})
 }
 
 func TestReconciledWithoutWork(t *testing.T) {

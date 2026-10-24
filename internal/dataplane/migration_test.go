@@ -3,7 +3,9 @@ package dataplane_test
 import (
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/stokaro/ptah-operator/internal/dataplane"
 )
@@ -105,6 +107,49 @@ func TestDecodeMigrationStatus_FallsBackToTheStatesWhenNoSelectionIsPublished(t 
 	}
 }
 
+// Ptah reports when each revision row was written and how long its migration
+// ran, and no duration for a table too old to record one. The decoder reads
+// both, and the result frame the runner writes carries them to the controller
+// unchanged.
+func TestDecodeMigrationStatus_ReadsWhenEachRowRan(t *testing.T) {
+	t.Parallel()
+	document := `{"contract_version":1,"current_version":2,"total_migrations":3,"has_pending_changes":true,
+	  "pending_migrations":[3],
+	  "migrations":[
+	    {"version":1,"description":"create accounts","checksum":"h1:one","applied_checksum":"h1:one",
+	     "applied_at":"2026-10-24T07:42:30.123456Z","execution_time_ms":1840,"state":"applied"},
+	    {"version":2,"checksum":"h1:two","applied_checksum":"h1:two","applied_at":"2026-10-24T07:42:31Z","state":"applied"},
+	    {"version":3,"checksum":"h1:three","state":"pending"}
+	  ]}`
+	ranAt := time.Date(2026, 10, 24, 7, 42, 30, 123456000, time.UTC)
+
+	report, err := dataplane.DecodeMigrationStatus([]byte(document))
+	if err != nil {
+		t.Fatalf("DecodeMigrationStatus() error = %v", err)
+	}
+	frame, err := json.Marshal(report)
+	if err != nil {
+		t.Fatalf("encode the result frame: %v", err)
+	}
+	relayed, err := dataplane.DecodeMigrationStatus(frame)
+	if err != nil {
+		t.Fatalf("decode the result frame: %v", err)
+	}
+
+	for _, read := range []dataplane.MigrationStatusReport{report, relayed} {
+		first, second, third := read.Migrations[0], read.Migrations[1], read.Migrations[2]
+		if first.AppliedAt == nil || !first.AppliedAt.Equal(ranAt) || first.ExecutionMs == nil || *first.ExecutionMs != 1840 {
+			t.Fatalf("version 1 ran at %v for %v ms, want %v for 1840", first.AppliedAt, first.ExecutionMs, ranAt)
+		}
+		if second.AppliedAt == nil || second.ExecutionMs != nil {
+			t.Fatalf("version 2 ran at %v for %v ms, want a time and no duration", second.AppliedAt, second.ExecutionMs)
+		}
+		if third.AppliedAt != nil || third.ExecutionMs != nil {
+			t.Fatalf("pending version 3 ran at %v for %v ms, want neither", third.AppliedAt, third.ExecutionMs)
+		}
+	}
+}
+
 func TestDecodeMigrationStatus_FailurePath(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -133,6 +178,43 @@ func TestDecodeMigrationStatus_FailurePath(t *testing.T) {
 			document: `{"contract_version":1,"total_migrations":1,"has_pending_changes":false,
 			  "migrations":[{"version":1,"checksum":"a","state":"applied"},{"version":2,"checksum":"b","state":"pending"}]}`,
 			message: "migration status lists 2 migrations and counts 1",
+		},
+		{
+			name: "a time on a migration with no revision row",
+			document: `{"contract_version":1,"total_migrations":1,"has_pending_changes":true,
+			  "migrations":[{"version":1,"checksum":"a","applied_at":"2026-10-24T07:42:30Z","state":"pending"}]}`,
+			message: `migration status reports when version 1 ran, and its state "pending" has no revision row`,
+		},
+		{
+			name: "a duration on a checkpoint-covered migration",
+			document: `{"contract_version":1,"total_migrations":1,"has_pending_changes":false,
+			  "migrations":[{"version":1,"checksum":"a","execution_time_ms":3,"state":"checkpoint-covered"}]}`,
+			message: `migration status reports when version 1 ran, and its state "checkpoint-covered" has no revision row`,
+		},
+		{
+			name: "a duration and no time",
+			document: `{"contract_version":1,"total_migrations":1,"has_pending_changes":false,
+			  "migrations":[{"version":1,"checksum":"a","applied_checksum":"a","execution_time_ms":3,"state":"applied"}]}`,
+			message: "migration status reports how long version 1 ran and not when",
+		},
+		{
+			name: "a negative duration",
+			document: `{"contract_version":1,"total_migrations":1,"has_pending_changes":false,
+			  "migrations":[{"version":1,"checksum":"a","applied_checksum":"a","applied_at":"2026-10-24T07:42:30Z",
+			  "execution_time_ms":-1,"state":"applied"}]}`,
+			message: "migration status reports version 1 ran for -1 milliseconds",
+		},
+		{
+			name: "a description no file name holds",
+			document: `{"contract_version":1,"total_migrations":1,"has_pending_changes":false,
+			  "migrations":[{"version":1,"description":"` + strings.Repeat("d", 256) + `","checksum":"a","state":"applied"}]}`,
+			message: "migration status reports a description of 256 bytes for version 1, longer than a file name holds",
+		},
+		{
+			name: "a checksum no digest spells",
+			document: `{"contract_version":1,"total_migrations":1,"has_pending_changes":false,
+			  "migrations":[{"version":1,"checksum":"a","applied_checksum":"` + strings.Repeat("c", 129) + `","state":"applied"}]}`,
+			message: "migration status reports a checksum longer than 128 bytes for version 1",
 		},
 	}
 

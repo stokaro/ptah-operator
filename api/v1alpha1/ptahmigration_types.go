@@ -343,6 +343,67 @@ type MigrationHistoryStatus struct {
 	// +listType=set
 	// +kubebuilder:validation:MaxItems=64
 	OutOfOrderVersions []int64 `json:"outOfOrderVersions,omitempty"`
+
+	// Revisions are the newest rows of the revision table, newest first: which
+	// migration each records, the checksum it recorded, when it was written
+	// and how long the migration ran. At most MaxMigrationRevisions are kept,
+	// so a list that long may leave older rows out. No SQL and no error text
+	// is read into them.
+	// +optional
+	// +listType=map
+	// +listMapKey=version
+	// +kubebuilder:validation:MaxItems=64
+	Revisions []MigrationRevisionStatus `json:"revisions,omitempty"`
+}
+
+// MaxMigrationRevisions bounds status.history.revisions.
+const MaxMigrationRevisions = 64
+
+// MigrationRevisionState is Ptah's verdict on one revision row.
+// +kubebuilder:validation:Enum=applied;modified;dirty
+type MigrationRevisionState string
+
+const (
+	// MigrationRevisionApplied is a row whose file still accounts for it.
+	MigrationRevisionApplied MigrationRevisionState = "applied"
+	// MigrationRevisionModified is a row whose file no longer accounts for it.
+	MigrationRevisionModified MigrationRevisionState = "modified"
+	// MigrationRevisionDirty is the row a failed or interrupted run left.
+	MigrationRevisionDirty MigrationRevisionState = "dirty"
+)
+
+// MigrationRevisionStatus is one row of the revision table, as the history
+// read found it.
+type MigrationRevisionStatus struct {
+	// Version is the migration the row records.
+	// +kubebuilder:validation:Minimum=1
+	Version int64 `json:"version"`
+
+	// Description is the migration's own, from its file name.
+	// +optional
+	// +kubebuilder:validation:MaxLength=255
+	Description string `json:"description,omitempty"`
+
+	// Checksum is what the row recorded when the migration ran. A dirty row
+	// records none.
+	// +optional
+	// +kubebuilder:validation:MaxLength=128
+	Checksum string `json:"checksum,omitempty"`
+
+	// State is applied, modified when the file no longer accounts for the
+	// row, or dirty when a run left it unfinished.
+	State MigrationRevisionState `json:"state"`
+
+	// AppliedAt is when the row was written.
+	// +optional
+	AppliedAt *metav1.Time `json:"appliedAt,omitempty"`
+
+	// ExecutionMillis is how long the migration ran, in whole milliseconds.
+	// A revision table too old to record a duration leaves it absent rather
+	// than zero.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	ExecutionMillis *int64 `json:"executionMillis,omitempty"`
 }
 
 // MigrationRunStatus is the evidence of the last execution, as the database

@@ -150,6 +150,27 @@ func settledInSync(migration *ptahv1alpha1.PtahMigration, digest string) error {
 	return nil
 }
 
+// revisionsRecordTheSequence is the history's own account of the three
+// migrations the sequence ran: one applied row each, newest first, with the
+// checksum the database recorded.
+func revisionsRecordTheSequence(migration *ptahv1alpha1.PtahMigration) error {
+	history := migration.Status.History
+	if history == nil {
+		return errors.New("it publishes no history")
+	}
+	versions := make([]int64, 0, len(history.Revisions))
+	for _, row := range history.Revisions {
+		if row.State != ptahv1alpha1.MigrationRevisionApplied || row.Checksum == "" {
+			return fmt.Errorf("its row for version %d is %s with checksum %q", row.Version, row.State, row.Checksum)
+		}
+		versions = append(versions, row.Version)
+	}
+	if !slices.Equal(versions, []int64{3, 2, 1}) {
+		return fmt.Errorf("its revisions are versions %v, not 3, 2 and 1 newest first", versions)
+	}
+	return nil
+}
+
 // reconciledWithoutWork is the migration after it read its history again:
 // still InSync on the three migrations, the same last run, and no plan.
 func reconciledWithoutWork(migration *ptahv1alpha1.PtahMigration, runUID string) error {

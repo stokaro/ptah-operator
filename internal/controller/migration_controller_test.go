@@ -350,6 +350,15 @@ func TestMigrationHistoryResultClassifiesWhatTheDatabaseSaid(t *testing.T) {
 			if actual.Status.History.CurrentVersion != test.report.CurrentVersion {
 				t.Fatalf("current version = %d, want %d", actual.Status.History.CurrentVersion, test.report.CurrentVersion)
 			}
+			rows := 0
+			for _, record := range test.report.Migrations {
+				if record.HasRevisionRow() {
+					rows++
+				}
+			}
+			if len(actual.Status.History.Revisions) != rows {
+				t.Fatalf("revisions = %+v, want the %d rows the history holds", actual.Status.History.Revisions, rows)
+			}
 			if !slices.Equal(actual.Status.History.OutOfOrderVersions, test.wantOutOfOrder) {
 				t.Fatalf("out-of-order versions = %v, want %v",
 					actual.Status.History.OutOfOrderVersions, test.wantOutOfOrder)
