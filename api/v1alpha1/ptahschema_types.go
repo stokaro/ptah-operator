@@ -113,7 +113,8 @@ type PtahSchemaSpec struct {
 	// itself has no permission to read.
 	Target DatabaseTargetSpec `json:"target"`
 	// Desired is the source that declares the schema, and the rows a
-	// declaration names, to converge it to: an OCI artifact or a ConfigMap.
+	// declaration names, to converge it to: an OCI artifact, a ConfigMap or
+	// a Git repository.
 	Desired SourceSpec `json:"desired"`
 	// Dev is a scratch database Ptah may use where a comparison needs one. It
 	// is never the target, and nothing it holds is kept.
@@ -262,7 +263,7 @@ type SourceSpec struct {
 	// VerificationPolicyFrom names the immutable ConfigMap holding the policy
 	// the artifact must satisfy. Editing it retires the plans computed under
 	// the previous version rather than letting them apply. It is required
-	// with ociRef and refused with configMap: its rules are about OCI
+	// with ociRef and refused with configMap and git: its rules are about OCI
 	// artifacts, and a policy nothing evaluates would read as a gate.
 	// +optional
 	VerificationPolicyFrom *corev1.ConfigMapKeySelector `json:"verificationPolicyFrom,omitempty"`
