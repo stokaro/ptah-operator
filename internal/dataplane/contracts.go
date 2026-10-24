@@ -185,6 +185,20 @@ type DriftFinding struct {
 	Severity string `json:"severity"`
 }
 
+// DriftInventoryEntry counts one kind of object on both sides of the
+// comparison the drift report made: how many the desired schema declares and
+// how many the database holds, within the compared scope. Kind is the stem of
+// the kind's finding categories, "tables" for tables_added and
+// tables_removed, so the inventory joins the findings. It names no object.
+//
+// The counts are int32, as status stores them: a count past that fails to
+// decode, and the report with it.
+type DriftInventoryEntry struct {
+	Kind     string `json:"kind"`
+	Desired  int32  `json:"desired"`
+	Observed int32  `json:"observed"`
+}
+
 type DriftReport struct {
 	Drift            bool            `json:"drift"`
 	Failed           bool            `json:"failed"`
@@ -196,7 +210,24 @@ type DriftReport struct {
 	IgnoredTables    []string        `json:"ignored_tables,omitempty"`
 	Findings         []DriftFinding  `json:"findings,omitempty"`
 	Diff             json.RawMessage `json:"diff,omitempty"`
-	Error            string          `json:"error,omitempty"`
+	// Inventory is absent from a Ptah that does not count, which the
+	// operator reads as a report with no inventory rather than an empty one.
+	Inventory []DriftInventoryEntry `json:"inventory,omitempty"`
+	Error     string                `json:"error,omitempty"`
+}
+
+// MaxDriftInventoryEntries bounds a report's inventory, as
+// status.target.inventory bounds it: each kind once, and every kind the
+// vocabulary pairs fits under it.
+const MaxDriftInventoryEntries = 128
+
+// IsKnownDriftInventoryKind reports whether kind is the stem of a pair of
+// fixed finding categories, an addition and a removal, which is what an
+// inventory kind counts.
+func IsKnownDriftInventoryKind(kind string) bool {
+	_, added := driftFindingCategorySet[kind+"_added"]
+	_, removed := driftFindingCategorySet[kind+"_removed"]
+	return kind != "" && added && removed
 }
 
 type PlanStatement struct {
@@ -374,7 +405,33 @@ func DecodeDrift(data []byte, exitCode int) (DriftReport, error) {
 		}
 		seenFindings[finding.Category] = struct{}{}
 	}
+	if err := validateDriftInventory(report.Inventory); err != nil {
+		return DriftReport{}, err
+	}
 	return report, nil
+}
+
+// validateDriftInventory holds an inventory to the vocabulary: each kind
+// once, a kind the findings could name, and no negative count.
+func validateDriftInventory(inventory []DriftInventoryEntry) error {
+	if len(inventory) > MaxDriftInventoryEntries {
+		return fmt.Errorf("drift report counts %d kinds, more than the %d any vocabulary pairs",
+			len(inventory), MaxDriftInventoryEntries)
+	}
+	seen := make(map[string]struct{}, len(inventory))
+	for _, entry := range inventory {
+		if !IsKnownDriftInventoryKind(entry.Kind) {
+			return fmt.Errorf("drift report counts a kind no finding category names")
+		}
+		if _, repeated := seen[entry.Kind]; repeated {
+			return fmt.Errorf("drift report counts kind %s twice", entry.Kind)
+		}
+		seen[entry.Kind] = struct{}{}
+		if entry.Desired < 0 || entry.Observed < 0 {
+			return fmt.Errorf("drift report counts kind %s below zero", entry.Kind)
+		}
+	}
+	return nil
 }
 
 // DriftReportDigest identifies the exact comparison result emitted by one

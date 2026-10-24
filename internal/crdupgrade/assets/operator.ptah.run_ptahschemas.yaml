@@ -5,7 +5,7 @@ metadata:
   annotations:
     operator.ptah.run/controller-state-version: "1"
     operator.ptah.run/crd-schema-version: "8"
-    operator.ptah.run/crd-schema-digest: "sha256:c82b6799e6cdae7bf7efb909bd7c38009c043ef4361b41f9a6f90ffe970ae54d"
+    operator.ptah.run/crd-schema-digest: "sha256:9536a0f4513f26d3a7d2067a8c80497a88272b5f94dc403d41c1b1ccb6d783dd"
     controller-gen.kubebuilder.io/version: v0.22.0
   name: ptahschemas.operator.ptah.run
 spec:
@@ -2888,6 +2888,32 @@ spec:
                     type: string
                   identityDigest:
                     type: string
+                  inventory:
+                    items:
+                      properties:
+                        desired:
+                          format: int32
+                          minimum: 0
+                          type: integer
+                        kind:
+                          maxLength: 64
+                          minLength: 1
+                          pattern: ^[a-z]([a-z_]*[a-z])?$
+                          type: string
+                        observed:
+                          format: int32
+                          minimum: 0
+                          type: integer
+                      required:
+                      - desired
+                      - kind
+                      - observed
+                      type: object
+                    maxItems: 128
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - kind
+                    x-kubernetes-list-type: map
                   lastObservedAt:
                     format: date-time
                     type: string

@@ -1262,6 +1262,35 @@ type TargetStatus struct {
 	// +listType=map
 	// +listMapKey=category
 	DriftFindings []DriftFindingStatus `json:"driftFindings,omitempty"`
+	// Inventory counts each kind of object that observation compared: how
+	// many the desired schema declares and how many the database holds in
+	// the compared scope. A kind is the stem of its finding categories, so
+	// tables counts what tables_added and tables_removed are found among, and
+	// a kind neither side holds is left out. Counts only, written and
+	// replaced with the findings. A Ptah that does not count leaves it
+	// absent.
+	// +optional
+	// +kubebuilder:validation:MaxItems=128
+	// +listType=map
+	// +listMapKey=kind
+	Inventory []ObjectInventoryStatus `json:"inventory,omitempty"`
+}
+
+// ObjectInventoryStatus counts one kind of object on both sides of an
+// observation.
+type ObjectInventoryStatus struct {
+	// Kind is the stem of the kind's drift finding categories, such as
+	// tables or rls_policies.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=64
+	// +kubebuilder:validation:Pattern=`^[a-z]([a-z_]*[a-z])?$`
+	Kind string `json:"kind"`
+	// Desired is how many objects of the kind the desired schema declares.
+	// +kubebuilder:validation:Minimum=0
+	Desired int32 `json:"desired"`
+	// Observed is how many of them the database holds.
+	// +kubebuilder:validation:Minimum=0
+	Observed int32 `json:"observed"`
 }
 
 // CurrentPlanStatus is a compact reference to an immutable PtahSchemaPlan.

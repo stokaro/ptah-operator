@@ -1040,6 +1040,32 @@ whenever the report found drift and absent when it found none, so read it, not
 the count, to tell the two apart. Planning runs either way, and the plan names
 the statements and the privilege kinds they change.
 
+`status.target.inventory` counts each kind of object the same observation
+compared, on both sides: how many the desired schema declares and how many the
+database holds within the compared scope. A kind is the stem of its finding
+categories, so `tables` counts what `tables_added` and `tables_removed` are
+found among, and an inventory entry joins its findings by that stem. A kind
+neither side holds is left out. The counts name no object, and objects a
+feature owner compares, such as PostgreSQL extensions and policies, are not
+counted. The inventory is written and replaced with the findings, and a Ptah
+that does not count leaves it absent.
+
+```yaml
+status:
+  target:
+    driftFindings:
+      - category: tables_removed
+        count: 1
+        severity: destructive
+    inventory:
+      - kind: columns
+        desired: 87
+        observed: 85
+      - kind: tables
+        desired: 11
+        observed: 12
+```
+
 Declared reference rows are counted in the same list. A row the database is
 missing, one whose managed columns someone changed, and one the declaration no
 longer holds appear as `data_rows_inserted`, `data_rows_updated` and

@@ -2264,6 +2264,67 @@ func TestObservePersistsCredentialFreeDriftFindings(t *testing.T) {
 	}
 }
 
+// An observation's inventory reaches status kind by kind, and the next
+// observation replaces it: one whose Ptah counted nothing leaves none, rather
+// than the counts of a database as it was before.
+func TestObservePersistsTheInventoryAndReplacesIt(t *testing.T) {
+	t.Parallel()
+
+	observing := func(id string) *operatorv1alpha1.PtahSchema {
+		schema := schemaFixture()
+		schema.Finalizers = []string{activeOperationFinalizer}
+		schema.Status.Phase = operatorv1alpha1.PhaseObserving
+		schema.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{
+			Type: operatorv1alpha1.OperationObserve, ID: id,
+			JobName: id + "-job", JobUID: "job-uid", StartedAt: metav1.Now(), Attempt: 1,
+		}
+		bindActiveInput(t, schema)
+		return schema
+	}
+	observed := func(inventory []runner.DriftInventorySummary) runner.Result {
+		return runner.Result{
+			Operation: runner.OperationObserve, CoordinationDigest: testCoordinationDigest,
+			TargetIdentityDigest: testDigest, DriftReportDigest: testDigest, ObservedDialect: "postgresql",
+			ObservedDrift: true, HighestDriftSeverity: "safe", DriftFindingCount: 1,
+			DriftFindings:  []runner.DriftFindingSummary{{Category: "tables_removed", Count: 1, Severity: "safe"}},
+			DriftInventory: inventory,
+		}
+	}
+	read := func(api client.Client, schema *operatorv1alpha1.PtahSchema) *operatorv1alpha1.PtahSchema {
+		actual := &operatorv1alpha1.PtahSchema{}
+		if err := api.Get(context.Background(), client.ObjectKeyFromObject(schema), actual); err != nil {
+			t.Fatal(err)
+		}
+		return actual
+	}
+
+	first := observing("observe-counted")
+	reconciler, api := fakeReconciler(t, staticLogs{}, first)
+	if _, err := reconciler.consumeResult(context.Background(), first, nil, observed([]runner.DriftInventorySummary{
+		{Kind: "columns", Desired: 87, Observed: 87},
+		{Kind: "tables", Desired: 11, Observed: 12},
+	}), nil, 0); err != nil {
+		t.Fatalf("consumeResult() Observe error = %v", err)
+	}
+	counted := read(api, first)
+	if want := []operatorv1alpha1.ObjectInventoryStatus{
+		{Kind: "columns", Desired: 87, Observed: 87},
+		{Kind: "tables", Desired: 11, Observed: 12},
+	}; !reflect.DeepEqual(counted.Status.Target.Inventory, want) {
+		t.Fatalf("persisted inventory = %#v, want %#v", counted.Status.Target.Inventory, want)
+	}
+
+	second := observing("observe-uncounted")
+	second.Status.Target = counted.Status.Target
+	reconciler, api = fakeReconciler(t, staticLogs{}, second)
+	if _, err := reconciler.consumeResult(context.Background(), second, nil, observed(nil), nil, 0); err != nil {
+		t.Fatalf("consumeResult() Observe error = %v", err)
+	}
+	if uncounted := read(api, second); uncounted.Status.Target.Inventory != nil {
+		t.Fatalf("an observation that counted nothing kept the inventory %#v", uncounted.Status.Target.Inventory)
+	}
+}
+
 // A grant is drift the native report has no category for: it says drift and
 // lists no finding. The Observe frame arrives through the Pod log the way a
 // runner writes it, and the schema has to move on to the Plan that decides

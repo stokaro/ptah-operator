@@ -1109,11 +1109,27 @@ func runObserve(ctx context.Context, config Config, environment []string, inputs
 	result.HighestDriftSeverity = severity
 	result.DriftFindingCount = count
 	result.DriftFindings = findings
+	result.DriftInventory = driftInventory(report.Inventory)
 	// The native drift command uses exit 1 as a domain outcome. Once its exact
 	// report has been validated, the framed operation itself is successful and
 	// must use the protocol-wide success exit code.
 	result.ChildExitCode = 0
 	return result
+}
+
+// driftInventory frames a report's inventory in kind order.
+func driftInventory(inventory []dataplane.DriftInventoryEntry) []DriftInventorySummary {
+	if len(inventory) == 0 {
+		return nil
+	}
+	summaries := make([]DriftInventorySummary, 0, len(inventory))
+	for _, entry := range inventory {
+		summaries = append(summaries, DriftInventorySummary{
+			Kind: entry.Kind, Desired: entry.Desired, Observed: entry.Observed,
+		})
+	}
+	slices.SortFunc(summaries, func(a, b DriftInventorySummary) int { return strings.Compare(a.Kind, b.Kind) })
+	return summaries
 }
 
 func normalizeDriftSummary(report dataplane.DriftReport) (string, int32, []DriftFindingSummary, error) {
