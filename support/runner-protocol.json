@@ -207,6 +207,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:84ec81ed215db29edeec0e393f3770557fdc848f5d1c6965cdd1c5387a71f848",
       "reason": "Keep a bounded journal of lifecycle events in each resource's status (#725). The API gains status.journal on PtahSchema and PtahMigration and status.lastRun.failure on PtahMigration, which the manager writes from transitions it already records. The runner neither reads nor writes either; its modes, commands, payloads, result frames, delivery identity, SQL authority and retry limits are as they were."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:81011d4d8e092c89c01178822c6a585faa71aef8fe08977008d9aa1557df4bc0",
+      "reason": "Read the database on request (#728). The API gains the operator.ptah.run/read-requested-at annotation and status.lastReadRequest on PtahSchema and PtahMigration, which only the manager reads and writes to bring the next interval read forward. The runner neither reads nor writes either; its modes, commands, payloads, result frames, delivery identity, SQL authority and retry limits are as they were."
     }
   ]
 }

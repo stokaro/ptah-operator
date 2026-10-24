@@ -657,6 +657,7 @@ spec:
 | `status.journal.entries[].startedAt` | `string` | StartedAt is when an Apply or a run began. |
 | `status.journal.entries[].statements` | `integer` | Statements is how many statements a published PtahSchema plan holds. |
 | `status.journal.entries[].type` | `string`, required, one of `PlanPublished`, `ApprovalAccepted`, `ApplyFinished`, `Verified`, `RunFinished`, `RunAcknowledged`, `OperationFailed` | Type is the kind of event. |
+| `status.lastReadRequest` | `string` | LastReadRequest is the last value of the operator.ptah.run/read-requested-at annotation the controller answered, so an answered request is not answered again. A value longer than MaxReadRequestLength is recorded as its SHA-256 digest, and a value that is not an RFC 3339 instant is recorded with a Warning Event and starts nothing. |
 | `status.lastRun` | `object` | LastRun is the evidence of the most recent execution, kept across later reconciliations so an operator can see what happened without the Job. |
 | `status.lastRun.appliedVersions` | `[]integer` | AppliedVersions names the selected migrations the history recorded afterwards, so a migration the history already held is not reported as this run's work. |
 | `status.lastRun.dispatchedBy` | `object` | DispatchedBy is the manager that built and dispatched the run's Job, read from the Job's Pod template when the run was harvested. The plan the run carried out names the manager that published it, which a later release sharing the execution binding need not be. It is absent when the run was settled without its Job. |

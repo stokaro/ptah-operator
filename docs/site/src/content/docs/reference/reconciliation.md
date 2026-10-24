@@ -245,6 +245,40 @@ empty revision table reads as everything pending, and the answer is Ptah's own
 `migrations baseline`, run by a person against a shadow database. The operator
 never holds a shadow credential.
 
+## Reading again on request
+
+A resource reads its database again at `status.nextReconciliationTime`. After
+a person changes the database outside the operator, such as clearing a dirty
+revision row with `ptah migrations repair`, the annotation
+`operator.ptah.run/read-requested-at`, set to an RFC 3339 instant, asks for
+that read now:
+
+```bash
+kubectl annotate ptahmigration orders \
+  operator.ptah.run/read-requested-at="$(date -u +%Y-%m-%dT%H:%M:%SZ)" --overwrite
+```
+
+A value `status.lastReadRequest` does not record as answered is answered once
+no operation is running. In `InSync`, `Blocked`, `ReadyToApply`,
+`AwaitingApproval` and a migration's `Planning`, the answer records the value
+in `status.lastReadRequest`, moves `nextReconciliationTime` to now and writes a
+`ReadRequested` Event, and the next pass starts the read the interval would
+have started: Resolve, then Observe for a schema or the history read for a
+migration. A plan that waits for approval is kept unless the new reading
+retires it, as at any interval.
+
+The request never starts a mutating operation and does not shorten a retry
+delay: a `Failed` resource answers it when its retry starts. A read already
+under way when the request arrives does not answer it, because it may have read
+the database before the change the request is about; the request waits for the
+read that starts after it. An annotation does not change the generation, so
+nothing else about the resource changes.
+
+A value that is not an RFC 3339 instant starts nothing. It is recorded as
+answered, with a `ReadRequestInvalid` Warning Event that names it, so it is
+reported once rather than on every pass. A value longer than 64 bytes is
+recorded as its SHA-256 digest, written `sha256:<hex>`.
+
 ## The lifecycle journal
 
 Every `PtahSchema` and `PtahMigration` keeps a bounded journal of its

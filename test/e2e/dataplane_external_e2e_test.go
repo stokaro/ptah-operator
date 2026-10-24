@@ -524,6 +524,7 @@ func (d *dataPlane) assertGrantOnlyChangePlansUnderAlways(schema, publishReferen
 	if d.externalPublicSelectGrant() != "f" {
 		d.fatalf("the grant reached the database while its plan waited for a person")
 	}
+	d.readRequestKeepsTheWaitingPlan(schema, digest, planName, planUID, fingerprint)
 
 	applyCheckpoint := d.checkpointJobs(schema, "")
 	d.assertNoJobBetween(schema, "apply", before, applyCheckpoint)

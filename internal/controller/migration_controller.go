@@ -255,6 +255,12 @@ func (r *MigrationReconciler) reconcile(ctx context.Context, request ctrl.Reques
 		// it: a plan made under the old one does not apply.
 		return r.claimMigration(ctx, migration, operatorv1alpha1.MigrationOperationResolve)
 	}
+	if request := readRequestOf(migration.Annotations, migration.Status.LastReadRequest); request.pending {
+		on := migrationReadOnRequest(migration.Status.Phase, due(migration.Status.NextReconciliationTime, now))
+		if on.answer || !request.instant {
+			return r.answerMigrationReadRequest(ctx, migration, request, on.schedule)
+		}
+	}
 	switch migration.Status.Phase {
 	case operatorv1alpha1.MigrationPhaseVerifying:
 		return r.claimMigration(ctx, migration, operatorv1alpha1.MigrationOperationVerify)
@@ -283,6 +289,34 @@ func (r *MigrationReconciler) reconcile(ctx context.Context, request ctrl.Reques
 	// A moved tag, a changed policy, or a history someone else advanced is only
 	// observable by starting the read-only chain again from resolution.
 	return r.claimMigration(ctx, migration, operatorv1alpha1.MigrationOperationResolve)
+}
+
+// answerMigrationReadRequest records a read request as answered, as
+// answerReadRequest does for a schema.
+func (r *MigrationReconciler) answerMigrationReadRequest(
+	ctx context.Context,
+	migration *operatorv1alpha1.PtahMigration,
+	request readRequest,
+	schedule bool,
+) (ctrl.Result, error) {
+	before := migration.DeepCopy()
+	migration.Status.LastReadRequest = request.token
+	scheduled := request.instant && schedule
+	if scheduled {
+		now := metav1.NewTime(r.now())
+		migration.Status.NextReconciliationTime = &now
+	}
+	if err := r.patchMigrationStatus(ctx, before, migration); err != nil {
+		return ctrl.Result{}, err
+	}
+	switch {
+	case !request.instant:
+		r.event(migration, corev1.EventTypeWarning, "ReadRequestInvalid",
+			"%s is %q, which is not an RFC 3339 instant; no read was started", operatorv1alpha1.ReadRequestAnnotation, request.token)
+	case scheduled:
+		r.event(migration, corev1.EventTypeNormal, "ReadRequested", "A read was requested; it starts now")
+	}
+	return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
 }
 
 // reconcileMigrationDeletion releases the resource once no Job of its claim can

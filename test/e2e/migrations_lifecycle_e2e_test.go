@@ -62,6 +62,7 @@ func (m *migrationRun) engineMigrations() {
 	m.hungResultReadProof()
 	m.realmAdmitsOnlyListedClaimants()
 	m.partialRunBlocksAndRecovers()
+	m.readRequestProof()
 	m.olderArtifactBlocksEverything()
 	m.modifiedFileBlocksEverything()
 	m.applyPolicyGuardProof()

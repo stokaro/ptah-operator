@@ -4,8 +4,8 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     operator.ptah.run/controller-state-version: "1"
-    operator.ptah.run/crd-schema-version: "6"
-    operator.ptah.run/crd-schema-digest: "sha256:b2abc5500030703bf79951c227f1c6c3f0bbd7d3a69adc41b45ec35355b65575"
+    operator.ptah.run/crd-schema-version: "7"
+    operator.ptah.run/crd-schema-digest: "sha256:c82b6799e6cdae7bf7efb909bd7c38009c043ef4361b41f9a6f90ffe970ae54d"
     controller-gen.kubebuilder.io/version: v0.22.0
   name: ptahschemas.operator.ptah.run
 spec:
@@ -1816,6 +1816,9 @@ spec:
                 type: object
               lastAttemptTime:
                 format: date-time
+                type: string
+              lastReadRequest:
+                maxLength: 71
                 type: string
               lastSuccessfulReconciliation:
                 format: date-time

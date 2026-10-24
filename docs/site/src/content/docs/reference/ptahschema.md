@@ -686,6 +686,7 @@ spec:
 | `status.journal.entries[].statements` | `integer` | Statements is how many statements a published PtahSchema plan holds. |
 | `status.journal.entries[].type` | `string`, required, one of `PlanPublished`, `ApprovalAccepted`, `ApplyFinished`, `Verified`, `RunFinished`, `RunAcknowledged`, `OperationFailed` | Type is the kind of event. |
 | `status.lastAttemptTime` | `string` | LastAttemptTime is when the controller last tried to do something. |
+| `status.lastReadRequest` | `string` | LastReadRequest is the last value of the operator.ptah.run/read-requested-at annotation the controller answered, so an answered request is not answered again. A value longer than MaxReadRequestLength is recorded as its SHA-256 digest, and a value that is not an RFC 3339 instant is recorded with a Warning Event and starts nothing. |
 | `status.lastSuccessfulReconciliation` | `string` | LastSuccessfulReconciliation is when it last completed a cycle with nothing left to do. |
 | `status.nextReconciliationTime` | `string` | NextReconciliationTime is the durable earliest time for the next scheduled read-only reconciliation. Event-driven safety work may run sooner. |
 | `status.observedGeneration` | `integer` | ObservedGeneration is the spec generation this status describes. |
