@@ -85,9 +85,13 @@ func latest(entry operatorv1alpha1.JournalEntry) time.Time {
 // records. journal is the journal before the write, which tells a plan or an
 // approval the resource already recorded from a new one: the controller clears
 // and republishes the same plan while it refreshes.
+//
+// A plan is published by the write that first names it. The plan an Apply ran
+// stays in status until the proof that follows settles, and every write in
+// between names it again; none of them publishes it.
 func SchemaEntries(before, after *operatorv1alpha1.PtahSchemaStatus, journal *operatorv1alpha1.LifecycleJournal, now time.Time) []operatorv1alpha1.JournalEntry {
 	var entries []operatorv1alpha1.JournalEntry
-	if plan := after.Plan; plan != nil && !planRecorded(journal, plan.Name) {
+	if plan := after.Plan; plan != nil && (before.Plan == nil || before.Plan.Name != plan.Name) && !planRecorded(journal, plan.Name) {
 		entries = append(entries, operatorv1alpha1.JournalEntry{
 			Type: operatorv1alpha1.JournalPlanPublished, At: orNow(plan.CreatedAt, now),
 			Plan: plan.Name, Statements: plan.StatementCount, Destructive: plan.Destructive,
@@ -147,10 +151,11 @@ func SchemaEntries(before, after *operatorv1alpha1.PtahSchemaStatus, journal *op
 }
 
 // MigrationEntries is what a PtahMigration status write from before to after
-// records, given the journal before the write.
+// records, given the journal before the write. A plan is published by the
+// write that first names it, as for a schema.
 func MigrationEntries(before, after *operatorv1alpha1.PtahMigrationStatus, journal *operatorv1alpha1.LifecycleJournal, now time.Time) []operatorv1alpha1.JournalEntry {
 	var entries []operatorv1alpha1.JournalEntry
-	if plan := after.Plan; plan != nil && !planRecorded(journal, plan.Name) {
+	if plan := after.Plan; plan != nil && (before.Plan == nil || before.Plan.Name != plan.Name) && !planRecorded(journal, plan.Name) {
 		entries = append(entries, operatorv1alpha1.JournalEntry{
 			Type: operatorv1alpha1.JournalPlanPublished, At: metav1.NewTime(now), Plan: plan.Name,
 		})

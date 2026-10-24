@@ -15,9 +15,26 @@ import (
 // whose outcome nobody could prove, which a fresh approval follows. An entry
 // of another plan in between is not part of it, and an Apply that ended before
 // it began is a record nobody wrote from a run.
+//
+// The plan is published once until a proof settles it or another plan
+// replaces it. A publication again before that is the plan its Apply left in
+// status, recorded by a later write that only named it again.
 func approvedApplyJournaled(journal *ptahv1alpha1.LifecycleJournal, plan string) error {
 	if journal == nil {
 		return fmt.Errorf("the schema keeps no journal")
+	}
+	open := false
+	for _, entry := range journal.Entries {
+		switch {
+		case entry.Type == ptahv1alpha1.JournalPlanPublished && entry.Plan == plan:
+			if open {
+				return fmt.Errorf("the journal publishes plan %s again before a proof settled it: %s", plan, journalOf(journal, plan))
+			}
+			open = true
+		case entry.Type == ptahv1alpha1.JournalPlanPublished,
+			entry.Type == ptahv1alpha1.JournalVerified && entry.Plan == plan:
+			open = false
+		}
 	}
 	approved := -1
 	for index, entry := range journal.Entries {

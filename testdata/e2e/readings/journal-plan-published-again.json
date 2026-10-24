@@ -1,0 +1,122 @@
+{
+  "apiVersion": "operator.ptah.run/v1alpha1",
+  "kind": "PtahSchema",
+  "metadata": {
+    "name": "storefront",
+    "namespace": "ptah-test-a-1-37-0-console-local-10242006-613d31842b",
+    "uid": "d67c5dfa-5692-4de3-b978-65f8f3adc0b2",
+    "generation": 4
+  },
+  "status": {
+    "phase": "InSync",
+    "applied": {
+      "planRef": {
+        "name": "ptah-plan-7bc832764f0f9c263509220f",
+        "uid": "7cd7da31-f7de-4afb-8e60-9cfd8f738d0d"
+      },
+      "completedAt": "2026-10-24T18:31:46Z"
+    },
+    "journal": {
+      "coveredSince": "2026-10-24T18:16:13Z",
+      "entries": [
+        {
+          "at": "2026-10-24T18:16:55Z",
+          "plan": "ptah-plan-a0bc2ff3689d678799b4e26e",
+          "statements": 3,
+          "type": "PlanPublished"
+        },
+        {
+          "at": "2026-10-24T18:17:03Z",
+          "outcome": "Succeeded",
+          "plan": "ptah-plan-a0bc2ff3689d678799b4e26e",
+          "startedAt": "2026-10-24T18:16:55Z",
+          "type": "ApplyFinished"
+        },
+        {
+          "at": "2026-10-24T18:16:55Z",
+          "plan": "ptah-plan-a0bc2ff3689d678799b4e26e",
+          "statements": 3,
+          "type": "PlanPublished"
+        },
+        {
+          "at": "2026-10-24T18:17:22Z",
+          "outcome": "InSync",
+          "plan": "ptah-plan-a0bc2ff3689d678799b4e26e",
+          "type": "Verified"
+        },
+        {
+          "at": "2026-10-24T18:18:08Z",
+          "destructive": true,
+          "plan": "ptah-plan-745692fb6a6c6b38e0d4d54b",
+          "statements": 2,
+          "type": "PlanPublished"
+        },
+        {
+          "approval": "ptah-console-035360308fa9fe290101",
+          "approver": "e2e-approver",
+          "at": "2026-10-24T18:28:52Z",
+          "plan": "ptah-plan-745692fb6a6c6b38e0d4d54b",
+          "type": "ApprovalAccepted"
+        },
+        {
+          "at": "2026-10-24T18:29:00Z",
+          "outcome": "Succeeded",
+          "plan": "ptah-plan-745692fb6a6c6b38e0d4d54b",
+          "startedAt": "2026-10-24T18:28:52Z",
+          "type": "ApplyFinished"
+        },
+        {
+          "at": "2026-10-24T18:18:08Z",
+          "destructive": true,
+          "plan": "ptah-plan-745692fb6a6c6b38e0d4d54b",
+          "statements": 2,
+          "type": "PlanPublished"
+        },
+        {
+          "at": "2026-10-24T18:29:14Z",
+          "outcome": "InSync",
+          "plan": "ptah-plan-745692fb6a6c6b38e0d4d54b",
+          "type": "Verified"
+        },
+        {
+          "at": "2026-10-24T18:30:12Z",
+          "plan": "ptah-plan-23dbe08e2f050a0db2d0f320",
+          "statements": 1,
+          "type": "PlanPublished"
+        },
+        {
+          "at": "2026-10-24T18:31:07Z",
+          "plan": "ptah-plan-7bc832764f0f9c263509220f",
+          "statements": 2,
+          "type": "PlanPublished"
+        },
+        {
+          "approval": "ptah-console-c66044cb26a71093020a",
+          "approver": "e2e-approver",
+          "at": "2026-10-24T18:31:23Z",
+          "plan": "ptah-plan-7bc832764f0f9c263509220f",
+          "type": "ApprovalAccepted"
+        },
+        {
+          "at": "2026-10-24T18:31:33Z",
+          "outcome": "Succeeded",
+          "plan": "ptah-plan-7bc832764f0f9c263509220f",
+          "startedAt": "2026-10-24T18:31:23Z",
+          "type": "ApplyFinished"
+        },
+        {
+          "at": "2026-10-24T18:31:07Z",
+          "plan": "ptah-plan-7bc832764f0f9c263509220f",
+          "statements": 2,
+          "type": "PlanPublished"
+        },
+        {
+          "at": "2026-10-24T18:31:46Z",
+          "outcome": "InSync",
+          "plan": "ptah-plan-7bc832764f0f9c263509220f",
+          "type": "Verified"
+        }
+      ]
+    }
+  }
+}

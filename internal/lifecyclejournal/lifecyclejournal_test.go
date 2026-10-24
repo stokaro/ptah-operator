@@ -218,6 +218,14 @@ func TestSchemaEntriesRecordEachTransitionOnce(t *testing.T) {
 			}},
 		},
 		{
+			// The plan an Apply ran stays in status until its proof settles,
+			// and the writes in between name it again.
+			name:    "the applied plan, written again before its proof settles",
+			before:  operatorv1alpha1.PtahSchemaStatus{Plan: plan, PendingObservation: observing("apply-1", operatorv1alpha1.PendingObservationApplySucceeded)},
+			after:   operatorv1alpha1.PtahSchemaStatus{Plan: plan, PendingObservation: observing("apply-1", operatorv1alpha1.PendingObservationApplySucceeded), Phase: operatorv1alpha1.PhaseVerifyingConvergence},
+			journal: journalWith(published("plan-a", -time.Hour), operatorv1alpha1.JournalEntry{Type: operatorv1alpha1.JournalApplyFinished, At: at(-50 * time.Minute)}),
+		},
+		{
 			name:    "an approval the plan recorded",
 			before:  operatorv1alpha1.PtahSchemaStatus{Plan: plan},
 			after:   operatorv1alpha1.PtahSchemaStatus{Plan: approved(plan, "approve-a")},
@@ -356,6 +364,14 @@ func TestMigrationEntriesRecordEachTransitionOnce(t *testing.T) {
 			name:    "the plan it already recorded",
 			after:   operatorv1alpha1.PtahMigrationStatus{Plan: planRef},
 			journal: &operatorv1alpha1.LifecycleJournal{Entries: []operatorv1alpha1.JournalEntry{published("billing-plan", -time.Hour)}},
+		},
+		{
+			name:   "the plan a run carried out, written again",
+			before: operatorv1alpha1.PtahMigrationStatus{Plan: planRef},
+			after:  operatorv1alpha1.PtahMigrationStatus{Plan: planRef, Phase: operatorv1alpha1.MigrationPhaseVerifyingHistory},
+			journal: &operatorv1alpha1.LifecycleJournal{Entries: []operatorv1alpha1.JournalEntry{
+				published("billing-plan", -time.Hour), {Type: operatorv1alpha1.JournalRunFinished, At: at(-50 * time.Minute)},
+			}},
 		},
 		{
 			name:    "an Apply that consumed an approval",

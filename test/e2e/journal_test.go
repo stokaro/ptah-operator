@@ -1,6 +1,8 @@
 package e2e
 
 import (
+	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -59,6 +61,14 @@ func TestApprovedApplyJournaledReadsThePlansLifeInOrder(t *testing.T) {
 	if err := approvedApplyJournaled(with(respent...), "plan-a"); err != nil {
 		t.Fatalf("a plan applied under a fresh approval after an unproven Apply was refused: %v", err)
 	}
+	// The source moved to another plan and back before anyone approved.
+	returned := append([]ptahv1alpha1.JournalEntry{
+		entry(ptahv1alpha1.JournalPlanPublished, "plan-a", 0, ""),
+		entry(ptahv1alpha1.JournalPlanPublished, "plan-b", 0, ""),
+	}, life...)
+	if err := approvedApplyJournaled(with(returned...), "plan-a"); err != nil {
+		t.Fatalf("a plan published again after another replaced it was refused: %v", err)
+	}
 	for _, test := range []struct {
 		name    string
 		journal *ptahv1alpha1.LifecycleJournal
@@ -75,6 +85,8 @@ func TestApprovedApplyJournaledReadsThePlansLifeInOrder(t *testing.T) {
 		{"an approval of a plan never published", with(life[1], life[2], life[3]), "never published"},
 		{"no approval", with(life[0], life[2], life[3]), "stops before ApprovalAccepted"},
 		{"a fresh approval nothing applied", with(append(respent[:6:6], respent[7])...), "stops before ApplyFinished"},
+		{"a plan published again after its Apply", with(life[0], life[1], life[2], life[0], life[3]), "again before a proof settled it"},
+		{"a plan published again before its approval", with(life[0], life[0], life[1], life[2], life[3]), "again before a proof settled it"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -83,5 +95,45 @@ func TestApprovedApplyJournaledReadsThePlansLifeInOrder(t *testing.T) {
 				t.Fatalf("approvedApplyJournaled() = %v, want an error naming %q", err, test.want)
 			}
 		})
+	}
+}
+
+// The journal a 0.2.7 development build kept for a schema it applied twice,
+// read from a cluster: every Apply was followed by the plan's publication
+// again, dated when the plan was created. The filter refuses that reading,
+// and admits it once the repeated publications are left out.
+func TestApprovedApplyJournaledRefusesThePlanItsApplyPublishedAgain(t *testing.T) {
+	t.Parallel()
+	body, err := os.ReadFile("../../testdata/e2e/readings/journal-plan-published-again.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var schema ptahv1alpha1.PtahSchema
+	if err := json.Unmarshal(body, &schema); err != nil {
+		t.Fatal(err)
+	}
+	plan := schema.Status.Applied.PlanRef.Name
+	journal := schema.Status.Journal
+	if err := approvedApplyJournaled(journal, plan); err == nil || !strings.Contains(err.Error(), "again before a proof settled it") {
+		t.Fatalf("approvedApplyJournaled(reading) = %v, want the repeated publication refused", err)
+	}
+	once := journal.DeepCopy()
+	once.Entries = nil
+	seen := map[string]bool{}
+	repeated := 0
+	for _, entry := range journal.Entries {
+		if entry.Type == ptahv1alpha1.JournalPlanPublished && seen[entry.Plan] {
+			repeated++
+			continue
+		}
+		seen[entry.Plan] = entry.Type == ptahv1alpha1.JournalPlanPublished || seen[entry.Plan]
+		once.Entries = append(once.Entries, entry)
+	}
+	// Each of the three applied plans was published a second time.
+	if repeated != 3 {
+		t.Fatalf("the reading repeats %d publications, want 3", repeated)
+	}
+	if err := approvedApplyJournaled(once, plan); err != nil {
+		t.Fatalf("approvedApplyJournaled(reading without the repeats) = %v", err)
 	}
 }
