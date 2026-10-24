@@ -94,7 +94,7 @@ func (r *SchemaReconciler) retireSchemaSnapshots(ctx context.Context, schema *op
 	if snapshot := schema.Status.Source.Snapshot; snapshot != nil {
 		keep = append(keep, snapshot.Name)
 	}
-	if err := retireSnapshots(ctx, r.directReader(), r.Client, schema.Namespace, owner, sourcesnapshot.LabelSchema, keep...); err != nil {
+	if err := retireSnapshots(ctx, r.cachedReader(), r.Client, schema.Namespace, owner, sourcesnapshot.LabelSchema, keep...); err != nil {
 		r.event(schema, corev1.EventTypeWarning, "SourceSnapshotRetirementFailed", "%s", bounded(err.Error(), 512))
 	}
 }

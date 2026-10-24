@@ -263,7 +263,8 @@ func main() {
 		os.Exit(1)
 	}
 	reconciler := &controller.SchemaReconciler{
-		Client: manager.GetClient(), APIReader: manager.GetAPIReader(), Scheme: manager.GetScheme(),
+		Client: manager.GetClient(), APIReader: manager.GetAPIReader(), CachedReader: manager.GetCache(),
+		Scheme:           manager.GetScheme(),
 		Recorder:         manager.GetEventRecorderFor("ptah-schema-controller"),
 		Logs:             controller.ClientsetPodLogs{Client: clientset},
 		Jobs:             builder,
@@ -283,7 +284,8 @@ func main() {
 		os.Exit(1)
 	}
 	migrations := &controller.MigrationReconciler{
-		Client: manager.GetClient(), APIReader: manager.GetAPIReader(), Scheme: manager.GetScheme(),
+		Client: manager.GetClient(), APIReader: manager.GetAPIReader(), CachedReader: manager.GetCache(),
+		Scheme:           manager.GetScheme(),
 		Recorder:         manager.GetEventRecorderFor("ptah-migration-controller"),
 		Logs:             controller.ClientsetPodLogs{Client: clientset},
 		Jobs:             builder,

@@ -126,7 +126,13 @@ type JobBuilder interface {
 // Approval -> Apply -> Observe convergence state machine.
 type SchemaReconciler struct {
 	client.Client
-	APIReader         client.Reader
+	APIReader client.Reader
+	// CachedReader reads what the manager's watches hold. A ConfigMap there
+	// carries no payload (see managercache), so it serves only a read that
+	// needs an object's name, labels and owner and may be a little behind:
+	// listing the source snapshots to retire after every resolution. Nil
+	// reads through Client.
+	CachedReader      client.Reader
 	Scheme            *runtime.Scheme
 	Recorder          record.EventRecorder
 	Logs              PodLogReader
@@ -4054,6 +4060,13 @@ func (r *SchemaReconciler) directReader() client.Reader {
 	return r.Client
 }
 
+func (r *SchemaReconciler) cachedReader() client.Reader {
+	if r.CachedReader != nil {
+		return r.CachedReader
+	}
+	return r.Client
+}
+
 func (r *SchemaReconciler) now() time.Time {
 	if r.Clock != nil {
 		return r.Clock().UTC()
@@ -4079,6 +4092,9 @@ func (r *SchemaReconciler) SetupWithManager(manager ctrl.Manager) error {
 	}
 	if r.APIReader == nil {
 		r.APIReader = manager.GetAPIReader()
+	}
+	if r.CachedReader == nil {
+		r.CachedReader = manager.GetCache()
 	}
 	if r.Scheme == nil {
 		r.Scheme = manager.GetScheme()

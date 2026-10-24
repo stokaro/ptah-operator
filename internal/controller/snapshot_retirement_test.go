@@ -44,6 +44,22 @@ func snapshotNamesIn(t *testing.T, api client.Client) []string {
 	return names
 }
 
+// refuseConfigMapLists is an API reader that fails any ConfigMap list. A
+// snapshot retirement runs after every resolution of every resource, OCI
+// included, so its list has to come from the manager's cache.
+func refuseConfigMapLists(t *testing.T, api client.Client) client.Reader {
+	t.Helper()
+	return interceptor.NewClient(api.(client.WithWatch), interceptor.Funcs{
+		List: func(ctx context.Context, reader client.WithWatch, list client.ObjectList, options ...client.ListOption) error {
+			if _, ok := list.(*corev1.ConfigMapList); ok {
+				t.Error("a ConfigMap list reached the API server")
+				return apierrors.NewServiceUnavailable("ConfigMap lists are refused here")
+			}
+			return reader.List(ctx, list, options...)
+		},
+	})
+}
+
 func ociResolveFrame(t *testing.T, operationID, repository string) []byte {
 	t.Helper()
 	frame, err := runner.MarshalFrame(runner.Result{
@@ -60,7 +76,7 @@ func ociResolveFrame(t *testing.T, operationID, repository string) []byte {
 // A schema whose source moved from a ConfigMap to Git or OCI deletes the
 // snapshot the ConfigMap left once the resolution that replaces it is stored.
 // A snapshot under the same label that another schema owns stays, and so
-// does the source ConfigMap.
+// does the source ConfigMap. The snapshots are listed from the cache.
 func TestResolveOfAnotherSourceRetiresTheSchemaSnapshot(t *testing.T) {
 	t.Parallel()
 	for name, row := range map[string]struct {
@@ -98,6 +114,7 @@ func TestResolveOfAnotherSourceRetiresTheSchemaSnapshot(t *testing.T) {
 			bindActiveInput(t, schema)
 			job, pod := terminalWorkload(schema, batchv1.JobComplete)
 			reconciler, api := fakeReconciler(t, staticLogs{content: row.frame}, schema, job, pod, left, earlier, sourceConfigMap("CREATE TABLE orders (id int);\n"))
+			reconciler.APIReader, reconciler.CachedReader = refuseConfigMapLists(t, api), api
 
 			actual := reconcileSchema(t, reconciler, api, schema)
 			if actual.Status.ActiveOperation != nil || !row.stored(actual.Status.Source) || actual.Status.Source.Snapshot != nil {
@@ -156,6 +173,7 @@ func TestResolveOfAnotherSourceRetiresTheMigrationSnapshot(t *testing.T) {
 			operation := migrationClaim(t, migration, operatorv1alpha1.MigrationOperationResolve)
 			job, pod := terminalMigrationWorkload(migration, batchv1.JobComplete)
 			reconciler, api := fakeMigrationReconciler(t, staticLogs{content: row.frame(operation.ID)}, migration, job, pod, left, earlier)
+			reconciler.APIReader, reconciler.CachedReader = refuseConfigMapLists(t, api), api
 
 			if _, err := reconciler.Reconcile(context.Background(), migrationRequest(migration)); err != nil {
 				t.Fatalf("Reconcile() error = %v", err)

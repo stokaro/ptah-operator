@@ -32,9 +32,12 @@ func Options() cache.Options {
 // ClientOptions keeps ConfigMap and plan chunk reads off the cache.
 //
 // The transform is what bounds the memory; this is what keeps the bound
-// honest. Every ConfigMap this operator reads -- a verification policy, a plan
-// projection -- is read through the API reader today, because each one is a
-// decision that a cache may not be current enough to make. Routing the cached
+// honest. Every ConfigMap this operator reads for its content -- a
+// verification policy, a source, a plan projection -- is read through the API
+// reader, because each one is a decision that a cache may not be current
+// enough to make. The one cached read goes to the cache itself rather than
+// through this client: retiring source snapshots needs only their names and
+// owners, which the transform keeps. Routing the cached
 // client's reads to the API server as well means a read added later cannot
 // quietly start seeing objects the transform emptied, and cannot quietly build
 // a second informer that holds what the transform dropped.

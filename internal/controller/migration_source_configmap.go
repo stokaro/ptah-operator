@@ -68,7 +68,7 @@ func (r *MigrationReconciler) retireMigrationSnapshots(ctx context.Context, migr
 	if operation := migration.Status.ActiveOperation; operation != nil {
 		keep = append(keep, snapshotNames(operation.Source)...)
 	}
-	if err := retireSnapshots(ctx, r.directReader(), r.Client, migration.Namespace, owner, sourcesnapshot.LabelMigration, keep...); err != nil {
+	if err := retireSnapshots(ctx, r.cachedReader(), r.Client, migration.Namespace, owner, sourcesnapshot.LabelMigration, keep...); err != nil {
 		r.event(migration, corev1.EventTypeWarning, "SourceSnapshotRetirementFailed", "%s", bounded(err.Error(), 512))
 	}
 }
