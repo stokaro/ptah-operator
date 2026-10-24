@@ -140,6 +140,27 @@ kubectl ptah migration orders -n application
 the current version, how many migrations are applied, how many are pending, and
 three states that stop everything.
 
+`status.history.revisions` lists the newest rows of that table, newest first:
+the version, the migration's description, the checksum the row recorded, its
+state, when it was written and how long the migration ran in milliseconds. At
+most 64 rows are kept, so a longer history leaves its oldest rows out. A
+modified row carries the checksum the database recorded, which is the one to
+compare with the file you ship. No SQL and no error text is read into them.
+
+```yaml
+status:
+  history:
+    currentVersion: 14
+    appliedCount: 14
+    revisions:
+      - version: 14
+        description: add ledger index
+        checksum: h1:2iJ5i0iUq9Jc6I3cS0Y8pX3x9mW6E3o7b8kq1V2xU0A=
+        state: applied
+        appliedAt: "2026-10-24T07:42:30Z"
+        executionMillis: 1840
+```
+
 **Dirty.** A failed or interrupted run left a revision row behind. Nothing
 applies while one exists, and the operator never removes it: what a
 half-applied migration did to your data is a question for a person with the

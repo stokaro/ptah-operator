@@ -212,6 +212,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:81011d4d8e092c89c01178822c6a585faa71aef8fe08977008d9aa1557df4bc0",
       "reason": "Read the database on request (#728). The API gains the operator.ptah.run/read-requested-at annotation and status.lastReadRequest on PtahSchema and PtahMigration, which only the manager reads and writes to bring the next interval read forward. The runner neither reads nor writes either; its modes, commands, payloads, result frames, delivery identity, SQL authority and retry limits are as they were."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:fefb4b7d376a20a71355450ebbc8c08ac037cb9c91660feb8fc191f7dc03cede",
+      "reason": "Publish the newest revision rows with their time and duration (#726). The migration status document's records gain applied_at and execution_time_ms, which Ptah reports for a row that exists; the history and Apply result frames carry them where the runner dropped them before, and the parser refuses a time on a migration with no row, a duration with no time, a negative duration, and a description or checksum past its bound. An older manager ignores the two fields, and a frame without them reads as before. Commands, payloads, delivery identity, SQL authority and retry limits are as they were."
     }
   ]
 }

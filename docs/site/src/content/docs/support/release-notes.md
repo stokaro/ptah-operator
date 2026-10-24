@@ -16,6 +16,17 @@ release that says so, and this is where it is said. A version that asks
 nothing of you says so in as many words, rather than leaving you to read it
 out of silence.
 
+## 0.2.8
+
+**Before you upgrade.** The manager image is new, so keep `--force-conflicts`
+on the upgrade. Nothing else.
+
+A `PtahMigration` now lists the newest rows of its revision table in
+`status.history.revisions`: the version, the description, the checksum the row
+recorded, its state, when it was written and how long the migration ran, at
+most 64 rows. [Migrations](../../use/migrations/#what-the-history-says) shows
+one.
+
 ## 0.2.7
 
 **Before you upgrade.** The manager image is new, so keep `--force-conflicts`

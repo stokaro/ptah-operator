@@ -324,6 +324,9 @@ func (m *migrationRun) assertInSync() *ptahv1alpha1.PtahMigration {
 	if err := settledInSync(migration, m.published); err != nil {
 		m.fatalf("%s did not settle on a history that matches the artifact: %v", m.migrationName(), err)
 	}
+	if err := revisionsRecordTheSequence(migration); err != nil {
+		m.fatalf("%s does not list the revision rows its run wrote: %v", m.migrationName(), err)
+	}
 	// A run's evidence explains what happened without reproducing what ran.
 	document, err := asJSON(migration.Status)
 	m.check(err, "decode %s status", m.migrationName())

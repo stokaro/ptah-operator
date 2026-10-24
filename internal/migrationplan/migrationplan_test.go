@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"k8s.io/apimachinery/pkg/types"
 
@@ -220,5 +221,49 @@ func TestASequenceNoJobCouldCarryIsNotSelected(t *testing.T) {
 	_, err := migrationplan.Sequence(report(strings.Repeat("é", 128), strings.Repeat("é", 128)))
 	if err == nil || !strings.Contains(err.Error(), "an Apply Job can carry") {
 		t.Fatalf("Sequence() error = %v, want the refusal of a sequence no Job could carry", err)
+	}
+}
+
+// A plan's premise is which migrations the database applied, not when, so a
+// history that reports each row's time and duration has the fingerprint of
+// one that reports neither, and an operator that starts reading them keeps
+// every plan already published. A changed row still changes it.
+func TestHistoryFingerprintIgnoresWhenARowRan(t *testing.T) {
+	t.Parallel()
+	report := func() dataplane.MigrationStatusReport {
+		return dataplane.MigrationStatusReport{
+			ContractVersion: dataplane.SupportedMigrationStatusContract,
+			CurrentVersion:  1, TotalMigrations: 2,
+			Migrations: []dataplane.MigrationRecord{
+				{Version: 1, Checksum: "h1:one", AppliedChecksum: "h1:one", State: dataplane.MigrationStateApplied},
+				{Version: 2, Checksum: "h1:two", State: dataplane.MigrationStatePending},
+			},
+		}
+	}
+	untimed, err := migrationplan.HistoryFingerprint(report())
+	if err != nil {
+		t.Fatal(err)
+	}
+	timed := report()
+	ranAt := time.Date(2026, 10, 24, 7, 42, 30, 0, time.UTC)
+	took := int64(1840)
+	timed.Migrations[0].AppliedAt, timed.Migrations[0].ExecutionMs = &ranAt, &took
+	rewritten := report()
+	rewritten.Migrations[0].AppliedChecksum = "h1:other"
+
+	withTimes, err := migrationplan.HistoryFingerprint(timed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withAnotherRow, err := migrationplan.HistoryFingerprint(rewritten)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if withTimes != untimed {
+		t.Fatalf("the fingerprint moved from %s to %s when the rows reported their times", untimed, withTimes)
+	}
+	if withAnotherRow == untimed {
+		t.Fatal("a row that recorded another checksum kept the fingerprint, so this test measures nothing")
 	}
 }

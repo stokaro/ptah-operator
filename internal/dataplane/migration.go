@@ -5,6 +5,7 @@ import (
 	"math"
 	"regexp"
 	"slices"
+	"time"
 )
 
 const (
@@ -77,8 +78,30 @@ type MigrationRecord struct {
 	AppliedChecksum string `json:"applied_checksum,omitempty"`
 	Checkpoint      bool   `json:"checkpoint,omitempty"`
 	TransactionMode string `json:"transaction_mode,omitempty"`
-	State           string `json:"state"`
+	// AppliedAt is when the migration's revision row was written, and
+	// ExecutionMs how long it ran in whole milliseconds, as the row recorded
+	// them. Ptah reports both only for a row that exists, and no duration for
+	// a revision table too old to record one. Neither is part of the history
+	// fingerprint: a plan's premise is which migrations are applied, not when.
+	AppliedAt   *time.Time `json:"applied_at,omitempty"`
+	ExecutionMs *int64     `json:"execution_time_ms,omitempty"`
+	State       string     `json:"state"`
 }
+
+// HasRevisionRow reports whether the database holds a revision row for the
+// record: an applied migration, a modified one, or the dirty one a failed run
+// left behind.
+func (m MigrationRecord) HasRevisionRow() bool {
+	return m.State == MigrationStateApplied || m.State == MigrationStateModified || m.State == MigrationStateDirty
+}
+
+// Bounds on what a record names. A description is the rest of a file name,
+// which no file system lets exceed 255 bytes, and a checksum is a digest
+// spelled out; anything longer did not come from a migration file.
+const (
+	MaxMigrationDescriptionBytes = 255
+	MaxMigrationChecksumBytes    = 128
+)
 
 // MigrationStatusReport is Ptah's `migrations status --json` document.
 type MigrationStatusReport struct {
@@ -284,9 +307,37 @@ func (r MigrationStatusReport) validate() error {
 				record.State, record.Version,
 			)
 		}
+		if err := record.validateRow(); err != nil {
+			return err
+		}
 	}
 	if r.DirtyRevision != nil && r.DirtyRevision.Version <= 0 {
 		return fmt.Errorf("migration status reports a dirty revision with no version")
+	}
+	return nil
+}
+
+// validateRow holds what a record says of its revision row to the state it
+// reports. A time on a migration that has no row, or a duration with no time,
+// contradicts the document it came in.
+func (m MigrationRecord) validateRow() error {
+	if len(m.Description) > MaxMigrationDescriptionBytes {
+		return fmt.Errorf("migration status reports a description of %d bytes for version %d, "+
+			"longer than a file name holds", len(m.Description), m.Version)
+	}
+	if len(m.Checksum) > MaxMigrationChecksumBytes || len(m.AppliedChecksum) > MaxMigrationChecksumBytes {
+		return fmt.Errorf("migration status reports a checksum longer than %d bytes for version %d",
+			MaxMigrationChecksumBytes, m.Version)
+	}
+	if (m.AppliedAt != nil || m.ExecutionMs != nil) && !m.HasRevisionRow() {
+		return fmt.Errorf("migration status reports when version %d ran, and its state %q has no revision row",
+			m.Version, m.State)
+	}
+	if m.ExecutionMs != nil && m.AppliedAt == nil {
+		return fmt.Errorf("migration status reports how long version %d ran and not when", m.Version)
+	}
+	if m.ExecutionMs != nil && *m.ExecutionMs < 0 {
+		return fmt.Errorf("migration status reports version %d ran for %d milliseconds", m.Version, *m.ExecutionMs)
 	}
 	return nil
 }

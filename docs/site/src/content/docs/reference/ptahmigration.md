@@ -631,6 +631,13 @@ spec:
 | `status.history.observedAt` | `string`, required | ObservedAt is when the history was read. |
 | `status.history.outOfOrderVersions` | `[]integer` | OutOfOrderVersions names migrations the artifact carries below a version the database has already applied. Linear execution refuses them, so the versions are published rather than counted: what a person decides here depends on which migration arrived late. |
 | `status.history.pendingCount` | `integer`, required | PendingCount is how many the artifact still has to apply, as Ptah selects them rather than as a subtraction of the two counts. |
+| `status.history.revisions` | `[]object` | Revisions are the newest rows of the revision table, newest first: which migration each records, the checksum it recorded, when it was written and how long the migration ran. At most MaxMigrationRevisions are kept, so a list that long may leave older rows out. No SQL and no error text is read into them. |
+| `status.history.revisions[].appliedAt` | `string` | AppliedAt is when the row was written. |
+| `status.history.revisions[].checksum` | `string` | Checksum is what the row recorded when the migration ran. A dirty row records none. |
+| `status.history.revisions[].description` | `string` | Description is the migration's own, from its file name. |
+| `status.history.revisions[].executionMillis` | `integer` | ExecutionMillis is how long the migration ran, in whole milliseconds. A revision table too old to record a duration leaves it absent rather than zero. |
+| `status.history.revisions[].state` | `string`, required, one of `applied`, `modified`, `dirty` | State is applied, modified when the file no longer accounts for the row, or dirty when a run left it unfinished. |
+| `status.history.revisions[].version` | `integer`, required | Version is the migration the row records. |
 | `status.history.targetIdentityDigest` | `string`, required | TargetIdentityDigest is the credential-free identity of the database this history was read from, as the executor derived it. A plan that was made against one database is never executed against another. |
 | `status.journal` | `object` | Journal is the bounded record of this migration's significant lifecycle events. |
 | `status.journal.coveredSince` | `string`, required | CoveredSince is the instant from which the journal is complete: when a manager that keeps a journal first wrote this resource's status, moved forward past the newest entry a bound has since dropped. A reader states the period the journal covers from it and assumes nothing before. |

@@ -1246,6 +1246,7 @@ func (r *MigrationReconciler) recordMigrationHistory(
 	if len(outOfOrder) > 0 {
 		history.OutOfOrderVersions = boundedVersions(outOfOrder, 64)
 	}
+	history.Revisions = revisionRows(report.Migrations)
 	migration.Status.History = history
 
 	switch {
