@@ -133,6 +133,12 @@ func ensureSnapshot(ctx context.Context, reader client.Reader, writer client.Wri
 // retireSnapshots deletes this resource's snapshots that nothing names any
 // more. keep is every snapshot something still reads: the one the source
 // resolved to, and any an operation, a plan or a post-Apply proof names.
+//
+// reader is the manager's cache. The list runs after every resolution of
+// every resource, OCI included, and from the cache it costs no API request.
+// A stale cache can only spare a snapshot: one it has not seen yet stays until
+// the next resolution, and one it still lists after a delete, or after the
+// name was written again, is refused by the UID precondition.
 func retireSnapshots(
 	ctx context.Context,
 	reader client.Reader,
