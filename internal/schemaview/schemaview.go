@@ -22,6 +22,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/sourceview"
 )
 
 // ErrSchemaNotFound is returned when the named PtahSchema is not there. It is
@@ -53,12 +54,9 @@ type View struct {
 	Conditions  []ConditionView  `json:"conditions,omitempty"`
 }
 
-// SourceView is the resolved, credential-free artifact binding.
-type SourceView struct {
-	Reference string `json:"reference,omitempty"`
-	Digest    string `json:"digest,omitempty"`
-	Verified  bool   `json:"verified,omitempty"`
-}
+// SourceView is the resolved, credential-free source binding: an OCI
+// artifact, a ConfigMap and its snapshot, or a Git commit.
+type SourceView = sourceview.View
 
 // ObservationView is what the last drift read found.
 //
@@ -153,13 +151,7 @@ func Load(ctx context.Context, reader client.Reader, namespace, name string) (Vi
 		Phase:     string(schema.Status.Phase),
 		Suspended: schema.Spec.Suspend,
 	}
-	if source := schema.Status.Source; source.ResolvedReference != "" || source.Digest != "" {
-		view.Source = &SourceView{
-			Reference: source.ResolvedReference,
-			Digest:    source.Digest,
-			Verified:  source.Verified,
-		}
-	}
+	view.Source = sourceview.FromSchema(schema.Status.Source)
 	view.Observation = observationOf(schema.Status.Target)
 	if plan := schema.Status.Plan; plan != nil {
 		view.Plan = &PlanView{

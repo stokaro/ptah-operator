@@ -195,6 +195,51 @@ func TestRenderTextCarriesCountsAndNoSQL(t *testing.T) {
 	}
 }
 
+// A schema read from Git names the repository, the ref and the commit it
+// resolved to, and no artifact: before the view knew the other kinds it
+// printed no source at all for one.
+func TestRenderNamesAGitSourceAndTheCommitItResolvedTo(t *testing.T) {
+	t.Parallel()
+
+	commit := strings.Repeat("3f1c", 10)
+	content := "sha256:" + strings.Repeat("b", 64)
+	schema := fixture()
+	schema.Status.Source = operatorv1alpha1.SchemaSourceStatus{Git: &operatorv1alpha1.GitSourceRevision{
+		URL: "https://git.example.com/acme/storefront.git", Ref: operatorv1alpha1.GitRef{Branch: "main"},
+		Path: "db/schema.sql", Commit: commit, ContentDigest: content,
+	}}
+	view, err := schemaview.Load(context.Background(), readerWith(t, schema), "team-a", "storefront")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var text, document bytes.Buffer
+	if err := schemaview.Render(&text, view, schemaview.Text); err != nil {
+		t.Fatal(err)
+	}
+	if err := schemaview.Render(&document, view, schemaview.JSON); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"Source:           Git https://git.example.com/acme/storefront.git\n",
+		"Ref:              branch main\n",
+		"Path:             db/schema.sql\n",
+		"Commit:           " + commit + "\n",
+		"Content:          " + content + "\n",
+	} {
+		if !strings.Contains(text.String(), want) {
+			t.Fatalf("text view is missing %q:\n%s", want, text.String())
+		}
+	}
+	if strings.Contains(text.String(), "Artifact:") || strings.Contains(text.String(), "Verified:") {
+		t.Fatalf("a Git source printed an artifact:\n%s", text.String())
+	}
+	for _, want := range []string{`"kind": "Git"`, `"commit": "` + commit + `"`, `"branch": "main"`} {
+		if !strings.Contains(document.String(), want) {
+			t.Fatalf("json view is missing %s:\n%s", want, document.String())
+		}
+	}
+}
+
 func TestRenderJSONIsTheSameView(t *testing.T) {
 	t.Parallel()
 

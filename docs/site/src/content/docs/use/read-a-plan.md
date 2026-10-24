@@ -152,6 +152,23 @@ Plan ptah-plan-4b44084123f0958600629632, 4 statements, stored 2026-09-16T06:00:0
 kubectl ptah plan prints the SQL this plan holds.
 ```
 
+A schema read from a ConfigMap or a Git repository prints its source in
+place of the `Artifact` line:
+
+```text
+Source:           Git https://git.example.com/acme/storefront.git
+Ref:              branch main
+Path:             db/schema.sql
+Commit:           3f1c2b0a9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a
+Content:          sha256:...
+Source policy:    sha256:...
+```
+
+`Content` is the digest of the selected files, the content a plan computed
+from them is bound to. A ConfigMap source prints `Source: ConfigMap` with the
+ConfigMap's name, and `Snapshot`, the copy every operation reads.
+`Source policy` appears only when the resource names one.
+
 `Observed: not yet` and `Drift: none` are different answers. The first is a
 schema nothing has read; the second is a database that matches its declaration.
 
@@ -204,6 +221,9 @@ ApprovalRequired: True (AwaitingApproval)
 Plan ptah-mplan-0123456789abcdef01234567, 1 migration from version 2:
   3                    add the orders index
 ```
+
+A ConfigMap or Git source prints the same lines as
+[`kubectl ptah schema`](#schema) in place of `Artifact`.
 
 `-o json` prints the same view as a document, for a script that wants the
 pending count or the last run's outcome without parsing text.

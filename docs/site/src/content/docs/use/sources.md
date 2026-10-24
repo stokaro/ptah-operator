@@ -293,7 +293,9 @@ credential that works.
 ## What resolved
 
 `ArtifactResolved` says `SnapshotTaken` for a ConfigMap source and
-`CommitResolved` for a Git one, and the status records what was read:
+`CommitResolved` for a Git one. `kubectl ptah schema` and
+`kubectl ptah migration` print the source, the commit or snapshot, and the
+content digest; the status records the same:
 
 ```sh
 kubectl -n application get ptahschema inventory \
