@@ -52,3 +52,15 @@ started the Plan that follows the drift, so the phase reads `Planning`.
 `TestDroppedExtensionObservedRefusesEveryOtherReading` accepts this reading and
 refuses copies of it that change the one field each mistake would change. It
 names Secrets only by name and key and holds no credentials or plan SQL.
+
+`journal-plan-published-again.json` is the journal of the schema `storefront`
+in the Ptah Console acceptance lab, read on October 24, 2026 from Kubernetes
+1.37.0 running operator `70bd7654e4a8a694ef8ab41e769535f456263c4b` with the
+Ptah v0.15.0 executor. It keeps the schema's identity, phase, applied plan
+reference and journal, and nothing else from the status. The schema applied
+three plans, and after each Apply the next status write recorded the plan's
+publication again, dated when the plan was created, because the plan stays in
+status until the proof that follows settles.
+`TestApprovedApplyJournaledRefusesThePlanItsApplyPublishedAgain` refuses this
+reading and admits it once the three repeated publications are left out. It
+holds no Secret names, credentials or plan SQL.
