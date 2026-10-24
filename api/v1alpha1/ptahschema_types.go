@@ -861,6 +861,11 @@ type PtahSchemaStatus struct {
 	// found, a plan is ready, an approval is required, the schema is in sync,
 	// and whether the last reconciliation failed.
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+
+	// Journal is the bounded record of this schema's significant lifecycle
+	// events.
+	// +optional
+	Journal *LifecycleJournal `json:"journal,omitempty"`
 }
 
 // ExecutionBindingStatus identifies one uninterrupted execution epoch: the

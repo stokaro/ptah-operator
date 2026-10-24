@@ -782,3 +782,40 @@ func TestStateLinesNameTheStateAndNothingElse(t *testing.T) {
 		t.Errorf("an empty status reads:\n%s", empty)
 	}
 }
+
+func TestStoppedRunJournaledRefusesEachClause(t *testing.T) {
+	t.Parallel()
+	const journaled = `{"status":{
+  "lastRun":{"outcome":"Failed","jobUID":"u-apply","appliedVersions":[1],"startedAt":"2026-10-24T07:40:00Z",
+    "finishedAt":"2026-10-24T07:42:00Z","failure":{"version":2,"statement":1,"statements":1,"sqlState":"57014"}},
+  "journal":{"coveredSince":"2026-10-24T07:00:00Z","entries":[
+    {"type":"PlanPublished","at":"2026-10-24T07:39:00Z","plan":"plan-a"},
+    {"type":"RunFinished","at":"2026-10-24T07:42:00Z","startedAt":"2026-10-24T07:40:00Z","outcome":"Failed",
+      "appliedVersions":1,"failure":{"version":2,"statement":1,"statements":1,"sqlState":"57014"}}]}}}`
+	accepts := func(migration *ptahv1alpha1.PtahMigration) bool {
+		return stoppedRunJournaled(migration.Status, 2, 1, 1)
+	}
+	newest := func(change func(*ptahv1alpha1.JournalEntry)) func(*ptahv1alpha1.PtahMigration) {
+		return func(m *ptahv1alpha1.PtahMigration) {
+			change(&m.Status.Journal.Entries[len(m.Status.Journal.Entries)-1])
+		}
+	}
+	mfRefusesEach(t, journaled, accepts, []mfMutation{
+		{"no run recorded", func(m *ptahv1alpha1.PtahMigration) { m.Status.LastRun = nil }},
+		{"a run not read yet", func(m *ptahv1alpha1.PtahMigration) { m.Status.LastRun.FinishedAt = nil }},
+		{"no failure in lastRun", func(m *ptahv1alpha1.PtahMigration) { m.Status.LastRun.Failure = nil }},
+		{"another migration in lastRun", func(m *ptahv1alpha1.PtahMigration) { m.Status.LastRun.Failure.Version = 3 }},
+		{"another statement in lastRun", func(m *ptahv1alpha1.PtahMigration) { m.Status.LastRun.Failure.Statement = 2 }},
+		{"no journal", func(m *ptahv1alpha1.PtahMigration) { m.Status.Journal = nil }},
+		{"no run in the journal", func(m *ptahv1alpha1.PtahMigration) { m.Status.Journal.Entries = m.Status.Journal.Entries[:1] }},
+		{"a partial run journaled", newest(func(e *ptahv1alpha1.JournalEntry) { e.Outcome = ptahv1alpha1.JournalPartial })},
+		{"the entry of another read", newest(func(e *ptahv1alpha1.JournalEntry) { e.At.Time = e.At.Add(time.Minute) })},
+		{"every version journaled applied", newest(func(e *ptahv1alpha1.JournalEntry) { e.AppliedVersions = 2 })},
+		{"no failure journaled", newest(func(e *ptahv1alpha1.JournalEntry) { e.Failure = nil })},
+		{"an older run matches and the newest does not", func(m *ptahv1alpha1.PtahMigration) {
+			later := m.Status.Journal.Entries[1]
+			later.At.Time, later.Outcome = later.At.Add(time.Hour), ptahv1alpha1.JournalSucceeded
+			m.Status.Journal.Entries = append(m.Status.Journal.Entries, later)
+		}},
+	})
+}

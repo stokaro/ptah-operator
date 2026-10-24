@@ -381,6 +381,38 @@ type MigrationRunStatus struct {
 	// carries the SQL a migration ran.
 	// +kubebuilder:validation:MaxLength=1024
 	Message string `json:"message,omitempty"`
+
+	// Failure is where a failed or partial run stopped, when a statement
+	// reached the database and failed there. It is what Message says in words,
+	// for a reader that should not depend on their wording.
+	// +optional
+	Failure *MigrationRunFailureStatus `json:"failure,omitempty"`
+}
+
+// MigrationRunFailureStatus is the statement a run stopped at and the code the
+// database answered with. Like the run report it comes from, it carries no
+// text: the database's message can name a row.
+type MigrationRunFailureStatus struct {
+	// Version is the migration the run stopped in.
+	// +kubebuilder:validation:Minimum=0
+	Version int64 `json:"version"`
+	// Statement is the position of the failed statement in that migration,
+	// counting from one.
+	// +kubebuilder:validation:Minimum=1
+	Statement int32 `json:"statement"`
+	// Statements is how many statements that migration has.
+	// +kubebuilder:validation:Minimum=1
+	Statements int32 `json:"statements"`
+	// SQLState is the SQLSTATE the database answered with, empty when it gave
+	// none.
+	// +kubebuilder:validation:Pattern=`^[0-9A-Z]{5}$`
+	// +optional
+	SQLState string `json:"sqlState,omitempty"`
+	// ErrorNumber is MySQL's own error number, zero on every other protocol.
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=65535
+	// +optional
+	ErrorNumber int32 `json:"errorNumber,omitempty"`
 }
 
 // UnresolvedMigrationRunStatus is the execution whose effect on the database
@@ -566,6 +598,11 @@ type PtahMigrationStatus struct {
 	// ResolvedRun is how the most recent unresolved run was settled, and who
 	// settled it when a person did. It stays until the next one is settled.
 	ResolvedRun *ResolvedMigrationRunStatus `json:"resolvedRun,omitempty"`
+
+	// Journal is the bounded record of this migration's significant lifecycle
+	// events.
+	// +optional
+	Journal *LifecycleJournal `json:"journal,omitempty"`
 
 	// PendingLockRelease is a database-realm Lease this resource still owes
 	// back, kept whole so the release survives the process that owed it. The

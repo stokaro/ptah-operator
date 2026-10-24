@@ -392,6 +392,10 @@ func (m *migrationRun) stoppedApplyProof() {
 		m.mfPrintLastRun(name, recorded)
 		m.fatalf("%s's record does not name the migration its run stopped in", name)
 	}
+	if !stoppedRunJournaled(recorded.Status, 2, 1, 1) {
+		m.mfPrintLastRun(name, recorded)
+		m.fatalf("%s did not record where its run stopped in lastRun.failure and its journal", name)
+	}
 	// The database says the same: the first migration applied, the second
 	// recorded as a failure with none of its statements committed.
 	if m.query("SELECT count(*) FROM schema_migrations WHERE version = 1 AND state = 'applied'", database) != "1" {

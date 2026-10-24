@@ -660,6 +660,31 @@ spec:
 | `status.executionBinding.executorImage` | `string`, required | ExecutorImage is the digest-pinned image carrying that build. |
 | `status.executionBinding.ptahVersion` | `string`, required | PtahVersion is the Ptah build this epoch executes with. |
 | `status.executionBinding.runnerProtocolVersion` | `integer`, required | RunnerProtocolVersion is the runner protocol this epoch binds: what the runner enforces inside the Pod and the result frame it returns. |
+| `status.journal` | `object` | Journal is the bounded record of this schema's significant lifecycle events. |
+| `status.journal.coveredSince` | `string`, required | CoveredSince is the instant from which the journal is complete: when a manager that keeps a journal first wrote this resource's status, moved forward past the newest entry a bound has since dropped. A reader states the period the journal covers from it and assumes nothing before. |
+| `status.journal.entries` | `[]object` | Entries are the events, oldest first. There are at most 64, and none is more than 30 days older than the newest. |
+| `status.journal.entries[].acknowledgedBy` | `string` | AcknowledgedBy is the user admission stamped on that acknowledgment. |
+| `status.journal.entries[].acknowledgment` | `string` | Acknowledgment names the acknowledgment that settled an unresolved run. |
+| `status.journal.entries[].appliedVersions` | `integer` | AppliedVersions is how many migrations a run recorded applied. |
+| `status.journal.entries[].approval` | `string` | Approval names the approval an Apply consumed. |
+| `status.journal.entries[].approver` | `string` | Approver is the user admission stamped on that approval. |
+| `status.journal.entries[].at` | `string`, required | At is when the event happened. For an Apply, a run or a failed attempt it is when that ended. |
+| `status.journal.entries[].count` | `integer` | Count is how many attempts an OperationFailed entry stands for. A single failure has none. |
+| `status.journal.entries[].destructive` | `boolean` | Destructive reports a published PtahSchema plan that destroys data. |
+| `status.journal.entries[].failure` | `object` | Failure is where a run stopped, as status.lastRun.failure said. |
+| `status.journal.entries[].failure.errorNumber` | `integer` | ErrorNumber is MySQL's own error number, zero on every other protocol. |
+| `status.journal.entries[].failure.sqlState` | `string` | SQLState is the SQLSTATE the database answered with, empty when it gave none. |
+| `status.journal.entries[].failure.statement` | `integer`, required | Statement is the position of the failed statement in that migration, counting from one. |
+| `status.journal.entries[].failure.statements` | `integer`, required | Statements is how many statements that migration has. |
+| `status.journal.entries[].failure.version` | `integer`, required | Version is the migration the run stopped in. |
+| `status.journal.entries[].lastAt` | `string` | LastAt is the latest attempt an OperationFailed entry folds. A single failure has none. |
+| `status.journal.entries[].operation` | `string`, one of `Resolve`, `Verify`, `Observe`, `Plan`, `History`, `Apply` | Operation is the operation that failed, when one was claimed. |
+| `status.journal.entries[].outcome` | `string`, one of `Succeeded`, `Failed`, `Partial`, `Unknown`, `UpToDate`, `InSync`, `DriftRemains`, `Superseded` | Outcome is how an Apply, a proof or a run ended. |
+| `status.journal.entries[].plan` | `string` | Plan names the plan the event concerns. |
+| `status.journal.entries[].reason` | `string` | Reason is the condition reason the failure set. It is a code, never the message: a message can carry what status must not. |
+| `status.journal.entries[].startedAt` | `string` | StartedAt is when an Apply or a run began. |
+| `status.journal.entries[].statements` | `integer` | Statements is how many statements a published PtahSchema plan holds. |
+| `status.journal.entries[].type` | `string`, required, one of `PlanPublished`, `ApprovalAccepted`, `ApplyFinished`, `Verified`, `RunFinished`, `RunAcknowledged`, `OperationFailed` | Type is the kind of event. |
 | `status.lastAttemptTime` | `string` | LastAttemptTime is when the controller last tried to do something. |
 | `status.lastSuccessfulReconciliation` | `string` | LastSuccessfulReconciliation is when it last completed a cycle with nothing left to do. |
 | `status.nextReconciliationTime` | `string` | NextReconciliationTime is the durable earliest time for the next scheduled read-only reconciliation. Event-driven safety work may run sooner. |

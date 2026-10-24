@@ -39,6 +39,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
 	"github.com/stokaro/ptah-operator/internal/jobclaim"
+	"github.com/stokaro/ptah-operator/internal/lifecyclejournal"
 	"github.com/stokaro/ptah-operator/internal/mutationlifecycle"
 	"github.com/stokaro/ptah-operator/internal/ocireference"
 	"github.com/stokaro/ptah-operator/internal/planseal"
@@ -3955,6 +3956,11 @@ func (r *SchemaReconciler) patchStatus(ctx context.Context, before, after *opera
 	if reflect.DeepEqual(before.Status, after.Status) {
 		return nil
 	}
+	// The journal is stamped by the wall clock, as conditions are: the
+	// injected clock decides deadlines, and a journal entry decides nothing.
+	now := metav1.Now().Time
+	after.Status.Journal = lifecyclejournal.Record(after.Status.Journal,
+		lifecyclejournal.SchemaEntries(&before.Status, &after.Status, before.Status.Journal, now), now)
 	if err := r.Client.Status().Patch(ctx, after, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})); err != nil {
 		return fmt.Errorf("update PtahSchema status: %w", err)
 	}

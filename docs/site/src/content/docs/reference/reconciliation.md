@@ -244,3 +244,42 @@ Adoption of an existing schema is deliberately not an operator feature: an
 empty revision table reads as everything pending, and the answer is Ptah's own
 `migrations baseline`, run by a person against a shadow database. The operator
 never holds a shadow credential.
+
+## The lifecycle journal
+
+Every `PtahSchema` and `PtahMigration` keeps a bounded journal of its
+significant events in `status.journal`, so a reader can see when a change was
+planned, approved and applied, how long it took and how it ended, and how
+often something failed, after the Events Kubernetes keeps for about an hour
+and the finished Jobs it keeps for five minutes are gone.
+
+| Entry | Written when |
+| --- | --- |
+| `PlanPublished` | `status.plan` names a plan the journal does not already hold. A plan republished while the resource refreshes is the same plan and writes nothing. |
+| `ApprovalAccepted` | An Apply consumes an approval: the one a schema's plan records, with the approver admission stamped, or the one a migration's Apply claim names, without one, since a migration's status does not carry it. |
+| `ApplyFinished` | A schema's Apply ends and its post-Apply observation takes its place: `Succeeded`, or `Unknown` when its outcome is unknown. An Apply withdrawn before dispatch changed nothing and writes nothing. |
+| `Verified` | That observation settles: `InSync`, `DriftRemains`, or `Superseded` when a newer generation, policy or execution binding took over. |
+| `RunFinished` | A migration run ends, with its outcome, how many versions it applied, and where it stopped; or it is recorded as unresolved, as `Unknown`. |
+| `RunAcknowledged` | A person acknowledges an unresolved run. |
+| `OperationFailed` | An attempt fails. Attempts that fail with the same operation and reason in a row are one entry with a `count` and the time of the last one. |
+
+A cycle that reads the database and finds nothing to do writes no entry. An
+entry names objects in the resource's namespace and carries condition reasons,
+never messages: a message can carry what status must not.
+
+The journal holds at most 64 entries, none more than 30 days older than the
+newest, and drops the oldest first. `coveredSince` is the instant from which it
+is complete: the first status write a manager that keeps a journal made,
+moved forward past the newest entry a bound dropped. A reader states the
+period the journal covers from it rather than assuming a week or a month.
+
+The journal is written in the status write that records the transition, so it
+costs no request of its own. Its times come from that status, such as a plan's
+creation or a run's end, or from the manager's clock when the transition
+carries none, as conditions do.
+
+`status.lastRun.failure` records where a failed or partial run stopped, when a
+statement reached the database and failed there: the migration's version, the
+statement's position, and the SQLSTATE and MySQL error number the database
+answered with. It carries no text, for the reason the run's message carries
+none.

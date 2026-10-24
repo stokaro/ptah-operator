@@ -4,8 +4,8 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     operator.ptah.run/controller-state-version: "1"
-    operator.ptah.run/crd-schema-version: "5"
-    operator.ptah.run/crd-schema-digest: "sha256:8ac69b55255fc7f90e708f904eeefee6cd6001f763f38bd5670aac2d03d389fe"
+    operator.ptah.run/crd-schema-version: "6"
+    operator.ptah.run/crd-schema-digest: "sha256:b2abc5500030703bf79951c227f1c6c3f0bbd7d3a69adc41b45ec35355b65575"
     controller-gen.kubebuilder.io/version: v0.22.0
   name: ptahschemas.operator.ptah.run
 spec:
@@ -1696,6 +1696,123 @@ spec:
                 - executorImage
                 - ptahVersion
                 - runnerProtocolVersion
+                type: object
+              journal:
+                properties:
+                  coveredSince:
+                    format: date-time
+                    type: string
+                  entries:
+                    items:
+                      properties:
+                        acknowledgedBy:
+                          maxLength: 512
+                          type: string
+                        acknowledgment:
+                          maxLength: 253
+                          type: string
+                        appliedVersions:
+                          format: int32
+                          minimum: 0
+                          type: integer
+                        approval:
+                          maxLength: 253
+                          type: string
+                        approver:
+                          maxLength: 512
+                          type: string
+                        at:
+                          format: date-time
+                          type: string
+                        count:
+                          format: int32
+                          minimum: 2
+                          type: integer
+                        destructive:
+                          type: boolean
+                        failure:
+                          properties:
+                            errorNumber:
+                              format: int32
+                              maximum: 65535
+                              minimum: 0
+                              type: integer
+                            sqlState:
+                              pattern: ^[0-9A-Z]{5}$
+                              type: string
+                            statement:
+                              format: int32
+                              minimum: 1
+                              type: integer
+                            statements:
+                              format: int32
+                              minimum: 1
+                              type: integer
+                            version:
+                              format: int64
+                              minimum: 0
+                              type: integer
+                          required:
+                          - statement
+                          - statements
+                          - version
+                          type: object
+                        lastAt:
+                          format: date-time
+                          type: string
+                        operation:
+                          enum:
+                          - Resolve
+                          - Verify
+                          - Observe
+                          - Plan
+                          - History
+                          - Apply
+                          type: string
+                        outcome:
+                          enum:
+                          - Succeeded
+                          - Failed
+                          - Partial
+                          - Unknown
+                          - UpToDate
+                          - InSync
+                          - DriftRemains
+                          - Superseded
+                          type: string
+                        plan:
+                          maxLength: 253
+                          type: string
+                        reason:
+                          maxLength: 128
+                          pattern: ^[A-Z][A-Za-z0-9]*$
+                          type: string
+                        startedAt:
+                          format: date-time
+                          type: string
+                        statements:
+                          format: int32
+                          minimum: 0
+                          type: integer
+                        type:
+                          enum:
+                          - PlanPublished
+                          - ApprovalAccepted
+                          - ApplyFinished
+                          - Verified
+                          - RunFinished
+                          - RunAcknowledged
+                          - OperationFailed
+                          type: string
+                      required:
+                      - at
+                      - type
+                      type: object
+                    maxItems: 64
+                    type: array
+                    x-kubernetes-list-type: atomic
+                required:
+                - coveredSince
                 type: object
               lastAttemptTime:
                 format: date-time

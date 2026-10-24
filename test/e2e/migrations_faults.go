@@ -103,6 +103,34 @@ func stoppedRunNamesItsMigration(run *ptahv1alpha1.MigrationRunStatus, stoppedAt
 	return pattern.MatchString(run.Message)
 }
 
+// stoppedRunJournaled is the same stop in the structured record: where the run
+// stopped, in status.lastRun.failure, and the RunFinished entry the journal
+// wrote for that run, failed, with the versions before it applied and the same
+// failure. The entry is dated when the run was read, as lastRun is.
+func stoppedRunJournaled(status ptahv1alpha1.PtahMigrationStatus, stoppedAt int64, statement, statements int32) bool {
+	run := status.LastRun
+	want := ptahv1alpha1.MigrationRunFailureStatus{Version: stoppedAt, Statement: statement, Statements: statements}
+	if run == nil || run.FinishedAt == nil || !sameStop(run.Failure, want) || status.Journal == nil {
+		return false
+	}
+	for index := len(status.Journal.Entries) - 1; index >= 0; index-- {
+		entry := status.Journal.Entries[index]
+		if entry.Type != ptahv1alpha1.JournalRunFinished {
+			continue
+		}
+		return entry.Outcome == ptahv1alpha1.JournalFailed && entry.At.Equal(run.FinishedAt) &&
+			int64(entry.AppliedVersions) == max(stoppedAt-1, 0) && sameStop(entry.Failure, want)
+	}
+	return false
+}
+
+// sameStop compares where a run stopped; the database's code is left out,
+// since whether a canceled statement comes back with one depends on the driver.
+func sameStop(failure *ptahv1alpha1.MigrationRunFailureStatus, want ptahv1alpha1.MigrationRunFailureStatus) bool {
+	return failure != nil && failure.Version == want.Version && failure.Statement == want.Statement &&
+		failure.Statements == want.Statements
+}
+
 // lostLogRunRecorded is what
 // a run whose log was lost left in the record once the termination summary
 // stood in for its frame. The run the claim dispatched; Applied, the outcome

@@ -449,9 +449,13 @@ func (d *dataPlane) assertPrivilegedPlanWaitsUnderAlways(schema, publishReferenc
 // waitForApprovedPlanConverged waits for the schema to apply the approved plan
 // and converge on the digest at its current generation, with nothing left
 // planned, pending or claimed.
+//
+// The document that converged also has to journal the plan's life, from its
+// publication to the proof, so every row that waits here is a caller of the
+// journal.
 func (d *dataPlane) waitForApprovedPlanConverged(schema, digest, fingerprint, planUID, description string) {
 	d.t.Helper()
-	d.waitForSchema(schema, description, func(s *ptahv1alpha1.PtahSchema) bool {
+	converged := d.waitForSchema(schema, description, func(s *ptahv1alpha1.PtahSchema) bool {
 		status := s.Status
 		return status.ObservedGeneration == s.Generation && status.Source.Digest == digest &&
 			status.Applied != nil && status.Applied.ArtifactDigest == digest &&
@@ -460,6 +464,9 @@ func (d *dataPlane) waitForApprovedPlanConverged(schema, digest, fingerprint, pl
 			status.PendingLockRelease == nil &&
 			conditionIs(status.Conditions, "InSync", "True", "ScopedConverged")
 	})
+	if err := approvedApplyJournaled(converged.Status.Journal, converged.Status.Applied.PlanRef.Name); err != nil {
+		d.fatalf("%s: %v", schema, err)
+	}
 }
 
 // assertGrantOnlyChangePlansUnderAlways proves a change that touches only a

@@ -632,12 +632,43 @@ spec:
 | `status.history.outOfOrderVersions` | `[]integer` | OutOfOrderVersions names migrations the artifact carries below a version the database has already applied. Linear execution refuses them, so the versions are published rather than counted: what a person decides here depends on which migration arrived late. |
 | `status.history.pendingCount` | `integer`, required | PendingCount is how many the artifact still has to apply, as Ptah selects them rather than as a subtraction of the two counts. |
 | `status.history.targetIdentityDigest` | `string`, required | TargetIdentityDigest is the credential-free identity of the database this history was read from, as the executor derived it. A plan that was made against one database is never executed against another. |
+| `status.journal` | `object` | Journal is the bounded record of this migration's significant lifecycle events. |
+| `status.journal.coveredSince` | `string`, required | CoveredSince is the instant from which the journal is complete: when a manager that keeps a journal first wrote this resource's status, moved forward past the newest entry a bound has since dropped. A reader states the period the journal covers from it and assumes nothing before. |
+| `status.journal.entries` | `[]object` | Entries are the events, oldest first. There are at most 64, and none is more than 30 days older than the newest. |
+| `status.journal.entries[].acknowledgedBy` | `string` | AcknowledgedBy is the user admission stamped on that acknowledgment. |
+| `status.journal.entries[].acknowledgment` | `string` | Acknowledgment names the acknowledgment that settled an unresolved run. |
+| `status.journal.entries[].appliedVersions` | `integer` | AppliedVersions is how many migrations a run recorded applied. |
+| `status.journal.entries[].approval` | `string` | Approval names the approval an Apply consumed. |
+| `status.journal.entries[].approver` | `string` | Approver is the user admission stamped on that approval. |
+| `status.journal.entries[].at` | `string`, required | At is when the event happened. For an Apply, a run or a failed attempt it is when that ended. |
+| `status.journal.entries[].count` | `integer` | Count is how many attempts an OperationFailed entry stands for. A single failure has none. |
+| `status.journal.entries[].destructive` | `boolean` | Destructive reports a published PtahSchema plan that destroys data. |
+| `status.journal.entries[].failure` | `object` | Failure is where a run stopped, as status.lastRun.failure said. |
+| `status.journal.entries[].failure.errorNumber` | `integer` | ErrorNumber is MySQL's own error number, zero on every other protocol. |
+| `status.journal.entries[].failure.sqlState` | `string` | SQLState is the SQLSTATE the database answered with, empty when it gave none. |
+| `status.journal.entries[].failure.statement` | `integer`, required | Statement is the position of the failed statement in that migration, counting from one. |
+| `status.journal.entries[].failure.statements` | `integer`, required | Statements is how many statements that migration has. |
+| `status.journal.entries[].failure.version` | `integer`, required | Version is the migration the run stopped in. |
+| `status.journal.entries[].lastAt` | `string` | LastAt is the latest attempt an OperationFailed entry folds. A single failure has none. |
+| `status.journal.entries[].operation` | `string`, one of `Resolve`, `Verify`, `Observe`, `Plan`, `History`, `Apply` | Operation is the operation that failed, when one was claimed. |
+| `status.journal.entries[].outcome` | `string`, one of `Succeeded`, `Failed`, `Partial`, `Unknown`, `UpToDate`, `InSync`, `DriftRemains`, `Superseded` | Outcome is how an Apply, a proof or a run ended. |
+| `status.journal.entries[].plan` | `string` | Plan names the plan the event concerns. |
+| `status.journal.entries[].reason` | `string` | Reason is the condition reason the failure set. It is a code, never the message: a message can carry what status must not. |
+| `status.journal.entries[].startedAt` | `string` | StartedAt is when an Apply or a run began. |
+| `status.journal.entries[].statements` | `integer` | Statements is how many statements a published PtahSchema plan holds. |
+| `status.journal.entries[].type` | `string`, required, one of `PlanPublished`, `ApprovalAccepted`, `ApplyFinished`, `Verified`, `RunFinished`, `RunAcknowledged`, `OperationFailed` | Type is the kind of event. |
 | `status.lastRun` | `object` | LastRun is the evidence of the most recent execution, kept across later reconciliations so an operator can see what happened without the Job. |
 | `status.lastRun.appliedVersions` | `[]integer` | AppliedVersions names the selected migrations the history recorded afterwards, so a migration the history already held is not reported as this run's work. |
 | `status.lastRun.dispatchedBy` | `object` | DispatchedBy is the manager that built and dispatched the run's Job, read from the Job's Pod template when the run was harvested. The plan the run carried out names the manager that published it, which a later release sharing the execution binding need not be. It is absent when the run was settled without its Job. |
 | `status.lastRun.dispatchedBy.controllerImage` | `string`, required | ControllerImage is the digest-pinned manager image. |
 | `status.lastRun.dispatchedBy.controllerRevision` | `string`, required | ControllerRevision is the source revision the manager was built from. |
 | `status.lastRun.dispatchedBy.runnerImage` | `string`, required | RunnerImage is the digest-pinned runner image the manager installed in the task Pod. |
+| `status.lastRun.failure` | `object` | Failure is where a failed or partial run stopped, when a statement reached the database and failed there. It is what Message says in words, for a reader that should not depend on their wording. |
+| `status.lastRun.failure.errorNumber` | `integer` | ErrorNumber is MySQL's own error number, zero on every other protocol. |
+| `status.lastRun.failure.sqlState` | `string` | SQLState is the SQLSTATE the database answered with, empty when it gave none. |
+| `status.lastRun.failure.statement` | `integer`, required | Statement is the position of the failed statement in that migration, counting from one. |
+| `status.lastRun.failure.statements` | `integer`, required | Statements is how many statements that migration has. |
+| `status.lastRun.failure.version` | `integer`, required | Version is the migration the run stopped in. |
 | `status.lastRun.finishedAt` | `string` | FinishedAt is when its result was read. An unfinished run has none. |
 | `status.lastRun.jobName` | `string` | JobName and JobUID identify the execution this evidence came from. The UID is what makes a replacement Job with the same name a different run. |
 | `status.lastRun.jobUID` | `string` | JobUID is that Job's UID. |

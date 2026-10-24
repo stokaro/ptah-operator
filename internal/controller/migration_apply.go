@@ -405,6 +405,7 @@ type migrationRunAccount struct {
 	outcome operatorv1alpha1.MigrationRunOutcome
 	applied []int64
 	message string
+	failure *operatorv1alpha1.MigrationRunFailureStatus
 }
 
 // frameMigrationApply is what a result frame says about a migration Apply.
@@ -486,6 +487,7 @@ func (r *MigrationReconciler) reportedMigrationRun(
 		outcome: migrationRunOutcome(report.Outcome),
 		applied: boundedVersions(report.Applied, 256),
 		message: migrationRunMessage(*report),
+		failure: migrationRunFailure(report.Failure),
 	}
 	if refusal, refused := r.sequenceRefusal(ctx, migration, migration.Status.ActiveOperation, *report); refused {
 		run.message = refusal
@@ -517,6 +519,7 @@ func (r *MigrationReconciler) recordMigrationRun(
 		AppliedVersions: run.applied,
 		DispatchedBy:    dispatcherRecord(job),
 		Message:         bounded(message, 1024),
+		Failure:         run.failure,
 	}
 	migration.Status.Plan = nil
 	switch outcome {
@@ -1207,6 +1210,22 @@ func stoppedMigration(report dataplane.MigrationRunReport) (int64, bool) {
 // failureIn is the run's failure when it is about the migration the message
 // names, and nil otherwise, so a sentence never puts one migration's name and
 // another's statement together.
+// migrationRunFailure is where the report says the run stopped, in the terms
+// status keeps. The decoder already held the statement position, the SQLSTATE
+// and the error number to the forms the API schema admits.
+func migrationRunFailure(failure *dataplane.MigrationRunFailure) *operatorv1alpha1.MigrationRunFailureStatus {
+	if failure == nil {
+		return nil
+	}
+	return &operatorv1alpha1.MigrationRunFailureStatus{
+		Version:     failure.Version,
+		Statement:   int32(failure.Statement),  // At most the statement count, which fits an int32.
+		Statements:  int32(failure.Statements), // Bounded by maxMigrationStatements.
+		SQLState:    failure.SQLState,
+		ErrorNumber: int32(failure.ErrorNumber), // At most 65535.
+	}
+}
+
 func failureIn(report dataplane.MigrationRunReport, version int64) *dataplane.MigrationRunFailure {
 	if report.Failure == nil || report.Failure.Version != version {
 		return nil
