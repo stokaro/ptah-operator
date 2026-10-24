@@ -202,6 +202,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:65cf58487b3cd67ca92bbc8c04e3c3c035d15f94cd7e7aff6af7cb97ad23442b",
       "reason": "Name the Git source where the API's doc comments list a schema's and a migration's sources, and where they say verificationPolicyFrom is refused beside it. Only comments in api/v1alpha1 changed; the runner's modes, commands, payloads, result frames, delivery identity, SQL authority and retry limits are as they were."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:84ec81ed215db29edeec0e393f3770557fdc848f5d1c6965cdd1c5387a71f848",
+      "reason": "Keep a bounded journal of lifecycle events in each resource's status (#725). The API gains status.journal on PtahSchema and PtahMigration and status.lastRun.failure on PtahMigration, which the manager writes from transitions it already records. The runner neither reads nor writes either; its modes, commands, payloads, result frames, delivery identity, SQL authority and retry limits are as they were."
     }
   ]
 }
