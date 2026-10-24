@@ -218,6 +218,18 @@ func TestSchemaEntriesRecordEachTransitionOnce(t *testing.T) {
 			}},
 		},
 		{
+			// An Apply whose outcome nobody could prove spends the approval;
+			// the operator reads the database again and the same plan comes
+			// back for a fresh one. It was created before the Apply, so the
+			// entry is dated when it came back.
+			name:    "the plan back after an Apply of unknown outcome",
+			after:   operatorv1alpha1.PtahSchemaStatus{Plan: plan},
+			journal: journalWith(published("plan-a", -10*time.Minute), operatorv1alpha1.JournalEntry{Type: operatorv1alpha1.JournalApplyFinished, At: at(-5 * time.Minute), Outcome: operatorv1alpha1.JournalUnknown}),
+			want: []operatorv1alpha1.JournalEntry{{
+				Type: operatorv1alpha1.JournalPlanPublished, At: at(0), Plan: "plan-a", Statements: 3, Destructive: true,
+			}},
+		},
+		{
 			// The plan an Apply ran stays in status until its proof settles,
 			// and the writes in between name it again.
 			name:    "the applied plan, written again before its proof settles",

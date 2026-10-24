@@ -93,7 +93,7 @@ func SchemaEntries(before, after *operatorv1alpha1.PtahSchemaStatus, journal *op
 	var entries []operatorv1alpha1.JournalEntry
 	if plan := after.Plan; plan != nil && (before.Plan == nil || before.Plan.Name != plan.Name) && !planRecorded(journal, plan.Name) {
 		entries = append(entries, operatorv1alpha1.JournalEntry{
-			Type: operatorv1alpha1.JournalPlanPublished, At: orNow(plan.CreatedAt, now),
+			Type: operatorv1alpha1.JournalPlanPublished, At: publishedAt(plan.CreatedAt, journal, now),
 			Plan: plan.Name, Statements: plan.StatementCount, Destructive: plan.Destructive,
 		})
 	}
@@ -282,6 +282,18 @@ func runOutcome(outcome operatorv1alpha1.MigrationRunOutcome) operatorv1alpha1.J
 	default:
 		return operatorv1alpha1.JournalUnknown
 	}
+}
+
+// publishedAt dates a schema plan's publication. A plan is first published as
+// it is created, so its creation dates it. One that comes back to status
+// after the journal recorded something later, such as the Apply of a plan
+// whose outcome nobody could prove, is published again now: its creation
+// would date the entry before what the journal already holds.
+func publishedAt(created metav1.Time, journal *operatorv1alpha1.LifecycleJournal, now time.Time) metav1.Time {
+	if journal != nil && len(journal.Entries) > 0 && latest(journal.Entries[len(journal.Entries)-1]).After(created.Time) {
+		return metav1.NewTime(now)
+	}
+	return orNow(created, now)
 }
 
 func orNow(at metav1.Time, now time.Time) metav1.Time {

@@ -47,13 +47,15 @@ func TestApprovedApplyJournaledReadsThePlansLifeInOrder(t *testing.T) {
 	}
 	// The unsupported-runner row: the first approval is spent on an Apply the
 	// runner refused, whose outcome nobody can prove, and a fresh approval of
-	// the same plan applies it.
+	// the same plan applies it. The operator puts the plan back before the
+	// proof settles, in this order, as the Kubernetes 1.35 schema-approvals
+	// job 120972718286 of run 40123087447 printed it.
 	respent := []ptahv1alpha1.JournalEntry{
 		entry(ptahv1alpha1.JournalPlanPublished, "plan-a", 1, ""),
 		approval("old", 2),
 		apply("plan-a", 4, ptahv1alpha1.JournalUnknown, 3),
-		entry(ptahv1alpha1.JournalVerified, "plan-a", 5, ptahv1alpha1.JournalDriftRemains),
-		entry(ptahv1alpha1.JournalPlanPublished, "plan-a", 6, ""),
+		entry(ptahv1alpha1.JournalPlanPublished, "plan-a", 5, ""),
+		entry(ptahv1alpha1.JournalVerified, "plan-a", 6, ptahv1alpha1.JournalDriftRemains),
 		approval("current", 7),
 		apply("plan-a", 9, ptahv1alpha1.JournalSucceeded, 8),
 		entry(ptahv1alpha1.JournalVerified, "plan-a", 10, ptahv1alpha1.JournalInSync),
@@ -82,11 +84,12 @@ func TestApprovedApplyJournaledReadsThePlansLifeInOrder(t *testing.T) {
 		{"a proof that found drift", with(life[0], life[1], life[2], entry(ptahv1alpha1.JournalVerified, "plan-a", 5, ptahv1alpha1.JournalDriftRemains)), `as "DriftRemains"`},
 		{"an Apply that ended before it began", with(life[0], life[1], apply("plan-a", 4, ptahv1alpha1.JournalSucceeded, 6), life[3]), "did not start before"},
 		{"an unproven Apply under the last approval, retried without one", with(respent[0], respent[1], respent[2], respent[6], respent[7]), `as "Unknown"`},
+		{"a plan published again after an unproven Apply, applied without a fresh approval", with(respent[0], respent[1], respent[2], respent[3], respent[4], respent[6], respent[7]), `as "Unknown"`},
 		{"an approval of a plan never published", with(life[1], life[2], life[3]), "never published"},
 		{"no approval", with(life[0], life[2], life[3]), "stops before ApprovalAccepted"},
 		{"a fresh approval nothing applied", with(append(respent[:6:6], respent[7])...), "stops before ApplyFinished"},
-		{"a plan published again after its Apply", with(life[0], life[1], life[2], life[0], life[3]), "again before a proof settled it"},
-		{"a plan published again before its approval", with(life[0], life[0], life[1], life[2], life[3]), "again before a proof settled it"},
+		{"a plan published again after its Apply succeeded", with(life[0], life[1], life[2], life[0], life[3]), "nothing carried out or replaced since"},
+		{"a plan published again before its approval", with(life[0], life[0], life[1], life[2], life[3]), "nothing carried out or replaced since"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -114,7 +117,7 @@ func TestApprovedApplyJournaledRefusesThePlanItsApplyPublishedAgain(t *testing.T
 	}
 	plan := schema.Status.Applied.PlanRef.Name
 	journal := schema.Status.Journal
-	if err := approvedApplyJournaled(journal, plan); err == nil || !strings.Contains(err.Error(), "again before a proof settled it") {
+	if err := approvedApplyJournaled(journal, plan); err == nil || !strings.Contains(err.Error(), "nothing carried out or replaced since") {
 		t.Fatalf("approvedApplyJournaled(reading) = %v, want the repeated publication refused", err)
 	}
 	once := journal.DeepCopy()

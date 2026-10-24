@@ -16,24 +16,30 @@ import (
 // of another plan in between is not part of it, and an Apply that ended before
 // it began is a record nobody wrote from a run.
 //
-// The plan is published once until a proof settles it or another plan
-// replaces it. A publication again before that is the plan its Apply left in
-// status, recorded by a later write that only named it again.
+// The plan is published again only once something carried it out or another
+// plan replaced it: an Apply of unknown outcome spends its approval, and the
+// operator puts the same plan back for a fresh one. It is never published
+// again between an Apply that succeeded and the proof after it, where status
+// still names it and every write names it again.
 func approvedApplyJournaled(journal *ptahv1alpha1.LifecycleJournal, plan string) error {
 	if journal == nil {
 		return fmt.Errorf("the schema keeps no journal")
 	}
-	open := false
+	waiting, applied := false, false
 	for _, entry := range journal.Entries {
+		mine := entry.Plan == plan
 		switch {
-		case entry.Type == ptahv1alpha1.JournalPlanPublished && entry.Plan == plan:
-			if open {
-				return fmt.Errorf("the journal publishes plan %s again before a proof settled it: %s", plan, journalOf(journal, plan))
+		case entry.Type == ptahv1alpha1.JournalPlanPublished && mine:
+			if waiting || applied {
+				return fmt.Errorf("the journal publishes plan %s again with nothing carried out or replaced since: %s", plan, journalOf(journal, plan))
 			}
-			open = true
-		case entry.Type == ptahv1alpha1.JournalPlanPublished,
-			entry.Type == ptahv1alpha1.JournalVerified && entry.Plan == plan:
-			open = false
+			waiting = true
+		case entry.Type == ptahv1alpha1.JournalPlanPublished:
+			waiting, applied = false, false
+		case entry.Type == ptahv1alpha1.JournalApplyFinished && mine:
+			waiting, applied = false, entry.Outcome == ptahv1alpha1.JournalSucceeded
+		case entry.Type == ptahv1alpha1.JournalVerified && mine:
+			applied = false
 		}
 	}
 	approved := -1
