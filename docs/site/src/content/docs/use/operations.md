@@ -1336,6 +1336,20 @@ and it is a statement that nothing is executing against that database any more.
 The operator does not perform automatic rollback. Repair the desired artifact
 or database deliberately, then let observation produce a new plan.
 
+Observation reads the database at the resource's next interval. To read it as
+soon as no operation is running instead, after a repair, annotate the resource
+with the time of the request:
+
+```bash
+kubectl annotate ptahschema storefront \
+  operator.ptah.run/read-requested-at="$(date -u +%Y-%m-%dT%H:%M:%SZ)" --overwrite
+```
+
+`status.lastReadRequest` shows the request once it is answered. It never
+starts an Apply and never shortens a retry delay; [Reading again on
+request](../../reference/reconciliation/#reading-again-on-request) has the
+rules.
+
 ## A migration run nobody accounted for
 
 A `PtahMigration` whose Apply ended `Partial` or `Unknown` records the run in

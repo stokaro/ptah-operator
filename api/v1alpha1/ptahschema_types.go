@@ -856,6 +856,15 @@ type PtahSchemaStatus struct {
 	// sooner.
 	NextReconciliationTime *metav1.Time `json:"nextReconciliationTime,omitempty"`
 
+	// LastReadRequest is the last value of the operator.ptah.run/read-requested-at
+	// annotation the controller answered, so an answered request is not
+	// answered again. A value longer than MaxReadRequestLength is recorded as
+	// its SHA-256 digest, and a value that is not an RFC 3339 instant is
+	// recorded with a Warning Event and starts nothing.
+	// +optional
+	// +kubebuilder:validation:MaxLength=71
+	LastReadRequest string `json:"lastReadRequest,omitempty"`
+
 	// Conditions are the readable verdicts: whether the engine is supported,
 	// the artifact resolved and verified, the database was reachable, drift was
 	// found, a plan is ready, an approval is required, the schema is in sync,

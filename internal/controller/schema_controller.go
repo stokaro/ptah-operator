@@ -297,6 +297,12 @@ func (r *SchemaReconciler) reconcile(ctx context.Context, request ctrl.Request) 
 		// cycle that follows reaches the same plan.
 		return r.claim(ctx, schema, operatorv1alpha1.OperationResolve)
 	}
+	if request := readRequestOf(schema.Annotations, schema.Status.LastReadRequest); request.pending {
+		on := schemaReadOnRequest(schema.Status.Phase, due(schema.Status.NextReconciliationTime, now))
+		if on.answer || !request.instant {
+			return r.answerReadRequest(ctx, schema, request, on.schedule)
+		}
+	}
 
 	switch schema.Status.Phase {
 	case operatorv1alpha1.PhaseVerifying:
@@ -335,6 +341,36 @@ func (r *SchemaReconciler) reconcile(ctx context.Context, request ctrl.Request) 
 	// A changed desired reference or a regular interval always starts with a
 	// fresh resolution. This is what makes mutable tags observable.
 	return r.claim(ctx, schema, operatorv1alpha1.OperationResolve)
+}
+
+// answerReadRequest records a read request as answered. One that is an
+// instant and may bring the next read forward does, so the pass after this
+// one starts the read the interval would have started; one that is not an
+// instant starts nothing and says so once.
+func (r *SchemaReconciler) answerReadRequest(
+	ctx context.Context,
+	schema *operatorv1alpha1.PtahSchema,
+	request readRequest,
+	schedule bool,
+) (ctrl.Result, error) {
+	before := schema.DeepCopy()
+	schema.Status.LastReadRequest = request.token
+	scheduled := request.instant && schedule
+	if scheduled {
+		now := metav1.NewTime(r.now())
+		schema.Status.NextReconciliationTime = &now
+	}
+	if err := r.patchStatus(ctx, before, schema); err != nil {
+		return ctrl.Result{}, err
+	}
+	switch {
+	case !request.instant:
+		r.event(schema, corev1.EventTypeWarning, "ReadRequestInvalid",
+			"%s is %q, which is not an RFC 3339 instant; no read was started", operatorv1alpha1.ReadRequestAnnotation, request.token)
+	case scheduled:
+		r.event(schema, corev1.EventTypeNormal, "ReadRequested", "A read was requested; it starts now")
+	}
+	return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
 }
 
 // schemaRealmBlocked refuses a claim the realm census does not allow: a
@@ -4153,7 +4189,7 @@ func (r *SchemaReconciler) SetupWithManager(manager ctrl.Manager) error {
 		UpdateFunc: func(update event.UpdateEvent) bool {
 			return update.ObjectOld.GetDeletionTimestamp() == nil && update.ObjectNew.GetDeletionTimestamp() != nil
 		},
-	})
+	}, readRequestChanged())
 	return ctrl.NewControllerManagedBy(manager).
 		WithOptions(queueOptions()).
 		For(&operatorv1alpha1.PtahSchema{}, builder.WithPredicates(primaryEvents)).
