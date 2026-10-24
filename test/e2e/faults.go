@@ -51,6 +51,21 @@ const (
 	// heartbeatFailureLimit is how many rounds in a row may fail before the
 	// heartbeat reports that it could not write.
 	heartbeatFailureLimit = 3
+	// heartbeatAckRetention is how many acknowledged writes the heartbeat
+	// keeps per watched kind: more than a watch delivery bound's worth of
+	// rounds, so the newest write past the bound is always among them.
+	heartbeatAckRetention = 32
+	// watchDeliveryBound is how long a watch may take to deliver a write the
+	// API server acknowledged. A watch served from a current cache delivers
+	// it within moments. One that has not after a whole segment is served by
+	// an API server that stopped delivering, and a barrier waiting on it
+	// would wait for its full bound and name nothing.
+	watchDeliveryBound = watchSegmentSeconds * time.Second
+	// watchSegmentOverrun is how long past its requested end a watch segment
+	// may run before it counts as hung: the API server ends the request at
+	// watchSegmentSeconds, and a stream that outlives that by a delivery
+	// bound is no longer being served.
+	watchSegmentOverrun = watchSegmentSeconds*time.Second + watchDeliveryBound
 )
 
 // The objects and keys the fault injection reads and writes.
@@ -88,6 +103,39 @@ var (
 type watchEvent[T client.Object] struct {
 	Type   watch.EventType
 	Object T
+}
+
+// watchAck is a write the API server acknowledged to the heartbeat. A watch
+// of the object's collection owes the event with exactly this
+// resourceVersion.
+type watchAck struct {
+	UID             types.UID
+	ResourceVersion string
+	At              time.Time
+}
+
+// withheldAck is the newest write acknowledged more than bound before now
+// that the history does not hold. A watch delivers events in the order the
+// API server applied them, so a history that holds a write holds every write
+// before it, and only the newest owed one has to be looked for.
+func withheldAck[T client.Object](events []watchEvent[T], acks []watchAck, now time.Time, bound time.Duration) (watchAck, bool) {
+	var owed watchAck
+	found := false
+	for _, ack := range acks {
+		if now.Sub(ack.At) > bound && (!found || ack.At.After(owed.At)) {
+			owed, found = ack, true
+		}
+	}
+	if !found {
+		return watchAck{}, false
+	}
+	for index := len(events) - 1; index >= 0; index-- {
+		object := events[index].Object
+		if object.GetUID() == owed.UID && object.GetResourceVersion() == owed.ResourceVersion {
+			return watchAck{}, false
+		}
+	}
+	return owed, true
 }
 
 // uidIs is an object whose UID is the one given. An empty UID names nothing,

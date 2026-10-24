@@ -60,6 +60,14 @@ type watchRecorder[T client.Object] struct {
 	failure  error
 	stopping atomic.Bool
 	done     chan struct{}
+
+	// heartbeat is the heartbeat writing to this collection, once one runs.
+	// Every write it had acknowledged is owed by the watch within
+	// watchDeliveryBound.
+	heartbeat atomic.Pointer[heartbeat]
+	// segmentStarted is when the current watch request was sent, in Unix
+	// nanoseconds, and zero between requests.
+	segmentStarted atomic.Int64
 }
 
 // startRecorder reads the collection straight from the API server, which
@@ -101,6 +109,9 @@ func (r *watchRecorder[T]) run(resourceVersion string) {
 		if last != "" {
 			resourceVersion = last
 		}
+		if err == nil {
+			err = r.withheld(count, resourceVersion)
+		}
 		switch {
 		case err != nil:
 			r.fail(err)
@@ -126,6 +137,8 @@ func (r *watchRecorder[T]) run(resourceVersion string) {
 // 410 and fails the recorder, and a drop before any event is a segment that
 // made no progress.
 func (r *watchRecorder[T]) segment(resourceVersion string) (count int, last string, err error) {
+	r.segmentStarted.Store(time.Now().UnixNano())
+	defer r.segmentStarted.Store(0)
 	timeout := int64(watchSegmentSeconds)
 	stream, err := r.watcher.Watch(r.ctx, r.newList(), &client.ListOptions{
 		Namespace: r.namespace,
@@ -152,6 +165,24 @@ func (r *watchRecorder[T]) segment(resourceVersion string) (count int, last stri
 		count++
 	}
 	return count, last, nil
+}
+
+// withheld is an error when a segment ended without a write the heartbeat
+// had acknowledged more than watchDeliveryBound earlier. The API server
+// serving this watch then stopped delivering events while the cluster went
+// on accepting writes, and the history can never cross a barrier written
+// after them.
+func (r *watchRecorder[T]) withheld(count int, resourceVersion string) error {
+	h := r.heartbeat.Load()
+	if h == nil {
+		return nil
+	}
+	owed, withheld := withheldAck(r.snapshot(), h.acknowledged(r.name), time.Now(), watchDeliveryBound)
+	if !withheld {
+		return nil
+	}
+	return fmt.Errorf("the API server serving the %s watch has not delivered the heartbeat write it acknowledged %s ago at resourceVersion %s; the segment that ended delivered %d events and left the watch at resourceVersion %s",
+		r.name, time.Since(owed.At).Round(time.Second), owed.ResourceVersion, count, resourceVersion)
 }
 
 func (r *watchRecorder[T]) fail(err error) {
@@ -190,8 +221,17 @@ func (r *watchRecorder[T]) alive() error {
 	case r.exited():
 		return fmt.Errorf("the %s resourceVersion watch exited before the assertions completed", r.name)
 	}
+	if started := r.segmentStarted.Load(); started != 0 {
+		if running := time.Since(time.Unix(0, started)); running > watchSegmentOverrun {
+			return fmt.Errorf("the %s watch request has run %s, past the %ds the API server was asked to end it at",
+				r.name, running.Round(time.Second), watchSegmentSeconds)
+		}
+	}
 	return nil
 }
+
+// follow holds the watch to the writes the heartbeat has acknowledged.
+func (r *watchRecorder[T]) follow(h *heartbeat) { r.heartbeat.Store(h) }
 
 // requestStop lets the current segment run to its natural end and starts no
 // other.
@@ -268,15 +308,27 @@ func (f *faultRun) startWatchesWithMode(quiet bool) {
 // stopped or reported an error.
 func (f *faultRun) assertWatchesAlive() {
 	f.t.Helper()
-	if f.heartbeat != nil && !f.heartbeatStopped {
-		if f.heartbeat.exited() {
-			f.fatalf("the Kubernetes watch heartbeat exited before the assertions completed: %v", f.heartbeat.failure())
-		}
-	}
+	f.assertHeartbeatAlive()
 	for _, r := range f.recorders {
 		if err := r.alive(); err != nil {
 			f.fatalf("%v", err)
 		}
+	}
+}
+
+// assertWatchAlive is assertWatchesAlive for the one watch a wait reads.
+func (f *faultRun) assertWatchAlive(r recorder) {
+	f.t.Helper()
+	f.assertHeartbeatAlive()
+	if err := r.alive(); err != nil {
+		f.fatalf("%v", err)
+	}
+}
+
+func (f *faultRun) assertHeartbeatAlive() {
+	f.t.Helper()
+	if f.heartbeat != nil && !f.heartbeatStopped && f.heartbeat.exited() {
+		f.fatalf("the Kubernetes watch heartbeat exited before the assertions completed: %v", f.heartbeat.failure())
 	}
 }
 
@@ -312,11 +364,17 @@ func establishBarrierWithPoll[T client.Object](f *faultRun, r *watchRecorder[T],
 	object.SetName(name)
 	f.check(f.annotate(f.ctx, object, annotationWatchBarrier, marker), "annotate %s %s for the %s watch barrier", r.name, name, r.name)
 	uid, resourceVersion := string(object.GetUID()), object.GetResourceVersion()
-	poll(fmt.Sprintf("the %s watch to cross its exact API resourceVersion barrier", r.name), func() bool {
-		return slices.ContainsFunc(r.snapshot(), func(event watchEvent[T]) bool {
+	poll(fmt.Sprintf("the %s watch to cross its exact API resourceVersion barrier at %s", r.name, resourceVersion), func() bool {
+		crossed := slices.ContainsFunc(r.snapshot(), func(event watchEvent[T]) bool {
 			return uidIs(event.Object, uid) && event.Object.GetResourceVersion() == resourceVersion &&
 				annotationIs(event.Object, annotationWatchBarrier, marker)
 		})
+		// A watch that stopped can never cross the barrier, so the wait ends
+		// with why it stopped rather than at its bound.
+		if !crossed {
+			f.assertWatchAlive(r)
+		}
+		return crossed
 	})
 }
 
@@ -334,6 +392,30 @@ type heartbeat struct {
 	cancel   context.CancelFunc
 	done     chan struct{}
 	err      error
+
+	mu sync.Mutex
+	// acks is the newest writes the API server acknowledged, by the name of
+	// the watch that owes them, oldest first and at most
+	// heartbeatAckRetention of them.
+	acks map[string][]watchAck
+}
+
+// record keeps the write the API server returned object from.
+func (h *heartbeat) record(watch string, object client.Object, at time.Time) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	acks := append(h.acks[watch], watchAck{UID: object.GetUID(), ResourceVersion: object.GetResourceVersion(), At: at})
+	if len(acks) > heartbeatAckRetention {
+		acks = slices.Clone(acks[len(acks)-heartbeatAckRetention:])
+	}
+	h.acks[watch] = acks
+}
+
+// acknowledged is the writes the watch named owes, oldest first.
+func (h *heartbeat) acknowledged(watch string) []watchAck {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return slices.Clone(h.acks[watch])
 }
 
 func (h *heartbeat) exited() bool {
@@ -371,6 +453,19 @@ func (h *heartbeat) await(timeout time.Duration) bool {
 	}
 }
 
+// heartbeatTarget is one object the heartbeat writes to, named by the watch
+// that owes the heartbeat the event of every write.
+type heartbeatTarget struct {
+	watch  string
+	object func() client.Object
+}
+
+// heartbeatFollower is a watch the heartbeat can hold to its writes.
+type heartbeatFollower interface {
+	stem() string
+	follow(*heartbeat)
+}
+
 // createHeartbeatLease creates the Lease the heartbeat writes to in the
 // release namespace, the one watched namespace the phase owns no object in.
 func (f *faultRun) createHeartbeatLease() {
@@ -394,23 +489,37 @@ func (f *faultRun) startHeartbeat() {
 	}
 	pod := f.databasePod()
 	test := f.in.TestNamespace
-	targets := []func() client.Object{
-		func() client.Object { return objectNamed(&batchv1.Job{}, test, f.heartbeatJobName()) },
-		func() client.Object { return objectNamed(&corev1.Pod{}, test, pod) },
-		func() client.Object { return objectNamed(&ptahv1alpha1.PtahSchema{}, test, heartbeatSchema) },
-		func() client.Object { return objectNamed(&ptahv1alpha1.PtahSchemaApproval{}, test, heartbeatApproval) },
-		func() client.Object {
+	targets := []heartbeatTarget{
+		{"jobs", func() client.Object { return objectNamed(&batchv1.Job{}, test, f.heartbeatJobName()) }},
+		{"pods", func() client.Object { return objectNamed(&corev1.Pod{}, test, pod) }},
+		{"schemas", func() client.Object { return objectNamed(&ptahv1alpha1.PtahSchema{}, test, heartbeatSchema) }},
+		{"approvals", func() client.Object {
+			return objectNamed(&ptahv1alpha1.PtahSchemaApproval{}, test, heartbeatApproval)
+		}},
+		{"leases", func() client.Object {
 			return objectNamed(&coordinationv1.Lease{}, f.in.OperatorNamespace, f.heartbeatLeaseName())
-		},
+		}},
 	}
 	for _, target := range targets {
-		object := target()
+		object := target.object()
 		f.check(f.cluster.Client.Get(f.ctx, client.ObjectKeyFromObject(object), object),
 			"read %T %s the heartbeat writes to", object, object.GetName())
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	h := &heartbeat{cancel: cancel, done: make(chan struct{})}
+	h := &heartbeat{cancel: cancel, done: make(chan struct{}), acks: map[string][]watchAck{}}
 	f.heartbeat = h
+	for _, target := range targets {
+		followed := false
+		for _, r := range f.recorders {
+			if follower, ok := r.(heartbeatFollower); ok && follower.stem() == target.watch {
+				follower.follow(h)
+				followed = true
+			}
+		}
+		if !followed {
+			f.fatalf("the heartbeat writes to the %s collection and no watch of it follows the heartbeat", target.watch)
+		}
+	}
 	go func() {
 		defer close(h.done)
 		defer cancel()
@@ -423,8 +532,10 @@ func (f *faultRun) startHeartbeat() {
 				round.Go(func() {
 					write, done := context.WithTimeout(ctx, 8*time.Second)
 					defer done()
-					object := target()
-					errs[index] = f.annotate(write, object, annotationWatchHeartbeat, marker)
+					object := target.object()
+					if errs[index] = f.annotate(write, object, annotationWatchHeartbeat, marker); errs[index] == nil {
+						h.record(target.watch, object, time.Now())
+					}
 				})
 			}
 			round.Wait()

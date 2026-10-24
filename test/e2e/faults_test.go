@@ -160,6 +160,64 @@ func TestFaultBoundsHoldTogether(t *testing.T) {
 	if wait := waitTimeout; wait < time.Duration(timeoutDeadline+60)*time.Second {
 		t.Errorf("a wait of %s leaves less than 60 seconds after the %d-second timeout deadline", wait, timeoutDeadline)
 	}
+	// A watch is checked at the end of each segment, so the newest write past
+	// the delivery bound has to still be retained a whole segment later.
+	segment := time.Duration(watchSegmentSeconds) * time.Second
+	if retained := time.Duration(heartbeatAckRetention) * heartbeatInterval; retained < watchDeliveryBound+segment+heartbeatInterval {
+		t.Errorf("the heartbeat keeps %s of acknowledged writes, less than the %s a watch is checked within", retained, watchDeliveryBound+segment+heartbeatInterval)
+	}
+	if watchSegmentOverrun <= segment {
+		t.Errorf("a watch request counts as hung after %s, no later than the %s the API server ends it at", watchSegmentOverrun, segment)
+	}
+	// A watch that stopped delivering has to be named before a barrier's wait
+	// ends, or the wait reports only that it timed out.
+	if detected := watchDeliveryBound + segment; detected >= waitTimeout/2 {
+		t.Errorf("a withheld write is named %s after it was acknowledged, not well within the %s a barrier waits", detected, waitTimeout)
+	}
+}
+
+// A watch owes the newest write the API server acknowledged more than the
+// bound ago. The history passes when it holds that write, and fails on the
+// mistakes a check of it could make: looking at an older write, at a write
+// still within the bound, or at a write by its resourceVersion or UID alone.
+func TestWithheldAckFindsTheNewestOwedWrite(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 10, 24, 7, 40, 0, 0, time.UTC)
+	bound := 30 * time.Second
+	ack := func(uid, resourceVersion string, age time.Duration) watchAck {
+		return watchAck{UID: types.UID(uid), ResourceVersion: resourceVersion, At: now.Add(-age)}
+	}
+	event := func(uid, resourceVersion string) watchEvent[*batchv1.Job] {
+		return watchEvent[*batchv1.Job]{Type: watch.Modified, Object: &batchv1.Job{ObjectMeta: metav1.ObjectMeta{
+			UID: types.UID(uid), ResourceVersion: resourceVersion,
+		}}}
+	}
+	bookmark := watchEvent[*batchv1.Job]{Type: watch.Bookmark, Object: &batchv1.Job{ObjectMeta: metav1.ObjectMeta{ResourceVersion: "120"}}}
+	acks := []watchAck{ack("job", "100", 60*time.Second), ack("job", "110", 40*time.Second), ack("job", "120", 10*time.Second)}
+	for _, test := range []struct {
+		name     string
+		events   []watchEvent[*batchv1.Job]
+		acks     []watchAck
+		withheld string
+	}{
+		{name: "the newest owed write delivered", events: []watchEvent[*batchv1.Job]{event("job", "100"), event("job", "110")}, acks: acks},
+		{name: "a write within the bound is not owed yet", events: []watchEvent[*batchv1.Job]{event("job", "110")}, acks: acks},
+		{name: "no acknowledged write", events: nil, acks: nil},
+		{name: "a write acknowledged within the bound only", events: nil, acks: acks[2:]},
+		{name: "nothing delivered", events: nil, acks: acks, withheld: "110"},
+		{name: "only an older owed write delivered", events: []watchEvent[*batchv1.Job]{event("job", "100")}, acks: acks, withheld: "110"},
+		{name: "the resourceVersion on another object", events: []watchEvent[*batchv1.Job]{event("other", "110")}, acks: acks, withheld: "110"},
+		{name: "the object at another resourceVersion", events: []watchEvent[*batchv1.Job]{event("job", "111")}, acks: acks, withheld: "110"},
+		{name: "a bookmark past the write is not its event", events: []watchEvent[*batchv1.Job]{bookmark}, acks: acks, withheld: "110"},
+	} {
+		owed, withheld := withheldAck(test.events, test.acks, now, bound)
+		switch {
+		case test.withheld == "" && withheld:
+			t.Errorf("%s: withheld %+v, want none", test.name, owed)
+		case test.withheld != "" && (!withheld || owed.ResourceVersion != test.withheld):
+			t.Errorf("%s: withheld %+v (%t), want the write at %s", test.name, owed, withheld, test.withheld)
+		}
+	}
 }
 
 func TestFaultObjectMatchesNeedAPresentValue(t *testing.T) {
