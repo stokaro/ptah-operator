@@ -172,6 +172,46 @@ func TestRenderJSONIsAStructuredView(t *testing.T) {
 	}
 }
 
+// A migration read from a ConfigMap names the ConfigMap and the snapshot every
+// operation reads. Before the view knew the other kinds, its JSON carried an
+// empty artifact reference and digest for one.
+func TestRenderNamesAConfigMapSourceAndItsSnapshot(t *testing.T) {
+	t.Parallel()
+
+	content := "sha256:" + strings.Repeat("c", 64)
+	migration, plan := fixture()
+	migration.Status.Artifact = &operatorv1alpha1.SourceAccessBinding{Snapshot: &operatorv1alpha1.SourceSnapshotBinding{
+		Name: "ptah-src-0a1b2c3d4e5f6a7b8c9d0e1f", UID: types.UID("snapshot-uid"), ContentDigest: content,
+	}}
+	migration.Status.ConfigMap = &operatorv1alpha1.ConfigMapSourceRevision{Name: "orders-migrations", UID: types.UID("cm-uid")}
+	view, err := migrationview.Load(context.Background(), readerWith(t, migration, plan), "team-a", "orders")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var text, document strings.Builder
+	if err := migrationview.Render(&text, view, migrationview.Text); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrationview.Render(&document, view, migrationview.JSON); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"Source:         ConfigMap orders-migrations\n",
+		"Snapshot:       ptah-src-0a1b2c3d4e5f6a7b8c9d0e1f\n",
+		"Content:        " + content + "\n",
+	} {
+		if !strings.Contains(text.String(), want) {
+			t.Fatalf("text view is missing %q:\n%s", want, text.String())
+		}
+	}
+	if strings.Contains(text.String(), "Artifact:") {
+		t.Fatalf("a ConfigMap source printed an artifact:\n%s", text.String())
+	}
+	if !strings.Contains(document.String(), `"kind": "ConfigMap"`) || strings.Contains(document.String(), `"reference"`) {
+		t.Fatalf("json view does not name the ConfigMap source alone:\n%s", document.String())
+	}
+}
+
 func TestRenderRefusesAnUnknownFormat(t *testing.T) {
 	t.Parallel()
 

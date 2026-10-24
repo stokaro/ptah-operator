@@ -51,8 +51,8 @@ func renderText(out io.Writer, view View) error {
 	if view.Suspended {
 		field("Suspended", "true")
 	}
-	if view.Artifact != nil {
-		field("Artifact", view.Artifact.Reference)
+	for _, line := range view.Artifact.Fields() {
+		field(line.Name, line.Value)
 	}
 	if history := view.History; history != nil {
 		field("History read", history.ObservedAt.UTC().Format("2006-01-02T15:04:05Z"))

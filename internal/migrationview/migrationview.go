@@ -14,6 +14,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/sourceview"
 )
 
 // ErrMigrationNotFound is returned when the named PtahMigration is not there.
@@ -34,11 +35,9 @@ type View struct {
 	Conditions []ConditionView `json:"conditions,omitempty"`
 }
 
-// ArtifactView is the resolved, credential-free source binding.
-type ArtifactView struct {
-	Reference string `json:"reference"`
-	Digest    string `json:"digest"`
-}
+// ArtifactView is the resolved, credential-free source binding: an OCI
+// artifact, a ConfigMap and its snapshot, or a Git commit.
+type ArtifactView = sourceview.View
 
 // HistoryView is what the revision table said when it was last read.
 type HistoryView struct {
@@ -124,9 +123,7 @@ func Load(
 		Phase:     string(migration.Status.Phase),
 		Suspended: migration.Spec.Suspend,
 	}
-	if artifact := migration.Status.Artifact; artifact != nil {
-		view.Artifact = &ArtifactView{Reference: artifact.ResolvedReference, Digest: artifact.Digest}
-	}
+	view.Artifact = sourceview.FromMigration(migration.Status.Artifact, migration.Status.ConfigMap, migration.Status.SourcePolicy)
 	if history := migration.Status.History; history != nil {
 		view.History = &HistoryView{
 			ObservedAt:         history.ObservedAt,

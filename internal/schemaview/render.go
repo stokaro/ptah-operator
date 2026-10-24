@@ -56,11 +56,8 @@ func renderText(out io.Writer, view View) error {
 	if view.Suspended {
 		field("Suspended", "true")
 	}
-	if source := view.Source; source != nil {
-		field("Artifact", source.Reference)
-		if source.Verified {
-			field("Verified", "true")
-		}
+	for _, line := range view.Source.Fields() {
+		field(line.Name, line.Value)
 	}
 	renderObservation(&text, view.Observation)
 	for _, condition := range view.Conditions {
