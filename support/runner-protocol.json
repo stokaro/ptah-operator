@@ -197,6 +197,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:019ff2b3f40fec038ef3a144601f33c8a1976ea8cb2338cba07721e555c446ff",
       "reason": "Name a Git commit beside a ConfigMap where the API's doc comments describe plan contract version 2. Only comments in api/v1alpha1 changed; the runner's modes, commands, payloads, result frames, delivery identity, SQL authority and retry limits are as they were."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:65cf58487b3cd67ca92bbc8c04e3c3c035d15f94cd7e7aff6af7cb97ad23442b",
+      "reason": "Name the Git source where the API's doc comments list a schema's and a migration's sources, and where they say verificationPolicyFrom is refused beside it. Only comments in api/v1alpha1 changed; the runner's modes, commands, payloads, result frames, delivery identity, SQL authority and retry limits are as they were."
     }
   ]
 }

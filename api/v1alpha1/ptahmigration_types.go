@@ -249,9 +249,9 @@ type PtahMigrationSpec struct {
 	Target DatabaseTargetSpec `json:"target"`
 
 	// Artifact is the migration directory this history is matched against:
-	// an OCI artifact or a ConfigMap. It reuses the schema path's source
-	// contract: fetching an artifact never hands registry credentials to the
-	// process that runs SQL.
+	// an OCI artifact, a ConfigMap or a Git repository. It reuses the schema
+	// path's source contract: fetching it never hands a registry or Git
+	// credential to the process that runs SQL.
 	Artifact SourceSpec `json:"artifact"`
 
 	// Policy decides what may run without a person: the apply mode, the
