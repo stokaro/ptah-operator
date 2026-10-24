@@ -53,6 +53,17 @@ the following.
 - `kubectl ptah schema` and `kubectl ptah migration` from this release show a
   ConfigMap or Git source. The 0.2.6 plugin shows no source for them.
 
+Each `PtahSchema` and `PtahMigration` now keeps a bounded journal of its
+lifecycle in `status.journal`: plans published, approvals accepted, Applies
+and runs with their start and end, verifications, acknowledgments, and failed
+attempts by reason, at most 64 entries and none more than 30 days older than
+the newest. `coveredSince` says from when it is complete, which on an upgraded
+resource is the manager's first status write after the upgrade.
+[Reconciliation](../../reference/reconciliation/#the-lifecycle-journal) lists
+each entry. A failed migration run now also names, in `status.lastRun.failure`,
+the version it stopped in, the statement's position and the engine's SQLSTATE
+or error number, never the engine's message.
+
 A Plan whose publication the API server refuses, by admission, quota, RBAC or
 size, now fails with the reason `PlanPublicationRefused` and the refusal in its
 message. 0.2.6 retried it until the Plan Job was gone and then reported the Job
