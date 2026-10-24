@@ -16,6 +16,51 @@ release that says so, and this is where it is said. A version that asks
 nothing of you says so in as many words, rather than leaving you to read it
 out of silence.
 
+## 0.2.7
+
+**Before you upgrade.** The manager image is new, so keep `--force-conflicts`
+on the upgrade. Resources with an OCI source need nothing else.
+
+- **Approvals.** The executor is now Ptah v0.15.0. As in 0.2.6, a new
+  executor retires the execution binding: a plan waiting for approval is
+  planned again and needs a new approval, and each resource reads its database
+  again with the new executor before it plans. Applied state is not touched.
+
+A schema or a migration sequence can now come from a ConfigMap in the
+resource's namespace or from a Git repository, beside an OCI artifact, and
+neither needs a registry. [Deliver from a ConfigMap or Git](../../use/sources/)
+shows both, with Kustomize and Helm. A namespace that uses one of them sees
+the following.
+
+- A ConfigMap source is copied into an immutable snapshot ConfigMap the
+  resource owns, named `ptah-src-<hash>`, which a ResourceQuota on
+  `count/configmaps` counts. The manager can now delete ConfigMaps for these,
+  and a new admission policy refuses it the deletion of any other ConfigMap.
+- A Git source is fetched by the Resolve Job and by an init container in every
+  later operation Pod, and only those containers hold the Git credential.
+  `examples/networkpolicy-egress.yaml` allows DNS, the registry and the
+  database, so a namespace that applies it has to allow the Git host as well.
+- A Git source pinned to a commit id is fetched by that id only from a server
+  that says it gives reachable commits by id, as GitHub, GitLab and Codeberg
+  do. Elsewhere it is refused once a push moves the branch past the commit; pin
+  a tag there. [Reconciliation](../../reference/reconciliation/) has the
+  details.
+- `sourcePolicyFrom` names an immutable ConfigMap that limits the ConfigMaps,
+  Git hosts and content size a resource's source may use.
+- A plan computed from a ConfigMap or a Git commit is written under plan
+  contract version 2, which a 0.2.6 manager refuses. Once a resource uses
+  either source, do not roll the manager back to 0.2.6.
+- `kubectl ptah schema` and `kubectl ptah migration` from this release show a
+  ConfigMap or Git source. The 0.2.6 plugin shows no source for them.
+
+A Plan whose publication the API server refuses, by admission, quota, RBAC or
+size, now fails with the reason `PlanPublicationRefused` and the refusal in its
+message. 0.2.6 retried it until the Plan Job was gone and then reported the Job
+missing.
+
+The operator image is built on ca-certificates 20250419+deb13u1, without the
+roots Debian distrusted in DSA-6572-1.
+
 ## 0.2.6
 
 **Before you upgrade.** The manager image is new, so keep `--force-conflicts`
