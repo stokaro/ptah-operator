@@ -186,7 +186,7 @@ class PublishedGuideTest(unittest.TestCase):
         page = self.read('support/releases.md')
         verify = ''.join(blocks(page, 'Verify before installation'))
         install = ''.join(blocks(page, 'Install by digest'))
-        self.assertIn('tag=v0.2.7\n', verify)
+        self.assertIn('tag=v0.2.8\n', verify)
         for variable in ('image', 'executor', 'ptah_version', 'version'):
             self.assertIn(f'{variable}=', verify)
         self.assertIn('helm upgrade --install ptah-operator', install)
