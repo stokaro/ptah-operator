@@ -158,4 +158,7 @@ func TestSchemaObservedOnRequestWaitsForTheReadToEnd(t *testing.T) {
 			}
 		})
 	}
+	if schemaObservedOnRequest(reading(func(*ptahv1alpha1.PtahSchema) {}), value, requested, requested.Add(30*time.Second)) {
+		t.Fatal("an observation after the interval's own read was taken for one the request caused")
+	}
 }
