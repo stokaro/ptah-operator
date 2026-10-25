@@ -14,6 +14,12 @@ import (
 // would: exactly one Observe Job, dated after the request and before the
 // interval's read, no Apply, and the same plan back at the gate, by name, UID
 // and fingerprint, for the approval the row creates next to apply.
+//
+// The wait ends when the read has: an observation recorded after the request
+// and the plan waiting again with no operation running. An Observe Job that
+// exists is not enough. Until it runs, the status still holds the gate the
+// read started from, and an approval created then is refused while the
+// schema is Observing.
 func (d *dataPlane) readRequestKeepsTheWaitingPlan(schema, digest, planName, planUID, fingerprint string) {
 	d.t.Helper()
 	waiting := &ptahv1alpha1.PtahSchema{}
@@ -33,9 +39,8 @@ func (d *dataPlane) readRequestKeepsTheWaitingPlan(schema, digest, planName, pla
 	}})
 	d.waitForSchema(schema, "its waiting plan back at the gate after a read on request", func(s *ptahv1alpha1.PtahSchema) bool {
 		plan := s.Status.Plan
-		return s.Status.LastReadRequest == value && grantOnlyApprovalGate(s, digest) &&
-			plan.Name == planName && string(plan.UID) == planUID && plan.Fingerprint == fingerprint &&
-			d.newJobCountSince(schema, "observe", before) > 0
+		return schemaObservedOnRequest(s, value, requested, intervalRead) && grantOnlyApprovalGate(s, digest) &&
+			plan.Name == planName && string(plan.UID) == planUID && plan.Fingerprint == fingerprint
 	})
 	after := d.checkpointJobs(schema, "")
 	if err := observedOnRequest(d.observed.between(schema, "observe", before, after), requested, intervalRead); err != nil {

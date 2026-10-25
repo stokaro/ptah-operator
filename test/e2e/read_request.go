@@ -27,6 +27,23 @@ func historyReadOnRequest(migration *ptahv1alpha1.PtahMigration, value string, r
 		history.CurrentVersion == version
 }
 
+// schemaObservedOnRequest is a schema back at its approval gate after a read
+// a person asked for: the status answered exactly that request, the database
+// was observed after it, within readRequestBound and before the read the
+// interval had set, and the plan waits for a person with no operation
+// running, the phase in which the approval webhook admits an approval. A
+// schema still inside that read is not: until its Observe Job has run, the
+// last observation is the one before the request, and until the plan that
+// follows it is back, the phase is another.
+func schemaObservedOnRequest(schema *ptahv1alpha1.PtahSchema, value string, requested, intervalRead time.Time) bool {
+	observed := schema.Status.Target.LastObservedAt
+	if schema.Status.LastReadRequest != value || observed == nil || !planAwaitingApproval(schema) {
+		return false
+	}
+	read := observed.Time
+	return read.After(requested) && read.Before(requested.Add(readRequestBound)) && read.Before(intervalRead)
+}
+
 // observedOnRequest is nil when exactly one Observe Job ran for a read
 // request: created no earlier than the second the request names, within
 // readRequestBound of it, and before the read the interval had set. The time
