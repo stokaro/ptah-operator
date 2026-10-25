@@ -68,6 +68,15 @@ make e2e            # the suite against kind
 separate targets under it, so run it after touching `api/`, any marker, or an
 admission policy definition.
 
+## Releasing
+
+[Make a release](docs/site/src/content/docs/support/releases.md#make-a-release)
+is the procedure, in order, from the pull request that prepares a version to
+the catalog row that declares it. Follow it as written rather than from
+memory: the order of the tag and the draft decides how many approvals a
+release takes and whether a defect costs the version number, and the steps
+after publication are what CI does not check.
+
 ## The envtest suites
 
 `make test-envtest` runs the packages under `test/envtest` against a real

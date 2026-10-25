@@ -61,29 +61,71 @@ below. The installed charts expire after 90 days and the lifecycle timings after
 complete unexpired exact-source evidence set remains, release or recovery
 preflight fails closed and requires a new release commit.
 
-## Prepare a release
+## Make a release
 
-Signed preparation uploads a draft and digest-addressed images without creating
-the Git tag or publishing the official release. Before preparing `v0.2.8`:
+These steps are in the order that works, and each note beside them was paid
+for by a release that took another path. `v0.2.8` stands for the version being
+made; the pull request that prepares a version changes it on this page.
 
-1. Merge the changes through a pull request, then wait for the complete CI
-   run on that exact `master` commit. Record the commit and run URL. The pull
-   request run alone cannot authorize publication.
-2. Run `go run ./hack/releaseverify -tag v0.2.8` at that commit. The chart
-   version, `appVersion`, default image tag, and release notes must name the
-   same version. Keep the installed-chart and lifecycle artifacts from its CI
-   run; preflight checks their bytes and expiration.
-3. Confirm immutable releases are enabled. The `release` environment must
-   require a reviewer, accept only the exact `master` branch and `v*` tags,
-   and contain the fine-grained
-   `IMMUTABLE_RELEASES_READ_TOKEN` described below. A repository secret is not
-   a substitute for the environment secret. Protect version tag creation and
-   refuse updates and deletion.
-4. Read the generated acceptance record with
+### Before the tag
+
+1. **Prepare the version in one pull request.** The chart's `version` and
+   `appVersion`, `image.tag` in `values.yaml` and its row in
+   [Configuration](../../use/configuration/), this page, the tag
+   `support/qualification/probes/fresh_install_test.py` pins, and the
+   version's section in [Release notes](../release-notes/).
+   `go run ./hack/releaseverify -tag v0.2.8` reports whether they name one
+   version.
+2. **Merge, and wait for the complete CI run on that exact `master`
+   commit.** A newer merge cancels it, and a commit whose run was cancelled
+   carries no verdict, so hold every other merge until the release is
+   prepared. The Documentation workflow has to pass on the same commit:
+   nothing in the Go checks reads the tables it compares. Record the commit
+   and the run. The pull request run alone cannot authorize publication.
+3. **Check the repository settings.** Immutable releases are enabled. The
+   `release` environment requires a reviewer, accepts only the exact
+   `master` branch and `v*` tags, and contains the fine-grained
+   `IMMUTABLE_RELEASES_READ_TOKEN` described below. A repository secret is
+   not a substitute for the environment secret. Version tag creation is
+   protected, and updates and deletion are refused.
+4. **Read the generated acceptance record** with
    `go run ./hack/acceptancecoverage -record -profile support/acceptance/lab-20.json`.
    The profile remains **Not assessed** and excludes database restore/RTO and
    production capacity/soak qualification. A successful build does not close
    [production qualification](https://github.com/stokaro/ptah-operator/issues/242).
+
+### Choose the order
+
+Every run of the release workflow that prepares or publishes waits for a
+person to approve the `release` environment, and a tag push always starts
+one. A version tag can be neither moved nor deleted, so the order decides two
+things: how many approvals the release takes, and whether the version number
+survives a defect found in the prepared draft.
+
+- **Tag first**, for an ordinary release: two approvals. Push the tag on the
+  recorded commit; the tag push prepares the draft, and publication follows.
+  If the prepared draft turns out to be wrong, the tag stays, and the fix is
+  released as the next version.
+- **Draft first**, for a release that is qualified on its prepared assets
+  before it is tagged, as 0.2.6 was: three approvals. Prepare from `master`,
+  qualify the draft, push the tag, and publish. The tag push runs the
+  workflow again, which re-verifies the draft and needs its own approval. A
+  draft that fails qualification costs no version number.
+
+### Tag first
+
+Push an annotated tag on the recorded commit:
+
+```sh
+commit=replace-with-the-recorded-commit
+git tag -a v0.2.8 -m "ptah-operator 0.2.8" "$commit"
+git push origin refs/tags/v0.2.8
+```
+
+Approve the `release` environment of the run the push started. It prepares
+the signed draft from the tag, with the tag as the producer ref.
+
+### Draft first
 
 Prepare the signed assets from the recorded `master` commit:
 
@@ -97,20 +139,29 @@ commit and that the intended release tag is absent. The draft's
 attestations name `refs/heads/master` as the actual producer. GoReleaser receives
 the intended version explicitly and skips its tag-existence validation; the
 workflow checks the live source identity and a clean checkout independently.
-The job stops
-before publication and records the SHA-256 of `release-manifest.txt`. Keep that
-digest with the qualification results. Staged images are readable by digest;
-the draft does not establish an official immutable release.
-
-Repeat the same preparation command to recover an interrupted transaction.
-An incomplete build must resume from its original producer ref and source.
-Preparation and publication share one concurrency group so they cannot mutate
-the same draft simultaneously. Unrelated pull request smoke runs remain separate.
+Staged images are readable by digest; the draft does not establish an official
+immutable release.
 
 After qualifying those exact assets, creating the release tag requires a
-separate decision. It must point to the manifest's source commit. A tag push
-only prepares or re-verifies the draft; it does not publish the release.
-Request publication from that tag with the recorded manifest digest:
+separate decision. It must point to the manifest's source commit. The tag
+push re-verifies the draft and publishes nothing; approve its run.
+
+### Prepared, in either order
+
+The preparation stops before publication and records the SHA-256 of
+`release-manifest.txt` in its summary; the draft carries the same file as an
+asset. Keep that digest with the qualification results.
+
+Repeat the same preparation to recover an interrupted transaction.
+An incomplete build must resume from its original producer ref and source.
+Preparation and publication share one concurrency group so they cannot mutate
+the same draft simultaneously; a publication requested while another release
+run waits for its approval queues behind it. Unrelated pull request smoke runs
+remain separate.
+
+### Publish
+
+Request publication from the tag with the recorded manifest digest:
 
 ```sh
 qualified_manifest_sha256='replace-with-the-recorded-64-character-digest'
@@ -132,14 +183,43 @@ pushes them. If either anonymous image check fails because its package is
 private, make that package public and rerun the same transaction as described
 below. Do not move the tag or replace a published artifact.
 
-After publication, verify the immutable release and its assets, and run the
-documented installation and critical lifecycle checks using the published
-image digests and chart. Those checks require the
-published bytes; preparation and source CI cannot stand in for them. Once the
-tag exists, add its compatibility row to `support/ptah.json` with the executor
-pin and measured scope from that tag. Set `documentation.published` to `true`
-and `documentation.source` to `v0.2.8` to build its guide from the tag. Do
-not declare a published guide before the tag exists.
+### After publication
+
+Verify the immutable release and its assets, then install it from its own
+guide. Those checks require the published bytes; preparation and source CI
+cannot stand in for them. Fresh installation runs the guide as written, and
+over the previous release as the operations guide describes, on each
+architecture:
+
+```sh
+tag=v0.2.8
+previous=replace-with-the-previous-release
+for arch in amd64 arm64; do
+  gh workflow run fresh-install.yml --ref master -f tag="$tag" -f architecture="$arch"
+  gh workflow run fresh-install.yml --ref master -f tag="$tag" \
+    -f upgrade_from="$previous" -f architecture="$arch"
+done
+```
+
+Once they pass, declare the release in one pull request:
+
+- **Its row in `support/ptah.json`.** The executor pin and the measured scope
+  are the development row's as the tag holds it. Set
+  `documentation.published` to `true` and `documentation.source` to
+  `v0.2.8` to build its guide from the tag. Do not declare a published guide
+  before the tag exists.
+- **The compatibility table.** Run `npm run compatibility:write` in
+  `docs/site`; the Documentation workflow refuses a table the catalog no
+  longer matches.
+- **A freeze revision.** `support/ptah.json` is a frozen qualification input,
+  so `support/qualification/0.2.0-freeze.json` takes the file's new SHA-256,
+  a `supersedes` block naming the commit and digest of the revision it
+  replaces, and `publishedPredecessors` read again from the releases and tags
+  API, with the new version as the predecessor of the next candidate.
+  `go test ./hack/acceptancecoverage/` checks it.
+
+stokaro/ptah-console builds against a released operator; its release guide
+says how it moves to this one.
 
 ## Acceptance evidence
 
