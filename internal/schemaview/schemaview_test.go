@@ -108,7 +108,8 @@ func TestLoadSeparatesAnUnobservedSchemaFromAConvergedOne(t *testing.T) {
 	}
 }
 
-// A grant is drift the report has no category for. The observation holds a
+// Some drift has no category in the report, as a grant had before Ptah
+// v0.16.0. The observation holds a
 // severity and no finding, and the view has to call it drift rather than read
 // the missing findings as a converged database.
 func TestLoadReportsDriftInNoCategory(t *testing.T) {

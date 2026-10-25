@@ -1031,14 +1031,42 @@ observation summary: the `DriftDetected` condition describes the authoritative
 managed scope, while `status.target` remains evidence for the observation
 identified by `driftReportDigest` and `lastObservedAt`.
 
-Drift does not imply a finding. The report has no category for some objects it
-compares: grants, default privileges, views and triggers among them. A change
-to one of those alone is observed as drift with no `driftFindings`, a
+Drift does not always come with a finding. Should a report find drift it lists
+under no category, it is observed as drift with no `driftFindings`, a
 `driftFindingCount` of zero and a `highestDriftSeverity` of `safe`, which is
 what the report rates a list with nothing in it. `highestDriftSeverity` is set
 whenever the report found drift and absent when it found none, so read it, not
 the count, to tell the two apart. Planning runs either way, and the plan names
-the statements and the privilege kinds they change.
+the statements and the privilege kinds they change. Ptah v0.16.0 lists grants,
+views, triggers and sequences under categories of their own, and a default
+privilege under `feature_access_*`.
+
+`status.target.inventory` counts each kind of object the same observation
+compared, on both sides: how many the desired schema declares and how many the
+comparison found in the database, within the compared scope. A kind is the stem of its finding
+categories, so `tables` counts what `tables_added` and `tables_removed` are
+found among, and an inventory entry joins its findings by that stem. A kind
+with no finding counts the same on both sides; the columns of a table found
+only in the database are not counted. A kind neither side holds is left out. The counts name no object, and objects a
+feature owner compares, such as PostgreSQL extensions and policies, are not
+counted. The inventory is written and replaced with the findings, and a Ptah
+that does not count leaves it absent.
+
+```yaml
+status:
+  target:
+    driftFindings:
+      - category: tables_removed
+        count: 1
+        severity: destructive
+    inventory:
+      - kind: columns
+        desired: 87
+        observed: 87
+      - kind: tables
+        desired: 11
+        observed: 12
+```
 
 Declared reference rows are counted in the same list. A row the database is
 missing, one whose managed columns someone changed, and one the declaration no

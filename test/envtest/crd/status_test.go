@@ -41,7 +41,7 @@ func TestPtahSchemaStatusRefusesAMalformedDriftSummary(t *testing.T) {
 		},
 		{
 			name:   "a category outside its pattern",
-			target: map[string]any{"driftFindingCount": int64(1), "driftFindings": []any{finding("views_added")}},
+			target: map[string]any{"driftFindingCount": int64(1), "driftFindings": []any{finding("triggers_renamed")}},
 			want:   cause{"status.target.driftFindings[0].category", "should match"},
 		},
 		{
@@ -112,9 +112,10 @@ func TestPtahSchemaStatusRefusesAMalformedDriftSummary(t *testing.T) {
 		}
 	})
 
-	// A grant is drift the report has no category for. The controller
-	// records it as a safe highest severity with no summaries and no count,
-	// and the schema has to take that shape as it takes any other.
+	// A report may find drift it lists under no category, as Ptah before
+	// v0.16.0 did for a grant. The controller records it as a safe highest
+	// severity with no summaries and no count, and the schema has to take that
+	// shape as it takes any other.
 	t.Run("drift in no category is published", func(t *testing.T) {
 		t.Parallel()
 		observed := reread(t, schema)

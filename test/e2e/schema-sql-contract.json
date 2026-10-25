@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "ptahCommit": "6ba0a93a44d3decd6782d88e57b88151edd4c788",
+  "ptahCommit": "91e28d4331950e949590fd9ac404373bc17b572d",
   "scope": "Exact schema diagnostics for initial v1 planning, v1-to-v2/v3 changes, populated v3/v4, fault-v1, and excluded-table fixtures; no generic SQL classification. Plan includes the native saved-plan dry run, its exact schema advisory lock, and the MySQL pinned-session foreign-key capability read. The separately identified stale Apply permits only its captured inspection and lock statements; its MySQL lock timeout is 60 seconds.",
   "statements": [
     {

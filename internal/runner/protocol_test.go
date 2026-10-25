@@ -233,9 +233,9 @@ func TestFrameOfAnotherProtocolVersionIsRefused(t *testing.T) {
 	}
 }
 
-// Drift the report has no category for, such as a grant, crosses the boundary
-// as drift with no findings, a zero count and a safe highest severity, and the
-// manager reads it back as it was written.
+// Drift the report lists under no category, as a grant was before Ptah
+// v0.16.0, crosses the boundary as drift with no findings, a zero count and a
+// safe highest severity, and the manager reads it back as it was written.
 func TestFrameCarriesDriftInNoCategory(t *testing.T) {
 	t.Parallel()
 

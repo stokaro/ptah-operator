@@ -1642,6 +1642,7 @@ func (r *SchemaReconciler) consumeResultWithTransport(ctx context.Context, schem
 			IdentityDigest: result.TargetIdentityDigest, DriftReportDigest: result.DriftReportDigest,
 			LastObservedAt: &now, HighestDriftSeverity: result.HighestDriftSeverity,
 			DriftFindingCount: result.DriftFindingCount, DriftFindings: findings,
+			Inventory: objectInventory(result.DriftInventory),
 		}
 		if err := r.markRecordedApprovalStale(ctx, schema); err != nil {
 			return ctrl.Result{}, err

@@ -1,16 +1,16 @@
 {
   "scope": "Isolated CLI readings of the SQL the executor sends for schema diagnostics, plan validation, the refused stale Apply, the allowed Apply, migration History and the refused restored-history Apply; not Kubernetes acceptance.",
-  "capturedOn": "2026-10-23",
+  "capturedOn": "2026-10-25",
   "procedure": "python3 support/qualification/probes/schema_sql_readings.py --context <context> --executor-image <image> --out <dir>",
-  "ptahRelease": "v0.15.0",
-  "ptahCommit": "6ba0a93a44d3decd6782d88e57b88151edd4c788",
-  "executorImage": "ghcr.io/stokaro/ptah@sha256:830cc5842eeb6271ee7927de23f397fa681d7a2612b8c91a846caec4f76e4c0a",
+  "ptahRelease": "v0.16.0",
+  "ptahCommit": "91e28d4331950e949590fd9ac404373bc17b572d",
+  "executorImage": "ghcr.io/stokaro/ptah@sha256:b8a9ac7c695e7af9f66787880b0cd722017474f5d05c08a81e0db297df311cf4",
   "serverImages": {
     "postgresql": "postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73",
     "mysql": "mysql:8.4@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb"
   },
   "clientAddress": "172.19.0.3",
-  "control": "The same procedure run with the executor of the previous pin, the Ptah v0.14.0 release image, reproduced every earlier checked-in reading record for record, and all four saved exclusion plans byte for byte.",
+  "control": "The same procedure run with the executor of the previous pin, the Ptah v0.15.0 release image, reproduced every checked-in reading record for record, and all four saved exclusion plans byte for byte. The v0.16.0 image reproduced every schema reading and both migration History readings; only the two restored-history refusals changed, where the refused Apply reads the revision table again under the migration lock.",
   "readings": {
     "mysql-migration-history-audit.jsonl": {
       "exitCode": 0,
@@ -19,8 +19,8 @@
     },
     "mysql-restored-history-refusal.jsonl": {
       "exitCode": 2,
-      "records": 63,
-      "sha256": "479bb778f03ef6bd88d6cf950499239c1091e9a825f1fdb7b9077596a6ae68ff"
+      "records": 77,
+      "sha256": "9eeae5c60c294b68b8604d2ae7d5cfee3da125f983c769a21aee30f3ad8576aa"
     },
     "mysql-schema-destructive-observe.jsonl": {
       "exitCode": 1,
@@ -145,8 +145,8 @@
     },
     "postgresql-restored-history-refusal.jsonl": {
       "exitCode": 2,
-      "records": 25,
-      "sha256": "747c8c1246882ef19da6fe5e35768d9fe980ecb11a9f274459a183abe0fd1491"
+      "records": 31,
+      "sha256": "5fc37626c2c30b7265823cb62f93ab2fd924bdc65946d1b477dbd6f7b85fdca1"
     },
     "postgresql-schema-destructive-observe.jsonl": {
       "exitCode": 1,

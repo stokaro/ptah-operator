@@ -19,12 +19,13 @@
 // closed vocabulary, so a Ptah that grows a category fails Observe for every
 // change in it until the vocabulary follows. The vendored file is what the
 // vocabulary is held to by a unit test that always runs. This program is what
-// holds the vendored file to Ptah: it reads the files that produce the
-// categories at the commit support/ptah.json pins, and compares their digests
-// and the categories they name with the file.
+// holds the vendored file to Ptah: it reads docs/drift-findings.json, the
+// vocabulary Ptah generates from its own classifier and holds to it with a
+// test, at the commit support/ptah.json pins, and compares its digest and the
+// categories it lists with the file.
 //
-// A Ptah bump that leaves those files alone changes nothing here. One that
-// edits them fails until the file is regenerated with -write, and the diff
+// A Ptah bump that leaves the vocabulary alone changes nothing here. One that
+// changes it fails until the file is regenerated with -write, and the diff
 // then shows which categories moved. CI runs the comparison where it already
 // has the pinned source, in the job that builds the executor from it.
 //
@@ -57,30 +58,9 @@ const (
 	vendoredPath = "support/ptah-drift-categories.json"
 )
 
-// source is one Ptah file that decides which categories a drift report can
-// carry, and says how this program reads them out of it: call names the
-// helper whose first string argument is a category, constant names the string
-// constant that is one, and qualified marks the file that writes the feature
-// categories, each of which may carry a feature kind after a colon. A file
-// with none of them is held by its digest alone.
-type source struct {
-	path      string
-	call      string
-	constant  string
-	qualified bool
-}
-
-// sources are the files a category has to pass through. The drift command
-// assembles the report's findings from the schema classifier, its feature
-// owners' changes, the managed-row summary and the undecided objects, so a new
-// producer edits one of these.
-var sources = []source{
-	{path: "internal/cli/drift/drift.go"},
-	{path: "internal/datamigrate/datamigrate.go", call: "addFinding"},
-	{path: "internal/undecidednote/undecidednote.go", constant: "FindingCategory"},
-	{path: "migration/safety/features.go", qualified: true},
-	{path: "migration/safety/safety.go", call: "add"},
-}
+// vocabularyPath is where Ptah publishes every category a drift report can
+// carry, generated from its classifier.
+const vocabularyPath = "docs/drift-findings.json"
 
 var (
 	categoryPattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
@@ -162,102 +142,87 @@ func run(ctx context.Context, arguments []string, root string, stdout io.Writer)
 	return err
 }
 
-// Compute reads every source through read and returns what the vendored file
-// should say.
+// Compute reads Ptah's vocabulary through read and returns what the vendored
+// file should say. A category written only bare is a fixed one; one Ptah
+// writes followed by ":<kind>" is qualified, and the operator admits it bare
+// as well.
 func Compute(read func(path string) ([]byte, error)) (Vendored, error) {
-	computed := Vendored{Comment: vendoredComment}
-	for _, file := range sources {
-		content, err := read(file.path)
-		if err != nil {
-			return Vendored{}, fmt.Errorf("read %s: %w", file.path, err)
+	content, err := read(vocabularyPath)
+	if err != nil {
+		return Vendored{}, fmt.Errorf("read %s: %w", vocabularyPath, err)
+	}
+	vocabulary, err := ParseVocabulary(content)
+	if err != nil {
+		return Vendored{}, fmt.Errorf("%s: %w", vocabularyPath, err)
+	}
+	digest := sha256.Sum256(content)
+	computed := Vendored{
+		Comment: vendoredComment,
+		Sources: []VendoredSource{{Path: vocabularyPath, SHA256: hex.EncodeToString(digest[:])}},
+	}
+	for _, entry := range vocabulary.Categories {
+		if entry.Qualified {
+			computed.Qualified = append(computed.Qualified, entry.Category)
+			continue
 		}
-		digest := sha256.Sum256(content)
-		computed.Sources = append(computed.Sources, VendoredSource{Path: file.path, SHA256: hex.EncodeToString(digest[:])})
-		var categories []string
-		switch {
-		case file.call != "":
-			categories, err = Extract(content, file.call)
-		case file.constant != "":
-			categories, err = ExtractConstant(content, file.constant)
-		case file.qualified:
-			var qualified []string
-			qualified, err = ExtractQualified(content)
-			computed.Qualified = append(computed.Qualified, qualified...)
-		}
-		if err != nil {
-			return Vendored{}, fmt.Errorf("%s: %w", file.path, err)
-		}
-		computed.Categories = append(computed.Categories, categories...)
+		computed.Categories = append(computed.Categories, entry.Category)
 	}
 	slices.Sort(computed.Categories)
-	computed.Categories = slices.Compact(computed.Categories)
 	slices.Sort(computed.Qualified)
-	computed.Qualified = slices.Compact(computed.Qualified)
 	return computed, nil
 }
 
-// ExtractConstant returns the category a string constant holds. The constant
-// has to be declared exactly once with a string literal; anything else means
-// the file no longer says what this program reads.
-func ExtractConstant(content []byte, name string) ([]string, error) {
-	declarations := regexp.MustCompile(`\b`+regexp.QuoteMeta(name)+`\s*=`).FindAllIndex(content, -1)
-	literals := regexp.MustCompile(`\b`+regexp.QuoteMeta(name)+`\s*=\s*"([^"]*)"`).FindAllSubmatch(content, -1)
-	if len(declarations) != 1 || len(literals) != 1 {
-		return nil, fmt.Errorf("%s is not declared once as a string literal", name)
-	}
-	category := string(literals[0][1])
-	if !categoryPattern.MatchString(category) {
-		return nil, fmt.Errorf("category %q is not a lowercase machine name", category)
-	}
-	return []string{category}, nil
+// Vocabulary is docs/drift-findings.json as Ptah writes it.
+type Vocabulary struct {
+	Comment    string          `json:"comment"`
+	Categories []VocabularyRow `json:"categories"`
 }
 
-// qualifiedLiteral is a feature category as the file spells it, bare or with
-// the colon a kind follows.
-var qualifiedLiteral = regexp.MustCompile(`"(feature_[a-z0-9_]*):?"`)
-
-// ExtractQualified returns the feature categories a file names. A file that
-// names none is refused: the feature categories moved, and an empty list would
-// pass.
-func ExtractQualified(content []byte) ([]string, error) {
-	literals := qualifiedLiteral.FindAllSubmatch(content, -1)
-	if len(literals) == 0 {
-		return nil, errors.New(`no "feature_..." literal names a qualified category`)
-	}
-	categories := make([]string, 0, len(literals))
-	for _, literal := range literals {
-		category := string(literal[1])
-		if !categoryPattern.MatchString(category) {
-			return nil, fmt.Errorf("category %q is not a lowercase machine name", category)
-		}
-		categories = append(categories, category)
-	}
-	slices.Sort(categories)
-	return slices.Compact(categories), nil
+// VocabularyRow is one category, the severities a finding of it can carry,
+// and the forms it is written in: bare, followed by ":<kind>", or both.
+type VocabularyRow struct {
+	Category   string   `json:"category"`
+	Severities []string `json:"severities"`
+	Bare       bool     `json:"bare"`
+	Qualified  bool     `json:"qualified"`
 }
 
-// Extract returns the categories named by every call of the helper in a Go
-// file. A call whose category is not a string literal is refused rather than
-// skipped, and so is a file with no call at all: either means the source no
-// longer says what this program reads, and a short list would pass.
-func Extract(content []byte, call string) ([]string, error) {
-	calls := regexp.MustCompile(`\b`+regexp.QuoteMeta(call)+`\(&findings,`).FindAllIndex(content, -1)
-	literals := regexp.MustCompile(`\b`+regexp.QuoteMeta(call)+`\(&findings,\s*"([^"]*)"`).FindAllSubmatch(content, -1)
-	if len(calls) == 0 {
-		return nil, fmt.Errorf("no %s(&findings, ...) call names a category", call)
+var severities = []string{"safe", "warning", "destructive"}
+
+// ParseVocabulary reads the vocabulary strictly and refuses one this program
+// could read wrong: an unknown field, no category, a category that is not a
+// lowercase machine name or comes twice, one with no form or no severity, or
+// a severity outside the three a report uses.
+func ParseVocabulary(content []byte) (Vocabulary, error) {
+	decoder := json.NewDecoder(bytes.NewReader(content))
+	decoder.DisallowUnknownFields()
+	var vocabulary Vocabulary
+	if err := decoder.Decode(&vocabulary); err != nil {
+		return Vocabulary{}, fmt.Errorf("decode: %w", err)
 	}
-	if len(literals) != len(calls) {
-		return nil, fmt.Errorf("%d of %d %s(&findings, ...) calls name their category with a string literal", len(literals), len(calls), call)
+	if len(vocabulary.Categories) == 0 {
+		return Vocabulary{}, errors.New("lists no category")
 	}
-	categories := make([]string, 0, len(literals))
-	for _, literal := range literals {
-		category := string(literal[1])
-		if !categoryPattern.MatchString(category) {
-			return nil, fmt.Errorf("category %q is not a lowercase machine name", category)
+	seen := make(map[string]bool, len(vocabulary.Categories))
+	for _, row := range vocabulary.Categories {
+		switch {
+		case !categoryPattern.MatchString(row.Category):
+			return Vocabulary{}, fmt.Errorf("category %q is not a lowercase machine name", row.Category)
+		case seen[row.Category]:
+			return Vocabulary{}, fmt.Errorf("category %s is listed twice", row.Category)
+		case !row.Bare && !row.Qualified:
+			return Vocabulary{}, fmt.Errorf("category %s is written neither bare nor qualified", row.Category)
+		case len(row.Severities) == 0:
+			return Vocabulary{}, fmt.Errorf("category %s carries no severity", row.Category)
 		}
-		categories = append(categories, category)
+		for _, severity := range row.Severities {
+			if !slices.Contains(severities, severity) {
+				return Vocabulary{}, fmt.Errorf("category %s carries severity %q", row.Category, severity)
+			}
+		}
+		seen[row.Category] = true
 	}
-	return categories, nil
+	return vocabulary, nil
 }
 
 // Compare names every difference between the vendored file and the source.

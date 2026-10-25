@@ -631,10 +631,11 @@ func grantGateReading(schema *ptahv1alpha1.PtahSchema) string {
 	}
 	status := schema.Status
 	type targetReading struct {
-		HighestDriftSeverity string                            `json:"highestDriftSeverity"`
-		DriftFindingCount    int32                             `json:"driftFindingCount"`
-		DriftFindings        []ptahv1alpha1.DriftFindingStatus `json:"driftFindings"`
-		LastObservedAt       *metav1.Time                      `json:"lastObservedAt"`
+		HighestDriftSeverity string                               `json:"highestDriftSeverity"`
+		DriftFindingCount    int32                                `json:"driftFindingCount"`
+		DriftFindings        []ptahv1alpha1.DriftFindingStatus    `json:"driftFindings"`
+		Inventory            []ptahv1alpha1.ObjectInventoryStatus `json:"inventory"`
+		LastObservedAt       *metav1.Time                         `json:"lastObservedAt"`
 	}
 	reading := struct {
 		Generation         int64                  `json:"generation"`
@@ -650,7 +651,8 @@ func grantGateReading(schema *ptahv1alpha1.PtahSchema) string {
 		Digest: status.Source.Digest, ActiveOperation: activeOperationType(status.ActiveOperation),
 		Target: targetReading{
 			HighestDriftSeverity: status.Target.HighestDriftSeverity, DriftFindingCount: status.Target.DriftFindingCount,
-			DriftFindings: status.Target.DriftFindings, LastObservedAt: status.Target.LastObservedAt,
+			DriftFindings: status.Target.DriftFindings, Inventory: status.Target.Inventory,
+			LastObservedAt: status.Target.LastObservedAt,
 		},
 		Plan:       readGatePlan(status.Plan),
 		Conditions: []gateConditionReading{},

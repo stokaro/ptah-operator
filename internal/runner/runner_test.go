@@ -1080,9 +1080,9 @@ func TestObservePreservesSafeSeverityForRealDrift(t *testing.T) {
 	}
 }
 
-// A grant is drift the report has no category for. Ptah says drift, rates the
-// empty list safe, and lists no finding; the pinned build leaves the list out
-// altogether. The observation is framed as drift with a zero count, so Plan
+// Some drift has no category in the report, as a grant had before Ptah
+// v0.16.0. Ptah says drift, rates the empty list safe, and lists no finding;
+// such a build left the list out altogether. The observation is framed as drift with a zero count, so Plan
 // still runs, and the frame carries nothing the grant says.
 func TestObserveFramesDriftTheReportHasNoCategoryFor(t *testing.T) {
 	t.Parallel()

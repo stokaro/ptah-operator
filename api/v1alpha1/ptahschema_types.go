@@ -1215,7 +1215,7 @@ type SchemaSourceStatus struct {
 type DriftFindingStatus struct {
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=153
-	// +kubebuilder:validation:Pattern=`^(async_replications_added|async_replications_modified|async_replications_removed|columns_added|columns_modified|columns_removed|constraints_added|constraints_removed|coordination_nodes_added|coordination_nodes_modified|coordination_nodes_removed|data_rows_deleted|data_rows_inserted|data_rows_updated|enum_values_added|enum_values_removed|enums_added|enums_removed|extensions_added|extensions_modified|extensions_removed|external_data_sources_added|external_data_sources_changed|external_data_sources_removed|external_tables_added|external_tables_changed|external_tables_removed|functions_added|functions_modified|functions_removed|indexes_added|indexes_removed|resource_pool_classifiers_added|resource_pool_classifiers_modified|resource_pool_classifiers_removed|resource_pools_added|resource_pools_modified|resource_pools_removed|rls_enabled_tables_added|rls_enabled_tables_removed|rls_force_added|rls_force_removed|rls_policies_added|rls_policies_modified|rls_policies_removed|roles_added|roles_modified|roles_removed|schemas_added|schemas_modified|schemas_removed|secrets_added|secrets_removed|secrets_rotated|table_constraints_added|table_constraints_removed|tables_added|tables_removed|topic_consumers_removed|topics_added|topics_modified|topics_removed|transfers_added|transfers_modified|transfers_removed|undecided|unique_protections_removed|vector_dimension_changed|feature_(changes|access_(widened|narrowed|unchanged|unknown))(:[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+(/[A-Za-z0-9_-][A-Za-z0-9._-]*)+)?)$`
+	// +kubebuilder:validation:Pattern=`^(async_replications_added|async_replications_modified|async_replications_removed|columns_added|columns_modified|columns_removed|comments_changed|constraints_added|constraints_removed|constraints_validated|coordination_nodes_added|coordination_nodes_modified|coordination_nodes_removed|data_rows_deleted|data_rows_inserted|data_rows_updated|enum_values_added|enum_values_removed|enums_added|enums_removed|extensions_added|extensions_modified|extensions_removed|external_data_sources_added|external_data_sources_changed|external_data_sources_removed|external_tables_added|external_tables_changed|external_tables_removed|functions_added|functions_modified|functions_removed|grant_options_added|grant_options_removed|grants_added|grants_removed|index_visibility_changed|indexes_added|indexes_removed|indexes_renamed|materialized_views_added|materialized_views_modified|materialized_views_removed|resource_pool_classifiers_added|resource_pool_classifiers_modified|resource_pool_classifiers_removed|resource_pools_added|resource_pools_modified|resource_pools_removed|rls_enabled_tables_added|rls_enabled_tables_removed|rls_force_added|rls_force_removed|rls_policies_added|rls_policies_modified|rls_policies_removed|role_memberships_added|role_memberships_removed|roles_added|roles_modified|roles_removed|schemas_added|schemas_modified|schemas_removed|secrets_added|secrets_removed|secrets_rotated|sequences_added|sequences_modified|sequences_removed|table_constraints_added|table_constraints_removed|tables_added|tables_removed|topic_consumers_removed|topics_added|topics_modified|topics_removed|transfers_added|transfers_modified|transfers_removed|triggers_added|triggers_modified|triggers_removed|undecided|unique_protections_removed|vector_dimension_changed|views_added|views_modified|views_removed|feature_(changes|access_(widened|narrowed|unchanged|unknown))(:[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+(/[A-Za-z0-9_-][A-Za-z0-9._-]*)+)?)$`
 	// Category is the kind of difference, never the object it was found in:
 	// a table name is part of the schema, and the status does not carry it.
 	// A feature category may name the type of object after a colon, as in
@@ -1248,9 +1248,9 @@ type TargetStatus struct {
 	LastObservedAt *metav1.Time `json:"lastObservedAt,omitempty"`
 	// HighestDriftSeverity is the worst category the report found. It is set
 	// whenever the report found drift and empty when it found none, so it also
-	// says which. A difference the report has no category for -- a grant, a
-	// default privilege, a view or a trigger -- is drift that reads safe here,
-	// with no findings and a zero count; the plan says what it changes.
+	// says which. Should a report find drift it lists under no category, that
+	// reads safe here, with no findings and a zero count; the plan says what it
+	// changes.
 	HighestDriftSeverity string `json:"highestDriftSeverity,omitempty"`
 	// DriftFindingCount is how many findings the report held: the sum of the
 	// counts below. Drift in no category counts none.
@@ -1262,6 +1262,35 @@ type TargetStatus struct {
 	// +listType=map
 	// +listMapKey=category
 	DriftFindings []DriftFindingStatus `json:"driftFindings,omitempty"`
+	// Inventory counts each kind of object that observation compared: how
+	// many the desired schema declares and how many the comparison found in
+	// the database, in the compared scope. A kind is the stem of its finding categories, so
+	// tables counts what tables_added and tables_removed are found among, and
+	// a kind neither side holds is left out. Counts only, written and
+	// replaced with the findings. A Ptah that does not count leaves it
+	// absent.
+	// +optional
+	// +kubebuilder:validation:MaxItems=128
+	// +listType=map
+	// +listMapKey=kind
+	Inventory []ObjectInventoryStatus `json:"inventory,omitempty"`
+}
+
+// ObjectInventoryStatus counts one kind of object on both sides of an
+// observation.
+type ObjectInventoryStatus struct {
+	// Kind is the stem of the kind's drift finding categories, such as
+	// tables or rls_policies.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=64
+	// +kubebuilder:validation:Pattern=`^[a-z]([a-z_]*[a-z])?$`
+	Kind string `json:"kind"`
+	// Desired is how many objects of the kind the desired schema declares.
+	// +kubebuilder:validation:Minimum=0
+	Desired int32 `json:"desired"`
+	// Observed is how many the comparison found in the database.
+	// +kubebuilder:validation:Minimum=0
+	Observed int32 `json:"observed"`
 }
 
 // CurrentPlanStatus is a compact reference to an immutable PtahSchemaPlan.
