@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-10-25T09:10:47.689757+00:00",
+  "frozenAt": "2026-10-25T11:23:37.487462+00:00",
   "profileSourceCommit": "1259f4d59343fef049307085e3ea77d2971677cb",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
@@ -28,7 +28,7 @@
     },
     {
       "path": "support/ptah.json",
-      "sha256": "43d733cb782bd523222f8807692d96d2826df199712d4c747d61c3f1031f9274"
+      "sha256": "88e960ffc83dc9489977e7e6bdb6fb714b526c9fe2fdb40c23ded8f748d2d7c7"
     },
     {
       "path": "docs/site/src/content/docs/support/databases.md",
@@ -71,18 +71,18 @@
     "sourceChanges": "Move plan-store alerting from lifecycle to certificates and PostgreSQL reference data from certificates to data-plane. Master CI run 37420035400 passed in 92m45s; its slowest lifecycle spent 20m02s on plan-store alerting before the upgrade fault window. Rebalance the existing nine suites without adding phases or scenarios. All 17 phases, 345 scenario/engine/family rows, supported minors and platforms, observation windows, and Q-01 through Q-12 targets remain unchanged. Revision 42 changes only the line naming the Ptah build under test, now the v0.13.0 release image; no phase, scenario, cell, platform or target changes. Revision 54 adds the data-plane scenario postgresql-extension-drift, which stores Ptah v0.14.0's feature category for a dropped PostgreSQL extension through a cluster; phases, suites, cells, platforms and targets are unchanged. Revision 55 adds the phase configmap-sources to the schema-approvals suite: a schema and a migration sequence read from ConfigMaps with no registry, edits to a selected and an unselected key, snapshot retention, and a replaced snapshot the Pod refuses. Suites, cells, platforms and targets are unchanged. Revision 57 adds the phase git-sources to the schema-approvals suite: a schema and a migration sequence read from Git over HTTPS and SSH, a branch that moves without and with a selected change, and a credential granted for another host. Suites, cells, platforms and targets are unchanged. Revision 58 changes only the line naming the Ptah build under test, now the v0.15.0 release image; no phase, scenario, cell, platform or target changes. Revision 59 adds the scenarios git-schema-pinned, git-force-push and git-source-refused to the phase git-sources. Suites, cells, platforms and targets are unchanged. Revision 60 moves the phases configmap-sources and git-sources from the schema-approvals suite to data-plane, because schema-approvals with both ran past the 90-minute job limit. No phase, scenario, cell, platform or target changes. Revision 61 adds the scenario git-source-policy to the phase git-sources and moves the phase reference-data-postgresql from data-plane to lifecycle, because data-plane came within two minutes of the 90-minute job limit. No phase, cell, platform or target changes. Revision 62 changes only the line naming the Ptah build under test, now the v0.16.0 release image; no phase, scenario, cell, platform or target changes."
   },
   "publishedPredecessors": {
-    "checkedAt": "2026-10-23T08:22:31+00:00",
+    "checkedAt": "2026-10-25T11:23:26+00:00",
     "repository": "stokaro/ptah-operator",
-    "releaseCount": 7,
-    "tagCount": 7,
-    "evidence": "Authenticated GitHub releases and tags API reads returned v0.2.0, v0.2.1, v0.2.2, v0.2.3, v0.2.4, v0.2.5 and v0.2.6, all published immutable releases, when this revision was recorded. The counts leave out the qualification-0.2.4 evidence release and its two amendments, which are not operator versions.",
-    "disposition": "v0.2.5 is the published predecessor of the v0.2.6 candidate. The upgrade from it is walked through both releases' guides by support/qualification/probes/fresh_install.py --upgrade-from on both platforms; the synthetic transition, refusal and recovery proofs remain required."
+    "releaseCount": 8,
+    "tagCount": 8,
+    "evidence": "Authenticated GitHub releases and tags API reads returned v0.2.0, v0.2.1, v0.2.2, v0.2.3, v0.2.4, v0.2.5, v0.2.6 and v0.2.7, all published immutable releases, when this revision was recorded. The counts leave out the qualification-0.2.4 evidence release, its two amendments and the qualification-0.2.6 evidence release, which are not operator versions.",
+    "disposition": "v0.2.7 is the published predecessor of the v0.2.8 candidate. The upgrade from it is walked through both releases' guides by support/qualification/probes/fresh_install.py --upgrade-from on both platforms; the synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 62,
+  "revision": 63,
   "supersedes": {
-    "freezeCommit": "5d9d70c654338cfee761636a03d8c13cf1a2d3c4",
-    "sha256": "37841c9948882981ea94943df7465f7c6ef0d8ad9d9288a784002d8056e890f2"
+    "freezeCommit": "430fec94031a2b8fd9e1c08e3e63a80dd334ed52",
+    "sha256": "c0c475b77ed5b02725fe4c778cf00e287075b8efe1e89eb08fd9a439dabb2ee0"
   },
-  "revisionReason": "Move the Ptah build under test to the v0.16.0 release image. It reports each revision row's applied time and duration and counts the objects of each kind on both sides of a drift report, and the operator's closed drift vocabulary takes the categories it adds. Phases, scenarios, cells, platforms, the profile and its targets are unchanged."
+  "revisionReason": "Declare the published v0.2.7 in support/ptah.json, as the release procedure asks once the tag exists, and record v0.2.7 as the published predecessor of the v0.2.8 candidate. The profile, its targets and every other input are unchanged."
 }
