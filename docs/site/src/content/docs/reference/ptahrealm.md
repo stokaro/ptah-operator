@@ -3,7 +3,7 @@ title: PtahRealm
 description: Every field of the PtahRealm resource, generated from the API types.
 ---
 
-`PtahRealm` is a cluster-scoped resource in `operator.ptah.run`, served as `v1alpha1`.
+`PtahRealm` is a cluster-scoped resource in `operator.ptah.run`, served as `v1alpha1`. `kubectl` knows it as `ptahrealms`, or `ptahr` for short.
 
 This page is generated from the API types by `make docs-reference`. The shipped CRDs carry no descriptions, so this is where the field documentation lives.
 
