@@ -472,13 +472,14 @@ func (d *dataPlane) waitForApprovedPlanConverged(schema, digest, fingerprint, pl
 // assertGrantOnlyChangePlansUnderAlways proves a change that touches only a
 // grant is observed, planned, and held for a person under apply: Always.
 //
-// Ptah's drift report has no category for a grant: it says drift and lists no
-// finding. The runner used to refuse that report, so the resource never left
-// Observe and no grant-only change could reach a plan under any policy. The
-// artifact adds one GRANT to PUBLIC to the converged external schema, which
-// Ptah plans as one statement it rates safe. The row holds the path to what it
-// is for: the observation is recorded as drift in no category, and the scoped
-// plan that follows names Grant and nothing else; under Always the plan waits
+// Before Ptah v0.16.0 a drift report had no category for a grant: it said
+// drift and listed no finding, and the runner once refused that report, so
+// no grant-only change could reach a plan under any policy. The artifact adds
+// one GRANT to PUBLIC to the converged external schema, which Ptah plans as
+// one statement it rates safe. The row holds the path to what it is for: the
+// observation records one grants_added and an inventory that counts the grant
+// declared and not held, and the scoped plan that follows names Grant and
+// nothing else; under Always the plan waits
 // for a person, with no Apply and no grant in the database while it waits; and
 // one exact approval applies it, the resource converges, and PUBLIC may read
 // the table.
@@ -511,7 +512,7 @@ func (d *dataPlane) assertGrantOnlyChangePlansUnderAlways(schema, publishReferen
 		func(s *ptahv1alpha1.PtahSchema) bool { return grantOnlyApprovalGate(s, digest) }, planAwaitingApproval,
 		"grant-only approval gate", heldPlanMessages{
 			failedWhile: "its grant-only plan",
-			timedOut:    " to observe its grant-only change as drift in no category, plan Grant and hold it for a person",
+			timedOut:    " to observe its grant-only change as one grant added, plan Grant and hold it for a person",
 		}, grantGateReading)
 	if gate.Status.Plan == nil {
 		d.fatalf("%s held no plan at its grant-only gate", schema)

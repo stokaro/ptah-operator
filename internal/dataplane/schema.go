@@ -18,15 +18,15 @@ const (
 	// rather than read for the fields this operator recognizes, because those
 	// fields may already mean something else.
 	//
-	// Plan version 2 is Ptah v0.14.0's and v0.15.0's. It changed the shape of
-	// undecided, which this operator does not read, and added
+	// Plan version 2 is Ptah v0.14.0's, v0.15.0's and v0.16.0's. It changed
+	// the shape of undecided, which this operator does not read, and added
 	// provider_diagnostic; every field and outcome read here means what it
 	// meant in version 1.
 	//
-	// Apply version 3 is Ptah v0.15.0's. It lists the planned operations as
-	// units, each with its SQL or a native operation's summary, where version 2
-	// listed statements. Outcome, plan digest and refusal mean what they meant
-	// in version 2.
+	// Apply version 3 is Ptah v0.15.0's and v0.16.0's. It lists the planned
+	// operations as units, each with its SQL or a native operation's summary,
+	// where version 2 listed statements. Outcome, plan digest and refusal mean
+	// what they meant in version 2.
 	SupportedSchemaPlanContract  = 2
 	SupportedSchemaApplyContract = 3
 )

@@ -948,7 +948,11 @@ spec:
 | `status.target.driftFindings[].severity` | `string`, required, one of `safe`, `info`, `warning`, `error`, `destructive` | Severity is how the category rates. |
 | `status.target.driftReportDigest` | `string` | DriftReportDigest is the observed state the last plan was computed from. |
 | `status.target.engine` | `string` | Engine is the database engine this target speaks. |
-| `status.target.highestDriftSeverity` | `string` | HighestDriftSeverity is the worst category the report found. It is set whenever the report found drift and empty when it found none, so it also says which. A difference the report has no category for -- a grant, a default privilege, a view or a trigger -- is drift that reads safe here, with no findings and a zero count; the plan says what it changes. |
+| `status.target.highestDriftSeverity` | `string` | HighestDriftSeverity is the worst category the report found. It is set whenever the report found drift and empty when it found none, so it also says which. Should a report find drift it lists under no category, that reads safe here, with no findings and a zero count; the plan says what it changes. |
 | `status.target.identityDigest` | `string` | IdentityDigest identifies the database without carrying anything that could reach it. |
+| `status.target.inventory` | `[]object` | Inventory counts each kind of object that observation compared: how many the desired schema declares and how many the comparison found in the database, in the compared scope. A kind is the stem of its finding categories, so tables counts what tables_added and tables_removed are found among, and a kind neither side holds is left out. Counts only, written and replaced with the findings. A Ptah that does not count leaves it absent. |
+| `status.target.inventory[].desired` | `integer`, required | Desired is how many objects of the kind the desired schema declares. |
+| `status.target.inventory[].kind` | `string`, required | Kind is the stem of the kind's drift finding categories, such as tables or rls_policies. |
+| `status.target.inventory[].observed` | `integer`, required | Observed is how many the comparison found in the database. |
 | `status.target.lastObservedAt` | `string` | LastObservedAt is when that observation ran. |
 

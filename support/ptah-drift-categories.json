@@ -2,32 +2,18 @@
   "comment": "The drift finding categories the Ptah build pinned in support/ptah.json can emit, and the digests of the files that produce them. A qualified category is written bare or followed by \":<kind>\". Written by `go run ./hack/ptahdriftcategories -ptah <checkout> -write`; CI compares it with the pinned source. internal/dataplane's vocabulary has to equal these lists, and the PtahSchema status pattern has to admit them.",
   "sources": [
     {
-      "path": "internal/cli/drift/drift.go",
-      "sha256": "54d87b36885694092bd3e32529adc69146d617814a3cb27915b439134c66d49f"
-    },
-    {
-      "path": "internal/datamigrate/datamigrate.go",
-      "sha256": "69a744f110fd50d308bbd06a9e23fc169756ab3f765516971f768fe939f86190"
-    },
-    {
-      "path": "internal/undecidednote/undecidednote.go",
-      "sha256": "d06a9de6d602c215ad8d38593bddf0e160d933685f910d8ef452b318f972e088"
-    },
-    {
-      "path": "migration/safety/features.go",
-      "sha256": "e63b391344e5db351d5d678ae5c83f86656b3bb6fa6a2530167570fb48fc2db4"
-    },
-    {
-      "path": "migration/safety/safety.go",
-      "sha256": "d3509ea680300fead2f28904ce74cb022e662b1084dee352ef59f3f594c36b80"
+      "path": "docs/drift-findings.json",
+      "sha256": "3c28441c012f63dad1ff118c3716c57adec03c0d8883d21a36f5a3bd956f6c36"
     }
   ],
   "categories": [
     "columns_added",
     "columns_modified",
     "columns_removed",
+    "comments_changed",
     "constraints_added",
     "constraints_removed",
+    "constraints_validated",
     "data_rows_deleted",
     "data_rows_inserted",
     "data_rows_updated",
@@ -38,8 +24,17 @@
     "functions_added",
     "functions_modified",
     "functions_removed",
+    "grant_options_added",
+    "grant_options_removed",
+    "grants_added",
+    "grants_removed",
+    "index_visibility_changed",
     "indexes_added",
     "indexes_removed",
+    "indexes_renamed",
+    "materialized_views_added",
+    "materialized_views_modified",
+    "materialized_views_removed",
     "rls_enabled_tables_added",
     "rls_enabled_tables_removed",
     "rls_force_added",
@@ -47,19 +42,30 @@
     "rls_policies_added",
     "rls_policies_modified",
     "rls_policies_removed",
+    "role_memberships_added",
+    "role_memberships_removed",
     "roles_added",
     "roles_modified",
     "roles_removed",
     "schemas_added",
     "schemas_modified",
     "schemas_removed",
+    "sequences_added",
+    "sequences_modified",
+    "sequences_removed",
     "table_constraints_added",
     "table_constraints_removed",
     "tables_added",
     "tables_removed",
+    "triggers_added",
+    "triggers_modified",
+    "triggers_removed",
     "undecided",
     "unique_protections_removed",
-    "vector_dimension_changed"
+    "vector_dimension_changed",
+    "views_added",
+    "views_modified",
+    "views_removed"
   ],
   "qualified": [
     "feature_access_narrowed",

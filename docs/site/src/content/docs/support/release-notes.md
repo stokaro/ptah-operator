@@ -16,6 +16,32 @@ release that says so, and this is where it is said. A version that asks
 nothing of you says so in as many words, rather than leaving you to read it
 out of silence.
 
+## 0.2.8
+
+**Before you upgrade.** The manager image is new, so keep `--force-conflicts`
+on the upgrade. Resources need nothing else.
+
+- **Approvals.** The executor is now Ptah v0.16.0, which retires the
+  execution binding as every new executor does: approve again whatever was
+  waiting, after the resource has read its database with v0.16.0 and planned.
+  Applied state is not touched.
+
+Ptah v0.16.0 compares more kinds of object, and a drift report can now name
+grants and grant options, sequences, views, materialized views, triggers,
+role memberships, comments, index visibility and renames, and validated
+constraints. A grant the database lacks used to be drift in no category; it is
+now one `grants_added`. Tooling that reads `status.target.driftFindings`
+should expect these categories.
+
+A `PtahSchema` now counts each kind of object its last observation compared,
+in `status.target.inventory`: how many the desired schema declares and how
+many the database holds, by the stem of the kind's drift categories, such as
+`tables` or `rls_policies`. [Operations](../../use/operations/) shows one.
+
+A `PtahMigration`'s `status.history.revisions` now carries each row's
+`appliedAt` and `executionMillis`. The fields came in 0.2.7 and stayed absent,
+because its executor did not report them; Ptah v0.16.0 does.
+
 ## 0.2.7
 
 **Before you upgrade.** The manager image is new, so keep `--force-conflicts`

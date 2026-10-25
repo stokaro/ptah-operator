@@ -63,108 +63,77 @@ func TestVendoredCategoriesAreTheOperatorVocabulary(t *testing.T) {
 		}
 		paths = append(paths, file.Path)
 	}
-	want := make([]string, 0, len(sources))
-	for _, file := range sources {
-		want = append(want, file.path)
-	}
-	if !reflect.DeepEqual(paths, want) {
-		t.Fatalf("vendored sources = %q, want the files this program reads, %q", paths, want)
+	if want := []string{vocabularyPath}; !reflect.DeepEqual(paths, want) {
+		t.Fatalf("vendored sources = %q, want the file this program reads, %q", paths, want)
 	}
 }
 
-func TestExtract(t *testing.T) {
-	t.Parallel()
+// vocabulary is a docs/drift-findings.json with the rows given.
+func vocabulary(rows ...string) string {
+	return `{"comment": "test", "categories": [` + strings.Join(rows, ",") + `]}`
+}
 
+// A fixed category is one Ptah writes bare only; one it writes with a kind
+// is qualified, whether or not it also writes it bare.
+func TestComputeSplitsFixedFromQualified(t *testing.T) {
+	t.Parallel()
+	content := vocabulary(
+		`{"category": "tables_added", "severities": ["safe"], "bare": true, "qualified": false}`,
+		`{"category": "feature_access_widened", "severities": ["destructive"], "bare": false, "qualified": true}`,
+		`{"category": "feature_changes", "severities": ["safe", "warning", "destructive"], "bare": true, "qualified": true}`,
+		`{"category": "columns_removed", "severities": ["destructive"], "bare": true, "qualified": false}`,
+	)
+
+	computed, err := Compute(func(path string) ([]byte, error) {
+		if path != vocabularyPath {
+			t.Fatalf("read %s, want %s", path, vocabularyPath)
+		}
+		return []byte(content), nil
+	})
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"columns_removed", "tables_added"}; !reflect.DeepEqual(computed.Categories, want) {
+		t.Fatalf("categories = %q, want %q", computed.Categories, want)
+	}
+	if want := []string{"feature_access_widened", "feature_changes"}; !reflect.DeepEqual(computed.Qualified, want) {
+		t.Fatalf("qualified = %q, want %q", computed.Qualified, want)
+	}
+	if len(computed.Sources) != 1 || computed.Sources[0].Path != vocabularyPath || len(computed.Sources[0].SHA256) != 64 {
+		t.Fatalf("sources = %+v, want the vocabulary file and its digest", computed.Sources)
+	}
+}
+
+// A vocabulary this program could read wrong is refused, never read short.
+func TestParseVocabularyRefuses(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
-		name    string
-		source  string
-		call    string
-		want    []string
-		failure string
+		name, content, says string
 	}{
-		{
-			name: "string literals, and a similarly named helper left alone",
-			source: "add(&findings, \"tables_added\", len(a), Safe)\n" +
-				"\tadd(&findings,\n\t\t\"rls_force_removed\", n, Destructive)\n" +
-				"addFinding(&findings, \"data_rows_inserted\", n, Safe)\n",
-			call: "add",
-			want: []string{"tables_added", "rls_force_removed"},
-		},
-		{
-			name:   "the other helper",
-			source: "addFinding(&findings, \"data_rows_inserted\", n, Safe)\nadd(&findings, \"tables_added\", n, Safe)\n",
-			call:   "addFinding",
-			want:   []string{"data_rows_inserted"},
-		},
-		{
-			name:    "a category that is not a literal",
-			source:  "add(&findings, \"tables_added\", n, Safe)\nadd(&findings, categoryForcedRLS, n, Safe)\n",
-			call:    "add",
-			failure: "1 of 2 add(&findings, ...) calls",
-		},
-		{
-			name:    "no call at all",
-			source:  "func classify() []Finding { return nil }\n",
-			call:    "add",
-			failure: "no add(&findings, ...) call",
-		},
-		{
-			name:    "a category that is not a machine name",
-			source:  "add(&findings, \"Tables Added\", n, Safe)\n",
-			call:    "add",
-			failure: "is not a lowercase machine name",
-		},
+		{name: "no category", content: vocabulary(), says: "lists no category"},
+		{name: "an unknown field", content: vocabulary(`{"category": "a", "severities": ["safe"], "bare": true, "plural": true}`),
+			says: `unknown field "plural"`},
+		{name: "a category that is no machine name", content: vocabulary(`{"category": "Tables Added", "severities": ["safe"], "bare": true}`),
+			says: `"Tables Added" is not a lowercase machine name`},
+		{name: "a category twice", content: vocabulary(
+			`{"category": "tables_added", "severities": ["safe"], "bare": true}`,
+			`{"category": "tables_added", "severities": ["warning"], "bare": true}`), says: "tables_added is listed twice"},
+		{name: "no form", content: vocabulary(`{"category": "tables_added", "severities": ["safe"]}`),
+			says: "tables_added is written neither bare nor qualified"},
+		{name: "no severity", content: vocabulary(`{"category": "tables_added", "severities": [], "bare": true}`),
+			says: "tables_added carries no severity"},
+		{name: "a severity a report does not use", content: vocabulary(`{"category": "tables_added", "severities": ["critical"], "bare": true}`),
+			says: `tables_added carries severity "critical"`},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := Extract([]byte(test.source), test.call)
-			if test.failure != "" {
-				if err == nil || !strings.Contains(err.Error(), test.failure) {
-					t.Fatalf("Extract() = %q, %v; want an error containing %q", got, err, test.failure)
-				}
-				return
-			}
-			if err != nil || !reflect.DeepEqual(got, test.want) {
-				t.Fatalf("Extract() = %q, %v; want %q", got, err, test.want)
+			_, err := ParseVocabulary([]byte(test.content))
+			if err == nil || !strings.Contains(err.Error(), test.says) {
+				t.Fatalf("ParseVocabulary() = %v, want an error saying %q", err, test.says)
 			}
 		})
-	}
-}
-
-func TestExtractConstant(t *testing.T) {
-	t.Parallel()
-
-	got, err := ExtractConstant([]byte("// FindingCategory is the category.\nconst FindingCategory = \"undecided\"\n"), "FindingCategory")
-	if err != nil || !reflect.DeepEqual(got, []string{"undecided"}) {
-		t.Fatalf("ExtractConstant() = %q, %v; want undecided", got, err)
-	}
-	for name, source := range map[string]string{
-		"absent":          "const OtherCategory = \"undecided\"\n",
-		"not a literal":   "const FindingCategory = prefix + \"undecided\"\n",
-		"declared twice":  "const FindingCategory = \"undecided\"\nvar FindingCategory = \"other\"\n",
-		"not a lowercase": "const FindingCategory = \"Undecided Objects\"\n",
-	} {
-		if got, err := ExtractConstant([]byte(source), "FindingCategory"); err == nil {
-			t.Errorf("%s: ExtractConstant() = %q, want an error", name, got)
-		}
-	}
-}
-
-func TestExtractQualified(t *testing.T) {
-	t.Parallel()
-
-	source := "add(findings, \"feature_changes\"+suffix, 1, Destructive)\n" +
-		"add(findings, \"feature_changes:\"+kind, 1, severity)\n" +
-		"case schemaext.AccessWidens:\n\treturn \"feature_access_widened\"\n" +
-		"strings.HasPrefix(finding.Category, \"feature_changes:\")\n" +
-		"add(findings, \"tables_added\", 1, Safe)\n"
-	got, err := ExtractQualified([]byte(source))
-	if want := []string{"feature_access_widened", "feature_changes"}; err != nil || !reflect.DeepEqual(got, want) {
-		t.Fatalf("ExtractQualified() = %q, %v; want %q", got, err, want)
-	}
-	if got, err := ExtractQualified([]byte("add(findings, \"tables_added\", 1, Safe)\n")); err == nil {
-		t.Fatalf("ExtractQualified() of a file with no feature category = %q, want an error", got)
 	}
 }
 
@@ -223,17 +192,22 @@ func TestRunFollowsThePinnedCommit(t *testing.T) {
 
 	checkout := t.TempDir()
 	gitIn(t, checkout, "init", "-q")
-	writeFile(t, checkout, "internal/cli/drift/drift.go", "package drift\n")
-	writeFile(t, checkout, "internal/datamigrate/datamigrate.go",
-		"addFinding(&findings, \"data_rows_inserted\", n, safety.Safe)\n")
-	writeFile(t, checkout, "internal/undecidednote/undecidednote.go", "const FindingCategory = \"undecided\"\n")
-	writeFile(t, checkout, "migration/safety/features.go", "add(findings, \"feature_changes:\"+kind, 1, severity)\n")
-	writeFile(t, checkout, "migration/safety/safety.go",
-		"add(&findings, \"tables_added\", n, Safe)\nadd(&findings, \"rls_force_added\", n, Safe)\n")
+	writeFile(t, checkout, vocabularyPath, vocabulary(
+		`{"category": "data_rows_inserted", "severities": ["safe"], "bare": true}`,
+		`{"category": "feature_changes", "severities": ["warning"], "bare": true, "qualified": true}`,
+		`{"category": "rls_force_added", "severities": ["safe"], "bare": true}`,
+		`{"category": "tables_added", "severities": ["safe"], "bare": true}`,
+		`{"category": "undecided", "severities": ["warning"], "bare": true}`,
+	))
 	first := commitAll(t, checkout, "first")
-	writeFile(t, checkout, "migration/safety/safety.go",
-		"add(&findings, \"tables_added\", n, Safe)\nadd(&findings, \"rls_force_added\", n, Safe)\n"+
-			"add(&findings, \"rls_force_removed\", n, Destructive)\n")
+	writeFile(t, checkout, vocabularyPath, vocabulary(
+		`{"category": "data_rows_inserted", "severities": ["safe"], "bare": true}`,
+		`{"category": "feature_changes", "severities": ["warning"], "bare": true, "qualified": true}`,
+		`{"category": "rls_force_added", "severities": ["safe"], "bare": true}`,
+		`{"category": "rls_force_removed", "severities": ["destructive"], "bare": true}`,
+		`{"category": "tables_added", "severities": ["safe"], "bare": true}`,
+		`{"category": "undecided", "severities": ["warning"], "bare": true}`,
+	))
 	second := commitAll(t, checkout, "second")
 
 	root := t.TempDir()
@@ -259,7 +233,7 @@ func TestRunFollowsThePinnedCommit(t *testing.T) {
 	pin(t, root, second)
 	err = run(context.Background(), []string{"-ptah", checkout}, root, &out)
 	if err == nil || !strings.Contains(err.Error(), "Ptah emits rls_force_removed") ||
-		!strings.Contains(err.Error(), "migration/safety/safety.go changed") {
+		!strings.Contains(err.Error(), vocabularyPath+" changed") {
 		t.Fatalf("run() after the pin moved = %v, want the new category and the changed file named", err)
 	}
 	if err := run(context.Background(), []string{"-ptah", filepath.Join(root, "absent")}, root, &out); err == nil {

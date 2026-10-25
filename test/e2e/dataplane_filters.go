@@ -1270,18 +1270,22 @@ func privilegedApprovalGate(schema *ptahv1alpha1.PtahSchema, digest string) bool
 // that touches only a grant, observed, planned, and held for a person under
 // apply: Always.
 //
-// Ptah's drift report has no category for a grant, so the observation says
-// drift with no finding: a safe highest severity, no count and no list. An
-// empty severity would be an observation that found no drift, and a grant it
-// did not see. Neither the observation nor a condition message may carry what
-// the statement says.
+// Ptah v0.16.0 reports the grant: the observation finds one grants_added, safe,
+// and nothing else, and its inventory counts the one grant the schema declares
+// and the database lacks, with every other kind the same on both sides. An
+// observation that found no drift, drift in no category or another category,
+// or an inventory that does not count the grant, is not this change seen.
+// Neither the observation nor a condition message may carry what the
+// statement says.
 func grantOnlyApprovalGate(schema *ptahv1alpha1.PtahSchema, digest string) bool {
 	status := schema.Status
 	plan := status.Plan
 	target := status.Target
 	if schema.Generation != status.ObservedGeneration || status.Source.Digest != digest ||
 		status.ActiveOperation != nil ||
-		target.HighestDriftSeverity != "safe" || target.DriftFindingCount != 0 || len(target.DriftFindings) != 0 ||
+		target.HighestDriftSeverity != "safe" || target.DriftFindingCount != 1 ||
+		!slices.Equal(target.DriftFindings, []ptahv1alpha1.DriftFindingStatus{{Category: "grants_added", Count: 1, Severity: "safe"}}) ||
+		!inventoryCountsOneMissingGrant(target.Inventory) ||
 		plan == nil || !slices.Equal(plan.PrivilegeChanges, []ptahv1alpha1.PrivilegeChange{"Grant"}) ||
 		plan.Destructive || plan.Approval != nil {
 		return false
@@ -1304,4 +1308,23 @@ func grantOnlyApprovalGate(schema *ptahv1alpha1.PtahSchema, digest string) bool 
 		return false
 	}
 	return drift && required
+}
+
+// inventoryCountsOneMissingGrant is an inventory in which the grant is the only
+// difference: one declared and none held, and every other kind it counted the
+// same on both sides.
+func inventoryCountsOneMissingGrant(inventory []ptahv1alpha1.ObjectInventoryStatus) bool {
+	grant := false
+	for _, kind := range inventory {
+		switch {
+		case kind.Kind == "grants":
+			if kind.Desired != 1 || kind.Observed != 0 {
+				return false
+			}
+			grant = true
+		case kind.Desired != kind.Observed:
+			return false
+		}
+	}
+	return grant
 }

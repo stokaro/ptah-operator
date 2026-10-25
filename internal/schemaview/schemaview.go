@@ -195,7 +195,7 @@ func Load(ctx context.Context, reader client.Reader, namespace, name string) (Vi
 //
 // Drift is read from the highest severity, which the operator records exactly
 // when the report found drift, and not from the findings: a difference the
-// report has no category for, such as a grant, is drift with no findings.
+// report lists under no category is drift with no findings.
 func observationOf(target operatorv1alpha1.TargetStatus) *ObservationView {
 	if target.LastObservedAt == nil && len(target.DriftFindings) == 0 {
 		return nil

@@ -217,6 +217,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:fefb4b7d376a20a71355450ebbc8c08ac037cb9c91660feb8fc191f7dc03cede",
       "reason": "Publish the newest revision rows with their time and duration (#726). The migration status document's records gain applied_at and execution_time_ms, which Ptah reports for a row that exists; the history and Apply result frames carry them where the runner dropped them before, and the parser refuses a time on a migration with no row, a duration with no time, a negative duration, and a description or checksum past its bound. An older manager ignores the two fields, and a frame without them reads as before. Commands, payloads, delivery identity, SQL authority and retry limits are as they were."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:a2143131969664e259d17e5a469d98660f7d6083538880afdae84c196bcc9254",
+      "reason": "Run Ptah v0.16.0 and publish the object inventory of the last observation (#727). The closed drift vocabulary gains the 22 categories v0.16.0 adds for the objects it now compares, among them grants, sequences, triggers and views; none leaves it, and a frame naming an unknown category is still refused, as an older controller refuses a newer runner. The drift report gains inventory, a count per kind of object on each side, held to kinds the vocabulary pairs, each once, never negative; an Observe frame carries it as driftInventory in kind order, other frames carry none, and an older manager ignores it. v0.16.0's plan, apply, drift and migration documents decode as v0.15.0's did. The executor image changes, which retires every plan and approval made under the old one. Commands, payloads, delivery identity, SQL authority and retry limits are unchanged."
     }
   ]
 }

@@ -214,8 +214,9 @@ func TestDecodeSchemaApplyRefusesWhatItCannotAccountFor(t *testing.T) {
 // one added column on PostgreSQL 17: `schema plan --output /w/plan.json --json`
 // and `schema apply --plan /w/plan.json --dry-run --json`, stored as printed.
 // v0.13.0 printed version 1 of both and v0.14.0 version 2 of both; v0.15.0
-// moved only the apply document, to version 3. A decoder held only to fixtures
-// written here would not have noticed either move.
+// moved only the apply document, to version 3, and v0.16.0 printed the same
+// two documents for the same change. A decoder held only to fixtures written
+// here would not have noticed either move.
 func TestDecodeSchemaReportsPtahPrinted(t *testing.T) {
 	t.Parallel()
 

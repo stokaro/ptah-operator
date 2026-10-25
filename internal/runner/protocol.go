@@ -157,8 +157,8 @@ type TruncationMetadata struct {
 // object names, SQL, schema literals, and diff payloads are never included.
 //
 // ObservedDrift is the report's own verdict and does not imply a summary: a
-// difference the report has no category for, such as a grant, is drift with
-// no summaries, a zero count and a safe highest severity.
+// difference the report lists under no category is drift with no summaries, a
+// zero count and a safe highest severity.
 type DriftFindingSummary struct {
 	Category string `json:"category"`
 	Count    int32  `json:"count"`
@@ -172,6 +172,15 @@ type DriftFindingSummary struct {
 // DriftFindingCount. A report whose kinds take it past the bound is refused
 // before it is framed.
 const maxDriftFindings = 128
+
+// DriftInventorySummary counts one kind of object on both sides of an
+// observation's comparison. It carries no name, so it is as safe to frame as
+// a finding's count.
+type DriftInventorySummary struct {
+	Kind     string `json:"kind"`
+	Desired  int32  `json:"desired"`
+	Observed int32  `json:"observed"`
+}
 
 // Result is the complete credential-free result emitted by ptah-runner.
 type Result struct {
@@ -190,11 +199,14 @@ type Result struct {
 	HighestDriftSeverity     string                `json:"highestDriftSeverity,omitempty"`
 	DriftFindingCount        int32                 `json:"driftFindingCount,omitempty"`
 	DriftFindings            []DriftFindingSummary `json:"driftFindings,omitempty"`
-	ObservedArtifactType     string                `json:"observedArtifactType,omitempty"`
-	ResolvedDigest           string                `json:"resolvedDigest,omitempty"`
-	ResolvedReference        string                `json:"resolvedReference,omitempty"`
-	ResolvedMediaType        string                `json:"resolvedMediaType,omitempty"`
-	ResolvedSize             int64                 `json:"resolvedSize,omitempty"`
+	// DriftInventory is the report's inventory, in kind order. A report
+	// from a Ptah that does not count carries none.
+	DriftInventory       []DriftInventorySummary `json:"driftInventory,omitempty"`
+	ObservedArtifactType string                  `json:"observedArtifactType,omitempty"`
+	ResolvedDigest       string                  `json:"resolvedDigest,omitempty"`
+	ResolvedReference    string                  `json:"resolvedReference,omitempty"`
+	ResolvedMediaType    string                  `json:"resolvedMediaType,omitempty"`
+	ResolvedSize         int64                   `json:"resolvedSize,omitempty"`
 	// ResolvedCommit and ResolvedContentDigest are what resolving a Git
 	// source found: the commit its ref named, and the content digest of the
 	// selected files there.
@@ -897,8 +909,11 @@ func validateResult(result Result, options ParseOptions) error {
 			len(result.DriftFindings) != 0 {
 			return fmt.Errorf("%w: converged observation carries drift findings", ErrMalformedFrame)
 		}
+		if err := validateDriftInventory(result.DriftInventory); err != nil {
+			return err
+		}
 	} else if result.ObservedDialect != "" || result.ObservedDrift || result.HighestDriftSeverity != "" ||
-		result.DriftFindingCount != 0 || len(result.DriftFindings) != 0 {
+		result.DriftFindingCount != 0 || len(result.DriftFindings) != 0 || len(result.DriftInventory) != 0 {
 		return fmt.Errorf("%w: observation summary is set on a non-successful observation", ErrMalformedFrame)
 	}
 	if options.ExpectedOperation != "" && result.Operation != options.ExpectedOperation {
@@ -906,6 +921,24 @@ func validateResult(result Result, options ParseOptions) error {
 	}
 	if options.ExpectedOperationID != "" && result.OperationID != options.ExpectedOperationID {
 		return fmt.Errorf("%w: operation ID binding mismatch", ErrMalformedFrame)
+	}
+	return nil
+}
+
+// validateDriftInventory holds an observation's inventory to the vocabulary
+// and to the order the runner writes it in, so two frames of one report are
+// the same bytes.
+func validateDriftInventory(inventory []DriftInventorySummary) error {
+	if len(inventory) > dataplane.MaxDriftInventoryEntries {
+		return fmt.Errorf("%w: drift observation counts too many kinds", ErrMalformedFrame)
+	}
+	for index, entry := range inventory {
+		if !dataplane.IsKnownDriftInventoryKind(entry.Kind) || entry.Desired < 0 || entry.Observed < 0 {
+			return fmt.Errorf("%w: drift observation has an invalid inventory entry", ErrMalformedFrame)
+		}
+		if index > 0 && strings.Compare(inventory[index-1].Kind, entry.Kind) >= 0 {
+			return fmt.Errorf("%w: drift inventory is not in kind order", ErrMalformedFrame)
+		}
 	}
 	return nil
 }

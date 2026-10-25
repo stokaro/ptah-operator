@@ -529,15 +529,29 @@ func TestSettledInSync(t *testing.T) {
 		})
 }
 
+// mtRecorded is mtSettled with the rows its run wrote: started a minute before
+// it finished, each row written inside that minute and timed.
 func mtRecorded() *ptahv1alpha1.PtahMigration {
 	migration := mtSettled()
-	for _, version := range []int64{3, 2, 1} {
+	finished := migration.Status.LastRun.FinishedAt.Time
+	migration.Status.LastRun.StartedAt = metav1.NewTime(finished.Add(-time.Minute))
+	for offset, version := range []int64{3, 2, 1} {
+		written := metav1.NewTime(finished.Add(-time.Duration(10*(offset+1)) * time.Second))
+		ran := int64(4 * (offset + 1))
 		migration.Status.History.Revisions = append(migration.Status.History.Revisions, ptahv1alpha1.MigrationRevisionStatus{
 			Version: version, Checksum: fmt.Sprintf("h1:%d", version), State: ptahv1alpha1.MigrationRevisionApplied,
+			AppliedAt: &written, ExecutionMillis: &ran,
 		})
 	}
 	return migration
 }
+
+func mtAt(at time.Time) *metav1.Time {
+	stamp := metav1.NewTime(at)
+	return &stamp
+}
+
+func mtMillis(milliseconds int64) *int64 { return &milliseconds }
 
 func TestRevisionsRecordTheSequence(t *testing.T) {
 	t.Parallel()
@@ -555,7 +569,46 @@ func TestRevisionsRecordTheSequence(t *testing.T) {
 			m.Status.History.Revisions[1].State = ptahv1alpha1.MigrationRevisionModified
 		},
 		"a row with no checksum": func(m *ptahv1alpha1.PtahMigration) { m.Status.History.Revisions[2].Checksum = "" },
+		"a row with no time":     func(m *ptahv1alpha1.PtahMigration) { m.Status.History.Revisions[0].AppliedAt = nil },
+		"a row with no duration": func(m *ptahv1alpha1.PtahMigration) { m.Status.History.Revisions[1].ExecutionMillis = nil },
+		"a negative duration":    func(m *ptahv1alpha1.PtahMigration) { m.Status.History.Revisions[1].ExecutionMillis = mtMillis(-1) },
+		"a row written before the run": func(m *ptahv1alpha1.PtahMigration) {
+			m.Status.History.Revisions[2].AppliedAt = mtAt(m.Status.LastRun.StartedAt.Add(-2 * time.Second))
+		},
+		"a row written after the run": func(m *ptahv1alpha1.PtahMigration) {
+			m.Status.History.Revisions[0].AppliedAt = mtAt(m.Status.LastRun.FinishedAt.Add(2 * time.Second))
+		},
+		"no time spent": func(m *ptahv1alpha1.PtahMigration) {
+			for index := range m.Status.History.Revisions {
+				m.Status.History.Revisions[index].ExecutionMillis = mtMillis(0)
+			}
+		},
+		"no finished run": func(m *ptahv1alpha1.PtahMigration) { m.Status.LastRun.FinishedAt = nil },
 	})
+}
+
+// A row written in the run's first or last second, which status records to
+// the second, is inside the run.
+func TestRevisionsRecordTheSequenceAtTheRunsEdges(t *testing.T) {
+	t.Parallel()
+	for name, change := range map[string]func(*ptahv1alpha1.PtahMigration){
+		"the first second": func(m *ptahv1alpha1.PtahMigration) {
+			m.Status.History.Revisions[2].AppliedAt = mtAt(m.Status.LastRun.StartedAt.Add(300 * time.Millisecond))
+		},
+		"the last second": func(m *ptahv1alpha1.PtahMigration) {
+			m.Status.History.Revisions[0].AppliedAt = mtAt(m.Status.LastRun.FinishedAt.Add(700 * time.Millisecond))
+		},
+		"one quick migration": func(m *ptahv1alpha1.PtahMigration) { m.Status.History.Revisions[1].ExecutionMillis = mtMillis(0) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			migration := mtRecorded()
+			change(migration)
+			if err := revisionsRecordTheSequence(migration); err != nil {
+				t.Fatalf("revisionsRecordTheSequence() = %v", err)
+			}
+		})
+	}
 }
 
 func TestReconciledWithoutWork(t *testing.T) {

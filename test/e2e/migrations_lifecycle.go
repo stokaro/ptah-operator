@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -152,21 +153,43 @@ func settledInSync(migration *ptahv1alpha1.PtahMigration, digest string) error {
 
 // revisionsRecordTheSequence is the history's own account of the three
 // migrations the sequence ran: one applied row each, newest first, with the
-// checksum the database recorded.
+// checksum the database recorded, written inside the run that applied them,
+// and how long each ran.
+//
+// The rows are dated by the database and the run by the controller, both in
+// whole seconds in status, so the run's window is taken to the second. One
+// migration may run in under a millisecond and record zero, so the rows are
+// held only to recording a duration each and some time spent between them.
 func revisionsRecordTheSequence(migration *ptahv1alpha1.PtahMigration) error {
-	history := migration.Status.History
+	history, run := migration.Status.History, migration.Status.LastRun
 	if history == nil {
 		return errors.New("it publishes no history")
 	}
+	if run == nil || run.FinishedAt == nil {
+		return errors.New("it records no finished run to date its rows by")
+	}
+	from := run.StartedAt.Truncate(time.Second)
+	to := run.FinishedAt.Truncate(time.Second).Add(time.Second)
 	versions := make([]int64, 0, len(history.Revisions))
+	var spent int64
 	for _, row := range history.Revisions {
-		if row.State != ptahv1alpha1.MigrationRevisionApplied || row.Checksum == "" {
+		switch {
+		case row.State != ptahv1alpha1.MigrationRevisionApplied || row.Checksum == "":
 			return fmt.Errorf("its row for version %d is %s with checksum %q", row.Version, row.State, row.Checksum)
+		case row.AppliedAt == nil || row.ExecutionMillis == nil || *row.ExecutionMillis < 0:
+			return fmt.Errorf("its row for version %d records no time or no duration", row.Version)
+		case row.AppliedAt.Time.Before(from) || row.AppliedAt.Time.After(to):
+			return fmt.Errorf("its row for version %d was written at %s, outside the run from %s to %s",
+				row.Version, row.AppliedAt.UTC().Format(time.RFC3339), from.UTC().Format(time.RFC3339), to.UTC().Format(time.RFC3339))
 		}
 		versions = append(versions, row.Version)
+		spent += *row.ExecutionMillis
 	}
 	if !slices.Equal(versions, []int64{3, 2, 1}) {
 		return fmt.Errorf("its revisions are versions %v, not 3, 2 and 1 newest first", versions)
+	}
+	if spent == 0 {
+		return errors.New("its rows record no time spent running the migrations")
 	}
 	return nil
 }
