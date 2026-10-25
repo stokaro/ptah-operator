@@ -26,6 +26,7 @@ things, and [the next section](#three-states-kept-apart) says what.
 | Operator | Declared range | Verified builds | Guide |
 | --- | --- | --- | --- |
 | `edge` | No range | `v0.16.0` | [edge](https://operator.ptah.run/edge/) |
+| `v0.2.8` | No range | `v0.16.0` | [v0.2.8](https://operator.ptah.run/v0.2.8/) |
 | `v0.2.7` | No range | `v0.15.0` | [v0.2.7](https://operator.ptah.run/v0.2.7/) |
 | `v0.2.6` | No range | `v0.14.0` | [v0.2.6](https://operator.ptah.run/v0.2.6/) |
 | `v0.2.5` | No range | `v0.13.0` | [v0.2.5](https://operator.ptah.run/v0.2.5/) |
@@ -51,6 +52,16 @@ The development state. Its guide is at [https://operator.ptah.run/edge/](https:/
 - The migration machine contracts -- `migrations status --json` carrying contract_version and a per-migration record, and `migrations up --json` carrying an outcome -- reached Ptah after v0.3.0-201, and `migrations up --expect-sequence`, which the operator passes on every migration Apply, reached it in v0.9.0. A build older than v0.9.0 resolves and verifies a migration artifact and then fails at its own history document or at the flag every migration Apply passes, so the versioned workflow needs at least v0.9.0 rather than any build that has the commands.
 - The verified scope is the operator's database support window, PostgreSQL 17.x and MySQL 8.4.x LTS. Other engines Ptah addresses are unverified here, whatever the Ptah build.
 - The published verified set is a repository document. It is not compiled into the manager, and nothing compares a running executor's ptahVersion against it, so a combination outside this set is outside what the matrix measured rather than something the operator refuses. What is refused before a database is mutated is a change of any bound execution component between the plan and the apply -- Ptah, the executor image, the runner protocol version, the controller-state version -- checked before the Job is created. The manager's image and revision and the runner image are recorded and not bound: a manager release that changes only them applies the plans and approvals its predecessor left. What is refused after a Job has run is a runner speaking another protocol version, which is a rejected result frame rather than a prevented mutation. Pinning both the executor image and its ptahVersion at install is a requirement on whoever installs, not a check at runtime.
+
+### v0.2.8
+
+A released version. Its guide is at [https://operator.ptah.run/v0.2.8/](https://operator.ptah.run/v0.2.8/).
+
+**Declared:** the same as [`edge`](#edge).
+
+**Verified:** the same as [`edge`](#edge).
+
+**Limitations:** the same as [`edge`](#edge).
 
 ### v0.2.7
 
