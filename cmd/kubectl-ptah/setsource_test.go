@@ -244,6 +244,44 @@ func TestSetSourceSaysAnApplyWithNoJobIsDropped(t *testing.T) {
 		"The Apply claimed from the previous spec has no Job yet: the operator drops it when it sees the change, and its plan does not run.")
 }
 
+// unreadAfterConflict is the operator writing status between the command's
+// read and its patch, and the API server then answering no read.
+type unreadAfterConflict struct{ *cluster }
+
+func (u unreadAfterConflict) Patch(ctx context.Context, object client.Object, patch client.Patch, options ...client.PatchOption) error {
+	stored := &operatorv1alpha1.PtahSchema{}
+	if err := u.cluster.Client.Get(ctx, client.ObjectKeyFromObject(object), stored); err != nil {
+		return err
+	}
+	stored.Status.Phase = operatorv1alpha1.PhaseResolving
+	if err := u.cluster.Client.Status().Update(ctx, stored); err != nil {
+		return err
+	}
+	err := u.cluster.Patch(ctx, object, patch, options...)
+	u.cluster.mu.Lock()
+	u.cluster.readErr = apierrors.NewServiceUnavailable("etcd is not ready")
+	u.cluster.mu.Unlock()
+	return err
+}
+
+// A conflict whose read again fails is a refused change: exit 5, and the
+// message names the conflict and the read.
+func TestSetSourceSaysAConflictWasRefusedWhenItCannotReadAgain(t *testing.T) {
+	api := newCluster(t, onArtifact("schema", operatorv1alpha1.ApplyPolicyOnApproval))
+
+	code, stdout, stderr := runCommand(t, unreadAfterConflict{api}, "set-source", "schema/storefront", "--oci", newRef)
+
+	if code != exitRefused || stdout != "" {
+		t.Fatalf("set-source = %d, stdout %q, stderr %q; want %d", code, stdout, stderr, exitRefused)
+	}
+	requireSays(t, "set-source's stderr", stderr, "Operation cannot be fulfilled",
+		"reading it again after that conflict failed", "etcd is not ready", "Nothing was changed.")
+	api.readErr = nil
+	if got := referenceOn(t, api, "schema"); got != oldRef {
+		t.Fatalf("the reference is %s, want %s", got, oldRef)
+	}
+}
+
 func TestSetSourceExitsByWhatTheAPIServerSaid(t *testing.T) {
 	forbidden := &apierrors.StatusError{ErrStatus: metav1.Status{Status: metav1.StatusFailure, Code: http.StatusForbidden,
 		Reason:  metav1.StatusReasonForbidden,

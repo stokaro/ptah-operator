@@ -321,6 +321,9 @@ func SetSource(ctx context.Context, c client.Client, ref Ref, pinned PinnedRefer
 			return SourceResult{}, err
 		}
 		if err := c.Get(ctx, ref.key(), object); err != nil {
+			if lastErr != nil {
+				return SourceResult{}, &rereadError{refused: lastErr, read: ref.failed("read", err)}
+			}
 			return SourceResult{}, ref.failed("read", err)
 		}
 		read, err := snapshotOf(object)
@@ -379,6 +382,27 @@ func SetSource(ctx context.Context, c client.Client, ref Ref, pinned PinnedRefer
 		}
 	}
 	return SourceResult{}, lastErr
+}
+
+// rereadError is a change the API server refused with a conflict, after which
+// the read that would have decided again failed. The refusal is the answer
+// to the change: nothing was stored, and Classify reads it as refused. A
+// resource found gone on that read is absent instead.
+type rereadError struct {
+	refused error
+	read    error
+}
+
+func (e *rereadError) Error() string {
+	return fmt.Sprintf("%v; reading it again after that conflict failed: %v", e.refused, e.read)
+}
+
+// Unwrap puts the answer Classify should find first in front.
+func (e *rereadError) Unwrap() []error {
+	if apierrors.IsNotFound(e.read) {
+		return []error{e.read, e.refused}
+	}
+	return []error{e.refused, e.read}
 }
 
 func sourceResult(ref Ref, previous string, changed bool, s snapshot, source Source) SourceResult {

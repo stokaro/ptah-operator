@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -472,6 +473,67 @@ func TestSetSourceRefusesAResourceReplacedWhileAConflictIsRead(t *testing.T) {
 				replacement.GetUID() != uidB || referenceOf(t, replacement) != pinnedOld {
 				t.Fatalf("err = %v after %d patches and %d reads; the replacement %s asks for %s",
 					err, patches, gets, replacement.GetUID(), referenceOf(t, replacement))
+			}
+		})
+	}
+}
+
+// A conflict whose read again fails still answered the change: the API
+// server refused it and stored nothing, so it reads as refused, and the
+// message names both. A resource found gone on that read is absent.
+func TestSetSourceReportsTheConflictWhenTheReadAfterItFails(t *testing.T) {
+	t.Parallel()
+
+	for _, row := range []struct {
+		name    string
+		readErr error
+		want    operate.Answer
+	}{
+		{"the API server does not answer the read", apierrors.NewServiceUnavailable("etcd is not ready"), operate.Refused},
+		{"the resource is gone", apierrors.NewNotFound(resource, name), operate.Absent},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+
+			var mu sync.Mutex
+			gets, patches := 0, 0
+			c := fake.NewClientBuilder().WithScheme(newScheme(t)).
+				WithStatusSubresource(&operatorv1alpha1.PtahSchema{}, &operatorv1alpha1.PtahMigration{}).
+				WithObjects(sourced(operate.FamilySchema, uidA, "")).
+				WithInterceptorFuncs(interceptor.Funcs{
+					Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+						mu.Lock()
+						gets++
+						// The first read decides, the second classifies the
+						// conflict, the third would decide again.
+						third := gets == 3
+						mu.Unlock()
+						if third {
+							return row.readErr
+						}
+						return c.Get(ctx, key, obj, opts...)
+					},
+					Patch: func(ctx context.Context, c client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+						mu.Lock()
+						patches++
+						mu.Unlock()
+						if err := writeStatus(ctx, c, operate.FamilySchema, func(object client.Object) { setPhase(object, "Resolving") }); err != nil {
+							return err
+						}
+						return c.Patch(ctx, obj, patch, opts...)
+					},
+				}).Build()
+
+			_, err := operate.SetSource(context.Background(), c, refOf(operate.FamilySchema), mustPin(t, pinnedNew))
+
+			if operate.Classify(err) != row.want || patches != 1 || gets != 3 ||
+				!strings.Contains(err.Error(), "Operation cannot be fulfilled") ||
+				!strings.Contains(err.Error(), "reading it again after that conflict failed") {
+				t.Fatalf("err = %v read as %s after %d patches and %d reads; want %s naming the conflict and the read",
+					err, operate.Classify(err), patches, gets, row.want)
+			}
+			if got := referenceOf(t, read(t, c, operate.FamilySchema)); got != pinnedOld {
+				t.Fatalf("the reference is %s, want %s: a refused change stored nothing", got, pinnedOld)
 			}
 		})
 	}
