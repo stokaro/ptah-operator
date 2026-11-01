@@ -82,6 +82,9 @@ Dieser Client wird mit jedem Release als `kubectl`-Plugin für die
 unterstützten Clientplattformen veröffentlicht. Seine Lesebefehle lesen nur;
 `kubectl ptah approve` erstellt die Freigabe eines geprüften Plans in Ihrem
 Namen und benötigt dafür `create` auf den Freigabearten.
+`kubectl ptah suspend`, `resume` und `refresh` ändern ein Schema oder eine
+Migration per Patch in Ihrem Namen, und `kubectl ptah wait` wartet, bis der
+Operator auf eine Änderung reagiert hat.
 [Einen Plan lesen](https://operator.ptah.run/edge/use/read-a-plan/#install)
 beschreibt die Installation und die benötigten RBAC-Berechtigungen
 im jeweiligen Namespace.

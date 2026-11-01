@@ -258,6 +258,12 @@ kubectl annotate ptahmigration orders \
   operator.ptah.run/read-requested-at="$(date -u +%Y-%m-%dT%H:%M:%SZ)" --overwrite
 ```
 
+`kubectl ptah refresh migration/orders -n application` writes the same
+annotation, with a value later than any the resource holds and than the last
+one `status.lastReadRequest` answered, so a second request a moment after the
+first is not taken for an answered one. With `--wait` it waits for the read
+the request starts, under the rules below.
+
 A value `status.lastReadRequest` does not record as answered is answered once
 no operation is running. In `InSync`, `Blocked`, `ReadyToApply`,
 `AwaitingApproval` and a migration's `Planning`, the answer records the value

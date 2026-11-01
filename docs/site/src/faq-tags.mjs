@@ -46,6 +46,7 @@ export const questionTags = {
   "least-privilege-login": ["database-access", "security"],
   "controller-and-credentials": ["database-access", "security"],
   "reading-convergence-status": ["status"],
+  "wait-for-the-operator": ["status"],
   "reporting-an-operator-bug": ["community", "troubleshooting"],
 };
 
