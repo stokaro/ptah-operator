@@ -2547,12 +2547,13 @@ timing_next bootstrap kind-cluster
 # through a privileged container of the node image, as privileged as kind's
 # nodes. They are only ever raised. A host that refuses the write still runs
 # while it allows the 512 instances kind documents; below that the run stops
-# here, where the cause has a name.
+# here, where the cause has a name. Only the instance limit is required of
+# such a host: it is the one the failure above measured.
 E2E_INOTIFY_INSTANCES=8192
 E2E_INOTIFY_WATCHES=524288
 E2E_INOTIFY_INSTANCES_REQUIRED=512
 inotify_limits() {
-	limits=$(docker --context "$DOCKER_CONTEXT" run --rm --privileged --network none --entrypoint sh "$KIND_NODE_IMAGE" -c \
+	limits=$(docker --context "$DOCKER_CONTEXT" run --rm --pull never --privileged --network none --entrypoint sh "$KIND_NODE_IMAGE" -c \
 		'printf "%s %s\n" "$(cat /proc/sys/fs/inotify/max_user_instances)" "$(cat /proc/sys/fs/inotify/max_user_watches)"') ||
 		fail "could not read the Docker host's inotify limits"
 	printf '%s\n' "$limits" | grep -Eq '^[0-9]+ [0-9]+$' ||
@@ -2560,6 +2561,18 @@ inotify_limits() {
 	printf '%s\n' "$limits"
 }
 ensure_inotify_capacity() (
+	# The probe is the first container of the node image, so the image is
+	# pulled here with the retries kind's own pull would have given it.
+	# source-image-pulls already recorded whether this run brings it in.
+	node_pull_attempt=1
+	until docker --context "$DOCKER_CONTEXT" image inspect "$KIND_NODE_IMAGE" >/dev/null 2>&1 ||
+		docker --context "$DOCKER_CONTEXT" pull "$KIND_NODE_IMAGE"; do
+		[ "$node_pull_attempt" -lt 3 ] ||
+			fail "kind node image $KIND_NODE_IMAGE could not be pulled in $node_pull_attempt attempts"
+		printf 'e2e: pull attempt %s for %s failed; retrying\n' "$node_pull_attempt" "$KIND_NODE_IMAGE"
+		node_pull_attempt=$((node_pull_attempt + 1))
+		sleep 5
+	done
 	before=$(inotify_limits)
 	instances=${before% *}
 	watches=${before#* }
@@ -2569,9 +2582,9 @@ ensure_inotify_capacity() (
 	[ "$instances" -ge "$E2E_INOTIFY_INSTANCES" ] || instances=$E2E_INOTIFY_INSTANCES
 	[ "$watches" -ge "$E2E_INOTIFY_WATCHES" ] || watches=$E2E_INOTIFY_WATCHES
 	# A refused write is judged by the limits read back, not by its status.
-	docker --context "$DOCKER_CONTEXT" run --rm --privileged --network none --entrypoint sh "$KIND_NODE_IMAGE" -c \
+	docker --context "$DOCKER_CONTEXT" run --rm --pull never --privileged --network none --entrypoint sh "$KIND_NODE_IMAGE" -c \
 		"echo $instances >/proc/sys/fs/inotify/max_user_instances; echo $watches >/proc/sys/fs/inotify/max_user_watches" \
-		>/dev/null 2>&1 || :
+		>/dev/null || :
 	after=$(inotify_limits)
 	if [ "$after" = "$instances $watches" ]; then
 		printf 'e2e: raised the Docker host'"'"'s inotify limits from %s instances and %s watches to %s and %s\n' \
@@ -2580,7 +2593,7 @@ ensure_inotify_capacity() (
 	fi
 	[ "${after% *}" -ge "$E2E_INOTIFY_INSTANCES_REQUIRED" ] ||
 		fail "the Docker host allows ${after% *} inotify instances per user and refused more; kind nodes need at least $E2E_INOTIFY_INSTANCES_REQUIRED, so set fs.inotify.max_user_instances=$E2E_INOTIFY_INSTANCES on it"
-	printf 'e2e: the Docker host keeps its inotify limits at %s instances and %s watches; it refused %s and %s\n' \
+	printf 'e2e: the Docker host keeps its inotify limits at %s instances and %s watches after a request for %s and %s\n' \
 		"${after% *}" "${after#* }" "$instances" "$watches"
 )
 ensure_inotify_capacity
