@@ -1,6 +1,6 @@
 ---
 title: Read a plan
-description: See the SQL the operator would run, or the SQL the last apply ran, with one read-only command.
+description: See the SQL the operator would run, or the SQL the last apply ran, with a read-only command.
 ---
 
 The SQL the operator applies is not in a status field or the manager's log. It
@@ -14,8 +14,11 @@ describes this default delivery path and the separate legacy log transport. An
 Apply projects the verified chunks into immutable ConfigMaps for its Pod to
 mount. Those projections are created only when the Apply is dispatched.
 
-`kubectl ptah` is how you read it. It reads Kubernetes objects and never
-creates or changes a resource, starts a Job, or connects to your database.
+`kubectl ptah` is how you read it. Its read commands read Kubernetes objects
+and never create or change a resource, start a Job, or connect to your
+database. `kubectl ptah approve` is the one command that writes: it creates the
+approval of a plan you reviewed, as you;
+[Exact-plan approvals](../approvals/) describes it.
 
 ```sh
 kubectl ptah plan storefront -n application
@@ -480,6 +483,10 @@ rule, and an optional one; a reader without it gets everything else:
 
 The chart's approver ClusterRole and `examples/diagnostic-reader-role.yaml`
 carry it.
+
+`kubectl ptah approve` reads what `plan` and `schema` read, and creates the
+approval, so it needs `create` on `ptahschemaapprovals` or
+`ptahmigrationapprovals` as well. The chart's approver ClusterRole carries both.
 
 :::caution
 The command reads the plan chunks as you, so granting it means granting

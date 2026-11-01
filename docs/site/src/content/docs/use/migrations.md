@@ -344,19 +344,29 @@ arbitrary SQL, and no analyzer classifies arbitrary SQL as safe.
 
 An approval names the migration, the plan and the plan's fingerprint; the
 admission webhook fills in the rest from the plan itself and refuses any value
-that conflicts with it. `examples/migration-approval.yaml` carries the commands
-that print those three identifiers:
+that conflicts with it. `kubectl ptah approve` shows the versions and checksums
+the plan selected, asks for a decision, and creates the approval as you:
+
+```sh
+kubectl ptah approve migration/orders -n application
+```
+
+It shows no SQL: a migration plan records versions and checksums, and the
+statements live in the artifact. It reads the migration again before it sends
+anything, and approves nothing if the plan was replaced or the operator would
+not admit an approval now. For a declarative workflow, `--dry-run client`
+prints the approval as YAML with the identifiers filled in:
 
 ```yaml
 apiVersion: operator.ptah.run/v1alpha1
 kind: PtahMigrationApproval
 metadata:
-  name: orders-to-20260830
+  generateName: orders-
   namespace: application
 spec:
   migrationRef:
     name: orders
-    uid: <status.plan is published against this UID>
+    uid: <metadata.uid of the PtahMigration>
   planRef:
     name: <status.plan.name>
     uid: <status.plan.uid>

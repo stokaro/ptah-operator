@@ -1,3 +1,14 @@
+# One decision, bound to one plan of one schema. kubectl ptah approve reads
+# the plan, shows it and creates this object with the identifiers filled in:
+#
+#   kubectl ptah approve schema/application -n application
+#
+# or prints it for a repository without sending it:
+#
+#   kubectl ptah approve schema/application -n application --dry-run client
+#
+# Admission stamps who approved and when, and refuses any identifier that is
+# not the current plan's.
 apiVersion: operator.ptah.run/v1alpha1
 kind: PtahSchemaApproval
 metadata:
