@@ -1123,6 +1123,19 @@ func TestWaitTargets(t *testing.T) {
 			wantTimeout: true, wantMessage: "generation 5",
 		},
 		{
+			// A document no branch writes: phase Suspended with the Suspended
+			// condition False. The target holds to the condition the
+			// controller stamps, not to the phase alone.
+			name: "suspended: a schema whose Suspended condition is not True is not the target", target: operate.TargetSuspended,
+			only:       operate.FamilySchema,
+			generation: 5,
+			docs: func(f operate.Family) []doc {
+				active := condition(operatorv1alpha1.ConditionSuspended, metav1.ConditionFalse, "Active", "Reconciliation is active", 5)
+				return []doc{{generation: 5, observedGeneration: 5, suspend: true, phase: "Suspended", observedAt: at(0), conditions: []metav1.Condition{active}}}
+			},
+			wantTimeout: true, wantMessage: "the Suspended condition True",
+		},
+		{
 			name: "suspended: an Apply in flight is observed to its end first", target: operate.TargetSuspended,
 			docs: func(f operate.Family) []doc {
 				return []doc{{generation: 5, observedGeneration: 5, suspend: true, phase: "Applying", operation: "Apply", dispatched: true, observedAt: at(0)}}

@@ -444,14 +444,21 @@ func TestRefreshSaysTheRequestIsNotTheRead(t *testing.T) {
 	// The controller checks the engine and the realm before it reaches a
 	// read request; a policy refusal comes after it.
 	for _, row := range []struct {
+		phase  operatorv1alpha1.MigrationPhase
 		reason string
 		held   bool
 	}{
-		{"RealmConflict", true}, {"RealmNotAuthorized", true}, {"UnsupportedEngine", true}, {"DestructiveChangesDisabled", false},
+		{operatorv1alpha1.MigrationPhaseBlocked, "RealmConflict", true},
+		{operatorv1alpha1.MigrationPhaseBlocked, "RealmNotAuthorized", true},
+		{operatorv1alpha1.MigrationPhaseBlocked, "UnsupportedEngine", true},
+		{operatorv1alpha1.MigrationPhaseBlocked, "DestructiveChangesDisabled", false},
+		// A Ready reason left from a realm block on a resource that has
+		// moved on is not a block.
+		{operatorv1alpha1.MigrationPhaseResolving, "RealmConflict", false},
 	} {
-		t.Run("blocked/"+row.reason, func(t *testing.T) {
+		t.Run(string(row.phase)+"/"+row.reason, func(t *testing.T) {
 			blocked := resting("migration").(*operatorv1alpha1.PtahMigration)
-			blocked.Status.Phase = operatorv1alpha1.MigrationPhaseBlocked
+			blocked.Status.Phase = row.phase
 			blocked.Status.Conditions = []metav1.Condition{{Type: operatorv1alpha1.ConditionReady, Status: metav1.ConditionFalse,
 				Reason: row.reason, Message: "held", ObservedGeneration: 4}}
 			api := newCluster(t, blocked)
@@ -459,8 +466,9 @@ func TestRefreshSaysTheRequestIsNotTheRead(t *testing.T) {
 			code, stdout, _ := runCommand(t, api, "refresh", "migration/storefront")
 
 			says := strings.Contains(stdout, "The resource is Blocked ("+row.reason+"): the operator checks that before it reaches a read request")
-			if code != exitOK || says != row.held {
-				t.Fatalf("refresh of a migration Blocked by %s = %d, says it takes no request: %t, want %t\n%s", row.reason, code, says, row.held, stdout)
+			if code != exitOK || says != row.held || (!row.held && strings.Contains(stdout, "is Blocked")) {
+				t.Fatalf("refresh of a migration in %s with Ready reason %s = %d, says it takes no request: %t, want %t\n%s",
+					row.phase, row.reason, code, says, row.held, stdout)
 			}
 		})
 	}
@@ -561,6 +569,21 @@ func TestWaitDoesNotFinishOnAnOldInSync(t *testing.T) {
 		}
 		requireSays(t, "the timeout", stderr, "A read of the database was under way. A wait started again does not count it",
 			"kubectl ptah refresh schema/storefront --wait -n demo asks for a read that begins later")
+	})
+
+	// A wait for an Apply does not count readings, so a read in flight is
+	// nothing a read request would help with.
+	synctest.Test(t, func(t *testing.T) {
+		observing := resting("schema").(*operatorv1alpha1.PtahSchema)
+		observing.Status.Phase = operatorv1alpha1.PhaseObserving
+		observing.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{Type: "Observe", ID: "read", JobName: "job", JobUID: "job-uid"}
+		api := newCluster(t, observing)
+
+		code, _, stderr := runCommand(t, api, "wait", "schema/storefront", "--for", "applied", "--timeout", "1m")
+
+		if code != exitTimedOut || strings.Contains(stderr, "refresh") {
+			t.Fatalf("wait for applied = %d, stderr %q; want a timeout that does not point at refresh", code, stderr)
+		}
 	})
 
 	synctest.Test(t, func(t *testing.T) {
@@ -666,15 +689,40 @@ func TestWaitForSuspensionNamesAProofStillOwed(t *testing.T) {
 	}
 	schema.Status.Conditions = append(schema.Status.Conditions, metav1.Condition{Type: operatorv1alpha1.ConditionSuspended,
 		Status: metav1.ConditionTrue, Reason: "Requested", Message: "New database operations are suspended", ObservedGeneration: 4})
+
+	// On the bubble's clock, as its neighbors are: a regression that makes
+	// the target unreachable costs the five-minute default in fake time.
+	synctest.Test(t, func(t *testing.T) {
+		api := newCluster(t, schema.DeepCopy())
+
+		code, stdout, stderr := runCommand(t, api, "wait", "schema/storefront", "--for", "suspended")
+
+		if code != exitOK {
+			t.Fatalf("wait = %d, stderr %q", code, stderr)
+		}
+		requireSays(t, "the wait's report", stdout, "reached suspended.",
+			"The proof that the last Apply converged waits for resume. Until then the schema keeps its database lock")
+	})
+}
+
+// A schema resumed while it owes the proof of an Apply runs that proof
+// before it reads the database again, and the report says so.
+func TestResumeSaysAProofStillOwedRunsFirst(t *testing.T) {
+	schema := resting("schema").(*operatorv1alpha1.PtahSchema)
+	schema.Spec.Suspend = true
+	schema.Status.Phase = operatorv1alpha1.PhaseSuspended
+	schema.Status.PendingObservation = &operatorv1alpha1.PendingObservationStatus{
+		Outcome: operatorv1alpha1.PendingObservationOutcomeUnknown, ApplyOperationID: "apply",
+	}
 	api := newCluster(t, schema)
 
-	code, stdout, stderr := runCommand(t, api, "wait", "schema/storefront", "--for", "suspended")
+	code, stdout, stderr := runCommand(t, api, "resume", "schema/storefront")
 
 	if code != exitOK {
-		t.Fatalf("wait = %d, stderr %q", code, stderr)
+		t.Fatalf("resume = %d, stderr %q", code, stderr)
 	}
-	requireSays(t, "the wait's report", stdout, "reached suspended.",
-		"The proof that the last Apply converged waits for resume. Until then the schema keeps its database lock")
+	requireSays(t, "resume's report", stdout,
+		"Once the operator observes generation 4 it runs the proof still owed after the last Apply, then reads the database again")
 }
 
 // A resource with no finalizer deleted while a wait reads it is gone before
