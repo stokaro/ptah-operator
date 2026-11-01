@@ -122,7 +122,7 @@ func TestRenderNamesTheOutOfOrderVersions(t *testing.T) {
 		format migrationview.Format
 		want   string
 	}{
-		{format: migrationview.Text, want: "Out of order:   2, 4"},
+		{format: migrationview.Text, want: "Out of order:     2, 4"},
 		{format: migrationview.JSON, want: `"outOfOrderVersions": [`},
 	} {
 		var out strings.Builder
@@ -196,9 +196,9 @@ func TestRenderNamesAConfigMapSourceAndItsSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"Source:         ConfigMap orders-migrations\n",
-		"Snapshot:       ptah-src-0a1b2c3d4e5f6a7b8c9d0e1f\n",
-		"Content:        " + content + "\n",
+		"Source:           ConfigMap orders-migrations\n",
+		"Snapshot:         ptah-src-0a1b2c3d4e5f6a7b8c9d0e1f\n",
+		"Content:          " + content + "\n",
 	} {
 		if !strings.Contains(text.String(), want) {
 			t.Fatalf("text view is missing %q:\n%s", want, text.String())
