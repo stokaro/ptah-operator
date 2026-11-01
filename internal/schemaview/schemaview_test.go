@@ -183,7 +183,7 @@ func TestRenderTextCarriesCountsAndNoSQL(t *testing.T) {
 		"Reference data:   2 to insert, 1 to update, 3 to delete",
 		"data_rows_deleted",
 		"not approved",
-		"kubectl ptah plan prints the SQL this plan holds.",
+		"kubectl ptah plan storefront -n team-a prints the SQL this plan holds.",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("text view is missing %q:\n%s", want, text)
