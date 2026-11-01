@@ -2536,6 +2536,55 @@ if [ "$E2E_STOP_AFTER" != bootstrap ]; then
 fi
 
 timing_next bootstrap kind-cluster
+
+# Every kind node is a container whose kubelet, kube-proxy and containerd hold
+# inotify instances, and the nodes share the Docker host's limit of instances
+# per user. An ubuntu-26.04 runner allows 128, which a four-node cluster
+# exceeds: kube-proxy stops with "fsnotify watcher init: too many open files",
+# a node without it cannot reach the API Service, and the first Job that needs
+# that fails far from the cause. The limits belong to the Docker host, which
+# is not this machine when the context is remote, so they are read and raised
+# through a privileged container of the node image, as privileged as kind's
+# nodes. They are only ever raised. A host that refuses the write still runs
+# while it allows the 512 instances kind documents; below that the run stops
+# here, where the cause has a name.
+E2E_INOTIFY_INSTANCES=8192
+E2E_INOTIFY_WATCHES=524288
+E2E_INOTIFY_INSTANCES_REQUIRED=512
+inotify_limits() {
+	limits=$(docker --context "$DOCKER_CONTEXT" run --rm --privileged --network none --entrypoint sh "$KIND_NODE_IMAGE" -c \
+		'printf "%s %s\n" "$(cat /proc/sys/fs/inotify/max_user_instances)" "$(cat /proc/sys/fs/inotify/max_user_watches)"') ||
+		fail "could not read the Docker host's inotify limits"
+	printf '%s\n' "$limits" | grep -Eq '^[0-9]+ [0-9]+$' ||
+		fail "the Docker host reported its inotify limits as '$limits'"
+	printf '%s\n' "$limits"
+}
+ensure_inotify_capacity() (
+	before=$(inotify_limits)
+	instances=${before% *}
+	watches=${before#* }
+	if [ "$instances" -ge "$E2E_INOTIFY_INSTANCES" ] && [ "$watches" -ge "$E2E_INOTIFY_WATCHES" ]; then
+		return 0
+	fi
+	[ "$instances" -ge "$E2E_INOTIFY_INSTANCES" ] || instances=$E2E_INOTIFY_INSTANCES
+	[ "$watches" -ge "$E2E_INOTIFY_WATCHES" ] || watches=$E2E_INOTIFY_WATCHES
+	# A refused write is judged by the limits read back, not by its status.
+	docker --context "$DOCKER_CONTEXT" run --rm --privileged --network none --entrypoint sh "$KIND_NODE_IMAGE" -c \
+		"echo $instances >/proc/sys/fs/inotify/max_user_instances; echo $watches >/proc/sys/fs/inotify/max_user_watches" \
+		>/dev/null 2>&1 || :
+	after=$(inotify_limits)
+	if [ "$after" = "$instances $watches" ]; then
+		printf 'e2e: raised the Docker host'"'"'s inotify limits from %s instances and %s watches to %s and %s\n' \
+			"${before% *}" "${before#* }" "$instances" "$watches"
+		return 0
+	fi
+	[ "${after% *}" -ge "$E2E_INOTIFY_INSTANCES_REQUIRED" ] ||
+		fail "the Docker host allows ${after% *} inotify instances per user and refused more; kind nodes need at least $E2E_INOTIFY_INSTANCES_REQUIRED, so set fs.inotify.max_user_instances=$E2E_INOTIFY_INSTANCES on it"
+	printf 'e2e: the Docker host keeps its inotify limits at %s instances and %s watches; it refused %s and %s\n' \
+		"${after% *}" "${after#* }" "$instances" "$watches"
+)
+ensure_inotify_capacity
+
 printf 'e2e: creating kind cluster %s with Kubernetes %s\n' "$CLUSTER_NAME" "$K8S_VERSION"
 CLUSTER_CREATED=1
 debug_logs_start_following

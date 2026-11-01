@@ -136,6 +136,12 @@ jobs:
           tar -xzf "$download/$archive" -C "$download" ptah
           install -m 0755 "$download/ptah" "$RUNNER_TEMP/bin/ptah"
           "$RUNNER_TEMP/bin/ptah" --version
+      # A kind node holds inotify instances against the runner's per-user
+      # limit, which ubuntu-26.04 sets to 128; past it kube-proxy stops with
+      # "too many open files". hack/e2e-kind.sh raises the same limits for the
+      # acceptance lab.
+      - name: Raise the runner's inotify limits for kind
+        run: sudo sysctl -w fs.inotify.max_user_instances=8192 fs.inotify.max_user_watches=524288
       - name: Install on a fresh cluster and converge a PostgreSQL schema
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
