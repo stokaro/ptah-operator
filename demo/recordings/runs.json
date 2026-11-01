@@ -1,25 +1,25 @@
 {
-  "recordedAt": "2026-10-10T21:14:22Z",
+  "recordedAt": "2026-11-01T22:49:59Z",
   "lab": {
-    "CONTROLLER_IMAGE": "e2e-registry.ptah-test-a-1-37-0-demo-38083319684-1-9f26e4e2d4.svc.cluster.local:5000/ptah-operator@sha256:18aafa202d6ebd9a5e65ffb026eb016cfad52eb14224ee8d8891f5eff55b63cd",
-    "CONTROLLER_REVISION": "b98f92bed240a4a34cde9c6bf5bc0cdc07da6d96",
-    "EXECUTOR_IMAGE": "e2e-registry.ptah-test-a-1-37-0-demo-38083319684-1-9f26e4e2d4.svc.cluster.local:5000/ptah-executor@sha256:f68968558f0634c1e388f2be3f8d9d0f7c5916631abe16c5bae55d21e8e909c0",
-    "KIND_CLUSTER_NAME": "ptah-e2e-1-37-0-demo-38083319-9f26e4e2d4",
+    "CONTROLLER_IMAGE": "e2e-registry.ptah-test-a-1-37-0-demo-41358223052-1-8add3a802e.svc.cluster.local:5000/ptah-operator@sha256:e085b9108ab069c971a89ea121678a2b663a9ecd3a592f100ba617e173b0c12b",
+    "CONTROLLER_REVISION": "75dbebf8e1cfd0f38c91fb6b2bc2c5fbe0764d8a",
+    "EXECUTOR_IMAGE": "e2e-registry.ptah-test-a-1-37-0-demo-41358223052-1-8add3a802e.svc.cluster.local:5000/ptah-executor@sha256:b8a9ac7c695e7af9f66787880b0cd722017474f5d05c08a81e0db297df311cf4",
+    "KIND_CLUSTER_NAME": "ptah-e2e-1-37-0-demo-41358223-8add3a802e",
     "KUBERNETES_VERSION": "1.37.0",
-    "PTAH_REVISION": "eb69f8c4435643c5c9f3fbd1c9953b9ba0f44b6f",
-    "PTAH_VERSION": "v0.13.0",
-    "RUNNER_IMAGE": "e2e-registry.ptah-test-a-1-37-0-demo-38083319684-1-9f26e4e2d4.svc.cluster.local:5000/ptah-runner@sha256:18aafa202d6ebd9a5e65ffb026eb016cfad52eb14224ee8d8891f5eff55b63cd"
+    "PTAH_REVISION": "91e28d4331950e949590fd9ac404373bc17b572d",
+    "PTAH_VERSION": "v0.16.0",
+    "RUNNER_IMAGE": "e2e-registry.ptah-test-a-1-37-0-demo-41358223052-1-8add3a802e.svc.cluster.local:5000/ptah-runner@sha256:e085b9108ab069c971a89ea121678a2b663a9ecd3a592f100ba617e173b0c12b"
   },
   "source": {
-    "commit": "0f7a06595d8b619c3769f61301661cd2940bdeca",
-    "describe": "0f7a065"
+    "commit": "75dbebf8e1cfd0f38c91fb6b2bc2c5fbe0764d8a",
+    "describe": "v0.2.8-14-g75dbebf"
   },
   "scenarios": [
     {
       "id": "adopt-existing-database",
       "source": {
-        "commit": "0f7a06595d8b619c3769f61301661cd2940bdeca",
-        "describe": "0f7a065"
+        "commit": "75dbebf8e1cfd0f38c91fb6b2bc2c5fbe0764d8a",
+        "describe": "v0.2.8-14-g75dbebf"
       },
       "definitionDigest": "sha256:b607ca8cdfe810104aeb340bebc54702736e89167ffe80b0323bf1dc6aaf7ab0",
       "title": "Adopt a database that already has a schema",
@@ -466,10 +466,10 @@
     {
       "id": "checkpoint-bootstrap",
       "source": {
-        "commit": "0f7a06595d8b619c3769f61301661cd2940bdeca",
-        "describe": "0f7a065"
+        "commit": "75dbebf8e1cfd0f38c91fb6b2bc2c5fbe0764d8a",
+        "describe": "v0.2.8-14-g75dbebf"
       },
-      "definitionDigest": "sha256:b623bbe564a51397c30e781e7aa8e9936a7ca9ca73e55ec0792134bcac267944",
+      "definitionDigest": "sha256:50dfe72bc93c3d34be0f23f38ada5e97f0ba6cf4c9d73046859ed12b3b976619",
       "title": "Start a new database from a checkpoint",
       "tagline": "A fresh database runs the snapshot and what came after it, and ends up where the long way ends.",
       "learn": "What a checkpoint replaces, who selects it, and how the operator proves the shortcut arrived at the same place.",
@@ -477,7 +477,7 @@
         "Lifecycle"
       ],
       "commands": 7,
-      "lines": 85,
+      "lines": 101,
       "events": [
         [
           "note",
@@ -593,7 +593,7 @@
         ],
         [
           "out",
-          "    ociRef: oci://e2e-registry.demo.svc.cluster.local:5000/migrations/demo@sha256:40dd09932dc044bda60aa66f72752fe02c156aa6ff4fa2d5eaea645bd2793625"
+          "    ociRef: oci://e2e-registry.demo.svc.cluster.local:5000/migrations/demo@sha256:733948cfd8616a3b4abf97734432f2cc1e68a9c925e0e0f97f344b019ee4479b"
         ],
         [
           "out",
@@ -701,55 +701,63 @@
         ],
         [
           "out",
-          "Migration:      demo/shipments"
+          "Migration:            demo/shipments"
         ],
         [
           "out",
-          "Phase:          InSync"
+          "Phase:                InSync"
         ],
         [
           "out",
-          "Artifact:       oci://e2e-registry.demo.svc.cluster.local:5000/migrations/demo@sha256:40dd09932dc044bda60aa66f72752fe02c156aa6ff4fa2d5eaea645bd2793625"
+          "Ready:                True, HistoryMatched: The database has every migration this artifact carries"
         ],
         [
           "out",
-          "History read:   \u003ctime\u003e"
+          "Policy:               apply Always"
         ],
         [
           "out",
-          "Current version:4"
+          "Artifact:             oci://e2e-registry.demo.svc.cluster.local:5000/migrations/demo@sha256:733948cfd8616a3b4abf97734432f2cc1e68a9c925e0e0f97f344b019ee4479b"
         ],
         [
           "out",
-          "Checkpoint:     3"
+          "History read:         \u003ctime\u003e"
         ],
         [
           "out",
-          "Applied:        4"
+          "Current version:      4"
         ],
         [
           "out",
-          "Pending:        0"
+          "Checkpoint:           3"
         ],
         [
           "out",
-          "Last run:       Applied at \u003ctime\u003e"
+          "Applied:              4"
         ],
         [
           "out",
-          "Run applied:    3, 4"
+          "Pending:              0"
+        ],
+        [
+          "blank",
+          null
         ],
         [
           "out",
-          "Run message:    2 migrations are recorded applied"
+          "Last run:             Applied, started \u003ctime\u003e, finished \u003ctime\u003e"
         ],
         [
           "out",
-          "ArtifactVerified:True (PolicySatisfied)"
+          "  Job:                ptah-m-apply-shipments-51df1b15ee1c4449, UID \u003cuid\u003e"
         ],
         [
           "out",
-          "Ready:          True (HistoryMatched)"
+          "  Versions:           3, 4"
+        ],
+        [
+          "out",
+          "  Message:            2 migrations are recorded applied"
         ],
         [
           "blank",
@@ -758,6 +766,62 @@
         [
           "out",
           "No plan is published."
+        ],
+        [
+          "blank",
+          null
+        ],
+        [
+          "out",
+          "Approvals: none"
+        ],
+        [
+          "blank",
+          null
+        ],
+        [
+          "out",
+          "Run acknowledgments: none"
+        ],
+        [
+          "blank",
+          null
+        ],
+        [
+          "out",
+          "Conditions:"
+        ],
+        [
+          "out",
+          "  TYPE              STATUS  REASON           SINCE                 MESSAGE"
+        ],
+        [
+          "out",
+          "  Progressing       False   HistoryMatched   \u003ctime\u003e                Nothing is pending"
+        ],
+        [
+          "out",
+          "  ArtifactVerified  True    PolicySatisfied  \u003ctime\u003e                The resolved artifact satisfied its verification policy"
+        ],
+        [
+          "out",
+          "  Blocked           False   HistoryMatched   \u003ctime\u003e                The history continues this artifact"
+        ],
+        [
+          "out",
+          "  Ready             True    HistoryMatched   \u003ctime\u003e                The database has every migration this artifact carries"
+        ],
+        [
+          "out",
+          "  ApprovalRequired  False   Satisfied        \u003ctime\u003e                The plan's approval requirements are satisfied"
+        ],
+        [
+          "blank",
+          null
+        ],
+        [
+          "out",
+          "kubectl events -n demo                                             --for ptahmigration/shipments prints its Events."
         ],
         [
           "note",
@@ -862,7 +926,7 @@
         {
           "scenario": "checkpoint-bootstrap",
           "step": 5,
-          "claim": "exits 0, prints \"InSync\", prints \"Current version:4\", prints \"Run applied:    3, 4\", never prints \"CREATE TABLE\", never prints \"ALTER TABLE\"",
+          "claim": "exits 0, prints \"InSync\", prints \"Current version:      4\", prints \"Versions:           3, 4\", never prints \"CREATE TABLE\", never prints \"ALTER TABLE\"",
           "passed": true
         },
         {
@@ -882,8 +946,8 @@
     {
       "id": "destructive-block",
       "source": {
-        "commit": "0f7a06595d8b619c3769f61301661cd2940bdeca",
-        "describe": "0f7a065"
+        "commit": "75dbebf8e1cfd0f38c91fb6b2bc2c5fbe0764d8a",
+        "describe": "v0.2.8-14-g75dbebf"
       },
       "definitionDigest": "sha256:6ebd63fc30d93d6acc4048b0a18f6bbff367146cf0eff6ab15e8d2338775f28e",
       "title": "Refuse a destructive change",
@@ -941,11 +1005,11 @@
         ],
         [
           "out",
-          "--- demo/schemas/v2.sql\t2026-10-10 21:03:15.679951748 +0000"
+          "--- demo/schemas/v2.sql\t2026-11-01 22:39:32.182645722 +0000"
         ],
         [
           "out",
-          "+++ demo/schemas/v3.sql\t2026-10-10 21:03:15.679951748 +0000"
+          "+++ demo/schemas/v3.sql\t2026-11-01 22:39:32.182645722 +0000"
         ],
         [
           "out",
@@ -1061,11 +1125,11 @@
         ],
         [
           "out",
-          "ptah-plan-21884da087dc7b86ae75ac4a   storefront   sha256:21884da087dc7b86ae75ac4ab6367b57e7f29251d081e5a25a6b21ff63846ad0   3            false                      68s"
+          "ptah-plan-814103017eeec81c6ec27ad6   storefront   sha256:814103017eeec81c6ec27ad6e93d30fe3df2754fd1adbbcaa39f9dbdd66310f1   3            false                      72s"
         ],
         [
           "out",
-          "ptah-plan-681ac17889d1c46b1b7042be   storefront   sha256:681ac17889d1c46b1b7042be804863cd85d6a60dd6f43515e72c3527564d4c51   2            true                       1s"
+          "ptah-plan-b91415dfc286793bb12c10de   storefront   sha256:b91415dfc286793bb12c10de16f072fb55938de4b6d00d71b3b8fed5f5c33b00   1            true                       1s"
         ],
         [
           "note",
@@ -1089,11 +1153,11 @@
         ],
         [
           "sql",
-          "ALTER TABLE \"customers\" DROP COLUMN \"email\" CASCADE  -- DROP COLUMN removes existing column data"
+          "ALTER TABLE \"customers\" DROP COLUMN \"email\" CASCADE"
         ],
         [
           "sql",
-          "safe  -- WARNING: Dropping column customers.email with CASCADE - This will delete data and dependent objects!  -- does not remove data or tighten constraints"
+          "-- WARNING: Dropping column customers.email with CASCADE - This will delete data and dependent objects!  -- DROP COLUMN removes existing column data"
         ],
         [
           "note",
@@ -1186,8 +1250,8 @@
     {
       "id": "drift",
       "source": {
-        "commit": "0f7a06595d8b619c3769f61301661cd2940bdeca",
-        "describe": "0f7a065"
+        "commit": "75dbebf8e1cfd0f38c91fb6b2bc2c5fbe0764d8a",
+        "describe": "v0.2.8-14-g75dbebf"
       },
       "definitionDigest": "sha256:9403b692352e9e0edeb976ee206a43819ae898e64cca3d0bec79c928d31d6cc5",
       "title": "Close the drift",
@@ -1349,11 +1413,11 @@
         ],
         [
           "out",
-          "ptah-plan-066f44c19419b0d002969432   storefront   sha256:066f44c19419b0d002969432556a2faa96c43660ba7909242d45b77592bfc954   1            false                      28s"
+          "ptah-plan-14f3e684d0e9dc8969c2ea58   storefront   sha256:14f3e684d0e9dc8969c2ea58c9739305f0c9502ba9a874690538552f405e73bc   3            false                      2m41s"
         ],
         [
           "out",
-          "ptah-plan-3e3c403d347a6f9a76857f28   storefront   sha256:3e3c403d347a6f9a76857f28ef8d03e40aa788c171c6ae377530828d525f4938   3            false                      2m30s"
+          "ptah-plan-2b274e2f5a07618873cbfa21   storefront   sha256:2b274e2f5a07618873cbfa211d598d4d2e8f7ff8d92d6819d88f293a322ab7dd   1            false                      25s"
         ]
       ],
       "checks": [
@@ -1398,8 +1462,8 @@
     {
       "id": "failure-recovery",
       "source": {
-        "commit": "0f7a06595d8b619c3769f61301661cd2940bdeca",
-        "describe": "0f7a065"
+        "commit": "75dbebf8e1cfd0f38c91fb6b2bc2c5fbe0764d8a",
+        "describe": "v0.2.8-14-g75dbebf"
       },
       "definitionDigest": "sha256:2c8f2eabc1ff9cc40c258f425bd668887e3a8a58e3d6c3e4dac7fe28de439275",
       "title": "Fail, then recover",
@@ -1469,23 +1533,23 @@
         ],
         [
           "out",
-          "20s         Normal    OperationCompleted   ptahschema/storefront   resolve operation completed"
+          "23s         Normal    OperationCompleted   ptahschema/storefront   resolve operation completed"
         ],
         [
           "out",
-          "20s         Normal    OperationStarted     ptahschema/storefront   Verify Job ptah-verify-storefront-a24c6161b2509d09 started"
+          "23s         Normal    OperationStarted     ptahschema/storefront   Verify Job ptah-verify-storefront-8b0c33751b4871da started"
         ],
         [
           "out",
-          "12s         Normal    OperationCompleted   ptahschema/storefront   verify operation completed"
+          "13s         Normal    OperationCompleted   ptahschema/storefront   verify operation completed"
         ],
         [
           "out",
-          "12s         Normal    OperationStarted     ptahschema/storefront   Observe Job ptah-observe-storefront-0acb0b691a4a5e70 started"
+          "13s         Normal    OperationStarted     ptahschema/storefront   Observe Job ptah-observe-storefront-956adeb1224d93f5 started"
         ],
         [
           "out",
-          "1s          Warning   OperationFailed      ptahschema/storefront   child_exit: ptah exited with code 2"
+          "2s          Warning   OperationFailed      ptahschema/storefront   child_exit: ptah exited with code 2"
         ],
         [
           "note",
@@ -1553,7 +1617,7 @@
         ],
         [
           "out",
-          "checked the whole status, 3444 bytes, no credential in it"
+          "checked the whole status, 3610 bytes, no credential in it"
         ],
         [
           "out",
@@ -1676,8 +1740,8 @@
     {
       "id": "first-apply",
       "source": {
-        "commit": "0f7a06595d8b619c3769f61301661cd2940bdeca",
-        "describe": "0f7a065"
+        "commit": "75dbebf8e1cfd0f38c91fb6b2bc2c5fbe0764d8a",
+        "describe": "v0.2.8-14-g75dbebf"
       },
       "definitionDigest": "sha256:91c23978c89db805dc06dba7397c042f5814d9a097e740d8aac5f6160eb75df1",
       "title": "Apply a schema",
@@ -1739,7 +1803,7 @@
         ],
         [
           "out",
-          "registry: 127.0.0.1:22919"
+          "registry: 127.0.0.1:22324"
         ],
         [
           "note",
@@ -1767,11 +1831,11 @@
         ],
         [
           "err",
-          "Pushed schema as oci://127.0.0.1:22919/schemas/demo:v1-94659"
+          "Pushed schema as oci://127.0.0.1:22324/schemas/demo:v1-101454"
         ],
         [
           "err",
-          "Digest: sha256:a2237321d48400b2e28ea462f2dcf94fd2e80dfb987d97b7d3031093be1ae936"
+          "Digest: sha256:21765062e3b2188b4ad14aeec4dc5b5da5c26cadfb86f4ee5cccd6abdaac2940"
         ],
         [
           "err",
@@ -1779,7 +1843,7 @@
         ],
         [
           "err",
-          "Tags: [v1-94659]"
+          "Tags: [v1-101454]"
         ],
         [
           "sync",
@@ -1887,7 +1951,7 @@
         ],
         [
           "out",
-          "    ociRef: oci://e2e-registry.demo.svc.cluster.local:5000/schemas/demo@sha256:a2237321d48400b2e28ea462f2dcf94fd2e80dfb987d97b7d3031093be1ae936"
+          "    ociRef: oci://e2e-registry.demo.svc.cluster.local:5000/schemas/demo@sha256:21765062e3b2188b4ad14aeec4dc5b5da5c26cadfb86f4ee5cccd6abdaac2940"
         ],
         [
           "out",
@@ -2079,7 +2143,7 @@
         ],
         [
           "out",
-          "ptah-plan-664b0a2d1a26340c2113e29e   storefront   sha256:664b0a2d1a26340c2113e29e6dbac8b1b0503d4bd1ae34ca6020329e8a96756a   1            false                      33s"
+          "ptah-plan-6fa1a56806b644652bc6992c   storefront   sha256:6fa1a56806b644652bc6992cb2b03d33ff7f01c0a0c0549bc39a225deb1d235f   1            false                      37s"
         ],
         [
           "note",
@@ -2230,8 +2294,8 @@
     {
       "id": "lab-setup",
       "source": {
-        "commit": "0f7a06595d8b619c3769f61301661cd2940bdeca",
-        "describe": "0f7a065"
+        "commit": "75dbebf8e1cfd0f38c91fb6b2bc2c5fbe0764d8a",
+        "describe": "v0.2.8-14-g75dbebf"
       },
       "definitionDigest": "sha256:cbcb2d24588a74500925d582529982e331f6c7e439e12827663111e0b1b1dcd9",
       "title": "Stand up the lab",
@@ -2265,15 +2329,15 @@
         ],
         [
           "out",
-          "operator    b98f92bed240a4a34cde9c6bf5bc0cdc07da6d96"
+          "operator    75dbebf8e1cfd0f38c91fb6b2bc2c5fbe0764d8a"
         ],
         [
           "out",
-          "executor    e2e-registry.demo.svc.cluster.local:5000/ptah-executor@sha256:f68968558f0634c1e388f2be3f8d9d0f7c5916631abe16c5bae55d21e8e909c0"
+          "executor    e2e-registry.demo.svc.cluster.local:5000/ptah-executor@sha256:b8a9ac7c695e7af9f66787880b0cd722017474f5d05c08a81e0db297df311cf4"
         ],
         [
           "out",
-          "ptah        v0.13.0"
+          "ptah        v0.16.0"
         ],
         [
           "note",
@@ -2289,11 +2353,11 @@
         ],
         [
           "out",
-          "ptah-operator-cert-rotator                                     1/1     1            1           10m"
+          "ptah-operator-cert-rotator                                     1/1     1            1           11m"
         ],
         [
           "out",
-          "ptah-operator                                                  2/2     2            2           10m"
+          "ptah-operator                                                  2/2     2            2           11m"
         ],
         [
           "note",
@@ -2309,11 +2373,11 @@
         ],
         [
           "out",
-          "e2e-registry.demo.svc.cluster.local:5000/ptah-operator@sha256:18aafa202d6ebd9a5e65ffb026eb016cfad52eb14224ee8d8891f5eff55b63cd"
+          "e2e-registry.demo.svc.cluster.local:5000/ptah-operator@sha256:e085b9108ab069c971a89ea121678a2b663a9ecd3a592f100ba617e173b0c12b"
         ],
         [
           "out",
-          "e2e-registry.demo.svc.cluster.local:5000/ptah-operator@sha256:18aafa202d6ebd9a5e65ffb026eb016cfad52eb14224ee8d8891f5eff55b63cd"
+          "e2e-registry.demo.svc.cluster.local:5000/ptah-operator@sha256:e085b9108ab069c971a89ea121678a2b663a9ecd3a592f100ba617e173b0c12b"
         ],
         [
           "note",
@@ -2357,11 +2421,11 @@
         ],
         [
           "out",
-          "secret/demo-database          Opaque                           6      10m"
+          "secret/demo-database          Opaque                           6      11m"
         ],
         [
           "out",
-          "secret/demo-database-broken   Opaque                           1      3m1s"
+          "secret/demo-database-broken   Opaque                           1      3m8s"
         ],
         [
           "out",
@@ -2369,11 +2433,11 @@
         ],
         [
           "out",
-          "secret/demo-registry          Opaque                           4      10m"
+          "secret/demo-registry          Opaque                           4      11m"
         ],
         [
           "out",
-          "secret/demo-registry-pull     kubernetes.io/dockerconfigjson   1      10m"
+          "secret/demo-registry-pull     kubernetes.io/dockerconfigjson   1      11m"
         ],
         [
           "out",
@@ -2405,7 +2469,7 @@
         ],
         [
           "out",
-          "configmap/ptah-plan-664b0a2d1a26340c2113e29e-000   1      34s"
+          "configmap/ptah-plan-6fa1a56806b644652bc6992c-000   1      37s"
         ]
       ],
       "checks": [
@@ -2450,8 +2514,8 @@
     {
       "id": "manual-approval",
       "source": {
-        "commit": "0f7a06595d8b619c3769f61301661cd2940bdeca",
-        "describe": "0f7a065"
+        "commit": "75dbebf8e1cfd0f38c91fb6b2bc2c5fbe0764d8a",
+        "describe": "v0.2.8-14-g75dbebf"
       },
       "definitionDigest": "sha256:a2759b7df9d97babbd51e38715528ee09f56b065716271961eb89306b64252b6",
       "title": "Approve a plan",
@@ -2569,7 +2633,7 @@
         ],
         [
           "out",
-          "    ociRef: oci://e2e-registry.demo.svc.cluster.local:5000/schemas/demo@sha256:65970c1ecd30ab6c34d2a60e96f86eba9d66ac8f866c4b759c81eafb1d8a7f02"
+          "    ociRef: oci://e2e-registry.demo.svc.cluster.local:5000/schemas/demo@sha256:12a2efd4ac011d8dcd1e57d0d743a19e75393a1a3ed08be4e1eedead0cf3a65d"
         ],
         [
           "out",
@@ -2789,7 +2853,7 @@
         ],
         [
           "out",
-          "{\"schemaRef\":{\"name\":\"storefront\",\"uid\":\"\u003cuid\u003e\"},\"planRef\":{\"name\":\"ptah-plan-668d861e896d227fd3fe192d\",\"uid\":\"\u003cuid\u003e\"},\"planFingerprint\":\"sha256:668d861e896d227fd3fe192d97eebd31e8887bd0d7bce47985476d492f54276f\"}"
+          "{\"schemaRef\":{\"name\":\"storefront\",\"uid\":\"\u003cuid\u003e\"},\"planRef\":{\"name\":\"ptah-plan-f1b893d0a9b2d2db52d200af\",\"uid\":\"\u003cuid\u003e\"},\"planFingerprint\":\"sha256:f1b893d0a9b2d2db52d200af81e6de4f4ea54c6c7fa05559ab8461a8fcb42088\"}"
         ],
         [
           "sync",
@@ -2833,7 +2897,7 @@
         ],
         [
           "out",
-          "  \"planFingerprint\": \"sha256:668d861e896d227fd3fe192d97eebd31e8887bd0d7bce47985476d492f54276f\""
+          "  \"planFingerprint\": \"sha256:f1b893d0a9b2d2db52d200af81e6de4f4ea54c6c7fa05559ab8461a8fcb42088\""
         ],
         [
           "out",
@@ -2986,8 +3050,8 @@
     {
       "id": "mysql-partial-failure",
       "source": {
-        "commit": "0f7a06595d8b619c3769f61301661cd2940bdeca",
-        "describe": "0f7a065"
+        "commit": "75dbebf8e1cfd0f38c91fb6b2bc2c5fbe0764d8a",
+        "describe": "v0.2.8-14-g75dbebf"
       },
       "definitionDigest": "sha256:6697f9170ec8d53f18127e77d22ec2cbf1dc028fba304baf3c732df31cb96557",
       "title": "Recover a MySQL migration that stopped halfway",
@@ -3548,8 +3612,8 @@
     {
       "id": "reference-data",
       "source": {
-        "commit": "0f7a06595d8b619c3769f61301661cd2940bdeca",
-        "describe": "0f7a065"
+        "commit": "75dbebf8e1cfd0f38c91fb6b2bc2c5fbe0764d8a",
+        "describe": "v0.2.8-14-g75dbebf"
       },
       "definitionDigest": "sha256:852ca82e1bae17bdb96771d41d1cfaa1c8e85d0fb09f77c4f56fbb3f08940929",
       "title": "Manage reference data",
@@ -3699,11 +3763,11 @@
         ],
         [
           "out",
-          "--- demo/reference/v1/catalog.go\t2026-10-10 21:03:15.679025165 +0000"
+          "--- demo/reference/v1/catalog.go\t2026-11-01 22:39:32.181609878 +0000"
         ],
         [
           "out",
-          "+++ demo/reference/v2/catalog.go\t2026-10-10 21:03:15.679082821 +0000"
+          "+++ demo/reference/v2/catalog.go\t2026-11-01 22:39:32.181671088 +0000"
         ],
         [
           "out",
@@ -3851,11 +3915,11 @@
         ],
         [
           "out",
-          "--- demo/reference/v2/catalog.go\t2026-10-10 21:03:15.679082821 +0000"
+          "--- demo/reference/v2/catalog.go\t2026-11-01 22:39:32.181671088 +0000"
         ],
         [
           "out",
-          "+++ demo/reference/v3/catalog.go\t2026-10-10 21:03:15.679143813 +0000"
+          "+++ demo/reference/v3/catalog.go\t2026-11-01 22:39:32.181731357 +0000"
         ],
         [
           "out",
@@ -4138,8 +4202,8 @@
     {
       "id": "schema-update",
       "source": {
-        "commit": "0f7a06595d8b619c3769f61301661cd2940bdeca",
-        "describe": "0f7a065"
+        "commit": "75dbebf8e1cfd0f38c91fb6b2bc2c5fbe0764d8a",
+        "describe": "v0.2.8-14-g75dbebf"
       },
       "definitionDigest": "sha256:eb20915acf1c4fde551803b92b886ee4bf0739b98c602f93562e0c964e6a5189",
       "title": "Change the schema",
@@ -4193,11 +4257,11 @@
         ],
         [
           "out",
-          "--- demo/schemas/v1.sql\t2026-10-10 21:03:15.679951748 +0000"
+          "--- demo/schemas/v1.sql\t2026-11-01 22:39:32.182645722 +0000"
         ],
         [
           "out",
-          "+++ demo/schemas/v2.sql\t2026-10-10 21:03:15.679951748 +0000"
+          "+++ demo/schemas/v2.sql\t2026-11-01 22:39:32.182645722 +0000"
         ],
         [
           "out",
@@ -4281,11 +4345,11 @@
         ],
         [
           "err",
-          "Pushed schema as oci://127.0.0.1:22919/schemas/demo:v2-131340"
+          "Pushed schema as oci://127.0.0.1:22324/schemas/demo:v2-138490"
         ],
         [
           "err",
-          "Digest: sha256:c5301515761db10b458e08d26a28d4b590d04291713cea2dd9a78db6c2f2ac9c"
+          "Digest: sha256:54180d47dc0f41a30fc9e634f90c401a216dbeae1a5d0883b2eb6bb0363fc6d0"
         ],
         [
           "err",
@@ -4293,7 +4357,7 @@
         ],
         [
           "err",
-          "Tags: [v2-131340]"
+          "Tags: [v2-138490]"
         ],
         [
           "sync",
@@ -4333,11 +4397,11 @@
         ],
         [
           "out",
-          "ptah-plan-53cd57f5ed02ae538dff14ae   storefront   sha256:53cd57f5ed02ae538dff14ae9c351181c248d9209927d4dc39c7abd8157fa113   1            false                      97s"
+          "ptah-plan-53c7d372d308f24e49f4f6ce   storefront   sha256:53c7d372d308f24e49f4f6cea3429f15b3d5710f853c35e9e1bcab015218c887   1            false                      99s"
         ],
         [
           "out",
-          "ptah-plan-78e6191054fd6817d0131770   storefront   sha256:78e6191054fd6817d0131770f89db7068b9b1754cdbefc5d4b6f36a012ccc5f5   3            false                      24s"
+          "ptah-plan-54a502e4f2f687b87e20a47e   storefront   sha256:54a502e4f2f687b87e20a47e067106960e229f5c6ed57990b5616d6a223cb17a   3            false                      29s"
         ],
         [
           "note",
@@ -4500,10 +4564,10 @@
     {
       "id": "second-release",
       "source": {
-        "commit": "0f7a06595d8b619c3769f61301661cd2940bdeca",
-        "describe": "0f7a065"
+        "commit": "75dbebf8e1cfd0f38c91fb6b2bc2c5fbe0764d8a",
+        "describe": "v0.2.8-14-g75dbebf"
       },
-      "definitionDigest": "sha256:4e5eb2cb9f7690c0b3f0a375efbc7e165e1b7d8c5131f38aed0bf092876b1838",
+      "definitionDigest": "sha256:cc9d6ca3a14665672d7f0451e90f64a1a4fef0fa4d12530db91d840ca46a45ee",
       "title": "Ship a second release onto rows that already exist",
       "tagline": "A backfill that runs against real data, and a history that says it ran once.",
       "learn": "What a release adds when the database already has a history, and how to tell it did not run twice.",
@@ -4511,7 +4575,7 @@
         "Lifecycle"
       ],
       "commands": 11,
-      "lines": 92,
+      "lines": 108,
       "events": [
         [
           "sync",
@@ -4539,51 +4603,59 @@
         ],
         [
           "out",
-          "Migration:      demo/shipments"
+          "Migration:            demo/shipments"
         ],
         [
           "out",
-          "Phase:          InSync"
+          "Phase:                InSync"
         ],
         [
           "out",
-          "Artifact:       oci://e2e-registry.demo.svc.cluster.local:5000/migrations/demo@sha256:441df4e25f559faa16475a0e3bc5da8e4bb1582976f47a7f50f6ff094bc0af66"
+          "Ready:                True, HistoryMatched: The database has every migration this artifact carries"
         ],
         [
           "out",
-          "History read:   \u003ctime\u003e"
+          "Policy:               apply Always"
         ],
         [
           "out",
-          "Current version:1"
+          "Artifact:             oci://e2e-registry.demo.svc.cluster.local:5000/migrations/demo@sha256:b4f78d289c5c52c280aab4525134306319f012bb69661a6efbe122c7bce4b804"
         ],
         [
           "out",
-          "Applied:        1"
+          "History read:         \u003ctime\u003e"
         ],
         [
           "out",
-          "Pending:        0"
+          "Current version:      1"
         ],
         [
           "out",
-          "Last run:       Applied at \u003ctime\u003e"
+          "Applied:              1"
         ],
         [
           "out",
-          "Run applied:    1"
+          "Pending:              0"
+        ],
+        [
+          "blank",
+          null
         ],
         [
           "out",
-          "Run message:    1 migrations are recorded applied"
+          "Last run:             Applied, started \u003ctime\u003e, finished \u003ctime\u003e"
         ],
         [
           "out",
-          "ArtifactVerified:True (PolicySatisfied)"
+          "  Job:                ptah-m-apply-shipments-d2d659b48fee5dbe, UID \u003cuid\u003e"
         ],
         [
           "out",
-          "Ready:          True (HistoryMatched)"
+          "  Versions:           1"
+        ],
+        [
+          "out",
+          "  Message:            1 migrations are recorded applied"
         ],
         [
           "blank",
@@ -4592,6 +4664,62 @@
         [
           "out",
           "No plan is published."
+        ],
+        [
+          "blank",
+          null
+        ],
+        [
+          "out",
+          "Approvals: none"
+        ],
+        [
+          "blank",
+          null
+        ],
+        [
+          "out",
+          "Run acknowledgments: none"
+        ],
+        [
+          "blank",
+          null
+        ],
+        [
+          "out",
+          "Conditions:"
+        ],
+        [
+          "out",
+          "  TYPE              STATUS  REASON           SINCE                 MESSAGE"
+        ],
+        [
+          "out",
+          "  Progressing       False   HistoryMatched   \u003ctime\u003e                Nothing is pending"
+        ],
+        [
+          "out",
+          "  ArtifactVerified  True    PolicySatisfied  \u003ctime\u003e                The resolved artifact satisfied its verification policy"
+        ],
+        [
+          "out",
+          "  Blocked           False   HistoryMatched   \u003ctime\u003e                The history continues this artifact"
+        ],
+        [
+          "out",
+          "  Ready             True    HistoryMatched   \u003ctime\u003e                The database has every migration this artifact carries"
+        ],
+        [
+          "out",
+          "  ApprovalRequired  False   Satisfied        \u003ctime\u003e                The plan's approval requirements are satisfied"
+        ],
+        [
+          "blank",
+          null
+        ],
+        [
+          "out",
+          "kubectl events -n demo                                             --for ptahmigration/shipments prints its Events."
         ],
         [
           "note",
@@ -4918,7 +5046,7 @@
         {
           "scenario": "second-release",
           "step": 2,
-          "claim": "exits 0, prints \"InSync\", prints \"Current version:1\", prints \"Last run:       Applied\"",
+          "claim": "exits 0, prints \"InSync\", prints \"Current version:      1\", prints \"Last run:             Applied\"",
           "passed": true
         },
         {
@@ -4998,8 +5126,8 @@
     {
       "id": "stale-approval",
       "source": {
-        "commit": "0f7a06595d8b619c3769f61301661cd2940bdeca",
-        "describe": "0f7a065"
+        "commit": "75dbebf8e1cfd0f38c91fb6b2bc2c5fbe0764d8a",
+        "describe": "v0.2.8-14-g75dbebf"
       },
       "definitionDigest": "sha256:ff7d07e091b9090da9918146a4d0afa3cf8c5b793b29000fcbd01435f158c951",
       "title": "Retire a used approval",
@@ -5029,7 +5157,7 @@
         ],
         [
           "out",
-          "sha256:9860bfd7acb4dd956fb56f55c219ed996b97cc5b0a0ff6c8e69be0a381725a31"
+          "sha256:b146cc2ab1a6e8f2355816100ec9e078b993f7814a8c19dc2d9b4aa8a37d7e85"
         ],
         [
           "sync",
@@ -5205,7 +5333,7 @@
         ],
         [
           "out",
-          "sha256:3c7654c03b31f6591337cadfbca8f8fe08f7bf2ff191786c9caa339e44a06b38"
+          "sha256:ba45037cd2e26bb777aa8610a64b6123b966e20131d6a87d13ac5ec6473c2290"
         ],
         [
           "note",
@@ -5316,8 +5444,8 @@
     {
       "id": "suspend-resume",
       "source": {
-        "commit": "0f7a06595d8b619c3769f61301661cd2940bdeca",
-        "describe": "0f7a065"
+        "commit": "75dbebf8e1cfd0f38c91fb6b2bc2c5fbe0764d8a",
+        "describe": "v0.2.8-14-g75dbebf"
       },
       "definitionDigest": "sha256:6c2495d3f29d829af7753c6f0a79ab383b6bacfc020d116e50cc8f181fb842af",
       "title": "Suspend and resume",
@@ -5560,10 +5688,10 @@
     {
       "id": "versioned-migration",
       "source": {
-        "commit": "0f7a06595d8b619c3769f61301661cd2940bdeca",
-        "describe": "0f7a065"
+        "commit": "75dbebf8e1cfd0f38c91fb6b2bc2c5fbe0764d8a",
+        "describe": "v0.2.8-14-g75dbebf"
       },
-      "definitionDigest": "sha256:15783b0054de1f9bced4b641cd570daa83df4d85b5e4ee4c9cbbb934922209ca",
+      "definitionDigest": "sha256:0b1323b99dd82d5aaf1f606e092d4226f8f9b83c0b8396d4d9f7661b479e6c8b",
       "title": "Run a prepared migration sequence",
       "tagline": "Numbered SQL files in an artifact, matched against the database's own record of what has run.",
       "learn": "How the versioned workflow differs from the declarative one, and what the database is asked before anything executes.",
@@ -5571,7 +5699,7 @@
         "Lifecycle"
       ],
       "commands": 12,
-      "lines": 152,
+      "lines": 187,
       "events": [
         [
           "note",
@@ -5743,7 +5871,7 @@
         ],
         [
           "out",
-          "    ociRef: oci://e2e-registry.demo.svc.cluster.local:5000/migrations/demo@sha256:198820c30f02bf2b565f15e47e69bbd141515d286a21fccf8e38dd9f3e4c09ab"
+          "    ociRef: oci://e2e-registry.demo.svc.cluster.local:5000/migrations/demo@sha256:22282ea00a4f24284145af48543bc37438cfa79dd18f7231287ba23717a9784e"
         ],
         [
           "out",
@@ -5871,43 +5999,39 @@
         ],
         [
           "out",
-          "Migration:      demo/shipments"
+          "Migration:            demo/shipments"
         ],
         [
           "out",
-          "Phase:          AwaitingApproval"
+          "Phase:                AwaitingApproval"
         ],
         [
           "out",
-          "Artifact:       oci://e2e-registry.demo.svc.cluster.local:5000/migrations/demo@sha256:198820c30f02bf2b565f15e47e69bbd141515d286a21fccf8e38dd9f3e4c09ab"
+          "Ready:                False, AwaitingApproval: The plan is waiting for the approval its policy requires"
         ],
         [
           "out",
-          "History read:   \u003ctime\u003e"
+          "Policy:               apply OnApproval"
         ],
         [
           "out",
-          "Current version:0"
+          "Artifact:             oci://e2e-registry.demo.svc.cluster.local:5000/migrations/demo@sha256:22282ea00a4f24284145af48543bc37438cfa79dd18f7231287ba23717a9784e"
         ],
         [
           "out",
-          "Applied:        0"
+          "History read:         \u003ctime\u003e"
         ],
         [
           "out",
-          "Pending:        2"
+          "Current version:      0"
         ],
         [
           "out",
-          "ArtifactVerified:True (PolicySatisfied)"
+          "Applied:              0"
         ],
         [
           "out",
-          "Ready:          False (AwaitingApproval)"
-        ],
-        [
-          "out",
-          "ApprovalRequired:True (AwaitingApproval)"
+          "Pending:              2"
         ],
         [
           "blank",
@@ -5915,7 +6039,7 @@
         ],
         [
           "out",
-          "Plan ptah-mplan-48f1c3734cc46bad17d86441, 2 migrations from version 0:"
+          "Plan ptah-mplan-5cf94727b1c647eabb6d7ee2, 2 migrations from version 0:"
         ],
         [
           "out",
@@ -5924,6 +6048,66 @@
         [
           "out",
           "  2                    Add Carrier"
+        ],
+        [
+          "out",
+          "  ApprovalRequired: True, AwaitingApproval: 2 planned migrations need an approval naming this plan"
+        ],
+        [
+          "blank",
+          null
+        ],
+        [
+          "out",
+          "Approvals: none"
+        ],
+        [
+          "blank",
+          null
+        ],
+        [
+          "out",
+          "Run acknowledgments: none"
+        ],
+        [
+          "blank",
+          null
+        ],
+        [
+          "out",
+          "Conditions:"
+        ],
+        [
+          "out",
+          "  TYPE              STATUS  REASON            SINCE                 MESSAGE"
+        ],
+        [
+          "out",
+          "  Progressing       False   AwaitingApproval  \u003ctime\u003e                Nothing runs until a person writes the approval"
+        ],
+        [
+          "out",
+          "  ArtifactVerified  True    PolicySatisfied   \u003ctime\u003e                The resolved artifact satisfied its verification policy"
+        ],
+        [
+          "out",
+          "  Blocked           False   HistoryMatched    \u003ctime\u003e                The history continues this artifact"
+        ],
+        [
+          "out",
+          "  Ready             False   AwaitingApproval  \u003ctime\u003e                The plan is waiting for the approval its policy requires"
+        ],
+        [
+          "out",
+          "  ApprovalRequired  True    AwaitingApproval  \u003ctime\u003e                2 planned migrations need an approval naming this plan"
+        ],
+        [
+          "blank",
+          null
+        ],
+        [
+          "out",
+          "kubectl events -n demo                                             --for ptahmigration/shipments prints its Events."
         ],
         [
           "note",
@@ -5995,7 +6179,7 @@
         ],
         [
           "out",
-          "{\"migrationRef\":{\"name\":\"shipments\",\"uid\":\"\u003cuid\u003e\"},\"planRef\":{\"name\":\"ptah-mplan-48f1c3734cc46bad17d86441\",\"uid\":\"\u003cuid\u003e\"},\"planFingerprint\":\"sha256:48f1c3734cc46bad17d8644171b26860ac30c5a6c68db7a168466ae579058740\"}"
+          "{\"migrationRef\":{\"name\":\"shipments\",\"uid\":\"\u003cuid\u003e\"},\"planRef\":{\"name\":\"ptah-mplan-5cf94727b1c647eabb6d7ee2\",\"uid\":\"\u003cuid\u003e\"},\"planFingerprint\":\"sha256:5cf94727b1c647eabb6d7ee21af4f740155dd7cd654bb0d3e95deeb449594477\"}"
         ],
         [
           "sync",
@@ -6035,7 +6219,7 @@
         ],
         [
           "out",
-          "  \"fingerprint\": \"sha256:48f1c3734cc46bad17d8644171b26860ac30c5a6c68db7a168466ae579058740\","
+          "  \"fingerprint\": \"sha256:5cf94727b1c647eabb6d7ee21af4f740155dd7cd654bb0d3e95deeb449594477\","
         ],
         [
           "out",
@@ -6043,7 +6227,7 @@
         ],
         [
           "out",
-          "  \"artifactDigest\": \"sha256:198820c30f02bf2b565f15e47e69bbd141515d286a21fccf8e38dd9f3e4c09ab\""
+          "  \"artifactDigest\": \"sha256:22282ea00a4f24284145af48543bc37438cfa79dd18f7231287ba23717a9784e\""
         ],
         [
           "out",
@@ -6059,7 +6243,7 @@
         ],
         [
           "out",
-          "  \"planFingerprint\": \"sha256:48f1c3734cc46bad17d8644171b26860ac30c5a6c68db7a168466ae579058740\""
+          "  \"planFingerprint\": \"sha256:5cf94727b1c647eabb6d7ee21af4f740155dd7cd654bb0d3e95deeb449594477\""
         ],
         [
           "out",
@@ -6119,51 +6303,59 @@
         ],
         [
           "out",
-          "Migration:      demo/shipments"
+          "Migration:            demo/shipments"
         ],
         [
           "out",
-          "Phase:          InSync"
+          "Phase:                InSync"
         ],
         [
           "out",
-          "Artifact:       oci://e2e-registry.demo.svc.cluster.local:5000/migrations/demo@sha256:198820c30f02bf2b565f15e47e69bbd141515d286a21fccf8e38dd9f3e4c09ab"
+          "Ready:                True, HistoryMatched: The database has every migration this artifact carries"
         ],
         [
           "out",
-          "History read:   \u003ctime\u003e"
+          "Policy:               apply OnApproval"
         ],
         [
           "out",
-          "Current version:2"
+          "Artifact:             oci://e2e-registry.demo.svc.cluster.local:5000/migrations/demo@sha256:22282ea00a4f24284145af48543bc37438cfa79dd18f7231287ba23717a9784e"
         ],
         [
           "out",
-          "Applied:        2"
+          "History read:         \u003ctime\u003e"
         ],
         [
           "out",
-          "Pending:        0"
+          "Current version:      2"
         ],
         [
           "out",
-          "Last run:       Applied at \u003ctime\u003e"
+          "Applied:              2"
         ],
         [
           "out",
-          "Run applied:    1, 2"
+          "Pending:              0"
+        ],
+        [
+          "blank",
+          null
         ],
         [
           "out",
-          "Run message:    2 migrations are recorded applied"
+          "Last run:             Applied, started \u003ctime\u003e, finished \u003ctime\u003e"
         ],
         [
           "out",
-          "ArtifactVerified:True (PolicySatisfied)"
+          "  Job:                ptah-m-apply-shipments-c2818209561f23f1, UID \u003cuid\u003e"
         ],
         [
           "out",
-          "Ready:          True (HistoryMatched)"
+          "  Versions:           1, 2"
+        ],
+        [
+          "out",
+          "  Message:            2 migrations are recorded applied"
         ],
         [
           "blank",
@@ -6172,6 +6364,82 @@
         [
           "out",
           "No plan is published."
+        ],
+        [
+          "blank",
+          null
+        ],
+        [
+          "out",
+          "Approvals, newest first:"
+        ],
+        [
+          "out",
+          "  shipments-v1"
+        ],
+        [
+          "out",
+          "    approved by kubernetes-admin at \u003ctime\u003e"
+        ],
+        [
+          "out",
+          "    plan ptah-mplan-5cf94727b1c647eabb6d7ee2, not the current plan"
+        ],
+        [
+          "out",
+          "    TYPE      STATUS  REASON             SINCE                 MESSAGE"
+        ],
+        [
+          "out",
+          "    Consumed  True    DispatchCommitted  \u003ctime\u003e                The approved plan was dispatched"
+        ],
+        [
+          "blank",
+          null
+        ],
+        [
+          "out",
+          "Run acknowledgments: none"
+        ],
+        [
+          "blank",
+          null
+        ],
+        [
+          "out",
+          "Conditions:"
+        ],
+        [
+          "out",
+          "  TYPE              STATUS  REASON           SINCE                 MESSAGE"
+        ],
+        [
+          "out",
+          "  Progressing       False   HistoryMatched   \u003ctime\u003e                Nothing is pending"
+        ],
+        [
+          "out",
+          "  ArtifactVerified  True    PolicySatisfied  \u003ctime\u003e                The resolved artifact satisfied its verification policy"
+        ],
+        [
+          "out",
+          "  Blocked           False   HistoryMatched   \u003ctime\u003e                The history continues this artifact"
+        ],
+        [
+          "out",
+          "  Ready             True    HistoryMatched   \u003ctime\u003e                The database has every migration this artifact carries"
+        ],
+        [
+          "out",
+          "  ApprovalRequired  False   Satisfied        \u003ctime\u003e                The plan's approval requirements are satisfied"
+        ],
+        [
+          "blank",
+          null
+        ],
+        [
+          "out",
+          "kubectl events -n demo                                             --for ptahmigration/shipments prints its Events."
         ],
         [
           "note",
@@ -6232,7 +6500,7 @@
         {
           "scenario": "versioned-migration",
           "step": 5,
-          "claim": "exits 0, prints \"AwaitingApproval\", prints \"Current version:0\", prints \"Pending:        2\", prints \"Create Shipments\", prints \"Add Carrier\", never prints \"CREATE TABLE\", never prints \"ALTER TABLE\"",
+          "claim": "exits 0, prints \"AwaitingApproval\", prints \"Current version:      0\", prints \"Pending:              2\", prints \"Create Shipments\", prints \"Add Carrier\", never prints \"CREATE TABLE\", never prints \"ALTER TABLE\"",
           "passed": true
         },
         {
@@ -6280,7 +6548,7 @@
         {
           "scenario": "versioned-migration",
           "step": 11,
-          "claim": "exits 0, prints \"InSync\", prints \"Current version:2\", prints \"Last run:       Applied\", prints \"Run applied:    1, 2\", never prints \"CREATE TABLE\", never prints \"ALTER TABLE\"",
+          "claim": "exits 0, prints \"InSync\", prints \"Current version:      2\", prints \"Last run:             Applied\", prints \"Versions:           1, 2\", never prints \"CREATE TABLE\", never prints \"ALTER TABLE\"",
           "passed": true
         },
         {
