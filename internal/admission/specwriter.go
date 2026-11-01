@@ -17,11 +17,12 @@ import (
 
 // LastSpecWriterUsernameAnnotation and LastSpecWriterUIDAnnotation record the
 // authenticated identity that created a PtahSchema or a PtahMigration, or last
-// changed its spec other than spec.suspend. Only SchemaSpecWriterHandler and MigrationSpecWriterHandler
-// write them: each overwrites whatever a request carried for these two keys,
-// so an author cannot name someone else, and each leaves them exactly as they
-// were on a request that does not change spec, so a metadata-only edit -- a
-// finalizer, a label -- cannot smuggle a forged value in either.
+// changed its spec other than spec.suspend. Only SchemaSpecWriterHandler and
+// MigrationSpecWriterHandler write them: each overwrites whatever a request
+// carried for these two keys, so an author cannot name someone else, and each
+// leaves them exactly as they were on a request that does not change spec, so
+// a metadata-only edit -- a finalizer, a label -- cannot smuggle a forged value
+// in either.
 //
 // The two keys are metadata rather than spec or status. Status is a
 // subresource on both kinds, so a write through the main resource can never

@@ -333,8 +333,6 @@ func TestMigrationSpecWriterRestampsOnlyWhenSpecChanges(t *testing.T) {
 	})
 }
 
-// TestMigrationSpecWriterProducesNoPatchForAFinalizerOnlyUpdate mirrors the
-// schema handler's finalizer-only contract for PtahMigration.
 // TestSpecWriterKeepsTheWriterAcrossASuspendToggle holds both handlers to the
 // recorded writer when an update changes spec.suspend and nothing else. The
 // request drops the annotations, the way a client that rebuilt the object
@@ -386,6 +384,60 @@ func TestSpecWriterKeepsTheWriterAcrossASuspendToggle(t *testing.T) {
 	}
 }
 
+// TestSpecWriterJudgesTheSpecAsTheAPIServerSendsIt sends the JSON the API
+// server sends rather than a typed object: suspend defaults to false, so a
+// real request carries "suspend": false where a marshaled Go object omits it.
+// Only the top-level key is set aside; a key named suspend anywhere else in
+// the spec is a change like any other.
+func TestSpecWriterJudgesTheSpecAsTheAPIServerSendsIt(t *testing.T) {
+	t.Parallel()
+	const recorded = `"annotations": {"operator.ptah.run/last-spec-writer-username": "alice@example.com", "operator.ptah.run/last-spec-writer-uid": "idp-123"}`
+	toggler := authenticationv1.UserInfo{Username: "bob@example.com", UID: "idp-456"}
+	for _, row := range []struct {
+		name       string
+		old, new   string
+		wantWriter string
+	}{
+		{
+			name:       "an explicit false turned true keeps the recorded writer",
+			old:        `{"metadata": {` + recorded + `}, "spec": {"suspend": false, "desired": {"ociRef": "oci://registry.test/acme/app@sha256:aa"}}}`,
+			new:        `{"metadata": {}, "spec": {"suspend": true, "desired": {"ociRef": "oci://registry.test/acme/app@sha256:aa"}}}`,
+			wantWriter: "alice@example.com",
+		},
+		{
+			name:       "a nested key named suspend is a spec change",
+			old:        `{"metadata": {` + recorded + `}, "spec": {"suspend": false, "execution": {"nodeSelector": {"suspend": "a"}}}}`,
+			new:        `{"metadata": {` + recorded + `}, "spec": {"suspend": false, "execution": {"nodeSelector": {"suspend": "b"}}}}`,
+			wantWriter: "bob@example.com",
+		},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			for _, handler := range []cradmission.Handler{
+				&SchemaSpecWriterHandler{Decoder: cradmission.NewDecoder(specWriterScheme(t))},
+				&MigrationSpecWriterHandler{Decoder: cradmission.NewDecoder(specWriterScheme(t))},
+			} {
+				request := updateWriterRequest(t, json.RawMessage(row.old), json.RawMessage(row.new), toggler)
+				response := handler.Handle(context.Background(), request)
+				if !response.Allowed {
+					t.Fatalf("%T denied the update: %#v", handler, response.Result)
+				}
+				patchJSON, err := json.Marshal(response.Patches)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, writer := range []string{"alice@example.com", "bob@example.com"} {
+					if containsJSON(patchJSON, writer) != (writer == row.wantWriter) {
+						t.Fatalf("%T patch %s, want the recorded writer to be %s", handler, patchJSON, row.wantWriter)
+					}
+				}
+			}
+		})
+	}
+}
+
+// TestMigrationSpecWriterProducesNoPatchForAFinalizerOnlyUpdate mirrors the
+// schema handler's finalizer-only contract for PtahMigration.
 func TestMigrationSpecWriterProducesNoPatchForAFinalizerOnlyUpdate(t *testing.T) {
 	t.Parallel()
 

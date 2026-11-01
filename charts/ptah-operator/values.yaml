@@ -64,6 +64,8 @@ approvals:
   # The four-eyes control: refuse an approval whose approver is exactly the
   # identity that last created or last changed the spec of the resource it
   # approves, or refuse it outright when no such identity was recorded. A
+  # change to spec.suspend alone is not recorded: it changes when the operator
+  # acts, not what it plans. A
   # desired-state author cannot reach this from their own resource's spec, so
   # turning it on binds every approval this installation admits rather than
   # binding one resource an author could edit back off. It defaults to false,
@@ -75,8 +77,9 @@ approvals:
   # being reachable for it; a webhook with failurePolicy Fail would otherwise
   # block every write, including across an upgrade under Recreate, to pay for
   # a record nothing reads. A resource written before this was turned on
-  # carries no recorded writer, so its approvals are refused until its spec is
-  # next changed and the now-installed webhook has a write to stamp.
+  # carries no recorded writer, so its approvals are refused until its spec,
+  # other than spec.suspend, is next changed and the now-installed webhook has
+  # a write to stamp.
   requireDistinctApprover: false
 
 # Who may turn the approval requirement off. spec.policy.apply: Always applies
