@@ -37,7 +37,9 @@ const (
 	// the database. Any other ending stops the wait with a StopError.
 	TargetApplied Target = "applied"
 	// TargetSuspended is a resource the controller reports Suspended at the
-	// required generation, with nothing in flight.
+	// required generation, with nothing in flight. A schema whose post-Apply
+	// proof had not started when it was suspended reaches it with the proof
+	// still owed: the proof waits for resume, and no Job runs meanwhile.
 	TargetSuspended Target = "suspended"
 )
 
@@ -716,8 +718,13 @@ func (w *waiter) checkSuspended(s snapshot) verdict {
 	if v, ok := w.generationReached(s); !ok {
 		return v
 	}
-	if s.operation != "" || s.proof {
-		return waitingFor("%s to end: suspension prevents new Jobs and lets one already running finish", inFlight(s))
+	// The operator drops a read-only claim when it sees the suspension, and
+	// observes an Apply, or the proof already running after one, to its end.
+	// A proof that had not started waits for resume and runs no Job, so it
+	// does not hold the target: a schema then reads Suspended with it owed.
+	if s.operation != "" {
+		return waitingFor("%s to end: suspension starts no new Job, observes an Apply or its running proof "+
+			"to the end, and drops any other claim", inFlight(s))
 	}
 	if s.phase != phaseSuspended ||
 		(s.family == FamilySchema && !s.conditionTrue(operatorv1alpha1.ConditionSuspended)) {

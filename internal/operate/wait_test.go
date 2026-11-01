@@ -1008,7 +1008,22 @@ func TestWaitTargets(t *testing.T) {
 			docs: func(f operate.Family) []doc {
 				return []doc{{generation: 5, observedGeneration: 5, suspend: true, phase: "Applying", operation: "Apply", observedAt: at(0)}}
 			},
-			wantTimeout: true, wantMessage: "the Apply operation (phase Applying) to end: suspension prevents new Jobs",
+			wantTimeout: true, wantMessage: "the Apply operation (phase Applying) to end: suspension starts no new Job",
+		},
+		{
+			// The controller writes Suspended and keeps the proof owed when a
+			// suspension arrives before the proof's Job was claimed: no Job
+			// runs until resume, so the resource is as suspended as it gets.
+			name: "suspended: a schema whose post-Apply proof waits for resume is suspended", target: operate.TargetSuspended,
+			only:       operate.FamilySchema,
+			generation: 5,
+			docs: func(f operate.Family) []doc {
+				return []doc{
+					{generation: 5, observedGeneration: 4, suspend: true, phase: "VerifyingConvergence", proof: true, observedAt: at(0)},
+					{generation: 5, observedGeneration: 5, suspend: true, phase: "Suspended", proof: true, observedAt: at(0), conditions: suspendedConditions(f, 5)},
+				}
+			},
+			wantReads: 2,
 		},
 		{
 			name: "in-sync: a schema whose post-Apply proof is still owed is not the target", target: operate.TargetInSync,
