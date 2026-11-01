@@ -464,8 +464,9 @@ refresh asks the operator to read the database now rather than at the next
 interval, through the operator.ptah.run/read-requested-at annotation. The
 operator takes the request once no operation is running, the resource is not
 suspended and no retry delay is pending, and not while it is Blocked by its
-engine or its database realm; a read already under way does not answer it. The request starts no Apply and approves nothing, and that it was
-written does not mean the read has happened.
+engine or its database realm; a read already under way does not answer it.
+The request starts no Apply and approves nothing, and that it was written
+does not mean the read has happened.
 
   --wait                   wait for the operator: suspend until it reports
                            Suspended with nothing in flight, resume until
