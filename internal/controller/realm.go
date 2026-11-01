@@ -392,7 +392,8 @@ func realmClaimantRequests(
 // stands, so the deadline is the shorter of the two.
 const realmRecheckCeiling = time.Minute
 
-// realmBlockDeadline keeps the deadline a standing refusal already carries.
+// realmBlockDeadline is when a refusal looks at the realm again: no later than
+// the shorter of interval and realmRecheckCeiling from now.
 //
 // A controller watches its own resource, so a status write it makes wakes it
 // again. A refusal that stamped a new next-reconciliation time on every pass
@@ -401,12 +402,19 @@ const realmRecheckCeiling = time.Minute
 // a deadline that has not passed makes the second pass a no-op write, which is
 // no write at all, and the ceiling keeps the interval between two writes at a
 // minute rather than at nothing.
+//
+// Only a deadline within that bound is reused. A refusal can start in the
+// middle of a cycle, whose Resolve claim set the next refresh an interval away
+// or more, and the Blocked branch waits for whatever deadline the refusal
+// leaves. Keeping the cycle's deadline would hold the resource Blocked for the
+// rest of its interval after the last claimant declared the realm shared.
 func realmBlockDeadline(current *metav1.Time, now time.Time, interval time.Duration) metav1.Time {
-	if current != nil && current.After(now) {
-		return *current
-	}
 	if interval <= 0 || interval > realmRecheckCeiling {
 		interval = realmRecheckCeiling
 	}
-	return metav1.NewTime(now.Add(interval))
+	bound := now.Add(interval)
+	if current != nil && current.After(now) && !current.After(bound) {
+		return *current
+	}
+	return metav1.NewTime(bound)
 }

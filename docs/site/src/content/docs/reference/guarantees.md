@@ -102,8 +102,8 @@ claimant declares the sharing.
 | --- | --- | --- |
 | Enforced in | `takeRealmCensus`, before any Job is dispatched | the same function, in the same place |
 | Bound to | the coordination digest of the engine with the namespace and its coordination key, or with the name of the `PtahRealm` the resource names | the same |
-| Failure behavior | `Blocked` with reason `RealmConflict`; the verdict is re-taken on a bounded cadence because another resource's edit produces no event here | the same |
-| Proved by | `TestSchemaBlocksOnAContestedRealmWithoutDispatchingAJob` | `TestMigrationBlocksOnAContestedRealmWithoutDispatchingAJob` |
+| Failure behavior | `Blocked` with reason `RealmConflict`; the verdict is re-taken within a minute, whatever deadline the resource carried into the refusal, because another resource's edit produces no event here | the same |
+| Proved by | `TestSchemaBlocksOnAContestedRealmWithoutDispatchingAJob`, `TestARefusalThatStartsMidCycleLooksAgainWithinAMinute` | `TestMigrationBlocksOnAContestedRealmWithoutDispatchingAJob`, `TestARefusalThatStartsMidCycleLooksAgainWithinAMinute` |
 
 This is the one guarantee with a single implementation for both families, and
 it is the model the rest is moving toward.
