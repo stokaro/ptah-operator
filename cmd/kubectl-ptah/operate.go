@@ -218,12 +218,16 @@ func writeSuspendReport(out io.Writer, result operate.SuspendResult, waiting boo
 		text.WriteString("The Apply runs to its end: suspension cancels no SQL. The proof that it converged waits for " +
 			"resume, and until then the schema keeps its database lock, so other resources on that database start " +
 			"nothing that changes it.\n")
+	case result.Suspend && statusOf(result.Object).proofOwed:
+		text.WriteString("The Observe that proves the last Apply converged runs to its end: that proof outranks " +
+			"suspension.\n")
 	case result.Suspend && result.Running != "":
-		fmt.Fprintf(&text, "The %s operation runs to its end: suspension starts no new Job and cancels nothing.\n",
+		fmt.Fprintf(&text, "The operator drops the %s claim when it sees the suspension: it changes nothing in the "+
+			"database, so suspension does not wait for it, and its Job stops at its own deadline.\n",
 			statusview.Clean(result.Running))
 	case result.Suspend:
 		fmt.Fprintf(&text, "The operator starts no new Job once it observes generation %d. Suspension cancels "+
-			"nothing: an operation already running is observed to its end.\n", result.Generation)
+			"no SQL.\n", result.Generation)
 	default:
 		fmt.Fprintf(&text, "Once the operator observes generation %d it reads the database again and decides "+
 			"from what it finds.\n", result.Generation)
@@ -442,6 +446,11 @@ func writeReached(out io.Writer, result operate.Result) {
 	field("Database", lastRead(result.ObservedAt))
 	next := viewCommand(ref) + " shows where it stands."
 	switch result.Target {
+	case operate.TargetSuspended:
+		if status.proofOwed {
+			text.WriteString("The proof that the last Apply converged waits for resume. Until then the schema keeps " +
+				"its database lock, and other resources on that database start nothing that changes it.\n")
+		}
 	case operate.TargetApproval:
 		field("Plan", statusview.Clean(status.plan))
 		next = fmt.Sprintf("kubectl ptah approve %s/%s -n %s reviews it.", ref.Family, ref.Name, ref.Namespace)
@@ -511,15 +520,18 @@ type resourceStatus struct {
 	phase           string
 	observedAt      time.Time
 	lastReadRequest string
-	plan            string
-	applied         string
-	lastRun         string
+	// proofOwed is a schema's post-Apply proof not yet taken.
+	proofOwed bool
+	plan      string
+	applied   string
+	lastRun   string
 }
 
 func statusOf(object client.Object) resourceStatus {
 	switch typed := object.(type) {
 	case *operatorv1alpha1.PtahSchema:
-		status := resourceStatus{phase: string(typed.Status.Phase), lastReadRequest: typed.Status.LastReadRequest}
+		status := resourceStatus{phase: string(typed.Status.Phase), lastReadRequest: typed.Status.LastReadRequest,
+			proofOwed: typed.Status.PendingObservation != nil}
 		if observed := typed.Status.Target.LastObservedAt; observed != nil {
 			status.observedAt = observed.Time
 		}

@@ -1305,8 +1305,10 @@ kubectl ptah resume schema/storefront -n application
 Each prints the state it asked for, `spec.suspend` and the generation that
 holds it, beside what the operator had observed when the API server answered:
 the generation it last acted on and its phase, and an operation still in
-flight. Running one again sends nothing when the field already holds the
-value. With `--wait`, suspend stays until the operator reports the resource
+flight. A read under way when the suspension arrives is dropped rather than
+waited for, since it changes nothing; its Job stops at its own deadline.
+Running one again sends nothing when the field already holds the value.
+With `--wait`, suspend stays until the operator reports the resource
 `Suspended` with nothing in flight, and resume until the resource is back in
 sync from a reading taken after the change, or, with `--for approval` or
 `--for applied`, until a plan waits for a decision or an Apply has ended.

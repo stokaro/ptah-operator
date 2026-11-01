@@ -449,10 +449,11 @@ Admission records whoever creates a printed approval as its approver: create
 it as the person who decided, with kubectl create rather than apply.
 
 suspend and resume set spec.suspend on a schema or a migration and change
-nothing else; resume clears it. Suspension prevents new Jobs. An operation
-already running, an Apply included, is observed to its end: no SQL is
-canceled. Suspending a migration while its Apply runs records that run as one
-nobody accounted for, so let an Apply finish first. Each command prints the
+nothing else; resume clears it. Suspension prevents new Jobs and cancels no
+SQL: an Apply already running, and the proof that follows it, are observed to
+their end, and a read under way is dropped, since it changes nothing.
+Suspending a migration while its Apply runs records that run as one nobody
+accounted for, so let an Apply finish first. Each command prints the
 state it asked for beside what the operator had observed, and sends nothing
 when spec.suspend already holds the value. After resume the operator reads
 the database again and decides from what it finds.

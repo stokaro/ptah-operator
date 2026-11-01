@@ -250,7 +250,7 @@ func TestSuspendSetsTheFieldAndReportsWhatTheOperatorObserved(t *testing.T) {
 				"Suspend requested for ptah"+family+"/storefront in namespace demo.",
 				"Requested: spec.suspend true, generation 4",
 				"Observed:  generation 4, phase InSync",
-				"Suspension cancels nothing: an operation already running is observed to its end.",
+				"The operator starts no new Job once it observes generation 4. Suspension cancels no SQL.",
 				"kubectl ptah wait "+family+"/storefront --for suspended -n demo")
 			if labels := stored(t, api, family).GetLabels(); labels["team"] != "shop" {
 				t.Fatalf("suspend changed the labels to %v", labels)
@@ -275,9 +275,9 @@ func TestSuspendSetsTheFieldAndReportsWhatTheOperatorObserved(t *testing.T) {
 	}
 }
 
-// Suspension stops no SQL, and what it does to an Apply in flight differs by
-// family: the report says which.
-func TestSuspendSaysWhatBecomesOfAnApplyInFlight(t *testing.T) {
+// Suspension stops no SQL. What it does to a claim in flight depends on the
+// claim and, for an Apply, on the family: the report says which.
+func TestSuspendSaysWhatBecomesOfAClaimInFlight(t *testing.T) {
 	for _, test := range []struct {
 		family string
 		object func() client.Object
@@ -297,6 +297,23 @@ func TestSuspendSaysWhatBecomesOfAnApplyInFlight(t *testing.T) {
 			return schema
 		}, []string{"Running:   Apply operation", "The Apply runs to its end: suspension cancels no SQL.",
 			"the schema keeps its database lock"}},
+		// A read is dropped, not waited for: it changes nothing.
+		{"migration", func() client.Object {
+			migration := resting("migration").(*operatorv1alpha1.PtahMigration)
+			migration.Status.Phase = operatorv1alpha1.MigrationPhaseReading
+			migration.Status.ActiveOperation = &operatorv1alpha1.MigrationOperationStatus{Type: "History", ID: "attempt", JobName: "job", Attempt: 1}
+			return migration
+		}, []string{"Running:   History operation", "The operator drops the History claim when it sees the suspension"}},
+		// The proof after an Apply is not dropped.
+		{"schema", func() client.Object {
+			schema := resting("schema").(*operatorv1alpha1.PtahSchema)
+			schema.Status.Phase = operatorv1alpha1.PhaseVerifyingConvergence
+			schema.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{Type: "Observe", ID: "attempt", JobName: "job"}
+			schema.Status.PendingObservation = &operatorv1alpha1.PendingObservationStatus{
+				Outcome: operatorv1alpha1.PendingObservationApplySucceeded, ApplyOperationID: "apply",
+			}
+			return schema
+		}, []string{"Running:   Observe operation", "The Observe that proves the last Apply converged runs to its end"}},
 	} {
 		t.Run(test.family, func(t *testing.T) {
 			api := newCluster(t, test.object())
@@ -567,6 +584,28 @@ func TestSuspendWaitsForTheOperator(t *testing.T) {
 			t.Fatalf("suspend --wait points at a wait it already ran: %q", stdout)
 		}
 	})
+}
+
+// A schema suspended before its post-Apply proof started is suspended, and
+// the report says what the proof still holds.
+func TestWaitForSuspensionNamesAProofStillOwed(t *testing.T) {
+	schema := resting("schema").(*operatorv1alpha1.PtahSchema)
+	schema.Spec.Suspend = true
+	schema.Status.Phase = operatorv1alpha1.PhaseSuspended
+	schema.Status.PendingObservation = &operatorv1alpha1.PendingObservationStatus{
+		Outcome: operatorv1alpha1.PendingObservationApplySucceeded, ApplyOperationID: "apply",
+	}
+	schema.Status.Conditions = append(schema.Status.Conditions, metav1.Condition{Type: operatorv1alpha1.ConditionSuspended,
+		Status: metav1.ConditionTrue, Reason: "Requested", Message: "New database operations are suspended", ObservedGeneration: 4})
+	api := newCluster(t, schema)
+
+	code, stdout, stderr := runCommand(t, api, "wait", "schema/storefront", "--for", "suspended")
+
+	if code != exitOK {
+		t.Fatalf("wait = %d, stderr %q", code, stderr)
+	}
+	requireSays(t, "the wait's report", stdout, "reached suspended.",
+		"The proof that the last Apply converged waits for resume. Until then the schema keeps its database lock")
 }
 
 // The command lines the operate verbs refuse before they reach a cluster.
