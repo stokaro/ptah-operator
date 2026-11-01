@@ -154,8 +154,12 @@ Diagnostics go to standard error. Nothing reaches standard output until every
 check has held, so a plan whose last chunk is corrupt leaves you with an error
 rather than half its SQL.
 
-Exit status: `0` printed, `1` could not read or verify, `2` the command line,
-`3` nothing stored to print.
+Exit status: `0` printed or approved, `1` could not read or verify, `2` the
+command line, `3` nothing stored to print or approve. `kubectl ptah approve`
+adds `4` nothing approved (the plan changed, the operator would not admit an
+approval now, the fingerprint given is not the current plan's, or you
+declined), `5` refused by RBAC or the API server, and `6` sent with no answer:
+the approval may have been stored.
 
 ## Where a schema stands {#schema}
 
@@ -484,9 +488,11 @@ rule, and an optional one; a reader without it gets everything else:
 The chart's approver ClusterRole and `examples/diagnostic-reader-role.yaml`
 carry it.
 
-`kubectl ptah approve` reads what `plan` and `schema` read, and creates the
-approval, so it needs `create` on `ptahschemaapprovals` or
-`ptahmigrationapprovals` as well. The chart's approver ClusterRole carries both.
+`kubectl ptah approve` reads the resource and its current plan with `get`,
+and for a schema the plan's chunks too, to show the SQL. It lists no
+approvals. It creates the approval as you, so it needs `create` on
+`ptahschemaapprovals` or `ptahmigrationapprovals` as well. The chart's approver
+ClusterRole carries both.
 
 :::caution
 The command reads the plan chunks as you, so granting it means granting
