@@ -21,6 +21,7 @@ import (
 
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -92,6 +93,9 @@ var (
 	// before envtest pointed them at this process.
 	chartMutating   *admissionregistrationv1.MutatingWebhookConfiguration
 	chartValidating *admissionregistrationv1.ValidatingWebhookConfiguration
+	// chartApproverRole is the approver ClusterRole as the chart renders it,
+	// the grant the docs tell an installation to bind its approvers to.
+	chartApproverRole *rbacv1.ClusterRole
 )
 
 // managerConfig is what the chart passes the manager on its command line.
@@ -163,8 +167,18 @@ func installChartWebhooks() error {
 	var mutating []*admissionregistrationv1.MutatingWebhookConfiguration
 	var validating []*admissionregistrationv1.ValidatingWebhookConfiguration
 	var deployments []*appsv1.Deployment
+	var approverRoles []*rbacv1.ClusterRole
 	for _, object := range objects {
 		switch object.GetKind() {
+		case "ClusterRole":
+			if !strings.HasSuffix(object.GetName(), "-approver") {
+				continue
+			}
+			typed := &rbacv1.ClusterRole{}
+			if err := fromUnstructured(object, typed); err != nil {
+				return err
+			}
+			approverRoles = append(approverRoles, typed)
 		case "MutatingWebhookConfiguration":
 			typed := &admissionregistrationv1.MutatingWebhookConfiguration{}
 			if err := fromUnstructured(object, typed); err != nil {
@@ -189,6 +203,10 @@ func installChartWebhooks() error {
 		return fmt.Errorf("the chart rendered %d mutating and %d validating webhook configurations, want one of each",
 			len(mutating), len(validating))
 	}
+	if len(approverRoles) != 1 {
+		return fmt.Errorf("the chart rendered %d approver ClusterRoles, want one", len(approverRoles))
+	}
+	chartApproverRole = approverRoles[0]
 	manager, err = managerConfigFrom(deployments)
 	if err != nil {
 		return err
