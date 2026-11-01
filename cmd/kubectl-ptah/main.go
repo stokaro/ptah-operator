@@ -450,19 +450,21 @@ it as the person who decided, with kubectl create rather than apply.
 
 suspend and resume set spec.suspend on a schema or a migration and change
 nothing else; resume clears it. Suspension prevents new Jobs and cancels no
-SQL: an Apply already running, and the proof that follows it, are observed to
-their end, and a read under way is dropped, since it changes nothing.
-Suspending a migration while its Apply runs records that run as one nobody
-accounted for, so let an Apply finish first. Each command prints the state it
-asked for beside what the operator had observed, and sends nothing when
-spec.suspend already holds the value. After resume the operator reads the
-database again and decides from what it finds.
+SQL. An Apply already running is observed to its end; any proof still owed
+after an Apply waits for resume; a read under way, a migration's read of its
+history after a run included, is dropped, since it changes nothing.
+Suspending while an Apply runs records its outcome as unknown, so let an
+Apply finish first. Each command prints the state it asked for beside what
+the operator had observed and what the suspension does to the work in
+flight, and sends nothing when spec.suspend already holds the value. After
+resume the operator runs any proof still owed, reads the database again and
+decides from what it finds.
 
 refresh asks the operator to read the database now rather than at the next
 interval, through the operator.ptah.run/read-requested-at annotation. The
 operator takes the request once no operation is running, the resource is not
-suspended and no retry delay is pending; a read already under way does not
-answer it. The request starts no Apply and approves nothing, and that it was
+suspended and no retry delay is pending, and not while it is Blocked by its
+engine or its database realm; a read already under way does not answer it. The request starts no Apply and approves nothing, and that it was
 written does not mean the read has happened.
 
   --wait                   wait for the operator: suspend until it reports
@@ -488,8 +490,9 @@ operator has to have observed the generation the resource had then.
   --for <target>           required; one of
                              in-sync    the resource rests in sync
                              approval   a fresh plan waits for an approval
-                             applied    an Apply or a migration run ended,
-                                        confirmed by a reading afterwards
+                             applied    an Apply or a migration run ended
+                                        after the wait began, confirmed by
+                                        a reading afterwards
                              suspended  the operator reports it Suspended,
                                         with nothing in flight
                              read       the read a refresh asked for ended

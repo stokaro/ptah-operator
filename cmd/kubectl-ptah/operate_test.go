@@ -275,47 +275,66 @@ func TestSuspendSetsTheFieldAndReportsWhatTheOperatorObserved(t *testing.T) {
 	}
 }
 
-// Suspension stops no SQL. What it does to a claim in flight depends on the
-// claim and, for an Apply, on the family: the report says which.
-func TestSuspendSaysWhatBecomesOfAClaimInFlight(t *testing.T) {
+// Suspension stops no SQL. What it does to the work in flight depends on the
+// work, and for an Apply on the family; the report says which, one case at a
+// time, by operate's reading of the controller (internal/controller holds
+// that reading to the reconciler).
+func TestSuspendSaysWhatBecomesOfTheWorkInFlight(t *testing.T) {
+	schemaWith := func(phase operatorv1alpha1.ReconciliationPhase, operation string, jobUID string, proof bool) func() client.Object {
+		return func() client.Object {
+			schema := resting("schema").(*operatorv1alpha1.PtahSchema)
+			schema.Status.Phase = phase
+			if operation != "" {
+				schema.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{
+					Type: operatorv1alpha1.OperationType(operation), ID: "attempt", JobName: "job", JobUID: types.UID(jobUID),
+				}
+			}
+			if proof {
+				schema.Status.PendingObservation = &operatorv1alpha1.PendingObservationStatus{
+					Outcome: operatorv1alpha1.PendingObservationApplySucceeded, ApplyOperationID: "apply",
+				}
+			}
+			return schema
+		}
+	}
+	migrationWith := func(phase operatorv1alpha1.MigrationPhase, operation string, jobUID string) func() client.Object {
+		return func() client.Object {
+			migration := resting("migration").(*operatorv1alpha1.PtahMigration)
+			migration.Status.Phase = phase
+			migration.Status.ActiveOperation = &operatorv1alpha1.MigrationOperationStatus{
+				Type: operatorv1alpha1.MigrationOperationType(operation), ID: "attempt", JobName: "job", JobUID: types.UID(jobUID), Attempt: 1,
+			}
+			return migration
+		}
+	}
 	for _, test := range []struct {
+		name   string
 		family string
 		object func() client.Object
 		says   []string
 	}{
-		{"migration", func() client.Object {
-			migration := resting("migration").(*operatorv1alpha1.PtahMigration)
-			migration.Status.Phase = operatorv1alpha1.MigrationPhaseApplying
-			migration.Status.ActiveOperation = &operatorv1alpha1.MigrationOperationStatus{Type: "Apply", ID: "attempt", JobName: "job", Attempt: 1}
-			return migration
-		}, []string{"Running:   Apply operation", "The Apply runs to its end: suspension cancels no SQL.",
+		{"an Apply running", "migration", migrationWith(operatorv1alpha1.MigrationPhaseApplying, "Apply", "job-uid"), []string{
+			"Running:   Apply operation", "The Apply runs to its end: suspension cancels no SQL.",
 			"records the run as one nobody accounted for (Unknown)", "kubectl ptah migration storefront -n demo shows the record"}},
-		{"schema", func() client.Object {
-			schema := resting("schema").(*operatorv1alpha1.PtahSchema)
-			schema.Status.Phase = operatorv1alpha1.PhaseApplying
-			schema.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{Type: "Apply", ID: "attempt", JobName: "job"}
-			return schema
-		}, []string{"Running:   Apply operation", "The Apply runs to its end: suspension cancels no SQL.",
-			"the schema keeps its database lock"}},
-		// A read is dropped, not waited for: it changes nothing.
-		{"migration", func() client.Object {
-			migration := resting("migration").(*operatorv1alpha1.PtahMigration)
-			migration.Status.Phase = operatorv1alpha1.MigrationPhaseReading
-			migration.Status.ActiveOperation = &operatorv1alpha1.MigrationOperationStatus{Type: "History", ID: "attempt", JobName: "job", Attempt: 1}
-			return migration
-		}, []string{"Running:   History operation", "The operator drops the History claim when it sees the suspension"}},
-		// The proof after an Apply is not dropped.
-		{"schema", func() client.Object {
-			schema := resting("schema").(*operatorv1alpha1.PtahSchema)
-			schema.Status.Phase = operatorv1alpha1.PhaseVerifyingConvergence
-			schema.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{Type: "Observe", ID: "attempt", JobName: "job"}
-			schema.Status.PendingObservation = &operatorv1alpha1.PendingObservationStatus{
-				Outcome: operatorv1alpha1.PendingObservationApplySucceeded, ApplyOperationID: "apply",
-			}
-			return schema
-		}, []string{"Running:   Observe operation", "The Observe that proves the last Apply converged runs to its end"}},
+		{"an Apply running", "schema", schemaWith(operatorv1alpha1.PhaseApplying, "Apply", "job-uid", false), []string{
+			"Running:   Apply operation", "The Apply runs to its end: suspension cancels no SQL.",
+			"records its outcome as unknown and records no applied plan",
+			"waits for resume and for the Apply's execution deadline", "keeps its database lock"}},
+		{"an Apply claim with no Job", "schema", schemaWith(operatorv1alpha1.PhaseApplying, "Apply", "", false), []string{
+			"The Apply claim has not created its Job: the operator drops it, and no SQL runs."}},
+		{"a read", "migration", migrationWith(operatorv1alpha1.MigrationPhaseReading, "History", "job-uid"), []string{
+			"Running:   History operation", "The operator drops the History claim: a read changes nothing in the database."}},
+		{"the read-back after a run", "migration", migrationWith(operatorv1alpha1.MigrationPhaseVerifyingHistory, "History", "job-uid"), []string{
+			"The operator drops the read of the history after the last run, and reads the history again after resume."}},
+		{"a proof owed", "schema", schemaWith(operatorv1alpha1.PhaseVerifyingConvergence, "", "", true), []string{
+			"The proof that the last Apply converged starts no Job until resume", "keeps its database lock"}},
+		{"a proof's Observe running", "schema", schemaWith(operatorv1alpha1.PhaseVerifyingConvergence, "Observe", "job-uid", true), []string{
+			"Running:   Observe operation",
+			"The Observe of the proof that the last Apply converged runs to its end, and the Plan that completes the proof waits for resume."}},
+		{"a proof's Plan running", "schema", schemaWith(operatorv1alpha1.PhaseVerifyingConvergence, "Plan", "job-uid", true), []string{
+			"The Plan that completes the proof that the last Apply converged runs to its end."}},
 	} {
-		t.Run(test.family, func(t *testing.T) {
+		t.Run(test.family+"/"+test.name, func(t *testing.T) {
 			api := newCluster(t, test.object())
 
 			code, stdout, stderr := runCommand(t, api, "suspend", test.family+"/storefront")
@@ -324,6 +343,9 @@ func TestSuspendSaysWhatBecomesOfAClaimInFlight(t *testing.T) {
 				t.Fatalf("suspend = %d, stderr %q", code, stderr)
 			}
 			requireSays(t, "suspend's report", stdout, test.says...)
+			if strings.Contains(stdout, "cancels nothing") || strings.Contains(stdout, "outranks") {
+				t.Fatalf("suspend's report claims more than the controller does: %q", stdout)
+			}
 		})
 	}
 }
@@ -418,6 +440,30 @@ func TestRefreshSaysTheRequestIsNotTheRead(t *testing.T) {
 		}
 		requireSays(t, "refresh's report", stdout, "The resource is suspended: the operator takes the request after it is resumed.")
 	})
+
+	// The controller checks the engine and the realm before it reaches a
+	// read request; a policy refusal comes after it.
+	for _, row := range []struct {
+		reason string
+		held   bool
+	}{
+		{"RealmConflict", true}, {"RealmNotAuthorized", true}, {"UnsupportedEngine", true}, {"DestructiveChangesDisabled", false},
+	} {
+		t.Run("blocked/"+row.reason, func(t *testing.T) {
+			blocked := resting("migration").(*operatorv1alpha1.PtahMigration)
+			blocked.Status.Phase = operatorv1alpha1.MigrationPhaseBlocked
+			blocked.Status.Conditions = []metav1.Condition{{Type: operatorv1alpha1.ConditionReady, Status: metav1.ConditionFalse,
+				Reason: row.reason, Message: "held", ObservedGeneration: 4}}
+			api := newCluster(t, blocked)
+
+			code, stdout, _ := runCommand(t, api, "refresh", "migration/storefront")
+
+			says := strings.Contains(stdout, "The resource is Blocked ("+row.reason+"): the operator checks that before it reaches a read request")
+			if code != exitOK || says != row.held {
+				t.Fatalf("refresh of a migration Blocked by %s = %d, says it takes no request: %t, want %t\n%s", row.reason, code, says, row.held, stdout)
+			}
+		})
+	}
 }
 
 // refresh --wait waits from the answer to its own patch: the operator takes
@@ -495,6 +541,26 @@ func TestWaitDoesNotFinishOnAnOldInSync(t *testing.T) {
 			"Phase:       InSync",
 			"Waiting for: a read of the database that began after the wait did (the last one is from 2026-10-01T09:00:00Z)",
 			"kubectl ptah schema storefront -n demo shows every condition with its message.")
+		if strings.Contains(stderr, "refresh") {
+			t.Fatalf("a timeout with no read in flight points at refresh: %q", stderr)
+		}
+	})
+
+	// A read in flight when the wait gave up is one a wait started again
+	// skips, so the timeout points at a read request.
+	synctest.Test(t, func(t *testing.T) {
+		observing := resting("schema").(*operatorv1alpha1.PtahSchema)
+		observing.Status.Phase = operatorv1alpha1.PhaseObserving
+		observing.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{Type: "Observe", ID: "read", JobName: "job", JobUID: "job-uid"}
+		api := newCluster(t, observing)
+
+		code, _, stderr := runCommand(t, api, "wait", "schema/storefront", "--for", "in-sync", "--timeout", "1m")
+
+		if code != exitTimedOut {
+			t.Fatalf("wait = %d, stderr %q", code, stderr)
+		}
+		requireSays(t, "the timeout", stderr, "A read of the database was under way. A wait started again does not count it",
+			"kubectl ptah refresh schema/storefront --wait -n demo asks for a read that begins later")
 	})
 
 	synctest.Test(t, func(t *testing.T) {
@@ -586,12 +652,15 @@ func TestSuspendWaitsForTheOperator(t *testing.T) {
 	})
 }
 
-// A schema suspended before its post-Apply proof started is suspended, and
-// the report says what the proof still holds.
+// A schema suspended while it owes the proof of an Apply is suspended, and
+// the report says what the proof still holds. The controller leaves
+// status.observedGeneration at the Apply's generation until the proof ends,
+// and stamps the Suspended condition with the generation it acted on.
 func TestWaitForSuspensionNamesAProofStillOwed(t *testing.T) {
 	schema := resting("schema").(*operatorv1alpha1.PtahSchema)
 	schema.Spec.Suspend = true
 	schema.Status.Phase = operatorv1alpha1.PhaseSuspended
+	schema.Status.ObservedGeneration = 3
 	schema.Status.PendingObservation = &operatorv1alpha1.PendingObservationStatus{
 		Outcome: operatorv1alpha1.PendingObservationApplySucceeded, ApplyOperationID: "apply",
 	}
@@ -606,6 +675,29 @@ func TestWaitForSuspensionNamesAProofStillOwed(t *testing.T) {
 	}
 	requireSays(t, "the wait's report", stdout, "reached suspended.",
 		"The proof that the last Apply converged waits for resume. Until then the schema keeps its database lock")
+}
+
+// A resource with no finalizer deleted while a wait reads it is gone before
+// any document says so; the wait ends as it does for one being deleted.
+func TestWaitStopsOnAResourceDeletedUnderIt(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		api := newCluster(t, resting("migration"))
+		api.armed = true
+		// After the second read the API server answers that the migration
+		// is gone, as it does for one deleted with no finalizer.
+		api.then(unchanged, func(client.Object) {
+			api.mu.Lock()
+			defer api.mu.Unlock()
+			api.readErr = apierrors.NewNotFound(k8sschema.GroupResource{Group: operatorv1alpha1.GroupVersion.Group, Resource: "ptahmigrations"}, "storefront")
+		})
+
+		code, stdout, stderr := runCommand(t, api, "wait", "migration/storefront", "--for", "in-sync")
+
+		if code != exitWillNotReach || stdout != "" {
+			t.Fatalf("wait on a deleted migration = %d, stdout %q, stderr %q", code, stdout, stderr)
+		}
+		requireSays(t, "the stop", stderr, "will not reach in-sync: Deleted.", "the resource was deleted")
+	})
 }
 
 // The command lines the operate verbs refuse before they reach a cluster.

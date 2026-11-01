@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/pflag"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -210,24 +211,11 @@ func writeSuspendReport(out io.Writer, result operate.SuspendResult, waiting boo
 	}
 	switch {
 	case !result.Changed:
-	case result.Suspend && result.Running == string(operatorv1alpha1.OperationApply) && ref.Family == operate.FamilyMigration:
-		fmt.Fprintf(&text, "The Apply runs to its end: suspension cancels no SQL. The change moved the generation that Apply "+
-			"was decided from, so the operator records the run as one nobody accounted for (Unknown) without reading "+
-			"its result. %s shows the record once the Job has ended.\n", view)
-	case result.Suspend && result.Running == string(operatorv1alpha1.OperationApply):
-		text.WriteString("The Apply runs to its end: suspension cancels no SQL. The proof that it converged waits for " +
-			"resume, and until then the schema keeps its database lock, so other resources on that database start " +
-			"nothing that changes it.\n")
-	case result.Suspend && statusOf(result.Object).proofOwed:
-		text.WriteString("The Observe that proves the last Apply converged runs to its end: that proof outranks " +
-			"suspension.\n")
-	case result.Suspend && result.Running != "":
-		fmt.Fprintf(&text, "The operator drops the %s claim when it sees the suspension: it changes nothing in the "+
-			"database, so suspension does not wait for it, and its Job stops at its own deadline.\n",
-			statusview.Clean(result.Running))
 	case result.Suspend:
-		fmt.Fprintf(&text, "The operator starts no new Job once it observes generation %d. Suspension cancels "+
-			"no SQL.\n", result.Generation)
+		text.WriteString(suspensionEffect(result, view))
+	case statusOf(result.Object).proofOwed:
+		fmt.Fprintf(&text, "Once the operator observes generation %d it runs the proof still owed after the last "+
+			"Apply, then reads the database again and decides from what it finds.\n", result.Generation)
 	default:
 		fmt.Fprintf(&text, "Once the operator observes generation %d it reads the database again and decides "+
 			"from what it finds.\n", result.Generation)
@@ -241,6 +229,47 @@ func writeSuspendReport(out io.Writer, result operate.SuspendResult, waiting boo
 		}
 	}
 	_, _ = io.WriteString(out, text.String())
+}
+
+// lockHeld is what a schema that owes the proof of an Apply holds until the
+// proof ends.
+const lockHeld = "Until the proof ends the schema keeps its database lock: other resources on that database " +
+	"start nothing that changes it."
+
+// suspensionEffect says, one case each, what the suspension does to the work
+// in flight, by operate's reading of the controller's rules.
+func suspensionEffect(result operate.SuspendResult, view string) string {
+	switch result.Effect() {
+	case operate.EffectApplyRuns:
+		if result.Ref.Family == operate.FamilyMigration {
+			return fmt.Sprintf("The Apply runs to its end: suspension cancels no SQL. The change moved the generation "+
+				"that Apply was decided from, so the operator records the run as one nobody accounted for (Unknown) "+
+				"without reading its result. %s shows the record once the Job has ended.\n", view)
+		}
+		return "The Apply runs to its end: suspension cancels no SQL. The change moved the generation that Apply " +
+			"was decided from, so the operator records its outcome as unknown and records no applied plan. The " +
+			"proof that reads the database afterwards waits for resume and for the Apply's execution deadline. " +
+			lockHeld + "\n"
+	case operate.EffectApplyDropped:
+		return "The Apply claim has not created its Job: the operator drops it, and no SQL runs.\n"
+	case operate.EffectReadDropped:
+		return fmt.Sprintf("The operator drops the %s claim: a read changes nothing in the database. A Job it "+
+			"started stops at its own deadline.\n", statusview.Clean(result.Running))
+	case operate.EffectReadBackDropped:
+		return "The operator drops the read of the history after the last run, and reads the history again after " +
+			"resume. A Job it started stops at its own deadline.\n"
+	case operate.EffectProofWaits:
+		return "The proof that the last Apply converged starts no Job until resume, and a proof claim whose Job " +
+			"was not created is dropped. " + lockHeld + "\n"
+	case operate.EffectProofObserveRuns:
+		return "The Observe of the proof that the last Apply converged runs to its end, and the Plan that completes " +
+			"the proof waits for resume. " + lockHeld + "\n"
+	case operate.EffectProofPlanRuns:
+		return "The Plan that completes the proof that the last Apply converged runs to its end.\n"
+	default:
+		return fmt.Sprintf("The operator starts no new Job once it observes generation %d. Suspension cancels no "+
+			"SQL.\n", result.Generation)
+	}
 }
 
 // refreshCommand writes a read request and, if asked to, waits for the read.
@@ -297,6 +326,10 @@ func writeRefreshReport(out io.Writer, result operate.RefreshResult, waiting boo
 		"answer it. It starts no Apply and approves nothing.\n")
 	if result.Suspended {
 		text.WriteString("The resource is suspended: the operator takes the request after it is resumed.\n")
+	}
+	if reason := blockedBeforeRequests(status); reason != "" {
+		fmt.Fprintf(&text, "The resource is Blocked (%s): the operator checks that before it reaches a read request, "+
+			"so it takes none until the block ends.\n", reason)
 	}
 	if !waiting {
 		fmt.Fprintf(&text, "%s waits for that read; refresh --wait asks and waits in one command.\n",
@@ -484,6 +517,11 @@ func waitFailed(stderr io.Writer, ref operate.Ref, err error) int {
 		if timeout.LastError != nil {
 			field("Last read", statusview.Clean(timeout.LastError.Error()))
 		}
+		if timeout.ReadUnderWay && (timeout.Target == operate.TargetInSync || timeout.Target == operate.TargetApproval) {
+			fmt.Fprintf(&text, "A read of the database was under way. A wait started again does not count it, since it "+
+				"may have begun before what you are waiting on; %s asks for a read that begins later and waits for "+
+				"it.\n", refreshLine(ref))
+		}
 		fmt.Fprintf(&text, "%s shows every condition with its message.\n", viewCommand(ref))
 		_, _ = io.WriteString(stderr, text.String())
 		return exitTimedOut
@@ -522,16 +560,18 @@ type resourceStatus struct {
 	lastReadRequest string
 	// proofOwed is a schema's post-Apply proof not yet taken.
 	proofOwed bool
-	plan      string
-	applied   string
-	lastRun   string
+	// readyReason is the reason of the Ready condition.
+	readyReason string
+	plan        string
+	applied     string
+	lastRun     string
 }
 
 func statusOf(object client.Object) resourceStatus {
 	switch typed := object.(type) {
 	case *operatorv1alpha1.PtahSchema:
 		status := resourceStatus{phase: string(typed.Status.Phase), lastReadRequest: typed.Status.LastReadRequest,
-			proofOwed: typed.Status.PendingObservation != nil}
+			proofOwed: typed.Status.PendingObservation != nil, readyReason: readyReason(typed.Status.Conditions)}
 		if observed := typed.Status.Target.LastObservedAt; observed != nil {
 			status.observedAt = observed.Time
 		}
@@ -544,7 +584,8 @@ func statusOf(object client.Object) resourceStatus {
 		}
 		return status
 	case *operatorv1alpha1.PtahMigration:
-		status := resourceStatus{phase: string(typed.Status.Phase), lastReadRequest: typed.Status.LastReadRequest}
+		status := resourceStatus{phase: string(typed.Status.Phase), lastReadRequest: typed.Status.LastReadRequest,
+			readyReason: readyReason(typed.Status.Conditions)}
 		if history := typed.Status.History; history != nil {
 			status.observedAt = history.ObservedAt.Time
 		}
@@ -560,9 +601,35 @@ func statusOf(object client.Object) resourceStatus {
 	}
 }
 
+func readyReason(conditions []metav1.Condition) string {
+	if ready := meta.FindStatusCondition(conditions, operatorv1alpha1.ConditionReady); ready != nil {
+		return ready.Reason
+	}
+	return ""
+}
+
 // viewCommand is the read command that prints the resource.
 func viewCommand(ref operate.Ref) string {
 	return fmt.Sprintf("kubectl ptah %s %s -n %s", ref.Family, ref.Name, ref.Namespace)
+}
+
+// refreshLine is the refresh command that asks for a read and waits for it.
+func refreshLine(ref operate.Ref) string {
+	return fmt.Sprintf("kubectl ptah refresh %s/%s --wait -n %s", ref.Family, ref.Name, ref.Namespace)
+}
+
+// blockedBeforeRequests is the reason a resource is Blocked by a check the
+// controller makes before it reaches a read request, its engine or its
+// database realm, or "" when it is not.
+func blockedBeforeRequests(status resourceStatus) string {
+	if status.phase != string(operatorv1alpha1.PhaseBlocked) {
+		return ""
+	}
+	switch operatorv1alpha1.ConditionReason(status.readyReason) {
+	case operatorv1alpha1.ReasonUnsupportedEngine, operatorv1alpha1.ReasonRealmConflict, operatorv1alpha1.ReasonRealmNotAuthorized:
+		return statusview.Clean(status.readyReason)
+	}
+	return ""
 }
 
 // waitLine is the wait command for target, with any flags it needs beside
