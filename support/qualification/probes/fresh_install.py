@@ -214,15 +214,31 @@ class Transcript:
         with self.path.open('a') as stream:
             stream.write(json.dumps(entry, sort_keys=True) + '\n')
 
-    def run(self, step, script, cwd, env, timeout=1800, check=True, source=None):
+    def run(self, step, script, cwd, env, timeout=1800, check=True, source=None, typed=None):
+        """Run a block. typed is what the reader types at its prompt: a command
+        that asks for a decision asks only on a terminal, so the block then
+        reads it from one. Without it the block reads nothing."""
         self.index += 1
         started = time.monotonic()
-        result = subprocess.run(['bash', '-c', 'set -euo pipefail\n' + script], cwd=cwd, env=env,
-                                capture_output=True, text=True, timeout=timeout)
+        terminal = stdin = None
+        if typed is not None:
+            terminal, stdin = os.openpty()
+            os.write(terminal, typed.encode())
+        try:
+            result = subprocess.run(['bash', '-c', 'set -euo pipefail\n' + script], cwd=cwd, env=env,
+                                    stdin=subprocess.DEVNULL if stdin is None else stdin,
+                                    capture_output=True, text=True, timeout=timeout)
+        finally:
+            if terminal is not None:
+                os.close(stdin)
+                os.close(terminal)
         output = self.directory / f'{self.index:03d}-{step}.out'
         output.write_text(result.stdout + ('\n--- stderr ---\n' + result.stderr if result.stderr else ''))
-        self.record(step=step, source=source, script=script, exitCode=result.returncode,
-                    seconds=round(time.monotonic() - started, 3), output=output.name)
+        entry = dict(step=step, source=source, script=script, exitCode=result.returncode,
+                     seconds=round(time.monotonic() - started, 3), output=output.name)
+        if typed is not None:
+            entry['typed'] = typed
+        self.record(**entry)
         if check and result.returncode:
             raise RuntimeError(f'{step} exited {result.returncode}; see {output}')
         return result
@@ -496,8 +512,13 @@ class Walkthrough:
 
         self.transcript.run(f'install-plugin-{engine}', self.plugin_install(), self.work, self.env, source='use/read-a-plan.md#install')
         for index, block in enumerate(stops):
-            self.transcript.run(f'waits-for-you-{engine}-{index}', block, self.work, self.env, source='start/first-schema.md#it-stops-and-waits-for-you')
-            if 'kubectl -n application create -f -' in block:
+            # kubectl ptah approve shows the plan and asks for a decision; the
+            # reader types yes. A guide from before it created the approval
+            # with kubectl create.
+            typed = 'yes\n' if 'kubectl ptah approve ' in block else None
+            self.transcript.run(f'waits-for-you-{engine}-{index}', block, self.work, self.env,
+                                source='start/first-schema.md#it-stops-and-waits-for-you', typed=typed)
+            if typed or 'kubectl -n application create -f -' in block:
                 self.wait_condition('InSync', 'True', 'ScopedConverged')
         conditions = self.kubectl('-n', 'application', 'get', 'ptahschema', 'application', '-o', 'json')
         status = json.loads(conditions.stdout)['status']
