@@ -144,8 +144,9 @@ func plan(ctx context.Context, arguments []string, stdout, stderr io.Writer) int
 }
 
 // migration prints what the operator stored about one PtahMigration: where it
-// stands, what the database's own history said, which sequence it would run
-// next, and what the last run did.
+// stands and what holds it, what the database's own history said, which
+// sequence it would run next, what the last run did, a run nobody accounted
+// for, and the approvals and run acknowledgments that name it.
 func migration(ctx context.Context, arguments []string, stdout, stderr io.Writer) int {
 	flags := pflag.NewFlagSet("kubectl ptah migration", pflag.ContinueOnError)
 	flags.SetOutput(stderr)
@@ -199,9 +200,10 @@ func migration(ctx context.Context, arguments []string, stdout, stderr io.Writer
 	return exitOK
 }
 
-// schema prints where one PtahSchema stands: what the last observation found,
-// including how far the declared reference rows sit from the database, and
-// which plan is waiting for a decision.
+// schema prints where one PtahSchema stands: what holds it, what the last
+// observation found, including how far the declared reference rows sit from
+// the database, which plan is waiting for a decision, and the approvals that
+// name it.
 func schema(ctx context.Context, arguments []string, stdout, stderr io.Writer) int {
 	flags := pflag.NewFlagSet("kubectl ptah schema", pflag.ContinueOnError)
 	flags.SetOutput(stderr)
@@ -330,11 +332,15 @@ func usage(out io.Writer) {
        kubectl ptah migration <migration> [flags]
 
 plan prints the SQL of a plan the Ptah operator stored, after the operator's
-own checks on it have held. schema prints where one PtahSchema stands: what the
-last observation found, how far its declared reference rows sit from the
-database, and which plan is waiting. migration prints where one PtahMigration
-stands: what the database's own history said, which sequence would run next,
-and what the last run did.
+own checks on it have held, each statement under a line that gives Ptah's
+severity for it and the reason. schema prints where one PtahSchema stands: what
+holds it, the policy its spec asks for, what the last observation found, how far
+its declared reference rows sit from the database, which plan is waiting, the
+approvals that name it, and every condition with its message. migration prints
+where one PtahMigration stands: what holds it, what the database's own history
+said, which sequence would run next, what the last run did, a run nobody has
+accounted for, the approvals and run acknowledgments that name it, and every
+condition with its message.
 
   --current              the plan the operator would run next (the default)
   --applied              the plan the last confirmed apply ran
@@ -353,6 +359,9 @@ log of what each statement did, and not a fresh reading of the database.
   kubectl ptah plan storefront --applied -n application -o sql
   kubectl ptah plan storefront --applied -n application -o json > plan.json
 
+-o sql prints the statements alone, with no review line, for a script or a
+diff.
+
 schema and migration each take -o text (the default) or json, plus the same
 -n, --kubeconfig, --context and --timeout flags. Neither prints SQL or a table
 row. A migration plan records versions and checksums, and the statements live
@@ -365,6 +374,13 @@ data plan is reading values.
   kubectl ptah schema storefront -n application -o json
   kubectl ptah migration orders -n application
   kubectl ptah migration orders -n application -o json
+
+Listing the approvals and acknowledgments takes list on them, which reading the
+resource does not. Without it the command still prints the resource, with one
+line that says why they are missing, and exits 0. Events are kubectl's own:
+
+  kubectl events -n application --for ptahschema/storefront
+  kubectl events -n application --for ptahmigration/orders
 
 Exit status: 0 printed, 1 could not read or verify, 2 usage, 3 nothing stored
 to print.

@@ -22,8 +22,8 @@ kubectl ptah plan storefront -n application
 ```
 
 Three verbs read three different things: `plan` reads the SQL a stored plan
-holds, `schema` reads where a `PtahSchema` stands and what its last observation
-found, and `migration` reads a `PtahMigration`.
+holds, `schema` reads where a `PtahSchema` stands, what holds it and who
+approved what, and `migration` reads the same for a `PtahMigration`.
 
 ## Install it {#install}
 
@@ -69,7 +69,8 @@ in the database, and it does not read the database again.
 
 ## What comes out
 
-Without `-o` you get what the plan is, and then the SQL it holds:
+Without `-o` you get what the plan is, and then each statement it holds,
+under a line that says where it sits in the plan and how it was rated:
 
 ```sh
 kubectl ptah plan storefront --applied -n application
@@ -87,6 +88,7 @@ Privileges:     none
 Stored:         2026-09-13T08:04:05Z
 Applied:        2026-09-13T08:04:24Z
 
+Statement 1 of 1: safe (does not remove data or tighten constraints)
 -- POSTGRES TABLE: customers --
 CREATE TABLE "customers" (
   "id" bigint PRIMARY KEY NOT NULL,
@@ -94,7 +96,34 @@ CREATE TABLE "customers" (
 );
 ```
 
-The statements come out as the planner wrote them, comments and all.
+The statements come out as the planner wrote them, comments and all. The line
+above each one is not SQL. It gives the statement's severity, which
+`Destructive` summarizes for the whole plan, and the reason Ptah gave for it.
+Statements that do different things read differently:
+
+```text
+Statement 1 of 2: safe (does not remove data or tighten constraints)
+-- Add/modify columns for table: e2e_widgets
+-- ALTER statements: --
+ALTER TABLE "e2e_widgets" ADD COLUMN "fault_token" text;
+
+Statement 2 of 2: destructive (DROP TABLE removes the table and all rows)
+-- WARNING: This will delete all data!
+DROP TABLE IF EXISTS "e2e_excluded_policy_keep" CASCADE;
+```
+
+The operator also reads each statement itself, and rates destructive any that
+has a `DROP` or a `TRUNCATE` in it, changes a column's type, disables
+row-level security or deletes from `pg_enum`, whatever Ptah said. The plan's
+`Destructive` and the decisions taken on it follow that rating. Where it is
+higher than Ptah's, the line says whose each one is, because Ptah's reason
+still explains the lower one:
+
+```text
+Statement 1 of 1: destructive as the operator reads it; Ptah rated it safe (does not remove data or tighten constraints)
+ALTER TABLE "customers" ALTER COLUMN "email" DROP NOT NULL;
+```
+
 `Privileges` names the kinds of authority the plan records, or says `none`. A
 plan that records any waited for an approval even under `apply: Always`, and
 [Plans that change privileges](../../reference/plans-and-approvals/#privilege-changes)
@@ -104,7 +133,8 @@ recorded)`: the plugin and the manager that published the plan are different
 builds, and the manager did not hold the plan for it.
 
 `-o sql` prints the statements alone, in the order the plan holds them, each
-terminated once. Nothing is re-split on a semicolon: a statement may carry one
+terminated once, with no line above them: it is the format a script reads and a
+reviewer diffs. Nothing is re-split on a semicolon: a statement may carry one
 inside a string, a comment or a function body.
 
 `-o json` prints the stored plan document byte for byte, so what you save still
@@ -135,6 +165,8 @@ kubectl ptah schema storefront -n application
 ```text
 Schema:           application/storefront
 Phase:            AwaitingApproval
+Ready:            False, AwaitingApproval: Plan is waiting for approval
+Policy:           apply OnApproval, allowDestructive true, driftSeverity all
 Artifact:         oci://registry.example/acme/storefront@sha256:...
 Verified:         true
 Observed:         2026-09-16T06:00:00Z
@@ -143,14 +175,85 @@ Reference data:   2 to insert, 1 to update, 3 to delete
   data_rows_deleted                       3  destructive
   data_rows_inserted                      2  safe
   data_rows_updated                       1  destructive
-ApprovalRequired: True (AwaitingApproval)
-Ready:            False (AwaitingApproval)
 
-Plan ptah-plan-4b44084123f0958600629632, 4 statements, stored 2026-09-16T06:00:00Z
+Plan ptah-plan-4b44084123f0958600629632, 4 statements, stored 2026-09-16T06:01:00Z
+  destructive
   not approved
+  ApprovalRequired: True, Waiting: Create an approval bound to the current plan fingerprint
 
-kubectl ptah plan prints the SQL this plan holds.
+Approvals, newest first:
+  storefront-v2
+    approved by alice@example.com at 2026-09-15T17:02:00Z
+    plan ptah-plan-0f6e1d2c3b4a59687706f5e4, not the current plan
+    TYPE      STATUS  REASON               SINCE                 MESSAGE
+    Accepted  False   PlanNoLongerCurrent  2026-09-16T06:00:00Z  The approved plan no longer matches the current database state
+    Stale     True    PlanNoLongerCurrent  2026-09-16T06:00:00Z  The approved plan no longer matches the current database state
+
+Conditions:
+  TYPE                  STATUS  REASON            SINCE                 MESSAGE
+  EngineSupported       True    SupportedEngine   2026-09-16T06:00:00Z  Database engine "PostgreSQL" is supported
+  Ready                 False   AwaitingApproval  2026-09-16T06:01:00Z  Plan is waiting for approval
+  ReconciliationFailed  False   Succeeded         2026-09-16T06:00:00Z  The latest operation completed
+  ArtifactResolved      True    DigestPinned      2026-09-16T06:00:00Z  Desired OCI reference resolved to immutable content
+  ArtifactVerified      True    PolicySatisfied   2026-09-16T06:00:00Z  Artifact type and verification policy were satisfied
+  DatabaseReachable     True    Observed          2026-09-16T06:00:00Z  Database schema was observed
+  DriftDetected         True    ScopedChanges     2026-09-16T06:00:00Z  Managed scope requires 4 schema statements; highest severity destructive
+  InSync                False   ScopedChanges     2026-09-16T06:00:00Z  The authoritative managed scope differs from the verified artifact
+  ApprovalRequired      True    Waiting           2026-09-16T06:01:00Z  Create an approval bound to the current plan fingerprint
+  PlanReady             True    Published         2026-09-16T06:01:00Z  Exact plan bytes are stored in immutable chunks
+  Suspended             False   Active            2026-09-16T06:00:00Z  Reconciliation is active
+  Applying              False   JobCompleted      2026-09-16T06:00:00Z  Apply Job completed; convergence observation is pending (written for generation 1)
+
+kubectl ptah plan storefront -n application prints the SQL this plan holds.
+kubectl events -n application --for ptahschema/storefront prints its Events.
 ```
+
+The lines under `Phase` say why the schema is where it is, in the controller's
+own words. `Ready` comes first, whatever its status, because its reason is the
+one that names what holds the schema; a `Blocked`, `Suspended` or
+`ReconciliationFailed` condition that is `True` follows it. `Policy` is what
+`spec.policy` asks for now, by the names of the fields you would edit, and
+`Protected tables` follows it when the spec fences any. `Suspend: requested`
+appears when `spec.suspend` is set, apart from the `Suspended` condition that
+says whether the controller has acted on it. `Status for` appears when the
+status was written for an older generation of the spec than the one stored.
+
+Under the plan, `ApprovalRequired` is the controller's verdict on that plan, in
+either status: `True` waits for an approval and its message says what to
+create, and `False` needs none or is refused by the policy. A destructive plan
+under `allowDestructive: false` reads:
+
+```text
+Phase:            Blocked
+Ready:            False, PolicyBlocked: Plan is blocked by destructive-change policy
+Policy:           apply OnApproval, allowDestructive false, driftSeverity all
+...
+Plan ptah-plan-4b44084123f0958600629632, 4 statements, stored 2026-09-16T06:01:00Z
+  destructive
+  not approved
+  ApprovalRequired: False, DestructiveChangesDisabled: Plan contains destructive changes and policy disallows them; read them with kubectl ptah plan, then either narrow the desired schema or set spec.policy.allowDestructive
+```
+
+`Approvals` lists the `PtahSchemaApproval` objects that name this schema by
+name and UID, newest first. It shows the five newest and, when there are more,
+how many and the command that lists them all. Each shows the identity admission
+stamped on it, the plan it names and whether that is the current plan, and
+every condition the controller wrote on it -- `Accepted`, `Consumed` and
+`Stale`, with the reason and the message. An approval of an earlier plan stays
+listed, so why it was not used, or what it was used for, is still there to read
+after the plan changed. `kubectl describe ptahschemaapproval <name>` shows one
+approval whole.
+
+`Conditions` is every condition the status carries, with the time its status
+last changed and its message, including the ones that report nothing wrong:
+`Suspended False Active` is a schema nobody suspended, and
+`Applying False JobCompleted` is an Apply that finished and is waiting for the
+observation that proves it. A condition written for an older generation of the
+spec says so after its message.
+
+The last lines name the commands for what this one does not print: the plan's
+SQL, and the schema's Events, which `kubectl events` reads and follows with
+`--watch`.
 
 A schema read from a ConfigMap or a Git repository prints its source in
 place of the `Artifact` line:
@@ -191,11 +294,16 @@ The line appears only when the observation carried a reference-data category. A
 schema that declares no rows says nothing here, rather than reporting three
 zeroes about a comparison that never ran.
 
-`-o json` prints the same view as a document, including `referenceData`, for a
-script that wants the counts without parsing text.
+`-o json` prints the same view as a document, including `referenceData`,
+`policy`, `approvals` and every condition with its `observedGeneration` and
+`lastTransitionTime`, for a script that wants them without parsing text.
 
 Reading a schema needs `get` on `ptahschemas` in the namespace and nothing
-else: no plan object, no ConfigMap, and no Secret.
+else: no plan object, no ConfigMap, and no Secret. Listing its approvals needs
+`list` on `ptahschemaapprovals` as well, and that is optional. Without it the
+command still prints the schema, says in one line that the approvals are not
+shown because listing them is forbidden, and exits 0; `-o json` carries the
+same answer as `approvalsUnreadable`, in place of `approvals`.
 
 ## A migration, not a plan {#migration}
 
@@ -209,24 +317,95 @@ kubectl ptah migration orders -n application
 ```
 
 ```text
-Migration:      application/orders
-Phase:          AwaitingApproval
-Artifact:       oci://registry.example/acme/orders-migrations@sha256:...
-History read:   2026-08-30T12:00:00Z
-Current version:2
-Applied:        2
-Pending:        1
-ApprovalRequired: True (AwaitingApproval)
+Migration:        application/orders
+Phase:            AwaitingApproval
+Ready:            False, AwaitingApproval: The plan is waiting for the approval its policy requires
+Policy:           apply OnApproval
+Artifact:         oci://registry.example/acme/orders-migrations@sha256:...
+History read:     2026-08-30T12:00:00Z
+Current version:  2
+Applied:          2
+Pending:          1
+
+Last run:         Applied, started 2026-08-28T12:00:00Z, finished 2026-08-28T12:01:00Z
+  Job:            ptah-m-apply-orders-6f1c2d3e4a5b6c7d, UID 0b7e6c1a-9d2f-4e3b-8a5c-1f2e3d4c5b6a
+  Applied:        2
 
 Plan ptah-mplan-0123456789abcdef01234567, 1 migration from version 2:
   3                    add the orders index
+  ApprovalRequired: True, AwaitingApproval: 1 planned migrations need an approval naming this plan
+
+Approvals: none
+
+Run acknowledgments: none
+
+Conditions:
+  TYPE              STATUS  REASON            SINCE                 MESSAGE
+  Progressing       False   AwaitingApproval  2026-08-30T12:00:00Z  Nothing runs until a person writes the approval
+  ArtifactVerified  True    PolicySatisfied   2026-08-30T12:00:00Z  The resolved artifact satisfied its verification policy
+  Blocked           False   HistoryMatched    2026-08-30T12:00:00Z  The history continues this artifact
+  Ready             False   AwaitingApproval  2026-08-30T12:00:00Z  The plan is waiting for the approval its policy requires
+  ApprovalRequired  True    AwaitingApproval  2026-08-30T12:00:00Z  1 planned migrations need an approval naming this plan
+
+kubectl events -n application --for ptahmigration/orders prints its Events.
 ```
+
+The lines under `Phase` and the plan's `ApprovalRequired` line read as they do
+for a schema. `Policy` is `spec.policy.apply`.
+
+`Last run` is the most recent execution: its outcome, when it started and
+finished, the Job it ran as by name and UID, the versions it applied, where it
+stopped when a statement failed there, and its message. The UID is what tells a
+later Job under the same name apart from this one.
+
+A run that ended `Partial` or `Unknown` is also recorded as unresolved, and the
+view prints that record as a block of its own, because it is a hold and not an
+outcome: while it stands nothing is planned and nothing runs, whatever the last
+run and the conditions say. Here the dispatched Job went missing:
+
+```text
+Last run:         Unknown, started 2026-09-30T06:30:36Z, finished 2026-09-30T06:30:43Z
+  Job:            ptah-m-apply-orders-04d370d4ccc65a4c, UID 2cde010b-1e46-46af-a3fb-35a75edacc7f
+  Message:        the dispatched Apply Job is missing and will not be recreated
+
+Unresolved run:   Unknown, recorded 2026-09-30T06:30:43Z
+  Operation:      sha256:9d8a95ebef8319572f9c4f38853a5a4815316e07f83f56865f9f7cab742dcded
+  Job:            ptah-m-apply-orders-04d370d4ccc65a4c, UID 2cde010b-1e46-46af-a3fb-35a75edacc7f
+  Plan:           ptah-mplan-8f517ba4f0200f2a4e095b65, UID 04800e23-c41a-40ff-9745-c77de45237b1
+  Database:       sha256:dd3598d94799d326af49fb6f455ea24c3959af067ca4cff5219f1987480e4abd (target identity digest)
+  While this record stands nothing is planned and nothing runs.
+  Establish what the run did in that database first. A history read
+  there that finds nothing of the artifact left to apply clears the
+  record by itself. If the database is accounted for and still has work
+  pending, settle it with a PtahMigrationRunAcknowledgment naming
+  migration UID 5b0e2a8c-1d3f-4e6a-9b7c-2f4d6e8a0c1b and the operation above.
+  The operations guide has the procedure, under "A migration run nobody
+  accounted for".
+```
+
+It names the attempt, the Job, the plan the run was carrying out and the
+database it addressed, and what the operations guide says to do about it:
+[A migration run nobody accounted for](../operations/#a-migration-run-nobody-accounted-for)
+has the procedure, and the
+[acknowledgment](../operations/#clear-unresolved-run) it describes takes the
+migration UID and the operation printed here. Nothing in the view offers a
+retry, because the operator never makes one. Once the record is settled,
+`Settled run` says by what and, for an acknowledgment, by whom.
+
+`Approvals` lists the `PtahMigrationApproval` objects that name this migration,
+the way the schema view lists its approvals. A migration approval carries only
+`Consumed`; whether the plan it names is the current one is printed beside it,
+and whether it matches that plan is the migration's own `ApprovalRequired`.
+`Run acknowledgments` lists the `PtahMigrationRunAcknowledgment` objects, each
+with the operation it names, marked when that is the unresolved run, and its
+`Consumed` or `Stale` condition.
 
 A ConfigMap or Git source prints the same lines as
 [`kubectl ptah schema`](#schema) in place of `Artifact`.
 
 `-o json` prints the same view as a document, for a script that wants the
-pending count or the last run's outcome without parsing text.
+pending count, the last run's outcome and Job, or the unresolved run without
+parsing text.
 
 What it never prints is SQL or a table row. A migration plan records versions,
 descriptions and checksums; reading the statements means reading the artifact,
@@ -241,12 +420,16 @@ Three states are worth recognizing in the output:
 - **Modified** -- an applied migration's file no longer accounts for it, and the
   versions are listed. This is the refusal a versioned workflow exists to make.
 - **Last run: Partial** -- a migration committed some of its statements and not
-  the rest. Retrying the file would run them twice, so the operator stops and
-  the recovery is yours to choose.
+  the rest. Retrying the file would run them twice, so the operator stops,
+  records the run under **Unresolved run**, and the recovery is yours to
+  choose.
 
 Reading a migration needs `get` on `ptahmigrations` and `ptahmigrationplans` in
 the namespace, and nothing else -- no chunk, because a migration plan stores no
-SQL of its own.
+SQL of its own. Listing its approvals and run acknowledgments needs `list` on
+`ptahmigrationapprovals` and `ptahmigrationrunacknowledgments`, optional the
+same way as for a schema: a list the reader may not read is one line saying so,
+and the command still exits 0.
 
 ## What it needs to be allowed to do
 
@@ -269,6 +452,19 @@ rules:
 The rule names no object, so it reads the next plan as well as this one.
 `examples/approver-plan-reader-role.yaml` is the same Role with a binding, and
 the chart's approver ClusterRole carries the same read.
+
+`kubectl ptah schema` and `kubectl ptah migration` also list the approvals and
+run acknowledgments that name a resource, when the reader may. That is one more
+rule, and an optional one; a reader without it gets everything else:
+
+```yaml
+  - apiGroups: [operator.ptah.run]
+    resources: [ptahschemaapprovals, ptahmigrationapprovals, ptahmigrationrunacknowledgments]
+    verbs: [list]
+```
+
+The chart's approver ClusterRole and `examples/diagnostic-reader-role.yaml`
+carry it.
 
 :::caution
 The command reads the plan chunks as you, so granting it means granting

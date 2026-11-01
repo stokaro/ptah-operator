@@ -367,6 +367,9 @@ The webhook refuses an approval the evidence no longer supports: a replaced
 plan, a history somebody else moved in the meantime, a re-resolved artifact, a
 changed verification policy, a rolled-out executor, or a migration that is not
 waiting for a decision. An approval authorizes one execution.
+`kubectl ptah migration orders -n application` lists the approvals that name
+the migration, whether each names the current plan, and the `Consumed`
+condition the controller writes once the approved plan is dispatched.
 
 The chart's optional approver ClusterRole grants what an approver needs for
 either family: read on the migration, its plans and approvals, and create on
@@ -398,7 +401,12 @@ matters most:
 
 `Partial` and `Unknown` stop the resource and are never retried. Re-running a
 file that committed half its statements would run them twice, and no controller
-can know which half. Both leave the database to a person.
+can know which half. Both leave the database to a person, and the resource
+records the run in `status.unresolvedRun` until a reading or a person settles
+it. `kubectl ptah migration` prints the last run with the Job it ran as, and
+the unresolved run as a block of its own, with what
+[A migration run nobody accounted for](../operations/#a-migration-run-nobody-accounted-for)
+says to do about it.
 
 Every other outcome is confirmed by reading the history back. What a run claims
 and what the revision table holds are two statements, and only the second one

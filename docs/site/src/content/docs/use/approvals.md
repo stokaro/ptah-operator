@@ -95,6 +95,19 @@ approval already owns that decision. Concurrent duplicates are retired, and
 the accepted approval is consumed only as the Apply crosses its dispatch
 boundary, just before the dispatch marker is written. Updates cannot change `spec`; create a new approval for a new plan.
 
+What became of an approval is on the approval: `Accepted`, `Consumed` and
+`Stale`, each with a reason and a message.
+[`kubectl ptah schema`](../read-a-plan/#schema) lists the approvals that name a
+schema with those conditions, the identity admission stamped and whether each
+names the current plan, so an approval of an earlier plan is still there to
+read after the plan changed:
+
+```sh
+kubectl ptah schema application -n application
+```
+
+`kubectl describe ptahschemaapproval <name>` shows one approval whole.
+
 The chart's optional approver ClusterRole grants read access to schemas,
 migrations, their plans, the chunks a schema plan's SQL is stored in, and
 approvals, plus create access to `PtahSchemaApproval`, `PtahMigrationApproval`

@@ -4,7 +4,9 @@ description: Every Event the operator records, what it says, and which resource 
 ---
 
 `kubectl describe ptahschema orders` prints these under the status, and they are
-the fastest way to see what the operator has just done. They are diagnostic
+the fastest way to see what the operator has just done.
+`kubectl events -n <namespace> --for ptahschema/orders` prints them alone, and
+`--watch` follows the ones that come next. They are diagnostic
 text: read them to understand, and match on Conditions to decide.
 [Condition reasons](../condition-reasons/) is the interface for deciding, and
 says why.
