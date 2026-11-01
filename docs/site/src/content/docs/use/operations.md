@@ -1220,7 +1220,8 @@ It sets `spec.desired.ociRef` of a `PtahSchema` or `spec.artifact.ociRef` of a
 credential, the transport and the apply policy stay what they were, and the
 new artifact is held to them: the report names them under `Kept`, beside the
 reference it replaced and what the operator had observed. When the field
-already holds the reference, it sends nothing.
+already holds the reference, it sends nothing, and a wait that follows counts
+only the next reading of the database, which `kubectl ptah refresh` asks for.
 
 What follows is the operator's ordinary cycle at the new generation: it
 resolves the reference, verifies the artifact against the policy, reads the

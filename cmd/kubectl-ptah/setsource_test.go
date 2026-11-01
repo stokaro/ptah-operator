@@ -324,6 +324,29 @@ func TestSetSourceWaitsForAPlanFromTheNewReference(t *testing.T) {
 	})
 }
 
+// A wait after a change nothing sent begins after that change, so it counts
+// the next reading of the database and says so.
+func TestSetSourceWaitsForTheNextReadingWhenNothingWasSent(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		resolved := onArtifact("migration", operatorv1alpha1.ApplyPolicyOnApproval).(*operatorv1alpha1.PtahMigration)
+		resolved.Spec.Artifact.OCIRef = newRef
+		resolved.Status.Artifact = &operatorv1alpha1.SourceAccessBinding{ResolvedReference: newRef, Digest: newDigest}
+		api := newCluster(t, resolved)
+		api.armed = true
+		api.then(unchanged, unchanged, readAgain)
+
+		code, stdout, stderr := runCommand(t, api, "set-source", "migration/storefront", "--oci", newRef, "--wait")
+
+		if code != exitOK || api.patchCount() != 0 {
+			t.Fatalf("set-source --wait = %d after %d patches, stdout %q, stderr %q", code, api.patchCount(), stdout, stderr)
+		}
+		requireSays(t, "set-source --wait's report", stdout, "already holds that reference; nothing was sent.",
+			"Nothing was sent, so the wait counts only a reading that begins after it",
+			"kubectl ptah refresh migration/storefront -n demo asks for one now.",
+			"reached in-sync.", "Database:   last read at 2026-10-01T09:07:00Z")
+	})
+}
+
 // With -o json stdout carries the resource as the API server answered the
 // change, and nothing else.
 func TestSetSourcePrintsTheResourceTheAnswerCarried(t *testing.T) {

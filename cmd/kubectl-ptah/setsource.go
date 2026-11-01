@@ -193,6 +193,13 @@ func writeSourceReport(out io.Writer, result operate.SourceResult, waiting bool)
 		}
 		text.WriteString(applyPolicyLine(ref, source.Apply) + "\n")
 	}
+	if !result.Changed && waiting {
+		// The change this wait is about happened before it began, so the
+		// rule every wait follows leaves it the next reading.
+		fmt.Fprintf(&text, "Nothing was sent, so the wait counts only a reading that begins after it, which the "+
+			"operator takes at its interval; kubectl ptah refresh %s/%s -n %s asks for one now.\n",
+			ref.Family, ref.Name, ref.Namespace)
+	}
 	if !waiting {
 		text.WriteString("set-source --for approval waits for the plan from the new reference in the same command, " +
 			"and --for in-sync until the resource rests in sync from it; kubectl ptah wait, run later, counts only a " +
