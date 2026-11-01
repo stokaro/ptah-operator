@@ -106,6 +106,13 @@ type WaitOptions struct {
 	// Plan narrows TargetApplied, for a PtahSchema only, to the plan of that
 	// name or fingerprint. Another plan applied first stops the wait.
 	Plan string
+	// Source narrows TargetInSync and TargetApproval to the OCI reference
+	// SetSource wrote, pinned by digest. A document counts only while the
+	// spec still asks for it, and only once the operator worked from it: a
+	// schema waiting for approval with a plan computed from its digest, and
+	// otherwise the artifact the operator resolved. A spec that names another
+	// source stops the wait.
+	Source string
 }
 
 // Result is the document that met the target.
@@ -422,6 +429,7 @@ type waiter struct {
 	ref           Ref
 	options       WaitOptions
 	token         string
+	sourceDigest  string
 	minGeneration int64
 	baseline      *snapshot
 	fresh         freshness
@@ -473,6 +481,16 @@ func newWaiter(ref Ref, options WaitOptions) (*waiter, error) {
 	if options.Plan != "" && (options.Target != TargetApplied || ref.Family != FamilySchema) {
 		return nil, errors.New("a plan narrows only a wait for a PtahSchema to be applied: a migration run records no plan")
 	}
+	if options.Source != "" {
+		if options.Target != TargetInSync && options.Target != TargetApproval {
+			return nil, fmt.Errorf("a source narrows only a wait for %s or %s", TargetInSync, TargetApproval)
+		}
+		pinned, err := ParsePinnedReference(options.Source)
+		if err != nil {
+			return nil, err
+		}
+		w.sourceDigest = pinned.Digest
+	}
 	if options.Since != nil {
 		since, err := snapshotOf(options.Since)
 		if err != nil {
@@ -520,6 +538,21 @@ func (w *waiter) begin(baseline snapshot) {
 }
 
 func (w *waiter) check(s snapshot) verdict {
+	if w.options.Source == "" {
+		return w.checkTarget(s)
+	}
+	if stop, moved := w.sourceMoved(s); moved {
+		return stop
+	}
+	// The target is checked first, on every document, so its bookkeeping of
+	// which reading is fresh sees each one in order.
+	if v := w.checkTarget(s); !v.done {
+		return v
+	}
+	return w.sourceReached(s)
+}
+
+func (w *waiter) checkTarget(s snapshot) verdict {
 	switch w.options.Target {
 	case TargetRead:
 		return w.checkRead(s)

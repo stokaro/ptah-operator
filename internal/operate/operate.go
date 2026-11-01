@@ -1,10 +1,11 @@
 // Package operate changes and waits on a PtahSchema or a PtahMigration the
-// way kubectl ptah suspend, resume, refresh and wait do.
+// way kubectl ptah suspend, resume, refresh, set-source and wait do.
 //
 // Every change is a JSON patch that first tests metadata.uid, so a resource
 // deleted and created again under the same name between the read and the
 // write is refused rather than changed. A change touches one field and
-// nothing else, and is sent under the field manager kubectl-ptah.
+// nothing else, and is sent under the field manager kubectl-ptah. A change of
+// source also carries the resourceVersion it read (SetSource says why).
 //
 // Suspension prevents new Jobs and never cancels SQL that has started. An
 // Apply already running is observed to its end; any proof still owed after
