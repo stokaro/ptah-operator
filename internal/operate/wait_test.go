@@ -972,6 +972,21 @@ func TestWaitTargets(t *testing.T) {
 			wantTimeout: true, wantMessage: "a run that finishes after the wait began",
 		},
 		{
+			// Two runs settled without a Job carry no name and no UID: the
+			// claim's start tells them apart. A reading with nothing pending
+			// settled the second one's record between two polls, so only its
+			// run record is left to see.
+			name: "applied: a second run settled without a Job is a run of its own", target: operate.TargetApplied,
+			only: operate.FamilyMigration,
+			docs: func(f operate.Family) []doc {
+				return []doc{
+					{phase: "Blocked", observedAt: at(0), lastRun: &runDoc{outcome: "Unknown", startedAt: at(-100), finishedAt: at(-90)}},
+					{phase: "InSync", observedAt: at(60), lastRun: &runDoc{outcome: "Unknown", startedAt: at(10), finishedAt: at(20)}, conditions: inSyncConditions(f, 3)},
+				}
+			},
+			wantStop: operate.StopUnresolved, wantMessage: "ended Unknown",
+		},
+		{
 			name: "applied: an unresolved migration run stops the wait", target: operate.TargetApplied,
 			only: operate.FamilyMigration,
 			docs: func(f operate.Family) []doc {
@@ -1082,6 +1097,23 @@ func TestWaitTargets(t *testing.T) {
 				}
 			},
 			wantReads: 2,
+		},
+		{
+			// The controller clears the record in the write that reads InSync
+			// (recordMigrationHistory), and the record is a hold whatever the
+			// conditions say: a document that carried both is not converged.
+			name: "in-sync: a migration holding a run nobody accounted for is not the target", target: operate.TargetInSync,
+			only: operate.FamilyMigration,
+			docs: func(f operate.Family) []doc {
+				return []doc{
+					{phase: "InSync", observedAt: at(0), conditions: inSyncConditions(f, 3)},
+					{
+						phase: "InSync", observedAt: at(30), conditions: inSyncConditions(f, 3),
+						unresolved: &unresolvedDoc{operationID: "sha256:op", outcome: "Unknown", job: "run-1", plan: "plan-1"},
+					},
+				}
+			},
+			wantTimeout: true, wantMessage: "nothing in flight",
 		},
 		{
 			name: "in-sync: a schema whose post-Apply proof is still owed is not the target", target: operate.TargetInSync,
