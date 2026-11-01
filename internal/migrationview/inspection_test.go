@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -67,26 +68,61 @@ func TestRenderTextKeepsTheLastRunApartFromTheUnresolvedHold(t *testing.T) {
 	}
 	text := render(t, view, migrationview.Text)
 	for _, want := range []string{
-		"Phase:            Blocked\n" +
-			"Ready:            False, ApplyOutcomeUnknown: What the dispatched run did is unknown until the database is read\n" +
-			"Blocked:          True, ApplyOutcomeUnknown: the dispatched Apply Job is missing and will not be recreated\n" +
-			"Policy:           apply OnApproval\n",
-		"\nLast run:         Unknown, started 2026-09-30T06:30:36Z, finished 2026-09-30T06:30:43Z\n" +
-			"  Job:            ptah-m-apply-e2e-uncertain-mysql-04d370d4ccc65a4c, UID 2cde010b-1e46-46af-a3fb-35a75edacc7f\n" +
-			"  Message:        the dispatched Apply Job is missing and will not be recreated\n",
-		"\nUnresolved run:   Unknown, recorded 2026-09-30T06:30:43Z\n" +
-			"  Operation:      sha256:9d8a95ebef8319572f9c4f38853a5a4815316e07f83f56865f9f7cab742dcded\n" +
-			"  Job:            ptah-m-apply-e2e-uncertain-mysql-04d370d4ccc65a4c, UID 2cde010b-1e46-46af-a3fb-35a75edacc7f\n" +
-			"  Plan:           ptah-mplan-8f517ba4f0200f2a4e095b65, UID 04800e23-c41a-40ff-9745-c77de45237b1\n" +
-			"  Database:       sha256:dd3598d94799d326af49fb6f455ea24c3959af067ca4cff5219f1987480e4abd (target identity digest)\n" +
-			"  While this record stands nothing is planned and nothing runs.\n",
-		"  migration UID migration-uid and the operation above.\n",
-		`A migration run nobody`,
+		"Phase:                Blocked\n" +
+			"Ready:                False, ApplyOutcomeUnknown: What the dispatched run did is unknown until the database is read\n" +
+			"Blocked:              True, ApplyOutcomeUnknown: the dispatched Apply Job is missing and will not be recreated\n" +
+			"Policy:               apply OnApproval\n",
+		"\nLast run:             Unknown, started 2026-09-30T06:30:36Z, finished 2026-09-30T06:30:43Z\n" +
+			"  Job:                ptah-m-apply-e2e-uncertain-mysql-04d370d4ccc65a4c, UID 2cde010b-1e46-46af-a3fb-35a75edacc7f\n" +
+			"  Message:            the dispatched Apply Job is missing and will not be recreated\n",
+		"\nUnresolved run:       Unknown, recorded 2026-09-30T06:30:43Z\n" +
+			"  Operation:          sha256:9d8a95ebef8319572f9c4f38853a5a4815316e07f83f56865f9f7cab742dcded\n" +
+			"  Job:                ptah-m-apply-e2e-uncertain-mysql-04d370d4ccc65a4c, UID 2cde010b-1e46-46af-a3fb-35a75edacc7f\n" +
+			"  Plan:               ptah-mplan-8f517ba4f0200f2a4e095b65, UID 04800e23-c41a-40ff-9745-c77de45237b1\n" +
+			"  Database:           sha256:dd3598d94799d326af49fb6f455ea24c3959af067ca4cff5219f1987480e4abd (target identity digest)\n",
 		"kubectl events -n team-a --for ptahmigration/e2e-uncertain-mysql prints its Events.\n",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("text view is missing %q:\n%s", want, text)
 		}
+	}
+	// The guidance is prose wrapped to the terminal, so it is read as words.
+	// Reads go on while the record stands; the database is where to start
+	// looking, not proof; and the acknowledgment takes the UID and operation
+	// printed here.
+	prose := strings.Join(strings.Fields(text), " ")
+	for _, want := range []string{
+		"While this record stands no plan is published and no Apply is dispatched; resolve, verify and the history read go on.",
+		"where to start looking, not proof of where the run went.",
+		"A reader who inspects the wrong database finds nothing wrong and settles a record that was telling the truth.",
+		"settle it with a PtahMigrationRunAcknowledgment naming migration UID migration-uid and the operation above.",
+		`The operations guide has the procedure, under "A migration run nobody accounted for".`,
+	} {
+		if !strings.Contains(prose, want) {
+			t.Fatalf("the guidance does not say %q:\n%s", want, text)
+		}
+	}
+	// Blocked=True ApplyOutcomeUnknown is the hold itself, and it stops no
+	// reading.
+	if strings.Contains(prose, "held before any reading") {
+		t.Fatalf("the hold was read as a gate in front of the reading:\n%s", text)
+	}
+	// The guidance is wrapped for a terminal: every line of it that is not a
+	// field fits 78 columns.
+	_, block, _ := strings.Cut(text, "\nUnresolved run:")
+	block, _, _ = strings.Cut(block, "\n\n")
+	wrapped := 0
+	for _, line := range strings.Split(block, "\n")[1:] {
+		if guidanceField.MatchString(line) {
+			continue
+		}
+		wrapped++
+		if len(line) > 78 {
+			t.Errorf("a guidance line runs past 78 columns: %q", line)
+		}
+	}
+	if wrapped < 5 {
+		t.Fatalf("read %d guidance lines, so the width check held almost nothing:\n%s", wrapped, block)
 	}
 	// The run nobody accounted for has no retry to offer.
 	for _, unwanted := range []string{"retry", "Retry", "rerun", "delete"} {
@@ -109,7 +145,7 @@ func TestRenderTextSaysAnUnresolvedRunRecordsNoJob(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := "  Job:            none recorded: the API server never confirmed its create\n"; !strings.Contains(render(t, view, migrationview.Text), want) {
+	if want := "  Job:                none recorded: the API server never confirmed its create\n"; !strings.Contains(render(t, view, migrationview.Text), want) {
 		t.Fatalf("text view is missing %q", want)
 	}
 }
@@ -158,16 +194,16 @@ func TestRenderTextShowsNoHoldWithoutAnUnresolvedRun(t *testing.T) {
 	for _, want := range []string{
 		"    operation " + operation + "\n",
 		"    Consumed  True    RunAcknowledged  -      The acknowledgment settled the run it names\n",
-		"\nLast run:         Partial, started 2026-01-01T00:00:00Z, finished 2026-01-01T00:00:00Z\n",
-		"\nSettled run:      Partial run sha256:" + strings.Repeat("1", 64) +
+		"\nLast run:             Partial, started 2026-01-01T00:00:00Z, finished 2026-01-01T00:00:00Z\n",
+		"\nSettled run:          Partial run sha256:" + strings.Repeat("1", 64) +
 			", by acknowledgment orders-run-accounted-for from alice at 2026-01-01T00:05:00Z\n",
-		"Blocked:          True, HistoryDirty: Revision 4 is recorded dirty; a person has to decide what the interrupted run did\n",
+		"Blocked:              True, HistoryDirty: Revision 4 is recorded dirty; a person has to decide what the interrupted run did\n",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("text view is missing %q:\n%s", want, text)
 		}
 	}
-	if strings.Contains(text, "Unresolved run:") || strings.Contains(text, "nothing is planned") ||
+	if strings.Contains(text, "Unresolved run:") || strings.Contains(text, "no plan is published") ||
 		strings.Contains(text, "the unresolved run") {
 		t.Fatalf("a settled run was shown as a hold:\n%s", text)
 	}
@@ -202,9 +238,9 @@ func TestRenderTextSaysWhereTheLastRunStopped(t *testing.T) {
 	}
 	text := render(t, view, migrationview.Text)
 	for _, want := range []string{
-		"  Job:            ptah-m-apply-orders-0123456789abcdef, UID job-uid\n",
-		"  Applied:        3\n",
-		"  Stopped at:     version 4, statement 2 of 3, SQLSTATE 42P01\n",
+		"  Job:                ptah-m-apply-orders-0123456789abcdef, UID job-uid\n",
+		"  Versions:           3\n",
+		"  Stopped at:         version 4, statement 2 of 3, SQLSTATE 42P01\n",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("text view is missing %q:\n%s", want, text)
@@ -215,6 +251,86 @@ func TestRenderTextSaysWhereTheLastRunStopped(t *testing.T) {
 		if !strings.Contains(document, want) {
 			t.Fatalf("json view is missing %s:\n%s", want, document)
 		}
+	}
+}
+
+// A resource held before any reading -- suspended, or refused for its engine or
+// its realm -- never reaches the history read that would clear the record, and
+// the view says so, and that an acknowledgment still settles it. The near
+// misses are the hold itself, and the gates' reasons on a condition that does
+// not hold anything.
+func TestRenderTextSaysWhenAGateStopsTheReadingThatWouldClearTheRecord(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name    string
+		suspend bool
+		blocked metav1.ConditionStatus
+		reason  operatorv1alpha1.ConditionReason
+		gate    string
+	}{
+		{name: "suspended", suspend: true, blocked: metav1.ConditionTrue, reason: operatorv1alpha1.ReasonApplyOutcomeUnknown, gate: "spec.suspend is set"},
+		{name: "realm conflict", blocked: metav1.ConditionTrue, reason: operatorv1alpha1.ReasonRealmConflict, gate: "Blocked is True, RealmConflict"},
+		{name: "realm not authorized", blocked: metav1.ConditionTrue, reason: operatorv1alpha1.ReasonRealmNotAuthorized, gate: "Blocked is True, RealmNotAuthorized"},
+		{name: "unsupported engine", blocked: metav1.ConditionTrue, reason: operatorv1alpha1.ReasonUnsupportedEngine, gate: "Blocked is True, UnsupportedEngine"},
+		{name: "the hold itself", blocked: metav1.ConditionTrue, reason: operatorv1alpha1.ReasonApplyOutcomeUnknown},
+		{name: "a dirty history", blocked: metav1.ConditionTrue, reason: operatorv1alpha1.ReasonHistoryDirty},
+		{name: "a realm reason not holding", blocked: metav1.ConditionFalse, reason: operatorv1alpha1.ReasonRealmConflict},
+		{name: "a realm reason in doubt", blocked: metav1.ConditionUnknown, reason: operatorv1alpha1.ReasonRealmConflict},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			held := uncertainMigration(t)
+			held.Spec.Suspend = test.suspend
+			for index := range held.Status.Conditions {
+				if held.Status.Conditions[index].Type == operatorv1alpha1.ConditionMigrationBlocked {
+					held.Status.Conditions[index].Status = test.blocked
+					held.Status.Conditions[index].Reason = string(test.reason)
+				}
+			}
+			view, err := migrationview.Load(context.Background(), readerWith(t, held), "team-a", held.Name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			prose := strings.Join(strings.Fields(render(t, view, migrationview.Text)), " ")
+			said := strings.Contains(prose, "This resource is held before any reading: ")
+			if test.gate == "" {
+				if said {
+					t.Fatalf("a resource no gate holds was called held before any reading:\n%s", prose)
+				}
+				return
+			}
+			want := "This resource is held before any reading: " + test.gate +
+				". No history read runs, so the record cannot clear by reading; an acknowledgment still settles it."
+			if !strings.Contains(prose, want) {
+				t.Fatalf("the view does not say %q:\n%s", want, prose)
+			}
+		})
+	}
+}
+
+// The controller writes nothing on a migration approval until its plan is
+// dispatched, so an approval with no condition says so without promising one.
+func TestRenderTextSaysAMigrationApprovalHasNoCondition(t *testing.T) {
+	t.Parallel()
+
+	migration, plan := fixture()
+	approval := &operatorv1alpha1.PtahMigrationApproval{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "team-a", Name: "orders-approval"},
+		Spec: operatorv1alpha1.PtahMigrationApprovalSpec{
+			MigrationRef:    operatorv1alpha1.ImmutableObjectReference{Name: "orders", UID: migration.UID},
+			PlanRef:         operatorv1alpha1.ImmutableObjectReference{Name: plan.Name, UID: plan.UID},
+			PlanFingerprint: plan.Spec.Fingerprint,
+		},
+	}
+	view, err := migrationview.Load(context.Background(), readerWith(t, migration, plan, approval), "team-a", "orders")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := render(t, view, migrationview.Text)
+	if !strings.Contains(text, "    plan "+plan.Name+", the current plan\n    no condition written\n") ||
+		strings.Contains(text, "no condition written yet") {
+		t.Fatalf("text view does not say the approval has no condition:\n%s", text)
 	}
 }
 
@@ -462,6 +578,9 @@ func TestRenderJSONKeepsItsEarlierFields(t *testing.T) {
 		}
 	}
 }
+
+// guidanceField is a "  Label:  value" line of a run block.
+var guidanceField = regexp.MustCompile(`^  [A-Z][A-Za-z ]*: +[^ ]`)
 
 func render(t *testing.T, view migrationview.View, format migrationview.Format) string {
 	t.Helper()

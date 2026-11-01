@@ -43,7 +43,7 @@ func TestReadingSucceedsWhenTheDecisionListsAreForbidden(t *testing.T) {
 			arguments: []string{"schema", "storefront"},
 			forbidden: []string{"ptahschemaapprovals"},
 			says: []string{
-				"Schema:           application/storefront\n",
+				"Schema:               application/storefront\n",
 				"\nApprovals: not shown; listing ptahschemaapprovals is forbidden to you (RBAC): " +
 					`ptahschemaapprovals.operator.ptah.run is forbidden: User "plan-reader" cannot list resource "ptahschemaapprovals"`,
 			},
@@ -69,7 +69,7 @@ func TestReadingSucceedsWhenTheDecisionListsAreForbidden(t *testing.T) {
 			arguments: []string{"migration", "orders"},
 			forbidden: []string{"ptahmigrationapprovals", "ptahmigrationrunacknowledgments"},
 			says: []string{
-				"Migration:        application/orders\n",
+				"Migration:            application/orders\n",
 				"\nApprovals: not shown; listing ptahmigrationapprovals is forbidden to you (RBAC): ",
 				"\nRun acknowledgments: not shown; listing ptahmigrationrunacknowledgments is forbidden to you (RBAC): ",
 			},

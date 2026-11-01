@@ -72,7 +72,7 @@ func TestReferenceDataPhasePinsTheLineTheViewWrites(t *testing.T) {
 
 func TestReferenceViewHasLine(t *testing.T) {
 	t.Parallel()
-	view := []byte("Schema:           ns/s\nReference data:   0 to insert, 1 to update, 0 to delete\n  data_rows_updated 1  destructive\n")
+	view := []byte(referenceSchemaViewLine("ns", "s") + "\n" + referenceExternalEditLine + "\n  data_rows_updated 1  destructive\n")
 	if !referenceViewHasLine(view, referenceExternalEditLine) {
 		t.Fatal("the view's own line was not found")
 	}
@@ -82,8 +82,8 @@ func TestReferenceViewHasLine(t *testing.T) {
 	// grep -Fx: a line that only contains the wanted one, or is padded
 	// differently, is not it.
 	for _, refused := range []string{
-		"Reference data:  0 to insert, 1 to update, 0 to delete",
-		"Reference data:   0 to insert, 1 to update",
+		"Reference data: 0 to insert, 1 to update, 0 to delete",
+		strings.TrimSuffix(referenceExternalEditLine, ", 0 to delete"),
 		"0 to insert, 1 to update, 0 to delete",
 		referenceSchemaViewLine("ns", "s-other"),
 		referenceSchemaViewLine("n", "s"),

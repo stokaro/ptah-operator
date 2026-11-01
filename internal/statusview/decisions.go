@@ -68,9 +68,14 @@ type Approval struct {
 	PlanRef         operatorv1alpha1.ImmutableObjectReference `json:"planRef"`
 	PlanFingerprint string                                    `json:"planFingerprint"`
 	// CurrentPlan says the plan it names is the resource's current plan, by
-	// UID and fingerprint. An approval of any other plan cannot authorize
-	// anything, whatever its own conditions say.
+	// name, UID and fingerprint. An approval of any other plan cannot
+	// authorize anything, whatever its own conditions say.
 	CurrentPlan bool `json:"currentPlan"`
+	// AppliedPlan says the plan it names is the one the resource's last
+	// confirmed apply ran, by name, UID and fingerprint: the approval that
+	// apply consumed, once the plan is no longer current. A migration records
+	// no applied plan, so it is false for a migration approval.
+	AppliedPlan bool `json:"appliedPlan"`
 	// Approver and ApprovedAt are what admission stamped from the
 	// authenticated request.
 	Approver   operatorv1alpha1.ApprovalIdentity `json:"approver"`
@@ -83,7 +88,9 @@ type Approval struct {
 // whether entries follow.
 //
 // title names the list, resource is the plural a reader passes to `kubectl
-// get` to see every one, and namespace is where they live.
+// get` to see them all, and namespace is where they live. That command lists
+// every one in the namespace, whichever resource it names, and the line says
+// so.
 func WriteListHeading[T any](
 	text *strings.Builder,
 	title, resource, namespace string,
@@ -102,32 +109,42 @@ func WriteListHeading[T any](
 		fmt.Fprintf(text, "\n%s: none\n", title)
 		return false
 	case len(decisions.Items) < decisions.Total:
-		fmt.Fprintf(text, "\n%s, the newest %d of %d (kubectl get %s -n %s lists every one):\n",
-			title, len(decisions.Items), decisions.Total, resource, namespace)
+		fmt.Fprintf(text, "\n%s, the newest %d of %d; kubectl get %s -n %s lists all %s in the namespace:\n",
+			title, len(decisions.Items), decisions.Total, resource, namespace, strings.ToLower(title))
 	default:
 		fmt.Fprintf(text, "\n%s, newest first:\n", title)
 	}
 	return true
 }
 
-// WriteApproval writes one approval: who approved which plan when, and every
-// condition the controller wrote on it.
-func WriteApproval(text *strings.Builder, approval Approval) {
-	fmt.Fprintf(text, "  %s\n", approval.Name)
+// WriteApproval writes one approval: who approved which plan when, which of
+// the resource's plans that is, and every condition the controller wrote on
+// it. none is what to say when there is no condition, which differs by
+// family: the controller answers a schema approval as soon as it reads it, and
+// writes nothing on a migration approval until its plan is dispatched.
+func WriteApproval(text *strings.Builder, approval Approval, none string) {
+	fmt.Fprintf(text, "  %s\n", Clean(approval.Name))
 	fmt.Fprintf(text, "    approved by %s at %s\n", identity(approval.Approver.Username), Time(approval.ApprovedAt))
-	current := "not the current plan"
+	var relations []string
 	if approval.CurrentPlan {
-		current = "the current plan"
+		relations = append(relations, "the current plan")
 	}
-	fmt.Fprintf(text, "    plan %s, %s\n", approval.PlanRef.Name, current)
-	WriteDecisionConditions(text, approval.Conditions)
+	if approval.AppliedPlan {
+		relations = append(relations, "the applied plan")
+	}
+	relation := "not the current plan"
+	if len(relations) > 0 {
+		relation = strings.Join(relations, " and ")
+	}
+	fmt.Fprintf(text, "    plan %s, %s\n", Clean(approval.PlanRef.Name), relation)
+	WriteDecisionConditions(text, approval.Conditions, none)
 }
 
-// WriteDecisionConditions writes the conditions of one decision, or says the
-// controller has not answered it yet.
-func WriteDecisionConditions(text *strings.Builder, conditions []Condition) {
+// WriteDecisionConditions writes the conditions of one decision, or none when
+// it has no condition.
+func WriteDecisionConditions(text *strings.Builder, conditions []Condition, none string) {
 	if len(conditions) == 0 {
-		text.WriteString("    no condition written yet\n")
+		fmt.Fprintf(text, "    %s\n", none)
 		return
 	}
 	WriteTable(text, "    ", conditions, 0)

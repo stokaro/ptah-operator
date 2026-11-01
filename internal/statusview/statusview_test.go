@@ -14,6 +14,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
+	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/statusview"
 )
 
@@ -146,6 +147,12 @@ func TestCleanKeepsTextAndEscapesWhatATerminalActsOn(t *testing.T) {
 		{name: "C1 control", text: "a\u009bb", want: `a\x9bb`},
 		{name: "bidirectional override", text: "user\u202eevil", want: `user\u202eevil`},
 		{name: "byte that is not UTF-8", text: "a\xffb", want: "a\ufffdb"},
+		// Format characters print as nothing, so a name holding one reads
+		// like a name without it.
+		{name: "zero-width space", text: "kubernetes\u200b-admin", want: `kubernetes\u200b-admin`},
+		{name: "byte order mark", text: "\ufeffalice", want: `\ufeffalice`},
+		{name: "soft hyphen", text: "ali\u00adce", want: `ali\xadce`},
+		{name: "format character beyond the basic plane", text: "a\U000e0001b", want: `a\U000e0001b`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -252,7 +259,7 @@ func TestWriteListHeadingSaysWhatFollows(t *testing.T) {
 		{name: "every one", decisions: two, follows: true, want: "\nApprovals, newest first:\n"},
 		{
 			name: "cut", decisions: cut, follows: true,
-			want: "\nApprovals, the newest 5 of 9 (kubectl get ptahschemaapprovals -n application lists every one):\n",
+			want: "\nApprovals, the newest 5 of 9; kubectl get ptahschemaapprovals -n application lists all approvals in the namespace:\n",
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -262,6 +269,39 @@ func TestWriteListHeadingSaysWhatFollows(t *testing.T) {
 				test.decisions, test.unreadable)
 			if follows != test.follows || text.String() != test.want {
 				t.Fatalf("WriteListHeading() = %t, %q; want %t, %q", follows, text.String(), test.follows, test.want)
+			}
+		})
+	}
+}
+
+// An approval says which of the resource's plans it names, and what its
+// missing conditions mean for its family.
+func TestWriteApprovalSaysWhichPlanItNames(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name             string
+		current, applied bool
+		want             string
+	}{
+		{name: "the current plan", current: true, want: "    plan ptah-plan-a\\x1b[2J, the current plan\n"},
+		{name: "the applied plan", applied: true, want: "    plan ptah-plan-a\\x1b[2J, the applied plan\n"},
+		{name: "both", current: true, applied: true, want: "    plan ptah-plan-a\\x1b[2J, the current plan and the applied plan\n"},
+		{name: "neither", want: "    plan ptah-plan-a\\x1b[2J, not the current plan\n"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			var text strings.Builder
+			statusview.WriteApproval(&text, statusview.Approval{
+				Name:        "approval",
+				PlanRef:     operatorv1alpha1.ImmutableObjectReference{Name: "ptah-plan-a\x1b[2J", UID: "plan-uid"},
+				CurrentPlan: test.current, AppliedPlan: test.applied,
+			}, "no condition written")
+			if !strings.Contains(text.String(), test.want) {
+				t.Fatalf("WriteApproval() wrote\n%s\nwant the line %q", text.String(), test.want)
+			}
+			if !strings.HasSuffix(text.String(), "    no condition written\n") {
+				t.Fatalf("WriteApproval() did not say the approval has no condition:\n%s", text.String())
 			}
 		})
 	}

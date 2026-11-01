@@ -25,7 +25,9 @@ func Time(instant metav1.Time) string {
 // sequence or a bidirectional override can rewrite what the terminal shows.
 // Line breaks and tabs become spaces; every other control character and
 // every bidirectional control is printed as its escape, so a reader sees that
-// it was there.
+// it was there. Format characters -- zero-width spaces and joiners, a byte
+// order mark, a soft hyphen -- are escaped too: they print as nothing, so a
+// name that holds one reads exactly like a name that does not.
 func Clean(text string) string {
 	if !needsCleaning(text) {
 		return text
@@ -35,11 +37,14 @@ func Clean(text string) string {
 		switch {
 		case character == '\n' || character == '\r' || character == '\t':
 			out.WriteByte(' ')
-		case unicode.IsControl(character) || unicode.Is(unicode.Bidi_Control, character):
-			if character <= 0xff {
+		case invisible(character):
+			switch {
+			case character <= 0xff:
 				fmt.Fprintf(&out, `\x%02x`, character)
-			} else {
+			case character <= 0xffff:
 				fmt.Fprintf(&out, `\u%04x`, character)
+			default:
+				fmt.Fprintf(&out, `\U%08x`, character)
 			}
 		default:
 			out.WriteRune(character)
@@ -56,9 +61,16 @@ func needsCleaning(text string) bool {
 		return true
 	}
 	for _, character := range text {
-		if unicode.IsControl(character) || unicode.Is(unicode.Bidi_Control, character) {
+		if invisible(character) {
 			return true
 		}
 	}
 	return false
+}
+
+// invisible reports a character a terminal acts on or prints as nothing.
+func invisible(character rune) bool {
+	return unicode.IsControl(character) ||
+		unicode.Is(unicode.Bidi_Control, character) ||
+		unicode.Is(unicode.Cf, character)
 }

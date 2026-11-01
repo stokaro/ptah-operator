@@ -48,12 +48,7 @@ func Render(out io.Writer, view View, format Format) error {
 // values.
 func renderText(out io.Writer, view View) error {
 	var text strings.Builder
-	field := func(name, value string) {
-		if value == "" {
-			return
-		}
-		fmt.Fprintf(&text, "%-17s %s\n", name+":", value)
-	}
+	field := statusview.FieldWriter(&text, "", statusview.LabelWidth)
 	field("Schema", view.Namespace+"/"+view.Schema)
 	field("Phase", view.Phase)
 	if view.ObservedGeneration != 0 && view.ObservedGeneration != view.Generation {
@@ -73,7 +68,7 @@ func renderText(out io.Writer, view View) error {
 	for _, line := range view.Source.Fields() {
 		field(line.Name, line.Value)
 	}
-	renderObservation(&text, view.Observation)
+	renderObservation(field, &text, view.Observation)
 	if applied := view.Applied; applied != nil {
 		name := applied.PlanName
 		if name == "" {
@@ -85,7 +80,7 @@ func renderText(out io.Writer, view View) error {
 	if statusview.WriteListHeading(&text, "Approvals", "ptahschemaapprovals", view.Namespace,
 		view.Approvals, view.ApprovalsUnreadable) {
 		for _, approval := range view.Approvals.Items {
-			statusview.WriteApproval(&text, approval)
+			statusview.WriteApproval(&text, approval, "no condition written yet")
 		}
 	}
 	if len(view.Conditions) > 0 {
@@ -118,34 +113,32 @@ func policyLine(policy PolicyView) string {
 // renderObservation writes what the last drift read found, and says plainly
 // when there has not been one. A schema with no observation is not a converged
 // schema, and printing nothing would read like one.
-func renderObservation(text *strings.Builder, observation *ObservationView) {
+func renderObservation(field func(name, value string), text *strings.Builder, observation *ObservationView) {
 	if observation == nil {
-		fmt.Fprintf(text, "%-18s%s\n", "Observed:", "not yet")
+		field("Observed", "not yet")
 		return
 	}
 	when := "unknown"
 	if observation.ObservedAt != nil {
 		when = statusview.Time(*observation.ObservedAt)
 	}
-	fmt.Fprintf(text, "%-18s%s\n", "Observed:", when)
+	field("Observed", when)
 	if !observation.Drift {
-		fmt.Fprintf(text, "%-18s%s\n", "Drift:", "none")
+		field("Drift", "none")
 		return
 	}
 	if observation.FindingCount == 0 && len(observation.Findings) == 0 {
 		// A grant, a default privilege, a view or a trigger: the report found
 		// the difference and has no category to count it in. A severity rated
 		// over no category says nothing, so none is printed.
-		fmt.Fprintf(text, "%-18s%s\n", "Drift:", "found, in no category the report counts; the plan says what changes")
+		field("Drift", "found, in no category the report counts; the plan says what changes")
 		return
 	}
-	fmt.Fprintf(text, "%-18s%s\n", "Drift:",
-		fmt.Sprintf("%d in %d categories, highest %s",
-			observation.FindingCount, len(observation.Findings), observation.HighestSeverity))
+	field("Drift", fmt.Sprintf("%d in %d categories, highest %s",
+		observation.FindingCount, len(observation.Findings), observation.HighestSeverity))
 	if rows := observation.ReferenceData; rows != nil {
-		fmt.Fprintf(text, "%-18s%s\n", "Reference data:",
-			fmt.Sprintf("%d to insert, %d to update, %d to delete",
-				rows.Inserts, rows.Updates, rows.Deletes))
+		field("Reference data", fmt.Sprintf("%d to insert, %d to update, %d to delete",
+			rows.Inserts, rows.Updates, rows.Deletes))
 	}
 	for _, finding := range observation.Findings {
 		fmt.Fprintf(text, "  %-34s %6d  %s\n", finding.Category, finding.Count, finding.Severity)

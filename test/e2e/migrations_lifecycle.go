@@ -213,16 +213,19 @@ func reconciledWithoutWork(migration *ptahv1alpha1.PtahMigration, runUID string)
 
 // kubectlPtahMigrationView holds the plugin's view of a migration: its phase
 // and name, no SQL, and the plan a reader approves in order while one waits,
-// or the applied versions once the run consumed it.
+// or the versions the last run applied once the run consumed it.
+//
+// A field is read by its label at the start of a line, not by the column its
+// value starts in: the column is the renderer's to move, and moving it once
+// turned this check red on every engine. TestKubectlPtahMigrationView holds
+// the reading to views migrationview.Render wrote.
 func kubectlPtahMigrationView(view []byte, namespace, migration string, phase ptahv1alpha1.MigrationPhase, plan string) error {
 	text := string(view)
 	lines := strings.Split(text, "\n")
 	switch {
-	case !slices.Contains(lines, "Phase:          "+string(phase)):
+	case !slices.Contains(viewFields(lines, "", "Phase"), string(phase)):
 		return fmt.Errorf("it does not report phase %s", phase)
-	case !slices.ContainsFunc(lines, func(line string) bool {
-		return strings.Contains(line, "Migration:      "+namespace+"/"+migration)
-	}):
+	case !slices.Contains(viewFields(lines, "", "Migration"), namespace+"/"+migration):
 		return errors.New("it does not name the resource it read")
 	// grep read the view a line at a time, so a statement is one that
 	// starts and ends on the same line.
@@ -241,7 +244,7 @@ func kubectlPtahMigrationView(view []byte, namespace, migration string, phase pt
 			return errors.New("it does not publish the plan a reader has to approve")
 		case !slices.Equal(order, []string{"1", "2", "3"}):
 			return fmt.Errorf("it printed the order as %v, not the planned sequence", order)
-		case !slices.Contains(lines, "Pending:        3"):
+		case !slices.Contains(viewFields(lines, "", "Pending"), "3"):
 			return errors.New("it does not report the pending count")
 		}
 		return nil
@@ -249,15 +252,14 @@ func kubectlPtahMigrationView(view []byte, namespace, migration string, phase pt
 	if !slices.Contains(lines, "No plan is published.") {
 		return errors.New("it still shows a plan after the run that consumed it")
 	}
-	// The shell split every "Run applied:" line at its commas, removed the
-	// spaces, sorted the fields as numbers and compared the result with
-	// "1 2 3", so each field has to be spelled exactly as a version, and a
-	// field that is no number at all makes the list another list.
+	// The versions are the last run's, on its "Versions:" line. The shell
+	// split that line at its commas, removed the spaces, sorted the fields as
+	// numbers and compared the result with "1 2 3", so each field has to be
+	// spelled exactly as a version, and a field that is no number at all makes
+	// the list another list.
 	var applied []string
-	for _, line := range lines {
-		if match := viewAppliedLine.FindStringSubmatch(line); match != nil {
-			applied = append(applied, strings.Split(strings.ReplaceAll(match[1], " ", ""), ",")...)
-		}
+	for _, versions := range viewFields(viewBlock(lines, "Last run"), "  ", "Versions") {
+		applied = append(applied, strings.Split(strings.ReplaceAll(versions, " ", ""), ",")...)
 	}
 	for _, field := range applied {
 		if _, err := strconv.Atoi(field); err != nil {
@@ -276,10 +278,41 @@ func kubectlPtahMigrationView(view []byte, namespace, migration string, phase pt
 }
 
 var (
-	kubectlPtahSQL  = regexp.MustCompile(`(?i)create[[:space:]]+table|alter[[:space:]]+table|insert[[:space:]]+into|update[[:space:]]+e2e`)
-	viewOrderLine   = regexp.MustCompile(`^  ([0-9]+) `)
-	viewAppliedLine = regexp.MustCompile(`^Run applied: *(.*)$`)
+	kubectlPtahSQL = regexp.MustCompile(`(?i)create[[:space:]]+table|alter[[:space:]]+table|insert[[:space:]]+into|update[[:space:]]+e2e`)
+	viewOrderLine  = regexp.MustCompile(`^  ([0-9]+) `)
 )
+
+// viewFields returns the value of every line that is label and a colon after
+// indent, then at least one space: the "Label:  value" lines the plugin
+// prints, read without depending on the column the value starts in. A line
+// indented otherwise is another block's field, not this one.
+func viewFields(lines []string, indent, label string) []string {
+	var values []string
+	for _, line := range lines {
+		rest, found := strings.CutPrefix(line, indent+label+":")
+		if !found || !strings.HasPrefix(rest, " ") {
+			continue
+		}
+		values = append(values, strings.TrimSpace(rest))
+	}
+	return values
+}
+
+// viewBlock returns the lines of the block a top-level label opens: that line
+// and the indented lines under it, up to the first line that is not indented.
+func viewBlock(lines []string, label string) []string {
+	for index, line := range lines {
+		if !strings.HasPrefix(line, label+": ") {
+			continue
+		}
+		end := index + 1
+		for end < len(lines) && strings.HasPrefix(lines[end], "  ") {
+			end++
+		}
+		return lines[index:end]
+	}
+	return nil
+}
 
 // jobOperations is the operations the archived Jobs cover, sorted, joined.
 func jobOperations(jobs []batchv1.Job) string {

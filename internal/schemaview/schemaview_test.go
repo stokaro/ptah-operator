@@ -134,10 +134,10 @@ func TestLoadReportsDriftInNoCategory(t *testing.T) {
 	if err := schemaview.Render(&encoded, view, schemaview.JSON); err != nil {
 		t.Fatal(err)
 	}
-	if want := "Drift:            found, in no category the report counts; the plan says what changes\n"; !strings.Contains(text.String(), want) {
+	if want := "Drift:                found, in no category the report counts; the plan says what changes\n"; !strings.Contains(text.String(), want) {
 		t.Fatalf("text view is missing %q:\n%s", want, text.String())
 	}
-	for _, unwanted := range []string{"Drift:            none", "0 in 0 categories"} {
+	for _, unwanted := range []string{"Drift:                none", "0 in 0 categories"} {
 		if strings.Contains(text.String(), unwanted) {
 			t.Fatalf("text view printed %q:\n%s", unwanted, text.String())
 		}
@@ -178,9 +178,9 @@ func TestRenderTextCarriesCountsAndNoSQL(t *testing.T) {
 	}
 	text := out.String()
 	for _, want := range []string{
-		"Schema:           team-a/storefront",
-		"Phase:            AwaitingApproval",
-		"Reference data:   2 to insert, 1 to update, 3 to delete",
+		"Schema:               team-a/storefront",
+		"Phase:                AwaitingApproval",
+		"Reference data:       2 to insert, 1 to update, 3 to delete",
 		"data_rows_deleted",
 		"not approved",
 		"kubectl ptah plan storefront -n team-a prints the SQL this plan holds.",
@@ -221,11 +221,11 @@ func TestRenderNamesAGitSourceAndTheCommitItResolvedTo(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"Source:           Git https://git.example.com/acme/storefront.git\n",
-		"Ref:              branch main\n",
-		"Path:             db/schema.sql\n",
-		"Commit:           " + commit + "\n",
-		"Content:          " + content + "\n",
+		"Source:               Git https://git.example.com/acme/storefront.git\n",
+		"Ref:                  branch main\n",
+		"Path:                 db/schema.sql\n",
+		"Commit:               " + commit + "\n",
+		"Content:              " + content + "\n",
 	} {
 		if !strings.Contains(text.String(), want) {
 			t.Fatalf("text view is missing %q:\n%s", want, text.String())

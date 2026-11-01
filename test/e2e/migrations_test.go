@@ -17,6 +17,8 @@ import (
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
+	"github.com/stokaro/ptah-operator/internal/migrationview"
+	"github.com/stokaro/ptah-operator/internal/statusview"
 )
 
 // mtRefusesEach holds a check to accepting its fixture and refusing each
@@ -628,67 +630,158 @@ func TestReconciledWithoutWork(t *testing.T) {
 		})
 }
 
-const (
-	mtAwaitingView = `Migration:      ptah-e2e/e2e-migrations-postgresql
-Phase:          AwaitingApproval
-Artifact:       oci://registry/migrations/postgresql@sha256:11
-Current:        0
-Pending:        3
+// mtAwaitingView and mtSyncedView are the migration as the plugin shows it at
+// the approval gate and after the run, as the phase reads them on a cluster.
+// They are rendered by migrationview.Render rather than written here: a view
+// written by hand once kept this test green while the renderer moved its
+// columns and the phase failed on every engine.
+func mtAwaitingView() migrationview.View {
+	observed := metav1.NewTime(time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC))
+	return migrationview.View{
+		Namespace: "ptah-e2e", Migration: "e2e-migrations-postgresql", UID: "migration-uid",
+		Generation: 1, ObservedGeneration: 1,
+		Phase:  string(ptahv1alpha1.MigrationPhaseAwaitingApproval),
+		Policy: &migrationview.PolicyView{Apply: "OnApproval"},
+		History: &migrationview.HistoryView{
+			ObservedAt: observed, CurrentVersion: 0, AppliedCount: 0, PendingCount: 3, Fingerprint: mtDigest,
+		},
+		Plan: &migrationview.PlanView{
+			Name: "ptah-mplan-abc", UID: "plan-uid", Fingerprint: mtDigest, CreatedAt: observed,
+			Migrations: []migrationview.PlannedMigrationView{
+				{Version: 1, Description: "create widgets", Checksum: "c1"},
+				{Version: 2, Description: "add color", Checksum: "c2"},
+				{Version: 3, Description: "recolor one widget", Checksum: "c3"},
+			},
+		},
+		Conditions: statusview.FromConditions([]metav1.Condition{
+			{Type: "Ready", Status: "False", Reason: "AwaitingApproval", Message: "The plan is waiting for the approval its policy requires", LastTransitionTime: observed},
+			{Type: "ApprovalRequired", Status: "True", Reason: "AwaitingApproval", Message: "3 planned migrations need an approval naming this plan", LastTransitionTime: observed},
+		}),
+		Approvals:       &statusview.Decisions[migrationview.ApprovalView]{Items: []migrationview.ApprovalView{}},
+		Acknowledgments: &statusview.Decisions[migrationview.AcknowledgmentView]{Items: []migrationview.AcknowledgmentView{}},
+	}
+}
 
-Plan ptah-mplan-abc, 3 migrations from version 0:
-  1 create widgets
-  2 add color
-  3 recolor one widget
-`
-	mtSyncedView = `Migration:      ptah-e2e/e2e-migrations-postgresql
-Phase:          InSync
-Current:        3
-Pending:        0
+func mtSyncedView(versions ...int64) migrationview.View {
+	observed := metav1.NewTime(time.Date(2026, 8, 30, 12, 5, 0, 0, time.UTC))
+	finished := metav1.NewTime(observed.Add(-time.Minute))
+	view := mtAwaitingView()
+	view.Phase = string(ptahv1alpha1.MigrationPhaseInSync)
+	view.History = &migrationview.HistoryView{ObservedAt: observed, CurrentVersion: 3, AppliedCount: 3, Fingerprint: mtDigest}
+	view.Plan = nil
+	view.LastRun = &migrationview.RunView{
+		Outcome: "Applied", JobName: "ptah-m-apply-e2e-migrations-postgresql-0123456789abcdef", JobUID: "apply-uid",
+		StartedAt: metav1.NewTime(observed.Add(-2 * time.Minute)), FinishedAt: &finished, AppliedVersions: versions,
+	}
+	view.Conditions = statusview.FromConditions([]metav1.Condition{
+		{Type: "Ready", Status: "True", Reason: "HistoryMatched", Message: "The database has every migration this artifact carries", LastTransitionTime: observed},
+		{Type: "ApprovalRequired", Status: "False", Reason: "Satisfied", Message: "The plan's approval requirements are satisfied", LastTransitionTime: observed},
+	})
+	view.Approvals = &statusview.Decisions[migrationview.ApprovalView]{Total: 1, Items: []migrationview.ApprovalView{{
+		Name: "e2e-migrations-postgresql-approval", PlanRef: ptahv1alpha1.ImmutableObjectReference{Name: "ptah-mplan-abc", UID: "plan-uid"},
+		Approver: ptahv1alpha1.ApprovalIdentity{Username: "kubernetes-admin"},
+		Conditions: statusview.FromConditions([]metav1.Condition{
+			{Type: "Consumed", Status: "True", Reason: "DispatchCommitted", Message: "The approved plan was dispatched", LastTransitionTime: observed},
+		}),
+	}}}
+	return view
+}
 
-No plan is published.
-Run applied: 1, 2, 3
-`
-)
+// mtRendered is a view as the plugin prints it.
+func mtRendered(t *testing.T, view migrationview.View) string {
+	t.Helper()
+	var text strings.Builder
+	if err := migrationview.Render(&text, view, migrationview.Text); err != nil {
+		t.Fatal(err)
+	}
+	return text.String()
+}
 
-// The greps assert_kubectl_ptah_migration ran, held to a view of each phase
-// and to the view with each claim broken.
+// The greps assert_kubectl_ptah_migration ran, held to the views the renderer
+// writes at each phase and to those views with each claim broken.
 func TestKubectlPtahMigrationView(t *testing.T) {
 	t.Parallel()
 	check := func(view string, phase ptahv1alpha1.MigrationPhase) error {
 		return kubectlPtahMigrationView([]byte(view), "ptah-e2e", "e2e-migrations-postgresql", phase, "ptah-mplan-abc")
 	}
-	if err := check(mtAwaitingView, ptahv1alpha1.MigrationPhaseAwaitingApproval); err != nil {
-		t.Fatalf("the approval gate view was refused: %v", err)
+	awaiting := mtRendered(t, mtAwaitingView())
+	synced := mtRendered(t, mtSyncedView(1, 2, 3))
+	if err := check(awaiting, ptahv1alpha1.MigrationPhaseAwaitingApproval); err != nil {
+		t.Fatalf("the approval gate view was refused: %v\n%s", err, awaiting)
 	}
-	if err := check(mtSyncedView, ptahv1alpha1.MigrationPhaseInSync); err != nil {
-		t.Fatalf("the settled view was refused: %v", err)
+	if err := check(synced, ptahv1alpha1.MigrationPhaseInSync); err != nil {
+		t.Fatalf("the settled view was refused: %v\n%s", err, synced)
 	}
-	if err := check(strings.Replace(mtSyncedView, "Run applied: 1, 2, 3", "Run applied: 3,1 ,2", 1), ptahv1alpha1.MigrationPhaseInSync); err != nil {
+	if err := check(mtRendered(t, mtSyncedView(3, 1, 2)), ptahv1alpha1.MigrationPhaseInSync); err != nil {
 		t.Fatalf("the settled view with the versions in another order was refused: %v", err)
 	}
+
+	// Each near miss changes one thing in a rendered view: the view a
+	// renderer writes for another state, or the text of one line.
+	versionsLine := func(view string) string {
+		for _, line := range strings.Split(view, "\n") {
+			if strings.HasPrefix(line, "  Versions:") {
+				return line
+			}
+		}
+		t.Fatalf("the settled view has no versions line:\n%s", view)
+		return ""
+	}
+	phaseLine := func(view string) string {
+		for _, line := range strings.Split(view, "\n") {
+			if strings.HasPrefix(line, "Phase:") {
+				return line
+			}
+		}
+		t.Fatalf("the view has no phase line:\n%s", view)
+		return ""
+	}
+	withVersions := func(versions string) string {
+		line := versionsLine(synced)
+		return strings.Replace(synced, line, strings.TrimSuffix(line, "1, 2, 3")+versions, 1)
+	}
+	pending := mtAwaitingView()
+	pending.History.PendingCount = 2
+	missing := mtAwaitingView()
+	missing.Plan.Migrations = append(missing.Plan.Migrations[:1:1], missing.Plan.Migrations[2])
+	reversed := mtAwaitingView()
+	slices.Reverse(reversed.Plan.Migrations)
+	stillPlanned := mtSyncedView(1, 2, 3)
+	stillPlanned.Plan = mtAwaitingView().Plan
+	noRun := mtSyncedView(1, 2, 3)
+	noRun.LastRun = nil
+	otherPlan := mtAwaitingView()
+	otherPlan.Plan.Name = "ptah-mplan-def"
+	otherResource := mtSyncedView(1, 2, 3)
+	otherResource.Migration = "e2e-migrations-mysql"
 	for _, test := range []struct {
 		name, view string
 		phase      ptahv1alpha1.MigrationPhase
 	}{
-		{"another phase", mtAwaitingView, ptahv1alpha1.MigrationPhaseInSync},
-		{"the phase indented", strings.Replace(mtSyncedView, "Phase:          InSync", " Phase:          InSync", 1), ptahv1alpha1.MigrationPhaseInSync},
-		{"another resource", strings.Replace(mtSyncedView, "e2e-migrations-postgresql", "e2e-migrations-mysql", 1), ptahv1alpha1.MigrationPhaseInSync},
-		{"a statement", mtSyncedView + "  CREATE TABLE e2e_migration_widgets\n", ptahv1alpha1.MigrationPhaseInSync},
-		{"an update", mtAwaitingView + "update e2e_migration_widgets set color = 'blue'\n", ptahv1alpha1.MigrationPhaseAwaitingApproval},
-		{"another plan", strings.Replace(mtAwaitingView, "ptah-mplan-abc", "ptah-mplan-def", 1), ptahv1alpha1.MigrationPhaseAwaitingApproval},
-		{"the order reversed", strings.Replace(strings.Replace(mtAwaitingView, "  1 create", "  9 create", 1), "  3 recolor", "  1 recolor", 1), ptahv1alpha1.MigrationPhaseAwaitingApproval},
-		{"a migration missing", strings.Replace(mtAwaitingView, "  2 add color\n", "", 1), ptahv1alpha1.MigrationPhaseAwaitingApproval},
-		{"no pending count", strings.Replace(mtAwaitingView, "Pending:        3", "Pending:        2", 1), ptahv1alpha1.MigrationPhaseAwaitingApproval},
-		{"a plan still shown", strings.Replace(mtSyncedView, "No plan is published.", "Plan ptah-mplan-abc, 3 migrations from version 0:", 1), ptahv1alpha1.MigrationPhaseInSync},
-		{"two versions applied", strings.Replace(mtSyncedView, "Run applied: 1, 2, 3", "Run applied: 1, 2", 1), ptahv1alpha1.MigrationPhaseInSync},
-		{"a version spelled otherwise", strings.Replace(mtSyncedView, "Run applied: 1, 2, 3", "Run applied: 01, 2, 3", 1), ptahv1alpha1.MigrationPhaseInSync},
-		{"a field that is no version", strings.Replace(mtSyncedView, "Run applied: 1, 2, 3", "Run applied: 1, 2, 3, x", 1), ptahv1alpha1.MigrationPhaseInSync},
-		{"no run", strings.Replace(mtSyncedView, "Run applied: 1, 2, 3\n", "", 1), ptahv1alpha1.MigrationPhaseInSync},
+		{"another phase", awaiting, ptahv1alpha1.MigrationPhaseInSync},
+		{"the phase indented", strings.Replace(synced, phaseLine(synced), " "+phaseLine(synced), 1), ptahv1alpha1.MigrationPhaseInSync},
+		{"another resource", mtRendered(t, otherResource), ptahv1alpha1.MigrationPhaseInSync},
+		{"a statement", synced + "  CREATE TABLE e2e_migration_widgets\n", ptahv1alpha1.MigrationPhaseInSync},
+		{"an update", awaiting + "update e2e_migration_widgets set color = 'blue'\n", ptahv1alpha1.MigrationPhaseAwaitingApproval},
+		{"another plan", mtRendered(t, otherPlan), ptahv1alpha1.MigrationPhaseAwaitingApproval},
+		{"the order reversed", mtRendered(t, reversed), ptahv1alpha1.MigrationPhaseAwaitingApproval},
+		{"a migration missing", mtRendered(t, missing), ptahv1alpha1.MigrationPhaseAwaitingApproval},
+		{"another pending count", mtRendered(t, pending), ptahv1alpha1.MigrationPhaseAwaitingApproval},
+		{"a plan still shown", mtRendered(t, stillPlanned), ptahv1alpha1.MigrationPhaseInSync},
+		{"two versions applied", mtRendered(t, mtSyncedView(1, 2)), ptahv1alpha1.MigrationPhaseInSync},
+		{"a version spelled otherwise", withVersions("01, 2, 3"), ptahv1alpha1.MigrationPhaseInSync},
+		{"a field that is no version", withVersions("1, 2, 3, x"), ptahv1alpha1.MigrationPhaseInSync},
+		{"no run", mtRendered(t, noRun), ptahv1alpha1.MigrationPhaseInSync},
+		// The history counts three applied migrations under "Applied:", and
+		// a reading that took that line for the run's versions would accept
+		// a view whose run applied none of them.
+		{"versions outside the last run", strings.Replace(synced, versionsLine(synced)+"\n", "", 1) +
+			"\nVersions: 1, 2, 3\n", ptahv1alpha1.MigrationPhaseInSync},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			if check(test.view, test.phase) == nil {
-				t.Fatalf("a view with %s was accepted", test.name)
+				t.Fatalf("a view with %s was accepted:\n%s", test.name, test.view)
 			}
 		})
 	}

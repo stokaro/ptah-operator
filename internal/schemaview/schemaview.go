@@ -263,6 +263,7 @@ func approvalsOf(
 			PlanRef:         approval.Spec.PlanRef,
 			PlanFingerprint: approval.Spec.PlanFingerprint,
 			CurrentPlan:     approvesCurrentPlan(approval.Spec, schema.Status.Plan),
+			AppliedPlan:     approvesAppliedPlan(approval.Spec, schema.Status.Applied),
 			Approver:        approval.Spec.Approver,
 			ApprovedAt:      approval.Spec.ApprovedAt,
 			Conditions:      statusview.FromConditions(approval.Status.Conditions),
@@ -281,6 +282,17 @@ func approvesCurrentPlan(approval operatorv1alpha1.PtahSchemaApprovalSpec, plan 
 		approval.PlanRef.Name == plan.Name &&
 		approval.PlanRef.UID == plan.UID &&
 		approval.PlanFingerprint == plan.Fingerprint
+}
+
+// approvesAppliedPlan says the approval names the plan the last confirmed
+// apply ran, the same way. Once a schema converges it has no current plan, and
+// the approval that apply consumed would otherwise read as one of a plan
+// nothing remembers.
+func approvesAppliedPlan(approval operatorv1alpha1.PtahSchemaApprovalSpec, applied *operatorv1alpha1.AppliedStatus) bool {
+	return applied != nil && applied.PlanRef.UID != "" &&
+		approval.PlanRef.Name == applied.PlanRef.Name &&
+		approval.PlanRef.UID == applied.PlanRef.UID &&
+		approval.PlanFingerprint == applied.PlanFingerprint
 }
 
 // observationOf reduces the target status to what a reader acts on.

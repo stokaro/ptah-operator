@@ -74,6 +74,31 @@ var holdTypes = map[string]bool{
 	"ReconciliationFailed": true,
 }
 
+// LabelWidth is the column the schema and migration views pad every
+// "Label:" to, so that every value starts in the same column. A condition read
+// first is labeled by its type, and the longest of those types is longer than
+// any label the views print of their own.
+var LabelWidth = leadingLabelWidth()
+
+func leadingLabelWidth() int {
+	width := len("Protected tables:")
+	for conditionType := range holdTypes {
+		width = max(width, len(conditionType)+len(":"))
+	}
+	return width
+}
+
+// FieldWriter returns a function that writes "Label: value" lines, the label
+// padded to width after indent, and skips a field with no value.
+func FieldWriter(text *strings.Builder, indent string, width int) func(name, value string) {
+	return func(name, value string) {
+		if value == "" {
+			return
+		}
+		fmt.Fprintf(text, "%s%-*s %s\n", indent, width, name+":", value)
+	}
+}
+
 // Leading is what a reader reads before the full table: Ready, whatever its
 // status, because the API documents its reason as the one to read first, and
 // then every condition that is True and holds the resource.
