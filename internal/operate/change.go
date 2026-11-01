@@ -32,7 +32,9 @@ type SuspendResult struct {
 	ObservedGeneration int64
 	Phase              string
 	// Running is the operation in flight, if any. Suspension does not stop
-	// it: an Apply that has started is observed to its end.
+	// an Apply that has started, or the proof running after one: both are
+	// observed to their end. The operator drops any other claim when it sees
+	// the suspension, since a read changes nothing.
 	Running string
 	// Object is the resource as the answer carried it, a baseline for a
 	// wait that follows.
