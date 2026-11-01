@@ -189,6 +189,11 @@ type TimeoutError struct {
 	// LastError is the error of the last read, when it failed and was
 	// retried.
 	LastError error
+	// ReadUnderWay reports that the last document read showed a read of the
+	// database in flight. A wait begun after it skips that read's harvest,
+	// because it may have read the database before the wait began; a read
+	// request is what asks for one that begins later.
+	ReadUnderWay bool
 }
 
 func (e *TimeoutError) Error() string {
@@ -205,6 +210,9 @@ func (e *TimeoutError) Error() string {
 	}
 	if e.LastError != nil {
 		fmt.Fprintf(&message, "; last read failed: %v", e.LastError)
+	}
+	if e.ReadUnderWay {
+		message.WriteString("; a read of the database was under way")
 	}
 	return message.String()
 }
@@ -296,6 +304,7 @@ func Wait(ctx context.Context, reader client.Reader, ref Ref, options WaitOption
 			if last != nil {
 				timeout.Phase = last.phase
 				timeout.Blocker = last.blocker()
+				timeout.ReadUnderWay = last.readingDatabase()
 			}
 			return Result{}, timeout
 		}

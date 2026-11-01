@@ -1435,3 +1435,37 @@ type blockedClock struct{}
 
 func (blockedClock) Now() time.Time                       { return clockStart }
 func (blockedClock) After(time.Duration) <-chan time.Time { return nil }
+
+// A timeout says whether a read of the database was in flight when the wait
+// gave up: a wait begun after it would skip that read's harvest, so the
+// person is better served by a read request than by waiting again.
+func TestWaitTimeoutSaysWhetherAReadWasUnderWay(t *testing.T) {
+	t.Parallel()
+
+	for _, family := range families {
+		phase, operation := readPhase(family)
+		for _, row := range []struct {
+			name  string
+			last  doc
+			under bool
+		}{
+			{"a read in flight", doc{phase: phase, operation: operation, dispatched: true, observedAt: at(0)}, true},
+			{"a cycle resting", doc{phase: "AwaitingApproval", observedAt: at(0), conditions: approvalConditions(metav1.ConditionTrue)}, false},
+			{"a claim that reads no database", doc{phase: "Resolving", operation: "Resolve", observedAt: at(0)}, false},
+		} {
+			t.Run(string(family)+"/"+row.name, func(t *testing.T) {
+				t.Parallel()
+
+				tl := &timeline{family: family, docs: []doc{row.last}}
+				_, err := operate.Wait(context.Background(), tl.reader(t), refOf(family), operate.WaitOptions{
+					Target: operate.TargetInSync, Timeout: timeout, Interval: interval, Clock: newStepClock(),
+				})
+				var timedOut *operate.TimeoutError
+				if !errors.As(err, &timedOut) || timedOut.ReadUnderWay != row.under ||
+					strings.Contains(err.Error(), "a read of the database was under way") != row.under {
+					t.Fatalf("err = %v, want a timeout with ReadUnderWay %t", err, row.under)
+				}
+			})
+		}
+	}
+}
