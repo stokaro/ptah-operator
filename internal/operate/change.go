@@ -328,8 +328,8 @@ type sentError struct{ err error }
 func (e sentError) Error() string { return e.err.Error() }
 func (e sentError) Unwrap() error { return e.err }
 
-// Answer is what an error SetSuspend or Refresh returned says about the
-// change.
+// Answer is what an error SetSuspend, Refresh or SetSource returned says
+// about the change.
 type Answer string
 
 const (
@@ -354,10 +354,10 @@ const (
 	Unknown Answer = "Unknown"
 )
 
-// Classify reads an error SetSuspend or Refresh returned. It reads the
-// API server's refusal the way kubectl ptah approve does (internal/apirefusal),
-// so a person refused by RBAC is told so in the same terms by every command
-// that writes.
+// Classify reads an error SetSuspend, Refresh or SetSource returned. It reads
+// the API server's refusal the way kubectl ptah approve does
+// (internal/apirefusal), so a person refused by RBAC is told so in the same
+// terms by every command that writes.
 func Classify(err error) Answer {
 	var sent sentError
 	switch {
