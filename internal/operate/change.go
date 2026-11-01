@@ -71,7 +71,7 @@ func SetSuspend(ctx context.Context, c client.Client, ref Ref, suspend bool) (Su
 		return SuspendResult{}, err
 	}
 	if err := c.Patch(ctx, object, client.RawPatch(types.JSONPatchType, patch), client.FieldOwner(FieldManager)); err != nil {
-		return SuspendResult{}, classifyPatchError(ctx, c, ref, read.uid, false, err)
+		return SuspendResult{}, classifyPatchError(ctx, c, ref, read.uid, nil, err)
 	}
 	written, err := snapshotOf(object)
 	if err != nil {
@@ -170,16 +170,18 @@ func Refresh(ctx context.Context, c client.Client, ref Ref, now time.Time) (Refr
 				Suspended: written.suspend, Object: written.object,
 			}, nil
 		}
-		lastErr = classifyPatchError(ctx, c, ref, read.uid, bare, err)
-		if !bare || !errors.Is(lastErr, errAnnotationsAppeared) {
+		lastErr = classifyPatchError(ctx, c, ref, read.uid, &bare, err)
+		if !errors.Is(lastErr, errAnnotationsChanged) {
 			return RefreshResult{}, lastErr
 		}
 	}
 	return RefreshResult{}, lastErr
 }
 
-// errAnnotationsAppeared is a patch that assumed no annotations and met some.
-var errAnnotationsAppeared = errors.New("annotations were added since the resource was read")
+// errAnnotationsChanged is a patch built for a resource with no annotations
+// that met some, or for one with annotations that met none. Either way it is
+// built again from a fresh read.
+var errAnnotationsChanged = errors.New("annotations were added or removed since the resource was read")
 
 // NextReadRequest is the read request value Refresh writes at now: now in
 // UTC, moved one nanosecond past current and answered whenever either is an
@@ -208,10 +210,11 @@ func pointerEscape(token string) string {
 // classifyPatchError says what a refused patch means. The API server answers
 // a failed test operation with 422 and a message from the patch library, so
 // rather than reading the message the resource is read again: another UID, or
-// none, is a resource replaced or removed since it was read. A patch that
-// assumed no annotations and finds some now met another writer, and is worth
-// building again.
-func classifyPatchError(ctx context.Context, c client.Client, ref Ref, uid types.UID, assumedNoAnnotations bool, patchErr error) error {
+// none, is a resource replaced or removed since it was read. A patch built
+// for annotations that are no longer there, or for none where there are now
+// some, met another writer and is worth building again; bare is what the
+// patch assumed, nil for a patch that does not touch annotations.
+func classifyPatchError(ctx context.Context, c client.Client, ref Ref, uid types.UID, bare *bool, patchErr error) error {
 	if apierrors.IsNotFound(patchErr) {
 		return ref.failed("change", patchErr)
 	}
@@ -228,8 +231,8 @@ func classifyPatchError(ctx context.Context, c client.Client, ref Ref, uid types
 	if current.GetUID() != uid {
 		return ref.failed("change", ErrReplaced)
 	}
-	if assumedNoAnnotations && len(current.GetAnnotations()) > 0 {
-		return ref.failed("change", errors.Join(errAnnotationsAppeared, patchErr))
+	if bare != nil && *bare != (len(current.GetAnnotations()) == 0) {
+		return ref.failed("change", errors.Join(errAnnotationsChanged, patchErr))
 	}
 	return ref.failed("change", patchErr)
 }

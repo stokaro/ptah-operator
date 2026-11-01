@@ -21,7 +21,9 @@ type snapshot struct {
 	generation         int64
 	observedGeneration int64
 	suspend            bool
-	phase              string
+	// deleting is a resource with metadata.deletionTimestamp set.
+	deleting bool
+	phase    string
 	// observedAt is when the database was last read: status.target.lastObservedAt
 	// for a schema, status.history.observedAt for a migration. Zero when
 	// never.
@@ -97,6 +99,7 @@ func schemaSnapshot(schema *operatorv1alpha1.PtahSchema) snapshot {
 		generation:         schema.Generation,
 		observedGeneration: status.ObservedGeneration,
 		suspend:            schema.Spec.Suspend,
+		deleting:           schema.DeletionTimestamp != nil,
 		phase:              string(status.Phase),
 		observedAt:         timeOf(status.Target.LastObservedAt),
 		proof:              status.PendingObservation != nil,
@@ -129,6 +132,7 @@ func migrationSnapshot(migration *operatorv1alpha1.PtahMigration) snapshot {
 		generation:         migration.Generation,
 		observedGeneration: status.ObservedGeneration,
 		suspend:            migration.Spec.Suspend,
+		deleting:           migration.DeletionTimestamp != nil,
 		phase:              string(status.Phase),
 		readRequest:        migration.Annotations[operatorv1alpha1.ReadRequestAnnotation],
 		lastReadRequest:    status.LastReadRequest,
@@ -168,41 +172,70 @@ func timeOf(value *metav1.Time) time.Time {
 	return value.Time
 }
 
-// resting reports a resource that has nothing in flight and is in a phase a
-// read ends in: the phases in which the controller answers a pending read
-// request rather than leaving it for a read that has not finished
-// (internal/controller/read_request.go), plus Failed and Suspended.
+// ReadEndsIn reports whether a read cycle of family can end in phase: the
+// phases in which the controller answers a pending read request and brings
+// the next read forward, rather than leaving the request for a read that has
+// not finished (internal/controller/read_request.go), plus Failed, where a
+// failed cycle stops, and Suspended.
 //
-// For a schema that is InSync, AwaitingApproval, ReadyToApply and Blocked,
-// where a read cycle ends; Failed, where a failed one stops; and Suspended.
-// Verifying, Observing, Planning and VerifyingConvergence are a cycle part
-// way through, and Pending and Resolving are one about to start.
+// For a schema that is InSync, AwaitingApproval, ReadyToApply, Blocked,
+// Failed and Suspended. Verifying, Observing, Planning and
+// VerifyingConvergence are a cycle part way through; Pending, Resolving and
+// Applying are work about to start or in flight.
 //
-// For a migration it is InSync, AwaitingApproval, Blocked, Failed, Suspended,
-// and Planning once the plan is published. Planning with no plan is the
-// instant between the status write that records the history and the one that
-// publishes the plan it read.
-func (s snapshot) resting() bool {
-	if s.operation != "" || s.proof {
-		return false
-	}
-	switch s.family {
+// For a migration it is InSync, AwaitingApproval, Planning, Blocked, Failed
+// and Suspended. Planning ends a read only once its plan is published, which
+// a document has to show as well (see snapshot.resting).
+func ReadEndsIn(family Family, phase string) bool {
+	switch family {
 	case FamilySchema:
-		switch operatorv1alpha1.ReconciliationPhase(s.phase) {
+		switch operatorv1alpha1.ReconciliationPhase(phase) {
 		case operatorv1alpha1.PhaseInSync, operatorv1alpha1.PhaseAwaitingApproval,
 			operatorv1alpha1.PhaseReadyToApply, operatorv1alpha1.PhaseBlocked,
 			operatorv1alpha1.PhaseFailed, operatorv1alpha1.PhaseSuspended:
 			return true
 		}
 	case FamilyMigration:
-		switch operatorv1alpha1.MigrationPhase(s.phase) {
+		switch operatorv1alpha1.MigrationPhase(phase) {
 		case operatorv1alpha1.MigrationPhaseInSync, operatorv1alpha1.MigrationPhaseAwaitingApproval,
-			operatorv1alpha1.MigrationPhaseBlocked, operatorv1alpha1.MigrationPhaseFailed,
-			operatorv1alpha1.MigrationPhaseSuspended:
+			operatorv1alpha1.MigrationPhasePlanning, operatorv1alpha1.MigrationPhaseBlocked,
+			operatorv1alpha1.MigrationPhaseFailed, operatorv1alpha1.MigrationPhaseSuspended:
 			return true
-		case operatorv1alpha1.MigrationPhasePlanning:
-			return s.plan != nil
 		}
+	}
+	return false
+}
+
+// resting reports a resource with nothing in flight in a phase a read ends
+// in (ReadEndsIn).
+//
+// A migration in Planning rests only once the plan it read is published. The
+// history harvest is two status writes: the first records the history and
+// Planning with Progressing reason MigrationsPending, and leaves the previous
+// cycle's status.plan in place; the second publishes the plan and replaces
+// that reason. A plan alone therefore does not show the second write.
+func (s snapshot) resting() bool {
+	if s.operation != "" || s.proof || !ReadEndsIn(s.family, s.phase) {
+		return false
+	}
+	if s.family == FamilyMigration && s.phase == string(operatorv1alpha1.MigrationPhasePlanning) {
+		progressing := s.condition(operatorv1alpha1.ConditionMigrationProgressing)
+		return s.plan != nil &&
+			(progressing == nil || progressing.Reason != string(operatorv1alpha1.ReasonMigrationsPending))
+	}
+	return true
+}
+
+// readingDatabase reports a claim whose Job reads the database and writes the
+// reading it took: a schema's Observe, a migration's History. A wait that
+// begins while one is in flight cannot tell whether that Job read the
+// database before the change the wait is about.
+func (s snapshot) readingDatabase() bool {
+	switch s.family {
+	case FamilySchema:
+		return s.operation == string(operatorv1alpha1.OperationObserve)
+	case FamilyMigration:
+		return s.operation == string(operatorv1alpha1.MigrationOperationHistory)
 	}
 	return false
 }
@@ -226,16 +259,25 @@ func (s snapshot) inSyncCondition() string {
 
 // blocker is the condition that best says why the resource is not moving: a
 // recorded failure or refusal first, then a Ready that is not True.
+//
+// A schema records a failed attempt on ReconciliationFailed, and a Pod
+// admission refusal on Ready. A migration records both on Progressing, which
+// a retried attempt leaves True with the failure as its message.
 func (s snapshot) blocker() *metav1.Condition {
-	var order []string
 	if s.family == FamilyMigration {
-		order = []string{operatorv1alpha1.ConditionMigrationBlocked}
+		if blocked := s.condition(operatorv1alpha1.ConditionMigrationBlocked); blocked != nil && blocked.Status == metav1.ConditionTrue {
+			return blocked.DeepCopy()
+		}
+		if progressing := s.condition(operatorv1alpha1.ConditionMigrationProgressing); progressing != nil &&
+			(progressing.Reason == string(operatorv1alpha1.ReasonOperationFailed) ||
+				progressing.Reason == string(operatorv1alpha1.ReasonPodAdmissionRefused)) {
+			return progressing.DeepCopy()
+		}
 	} else {
-		order = []string{operatorv1alpha1.ConditionReconciliationFailed, operatorv1alpha1.ConditionSuspended}
-	}
-	for _, conditionType := range order {
-		if condition := s.condition(conditionType); condition != nil && condition.Status == metav1.ConditionTrue {
-			return condition.DeepCopy()
+		for _, conditionType := range []string{operatorv1alpha1.ConditionReconciliationFailed, operatorv1alpha1.ConditionSuspended} {
+			if condition := s.condition(conditionType); condition != nil && condition.Status == metav1.ConditionTrue {
+				return condition.DeepCopy()
+			}
 		}
 	}
 	if ready := s.condition(operatorv1alpha1.ConditionReady); ready != nil && ready.Status != metav1.ConditionTrue {

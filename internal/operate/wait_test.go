@@ -8,8 +8,13 @@ import (
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/operate"
@@ -44,15 +49,41 @@ func approvalConditions(status metav1.ConditionStatus) []metav1.Condition {
 	}
 }
 
+// failedConditions are what a failure that leaves no claim writes: a
+// schema's ReconciliationFailed and Ready, a migration's Ready and
+// Progressing (migrationOperationFailure).
 func failedConditions(family operate.Family, reason, message string) []metav1.Condition {
 	ready := condition(operatorv1alpha1.ConditionReady, metav1.ConditionFalse, reason, message, 3)
 	if family == operate.FamilyMigration {
-		return []metav1.Condition{ready}
+		return []metav1.Condition{ready, condition(operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionFalse, reason, message, 3)}
 	}
 	return []metav1.Condition{
 		condition(operatorv1alpha1.ConditionReconciliationFailed, metav1.ConditionTrue, reason, message, 3),
 		condition(operatorv1alpha1.ConditionReady, metav1.ConditionFalse, reason, "Reconciliation did not complete", 3),
 	}
+}
+
+// retriedConditions are what an attempt the operator retries under the same
+// claim writes: a schema's ReconciliationFailed in phase Failed, a
+// migration's Progressing, True, in whatever phase it was in.
+func retriedConditions(family operate.Family, message string) []metav1.Condition {
+	if family == operate.FamilyMigration {
+		return []metav1.Condition{condition(operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionTrue, "OperationFailed", message, 3)}
+	}
+	return []metav1.Condition{
+		condition(operatorv1alpha1.ConditionReconciliationFailed, metav1.ConditionTrue, "OperationFailed", message, 3),
+		condition(operatorv1alpha1.ConditionReady, metav1.ConditionFalse, "OperationFailed", "Reconciliation did not complete", 3),
+	}
+}
+
+// claimFailure is the operation a failure that leaves no claim is journaled
+// under: a schema fails before its claim is written and names none, a
+// migration retires the claim it names.
+func claimFailure(family operate.Family) string {
+	if family == operate.FamilyMigration {
+		return "Resolve"
+	}
+	return ""
 }
 
 func suspendedConditions(family operate.Family, generation int64) []metav1.Condition {
@@ -172,22 +203,37 @@ func TestWaitTargets(t *testing.T) {
 			wantTimeout: true, wantMessage: "the read to end: the Apply operation (phase Applying)",
 		},
 		{
-			name: "read: a newer reading while a failed step is retried is not the end", target: operate.TargetRead,
-			readRequest: request,
+			name: "read: a schema step retried under its claim does not stop the wait, and the timeout names it", target: operate.TargetRead,
+			only: operate.FamilySchema, readRequest: request,
 			docs: func(f operate.Family) []doc {
-				// Planning failed after the observation, and the claim stays
-				// for its retry. A manager that keeps no journal records no
-				// failure the stop could read, so only the claim says the read
-				// has not ended.
+				// Planning failed after the observation. retryOperationAs keeps
+				// the claim, writes Failed and journals the attempt.
 				return []doc{
 					{phase: "InSync", observedAt: at(0), annotation: request, lastRead: oldRequest},
 					{
 						phase: "Failed", operation: "Plan", observedAt: at(30), annotation: request, lastRead: request,
-						conditions: failedConditions(f, "OperationFailed", "the plan Job was evicted"),
+						conditions: retriedConditions(f, "the plan Job was evicted"),
+						journal:    []operatorv1alpha1.JournalEntry{failure(40, "Plan", "OperationFailed")},
 					},
 				}
 			},
-			wantTimeout: true, wantMessage: "the read to end: the Plan operation (phase Failed)",
+			wantTimeout: true, wantMessage: "ReconciliationFailed=True (OperationFailed): the plan Job was evicted; still waiting for the read to end: the Plan operation (phase Failed)",
+		},
+		{
+			name: "read: a migration step retried under its claim does not stop the wait, and the timeout names it", target: operate.TargetRead,
+			only: operate.FamilyMigration, readRequest: request,
+			docs: func(f operate.Family) []doc {
+				// retryMigrationOperationAs keeps the claim and the phase and
+				// journals nothing; Progressing carries the failure.
+				return []doc{
+					{phase: "InSync", observedAt: at(0), annotation: request, lastRead: oldRequest},
+					{
+						phase: "Reading", operation: "History", observedAt: at(0), annotation: request, lastRead: request,
+						conditions: retriedConditions(f, "the history Job was evicted"),
+					},
+				}
+			},
+			wantTimeout: true, wantMessage: "Progressing=True (OperationFailed): the history Job was evicted",
 		},
 		{
 			name: "read: a newer reading in a phase a cycle passes through is not the end", target: operate.TargetRead,
@@ -206,23 +252,67 @@ func TestWaitTargets(t *testing.T) {
 			name: "read: a migration planning with its plan published has ended its read", target: operate.TargetRead,
 			only: operate.FamilyMigration, readRequest: request,
 			docs: func(f operate.Family) []doc {
+				// Policy Never: publishing the plan replaced Progressing's
+				// MigrationsPending with ApplyDisabled and left Planning.
 				return []doc{
 					{phase: "InSync", observedAt: at(0), annotation: request, lastRead: oldRequest},
-					{phase: "Planning", observedAt: at(30), annotation: request, lastRead: request, plan: &planDoc{name: "plan-1", uid: "plan-uid-1"}},
+					{
+						phase: "Planning", observedAt: at(30), annotation: request, lastRead: request, plan: &planDoc{name: "plan-1", uid: "plan-uid-1"},
+						conditions: []metav1.Condition{condition(operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionFalse,
+							"ApplyDisabled", "The apply policy is Never, so nothing runs from here", 3)},
+					},
 				}
 			},
 			wantReads: 2,
 		},
 		{
-			name: "read: a read that fails after the request was taken stops the wait", target: operate.TargetRead,
+			name: "read: a migration between recording its history and publishing the plan has not ended its read", target: operate.TargetRead,
+			only: operate.FamilyMigration, readRequest: request,
+			docs: func(f operate.Family) []doc {
+				// The first write of a history harvest leaves the previous
+				// cycle's plan in status.plan.
+				previous := &planDoc{name: "plan-0", uid: "plan-uid-0"}
+				between := []metav1.Condition{
+					condition(operatorv1alpha1.ConditionMigrationReady, metav1.ConditionFalse, "MigrationsPending", "2 migrations are pending", 3),
+					condition(operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionTrue, "MigrationsPending",
+						"A plan for 2 pending migrations is being published", 3),
+				}
+				return []doc{
+					{phase: "AwaitingApproval", observedAt: at(0), annotation: request, lastRead: oldRequest, plan: previous},
+					{phase: "Reading", operation: "History", observedAt: at(0), annotation: request, lastRead: request, plan: previous},
+					{phase: "Planning", observedAt: at(30), annotation: request, lastRead: request, plan: previous, conditions: between},
+				}
+			},
+			wantTimeout: true, wantMessage: "the read to end: phase Planning",
+		},
+		{
+			name: "read: a migration ends its read once the plan it read is published", target: operate.TargetRead,
+			only: operate.FamilyMigration, readRequest: request,
+			docs: func(f operate.Family) []doc {
+				previous := &planDoc{name: "plan-0", uid: "plan-uid-0"}
+				between := []metav1.Condition{
+					condition(operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionTrue, "MigrationsPending",
+						"A plan for 2 pending migrations is being published", 3),
+				}
+				return []doc{
+					{phase: "AwaitingApproval", observedAt: at(0), annotation: request, lastRead: oldRequest, plan: previous},
+					{phase: "Reading", operation: "History", observedAt: at(0), annotation: request, lastRead: request, plan: previous},
+					{phase: "Planning", observedAt: at(30), annotation: request, lastRead: request, plan: previous, conditions: between},
+					{phase: "AwaitingApproval", observedAt: at(30), annotation: request, lastRead: request, plan: &planDoc{name: "plan-1", uid: "plan-uid-1"}, conditions: approvalConditions(metav1.ConditionTrue)},
+				}
+			},
+			wantReads: 4,
+		},
+		{
+			name: "read: a read that fails with no claim left stops the wait", target: operate.TargetRead,
 			readRequest: request,
 			docs: func(f operate.Family) []doc {
 				return []doc{
 					{phase: "InSync", observedAt: at(0), annotation: request, lastRead: oldRequest},
 					{
-						phase: "Failed", operation: "Resolve", observedAt: at(0), annotation: request, lastRead: request,
+						phase: "Failed", observedAt: at(0), annotation: request, lastRead: request,
 						conditions: failedConditions(f, "OperationFailed", "registry.example is unreachable"),
-						journal:    []operatorv1alpha1.JournalEntry{failure(20, "Resolve", "OperationFailed")},
+						journal:    []operatorv1alpha1.JournalEntry{failure(20, claimFailure(f), "OperationFailed")},
 					},
 				}
 			},
@@ -250,21 +340,76 @@ func TestWaitTargets(t *testing.T) {
 			name: "read: another failed attempt folded into the same entry stops the wait", target: operate.TargetRead,
 			readRequest: request,
 			docs: func(f operate.Family) []doc {
-				failed := []operatorv1alpha1.JournalEntry{failure(-30, "Resolve", "OperationFailed")}
-				folded := failure(-30, "Resolve", "OperationFailed")
+				failed := []operatorv1alpha1.JournalEntry{failure(-30, claimFailure(f), "OperationFailed")}
+				folded := failure(-30, claimFailure(f), "OperationFailed")
 				folded.Count = 2
 				folded.LastAt = &metav1.Time{Time: at(40)}
 				conditions := failedConditions(f, "OperationFailed", "registry.example is unreachable")
 				return []doc{
 					{phase: "Failed", observedAt: at(0), annotation: request, lastRead: oldRequest, conditions: conditions, journal: failed},
+					// Taken once the retry delay ended; the read it starts
+					// fails the same way.
 					{phase: "Failed", observedAt: at(0), annotation: request, lastRead: request, conditions: conditions, journal: failed},
+					{phase: "Resolving", operation: "Resolve", observedAt: at(0), annotation: request, lastRead: request, journal: failed},
 					{
-						phase: "Failed", operation: "Resolve", observedAt: at(0), annotation: request, lastRead: request,
+						phase: "Failed", observedAt: at(0), annotation: request, lastRead: request,
 						conditions: conditions, journal: []operatorv1alpha1.JournalEntry{folded},
 					},
 				}
 			},
 			wantStop: operate.StopReadFailed, wantMessage: "registry.example is unreachable",
+		},
+		{
+			name: "read: a cycle under way when the request arrived is not its answer, the read it starts is", target: operate.TargetRead,
+			readRequest: request,
+			docs: func(f operate.Family) []doc {
+				// The cycle had not reached the database when the request was
+				// written; the operator still takes the request only after it
+				// and answers with a read of its own.
+				return []doc{
+					{phase: "Resolving", operation: "Resolve", observedAt: at(0), annotation: request, lastRead: oldRequest},
+					{phase: "InSync", observedAt: at(10), annotation: request, lastRead: oldRequest, conditions: inSyncConditions(f, 3)},
+					{phase: "InSync", observedAt: at(10), annotation: request, lastRead: request, conditions: inSyncConditions(f, 3)},
+					// Read again before the next claim: that cycle's reading
+					// still does not count.
+					{phase: "InSync", observedAt: at(10), annotation: request, lastRead: request, conditions: inSyncConditions(f, 3)},
+					{phase: "Resolving", operation: "Resolve", observedAt: at(10), annotation: request, lastRead: request},
+					{phase: "InSync", observedAt: at(40), annotation: request, lastRead: request, conditions: inSyncConditions(f, 3)},
+				}
+			},
+			wantReads: 6,
+		},
+		{
+			name: "read: a failure of the cycle under way when the request arrived does not stop the wait", target: operate.TargetRead,
+			readRequest: request,
+			docs: func(f operate.Family) []doc {
+				failed := []operatorv1alpha1.JournalEntry{failure(20, claimFailure(f), "OperationFailed")}
+				conditions := failedConditions(f, "OperationFailed", "registry.example is unreachable")
+				return []doc{
+					{phase: "Resolving", operation: "Resolve", observedAt: at(0), annotation: request, lastRead: oldRequest},
+					// That cycle fails and leaves no claim. The operator takes
+					// the request once the retry delay is over.
+					{phase: "Failed", observedAt: at(0), annotation: request, lastRead: oldRequest, conditions: conditions, journal: failed},
+					{phase: "Failed", observedAt: at(0), annotation: request, lastRead: request, conditions: conditions, journal: failed},
+					{phase: "Resolving", operation: "Resolve", observedAt: at(0), annotation: request, lastRead: request, journal: failed},
+					{phase: "InSync", observedAt: at(40), annotation: request, lastRead: request, conditions: inSyncConditions(f, 3), journal: failed},
+				}
+			},
+			wantReads: 5,
+		},
+		{
+			name: "read: a claim in flight after the operator took the request is its answer", target: operate.TargetRead,
+			readRequest: request,
+			since: func(f operate.Family) *doc {
+				// The request was taken before this baseline was read, so the
+				// read in flight began after it.
+				phase, operation := readPhase(f)
+				return &doc{phase: phase, operation: operation, observedAt: at(0), annotation: request, lastRead: request}
+			},
+			docs: func(f operate.Family) []doc {
+				return []doc{{phase: "InSync", observedAt: at(10), annotation: request, lastRead: request, conditions: inSyncConditions(f, 3)}}
+			},
+			wantReads: 1,
 		},
 		{
 			name: "read: a request replaced before it was taken stops the wait", target: operate.TargetRead,
@@ -298,7 +443,61 @@ func TestWaitTargets(t *testing.T) {
 					{phase: "InSync", observedAt: at(0), conditions: inSyncConditions(f, 3)},
 				}
 			},
-			wantTimeout: true, wantMessage: "a read of the database newer than 2026-10-01T09:00:00Z",
+			wantTimeout: true, wantMessage: "a read of the database that began after the wait did (the last one is from 2026-10-01T09:00:00Z)",
+		},
+		{
+			name: "in-sync: the read in flight when the wait began is not the target", target: operate.TargetInSync,
+			docs: func(f operate.Family) []doc {
+				phase, operation := readPhase(f)
+				return []doc{
+					// An interval read whose Job may already have read the
+					// database before the change the wait is about.
+					{phase: phase, operation: operation, observedAt: at(0), conditions: inSyncConditions(f, 3)},
+					// Its harvest is stamped after the baseline. A migration's
+					// History harvest writes InSync in the same write.
+					{phase: "InSync", observedAt: at(10), conditions: inSyncConditions(f, 3)},
+				}
+			},
+			wantTimeout: true, wantMessage: "a read of the database that began after the wait did (the last one is from 2026-10-01T09:00:10Z)",
+		},
+		{
+			name: "in-sync: the read after the one in flight when the wait began is the target", target: operate.TargetInSync,
+			docs: func(f operate.Family) []doc {
+				phase, operation := readPhase(f)
+				return []doc{
+					{phase: phase, operation: operation, observedAt: at(0), conditions: inSyncConditions(f, 3)},
+					{phase: "InSync", observedAt: at(10), conditions: inSyncConditions(f, 3)},
+					{phase: "Resolving", operation: "Resolve", observedAt: at(10), conditions: inSyncConditions(f, 3)},
+					{phase: "InSync", observedAt: at(40), conditions: inSyncConditions(f, 3)},
+				}
+			},
+			wantReads: 4,
+		},
+		{
+			name: "in-sync: a refresh's baseline with a read in flight does not let that read count", target: operate.TargetInSync,
+			since: func(f operate.Family) *doc {
+				phase, operation := readPhase(f)
+				return &doc{phase: phase, operation: operation, observedAt: at(0), annotation: request, lastRead: oldRequest, conditions: inSyncConditions(f, 3)}
+			},
+			docs: func(f operate.Family) []doc {
+				return []doc{{phase: "InSync", observedAt: at(10), annotation: request, lastRead: oldRequest, conditions: inSyncConditions(f, 3)}}
+			},
+			wantTimeout: true, wantMessage: "a read of the database that began after the wait did",
+		},
+		{
+			name: "in-sync: a read in flight for an older generation is not skipped", target: operate.TargetInSync,
+			generation: 4,
+			docs: func(f operate.Family) []doc {
+				// The read was claimed for generation 3. Its inputs no longer
+				// hold, so the operator discards it, and the first reading at
+				// generation 4 is a new read's.
+				phase, operation := readPhase(f)
+				return []doc{
+					{generation: 4, observedGeneration: 3, phase: phase, operation: operation, observedAt: at(0), conditions: inSyncConditions(f, 3)},
+					{generation: 4, observedGeneration: 4, phase: "InSync", observedAt: at(30), conditions: inSyncConditions(f, 4)},
+				}
+			},
+			wantReads: 2,
 		},
 		{
 			name: "in-sync: a reading at an older generation, or an older verdict, is not the target", target: operate.TargetInSync,
@@ -362,7 +561,44 @@ func TestWaitTargets(t *testing.T) {
 			docs: func(f operate.Family) []doc {
 				return []doc{{phase: "AwaitingApproval", observedAt: at(0), plan: &planDoc{name: "plan-1", uid: "plan-uid-1"}, conditions: approvalConditions(metav1.ConditionTrue)}}
 			},
-			wantTimeout: true, wantMessage: "after the wait began",
+			wantTimeout: true, wantMessage: "a read of the database that began after the wait did",
+		},
+		{
+			name: "approval: a plan republished from the read in flight when the wait began is not the target", target: operate.TargetApproval,
+			docs: func(f operate.Family) []doc {
+				phase, operation := readPhase(f)
+				plan := &planDoc{name: "plan-1", uid: "plan-uid-1"}
+				return []doc{
+					{phase: phase, operation: operation, observedAt: at(0), plan: plan},
+					{phase: "AwaitingApproval", observedAt: at(10), plan: plan, conditions: approvalConditions(metav1.ConditionTrue)},
+				}
+			},
+			wantTimeout: true, wantMessage: "a read of the database that began after the wait did",
+		},
+		{
+			name: "approval: a new plan computed from the read in flight when the wait began is not the target", target: operate.TargetApproval,
+			docs: func(f operate.Family) []doc {
+				phase, operation := readPhase(f)
+				return []doc{
+					{phase: phase, operation: operation, observedAt: at(0)},
+					{phase: "AwaitingApproval", observedAt: at(10), plan: &planDoc{name: "plan-2", uid: "plan-uid-2"}, conditions: approvalConditions(metav1.ConditionTrue)},
+				}
+			},
+			wantTimeout: true, wantMessage: "a read of the database that began after the wait did",
+		},
+		{
+			name: "approval: the plan from the read after the one in flight is the target", target: operate.TargetApproval,
+			docs: func(f operate.Family) []doc {
+				phase, operation := readPhase(f)
+				plan := &planDoc{name: "plan-1", uid: "plan-uid-1"}
+				return []doc{
+					{phase: phase, operation: operation, observedAt: at(0), plan: plan},
+					{phase: "AwaitingApproval", observedAt: at(10), plan: plan, conditions: approvalConditions(metav1.ConditionTrue)},
+					{phase: "Resolving", operation: "Resolve", observedAt: at(10), plan: plan},
+					{phase: "AwaitingApproval", observedAt: at(40), plan: plan, conditions: approvalConditions(metav1.ConditionTrue)},
+				}
+			},
+			wantReads: 4,
 		},
 		{
 			name: "approval: a gate with an operation in flight is not the target", target: operate.TargetApproval,
@@ -427,15 +663,18 @@ func TestWaitTargets(t *testing.T) {
 			name: "applied: a schema Apply with an unknown outcome stops the wait", target: operate.TargetApplied,
 			only: operate.FamilySchema,
 			docs: func(f operate.Family) []doc {
+				// finishUncertainApply: the claim retired, the proof owed,
+				// and both entries in one write.
 				published := operatorv1alpha1.JournalEntry{Type: operatorv1alpha1.JournalPlanPublished, At: metav1.NewTime(at(-10)), Plan: "plan-1"}
 				return []doc{
 					{phase: "AwaitingApproval", observedAt: at(0), journal: []operatorv1alpha1.JournalEntry{published}},
 					{
-						phase: "VerifyingConvergence", operation: "Observe", proof: true, observedAt: at(0),
+						phase: "VerifyingConvergence", proof: true, observedAt: at(0),
 						journal: []operatorv1alpha1.JournalEntry{
 							published,
 							{Type: operatorv1alpha1.JournalApprovalAccepted, At: metav1.NewTime(at(5)), Plan: "plan-1", Approval: "approval"},
 							{Type: operatorv1alpha1.JournalApplyFinished, At: metav1.NewTime(at(60)), Plan: "plan-1", Outcome: operatorv1alpha1.JournalUnknown},
+							failure(60, "Apply", "ApplyOutcomeUnknown"),
 						},
 					},
 				}
@@ -466,7 +705,7 @@ func TestWaitTargets(t *testing.T) {
 				history := []operatorv1alpha1.JournalEntry{
 					{Type: operatorv1alpha1.JournalApplyFinished, At: metav1.NewTime(at(-600)), Plan: "plan-0", Outcome: operatorv1alpha1.JournalUnknown},
 					{Type: operatorv1alpha1.JournalVerified, At: metav1.NewTime(at(-500)), Plan: "plan-0", Outcome: operatorv1alpha1.JournalDriftRemains},
-					failure(-400, "Apply", "PodAdmissionRefused"),
+					failure(-600, "Apply", "ApplyOutcomeUnknown"),
 				}
 				return []doc{
 					{phase: "AwaitingApproval", observedAt: at(0), journal: history},
@@ -476,31 +715,95 @@ func TestWaitTargets(t *testing.T) {
 			wantTimeout: true,
 		},
 		{
-			name: "applied: an Apply the operator could not start stops the wait", target: operate.TargetApplied,
+			name: "applied: an Apply Pod admission refuses leaves the wait running, and the timeout names it", target: operate.TargetApplied,
 			docs: func(f operate.Family) []doc {
+				// reportPodAdmission keeps the claim in flight and moves Ready
+				// (schema) or Progressing (migration); it journals nothing.
+				refusal := `pods "apply-1" is forbidden: violates PodSecurity "restricted:latest"`
+				conditionType := operatorv1alpha1.ConditionReady
+				if f == operate.FamilyMigration {
+					conditionType = operatorv1alpha1.ConditionMigrationProgressing
+				}
 				return []doc{
 					{phase: "AwaitingApproval", observedAt: at(0)},
 					{
-						phase: "Failed", observedAt: at(0), conditions: failedConditions(f, "PodAdmissionRefused", "admission refused the Apply Pod"),
-						journal: []operatorv1alpha1.JournalEntry{failure(30, "Apply", "PodAdmissionRefused")},
+						phase: "Applying", operation: "Apply", observedAt: at(0),
+						conditions: []metav1.Condition{condition(conditionType, metav1.ConditionFalse, "PodAdmissionRefused", refusal, 3)},
 					},
 				}
 			},
-			wantStop: operate.StopApplyFailed, wantMessage: "admission refused the Apply Pod",
+			wantTimeout: true, wantMessage: `(PodAdmissionRefused): pods "apply-1" is forbidden`,
 		},
 		{
-			name: "applied: another failed Apply folded into the entry before the wait stops it", target: operate.TargetApplied,
+			name: "applied: a schema Apply whose dispatch was refused keeps its claim, and the timeout names it", target: operate.TargetApplied,
+			only: operate.FamilySchema,
 			docs: func(f operate.Family) []doc {
-				folded := failure(-400, "Apply", "PodAdmissionRefused")
+				// schemaDispatch.Refuse for a mutating claim: operationFailure
+				// writes Failed and leaves the Apply claim to be tried again.
+				return []doc{
+					{phase: "AwaitingApproval", observedAt: at(0)},
+					{
+						phase: "Failed", operation: "Apply", observedAt: at(0),
+						conditions: []metav1.Condition{
+							condition(operatorv1alpha1.ConditionReconciliationFailed, metav1.ConditionTrue, "ConfigurationError", "the Apply Job template could not be read", 3),
+							condition(operatorv1alpha1.ConditionReady, metav1.ConditionFalse, "ConfigurationError", "Reconciliation did not complete", 3),
+						},
+						journal: []operatorv1alpha1.JournalEntry{failure(30, "Apply", "ConfigurationError")},
+					},
+				}
+			},
+			wantTimeout: true, wantMessage: "ReconciliationFailed=True (ConfigurationError): the Apply Job template could not be read",
+		},
+		{
+			name: "applied: a migration Apply the operator gave up before it ran stops the wait", target: operate.TargetApplied,
+			only: operate.FamilyMigration,
+			docs: func(f operate.Family) []doc {
+				// migrationOperationFailure retires the Apply claim and
+				// journals the failure under it.
+				return []doc{
+					{phase: "AwaitingApproval", observedAt: at(0)},
+					{
+						phase: "Failed", observedAt: at(0), conditions: failedConditions(f, "OperationFailed", "build Apply Job: the runner image is not configured"),
+						journal: []operatorv1alpha1.JournalEntry{failure(30, "Apply", "OperationFailed")},
+					},
+				}
+			},
+			wantStop: operate.StopApplyFailed, wantMessage: "the runner image is not configured",
+		},
+		{
+			name: "applied: a migration Apply given up and claimed again before the wait saw it keeps the wait", target: operate.TargetApplied,
+			only: operate.FamilyMigration,
+			docs: func(f operate.Family) []doc {
+				// The Failed document fell between two reads; by the next one
+				// the operator has claimed the Apply again, and that run
+				// applies.
+				failed := []operatorv1alpha1.JournalEntry{failure(30, "Apply", "OperationFailed")}
+				run := &runDoc{outcome: "Applied", job: "run-2", jobUID: "job-uid-2", startedAt: at(60), finishedAt: at(80)}
+				return []doc{
+					{phase: "AwaitingApproval", observedAt: at(0)},
+					{phase: "Applying", operation: "Apply", observedAt: at(0), journal: failed},
+					{phase: "VerifyingHistory", observedAt: at(0), lastRun: run, journal: failed},
+					{phase: "InSync", observedAt: at(90), lastRun: run, conditions: inSyncConditions(f, 3), journal: failed},
+				}
+			},
+			wantReads: 4,
+		},
+		{
+			name: "applied: a migration Apply given up again, folded into the entry before the wait, stops it", target: operate.TargetApplied,
+			only: operate.FamilyMigration,
+			docs: func(f operate.Family) []doc {
+				folded := failure(-400, "Apply", "OperationFailed")
 				folded.Count = 2
 				folded.LastAt = &metav1.Time{Time: at(30)}
-				conditions := failedConditions(f, "PodAdmissionRefused", "admission refused the Apply Pod")
+				conditions := failedConditions(f, "OperationFailed", "build Apply Job: the runner image is not configured")
+				earlier := []operatorv1alpha1.JournalEntry{failure(-400, "Apply", "OperationFailed")}
 				return []doc{
-					{phase: "Failed", observedAt: at(0), conditions: conditions, journal: []operatorv1alpha1.JournalEntry{failure(-400, "Apply", "PodAdmissionRefused")}},
+					{phase: "Failed", observedAt: at(0), conditions: conditions, journal: earlier},
+					{phase: "Applying", operation: "Apply", observedAt: at(0), journal: earlier},
 					{phase: "Failed", observedAt: at(0), conditions: conditions, journal: []operatorv1alpha1.JournalEntry{folded}},
 				}
 			},
-			wantStop: operate.StopApplyFailed, wantMessage: "admission refused the Apply Pod",
+			wantStop: operate.StopApplyFailed, wantMessage: "the runner image is not configured",
 		},
 		{
 			name: "applied: another plan applied than the one named stops the wait", target: operate.TargetApplied,
@@ -531,14 +834,85 @@ func TestWaitTargets(t *testing.T) {
 			only: operate.FamilyMigration,
 			docs: func(f operate.Family) []doc {
 				earlier := &runDoc{outcome: "Applied", job: "run-0", jobUID: "job-uid-0", startedAt: at(-3700), finishedAt: at(-3600)}
+				run := &runDoc{outcome: "Applied", job: "run-1", jobUID: "job-uid-1", startedAt: at(40), finishedAt: at(80)}
 				return []doc{
 					{phase: "AwaitingApproval", observedAt: at(0), plan: &planDoc{name: "plan-1", uid: "plan-uid-1"}, lastRun: earlier},
 					{phase: "Applying", operation: "Apply", observedAt: at(0), lastRun: earlier},
-					{phase: "VerifyingHistory", operation: "History", observedAt: at(0), lastRun: earlier},
-					{phase: "InSync", observedAt: at(90), lastRun: &runDoc{outcome: "Applied", job: "run-1", jobUID: "job-uid-1", startedAt: at(40), finishedAt: at(80)}},
+					// recordMigrationRun: the run's own account and
+					// VerifyingHistory in one write, the claim retired.
+					{phase: "VerifyingHistory", observedAt: at(0), lastRun: run},
+					{phase: "VerifyingHistory", operation: "History", observedAt: at(0), lastRun: run},
+					// The history read back settles it.
+					{phase: "InSync", observedAt: at(90), lastRun: run, conditions: inSyncConditions(f, 3)},
+				}
+			},
+			wantReads: 5,
+		},
+		{
+			name: "applied: a run's own account is not the target before the history is read back", target: operate.TargetApplied,
+			only: operate.FamilyMigration,
+			docs: func(f operate.Family) []doc {
+				run := &runDoc{outcome: "Applied", job: "run-1", jobUID: "job-uid-1", startedAt: at(40), finishedAt: at(80)}
+				return []doc{
+					{phase: "Applying", operation: "Apply", observedAt: at(0)},
+					{phase: "VerifyingHistory", observedAt: at(0), lastRun: run},
+				}
+			},
+			wantTimeout: true, wantMessage: "the history read back after run run-1; now phase VerifyingHistory",
+		},
+		{
+			name: "applied: a read back that finds more pending settles once the next plan is published", target: operate.TargetApplied,
+			only: operate.FamilyMigration,
+			docs: func(f operate.Family) []doc {
+				// The artifact moved on while the run ran. The history harvest
+				// writes Planning with MigrationsPending before it publishes
+				// the plan for what is still pending.
+				run := &runDoc{outcome: "Applied", job: "run-1", jobUID: "job-uid-1", startedAt: at(40), finishedAt: at(80)}
+				return []doc{
+					{phase: "Applying", operation: "Apply", observedAt: at(0)},
+					{phase: "VerifyingHistory", observedAt: at(0), lastRun: run},
+					{phase: "Planning", observedAt: at(90), lastRun: run, conditions: []metav1.Condition{
+						condition(operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionTrue, "MigrationsPending",
+							"A plan for 1 pending migrations is being published", 3),
+					}},
+					{phase: "AwaitingApproval", observedAt: at(90), lastRun: run, plan: &planDoc{name: "plan-2", uid: "plan-uid-2"}, conditions: approvalConditions(metav1.ConditionTrue)},
 				}
 			},
 			wantReads: 4,
+		},
+		{
+			name: "applied: a history read that failed after an applied run is not the target", target: operate.TargetApplied,
+			only: operate.FamilyMigration,
+			docs: func(f operate.Family) []doc {
+				// The read back could not be dispatched: the resource rests in
+				// Failed with the reading from before the run.
+				run := &runDoc{outcome: "Applied", job: "run-1", jobUID: "job-uid-1", startedAt: at(40), finishedAt: at(80)}
+				return []doc{
+					{phase: "Applying", operation: "Apply", observedAt: at(0)},
+					{phase: "VerifyingHistory", observedAt: at(0), lastRun: run},
+					{
+						phase: "Failed", observedAt: at(0), lastRun: run,
+						conditions: failedConditions(f, "OperationFailed", "build History Job: the runner image is not configured"),
+						journal:    []operatorv1alpha1.JournalEntry{failure(90, "History", "OperationFailed")},
+					},
+				}
+			},
+			wantTimeout: true, wantMessage: "the history read back after run run-1; now phase Failed",
+		},
+		{
+			name: "applied: a history read back blocked after an applied run stops the wait", target: operate.TargetApplied,
+			only: operate.FamilyMigration,
+			docs: func(f operate.Family) []doc {
+				run := &runDoc{outcome: "Applied", job: "run-1", jobUID: "job-uid-1", startedAt: at(40), finishedAt: at(80)}
+				return []doc{
+					{phase: "Applying", operation: "Apply", observedAt: at(0)},
+					{phase: "VerifyingHistory", observedAt: at(0), lastRun: run},
+					{phase: "Blocked", observedAt: at(90), lastRun: run, conditions: []metav1.Condition{
+						condition(operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue, "HistoryDirty", "Revision 7 is recorded dirty", 3),
+					}},
+				}
+			},
+			wantStop: operate.StopNotConverged, wantMessage: "Revision 7 is recorded dirty",
 		},
 		{
 			name: "applied: the run that finished before the wait began is not the target", target: operate.TargetApplied,
@@ -551,17 +925,6 @@ func TestWaitTargets(t *testing.T) {
 				}
 			},
 			wantTimeout: true, wantMessage: "a run that finishes after the wait began",
-		},
-		{
-			name: "applied: a run in flight when the wait began counts once it finishes", target: operate.TargetApplied,
-			only: operate.FamilyMigration,
-			docs: func(f operate.Family) []doc {
-				return []doc{
-					{phase: "Applying", operation: "Apply", observedAt: at(0), lastRun: &runDoc{outcome: "Applied", job: "run-1", jobUID: "job-uid-1", startedAt: at(40)}},
-					{phase: "InSync", observedAt: at(90), lastRun: &runDoc{outcome: "Applied", job: "run-1", jobUID: "job-uid-1", startedAt: at(40), finishedAt: at(80)}},
-				}
-			},
-			wantReads: 2,
 		},
 		{
 			name: "applied: an unresolved migration run stops the wait", target: operate.TargetApplied,
@@ -597,7 +960,7 @@ func TestWaitTargets(t *testing.T) {
 			docs: func(f operate.Family) []doc {
 				return []doc{
 					{phase: "Applying", operation: "Apply", observedAt: at(0)},
-					{phase: "Failed", observedAt: at(90), lastRun: &runDoc{outcome: "Failed", job: "run-1", jobUID: "job-uid-1", startedAt: at(40), finishedAt: at(80), message: "migration 7 failed at statement 2 of 3"}},
+					{phase: "VerifyingHistory", observedAt: at(0), lastRun: &runDoc{outcome: "Failed", job: "run-1", jobUID: "job-uid-1", startedAt: at(40), finishedAt: at(80), message: "migration 7 failed at statement 2 of 3"}},
 				}
 			},
 			wantStop: operate.StopApplyFailed, wantMessage: "migration 7 failed at statement 2 of 3",
@@ -608,7 +971,7 @@ func TestWaitTargets(t *testing.T) {
 			docs: func(f operate.Family) []doc {
 				return []doc{
 					{phase: "Applying", operation: "Apply", observedAt: at(0)},
-					{phase: "InSync", observedAt: at(90), lastRun: &runDoc{outcome: "UpToDate", job: "run-1", jobUID: "job-uid-1", startedAt: at(40), finishedAt: at(80)}},
+					{phase: "VerifyingHistory", observedAt: at(0), lastRun: &runDoc{outcome: "UpToDate", job: "run-1", jobUID: "job-uid-1", startedAt: at(40), finishedAt: at(80)}},
 				}
 			},
 			wantStop: operate.StopNothingApplied,
@@ -619,9 +982,15 @@ func TestWaitTargets(t *testing.T) {
 			name: "suspended: Suspended at the generation of the change, once the Apply in flight ended", target: operate.TargetSuspended,
 			generation: 5,
 			docs: func(f operate.Family) []doc {
+				// The Apply finishes, then its proof (schema) or history read
+				// back (migration), before suspension takes effect.
+				after := doc{generation: 5, observedGeneration: 4, suspend: true, phase: "VerifyingConvergence", proof: true, operation: "Observe", observedAt: at(0)}
+				if f == operate.FamilyMigration {
+					after = doc{generation: 5, observedGeneration: 4, suspend: true, phase: "VerifyingHistory", operation: "History", observedAt: at(0)}
+				}
 				return []doc{
 					{generation: 5, observedGeneration: 4, suspend: true, phase: "Applying", operation: "Apply", observedAt: at(0)},
-					{generation: 5, observedGeneration: 4, suspend: true, phase: "VerifyingConvergence", proof: f == operate.FamilySchema, operation: "Observe", observedAt: at(0)},
+					after,
 					{generation: 5, observedGeneration: 5, suspend: true, phase: "Suspended", observedAt: at(60), conditions: suspendedConditions(f, 5)},
 				}
 			},
@@ -651,6 +1020,16 @@ func TestWaitTargets(t *testing.T) {
 				}
 			},
 			wantTimeout: true, wantMessage: "nothing in flight: the post-Apply proof (phase InSync)",
+		},
+		{
+			name: "any target: a resource being deleted stops the wait", target: operate.TargetInSync,
+			docs: func(f operate.Family) []doc {
+				return []doc{
+					{phase: "InSync", observedAt: at(0), conditions: inSyncConditions(f, 3)},
+					{deleting: true, phase: "InSync", observedAt: at(0), conditions: inSyncConditions(f, 3)},
+				}
+			},
+			wantStop: operate.StopDeleting, wantMessage: "metadata.deletionTimestamp is set",
 		},
 		{
 			name: "suspended: a resource whose spec does not ask for it stops the wait", target: operate.TargetSuspended,
@@ -802,6 +1181,27 @@ func TestWaitErrorsFromTheAPIServer(t *testing.T) {
 			},
 		},
 		{
+			name: "a kind the API server does not serve ends the wait",
+			errs: map[int]error{0: &meta.NoKindMatchError{
+				GroupKind: schema.GroupKind{Group: "operator.ptah.run", Kind: "PtahSchema"}, SearchedVersions: []string{"v1alpha1"},
+			}},
+			wantReads: 1, check: meta.IsNoMatchError,
+		},
+		{
+			name: "a kind this client cannot encode ends the wait",
+			errs: map[int]error{0: runtime.NewNotRegisteredErrForKind("operate", schema.GroupVersionKind{
+				Group: "operator.ptah.run", Version: "v1alpha1", Kind: "PtahSchema",
+			})},
+			wantReads: 1, check: func(err error) bool {
+				for ; err != nil; err = errors.Unwrap(err) {
+					if runtime.IsNotRegisteredError(err) {
+						return true
+					}
+				}
+				return false
+			},
+		},
+		{
 			name:      "a read the server may answer next time is retried",
 			errs:      map[int]error{0: apierrors.NewServerTimeout(resource, "get", 1), 1: apierrors.NewTooManyRequests("slow down", 1)},
 			wantReads: 3, check: func(err error) bool { return err == nil },
@@ -917,6 +1317,29 @@ func TestWaitReadsTheTargetAsACommandLineSpellsIt(t *testing.T) {
 	})
 	if err != nil || result.Target != operate.TargetRead || result.Reads != 2 {
 		t.Fatalf("result = %+v, err = %v", result, err)
+	}
+}
+
+func TestWaitWithTheRealClockBoundsAReadThatHangs(t *testing.T) {
+	t.Parallel()
+
+	reader := fake.NewClientBuilder().WithScheme(newScheme(t)).WithInterceptorFuncs(interceptor.Funcs{
+		Get: func(ctx context.Context, _ client.WithWatch, _ client.ObjectKey, _ client.Object, _ ...client.GetOption) error {
+			<-ctx.Done()
+			return ctx.Err()
+		},
+	}).Build()
+	began := time.Now()
+	_, err := operate.Wait(context.Background(), reader, refOf(operate.FamilySchema), operate.WaitOptions{
+		Target: operate.TargetInSync, Timeout: 200 * time.Millisecond, Interval: time.Hour,
+	})
+	elapsed := time.Since(began)
+	var timedOut *operate.TimeoutError
+	if !errors.As(err, &timedOut) || !errors.Is(timedOut.LastError, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want a TimeoutError after the read hit the deadline", err)
+	}
+	if elapsed > 10*time.Second {
+		t.Fatalf("a read that hangs held the wait %s past a 200ms timeout", elapsed)
 	}
 }
 

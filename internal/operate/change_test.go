@@ -162,11 +162,14 @@ func TestSetSuspendSendsOneTestedFieldChange(t *testing.T) {
 				if got := decodeOperations(t, sent[0].body); !reflect.DeepEqual(got, want) {
 					t.Fatalf("patch = %v, want %v", got, want)
 				}
-				if !result.Changed || result.Suspend != suspend || result.UID != uidA || result.Generation != 7 ||
+				after := read(t, c, family)
+				// The generation is the one the answer carried. The fake API
+				// server does not move it; test/envtest/crd proves a real one
+				// does.
+				if !result.Changed || result.Suspend != suspend || result.UID != uidA || result.Generation != after.GetGeneration() ||
 					result.ObservedGeneration != 6 || result.Phase != "Applying" || result.Running != "Apply" || result.Object == nil {
 					t.Fatalf("result = %+v", result)
 				}
-				after := read(t, c, family)
 				if got, _ := operateSuspend(after); got != suspend {
 					t.Fatalf("spec.suspend = %v, want %v", got, suspend)
 				}
@@ -202,7 +205,7 @@ func TestSetSuspendSendsNothingWhenTheSpecAlreadySaysSo(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if result.Changed || result.Suspend != suspend || result.Generation != 7 || len(rec.sent()) != 0 {
+				if result.Changed || result.Suspend != suspend || result.Generation != 7 || result.ObservedGeneration != 6 || len(rec.sent()) != 0 {
 					t.Fatalf("result = %+v after %d patches, want no change and no patch", result, len(rec.sent()))
 				}
 			})
@@ -393,6 +396,48 @@ func TestRefreshAddsTheAnnotationsMapOnlyWhereThereIsNone(t *testing.T) {
 			want := map[string]string{"owner": "team-b", key: result.Request}
 			if got := read(t, c, family).GetAnnotations(); !reflect.DeepEqual(got, want) {
 				t.Fatalf("annotations = %v, want %v", got, want)
+			}
+		})
+	}
+}
+
+func TestRefreshBuildsThePatchAgainWhenTheAnnotationsVanish(t *testing.T) {
+	t.Parallel()
+
+	key := operatorv1alpha1.ReadRequestAnnotation
+	for _, family := range families {
+		t.Run(string(family), func(t *testing.T) {
+			t.Parallel()
+
+			rec := &recorder{}
+			// Another writer removes every annotation after the read: the
+			// patch that adds a key to the map meets no map, and the next one
+			// adds the map.
+			rec.before = func(ctx context.Context, c client.WithWatch, count int) error {
+				if count != 1 {
+					return nil
+				}
+				current := stored(family, "", false, nil)
+				if err := c.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, current); err != nil {
+					return err
+				}
+				current.SetAnnotations(nil)
+				return c.Update(ctx, current)
+			}
+			c := rec.client(t, stored(family, uidA, false, map[string]string{"team": "shop"}))
+			result, err := operate.Refresh(context.Background(), c, refOf(family), clockStart)
+			if err != nil {
+				t.Fatal(err)
+			}
+			sent := rec.sent()
+			if len(sent) != 2 {
+				t.Fatalf("sent %d patches, want 2", len(sent))
+			}
+			if got := decodeOperations(t, sent[1].body); len(got) != 3 || got[1]["path"] != "/metadata/annotations" || got[1]["op"] != "test" {
+				t.Fatalf("second patch = %v, want the one that adds the map", got)
+			}
+			if got := read(t, c, family).GetAnnotations(); !reflect.DeepEqual(got, map[string]string{key: result.Request}) {
+				t.Fatalf("annotations = %v", got)
 			}
 		})
 	}
