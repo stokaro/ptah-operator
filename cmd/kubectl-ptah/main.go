@@ -370,7 +370,7 @@ func usage(out io.Writer) {
        kubectl ptah suspend schema/<name>|migration/<name> [flags]
        kubectl ptah resume schema/<name>|migration/<name> [flags]
        kubectl ptah refresh schema/<name>|migration/<name> [flags]
-       kubectl ptah set-source schema/<name>|migration/<name> --oci <reference> [flags]
+       kubectl ptah set-source schema/<name>|migration/<name> --oci <ref> [flags]
        kubectl ptah wait schema/<name>|migration/<name> --for <target> [flags]
 
 plan prints the SQL of a plan the Ptah operator stored, after the operator's
@@ -545,9 +545,9 @@ and what it still waits for. One that cannot reach its target, such as an
 Apply that failed or a run whose outcome nobody established, stops at once.
 
 suspend, resume, refresh and set-source patch the resource as you: they need
-get and patch on ptahschemas or ptahmigrations. wait needs get. The resource is named
-as schema/NAME or migration/NAME, or by the kind's plural or short name as
-kubectl spells it.
+get and patch on ptahschemas or ptahmigrations. wait needs get. The resource is
+named as schema/NAME or migration/NAME, or by the kind's plural or short name
+as kubectl spells it.
 
 Exit status: 0 printed, changed or reached, 1 could not read or verify, 2
 usage, 3 nothing stored to print, approve, change or wait on, 4 nothing
