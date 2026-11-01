@@ -58,7 +58,7 @@ steps:
     sync: converged
     expect:
       exit: 0
-      stdout_contains: [InSync, "Current version:4", "Run applied:    3, 4"]
+      stdout_contains: [InSync, "Current version:      4", "Versions:           3, 4"]
       stdout_absent: ["CREATE TABLE", "ALTER TABLE"]
 
   - note: The table is what replaying all four would have built, down to the constraint.
