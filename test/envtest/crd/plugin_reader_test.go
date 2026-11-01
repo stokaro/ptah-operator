@@ -18,13 +18,14 @@ import (
 	"github.com/stokaro/ptah-operator/internal/statusview"
 )
 
-// `kubectl ptah schema` and `kubectl ptah migration` need get on the resource
-// and nothing else, and list the approvals and acknowledgments that name it
-// only where the reader may. Here the API server's own authorizer refuses
-// those lists to a reader granted the documented get: the views still load,
-// and record the refusal as RBAC's. Granting list then shows the same reader
-// the lists, so what the first reading recorded was the authorizer's answer
-// and not something the views say regardless.
+// `kubectl ptah schema` and `kubectl ptah migration` need the get the docs
+// name -- on the schema; on the migration and the plan its status names -- and
+// list the approvals and acknowledgments that name a resource only where the
+// reader may. Here the API server's own authorizer refuses those lists to a
+// reader granted that get alone: the views still load, the migration's plan
+// included, and record the refusal as RBAC's. Granting list then shows the same
+// reader the lists, so what the first reading recorded was the authorizer's
+// answer and not something the views say regardless.
 func TestPluginViewsNeedGetAndListDecisionsOnlyWhereAllowed(t *testing.T) {
 	plane.Require(t)
 	t.Parallel()
@@ -32,10 +33,22 @@ func TestPluginViewsNeedGetAndListDecisionsOnlyWhereAllowed(t *testing.T) {
 	defer cancel()
 
 	namespace := newNamespace(t, "plugin-reader")
-	for _, object := range []client.Object{schemaBase(namespace)(), migrationBase(namespace)()} {
+	storedMigration := migrationBase(namespace)()
+	for _, object := range []client.Object{schemaBase(namespace)(), storedMigration} {
 		if err := api.Create(ctx, object); err != nil {
 			t.Fatal(err)
 		}
+	}
+	// The plan the migration's status names, written as the administrator
+	// the way the manager would, so the reader's view has a plan to get.
+	plan := resource("PtahMigrationPlan", namespace, "ptah-mplan-19581e27de7ced00ff1ce50b", migrationPlanSpec())
+	set(t, plan, string(storedMigration.GetUID()), "spec", "migrationRef", "uid")
+	if err := api.Create(ctx, plan); err != nil {
+		t.Fatal(err)
+	}
+	set(t, storedMigration, map[string]any{"name": plan.GetName(), "uid": string(plan.GetUID())}, "status", "plan")
+	if err := api.Status().Update(ctx, storedMigration); err != nil {
+		t.Fatal(err)
 	}
 	reader := namespace + "-reader"
 	grant(ctx, t, namespace, reader, "get", []string{"ptahschemas", "ptahmigrations", "ptahmigrationplans"}, "get")
@@ -61,6 +74,9 @@ func TestPluginViewsNeedGetAndListDecisionsOnlyWhereAllowed(t *testing.T) {
 		return schemaErr == nil && migrationErr == nil, nil
 	}); err != nil {
 		t.Fatalf("the reader granted get could not read the resources: %v", err)
+	}
+	if migration.Plan == nil || migration.Plan.Name != plan.GetName() || len(migration.Plan.Migrations) != 2 {
+		t.Fatalf("the reader's migration view carries plan %+v, want %s with its two migrations", migration.Plan, plan.GetName())
 	}
 	for _, list := range []struct {
 		resource   string
