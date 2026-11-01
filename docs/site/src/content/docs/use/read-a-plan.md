@@ -112,15 +112,17 @@ Statement 2 of 2: destructive (DROP TABLE removes the table and all rows)
 DROP TABLE IF EXISTS "e2e_excluded_policy_keep" CASCADE;
 ```
 
-The operator also reads each statement itself, and rates destructive any that
-has a `DROP` or a `TRUNCATE` in it, changes a column's type, disables
-row-level security or deletes from `pg_enum`, whatever Ptah said. The plan's
-`Destructive` and the decisions taken on it follow that rating. Where it is
-higher than Ptah's, the line says whose each one is, because Ptah's reason
-still explains the lower one:
+The plugin also reads each statement, by the rules the manager reads a plan
+with, and rates destructive any that has a `DROP` or a `TRUNCATE` in it, an
+`ALTER COLUMN ... TYPE`, a MySQL `MODIFY COLUMN` or `CHANGE COLUMN` whatever it
+changes, a `DISABLE ROW LEVEL SECURITY` or a `DELETE FROM pg_enum`, whatever
+Ptah said. Where that rating is higher than Ptah's, the line says whose each
+one is, because Ptah's reason still explains the lower one. It names this
+plugin rather than the operator for the reason the `Privileges` line does: the
+plugin and the manager that published the plan are separate builds.
 
 ```text
-Statement 1 of 1: destructive as the operator reads it; Ptah rated it safe (does not remove data or tighten constraints)
+Statement 1 of 1: destructive as this plugin reads it; Ptah rated it safe (does not remove data or tighten constraints)
 ALTER TABLE "customers" ALTER COLUMN "email" DROP NOT NULL;
 ```
 
@@ -163,15 +165,15 @@ kubectl ptah schema storefront -n application
 ```
 
 ```text
-Schema:           application/storefront
-Phase:            AwaitingApproval
-Ready:            False, AwaitingApproval: Plan is waiting for approval
-Policy:           apply OnApproval, allowDestructive true, driftSeverity all
-Artifact:         oci://registry.example/acme/storefront@sha256:...
-Verified:         true
-Observed:         2026-09-16T06:00:00Z
-Drift:            6 in 3 categories, highest destructive
-Reference data:   2 to insert, 1 to update, 3 to delete
+Schema:               application/storefront
+Phase:                AwaitingApproval
+Ready:                False, AwaitingApproval: Plan is waiting for approval
+Policy:               apply OnApproval, allowDestructive true, driftSeverity all
+Artifact:             oci://registry.example/acme/storefront@sha256:...
+Verified:             true
+Observed:             2026-09-16T06:00:00Z
+Drift:                6 in 3 categories, highest destructive
+Reference data:       2 to insert, 1 to update, 3 to delete
   data_rows_deleted                       3  destructive
   data_rows_inserted                      2  safe
   data_rows_updated                       1  destructive
@@ -224,9 +226,9 @@ create, and `False` needs none or is refused by the policy. A destructive plan
 under `allowDestructive: false` reads:
 
 ```text
-Phase:            Blocked
-Ready:            False, PolicyBlocked: Plan is blocked by destructive-change policy
-Policy:           apply OnApproval, allowDestructive false, driftSeverity all
+Phase:                Blocked
+Ready:                False, PolicyBlocked: Plan is blocked by destructive-change policy
+Policy:               apply OnApproval, allowDestructive false, driftSeverity all
 ...
 Plan ptah-plan-4b44084123f0958600629632, 4 statements, stored 2026-09-16T06:01:00Z
   destructive
@@ -236,10 +238,11 @@ Plan ptah-plan-4b44084123f0958600629632, 4 statements, stored 2026-09-16T06:01:0
 
 `Approvals` lists the `PtahSchemaApproval` objects that name this schema by
 name and UID, newest first. It shows the five newest and, when there are more,
-how many and the command that lists them all. Each shows the identity admission
-stamped on it, the plan it names and whether that is the current plan, and
-every condition the controller wrote on it -- `Accepted`, `Consumed` and
-`Stale`, with the reason and the message. An approval of an earlier plan stays
+how many, and the `kubectl get` that lists every approval in the namespace.
+Each shows the identity admission stamped on it, the plan it names and whether
+that is the current plan or the one the last confirmed apply ran, and every
+condition the controller wrote on it -- `Accepted`, `Consumed` and `Stale`,
+with the reason and the message. An approval of an earlier plan stays
 listed, so why it was not used, or what it was used for, is still there to read
 after the plan changed. `kubectl describe ptahschemaapproval <name>` shows one
 approval whole.
@@ -259,12 +262,12 @@ A schema read from a ConfigMap or a Git repository prints its source in
 place of the `Artifact` line:
 
 ```text
-Source:           Git https://git.example.com/acme/storefront.git
-Ref:              branch main
-Path:             db/schema.sql
-Commit:           3f1c2b0a9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a
-Content:          sha256:...
-Source policy:    sha256:...
+Source:               Git https://git.example.com/acme/storefront.git
+Ref:                  branch main
+Path:                 db/schema.sql
+Commit:               3f1c2b0a9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a
+Content:              sha256:...
+Source policy:        sha256:...
 ```
 
 `Content` is the digest of the selected files, the content a plan computed
@@ -317,19 +320,19 @@ kubectl ptah migration orders -n application
 ```
 
 ```text
-Migration:        application/orders
-Phase:            AwaitingApproval
-Ready:            False, AwaitingApproval: The plan is waiting for the approval its policy requires
-Policy:           apply OnApproval
-Artifact:         oci://registry.example/acme/orders-migrations@sha256:...
-History read:     2026-08-30T12:00:00Z
-Current version:  2
-Applied:          2
-Pending:          1
+Migration:            application/orders
+Phase:                AwaitingApproval
+Ready:                False, AwaitingApproval: The plan is waiting for the approval its policy requires
+Policy:               apply OnApproval
+Artifact:             oci://registry.example/acme/orders-migrations@sha256:...
+History read:         2026-08-30T12:00:00Z
+Current version:      2
+Applied:              2
+Pending:              1
 
-Last run:         Applied, started 2026-08-28T12:00:00Z, finished 2026-08-28T12:01:00Z
-  Job:            ptah-m-apply-orders-6f1c2d3e4a5b6c7d, UID 0b7e6c1a-9d2f-4e3b-8a5c-1f2e3d4c5b6a
-  Applied:        2
+Last run:             Applied, started 2026-08-28T12:00:00Z, finished 2026-08-28T12:01:00Z
+  Job:                ptah-m-apply-orders-6f1c2d3e4a5b6c7d, UID 0b7e6c1a-9d2f-4e3b-8a5c-1f2e3d4c5b6a
+  Versions:           2
 
 Plan ptah-mplan-0123456789abcdef01234567, 1 migration from version 2:
   3                    add the orders index
@@ -360,31 +363,42 @@ later Job under the same name apart from this one.
 
 A run that ended `Partial` or `Unknown` is also recorded as unresolved, and the
 view prints that record as a block of its own, because it is a hold and not an
-outcome: while it stands nothing is planned and nothing runs, whatever the last
-run and the conditions say. Here the dispatched Job went missing:
+outcome: while it stands no plan is published and no Apply is dispatched,
+whatever the last run and the conditions say, and the reads that could clear it
+go on. Here the dispatched Job went missing:
 
 ```text
-Last run:         Unknown, started 2026-09-30T06:30:36Z, finished 2026-09-30T06:30:43Z
-  Job:            ptah-m-apply-orders-04d370d4ccc65a4c, UID 2cde010b-1e46-46af-a3fb-35a75edacc7f
-  Message:        the dispatched Apply Job is missing and will not be recreated
+Last run:             Unknown, started 2026-09-30T06:30:36Z, finished 2026-09-30T06:30:43Z
+  Job:                ptah-m-apply-orders-04d370d4ccc65a4c, UID 2cde010b-1e46-46af-a3fb-35a75edacc7f
+  Message:            the dispatched Apply Job is missing and will not be recreated
 
-Unresolved run:   Unknown, recorded 2026-09-30T06:30:43Z
-  Operation:      sha256:9d8a95ebef8319572f9c4f38853a5a4815316e07f83f56865f9f7cab742dcded
-  Job:            ptah-m-apply-orders-04d370d4ccc65a4c, UID 2cde010b-1e46-46af-a3fb-35a75edacc7f
-  Plan:           ptah-mplan-8f517ba4f0200f2a4e095b65, UID 04800e23-c41a-40ff-9745-c77de45237b1
-  Database:       sha256:dd3598d94799d326af49fb6f455ea24c3959af067ca4cff5219f1987480e4abd (target identity digest)
-  While this record stands nothing is planned and nothing runs.
-  Establish what the run did in that database first. A history read
-  there that finds nothing of the artifact left to apply clears the
-  record by itself. If the database is accounted for and still has work
-  pending, settle it with a PtahMigrationRunAcknowledgment naming
-  migration UID 5b0e2a8c-1d3f-4e6a-9b7c-2f4d6e8a0c1b and the operation above.
+Unresolved run:       Unknown, recorded 2026-09-30T06:30:43Z
+  Operation:          sha256:9d8a95ebef8319572f9c4f38853a5a4815316e07f83f56865f9f7cab742dcded
+  Job:                ptah-m-apply-orders-04d370d4ccc65a4c, UID 2cde010b-1e46-46af-a3fb-35a75edacc7f
+  Plan:               ptah-mplan-8f517ba4f0200f2a4e095b65, UID 04800e23-c41a-40ff-9745-c77de45237b1
+  Database:           sha256:dd3598d94799d326af49fb6f455ea24c3959af067ca4cff5219f1987480e4abd (target identity digest)
+  While this record stands no plan is published and no Apply is dispatched;
+  resolve, verify and the history read go on.
+  The database is the one the run reported reaching or, where it reported
+  nothing, the one it was dispatched against: where to start looking, not
+  proof of where the run went. A reader who inspects the wrong database finds
+  nothing wrong and settles a record that was telling the truth.
+  Establish what the run did there first. A history read of that database that
+  finds nothing of the artifact left to apply clears the record by itself. If
+  the database is accounted for and still has work pending, settle it with a
+  PtahMigrationRunAcknowledgment naming migration UID
+  5b0e2a8c-1d3f-4e6a-9b7c-2f4d6e8a0c1b and the operation above.
   The operations guide has the procedure, under "A migration run nobody
   accounted for".
 ```
 
 It names the attempt, the Job, the plan the run was carrying out and the
-database it addressed, and what the operations guide says to do about it:
+database it addressed. That database is the one the run reported or, where it
+reported nothing, the one it was dispatched against, so it is where to start
+looking rather than proof of where the run went. A resource that is suspended,
+or refused for its engine or its realm, never reaches the history read that
+would clear the record, and the block says so; an acknowledgment still settles
+it. The block ends with what the operations guide says to do:
 [A migration run nobody accounted for](../operations/#a-migration-run-nobody-accounted-for)
 has the procedure, and the
 [acknowledgment](../operations/#clear-unresolved-run) it describes takes the
@@ -394,7 +408,8 @@ retry, because the operator never makes one. Once the record is settled,
 
 `Approvals` lists the `PtahMigrationApproval` objects that name this migration,
 the way the schema view lists its approvals. A migration approval carries only
-`Consumed`; whether the plan it names is the current one is printed beside it,
+`Consumed`, written when its plan is dispatched, so one with no condition says
+just that; whether the plan it names is the current one is printed beside it,
 and whether it matches that plan is the migration's own `ApprovalRequired`.
 `Run acknowledgments` lists the `PtahMigrationRunAcknowledgment` objects, each
 with the operation it names, marked when that is the unresolved run, and its
