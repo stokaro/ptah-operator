@@ -1251,14 +1251,16 @@ set-source sends nothing, and exits 4, for:
 - A ConfigMap or Git source. Moving to an artifact replaces that source and
   its settings and names the verification policy the artifact is held to,
   which is an edit of the resource.
-- A resource with an Apply in flight. The change would move the generation
-  the Apply was decided from, and the operator records an Apply whose inputs
-  changed while it ran as an outcome nobody established, without reading its
-  result. For a migration that is
+- A resource with an Apply whose Job may already exist. The change would move
+  the generation the Apply was decided from, and the operator records an Apply
+  whose inputs changed while it ran as an outcome nobody established, without
+  reading its result. For a migration that is
   [a run nobody accounted for](#a-migration-run-nobody-accounted-for), which a
   reading clears only once nothing of the artifact is left to apply. Wait for
   the Apply to end, with `kubectl ptah wait migration/orders --for applied -n
-  application`, and run set-source again.
+  application`, and run set-source again. An Apply claimed with no Job yet is
+  not refused: the operator drops it when it sees the change, and its plan
+  does not run.
 - A source another writer changed between set-source's read and its patch.
   The patch carries the `resourceVersion` of that read, so the API server
   refuses it when anything wrote in between. set-source reads again and retries over a

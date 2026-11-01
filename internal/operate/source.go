@@ -187,8 +187,10 @@ type SourceResult struct {
 	Generation         int64
 	ObservedGeneration int64
 	Phase              string
-	// Running is the operation in flight, if any. It is never an Apply:
-	// SetSource changes no source under one.
+	// Running is the operation in flight, if any. An Apply here is a claim
+	// whose Job was not created: SetSource changes no source under an Apply
+	// whose Job may exist, and the operator drops this one when it sees the
+	// change, so its plan does not run.
 	Running string
 	// ProofOwed is a schema's post-Apply proof not yet taken. It outranks a
 	// newer generation, so the new reference is resolved after it.
@@ -216,13 +218,15 @@ func (e *SourceKindError) Error() string {
 	return fmt.Sprintf("%s of %s names a %s source, not an OCI artifact", e.Field, e.Ref, e.Kind)
 }
 
-// ApplyRunningError is a resource with an Apply claim in flight, whose
-// source SetSource does not change.
+// ApplyRunningError is a resource with an Apply in flight whose Job may
+// exist, by the rule the controller decides it with
+// (mutationlifecycle.MayHaveDispatched). SetSource does not change its
+// source.
 //
 // A spec change moves the generation, which is one of the inputs an Apply
-// claim was decided from, and the operator records a claim whose inputs
-// changed while its Job ran as an outcome nobody established, without
-// reading the result. For a migration that is a run nobody accounted for,
+// claim was decided from. The operator drops a claim whose Job it has not
+// created, and records one whose Job may exist as an outcome nobody
+// established, without reading the result. For a migration that is a run nobody accounted for,
 // and a reading clears that record only once nothing of the artifact is left
 // to apply: with a new artifact's versions pending, it takes a person's
 // acknowledgment. The Apply cannot take the new reference anyway; changing
@@ -274,7 +278,7 @@ func describeRequest(s Source) string {
 //
 // It sends nothing when the spec already asks for pinned. It refuses a
 // resource whose source is a ConfigMap or Git (*SourceKindError) and one with
-// an Apply in flight (*ApplyRunningError).
+// an Apply in flight whose Job may exist (*ApplyRunningError).
 //
 // The patch tests metadata.uid, as every change here does, and carries the
 // resourceVersion of the read as well, which SetSuspend and Refresh do not.
@@ -325,7 +329,7 @@ func SetSource(ctx context.Context, c client.Client, ref Ref, pinned PinnedRefer
 		if source.Reference == pinned.Reference {
 			return sourceResult(ref, source.Reference, false, read, source), nil
 		}
-		if applying(read) {
+		if applying(read) && read.dispatched {
 			return SourceResult{}, &ApplyRunningError{Ref: ref, Job: runningJob(object)}
 		}
 		patch, err := json.Marshal([]patchOperation{
@@ -366,7 +370,8 @@ func sourceResult(ref Ref, previous string, changed bool, s snapshot, source Sou
 	return result
 }
 
-// applying reports an Apply claim in flight, in either family.
+// applying reports an Apply claim in flight, in either family, whether or
+// not its Job was created.
 func applying(s snapshot) bool {
 	return s.operation == string(operatorv1alpha1.OperationApply) ||
 		s.operation == string(operatorv1alpha1.MigrationOperationApply)

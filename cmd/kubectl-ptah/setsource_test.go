@@ -190,10 +190,12 @@ func TestSetSourceRefusesWhatItDoesNotChange(t *testing.T) {
 		Ref: operatorv1alpha1.GitRef{Branch: "main"}, Path: "."}}
 	applying := onArtifact("migration", operatorv1alpha1.ApplyPolicyOnApproval).(*operatorv1alpha1.PtahMigration)
 	applying.Status.Phase = operatorv1alpha1.MigrationPhaseApplying
-	applying.Status.ActiveOperation = &operatorv1alpha1.MigrationOperationStatus{Type: "Apply", ID: "attempt", JobName: "ptah-apply-1", Attempt: 1}
+	applying.Status.ActiveOperation = &operatorv1alpha1.MigrationOperationStatus{Type: "Apply", ID: "attempt", JobName: "ptah-apply-1",
+		Attempt: 1, DispatchStarted: true}
 	applyingSchema := onArtifact("schema", operatorv1alpha1.ApplyPolicyOnApproval).(*operatorv1alpha1.PtahSchema)
 	applyingSchema.Status.Phase = operatorv1alpha1.PhaseApplying
-	applyingSchema.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{Type: "Apply", ID: "attempt", JobName: "ptah-apply-1"}
+	applyingSchema.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{Type: "Apply", ID: "attempt", JobName: "ptah-apply-1",
+		JobUID: "uid-job"}
 
 	for _, test := range []struct {
 		name   string
@@ -223,6 +225,23 @@ func TestSetSourceRefusesWhatItDoesNotChange(t *testing.T) {
 			requireSays(t, "set-source's stderr", stderr, test.says...)
 		})
 	}
+}
+
+// An Apply claimed with no Job yet is dropped by the change, and the report
+// says its plan does not run.
+func TestSetSourceSaysAnApplyWithNoJobIsDropped(t *testing.T) {
+	claimed := onArtifact("schema", operatorv1alpha1.ApplyPolicyAlways).(*operatorv1alpha1.PtahSchema)
+	claimed.Status.Phase = operatorv1alpha1.PhaseApplying
+	claimed.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{Type: "Apply", ID: "attempt", JobName: "ptah-apply-1"}
+	api := newCluster(t, claimed)
+
+	code, stdout, stderr := runCommand(t, api, "set-source", "schema/storefront", "--oci", newRef)
+
+	if code != exitOK || api.patchCount() != 1 {
+		t.Fatalf("set-source = %d after %d patches, stderr %q", code, api.patchCount(), stderr)
+	}
+	requireSays(t, "set-source's report", stdout, "Running:   Apply operation",
+		"The Apply claimed from the previous spec has no Job yet: the operator drops it when it sees the change, and its plan does not run.")
 }
 
 func TestSetSourceExitsByWhatTheAPIServerSaid(t *testing.T) {

@@ -79,7 +79,8 @@ func TestParsePinnedReference(t *testing.T) {
 
 // sourced is a resource of family at rest on pinnedOld, with something in
 // every source setting a change of reference must leave alone, and an
-// operation of the given type in flight when one is named.
+// operation of the given type in flight when one is named. Its Job has been
+// created: the claim records its UID.
 func sourced(family operate.Family, uid types.UID, operation string) client.Object {
 	object := stored(family, uid, false, map[string]string{"owner": "shop"})
 	source := operatorv1alpha1.SourceSpec{
@@ -97,7 +98,8 @@ func sourced(family operate.Family, uid types.UID, operation string) client.Obje
 			Digest: digestOld, Verified: true}
 		if operation != "" {
 			typed.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{
-				Type: operatorv1alpha1.OperationType(operation), ID: "attempt", JobName: "ptah-" + strings.ToLower(operation)}
+				Type: operatorv1alpha1.OperationType(operation), ID: "attempt", JobName: "ptah-" + strings.ToLower(operation),
+				JobUID: "uid-job"}
 		}
 	case *operatorv1alpha1.PtahMigration:
 		typed.Spec.Artifact = source
@@ -105,7 +107,8 @@ func sourced(family operate.Family, uid types.UID, operation string) client.Obje
 		typed.Status.Artifact = &operatorv1alpha1.SourceAccessBinding{ResolvedReference: pinnedOld, Digest: digestOld}
 		if operation != "" {
 			typed.Status.ActiveOperation = &operatorv1alpha1.MigrationOperationStatus{
-				Type: operatorv1alpha1.MigrationOperationType(operation), ID: "attempt", JobName: "ptah-" + strings.ToLower(operation), Attempt: 1}
+				Type: operatorv1alpha1.MigrationOperationType(operation), ID: "attempt", JobName: "ptah-" + strings.ToLower(operation),
+				JobUID: "uid-job", Attempt: 1}
 		}
 	}
 	return object
@@ -248,8 +251,9 @@ func TestSetSourceRefusesAConfigMapOrGitSource(t *testing.T) {
 	}
 }
 
-// An Apply in flight is refused; any other operation is not, and the result
-// names it.
+// An Apply whose Job may exist is refused. An Apply claim with no Job yet is
+// not, since the change drops it before any SQL runs, and neither is any
+// other operation; the result names what is in flight.
 func TestSetSourceRefusesWhileAnApplyRuns(t *testing.T) {
 	t.Parallel()
 
@@ -258,25 +262,42 @@ func TestSetSourceRefusesWhileAnApplyRuns(t *testing.T) {
 		if family == operate.FamilyMigration {
 			readOnly = "History"
 		}
-		for _, operation := range []string{"Apply", readOnly} {
-			t.Run(string(family)+"/"+operation, func(t *testing.T) {
+		for _, row := range []struct {
+			name, operation string
+			// noJob clears the claim's Job UID: its Job was not created.
+			noJob, refused bool
+		}{
+			{name: "an Apply with its Job", operation: "Apply", refused: true},
+			{name: "an Apply claim with no Job", operation: "Apply", noJob: true},
+			{name: "a read", operation: readOnly},
+		} {
+			t.Run(string(family)+"/"+row.name, func(t *testing.T) {
 				t.Parallel()
 
+				object := sourced(family, uidA, row.operation)
+				if row.noJob {
+					switch typed := object.(type) {
+					case *operatorv1alpha1.PtahSchema:
+						typed.Status.ActiveOperation.JobUID = ""
+					case *operatorv1alpha1.PtahMigration:
+						typed.Status.ActiveOperation.JobUID = ""
+					}
+				}
 				rec := &recorder{}
-				c := rec.client(t, sourced(family, uidA, operation))
+				c := rec.client(t, object)
 
 				result, err := operate.SetSource(context.Background(), c, refOf(family), mustPin(t, pinnedNew))
 
 				var running *operate.ApplyRunningError
-				if operation == "Apply" {
+				if row.refused {
 					if !errors.As(err, &running) || running.Job != "ptah-apply" || len(rec.sent()) != 0 ||
 						referenceOf(t, read(t, c, family)) != pinnedOld {
 						t.Fatalf("err = %v after %d patches; want the Apply named and nothing sent", err, len(rec.sent()))
 					}
 					return
 				}
-				if err != nil || !result.Changed || result.Running != readOnly {
-					t.Fatalf("result = %+v, %v; want the change made and %s named", result, err, readOnly)
+				if err != nil || !result.Changed || result.Running != row.operation || referenceOf(t, read(t, c, family)) != pinnedNew {
+					t.Fatalf("result = %+v, %v; want the change made and %s named", result, err, row.operation)
 				}
 			})
 		}

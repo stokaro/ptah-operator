@@ -183,6 +183,9 @@ func writeSourceReport(out io.Writer, result operate.SourceResult, waiting bool)
 		case result.ProofOwed:
 			text.WriteString("The proof that the last Apply converged comes first: it outranks a newer generation, " +
 				"and the new reference is resolved after it.\n")
+		case result.Running == string(operatorv1alpha1.OperationApply):
+			text.WriteString("The Apply claimed from the previous spec has no Job yet: the operator drops it when it " +
+				"sees the change, and its plan does not run.\n")
 		case result.Running != "":
 			fmt.Fprintf(&text, "The %s operation in flight was decided from the previous spec; the operator discards "+
 				"its result once its Job ends.\n", statusview.Clean(result.Running))

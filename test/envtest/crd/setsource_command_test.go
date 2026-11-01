@@ -198,6 +198,9 @@ func TestKubectlPtahSetSourceAgainstTheAPIServer(t *testing.T) {
 					s.phase("Applying", 1)
 					s.operation("Apply", time.Now().UTC())
 					s.migration.Status.ActiveOperation.ExecutionBindingID = "v1-" + strings.Repeat("0", 32)
+					// The claim records that its dispatch began: its Job may
+					// exist.
+					s.migration.Status.ActiveOperation.DispatchStarted = true
 				})
 			},
 			check: func(t *testing.T, err error, ref operate.Ref) {
