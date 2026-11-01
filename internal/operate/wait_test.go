@@ -672,7 +672,43 @@ func TestWaitTargets(t *testing.T) {
 					{phase: "InSync", observedAt: at(90), applied: &appliedDoc{plan: "plan-1", uid: "plan-1-uid", fingerprint: "sha256:plan-1", completedAt: at(90)}},
 				}
 			},
-			wantTimeout: true, wantMessage: "plan plan-1 was applied before it",
+			wantTimeout: true, wantMessage: "an Apply that ends after the wait began",
+		},
+		{
+			// The plan store reuses a plan whose manifest is byte-identical,
+			// so the plan whose proof the baseline owed can be approved and
+			// applied again in the same wait. Once that proof ended, the
+			// next Apply of the plan is the wait's.
+			name: "applied: the plan whose proof the baseline owed, applied again after that proof, is the target", target: operate.TargetApplied,
+			only: operate.FamilySchema,
+			docs: func(f operate.Family) []doc {
+				first := &appliedDoc{plan: "plan-1", uid: "plan-1-uid", fingerprint: "sha256:plan-1", completedAt: at(90)}
+				return []doc{
+					{phase: "VerifyingConvergence", operation: "Observe", dispatched: true, proof: true, proofPlan: "plan-1", observedAt: at(0)},
+					{phase: "InSync", observedAt: at(90), applied: first},
+					{phase: "Applying", operation: "Apply", dispatched: true, observedAt: at(300), applied: first},
+					{phase: "VerifyingConvergence", operation: "Observe", dispatched: true, proof: true, proofPlan: "plan-1", observedAt: at(300), applied: first},
+					{phase: "InSync", observedAt: at(400), applied: &appliedDoc{plan: "plan-1", uid: "plan-1-uid", fingerprint: "sha256:plan-1", completedAt: at(400)}},
+				}
+			},
+			wantReads: 5,
+		},
+		{
+			name: "applied: the plan whose proof the baseline owed, applied again with an unknown outcome, stops the wait", target: operate.TargetApplied,
+			only: operate.FamilySchema,
+			docs: func(f operate.Family) []doc {
+				proved := operatorv1alpha1.JournalEntry{Type: operatorv1alpha1.JournalVerified, At: metav1.NewTime(at(90)), Plan: "plan-1", Outcome: operatorv1alpha1.JournalInSync}
+				return []doc{
+					{phase: "VerifyingConvergence", operation: "Plan", dispatched: true, proof: true, proofPlan: "plan-1", observedAt: at(0)},
+					{phase: "InSync", observedAt: at(90), journal: []operatorv1alpha1.JournalEntry{proved}},
+					{
+						phase: "VerifyingConvergence", proof: true, proofPlan: "plan-1", observedAt: at(90),
+						journal: []operatorv1alpha1.JournalEntry{proved,
+							{Type: operatorv1alpha1.JournalApplyFinished, At: metav1.NewTime(at(300)), Plan: "plan-1", Outcome: operatorv1alpha1.JournalUnknown}},
+					},
+				}
+			},
+			wantStop: operate.StopUnresolved, wantMessage: "plan-1",
 		},
 		{
 			name: "applied: the proof of an Apply that ended before the wait began does not stop it", target: operate.TargetApplied,

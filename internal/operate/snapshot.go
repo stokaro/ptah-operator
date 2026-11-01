@@ -371,6 +371,19 @@ func journalSince(baseline, current *operatorv1alpha1.LifecycleJournal) []operat
 	return since
 }
 
+// journalThrough is journal up to and including entry: a baseline from
+// which journalSince reports only what came after it.
+func journalThrough(journal *operatorv1alpha1.LifecycleJournal, entry operatorv1alpha1.JournalEntry) *operatorv1alpha1.LifecycleJournal {
+	through := &operatorv1alpha1.LifecycleJournal{CoveredSince: journal.CoveredSince}
+	for _, candidate := range journal.Entries {
+		through.Entries = append(through.Entries, candidate)
+		if sameEvent(candidate, entry) {
+			break
+		}
+	}
+	return through
+}
+
 // sameEvent compares two entries without the fields a later failed attempt
 // folds into an OperationFailed entry.
 func sameEvent(a, b operatorv1alpha1.JournalEntry) bool {

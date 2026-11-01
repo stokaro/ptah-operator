@@ -434,6 +434,15 @@ type waiter struct {
 	answered      bool
 	floorAtAnswer bool
 	failureFloor  failureMark
+
+	// earlier is the plan whose post-Apply proof the baseline owed, until
+	// that proof ends: its Apply ended before the wait began. The
+	// status.applied that proof writes, and the journal entries for the plan
+	// up to the proof's Verified entry, neither count nor stop the wait.
+	// The plan store reuses a byte-identical plan, so the same plan applied
+	// again later in the wait is another Apply, and counts.
+	earlier        *planRecord
+	earlierApplied bool
 }
 
 func newWaiter(ref Ref, options WaitOptions) (*waiter, error) {
@@ -492,6 +501,10 @@ func (w *waiter) begin(baseline snapshot) {
 	}
 	w.fresh = newFreshness(baseline, w.minGeneration)
 	w.failureFloor = baseline.failureMark()
+	if baseline.proof && baseline.proofPlan.name != "" {
+		earlier := baseline.proofPlan
+		w.earlier = &earlier
+	}
 	if w.options.Target != TargetRead {
 		return
 	}
@@ -635,18 +648,16 @@ func (w *waiter) checkApplied(s snapshot) verdict {
 		return w.checkRun(s)
 	}
 	b := w.baseline
-	// An Apply whose proof the baseline already owed ended before the wait
-	// began, as a migration run the baseline already recorded did: neither
-	// counts, nor stops the wait, when its proof ends.
-	before := ""
-	if b.proof {
-		before = b.proofPlan.name
-	}
 	// status.applied is written only by the proof that read the database
 	// after the Apply and found it converged.
 	if applied := s.applied; applied != nil && (b.applied == nil || applied.planUID != b.applied.planUID ||
 		!applied.completedAt.Equal(b.applied.completedAt)) {
-		if before != "" && applied.planUID == b.proofPlan.uid {
+		if w.earlier != nil && !w.earlierApplied && applied.planUID == w.earlier.uid {
+			// The proof the baseline owed credited its Apply, which ended
+			// before the wait began, as a migration run the baseline already
+			// recorded did. This record is the baseline from here on.
+			credited := *applied
+			b.applied, w.earlierApplied = &credited, true
 			return waitingFor("an Apply that ends after the wait began: plan %s was applied before it, and its "+
 				"proof ended since", applied.plan)
 		}
@@ -662,7 +673,12 @@ func (w *waiter) checkApplied(s snapshot) verdict {
 	// else (internal/lifecyclejournal); a failure it can see is a proof that
 	// did not confirm the Apply.
 	for _, entry := range journalSince(b.journal, s.journal) {
-		if before != "" && entry.Plan == before {
+		if w.earlier != nil && entry.Plan == w.earlier.name {
+			if entry.Type == operatorv1alpha1.JournalVerified {
+				// The proof the baseline owed ended here. What follows, the
+				// same plan applied again included, is the wait's.
+				b.journal, w.earlier = journalThrough(s.journal, entry), nil
+			}
 			continue
 		}
 		switch {
