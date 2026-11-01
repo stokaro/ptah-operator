@@ -264,11 +264,14 @@ func TestKubectlPtahSetSourceAgainstTheAPIServer(t *testing.T) {
 		})
 	}
 
-	// After the change the operator first answers the generation before it,
-	// then the new generation from a fresh reading with the previous
-	// artifact's state still in status, and then works from the new
-	// reference. Only the last is what the change asked for.
-	t.Run("a wait does not finish on the previous artifact", func(t *testing.T) {
+	// After the change the operator first answers the generation before it.
+	// Then status carries another artifact at the change's generation, from
+	// a fresh reading: with one writer the operator never writes that, but
+	// a second one that points the resource elsewhere and back before the
+	// operator acts leaves the same shape at a later generation, and the
+	// generation and the reading alone accept it. Only the last document is
+	// the operator's work from the new reference.
+	t.Run("a wait does not finish on another artifact", func(t *testing.T) {
 		t.Parallel()
 		for _, family := range []operate.Family{operate.FamilySchema, operate.FamilyMigration} {
 			t.Run(string(family), func(t *testing.T) {

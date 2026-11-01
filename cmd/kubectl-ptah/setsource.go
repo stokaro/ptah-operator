@@ -23,7 +23,7 @@ func setSourceCommand(ctx context.Context, arguments []string, stdout, stderr io
 	timeout := flags.Duration("timeout", apiTimeout, "how long to wait for the API server")
 	oci := flags.String("oci", "", "the OCI reference to set, pinned by digest: "+pinnedForm)
 	waiting := addWaitFlags(flags, "the operator has planned from the new reference and the resource reaches --for")
-	waitFor := flags.String("for", string(operate.TargetInSync), "what --wait waits for: in-sync or approval")
+	waitFor := flags.String("for", "", "what --wait waits for: approval or in-sync (default: whichever comes first)")
 	ref, code, done := flags.parse(arguments, stderr)
 	if done {
 		return code
@@ -46,7 +46,10 @@ func setSourceCommand(ctx context.Context, arguments []string, stdout, stderr io
 			pinnedForm, statusview.Clean(err.Error()), wherePinnedReferencesComeFrom(ref.Family, statusview.Clean(tag)))
 		return exitUsage
 	}
-	target := operate.TargetInSync
+	// Without --for a wait ends on whichever the operator reaches from the
+	// new reference: under OnApproval a plan waits for a person, and an
+	// artifact that asks for nothing the database lacks leads to no plan.
+	target := operate.TargetPlanned
 	if flags.Changed("for") {
 		// Naming what to wait for is asking to wait.
 		*waiting.wait = true
@@ -117,10 +120,14 @@ func setSourceFailed(stderr io.Writer, ref operate.Ref, pinned operate.PinnedRef
 	)
 	switch {
 	case errors.As(err, &kind):
+		replaces := "that source"
+		if kind.Kind != operate.SourceOther {
+			replaces = "the " + string(kind.Kind) + " source"
+		}
 		fmt.Fprintf(stderr, "kubectl-ptah: %s. Nothing was changed.\nset-source changes the reference of an OCI "+
-			"source and nothing else. Moving to an OCI artifact replaces the %s source and its settings, and names "+
-			"the verification policy the artifact is held to in %s.verificationPolicyFrom: that is an edit of the "+
-			"resource.\n  kubectl edit %s %s -n %s\n", statusview.Clean(kind.Error()), kind.Kind, kind.Field,
+			"source and nothing else. Moving to an OCI artifact replaces %s and its settings, and names the "+
+			"verification policy the artifact is held to in %s.verificationPolicyFrom: that is an edit of the "+
+			"resource.\n  kubectl edit %s %s -n %s\n", statusview.Clean(kind.Error()), replaces, kind.Field,
 			strings.ToLower(ref.Kind()), ref.Name, ref.Namespace)
 		return exitNotDone
 	case errors.As(err, &running):
@@ -138,10 +145,8 @@ func setSourceFailed(stderr io.Writer, ref operate.Ref, pinned operate.PinnedRef
 		return exitNotDone
 	case errors.As(err, &changed):
 		again := "Run set-source again to replace it."
-		if changed.Now.Kind == operate.SourceOCI && changed.Now.Reference == pinned.Reference {
-			again = "It holds the reference you asked for: another writer set it first."
-		} else if changed.Now.Kind != operate.SourceOCI {
-			again = "set-source changes no ConfigMap or Git source."
+		if changed.Now.Kind != operate.SourceOCI {
+			again = "set-source changes the reference of an OCI source only."
 		}
 		fmt.Fprintf(stderr, "kubectl-ptah: %s. Nothing was changed: the reference it would have replaced is "+
 			"not the one read. %s\n", statusview.Clean(changed.Error()), again)
@@ -155,9 +160,13 @@ func writeSourceReport(out io.Writer, result operate.SourceResult, waiting bool)
 	field := source.Field + ".ociRef"
 	var text strings.Builder
 	line := statusview.FieldWriter(&text, "  ", len("Requested:"))
-	if result.Changed {
+	switch {
+	case result.Changed:
 		fmt.Fprintf(&text, "Source set for %s.\n", ref)
-	} else {
+	case result.SetByAnother:
+		fmt.Fprintf(&text, "%s of %s holds that reference: another writer set it after this command read %s, "+
+			"and the API server refused this command's own change.\n", field, ref, statusview.Clean(result.Previous))
+	default:
 		fmt.Fprintf(&text, "%s of %s already holds that reference; nothing was sent.\n", field, ref)
 	}
 	line("Requested", fmt.Sprintf("%s %s, generation %d", field, statusview.Clean(result.Reference), result.Generation))
@@ -196,7 +205,7 @@ func writeSourceReport(out io.Writer, result operate.SourceResult, waiting bool)
 		}
 		text.WriteString(applyPolicyLine(ref, source.Apply) + "\n")
 	}
-	if !result.Changed && waiting {
+	if !result.Changed && !result.SetByAnother && waiting {
 		// The change this wait is about happened before it began, so the
 		// rule every wait follows leaves it the next reading.
 		fmt.Fprintf(&text, "Nothing was sent, so the wait counts only a reading that begins after it, which the "+
@@ -204,8 +213,8 @@ func writeSourceReport(out io.Writer, result operate.SourceResult, waiting bool)
 			ref.Family, ref.Name, ref.Namespace)
 	}
 	if !waiting {
-		text.WriteString("set-source --for approval waits for the plan from the new reference in the same command, " +
-			"and --for in-sync until the resource rests in sync from it; kubectl ptah wait, run later, counts only a " +
+		text.WriteString("set-source --wait waits in the same command until a plan from the new reference waits " +
+			"for an approval or the resource rests in sync from it; kubectl ptah wait, run later, counts only a " +
 			"reading that begins after it does.\n")
 	}
 	_, _ = io.WriteString(out, text.String())

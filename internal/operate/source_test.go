@@ -217,16 +217,20 @@ func TestSetSourceRefusesAConfigMapOrGitSource(t *testing.T) {
 	t.Parallel()
 
 	for _, family := range families {
-		for _, kind := range []operate.SourceKind{operate.SourceConfigMap, operate.SourceGit} {
+		for _, kind := range []operate.SourceKind{operate.SourceConfigMap, operate.SourceGit, operate.SourceOther} {
 			t.Run(string(family)+"/"+string(kind), func(t *testing.T) {
 				t.Parallel()
 
 				object := sourced(family, uidA, "")
 				source := operatorv1alpha1.SourceSpec{}
-				if kind == operate.SourceConfigMap {
+				// Other is a spec that names none of the three, as one a newer
+				// API's kind of source would read here: there is no ociRef to
+				// replace.
+				switch kind {
+				case operate.SourceConfigMap:
 					source.ConfigMap = &operatorv1alpha1.ConfigMapSourceSpec{Name: "schema",
 						Items: []operatorv1alpha1.ConfigMapSourceItem{{Key: "schema.sql", Path: "schema.sql"}}}
-				} else {
+				case operate.SourceGit:
 					source.Git = &operatorv1alpha1.GitSourceSpec{URL: "https://git.example/shop/schema",
 						Ref: operatorv1alpha1.GitRef{Branch: "main"}, Path: "schema.sql"}
 				}
@@ -314,7 +318,7 @@ func TestSetSourceDecidesAgainAfterAConflict(t *testing.T) {
 		// between is a write that lands between SetSource's read and its
 		// first patch.
 		between     func(context.Context, client.WithWatch, operate.Family) error
-		wantErr     func(error) bool
+		want        func(operate.SourceResult, error) bool
 		wantRef     string
 		wantPatches int
 	}{
@@ -323,7 +327,7 @@ func TestSetSourceDecidesAgainAfterAConflict(t *testing.T) {
 			between: func(ctx context.Context, c client.WithWatch, family operate.Family) error {
 				return writeStatus(ctx, c, family, func(object client.Object) { setPhase(object, "Resolving") })
 			},
-			wantErr: func(err error) bool { return err == nil }, wantRef: pinnedNew, wantPatches: 2,
+			want: func(result operate.SourceResult, err error) bool { return err == nil && result.Changed }, wantRef: pinnedNew, wantPatches: 2,
 		},
 		{
 			name: "the operator claims an Apply",
@@ -333,7 +337,7 @@ func TestSetSourceDecidesAgainAfterAConflict(t *testing.T) {
 					setStatusOf(object, claimed)
 				})
 			},
-			wantErr: func(err error) bool {
+			want: func(_ operate.SourceResult, err error) bool {
 				var running *operate.ApplyRunningError
 				return errors.As(err, &running)
 			},
@@ -344,7 +348,7 @@ func TestSetSourceDecidesAgainAfterAConflict(t *testing.T) {
 			between: func(ctx context.Context, c client.WithWatch, family operate.Family) error {
 				return writeReference(ctx, c, family, pinnedOther)
 			},
-			wantErr: func(err error) bool {
+			want: func(_ operate.SourceResult, err error) bool {
 				var changed *operate.SourceChangedError
 				return errors.As(err, &changed) && changed.Was == pinnedOld && changed.Now.Reference == pinnedOther &&
 					operate.Classify(err) == operate.Refused
@@ -356,9 +360,11 @@ func TestSetSourceDecidesAgainAfterAConflict(t *testing.T) {
 			between: func(ctx context.Context, c client.WithWatch, family operate.Family) error {
 				return writeReference(ctx, c, family, pinnedNew)
 			},
-			wantErr: func(err error) bool {
-				var changed *operate.SourceChangedError
-				return errors.As(err, &changed) && changed.Now.Reference == pinnedNew
+			// What the person asked for holds: the change is reached, by
+			// another writer's hand, and nothing this one sent was stored.
+			want: func(result operate.SourceResult, err error) bool {
+				return err == nil && !result.Changed && result.SetByAnother && result.Previous == pinnedOld &&
+					result.Reference == pinnedNew
 			},
 			wantRef: pinnedNew, wantPatches: 1,
 		},
@@ -370,7 +376,7 @@ func TestSetSourceDecidesAgainAfterAConflict(t *testing.T) {
 				}
 				return c.Create(ctx, sourced(family, uidB, ""))
 			},
-			wantErr: func(err error) bool { return errors.Is(err, operate.ErrReplaced) }, wantRef: pinnedOld, wantPatches: 1,
+			want: func(_ operate.SourceResult, err error) bool { return errors.Is(err, operate.ErrReplaced) }, wantRef: pinnedOld, wantPatches: 1,
 		},
 	}
 	for _, row := range rows {
@@ -387,9 +393,9 @@ func TestSetSourceDecidesAgainAfterAConflict(t *testing.T) {
 				}
 				c := rec.client(t, sourced(family, uidA, ""))
 
-				_, err := operate.SetSource(context.Background(), c, refOf(family), mustPin(t, pinnedNew))
+				result, err := operate.SetSource(context.Background(), c, refOf(family), mustPin(t, pinnedNew))
 
-				if !row.wantErr(err) || len(rec.sent()) != row.wantPatches {
+				if !row.want(result, err) || len(rec.sent()) != row.wantPatches {
 					t.Fatalf("err = %v after %d patches; want %d patches", err, len(rec.sent()), row.wantPatches)
 				}
 				if got := referenceOf(t, read(t, c, family)); got != row.wantRef {
@@ -559,57 +565,77 @@ func pointedAt(d doc, family operate.Family, reference, digest, planDigest strin
 	return object
 }
 
+// The documents a wait for a change of source reads. The change made
+// generation 4. Another writer then pointed the resource at pinnedOther,
+// which the operator worked from at generation 5, and set pinnedNew back at
+// generation 6: until the operator acts on 6, status carries the other
+// artifact at a generation past the change and from a reading after it, which
+// the generation and a fresh reading alone accept.
+
+// awaiting is a resource of family on pinnedNew at generation 6, waiting for
+// an approval of a plan computed from planned, with resolved the artifact
+// the operator resolved, as status records them at observedGeneration.
+func awaiting(family operate.Family, observedGeneration int64, observedAt int, resolved, planned string) client.Object {
+	d := doc{generation: 6, observedGeneration: observedGeneration, phase: "AwaitingApproval", observedAt: at(observedAt),
+		conditions: approvalConditions(metav1.ConditionTrue), plan: &planDoc{name: "plan-" + planned[7:10], uid: "plan-uid"}}
+	if family == operate.FamilyMigration {
+		resolved = planned
+	}
+	return pointedAt(d, family, pinnedNew, resolved, planned)
+}
+
+// resting is a resource of family on pinnedNew at generation 6, in sync from
+// digest as status records it at observedGeneration.
+func resting(family operate.Family, observedGeneration int64, observedAt int, digest string) client.Object {
+	d := doc{generation: 6, observedGeneration: observedGeneration, phase: "InSync", observedAt: at(observedAt),
+		conditions: inSyncConditions(family, observedGeneration)}
+	return pointedAt(d, family, pinnedNew, digest, "")
+}
+
+// changedTo is the answer to the change: generation 4, which the operator
+// had not observed, on the artifact before it.
+func changedTo(family operate.Family) client.Object {
+	return pointedAt(doc{generation: 4, observedGeneration: 3, phase: "InSync", observedAt: at(0),
+		conditions: inSyncConditions(family, 3)}, family, pinnedNew, digestOld, "")
+}
+
 // A wait for the source SetSource wrote counts a document only once the
-// operator worked from that reference. The documents it goes past are ones
-// the generation and a fresh reading alone accept, which each row shows by
-// waiting on them again without the source.
+// operator worked from that reference. Each row waits again without the
+// source, and that wait stops on the other writer's artifact.
 func TestWaitForASourceNeedsTheOperatorToWorkFromIt(t *testing.T) {
 	t.Parallel()
 
-	// A schema's plan is held to the digest it was computed from, which the
-	// middle document gives the previous artifact beside a resolution of the
-	// new one: the claim is about the plan a person would approve.
-	approval := func(family operate.Family, observedGeneration int64, observedAt int, resolved, planned string) client.Object {
-		d := doc{generation: 4, observedGeneration: observedGeneration, phase: "AwaitingApproval", observedAt: at(observedAt),
-			conditions: approvalConditions(metav1.ConditionTrue), plan: &planDoc{name: "plan-" + planned[7:10], uid: "plan-uid"}}
-		if family == operate.FamilyMigration {
-			resolved = planned
-		}
-		return pointedAt(d, family, pinnedNew, resolved, planned)
-	}
-	inSync := func(family operate.Family, observedGeneration int64, observedAt int, digest string) client.Object {
-		d := doc{generation: 4, observedGeneration: observedGeneration, phase: "InSync", observedAt: at(observedAt),
-			conditions: inSyncConditions(family, observedGeneration)}
-		return pointedAt(d, family, pinnedNew, digest, "")
-	}
 	rows := []struct {
 		name   string
 		target operate.Target
 		// documents is what the operator writes after the change, in the
-		// order the wait reads it; the last one is the operator's work from
-		// the new reference.
+		// order the wait reads it; the last one is its work from pinnedNew.
 		documents func(operate.Family) []client.Object
 		// wantWithout is the read a wait without the source stops at.
 		wantWithout int
 	}{
 		{
-			name: "approval: a plan from the previous artifact at the new generation", target: operate.TargetApproval,
+			// A schema's plan is held to the digest it was computed from,
+			// which the middle document gives the other artifact beside a
+			// resolution of the new one: the claim is about the plan a person
+			// would approve.
+			name: "approval: a plan from another writer's artifact", target: operate.TargetApproval,
 			documents: func(f operate.Family) []client.Object {
 				return []client.Object{
-					approval(f, 3, 0, digestOld, digestOld),
-					approval(f, 4, 30, digestNew, digestOld),
-					approval(f, 4, 60, digestNew, digestNew),
+					awaiting(f, 3, 0, digestOld, digestOld),
+					awaiting(f, 5, 30, digestNew, digestOther),
+					awaiting(f, 6, 60, digestNew, digestNew),
 				}
 			},
 			wantWithout: 2,
 		},
 		{
-			name: "in-sync: a resolution of the previous artifact at the new generation", target: operate.TargetInSync,
+			name: "in-sync: a resolution of another writer's artifact", target: operate.TargetInSync,
 			documents: func(f operate.Family) []client.Object {
 				return []client.Object{
-					inSync(f, 3, 0, digestOld),
-					inSync(f, 4, 30, digestOld),
-					inSync(f, 4, 60, digestNew),
+					resting(f, 3, 0, digestOld),
+					resting(f, 5, 30, digestOther),
+					resting(f, 6, 60, digestNew),
 				}
 			},
 			wantWithout: 2,
@@ -621,12 +647,10 @@ func TestWaitForASourceNeedsTheOperatorToWorkFromIt(t *testing.T) {
 				t.Run(string(family)+"/"+row.name+map[bool]string{true: "", false: "/without the source"}[withSource], func(t *testing.T) {
 					t.Parallel()
 
-					baseline := pointedAt(doc{generation: 4, observedGeneration: 3, phase: "InSync", observedAt: at(0),
-						conditions: inSyncConditions(family, 3)}, family, pinnedNew, digestOld, "")
 					tl := &served{objects: row.documents(family)}
 					options := operate.WaitOptions{
 						Target: row.target, Timeout: timeout, Interval: interval, Clock: newStepClock(),
-						Since: baseline, Generation: 4,
+						Since: changedTo(family), Generation: 4,
 					}
 					want := row.wantWithout
 					if withSource {
@@ -641,6 +665,66 @@ func TestWaitForASourceNeedsTheOperatorToWorkFromIt(t *testing.T) {
 				})
 			}
 		}
+	}
+}
+
+// Without --for, set-source waits for whichever the operator reaches from the
+// new reference, and the result names which.
+func TestWaitForAPlannedSourceEndsOnWhicheverTheOperatorReaches(t *testing.T) {
+	t.Parallel()
+
+	for _, row := range []struct {
+		name      string
+		documents func(operate.Family) []client.Object
+		want      operate.Target
+	}{
+		{"a plan waits for an approval", func(f operate.Family) []client.Object {
+			return []client.Object{awaiting(f, 5, 30, digestNew, digestOther), awaiting(f, 6, 60, digestNew, digestNew)}
+		}, operate.TargetApproval},
+		{"nothing to change", func(f operate.Family) []client.Object {
+			return []client.Object{resting(f, 5, 30, digestOther), resting(f, 6, 60, digestNew)}
+		}, operate.TargetInSync},
+	} {
+		for _, family := range families {
+			t.Run(string(family)+"/"+row.name, func(t *testing.T) {
+				t.Parallel()
+
+				tl := &served{objects: row.documents(family)}
+				result, err := operate.Wait(context.Background(), tl.reader(t), refOf(family), operate.WaitOptions{
+					Target: operate.TargetPlanned, Timeout: timeout, Interval: interval, Clock: newStepClock(),
+					Since: changedTo(family), Generation: 4, Source: pinnedNew,
+				})
+
+				if err != nil || result.Reads != 2 || result.Target != row.want {
+					t.Fatalf("wait = %+v, %v; want %s at read 2", result, err, row.want)
+				}
+			})
+		}
+	}
+}
+
+// A wait for an approval on a resource that rests in sync from the new
+// reference will not see a plan from it: the operator found nothing to do.
+// In sync from another writer's artifact says nothing about this one.
+func TestWaitForAnApprovalStopsWhenTheNewArtifactNeedsNoPlan(t *testing.T) {
+	t.Parallel()
+
+	for _, family := range families {
+		t.Run(string(family), func(t *testing.T) {
+			t.Parallel()
+
+			tl := &served{objects: []client.Object{resting(family, 5, 30, digestOther), resting(family, 6, 60, digestNew)}}
+			_, err := operate.Wait(context.Background(), tl.reader(t), refOf(family), operate.WaitOptions{
+				Target: operate.TargetApproval, Timeout: timeout, Interval: interval, Clock: newStepClock(),
+				Since: changedTo(family), Generation: 4, Source: pinnedNew,
+			})
+
+			var stop *operate.StopError
+			if !errors.As(err, &stop) || stop.Reason != operate.StopNothingPlanned || tl.reads != 2 ||
+				!strings.Contains(stop.Message, "rests in sync, and no plan waits") {
+				t.Fatalf("err = %v after %d reads, want a NothingPlanned stop at read 2", err, tl.reads)
+			}
+		})
 	}
 }
 
@@ -681,6 +765,8 @@ func TestWaitRefusesASourceItCannotHoldTheTargetTo(t *testing.T) {
 		{"an Apply", operate.WaitOptions{Target: operate.TargetApplied, Source: pinnedNew}, "narrows only a wait for in-sync or approval"},
 		{"suspension", operate.WaitOptions{Target: operate.TargetSuspended, Source: pinnedNew}, "narrows only a wait for in-sync or approval"},
 		{"a tag", operate.WaitOptions{Target: operate.TargetInSync, Source: "oci://registry.example/shop/storefront:1.5.0"}, "not a digest"},
+		// Only the end of a change of source is waited on as either.
+		{"approval or in-sync with no source", operate.WaitOptions{Target: operate.TargetPlanned}, "unknown wait target"},
 	} {
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()

@@ -497,21 +497,24 @@ name and not whatever a tag names later, and it resolves no tag: ptah schema
 push --format reference and ptah migrations push --format reference print the
 reference of the artifact a push wrote, and ptah oci resolve <reference> the
 one a tag names now. It sends nothing when the field already holds the
-reference, while an Apply runs, since a spec change then records the Apply's
-outcome as unknown, or when another writer changed the source after it was
-read. It changes no ConfigMap or Git source: moving to an artifact also names
-the verification policy it is held to, and that is an edit of the resource.
+reference or while an Apply runs, since a spec change then records the
+Apply's outcome as unknown, and it changes nothing when another writer changed
+the source after it was read. It changes no ConfigMap or Git source: moving to
+an artifact also names the verification policy it is held to, and that is an
+edit of the resource.
 
   --oci <reference>        required: oci://HOST/REPOSITORY@sha256:<64 hex>
   --wait                   wait until the operator has planned from the new
-                           reference and the resource reaches --for
-  --for <target>           in-sync (the default) or approval; naming one
-                           implies --wait
+                           reference: a plan waits for an approval, or the
+                           resource rests in sync, whichever comes first
+  --for <target>           approval or in-sync, to wait for that one alone;
+                           naming one implies --wait. A wait for approval
+                           stops if the resource rests in sync instead
   --wait-timeout <dur>     how long --wait waits (default 5m)
   -o, --output <format>    text (the default), or yaml or json
 
   kubectl ptah set-source schema/storefront -n application \
-    --oci oci://registry.example/acme/storefront@sha256:<digest> --for approval
+    --oci oci://registry.example/acme/storefront@sha256:<digest> --wait
 
 The operator resolves the new reference, verifies it, reads the database and
 plans again, and a plan or an approval of the previous artifact does not carry

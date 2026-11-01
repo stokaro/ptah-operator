@@ -86,7 +86,7 @@ func TestSetSourceSetsTheReferenceAndReportsWhatTheOperatorObserved(t *testing.T
 				"Once the operator observes generation 4 it resolves the new reference, checks it against the verification policy, "+reads+".",
 				"A plan or an approval from the previous artifact does not carry over.",
 				"Under spec.policy.apply OnApproval that plan waits for an approval: kubectl ptah approve "+family+"/storefront -n demo reviews it.",
-				"set-source --for approval waits for the plan from the new reference in the same command")
+				"set-source --wait waits in the same command until a plan from the new reference waits for an approval")
 			if labels := stored(t, api, family).GetLabels(); labels["team"] != "shop" {
 				t.Fatalf("set-source changed the labels to %v", labels)
 			}
@@ -307,9 +307,10 @@ func awaiting(planned string) func(client.Object) {
 }
 
 // set-source --for approval waits for a plan from the new reference. A plan
-// from the previous artifact, published at the new generation from a fresh
-// reading, is one a wait on the generation alone takes, and it is not the
-// plan this change asked for.
+// from another artifact at the change's generation, from a fresh reading, is
+// one a wait on the generation alone takes; the operator leaves that shape
+// when another writer points the resource elsewhere and back before it acts,
+// and it is not the plan this change asked for.
 func TestSetSourceWaitsForAPlanFromTheNewReference(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		api := newCluster(t, onArtifact("schema", operatorv1alpha1.ApplyPolicyOnApproval))
@@ -364,6 +365,83 @@ func TestSetSourceWaitsForTheNextReadingWhenNothingWasSent(t *testing.T) {
 			"kubectl ptah refresh migration/storefront -n demo asks for one now.",
 			"reached in-sync.", "Database:   last read at 2026-10-01T09:07:00Z")
 	})
+}
+
+// --wait alone ends on whichever the operator reaches from the new
+// reference: under OnApproval, the plan waiting for a person.
+func TestSetSourceWaitEndsOnAPlanUnderOnApproval(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		api := newCluster(t, onArtifact("schema", operatorv1alpha1.ApplyPolicyOnApproval))
+		api.then(unchanged, awaiting(newDigest))
+
+		code, stdout, stderr := runCommand(t, bumping{api}, "set-source", "schema/storefront", "--oci", newRef, "--wait")
+
+		if code != exitOK {
+			t.Fatalf("set-source --wait = %d, stdout %q, stderr %q", code, stdout, stderr)
+		}
+		requireSays(t, "set-source --wait's report", stdout, "reached approval.", "Plan:       ptah-plan-bbb")
+		requireSays(t, "set-source --wait's stderr", stderr, "to reach approval or in-sync.")
+	})
+}
+
+// --for approval on an artifact that asks for nothing the database lacks
+// stops once the operator rests in sync from it: no plan will wait.
+func TestSetSourceWaitForApprovalStopsWhenNothingIsPlanned(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		api := newCluster(t, onArtifact("migration", operatorv1alpha1.ApplyPolicyOnApproval))
+		inSync := migrationStatus(func(status *operatorv1alpha1.PtahMigrationStatus) {
+			at := metav1.NewTime(readAgainAt)
+			status.ObservedGeneration, status.History.ObservedAt = 5, at
+			status.Artifact = &operatorv1alpha1.SourceAccessBinding{ResolvedReference: newRef, Digest: newDigest}
+			for index := range status.Conditions {
+				status.Conditions[index].ObservedGeneration = 5
+			}
+		})
+		api.then(unchanged, inSync)
+
+		code, stdout, stderr := runCommand(t, bumping{api}, "set-source", "migration/storefront", "--oci", newRef, "--for", "approval")
+
+		if code != exitWillNotReach || strings.Contains(stdout, "reached") {
+			t.Fatalf("set-source --for approval on an artifact with nothing to plan = %d, stdout %q, stderr %q", code, stdout, stderr)
+		}
+		requireSays(t, "the stop", stderr, "will not reach approval: NothingPlanned.", "rests in sync, and no plan waits")
+	})
+}
+
+// racing is another writer who sets the reference to reference between the
+// command's read and its patch.
+type racing struct {
+	*cluster
+	reference string
+}
+
+func (r racing) Patch(ctx context.Context, object client.Object, patch client.Patch, options ...client.PatchOption) error {
+	stored := &operatorv1alpha1.PtahSchema{}
+	if err := r.cluster.Client.Get(ctx, client.ObjectKeyFromObject(object), stored); err != nil {
+		return err
+	}
+	stored.Spec.Desired.OCIRef = r.reference
+	if err := r.cluster.Client.Update(ctx, stored); err != nil {
+		return err
+	}
+	return r.cluster.Patch(ctx, object, patch, options...)
+}
+
+// Another writer setting the reference asked for first leaves it set: the
+// command exits 0 and says whose change it was.
+func TestSetSourceSaysWhenAnotherWriterSetTheReferenceFirst(t *testing.T) {
+	api := newCluster(t, onArtifact("schema", operatorv1alpha1.ApplyPolicyOnApproval))
+
+	code, stdout, stderr := runCommand(t, racing{api, newRef}, "set-source", "schema/storefront", "--oci", newRef)
+
+	if code != exitOK || referenceOn(t, api, "schema") != newRef {
+		t.Fatalf("set-source = %d, reference %s, stderr %q", code, referenceOn(t, api, "schema"), stderr)
+	}
+	requireSays(t, "set-source's report", stdout, "spec.desired.ociRef of ptahschema/storefront in namespace demo holds that "+
+		"reference: another writer set it after this command read "+oldRef+", and the API server refused this command's own change.")
+	if strings.Contains(stdout, "Replaced:") || strings.Contains(stdout, "nothing was sent") {
+		t.Fatalf("the report claims a change it did not make, or that it sent nothing: %q", stdout)
+	}
 }
 
 // With -o json stdout carries the resource as the API server answered the

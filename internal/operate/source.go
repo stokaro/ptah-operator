@@ -28,6 +28,9 @@ const (
 	SourceConfigMap SourceKind = "ConfigMap"
 	// SourceGit is one commit of a Git repository.
 	SourceGit SourceKind = "Git"
+	// SourceOther is a spec that names none of these, such as a kind of
+	// source a newer API added.
+	SourceOther SourceKind = "Other"
 )
 
 // Source is the source a resource's spec names, the settings that come with
@@ -91,8 +94,10 @@ func sourceKind(spec operatorv1alpha1.SourceSpec) SourceKind {
 		return SourceConfigMap
 	case spec.Git != nil:
 		return SourceGit
-	default:
+	case spec.OCIRef != "":
 		return SourceOCI
+	default:
+		return SourceOther
 	}
 }
 
@@ -181,8 +186,12 @@ type SourceResult struct {
 	// nothing was sent it is Reference.
 	Previous string
 	// Changed is false when the spec already asked for Reference and
-	// nothing was sent.
-	Changed            bool
+	// nothing was sent, or nothing sent was stored.
+	Changed bool
+	// SetByAnother is a change another writer made first: the spec came to
+	// ask for Reference between SetSource's read and its patch, which the
+	// API server refused. Changed is false.
+	SetByAnother       bool
 	UID                types.UID
 	Generation         int64
 	ObservedGeneration int64
@@ -215,6 +224,9 @@ type SourceKindError struct {
 }
 
 func (e *SourceKindError) Error() string {
+	if e.Kind == SourceOther {
+		return fmt.Sprintf("%s of %s names no OCI artifact", e.Field, e.Ref)
+	}
 	return fmt.Sprintf("%s of %s names a %s source, not an OCI artifact", e.Field, e.Ref, e.Kind)
 }
 
@@ -226,11 +238,11 @@ func (e *SourceKindError) Error() string {
 // A spec change moves the generation, which is one of the inputs an Apply
 // claim was decided from. The operator drops a claim whose Job it has not
 // created, and records one whose Job may exist as an outcome nobody
-// established, without reading the result. For a migration that is a run nobody accounted for,
-// and a reading clears that record only once nothing of the artifact is left
-// to apply: with a new artifact's versions pending, it takes a person's
-// acknowledgment. The Apply cannot take the new reference anyway; changing
-// the source after it ends costs nothing.
+// established, without reading the result. For a migration that is a run
+// nobody accounted for, and a reading clears that record only once nothing of
+// the artifact is left to apply: with a new artifact's versions pending, it
+// takes a person's acknowledgment. The Apply cannot take the new reference
+// anyway; changing the source after it ends costs nothing.
 type ApplyRunningError struct {
 	Ref Ref
 	Job string
@@ -264,10 +276,14 @@ func (e *SourceChangedError) Error() string {
 func (e *SourceChangedError) Unwrap() error { return e.sent }
 
 func describeRequest(s Source) string {
-	if s.Kind != SourceOCI {
+	switch s.Kind {
+	case SourceOCI:
+		return s.Reference
+	case SourceOther:
+		return "a source that is not an OCI artifact"
+	default:
 		return "a " + string(s.Kind) + " source"
 	}
-	return s.Reference
 }
 
 // SetSource points the resource ref names at another OCI artifact: it sets
@@ -320,6 +336,11 @@ func SetSource(ctx context.Context, c client.Client, ref Ref, pinned PinnedRefer
 			first, firstUID = &source, read.uid
 		case read.uid != firstUID:
 			return SourceResult{}, ref.failed("change", ErrReplaced)
+		case source.Kind == SourceOCI && source.Reference == pinned.Reference:
+			// What was asked for holds, by another writer's hand.
+			result := sourceResult(ref, first.Reference, false, read, source)
+			result.SetByAnother = true
+			return result, nil
 		case !source.sameRequest(*first):
 			return SourceResult{}, &SourceChangedError{Ref: ref, Field: source.Field, Was: first.Reference, Now: source, sent: lastErr}
 		}
@@ -391,9 +412,58 @@ func runningJob(object client.Object) string {
 	return ""
 }
 
-// StopSourceChanged is a wait for the source SetSource wrote on a resource
-// whose spec now names another one.
-const StopSourceChanged StopReason = "SourceChanged"
+// TargetPlanned is the end of a change of source: a plan from the new
+// reference waits for an approval, or the resource rests in sync from it,
+// whichever the operator reaches. It is waited on only with
+// WaitOptions.Source; a command line names approval or in-sync, and a
+// Result names the one that was met.
+const TargetPlanned Target = "approval or in-sync"
+
+const (
+	// StopSourceChanged is a wait for the source SetSource wrote on a
+	// resource whose spec now names another one.
+	StopSourceChanged StopReason = "SourceChanged"
+	// StopNothingPlanned is a wait for an approval of a plan from the new
+	// reference on a resource that rests in sync from it: the operator read
+	// the database after the change and found nothing to do, so no plan from
+	// that change will wait.
+	StopNothingPlanned StopReason = "NothingPlanned"
+)
+
+// checkSource decides a wait for the reference SetSource wrote. The reading
+// is looked at once per document, so the bookkeeping of which reading is
+// fresh sees each one in order, and both endings are decided from that one
+// look.
+func (w *waiter) checkSource(s snapshot) verdict {
+	fresh := w.fresh.see(s)
+	approval := w.approval(s, fresh)
+	if approval.done {
+		approval = w.sourceReached(s, TargetApproval)
+	}
+	inSync := w.inSync(s, fresh)
+	if inSync.done {
+		inSync = w.sourceReached(s, TargetInSync)
+	}
+	switch w.options.Target {
+	case TargetApproval:
+		if inSync.done {
+			return w.stop(s, StopNothingPlanned, fmt.Sprintf("the operator read the database after the change and "+
+				"found nothing %s asks for missing: the resource rests in sync, and no plan waits", w.options.Source))
+		}
+		return approval
+	case TargetInSync:
+		return inSync
+	}
+	switch {
+	case approval.done:
+		approval.reached = TargetApproval
+		return approval
+	case inSync.done:
+		inSync.reached = TargetInSync
+		return inSync
+	}
+	return waitingFor("a plan waiting for an approval (%s) or the resource in sync (%s)", approval.waiting, inSync.waiting)
+}
 
 // sourceMoved stops a wait whose resource no longer asks for the reference
 // the wait is for: whatever it plans from now is another writer's artifact.
@@ -412,12 +482,12 @@ func (w *waiter) sourceMoved(s snapshot) (verdict, bool) {
 // reading this is redundant while one writer edits the spec, and it is what
 // still holds when another set a reference in between and then set this one
 // back.
-func (w *waiter) sourceReached(s snapshot) verdict {
+func (w *waiter) sourceReached(s snapshot, target Target) verdict {
 	source, err := SourceOf(s.object)
 	if err != nil {
 		return waitingFor("a resource of a known kind")
 	}
-	if w.options.Target == TargetApproval && s.family == FamilySchema {
+	if target == TargetApproval && s.family == FamilySchema {
 		if source.PlanDigest != w.sourceDigest {
 			return waitingFor("a plan computed from %s (the current plan is from %s)", w.sourceDigest, orNone(source.PlanDigest))
 		}

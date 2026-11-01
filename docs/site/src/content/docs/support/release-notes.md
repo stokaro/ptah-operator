@@ -53,9 +53,9 @@ on the upgrade. A script that reads the text of `kubectl ptah` has to move to
   `ptah migrations push --format reference` print. It changes the reference
   and nothing else, keeps the verification policy, the registry credential, the
   transport and the apply policy, and refuses a tag, a ConfigMap or Git source,
-  and a resource with an Apply already running. With `--wait` it stays until the
-  resource is in sync from the new artifact, and with `--for approval` until a
-  plan from it waits for a decision. It needs `get` and `patch`, like suspend. [Moving to a new
+  and a resource with an Apply already running. With `--wait` it stays until a
+  plan from the new artifact waits for a decision or the resource is in sync
+  from it. It needs `get` and `patch`, like suspend. [Moving to a new
   artifact](../../use/operations/#set-source) has the rest.
 - **Exit statuses.** A write the plugin sends exits 4 when nothing was
   approved or changed, 5 when RBAC or the API server refused it, and 6 when it

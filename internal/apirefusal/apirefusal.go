@@ -1,10 +1,10 @@
 // Package apirefusal reads what the API server's answer to a failed write
 // says about it.
 //
-// kubectl ptah approve, suspend, resume, refresh and set-source send a write
-// as the person who runs them and tell that person what became of it. They ask the
-// same two questions of a failed write, and answer them here, so a refusal
-// reads the same whichever command met it.
+// kubectl ptah approve, suspend, resume, refresh and set-source send a
+// write as the person who runs them and tell that person what became of it.
+// They ask the same two questions of a failed write, and answer them here, so
+// a refusal reads the same whichever command met it.
 package apirefusal
 
 import (

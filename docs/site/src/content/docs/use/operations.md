@@ -1203,17 +1203,19 @@ set-source` is the second step:
 ```sh
 REF=$(ptah schema push oci://registry.example/acme/storefront:1.5.0 \
   --schema-file schema.sql --dialect postgres --format reference)
-kubectl ptah set-source schema/storefront -n application --oci "$REF" --for approval
+kubectl ptah set-source schema/storefront -n application --oci "$REF" --wait
 ```
 
 `ptah schema push --format reference` and `ptah migrations push --format
 reference` print the reference of the manifest the push wrote, pinned by its
 digest, and nothing else. `ptah oci resolve <reference>` prints the one a tag
 names now, which a later push may already have moved, so prefer the push's
-own answer. set-source takes `oci://HOST/REPOSITORY@sha256:<64 hex>` and
-nothing looser: a tag, a tag beside a digest, or anything the operator's own
-parser refuses is refused before the cluster is read, with exit status 2. It
-resolves no tag itself.
+own answer. A Ptah whose push has no `--format` prints the digest in its
+receipt; `ptah oci resolve` on the tag just pushed pins it, provided nothing
+pushed to that tag since. set-source takes
+`oci://HOST/REPOSITORY@sha256:<64 hex>` and nothing looser: a tag, a tag
+beside a digest, or anything the operator's own parser refuses is refused
+before the cluster is read, with exit status 2. It resolves no tag itself.
 
 It sets `spec.desired.ociRef` of a `PtahSchema` or `spec.artifact.ociRef` of a
 `PtahMigration` and no other field. The verification policy, the registry
@@ -1238,15 +1240,18 @@ Under `Always`, then, set-source can be all it takes for a new revision to
 reach the database. An artifact that asks for nothing the database lacks leads
 to no plan, and the resource returns to `InSync`.
 
-`--wait` stays until the resource rests in sync from the new reference, and
-`--for approval` until a plan computed from it waits for a decision. Both need
-the operator to have observed the generation the change made and a reading
-that began after it, and a document that still carries the previous artifact
+`--wait` stays until the operator has planned from the new reference: a plan
+computed from it waits for a decision, or the resource rests in sync from it,
+whichever comes first. `--for approval` or `--for in-sync` waits for that one
+alone, and a wait for approval stops with exit status 8 when the resource
+rests in sync instead, since no plan from the change will wait. Every ending
+needs the operator to have observed the generation the change made and a
+reading that began after it, and a document that carries another artifact
 does not count. A wait whose resource is pointed somewhere else meanwhile
 stops with exit status 8, as [any wait](#wait) does on a target it can no
 longer reach.
 
-set-source sends nothing, and exits 4, for:
+set-source changes nothing, and exits 4, for:
 
 - A ConfigMap or Git source. Moving to an artifact replaces that source and
   its settings and names the verification policy the artifact is held to,
@@ -1263,9 +1268,12 @@ set-source sends nothing, and exits 4, for:
   does not run.
 - A source another writer changed between set-source's read and its patch.
   The patch carries the `resourceVersion` of that read, so the API server
-  refuses it when anything wrote in between. set-source reads again and retries over a
-  write that changed nothing it decided from, such as the operator's own
-  status, and reports another writer's reference rather than replacing it.
+  refuses it when anything wrote in between. set-source reads again and
+  retries over a write that changed nothing it decided from, such as the
+  operator's own status, and reports another writer's reference rather than
+  replacing it. Another writer's change to the reference asked for is the
+  change made: it says so and exits 0. A resource that keeps changing under it
+  for three tries ends with the API server's conflict and exit status 5.
 
 It needs `get` and `patch` on the resource, the verbs of whoever writes desired
 state, and it changes the spec: with `approvals.requireDistinctApprover` on,
