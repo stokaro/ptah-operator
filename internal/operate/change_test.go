@@ -523,3 +523,93 @@ func TestParseRef(t *testing.T) {
 		t.Error("ParseRef with no namespace succeeded")
 	}
 }
+
+// Classify reads every way a change can fail, from the error the change
+// returned. A read refused before anything was sent is not a refused change,
+// whatever the API server said, and a 403 that admission wrote is not RBAC's.
+func TestClassifyReadsWhatBecameOfTheChange(t *testing.T) {
+	t.Parallel()
+
+	const rbac = `ptahschemas.ptah.run "storefront" is forbidden: User "dev" cannot patch resource "ptahschemas" in API group "ptah.run" in the namespace "demo"`
+	forbidden := func(message string) error {
+		return &apierrors.StatusError{ErrStatus: metav1.Status{
+			Status: metav1.StatusFailure, Code: 403, Reason: metav1.StatusReasonForbidden, Message: message,
+		}}
+	}
+	gone := apierrors.NewNotFound(resource, name)
+	for _, test := range []struct {
+		name string
+		// read answers the change's read; patch answers its patch.
+		read, patch error
+		// replace deletes the resource and creates another under its name
+		// before the patch arrives.
+		replace bool
+		want    operate.Answer
+	}{
+		{name: "RBAC refuses the patch", patch: forbidden(rbac), want: operate.Forbidden},
+		{name: "admission refuses the patch", patch: forbidden(`admission webhook "v.example" denied the request: no`), want: operate.Refused},
+		{name: "the API schema refuses the patch", patch: apierrors.NewInvalid(
+			operatorv1alpha1.GroupVersion.WithKind("PtahSchema").GroupKind(), name, nil), want: operate.Refused},
+		{name: "the API server is too busy", patch: apierrors.NewTooManyRequests("busy", 1), want: operate.Refused},
+		{name: "the patch has no answer in time", patch: context.DeadlineExceeded, want: operate.Unknown},
+		{name: "the API server fails the patch", patch: apierrors.NewInternalError(errors.New("etcd")), want: operate.Unknown},
+		{name: "the resource is gone when the patch arrives", patch: gone, want: operate.Absent},
+		{name: "the resource is replaced before the patch", replace: true, want: operate.Replaced},
+		// Refused reading, nothing sent: the 403 is RBAC's, and still not a
+		// refused change.
+		{name: "RBAC refuses the read", read: forbidden(strings.Replace(rbac, "cannot patch", "cannot get", 1)), want: operate.NotRead},
+		{name: "the read has no answer", read: context.DeadlineExceeded, want: operate.NotRead},
+		{name: "the resource is not there", read: gone, want: operate.Absent},
+	} {
+		for _, family := range families {
+			t.Run(string(family)+"/"+test.name, func(t *testing.T) {
+				t.Parallel()
+
+				changes := map[string]func(client.Client) error{
+					"suspend": func(c client.Client) error {
+						_, err := operate.SetSuspend(context.Background(), c, refOf(family), true)
+						return err
+					},
+					"refresh": func(c client.Client) error {
+						_, err := operate.Refresh(context.Background(), c, refOf(family), clockStart)
+						return err
+					},
+				}
+				for change, call := range changes {
+					rec := &recorder{}
+					rec.before = func(ctx context.Context, c client.WithWatch, _ int) error {
+						if test.replace {
+							if err := c.Delete(ctx, stored(family, uidA, false, nil)); err != nil {
+								return err
+							}
+							return c.Create(ctx, stored(family, uidB, false, nil))
+						}
+						if test.patch == gone {
+							if err := c.Delete(ctx, stored(family, uidA, false, nil)); err != nil {
+								return err
+							}
+						}
+						return test.patch
+					}
+					c := interceptor.NewClient(rec.client(t, stored(family, uidA, false, nil)), interceptor.Funcs{
+						Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+							if test.read != nil {
+								return test.read
+							}
+							return c.Get(ctx, key, obj, opts...)
+						},
+					})
+
+					err := call(c)
+
+					if got := operate.Classify(err); got != test.want {
+						t.Fatalf("%s: Classify(%v) = %s, want %s", change, err, got, test.want)
+					}
+					if sent := len(rec.sent()); (test.read != nil) != (sent == 0) {
+						t.Fatalf("%s sent %d patches after a read that answered %v", change, sent, test.read)
+					}
+				}
+			})
+		}
+	}
+}

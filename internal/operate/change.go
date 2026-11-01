@@ -12,6 +12,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/apirefusal"
 )
 
 // SuspendResult is what SetSuspend asked for and what the API server
@@ -215,8 +216,9 @@ func pointerEscape(token string) string {
 // some, met another writer and is worth building again; bare is what the
 // patch assumed, nil for a patch that does not touch annotations.
 func classifyPatchError(ctx context.Context, c client.Client, ref Ref, uid types.UID, bare *bool, patchErr error) error {
+	sent := sentError{patchErr}
 	if apierrors.IsNotFound(patchErr) {
-		return ref.failed("change", patchErr)
+		return ref.failed("change", sent)
 	}
 	current, err := ref.newObject()
 	if err != nil {
@@ -226,13 +228,68 @@ func classifyPatchError(ctx context.Context, c client.Client, ref Ref, uid types
 		if apierrors.IsNotFound(err) {
 			return ref.failed("change", err)
 		}
-		return ref.failed("change", patchErr)
+		return ref.failed("change", sent)
 	}
 	if current.GetUID() != uid {
 		return ref.failed("change", ErrReplaced)
 	}
 	if bare != nil && *bare != (len(current.GetAnnotations()) == 0) {
-		return ref.failed("change", errors.Join(errAnnotationsChanged, patchErr))
+		return ref.failed("change", errors.Join(errAnnotationsChanged, sent))
 	}
-	return ref.failed("change", patchErr)
+	return ref.failed("change", sent)
+}
+
+// sentError is the API server's answer to a patch it was sent, or the error
+// that took the place of an answer.
+type sentError struct{ err error }
+
+func (e sentError) Error() string { return e.err.Error() }
+func (e sentError) Unwrap() error { return e.err }
+
+// Answer is what an error SetSuspend or Refresh returned says about the
+// change.
+type Answer string
+
+const (
+	// NotRead is a resource that could not be read. Nothing was sent.
+	NotRead Answer = "NotRead"
+	// Absent is a resource that is not there, before the change was sent or
+	// when it arrived. Nothing was changed.
+	Absent Answer = "Absent"
+	// Replaced is ErrReplaced: the resource under the name is another one
+	// than the one read. Nothing was changed.
+	Replaced Answer = "Replaced"
+	// Forbidden is RBAC refusing the change to the identity that sent it.
+	// Nothing was changed.
+	Forbidden Answer = "Forbidden"
+	// Refused is any other definite refusal of the change: admission, the
+	// API schema, a credential the API server did not accept, or a request
+	// it was too busy to take. Nothing was changed.
+	Refused Answer = "Refused"
+	// Unknown is a change that was sent and that no answer settled: a
+	// timeout, a server error or a lost connection. It may have been
+	// stored.
+	Unknown Answer = "Unknown"
+)
+
+// Classify reads an error SetSuspend or Refresh returned. It reads the
+// API server's refusal the way kubectl ptah approve does (internal/apirefusal),
+// so a person refused by RBAC is told so in the same terms by every command
+// that writes.
+func Classify(err error) Answer {
+	var sent sentError
+	switch {
+	case errors.Is(err, ErrReplaced):
+		return Replaced
+	case apierrors.IsNotFound(err):
+		return Absent
+	case !errors.As(err, &sent):
+		return NotRead
+	case !apirefusal.Definite(sent.err):
+		return Unknown
+	case apirefusal.ByRBAC(sent.err):
+		return Forbidden
+	default:
+		return Refused
+	}
 }
