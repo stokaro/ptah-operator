@@ -3389,6 +3389,7 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 			`create_image_audit_container "$FIXTURE_BUILD_IMAGE"`,
 			`docker --context "$DOCKER_CONTEXT" export "$IMAGE_AUDIT_CONTAINER_ID" >"$IMAGE_AUDIT_ARCHIVE"`,
 		}),
+		exactSourceLine("inotify capacity before kind cluster creation", `ensure_inotify_capacity`),
 		exactSourceLineSequence("kind cluster creation", []string{
 			`kind create cluster \`,
 			`--name "$CLUSTER_NAME" \`,

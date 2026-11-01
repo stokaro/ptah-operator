@@ -1628,6 +1628,12 @@ func TestVerifyE2EHarnessRejectsCriticalMutations(t *testing.T) {
 			wantError:   "API-server feature gate contract",
 		},
 		{
+			name:        "inotify capacity check omitted",
+			old:         "ensure_inotify_capacity\n\nprintf 'e2e: creating kind cluster",
+			replacement: ": # inotify capacity check omitted\n\nprintf 'e2e: creating kind cluster",
+			wantError:   "inotify capacity before kind cluster creation",
+		},
+		{
 			name:        "kind cluster creation omitted",
 			old:         "kind create cluster \\\n",
 			replacement: "true # kind cluster creation omitted\n",
