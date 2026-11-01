@@ -395,13 +395,14 @@ const realmRecheckCeiling = time.Minute
 // realmBlockDeadline is when a refusal looks at the realm again: no later than
 // the shorter of interval and realmRecheckCeiling from now.
 //
-// A controller watches its own resource, so a status write it makes wakes it
-// again. A refusal that stamped a new next-reconciliation time on every pass
-// would differ from the stored status every time, patch every time, and wake
-// itself every time: a hot loop that never sleeps and never says why. Reusing
-// a deadline that has not passed makes the second pass a no-op write, which is
-// no write at all, and the ceiling keeps the interval between two writes at a
-// minute rather than at nothing.
+// The deadline is not the only thing that reconciles a refusal again: an
+// event of its Jobs, an approval, a verification policy ConfigMap or a
+// PtahRealm does too. A refusal that stamped a new next-reconciliation time on
+// every pass would differ from the stored status on each of those passes and
+// patch on each, and a status that moves on every look says nothing about why.
+// Reusing a deadline that has not passed makes such a pass a no-op write,
+// which is no write at all, and the ceiling keeps the interval between two
+// writes at a minute rather than at whatever the events add up to.
 //
 // Only a deadline within that bound is reused. A refusal can start in the
 // middle of a cycle, whose Resolve claim set the next refresh an interval away
