@@ -52,6 +52,13 @@ func TestRunUsagePath(t *testing.T) {
 			status:    exitUsage,
 			says:      "unknown output format",
 		},
+		// pflag returns the error and prints nothing, so the command has to.
+		{name: "a flag plan does not take", arguments: []string{"plan", "storefront", "--bogus"}, status: exitUsage, says: "unknown flag: --bogus"},
+		{name: "a flag schema does not take", arguments: []string{"schema", "storefront", "--bogus"}, status: exitUsage, says: "unknown flag: --bogus"},
+		{name: "a flag migration does not take", arguments: []string{"migration", "orders", "--bogus"}, status: exitUsage, says: "unknown flag: --bogus"},
+		{name: "a flag approve does not take", arguments: []string{"approve", "schema/storefront", "--bogus"}, status: exitUsage, says: "unknown flag: --bogus"},
+		{name: "a flag wait does not take", arguments: []string{"wait", "schema/storefront", "--bogus"}, status: exitUsage, says: "unknown flag: --bogus"},
+		{name: "a flag value that is not one", arguments: []string{"plan", "storefront", "--timeout", "soon"}, status: exitUsage, says: `invalid argument "soon"`},
 	}
 
 	for _, test := range tests {

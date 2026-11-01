@@ -49,6 +49,7 @@ func approveCommand(ctx context.Context, arguments []string, stdin io.Reader, in
 		if errors.Is(err, pflag.ErrHelp) {
 			return exitOK
 		}
+		fmt.Fprintf(stderr, "kubectl-ptah: %v\n", err)
 		return exitUsage
 	}
 	if flags.NArg() != 1 {

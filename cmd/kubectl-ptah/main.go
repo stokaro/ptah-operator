@@ -123,6 +123,7 @@ func plan(ctx context.Context, arguments []string, stdout, stderr io.Writer) int
 		if errors.Is(err, pflag.ErrHelp) {
 			return exitOK
 		}
+		fmt.Fprintf(stderr, "kubectl-ptah: %v\n", err)
 		return exitUsage
 	}
 	if flags.NArg() != 1 {
@@ -190,6 +191,7 @@ func migration(ctx context.Context, arguments []string, stdout, stderr io.Writer
 		if errors.Is(err, pflag.ErrHelp) {
 			return exitOK
 		}
+		fmt.Fprintf(stderr, "kubectl-ptah: %v\n", err)
 		return exitUsage
 	}
 	if flags.NArg() != 1 {
@@ -247,6 +249,7 @@ func schema(ctx context.Context, arguments []string, stdout, stderr io.Writer) i
 		if errors.Is(err, pflag.ErrHelp) {
 			return exitOK
 		}
+		fmt.Fprintf(stderr, "kubectl-ptah: %v\n", err)
 		return exitUsage
 	}
 	if flags.NArg() != 1 {
