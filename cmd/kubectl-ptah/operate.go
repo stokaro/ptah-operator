@@ -215,8 +215,8 @@ func writeSuspendReport(out io.Writer, result operate.SuspendResult, waiting boo
 			"was decided from, so the operator records the run as one nobody accounted for (Unknown) without reading "+
 			"its result. %s shows the record once the Job has ended.\n", view)
 	case result.Suspend && result.Running == string(operatorv1alpha1.OperationApply):
-		fmt.Fprintf(&text, "The Apply runs to its end: suspension cancels no SQL. The proof that it converged waits for "+
-			"resume, and until then the schema keeps its database lock, so other resources on that database start "+
+		text.WriteString("The Apply runs to its end: suspension cancels no SQL. The proof that it converged waits for " +
+			"resume, and until then the schema keeps its database lock, so other resources on that database start " +
 			"nothing that changes it.\n")
 	case result.Suspend && result.Running != "":
 		fmt.Fprintf(&text, "The %s operation runs to its end: suspension starts no new Job and cancels nothing.\n",
@@ -322,7 +322,7 @@ func changeFailed(stderr io.Writer, ref operate.Ref, verb string, err error) int
 	case operate.Unknown:
 		again := "Running it again sends nothing when spec.suspend already holds the value."
 		if verb == "refresh" {
-			again = "Running it again writes a newer request, and the operator reads once for the two."
+			again = "Running it again writes a newer request in its place, which asks for one more read at most."
 		}
 		fmt.Fprintf(stderr, "kubectl-ptah: %s\nThe change was sent and no answer said whether it was stored. %s "+
 			"shows what is stored. %s\n", message, viewCommand(ref), again)
