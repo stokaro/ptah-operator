@@ -46,8 +46,10 @@ const (
 	// exitNotDone covers a decision or a change this program did not make:
 	// approve's plan changed during review, the operator would not admit an
 	// approval now, the fingerprint given is not the current plan's, or the
-	// person declined; or the resource suspend, resume or refresh read was
-	// deleted and created again before the change reached it.
+	// person declined; the resource suspend, resume, refresh or set-source
+	// read was deleted and created again before the change reached it; or
+	// set-source met a source that is not an OCI artifact, an Apply running,
+	// or a source another writer changed after it was read.
 	exitNotDone = 4
 	// exitRefused covers a write the API server refused with a 4xx, in its
 	// own words: RBAC, admission, the schema, a name already taken, a
@@ -92,6 +94,8 @@ func run(ctx context.Context, arguments []string, stdout, stderr io.Writer) int 
 		return refreshCommand(ctx, arguments[1:], stdout, stderr)
 	case "wait":
 		return waitCommand(ctx, arguments[1:], stdout, stderr)
+	case "set-source":
+		return setSourceCommand(ctx, arguments[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "kubectl-ptah: unknown command %q\n\n", arguments[0])
 		usage(stderr)
@@ -366,6 +370,7 @@ func usage(out io.Writer) {
        kubectl ptah suspend schema/<name>|migration/<name> [flags]
        kubectl ptah resume schema/<name>|migration/<name> [flags]
        kubectl ptah refresh schema/<name>|migration/<name> [flags]
+       kubectl ptah set-source schema/<name>|migration/<name> --oci <reference> [flags]
        kubectl ptah wait schema/<name>|migration/<name> --for <target> [flags]
 
 plan prints the SQL of a plan the Ptah operator stored, after the operator's
@@ -483,6 +488,37 @@ does not mean the read has happened.
   kubectl ptah resume migration/orders -n application --for approval
   kubectl ptah refresh migration/orders -n application --wait
 
+set-source points a schema or a migration at another OCI artifact. It sets
+spec.desired.ociRef of a schema or spec.artifact.ociRef of a migration and
+nothing else: the verification policy, the registry credential, the transport
+and the apply policy stay as they are, and the new artifact is held to them.
+It takes the reference pinned by digest, so the resource runs the artifact you
+name and not whatever a tag names later, and it resolves no tag: ptah schema
+push --format reference and ptah migrations push --format reference print the
+reference of the artifact a push wrote, and ptah oci resolve <reference> the
+one a tag names now. It sends nothing when the field already holds the
+reference, while an Apply runs, since a spec change then records the Apply's
+outcome as unknown, or when another writer changed the source after it was
+read. It changes no ConfigMap or Git source: moving to an artifact also names
+the verification policy it is held to, and that is an edit of the resource.
+
+  --oci <reference>        required: oci://HOST/REPOSITORY@sha256:<64 hex>
+  --wait                   wait until the operator has planned from the new
+                           reference and the resource reaches --for
+  --for <target>           in-sync (the default) or approval; naming one
+                           implies --wait
+  --wait-timeout <dur>     how long --wait waits (default 5m)
+  -o, --output <format>    text (the default), or yaml or json
+
+  kubectl ptah set-source schema/storefront -n application \
+    --oci oci://registry.example/acme/storefront@sha256:<digest> --for approval
+
+The operator resolves the new reference, verifies it, reads the database and
+plans again, and a plan or an approval of the previous artifact does not carry
+over. Under apply policy OnApproval the new plan waits for an approval; under
+Always it runs without a person, except a schema plan that is destructive or
+changes privileges.
+
 wait reads a schema or a migration until it reaches a target, and counts
 nothing that was already true when it began: a reading of the database has to
 begin after the wait does, and for in-sync, approval and suspended the
@@ -508,17 +544,18 @@ A wait that times out names the phase, the condition that holds the resource
 and what it still waits for. One that cannot reach its target, such as an
 Apply that failed or a run whose outcome nobody established, stops at once.
 
-suspend, resume and refresh patch the resource as you: they need get and
-patch on ptahschemas or ptahmigrations. wait needs get. The resource is named
+suspend, resume, refresh and set-source patch the resource as you: they need
+get and patch on ptahschemas or ptahmigrations. wait needs get. The resource is named
 as schema/NAME or migration/NAME, or by the kind's plural or short name as
 kubectl spells it.
 
 Exit status: 0 printed, changed or reached, 1 could not read or verify, 2
 usage, 3 nothing stored to print, approve, change or wait on, 4 nothing
 approved or changed (the plan changed, the operator would not admit an
-approval now, the fingerprint is not the current plan's, you declined, or the
-resource was deleted and created again), 5 refused by RBAC or the API server,
-6 sent with no answer: the change may have been stored, 7 the wait timed out,
-8 the resource will not reach the target.
+approval now, the fingerprint is not the current plan's, you declined, the
+resource was deleted and created again, or set-source met a source that is not
+an OCI artifact, an Apply running, or a source changed after it was read), 5
+refused by RBAC or the API server, 6 sent with no answer: the change may have
+been stored, 7 the wait timed out, 8 the resource will not reach the target.
 `)
 }

@@ -358,8 +358,11 @@ func changeFailed(stderr io.Writer, ref operate.Ref, verb string, err error) int
 		return exitRefused
 	case operate.Unknown:
 		again := "Running it again sends nothing when spec.suspend already holds the value."
-		if verb == "refresh" {
+		switch verb {
+		case "refresh":
 			again = "Running it again writes a newer request in its place, which asks for one more read at most."
+		case "set-source":
+			again = "Running it again sends nothing when the spec already holds the reference."
 		}
 		fmt.Fprintf(stderr, "kubectl-ptah: %s\nThe change was sent and no answer said whether it was stored. %s "+
 			"shows what is stored. %s\n", message, viewCommand(ref), again)
