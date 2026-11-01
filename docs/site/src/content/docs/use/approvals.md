@@ -183,9 +183,11 @@ identity at all, with a reason that says so.
 
 Editing spec after a plan is awaiting approval already retires that plan and
 its binding, so a fresh plan is always judged against whoever most recently
-changed the spec it was computed from. `kubectl ptah suspend` and `resume`
-change only `spec.suspend` and record nobody, and `kubectl ptah refresh`
-writes an annotation, changes no spec, and records nobody either.
+changed the spec it was computed from. `kubectl ptah set-source` changes the
+artifact reference in spec, so whoever runs it becomes that identity.
+`kubectl ptah suspend` and `resume` change only `spec.suspend` and record
+nobody, and `kubectl ptah refresh` writes an annotation, changes no spec, and
+records nobody either.
 
 The mutating webhook that stamps the two annotations is itself installed only
 while the switch is on, so a schema or migration written before an

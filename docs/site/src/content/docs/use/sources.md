@@ -23,6 +23,13 @@ exact files the plan was computed from.
 [Reconciliation](../../reference/reconciliation/#a-configmap-source) says how
 each source is resolved and what each operation checks.
 
+Moving a resource from one kind of source to another is an edit of its spec,
+in its manifest or with `kubectl edit`. `kubectl ptah set-source` changes the
+reference of an OCI source and refuses a ConfigMap or Git one: an artifact
+also takes a verification policy, which those two sources refuse, and only
+the person making the edit can name it.
+[Moving to a new artifact](../operations/#set-source) has the OCI case.
+
 ## From a ConfigMap
 
 `configMap` names a ConfigMap and the keys that become files:
