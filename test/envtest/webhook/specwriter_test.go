@@ -202,6 +202,28 @@ func TestSpecWriterStampingAndFourEyes(t *testing.T) {
 		t.Fatalf("a metadata-only update changed the recorded writer: %v", afterLabel.Annotations)
 	}
 
+	// Someone else suspends the schema and resumes it. That changes when the
+	// operator acts and not what it plans, so the author stays the recorded
+	// writer; otherwise the toggle would clear the author to approve their own
+	// edit below.
+	for _, suspend := range []string{"true", "false"} {
+		toggled := &operatorv1alpha1.PtahSchema{ObjectMeta: metav1.ObjectMeta{Namespace: fixture.namespace, Name: fixture.schema.Name}}
+		togglePatch := []byte(`{"spec": {"suspend": ` + suspend + `}}`)
+		if err := admin.Patch(ctx, toggled, client.RawPatch(types.MergePatchType, togglePatch)); err != nil {
+			t.Fatalf("suspend=%s patch of %s was refused: %v", suspend, fixture.schema.Name, err)
+		}
+		afterToggle := &operatorv1alpha1.PtahSchema{}
+		if err := admin.Get(ctx, client.ObjectKeyFromObject(fixture.schema), afterToggle); err != nil {
+			t.Fatal(err)
+		}
+		if afterToggle.Spec.Suspend != (suspend == "true") {
+			t.Fatalf("suspend=%s did not persist", suspend)
+		}
+		if afterToggle.Annotations[wantUsername] != specAuthorName || afterToggle.Annotations[wantUID] != specAuthorUID {
+			t.Fatalf("suspend=%s by another identity changed the recorded writer: %v", suspend, afterToggle.Annotations)
+		}
+	}
+
 	// The installation requires a distinct approver, and the author is the
 	// one who last changed this schema's spec: their own approval is refused.
 	selfApproval := fixture.approval("approve-by-author", fixture.plan.Spec.Fingerprint)

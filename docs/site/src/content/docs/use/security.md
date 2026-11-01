@@ -364,7 +364,8 @@ One consequence follows directly: a resource written while the switch was off
 carries no recorded writer, and turning the switch on does not retroactively
 supply one. Its approvals are refused, by the same "no spec writer is
 recorded" reason a missing annotation always produces, until its spec is next
-changed and the now-installed webhook has a write to stamp. An installer
+changed and the now-installed webhook has a write to stamp. Suspending or
+resuming it is not such a change: the webhook does not count `spec.suspend`. An installer
 turning this on should expect that gap, not read it as the control
 misbehaving.
 
