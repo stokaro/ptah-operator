@@ -419,7 +419,7 @@ it as the person who decided, with kubectl create rather than apply.
 Exit status: 0 printed or approved, 1 could not read or verify, 2 usage, 3
 nothing stored to print or approve, 4 nothing approved (the plan changed, the
 operator would not admit an approval now, the fingerprint is not the current
-plan's, or you declined), 5 refused by RBAC or admission, 6 sent with no
-answer: the approval may have been stored.
+plan's, or you declined), 5 refused by RBAC or the API server, 6 sent with
+no answer: the approval may have been stored.
 `)
 }

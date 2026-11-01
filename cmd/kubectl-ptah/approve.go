@@ -26,8 +26,10 @@ const (
 	// plan changed during review, the operator would not admit one now, the
 	// fingerprint given is not the current plan's, or the person declined.
 	exitNotApproved = 4
-	// exitRefused covers an approval the API server refused: RBAC or
-	// admission, in their own words.
+	// exitRefused covers an approval the API server refused with a 4xx, in
+	// its own words: RBAC, admission, the schema, a name already taken, a
+	// credential it did not accept, or a request it was too busy to take.
+	// Nothing was stored.
 	exitRefused = 5
 	// exitUnknown covers an approval that was sent and whose fate no answer
 	// told. It may have been stored.

@@ -490,7 +490,8 @@ carry it.
 
 `kubectl ptah approve` reads the resource and its current plan with `get`,
 and for a schema the plan's chunks too, to show the SQL. It lists no
-approvals. It creates the approval as you, so it needs `create` on
+approvals, and gets one only to say what holds a name `--name` asked for that
+is already taken. It creates the approval as you, so it needs `create` on
 `ptahschemaapprovals` or `ptahmigrationapprovals` as well. The chart's approver
 ClusterRole carries both.
 
