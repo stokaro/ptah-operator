@@ -17,6 +17,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/stokaro/ptah-operator/internal/approve"
+	"github.com/stokaro/ptah-operator/internal/operate"
 	"github.com/stokaro/ptah-operator/internal/statusview"
 )
 
@@ -41,6 +42,8 @@ func approveCommand(ctx context.Context, arguments []string, stdin io.Reader, in
 		kubeconfig  = flags.String("kubeconfig", "", "path to a kubeconfig file (default: KUBECONFIG, then ~/.kube/config)")
 		kubeContext = flags.String("context", "", "kubeconfig context to use (default: the current one)")
 		timeout     = flags.Duration("timeout", 30*time.Second, "how long to wait for the API server")
+		wait        = flags.Bool("wait", false, "once the approval is stored, wait until the operator has applied the plan and read the database afterwards")
+		waitTimeout = flags.Duration("wait-timeout", defaultWaitTimeout, "how long --wait waits")
 	)
 	if err := flags.Parse(arguments); err != nil {
 		if errors.Is(err, pflag.ErrHelp) {
@@ -62,6 +65,14 @@ func approveCommand(ctx context.Context, arguments []string, stdin io.Reader, in
 	case "none", "client", "server":
 	default:
 		fmt.Fprintf(stderr, "kubectl-ptah: --dry-run is none, client or server, not %q\n", *dryRun)
+		return exitUsage
+	}
+	switch {
+	case *wait && *dryRun != "none":
+		fmt.Fprintf(stderr, "kubectl-ptah: --wait waits for the Apply an approval allows, and a dry run stores no approval\n")
+		return exitUsage
+	case *wait && *waitTimeout <= 0:
+		fmt.Fprintf(stderr, "kubectl-ptah: --wait-timeout has to be longer than zero, not %s\n", *waitTimeout)
 		return exitUsage
 	}
 	switch *output {
@@ -160,11 +171,24 @@ func approveCommand(ctx context.Context, arguments []string, stdin io.Reader, in
 
 	submitCtx, cancelSubmit := context.WithTimeout(ctx, *timeout)
 	defer cancelSubmit()
+	target := operate.Ref{Family: operate.Family(family), Namespace: resolved, Name: resource}
+	var baseline client.Object
+	if *wait {
+		// The resource before the approval exists is the wait's baseline: no
+		// Apply it records can be one this approval allowed.
+		if baseline, err = readResource(submitCtx, cluster, target); err != nil {
+			fmt.Fprintf(stderr, "kubectl-ptah: %v\nNothing was approved.\n", err)
+			return exitFailed
+		}
+	}
 	result := approve.Submit(submitCtx, cluster, review, approve.Options{Name: *name, ServerDryRun: *dryRun == "server"})
 	switch result.Outcome {
 	case approve.Admitted, approve.Previewed:
 		if *output != "text" {
-			return printObject(stdout, stderr, result.Approval, *output)
+			if code := printObject(stdout, stderr, result.Approval, *output); code != exitOK || !*wait {
+				return code
+			}
+			return waitForApply(ctx, cluster, target, review, baseline, *waitTimeout, false, stdout, stderr)
 		}
 		approver, at := result.Approver()
 		verb := "Approved"
@@ -178,6 +202,9 @@ func approveCommand(ctx context.Context, arguments []string, stdin io.Reader, in
 		fmt.Fprintf(stdout, "%s: %s %s/%s, recorded by admission as %s%s.\nIt binds plan %s, fingerprint %s.\n",
 			verb, family.ApprovalKind(), resolved, result.Approval.GetName(), statusview.Clean(approver), when,
 			review.PlanName, statusview.Clean(review.Fingerprint))
+		if *wait {
+			return waitForApply(ctx, cluster, target, review, baseline, *waitTimeout, true, stdout, stderr)
+		}
 		if result.Outcome == approve.Admitted {
 			fmt.Fprintf(stdout, "The operator runs it under the resource's policy; kubectl ptah %s %s -n %s shows how far it got.\n", family, resource, resolved)
 		}
@@ -220,4 +247,20 @@ func printObject(stdout, stderr io.Writer, object client.Object, format string) 
 		return exitFailed
 	}
 	return exitOK
+}
+
+// waitForApply waits for the operator to apply the plan an approval was
+// stored for, and to read the database afterwards. For a schema only that
+// plan counts; a migration run records no plan.
+func waitForApply(ctx context.Context, reader client.Reader, ref operate.Ref, review approve.Review, baseline client.Object,
+	timeout time.Duration, text bool, stdout, stderr io.Writer) int {
+	options := operate.WaitOptions{Target: operate.TargetApplied, Timeout: timeout, Since: baseline}
+	if ref.Family == operate.FamilySchema {
+		options.Plan = review.PlanName
+	}
+	result, code := waitFor(ctx, reader, ref, options, text, stderr)
+	if code == exitOK && text {
+		writeReached(stdout, result)
+	}
+	return code
 }

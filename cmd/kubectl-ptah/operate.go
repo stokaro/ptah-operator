@@ -419,6 +419,18 @@ func waitFor(ctx context.Context, reader client.Reader, ref operate.Ref, options
 	return result, exitOK
 }
 
+// readResource reads the resource ref names, as a baseline for a wait.
+func readResource(ctx context.Context, reader client.Reader, ref operate.Ref) (client.Object, error) {
+	var object client.Object = &operatorv1alpha1.PtahSchema{}
+	if ref.Family == operate.FamilyMigration {
+		object = &operatorv1alpha1.PtahMigration{}
+	}
+	if err := reader.Get(ctx, client.ObjectKey{Namespace: ref.Namespace, Name: ref.Name}, object); err != nil {
+		return nil, fmt.Errorf("read %s: %w", ref, err)
+	}
+	return object, nil
+}
+
 func writeReached(out io.Writer, result operate.Result) {
 	ref := result.Ref
 	status := statusOf(result.Object)

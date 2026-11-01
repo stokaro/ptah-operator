@@ -14,6 +14,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8sschema "k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/yaml"
@@ -591,6 +592,8 @@ func TestOperateUsage(t *testing.T) {
 		{"wait", "migration/orders", "--for", "applied", "--plan", "ptah-mplan-1"},
 		{"wait", "schema/storefront", "--for", "approval", "--plan", "ptah-plan-1"},
 		{"wait", "schema/storefront", "--for", "in-sync", "--timeout", "0s"},
+		{"approve", "schema/storefront", "--wait", "--dry-run", "client"},
+		{"approve", "schema/storefront", "--wait", "--dry-run", "server"},
 	} {
 		t.Run(strings.Join(arguments, " "), func(t *testing.T) {
 			t.Parallel()
@@ -603,4 +606,81 @@ func TestOperateUsage(t *testing.T) {
 			}
 		})
 	}
+}
+
+// approve --wait waits from the resource as it was before the approval
+// existed, for the plan it approved and no other. Here the operator applies
+// the plan before the wait's first read: only a baseline read before the
+// create tells that Apply apart from one recorded earlier.
+func TestApproveWaitsForTheApplyOfThePlanItApproved(t *testing.T) {
+	applied := func(plan string) func(*operatorv1alpha1.PtahSchemaStatus) {
+		return func(status *operatorv1alpha1.PtahSchemaStatus) {
+			at := metav1.NewTime(readAgainAt)
+			status.Phase, status.ActiveOperation, status.Target.LastObservedAt = operatorv1alpha1.PhaseInSync, nil, &at
+			status.Applied = &operatorv1alpha1.AppliedStatus{
+				PlanRef: operatorv1alpha1.ImmutableObjectReference{Name: plan, UID: types.UID("uid-" + plan)}, PlanFingerprint: "sha256:" + plan,
+				CompletedAt: at,
+			}
+		}
+	}
+	for _, test := range []struct {
+		name string
+		plan func(current string) string
+		code int
+		says string
+	}{
+		{"the approved plan", func(current string) string { return current }, exitOK, "reached applied."},
+		{"another plan", func(string) string { return "ptah-plan-another" }, exitWillNotReach, "OtherPlanApplied"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				api, fingerprint := approvable(t, nil)
+				current := planOf(t, api)
+				waiting := &afterApproval{admitting: api, steps: []func(*operatorv1alpha1.PtahSchemaStatus){
+					applied(test.plan(current)),
+				}}
+
+				code, stdout, stderr := runApproveWith(t, waiting, planreadtest.Namespace, strings.NewReader(""), false,
+					"schema/storefront", "--plan-fingerprint", fingerprint, "--wait")
+
+				if code != test.code || len(api.created) != 1 {
+					t.Fatalf("approve --wait = %d after %d creates; stdout %q, stderr %q", code, len(api.created), stdout, stderr)
+				}
+				requireSays(t, "approve --wait's output", stdout+stderr, "Approved:", test.says)
+			})
+		})
+	}
+}
+
+// afterApproval is the API server with the operator applying a plan once an
+// approval exists: each read of the schema after the create first applies
+// the next step to its status.
+type afterApproval struct {
+	*admitting
+	steps []func(*operatorv1alpha1.PtahSchemaStatus)
+}
+
+func (a *afterApproval) Get(ctx context.Context, key client.ObjectKey, object client.Object, options ...client.GetOption) error {
+	if _, schema := object.(*operatorv1alpha1.PtahSchema); schema && len(a.created) > 0 && len(a.steps) > 0 {
+		step := a.steps[0]
+		a.steps = a.steps[1:]
+		stored := &operatorv1alpha1.PtahSchema{}
+		if err := a.admitting.Get(ctx, key, stored); err != nil {
+			return err
+		}
+		step(&stored.Status)
+		if err := a.admitting.Status().Update(ctx, stored); err != nil {
+			return err
+		}
+	}
+	return a.admitting.Get(ctx, key, object, options...)
+}
+
+func planOf(t *testing.T, api client.Client) string {
+	t.Helper()
+	schema := &operatorv1alpha1.PtahSchema{}
+	if err := api.Get(context.Background(), client.ObjectKey{Namespace: planreadtest.Namespace, Name: "storefront"}, schema); err != nil {
+		t.Fatalf("read the schema: %v", err)
+	}
+	return schema.Status.Plan.Name
 }
