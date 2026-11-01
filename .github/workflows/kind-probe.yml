@@ -17,12 +17,17 @@ jobs:
       fail-fast: false
       matrix:
         runner: [ubuntu-26.04, ubuntu-24.04]
-        proxy: [iptables, nftables]
+        proxy: [iptables]
+        inotify: [default, raised]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     steps:
+      - name: Raise inotify limits
+        if: matrix.inotify == 'raised'
+        run: sudo sysctl -w fs.inotify.max_user_instances=8192 fs.inotify.max_user_watches=524288
       - name: Host
         run: |
+          sysctl fs.inotify
           uname -a
           cat /etc/os-release | head -3
           docker version --format '{{.Server.Version}}'
@@ -57,7 +62,9 @@ jobs:
         if: always()
         run: |
           kubectl get nodes -o wide || true
+          sleep 60
           kubectl -n kube-system get pods -o wide || true
+          echo "kube-proxy restarts: $(kubectl -n kube-system get pods -l k8s-app=kube-proxy -o jsonpath='{range .items[*]}{.status.containerStatuses[0].restartCount}{" "}{end}')"
           for pod in $(kubectl -n kube-system get pods -l k8s-app=kube-proxy -o name 2>/dev/null); do
             echo "== $pod"; kubectl -n kube-system logs "$pod" --tail=40 || true
             kubectl -n kube-system logs "$pod" --previous --tail=40 || true
