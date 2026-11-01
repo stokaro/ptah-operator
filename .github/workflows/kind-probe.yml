@@ -1,0 +1,69 @@
+name: Kind probe on ubuntu-26.04
+
+# Throwaway: collects why kind clusters fail on the ubuntu-26.04 runner image.
+# This pull request is closed without merging.
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/kind-probe.yml
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-26.04, ubuntu-24.04]
+        proxy: [iptables, nftables]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - name: Host
+        run: |
+          uname -a
+          cat /etc/os-release | head -3
+          docker version --format '{{.Server.Version}}'
+          stat -fc %T /sys/fs/cgroup
+          lsmod | grep -E '^(ip_tables|iptable_|x_tables|nf_tables|nft_|ip6_tables)' || true
+          sudo iptables -V || true
+          ls /lib/modules/$(uname -r)/kernel/net/ipv4/netfilter/ 2>/dev/null | head -40 || true
+      - name: Install kind
+        run: |
+          curl -fsSLo kind https://kind.sigs.k8s.io/dl/v0.33.0/kind-linux-amd64
+          chmod +x kind && sudo mv kind /usr/local/bin/kind
+          curl -fsSLo kubectl https://dl.k8s.io/release/v1.37.0/bin/linux/amd64/kubectl
+          chmod +x kubectl && sudo mv kubectl /usr/local/bin/kubectl
+      - name: Create a cluster shaped like the e2e lab
+        continue-on-error: true
+        run: |
+          cat > kind.yaml <<KIND
+          kind: Cluster
+          apiVersion: kind.x-k8s.io/v1alpha4
+          networking:
+            kubeProxyMode: ${{ matrix.proxy }}
+          nodes:
+            - role: control-plane
+            - role: control-plane
+            - role: control-plane
+            - role: worker
+          KIND
+          kind create cluster --name probe --config kind.yaml \
+            --image kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5 \
+            --retain --wait 5m
+      - name: What ran
+        if: always()
+        run: |
+          kubectl get nodes -o wide || true
+          kubectl -n kube-system get pods -o wide || true
+          for pod in $(kubectl -n kube-system get pods -l k8s-app=kube-proxy -o name 2>/dev/null); do
+            echo "== $pod"; kubectl -n kube-system logs "$pod" --tail=40 || true
+            kubectl -n kube-system logs "$pod" --previous --tail=40 || true
+          done
+          for node in $(kind get nodes --name probe 2>/dev/null); do
+            echo "== kubelet on $node"
+            docker exec "$node" journalctl -u kubelet --no-pager | grep -iE 'error|fail|cgroup' | tail -25 || true
+            docker exec "$node" sh -c 'iptables -V; update-alternatives --display iptables 2>/dev/null | head -3' || true
+          done
