@@ -81,8 +81,10 @@ du manager. `kubectl ptah` le lit comme le fait l’opérateur :
 kubectl ptah plan storefront --applied -n application -o sql
 ```
 
-Ce client en lecture seule est publié avec chaque version sous forme de plugin
-`kubectl` pour les plateformes clientes prises en charge.
+Ce client est publié avec chaque version sous forme de plugin `kubectl` pour
+les plateformes clientes prises en charge. Ses commandes de lecture ne font que
+lire ; `kubectl ptah approve` crée, en votre nom, l’approbation d’un plan que
+vous avez relu, et requiert `create` sur les types d’approbation.
 [Lire un plan](https://operator.ptah.run/edge/use/read-a-plan/#install)
 décrit son installation et les droits RBAC requis dans le namespace.
 

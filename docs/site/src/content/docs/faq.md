@@ -168,8 +168,8 @@ approving hashes without reading the SQL is not an independent review.
 ### How do I see the SQL a plan holds? {#read-a-plan}
 
 `kubectl ptah plan <schema> -n <namespace>` prints it, and `--applied` prints what
-the last confirmed apply ran instead of what would run next. The plugin is a
-read-only client published with each release and installed once; it reads every
+the last confirmed apply ran instead of what would run next. The plugin is
+published with each release and installed once, and `plan` only reads: it reads every
 chunk, checks each against the digest and size the plan records, joins them in
 order and checks the whole document before printing a line. Decoding the chunks
 by hand is not the supported way to read a plan, and it is wrong for

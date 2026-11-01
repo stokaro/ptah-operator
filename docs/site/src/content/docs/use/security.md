@@ -595,9 +595,11 @@ schema names, defaults, comments, and literals may still be sensitive. Restrict
 `PtahSchemaPlanChunk` read access in application namespaces accordingly. One
 rule on that kind reads every plan in the namespace, and the built-in approver
 role carries it, as described in [Exact-plan approvals](../approvals/). What
-that access is used with is `kubectl ptah`, a read-only client that needs `get`
-on the schema, the plan and its chunks and nothing else, and lists approvals
-only where `list` on them is granted;
+that access is used with is `kubectl ptah`. Its read commands only read: they
+need `get` on the schema, the plan and its chunks and nothing else, and list
+approvals only where `list` on them is granted. `kubectl ptah approve` creates
+an approval as the person who runs it, and needs `create` on the approval kinds
+as well;
 [Read a plan](../read-a-plan/) carries the Role and the
 [install](../read-a-plan/#install).
 
