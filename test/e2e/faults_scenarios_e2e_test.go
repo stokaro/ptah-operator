@@ -600,12 +600,26 @@ func (f *faultRun) sharedAlias() {
 	// claimant made the same statement. A contested realm is looked at again
 	// at most a minute later whatever interval the resource runs on, so
 	// ninety seconds is long enough for both claimants to look again and
-	// still refuse. Waiting it out is the assertion.
+	// still refuse. Waiting it out is the assertion, and each read holds the
+	// refusal to that minute as well: a claimant that stopped looking would
+	// hold the refusal just as well, and be found only once the last
+	// declaration left it waiting out its own interval.
 	f.patchSchema(schemaA, map[string]any{"spec": map[string]any{"target": map[string]any{"sharedRealm": true}}})
 	for window := time.Now().Add(90 * time.Second); time.Now().Before(window); {
 		for _, contested := range []string{schemaA, schemaB} {
-			if !realmConflictHeld(f.schema(contested)) {
+			reading := f.schema(contested)
+			readAt := time.Now()
+			if !realmConflictHeld(reading) {
 				f.fatalf("%s left the refusal while one claimant had not declared the realm shared", contested)
+			}
+			if !realmRecheckScheduled(reading, readAt) {
+				next := "none"
+				if deadline := reading.Status.NextReconciliationTime; deadline != nil {
+					next = deadline.UTC().Format(time.RFC3339)
+				}
+				f.fatalf("%s is refused until status.nextReconciliationTime %s, read at %s; "+
+					"a refused claimant looks at its realm again within %s",
+					contested, next, readAt.UTC().Format(time.RFC3339), realmRecheckBound)
 			}
 		}
 		f.sleep(10 * time.Second)

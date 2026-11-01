@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -210,6 +211,27 @@ func realmConflictRefused(schema *ptahv1alpha1.PtahSchema) bool {
 func realmConflictHeld(schema *ptahv1alpha1.PtahSchema) bool {
 	return schema.Status.Phase == ptahv1alpha1.PhaseBlocked && schema.Status.ActiveOperation == nil &&
 		conditionIs(schema.Status.Conditions, ptahv1alpha1.ConditionReady, metav1.ConditionFalse, "RealmConflict")
+}
+
+// realmRecheckBound is how soon a refused claimant looks at its realm again:
+// the minute the operator documents, whatever interval the resource runs on.
+// realmRecheckSlack absorbs the difference between the clock the test reads
+// and the clock the manager stamps the deadline from.
+const (
+	realmRecheckBound = time.Minute
+	realmRecheckSlack = 5 * time.Second
+)
+
+// realmRecheckScheduled is a refusal that will look at its realm again within
+// the bound of readAt, the instant the read of schema returned. The manager
+// stamps the deadline on the pass that wrote the document, which came before
+// the read, so a deadline further out is one the refusal did not set: the
+// next refresh of the cycle the refusal interrupted. A deadline that has
+// passed is accepted: the pass that looks again is due and has not written
+// yet.
+func realmRecheckScheduled(schema *ptahv1alpha1.PtahSchema, readAt time.Time) bool {
+	next := schema.Status.NextReconciliationTime
+	return next != nil && !next.After(readAt.Add(realmRecheckBound+realmRecheckSlack))
 }
 
 // undispatchedApplyClaim is an Apply the schema claimed and could not
