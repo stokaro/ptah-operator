@@ -979,48 +979,61 @@ func TestWaitTargets(t *testing.T) {
 
 		// suspended
 		{
-			name: "suspended: Suspended at the generation of the change, once the Apply in flight ended", target: operate.TargetSuspended,
+			// What the controller writes after a suspension that met a running
+			// Apply. The suspension moved the generation the Apply was decided
+			// from, so the harvest records it unknown: a schema owes a proof
+			// and keeps status.observedGeneration at the Apply's generation,
+			// and writes Suspended with the condition for the new one
+			// (reconcilePendingObservation); a migration records the run
+			// unresolved and observes the new generation.
+			name: "suspended: Suspended for the generation of the change, once the Apply in flight ended", target: operate.TargetSuspended,
 			generation: 5,
 			docs: func(f operate.Family) []doc {
-				// The Apply finishes, then its proof (schema) or history read
-				// back (migration), before suspension takes effect.
-				after := doc{generation: 5, observedGeneration: 4, suspend: true, phase: "VerifyingConvergence", proof: true, operation: "Observe", observedAt: at(0)}
+				applying := doc{generation: 5, observedGeneration: 4, suspend: true, phase: "Applying", operation: "Apply", dispatched: true, observedAt: at(0)}
 				if f == operate.FamilyMigration {
-					after = doc{generation: 5, observedGeneration: 4, suspend: true, phase: "VerifyingHistory", operation: "History", observedAt: at(0)}
+					return []doc{applying, applying, {
+						generation: 5, observedGeneration: 5, suspend: true, phase: "Suspended", observedAt: at(0),
+						conditions: suspendedConditions(f, 5),
+						unresolved: &unresolvedDoc{operationID: "attempt", outcome: "Unknown", job: "job", plan: "plan-1"},
+					}}
 				}
 				return []doc{
-					{generation: 5, observedGeneration: 4, suspend: true, phase: "Applying", operation: "Apply", observedAt: at(0)},
-					after,
-					{generation: 5, observedGeneration: 5, suspend: true, phase: "Suspended", observedAt: at(60), conditions: suspendedConditions(f, 5)},
+					applying,
+					{generation: 5, observedGeneration: 4, suspend: true, phase: "VerifyingConvergence", proof: true, proofPlan: "plan-1", observedAt: at(0)},
+					{generation: 5, observedGeneration: 4, suspend: true, phase: "Suspended", proof: true, proofPlan: "plan-1", observedAt: at(0), conditions: suspendedConditions(f, 5)},
 				}
 			},
 			wantReads: 3,
 		},
 		{
+			// A resource whose spec changed while it was suspended: Suspended,
+			// for the generation before.
 			name: "suspended: Suspended at an older generation is not the target", target: operate.TargetSuspended,
 			docs: func(f operate.Family) []doc {
 				return []doc{{generation: 5, observedGeneration: 4, suspend: true, phase: "Suspended", observedAt: at(0), conditions: suspendedConditions(f, 4)}}
 			},
-			wantTimeout: true, wantMessage: "the operator to observe generation 5",
+			wantTimeout: true, wantMessage: "generation 5",
 		},
 		{
 			name: "suspended: an Apply in flight is observed to its end first", target: operate.TargetSuspended,
 			docs: func(f operate.Family) []doc {
-				return []doc{{generation: 5, observedGeneration: 5, suspend: true, phase: "Applying", operation: "Apply", observedAt: at(0)}}
+				return []doc{{generation: 5, observedGeneration: 5, suspend: true, phase: "Applying", operation: "Apply", dispatched: true, observedAt: at(0)}}
 			},
 			wantTimeout: true, wantMessage: "the Apply operation (phase Applying) to end: suspension starts no new Job",
 		},
 		{
-			// The controller writes Suspended and keeps the proof owed when a
-			// suspension arrives before the proof's Job was claimed: no Job
-			// runs until resume, so the resource is as suspended as it gets.
+			// A suspension that reached the schema after its Apply was
+			// harvested and before the proof was claimed, or while the
+			// proof's Observe ran: reconcilePendingObservation writes
+			// Suspended and the condition, and leaves observedGeneration at
+			// the Apply's generation, where the proof keeps it.
 			name: "suspended: a schema whose post-Apply proof waits for resume is suspended", target: operate.TargetSuspended,
 			only:       operate.FamilySchema,
 			generation: 5,
 			docs: func(f operate.Family) []doc {
 				return []doc{
-					{generation: 5, observedGeneration: 4, suspend: true, phase: "VerifyingConvergence", proof: true, observedAt: at(0)},
-					{generation: 5, observedGeneration: 5, suspend: true, phase: "Suspended", proof: true, observedAt: at(0), conditions: suspendedConditions(f, 5)},
+					{generation: 5, observedGeneration: 4, suspend: true, phase: "VerifyingConvergence", proof: true, proofPlan: "plan-1", observedAt: at(0)},
+					{generation: 5, observedGeneration: 4, suspend: true, phase: "Suspended", proof: true, proofPlan: "plan-1", observedAt: at(0), conditions: suspendedConditions(f, 5)},
 				}
 			},
 			wantReads: 2,

@@ -37,9 +37,10 @@ const (
 	// the database. Any other ending stops the wait with a StopError.
 	TargetApplied Target = "applied"
 	// TargetSuspended is a resource the controller reports Suspended at the
-	// required generation, with nothing in flight. A schema whose post-Apply
-	// proof had not started when it was suspended reaches it with the proof
-	// still owed: the proof waits for resume, and no Job runs meanwhile.
+	// required generation, with nothing in flight: for a schema, its
+	// Suspended condition at that generation. A schema whose post-Apply proof
+	// is still owed reaches it with the proof owed: the proof waits for
+	// resume, and no Job runs meanwhile.
 	TargetSuspended Target = "suspended"
 )
 
@@ -715,20 +716,42 @@ func (w *waiter) checkSuspended(s snapshot) verdict {
 	if !s.suspend {
 		return w.stop(s, StopNotSuspended, "spec.suspend is false")
 	}
+	// The operator drops a claim whose Job it has not created and every read
+	// when it sees the suspension, and observes an Apply, or a proof Job
+	// already running after one, to its end. A proof still owed starts no Job
+	// until resume, so it does not hold the target.
+	if s.operation != "" {
+		return waitingFor("%s to end: suspension starts no new Job, observes an Apply or a running proof to "+
+			"its end, and drops any other claim", inFlight(s))
+	}
+	if s.family == FamilySchema {
+		return w.checkSchemaSuspended(s)
+	}
 	if v, ok := w.generationReached(s); !ok {
 		return v
 	}
-	// The operator drops a read-only claim when it sees the suspension, and
-	// observes an Apply, or the proof already running after one, to its end.
-	// A proof that had not started waits for resume and runs no Job, so it
-	// does not hold the target: a schema then reads Suspended with it owed.
-	if s.operation != "" {
-		return waitingFor("%s to end: suspension starts no new Job, observes an Apply or its running proof "+
-			"to the end, and drops any other claim", inFlight(s))
-	}
-	if s.phase != phaseSuspended ||
-		(s.family == FamilySchema && !s.conditionTrue(operatorv1alpha1.ConditionSuspended)) {
+	if s.phase != phaseSuspended {
 		return waitingFor("phase Suspended")
+	}
+	return verdict{done: true}
+}
+
+// checkSchemaSuspended decides a schema by its Suspended condition rather
+// than by status.observedGeneration. A schema that owes post-Apply proof
+// keeps observedGeneration at the Apply's generation until the proof ends,
+// and the proof does not run while it is suspended; every write of phase
+// Suspended stamps the condition with the generation the operator acted on
+// (internal/controller/schema_controller.go, setCondition).
+func (w *waiter) checkSchemaSuspended(s snapshot) verdict {
+	suspended := s.condition(operatorv1alpha1.ConditionSuspended)
+	switch {
+	case s.phase != phaseSuspended:
+		return waitingFor("phase Suspended")
+	case suspended == nil || suspended.Status != metav1.ConditionTrue:
+		return waitingFor("the Suspended condition True")
+	case suspended.ObservedGeneration < w.minGeneration:
+		return waitingFor("the operator to report Suspended for generation %d (the Suspended condition is for "+
+			"generation %d)", w.minGeneration, suspended.ObservedGeneration)
 	}
 	return verdict{done: true}
 }
