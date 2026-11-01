@@ -3,6 +3,7 @@ package approve_test
 import (
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"reflect"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/validation"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
@@ -209,6 +211,11 @@ func TestSubmitCreatesTheApprovalOfTheReviewedPlan(t *testing.T) {
 	if approval.GenerateName != "storefront-" || approval.Name == "" {
 		t.Fatalf("the approval is named %q from %q, want a name generated from storefront-", approval.Name, approval.GenerateName)
 	}
+	// The typed client decodes the answer without its kind; what is printed
+	// carries it.
+	if kind := result.Approval.GetObjectKind().GroupVersionKind(); kind != operatorv1alpha1.GroupVersion.WithKind("PtahSchemaApproval") {
+		t.Fatalf("the admitted approval reads as kind %v", kind)
+	}
 }
 
 func TestSubmitSendsNothingForAnotherPlan(t *testing.T) {
@@ -295,19 +302,46 @@ func TestSubmitPassesTheAPIServersAnswerOn(t *testing.T) {
 	t.Parallel()
 	const rbac = `ptahschemaapprovals.operator.ptah.run is forbidden: User "bob" cannot create resource "ptahschemaapprovals" in API group "operator.ptah.run" in the namespace "application"`
 	const admission = `admission webhook "vptahschemaapproval.operator.ptah.run" denied the request: an approver may not approve a plan for a change they authored`
+	// The manager's own read refused inside admission comes back as a 403
+	// whose text carries an authorizer's refusal, of the manager's identity.
+	const managerRefused = `admission webhook "mapproval.operator.ptah.run" denied the request: read referenced plan: ptahschemaplans.operator.ptah.run "p" is forbidden: User "system:serviceaccount:ptah-system:ptah-operator" cannot get resource "ptahschemaplans" in API group "operator.ptah.run" in the namespace "application"`
+	const vanished = `admission webhook "mapproval.operator.ptah.run" denied the request: read referenced plan: ptahschemaplans.operator.ptah.run "p" not found`
 	for _, test := range []struct {
 		name    string
 		answer  error
 		outcome approve.Outcome
-		says    string
+		says    []string
 	}{
-		{"RBAC refuses the create", statusError(http.StatusForbidden, metav1.StatusReasonForbidden, rbac), approve.Forbidden, rbac},
+		{"RBAC refuses the create", statusError(http.StatusForbidden, metav1.StatusReasonForbidden, rbac), approve.Forbidden, []string{rbac, "Nothing was approved"}},
+		{"RBAC refuses a named create", statusError(http.StatusForbidden, metav1.StatusReasonForbidden,
+			`ptahschemaapprovals.operator.ptah.run "mine" is forbidden: User "bob" cannot create resource "ptahschemaapprovals" in API group "operator.ptah.run" in the namespace "application"`),
+			approve.Forbidden, []string{`"mine" is forbidden`}},
+		// The API server writes the username with %q, so a quote in it is
+		// escaped and the refusal is still RBAC's.
+		{"RBAC refuses a user with a quote in the name", statusError(http.StatusForbidden, metav1.StatusReasonForbidden,
+			`ptahschemaapprovals.operator.ptah.run is forbidden: User "bob \"b\" o'brien" cannot create resource "ptahschemaapprovals" in API group "operator.ptah.run" in the namespace "application"`),
+			approve.Forbidden, []string{`o'brien`}},
 		// Admission refuses with 403 as well, in its own words: it is not RBAC.
-		{"admission refuses it", statusError(http.StatusForbidden, metav1.StatusReasonForbidden, admission), approve.Refused, admission},
+		{"admission refuses it", statusError(http.StatusForbidden, metav1.StatusReasonForbidden, admission), approve.Refused, []string{admission, "Nothing was approved"}},
+		{"admission passes on the manager's own refusal", statusError(http.StatusForbidden, "", managerRefused), approve.Refused, []string{managerRefused}},
 		{"the schema refuses a field", statusError(http.StatusUnprocessableEntity, metav1.StatusReasonInvalid,
-			`PtahSchemaApproval.operator.ptah.run "x" is invalid: spec.planFingerprint: Invalid value`), approve.Refused, "spec.planFingerprint"},
-		{"no answer in time", context.DeadlineExceeded, approve.Unknown, "may have been stored"},
-		{"the server failed", statusError(http.StatusInternalServerError, metav1.StatusReasonInternalError, "etcd"), approve.Unknown, "may have been stored"},
+			`PtahSchemaApproval.operator.ptah.run "x" is invalid: spec.planFingerprint: Invalid value`), approve.Refused, []string{"spec.planFingerprint"}},
+		// The webhook answers 404 when the plan it reads is gone.
+		{"the plan vanished under admission", statusError(http.StatusNotFound, "", vanished), approve.Refused,
+			[]string{vanished, "something the approval names is gone", "kubectl ptah schema storefront -n " + planreadtest.Namespace}},
+		{"the credentials are not accepted", statusError(http.StatusUnauthorized, metav1.StatusReasonUnauthorized, "Unauthorized"),
+			approve.Refused, []string{"did not accept your credentials"}},
+		{"the API server is too busy", statusError(http.StatusTooManyRequests, metav1.StatusReasonTooManyRequests, "the server has received too many requests"),
+			approve.Refused, []string{"too busy", "nothing was stored", "Run the command again"}},
+		{"no answer in time", context.DeadlineExceeded, approve.Unknown,
+			[]string{"did not answer in time", "may have been stored", "kubectl ptah schema storefront -n " + planreadtest.Namespace}},
+		{"the connection dropped", &net.OpError{Op: "read", Net: "tcp", Err: errors.New("connection reset by peer")}, approve.Unknown,
+			[]string{"The answer was lost", "connection reset by peer", "may have been stored"}},
+		{"the server failed", statusError(http.StatusInternalServerError, metav1.StatusReasonInternalError, "etcd"), approve.Unknown, []string{"may have been stored"}},
+		{"the server timed out storing it", statusError(http.StatusGatewayTimeout, metav1.StatusReasonTimeout, "the request timed out"),
+			approve.Unknown, []string{"did not answer in time", "may have been stored"}},
+		{"admission timed out", statusError(http.StatusInternalServerError, metav1.StatusReasonInternalError,
+			`Internal error occurred: failed calling webhook "mapproval.operator.ptah.run": context deadline exceeded`), approve.Unknown, []string{"may have been stored"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -320,8 +354,66 @@ func TestSubmitPassesTheAPIServersAnswerOn(t *testing.T) {
 
 			result := approve.Submit(context.Background(), api, review, approve.Options{})
 
-			if result.Outcome != test.outcome || !strings.Contains(result.Message, test.says) || result.Approval != nil {
-				t.Fatalf("Submit() = %+v, want %s naming %q", result, test.outcome, test.says)
+			if result.Outcome != test.outcome || result.Approval != nil {
+				t.Fatalf("Submit() = %+v, want %s", result, test.outcome)
+			}
+			for _, says := range test.says {
+				if !strings.Contains(result.Message, says) {
+					t.Fatalf("Submit() said %q, want it to name %q", result.Message, says)
+				}
+			}
+		})
+	}
+}
+
+// A name already taken is a definite answer: nothing was stored. What holds
+// the name decides what to tell the person, and an approval of the same plan
+// under it is a decision already recorded, by whoever made it.
+func TestSubmitSaysWhatHoldsATakenName(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name   string
+		stored func(*operatorv1alpha1.PtahSchemaApproval)
+		says   string
+	}{
+		{"an approval of the same plan", func(*operatorv1alpha1.PtahSchemaApproval) {}, "an approval of this plan is recorded, and this request stored nothing"},
+		{"an approval of another plan", func(a *operatorv1alpha1.PtahSchemaApproval) { a.Spec.PlanRef.UID = "uid-an-earlier-plan" }, "binds another plan"},
+		{"the same plan under another fingerprint", func(a *operatorv1alpha1.PtahSchemaApproval) { a.Spec.PlanFingerprint = "sha256:another" }, "binds another plan"},
+		{"the same plan of another schema", func(a *operatorv1alpha1.PtahSchemaApproval) { a.Spec.SchemaRef.UID = "uid-another-storefront" }, "binds another plan"},
+		{"nothing this identity may read", nil, "The name is taken"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			lab, plan := waiting(t)
+			review, err := approve.Load(context.Background(), lab.Client(), approve.Schema, planreadtest.Namespace, "storefront")
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			api := &answering{Client: lab.Client()}
+			if test.stored != nil {
+				existing := &operatorv1alpha1.PtahSchemaApproval{
+					ObjectMeta: metav1.ObjectMeta{Namespace: planreadtest.Namespace, Name: "mine"},
+					Spec: operatorv1alpha1.PtahSchemaApprovalSpec{
+						SchemaRef:       operatorv1alpha1.ImmutableObjectReference{Name: "storefront", UID: review.ResourceUID},
+						PlanRef:         operatorv1alpha1.ImmutableObjectReference{Name: plan.Name, UID: plan.UID},
+						PlanFingerprint: plan.Spec.Fingerprint,
+					},
+				}
+				test.stored(existing)
+				if err := lab.Client().Create(context.Background(), existing); err != nil {
+					t.Fatalf("store the approval that holds the name: %v", err)
+				}
+			} else {
+				api.answer = func(client.Object) error {
+					return apierrors.NewAlreadyExists(operatorv1alpha1.GroupVersion.WithResource("ptahschemaapprovals").GroupResource(), "mine")
+				}
+			}
+
+			result := approve.Submit(context.Background(), api, review, approve.Options{Name: "mine"})
+
+			if result.Outcome != approve.Refused || !strings.Contains(result.Message, `"mine" already exists`) ||
+				!strings.Contains(result.Message, test.says) || result.Approval != nil {
+				t.Fatalf("Submit() = %+v, want refused naming %q", result, test.says)
 			}
 		})
 	}
@@ -352,30 +444,81 @@ func TestSubmitAsksAdmissionWithoutStoringOnADryRun(t *testing.T) {
 	}
 }
 
-func TestManifestCarriesTheBindingAndNoIdentity(t *testing.T) {
+// The manifest is what a repository holds and a later apply sends back, so
+// it carries the decision and nothing else: no empty approver, no null time,
+// no status, no generated name, all of which kubectl or admission refuses.
+func TestManifestCarriesTheDecisionAndNothingElse(t *testing.T) {
 	t.Parallel()
-	review := approve.Review{
-		Family: approve.Migration, Namespace: "application", Name: "shipments", ResourceUID: "uid-m",
-		PlanName: "shipments-p-3", PlanUID: "uid-p", Fingerprint: "sha256:aa",
-	}
+	const fingerprint = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	for _, test := range []struct {
+		family approve.Family
+		kind   string
+		owner  string
+	}{
+		{approve.Migration, "PtahMigrationApproval", "migrationRef"},
+		{approve.Schema, "PtahSchemaApproval", "schemaRef"},
+	} {
+		review := approve.Review{
+			Family: test.family, Namespace: "application", Name: "shipments", ResourceUID: "uid-m",
+			PlanName: "shipments-p-3", PlanUID: "uid-p", Fingerprint: fingerprint,
+		}
+		want := map[string]any{
+			"apiVersion": "operator.ptah.run/v1alpha1",
+			"kind":       test.kind,
+			"metadata":   map[string]any{"name": "shipments-approval", "namespace": "application"},
+			"spec": map[string]any{
+				test.owner:        map[string]any{"name": "shipments", "uid": "uid-m"},
+				"planRef":         map[string]any{"name": "shipments-p-3", "uid": "uid-p"},
+				"planFingerprint": fingerprint,
+			},
+		}
 
-	approval, ok := approve.Manifest(review, "shipments-approval").(*operatorv1alpha1.PtahMigrationApproval)
-	if !ok {
-		t.Fatal("Manifest() of a migration is not a PtahMigrationApproval")
+		if got := approve.Manifest(review, "shipments-approval").Object; !reflect.DeepEqual(got, want) {
+			t.Fatalf("Manifest() of a %s = %v, want exactly %v", test.family, got, want)
+		}
+		if name := approve.Manifest(review, "").GetName(); name != "shipments-0123456789ab" {
+			t.Fatalf("Manifest() without a name is named %q, want shipments-0123456789ab", name)
+		}
 	}
-	if approval.Name != "shipments-approval" || approval.GenerateName != "" || approval.Namespace != "application" {
-		t.Fatalf("Manifest() named %q/%q in %q", approval.Name, approval.GenerateName, approval.Namespace)
+}
+
+func TestDefaultNameIsOneValidNamePerPlan(t *testing.T) {
+	t.Parallel()
+	const fingerprint = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	review := func(name, fingerprint string) approve.Review {
+		return approve.Review{Family: approve.Schema, Name: name, Fingerprint: fingerprint}
 	}
-	want := operatorv1alpha1.PtahMigrationApprovalSpec{
-		MigrationRef:    operatorv1alpha1.ImmutableObjectReference{Name: "shipments", UID: "uid-m"},
-		PlanRef:         operatorv1alpha1.ImmutableObjectReference{Name: "shipments-p-3", UID: "uid-p"},
-		PlanFingerprint: "sha256:aa",
+	// A cut at the bound lands on a dot, then on a dash: neither may end a
+	// label, so neither may precede the suffix.
+	long := strings.Repeat("a", 239) + ".b" + strings.Repeat("c", 20)
+	dashed := strings.Repeat("a", 239) + "-b" + strings.Repeat("c", 20)
+	for _, test := range []struct {
+		name, fingerprint, want string
+	}{
+		{"storefront", fingerprint, "storefront-0123456789ab"},
+		{"storefront", "SHA256:ABCDEF0123456789ABCDEF", "storefront-abcdef012345"},
+		{long, fingerprint, strings.Repeat("a", 239) + "-0123456789ab"},
+		{dashed, fingerprint, strings.Repeat("a", 239) + "-0123456789ab"},
+	} {
+		if got := approve.DefaultName(review(test.name, test.fingerprint)); got != test.want {
+			t.Fatalf("DefaultName(%q, %q) = %q, want %q", test.name, test.fingerprint, got, test.want)
+		}
 	}
-	if !reflect.DeepEqual(approval.Spec, want) {
-		t.Fatalf("Manifest() spec = %+v, want %+v", approval.Spec, want)
-	}
-	if kind := approval.GetObjectKind().GroupVersionKind(); kind.Kind != "PtahMigrationApproval" || kind.Group != "operator.ptah.run" {
-		t.Fatalf("Manifest() kind = %v", kind)
+	// Whatever a fingerprint is written in, the name stays one name per
+	// fingerprint and a valid one.
+	seen := map[string]string{}
+	for _, value := range []string{fingerprint, "sha256:aa", "v2:Not_Hex!", "", "sha256:1123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"} {
+		name := approve.DefaultName(review(long, value))
+		if problems := validation.IsDNS1123Subdomain(name); len(problems) > 0 {
+			t.Fatalf("DefaultName(%q) = %q, which is not a name: %v", value, name, problems)
+		}
+		if other, ok := seen[name]; ok {
+			t.Fatalf("DefaultName gives %q for both %q and %q", name, other, value)
+		}
+		seen[name] = value
+		if again := approve.DefaultName(review(long, value)); again != name {
+			t.Fatalf("DefaultName(%q) = %q, then %q", value, name, again)
+		}
 	}
 }
 
@@ -444,6 +587,9 @@ func TestLoadSaysWhyAMigrationApprovalWouldNotBeAdmitted(t *testing.T) {
 		{"another phase", func(m *operatorv1alpha1.PtahMigration, _ *operatorv1alpha1.PtahMigrationPlan) {
 			m.Status.Phase = operatorv1alpha1.MigrationPhasePlanning
 		}, "is Planning"},
+		{"no approval required", func(m *operatorv1alpha1.PtahMigration, _ *operatorv1alpha1.PtahMigrationPlan) {
+			m.Status.Conditions[0].Status = metav1.ConditionFalse
+		}, "does not require an approval"},
 		// A plan of the same name stored for another migration is not this
 		// migration's plan, whatever its fingerprint says.
 		{"the plan belongs to another migration", func(_ *operatorv1alpha1.PtahMigration, p *operatorv1alpha1.PtahMigrationPlan) {
@@ -463,6 +609,107 @@ func TestLoadSaysWhyAMigrationApprovalWouldNotBeAdmitted(t *testing.T) {
 			}
 			if review.Open || !strings.Contains(review.Closed, test.says) {
 				t.Fatalf("Load() open = %t, closed = %q; want closed naming %q", review.Open, review.Closed, test.says)
+			}
+			// A closed gate still names the plan the status names, and only
+			// a plan that is not stored is missing.
+			missing := test.says == "is not the plan"
+			if review.Missing != missing || review.PlanUID != "uid-p-14" {
+				t.Fatalf("Load() missing = %t, plan UID %q; want missing %t and the UID the status names", review.Missing, review.PlanUID, missing)
+			}
+			if missing && (review.Fingerprint != "" || review.MigrationPlan != nil) {
+				t.Fatalf("Load() carries fingerprint %q and plan %v of an object the status does not name", review.Fingerprint, review.MigrationPlan)
+			}
+		})
+	}
+}
+
+// The operator replaced the plan under its name after the review: the status
+// still names the old UID, and the object stored there is another. Nothing
+// may be sent, and the reason is the closed gate, not a changed fingerprint
+// read off the other object.
+func TestSubmitSendsNothingForAMigrationPlanThatIsNotStored(t *testing.T) {
+	t.Parallel()
+	objects := waitingMigration(nil)
+	api := &answering{Client: planreadtest.NewClient(t, objects...)}
+	review, err := approve.Load(context.Background(), api, approve.Migration, "application", "shipments")
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	stored := &operatorv1alpha1.PtahMigrationPlan{}
+	if err := api.Get(context.Background(), client.ObjectKey{Namespace: "application", Name: "shipments-p-14"}, stored); err != nil {
+		t.Fatalf("read the plan: %v", err)
+	}
+	if err := api.Delete(context.Background(), stored); err != nil {
+		t.Fatalf("delete the plan: %v", err)
+	}
+	stored.ResourceVersion, stored.UID, stored.Spec.Fingerprint = "", "uid-p-14-again", "sha256:another"
+	if err := api.Client.Create(context.Background(), stored); err != nil {
+		t.Fatalf("store another plan under its name: %v", err)
+	}
+
+	result := approve.Submit(context.Background(), api, review, approve.Options{})
+
+	if result.Outcome != approve.Closed || !strings.Contains(result.Message, "is not the plan") || len(api.created) != 0 {
+		t.Fatalf("Submit() = %+v after %d creates, want closed and nothing sent", result, len(api.created))
+	}
+}
+
+func TestRenderReviewShowsAMigrationPlanAndWhereItsSQLIs(t *testing.T) {
+	t.Parallel()
+	const artifact = "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+	const content = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+	const policy = "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+	migrations := []operatorv1alpha1.PlannedMigration{
+		{Version: 14, Description: "add shipments", Checksum: "sha256:c14", TransactionMode: "none"},
+		{Version: 15, VersionKey: "15b", Description: "backfill\x1b[2Jcarriers", Checksum: "sha256:c15", Checkpoint: true},
+	}
+	for _, test := range []struct {
+		name   string
+		change func(*operatorv1alpha1.PtahMigrationPlanSpec)
+		says   []string
+	}{
+		{"an OCI artifact", func(s *operatorv1alpha1.PtahMigrationPlanSpec) { s.ArtifactDigest = artifact },
+			[]string{"Source:          OCI artifact", "Artifact:        " + artifact}},
+		{"a ConfigMap under a source policy", func(s *operatorv1alpha1.PtahMigrationPlanSpec) {
+			s.ContractVersion = 2
+			s.Source = &operatorv1alpha1.PlanSourceBinding{Kind: operatorv1alpha1.SourceKindConfigMap, Revision: "uid-orders-migrations",
+				ContentDigest: content, Policy: &operatorv1alpha1.SourcePolicyBinding{UID: "uid-policy", Digest: policy}}
+		}, []string{"Source:          ConfigMap", "Revision:        uid-orders-migrations", "Content:         " + content, "Source policy:   " + policy}},
+		{"nothing recorded", func(*operatorv1alpha1.PtahMigrationPlanSpec) {}, []string{"Source:          none recorded"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			api := planreadtest.NewClient(t, waitingMigration(func(_ *operatorv1alpha1.PtahMigration, p *operatorv1alpha1.PtahMigrationPlan) {
+				p.Spec.CurrentVersion = 13
+				p.Spec.Migrations = migrations
+				test.change(&p.Spec)
+			})...)
+			review, err := approve.Load(context.Background(), api, approve.Migration, "application", "shipments")
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			var out strings.Builder
+
+			if err := approve.RenderReview(&out, review); err != nil {
+				t.Fatalf("RenderReview() error = %v", err)
+			}
+
+			text := out.String()
+			for _, want := range append([]string{
+				"PtahMigration: application/shipments, UID uid-shipments",
+				"Plan:          shipments-p-14, UID uid-p-14",
+				"Fingerprint:   sha256:14",
+				"From version 13, in this order:",
+				"14               add shipments", "checksum sha256:c14, transaction none",
+				"15b              backfill\\x1b[2Jcarriers", "checksum sha256:c15, checkpoint",
+				"Its SQL is read from the\nsource the plan binds, and it is not shown here:",
+			}, test.says...) {
+				if !strings.Contains(text, want) {
+					t.Fatalf("RenderReview() wrote\n%s\nmissing %q", text, want)
+				}
+			}
+			if strings.ContainsRune(text, 0x1b) {
+				t.Fatalf("RenderReview() passed a control character through:\n%q", text)
 			}
 		})
 	}

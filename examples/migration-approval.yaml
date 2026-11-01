@@ -4,12 +4,15 @@
 #
 #   kubectl ptah approve migration/orders -n application
 #
-# or prints it for a repository without sending it:
+# or prints it for a repository without sending it, after the same review:
 #
-#   kubectl ptah approve migration/orders -n application --dry-run client
+#   kubectl ptah approve migration/orders -n application --dry-run client > approval.yaml
 #
-# Everything else is filled in from the plan by the admission webhook, which
-# refuses any value that conflicts with it. An approval authorizes one run.
+# Create it with kubectl create -f, as the person who decided: admission
+# stamps whoever creates it as the approver, and a controller that applies it
+# from a repository is recorded in that person's place. Everything else is
+# filled in from the plan by the admission webhook, which refuses any value
+# that conflicts with it. An approval authorizes one run.
 apiVersion: operator.ptah.run/v1alpha1
 kind: PtahMigrationApproval
 metadata:

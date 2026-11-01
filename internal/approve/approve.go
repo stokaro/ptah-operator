@@ -23,6 +23,7 @@ import (
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/migrationplan"
+	"github.com/stokaro/ptah-operator/internal/statusview"
 	"github.com/stokaro/ptah-operator/pkg/planread"
 )
 
@@ -43,6 +44,22 @@ var ErrNotFound = errors.New("no such resource")
 
 // ErrNothingToApprove is returned when the resource has no current plan.
 var ErrNothingToApprove = errors.New("no plan to approve")
+
+// Kind is the resource kind of the family, as the API names it.
+func (f Family) Kind() string {
+	if f == Migration {
+		return "PtahMigration"
+	}
+	return "PtahSchema"
+}
+
+// ApprovalKind is the kind of the approval the family takes.
+func (f Family) ApprovalKind() string {
+	if f == Migration {
+		return "PtahMigrationApproval"
+	}
+	return "PtahSchemaApproval"
+}
 
 // ParseTarget reads a target written as family/name, the way kubectl names a
 // resource: schema/storefront or migration/shipments. The family is required:
@@ -88,6 +105,12 @@ type Review struct {
 	// carries why not, in words a person acts on.
 	Open   bool
 	Closed string
+	// Missing says the plan the status names is not stored: the object under
+	// its name is another plan, or another resource's. Nothing can approve it,
+	// in any mode, and Closed says why. The review then carries the identity
+	// the status names and no fingerprint, so nothing built from it binds the
+	// object that took the name.
+	Missing bool
 }
 
 // Load reads the current plan of a schema or a migration and says whether
@@ -194,9 +217,9 @@ func identifyMigration(ctx context.Context, reader client.Reader, namespace, nam
 	}
 	if plan.UID != ref.UID || plan.Spec.MigrationRef.UID != migration.UID || plan.Spec.MigrationRef.Name != migration.Name {
 		// The stored object under that name is another plan, or another
-		// migration's: the plan the status names is gone.
-		review.PlanUID = plan.UID
-		review.Fingerprint = plan.Spec.Fingerprint
+		// migration's: the plan the status names is gone. Its UID and
+		// fingerprint belong to that other object and stay out of the review.
+		review.Missing = true
 		review.Open, review.Closed = false, fmt.Sprintf("PtahMigrationPlan %s/%s is not the plan PtahMigration %s names.", namespace, ref.Name, name)
 		return review, nil
 	}
@@ -220,7 +243,7 @@ func schemaOpen(schema *operatorv1alpha1.PtahSchema) (bool, string) {
 	switch {
 	case status.Plan.Approval != nil:
 		return false, fmt.Sprintf("The plan is approved already, by %s (%s).",
-			status.Plan.Approval.Approver.Username, status.Plan.Approval.Name)
+			statusview.Clean(status.Plan.Approval.Approver.Username), statusview.Clean(status.Plan.Approval.Name))
 	case status.ActiveOperation != nil:
 		return false, fmt.Sprintf("The operator is running %s for this schema. An approval is admitted once it is back at the approval gate; run this command again then.",
 			status.ActiveOperation.Type)

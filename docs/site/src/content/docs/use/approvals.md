@@ -93,12 +93,27 @@ admission's own words.
   plan; there is no option that approves whatever plan is current.
 - `--dry-run server` lets admission check the approval and stores nothing.
 - `--dry-run client` prints the approval as YAML with the identifiers filled in
-  and sends nothing, for a workflow that applies decisions from a repository.
+  and sends nothing, for a workflow that keeps decisions in a repository. It
+  takes the same decision as an approval: the fingerprint of the plan you
+  reviewed, or the review answered with yes. The object carries the API
+  version, the kind, a name made of the schema's name and the start of the
+  fingerprint, the namespace and the three references, and nothing else.
   `examples/approval.yaml` is the same object written by hand.
 
-Exit status 4 means nothing was approved, 5 that RBAC or admission refused the
-approval, and 6 that the request was sent and no answer said whether it was
-stored; read the schema before approving again.
+Create a printed approval with `kubectl create -f`, as the person who decided.
+Admission records whoever creates the object as its approver, so the identity
+on the approval is the identity that sent it, not the one that printed it. A
+controller that applies approvals from a repository is recorded as their
+approver, and with `approvals.requireDistinctApprover` on, an approval it
+creates for a schema whose spec it also wrote is refused as a self-approval.
+An approval is immutable and authorizes one run, so it is created once; it is
+not a desired state to apply again.
+
+Exit status 4 means nothing was approved, 5 that RBAC or the API server
+refused the approval, and 6 that the request was sent and no answer said
+whether it was stored. After a 6, `kubectl ptah schema application -n
+application` lists the approvals that name the schema; read it before
+approving again.
 
 Creation is rejected if the plan is already stale, its immutable storage is
 not committed, the verification-policy ConfigMap changed, or the approval

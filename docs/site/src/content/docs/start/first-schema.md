@@ -119,9 +119,11 @@ kubectl ptah approve schema/application -n application
 It reads the schema once more before it sends anything. If a newer plan
 replaced the one you read, or the operator is reading the database again and
 admission would refuse an approval, it says so and approves nothing. A script
-that reviewed the plan passes its fingerprint with `--plan-fingerprint`, and a
-declarative workflow takes the approval as YAML with `--dry-run client` and
-applies it from a repository.
+that reviewed the plan passes its fingerprint with `--plan-fingerprint`.
+`--dry-run client` prints the approval as YAML instead, to keep in a
+repository and create later with `kubectl create -f`. Admission records
+whoever creates it as the approver, so create it as the person who decided:
+a controller that applies it is recorded in their place.
 
 Creating it requires a binding that grants the approval verbs, which the
 chart's approver ClusterRole carries together with read access to the plan and

@@ -352,16 +352,17 @@ kubectl ptah approve migration/orders -n application
 ```
 
 It shows no SQL: a migration plan records versions and checksums, and the
-statements live in the artifact. It reads the migration again before it sends
-anything, and approves nothing if the plan was replaced or the operator would
-not admit an approval now. For a declarative workflow, `--dry-run client`
-prints the approval as YAML with the identifiers filled in:
+statements live in the source the plan binds, whose digest the review prints.
+It reads the migration again before it sends anything, and approves nothing if
+the plan was replaced or the operator would not admit an approval now.
+`--dry-run client` prints the approval as YAML with the identifiers filled in,
+after the same decision, to keep in a repository:
 
 ```yaml
 apiVersion: operator.ptah.run/v1alpha1
 kind: PtahMigrationApproval
 metadata:
-  generateName: orders-
+  name: orders-<the first 12 hex digits of the plan's fingerprint>
   namespace: application
 spec:
   migrationRef:
@@ -372,6 +373,10 @@ spec:
     uid: <status.plan.uid>
   planFingerprint: <the plan's spec.fingerprint>
 ```
+
+Create it with `kubectl create -f`, as the person who decided: admission
+records whoever creates it as the approver, and a controller that applies it
+from the repository is recorded in that person's place.
 
 The webhook refuses an approval the evidence no longer supports: a replaced
 plan, a history somebody else moved in the meantime, a re-resolved artifact, a
