@@ -567,9 +567,13 @@ func TestSchemaBlocksOnAContestedRealmWithoutDispatchingAJob(t *testing.T) {
 	}
 }
 
-// A controller watches its own resource, so a status write it makes wakes it
-// again. A standing refusal that restamped its next-reconciliation time every
-// pass would patch every pass and wake itself every pass.
+// Any event other than its own status write reconciles a standing refusal
+// again, such as one of its Jobs, an approval or a PtahRealm. A refusal that
+// restamped its next-reconciliation time on every pass would patch on every
+// one of them. The passes run at later instants, as such events arrive, and
+// before the deadline the refusal set: a pass that ran at the same instant
+// would find the same deadline whatever the refusal does with the one it
+// carries.
 func TestAStandingRealmRefusalStopsWritingStatus(t *testing.T) {
 	t.Parallel()
 
@@ -602,6 +606,7 @@ func TestAStandingRealmRefusalStopsWritingStatus(t *testing.T) {
 
 			schema, objects := standing.objects()
 			reconciler, api := fakeReconciler(t, nil, objects...)
+			clock := movableSchemaClock(reconciler, api)
 
 			key := client.ObjectKeyFromObject(schema)
 			request := ctrl.Request{NamespacedName: key}
@@ -616,8 +621,13 @@ func TestAStandingRealmRefusalStopsWritingStatus(t *testing.T) {
 				t.Fatalf("phase = %q, want Blocked", blocked.Status.Phase)
 			}
 			settled := blocked.ResourceVersion
+			if blocked.Status.NextReconciliationTime == nil ||
+				!blocked.Status.NextReconciliationTime.After(clock.now.Add(3*standingPassGap)) {
+				t.Fatalf("the refusal looks again at %s, before the passes below end", formatDeadline(blocked.Status.NextReconciliationTime))
+			}
 
 			for pass := range 3 {
+				clock.now = clock.now.Add(standingPassGap)
 				if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
 					t.Fatalf("pass %d: %v", pass, err)
 				}

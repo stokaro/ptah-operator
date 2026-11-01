@@ -13,6 +13,21 @@ import (
 	"github.com/stokaro/ptah-operator/internal/targetlock"
 )
 
+// standingPassGap is how far apart the standing-refusal tests run their
+// passes: later than the pass before, and three of them still inside the
+// one-minute re-check.
+const standingPassGap = 15 * time.Second
+
+// movableSchemaClock replaces a schema reconciler's clock, and the one its
+// locker stamps Leases from, with a clock the caller can move, as
+// movableMigrationClock does for a migration.
+func movableSchemaClock(reconciler *SchemaReconciler, api client.Client) *fixedClock {
+	clock := &fixedClock{now: reconciler.now()}
+	reconciler.Clock = clock.Now
+	reconciler.Locks = targetlock.New(api, api, clock)
+	return clock
+}
+
 // realmClaimant drives one resource of either family through the realm
 // census, with a clock the test moves.
 type realmClaimant struct {
@@ -35,18 +50,27 @@ type claimantReading struct {
 	refusal string
 }
 
-func newRealmClaimant(t *testing.T, family string, interval time.Duration) *realmClaimant {
+// newRealmClaimant builds a claimant of family that runs on interval. With a
+// realm it names that PtahRealm instead of its coordination key, and the
+// realm is stored beside it.
+func newRealmClaimant(t *testing.T, family string, interval time.Duration, realm *operatorv1alpha1.PtahRealm) *realmClaimant {
 	t.Helper()
 
+	nameRealm := func(target *operatorv1alpha1.DatabaseTargetSpec) []client.Object {
+		if realm == nil {
+			return nil
+		}
+		target.CoordinationKey = ""
+		target.RealmRef = &operatorv1alpha1.PtahRealmReference{Name: realm.Name}
+		return []client.Object{realm}
+	}
 	claimant := &realmClaimant{t: t}
 	switch family {
 	case "schema":
 		schema := schemaFixture()
 		schema.Spec.Interval.Duration = interval
-		reconciler, api := fakeReconciler(t, nil, schema)
-		claimant.clock = &fixedClock{now: reconciler.now()}
-		reconciler.Clock = claimant.clock.Now
-		reconciler.Locks = targetlock.New(api, api, claimant.clock)
+		reconciler, api := fakeReconciler(t, nil, append([]client.Object{schema}, nameRealm(&schema.Spec.Target)...)...)
+		claimant.clock = movableSchemaClock(reconciler, api)
 		claimant.api, claimant.object = api, schema
 		claimant.reconcile = func() (ctrl.Result, error) {
 			return reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)})
@@ -55,7 +79,8 @@ func newRealmClaimant(t *testing.T, family string, interval time.Duration) *real
 		migration := migrationFixture()
 		migration.Spec.Interval.Duration = interval
 		migration.Status.ExecutionBinding = migrationExecutionBinding()
-		reconciler, api := fakeMigrationReconciler(t, nil, migration, verificationPolicyConfigMap())
+		objects := append([]client.Object{migration, verificationPolicyConfigMap()}, nameRealm(&migration.Spec.Target)...)
+		reconciler, api := fakeMigrationReconciler(t, nil, objects...)
 		claimant.clock = movableMigrationClock(reconciler, api)
 		claimant.api, claimant.object = api, migration
 		claimant.reconcile = func() (ctrl.Result, error) {
@@ -225,7 +250,7 @@ func TestARefusalThatStartsMidCycleLooksAgainWithinAMinute(t *testing.T) {
 		t.Run(family, func(t *testing.T) {
 			t.Parallel()
 
-			first := newRealmClaimant(t, family, time.Hour)
+			first := newRealmClaimant(t, family, time.Hour, nil)
 
 			// The only claimant starts its cycle, and the claim sets the next
 			// refresh an interval away.
@@ -249,7 +274,7 @@ func TestARefusalThatStartsMidCycleLooksAgainWithinAMinute(t *testing.T) {
 			refused, result := first.settle("a realm refusal", func(reading claimantReading) bool {
 				return reading.phase == "Blocked"
 			})
-			assertRealmRecheckBounded(t, "the refusal", first.clock.now, refused, result)
+			assertRealmRecheckBounded(t, "the refusal", operatorv1alpha1.ReasonRealmConflict, first.clock.now, refused, result)
 
 			// One declaration is not enough: the first claimant declares and
 			// is refused again on its own generation.
@@ -258,7 +283,8 @@ func TestARefusalThatStartsMidCycleLooksAgainWithinAMinute(t *testing.T) {
 			refusedAgain, result := first.settle("a refusal of its own declaration", func(reading claimantReading) bool {
 				return reading.phase == "Blocked" && reading.observed == reading.generation && reading.generation > 1
 			})
-			assertRealmRecheckBounded(t, "the refusal after its own declaration", first.clock.now, refusedAgain, result)
+			assertRealmRecheckBounded(t, "the refusal after its own declaration", operatorv1alpha1.ReasonRealmConflict,
+				first.clock.now, refusedAgain, result)
 
 			// The second claimant declares, and nothing wakes the first. It
 			// leaves Blocked within a minute of that declaration.
@@ -278,13 +304,97 @@ func TestARefusalThatStartsMidCycleLooksAgainWithinAMinute(t *testing.T) {
 	}
 }
 
-// assertRealmRecheckBounded holds one refusal to the documented re-check: the
-// persisted deadline and the requeue both within realmRecheckCeiling of now.
-func assertRealmRecheckBounded(t *testing.T, what string, now time.Time, reading claimantReading, result ctrl.Result) {
+// A withdrawn grant refuses a claimant on the pass the realm change starts,
+// wherever its cycle is, and a new grant lifts that refusal within a minute.
+// The withdrawal can land in the middle of a cycle whose Resolve claim set the
+// next refresh an interval away. The refusal used to keep that deadline, and
+// the claimant stayed Blocked for the rest of its interval after its
+// namespace was listed again.
+func TestAGrantRestoredMidCycleLiftsTheRefusalWithinAMinute(t *testing.T) {
+	t.Parallel()
+
+	for _, family := range []string{"schema", "migration"} {
+		t.Run(family, func(t *testing.T) {
+			t.Parallel()
+
+			realm := realmFixture("orders-primary", operatorv1alpha1.RealmSharingExclusive, "team-a")
+			first := newRealmClaimant(t, family, time.Hour, realm)
+			if first.object.GetNamespace() != "team-a" {
+				t.Fatalf("the claimant lives in %q, which the realm fixture does not list", first.object.GetNamespace())
+			}
+
+			// The realm admits the claimant, which starts its cycle; the claim
+			// sets the next refresh an interval away.
+			claimedAt := first.clock.now
+			claimed, _ := first.settle("a Resolve claim", func(reading claimantReading) bool {
+				return reading.operation == "Resolve"
+			})
+			if claimed.next == nil || claimed.next.Time.Before(claimedAt.Add(time.Hour)) {
+				t.Fatalf("the Resolve claim set the next refresh at %s, want an interval after %s",
+					formatDeadline(claimed.next), claimedAt.Format(time.RFC3339))
+			}
+			first.finishResolve()
+
+			// The administrator withdraws the namespace, and the pass the
+			// realm watch starts refuses the next step of the cycle.
+			first.clock.now = claimedAt.Add(2 * time.Minute)
+			listRealmNamespaces(t, first.api, realm.Name, "team-z")
+			refused, result := first.settle("a refusal of the withdrawn grant", func(reading claimantReading) bool {
+				return reading.phase == "Blocked"
+			})
+			assertRealmRecheckBounded(t, "the refusal", operatorv1alpha1.ReasonRealmNotAuthorized, first.clock.now, refused, result)
+
+			// The namespace is listed again. The pass the realm watch starts
+			// finds the refusal not yet due; the documented bound is a minute
+			// from the grant.
+			first.clock.now = first.clock.now.Add(10 * time.Second)
+			grantedAt := first.clock.now
+			listRealmNamespaces(t, first.api, realm.Name, "team-a")
+			if _, err := first.reconcile(); err != nil {
+				t.Fatal(err)
+			}
+			first.clock.now = grantedAt.Add(realmRecheckCeiling)
+			if _, err := first.reconcile(); err != nil {
+				t.Fatal(err)
+			}
+			lifted := first.read()
+			if lifted.operation != "Resolve" {
+				t.Fatalf("a minute after the realm listed the namespace again, the claimant is still %q "+
+					"(operation %q, next %s, refusal %q)",
+					lifted.phase, lifted.operation, formatDeadline(lifted.next), lifted.refusal)
+			}
+		})
+	}
+}
+
+// listRealmNamespaces sets the namespaces the PtahRealm name admits.
+func listRealmNamespaces(t *testing.T, api client.Client, name string, namespaces ...string) {
 	t.Helper()
 
-	if reading.refusal != string(operatorv1alpha1.ReasonRealmConflict) {
-		t.Fatalf("%s: reason %q, want %s", what, reading.refusal, operatorv1alpha1.ReasonRealmConflict)
+	realm := &operatorv1alpha1.PtahRealm{}
+	if err := api.Get(context.Background(), client.ObjectKey{Name: name}, realm); err != nil {
+		t.Fatal(err)
+	}
+	realm.Spec.Namespaces = namespaces
+	if err := api.Update(context.Background(), realm); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// assertRealmRecheckBounded holds one refusal to the documented re-check: the
+// persisted deadline and the requeue both within realmRecheckCeiling of now.
+func assertRealmRecheckBounded(
+	t *testing.T,
+	what string,
+	reason operatorv1alpha1.ConditionReason,
+	now time.Time,
+	reading claimantReading,
+	result ctrl.Result,
+) {
+	t.Helper()
+
+	if reading.refusal != string(reason) {
+		t.Fatalf("%s: reason %q, want %s", what, reading.refusal, reason)
 	}
 	if reading.next == nil {
 		t.Fatalf("%s at %s left no time to look again", what, now.Format(time.RFC3339))

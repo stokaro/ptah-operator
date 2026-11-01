@@ -164,8 +164,11 @@ func TestMigrationRefusesARealmThatDoesNotAdmitItsNamespace(t *testing.T) {
 }
 
 // A standing refusal re-examines its realm every pass and writes its status
-// once. Status writes wake the controller that makes them, so one that
-// rewrote the refusal every pass would never sleep.
+// once. Any event other than its own status write reconciles it again, such
+// as one of its Jobs, an approval, a run acknowledgment or a change to its
+// labels or annotations, so one that rewrote the refusal on every pass would
+// patch on every one of them. The passes run at later instants, before the
+// refusal's deadline, as TestAStandingRealmRefusalStopsWritingStatus says.
 func TestAStandingMigrationRealmRefusalStopsWritingStatus(t *testing.T) {
 	t.Parallel()
 
@@ -199,6 +202,7 @@ func TestAStandingMigrationRealmRefusalStopsWritingStatus(t *testing.T) {
 
 			migration, objects := standing.objects()
 			reconciler, api := fakeMigrationReconciler(t, nil, objects...)
+			clock := movableMigrationClock(reconciler, api)
 			request := migrationRequest(migration)
 			if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
 				t.Fatal(err)
@@ -206,8 +210,13 @@ func TestAStandingMigrationRealmRefusalStopsWritingStatus(t *testing.T) {
 			blocked := readMigration(t, api, migration)
 			assertMigrationBlockedFor(t, blocked, standing.reason)
 			settled := blocked.ResourceVersion
+			if blocked.Status.NextReconciliationTime == nil ||
+				!blocked.Status.NextReconciliationTime.After(clock.now.Add(3*standingPassGap)) {
+				t.Fatalf("the refusal looks again at %s, before the passes below end", formatDeadline(blocked.Status.NextReconciliationTime))
+			}
 
 			for pass := range 3 {
+				clock.now = clock.now.Add(standingPassGap)
 				if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
 					t.Fatalf("pass %d: %v", pass, err)
 				}
