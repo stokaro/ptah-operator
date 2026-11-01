@@ -458,7 +458,7 @@ func TestApproveExitsByWhatTheAPIServerSaid(t *testing.T) {
 
 func TestApproveNamesTheResourceItApproves(t *testing.T) {
 	api, _ := approvable(t, nil)
-	for _, arguments := range [][]string{{"storefront"}, {"ptahschema/storefront"}, {}, {"schema/storefront", "schema/other"}} {
+	for _, arguments := range [][]string{{"storefront"}, {"schemas/storefront"}, {}, {"schema/storefront", "schema/other"}} {
 		if code, _, _ := runApprove(t, api, "", false, arguments...); code != exitUsage {
 			t.Fatalf("approve %q = %d, want usage", arguments, code)
 		}
@@ -471,5 +471,17 @@ func TestApproveNamesTheResourceItApproves(t *testing.T) {
 	}
 	if len(api.created) != 0 {
 		t.Fatalf("%d approvals were sent for commands that named nothing approvable", len(api.created))
+	}
+}
+
+// approve reads the family as every other verb does: kubectl's spelling of
+// the kind names the same resource.
+func TestApproveTakesTheKindAsKubectlSpellsIt(t *testing.T) {
+	api, fingerprint := approvable(t, nil)
+
+	code, _, stderr := runApprove(t, api, "", false, "ptahschema/storefront", "--plan-fingerprint", fingerprint)
+
+	if code != exitOK || len(api.created) != 1 {
+		t.Fatalf("approve ptahschema/storefront = %d after %d creates; stderr %q", code, len(api.created), stderr)
 	}
 }

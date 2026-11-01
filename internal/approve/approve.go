@@ -23,6 +23,7 @@ import (
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/migrationplan"
+	"github.com/stokaro/ptah-operator/internal/operate"
 	"github.com/stokaro/ptah-operator/internal/statusview"
 	"github.com/stokaro/ptah-operator/pkg/planread"
 )
@@ -62,20 +63,24 @@ func (f Family) ApprovalKind() string {
 }
 
 // ParseTarget reads a target written as family/name, the way kubectl names a
-// resource: schema/storefront or migration/shipments. The family is required:
-// a schema and a migration may share a name, and an approval for the wrong one
-// is an approval nobody reviewed.
+// resource: schema/storefront or migration/shipments, or the kind's plural or
+// short name, as in ptahschema/storefront. It reads the family the way
+// suspend, resume, refresh and wait do (operate.ParseFamily). The family is
+// required: a schema and a migration may share a name, and an approval for
+// the wrong one is an approval nobody reviewed.
 func ParseTarget(target string) (Family, string, error) {
 	family, name, found := strings.Cut(target, "/")
 	if !found || name == "" || strings.Contains(name, "/") {
 		return "", "", fmt.Errorf("name the resource as schema/NAME or migration/NAME, not %q", target)
 	}
-	switch Family(family) {
-	case Schema, Migration:
-		return Family(family), name, nil
-	default:
+	parsed, err := operate.ParseFamily(family)
+	if err != nil {
 		return "", "", fmt.Errorf("%q is not a family this command approves; use schema/NAME or migration/NAME", family)
 	}
+	if parsed == operate.FamilyMigration {
+		return Migration, name, nil
+	}
+	return Schema, name, nil
 }
 
 // Review is the plan a person is asked to approve and the identities an
