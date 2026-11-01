@@ -404,38 +404,60 @@ func TestRefreshSaysTheRequestIsNotTheRead(t *testing.T) {
 
 // refresh --wait waits from the answer to its own patch: the operator takes
 // the request, a read begins after it, and the wait ends on the document
-// that holds that read's harvest and nothing in flight.
+// that holds that read's harvest and nothing in flight. When all of that
+// lands before the wait's first read, only that baseline shows the reading
+// is new.
 func TestRefreshWaitsForTheReadItAskedFor(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		api := newCluster(t, resting("schema"))
-		api.then(
-			unchanged,
-			// The operator takes the request and claims the read.
-			schemaStatus(func(status *operatorv1alpha1.PtahSchemaStatus) {
-				status.LastReadRequest = operatorv1alpha1.ReadRequestToken(requestOn(t, api))
-				status.Phase = operatorv1alpha1.PhaseResolving
-				status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{Type: "Resolve", ID: "read", JobName: "job"}
-			}),
-			readAgain,
-		)
-
-		code, stdout, stderr := runCommand(t, api, "refresh", "schema/storefront", "--wait")
-
-		if code != exitOK {
-			t.Fatalf("refresh --wait = %d, stdout %q, stderr %q", code, stdout, stderr)
-		}
-		requireSays(t, "refresh --wait's report", stdout, "Read requested for", "ptahschema/storefront in namespace demo reached read.",
-			"Database:   last read at 2026-10-01T09:07:00Z")
-		requireSays(t, "refresh --wait's stderr", stderr, "Waiting up to 5m0s for ptahschema/storefront in namespace demo to reach read.")
-		if strings.Contains(stdout, "--read-request") {
-			t.Fatalf("refresh --wait points at a wait it already ran: %q", stdout)
-		}
-	})
+	for _, test := range []struct {
+		name  string
+		steps func(*cluster) []func(client.Object)
+	}{
+		{"read by read", func(api *cluster) []func(client.Object) {
+			return []func(client.Object){
+				unchanged,
+				// The operator takes the request and claims the read.
+				schemaStatus(func(status *operatorv1alpha1.PtahSchemaStatus) {
+					status.LastReadRequest = operatorv1alpha1.ReadRequestToken(requestOn(api))
+					status.Phase = operatorv1alpha1.PhaseResolving
+					status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{Type: "Resolve", ID: "read", JobName: "job"}
+				}),
+				readAgain,
+			}
+		}},
+		{"before the first read", func(api *cluster) []func(client.Object) {
+			return []func(client.Object){func(object client.Object) {
+				object.(*operatorv1alpha1.PtahSchema).Status.LastReadRequest = operatorv1alpha1.ReadRequestToken(requestOn(api))
+				readAgain(object)
+			}}
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) { refreshAndWait(t, test.steps) })
+		})
+	}
 }
 
-func requestOn(t *testing.T, api *cluster) string {
-	t.Helper()
-	return stored(t, api, "schema").GetAnnotations()[operatorv1alpha1.ReadRequestAnnotation]
+func refreshAndWait(t *testing.T, steps func(*cluster) []func(client.Object)) {
+	api := newCluster(t, resting("schema"))
+	api.then(steps(api)...)
+
+	code, stdout, stderr := runCommand(t, api, "refresh", "schema/storefront", "--wait")
+
+	if code != exitOK {
+		t.Fatalf("refresh --wait = %d, stdout %q, stderr %q", code, stdout, stderr)
+	}
+	requireSays(t, "refresh --wait's report", stdout, "Read requested for", "ptahschema/storefront in namespace demo reached read.",
+		"Database:   last read at 2026-10-01T09:07:00Z")
+	requireSays(t, "refresh --wait's stderr", stderr, "Waiting up to 5m0s for ptahschema/storefront in namespace demo to reach read.")
+	if strings.Contains(stdout, "--read-request") {
+		t.Fatalf("refresh --wait points at a wait it already ran: %q", stdout)
+	}
+}
+
+// requestOn is the read request stored on the schema, as the operator reads
+// it before it answers.
+func requestOn(api *cluster) string {
+	return stored(api.t, api, "schema").GetAnnotations()[operatorv1alpha1.ReadRequestAnnotation]
 }
 
 // An InSync the resource already showed when the wait began is not an
