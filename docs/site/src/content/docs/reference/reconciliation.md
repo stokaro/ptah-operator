@@ -273,6 +273,13 @@ have started: Resolve, then Observe for a schema or the history read for a
 migration. A plan that waits for approval is kept unless the new reading
 retires it, as at any interval.
 
+A resource `Blocked` because its engine is not supported (`UnsupportedEngine`)
+or because its database realm does not admit it (`RealmConflict`,
+`RealmNotAuthorized`) does not answer: the controller checks the engine and the
+realm before it reaches the request, and the request waits until those checks
+pass. `Blocked` for any other reason, such as a policy that refuses the plan,
+answers as above.
+
 The request never starts a mutating operation and does not shorten a retry
 delay: a `Failed` resource answers it when its retry starts. A read already
 under way when the request arrives does not answer it, because it may have read

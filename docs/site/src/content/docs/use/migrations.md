@@ -263,12 +263,14 @@ those files produce against what the database has, so files that are not the
 artifact's prove nothing about the artifact.
 
 **Nothing may be applying while this runs.** If the resource already exists,
-suspend it and wait for its operation Jobs to finish, which
-`kubectl ptah suspend migration/orders -n application --wait` does in one
-command; a plan approved earlier
-can otherwise dispatch an Apply into the middle of adoption, and that Apply
-would run the whole sequence against a database that already carries the
-schema. If it does not exist yet, create it after baseline rather than before.
+suspend it before you start: a plan approved earlier can otherwise dispatch an
+Apply into the middle of adoption, and that Apply would run the whole sequence
+against a database that already carries the schema.
+`kubectl ptah suspend migration/orders -n application --wait` returns once
+the operator reports the migration `Suspended`, with no Apply running and none
+able to start. A read the suspension dropped can keep its Job running to that
+Job's own deadline; it changes nothing, and `kubectl get jobs -n application`
+shows when it is gone. If it does not exist yet, create it after baseline rather than before.
 
 #### Run it {#adopt-run}
 
