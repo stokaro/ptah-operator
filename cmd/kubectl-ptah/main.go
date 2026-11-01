@@ -453,10 +453,10 @@ nothing else; resume clears it. Suspension prevents new Jobs and cancels no
 SQL: an Apply already running, and the proof that follows it, are observed to
 their end, and a read under way is dropped, since it changes nothing.
 Suspending a migration while its Apply runs records that run as one nobody
-accounted for, so let an Apply finish first. Each command prints the
-state it asked for beside what the operator had observed, and sends nothing
-when spec.suspend already holds the value. After resume the operator reads
-the database again and decides from what it finds.
+accounted for, so let an Apply finish first. Each command prints the state it
+asked for beside what the operator had observed, and sends nothing when
+spec.suspend already holds the value. After resume the operator reads the
+database again and decides from what it finds.
 
 refresh asks the operator to read the database now rather than at the next
 interval, through the operator.ptah.run/read-requested-at annotation. The
@@ -482,8 +482,8 @@ written does not mean the read has happened.
 
 wait reads a schema or a migration until it reaches a target, and counts
 nothing that was already true when it began: a reading of the database has to
-begin after the wait does, and the operator has to have observed the
-generation the resource had then.
+begin after the wait does, and for in-sync, approval and suspended the
+operator has to have observed the generation the resource had then.
 
   --for <target>           required; one of
                              in-sync    the resource rests in sync
@@ -510,11 +510,11 @@ as schema/NAME or migration/NAME, or by the kind's plural or short name as
 kubectl spells it.
 
 Exit status: 0 printed, changed or reached, 1 could not read or verify, 2
-usage, 3 nothing stored to print, approve or change, 4 nothing approved or
-changed (the plan changed, the operator would not admit an approval now, the
-fingerprint is not the current plan's, you declined, or the resource was
-deleted and created again), 5 refused by RBAC or the API server, 6 sent with
-no answer: the change may have been stored, 7 the wait timed out, 8 the
-resource will not reach the target.
+usage, 3 nothing stored to print, approve, change or wait on, 4 nothing
+approved or changed (the plan changed, the operator would not admit an
+approval now, the fingerprint is not the current plan's, you declined, or the
+resource was deleted and created again), 5 refused by RBAC or the API server,
+6 sent with no answer: the change may have been stored, 7 the wait timed out,
+8 the resource will not reach the target.
 `)
 }
