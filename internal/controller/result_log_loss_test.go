@@ -49,10 +49,21 @@ func statusOf(err error) *metav1.Status {
 	return &document
 }
 
+// unreachableAPIServer is an address no API server answers on: port 1 is
+// below every ephemeral range, so no test server can be given it. A server
+// started and then closed is not that address. Its port goes back to the
+// kernel, and a test running in parallel can be given the same port and answer
+// the read with its own response, which then gets classified in this row's place.
+const unreachableAPIServer = "http://127.0.0.1:1"
+
 // readThroughAPIServer reads one executor log through the reader the manager
-// runs, a clientset, against a server answering as the API server does.
+// runs, a clientset, against a server answering as the API server does, or
+// against no server at all when closed is set.
 func readThroughAPIServer(t *testing.T, answer apiServerLogAnswer, closed bool) ([]byte, error) {
 	t.Helper()
+	if closed {
+		return readFrom(t, unreachableAPIServer)
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.URL.Path != "/api/v1/namespaces/team-a/pods/apply-pod/log" ||
 			request.URL.Query().Get("container") != executorContainerName {
@@ -71,12 +82,13 @@ func readThroughAPIServer(t *testing.T, answer apiServerLogAnswer, closed bool) 
 		writer.WriteHeader(answer.code)
 		_, _ = writer.Write([]byte(answer.body))
 	}))
-	if closed {
-		server.Close()
-	} else {
-		defer server.Close()
-	}
-	clientset, err := kubernetes.NewForConfig(&rest.Config{Host: server.URL})
+	defer server.Close()
+	return readFrom(t, server.URL)
+}
+
+func readFrom(t *testing.T, host string) ([]byte, error) {
+	t.Helper()
+	clientset, err := kubernetes.NewForConfig(&rest.Config{Host: host})
 	if err != nil {
 		t.Fatal(err)
 	}
