@@ -1,5 +1,10 @@
 package v1alpha1
 
+import (
+	"crypto/sha256"
+	"encoding/hex"
+)
+
 // ReadRequestAnnotation asks a PtahSchema or a PtahMigration to read its
 // database now rather than at status.nextReconciliationTime, as after a
 // person changed the database outside the operator. Its value is an RFC 3339
@@ -21,3 +26,16 @@ const ReadRequestAnnotation = "operator.ptah.run/read-requested-at"
 // given. A longer one is recorded as its SHA-256 digest, written
 // "sha256:<hex>".
 const MaxReadRequestLength = 64
+
+// ReadRequestToken is how status.lastReadRequest records a value of the
+// ReadRequestAnnotation: as given up to MaxReadRequestLength bytes, as its
+// SHA-256 digest beyond, so any value can be recorded as answered and none is
+// answered twice. A client that waits for its request compares this with
+// status.lastReadRequest.
+func ReadRequestToken(value string) string {
+	if len(value) <= MaxReadRequestLength {
+		return value
+	}
+	sum := sha256.Sum256([]byte(value))
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
