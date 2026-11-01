@@ -155,6 +155,8 @@ const (
 	StopNotSuspended StopReason = "NotSuspended"
 	// StopDeleting is a resource that is being deleted.
 	StopDeleting StopReason = "Deleting"
+	// StopDeleted is a resource that was deleted while the wait read it.
+	StopDeleted StopReason = "Deleted"
 )
 
 // StopError is a wait that ended because the resource recorded an outcome
@@ -220,11 +222,12 @@ func (e *TimeoutError) Error() string {
 // Wait reads the resource until it reaches options.Target, the timeout
 // passes, or the resource records an outcome the target cannot follow.
 //
-// It returns a *StopError for such an outcome or a resource being deleted, a
-// *TimeoutError on timeout, ErrReplaced when the name comes to hold another
-// resource, and the API server's error for a resource that is gone, a kind
-// the server does not serve, or a read it refuses. A failed read the server
-// may answer next time is retried until the timeout.
+// It returns a *StopError for such an outcome or a resource being deleted or
+// deleted since the baseline, a *TimeoutError on timeout, ErrReplaced when the
+// name comes to hold another resource, and the API server's error for a
+// resource that was not there to begin with, a kind the server does not
+// serve, or a read it refuses. A failed read the server may answer next time
+// is retried until the timeout.
 //
 // Status timestamps carry whole seconds, so a reading made in the same second
 // as the baseline's is not newer than it. That can only make a wait last
@@ -291,6 +294,15 @@ func Wait(ctx context.Context, reader client.Reader, ref Ref, options WaitOption
 			// The read carried the wait's own deadline: the timeout below
 			// reports it.
 			lastErr = err
+		case apierrors.IsNotFound(err) && w.baseline != nil:
+			// The resource the wait began on is gone; a resource with no
+			// finalizer goes without a deleting document between.
+			phase := w.baseline.phase
+			if last != nil {
+				phase = last.phase
+			}
+			return Result{}, &StopError{Ref: ref, Target: options.Target, Reason: StopDeleted, Phase: phase,
+				Message: "the resource was deleted"}
 		case !retryable(err):
 			return Result{}, ref.failed("wait for", err)
 		default:

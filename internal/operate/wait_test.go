@@ -1243,8 +1243,18 @@ func TestWaitErrorsFromTheAPIServer(t *testing.T) {
 		check     func(error) bool
 	}{
 		{
-			name: "a resource that is gone ends the wait", errs: map[int]error{1: apierrors.NewNotFound(resource, name)},
-			wantReads: 2, check: apierrors.IsNotFound,
+			// A resource with no finalizer goes without a document that
+			// shows it being deleted: the wait stops as it does for one being
+			// deleted, with the phase it last read.
+			name: "a resource deleted after the wait began stops it", errs: map[int]error{1: apierrors.NewNotFound(resource, name)},
+			wantReads: 2, check: func(err error) bool {
+				var stop *operate.StopError
+				return errors.As(err, &stop) && stop.Reason == operate.StopDeleted && stop.Phase == "Applying"
+			},
+		},
+		{
+			name: "a resource that is not there ends the wait with the API server's answer", errs: map[int]error{0: apierrors.NewNotFound(resource, name)},
+			wantReads: 1, check: apierrors.IsNotFound,
 		},
 		{
 			name:      "a read RBAC refuses ends the wait with the API server's message",
@@ -1467,5 +1477,24 @@ func TestWaitTimeoutSaysWhetherAReadWasUnderWay(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// A wait that starts from a change's answer has a baseline before its first
+// read, so a resource gone at that read was deleted since.
+func TestWaitStopsOnAResourceDeletedSinceItsBaseline(t *testing.T) {
+	t.Parallel()
+
+	tl := &timeline{family: operate.FamilySchema, docs: []doc{{suspend: true, phase: "Suspended"}},
+		errs: map[int]error{0: apierrors.NewNotFound(resource, name)}}
+	since := doc{generation: 4, suspend: true, phase: "InSync", observedAt: at(0)}.object(operate.FamilySchema)
+
+	_, err := operate.Wait(context.Background(), tl.reader(t), refOf(operate.FamilySchema), operate.WaitOptions{
+		Target: operate.TargetSuspended, Timeout: timeout, Interval: interval, Clock: newStepClock(), Since: since,
+	})
+
+	var stop *operate.StopError
+	if !errors.As(err, &stop) || stop.Reason != operate.StopDeleted || stop.Phase != "InSync" || tl.readCount() != 1 {
+		t.Fatalf("err = %v after %d reads, want a Deleted stop at the first read naming phase InSync", err, tl.readCount())
 	}
 }
