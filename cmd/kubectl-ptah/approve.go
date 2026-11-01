@@ -20,22 +20,6 @@ import (
 	"github.com/stokaro/ptah-operator/internal/statusview"
 )
 
-// Exit statuses of approve, beside the ones every command shares.
-const (
-	// exitNotApproved covers an approval this command did not send: the
-	// plan changed during review, the operator would not admit one now, the
-	// fingerprint given is not the current plan's, or the person declined.
-	exitNotApproved = 4
-	// exitRefused covers an approval the API server refused with a 4xx, in
-	// its own words: RBAC, admission, the schema, a name already taken, a
-	// credential it did not accept, or a request it was too busy to take.
-	// Nothing was stored.
-	exitRefused = 5
-	// exitUnknown covers an approval that was sent and whose fate no answer
-	// told. It may have been stored.
-	exitUnknown = 6
-)
-
 func stdinIsTerminal() bool {
 	return term.IsTerminal(int(os.Stdin.Fd()))
 }
@@ -111,7 +95,7 @@ func approveCommand(ctx context.Context, arguments []string, stdin io.Reader, in
 		// The plan the status names is not stored: an approval in any mode
 		// would bind an object nobody reviewed.
 		fmt.Fprintf(stderr, "kubectl-ptah: %s Nothing was approved.\n", review.Closed)
-		return exitNotApproved
+		return exitNotDone
 	}
 
 	// Every mode, --dry-run client included, takes the same decision: the
@@ -122,7 +106,7 @@ func approveCommand(ctx context.Context, arguments []string, stdin io.Reader, in
 		if *fingerprint != review.Fingerprint {
 			fmt.Fprintf(stderr, "kubectl-ptah: the current plan of %s/%s is %s with fingerprint %s, not the %s given. Nothing was approved; review the current plan.\n",
 				family, resource, review.PlanName, statusview.Clean(review.Fingerprint), statusview.Clean(*fingerprint))
-			return exitNotApproved
+			return exitNotDone
 		}
 	} else if !interactive {
 		fmt.Fprintf(stderr, "kubectl-ptah: approve asks for a decision on a terminal. Without one, pass --plan-fingerprint with the fingerprint of the plan you reviewed (kubectl ptah plan %s shows it).\n", resource)
@@ -131,7 +115,7 @@ func approveCommand(ctx context.Context, arguments []string, stdin io.Reader, in
 	if !review.Open {
 		if !printOnly {
 			fmt.Fprintf(stderr, "kubectl-ptah: %s Nothing was approved.\n", review.Closed)
-			return exitNotApproved
+			return exitNotDone
 		}
 		// A manifest outlives the moment: the operator reading again at its
 		// interval closes the gate for a while, and the plan stays current.
@@ -159,7 +143,7 @@ func approveCommand(ctx context.Context, arguments []string, stdin io.Reader, in
 		answer, _ := bufio.NewReader(stdin).ReadString('\n')
 		if strings.TrimSpace(answer) != "yes" {
 			fmt.Fprintln(stderr, "Nothing was approved.")
-			return exitNotApproved
+			return exitNotDone
 		}
 	}
 
@@ -200,7 +184,7 @@ func approveCommand(ctx context.Context, arguments []string, stdin io.Reader, in
 		return exitOK
 	case approve.Changed, approve.Closed:
 		fmt.Fprintf(stderr, "kubectl-ptah: %s\n", result.Message)
-		return exitNotApproved
+		return exitNotDone
 	case approve.Forbidden, approve.Refused:
 		fmt.Fprintf(stderr, "kubectl-ptah: %s\n", result.Message)
 		return exitRefused
@@ -213,8 +197,9 @@ func approveCommand(ctx context.Context, arguments []string, stdin io.Reader, in
 	}
 }
 
-// printObject writes an approval as YAML or JSON, the way kubectl prints one.
+// printObject writes an object as YAML or JSON, the way kubectl prints one.
 func printObject(stdout, stderr io.Writer, object client.Object, format string) int {
+	kind := object.GetObjectKind().GroupVersionKind().Kind
 	object.SetManagedFields(nil)
 	var (
 		data []byte
@@ -227,11 +212,11 @@ func printObject(stdout, stderr io.Writer, object client.Object, format string) 
 		data, err = yaml.Marshal(object)
 	}
 	if err != nil {
-		fmt.Fprintf(stderr, "kubectl-ptah: encode the approval: %v\n", err)
+		fmt.Fprintf(stderr, "kubectl-ptah: encode the %s: %v\n", kind, err)
 		return exitFailed
 	}
 	if _, err := stdout.Write(data); err != nil {
-		fmt.Fprintf(stderr, "kubectl-ptah: write the approval: %v\n", err)
+		fmt.Fprintf(stderr, "kubectl-ptah: write the %s: %v\n", kind, err)
 		return exitFailed
 	}
 	return exitOK

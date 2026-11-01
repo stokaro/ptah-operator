@@ -154,12 +154,14 @@ Diagnostics go to standard error. Nothing reaches standard output until every
 check has held, so a plan whose last chunk is corrupt leaves you with an error
 rather than half its SQL.
 
-Exit status: `0` printed or approved, `1` could not read or verify, `2` the
-command line, `3` nothing stored to print or approve. `kubectl ptah approve`
-adds `4` nothing approved (the plan changed, the operator would not admit an
-approval now, the fingerprint given is not the current plan's, or you
-declined), `5` refused by RBAC or the API server, and `6` sent with no answer:
-the approval may have been stored.
+Exit status: `0` printed, approved, changed or reached, `1` could not read or
+verify, `2` the command line, `3` nothing stored to print, approve, change or
+wait on. The commands that write add `4` nothing approved or changed (the plan
+changed, the operator would not admit an approval now, the fingerprint given is
+not the current plan's, you declined, or the resource was deleted and created
+again), `5` refused by RBAC or the API server, and `6` sent with no answer: the
+approval or the change may have been stored. A wait adds `7` timed out and `8`
+the resource will not reach the target.
 
 ## Where a schema stands {#schema}
 

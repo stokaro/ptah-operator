@@ -39,10 +39,24 @@ const (
 	exitFailed = 1
 	// exitUsage covers a command line this program cannot act on.
 	exitUsage = 2
-	// exitAbsent covers a schema or a plan that is not there. It is separate
-	// because "there is nothing to show" is an answer, and printing empty SQL
-	// with a zero status would be a wrong one.
+	// exitAbsent covers a resource or a plan that is not there. It is
+	// separate because "there is nothing to show" is an answer, and printing
+	// empty SQL with a zero status would be a wrong one.
 	exitAbsent = 3
+	// exitNotDone covers a decision or a change this program did not make:
+	// approve's plan changed during review, the operator would not admit an
+	// approval now, the fingerprint given is not the current plan's, or the
+	// person declined; or the resource suspend, resume or refresh read was
+	// deleted and created again before the change reached it.
+	exitNotDone = 4
+	// exitRefused covers a write the API server refused with a 4xx, in its
+	// own words: RBAC, admission, the schema, a name already taken, a
+	// credential it did not accept, or a request it was too busy to take.
+	// Nothing was stored.
+	exitRefused = 5
+	// exitUnknown covers a write that was sent and whose fate no answer told.
+	// It may have been stored.
+	exitUnknown = 6
 )
 
 func main() {
@@ -70,6 +84,14 @@ func run(ctx context.Context, arguments []string, stdout, stderr io.Writer) int 
 		return schema(ctx, arguments[1:], stdout, stderr)
 	case "approve":
 		return approveCommand(ctx, arguments[1:], os.Stdin, stdinIsTerminal(), stdout, stderr)
+	case "suspend":
+		return suspendCommand(ctx, arguments[1:], true, stdout, stderr)
+	case "resume":
+		return suspendCommand(ctx, arguments[1:], false, stdout, stderr)
+	case "refresh":
+		return refreshCommand(ctx, arguments[1:], stdout, stderr)
+	case "wait":
+		return waitCommand(ctx, arguments[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "kubectl-ptah: unknown command %q\n\n", arguments[0])
 		usage(stderr)
@@ -338,6 +360,10 @@ func usage(out io.Writer) {
        kubectl ptah schema <schema> [flags]
        kubectl ptah migration <migration> [flags]
        kubectl ptah approve schema/<name>|migration/<name> [flags]
+       kubectl ptah suspend schema/<name>|migration/<name> [flags]
+       kubectl ptah resume schema/<name>|migration/<name> [flags]
+       kubectl ptah refresh schema/<name>|migration/<name> [flags]
+       kubectl ptah wait schema/<name>|migration/<name> --for <target> [flags]
 
 plan prints the SQL of a plan the Ptah operator stored, after the operator's
 own checks on it have held, each statement under a line that gives its severity
@@ -416,10 +442,72 @@ you may.
 Admission records whoever creates a printed approval as its approver: create
 it as the person who decided, with kubectl create rather than apply.
 
-Exit status: 0 printed or approved, 1 could not read or verify, 2 usage, 3
-nothing stored to print or approve, 4 nothing approved (the plan changed, the
-operator would not admit an approval now, the fingerprint is not the current
-plan's, or you declined), 5 refused by RBAC or the API server, 6 sent with
-no answer: the approval may have been stored.
+suspend and resume set spec.suspend on a schema or a migration and change
+nothing else; resume clears it. Suspension prevents new Jobs. An operation
+already running, an Apply included, is observed to its end: no SQL is
+canceled. Suspending a migration while its Apply runs records that run as one
+nobody accounted for, so let an Apply finish first. Each command prints the
+state it asked for beside what the operator had observed, and sends nothing
+when spec.suspend already holds the value. After resume the operator reads
+the database again and decides from what it finds.
+
+refresh asks the operator to read the database now rather than at the next
+interval, through the operator.ptah.run/read-requested-at annotation. The
+operator takes the request once no operation is running, the resource is not
+suspended and no retry delay is pending; a read already under way does not
+answer it. The request starts no Apply and approves nothing, and that it was
+written does not mean the read has happened.
+
+  --wait                   wait for the operator: suspend until it reports
+                           Suspended with nothing in flight, resume until
+                           the resource reaches --for, refresh until the
+                           read it asked for has ended
+  --for <target>           resume only: in-sync (the default), approval or
+                           applied; naming one implies --wait
+  --wait-timeout <dur>     how long --wait waits (default 5m)
+  -o, --output <format>    text (the default), or yaml or json: the
+                           resource as the API server answered the change,
+                           or as the wait last read it
+
+  kubectl ptah suspend schema/storefront -n application --wait
+  kubectl ptah resume migration/orders -n application --for approval
+  kubectl ptah refresh migration/orders -n application --wait
+
+wait reads a schema or a migration until it reaches a target, and counts
+nothing that was already true when it began: a reading of the database has to
+begin after the wait does, and the operator has to have observed the
+generation the resource had then.
+
+  --for <target>           required; one of
+                             in-sync    the resource rests in sync
+                             approval   a fresh plan waits for an approval
+                             applied    an Apply or a migration run ended,
+                                        confirmed by a reading afterwards
+                             suspended  the operator reports it Suspended,
+                                        with nothing in flight
+                             read       the read a refresh asked for ended
+  --read-request <value>   with --for read: the request refresh printed
+  --plan <name|fp>         with --for applied, for a schema: only this plan
+  --timeout <duration>     how long to wait (default 5m)
+  -o, --output <format>    text (the default), yaml or json
+
+  kubectl ptah wait schema/storefront --for in-sync --timeout 10m -n application
+
+A wait that times out names the phase, the condition that holds the resource
+and what it still waits for. One that cannot reach its target, such as an
+Apply that failed or a run whose outcome nobody established, stops at once.
+
+suspend, resume and refresh patch the resource as you: they need get and
+patch on ptahschemas or ptahmigrations. wait needs get. The resource is named
+as schema/NAME or migration/NAME, or by the kind's plural or short name as
+kubectl spells it.
+
+Exit status: 0 printed, changed or reached, 1 could not read or verify, 2
+usage, 3 nothing stored to print, approve or change, 4 nothing approved or
+changed (the plan changed, the operator would not admit an approval now, the
+fingerprint is not the current plan's, you declined, or the resource was
+deleted and created again), 5 refused by RBAC or the API server, 6 sent with
+no answer: the change may have been stored, 7 the wait timed out, 8 the
+resource will not reach the target.
 `)
 }
