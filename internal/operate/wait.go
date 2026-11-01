@@ -34,7 +34,9 @@ const (
 	TargetApproval Target = "approval"
 	// TargetApplied is an Apply or a migration run that ended after the
 	// baseline, recorded applied and settled by the operator's own reading of
-	// the database. Any other ending stops the wait with a StopError.
+	// the database. One that ended before it does not count even when its
+	// proof or read-back ends after it. Any other ending of an Apply that
+	// ended after the baseline stops the wait with a StopError.
 	TargetApplied Target = "applied"
 	// TargetSuspended is a resource the controller reports Suspended at the
 	// required generation, with nothing in flight: for a schema, its
@@ -612,10 +614,21 @@ func (w *waiter) checkApplied(s snapshot) verdict {
 		return w.checkRun(s)
 	}
 	b := w.baseline
+	// An Apply whose proof the baseline already owed ended before the wait
+	// began, as a migration run the baseline already recorded did: neither
+	// counts, nor stops the wait, when its proof ends.
+	before := ""
+	if b.proof {
+		before = b.proofPlan.name
+	}
 	// status.applied is written only by the proof that read the database
 	// after the Apply and found it converged.
 	if applied := s.applied; applied != nil && (b.applied == nil || applied.planUID != b.applied.planUID ||
 		!applied.completedAt.Equal(b.applied.completedAt)) {
+		if before != "" && applied.planUID == b.proofPlan.uid {
+			return waitingFor("an Apply that ends after the wait began: plan %s was applied before it, and its "+
+				"proof ended since", applied.plan)
+		}
 		if plan := w.options.Plan; plan != "" && applied.plan != plan && applied.fingerprint != plan {
 			return w.stop(s, StopOtherPlanApplied, fmt.Sprintf("plan %s was applied, not %s", applied.plan, plan))
 		}
@@ -624,13 +637,17 @@ func (w *waiter) checkApplied(s snapshot) verdict {
 		}
 		return verdict{done: true}
 	}
+	// A schema journals an Apply's end as Succeeded or Unknown and nothing
+	// else (internal/lifecyclejournal); a failure it can see is a proof that
+	// did not confirm the Apply.
 	for _, entry := range journalSince(b.journal, s.journal) {
+		if before != "" && entry.Plan == before {
+			continue
+		}
 		switch {
 		case entry.Type == operatorv1alpha1.JournalApplyFinished && entry.Outcome == operatorv1alpha1.JournalUnknown:
 			return w.stop(s, StopUnresolved, fmt.Sprintf("the Apply of plan %s ended with an outcome nobody established; "+
 				"the operator proves convergence before anything else runs, and records no Apply for it", entry.Plan))
-		case entry.Type == operatorv1alpha1.JournalApplyFinished && entry.Outcome != operatorv1alpha1.JournalSucceeded:
-			return w.stop(s, StopApplyFailed, fmt.Sprintf("the Apply of plan %s ended %s", entry.Plan, entry.Outcome))
 		case entry.Type == operatorv1alpha1.JournalVerified && entry.Outcome == operatorv1alpha1.JournalDriftRemains:
 			return w.stop(s, StopNotConverged, fmt.Sprintf("after the Apply of plan %s the database still differs "+
 				"from the desired schema", entry.Plan))

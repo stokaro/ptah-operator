@@ -660,6 +660,37 @@ func TestWaitTargets(t *testing.T) {
 			wantTimeout: true, wantMessage: "an Apply that ends after the wait began",
 		},
 		{
+			// The Apply ended before the wait did: the baseline owes its
+			// proof. That proof writes status.applied after the wait began,
+			// and a migration run recorded before the wait is not counted
+			// when its read-back ends either.
+			name: "applied: a schema Apply that ended before the wait began is not the target", target: operate.TargetApplied,
+			only: operate.FamilySchema,
+			docs: func(f operate.Family) []doc {
+				return []doc{
+					{phase: "VerifyingConvergence", operation: "Observe", dispatched: true, proof: true, proofPlan: "plan-1", observedAt: at(0)},
+					{phase: "InSync", observedAt: at(90), applied: &appliedDoc{plan: "plan-1", uid: "plan-1-uid", fingerprint: "sha256:plan-1", completedAt: at(90)}},
+				}
+			},
+			wantTimeout: true, wantMessage: "plan plan-1 was applied before it",
+		},
+		{
+			name: "applied: the proof of an Apply that ended before the wait began does not stop it", target: operate.TargetApplied,
+			only: operate.FamilySchema,
+			docs: func(f operate.Family) []doc {
+				return []doc{
+					{phase: "VerifyingConvergence", operation: "Plan", dispatched: true, proof: true, proofPlan: "plan-1", observedAt: at(0)},
+					{
+						phase: "AwaitingApproval", observedAt: at(80),
+						journal: []operatorv1alpha1.JournalEntry{
+							{Type: operatorv1alpha1.JournalVerified, At: metav1.NewTime(at(80)), Plan: "plan-1", Outcome: operatorv1alpha1.JournalDriftRemains},
+						},
+					},
+				}
+			},
+			wantTimeout: true, wantMessage: "an Apply that ends after the wait began",
+		},
+		{
 			name: "applied: a schema Apply with an unknown outcome stops the wait", target: operate.TargetApplied,
 			only: operate.FamilySchema,
 			docs: func(f operate.Family) []doc {
@@ -922,6 +953,20 @@ func TestWaitTargets(t *testing.T) {
 				return []doc{
 					{phase: "InSync", observedAt: at(0), lastRun: earlier},
 					{phase: "InSync", observedAt: at(30), lastRun: earlier},
+				}
+			},
+			wantTimeout: true, wantMessage: "a run that finishes after the wait began",
+		},
+		{
+			// The schema rule's twin: the run ended before the wait began,
+			// and its read-back ends after.
+			name: "applied: a migration run that ended before the wait began is not the target", target: operate.TargetApplied,
+			only: operate.FamilyMigration,
+			docs: func(f operate.Family) []doc {
+				run := &runDoc{outcome: "Applied", job: "run-1", jobUID: "job-uid-1", startedAt: at(-60), finishedAt: at(-10)}
+				return []doc{
+					{phase: "VerifyingHistory", operation: "History", dispatched: true, observedAt: at(-100), lastRun: run},
+					{phase: "InSync", observedAt: at(30), lastRun: run, conditions: inSyncConditions(f, 3)},
 				}
 			},
 			wantTimeout: true, wantMessage: "a run that finishes after the wait began",
