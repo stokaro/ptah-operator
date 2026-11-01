@@ -94,10 +94,16 @@ func TestKubectlPtahOperateVerbsAgainstTheAPIServer(t *testing.T) {
 				// edited while suspended reads, then Suspended at it.
 				operator := &operatorWrites{t: t, admin: admin, ref: ref, steps: []func(client.Object){
 					func(object client.Object) {
-						setStatus(object, func(s *status) { s.phase("Suspended", suspended.Generation-1); s.suspendedCondition() })
+						setStatus(object, func(s *status) {
+							s.phase("Suspended", suspended.Generation-1)
+							s.suspendedCondition(suspended.Generation - 1)
+						})
 					},
 					func(object client.Object) {
-						setStatus(object, func(s *status) { s.phase("Suspended", suspended.Generation); s.suspendedCondition() })
+						setStatus(object, func(s *status) {
+							s.phase("Suspended", suspended.Generation)
+							s.suspendedCondition(suspended.Generation)
+						})
 					},
 				}}
 				result, err := operate.Wait(ctx, operator.reader(watcher), ref, operate.WaitOptions{
@@ -203,7 +209,6 @@ func TestKubectlPtahOperateVerbsAgainstTheAPIServer(t *testing.T) {
 	}
 
 	// An old InSync, written for the generation before suspension, is still
-	// An old InSync, written for the generation before suspension, is still
 	// True when the wait begins, and then InSync is written for the
 	// generation resume asked for with no reading behind it. The wait needs
 	// both that generation and a reading taken after the change.
@@ -221,7 +226,7 @@ func TestKubectlPtahOperateVerbsAgainstTheAPIServer(t *testing.T) {
 			s.phase("Suspended", created.GetGeneration()+1)
 			s.observedAt(lastRead)
 			s.inSync(created.GetGeneration())
-			s.suspendedCondition()
+			s.suspendedCondition(created.GetGeneration() + 1)
 		})
 		resumed, err := operate.SetSuspend(ctx, person, ref, false)
 		if err != nil {
@@ -518,13 +523,26 @@ func (s *status) answer(token string) {
 	s.migration.Status.LastReadRequest = token
 }
 
+// condition writes a condition as the controller's setCondition does, for
+// the generation the resource has.
 func (s *status) condition(conditionType string, value metav1.ConditionStatus, reason, message string) {
-	var conditions *[]metav1.Condition
 	var generation int64
 	if s.schema != nil {
-		conditions, generation = &s.schema.Status.Conditions, s.schema.Generation
+		generation = s.schema.Generation
 	} else {
-		conditions, generation = &s.migration.Status.Conditions, s.migration.Generation
+		generation = s.migration.Generation
+	}
+	s.conditionAt(conditionType, value, reason, message, generation)
+}
+
+// conditionAt writes a condition for generation, as the controller wrote it
+// when the resource had that generation.
+func (s *status) conditionAt(conditionType string, value metav1.ConditionStatus, reason, message string, generation int64) {
+	var conditions *[]metav1.Condition
+	if s.schema != nil {
+		conditions = &s.schema.Status.Conditions
+	} else {
+		conditions = &s.migration.Status.Conditions
 	}
 	meta.SetStatusCondition(conditions, metav1.Condition{
 		Type: conditionType, Status: value, Reason: reason, Message: message, ObservedGeneration: generation,
@@ -539,9 +557,11 @@ func (s *status) inSync(generation int64) {
 	})
 }
 
-func (s *status) suspendedCondition() {
+// suspendedCondition is what the controller writes with phase Suspended,
+// for the generation it acted on.
+func (s *status) suspendedCondition(generation int64) {
 	if s.schema != nil {
-		s.condition(operatorv1alpha1.ConditionSuspended, metav1.ConditionTrue, "Requested", "New database operations are suspended")
+		s.conditionAt(operatorv1alpha1.ConditionSuspended, metav1.ConditionTrue, "Requested", "New database operations are suspended", generation)
 	}
-	s.condition(operatorv1alpha1.ConditionReady, metav1.ConditionFalse, "Suspended", "Reconciliation is suspended")
+	s.conditionAt(operatorv1alpha1.ConditionReady, metav1.ConditionFalse, "Suspended", "Reconciliation is suspended", generation)
 }
