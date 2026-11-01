@@ -613,3 +613,42 @@ func TestClassifyReadsWhatBecameOfTheChange(t *testing.T) {
 		}
 	}
 }
+
+// Effect reads what a suspension does from the resource the change's answer
+// carried, by the controller's rules: reconcileActive drops a read and keeps
+// an Apply or a running proof Job, the dispatch step drops any claim whose
+// Job was not created, and reconcilePendingObservation starts no proof while
+// suspended.
+func TestEffectSaysWhatSuspensionDoesToWhatIsInFlight(t *testing.T) {
+	t.Parallel()
+
+	for _, row := range []struct {
+		name   string
+		family operate.Family
+		doc    doc
+		want   operate.Effect
+	}{
+		{"nothing in flight", operate.FamilySchema, doc{phase: "InSync"}, operate.EffectNothing},
+		{"nothing in flight", operate.FamilyMigration, doc{phase: "InSync"}, operate.EffectNothing},
+		{"an Apply whose Job may exist", operate.FamilySchema, doc{phase: "Applying", operation: "Apply", dispatched: true}, operate.EffectApplyRuns},
+		{"an Apply whose Job may exist", operate.FamilyMigration, doc{phase: "Applying", operation: "Apply", dispatched: true}, operate.EffectApplyRuns},
+		{"an Apply claim with no Job", operate.FamilySchema, doc{phase: "Applying", operation: "Apply"}, operate.EffectApplyDropped},
+		{"an Apply claim with no Job", operate.FamilyMigration, doc{phase: "Applying", operation: "Apply"}, operate.EffectApplyDropped},
+		{"a read", operate.FamilySchema, doc{phase: "Observing", operation: "Observe", dispatched: true}, operate.EffectReadDropped},
+		{"a read", operate.FamilyMigration, doc{phase: "Reading", operation: "History", dispatched: true}, operate.EffectReadDropped},
+		{"a read with no Job yet", operate.FamilySchema, doc{phase: "Resolving", operation: "Resolve"}, operate.EffectReadDropped},
+		{"the read-back after a run", operate.FamilyMigration, doc{phase: "VerifyingHistory", operation: "History", dispatched: true}, operate.EffectReadBackDropped},
+		{"a proof owed and not claimed", operate.FamilySchema, doc{phase: "VerifyingConvergence", proof: true}, operate.EffectProofWaits},
+		{"a proof claim with no Job", operate.FamilySchema, doc{phase: "VerifyingConvergence", operation: "Observe", proof: true}, operate.EffectProofWaits},
+		{"a proof's Observe running", operate.FamilySchema, doc{phase: "VerifyingConvergence", operation: "Observe", dispatched: true, proof: true}, operate.EffectProofObserveRuns},
+		{"a proof's Plan running", operate.FamilySchema, doc{phase: "VerifyingConvergence", operation: "Plan", dispatched: true, proof: true}, operate.EffectProofPlanRuns},
+	} {
+		t.Run(string(row.family)+"/"+row.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := (operate.SuspendResult{Object: row.doc.object(row.family)}).Effect(); got != row.want {
+				t.Fatalf("Effect() = %s, want %s", got, row.want)
+			}
+		})
+	}
+}

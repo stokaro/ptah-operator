@@ -6,11 +6,12 @@
 // write is refused rather than changed. A change touches one field and
 // nothing else, and is sent under the field manager kubectl-ptah.
 //
-// Suspension prevents new Jobs. An Apply already running when the resource
-// is suspended is still observed to its end, and so is the proof that
-// follows it: suspension never cancels SQL that has started. A read request
-// asks for a fresh read of the database; it starts no mutating operation and
-// authorizes nothing.
+// Suspension prevents new Jobs and never cancels SQL that has started. An
+// Apply already running is observed to its end; any proof still owed after
+// an Apply waits for resume; a read under way, a migration's read of its
+// history after a run included, is dropped. SuspendResult.Effect says which
+// applies. A read request asks for a fresh read of the database; it starts no
+// mutating operation and authorizes nothing.
 //
 // A wait reads the resource until it reaches a target, and never counts state
 // that was already there when the wait began: each target compares what it

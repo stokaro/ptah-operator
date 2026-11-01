@@ -31,10 +31,10 @@ type SuspendResult struct {
 	Generation         int64
 	ObservedGeneration int64
 	Phase              string
-	// Running is the operation in flight, if any. Suspension does not stop
-	// an Apply that has started, or the proof running after one: both are
-	// observed to their end. The operator drops any other claim when it sees
-	// the suspension, since a read changes nothing.
+	// Running is the operation in flight, if any. Effect says what
+	// suspension does to it: an Apply already running is observed to its
+	// end, any proof still owed after an Apply waits for resume, and a read
+	// under way is dropped.
 	Running string
 	// Object is the resource as the answer carried it, a baseline for a
 	// wait that follows.
@@ -44,7 +44,8 @@ type SuspendResult struct {
 // SetSuspend sets spec.suspend on the resource ref names and nothing else.
 // Suspending prevents new Jobs; it does not cancel an Apply already running,
 // which the controller observes to its end before the resource reads
-// Suspended. Resuming lets the controller read the database again and decide
+// Suspended, and SuspendResult.Effect says what it does to anything else in
+// flight. Resuming lets the controller read the database again and decide
 // from what it finds.
 //
 // When spec.suspend already holds the value nothing is sent and Changed is
@@ -83,6 +84,83 @@ func SetSuspend(ctx context.Context, c client.Client, ref Ref, suspend bool) (Su
 	return suspendResult(ref, suspend, true, written), nil
 }
 
+// Effect is what a suspension does to the work a resource has in flight, as
+// the controller treats it once it sees spec.suspend: reconcileActive and
+// reconcilePendingObservation, and the Authorize step that drops a claim
+// before its Job is created, in each family (internal/controller).
+type Effect string
+
+const (
+	// EffectNothing is a resource with nothing in flight and no proof owed.
+	// No Job starts.
+	EffectNothing Effect = "Nothing"
+	// EffectApplyRuns is an Apply whose Job may exist. It runs to its end.
+	// The suspension moves the generation the Apply was decided from, so the
+	// operator records its outcome as unknown without reading its result: a
+	// schema records no applied plan and owes a proof that waits for resume
+	// and for the Apply's execution deadline, and keeps its database lock
+	// until that proof ends; a migration records a run nobody accounted for.
+	EffectApplyRuns Effect = "ApplyRuns"
+	// EffectApplyDropped is an Apply claim whose Job was not created. The
+	// operator drops it, and no SQL runs.
+	EffectApplyDropped Effect = "ApplyDropped"
+	// EffectReadDropped is a read of the source or of the database. The
+	// operator drops the claim; a Job it started stops at its own deadline.
+	EffectReadDropped Effect = "ReadDropped"
+	// EffectReadBackDropped is a migration's read of its history after a
+	// run. The operator drops it, and reads the history again after resume.
+	EffectReadBackDropped Effect = "ReadBackDropped"
+	// EffectProofWaits is a schema that owes the proof of an Apply and runs
+	// no proof Job: a proof claim whose Job was not created is dropped, and
+	// none starts until resume. The schema keeps its database lock until the
+	// proof ends.
+	EffectProofWaits Effect = "ProofWaits"
+	// EffectProofObserveRuns is the Observe of a schema's proof, running. It
+	// runs to its end, and the Plan that completes the proof waits for
+	// resume.
+	EffectProofObserveRuns Effect = "ProofObserveRuns"
+	// EffectProofPlanRuns is the Plan that completes a schema's proof,
+	// running. It runs to its end.
+	EffectProofPlanRuns Effect = "ProofPlanRuns"
+)
+
+// Effect says what suspending the resource does to what it had in flight
+// when the API server answered. A claim's Job may exist when the claim
+// records a dispatch or a Job UID, the rule the controller decides it by
+// (mutationlifecycle.MayHaveDispatched).
+func (r SuspendResult) Effect() Effect {
+	s, err := snapshotOf(r.Object)
+	if err != nil {
+		return EffectNothing
+	}
+	return s.suspensionEffect()
+}
+
+func (s snapshot) suspensionEffect() Effect {
+	apply := s.operation == string(operatorv1alpha1.OperationApply)
+	switch {
+	case apply && s.dispatched:
+		return EffectApplyRuns
+	case apply:
+		return EffectApplyDropped
+	case s.family == FamilySchema && s.proof:
+		switch {
+		case s.operation == "" || !s.dispatched:
+			return EffectProofWaits
+		case s.operation == string(operatorv1alpha1.OperationPlan):
+			return EffectProofPlanRuns
+		default:
+			return EffectProofObserveRuns
+		}
+	case s.operation == "":
+		return EffectNothing
+	case s.family == FamilyMigration && s.phase == string(operatorv1alpha1.MigrationPhaseVerifyingHistory):
+		return EffectReadBackDropped
+	default:
+		return EffectReadDropped
+	}
+}
+
 func suspendResult(ref Ref, suspend, changed bool, s snapshot) SuspendResult {
 	return SuspendResult{
 		Ref: ref, Suspend: suspend, Changed: changed, UID: s.uid,
@@ -118,8 +196,10 @@ type RefreshResult struct {
 // again: the controller would take it as no request at all.
 //
 // The controller answers the request when no operation is running, the
-// resource is not suspended and no retry delay is pending. A read that was
-// already running when the request arrived does not answer it. That the
+// resource is not suspended and no retry delay is pending, and not while its
+// engine is unsupported or its database realm does not admit it: those
+// checks come before the request. A read that was already running when the
+// request arrived does not answer it. That the
 // annotation was written says nothing about whether the read completed; Wait
 // with TargetRead does.
 func Refresh(ctx context.Context, c client.Client, ref Ref, now time.Time) (RefreshResult, error) {

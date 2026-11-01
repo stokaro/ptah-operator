@@ -64,7 +64,11 @@ type doc struct {
 	phase      string
 	observedAt time.Time
 	operation  string
+	// dispatched records a Job UID on the claim in flight.
+	dispatched bool
 	proof      bool
+	// proofPlan names the plan whose Apply owes the proof.
+	proofPlan  string
 	annotation string
 	lastRead   string
 	conditions []metav1.Condition
@@ -147,10 +151,18 @@ func (d doc) object(family operate.Family) client.Object {
 			status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{
 				Type: operatorv1alpha1.OperationType(d.operation), ID: "attempt", JobName: "job", StartedAt: metav1.NewTime(at(-5)),
 			}
+			if d.dispatched {
+				status.ActiveOperation.JobUID = "job-uid"
+			}
 		}
 		if d.proof {
 			status.PendingObservation = &operatorv1alpha1.PendingObservationStatus{
 				Outcome: operatorv1alpha1.PendingObservationApplySucceeded, ApplyOperationID: "apply",
+			}
+			if d.proofPlan != "" {
+				status.PendingObservation.Plan = operatorv1alpha1.CurrentPlanStatus{
+					Name: d.proofPlan, UID: types.UID(d.proofPlan + "-uid"), Fingerprint: "sha256:" + d.proofPlan,
+				}
 			}
 		}
 		if p := d.plan; p != nil {
@@ -184,6 +196,9 @@ func (d doc) object(family operate.Family) client.Object {
 		status.ActiveOperation = &operatorv1alpha1.MigrationOperationStatus{
 			Type: operatorv1alpha1.MigrationOperationType(d.operation), ID: "attempt", JobName: "job",
 			StartedAt: metav1.NewTime(at(-5)), Attempt: 1,
+		}
+		if d.dispatched {
+			status.ActiveOperation.JobUID = "job-uid"
 		}
 	}
 	if p := d.plan; p != nil {

@@ -10,6 +10,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/mutationlifecycle"
 )
 
 // snapshot is what a wait reads from one document of either family. The
@@ -31,9 +32,15 @@ type snapshot struct {
 	// operation is the type of status.activeOperation, empty when nothing is
 	// in flight.
 	operation string
+	// dispatched reports that the Job of the operation in flight may exist,
+	// by the rule the controller decides it with
+	// (mutationlifecycle.MayHaveDispatched).
+	dispatched bool
 	// proof is a schema's post-Apply proof still owed
-	// (status.pendingObservation).
+	// (status.pendingObservation), and proofPlan the plan whose Apply owes
+	// it.
 	proof           bool
+	proofPlan       planRecord
 	readRequest     string
 	lastReadRequest string
 	conditions      []metav1.Condition
@@ -111,6 +118,12 @@ func schemaSnapshot(schema *operatorv1alpha1.PtahSchema) snapshot {
 	}
 	if operation := status.ActiveOperation; operation != nil {
 		s.operation = string(operation.Type)
+		s.dispatched = mutationlifecycle.MayHaveDispatched(mutationlifecycle.DispatchState{
+			DispatchStarted: operation.DispatchStarted, JobUID: string(operation.JobUID),
+		})
+	}
+	if pending := status.PendingObservation; pending != nil {
+		s.proofPlan = planRecord{name: pending.Plan.Name, uid: pending.Plan.UID, fingerprint: pending.Plan.Fingerprint}
 	}
 	if plan := status.Plan; plan != nil {
 		s.plan = &planRecord{name: plan.Name, uid: plan.UID, fingerprint: plan.Fingerprint, approved: plan.Approval != nil}
@@ -146,6 +159,9 @@ func migrationSnapshot(migration *operatorv1alpha1.PtahMigration) snapshot {
 	}
 	if operation := status.ActiveOperation; operation != nil {
 		s.operation = string(operation.Type)
+		s.dispatched = mutationlifecycle.MayHaveDispatched(mutationlifecycle.DispatchState{
+			DispatchStarted: operation.DispatchStarted, JobUID: string(operation.JobUID),
+		})
 	}
 	if plan := status.Plan; plan != nil {
 		s.plan = &planRecord{name: plan.Name, uid: plan.UID}
