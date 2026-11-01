@@ -570,7 +570,8 @@ func (w *waiter) checkRead(s snapshot) verdict {
 				operatorv1alpha1.ReadRequestAnnotation, s.readRequest, w.options.ReadRequest))
 		default:
 			return waitingFor("the operator to take read request %s; it does once no operation is running, "+
-				"the resource is not suspended and no retry delay is pending", w.options.ReadRequest)
+				"the resource is not suspended, no retry delay is pending, and neither its engine nor its "+
+				"database realm blocks it", w.options.ReadRequest)
 		}
 	}
 	// A failed attempt the operator retries under the same claim is not the

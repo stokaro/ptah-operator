@@ -150,6 +150,18 @@ func TestWaitTargets(t *testing.T) {
 			wantReads: 3,
 		},
 		{
+			// The controller checks the engine and the realm before it
+			// reaches a read request, so a resource they block never takes
+			// it; the timeout says what the operator waits for.
+			name: "read: a request a realm block holds is not taken, and the timeout says why", target: operate.TargetRead,
+			readRequest: request,
+			docs: func(f operate.Family) []doc {
+				blocked := condition(operatorv1alpha1.ConditionReady, metav1.ConditionFalse, "RealmConflict", "This database realm is claimed by 2 resources", 3)
+				return []doc{{phase: "Blocked", observedAt: at(0), annotation: request, lastRead: oldRequest, conditions: []metav1.Condition{blocked}}}
+			},
+			wantTimeout: true, wantMessage: "neither its engine nor its database realm blocks it",
+		},
+		{
 			name: "read: an answered request with no newer reading is not its answer", target: operate.TargetRead,
 			readRequest: request,
 			docs: func(f operate.Family) []doc {
