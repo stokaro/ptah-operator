@@ -332,10 +332,10 @@ func usage(out io.Writer) {
        kubectl ptah migration <migration> [flags]
 
 plan prints the SQL of a plan the Ptah operator stored, after the operator's
-own checks on it have held, each statement under a line that gives Ptah's
-severity for it and the reason. schema prints where one PtahSchema stands: what
-holds it, the policy its spec asks for, what the last observation found, how far
-its declared reference rows sit from the database, which plan is waiting, the
+own checks on it have held, each statement under a line that gives its severity
+and the reason Ptah gave. schema prints where one PtahSchema stands: what holds
+it, the policy its spec asks for, what the last observation found, how far its
+declared reference rows sit from the database, which plan is waiting, the
 approvals that name it, and every condition with its message. migration prints
 where one PtahMigration stands: what holds it, what the database's own history
 said, which sequence would run next, what the last run did, a run nobody has

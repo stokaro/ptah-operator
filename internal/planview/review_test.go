@@ -115,15 +115,15 @@ func TestRenderTextSaysWhoseSeverityARaisedStatementCarries(t *testing.T) {
 		want     string
 	}{
 		{
-			name:     "raised by the operator",
+			name:     "raised by this plugin's reading",
 			severity: "safe", reason: "does not remove data or tighten constraints",
-			want: "Statement 1 of 1: destructive as the operator reads it; Ptah rated it safe" +
+			want: "Statement 1 of 1: destructive as this plugin reads it; Ptah rated it safe" +
 				" (does not remove data or tighten constraints)\n",
 		},
 		{
 			name:     "raised, with no reason",
 			severity: "warning",
-			want:     "Statement 1 of 1: destructive as the operator reads it; Ptah rated it warning\n",
+			want:     "Statement 1 of 1: destructive as this plugin reads it; Ptah rated it warning\n",
 		},
 		{
 			name:     "rated destructive by Ptah",
