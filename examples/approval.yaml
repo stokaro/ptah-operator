@@ -1,3 +1,16 @@
+# One decision, bound to one plan of one schema. kubectl ptah approve reads
+# the plan, shows it and creates this object with the identifiers filled in:
+#
+#   kubectl ptah approve schema/application -n application
+#
+# or prints it for a repository without sending it, after the same review:
+#
+#   kubectl ptah approve schema/application -n application --dry-run client > approval.yaml
+#
+# Create it with kubectl create -f, as the person who decided. Admission
+# stamps whoever creates it as the approver, and when; a controller that
+# applies it from a repository is recorded in that person's place. Admission
+# also refuses any identifier that is not the current plan's.
 apiVersion: operator.ptah.run/v1alpha1
 kind: PtahSchemaApproval
 metadata:

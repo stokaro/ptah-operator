@@ -1,6 +1,6 @@
 ---
 title: Read a plan
-description: See the SQL the operator would run, or the SQL the last apply ran, with one read-only command.
+description: See the SQL the operator would run, or the SQL the last apply ran, with a read-only command.
 ---
 
 The SQL the operator applies is not in a status field or the manager's log. It
@@ -14,8 +14,11 @@ describes this default delivery path and the separate legacy log transport. An
 Apply projects the verified chunks into immutable ConfigMaps for its Pod to
 mount. Those projections are created only when the Apply is dispatched.
 
-`kubectl ptah` is how you read it. It reads Kubernetes objects and never
-creates or changes a resource, starts a Job, or connects to your database.
+`kubectl ptah` is how you read it. Its read commands read Kubernetes objects
+and never create or change a resource, start a Job, or connect to your
+database. `kubectl ptah approve` is the one command that writes: it creates the
+approval of a plan you reviewed, as you;
+[Exact-plan approvals](../approvals/) describes it.
 
 ```sh
 kubectl ptah plan storefront -n application
@@ -151,8 +154,12 @@ Diagnostics go to standard error. Nothing reaches standard output until every
 check has held, so a plan whose last chunk is corrupt leaves you with an error
 rather than half its SQL.
 
-Exit status: `0` printed, `1` could not read or verify, `2` the command line,
-`3` nothing stored to print.
+Exit status: `0` printed or approved, `1` could not read or verify, `2` the
+command line, `3` nothing stored to print or approve. `kubectl ptah approve`
+adds `4` nothing approved (the plan changed, the operator would not admit an
+approval now, the fingerprint given is not the current plan's, or you
+declined), `5` refused by RBAC or the API server, and `6` sent with no answer:
+the approval may have been stored.
 
 ## Where a schema stands {#schema}
 
@@ -480,6 +487,13 @@ rule, and an optional one; a reader without it gets everything else:
 
 The chart's approver ClusterRole and `examples/diagnostic-reader-role.yaml`
 carry it.
+
+`kubectl ptah approve` reads the resource and its current plan with `get`,
+and for a schema the plan's chunks too, to show the SQL. It lists no
+approvals, and gets one only to say what holds a name `--name` asked for that
+is already taken. It creates the approval as you, so it needs `create` on
+`ptahschemaapprovals` or `ptahmigrationapprovals` as well. The chart's approver
+ClusterRole carries both.
 
 :::caution
 The command reads the plan chunks as you, so granting it means granting

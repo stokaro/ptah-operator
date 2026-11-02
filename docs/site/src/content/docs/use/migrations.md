@@ -344,24 +344,39 @@ arbitrary SQL, and no analyzer classifies arbitrary SQL as safe.
 
 An approval names the migration, the plan and the plan's fingerprint; the
 admission webhook fills in the rest from the plan itself and refuses any value
-that conflicts with it. `examples/migration-approval.yaml` carries the commands
-that print those three identifiers:
+that conflicts with it. `kubectl ptah approve` shows the versions and checksums
+the plan selected, asks for a decision, and creates the approval as you:
+
+```sh
+kubectl ptah approve migration/orders -n application
+```
+
+It shows no SQL: a migration plan records versions and checksums, and the
+statements live in the source the plan binds, whose digest the review prints.
+It reads the migration again before it sends anything, and approves nothing if
+the plan was replaced or the operator would not admit an approval now.
+`--dry-run client` prints the approval as YAML with the identifiers filled in,
+after the same decision, to keep in a repository:
 
 ```yaml
 apiVersion: operator.ptah.run/v1alpha1
 kind: PtahMigrationApproval
 metadata:
-  name: orders-to-20260830
+  name: orders-<the first 12 hex digits of the plan's fingerprint>
   namespace: application
 spec:
   migrationRef:
     name: orders
-    uid: <status.plan is published against this UID>
+    uid: <metadata.uid of the PtahMigration>
   planRef:
     name: <status.plan.name>
     uid: <status.plan.uid>
   planFingerprint: <the plan's spec.fingerprint>
 ```
+
+Create it with `kubectl create -f`, as the person who decided: admission
+records whoever creates it as the approver, and a controller that applies it
+from the repository is recorded in that person's place.
 
 The webhook refuses an approval the evidence no longer supports: a replaced
 plan, a history somebody else moved in the meantime, a re-resolved artifact, a

@@ -28,6 +28,17 @@ on the upgrade. A script that reads the text of `kubectl ptah` has to move to
   and a severity line above each plan statement. `-o json` kept every field it
   had and only gained new ones, and `kubectl ptah plan -o sql` is unchanged.
   [Read a plan](../../use/read-a-plan/) shows the new output.
+- **`kubectl ptah approve`.** `kubectl ptah approve schema/NAME` or
+  `migration/NAME` shows the current plan with the identities an approval
+  binds, asks for a decision, and creates the approval as you, so approving
+  no longer means writing a manifest by hand. It reads the resource again
+  before it sends anything and approves nothing if the plan changed.
+  `--plan-fingerprint` approves from a script and `--dry-run client` prints the
+  manifest instead. It needs `create` on the approval kind besides the plan
+  reads, which the chart's approver ClusterRole carries. It exits 4 when
+  nothing was approved, 5 when RBAC or the API server refused, and 6 when the
+  approval was sent without an answer. [Exact-plan approvals](../../use/approvals/)
+  shows it.
 - **Four-eyes approvals.** With `approvals.requireDistinctApprover` on,
   suspending or resuming a schema or a migration no longer records whoever did
   it as the last spec writer. Before, a colleague who paused and resumed a

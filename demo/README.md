@@ -15,9 +15,9 @@ claims held on the live cluster.
 steps a reader watches, the narration between them, and the conditions that
 have to hold. [`scenarios/README.md`](scenarios/README.md) is the format.
 
-**`cmd/kubectl-ptah`** is the read-only client a scenario uses to show a stored
-plan. It ships to readers as a `kubectl` plugin; here it is one more command on
-the path.
+**`cmd/kubectl-ptah`** is the client a scenario uses to show a stored plan,
+through its read commands. It ships to readers as a `kubectl` plugin; here it
+is one more command on the path.
 
 **`cmd/record`** executes them against the lab, checks the cluster reached the
 state each scenario claims, and writes `recordings/runs.json`.

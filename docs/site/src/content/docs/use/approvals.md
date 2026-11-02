@@ -32,14 +32,9 @@ groups it names; the
 [security model](../security/#who-may-turn-the-approval-requirement-off)
 says why RBAC alone does not do it, and which groups to name.
 
-Start from the minimal approval example in `examples/approval.yaml`. Obtain the
-values only after reviewing the plan:
-
-```sh
-kubectl -n application get ptahschema application \
-  -o jsonpath='{.metadata.uid}{"\n"}{.status.plan.name}{"\n"}{.status.plan.uid}{"\n"}{.status.plan.fingerprint}{"\n"}'
-kubectl -n application get ptahschemaplan <plan-name> -o yaml
-```
+An approval names the schema with its UID, the plan with its UID and the plan's
+fingerprint, and nothing else a person writes: admission stamps who approved
+and when. Review the plan first.
 
 The plan resource contains immutable chunk names and digests; the exact SQL is
 in the `PtahSchemaPlanChunk` objects it names, which the controller writes with
@@ -78,13 +73,47 @@ the Pod mounts those. Whoever may read ConfigMaps in the namespace reads the
 plans that reached an Apply there; a plan waiting for a person has no
 ConfigMap at all.
 
-Fill those values in the approval and use server-side dry run to inspect the
-object after the authenticated identity is stamped:
+`kubectl ptah approve` turns the review into the approval. It shows the
+current plan again with the identities the approval will carry, asks for a
+decision, and creates the approval as you, so admission records your identity:
 
 ```sh
-kubectl apply --server-side --dry-run=server -f examples/approval.yaml -o yaml
-kubectl apply -f examples/approval.yaml
+kubectl ptah approve schema/application -n application
 ```
+
+It reads the schema once more before it sends anything, and approves nothing if
+a newer plan replaced the one shown, the schema was deleted and created again,
+or the operator would not admit an approval now, as while it reads the database
+again at its interval. The answer it prints is the API server's: the approval
+admission stored with the identity it stamped, or the refusal in RBAC's or
+admission's own words.
+
+- `--plan-fingerprint <fingerprint>` approves without asking, and only if the
+  current plan carries that fingerprint. It is for a script that reviewed the
+  plan; there is no option that approves whatever plan is current.
+- `--dry-run server` lets admission check the approval and stores nothing.
+- `--dry-run client` prints the approval as YAML with the identifiers filled in
+  and sends nothing, for a workflow that keeps decisions in a repository. It
+  takes the same decision as an approval: the fingerprint of the plan you
+  reviewed, or the review answered with yes. The object carries the API
+  version, the kind, a name made of the schema's name and the start of the
+  fingerprint, the namespace and the three references, and nothing else.
+  `examples/approval.yaml` is the same object written by hand.
+
+Create a printed approval with `kubectl create -f`, as the person who decided.
+Admission records whoever creates the object as its approver, so the identity
+on the approval is the identity that sent it, not the one that printed it. A
+controller that applies approvals from a repository is recorded as their
+approver, and with `approvals.requireDistinctApprover` on, an approval it
+creates for a schema whose spec it also wrote is refused as a self-approval.
+An approval is immutable and authorizes one run, so it is created once; it is
+not a desired state to apply again.
+
+Exit status 4 means nothing was approved, 5 that RBAC or the API server
+refused the approval, and 6 that the request was sent and no answer said
+whether it was stored. After a 6, `kubectl ptah schema application -n
+application` lists the approvals that name the schema; read it before
+approving again.
 
 Creation is rejected if the plan is already stale, its immutable storage is
 not committed, the verification-policy ConfigMap changed, or the approval

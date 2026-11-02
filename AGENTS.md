@@ -103,6 +103,10 @@ controller runs there, so what they prove is the API server's own verdict:
   without a refusal row and a mutation fails the suite.
 - `webhook` serves the manager's admission handlers in-process behind the
   chart's own webhook configurations, which envtest points at this process.
+  One row sends `kubectl ptah approve`'s submission as the person: bound to the
+  chart's approver ClusterRole it is admitted and stamped, without create it is
+  refused by the authorizer, a server dry run is named and not stored, and a
+  schema that moves after the last read is admission's refusal.
 - `resultstore` publishes immutable result Secrets against the API server and
   tests interrupted writes, concurrent redelivery, payload limits, and readback
   after explicit Job/Pod deletion. It runs as the test administrator, so it

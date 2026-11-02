@@ -1,10 +1,13 @@
 import copy
 import datetime
 import json
+import os
 from pathlib import Path
+import tempfile
 import unittest
 
-from fresh_install import SERVERS, blocks, converged_after, fixture_deployment, runtime_findings, substitute, upgrade_command
+from fresh_install import (SERVERS, Transcript, blocks, converged_after, fixture_deployment, runtime_findings, substitute,
+                           upgrade_command)
 
 DOCS = Path(__file__).resolve().parents[3] / 'docs/site/src/content/docs'
 
@@ -38,6 +41,26 @@ class BlockExtractionTest(unittest.TestCase):
             substitute('a=1\n', [('<x>', '1')])
         with self.assertRaises(ValueError):
             substitute('<x> <x>\n', [('<x>', '1')])
+
+
+class TranscriptTest(unittest.TestCase):
+    PROMPT = '[ -t 0 ] || { echo "no terminal"; exit 1; }\nread -r answer\necho "read $answer"\n'
+
+    def test_what_the_reader_types_arrives_on_a_terminal(self):
+        with tempfile.TemporaryDirectory() as work:
+            transcript = Transcript(Path(work) / 'transcript')
+            result = transcript.run('typed', self.PROMPT, work, dict(os.environ), typed='yes\n')
+            self.assertEqual(result.stdout, 'read yes\n')
+            recorded = json.loads((Path(work) / 'transcript/transcript.jsonl').read_text())
+            self.assertEqual(recorded['typed'], 'yes\n')
+
+    def test_a_block_with_nothing_typed_has_no_terminal_to_read(self):
+        with tempfile.TemporaryDirectory() as work:
+            transcript = Transcript(Path(work) / 'transcript')
+            result = transcript.run('untyped', self.PROMPT, work, dict(os.environ), check=False)
+            self.assertEqual((result.returncode, result.stdout), (1, 'no terminal\n'))
+            recorded = json.loads((Path(work) / 'transcript/transcript.jsonl').read_text())
+            self.assertNotIn('typed', recorded)
 
 
 class FixtureTest(unittest.TestCase):
@@ -215,8 +238,8 @@ class PublishedGuideTest(unittest.TestCase):
         for block in create[1:]:
             self.assertIn('kubectl -n application get ptahschema application -w', block)
         stops = blocks(page, 'It stops, and waits for you')
-        self.assertEqual(len(stops), 4)
-        self.assertTrue(any('kubectl -n application create -f -' in block for block in stops))
+        self.assertEqual(len(stops), 3)
+        self.assertTrue(any('kubectl ptah approve schema/application -n application' in block for block in stops))
 
     def test_the_plugin_install_has_the_placeholders_the_walkthrough_fills(self):
         block = ''.join(blocks(self.read('use/read-a-plan.md'), 'Install it'))

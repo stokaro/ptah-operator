@@ -104,34 +104,26 @@ kubectl ptah plan application -n application
 ```
 
 Without a selection that is the current plan, which is the one waiting for an
-approval. `-o json` gives the stored plan document, if you want the severity
-the planner recorded beside each statement:
+approval. Each statement is printed under the severity and reason the plan
+records for it.
+
+An approval names the schema with its UID, the plan with its UID and that
+plan's fingerprint, and admission stamps who approved and when. `kubectl ptah
+approve` shows the plan again with those identities, asks for a decision, and
+creates the approval as you:
 
 ```sh
-kubectl ptah plan application -n application -o json \
-  | jq -r '.statements[] | "\(.severity)\t\(.sql)"'
+kubectl ptah approve schema/application -n application
 ```
 
-An approval names the schema, the plan and that plan's fingerprint. Everything
-else on it is stamped by the admission webhook from the plan being approved,
-which is why this creates it from what the API server already holds rather than
-from values copied by hand:
-
-```sh
-kubectl -n application get ptahschema application -o json > schema.json
-kubectl -n application get ptahschemaplan \
-  "$(jq -r .status.plan.name schema.json)" -o json > plan.json
-jq -n --slurpfile schema schema.json --slurpfile plan plan.json '
-  {
-    apiVersion: "operator.ptah.run/v1alpha1", kind: "PtahSchemaApproval",
-    metadata: {name: "application-first"},
-    spec: {
-      schemaRef: {name: $schema[0].metadata.name, uid: $schema[0].metadata.uid},
-      planRef:   {name: $plan[0].metadata.name,   uid: $plan[0].metadata.uid},
-      planFingerprint: $plan[0].spec.fingerprint
-    }
-  }' | kubectl -n application create -f -
-```
+It reads the schema once more before it sends anything. If a newer plan
+replaced the one you read, or the operator is reading the database again and
+admission would refuse an approval, it says so and approves nothing. A script
+that reviewed the plan passes its fingerprint with `--plan-fingerprint`.
+`--dry-run client` prints the approval as YAML instead, to keep in a
+repository and create later with `kubectl create -f`. Admission records
+whoever creates it as the approver, so create it as the person who decided:
+a controller that applies it is recorded in their place.
 
 Creating it requires a binding that grants the approval verbs, which the
 chart's approver ClusterRole carries together with read access to the plan and
@@ -143,8 +135,7 @@ With the decision recorded the plan runs, and convergence is proved by a second
 observation rather than by the Job finishing:
 
 ```sh
-kubectl -n application get ptahschema application \
-  -o jsonpath='{range .status.conditions[*]}{.type}{"\t"}{.status}{"\t"}{.reason}{"\n"}{end}'
+kubectl ptah schema application -n application
 ```
 
 `InSync=True` with reason `ScopedConverged` confirms convergence.

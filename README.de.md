@@ -78,8 +78,10 @@ Managers.
 kubectl ptah plan storefront --applied -n application -o sql
 ```
 
-Dieser ausschließlich lesende Client wird mit jedem Release als `kubectl`-Plugin
-für die unterstützten Clientplattformen veröffentlicht.
+Dieser Client wird mit jedem Release als `kubectl`-Plugin für die
+unterstützten Clientplattformen veröffentlicht. Seine Lesebefehle lesen nur;
+`kubectl ptah approve` erstellt die Freigabe eines geprüften Plans in Ihrem
+Namen und benötigt dafür `create` auf den Freigabearten.
 [Einen Plan lesen](https://operator.ptah.run/edge/use/read-a-plan/#install)
 beschreibt die Installation und die benötigten RBAC-Berechtigungen
 im jeweiligen Namespace.

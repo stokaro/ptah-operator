@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	pluginSource   = "cmd/kubectl-ptah/main.go"
+	pluginSource   = "cmd/kubectl-ptah"
 	readAPlanPage  = "docs/site/src/content/docs/use/read-a-plan.md"
 	exitStatusLead = "Exit status:"
 )
@@ -27,9 +27,11 @@ var (
 //
 // Renumbering one without the other leaves a script that reads success as a
 // missing plan, or the reverse, and nothing else in the tree compares them.
+// A command declares the statuses it adds beside its own code, so every
+// source file of the plugin is read, not only main.go.
 func TestTheDocumentedExitStatusesAreTheOnesThePluginReturns(t *testing.T) {
 	t.Parallel()
-	source := readSourceFile(t, pluginSource)
+	source := readPluginSources(t)
 
 	compiled := map[string]int{}
 	for _, match := range exitConstant.FindAllStringSubmatch(source, -1) {
@@ -39,7 +41,7 @@ func TestTheDocumentedExitStatusesAreTheOnesThePluginReturns(t *testing.T) {
 		}
 		compiled[match[1]] = value
 	}
-	if len(compiled) < 4 {
+	if len(compiled) < 7 {
 		t.Fatalf("read %d exit statuses from %s; the plugin declares more than that", len(compiled), pluginSource)
 	}
 
@@ -95,6 +97,32 @@ func documentedExitStatuses(t *testing.T) map[int]bool {
 		t.Fatalf("%s states no exit status, so this check would pass over nothing", readAPlanPage)
 	}
 	return found
+}
+
+// readPluginSources joins every Go file of the plugin that is built into it:
+// the test files are left out, since a status a test names is not one the
+// program returns.
+func readPluginSources(t *testing.T) string {
+	t.Helper()
+	entries, err := os.ReadDir(repositoryFile(t, filepath.FromSlash(pluginSource)))
+	if err != nil {
+		t.Fatalf("read %s: %v", pluginSource, err)
+	}
+	var sources strings.Builder
+	read := 0
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		sources.WriteString(readSourceFile(t, pluginSource+"/"+name))
+		sources.WriteString("\n")
+		read++
+	}
+	if read < 2 {
+		t.Fatalf("read %d source files from %s; the plugin has more than that", read, pluginSource)
+	}
+	return sources.String()
 }
 
 func readSourceFile(t *testing.T, path string) string {
