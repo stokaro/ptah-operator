@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-10-25T19:16:31.752314+00:00",
+  "frozenAt": "2026-11-02T05:32:43.421839+00:00",
   "profileSourceCommit": "1259f4d59343fef049307085e3ea77d2971677cb",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
@@ -36,7 +36,7 @@
     },
     {
       "path": "support/qualification/kindnet/Dockerfile",
-      "sha256": "1ba3dbc97813245c36cc24de92993bc6227ca75d288c8e1990c0f2b7ee607379"
+      "sha256": "dcf9e10345510d69dea5efc5f4a335d87036f4841f2608ce9cbbc76d283bea0d"
     },
     {
       "path": "support/qualification/kindnet/pending-pod.patch",
@@ -79,10 +79,10 @@
     "disposition": "v0.2.8 is the published predecessor of the next candidate. The upgrade from it is walked through both releases' guides by support/qualification/probes/fresh_install.py --upgrade-from on both platforms; the synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 64,
+  "revision": 65,
   "supersedes": {
-    "freezeCommit": "07493341a4ad479575d18a1190512920b13c724d",
-    "sha256": "bdd19e34df3dc21678585afcc540c1bdbfdf1d2ad13af6ff38c7e6627ac37de2"
+    "freezeCommit": "6f960dd2d865e0326a8e105fce7b97ddd6a8963a",
+    "sha256": "2a80e0b8275b9ab2a0b476418df7feee964fd9d2afeaf9fb7fea266e669f911f"
   },
-  "revisionReason": "Declare the published v0.2.8 in support/ptah.json, as the release procedure asks once the tag exists, and record v0.2.8 as the published predecessor of the next candidate. The profile, its targets and every other input are unchanged."
+  "revisionReason": "Record the kindnet correction built with the golang 1.27.3 builder image (#756); the corrected kindnet source, its pinned kind source and every other input are unchanged."
 }
