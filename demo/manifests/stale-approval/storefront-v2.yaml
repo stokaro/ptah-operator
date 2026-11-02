@@ -1,0 +1,35 @@
+# The storefront schema, read from a ConfigMap, and applied only once a person
+# has approved the exact plan.
+#
+# Nothing in it is a credential or names a namespace: kubectl apply -n puts it
+# in yours. It names a ConfigMap holding the SQL and a Secret holding the
+# database URL, and the operator reads both from that namespace.
+apiVersion: operator.ptah.run/v1alpha1
+kind: PtahSchema
+metadata:
+  name: storefront
+spec:
+  target:
+    engine: PostgreSQL
+    # Every resource that can reach this database uses this key, so two of
+    # them cannot plan against it at once.
+    coordinationKey: demo/storefront/primary
+    urlFrom:
+      name: demo-database
+      key: url
+  desired:
+    configMap:
+      name: storefront-v2
+      items:
+        - key: schema.sql
+          path: schema.sql
+  policy:
+    # Nothing runs until a person approves the plan.
+    apply: OnApproval
+    allowDestructive: false
+    driftSeverity: all
+  interval: 1m
+  execution:
+    activeDeadlineSeconds: 300
+    failureRetryInterval: 10s
+    connectTimeout: 30s

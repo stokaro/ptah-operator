@@ -41,14 +41,15 @@ func TestPluginTextStepsExpectWhatTheRendererWrites(t *testing.T) {
 		"first-apply#1":       demoSchemaInSync(),
 		"destructive-block#1": demoSchemaInSync(),
 		"destructive-block#2": demoSchemaBlocked(),
-		"stale-approval#1":    demoSchemaAwaitingApproval("ptah-plan-0aa1"),
-		"stale-approval#2":    withApproval(demoSchemaInSync(), demoConsumedApproval(true)),
-		"stale-approval#3":    withApproval(demoSchemaAwaitingApproval("ptah-plan-0bb2"), demoSupersededApproval()),
-		"suspend-resume#1":    demoSchemaInSync(),
-		"drift#1":             demoSchemaInSync(),
-		"failure-recovery#1":  demoSchemaFailed(),
-		"manual-approval#1":   demoSchemaAwaitingApproval("ptah-plan-0aa1"),
-		"manual-approval#2":   withApproval(demoSchemaInSync(), demoConsumedApproval(false)),
+		"stale-approval#1":    fromConfigMap(demoSchemaAwaitingApproval("ptah-plan-0aa1"), "storefront-v1"),
+		"stale-approval#2":    fromConfigMap(withApproval(demoSchemaInSync(), demoConsumedApproval(true)), "storefront-v1"),
+		"stale-approval#3": fromConfigMap(
+			withApproval(demoSchemaAwaitingApproval("ptah-plan-0bb2"), demoSupersededApproval()), "storefront-v2"),
+		"suspend-resume#1":   demoSchemaInSync(),
+		"drift#1":            demoSchemaInSync(),
+		"failure-recovery#1": demoSchemaFailed(),
+		"manual-approval#1":  fromConfigMap(demoSchemaAwaitingApproval("ptah-plan-0aa1"), "storefront-v1"),
+		"manual-approval#2":  fromConfigMap(withApproval(demoSchemaInSync(), demoConsumedApproval(false)), "storefront-v1"),
 	}
 	migrations := map[string]migrationview.View{
 		"checkpoint-bootstrap#1":    withCheckpoint(demoInSync(4, 3, 4)),
@@ -217,8 +218,7 @@ func demoSchemaBlocked() schemaview.View {
 }
 
 func demoSchemaFailed() schemaview.View {
-	view := demoSchema(string(operatorv1alpha1.PhaseFailed))
-	view.Source = &sourceview.View{Kind: sourceview.KindConfigMap, ConfigMap: "storefront-v1", Snapshot: "storefront-snapshot", ContentDigest: "sha256:0dd4"}
+	view := fromConfigMap(demoSchema(string(operatorv1alpha1.PhaseFailed)), "storefront-v1")
 	view.Observation = nil
 	view.Conditions = demoConditions(
 		metav1.Condition{Type: "Ready", Status: "False", Reason: "OperationFailed", Message: "Reconciliation did not complete"},
@@ -254,6 +254,14 @@ func demoSupersededApproval() schemaview.ApprovalView {
 	approval := demoConsumedApproval(true)
 	approval.AppliedPlan = false
 	return approval
+}
+
+// fromConfigMap is the view of a schema that reads its SQL from the named
+// ConfigMap rather than from an artifact. In stale-approval the name is what
+// separates the source from the approval named storefront-v1.
+func fromConfigMap(view schemaview.View, name string) schemaview.View {
+	view.Source = &sourceview.View{Kind: sourceview.KindConfigMap, ConfigMap: name, Snapshot: name + "-snapshot", ContentDigest: "sha256:0dd4"}
+	return view
 }
 
 func withApproval(view schemaview.View, approval schemaview.ApprovalView) schemaview.View {
