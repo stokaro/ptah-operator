@@ -64,3 +64,15 @@ status until the proof that follows settles.
 `TestApprovedApplyJournaledRefusesThePlanItsApplyPublishedAgain` refuses this
 reading and admits it once the three repeated publications are left out. It
 holds no Secret names, credentials or plan SQL.
+
+`shared-alias-refusal-deadline.json` keeps the two shared-alias schemas from
+the diagnostic projection that CI job 124980815753 of run 41350373785 printed
+at 22:20:27Z on November 1, 2026, when the Kubernetes 1.36 schema-faults row
+timed out. The run built `1f02b8e`, the merge of `acea5a8a` onto `c5f49a31`.
+The entries are the projection's own fields, unchanged; the Leases and the
+other schemas are left out. `e2e-fault-pg-alias-a` was still `Blocked` with
+`nextReconciliationTime` 23:38:10Z, the next refresh its Resolve claim had set
+before the census refused it, which the refusal kept. `TestRealmRecheckScheduled`
+refuses that reading as read at 22:20:27Z and accepts copies of it carrying a
+deadline a refusal sets. The projection holds no Secret names, credentials or
+plan SQL.

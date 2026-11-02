@@ -1,0 +1,38 @@
+{
+  "schemas": [
+    {
+      "name": "e2e-fault-pg-alias-a",
+      "uid": "d6db518b-7e01-46d8-b698-cf3d8743616e",
+      "generation": 2,
+      "observedGeneration": 2,
+      "phase": "Blocked",
+      "nextReconciliationTime": "2026-11-01T23:38:10Z",
+      "failure": null,
+      "expectedEpochs": {
+        "activeOperation": null,
+        "pendingObservation": null,
+        "pendingLockRelease": null
+      },
+      "leaseContinuityLost": false,
+      "events": [],
+      "jobs": []
+    },
+    {
+      "name": "e2e-fault-pg-alias-b",
+      "uid": "b6e6284b-8775-48ad-9916-f94f2b98384b",
+      "generation": 2,
+      "observedGeneration": 2,
+      "phase": "AwaitingApproval",
+      "nextReconciliationTime": "2026-11-01T23:11:01Z",
+      "failure": null,
+      "expectedEpochs": {
+        "activeOperation": null,
+        "pendingObservation": null,
+        "pendingLockRelease": null
+      },
+      "leaseContinuityLost": false,
+      "events": [],
+      "jobs": []
+    }
+  ]
+}
