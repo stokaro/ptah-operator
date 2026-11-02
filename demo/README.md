@@ -241,9 +241,10 @@ wrong and is not:
 - **An approval refused for no visible reason.** `kubectl ptah approve` asks on
   a terminal and refuses an answer piped into it, so a step that approves runs
   on one: it names the prompt in `answers`, and the recorder types the answer
-  once the prompt is on the screen. It also refuses while the operator is
-  reading the database again at its interval, so a step approves right after
-  the wait that found the plan waiting.
+  once the prompt is on the screen. Admission takes no approval while the
+  operator reads the database again at its interval; approve then waits up to
+  five minutes for that read to end and sends the approval only if the same
+  plan is waiting again, and says so on the terminal.
 - **A publish that is refused.** A Ptah artifact is not byte-identical between
   two pushes of one file, and a tag is write-once. Every `ptah schema push` in
   a scenario ends its tag with `$$` for that reason; what the operator is
