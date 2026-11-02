@@ -40,11 +40,11 @@ steps:
           status: "True"
           reason: OperationFailed
 
-  - note: It reports the database as unreachable, with a reason a machine can read.
+  - note: It failed, with a reason a machine can read. The message is only the exit code of ptah.
     run: kubectl ptah schema storefront -n "$NAMESPACE"
     expect:
       exit: 0
-      stdout_contains: [Failed, ReconciliationFailed, OperationFailed]
+      stdout_contains: [Failed, ReconciliationFailed, OperationFailed, "ptah exited with code"]
       stdout_absent: ["nobody:nobody", no-such-database]
 
   - note: A failure is an event too, so it is in the record rather than only in a log.
@@ -61,10 +61,14 @@ steps:
   # the check would have passed on nothing.
   - note: "Verification: no credential in the status, and the check reads all of it."
     run: |
-      status=$(kubectl -n "$NAMESPACE" get ptahschema storefront -o json | jq -ce '.status | objects') || {
-        printf 'could not read the status, so nothing was checked\n' >&2
-        exit 1
-      }
+      status=$(kubectl -n "$NAMESPACE" get ptahschema storefront -o jsonpath='{.status}') || status=
+      case $status in
+        '{'*'}') ;;
+        *)
+          printf 'could not read the status, so nothing was checked\n' >&2
+          exit 1
+          ;;
+      esac
       for planted in 'nobody:nobody' 'no-such-database.demo.svc.cluster.local'; do
         if printf '%s' "$status" | grep -qF "$planted"; then
           printf 'the status carries the credential this scenario planted\n' >&2

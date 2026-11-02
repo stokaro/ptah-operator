@@ -84,14 +84,14 @@ steps:
       exit: 0
       stdout_absent: [schema_migrations]
 
-  - note: This database is at release 1, so baseline through version 1. One line of the Job differs.
+  - note: The database is at release 1, so baseline through version 1. The name and version change.
     run: |
       diff -u demo/manifests/adopt-existing-database/baseline-v2.yaml demo/manifests/adopt-existing-database/baseline-v1.yaml
       kubectl set image --local -f demo/manifests/adopt-existing-database/baseline-v1.yaml \
         baseline="$EXECUTOR_IMAGE" -o yaml | kubectl -n "$NAMESPACE" apply -f -
     expect:
       exit: 0
-      stdout_contains: ["+            - --version=1", job.batch/baseline-v1 created]
+      stdout_contains: ["+  name: baseline-v1", "+            - --version=1", job.batch/baseline-v1 created]
 
   - note: The replay matches this time, so it records version 1, and says so.
     run: |

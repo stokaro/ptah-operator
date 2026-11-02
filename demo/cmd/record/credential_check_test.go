@@ -29,6 +29,7 @@ func TestTheCredentialCheckReadsPastTheBytesItPrints(t *testing.T) {
 	for _, row := range []struct {
 		name    string
 		status  string
+		failed  bool
 		refused bool
 	}{
 		{
@@ -51,22 +52,29 @@ func TestTheCredentialCheckReadsPastTheBytesItPrints(t *testing.T) {
 			refused: true,
 		},
 		// An empty reading holds no credential, so a check that searched it
-		// would pass having read nothing.
+		// would pass having read nothing. jsonpath prints nothing for a
+		// resource with no status yet.
 		{
-			name:    "kubectl printed nothing",
+			name:    "a resource with no status yet",
 			status:  "",
 			refused: true,
 		},
 		{
-			name:    "a resource with no status yet",
-			status:  `{"metadata":{"name":"storefront"}}`,
+			name:    "kubectl failed",
+			failed:  true,
+			refused: true,
+		},
+		// What an older kubectl printed for a map: Go syntax, not JSON.
+		{
+			name:    "a status that is not a JSON object",
+			status:  "map[phase:Failed]",
 			refused: true,
 		},
 	} {
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
 
-			stdout, stderr, err := runCredentialCheck(t, script, row.status)
+			stdout, stderr, err := runCredentialCheck(t, script, row.status, row.failed)
 			switch {
 			case row.refused && err == nil:
 				t.Fatalf("the check accepted a status it must refuse:\n%s", stdout)
@@ -113,9 +121,10 @@ func credentialCheckScript(t *testing.T) string {
 	return ""
 }
 
-// statusDocument is what `kubectl get ptahschema -o json` returns. The padding
-// goes before the message on purpose: it is what pushes a credential in that
-// message past the bytes a display would show.
+// statusDocument is what `kubectl get ptahschema -o jsonpath='{.status}'`
+// prints: the status as JSON. The padding goes before the message on purpose:
+// it is what pushes a credential in that message past the bytes a display
+// would show.
 func statusDocument(t *testing.T, credential string, padding int) string {
 	t.Helper()
 
@@ -123,9 +132,9 @@ func statusDocument(t *testing.T, credential string, padding int) string {
 	if credential != "" {
 		message = "dial " + credential + ": no such host"
 	}
-	document := `{"status":{"phase":"Failed","evidence":"` + strings.Repeat("e", padding) +
+	document := `{"phase":"Failed","evidence":"` + strings.Repeat("e", padding) +
 		`","conditions":[{"type":"ReconciliationFailed","status":"True","reason":"OperationFailed",` +
-		`"message":"` + message + `"}]}}`
+		`"message":"` + message + `"}]}`
 	if credential != "" && padding > 0 {
 		offset := strings.Index(document, credential)
 		if offset <= 400 {
@@ -135,15 +144,25 @@ func statusDocument(t *testing.T, credential string, padding int) string {
 	return document
 }
 
-// runCredentialCheck runs the step against a kubectl that answers with the
-// document, and nothing else. The stub is a shell function rather than an
-// executable file: a file written and executed while parallel tests fork can
-// fail with "text file busy", and a kubectl that fails that way would measure
-// the wrong thing.
-func runCredentialCheck(t *testing.T, script, status string) (stdout, stderr string, err error) {
+// runCredentialCheck runs the step against a kubectl that answers the read of
+// the whole status with the document, or fails, and answers nothing else: a
+// step that read another field would be checking that field. The stub is a
+// shell function rather than an executable file: a file written and executed
+// while parallel tests fork can fail with "text file busy", and a kubectl that
+// fails that way would measure the wrong thing.
+func runCredentialCheck(t *testing.T, script, status string, failed bool) (stdout, stderr string, err error) {
 	t.Helper()
 
-	stub := "kubectl() { printf '%s' " + shellQuote(status) + "; }\n"
+	answer := "printf '%s' " + shellQuote(status)
+	if failed {
+		answer = "printf 'Error from server (NotFound)\\n' >&2; return 1"
+	}
+	stub := "kubectl() {\n" +
+		"  case \" $* \" in\n" +
+		"  *' -o jsonpath={.status} '*) " + answer + " ;;\n" +
+		"  *) printf 'the stub answers only the read of .status, not: %s\\n' \"$*\" >&2; return 1 ;;\n" +
+		"  esac\n" +
+		"}\n"
 	command := exec.Command("/bin/sh", "-c", stub+script)
 	command.Env = append(os.Environ(), "NAMESPACE=demo")
 	var out, errs strings.Builder
