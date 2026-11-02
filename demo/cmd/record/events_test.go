@@ -55,19 +55,47 @@ func TestOutputEventsRespectTheStreamTheStepNamed(t *testing.T) {
 }
 
 // A statement spans lines. Marking only the keyword line leaves the columns
-// under it reading as ordinary output, which is most of the plan.
+// under it reading as ordinary output, which is most of the plan. The lines
+// are what kubectl ptah approve printed in run 41458488586, with Ptah v0.17.0,
+// whose plans carry no comment line ahead of a CREATE TABLE: the statement is
+// found by its keyword at the start of the line.
 func TestOutputEventsMarkAStatementToItsEnd(t *testing.T) {
 	t.Parallel()
 	plan := strings.Join([]string{
-		"safe\t-- POSTGRES TABLE: customers --",
+		"Statement 1 of 1: safe (does not remove data or tighten constraints)",
 		`CREATE TABLE "customers" (`,
 		`  "id" bigint PRIMARY KEY NOT NULL,`,
 		`  "email" text NOT NULL`,
-		")",
-		"Schema apply completed",
+		");",
+		"Approve plan ptah-plan-64e304c38b3a185acc873186 of schema/storefront in demo? Type yes to approve: yes",
 	}, "\n")
 	events := outputEvents(plan, kindOutput)
 	want := []string{kindOutput, kindSQL, kindSQL, kindSQL, kindSQL, kindOutput}
+	if len(events) != len(want) {
+		t.Fatalf("outputEvents made %d events, expected %d", len(events), len(want))
+	}
+	for index, kind := range want {
+		if events[index][0] != kind {
+			t.Fatalf("event %d is %v, expected %s (%q)", index, events[index][0], kind, events[index][1])
+		}
+	}
+}
+
+// A statement the renderer wrote without a terminator runs on into the
+// comment Ptah appends to it, which ends it: the destructive plan in
+// destructive-block, as run 41458488586 printed it. The comment ahead of the
+// statement is not part of it.
+func TestOutputEventsCarryAStatementThroughItsTrailingComment(t *testing.T) {
+	t.Parallel()
+	plan := strings.Join([]string{
+		"Statement 1 of 1: destructive (DROP COLUMN removes existing column data)",
+		"-- Remove columns from table: customers",
+		`ALTER TABLE "customers" DROP COLUMN "email" CASCADE`,
+		"-- WARNING: Dropping column customers.email with CASCADE - This will delete data and dependent objects!;",
+		"Stored:         <time>",
+	}, "\n")
+	events := outputEvents(plan, kindOutput)
+	want := []string{kindOutput, kindOutput, kindSQL, kindSQL, kindOutput}
 	if len(events) != len(want) {
 		t.Fatalf("outputEvents made %d events, expected %d", len(events), len(want))
 	}
