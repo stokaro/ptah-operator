@@ -470,6 +470,14 @@ func generationOf(object []byte) (int64, bool, error) {
 // something settle, and re-running is what a reader does. What is published is
 // the run that held.
 func (r *recorder) attempt(ctx context.Context, current step, expected expectation) (outcome, error, error) {
+	if len(current.Answers) > 0 {
+		// Once: validate refuses a retry beside answers.
+		result, err := r.terminal(ctx, current.Run, current.Answers)
+		if err != nil {
+			return outcome{}, nil, err
+		}
+		return result, expected.evaluate(result), nil
+	}
 	deadline := time.Now().Add(current.Retry)
 	for {
 		result, err := r.shell(ctx, current.Run)

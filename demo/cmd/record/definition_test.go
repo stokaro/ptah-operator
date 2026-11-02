@@ -269,7 +269,7 @@ func TestTheDigestCanWriteEveryScenarioField(t *testing.T) {
 	}
 	walk("scenario", reflect.TypeFor[scenario]())
 
-	for _, name := range []string{"scenario", "step", "observation", "condition", "field", "expectation"} {
+	for _, name := range []string{"scenario", "step", "answer", "observation", "condition", "field", "expectation"} {
 		if !visited[name] {
 			t.Errorf("the walk never reached %s, so it checked less than the digest writes", name)
 		}

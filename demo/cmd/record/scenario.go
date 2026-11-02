@@ -55,9 +55,26 @@ type step struct {
 	// step that demonstrates a refusal names stderr, because the refusal is
 	// what the reader came to see.
 	Show []string `yaml:"show"`
+	// Answers are what a person types at the terminal the command runs on,
+	// each one after the command has printed its prompt. A step with answers
+	// runs on a pseudo-terminal rather than on pipes: a command that asks for
+	// a decision asks only a terminal, and refuses an answer piped into it.
+	// The terminal echoes what was typed, so the transcript shows the answer
+	// where the person typed it, and stdout and stderr arrive as one stream.
+	Answers []answer `yaml:"answers"`
 	// Expect is what has to hold once the command has run. A step without it is
 	// refused.
 	Expect *expectation `yaml:"expect"`
+}
+
+// answer is one reply typed at a terminal.
+type answer struct {
+	// Prompt is text the command prints when it stops to ask. The answer is
+	// typed once the terminal has shown it, and not before: typed earlier, the
+	// terminal would echo it above the question.
+	Prompt string `yaml:"prompt"`
+	// Type is the line typed in reply, without its newline.
+	Type string `yaml:"type"`
 }
 
 // expectation is the condition under which this step's output may be published.
@@ -219,6 +236,7 @@ func (s step) validate(scenarioID string, index int) []error {
 			problems = append(problems, fmt.Errorf("%s shows %q, which is neither stdout nor stderr", where, name))
 		}
 	}
+	problems = append(problems, s.validateAnswers(where)...)
 	if s.Await != nil {
 		problems = append(problems, s.Await.validate(where+" await")...)
 	}
@@ -233,6 +251,43 @@ func (s step) validate(scenarioID string, index int) []error {
 	}
 	if s.Expect.Resource != nil {
 		problems = append(problems, s.Expect.Resource.validate(where+" resource")...)
+	}
+	return problems
+}
+
+// validateAnswers refuses answers a terminal could not deliver as written,
+// and a step that would type them more than once.
+func (s step) validateAnswers(where string) []error {
+	if len(s.Answers) == 0 {
+		return nil
+	}
+	var problems []error
+	for index, one := range s.Answers {
+		switch {
+		case strings.TrimSpace(one.Prompt) == "":
+			problems = append(problems, fmt.Errorf("%s answer %d waits for no prompt", where, index+1))
+		case strings.ContainsAny(one.Prompt, "\r\n"):
+			// A terminal writes a line break as CR LF, so a prompt that spans
+			// two lines would never be found in what it showed.
+			problems = append(problems, fmt.Errorf("%s answer %d waits for a prompt of more than one line", where, index+1))
+		}
+		if strings.TrimSpace(one.Type) == "" || strings.ContainsAny(one.Type, "\r\n") {
+			problems = append(problems, fmt.Errorf("%s answer %d types %q; an answer is one line of text", where, index+1, one.Type))
+		}
+	}
+	if s.Retry != 0 {
+		problems = append(problems, fmt.Errorf(
+			"%s answers a prompt and retries; typing the answer again is a second decision, not a second look", where))
+	}
+	for _, name := range s.Show {
+		if name == "stderr" {
+			problems = append(problems, fmt.Errorf(
+				"%s shows stderr, and a terminal carries one stream; what the command wrote is in stdout", where))
+		}
+	}
+	if s.Expect != nil && len(s.Expect.StderrContains) > 0 {
+		problems = append(problems, fmt.Errorf(
+			"%s expects text on stderr, and a terminal carries one stream; expect it in stdout", where))
 	}
 	return problems
 }

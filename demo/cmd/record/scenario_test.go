@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestScenarioValidateRefusesAnUncheckedStep(t *testing.T) {
@@ -453,6 +454,56 @@ func TestScenarioValidateRefusesARepeatedWait(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("validate said %q, which does not carry %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestScenarioValidateRefusesAnswersATerminalCannotDeliver(t *testing.T) {
+	t.Parallel()
+	exit := 0
+	approve := func(change func(*step)) []step {
+		one := step{
+			Run:     "kubectl ptah approve schema/storefront --wait",
+			Answers: []answer{{Prompt: "Type yes to approve: ", Type: "yes"}},
+			Expect:  &expectation{Exit: &exit, StdoutContains: []string{"Approved"}},
+		}
+		change(&one)
+		return []step{one}
+	}
+	for _, row := range []struct {
+		name  string
+		steps []step
+		want  string
+	}{
+		{name: "an answer after its prompt", steps: approve(func(*step) {})},
+		{name: "no prompt", steps: approve(func(s *step) { s.Answers[0].Prompt = " " }), want: "waits for no prompt"},
+		{
+			name:  "a prompt over two lines",
+			steps: approve(func(s *step) { s.Answers[0].Prompt = "plan\nType yes: " }),
+			want:  "more than one line",
+		},
+		{name: "two lines typed", steps: approve(func(s *step) { s.Answers[0].Type = "yes\nyes" }), want: "one line of text"},
+		{name: "a retry", steps: approve(func(s *step) { s.Retry = time.Minute }), want: "second decision"},
+		{name: "stderr shown", steps: approve(func(s *step) { s.Show = []string{"stderr"} }), want: "one stream"},
+		{
+			name:  "stderr expected",
+			steps: approve(func(s *step) { s.Expect.StderrContains = []string{"Waiting"} }),
+			want:  "expect it in stdout",
+		},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			subject := scenario{
+				ID: "example", Title: "Example", Tagline: "A tagline.", Learn: "A lesson.",
+				Tags: []string{"Lifecycle"}, Steps: row.steps,
+			}
+			err := subject.validate()
+			switch {
+			case row.want == "" && err != nil:
+				t.Fatalf("validate refused %s: %v", row.name, err)
+			case row.want != "" && (err == nil || !strings.Contains(err.Error(), row.want)):
+				t.Fatalf("validate said %v, which does not carry %q", err, row.want)
 			}
 		})
 	}

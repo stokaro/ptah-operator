@@ -93,7 +93,8 @@ the reader scrolls past, and the scenario is what has to be shorter.
 ## Changing a recorded scenario
 
 The recording holds a digest of what this file says the scenario runs: the
-`reset`, and each step's `run`, `await`, `retry`, `sync`, `show` and `expect`.
+`reset`, and each step's `run`, `await`, `retry`, `sync`, `show`, `answers`
+and `expect`.
 Edit any of them and `make verify-demo-recording`, which `make verify-source`
 runs, refuses the committed recording until the scenario is recorded again.
 `title`, `tagline`, `learn`, `tags` and `note` are left out, because rewording
@@ -116,6 +117,17 @@ Give the step `retry: 6m` and a command that reads: the recorder re-runs it
 until the expectation holds, which is what a reader does by looking again.
 `retry` is only for a command that changes nothing; what is published is the
 run that held.
+
+## Typing at a terminal
+
+`kubectl ptah approve` shows the plan and asks for a decision on a terminal,
+and refuses one piped into it. A step that runs it lists what a person types
+under `answers`: each `prompt` is text the command prints when it asks, and
+`type` is the line typed after it appears. The step runs on a pseudo-terminal,
+so the transcript is what the terminal showed, the echoed answer included, and
+stdout and stderr are one stream: a step with answers expects text on stdout
+and shows nothing else. It never retries, because typing an answer again is a
+second decision rather than a second look.
 
 ## What a transcript may say
 
