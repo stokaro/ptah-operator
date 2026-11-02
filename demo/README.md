@@ -129,6 +129,17 @@ with `kubectl ptah approve`, and the operator applies it. With no terminal to
 answer on, it passes `--plan-fingerprint` with the fingerprint of the plan it
 read, which is how a script approves.
 
+Then it takes the artifact path the other scenarios publish. `ptah schema push`
+publishes the same SQL, with the lab's registry credentials in
+`PTAH_OCI_USERNAME` and `PTAH_OCI_PASSWORD`, and the resource is applied again
+naming that digest instead of the ConfigMap. `kubectl ptah set-source` does not
+make that move, since an artifact also needs a verification policy, which only
+the person editing the resource names. The database already holds that
+revision, so the resource converges without a plan. `ptah schema push`
+publishes the next revision, `kubectl ptah set-source --wait` points the
+resource at it and waits for its plan, and the approver approves that plan the
+same way.
+
 ## Recording
 
 ```sh

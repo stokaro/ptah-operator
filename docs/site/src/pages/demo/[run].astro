@@ -109,7 +109,9 @@ const base = import.meta.env.BASE_URL;
 		recorded; <strong>Where it starts</strong> above says what that is and which run ends there. Run
 		<code>demo/acceptance/reproduce.sh</code> to watch Approve a plan repeated from a directory where
 		the lab&rsquo;s scripts do not exist, by an account that may not create a Job, with the plan
-		approved by a second account that may create neither a schema nor a Job.
+		approved by a second account that may create neither a schema nor a Job, and then the same
+		schema published with <code>ptah schema push</code> and moved to its next revision with
+		<code>kubectl ptah set-source</code>.
 	</p>
 
 	<h2>The same changes, as edits</h2>
