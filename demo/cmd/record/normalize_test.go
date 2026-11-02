@@ -155,6 +155,13 @@ func TestNormalizerPadsAColumnAndNotASentence(t *testing.T) {
 			line: namespace + "   Active   5m",
 			want: "demo" + strings.Repeat(" ", len(namespace)-len("demo")) + "   Active   5m",
 		},
+		{
+			// psql ends a cell with a space and a bar, and the widest value in
+			// its column has one space before the bar.
+			name: "a namespace in the widest cell of a psql column",
+			line: " " + namespace + " | storefront",
+			want: " demo" + strings.Repeat(" ", len(namespace)-len("demo")) + " | storefront",
+		},
 	} {
 		if got := rewriter.apply(row.line); got != row.want {
 			t.Errorf("%s: apply wrote %q, expected %q", row.name, got, row.want)
