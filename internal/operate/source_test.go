@@ -38,6 +38,8 @@ func TestParsePinnedReference(t *testing.T) {
 		name, value string
 		want        string // empty for an accepted value
 		tag         string
+		// notWant is what the refusal must not call the value.
+		notWant string
 	}{
 		{name: "a digest", value: pinnedNew},
 		{name: "a registry with a port", value: "oci://localhost:5000/shop/storefront@" + digestNew},
@@ -48,6 +50,29 @@ func TestParsePinnedReference(t *testing.T) {
 		{name: "no selector", value: "oci://registry.example/shop/storefront", want: "which means tag latest", tag: "latest"},
 		{name: "a tag beside the digest", value: "oci://registry.example/shop/storefront:1.5.0@" + digestNew,
 			want: "names tag 1.5.0 beside its digest"},
+		// The operator's parser reads repository oci, and drops the rest up
+		// to the digest unread.
+		{name: "another reference after the registry", value: "oci://registry.example/oci://other.example/shop/storefront@" + digestNew,
+			want: "has oci://other.example/shop/storefront where its repository path belongs, and a repository path carries " +
+				"no scheme: the operator would read repository oci from it and drop the rest unread", notWant: "tag"},
+		{name: "another scheme after the registry", value: "oci://registry.example/https://other.example/shop/storefront@" + digestNew,
+			want:    "has https://other.example/shop/storefront where its repository path belongs, and a repository path carries no scheme",
+			notWant: "tag"},
+		// The parser refuses it, calling what follows the first colon a tag.
+		{name: "another reference after the registry, with no digest", value: "oci://registry.example/oci://other.example/shop/storefront:1.5.0",
+			want:    "has oci://other.example/shop/storefront:1.5.0 where its repository path belongs, and a repository path carries no scheme",
+			notWant: "tag \""},
+		{name: "a path with a colon in it before the digest", value: "oci://registry.example/shop:storefront/v1@" + digestNew,
+			want: "has shop:storefront/v1 where its repository path belongs, which is not a repository path, with a tag or " +
+				"without: the operator would read repository shop from it and drop the rest unread", notWant: "names tag"},
+		{name: "an empty tag beside the digest", value: "oci://registry.example/shop/storefront:@" + digestNew,
+			want: "has shop/storefront: where its repository path belongs, which is not a repository path", notWant: "names tag"},
+		{name: "two tags beside the digest", value: "oci://registry.example/shop/storefront:1.5:0@" + digestNew,
+			want: "which is not a repository path", notWant: "names tag"},
+		{name: "a tag longer than a tag can be beside the digest", value: "oci://registry.example/shop/storefront:" +
+			strings.Repeat("v", 129) + "@" + digestNew, want: "which is not a repository path", notWant: "names tag"},
+		{name: "the longest tag beside the digest", value: "oci://registry.example/shop/storefront:" +
+			strings.Repeat("v", 128) + "@" + digestNew, want: "names tag " + strings.Repeat("v", 128) + " beside its digest"},
 		{name: "another algorithm", value: "oci://registry.example/shop/storefront@sha512:" + strings.Repeat("b", 128),
 			want: "names digest sha512:"},
 		{name: "upper-case hex", value: "oci://registry.example/shop/storefront@sha256:" + strings.Repeat("B", 64),
@@ -73,6 +98,9 @@ func TestParsePinnedReference(t *testing.T) {
 			var notPinned *operate.NotPinnedError
 			if !errors.As(err, &notPinned) || !strings.Contains(err.Error(), row.want) || notPinned.Tag != row.tag {
 				t.Fatalf("ParsePinnedReference(%q) = %+v, %v; want a refusal naming %q with tag %q", row.value, pinned, err, row.want, row.tag)
+			}
+			if row.notWant != "" && strings.Contains(err.Error(), row.notWant) {
+				t.Fatalf("ParsePinnedReference(%q) refused it as %q, which calls it %q", row.value, err, row.notWant)
 			}
 		})
 	}

@@ -3,6 +3,7 @@ package statusview
 import (
 	"fmt"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -15,6 +16,19 @@ const TimeLayout = "2006-01-02T15:04:05Z"
 // Time prints one instant the way every other line of the plugin does.
 func Time(instant metav1.Time) string {
 	return instant.UTC().Format(TimeLayout)
+}
+
+// Duration prints a length of time the way the plugin's help writes one: 5m
+// rather than 5m0s, 1h rather than 1h0m0s, and 90s as 1m30s.
+func Duration(d time.Duration) string {
+	text := d.String()
+	if trimmed, ok := strings.CutSuffix(text, "m0s"); ok {
+		text = trimmed + "m"
+	}
+	if trimmed, ok := strings.CutSuffix(text, "h0m"); ok {
+		text = trimmed + "h"
+	}
+	return text
 }
 
 // Clean makes free text safe to print on one terminal line.

@@ -1214,8 +1214,10 @@ own answer. A Ptah whose push has no `--format` prints the digest in its
 receipt; `ptah oci resolve` on the tag just pushed pins it, provided nothing
 pushed to that tag since. set-source takes
 `oci://HOST/REPOSITORY@sha256:<64 hex>` and nothing looser: a tag, a tag
-beside a digest, or anything the operator's own parser refuses is refused
-before the cluster is read, with exit status 2. It resolves no tag itself.
+beside a digest, something after the registry that is not a repository path
+(another reference pasted there, say), or anything the operator's own parser
+refuses is refused before the cluster is read, with exit status 2. The
+refusal names which. It resolves no tag itself.
 
 It sets `spec.desired.ociRef` of a `PtahSchema` or `spec.artifact.ociRef` of a
 `PtahMigration` and no other field. The verification policy, the registry
@@ -1240,16 +1242,23 @@ Under `Always`, then, set-source can be all it takes for a new revision to
 reach the database. An artifact that asks for nothing the database lacks leads
 to no plan, and the resource returns to `InSync`.
 
+A suspended resource starts no Job, so none of this happens until it is
+resumed; set-source stores the change and its report says so.
+
 `--wait` stays until the operator has planned from the new reference: a plan
 computed from it waits for a decision, or the resource rests in sync from it,
 whichever comes first. `--for approval` or `--for in-sync` waits for that one
 alone, and a wait for approval stops with exit status 8 when the resource
-rests in sync instead, since no plan from the change will wait. Every ending
-needs the operator to have observed the generation the change made and a
-reading that began after it, and a document that carries another artifact
-does not count. A wait whose resource is pointed somewhere else meanwhile
-stops with exit status 8, as [any wait](#wait) does on a target it can no
-longer reach.
+rests in sync instead, since no plan from the change will wait. A plan the
+resource's own policy holds -- a schema plan that is destructive while
+`spec.policy.allowDestructive` is false, or any plan under apply `Never` --
+stops either wait with exit status 8 once the operator has published it, with
+the reason and the operator's message: no approval is asked for and nothing
+applies it until the spec changes. Every ending needs the operator to have
+observed the generation the change made and a reading that began after it,
+and a document that carries another artifact does not count. A wait whose
+resource is pointed somewhere else meanwhile stops with exit status 8, as
+[any wait](#wait) does on a target it can no longer reach.
 
 set-source changes nothing, and exits 4, for:
 
@@ -1591,8 +1600,8 @@ plugin waits in the same command with `--wait`, from the answer to the change
 itself; `kubectl ptah approve --wait` waits for the Apply of the plan it
 approved.
 
-A wait that times out exits 7 and prints the phase, the condition holding the
-resource and what the wait still needed:
+A wait that times out exits 7 and prints the phase and the condition holding
+the resource as the last read found them, and what the wait still needed:
 
 ```text
 kubectl-ptah: ptahschema/storefront in namespace application did not reach in-sync within 10m0s.
@@ -1601,6 +1610,10 @@ kubectl-ptah: ptahschema/storefront in namespace application did not reach in-sy
   Waiting for: phase InSync with InSync True at generation 4
 kubectl ptah schema storefront -n application shows every condition with its message.
 ```
+
+When the last reads failed, the timeout names that failure as well. The read a
+wait makes at its deadline is cut short by the deadline itself, and is not one
+of them.
 
 A wait started again after a timeout does not count a read that was already
 under way, because that read may have begun before the change being waited
@@ -1612,9 +1625,33 @@ A target the resource cannot reach any more stops the wait at once with exit
 status 8: an Apply that failed, a run whose outcome nobody established, a
 reading afterwards that did not confirm the Apply, another plan applied than
 the one named, a resource deleted or being deleted, or a wait for suspension
-on a resource whose spec does not ask for it. With `-o yaml` or `-o json` the
-command prints the resource as the wait last read it, and nothing when it did
-not reach the target. Waiting needs `get` on the resource and nothing else.
+on a resource whose spec does not ask for it.
+
+A plan the resource's own policy holds stops a wait for `in-sync`,
+`approval` or `applied` the same way: a schema plan that is destructive while
+`spec.policy.allowDestructive` is false, or any plan of either kind under
+apply `Never`. No approval is asked for and nothing applies it until the spec
+changes. The wait reads the refusal from the condition the operator keeps
+while it resolves, verifies and reads again at its interval -- a schema's
+`ApprovalRequired`, a migration's `Ready` -- so a wait that reads it
+mid-cycle, outside `Blocked` or `Planning`, stops as well. As with every
+target, the refusal counts only when it is for the generation the resource has
+now and was planned from a reading that began after the wait did:
+
+```text
+kubectl-ptah: ptahschema/storefront in namespace application will not reach in-sync: PolicyBlocked.
+  Phase:       Blocked
+  Why:         spec.policy holds plan ptah-plan-0132bf7579a7c04e68e35110 (DestructiveChangesDisabled): Plan contains destructive changes and policy disallows them; read them with kubectl ptah plan, then either narrow the desired schema or set spec.policy.allowDestructive
+kubectl ptah schema storefront -n application shows where it stands.
+```
+
+A resource its database realm blocks keeps a wait running: another resource's
+change or an administrator's grant ends that refusal, not a change to this
+one, and a timeout names it.
+
+With `-o yaml` or `-o json` the command prints the resource as the wait last
+read it, and nothing when it did not reach the target. Waiting needs `get` on
+the resource and nothing else.
 
 ## A migration run nobody accounted for
 

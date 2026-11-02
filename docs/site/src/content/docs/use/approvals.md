@@ -83,14 +83,19 @@ kubectl ptah approve schema/application -n application
 
 It reads the schema once more before it sends anything, and approves nothing if
 a newer plan replaced the one shown, the schema was deleted and created again,
-or the operator would not admit an approval now, as while it reads the database
-again at its interval. The answer it prints is the API server's: the approval
-admission stored with the identity it stamped, or the refusal in RBAC's or
-admission's own words.
+its spec changed other than by a suspend or a resume, or the operator would
+not admit an approval now. The operator reads a waiting schema again at its
+interval, and admission takes no approval while it does: an answer given then
+is sent when that read ends, if the plan shown is the one waiting again. It
+waits up to five minutes for that read to end before it sends, and `--timeout`
+bounds each request it makes rather than that wait. The answer it
+prints is the API server's: the approval admission stored with the identity
+it stamped, or the refusal in RBAC's or admission's own words.
 
 - `--plan-fingerprint <fingerprint>` approves without asking, and only if the
   current plan carries that fingerprint. It is for a script that reviewed the
-  plan; there is no option that approves whatever plan is current.
+  plan; there is no option that approves whatever plan is current. It waits
+  for an interval read to end the same way, up to five minutes.
 - `--dry-run server` lets admission check the approval and stores nothing.
 - `--dry-run client` prints the approval as YAML with the identifiers filled in
   and sends nothing, for a workflow that keeps decisions in a repository. It
@@ -119,8 +124,9 @@ whether it was stored. After a 6, `kubectl ptah schema application -n
 application` lists the approvals that name the schema; read it before
 approving again. With `--wait`, 7 means the approval is stored and the Apply
 had not ended in time, and 8 that it will not end applied: it failed, nobody
-established its outcome, the reading afterwards did not confirm it, or another
-plan was applied. Both print the phase and what holds the schema.
+established its outcome, the reading afterwards did not confirm it, another
+plan was applied, or the schema's own policy holds the plan that replaced it.
+Both print the phase and what holds the schema.
 
 Creation is rejected if the plan is already stale, its immutable storage is
 not committed, the verification-policy ConfigMap changed, or the approval

@@ -160,6 +160,13 @@ const (
 	// StopNotSuspended is a wait for suspension on a resource whose spec
 	// does not ask for it.
 	StopNotSuspended StopReason = "NotSuspended"
+	// StopPolicyBlocked is a resource whose current plan its own policy
+	// holds: a schema plan that is destructive while
+	// spec.policy.allowDestructive is false, or any plan of either family
+	// under spec.policy.apply Never. No approval is asked for and no Apply
+	// runs, and every later reading of the same database plans the same,
+	// until the spec changes.
+	StopPolicyBlocked StopReason = "PolicyBlocked"
 	// StopDeleting is a resource that is being deleted.
 	StopDeleting StopReason = "Deleting"
 	// StopDeleted is a resource that was deleted while the wait read it.
@@ -196,7 +203,9 @@ type TimeoutError struct {
 	// Waiting is what the target still needed in the last document read.
 	Waiting string
 	// LastError is the error of the last read, when it failed and was
-	// retried.
+	// retried. A read the wait's own deadline cut short is not counted: the
+	// deadline is the timeout this error reports, not news about the
+	// resource. When no read answered at all, LastError says so.
 	LastError error
 	// ReadUnderWay reports that the last document read showed a read of the
 	// database in flight. A wait begun after it skips that read's harvest,
@@ -297,10 +306,14 @@ func Wait(ctx context.Context, reader client.Reader, ref Ref, options WaitOption
 			waiting = verdict.waiting
 		case ctx.Err() != nil:
 			return Result{}, fmt.Errorf("wait for %s: %w", ref, ctx.Err())
-		case errors.Is(err, context.DeadlineExceeded):
-			// The read carried the wait's own deadline: the timeout below
-			// reports it.
-			lastErr = err
+		case errors.Is(err, context.DeadlineExceeded) && !clock.Now().Before(deadline):
+			// The read carried the wait's own deadline and ran into it, which
+			// the read at the deadline always does. The timeout below reports
+			// what the last read that answered found, or why the last one
+			// before this failed.
+			if last == nil && lastErr == nil {
+				lastErr = errNoAnswer
+			}
 		case apierrors.IsNotFound(err) && w.baseline != nil:
 			// The resource the wait began on is gone; a resource with no
 			// finalizer goes without a deleting document between.
@@ -310,7 +323,7 @@ func Wait(ctx context.Context, reader client.Reader, ref Ref, options WaitOption
 			}
 			return Result{}, &StopError{Ref: ref, Target: options.Target, Reason: StopDeleted, Phase: phase,
 				Message: "the resource was deleted"}
-		case !retryable(err):
+		case !Retryable(err):
 			return Result{}, ref.failed("wait for", err)
 		default:
 			lastErr = err
@@ -335,6 +348,10 @@ func Wait(ctx context.Context, reader client.Reader, ref Ref, options WaitOption
 	}
 }
 
+// errNoAnswer is a timeout before which no read was answered: each read ran
+// into the wait's deadline, which says nothing about the resource.
+var errNoAnswer = errors.New("the API server answered no read before the timeout")
+
 // get reads the resource. With the real clock the read carries the wait's
 // deadline; an injected clock's instants are not the context's.
 func get(ctx context.Context, reader client.Reader, ref Ref, object client.Object, deadline time.Time, real bool) error {
@@ -346,10 +363,13 @@ func get(ctx context.Context, reader client.Reader, ref Ref, object client.Objec
 	return reader.Get(bounded, ref.key(), object)
 }
 
-// retryable is a read the API server may answer next time. A kind the server
-// does not serve, or one this client cannot encode, is not: the CRD is not
-// installed, and waiting does not install it.
-func retryable(err error) bool {
+// Retryable reports a failed read the API server may answer next time: a
+// transport failure, a timeout, throttling or a server error. A kind the
+// server does not serve, or one this client cannot encode, is not: the CRD is
+// not installed, and waiting does not install it. Nor is a refusal, such as
+// RBAC's. Wait retries what it reports until its timeout, and so does
+// kubectl ptah approve while it waits for the approval gate.
+func Retryable(err error) bool {
 	if meta.IsNoMatchError(err) || inChain(err, runtime.IsNotRegisteredError) {
 		return false
 	}
@@ -639,7 +659,75 @@ func (w *waiter) checkRead(s snapshot) verdict {
 }
 
 func (w *waiter) checkInSync(s snapshot) verdict {
-	return w.inSync(s, w.fresh.see(s))
+	fresh := w.fresh.see(s)
+	if held, ok := w.policyHeld(s, fresh); ok {
+		return held
+	}
+	return w.inSync(s, fresh)
+}
+
+// policyHeld stops a wait on a resource whose current plan its own policy
+// holds (StopPolicyBlocked), at the generation the resource has now and
+// beside a plan from a reading the target may count. None of in-sync,
+// approval and applied follows such a plan.
+//
+// For a schema the refusal is ApprovalRequired False for
+// DestructiveChangesDisabled or ApplyDisabled. The operator writes it with the
+// plan (setPlanPolicyStatus in internal/controller) and leaves it alone while
+// it resolves, verifies and reads the database again at its interval, while
+// the phase leaves Blocked and Ready reads OperationInProgress. The plan beside
+// it dates it: the Observe harvest clears status.plan in the same write that
+// records the reading, and only the plan computed after it puts one back, so a
+// refusal beside the reading of a cycle that has not planned yet has no plan
+// beside it.
+//
+// For a migration it is Ready False for ApplyDisabled, which publishing a plan
+// under apply policy Never writes (applyMigrationPolicyPhase). A claim writes
+// the phase and Progressing and leaves Ready alone, and the harvest of the
+// history writes Ready in the same write that records the reading, on every
+// branch. So ApplyDisabled beside a reading was written by the publication
+// that followed that reading. A migration keeps the previous plan through a
+// read, so the plan dates nothing there.
+//
+// A database realm that blocks the resource does not stop the wait: another
+// resource's change or the realm's grant ends that refusal, not this
+// resource's spec, and the timeout names it.
+func (w *waiter) policyHeld(s snapshot, fresh bool) (verdict, bool) {
+	if s.plan == nil || !fresh {
+		return verdict{}, false
+	}
+	held := s.policyHold()
+	// The generation is the resource's own, which is never below the one the
+	// wait requires: a spec edited since the refusal may be the edit that
+	// allows the plan. It also holds a wait for a source to a plan from that
+	// source, since sourceMoved has stopped one whose spec names another.
+	if held == nil || held.ObservedGeneration < s.generation {
+		return verdict{}, false
+	}
+	return w.stop(s, StopPolicyBlocked, fmt.Sprintf("spec.policy holds plan %s (%s): %s",
+		s.plan.name, held.Reason, held.Message)), true
+}
+
+// policyHold is the condition that says the resource's own policy holds its
+// current plan, or nil.
+func (s snapshot) policyHold() *metav1.Condition {
+	switch s.family {
+	case FamilySchema:
+		held := s.condition(operatorv1alpha1.ConditionApprovalRequired)
+		if held != nil && held.Status == metav1.ConditionFalse {
+			switch operatorv1alpha1.ConditionReason(held.Reason) {
+			case operatorv1alpha1.ReasonDestructiveChangesDisabled, operatorv1alpha1.ReasonApplyDisabled:
+				return held
+			}
+		}
+	case FamilyMigration:
+		held := s.condition(operatorv1alpha1.ConditionMigrationReady)
+		if held != nil && held.Status == metav1.ConditionFalse &&
+			held.Reason == string(operatorv1alpha1.ReasonApplyDisabled) {
+			return held
+		}
+	}
+	return nil
 }
 
 // inSync decides TargetInSync on a document whose reading fresh says counts
@@ -664,7 +752,11 @@ func (w *waiter) inSync(s snapshot, fresh bool) verdict {
 }
 
 func (w *waiter) checkApproval(s snapshot) verdict {
-	return w.approval(s, w.fresh.see(s))
+	fresh := w.fresh.see(s)
+	if held, ok := w.policyHeld(s, fresh); ok {
+		return held
+	}
+	return w.approval(s, fresh)
 }
 
 // approval decides TargetApproval on a document whose reading fresh says
@@ -697,8 +789,19 @@ func (w *waiter) approval(s snapshot, fresh bool) verdict {
 }
 
 func (w *waiter) checkApplied(s snapshot) verdict {
+	// Every document passes through the freshness bookkeeping in order, as
+	// it does for the other targets, though only a policy refusal below
+	// asks it.
+	fresh := w.fresh.see(s)
 	if s.family == FamilyMigration {
-		return w.checkRun(s)
+		run := w.checkRun(s)
+		if run.done || run.stop != nil {
+			return run
+		}
+		if held, ok := w.policyHeld(s, fresh); ok {
+			return held
+		}
+		return run
 	}
 	b := w.baseline
 	// status.applied is written only by the proof that read the database
@@ -745,6 +848,9 @@ func (w *waiter) checkApplied(s snapshot) verdict {
 			return w.stop(s, StopNotConverged, fmt.Sprintf("the proof after the Apply of plan %s settled under a "+
 				"newer generation, policy or execution binding", entry.Plan))
 		}
+	}
+	if held, ok := w.policyHeld(s, fresh); ok {
+		return held
 	}
 	// An Apply whose dispatch the operator refused keeps its claim and is
 	// tried again, so that failure leaves the wait running and its timeout

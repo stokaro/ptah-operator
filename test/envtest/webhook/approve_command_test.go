@@ -11,10 +11,12 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/approve"
+	"github.com/stokaro/ptah-operator/internal/desiredspec"
 )
 
 // kubectl ptah approve hands its decision to approve.Submit, which reads the
@@ -35,7 +37,7 @@ func TestApproveCommandGetsTheAPIServersAnswer(t *testing.T) {
 		const person = "carol@example.com"
 		bindApproverRole(t, fixture.namespace, person)
 
-		result := approve.Submit(ctx, clientAs(t, person), fixture.review(), approve.Options{})
+		result := approve.Submit(ctx, clientAs(t, person), fixture.review(t), approve.Options{})
 
 		if result.Outcome != approve.Admitted {
 			t.Fatalf("Submit() as %s = %s: %s", person, result.Outcome, result.Message)
@@ -50,7 +52,7 @@ func TestApproveCommandGetsTheAPIServersAnswer(t *testing.T) {
 		if err := admin.Get(ctx, client.ObjectKeyFromObject(result.Approval), stored); err != nil {
 			t.Fatalf("read the approval %s back: %v", client.ObjectKeyFromObject(result.Approval), err)
 		}
-		want := fixture.review()
+		want := fixture.review(t)
 		if stored.Spec.Approver.Username != person || stored.Spec.SchemaRef.UID != want.ResourceUID ||
 			stored.Spec.PlanRef.UID != want.PlanUID || stored.Spec.PlanFingerprint != want.Fingerprint ||
 			!strings.HasPrefix(stored.Name, fixture.schema.Name+"-") {
@@ -68,7 +70,7 @@ func TestApproveCommandGetsTheAPIServersAnswer(t *testing.T) {
 			APIGroups: []string{operatorv1alpha1.GroupVersion.Group}, Resources: []string{"ptahschemas"}, Verbs: []string{"get"},
 		})
 
-		result := approve.Submit(ctx, clientAs(t, person), fixture.review(), approve.Options{})
+		result := approve.Submit(ctx, clientAs(t, person), fixture.review(t), approve.Options{})
 
 		refusal := `User "` + person + `" cannot create resource "ptahschemaapprovals" in API group "operator.ptah.run" in the namespace "` + fixture.namespace + `"`
 		if result.Outcome != approve.Forbidden || !strings.Contains(result.Message, refusal) {
@@ -83,7 +85,7 @@ func TestApproveCommandGetsTheAPIServersAnswer(t *testing.T) {
 		const person = "erin@example.com"
 		bindApproverRole(t, fixture.namespace, person)
 
-		result := approve.Submit(ctx, clientAs(t, person), fixture.review(), approve.Options{ServerDryRun: true})
+		result := approve.Submit(ctx, clientAs(t, person), fixture.review(t), approve.Options{ServerDryRun: true})
 
 		if result.Outcome != approve.Previewed {
 			t.Fatalf("Submit() as %s with a server dry run = %s: %s", person, result.Outcome, result.Message)
@@ -131,7 +133,7 @@ func TestApproveCommandGetsTheAPIServersAnswer(t *testing.T) {
 			bindApproverRole(t, fixture.namespace, person)
 			api := &afterTheRead{Client: clientAs(t, person), change: func() { test.change(t, fixture) }}
 
-			result := approve.Submit(ctx, api, fixture.review(), approve.Options{})
+			result := approve.Submit(ctx, api, fixture.review(t), approve.Options{})
 
 			if !test.outcome(api.answer) {
 				t.Fatalf("the API server answered %v, not the status this row is about", api.answer)
@@ -159,12 +161,24 @@ func (a *afterTheRead) Create(ctx context.Context, object client.Object, options
 	return a.answer
 }
 
-// review is what approve.Load reads for the fixture's identities: Submit
-// reads only those again, and the fixture's plan has no stored chunk for
-// Load's content read.
-func (fixture approvalFixture) review() approve.Review {
+// review is what approve.Load reads for the fixture's identities and spec:
+// Submit reads only those again, and the fixture's plan has no stored chunk
+// for Load's content read.
+func (fixture approvalFixture) review(t *testing.T) approve.Review {
+	t.Helper()
+	// The spec as the API server sends it, which is what approve compares.
+	raw := &unstructured.Unstructured{}
+	raw.SetGroupVersionKind(operatorv1alpha1.GroupVersion.WithKind("PtahSchema"))
+	if err := admin.Get(context.Background(), client.ObjectKeyFromObject(fixture.schema), raw); err != nil {
+		t.Fatalf("read the fixture's schema: %v", err)
+	}
+	spec, err := desiredspec.Of(raw.Object["spec"])
+	if err != nil {
+		t.Fatalf("read the fixture's spec: %v", err)
+	}
 	return approve.Review{
 		Family: approve.Schema, Namespace: fixture.namespace, Name: fixture.schema.Name, ResourceUID: fixture.schema.UID,
+		Spec:     spec,
 		PlanName: fixture.plan.Name, PlanUID: fixture.plan.UID, Fingerprint: fixture.plan.Spec.Fingerprint,
 	}
 }

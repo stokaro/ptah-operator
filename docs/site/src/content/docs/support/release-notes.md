@@ -32,10 +32,16 @@ on the upgrade. A script that reads the text of `kubectl ptah` has to move to
   `migration/NAME` shows the current plan with the identities an approval
   binds, asks for a decision, and creates the approval as you, so approving
   no longer means writing a manifest by hand. It reads the resource again
-  before it sends anything and approves nothing if the plan changed.
+  before it sends anything and approves nothing if the plan changed, or the
+  spec changed other than by a suspend or a resume. An answer given while the
+  operator reads the resource again at its interval is sent when that read
+  ends, if the same plan is waiting again; approve waits up to five minutes
+  for that, and `--timeout` bounds each request rather than the wait.
   `--plan-fingerprint` approves from a script and `--dry-run client` prints the
-  manifest instead. It needs `create` on the approval kind besides the plan
-  reads, which the chart's approver ClusterRole carries.
+  manifest instead, which the person who decided creates: a GitOps controller
+  that applies it is recorded as the approver. It needs `create` on the
+  approval kind besides the plan reads, which the chart's approver
+  ClusterRole carries.
   [Exact-plan approvals](../../use/approvals/) shows it.
 - **`kubectl ptah suspend`, `resume`, `refresh` and `wait`.** suspend and
   resume set `spec.suspend` and nothing else, and report what they asked for
@@ -43,10 +49,13 @@ on the upgrade. A script that reads the text of `kubectl ptah` has to move to
   annotation and says that the read has not happened yet. wait reads a schema
   or a migration until it is in sync, waits for an approval, has applied, is
   suspended, or has ended the read a refresh asked for, and never counts what
-  was already true when it began. The three that write need `get` and `patch`
-  on the resource, `wait` needs `get`. The changes, `approve` included, take
-  `--wait`. [Waiting for the operator](../../use/operations/#wait) has the
-  targets.
+  was already true when it began. A plan the resource's own policy holds, a
+  schema plan that is destructive while `allowDestructive` is false or any
+  plan under apply `Never`, stops a wait for in-sync, approval or applied once
+  the operator has planned it again after the wait began. The three
+  that write need `get` and `patch` on the resource, `wait` needs `get`. The
+  changes, `approve` included, take `--wait`. [Waiting for the
+  operator](../../use/operations/#wait) has the targets.
 - **`kubectl ptah set-source`.** `kubectl ptah set-source schema/NAME --oci
   REF` or `migration/NAME` points a resource at another artifact, given as a
   reference pinned by digest, which `ptah schema push --format reference` and
@@ -55,8 +64,9 @@ on the upgrade. A script that reads the text of `kubectl ptah` has to move to
   transport and the apply policy, and refuses a tag, a ConfigMap or Git source,
   and a resource with an Apply already running. With `--wait` it stays until a
   plan from the new artifact waits for a decision or the resource is in sync
-  from it. It needs `get` and `patch`, like suspend. [Moving to a new
-  artifact](../../use/operations/#set-source) has the rest.
+  from it, and stops when the policy refuses that plan. It needs `get` and
+  `patch`, like suspend. [Moving to a new artifact](../../use/operations/#set-source)
+  has the rest.
 - **Exit statuses.** A write the plugin sends exits 4 when nothing was
   approved or changed, 5 when RBAC or the API server refused it, and 6 when it
   was sent without an answer and may have been stored. A wait exits 7 when it

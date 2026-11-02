@@ -135,6 +135,36 @@ func TestSetSourceSaysWhatTheApplyPolicyLetsThePlanDo(t *testing.T) {
 	}
 }
 
+// A suspended resource starts no Job, so the change waits for resume, and
+// the report says so instead of saying what the operator does next.
+func TestSetSourceOnASuspendedResourceSaysNothingHappensUntilResume(t *testing.T) {
+	for _, family := range []string{"schema", "migration"} {
+		t.Run(family, func(t *testing.T) {
+			object := onArtifact(family, operatorv1alpha1.ApplyPolicyAlways)
+			switch typed := object.(type) {
+			case *operatorv1alpha1.PtahSchema:
+				typed.Spec.Suspend, typed.Status.Phase = true, operatorv1alpha1.PhaseSuspended
+			case *operatorv1alpha1.PtahMigration:
+				typed.Spec.Suspend, typed.Status.Phase = true, operatorv1alpha1.MigrationPhaseSuspended
+			}
+			api := newCluster(t, object)
+
+			code, stdout, stderr := runCommand(t, api, "set-source", family+"/storefront", "--oci", newRef)
+
+			if code != exitOK || referenceOn(t, api, family) != newRef {
+				t.Fatalf("set-source on a suspended %s = %d, stderr %q", family, code, stderr)
+			}
+			requireSays(t, "set-source's report", stdout, "Source set for", "Observed:  generation 4, phase Suspended",
+				"The resource is suspended: the operator starts no Job until it is resumed, so nothing resolves the new "+
+					"reference before then, and a wait for its plan lasts until then too. After kubectl ptah resume "+
+					family+"/storefront -n demo the operator resolves the new reference")
+			if strings.Contains(stdout, "Once the operator observes generation") {
+				t.Fatalf("the report on a suspended %s says the operator acts once it observes the change: %q", family, stdout)
+			}
+		})
+	}
+}
+
 // A reference set-source cannot pin is refused before the cluster is
 // reached, with the commands that print one.
 func TestSetSourceRefusesAReferenceItCannotPin(t *testing.T) {
@@ -159,6 +189,10 @@ func TestSetSourceRefusesAReferenceItCannotPin(t *testing.T) {
 			[]string{"which means tag latest", "ptah oci resolve oci://registry.example/shop/storefront"}},
 		{"a tag beside the digest", []string{"set-source", "schema/storefront", "--oci", "oci://registry.example/shop/storefront:1.5.0@" + newDigest},
 			[]string{"names tag 1.5.0 beside its digest", "ptah oci resolve <reference>"}},
+		{"another reference after the registry", []string{"set-source", "schema/storefront", "--oci",
+			"oci://registry.example/oci://registry.example/shop/storefront@" + newDigest},
+			[]string{"has oci://registry.example/shop/storefront where its repository path belongs, and a repository path " +
+				"carries no scheme: the operator would read repository oci from it and drop the rest unread.", "Nothing was sent."}},
 		{"no scheme", []string{"set-source", "schema/storefront", "--oci", "registry.example/shop/storefront@" + newDigest},
 			[]string{"oci:// scheme", "ptah schema push --format reference"}},
 		{"another algorithm", []string{"set-source", "schema/storefront", "--oci", "oci://registry.example/shop/storefront@sha512:" + strings.Repeat("b", 128)},
@@ -443,6 +477,47 @@ func TestSetSourceWaitForApprovalStopsWhenNothingIsPlanned(t *testing.T) {
 			t.Fatalf("set-source --for approval on an artifact with nothing to plan = %d, stdout %q, stderr %q", code, stdout, stderr)
 		}
 		requireSays(t, "the stop", stderr, "will not reach approval: NothingPlanned.", "rests in sync, and no plan waits")
+	})
+}
+
+// refused is the operator's answer to generation 5 of a schema whose plan
+// from the new reference is destructive while spec.policy.allowDestructive
+// is false, with the conditions setPlanPolicyStatus writes.
+var refused = schemaStatus(func(status *operatorv1alpha1.PtahSchemaStatus) {
+	at := metav1.NewTime(readAgainAt)
+	status.ObservedGeneration, status.Phase, status.Target.LastObservedAt = 5, operatorv1alpha1.PhaseBlocked, &at
+	status.Source = operatorv1alpha1.SchemaSourceStatus{RequestedReference: newRef, ResolvedReference: newRef, Digest: newDigest, Verified: true}
+	status.Plan = &operatorv1alpha1.CurrentPlanStatus{Name: "ptah-plan-0132bf7579a7c04e68e35110", UID: "uid-plan",
+		Fingerprint: "sha256:fp", ArtifactDigest: newDigest, Destructive: true}
+	status.Conditions = []metav1.Condition{
+		{Type: operatorv1alpha1.ConditionReady, Status: metav1.ConditionFalse, Reason: "PolicyBlocked",
+			Message: "Plan is blocked by destructive-change policy", ObservedGeneration: 5},
+		{Type: operatorv1alpha1.ConditionApprovalRequired, Status: metav1.ConditionFalse, Reason: "DestructiveChangesDisabled",
+			Message: "Plan contains destructive changes and policy disallows them; read them with kubectl ptah plan, " +
+				"then either narrow the desired schema or set spec.policy.allowDestructive", ObservedGeneration: 5},
+	}
+})
+
+// --wait on an artifact whose plan the policy refuses stops once the
+// operator has refused it, with exit status 8, the refusal and the
+// controller's message, rather than running to its timeout.
+func TestSetSourceWaitStopsOnAPlanThePolicyRefuses(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		api := newCluster(t, onArtifact("schema", operatorv1alpha1.ApplyPolicyAlways))
+		api.then(unchanged, refused)
+
+		code, stdout, stderr := runCommand(t, bumping{api}, "set-source", "schema/storefront", "--oci", newRef, "--wait")
+
+		if code != exitWillNotReach || strings.Contains(stdout, "reached") {
+			t.Fatalf("set-source --wait onto a refused plan = %d, stdout %q, stderr %q", code, stdout, stderr)
+		}
+		requireSays(t, "the stop", stderr,
+			"kubectl-ptah: ptahschema/storefront in namespace demo will not reach approval or in-sync: PolicyBlocked.\n",
+			"  Phase:       Blocked\n",
+			"  Why:         spec.policy holds plan ptah-plan-0132bf7579a7c04e68e35110 (DestructiveChangesDisabled): Plan "+
+				"contains destructive changes and policy disallows them; read them with kubectl ptah plan, then either "+
+				"narrow the desired schema or set spec.policy.allowDestructive\n",
+			"kubectl ptah schema storefront -n demo shows where it stands.")
 	})
 }
 

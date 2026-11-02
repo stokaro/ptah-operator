@@ -373,9 +373,13 @@ kubectl ptah approve migration/orders -n application
 It shows no SQL: a migration plan records versions and checksums, and the
 statements live in the source the plan binds, whose digest the review prints.
 It reads the migration again before it sends anything, and approves nothing if
-the plan was replaced or the operator would not admit an approval now. With
-`--wait` it then stays until the run has ended and the operator has read the
-history back.
+the plan was replaced, the spec changed other than by a suspend or a resume,
+or the operator would not admit an approval now. An answer given while the
+operator reads the history again at its interval is sent when that read ends,
+if the same plan is waiting again: approve waits up to five minutes for that
+before it sends, and `--timeout` bounds each request it makes rather than that
+wait. With `--wait` it then stays until the run has ended and the operator has
+read the history back.
 `--dry-run client` prints the approval as YAML with the identifiers filled in,
 after the same decision, to keep in a repository:
 

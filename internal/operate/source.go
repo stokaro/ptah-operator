@@ -134,7 +134,12 @@ func (e *NotPinnedError) Error() string {
 	return fmt.Sprintf("%q %s", e.Value, e.Problem)
 }
 
-var sha256Digest = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+var (
+	sha256Digest = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+	// tagName is a tag as the operator's parser validates one where no
+	// digest follows (oras-go's tagRegexp).
+	tagName = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$`)
+)
 
 // ParsePinnedReference reads an OCI reference that names its artifact by
 // digest alone, as oci://HOST/REPOSITORY@sha256:<64 hex>.
@@ -144,18 +149,37 @@ var sha256Digest = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 // operator resolves. A tag is refused even beside a digest: the operator's
 // parser drops such a tag unread, and a stored tag nothing checks would tell
 // a reader of the spec which release runs without anything holding it true.
+//
+// Beside a digest that parser drops everything from the first ":" to the
+// "@" without reading it, so what sits there is named for what it is: a
+// tag, or a repository path that is not one, such as another reference
+// pasted after the registry. A scheme there is named even where the parser
+// refuses the value, since its own message would call it a tag.
 func ParsePinnedReference(value string) (PinnedReference, error) {
-	if _, err := ocireference.Parse(value); err != nil {
+	written, digest, hasDigest := strings.Cut(repositoryPath(value), "@")
+	parsed, err := ocireference.Parse(value)
+	if strings.Contains(written, "://") {
+		problem := fmt.Sprintf("has %s where its repository path belongs, and a repository path carries no scheme", written)
+		if err == nil {
+			problem += fmt.Sprintf(": the operator would read repository %s from it and drop the rest unread", parsed.Repository)
+		}
+		return PinnedReference{}, &NotPinnedError{Value: value, Problem: problem}
+	}
+	if err != nil {
 		return PinnedReference{}, &NotPinnedError{Value: value, Problem: "is not an OCI reference the operator accepts: " + err.Error()}
 	}
-	repository, digest, hasDigest := strings.Cut(repositoryPath(value), "@")
-	_, tag, hasTag := strings.Cut(repository, ":")
+	_, tag, hasTag := strings.Cut(written, ":")
 	switch {
 	case !hasDigest && !hasTag:
 		return PinnedReference{}, &NotPinnedError{Value: value, Tag: "latest",
 			Problem: "names no digest, and no tag either, which means tag latest"}
 	case !hasDigest:
+		// The parser accepted it, so it is a tag.
 		return PinnedReference{}, &NotPinnedError{Value: value, Tag: tag, Problem: fmt.Sprintf("names tag %s, not a digest", tag)}
+	case hasTag && !tagName.MatchString(tag):
+		return PinnedReference{}, &NotPinnedError{Value: value, Problem: fmt.Sprintf("has %s where its repository path "+
+			"belongs, which is not a repository path, with a tag or without: the operator would read repository %s "+
+			"from it and drop the rest unread", written, parsed.Repository)}
 	case hasTag:
 		return PinnedReference{}, &NotPinnedError{Value: value, Problem: fmt.Sprintf("names tag %s beside its digest; "+
 			"the operator reads the digest alone, so the tag would be stored and never checked", tag)}
@@ -207,6 +231,9 @@ type SourceResult struct {
 	// Unresolved is a migration with a run nobody accounted for. While the
 	// record stands the migration publishes no plan.
 	Unresolved bool
+	// Suspended reports spec.suspend: a suspended resource starts no Job, so
+	// nothing resolves the new reference until it is resumed.
+	Suspended bool
 	// Source is the source as the answer carried it.
 	Source Source
 	// Object is the resource as the answer carried it, a baseline for a
@@ -412,6 +439,7 @@ func sourceResult(ref Ref, previous string, changed bool, s snapshot, source Sou
 		Running: s.operation, ProofOwed: s.proof, Source: source, Object: s.object,
 	}
 	result.Unresolved = s.unresolved != nil
+	result.Suspended = s.suspend
 	return result
 }
 
@@ -460,6 +488,9 @@ const (
 // look.
 func (w *waiter) checkSource(s snapshot) verdict {
 	fresh := w.fresh.see(s)
+	if held, ok := w.policyHeld(s, fresh); ok {
+		return held
+	}
 	approval := w.approval(s, fresh)
 	if approval.done {
 		approval = w.sourceReached(s, TargetApproval)

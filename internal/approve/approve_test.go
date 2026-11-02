@@ -108,27 +108,41 @@ func TestLoadSaysWhyAnApprovalWouldNotBeAdmitted(t *testing.T) {
 		name   string
 		change func(*operatorv1alpha1.PtahSchemaStatus)
 		says   string
+		// reading is a gate the operator reopens by itself when its read ends.
+		reading bool
 	}{
 		{"approved already", func(s *operatorv1alpha1.PtahSchemaStatus) {
 			s.Plan.Approval = &operatorv1alpha1.ConsumedApprovalStatus{Name: "first",
 				Approver: operatorv1alpha1.ApprovalIdentity{Username: "alice"}}
-		}, "approved already, by alice"},
+		}, "approved already, by alice", false},
 		// The operator reads a waiting schema again at its interval; the plan
 		// stays current and admission refuses an approval meanwhile.
 		{"reading again", func(s *operatorv1alpha1.PtahSchemaStatus) {
 			s.Phase = operatorv1alpha1.PhaseObserving
 			s.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{Type: operatorv1alpha1.OperationObserve, ID: "op"}
-		}, "running Observe"},
+		}, "reading this schema again (Observe)", true},
 		{"between two operations of a read", func(s *operatorv1alpha1.PtahSchemaStatus) {
 			s.Phase = operatorv1alpha1.PhasePlanning
-		}, "is Planning, not waiting"},
+		}, "reading this schema again (phase Planning)", true},
+		// An Apply is not a read: the plan has an approval, or needs none.
+		{"applying", func(s *operatorv1alpha1.PtahSchemaStatus) {
+			s.Phase = operatorv1alpha1.PhaseApplying
+			s.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{Type: operatorv1alpha1.OperationApply, ID: "op"}
+		}, "running Apply", false},
+		// The proof after an Apply reads the database too, and is not the
+		// interval's read of a waiting plan.
+		{"proving an Apply", func(s *operatorv1alpha1.PtahSchemaStatus) {
+			s.Phase = operatorv1alpha1.PhaseObserving
+			s.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{Type: operatorv1alpha1.OperationObserve, ID: "op"}
+			s.PendingObservation = &operatorv1alpha1.PendingObservationStatus{ApplyOperationID: "apply"}
+		}, "running Observe", false},
 		{"ready to apply without one", func(s *operatorv1alpha1.PtahSchemaStatus) {
 			s.Phase = operatorv1alpha1.PhaseReadyToApply
-		}, "is ReadyToApply"},
+		}, "is ReadyToApply", false},
 		{"no approval required", func(s *operatorv1alpha1.PtahSchemaStatus) {
 			meta.SetStatusCondition(&s.Conditions, metav1.Condition{
 				Type: operatorv1alpha1.ConditionApprovalRequired, Status: metav1.ConditionFalse, Reason: "NotRequired"})
-		}, "does not require an approval"},
+		}, "does not require an approval", false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -139,8 +153,9 @@ func TestLoadSaysWhyAnApprovalWouldNotBeAdmitted(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Load() error = %v", err)
 			}
-			if review.Open || !strings.Contains(review.Closed, test.says) {
-				t.Fatalf("Load() open = %t, closed = %q; want closed naming %q", review.Open, review.Closed, test.says)
+			if review.Open || !strings.Contains(review.Closed, test.says) || review.Reading != test.reading {
+				t.Fatalf("Load() open = %t, reading = %t, closed = %q; want closed naming %q, reading %t",
+					review.Open, review.Reading, review.Closed, test.says, test.reading)
 			}
 		})
 	}
@@ -298,7 +313,7 @@ func TestSubmitSendsNothingWhileTheOperatorReadsAgain(t *testing.T) {
 
 	result := approve.Submit(context.Background(), api, review, approve.Options{})
 
-	if result.Outcome != approve.Closed || !strings.Contains(result.Message, "running Resolve") || len(api.created) != 0 {
+	if result.Outcome != approve.Closed || !strings.Contains(result.Message, "reading this schema again (Resolve)") || len(api.created) != 0 {
 		t.Fatalf("Submit() = %+v after %d creates, want closed and nothing sent", result, len(api.created))
 	}
 }
@@ -588,10 +603,17 @@ func TestLoadSaysWhyAMigrationApprovalWouldNotBeAdmitted(t *testing.T) {
 		{"reading the history again", func(m *operatorv1alpha1.PtahMigration, _ *operatorv1alpha1.PtahMigrationPlan) {
 			m.Status.Phase = operatorv1alpha1.MigrationPhaseReading
 			m.Status.ActiveOperation = &operatorv1alpha1.MigrationOperationStatus{Type: operatorv1alpha1.MigrationOperationHistory, ID: "op"}
-		}, "running History"},
-		{"another phase", func(m *operatorv1alpha1.PtahMigration, _ *operatorv1alpha1.PtahMigrationPlan) {
+		}, "reading this migration again (History)"},
+		{"between the history and its plan", func(m *operatorv1alpha1.PtahMigration, _ *operatorv1alpha1.PtahMigrationPlan) {
 			m.Status.Phase = operatorv1alpha1.MigrationPhasePlanning
-		}, "is Planning"},
+		}, "reading this migration again (phase Planning)"},
+		{"applying", func(m *operatorv1alpha1.PtahMigration, _ *operatorv1alpha1.PtahMigrationPlan) {
+			m.Status.Phase = operatorv1alpha1.MigrationPhaseApplying
+			m.Status.ActiveOperation = &operatorv1alpha1.MigrationOperationStatus{Type: operatorv1alpha1.MigrationOperationApply, ID: "op"}
+		}, "running Apply"},
+		{"in sync", func(m *operatorv1alpha1.PtahMigration, _ *operatorv1alpha1.PtahMigrationPlan) {
+			m.Status.Phase = operatorv1alpha1.MigrationPhaseInSync
+		}, "is InSync"},
 		{"no approval required", func(m *operatorv1alpha1.PtahMigration, _ *operatorv1alpha1.PtahMigrationPlan) {
 			m.Status.Conditions[0].Status = metav1.ConditionFalse
 		}, "does not require an approval"},
@@ -612,8 +634,9 @@ func TestLoadSaysWhyAMigrationApprovalWouldNotBeAdmitted(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Load() error = %v", err)
 			}
-			if review.Open || !strings.Contains(review.Closed, test.says) {
-				t.Fatalf("Load() open = %t, closed = %q; want closed naming %q", review.Open, review.Closed, test.says)
+			if review.Open || !strings.Contains(review.Closed, test.says) ||
+				review.Reading != strings.Contains(test.says, "reading this migration again") {
+				t.Fatalf("Load() open = %t, reading = %t, closed = %q; want closed naming %q", review.Open, review.Reading, review.Closed, test.says)
 			}
 			// A closed gate still names the plan the status names, and only
 			// a plan that is not stored is missing.
@@ -788,7 +811,7 @@ type racing struct {
 
 func (r *racing) Get(ctx context.Context, key client.ObjectKey, object client.Object, options ...client.GetOption) error {
 	err := r.Reader.Get(ctx, key, object, options...)
-	if _, schema := object.(*operatorv1alpha1.PtahSchema); schema && !r.done {
+	if resourceKind(object) == "PtahSchema" && !r.done {
 		r.done = true
 		r.replace()
 	}
