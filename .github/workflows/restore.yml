@@ -93,7 +93,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          go install "sigs.k8s.io/kind@${{ steps.support.outputs.kind_version }}"
+          # A module or checksum database fetch can fail on one dropped stream;
+          # the version is pinned and checked, so a retry fetches the same bytes.
+          attempt=1
+          until go install "sigs.k8s.io/kind@${{ steps.support.outputs.kind_version }}"; do
+            [ "$attempt" -lt 3 ] || exit 1
+            echo "kind install attempt $attempt failed; retrying" >&2
+            attempt=$((attempt + 1))
+            sleep 5
+          done
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
           install_dir="$RUNNER_TEMP/bin"
           mkdir -p "$install_dir"
