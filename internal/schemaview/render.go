@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/stokaro/ptah-operator/internal/statusview"
 )
 
 // Format is how a reader asked to see a schema.
@@ -35,8 +37,9 @@ func Render(out io.Writer, view View, format Format) error {
 	}
 }
 
-// renderText says where the schema stands, then what the observation found,
-// then what is waiting for a decision.
+// renderText says where the schema stands and what holds it, then what the
+// observation found, then what is waiting for a decision and who decided,
+// and last every condition the status carries.
 //
 // No SQL appears here, and no row of any table. The reference-data line is
 // counts: how many declared rows the database is missing, how many it holds
@@ -45,86 +48,116 @@ func Render(out io.Writer, view View, format Format) error {
 // values.
 func renderText(out io.Writer, view View) error {
 	var text strings.Builder
-	field := func(name, value string) {
-		if value == "" {
-			return
-		}
-		fmt.Fprintf(&text, "%-18s%s\n", name+":", value)
-	}
+	field := statusview.FieldWriter(&text, "", statusview.LabelWidth)
 	field("Schema", view.Namespace+"/"+view.Schema)
 	field("Phase", view.Phase)
+	if view.ObservedGeneration != 0 && view.ObservedGeneration != view.Generation {
+		field("Status for", fmt.Sprintf("generation %d; the spec is at generation %d",
+			view.ObservedGeneration, view.Generation))
+	}
+	for _, condition := range statusview.Leading(view.Conditions) {
+		field(statusview.Clean(condition.Type), statusview.Summary(condition))
+	}
 	if view.Suspended {
-		field("Suspended", "true")
+		field("Suspend", "requested")
+	}
+	if policy := view.Policy; policy != nil {
+		field("Policy", policyLine(*policy))
+		field("Protected tables", strings.Join(policy.ProtectedTables, ", "))
 	}
 	for _, line := range view.Source.Fields() {
 		field(line.Name, line.Value)
 	}
-	renderObservation(&text, view.Observation)
-	for _, condition := range view.Conditions {
-		if condition.Status == "True" || condition.Type == "Ready" {
-			field(condition.Type, condition.Status+" ("+condition.Reason+")")
-		}
-	}
+	renderObservation(field, &text, view.Observation)
 	if applied := view.Applied; applied != nil {
 		name := applied.PlanName
 		if name == "" {
 			name = applied.PlanFingerprint
 		}
-		field("Applied", name+" at "+applied.CompletedAt.UTC().Format("2006-01-02T15:04:05Z"))
+		field("Applied", name+" at "+statusview.Time(applied.CompletedAt))
 	}
-	renderPlan(&text, view.Plan)
+	renderPlan(&text, view.Plan, statusview.Find(view.Conditions, "ApprovalRequired"))
+	if statusview.WriteListHeading(&text, "Approvals", "ptahschemaapprovals", view.Namespace,
+		view.Approvals, view.ApprovalsUnreadable) {
+		for _, approval := range view.Approvals.Items {
+			statusview.WriteApproval(&text, approval, "no condition written yet")
+		}
+	}
+	if len(view.Conditions) > 0 {
+		text.WriteString("\nConditions:\n")
+		statusview.WriteTable(&text, "  ", view.Conditions, view.Generation)
+	}
+	text.WriteString("\n")
+	if view.Plan != nil {
+		fmt.Fprintf(&text, "kubectl ptah plan %s -n %s prints the SQL this plan holds.\n", view.Schema, view.Namespace)
+	}
+	fmt.Fprintf(&text, "kubectl events -n %s --for ptahschema/%s prints its Events.\n", view.Namespace, view.Schema)
 	_, err := io.WriteString(out, text.String())
 	return err
+}
+
+// policyLine names the policy fields by their spec names, so a reader who
+// wants another value knows which field to edit.
+func policyLine(policy PolicyView) string {
+	var parts []string
+	if policy.Apply != "" {
+		parts = append(parts, "apply "+policy.Apply)
+	}
+	parts = append(parts, fmt.Sprintf("allowDestructive %t", policy.AllowDestructive))
+	if policy.DriftSeverity != "" {
+		parts = append(parts, "driftSeverity "+policy.DriftSeverity)
+	}
+	return strings.Join(parts, ", ")
 }
 
 // renderObservation writes what the last drift read found, and says plainly
 // when there has not been one. A schema with no observation is not a converged
 // schema, and printing nothing would read like one.
-func renderObservation(text *strings.Builder, observation *ObservationView) {
+func renderObservation(field func(name, value string), text *strings.Builder, observation *ObservationView) {
 	if observation == nil {
-		fmt.Fprintf(text, "%-18s%s\n", "Observed:", "not yet")
+		field("Observed", "not yet")
 		return
 	}
 	when := "unknown"
 	if observation.ObservedAt != nil {
-		when = observation.ObservedAt.UTC().Format("2006-01-02T15:04:05Z")
+		when = statusview.Time(*observation.ObservedAt)
 	}
-	fmt.Fprintf(text, "%-18s%s\n", "Observed:", when)
+	field("Observed", when)
 	if !observation.Drift {
-		fmt.Fprintf(text, "%-18s%s\n", "Drift:", "none")
+		field("Drift", "none")
 		return
 	}
 	if observation.FindingCount == 0 && len(observation.Findings) == 0 {
 		// A grant, a default privilege, a view or a trigger: the report found
 		// the difference and has no category to count it in. A severity rated
 		// over no category says nothing, so none is printed.
-		fmt.Fprintf(text, "%-18s%s\n", "Drift:", "found, in no category the report counts; the plan says what changes")
+		field("Drift", "found, in no category the report counts; the plan says what changes")
 		return
 	}
-	fmt.Fprintf(text, "%-18s%s\n", "Drift:",
-		fmt.Sprintf("%d in %d categories, highest %s",
-			observation.FindingCount, len(observation.Findings), observation.HighestSeverity))
+	field("Drift", fmt.Sprintf("%d in %d categories, highest %s",
+		observation.FindingCount, len(observation.Findings), observation.HighestSeverity))
 	if rows := observation.ReferenceData; rows != nil {
-		fmt.Fprintf(text, "%-18s%s\n", "Reference data:",
-			fmt.Sprintf("%d to insert, %d to update, %d to delete",
-				rows.Inserts, rows.Updates, rows.Deletes))
+		field("Reference data", fmt.Sprintf("%d to insert, %d to update, %d to delete",
+			rows.Inserts, rows.Updates, rows.Deletes))
 	}
 	for _, finding := range observation.Findings {
 		fmt.Fprintf(text, "  %-34s %6d  %s\n", finding.Category, finding.Count, finding.Severity)
 	}
 }
 
-// renderPlan names the plan and what it would do. The SQL is what
-// `kubectl ptah plan` prints, and saying so here is cheaper than a reader
-// discovering that this command declines to.
-func renderPlan(text *strings.Builder, plan *PlanView) {
+// renderPlan names the plan and what it would do, and gives the controller's
+// verdict on it: ApprovalRequired says, in either status, whether the plan
+// waits for an approval, runs without one, or is refused by the policy, and
+// its message is the one that says what to do. The SQL is what `kubectl ptah
+// plan` prints, and saying so here is cheaper than a reader discovering that
+// this command declines to.
+func renderPlan(text *strings.Builder, plan *PlanView, approvalRequired *ConditionView) {
 	if plan == nil {
 		text.WriteString("\nNo plan is published.\n")
 		return
 	}
 	fmt.Fprintf(text, "\nPlan %s, %s, stored %s\n",
-		plan.Name, countedStatements(plan.StatementCount),
-		plan.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"))
+		plan.Name, countedStatements(plan.StatementCount), statusview.Time(plan.CreatedAt))
 	if plan.Destructive {
 		text.WriteString("  destructive\n")
 	}
@@ -135,16 +168,18 @@ func renderPlan(text *strings.Builder, plan *PlanView) {
 	case plan.Approved:
 		approved := plan.ApprovalName
 		if plan.ApprovedAt != nil {
-			approved += " at " + plan.ApprovedAt.UTC().Format("2006-01-02T15:04:05Z")
+			approved += " at " + statusview.Time(*plan.ApprovedAt)
 		}
 		if plan.ApprovalApprover != "" {
-			approved += " by " + plan.ApprovalApprover
+			approved += " by " + statusview.Clean(plan.ApprovalApprover)
 		}
 		fmt.Fprintf(text, "  approved by %s\n", approved)
 	default:
 		text.WriteString("  not approved\n")
 	}
-	text.WriteString("\nkubectl ptah plan prints the SQL this plan holds.\n")
+	if approvalRequired != nil {
+		fmt.Fprintf(text, "  ApprovalRequired: %s\n", statusview.Summary(*approvalRequired))
+	}
 }
 
 func countedStatements(count int32) string {

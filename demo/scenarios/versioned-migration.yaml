@@ -57,7 +57,7 @@ steps:
       exit: 0
       # The order and the descriptions, and no statement anywhere: a published
       # plan records versions and checksums, and the SQL stays in the artifact.
-      stdout_contains: [AwaitingApproval, "Current version:0", "Pending:        2", Create Shipments, Add Carrier]
+      stdout_contains: [AwaitingApproval, "Current version:      0", "Pending:              2", Create Shipments, Add Carrier]
       stdout_absent: ["CREATE TABLE", "ALTER TABLE"]
 
   - note: No migration has run, and reading the history wrote nothing. The database is still empty.
@@ -134,7 +134,7 @@ steps:
     run: kubectl ptah migration shipments -n "$NAMESPACE"
     expect:
       exit: 0
-      stdout_contains: [InSync, "Current version:2", "Last run:       Applied", "Run applied:    1, 2"]
+      stdout_contains: [InSync, "Current version:      2", "Last run:             Applied", "Versions:           1, 2"]
       stdout_absent: ["CREATE TABLE", "ALTER TABLE"]
 
   - note: Reconciling again runs nothing. The history already holds both, so there is nothing pending.

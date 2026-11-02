@@ -86,7 +86,10 @@ controller runs there, so what they prove is the API server's own verdict:
 - `crd` installs `config/crd/bases` and stores every example in
   `docs/reference-examples`, then sends each kind the objects its schema and
   CEL rules must refuse. A refusal counts only if it names the field and the
-  rule's message.
+  rule's message. One row has the authorizer judge `kubectl ptah`'s reads: a
+  reader granted only the documented get loads the schema and migration views,
+  the migration's plan included, and is refused only the optional lists of
+  approvals and acknowledgments.
 - `admissionpolicy` renders the chart and installs what a completed install
   leaves bound: every ValidatingAdmissionPolicy with its binding, none of them
   a hook. It sends each policy the request it exists to refuse and the write it

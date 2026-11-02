@@ -19,8 +19,15 @@ out of silence.
 ## 0.2.9
 
 **Before you upgrade.** The manager image is new, so keep `--force-conflicts`
-on the upgrade. Nothing else.
+on the upgrade. A script that reads the text of `kubectl ptah` has to move to
+`-o json`. Nothing else.
 
+- **`kubectl ptah` output.** The text `kubectl ptah schema`, `migration` and
+  `plan` print is for people, and its layout changed: wider label columns, the
+  conditions as a table with their messages, approvals and acknowledgments,
+  and a severity line above each plan statement. `-o json` kept every field it
+  had and only gained new ones, and `kubectl ptah plan -o sql` is unchanged.
+  [Read a plan](../../use/read-a-plan/) shows the new output.
 - **Four-eyes approvals.** With `approvals.requireDistinctApprover` on,
   suspending or resuming a schema or a migration no longer records whoever did
   it as the last spec writer. Before, a colleague who paused and resumed a

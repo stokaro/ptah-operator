@@ -1003,7 +1003,7 @@ Use the phase as a summary and Conditions as the stable machine interface:
 kubectl -n <namespace> get ptahschema <name>
 kubectl -n <namespace> get ptahschema <name> -o yaml
 kubectl -n <namespace> get ptahschemaplan
-kubectl -n <namespace> get events --field-selector involvedObject.name=<name>
+kubectl events -n <namespace> --for ptahschema/<name>
 ```
 
 The complete stable condition-reason vocabulary is cataloged in
@@ -1387,8 +1387,12 @@ later refusal rewrites the reason on `Blocked`, and a rewritten reason says
 nothing about whether the mutation was ever accounted for.
 
 ```sh
+kubectl ptah migration orders -n application
 kubectl get ptahmigration orders -o jsonpath='{.status.unresolvedRun}' | jq
 ```
+
+The first prints the record under `Unresolved run`, apart from the last run,
+with the migration's UID; the second is the record as stored.
 
 The record names the attempt (`operationID`), the plan it was
 carrying out, and the credential-free identity of a database. It names the Job
@@ -1489,7 +1493,9 @@ database in a state nobody checked.
 
 #### Run it {#clear-run}
 
-Copy the resource's UID and the run's operation ID the operator published:
+Copy the resource's UID and the run's operation ID the operator published.
+`kubectl ptah migration orders -n application` prints both in its
+`Unresolved run` block, and so does:
 
 ```sh
 kubectl -n application get ptahmigration orders \
@@ -1525,6 +1531,9 @@ are gone, and `status.resolvedRun` names the run, the acknowledgment and you:
 kubectl -n application get ptahmigration orders -o jsonpath='{.status.resolvedRun}' | jq
 kubectl -n application get ptahmigrationrunacknowledgment orders-run-accounted-for
 ```
+
+`kubectl ptah migration orders -n application` prints the same as a
+`Settled run` line, and lists the acknowledgment with its conditions.
 
 The acknowledgment reads `Consumed=True`, and a Normal Event,
 `UnresolvedRunAcknowledged`, names who acknowledged which run. The resource then

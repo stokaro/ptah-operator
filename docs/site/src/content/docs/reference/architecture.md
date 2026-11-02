@@ -120,7 +120,7 @@ Five programs ship from `cmd/`:
 | `ptah-runner` | Runs inside every operation Pod: validates inputs, bounds output, redacts credentials, frames the result |
 | `ptah-cert-rotator` | Issues and replaces the webhook serving certificates |
 | `ptah-crd-manager` | The Helm hook and the runtime verifier: the reconcile that checks the stored state, stops the previous runtime when the manager image changes and updates the CRDs, on install, upgrade and rollback alike, and the init container that holds a manager until its CRDs and admission singleton match |
-| `kubectl-ptah` | A read-only plugin that reconstructs a published plan for a person to read |
+| `kubectl-ptah` | A read-only plugin that reconstructs a published plan for a person to read, and prints where a schema or a migration stands, what holds it, and the approvals and acknowledgments that name it |
 
 ### What the manager keeps in memory
 
@@ -274,7 +274,7 @@ is the one to change when the contract changes.
 | Certificate lifecycle | `internal/certrotation` |
 | CRD, RBAC and release lifecycle | `internal/crdupgrade` |
 | Reading a stored plan back, for `kubectl ptah` and other programs | `pkg/planread` |
-| Read-only views behind `kubectl ptah` | `internal/planview`, `internal/schemaview`, `internal/migrationview` |
+| Read-only views behind `kubectl ptah` | `internal/planview`, `internal/schemaview`, `internal/migrationview`, `internal/sourceview`, `internal/statusview` |
 | Bounded-cardinality metrics | `internal/telemetry` |
 | What the manager caches from a watch | `internal/managercache` |
 | How fast a manager process calls the API server | `internal/apipace` |

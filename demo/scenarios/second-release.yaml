@@ -42,7 +42,7 @@ steps:
     run: kubectl ptah migration shipments -n "$NAMESPACE"
     expect:
       exit: 0
-      stdout_contains: [InSync, "Current version:1", "Last run:       Applied"]
+      stdout_contains: [InSync, "Current version:      1", "Last run:             Applied"]
 
   - note: The application writes rows. These are what the next release has to keep.
     run: |

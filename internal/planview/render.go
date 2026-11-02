@@ -6,10 +6,12 @@
 package planview
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
 
+	"github.com/stokaro/ptah-operator/internal/statusview"
 	"github.com/stokaro/ptah-operator/pkg/planread"
 )
 
@@ -17,7 +19,8 @@ import (
 type Format string
 
 const (
-	// Text is the default: what the plan is, then the SQL it holds.
+	// Text is the default: what the plan is, then each statement it holds
+	// under a line that gives its severity and the reason Ptah gave.
 	Text Format = "text"
 	// SQL is the statements alone, for piping somewhere else.
 	SQL Format = "sql"
@@ -76,6 +79,11 @@ func privilegesLine(plan planread.Plan) string {
 // The chunk names are deliberately absent. They are how the plan is stored, not
 // what it says, and a reader who needs them is diagnosing the store rather than
 // reading a plan.
+//
+// The statements come out as `-o sql` prints them, one at a time, each under a
+// line that is not SQL: its place in the plan, its severity, and the reason
+// Ptah gave. Those lines are for review, which is why `-o sql`,
+// the format a script reads or a reviewer diffs, carries none of them.
 func renderText(out io.Writer, plan planread.Plan) error {
 	var text strings.Builder
 	field := func(name, value string) {
@@ -99,7 +107,75 @@ func renderText(out io.Writer, plan planread.Plan) error {
 		field("Applied", plan.CompletedAt.UTC().Format("2006-01-02T15:04:05Z"))
 	}
 	text.WriteString("\n")
-	text.WriteString(plan.SQL())
+	writeStatements(&text, plan)
 	_, err := io.WriteString(out, text.String())
 	return err
+}
+
+// writeStatements writes each statement under its review line. A statement is
+// rendered by the same code as `-o sql`, so the SQL under the lines is the SQL
+// that format prints, and a statement it skips is skipped here too.
+func writeStatements(text *strings.Builder, plan planread.Plan) {
+	stored := storedSeverities(plan)
+	written := 0
+	for index, statement := range plan.Statements {
+		sql := planread.Plan{Statements: []planread.Statement{statement}}.SQL()
+		if sql == "" {
+			continue
+		}
+		if written > 0 {
+			text.WriteString("\n")
+		}
+		written++
+		fmt.Fprintf(text, "Statement %d of %d: %s\n", index+1, len(plan.Statements), classification(statement, stored[index]))
+		text.WriteString(sql)
+	}
+}
+
+// classification is a statement's severity and the reason Ptah gave for it.
+//
+// The severity is the one this plugin decoded, by the rules the operator
+// decodes a plan with: where those rules read a statement as destructive that
+// Ptah rated lower -- a DROP of a default or of a NOT NULL constraint, say --
+// the severity is raised, and Ptah's reason still explains the lower rating.
+// Printed side by side without a word, "destructive" and "does not remove
+// data" would contradict each other, so a raised severity says whose each one
+// is. It says "this plugin" rather than "the operator" for the reason the
+// privileges line does: the plugin and the manager are separate builds.
+func classification(statement planread.Statement, stored string) string {
+	severity := statusview.Clean(strings.TrimSpace(statement.Severity))
+	reason := statusview.Clean(strings.TrimSpace(statement.Reason))
+	stored = statusview.Clean(strings.TrimSpace(stored))
+	if stored != "" && !strings.EqualFold(stored, severity) {
+		raised := severity + " as this plugin reads it; Ptah rated it " + stored
+		if reason != "" {
+			raised += " (" + reason + ")"
+		}
+		return raised
+	}
+	if reason != "" {
+		return severity + " (" + reason + ")"
+	}
+	return severity
+}
+
+// storedSeverities are the severities the plan document carries, before the
+// operator raised any, one for each statement. The document is the one the
+// store verified, and planread decodes its statements one for one, so the two
+// lists line up; a document that does not read as one leaves every entry
+// empty, and each statement then prints the severity this plugin decoded.
+func storedSeverities(plan planread.Plan) []string {
+	severities := make([]string, len(plan.Statements))
+	var document struct {
+		Statements []struct {
+			Severity string `json:"severity"`
+		} `json:"statements"`
+	}
+	if json.Unmarshal(plan.Document, &document) != nil || len(document.Statements) != len(plan.Statements) {
+		return severities
+	}
+	for index, statement := range document.Statements {
+		severities[index] = statement.Severity
+	}
+	return severities
 }

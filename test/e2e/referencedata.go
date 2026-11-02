@@ -62,10 +62,10 @@ const (
 	// whole line is the literal rather than three numbers a format string here
 	// would arrange, because the renderer arranges it; a unit test compares it
 	// with what the renderer writes.
-	referenceExternalEditLine = "Reference data:   0 to insert, 1 to update, 0 to delete"
+	referenceExternalEditLine = "Reference data:       0 to insert, 1 to update, 0 to delete"
 	// referenceSchemaViewPrefix is the start of the line the view names the
 	// schema it read with, pinned to the renderer the same way.
-	referenceSchemaViewPrefix = "Schema:           "
+	referenceSchemaViewPrefix = "Schema:               "
 	// referencePlanDocumentKey is the plan document's own top-level key,
 	// present in every plaintext plan Ptah has written and vanishingly unlikely
 	// to appear by chance in the base64 of a sealed box.
