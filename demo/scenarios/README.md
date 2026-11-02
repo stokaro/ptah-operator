@@ -129,6 +129,16 @@ stdout and stderr are one stream: a step with answers expects text on stdout
 and shows nothing else. It never retries, because typing an answer again is a
 second decision rather than a second look.
 
+## Comparing two steps
+
+A field can keep the value it read for a later step to compare with:
+`keep: <name>` records it, and `sameAs: <name>` requires the same value. It is
+how a scenario proves that something did not happen in between -- the last run
+of a migration is the same Job before and after another reading of its
+history -- without printing a comparison a reader would have to repeat. The
+transcript prints every UID the same way, so the comparison is the
+recorder's.
+
 ## What a transcript may say
 
 Output is shown as the command wrote it. Trimming a long block to its telling

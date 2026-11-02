@@ -114,6 +114,13 @@ type field struct {
 	Path     string `yaml:"path"`
 	Equals   string `yaml:"equals"`
 	NotEmpty bool   `yaml:"notEmpty"`
+	// Keep records the value, which has to be set, under a name a later step
+	// compares with SameAs. It is how a scenario proves that something did not
+	// happen between two steps -- the same Job's UID before and after another
+	// pass -- without printing a comparison a reader would have to repeat.
+	Keep string `yaml:"keep"`
+	// SameAs requires the value an earlier step kept under this name.
+	SameAs string `yaml:"sameAs"`
 }
 
 // condition reads a Kubernetes condition as fields.
@@ -154,7 +161,43 @@ func (s scenario) validate() error {
 		problems = append(problems, current.validate(s.ID, index)...)
 	}
 	problems = append(problems, s.validateRepeatedWaits()...)
+	problems = append(problems, s.validateKeptValues()...)
 	return errors.Join(problems...)
+}
+
+// validateKeptValues refuses a comparison with a value no earlier step keeps,
+// and a name kept twice. A sameAs that named nothing would compare the field
+// with nothing, and the step would publish a claim it never checked.
+func (s scenario) validateKeptValues() []error {
+	var problems []error
+	kept := map[string]int{}
+	for index, current := range s.Steps {
+		if current.Expect == nil || current.Expect.Resource == nil {
+			continue
+		}
+		where := fmt.Sprintf("%s step %d", s.ID, index+1)
+		for _, read := range current.Expect.Resource.Fields {
+			if read.SameAs != "" {
+				if _, ok := kept[read.SameAs]; !ok {
+					problems = append(problems, fmt.Errorf(
+						"%s compares %s with the value kept as %q, which no earlier step keeps",
+						where, read.Path, read.SameAs))
+				}
+			}
+		}
+		for _, read := range current.Expect.Resource.Fields {
+			if read.Keep == "" {
+				continue
+			}
+			if earlier, ok := kept[read.Keep]; ok {
+				problems = append(problems, fmt.Errorf(
+					"%s keeps a value as %q, which step %d already keeps", where, read.Keep, earlier))
+				continue
+			}
+			kept[read.Keep] = index + 1
+		}
+	}
+	return problems
 }
 
 // validateRepeatedWaits refuses a second await on a condition an earlier step
@@ -239,6 +282,13 @@ func (s step) validate(scenarioID string, index int) []error {
 	problems = append(problems, s.validateAnswers(where)...)
 	if s.Await != nil {
 		problems = append(problems, s.Await.validate(where+" await")...)
+		for _, read := range s.Await.Fields {
+			if read.Keep != "" || read.SameAs != "" {
+				problems = append(problems, fmt.Errorf(
+					"%s await keeps or compares %s; a wait reads the object many times, so only an "+
+						"expectation, which reads it once, may keep a value", where, read.Path))
+			}
+		}
 	}
 	if s.Expect == nil {
 		problems = append(problems, fmt.Errorf(
@@ -334,14 +384,23 @@ func (f field) validate(where string) []error {
 	if strings.TrimSpace(f.Path) == "" {
 		problems = append(problems, fmt.Errorf("%s reads a field with no path", where))
 	}
-	if f.Equals == "" && !f.NotEmpty {
-		problems = append(problems, fmt.Errorf(
-			"%s reads %s and asks nothing of it; say equals or notEmpty", where, f.Path))
+	asked := 0
+	for _, set := range []bool{f.Equals != "", f.NotEmpty, f.Keep != "", f.SameAs != ""} {
+		if set {
+			asked++
+		}
 	}
-	if f.Equals != "" && f.NotEmpty {
+	switch {
+	case asked == 0:
+		problems = append(problems, fmt.Errorf(
+			"%s reads %s and asks nothing of it; say equals, notEmpty, keep or sameAs", where, f.Path))
+	case f.Equals != "" && f.NotEmpty:
 		problems = append(problems, fmt.Errorf(
 			"%s reads %s with both equals and notEmpty; notEmpty is what you say when you "+
 				"cannot name the value", where, f.Path))
+	case asked > 1:
+		problems = append(problems, fmt.Errorf(
+			"%s reads %s with more than one of equals, notEmpty, keep and sameAs; say one", where, f.Path))
 	}
 	return problems
 }
@@ -433,14 +492,29 @@ func read(object map[string]any, path string) (string, bool) {
 }
 
 // matches reports whether the object carries the value this field expects.
-func (f field) matches(object map[string]any) error {
+// A field that keeps its value writes it into kept, and one that compares
+// reads it from there.
+func (f field) matches(object map[string]any, kept map[string]string) error {
 	value, present := read(object, f.Path)
 	if !present {
 		return fmt.Errorf("%s is not set", f.Path)
 	}
-	if f.NotEmpty {
+	if f.NotEmpty || f.Keep != "" {
 		if strings.TrimSpace(value) == "" {
 			return fmt.Errorf("%s is empty", f.Path)
+		}
+		if f.Keep != "" {
+			kept[f.Keep] = value
+		}
+		return nil
+	}
+	if f.SameAs != "" {
+		earlier, ok := kept[f.SameAs]
+		switch {
+		case !ok:
+			return fmt.Errorf("no step kept a value as %q to compare %s with", f.SameAs, f.Path)
+		case value != earlier:
+			return fmt.Errorf("%s is %q, and the value kept as %q is %q", f.Path, value, f.SameAs, earlier)
 		}
 		return nil
 	}

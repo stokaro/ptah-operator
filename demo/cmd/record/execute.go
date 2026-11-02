@@ -29,6 +29,9 @@ type recorder struct {
 	source map[string]string
 	// log receives progress, so a run that takes minutes says what it is on.
 	log func(format string, arguments ...any)
+	// kept holds the values the current scenario's steps kept for a later
+	// step to compare with. It starts empty with every scenario.
+	kept map[string]string
 }
 
 // outcome is what one command did.
@@ -80,6 +83,7 @@ type recording struct {
 // publish a session that continued past the point where the demonstration
 // stopped being true.
 func (r *recorder) run(ctx context.Context, current scenario) (recording, error) {
+	r.kept = map[string]string{}
 	r.log("scenario %s: resetting", current.ID)
 	for _, command := range current.Reset {
 		result, err := r.shell(ctx, command)
@@ -299,11 +303,16 @@ func (o observation) describe() string {
 		claims = append(claims, fmt.Sprintf("%s=%s (%s)", o.Condition.Type, o.Condition.Status, o.Condition.Reason))
 	}
 	for _, read := range o.Fields {
-		if read.NotEmpty {
+		switch {
+		case read.NotEmpty:
 			claims = append(claims, read.Path+" is set")
-			continue
+		case read.Keep != "":
+			claims = append(claims, fmt.Sprintf("%s is set, kept as %s", read.Path, read.Keep))
+		case read.SameAs != "":
+			claims = append(claims, fmt.Sprintf("%s is the value kept as %s", read.Path, read.SameAs))
+		default:
+			claims = append(claims, fmt.Sprintf("%s=%s", read.Path, read.Equals))
 		}
-		claims = append(claims, fmt.Sprintf("%s=%s", read.Path, read.Equals))
 	}
 	return subject + ": " + strings.Join(claims, ", ")
 }
@@ -373,8 +382,11 @@ func (r *recorder) observe(ctx context.Context, expected observation) error {
 		if err := json.Unmarshal(object, &read); err != nil {
 			problems = append(problems, fmt.Errorf("read %s/%s: %w", expected.Kind, expected.Name, err))
 		} else {
+			if r.kept == nil {
+				r.kept = map[string]string{}
+			}
 			for _, one := range expected.Fields {
-				problems = append(problems, one.matches(read))
+				problems = append(problems, one.matches(read, r.kept))
 			}
 		}
 	}
