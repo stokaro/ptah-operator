@@ -2531,6 +2531,19 @@ fi
 timing_next bootstrap go-phases
 GO_PHASE_BINARY=$WORK_DIR/ptah-e2e.test
 if [ "$E2E_STOP_AFTER" != bootstrap ]; then
+	# The modules are fetched first, with three attempts, so a module proxy
+	# that answers for reasons of its own is not reported as code that does not
+	# compile: run 41358175291 lost a job to one "stream error ... INTERNAL_ERROR"
+	# from proxy.golang.org. go.sum pins every module, so a retry can only fetch
+	# the same bytes or fail again.
+	module_download_attempt=1
+	until go -C "$ROOT_DIR" mod download; do
+		[ "$module_download_attempt" -lt 3 ] ||
+			fail "the Go modules could not be downloaded in $module_download_attempt attempts"
+		printf 'e2e: module download attempt %s failed; retrying\n' "$module_download_attempt"
+		module_download_attempt=$((module_download_attempt + 1))
+		sleep 5
+	done
 	go -C "$ROOT_DIR" test -tags e2e -c -o "$GO_PHASE_BINARY" ./test/e2e ||
 		fail "the Go acceptance phases do not compile"
 fi
