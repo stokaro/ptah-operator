@@ -13,6 +13,7 @@ import (
 	cradmission "sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/desiredspec"
 )
 
 // LastSpecWriterUsernameAnnotation and LastSpecWriterUIDAnnotation record the
@@ -52,7 +53,13 @@ func specWriterValues(req cradmission.Request) (map[string]string, error) {
 		if err := json.Unmarshal(req.OldObject.Raw, &stored); err != nil {
 			return nil, fmt.Errorf("decode the stored object: %w", err)
 		}
-		if reflect.DeepEqual(withoutSuspend(current.Spec), withoutSuspend(stored.Spec)) {
+		// The recorded writer is judged by all of the spec but spec.suspend.
+		// Suspending and resuming change when the operator acts, not what it
+		// plans, so whoever only pauses a resource has not written the desired
+		// state its next plan comes from. Counting the toggle would let anyone
+		// with patch move the recorded writer off the author, and the author
+		// could then approve their own change.
+		if reflect.DeepEqual(desiredspec.WithoutSuspend(current.Spec), desiredspec.WithoutSuspend(stored.Spec)) {
 			for _, key := range specWriterAnnotations {
 				if value, ok := stored.Metadata.Annotations[key]; ok {
 					values[key] = value
@@ -66,26 +73,6 @@ func specWriterValues(req cradmission.Request) (map[string]string, error) {
 		values[LastSpecWriterUIDAnnotation] = uid
 	}
 	return values, nil
-}
-
-// withoutSuspend is the spec the recorded writer is judged by: all of it but
-// spec.suspend. Suspending and resuming change when the operator acts, not
-// what it plans, so whoever only pauses a resource has not written the desired
-// state its next plan comes from. Counting the toggle would let anyone with
-// patch move the recorded writer off the author, and the author could then
-// approve their own change.
-func withoutSuspend(spec any) any {
-	fields, ok := spec.(map[string]any)
-	if !ok {
-		return spec
-	}
-	kept := make(map[string]any, len(fields))
-	for key, value := range fields {
-		if key != "suspend" {
-			kept[key] = value
-		}
-	}
-	return kept
 }
 
 // specWriterAnnotations is the order the patch names the reserved keys in.

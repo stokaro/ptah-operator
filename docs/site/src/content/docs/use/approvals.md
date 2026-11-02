@@ -83,17 +83,19 @@ kubectl ptah approve schema/application -n application
 
 It reads the schema once more before it sends anything, and approves nothing if
 a newer plan replaced the one shown, the schema was deleted and created again,
-its spec changed, or the operator would not admit an approval now. The
-operator reads a waiting schema again at its interval, and admission takes no
-approval while it does: an answer given then is sent when that read ends, if
-the plan shown is the one waiting again, and approve waits up to five minutes
-for that. The answer it prints is the API server's: the approval
-admission stored with the identity it stamped, or the refusal in RBAC's or
-admission's own words.
+its spec changed other than by a suspend or a resume, or the operator would
+not admit an approval now. The operator reads a waiting schema again at its
+interval, and admission takes no approval while it does: an answer given then
+is sent when that read ends, if the plan shown is the one waiting again. It
+waits up to five minutes for that read to end before it sends, and `--timeout`
+bounds each request it makes rather than that wait. The answer it
+prints is the API server's: the approval admission stored with the identity
+it stamped, or the refusal in RBAC's or admission's own words.
 
 - `--plan-fingerprint <fingerprint>` approves without asking, and only if the
   current plan carries that fingerprint. It is for a script that reviewed the
-  plan; there is no option that approves whatever plan is current.
+  plan; there is no option that approves whatever plan is current. It waits
+  for an interval read to end the same way, up to five minutes.
 - `--dry-run server` lets admission check the approval and stores nothing.
 - `--dry-run client` prints the approval as YAML with the identifiers filled in
   and sends nothing, for a workflow that keeps decisions in a repository. It

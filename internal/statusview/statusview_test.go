@@ -350,3 +350,22 @@ func migrationConditions(t *testing.T, engine string) []metav1.Condition {
 	readReading(t, "uncertain-migration-retained-claim.json", &objects)
 	return objects[engine].Status.Conditions
 }
+
+func TestDurationWritesWhatTheHelpWrites(t *testing.T) {
+	t.Parallel()
+	for _, row := range []struct {
+		in   time.Duration
+		want string
+	}{
+		{5 * time.Minute, "5m"},
+		{30 * time.Second, "30s"},
+		{90 * time.Second, "1m30s"},
+		{time.Hour, "1h"},
+		{time.Hour + 30*time.Minute, "1h30m"},
+		{10 * time.Minute, "10m"},
+	} {
+		if got := statusview.Duration(row.in); got != row.want {
+			t.Fatalf("Duration(%s) = %q, want %q", row.in, got, row.want)
+		}
+	}
+}

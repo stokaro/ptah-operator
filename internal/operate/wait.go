@@ -322,7 +322,7 @@ func Wait(ctx context.Context, reader client.Reader, ref Ref, options WaitOption
 			}
 			return Result{}, &StopError{Ref: ref, Target: options.Target, Reason: StopDeleted, Phase: phase,
 				Message: "the resource was deleted"}
-		case !retryable(err):
+		case !Retryable(err):
 			return Result{}, ref.failed("wait for", err)
 		default:
 			lastErr = err
@@ -362,10 +362,13 @@ func get(ctx context.Context, reader client.Reader, ref Ref, object client.Objec
 	return reader.Get(bounded, ref.key(), object)
 }
 
-// retryable is a read the API server may answer next time. A kind the server
-// does not serve, or one this client cannot encode, is not: the CRD is not
-// installed, and waiting does not install it.
-func retryable(err error) bool {
+// Retryable reports a failed read the API server may answer next time: a
+// transport failure, a timeout, throttling or a server error. A kind the
+// server does not serve, or one this client cannot encode, is not: the CRD is
+// not installed, and waiting does not install it. Nor is a refusal, such as
+// RBAC's. Wait retries what it reports until its timeout, and so does
+// kubectl ptah approve while it waits for the approval gate.
+func Retryable(err error) bool {
 	if meta.IsNoMatchError(err) || inChain(err, runtime.IsNotRegisteredError) {
 		return false
 	}

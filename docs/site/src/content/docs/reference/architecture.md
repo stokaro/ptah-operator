@@ -265,6 +265,7 @@ is the one to change when the contract changes.
 | Plan byte-size contract | `internal/plancontract` |
 | Migration plan derivation and naming | `internal/migrationplan` |
 | Approval and run-acknowledgment admission | `internal/admission` |
+| Which part of a spec is desired state: all of it but `spec.suspend`, for admission and `kubectl ptah approve` | `internal/desiredspec` |
 | The manager's own write guard | `internal/controllerwrite` |
 | Pod admission snapshots | `internal/podintent` |
 | Verification policy binding | `internal/policy` |

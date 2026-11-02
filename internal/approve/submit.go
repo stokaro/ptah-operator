@@ -18,6 +18,7 @@ import (
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/apirefusal"
+	"github.com/stokaro/ptah-operator/internal/operate"
 	"github.com/stokaro/ptah-operator/internal/statusview"
 )
 
@@ -207,7 +208,7 @@ func Submit(ctx context.Context, c client.Client, review Review, opts Options) R
 	if review.Family == Migration {
 		identify = identifyMigration
 	}
-	var deadline time.Time
+	gate := gateWait{review: review, opts: opts}
 	for {
 		readCtx, cancel := bounded(ctx, opts.CallTimeout)
 		current, err := identify(readCtx, c, review.Namespace, review.Name)
@@ -217,8 +218,18 @@ func Submit(ctx context.Context, c client.Client, review Review, opts Options) R
 			return Result{Outcome: Changed, Message: fmt.Sprintf(
 				"%s/%s was deleted after you reviewed its plan. Nothing was approved.", review.Family, review.Name)}
 		case err != nil && !errors.Is(err, ErrNothingToApprove):
-			return Result{Outcome: Failed, Message: fmt.Sprintf("Nothing was approved: %v", err)}
+			// Once Submit waits, a read the API server may answer next time is
+			// read again until the wait is over; before, nothing was promised.
+			if gate.deadline.IsZero() || !operate.Retryable(err) {
+				return Result{Outcome: Failed, Message: fmt.Sprintf("Nothing was approved: %v", err)}
+			}
+			gate.lastErr = err
+			if result, over := gate.pause(ctx); over {
+				return result
+			}
+			continue
 		}
+		gate.lastErr = nil
 		if why := changedSince(review, current); why != "" {
 			return Result{Outcome: Changed, Message: why + " Nothing was approved; run the command again to review the plan that is current now."}
 		}
@@ -232,23 +243,17 @@ func Submit(ctx context.Context, c client.Client, review Review, opts Options) R
 				// The read cleared the plan, so no gate was judged.
 				why = fmt.Sprintf("The operator is reading %s/%s again, and publishes its plan when that read ends.", review.Family, review.Name)
 			}
-			now := time.Now()
-			switch {
-			case opts.Await <= 0:
+			if opts.Await <= 0 {
 				return Result{Outcome: Closed, Message: why + " Nothing was approved."}
-			case deadline.IsZero():
-				deadline = now.Add(opts.Await)
+			}
+			if gate.deadline.IsZero() {
+				gate.deadline = time.Now().Add(opts.Await)
 				if opts.Waiting != nil {
 					opts.Waiting(why)
 				}
-			case !now.Before(deadline):
-				return Result{Outcome: Closed, Message: fmt.Sprintf("The operator was still reading %s/%s again after %s. "+
-					"Nothing was approved; run the command again once it waits for an approval.", review.Family, review.Name, opts.Await)}
 			}
-			select {
-			case <-ctx.Done():
-				return Result{Outcome: Failed, Message: fmt.Sprintf("Nothing was approved: %v", ctx.Err())}
-			case <-time.After(min(pollInterval, deadline.Sub(now))):
+			if result, over := gate.pause(ctx); over {
+				return result
 			}
 			continue
 		}
@@ -277,6 +282,38 @@ func Submit(ctx context.Context, c client.Client, review Review, opts Options) R
 	return Result{Outcome: Admitted, Approval: approval}
 }
 
+// gateWait is Submit waiting for the operator to end a read of the resource.
+type gateWait struct {
+	review   Review
+	opts     Options
+	deadline time.Time
+	// lastErr is the last read's failure, when the API server may answer the
+	// next one.
+	lastErr error
+}
+
+// pause sleeps until the next read, or ends the wait: at its deadline, or
+// when ctx ends.
+func (g *gateWait) pause(ctx context.Context) (Result, bool) {
+	now := time.Now()
+	if !now.Before(g.deadline) {
+		if g.lastErr != nil {
+			return Result{Outcome: Failed, Message: fmt.Sprintf("No read of %s/%s found the approval gate open within %s, "+
+				"and the last one failed: %v. Nothing was approved.", g.review.Family, g.review.Name,
+				statusview.Duration(g.opts.Await), g.lastErr)}, true
+		}
+		return Result{Outcome: Closed, Message: fmt.Sprintf("The operator was still reading %s/%s again after %s. "+
+			"Nothing was approved; run the command again once it waits for an approval.", g.review.Family, g.review.Name,
+			statusview.Duration(g.opts.Await))}, true
+	}
+	select {
+	case <-ctx.Done():
+		return Result{Outcome: Failed, Message: fmt.Sprintf("Nothing was approved: %v", ctx.Err())}, true
+	case <-time.After(min(pollInterval, g.deadline.Sub(now))):
+		return Result{}, false
+	}
+}
+
 // bounded is ctx with timeout, or ctx alone when timeout is not positive.
 func bounded(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
 	if timeout <= 0 {
@@ -293,9 +330,10 @@ func changedSince(reviewed, current Review) string {
 	switch {
 	case current.ResourceUID != reviewed.ResourceUID:
 		return fmt.Sprintf("%s/%s was deleted and created again after you reviewed its plan.", reviewed.Family, reviewed.Name)
-	case current.Generation != reviewed.Generation:
-		return fmt.Sprintf("The spec of %s/%s changed after you reviewed its plan (generation %d, now %d).",
-			reviewed.Family, reviewed.Name, reviewed.Generation, current.Generation)
+	case current.Spec != reviewed.Spec:
+		// A suspend or a resume is not a change of the desired state
+		// (desiredspec), and moves the generation all the same.
+		return fmt.Sprintf("The spec of %s/%s changed after you reviewed its plan.", reviewed.Family, reviewed.Name)
 	case current.PlanName == "":
 		return ""
 	case current.PlanName != reviewed.PlanName || current.PlanUID != reviewed.PlanUID:

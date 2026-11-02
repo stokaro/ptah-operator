@@ -20,6 +20,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/statusview"
 	"github.com/stokaro/ptah-operator/pkg/planread/planreadtest"
 )
 
@@ -291,9 +292,10 @@ func TestApproveWaitsForTheGateWhenTheOperatorReadsAgain(t *testing.T) {
 			if code != exitOK || len(api.created) != 1 || len(server.steps) != 0 {
 				t.Fatalf("approve = %d after %d creates with %d steps left; stderr %q", code, len(api.created), len(server.steps), stderr)
 			}
+			plan := approvedPlan(t, api)
 			requireSays(t, "approve's stderr", stderr, "Type yes to approve: ",
-				"The operator is reading this schema again (Resolve); admission takes an approval once it is back at the approval gate.",
-				"is approved when it is back at the approval gate, if it is still the plan waiting; waiting up to 5m0s.")
+				"Waiting up to 5m for the operator to end its read of schema/storefront. If plan "+plan+
+					" is back at the approval gate then, the approval goes to admission.\n")
 			requireSays(t, "approve's report", stdout, "Approved:", fingerprint)
 		})
 	})
@@ -308,10 +310,13 @@ func TestApproveWaitsForTheGateWhenTheOperatorReadsAgain(t *testing.T) {
 			if code != exitOK || len(api.created) != 1 {
 				t.Fatalf("approve = %d after %d creates; stderr %q", code, len(api.created), stderr)
 			}
-			requireSays(t, "approve's stderr", stderr,
-				"The operator is reading this schema again (Observe); admission takes an approval once it is back at the approval gate. "+
-					"A decision taken now is sent when that read ends, if this plan is still the one waiting.",
-				"Type yes to approve: ")
+			notice := "The operator is reading this schema again (Observe); admission takes an approval once it is back at the approval gate. " +
+				"A decision taken now is sent when that read ends, if this plan is still the one waiting."
+			requireSays(t, "approve's stderr", stderr, notice, "Type yes to approve: ")
+			// Said once, before the prompt; the read had ended by the answer.
+			if strings.Count(stderr, "reading this schema again") != 1 || strings.Contains(stderr, "Waiting up to") {
+				t.Fatalf("approve repeats what it found, or waits for a read that ended: %q", stderr)
+			}
 		})
 	})
 	t.Run("the read does not end", func(t *testing.T) {
@@ -327,9 +332,91 @@ func TestApproveWaitsForTheGateWhenTheOperatorReadsAgain(t *testing.T) {
 			if code != exitNotDone || len(api.created) != 0 {
 				t.Fatalf("approve = %d after %d creates; stderr %q", code, len(api.created), stderr)
 			}
-			requireSays(t, "approve's stderr", stderr, "The operator was still reading schema/storefront again after 5m0s. Nothing was approved")
+			requireSays(t, "approve's stderr", stderr, "The operator was still reading schema/storefront again after 5m. Nothing was approved")
 		})
 	})
+}
+
+// approvedPlan is the name of the plan the schema names.
+func approvedPlan(t *testing.T, api *admitting) string {
+	t.Helper()
+	schema := &operatorv1alpha1.PtahSchema{}
+	if err := api.Get(context.Background(), client.ObjectKey{Namespace: planreadtest.Namespace, Name: "storefront"}, schema); err != nil {
+		t.Fatalf("read the schema: %v", err)
+	}
+	return schema.Status.Plan.Name
+}
+
+// A gate no read of the operator reopens is answered at once, in the words
+// approve used before it learned to wait: ApprovalRequired was not True when
+// the read began.
+func TestApproveAnswersAtOnceAGateNoReadReopens(t *testing.T) {
+	t.Run("a migration under apply Never at rest", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			migration := &operatorv1alpha1.PtahMigration{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "application", Name: "shipments", UID: "uid-shipments"},
+				Spec:       operatorv1alpha1.PtahMigrationSpec{Policy: operatorv1alpha1.MigrationPolicy{Apply: operatorv1alpha1.ApplyPolicyNever}},
+				Status: operatorv1alpha1.PtahMigrationStatus{
+					Phase:   operatorv1alpha1.MigrationPhasePlanning,
+					History: &operatorv1alpha1.MigrationHistoryStatus{CurrentVersion: 13},
+					Plan:    &operatorv1alpha1.ImmutableObjectReference{Name: "shipments-p-14", UID: "uid-p-14"},
+					Conditions: []metav1.Condition{{
+						Type: operatorv1alpha1.ConditionMigrationApprovalRequired, Status: metav1.ConditionFalse, Reason: "NotRequired",
+						Message: "The apply policy is Never, so no approval is consulted",
+					}},
+				},
+			}
+			plan := &operatorv1alpha1.PtahMigrationPlan{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "application", Name: "shipments-p-14", UID: "uid-p-14"},
+				Spec: operatorv1alpha1.PtahMigrationPlanSpec{ContractVersion: 1, Fingerprint: "sha256:14",
+					MigrationRef: operatorv1alpha1.ImmutableObjectReference{Name: "shipments", UID: "uid-shipments"}},
+			}
+			api := &admitting{Client: planreadtest.NewClient(t, migration, plan)}
+			began := time.Now()
+
+			code, stdout, stderr := runApproveWith(t, api, "application", strings.NewReader("yes\n"), true, "migration/shipments")
+
+			if code != exitNotDone || stdout != "" || len(api.created) != 0 || time.Since(began) != 0 {
+				t.Fatalf("approve = %d after %s and %d creates, stdout %q, stderr %q", code, time.Since(began), len(api.created), stdout, stderr)
+			}
+			if stderr != "kubectl-ptah: The migration is Planning, not waiting for an approval. Nothing was approved.\n" {
+				t.Fatalf("approve said %q", stderr)
+			}
+		})
+	})
+	t.Run("a schema the policy holds, read at its interval", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			api, fingerprint := approvable(t, func(status *operatorv1alpha1.PtahSchemaStatus) {
+				readStep(operatorv1alpha1.PhaseResolving, operatorv1alpha1.OperationResolve)(status)
+				meta.SetStatusCondition(&status.Conditions, metav1.Condition{Type: operatorv1alpha1.ConditionApprovalRequired,
+					Status: metav1.ConditionFalse, Reason: "DestructiveChangesDisabled", Message: "Plan contains destructive changes"})
+			})
+			began := time.Now()
+
+			code, _, stderr := runApprove(t, api, "", false, "schema/storefront", "--plan-fingerprint", fingerprint)
+
+			if code != exitNotDone || len(api.created) != 0 || time.Since(began) != 0 {
+				t.Fatalf("approve = %d after %s and %d creates, stderr %q", code, time.Since(began), len(api.created), stderr)
+			}
+			if stderr != "kubectl-ptah: The operator is running Resolve for this schema. An approval is admitted once it is back "+
+				"at the approval gate; run this command again then. Nothing was approved.\n" {
+				t.Fatalf("approve said %q", stderr)
+			}
+		})
+	})
+}
+
+// The help names the bound approve waits for an interval read by, as the
+// code holds it.
+func TestApproveHelpNamesTheGateWait(t *testing.T) {
+	var help bytes.Buffer
+	usage(&help)
+	for _, want := range []string{"waits up to " + statusview.Duration(gateTimeout) + " for an interval read",
+		"bounded by " + statusview.Duration(gateTimeout) + ", not by this", "approve waits up to " + statusview.Duration(gateTimeout)} {
+		if !strings.Contains(strings.Join(strings.Fields(help.String()), " "), want) {
+			t.Fatalf("the help does not say %q", want)
+		}
+	}
 }
 
 // The manifest is the decision and nothing else, under a name kubectl create

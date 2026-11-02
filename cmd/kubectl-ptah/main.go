@@ -427,16 +427,18 @@ line that says why they are missing, and exits 0. Events are kubectl's own:
 approve shows the current plan of a schema or a migration and the identities
 an approval of it carries, asks for a decision, and creates the approval as
 you. It reads the resource again first and sends nothing if the plan was
-replaced, the resource was recreated or its spec changed, or the operator
-would not admit an approval now. The operator reads a waiting resource again
-at its interval, and admission takes no approval while it does: an answer
-given then is sent when that read ends, if the same plan is waiting again,
-and approve waits up to 5m for that. Admission records who approved and when;
-RBAC decides whether you may.
+replaced, the resource was recreated, its spec changed other than by a
+suspend or a resume, or the operator would not admit an approval now. The
+operator reads a waiting resource again at its interval, and admission takes
+no approval while it does: an answer given then is sent when that read ends,
+if the same plan is waiting again, and approve waits up to 5m for that.
+Admission records who approved and when; RBAC decides whether you may.
 
   --plan-fingerprint <fp>  decide without asking, only if the current plan
                            carries this fingerprint (for a script that
-                           reviewed it)
+                           reviewed it); like an answer on a terminal, it
+                           waits up to 5m for an interval read of the
+                           operator to end before it sends
   --dry-run client         print the approval as YAML and send nothing; it
                            takes the same decision as an approval does.
                            Whoever creates the printed object is recorded
@@ -449,6 +451,9 @@ RBAC decides whether you may.
   --wait                   once the approval is stored, wait until the
                            operator has applied the plan and read the
                            database afterwards
+  --timeout <duration>     how long each request to the API server may take
+                           (default 30s); the wait for an interval read is
+                           bounded by 5m, not by this
   -o, --output <format>    text (the default), yaml or json
 
   kubectl ptah approve schema/storefront -n application
