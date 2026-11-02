@@ -29,9 +29,9 @@ steps:
   # selecting one is Ptah's job, from the history the database has.
   - note: Publish it, and point a resource at the whole artifact. Nothing in it names the checkpoint.
     run: |
-      DIGEST=$(ptah migrations push "oci://$PTAH_OCI_REGISTRY/migrations/demo:ckpt-$$" \
-        --migrations-dir demo/migrations-checkpoint --dir-format ptah --version "ckpt-$$" --plain-http \
-        | sed -n 's/^Digest: //p')
+      REF=$(ptah migrations push "oci://$PTAH_OCI_REGISTRY/migrations/demo:ckpt-$$" \
+        --migrations-dir demo/migrations-checkpoint --dir-format ptah --version "ckpt-$$" --plain-http --format reference)
+      PULL="oci://$REGISTRY_IN_CLUSTER/${REF#"oci://$PTAH_OCI_REGISTRY/"}"
       kubectl apply -n "$NAMESPACE" -f - <<EOF
       apiVersion: operator.ptah.run/v1alpha1
       kind: PtahMigration
@@ -43,7 +43,7 @@ steps:
           coordinationKey: demo/storefront/primary
           urlFrom: {name: demo-database, key: url}
         artifact:
-          ociRef: oci://$REGISTRY_IN_CLUSTER/migrations/demo@$DIGEST
+          ociRef: $PULL
           registryAuthFrom: {name: demo-registry}
           verificationPolicyFrom: {name: demo-migration-verification-policy, key: policy.yaml}
           transport: {plainHTTP: true}

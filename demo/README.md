@@ -248,7 +248,8 @@ wrong and is not:
 - **A publish that is refused.** A Ptah artifact is not byte-identical between
   two pushes of one file, and a tag is write-once. Every `ptah schema push` in
   a scenario ends its tag with `$$` for that reason; what the operator is
-  pointed at is the digest the push returned, never the tag.
+  pointed at is the reference the push printed with `--format reference`,
+  pinned by digest, never the tag.
 - **A plan that cannot be found.** A converged schema carries no current plan,
   because there is nothing left to do. After convergence the plan that ran is
   found by the fingerprint `status.applied` names, not through `status.plan`.

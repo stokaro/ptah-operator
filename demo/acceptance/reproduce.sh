@@ -395,16 +395,20 @@ kubectl ptah plan "$SCHEMA" --applied -n "$NAMESPACE" -o sql | grep -q 'CREATE T
 # that revision already, so the resource plans nothing, and the next revision
 # is set-source's to point at.
 
-# push prints the digest of what it published. The resource names that digest,
-# never the tag, at the address the cluster pulls from.
+# push_schema prints the reference the resource names: with --format
+# reference, push prints what it published pinned by its digest, never the
+# tag, under the address it pushed to, and the cluster pulls the same
+# repository and digest from its own address.
 push_schema() {
 	push_file=$1
 	push_tag=$2
-	push_digest=$(ptah schema push "oci://$PTAH_OCI_REGISTRY/schemas/reproduce:$push_tag-$$" \
-		--schema-file "$push_file" --dialect postgres --plain-http | sed -n 's/^Digest: //p')
-	case "$push_digest" in
-	sha256:*) printf '%s\n' "$push_digest" ;;
-	*) fail "ptah schema push printed no digest for $push_file" ;;
+	push_reference=$(ptah schema push "oci://$PTAH_OCI_REGISTRY/schemas/reproduce:$push_tag-$$" \
+		--schema-file "$push_file" --dialect postgres --plain-http --format reference)
+	case "$push_reference" in
+	"oci://$PTAH_OCI_REGISTRY/schemas/reproduce@sha256:"*)
+		printf 'oci://%s/%s\n' "$REGISTRY_IN_CLUSTER" "${push_reference#"oci://$PTAH_OCI_REGISTRY/"}"
+		;;
+	*) fail "ptah schema push printed no pinned reference for $push_file" ;;
 	esac
 }
 
@@ -423,7 +427,7 @@ spec:
     coordinationKey: demo/storefront/primary
     urlFrom: {name: demo-database, key: url}
   desired:
-    ociRef: oci://$REGISTRY_IN_CLUSTER/schemas/reproduce@$FIRST
+    ociRef: $FIRST
     registryAuthFrom: {name: demo-registry}
     verificationPolicyFrom: {name: demo-verification-policy, key: policy.yaml}
     transport: {plainHTTP: true}
@@ -439,10 +443,10 @@ kubectl ptah wait "schema/$SCHEMA" -n "$NAMESPACE" --for in-sync --timeout 10m >
 say 'publishing the next revision, and pointing the resource at it with kubectl ptah set-source'
 SECOND=$(push_schema schema-v2.sql v2)
 kubectl ptah set-source "schema/$SCHEMA" -n "$NAMESPACE" --wait --for approval --wait-timeout 10m \
-	--oci "oci://$REGISTRY_IN_CLUSTER/schemas/reproduce@$SECOND" >/dev/null ||
+	--oci "$SECOND" >/dev/null ||
 	fail_showing 'set-source did not bring the resource to wait for an approval of the next revision'
 RESOLVED=$(kubectl -n "$NAMESPACE" get "ptahschema/$SCHEMA" -o jsonpath='{.status.source.digest}')
-[ "$RESOLVED" = "$SECOND" ] ||
+[ "$RESOLVED" = "${SECOND##*@}" ] ||
 	fail "the resource resolved $RESOLVED, and set-source pointed it at $SECOND"
 approve_current_plan "$NEXT_APPROVAL"
 

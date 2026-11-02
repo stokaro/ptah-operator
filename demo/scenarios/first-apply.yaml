@@ -21,13 +21,19 @@ steps:
 
   # Publishing is ptah's own command, run the way a reader or a CI job runs it.
   # The tag ends in $$ because a tag in this registry is written once; what
-  # the resource names is the digest, never the tag. The push goes to the
-  # registry's address on this machine, and the resource names the address
-  # the cluster pulls from, with the same repository and digest.
+  # the resource names is the digest, never the tag. --format reference prints
+  # the reference of the manifest the push wrote, pinned by its digest, and
+  # nothing else. The push goes to the registry's address on this machine, and
+  # the resource names the address the cluster pulls from. The push prints
+  # its reference under the address it was given, so PULL swaps that address
+  # for the cluster's and keeps the repository and the digest. The registry
+  # Secret names the cluster's address, and the operator sends its credential
+  # to no other.
   - note: Publish it, then create the resource that names that artifact by digest.
     run: |
-      DIGEST=$(ptah schema push "oci://$PTAH_OCI_REGISTRY/schemas/demo:v1-$$" \
-        --schema-file demo/schemas/v1.sql --dialect postgres --plain-http | sed -n 's/^Digest: //p')
+      REF=$(ptah schema push "oci://$PTAH_OCI_REGISTRY/schemas/demo:v1-$$" \
+        --schema-file demo/schemas/v1.sql --dialect postgres --plain-http --format reference)
+      PULL="oci://$REGISTRY_IN_CLUSTER/${REF#"oci://$PTAH_OCI_REGISTRY/"}"
       kubectl apply -n "$NAMESPACE" -f - <<EOF
       apiVersion: operator.ptah.run/v1alpha1
       kind: PtahSchema
@@ -39,7 +45,7 @@ steps:
           coordinationKey: demo/storefront/primary
           urlFrom: {name: demo-database, key: url}
         desired:
-          ociRef: oci://$REGISTRY_IN_CLUSTER/schemas/demo@$DIGEST
+          ociRef: $PULL
           registryAuthFrom: {name: demo-registry}
           verificationPolicyFrom: {name: demo-verification-policy, key: policy.yaml}
           transport: {plainHTTP: true}

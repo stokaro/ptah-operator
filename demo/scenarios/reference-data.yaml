@@ -29,8 +29,9 @@ steps:
   # digest, so nothing later reads the author's working copy.
   - note: Publish the directory, and create a resource that names it by digest.
     run: |
-      DIGEST=$(ptah schema push "oci://$PTAH_OCI_REGISTRY/schemas/catalog:v1-$$" \
-        --root-dir demo/reference/v1 --dialect postgres --plain-http | sed -n 's/^Digest: //p')
+      REF=$(ptah schema push "oci://$PTAH_OCI_REGISTRY/schemas/catalog:v1-$$" \
+        --root-dir demo/reference/v1 --dialect postgres --plain-http --format reference)
+      PULL="oci://$REGISTRY_IN_CLUSTER/${REF#"oci://$PTAH_OCI_REGISTRY/"}"
       kubectl apply -n "$NAMESPACE" -f - <<EOF
       apiVersion: operator.ptah.run/v1alpha1
       kind: PtahSchema
@@ -42,7 +43,7 @@ steps:
           coordinationKey: demo/storefront/primary
           urlFrom: {name: demo-database, key: url}
         desired:
-          ociRef: oci://$REGISTRY_IN_CLUSTER/schemas/catalog@$DIGEST
+          ociRef: $PULL
           registryAuthFrom: {name: demo-registry}
           verificationPolicyFrom: {name: demo-verification-policy, key: policy.yaml}
           transport: {plainHTTP: true}
@@ -98,10 +99,10 @@ steps:
   # and applied, and under apply Always the wait ends with them in place.
   - note: Publish it, and point the resource at it. The rows are planned and applied.
     run: |
-      DIGEST=$(ptah schema push "oci://$PTAH_OCI_REGISTRY/schemas/catalog:v2-$$" \
-        --root-dir demo/reference/v2 --dialect postgres --plain-http | sed -n 's/^Digest: //p')
+      REF=$(ptah schema push "oci://$PTAH_OCI_REGISTRY/schemas/catalog:v2-$$" \
+        --root-dir demo/reference/v2 --dialect postgres --plain-http --format reference)
       kubectl ptah set-source schema/catalog -n "$NAMESPACE" --wait \
-        --oci "oci://$REGISTRY_IN_CLUSTER/schemas/catalog@$DIGEST"
+        --oci "oci://$REGISTRY_IN_CLUSTER/${REF#"oci://$PTAH_OCI_REGISTRY/"}"
     sync: planning
     expect:
       exit: 0
@@ -162,10 +163,10 @@ steps:
 
   - note: Publish it, and point the resource at it.
     run: |
-      DIGEST=$(ptah schema push "oci://$PTAH_OCI_REGISTRY/schemas/catalog:v3-$$" \
-        --root-dir demo/reference/v3 --dialect postgres --plain-http | sed -n 's/^Digest: //p')
+      REF=$(ptah schema push "oci://$PTAH_OCI_REGISTRY/schemas/catalog:v3-$$" \
+        --root-dir demo/reference/v3 --dialect postgres --plain-http --format reference)
       kubectl ptah set-source schema/catalog -n "$NAMESPACE" --wait \
-        --oci "oci://$REGISTRY_IN_CLUSTER/schemas/catalog@$DIGEST"
+        --oci "oci://$REGISTRY_IN_CLUSTER/${REF#"oci://$PTAH_OCI_REGISTRY/"}"
     sync: planning
     expect:
       exit: 0
