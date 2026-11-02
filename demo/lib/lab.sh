@@ -421,6 +421,14 @@ lab_reset() {
 		storefront-v1 shipments-migrations shipments-release-1 shipments-release-2 \
 		deliveries-release-1 deliveries-release-2 deliveries-release-3 >/dev/null ||
 		lab_fail "could not remove the ConfigMaps an earlier run created"
+	# The fault failure-recovery plants, which its own reset plants again.
+	k -n "$E2E_TEST_NAMESPACE" delete secret demo-database-broken --ignore-not-found >/dev/null ||
+		lab_fail "could not remove the Secret an earlier run planted"
+	# Events name an object by kind and name, not by UID, so kubectl events
+	# --for ptahschema/storefront would list what every earlier run's
+	# storefront did beside this one's.
+	k -n "$E2E_TEST_NAMESPACE" delete events --all >/dev/null ||
+		lab_fail "could not remove the Events earlier runs left"
 }
 
 # lab_manifest renders one manifest template.
