@@ -7,9 +7,10 @@ Kubernetes acceptance or a production qualification result.
 
 ## Identity and procedure
 
-Captured on October 23, 2026 with the Ptah v0.15.0 release image, and taken
-again on October 25, 2026 with the executor `support/ptah.json` now pins: the
-Ptah v0.16.0 release image, commit `91e28d4331950e949590fd9ac404373bc17b572d`.
+Captured on October 23, 2026 with the Ptah v0.15.0 release image, taken again
+on October 25, 2026 with v0.16.0, and on November 2, 2026 with the executor
+`support/ptah.json` now pins: the Ptah v0.17.0 release image, commit
+`38bd6e91cfe3a70543046da9c3ada05a0460a103`.
 [`schema-sql-capture.json`](schema-sql-capture.json) records the executor and
 server images, every command's exit status and record count, and the SHA-256 of
 each reading and saved plan.
@@ -32,30 +33,57 @@ protocol commands, session order and timestamps stay as received. Each command
 runs in its own container, and every container, anonymous volume and network the
 run created is removed.
 
-Before the v0.16.0 capture, the same procedure ran with the executor of the
-previous pin, the Ptah v0.15.0 release image, as it ran with v0.14.0 before
-the v0.15.0 capture. Each time it reproduced every
-earlier checked-in reading record for record, PostgreSQL parameters included,
-and all four saved exclusion plans byte for byte. That is what makes the new
-readings a statement about the executor rather than about a different procedure.
+Before the v0.17.0 capture, the same procedure ran with the executor of the
+previous pin, the Ptah v0.16.0 release image, as it ran with v0.15.0 before
+the v0.16.0 capture and with v0.14.0 before the v0.15.0 one. Each time it
+reproduced every earlier checked-in reading record for record, PostgreSQL
+parameters included, and all four saved exclusion plans byte for byte. That is
+what makes the new readings a statement about the executor rather than about a
+different procedure.
 
 `--contract` writes the contract from a directory of readings. Run on the
-v0.14.0 readings, it reproduced the earlier contract byte for byte.
+v0.14.0 readings, and again on the v0.16.0 readings, it reproduced the contract
+then checked in byte for byte.
 
-Against v0.15.0, v0.16.0 changed nothing here either: every schema reading and
-both migration History readings matched record for record, and the contract
-changed only in the commit it names. Only the restored-history refusals moved;
-[restored-history-refusal.md](restored-history-refusal.md) says how.
+Against v0.15.0, v0.16.0 changed nothing here: every schema reading and both
+migration History readings matched record for record, and only the
+restored-history refusals moved; [restored-history-refusal.md](restored-history-refusal.md)
+says how.
+
+Against v0.16.0, v0.17.0 changed every PostgreSQL reading and one MySQL
+reading. Every PostgreSQL command now also reads the session's search path when
+it connects, so each PostgreSQL journal has one record more; four catalog reads
+were rewritten, and the column spelling probe and the planned statements lost
+the comment lines in front of them. On MySQL only the allowed Apply's journal
+moved, because the statements it executes lost the same comment lines; every
+other MySQL reading matched record for record. All four saved exclusion plans
+changed the same way: the narrowed plans carry only the column addition, and
+the wide plans still drop the excluded table after it.
 
 ## Permitted work and source review
 
-The contract carries 48 PostgreSQL statement/parameter sets and 32 MySQL
+The contract carries 49 PostgreSQL statement/parameter sets and 32 MySQL
 command/statement pairs. The predicate compares SQL, comments, whitespace,
 parameters and MySQL protocol commands byte for byte. Only the declaration's
 quoted MySQL database placeholder is expanded to the controlled fixture
 identifier. Received SQL is never normalized.
 
-Against the previous pin, v0.15.0 changed nothing here. Every reading carries
+Against v0.16.0, v0.17.0 added one PostgreSQL declaration and changed six,
+and kept every MySQL one. The new one is the search-path read
+`SELECT s FROM unnest(current_schemas(false)) WITH ORDINALITY AS path(s, n) ORDER BY n`,
+which [connection setup](https://github.com/stokaro/ptah/blob/38bd6e91cfe3a70543046da9c3ada05a0460a103/internal/connector/pgconnect/pgconnect.go)
+sends so that an unqualified name resolves in the order the server resolves
+it. The view read adds each view's `reloptions`; the materialized view read
+adds its `reloptions` and whether it is populated; the table grant read adds a
+second branch that reads a materialized view's privileges from
+`pg_class.relacl`; and the routine grant read adds a branch for the owner's own
+`EXECUTE`. These are reads of the catalog or the session: none contains a
+write, DDL, grant or transaction-control keyword outside comments and literals.
+The two column spelling probes create the same temporary table as before,
+without the `-- POSTGRES TABLE` comment in front of the statement.
+
+Against v0.15.0, v0.16.0 changed nothing here. Against v0.14.0, v0.15.0 changed
+nothing either. Every reading carries
 the same statements in the same order; the MySQL journals differ only in their
 timestamps and one thread number, and the contract only in the commit it names.
 Against v0.13.0, v0.14.0 changed seven declarations and kept the count at 80. On PostgreSQL the column read takes a domain column's NOT NULL from the
@@ -71,19 +99,19 @@ and restored-history readings are unchanged record for record.
 
 The reviewed source is the pinned commit:
 
-- PostgreSQL's [schema reader](https://github.com/stokaro/ptah/blob/e046527f79c58651d2082dce65b5ceb48dbc2606/internal/dbschema/postgres/reader.go)
+- PostgreSQL's [schema reader](https://github.com/stokaro/ptah/blob/38bd6e91cfe3a70543046da9c3ada05a0460a103/internal/dbschema/postgres/reader.go)
   reads namespaces, columns, types, table statistics, indexes, constraints,
   extensions, routines, views, triggers, sequences, policies, roles, owners,
   grants, default privileges and membership from PostgreSQL catalogs. Catalog
   functions such as `pg_get_expr` return definitions; the fixture queries do not
   execute those definitions.
-- PostgreSQL's [column spelling probe](https://github.com/stokaro/ptah/blob/e046527f79c58651d2082dce65b5ceb48dbc2606/internal/dbexprprobe/column_spellings.go)
+- PostgreSQL's [column spelling probe](https://github.com/stokaro/ptah/blob/38bd6e91cfe3a70543046da9c3ada05a0460a103/internal/dbexprprobe/column_spellings.go)
   creates exactly `pg_temp.ptah_column_probe_0` with `id bigint`, with or without
   `enabled boolean` in the declared fixture variants, reads its type
   definitions, and rolls back to its savepoint. This exact temporary probe is
   permitted; permanent DDL, changed columns or defaults, arbitrary functions and
   COMMIT are not.
-- MySQL's [schema reader](https://github.com/stokaro/ptah/blob/e046527f79c58651d2082dce65b5ceb48dbc2606/internal/dbschema/mysql/reader.go)
+- MySQL's [schema reader](https://github.com/stokaro/ptah/blob/38bd6e91cfe3a70543046da9c3ada05a0460a103/internal/dbschema/mysql/reader.go)
   reads columns, tables, enum columns, indexes, check and key constraints, views,
   triggers, routine parameters and routines from `information_schema`. Its
   prepared queries and their expanded executions are distinct entries. The
@@ -100,17 +128,17 @@ and missing diagnostic controls. Error messages omit SQL and parameter values.
 
 | Reading | Fixture and command | PostgreSQL records | MySQL records (Query/Execute) |
 | --- | --- | ---: | ---: |
-| `observe`, `plan` | v3 with a control row; drift and plan of fault-v1 | 46, 84 | 38 (16), 73 (31) |
-| `destructive-observe`, `-plan` | the same, desired v4 | 46, 84 | 38 (16), 73 (31) |
-| `exclusion-wide-observe`, `-plan` | adds `e2e_excluded_policy_keep` as the lifecycle creates it; fault-v1 | 46, 84 | 38 (16), 73 (31) |
-| `exclusion-narrow-observe`, `-plan` | the same; Plan alone receives `--exclude=e2e_excluded_policy_keep` | 46, 84 | 38 (16), 73 (31) |
-| `initial-v1-observe`, `-plan` | no tables; desired v1 | 40, 77 | 37 (15), 71 (29) |
-| `tag-v2-observe`, `-plan`, `tag-v3-…` | v1 with one control row; desired v2 or v3 | 46, 84 | 38 (16), 73 (31) |
-| `drift-plan-before` | v3; saved plan of fault-v1 | 84 | 73 (31) |
-| `drift-stale-apply` | `enabled` dropped under the saved plan; Apply refused `stale-plan` (exit 2), lock timeout 60s | 44 | 46 (19) |
-| `drift-observe`, `drift-plan` | the changed database, observed and planned again | 46, 84 | 38 (16), 73 (31) |
-| `drift-validate-plan` | `schema apply --dry-run` of the fresh plan, lock timeout 30s | 44 | 46 (19) |
-| `drift-apply-current` | the fresh plan applied, lock timeout 60s | 48 | 50 (23) |
+| `observe`, `plan` | v3 with a control row; drift and plan of fault-v1 | 47, 85 | 38 (16), 73 (31) |
+| `destructive-observe`, `-plan` | the same, desired v4 | 47, 85 | 38 (16), 73 (31) |
+| `exclusion-wide-observe`, `-plan` | adds `e2e_excluded_policy_keep` as the lifecycle creates it; fault-v1 | 47, 85 | 38 (16), 73 (31) |
+| `exclusion-narrow-observe`, `-plan` | the same; Plan alone receives `--exclude=e2e_excluded_policy_keep` | 47, 85 | 38 (16), 73 (31) |
+| `initial-v1-observe`, `-plan` | no tables; desired v1 | 41, 78 | 37 (15), 71 (29) |
+| `tag-v2-observe`, `-plan`, `tag-v3-…` | v1 with one control row; desired v2 or v3 | 47, 85 | 38 (16), 73 (31) |
+| `drift-plan-before` | v3; saved plan of fault-v1 | 85 | 73 (31) |
+| `drift-stale-apply` | `enabled` dropped under the saved plan; Apply refused `stale-plan` (exit 2), lock timeout 60s | 45 | 46 (19) |
+| `drift-observe`, `drift-plan` | the changed database, observed and planned again | 47, 85 | 38 (16), 73 (31) |
+| `drift-validate-plan` | `schema apply --dry-run` of the fresh plan, lock timeout 30s | 45 | 46 (19) |
+| `drift-apply-current` | the fresh plan applied, lock timeout 60s | 49 | 50 (23) |
 | `lock-45-plan`, `lock-60-plan` | MySQL only: a runner Plan's two plan reads and dry-run validation under a 45s or 60s lock timeout | | 192 (81) |
 
 Every Observe exited 1 with drift, every Plan and validation exited 0, the stale
@@ -122,7 +150,10 @@ Both native exclusion plans add the managed column and then drop the excluded
 table. v0.13.0's PostgreSQL plan dropped the table's primary-key constraint
 before the table, and v0.14.0's does not. Both narrowed plans contain only the
 column addition. v0.14.0 also sends each planned statement with the plan's
-comments in front of it, so the allowed Apply's journal shows them.
+comments in front of it, so the allowed Apply's journal shows them. v0.17.0
+writes fewer of them: the `-- ALTER statements: --` and `-- POSTGRES TABLE`
+and `-- MYSQL TABLE` headers are gone, and a comment that names the change,
+such as `-- Add/modify columns for table: e2e_widgets`, stays.
 
 ## Operations
 

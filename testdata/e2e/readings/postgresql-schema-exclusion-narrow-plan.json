@@ -10,7 +10,7 @@
   "destructive": false,
   "statements": [
     {
-      "sql": "-- Add/modify columns for table: e2e_widgets\n-- ALTER statements: --\nALTER TABLE \"e2e_widgets\" ADD COLUMN \"fault_token\" text",
+      "sql": "-- Add/modify columns for table: e2e_widgets\nALTER TABLE \"e2e_widgets\" ADD COLUMN \"fault_token\" text",
       "severity": "safe",
       "reason": "does not remove data or tighten constraints"
     }

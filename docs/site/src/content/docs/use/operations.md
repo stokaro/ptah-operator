@@ -1038,9 +1038,9 @@ under no category, it is observed as drift with no `driftFindings`, a
 what the report rates a list with nothing in it. `highestDriftSeverity` is set
 whenever the report found drift and absent when it found none, so read it, not
 the count, to tell the two apart. Planning runs either way, and the plan names
-the statements and the privilege kinds they change. Ptah v0.16.0 lists grants,
-views, triggers and sequences under categories of their own, and a default
-privilege under `feature_access_*`.
+the statements and the privilege kinds they change. Since v0.16.0 Ptah lists
+grants, views, triggers and sequences under categories of their own, and a
+default privilege under `feature_access_*`.
 
 `status.target.inventory` counts each kind of object the same observation
 compared, on both sides: how many the desired schema declares and how many the
@@ -1210,9 +1210,9 @@ kubectl ptah set-source schema/storefront -n application --oci "$REF" --wait
 reference` print the reference of the manifest the push wrote, pinned by its
 digest, and nothing else. `ptah oci resolve <reference>` prints the one a tag
 names now, which a later push may already have moved, so prefer the push's
-own answer. A Ptah whose push has no `--format` prints the digest in its
-receipt; `ptah oci resolve` on the tag just pushed pins it, provided nothing
-pushed to that tag since. set-source takes
+own answer. A push before Ptah v0.17.0 has no `--format` and prints the digest
+in its receipt; `ptah oci resolve` on the tag just pushed pins it, provided
+nothing pushed to that tag since. set-source takes
 `oci://HOST/REPOSITORY@sha256:<64 hex>` and nothing looser: a tag, a tag
 beside a digest, something after the registry that is not a repository path
 (another reference pasted there, say), or anything the operator's own parser

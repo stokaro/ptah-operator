@@ -107,6 +107,7 @@ func TestPlanSizeExecutableBoundary(t *testing.T) {
 				"one byte over":              append(bytes.Clone(document), '\n'),
 				"one byte short":             document[:len(document)-1],
 				"comment instead of default": bytes.Replace(document, []byte("DEFAULT"), []byte("COMMENT"), 1),
+				"another table":              bytes.Replace(document, []byte("e2e_plan_size_limit"), []byte("e2e_plan_size_limiz"), 1),
 			} {
 				t.Run(name, func(t *testing.T) {
 					if executablePlanAtLimit(plan, altered, dialect, repeated, suffix) == nil {

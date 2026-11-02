@@ -30,7 +30,7 @@ func TestPostgresRestoredHistorySQLAuditUsesTheExactRefusedApply(t *testing.T) {
 	t.Parallel()
 	raw := restoreAuditReading(t, "postgresql")
 	counts, err := postgresMigrationRefusalSQLForJob(raw, restoreAuditDatabase, restoreAuditClients(), "refused-job")
-	if err != nil || len(counts) != 1 || counts[mysqlAuditHost] != 31 {
+	if err != nil || len(counts) != 1 || counts[mysqlAuditHost] != 32 {
 		t.Fatalf("actual refused Apply: counts=%v error=%v", counts, err)
 	}
 	for _, uid := range []string{"", "another-job"} {
@@ -49,7 +49,7 @@ func TestPostgresRestoredHistorySQLAuditUsesTheExactRefusedApply(t *testing.T) {
 	clients["10.244.3.97"] = operationSQLClient{jobUID: "history", podUID: "history-pod", operation: "history"}
 	history := bytes.ReplaceAll(postgresMigrationAuditReading(t), []byte("ptah_e2e_retarget"), []byte(restoreAuditDatabase))
 	counts, err = postgresMigrationRefusalSQLForJob(append(bytes.Clone(raw), history...), restoreAuditDatabase, clients, "refused-job")
-	if err != nil || counts[mysqlAuditHost] != 31 || counts["10.244.3.97"] != 9 {
+	if err != nil || counts[mysqlAuditHost] != 32 || counts["10.244.3.97"] != 10 {
 		t.Fatalf("refused Apply plus later History: %v %v", counts, err)
 	}
 	if _, err := postgresMigrationRefusalSQLForJob(history, restoreAuditDatabase, clients, "refused-job"); err == nil {
