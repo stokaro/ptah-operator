@@ -44,7 +44,7 @@ steps:
 
   # Without --wait: set-source --wait waits for a plan that asks for an
   # approval or for the resource in sync, and a plan the policy refuses is
-  # neither. The wait below is for the phase the refusal puts it in.
+  # neither. The wait below is for the condition that carries the refusal.
   - note: Publish v3 and point the resource at it.
     run: |
       DIGEST=$(ptah schema push "oci://$PTAH_OCI_REGISTRY/schemas/demo:v3-$$" \
@@ -56,8 +56,13 @@ steps:
       exit: 0
       stdout_contains: [Source set for]
 
+  # The condition rather than the phase: a resource that stopped still reads
+  # the database at its interval and leaves Blocked while it does, and the
+  # refusal holds throughout.
   - note: It plans, and stops there. Wait until it says so.
-    run: kubectl -n "$NAMESPACE" wait ptahschema/storefront --for=jsonpath='{.status.phase}'=Blocked --timeout=6m
+    run: |
+      kubectl -n "$NAMESPACE" wait ptahschema/storefront --timeout=6m \
+        --for=jsonpath='{.status.conditions[?(@.type=="ApprovalRequired")].reason}'=DestructiveChangesDisabled
     sync: blocked
     expect:
       exit: 0
@@ -67,9 +72,9 @@ steps:
         name: storefront
         generation: current
         condition:
-          type: Ready
+          type: ApprovalRequired
           status: "False"
-          reason: PolicyBlocked
+          reason: DestructiveChangesDisabled
 
   # The message on ApprovalRequired is the refusal in the controller's words,
   # and it names the two ways forward.
