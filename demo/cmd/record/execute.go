@@ -69,16 +69,20 @@ type recording struct {
 	// the moment this ran. A reader comparing it with the scenario's digest
 	// today learns whether the transcript still represents it, without
 	// checking the repository out.
-	DefinitionDigest string   `json:"definitionDigest,omitempty"`
-	Title            string   `json:"title"`
-	Tagline          string   `json:"tagline"`
-	Learn            string   `json:"learn"`
-	Start            string   `json:"start"`
-	Tags             []string `json:"tags"`
-	Commands         int      `json:"commands"`
-	Lines            int      `json:"lines"`
-	Events           []event  `json:"events"`
-	Checks           []check  `json:"checks"`
+	DefinitionDigest string `json:"definitionDigest,omitempty"`
+	// InputDigest is the files the scenario's commands read, as they were
+	// when this ran: a manifest it applies, the SQL it pushes, a file it
+	// prints. The scenario file can stay the same while one of them changes.
+	InputDigest string   `json:"inputDigest,omitempty"`
+	Title       string   `json:"title"`
+	Tagline     string   `json:"tagline"`
+	Learn       string   `json:"learn"`
+	Start       string   `json:"start"`
+	Tags        []string `json:"tags"`
+	Commands    int      `json:"commands"`
+	Lines       int      `json:"lines"`
+	Events      []event  `json:"events"`
+	Checks      []check  `json:"checks"`
 }
 
 // run executes one scenario and returns what a reader will see.
@@ -88,6 +92,12 @@ type recording struct {
 // stopped being true.
 func (r *recorder) run(ctx context.Context, current scenario) (recording, error) {
 	r.kept = map[string]string{}
+	// Before the reset: the files are what this run reads, and a scenario
+	// that names one that is not there would fail partway through.
+	inputs, err := inputDigest(r.root, current)
+	if err != nil {
+		return recording{}, err
+	}
 	r.log("scenario %s: resetting", current.ID)
 	for _, command := range current.Reset {
 		result, err := r.shell(ctx, command)
@@ -106,6 +116,7 @@ func (r *recorder) run(ctx context.Context, current scenario) (recording, error)
 		ID:               current.ID,
 		Source:           r.source,
 		DefinitionDigest: definitionDigest(current),
+		InputDigest:      inputs,
 		Title:            strings.TrimSpace(current.Title),
 		Tagline:          strings.TrimSpace(current.Tagline),
 		Learn:            strings.TrimSpace(current.Learn),

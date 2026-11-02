@@ -101,6 +101,13 @@ is recorded again. `title`, `tagline`, `learn`, `start`, `tags` and `note` are
 left out, because rewording them does not change what ran, and a YAML comment
 is not part of the definition at all.
 
+The files a command names under `demo/manifests`, `demo/schemas`,
+`demo/migrations`, `demo/migrations-checkpoint`, `demo/mysql` and
+`demo/reference` are bound the same way, by a digest of their contents: edit
+a manifest a scenario applies and that scenario has to be recorded again. A
+path the shell completes, `demo/mysql/release-$release`, binds the directory
+it is in.
+
 ## Waiting for something that has not happened yet
 
 A wait for a condition that was already true returns at once and proves

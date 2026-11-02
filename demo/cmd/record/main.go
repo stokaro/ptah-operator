@@ -64,7 +64,7 @@ func run(arguments []string, diagnostics io.Writer) error {
 		}
 	}
 	if *verify != "" {
-		return verifyRecordings(*verify, loaded, *only, diagnostics)
+		return verifyRecordings(*root, *verify, loaded, *only, diagnostics)
 	}
 	if *checkOnly {
 		fmt.Fprintf(diagnostics, "record: %d scenarios, %d steps, all valid\n", len(loaded), countSteps(loaded))

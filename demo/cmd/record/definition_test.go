@@ -137,9 +137,11 @@ func TestStaleRecordingsSeparatesUncheckedFromDisagreeing(t *testing.T) {
 	t.Parallel()
 
 	current := []scenario{sampleScenario()}
-	matching := recording{ID: "first-apply", DefinitionDigest: definitionDigest(sampleScenario())}
+	defined := definitionDigest(sampleScenario())
+	inputs := map[string]string{"first-apply": "sha256:inputs"}
+	matching := recording{ID: "first-apply", DefinitionDigest: defined, InputDigest: "sha256:inputs"}
 
-	if findings := staleRecordings(runRecord{Scenarios: []recording{matching}}, current); len(findings) != 0 {
+	if findings := staleRecordings(runRecord{Scenarios: []recording{matching}}, current, inputs); len(findings) != 0 {
 		t.Fatalf("a recording of the current definition was reported stale: %v", findings)
 	}
 
@@ -165,11 +167,21 @@ func TestStaleRecordingsSeparatesUncheckedFromDisagreeing(t *testing.T) {
 			record:  recording{ID: "retired", DefinitionDigest: "sha256:0000"},
 			finding: "no longer declares",
 		},
+		{
+			name:    "a recording made before the input digest existed",
+			record:  recording{ID: "first-apply", DefinitionDigest: defined},
+			finding: "carries no input digest",
+		},
+		{
+			name:    "a file the scenario reads changed under its recording",
+			record:  recording{ID: "first-apply", DefinitionDigest: defined, InputDigest: "sha256:0000"},
+			finding: "a file the scenario reads changed",
+		},
 	} {
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
 
-			findings := staleRecordings(runRecord{Scenarios: []recording{row.record}}, current)
+			findings := staleRecordings(runRecord{Scenarios: []recording{row.record}}, current, inputs)
 			if len(findings) != 1 || !strings.Contains(findings[0], row.finding) {
 				t.Fatalf("findings were %v", findings)
 			}
@@ -339,6 +351,7 @@ steps:
 			record := runRecord{Scenarios: []recording{{
 				ID:               "verify-probe",
 				DefinitionDigest: definitionDigest(recorded[0]),
+				InputDigest:      readInputs(t, ".", recorded[0]),
 			}}}
 			if err := writeRecord(recordFile, record); err != nil {
 				t.Fatalf("writeRecord: %v", err)
@@ -399,13 +412,15 @@ steps:
 		t.Fatalf("loadScenarios: %v", err)
 	}
 	digests := map[string]string{}
+	inputs := map[string]string{}
 	for _, one := range recorded {
 		digests[one.ID] = definitionDigest(one)
+		inputs[one.ID] = readInputs(t, ".", one)
 	}
 	recordFile := filepath.Join(directory, "runs.json")
 	if err := writeRecord(recordFile, runRecord{Scenarios: []recording{
-		{ID: "only-first", DefinitionDigest: digests["only-first"]},
-		{ID: "only-second", DefinitionDigest: digests["only-second"]},
+		{ID: "only-first", DefinitionDigest: digests["only-first"], InputDigest: inputs["only-first"]},
+		{ID: "only-second", DefinitionDigest: digests["only-second"], InputDigest: inputs["only-second"]},
 	}}); err != nil {
 		t.Fatalf("writeRecord: %v", err)
 	}
@@ -437,7 +452,7 @@ steps:
 
 	// A record with no recording of the named scenario verified nothing.
 	if err := writeRecord(recordFile, runRecord{Scenarios: []recording{
-		{ID: "only-second", DefinitionDigest: digests["only-second"]},
+		{ID: "only-second", DefinitionDigest: digests["only-second"], InputDigest: inputs["only-second"]},
 	}}); err != nil {
 		t.Fatalf("writeRecord: %v", err)
 	}

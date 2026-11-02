@@ -148,9 +148,12 @@ publishes.
 Each recorded scenario carries a digest of what the scenario file says it runs:
 the reset, and for every step its command, wait, retry, phase, streams and
 expectations. The title, tagline, lesson, tags and notes are left out, since
-rewording them does not change what ran. `make verify-demo-recording` computes
-the digest again from the files and refuses a recording that no longer matches,
-without a cluster. `make verify-source` runs it, so a pull request that changes
+rewording them does not change what ran. A second digest covers the files its
+commands name under `demo/manifests`, `demo/schemas`, `demo/migrations`,
+`demo/migrations-checkpoint`, `demo/mysql` and `demo/reference`, since a
+manifest can change while the command that applies it stays the same.
+`make verify-demo-recording` computes both again from the files and refuses a
+recording that no longer matches, without a cluster. `make verify-source` runs it, so a pull request that changes
 what a scenario runs has to carry a new recording. With no cluster at hand,
 `gh workflow run demo.yml --ref <branch>` records on the branch and uploads
 `demo/recordings/runs.json` as the run's `demonstration-recording` artifact.
