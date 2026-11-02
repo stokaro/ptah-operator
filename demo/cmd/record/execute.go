@@ -20,6 +20,9 @@ type recorder struct {
 	// otherwise hold the whole recording, and the run that produced no
 	// recording is the one nobody can read.
 	stepTimeout time.Duration
+	// promptTimeout bounds the wait for each prompt a step answers, while the
+	// command runs. Zero is defaultPromptTimeout.
+	promptTimeout time.Duration
 	// pollInterval is how often an await re-reads the object.
 	pollInterval time.Duration
 	// normalizer prepares captured text for publication, and refuses text
@@ -490,7 +493,7 @@ func (r *recorder) attempt(ctx context.Context, current step, expected expectati
 		// Once: validate refuses a retry beside answers.
 		result, err := r.terminal(ctx, current.Run, current.Answers)
 		if err != nil {
-			return outcome{}, nil, err
+			return result, nil, err
 		}
 		return result, expected.evaluate(result), nil
 	}

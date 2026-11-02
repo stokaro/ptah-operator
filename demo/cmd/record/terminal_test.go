@@ -102,8 +102,10 @@ func TestTerminalTypesEachAnswerAfterItsPrompt(t *testing.T) {
 // fails the step and says which prompt never came.
 func TestTerminalRefusesAPromptThatNeverCame(t *testing.T) {
 	t.Parallel()
+	// The output is composed, so the refusal can carry it only from the
+	// transcript and not from the command's own text.
 	result, err := terminalRecorder(t, 30*time.Second).terminal(context.Background(),
-		`echo "Nothing was approved."; exit 4`, []answer{{Prompt: "Type yes to approve: ", Type: "yes"}})
+		`printf 'Nothing was %s.\n' approved; exit 4`, []answer{{Prompt: "Type yes to approve: ", Type: "yes"}})
 	if err == nil {
 		t.Fatalf("a prompt that never came was accepted:\n%s", result.stdout)
 	}
@@ -127,17 +129,89 @@ func TestTerminalLooksForEachPromptAfterTheOneBefore(t *testing.T) {
 }
 
 // A command that hangs is stopped with everything it started, so the step
-// ends at its timeout instead of waiting on a process that holds the terminal.
+// ends at its timeout instead of waiting on a process that holds the terminal,
+// and says what the terminal showed until then.
 func TestTerminalStopsACommandThatOutlivesTheStep(t *testing.T) {
 	t.Parallel()
 	started := time.Now()
-	_, err := terminalRecorder(t, 2*time.Second).terminal(context.Background(),
-		`sleep 60 & printf 'Q: '; read reply; sleep 60`, []answer{{Prompt: "Q: ", Type: "yes"}})
-	if err == nil || !strings.Contains(err.Error(), "did not finish within") {
-		t.Fatalf("a command that outlived the step was not stopped: %v", err)
+	result, err := terminalRecorder(t, 2*time.Second).terminal(context.Background(),
+		`sleep 60 & printf 'Q: '; read reply; echo "waiting on $reply"; sleep 60`, []answer{{Prompt: "Q: ", Type: "yes"}})
+	if err == nil {
+		t.Fatalf("a command that outlived the step was not stopped:\n%s", result.stdout)
+	}
+	for _, want := range []string{"did not finish within 2s", "the terminal showed", "waiting on yes"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if !strings.Contains(result.stdout, "waiting on yes") {
+		t.Fatalf("the transcript did not come back with the refusal: %q", result.stdout)
 	}
 	if waited := time.Since(started); waited > 20*time.Second {
 		t.Fatalf("the step took %s to give up on a command with a two-second timeout", waited)
+	}
+}
+
+// A prompt that is not coming fails the step at its own deadline, well before
+// the step's, and the refusal carries what the command printed instead.
+func TestTerminalGivesUpOnAPromptThatIsNotComing(t *testing.T) {
+	t.Parallel()
+	subject := terminalRecorder(t, time.Minute)
+	subject.promptTimeout = time.Second
+	started := time.Now()
+	result, err := subject.terminal(context.Background(),
+		`printf 'kubectl-ptah: no plan is %s\n' published; sleep 60`, []answer{{Prompt: "Type yes to approve: ", Type: "yes"}})
+	if err == nil {
+		t.Fatalf("a prompt that never came was accepted:\n%s", result.stdout)
+	}
+	for _, want := range []string{`printed no "Type yes to approve: " within 1s`, "never typed", "no plan is published"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if !strings.Contains(result.stdout, "no plan is published") {
+		t.Fatalf("the transcript did not come back with the refusal: %q", result.stdout)
+	}
+	if waited := time.Since(started); waited > 20*time.Second {
+		t.Fatalf("the step took %s to give up on a prompt with a one-second deadline", waited)
+	}
+}
+
+// The prompt deadline counts from the last answer, not from the start, and
+// ends with the last answer: what the command does after it is the step's.
+func TestTerminalCountsThePromptDeadlineFromEachAnswer(t *testing.T) {
+	t.Parallel()
+	subject := terminalRecorder(t, time.Minute)
+	subject.promptTimeout = 3 * time.Second
+	// Each prompt comes two seconds after the one before, so the second is
+	// four seconds after the start; then the command works past the deadline.
+	result, err := subject.terminal(context.Background(),
+		`sleep 2; printf 'first: '; read one; sleep 2; printf 'second: '; read two; sleep 4; echo "done $one $two"`,
+		[]answer{{Prompt: "first: ", Type: "a"}, {Prompt: "second: ", Type: "b"}})
+	if err != nil {
+		t.Fatalf("terminal: %v", err)
+	}
+	if !strings.Contains(result.stdout, "done a b") {
+		t.Fatalf("the command did not finish: %q", result.stdout)
+	}
+}
+
+// A process the command leaves in the background can hold the terminal past
+// the command's exit. The transcript is read until the drain bound and no
+// longer, and the step ends with the command.
+func TestTerminalEndsTheReadABackgroundProcessHolds(t *testing.T) {
+	t.Parallel()
+	started := time.Now()
+	result, err := terminalRecorder(t, time.Minute).terminal(context.Background(),
+		`printf 'Q: '; read reply; sleep 15 & echo "left $reply behind"`, []answer{{Prompt: "Q: ", Type: "it"}})
+	if err != nil {
+		t.Fatalf("terminal: %v", err)
+	}
+	if !strings.Contains(result.stdout, "left it behind") {
+		t.Fatalf("the transcript lost the command's output: %q", result.stdout)
+	}
+	if waited := time.Since(started); waited > terminalDrain+5*time.Second {
+		t.Fatalf("the step took %s, waiting on the background process rather than the command", waited)
 	}
 }
 
