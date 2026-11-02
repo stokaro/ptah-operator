@@ -38,18 +38,21 @@ spec:
             - baseline
             - --migrations-dir=/migrations
             - --dir-format=ptah
-            - --db-url=$(TARGET_URL)
-            - --shadow-db=$(SHADOW_URL)
             - --version=1
           env:
             - {name: HOME, value: /work}
             - {name: TMPDIR, value: /work}
-            # The database to adopt, and a shadow that holds nothing else:
-            # baseline empties it before it replays anything.
-            - name: TARGET_URL
+            # Ptah reads every flag from PTAH_<FLAG> as well. PTAH_DB_URL is
+            # --db-url, the database to adopt. PTAH_SHADOW_DB is --shadow-db,
+            # a database that holds nothing else: baseline empties it before
+            # it replays anything.
+            - name: PTAH_DB_URL
               valueFrom: {secretKeyRef: {name: demo-database, key: url}}
-            - name: SHADOW_URL
+            - name: PTAH_SHADOW_DB
               valueFrom: {secretKeyRef: {name: demo-shadow-database, key: url}}
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {cpu: 500m, memory: 256Mi}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

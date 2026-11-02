@@ -54,7 +54,7 @@ steps:
     run: cat demo/manifests/adopt-existing-database/baseline-v2.yaml
     expect:
       exit: 0
-      stdout_contains: [migrations, baseline, "--db-url=$(TARGET_URL)", "--shadow-db=$(SHADOW_URL)", "--version=2"]
+      stdout_contains: [migrations, baseline, PTAH_DB_URL, PTAH_SHADOW_DB, "--version=2"]
 
   # kubectl set image puts the executor image in place of the name the file
   # carries, and prints the Job without sending it; apply sends it.
