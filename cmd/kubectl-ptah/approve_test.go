@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -179,15 +180,18 @@ func TestApproveRefusesAFingerprintThatIsNotTheCurrentPlans(t *testing.T) {
 }
 
 func TestApproveSaysWhyNothingCanBeApprovedNow(t *testing.T) {
+	// A gate the operator does not reopen by itself: the policy holds the
+	// plan.
 	closed := func(status *operatorv1alpha1.PtahSchemaStatus) {
-		status.Phase = operatorv1alpha1.PhaseObserving
-		status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{Type: operatorv1alpha1.OperationObserve, ID: "op"}
+		status.Phase = operatorv1alpha1.PhaseBlocked
+		meta.SetStatusCondition(&status.Conditions, metav1.Condition{Type: operatorv1alpha1.ConditionApprovalRequired,
+			Status: metav1.ConditionFalse, Reason: "DestructiveChangesDisabled"})
 	}
 	api, fingerprint := approvable(t, closed)
 
 	code, _, stderr := runApprove(t, api, "", false, "schema/storefront", "--plan-fingerprint", fingerprint)
 
-	if code != exitNotDone || len(api.created) != 0 || !strings.Contains(stderr, "running Observe") {
+	if code != exitNotDone || len(api.created) != 0 || !strings.Contains(stderr, "The schema is Blocked, not waiting for an approval") {
 		t.Fatalf("approve = %d, %d creates, stderr %q", code, len(api.created), stderr)
 	}
 
@@ -198,9 +202,134 @@ func TestApproveSaysWhyNothingCanBeApprovedNow(t *testing.T) {
 	code, stdout, stderr := runApprove(t, api, "yes\n", true, "schema/storefront")
 
 	if code != exitNotDone || stdout != "" || len(api.created) != 0 ||
-		!strings.Contains(stderr, "running Observe") || strings.Contains(stderr, "Type yes") {
+		!strings.Contains(stderr, "is Blocked") || strings.Contains(stderr, "Type yes") {
 		t.Fatalf("approve on a terminal = %d, %d creates, stdout %q, stderr %q", code, len(api.created), stdout, stderr)
 	}
+}
+
+// rereading is the API server with the operator reading the schema again at
+// its interval once the person has answered: from then on each read of the
+// schema first applies the next step to its status.
+type rereading struct {
+	*admitting
+	t     *testing.T
+	mu    sync.Mutex
+	armed bool
+	steps []func(*operatorv1alpha1.PtahSchemaStatus)
+}
+
+func (r *rereading) Get(ctx context.Context, key client.ObjectKey, object client.Object, options ...client.GetOption) error {
+	var step func(*operatorv1alpha1.PtahSchemaStatus)
+	if _, schema := object.(*operatorv1alpha1.PtahSchema); schema {
+		r.mu.Lock()
+		if r.armed && len(r.steps) > 0 {
+			step, r.steps = r.steps[0], r.steps[1:]
+		}
+		r.mu.Unlock()
+	}
+	if step != nil {
+		stored := &operatorv1alpha1.PtahSchema{}
+		if err := r.admitting.Client.Get(ctx, key, stored); err != nil {
+			r.t.Fatalf("read the schema to change its status: %v", err)
+		}
+		step(&stored.Status)
+		if err := r.admitting.Client.Status().Update(ctx, stored); err != nil {
+			r.t.Fatalf("write the status the operator would: %v", err)
+		}
+	}
+	return r.admitting.Get(ctx, key, object, options...)
+}
+
+func (r *rereading) arm() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.armed = true
+}
+
+// decides is a person who reads the plan for a while and answers, at which
+// point the operator starts its read.
+type decides struct {
+	reads  time.Duration
+	answer io.Reader
+	then   func()
+}
+
+func (d *decides) Read(buffer []byte) (int, error) {
+	time.Sleep(d.reads)
+	d.then()
+	return d.answer.Read(buffer)
+}
+
+func readStep(phase operatorv1alpha1.ReconciliationPhase, operation operatorv1alpha1.OperationType) func(*operatorv1alpha1.PtahSchemaStatus) {
+	return func(status *operatorv1alpha1.PtahSchemaStatus) {
+		status.Phase = phase
+		status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{Type: operation, ID: "read"}
+	}
+}
+
+func backAtTheGate(status *operatorv1alpha1.PtahSchemaStatus) {
+	status.Phase, status.ActiveOperation = operatorv1alpha1.PhaseAwaitingApproval, nil
+}
+
+// The operator reads a waiting schema again at its interval, and admission
+// refuses an approval while it does. A person who answers then is not told
+// there is nothing to approve: the answer is sent when the read ends with the
+// reviewed plan back at the gate.
+func TestApproveWaitsForTheGateWhenTheOperatorReadsAgain(t *testing.T) {
+	t.Run("the person answers during the read", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			api, fingerprint := approvable(t, nil)
+			server := &rereading{admitting: api, t: t, steps: []func(*operatorv1alpha1.PtahSchemaStatus){
+				readStep(operatorv1alpha1.PhaseResolving, operatorv1alpha1.OperationResolve),
+				readStep(operatorv1alpha1.PhaseVerifying, operatorv1alpha1.OperationVerify),
+				backAtTheGate,
+			}}
+			person := &decides{reads: 2 * time.Minute, answer: strings.NewReader("yes\n"), then: server.arm}
+
+			code, stdout, stderr := runApproveWith(t, server, planreadtest.Namespace, person, true, "schema/storefront")
+
+			if code != exitOK || len(api.created) != 1 || len(server.steps) != 0 {
+				t.Fatalf("approve = %d after %d creates with %d steps left; stderr %q", code, len(api.created), len(server.steps), stderr)
+			}
+			requireSays(t, "approve's stderr", stderr, "Type yes to approve: ",
+				"The operator is reading this schema again (Resolve); admission takes an approval once it is back at the approval gate.",
+				"is approved when it is back at the approval gate, if it is still the plan waiting; waiting up to 5m0s.")
+			requireSays(t, "approve's report", stdout, "Approved:", fingerprint)
+		})
+	})
+	t.Run("the read was under way before the review", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			api, _ := approvable(t, readStep(operatorv1alpha1.PhaseObserving, operatorv1alpha1.OperationObserve))
+			server := &rereading{admitting: api, t: t, steps: []func(*operatorv1alpha1.PtahSchemaStatus){backAtTheGate}}
+			person := &decides{reads: 10 * time.Second, answer: strings.NewReader("yes\n"), then: server.arm}
+
+			code, _, stderr := runApproveWith(t, server, planreadtest.Namespace, person, true, "schema/storefront")
+
+			if code != exitOK || len(api.created) != 1 {
+				t.Fatalf("approve = %d after %d creates; stderr %q", code, len(api.created), stderr)
+			}
+			requireSays(t, "approve's stderr", stderr,
+				"The operator is reading this schema again (Observe); admission takes an approval once it is back at the approval gate. "+
+					"A decision taken now is sent when that read ends, if this plan is still the one waiting.",
+				"Type yes to approve: ")
+		})
+	})
+	t.Run("the read does not end", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			api, _ := approvable(t, nil)
+			server := &rereading{admitting: api, t: t, steps: []func(*operatorv1alpha1.PtahSchemaStatus){
+				readStep(operatorv1alpha1.PhaseObserving, operatorv1alpha1.OperationObserve),
+			}}
+			person := &decides{reads: time.Minute, answer: strings.NewReader("yes\n"), then: server.arm}
+
+			code, _, stderr := runApproveWith(t, server, planreadtest.Namespace, person, true, "schema/storefront")
+
+			if code != exitNotDone || len(api.created) != 0 {
+				t.Fatalf("approve = %d after %d creates; stderr %q", code, len(api.created), stderr)
+			}
+			requireSays(t, "approve's stderr", stderr, "The operator was still reading schema/storefront again after 5m0s. Nothing was approved")
+		})
+	})
 }
 
 // The manifest is the decision and nothing else, under a name kubectl create

@@ -163,10 +163,11 @@ rather than half its SQL.
 Exit status: `0` printed, approved, changed or reached, `1` could not read or
 verify, `2` the command line, `3` nothing stored to print, approve, change or
 wait on. The commands that write add `4` nothing approved or changed (the plan
-changed, the operator would not admit an approval now, the fingerprint given is
-not the current plan's, you declined, the resource was deleted and created
-again, or set-source met a source that is not an OCI artifact, an Apply
-running, or a source another writer changed after it was read), `5` refused by
+or the spec changed, the operator would not admit an approval now, the
+fingerprint given is not the current plan's, you declined, the resource was
+deleted and created again, or set-source met a source that is not an OCI
+artifact, an Apply running, or a source another writer changed after it was
+read), `5` refused by
 RBAC or the API server, and `6` sent with no answer: the approval or the
 change may have been stored. A wait adds `7` timed out and `8` the resource
 will not reach the target.

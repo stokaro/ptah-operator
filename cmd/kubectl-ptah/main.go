@@ -44,9 +44,9 @@ const (
 	// empty SQL with a zero status would be a wrong one.
 	exitAbsent = 3
 	// exitNotDone covers a decision or a change this program did not make:
-	// approve's plan changed during review, the operator would not admit an
-	// approval now, the fingerprint given is not the current plan's, or the
-	// person declined; the resource suspend, resume, refresh or set-source
+	// approve's plan or spec changed during review, the operator would not
+	// admit an approval now, the fingerprint given is not the current plan's,
+	// or the person declined; the resource suspend, resume, refresh or set-source
 	// read was deleted and created again before the change reached it; or
 	// set-source met a source that is not an OCI artifact, an Apply running,
 	// or a source another writer changed after it was read.
@@ -427,9 +427,12 @@ line that says why they are missing, and exits 0. Events are kubectl's own:
 approve shows the current plan of a schema or a migration and the identities
 an approval of it carries, asks for a decision, and creates the approval as
 you. It reads the resource again first and sends nothing if the plan was
-replaced, the resource was recreated, or the operator would not admit an
-approval now. Admission records who approved and when; RBAC decides whether
-you may.
+replaced, the resource was recreated or its spec changed, or the operator
+would not admit an approval now. The operator reads a waiting resource again
+at its interval, and admission takes no approval while it does: an answer
+given then is sent when that read ends, if the same plan is waiting again,
+and approve waits up to 5m for that. Admission records who approved and when;
+RBAC decides whether you may.
 
   --plan-fingerprint <fp>  decide without asking, only if the current plan
                            carries this fingerprint (for a script that
@@ -558,10 +561,11 @@ as kubectl spells it.
 
 Exit status: 0 printed, changed or reached, 1 could not read or verify, 2
 usage, 3 nothing stored to print, approve, change or wait on, 4 nothing
-approved or changed (the plan changed, the operator would not admit an
-approval now, the fingerprint is not the current plan's, you declined, the
-resource was deleted and created again, or set-source met a source that is not
-an OCI artifact, an Apply running, or a source changed after it was read), 5
+approved or changed (the plan or the spec changed, the operator would not
+admit an approval now, the fingerprint is not the current plan's, you
+declined, the resource was deleted and created again, or set-source met a
+source that is not an OCI artifact, an Apply running, or a source changed
+after it was read), 5
 refused by RBAC or the API server, 6 sent with no answer: the change may have
 been stored, 7 the wait timed out, 8 the resource will not reach the target.
 `)

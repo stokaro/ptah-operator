@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -81,7 +82,21 @@ type Options struct {
 	Name string
 	// ServerDryRun asks admission to check the approval without storing it.
 	ServerDryRun bool
+	// Await is how long Submit waits for the operator to come back to the
+	// approval gate when it finds it reading the resource again
+	// (Review.Reading). Zero answers such a read at once, as Closed.
+	Await time.Duration
+	// CallTimeout bounds each request Submit sends, and zero leaves them to
+	// ctx. A wait spans many requests, so it does not bound the wait.
+	CallTimeout time.Duration
+	// Waiting, when set, is called once when Submit begins to wait, with
+	// what the operator is doing.
+	Waiting func(why string)
 }
+
+// pollInterval is how often Submit reads the resource while it waits for the
+// approval gate.
+const pollInterval = 2 * time.Second
 
 // Manifest is the approval of the reviewed plan as a repository holds it: the
 // API version, the kind, the name and the namespace, and the three references
@@ -176,31 +191,71 @@ func setKind(approval client.Object, family Family) {
 // It reads the resource again first, by identity: a stored plan is immutable,
 // so the same resource UID, plan UID and fingerprint are the plan that was
 // verified and shown. A plan replaced while the person read the old one, a
-// resource deleted and created again, or a resource the operator started
-// reading again are all answered without sending anything:
-// an approval is a decision about the plan that was shown, and no retry may
-// carry it over to another one.
+// resource deleted and created again, or a spec changed since are all
+// answered without sending anything: an approval is a decision about the plan
+// that was shown, under the spec it was shown under, and no retry may carry
+// it over to another one.
+//
+// A resource the operator is reading again closes the gate only until that
+// read ends, and admission refuses an approval meanwhile. With opts.Await
+// Submit waits for the read to end, reading the resource at pollInterval and
+// holding every read to the same identity, and sends the approval once the
+// gate is open with the reviewed plan. A read that ends anywhere else is
+// answered as it would have been at once.
 func Submit(ctx context.Context, c client.Client, review Review, opts Options) Result {
 	identify := identifySchema
 	if review.Family == Migration {
 		identify = identifyMigration
 	}
-	current, err := identify(ctx, c, review.Namespace, review.Name)
-	switch {
-	case errors.Is(err, ErrNotFound):
-		return Result{Outcome: Changed, Message: fmt.Sprintf(
-			"%s/%s was deleted after you reviewed its plan. Nothing was approved.", review.Family, review.Name)}
-	case errors.Is(err, ErrNothingToApprove):
-		return Result{Outcome: Changed, Message: fmt.Sprintf(
-			"%s/%s has no current plan any more. Nothing was approved.", review.Family, review.Name)}
-	case err != nil:
-		return Result{Outcome: Failed, Message: fmt.Sprintf("Nothing was approved: %v", err)}
-	}
-	if why := changedSince(review, current); why != "" {
-		return Result{Outcome: Changed, Message: why + " Nothing was approved; run the command again to review the plan that is current now."}
-	}
-	if !current.Open {
-		return Result{Outcome: Closed, Message: current.Closed + " Nothing was approved."}
+	var deadline time.Time
+	for {
+		readCtx, cancel := bounded(ctx, opts.CallTimeout)
+		current, err := identify(readCtx, c, review.Namespace, review.Name)
+		cancel()
+		switch {
+		case errors.Is(err, ErrNotFound):
+			return Result{Outcome: Changed, Message: fmt.Sprintf(
+				"%s/%s was deleted after you reviewed its plan. Nothing was approved.", review.Family, review.Name)}
+		case err != nil && !errors.Is(err, ErrNothingToApprove):
+			return Result{Outcome: Failed, Message: fmt.Sprintf("Nothing was approved: %v", err)}
+		}
+		if why := changedSince(review, current); why != "" {
+			return Result{Outcome: Changed, Message: why + " Nothing was approved; run the command again to review the plan that is current now."}
+		}
+		if err != nil && !current.Reading {
+			return Result{Outcome: Changed, Message: fmt.Sprintf(
+				"%s/%s has no current plan any more. Nothing was approved.", review.Family, review.Name)}
+		}
+		if current.Reading {
+			why := current.Closed
+			if why == "" {
+				// The read cleared the plan, so no gate was judged.
+				why = fmt.Sprintf("The operator is reading %s/%s again, and publishes its plan when that read ends.", review.Family, review.Name)
+			}
+			now := time.Now()
+			switch {
+			case opts.Await <= 0:
+				return Result{Outcome: Closed, Message: why + " Nothing was approved."}
+			case deadline.IsZero():
+				deadline = now.Add(opts.Await)
+				if opts.Waiting != nil {
+					opts.Waiting(why)
+				}
+			case !now.Before(deadline):
+				return Result{Outcome: Closed, Message: fmt.Sprintf("The operator was still reading %s/%s again after %s. "+
+					"Nothing was approved; run the command again once it waits for an approval.", review.Family, review.Name, opts.Await)}
+			}
+			select {
+			case <-ctx.Done():
+				return Result{Outcome: Failed, Message: fmt.Sprintf("Nothing was approved: %v", ctx.Err())}
+			case <-time.After(min(pollInterval, deadline.Sub(now))):
+			}
+			continue
+		}
+		if !current.Open {
+			return Result{Outcome: Closed, Message: current.Closed + " Nothing was approved."}
+		}
+		break
 	}
 
 	approval := approvalObject(review, opts.Name)
@@ -208,8 +263,10 @@ func Submit(ctx context.Context, c client.Client, review Review, opts Options) R
 	if opts.ServerDryRun {
 		create = append(create, client.DryRunAll)
 	}
-	if err := c.Create(ctx, approval, create...); err != nil {
-		return refusal(ctx, c, review, opts.Name, err)
+	createCtx, cancel := bounded(ctx, opts.CallTimeout)
+	defer cancel()
+	if err := c.Create(createCtx, approval, create...); err != nil {
+		return refusal(createCtx, c, review, opts.Name, err)
 	}
 	// The typed client decodes the answer without its kind. What is printed
 	// is the object as the API server holds it, kind included.
@@ -220,12 +277,27 @@ func Submit(ctx context.Context, c client.Client, review Review, opts Options) R
 	return Result{Outcome: Admitted, Approval: approval}
 }
 
+// bounded is ctx with timeout, or ctx alone when timeout is not positive.
+func bounded(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if timeout <= 0 {
+		return context.WithCancel(ctx)
+	}
+	return context.WithTimeout(ctx, timeout)
+}
+
 // changedSince names what makes current another plan than the one reviewed,
-// or returns "" when it is the same plan of the same resource.
+// or returns "" when it is the same plan of the same resource under the same
+// spec. A current review with no plan, read while the operator reads the
+// resource again, names no other plan.
 func changedSince(reviewed, current Review) string {
 	switch {
 	case current.ResourceUID != reviewed.ResourceUID:
 		return fmt.Sprintf("%s/%s was deleted and created again after you reviewed its plan.", reviewed.Family, reviewed.Name)
+	case current.Generation != reviewed.Generation:
+		return fmt.Sprintf("The spec of %s/%s changed after you reviewed its plan (generation %d, now %d).",
+			reviewed.Family, reviewed.Name, reviewed.Generation, current.Generation)
+	case current.PlanName == "":
+		return ""
 	case current.PlanName != reviewed.PlanName || current.PlanUID != reviewed.PlanUID:
 		return fmt.Sprintf("A newer plan, %s, replaced %s while you reviewed it.", current.PlanName, reviewed.PlanName)
 	case current.Missing:

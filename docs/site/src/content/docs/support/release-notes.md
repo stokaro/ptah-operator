@@ -32,7 +32,9 @@ on the upgrade. A script that reads the text of `kubectl ptah` has to move to
   `migration/NAME` shows the current plan with the identities an approval
   binds, asks for a decision, and creates the approval as you, so approving
   no longer means writing a manifest by hand. It reads the resource again
-  before it sends anything and approves nothing if the plan changed.
+  before it sends anything and approves nothing if the plan or the spec
+  changed. An answer given while the operator reads the resource again at its
+  interval is sent when that read ends, if the same plan is waiting again.
   `--plan-fingerprint` approves from a script and `--dry-run client` prints the
   manifest instead. It needs `create` on the approval kind besides the plan
   reads, which the chart's approver ClusterRole carries.

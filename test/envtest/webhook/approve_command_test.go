@@ -165,7 +165,8 @@ func (a *afterTheRead) Create(ctx context.Context, object client.Object, options
 func (fixture approvalFixture) review() approve.Review {
 	return approve.Review{
 		Family: approve.Schema, Namespace: fixture.namespace, Name: fixture.schema.Name, ResourceUID: fixture.schema.UID,
-		PlanName: fixture.plan.Name, PlanUID: fixture.plan.UID, Fingerprint: fixture.plan.Spec.Fingerprint,
+		Generation: fixture.schema.Generation,
+		PlanName:   fixture.plan.Name, PlanUID: fixture.plan.UID, Fingerprint: fixture.plan.Spec.Fingerprint,
 	}
 }
 

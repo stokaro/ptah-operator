@@ -83,8 +83,11 @@ kubectl ptah approve schema/application -n application
 
 It reads the schema once more before it sends anything, and approves nothing if
 a newer plan replaced the one shown, the schema was deleted and created again,
-or the operator would not admit an approval now, as while it reads the database
-again at its interval. The answer it prints is the API server's: the approval
+its spec changed, or the operator would not admit an approval now. The
+operator reads a waiting schema again at its interval, and admission takes no
+approval while it does: an answer given then is sent when that read ends, if
+the plan shown is the one waiting again, and approve waits up to five minutes
+for that. The answer it prints is the API server's: the approval
 admission stored with the identity it stamped, or the refusal in RBAC's or
 admission's own words.
 

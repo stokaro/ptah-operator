@@ -117,9 +117,11 @@ kubectl ptah approve schema/application -n application --wait
 ```
 
 It reads the schema once more before it sends anything. If a newer plan
-replaced the one you read, or the operator is reading the database again and
-admission would refuse an approval, it says so and approves nothing. A script
-that reviewed the plan passes its fingerprint with `--plan-fingerprint`.
+replaced the one you read, it says so and approves nothing. The operator reads
+the database again at its interval, and admission refuses an approval while it
+does; an answer given then is sent when that read ends, if the same plan is
+waiting again. A script that reviewed the plan passes its fingerprint with
+`--plan-fingerprint`.
 `--dry-run client` prints the approval as YAML instead, to keep in a
 repository and create later with `kubectl create -f`. Admission records
 whoever creates it as the approver, so create it as the person who decided:

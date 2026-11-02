@@ -125,13 +125,20 @@ func approveCommand(ctx context.Context, arguments []string, stdin io.Reader, in
 		return exitUsage
 	}
 	if !review.Open {
-		if !printOnly {
+		switch {
+		case printOnly:
+			// A manifest outlives the moment: the operator reading again at its
+			// interval closes the gate for a while, and the plan stays current.
+			fmt.Fprintf(stderr, "kubectl-ptah: %s Admission would refuse this approval now.\n", review.Closed)
+		case review.Reading:
+			// The read ends at the gate again by itself. The decision is taken
+			// now, about this plan, and sent once the gate is open with it.
+			fmt.Fprintf(stderr, "kubectl-ptah: %s A decision taken now is sent when that read ends, if this plan is still the one waiting.\n",
+				review.Closed)
+		default:
 			fmt.Fprintf(stderr, "kubectl-ptah: %s Nothing was approved.\n", review.Closed)
 			return exitNotDone
 		}
-		// A manifest outlives the moment: the operator reading again at its
-		// interval closes the gate for a while, and the plan stays current.
-		fmt.Fprintf(stderr, "kubectl-ptah: %s Admission would refuse this approval now.\n", review.Closed)
 	}
 	if *fingerprint == "" {
 		// stdout carries the object whenever one is printed, so the review
@@ -182,7 +189,17 @@ func approveCommand(ctx context.Context, arguments []string, stdin io.Reader, in
 			return exitFailed
 		}
 	}
-	result := approve.Submit(submitCtx, cluster, review, approve.Options{Name: *name, ServerDryRun: *dryRun == "server"})
+	// The operator reads a waiting resource again at its interval, which
+	// closes the gate until the read ends; a person who took longer than the
+	// interval over the plan meets it. Submit waits for the gate then, and
+	// each request it sends carries --timeout of its own.
+	result := approve.Submit(ctx, cluster, review, approve.Options{
+		Name: *name, ServerDryRun: *dryRun == "server", Await: gateTimeout, CallTimeout: *timeout,
+		Waiting: func(why string) {
+			fmt.Fprintf(stderr, "%s Plan %s is approved when it is back at the approval gate, if it is still the plan "+
+				"waiting; waiting up to %s.\n", why, review.PlanName, gateTimeout)
+		},
+	})
 	switch result.Outcome {
 	case approve.Admitted, approve.Previewed:
 		if *output != "text" {
@@ -224,6 +241,12 @@ func approveCommand(ctx context.Context, arguments []string, stdin io.Reader, in
 		return exitFailed
 	}
 }
+
+// gateTimeout is how long approve waits, once the person has decided, for
+// the operator to end a read of the resource and be back at the approval
+// gate. A read takes a few Jobs; one that takes longer than this is not the
+// interval's read.
+const gateTimeout = 5 * time.Minute
 
 // printObject writes an object as YAML or JSON, the way kubectl prints one.
 func printObject(stdout, stderr io.Writer, object client.Object, format string) int {

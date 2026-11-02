@@ -93,6 +93,9 @@ type Review struct {
 	// ResourceUID is the schema's or migration's UID: a resource deleted and
 	// created again under the same name is another resource.
 	ResourceUID types.UID
+	// Generation is the resource's metadata.generation when it was read. A
+	// spec changed since is not the one the person reviewed the plan under.
+	Generation int64
 
 	PlanName        string
 	PlanUID         types.UID
@@ -110,6 +113,11 @@ type Review struct {
 	// carries why not, in words a person acts on.
 	Open   bool
 	Closed string
+	// Reading says the operator is reading the resource again, which it does
+	// at its interval while a plan waits for a person, and on request. The
+	// gate is closed until that read ends and reopens by itself; Submit waits
+	// for it when asked to.
+	Reading bool
 	// Missing says the plan the status names is not stored: the object under
 	// its name is another plan, or another resource's. Nothing can approve it,
 	// in any mode, and Closed says why. The review then carries the identity
@@ -169,20 +177,26 @@ func identifySchema(ctx context.Context, reader client.Reader, namespace, name s
 		}
 		return Review{}, fmt.Errorf("read PtahSchema %s/%s: %w", namespace, name, err)
 	}
-	current := schema.Status.Plan
-	if current == nil || current.Name == "" {
-		return Review{}, fmt.Errorf("%w: PtahSchema %s/%s has no current plan", ErrNothingToApprove, namespace, name)
-	}
 	review := Review{
 		Family:      Schema,
 		Namespace:   namespace,
 		Name:        name,
 		ResourceUID: schema.UID,
-		PlanName:    current.Name,
-		PlanUID:     current.UID,
-		Fingerprint: current.Fingerprint,
+		Generation:  schema.Generation,
+		Reading:     schemaReading(schema),
 	}
-	review.Open, review.Closed = schemaOpen(schema)
+	current := schema.Status.Plan
+	if current == nil || current.Name == "" {
+		// The harvest of a reading clears the plan, and the plan computed from
+		// it is published when the read ends.
+		if review.Reading {
+			return review, fmt.Errorf("%w: PtahSchema %s/%s has no current plan while the operator reads it again; "+
+				"it publishes one when that read ends", ErrNothingToApprove, namespace, name)
+		}
+		return review, fmt.Errorf("%w: PtahSchema %s/%s has no current plan", ErrNothingToApprove, namespace, name)
+	}
+	review.PlanName, review.PlanUID, review.Fingerprint = current.Name, current.UID, current.Fingerprint
+	review.Open, review.Closed = schemaOpen(schema, review.Reading)
 	return review, nil
 }
 
@@ -201,18 +215,23 @@ func identifyMigration(ctx context.Context, reader client.Reader, namespace, nam
 		}
 		return Review{}, fmt.Errorf("read PtahMigration %s/%s: %w", namespace, name, err)
 	}
-	ref := migration.Status.Plan
-	if ref == nil || ref.Name == "" {
-		return Review{}, fmt.Errorf("%w: PtahMigration %s/%s has no current plan", ErrNothingToApprove, namespace, name)
-	}
 	review := Review{
 		Family:      Migration,
 		Namespace:   namespace,
 		Name:        name,
 		ResourceUID: migration.UID,
-		PlanName:    ref.Name,
-		PlanUID:     ref.UID,
+		Generation:  migration.Generation,
+		Reading:     migrationReading(migration),
 	}
+	ref := migration.Status.Plan
+	if ref == nil || ref.Name == "" {
+		if review.Reading {
+			return review, fmt.Errorf("%w: PtahMigration %s/%s has no current plan while the operator reads it again; "+
+				"it publishes one when that read ends", ErrNothingToApprove, namespace, name)
+		}
+		return review, fmt.Errorf("%w: PtahMigration %s/%s has no current plan", ErrNothingToApprove, namespace, name)
+	}
+	review.PlanName, review.PlanUID = ref.Name, ref.UID
 	plan := &operatorv1alpha1.PtahMigrationPlan{}
 	if err := reader.Get(ctx, client.ObjectKey{Namespace: namespace, Name: ref.Name}, plan); err != nil {
 		if apierrors.IsNotFound(err) {
@@ -235,20 +254,26 @@ func identifyMigration(ctx context.Context, reader client.Reader, namespace, nam
 	review.Fingerprint = plan.Spec.Fingerprint
 	review.ContractVersion = plan.Spec.ContractVersion
 	review.MigrationPlan = plan
-	review.Open, review.Closed = migrationOpen(migration)
+	review.Open, review.Closed = migrationOpen(migration, review.Reading)
 	return review, nil
 }
 
 // schemaOpen says whether admission would take an approval of the schema's
 // current plan now, and why not when it would not. It asks what the webhook
-// asks of the status: the plan waiting for a person in AwaitingApproval, with
-// approval required, no operation running and no approval recorded.
-func schemaOpen(schema *operatorv1alpha1.PtahSchema) (bool, string) {
+// asks of the status (internal/admission, validateBinding): the plan waiting
+// for a person in AwaitingApproval, with approval required, no operation
+// running and no approval recorded. Admission refuses an approval while the
+// operator reads the schema again, so a read closes the gate here too, and
+// Reading tells that apart from a gate that will not reopen on its own.
+func schemaOpen(schema *operatorv1alpha1.PtahSchema, reading bool) (bool, string) {
 	status := schema.Status
 	switch {
 	case status.Plan.Approval != nil:
 		return false, fmt.Sprintf("The plan is approved already, by %s (%s).",
 			statusview.Clean(status.Plan.Approval.Approver.Username), statusview.Clean(status.Plan.Approval.Name))
+	case reading:
+		return false, fmt.Sprintf("The operator is reading this schema again (%s); admission takes an approval once it is back at the approval gate.",
+			readingWhat(string(operationType(status.ActiveOperation)), string(status.Phase)))
 	case status.ActiveOperation != nil:
 		return false, fmt.Sprintf("The operator is running %s for this schema. An approval is admitted once it is back at the approval gate; run this command again then.",
 			status.ActiveOperation.Type)
@@ -262,9 +287,16 @@ func schemaOpen(schema *operatorv1alpha1.PtahSchema) (bool, string) {
 
 // migrationOpen is schemaOpen for a migration, which also needs the history
 // read its plan was computed against.
-func migrationOpen(migration *operatorv1alpha1.PtahMigration) (bool, string) {
+func migrationOpen(migration *operatorv1alpha1.PtahMigration, reading bool) (bool, string) {
 	status := migration.Status
+	var operation string
+	if status.ActiveOperation != nil {
+		operation = string(status.ActiveOperation.Type)
+	}
 	switch {
+	case reading:
+		return false, fmt.Sprintf("The operator is reading this migration again (%s); admission takes an approval once it is back at the approval gate.",
+			readingWhat(operation, string(status.Phase)))
 	case status.ActiveOperation != nil:
 		return false, fmt.Sprintf("The operator is running %s for this migration. An approval is admitted once it is back at the approval gate; run this command again then.",
 			status.ActiveOperation.Type)
@@ -276,6 +308,74 @@ func migrationOpen(migration *operatorv1alpha1.PtahMigration) (bool, string) {
 		return false, "The operator does not require an approval of this plan."
 	}
 	return true, ""
+}
+
+// schemaReading reports a schema the operator is reading again: a read-only
+// operation in flight, or a phase such a read passes through between two of
+// them. The operator does this at its interval while a plan waits for a
+// person, so a person reviewing a plan for longer than the interval meets it.
+// The read ends at the approval gate again by itself, with the same stored
+// plan when nothing it read changed: the plan store reuses a byte-identical
+// manifest under its name and UID (planstore.Store.Publish). The proof after
+// an Apply is not such a read.
+func schemaReading(schema *operatorv1alpha1.PtahSchema) bool {
+	status := schema.Status
+	if status.PendingObservation != nil {
+		return false
+	}
+	if operation := status.ActiveOperation; operation != nil {
+		switch operation.Type {
+		case operatorv1alpha1.OperationResolve, operatorv1alpha1.OperationVerify,
+			operatorv1alpha1.OperationObserve, operatorv1alpha1.OperationPlan:
+			return true
+		}
+		return false
+	}
+	switch status.Phase {
+	case operatorv1alpha1.PhaseResolving, operatorv1alpha1.PhaseVerifying,
+		operatorv1alpha1.PhaseObserving, operatorv1alpha1.PhasePlanning:
+		return true
+	}
+	return false
+}
+
+// migrationReading is schemaReading for a migration: Resolve, Verify and the
+// read of the history, and the phases between them. A migration plan waits
+// for a person only under apply policy OnApproval, where Planning is the
+// write between the history and the plan published from it, not a rest; a
+// changed policy is a changed generation, which Submit refuses first.
+func migrationReading(migration *operatorv1alpha1.PtahMigration) bool {
+	status := migration.Status
+	if operation := status.ActiveOperation; operation != nil {
+		switch operation.Type {
+		case operatorv1alpha1.MigrationOperationResolve, operatorv1alpha1.MigrationOperationVerify,
+			operatorv1alpha1.MigrationOperationHistory:
+			return true
+		}
+		return false
+	}
+	switch status.Phase {
+	case operatorv1alpha1.MigrationPhaseResolving, operatorv1alpha1.MigrationPhaseVerifying,
+		operatorv1alpha1.MigrationPhaseReading, operatorv1alpha1.MigrationPhasePlanning:
+		return true
+	}
+	return false
+}
+
+func operationType(operation *operatorv1alpha1.ActiveOperationStatus) operatorv1alpha1.OperationType {
+	if operation == nil {
+		return ""
+	}
+	return operation.Type
+}
+
+// readingWhat names the step of a read: the operation in flight, or the
+// phase between two of them.
+func readingWhat(operation, phase string) string {
+	if operation != "" {
+		return operation
+	}
+	return "phase " + phaseOr(phase)
 }
 
 func phaseOr(phase string) string {
