@@ -35,6 +35,10 @@ steps:
   # beside what the operator had observed. --wait stays until the operator
   # reports the resource Suspended with nothing in flight. The same change in
   # an editor is the line suspend: true under spec, through kubectl edit.
+  #
+  # The values kept here are what the operator last resolved, read and
+  # applied, taken once nothing is in flight, so no operation that was running
+  # can move them afterward.
   - note: Suspend it. One field, and the resource stays exactly where it is.
     run: kubectl ptah suspend schema/storefront -n "$NAMESPACE" --wait
     sync: suspended
@@ -49,6 +53,13 @@ steps:
           type: Suspended
           status: "True"
           reason: Requested
+        fields:
+          - path: status.source.digest
+            keep: resolved
+          - path: status.target.lastObservedAt
+            keep: observed
+          - path: status.applied.planFingerprint
+            keep: applied
 
   # Without --wait: a suspended resource plans nothing, so neither a plan
   # waiting for an approval nor convergence would come.
@@ -61,10 +72,25 @@ steps:
     expect:
       exit: 0
       stdout_contains: [Source set for]
+      resource:
+        kind: ptahschema
+        name: storefront
+        fields:
+          - path: metadata.generation
+            keep: pointed
 
   # A wait for convergence that cannot come, bounded, so the transcript shows
-  # the operator doing nothing rather than asserting it: the timeout names the
-  # phase and the condition that holds the resource.
+  # the operator doing nothing: the timeout names the phase and the condition
+  # that holds the resource.
+  #
+  # The proof does not rest on the 30 seconds. status.observedGeneration at
+  # the generation set-source wrote says the operator has already handled the
+  # new source, and the Suspended condition at that generation says how. The
+  # kept values say what it did not do: it resolved no artifact, read nothing
+  # from the database and applied nothing, and nothing is in flight. A
+  # suspended schema's pass ends there, with no claim and no requeue
+  # (internal/controller/schema_controller.go), so whatever wakes it, nothing
+  # starts while spec.suspend stays true.
   - note: Nothing happens, which is the point. A wait gives up and names what holds it.
     run: kubectl ptah wait schema/storefront -n "$NAMESPACE" --for in-sync --timeout 30s
     show: [stderr]
@@ -74,10 +100,22 @@ steps:
       resource:
         kind: ptahschema
         name: storefront
+        generation: current
         condition:
           type: Suspended
           status: "True"
           reason: Requested
+        fields:
+          - path: status.observedGeneration
+            sameAs: pointed
+          - path: status.source.digest
+            sameAs: resolved
+          - path: status.target.lastObservedAt
+            sameAs: observed
+          - path: status.applied.planFingerprint
+            sameAs: applied
+          - path: status.activeOperation
+            absent: true
 
   - note: The database is untouched.
     run: kubectl -n "$NAMESPACE" exec deploy/demo-psql -- psql -c "\dt"
