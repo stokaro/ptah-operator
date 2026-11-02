@@ -149,3 +149,27 @@ finished, which is a different claim.
 
 Watch the whole sequence, including this one, in
 [the recorded runs](../../demo/).
+
+## The next version
+
+A change to the schema is a new artifact. Publish it the way you published the
+first, with `--format reference` added, point the schema at it, and review the
+plan it leads to:
+
+```sh
+REF=$(ptah schema push oci://ghcr.io/example/application-schema:1.5.0 \
+  --schema-file schema.sql --dialect postgres --format reference)
+kubectl ptah set-source schema/application -n application --oci "$REF" --for approval
+kubectl ptah approve schema/application -n application --wait
+```
+
+`--format reference` prints the reference of the artifact the push wrote,
+pinned by its digest, which is the only kind of reference `set-source` takes;
+a Ptah without it prints the digest in its receipt instead.
+It changes `spec.desired.ociRef` and nothing else: the verification policy you
+created above holds the new artifact too. `--for approval` waits until the
+operator has planned from it, and the plan is the difference between the new
+schema and the database as it is now. With `approvals.requireDistinctApprover`
+on, someone else approves it, since `set-source` records you as the schema's
+last spec writer. [Moving to a new artifact](../../use/operations/#set-source)
+has what `set-source` refuses and the same change made with `kubectl edit`.

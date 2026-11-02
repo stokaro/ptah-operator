@@ -19,6 +19,7 @@ row that matches is where to go.
 | A resource that is not converging, and no obvious refusal | [Finding a resource that has stopped converging](#finding-a-resource-that-has-stopped-converging) |
 | A resource in `Blocked`, or a condition you do not recognize | [Condition reasons](../../troubleshoot/condition-reasons/) |
 | A migration whose Apply ended `Partial` or `Unknown` | [A migration run nobody accounted for](#a-migration-run-nobody-accounted-for) |
+| A new artifact to roll out | [Moving to a new artifact](#set-source) |
 | Writes failing because the webhook cannot be reached | [Webhook certificate lifecycle](#webhook-certificate-lifecycle) |
 | A write the admission refused, with a message | The message names the guard; [Security model](../security/) says what each one protects |
 | The cluster or the namespace is gone and the database is not | [Recover operator state](../recovery/) |
@@ -1193,6 +1194,117 @@ replacement manager invalidates every undispatched old-binding authorization
 before it can mutate a database. When it does not, those authorizations carry
 over, and the scale-down only holds dispatch for the length of the window.
 
+## Moving to a new artifact {#set-source}
+
+A new revision of a schema or of a migration sequence reaches the cluster as a
+new artifact: publish it, then point the resource at it. `kubectl ptah
+set-source` is the second step:
+
+```sh
+REF=$(ptah schema push oci://registry.example/acme/storefront:1.5.0 \
+  --schema-file schema.sql --dialect postgres --format reference)
+kubectl ptah set-source schema/storefront -n application --oci "$REF" --wait
+```
+
+`ptah schema push --format reference` and `ptah migrations push --format
+reference` print the reference of the manifest the push wrote, pinned by its
+digest, and nothing else. `ptah oci resolve <reference>` prints the one a tag
+names now, which a later push may already have moved, so prefer the push's
+own answer. A Ptah whose push has no `--format` prints the digest in its
+receipt; `ptah oci resolve` on the tag just pushed pins it, provided nothing
+pushed to that tag since. set-source takes
+`oci://HOST/REPOSITORY@sha256:<64 hex>` and nothing looser: a tag, a tag
+beside a digest, or anything the operator's own parser refuses is refused
+before the cluster is read, with exit status 2. It resolves no tag itself.
+
+It sets `spec.desired.ociRef` of a `PtahSchema` or `spec.artifact.ociRef` of a
+`PtahMigration` and no other field. The verification policy, the registry
+credential, the transport and the apply policy stay what they were, and the
+new artifact is held to them: the report names them under `Kept`, beside the
+reference it replaced and what the operator had observed. When the field
+already holds the reference, it sends nothing, and a wait that follows counts
+only the next reading of the database, which `kubectl ptah refresh` asks for.
+
+What follows is the operator's ordinary cycle at the new generation: it
+resolves the reference, verifies the artifact against the policy, reads the
+database or the migration history, and plans. A plan or an approval of the
+previous artifact does not carry over. The apply policy decides the rest:
+
+| `spec.policy.apply` | The new plan |
+| --- | --- |
+| `OnApproval` | waits for an approval naming it |
+| `Always` | runs without a person; a schema plan that is destructive or changes privileges still waits for an approval |
+| `Never` | is recorded, and nothing applies it |
+
+Under `Always`, then, set-source can be all it takes for a new revision to
+reach the database. An artifact that asks for nothing the database lacks leads
+to no plan, and the resource returns to `InSync`.
+
+`--wait` stays until the operator has planned from the new reference: a plan
+computed from it waits for a decision, or the resource rests in sync from it,
+whichever comes first. `--for approval` or `--for in-sync` waits for that one
+alone, and a wait for approval stops with exit status 8 when the resource
+rests in sync instead, since no plan from the change will wait. Every ending
+needs the operator to have observed the generation the change made and a
+reading that began after it, and a document that carries another artifact
+does not count. A wait whose resource is pointed somewhere else meanwhile
+stops with exit status 8, as [any wait](#wait) does on a target it can no
+longer reach.
+
+set-source changes nothing, and exits 4, for:
+
+- A ConfigMap or Git source. Moving to an artifact replaces that source and
+  its settings and names the verification policy the artifact is held to,
+  which is an edit of the resource.
+- A resource with an Apply whose Job may already exist. The change would move
+  the generation the Apply was decided from, and the operator records an Apply
+  whose inputs changed while it ran as an outcome nobody established, without
+  reading its result. For a migration that is
+  [a run nobody accounted for](#a-migration-run-nobody-accounted-for), which a
+  reading clears only once nothing of the artifact is left to apply. Wait for
+  the Apply to end, with `kubectl ptah wait migration/orders --for applied -n
+  application`, and run set-source again. An Apply claimed with no Job yet is
+  not refused: the operator drops it when it sees the change, and its plan
+  does not run.
+- A source another writer changed between set-source's read and its patch.
+  The patch carries the `resourceVersion` of that read, so the API server
+  refuses it when anything wrote in between. set-source reads again and
+  retries over a write that changed nothing it decided from, such as the
+  operator's own status, and reports another writer's reference rather than
+  replacing it. Another writer's change to the reference asked for is the
+  change made: it says so and exits 0. A resource that keeps changing under it
+  for three tries ends with the API server's conflict and exit status 5.
+
+It needs `get` and `patch` on the resource, the verbs of whoever writes desired
+state, and it changes the spec: with `approvals.requireDistinctApprover` on,
+whoever runs it is recorded as the resource's last spec writer and cannot
+approve the plan that follows ([Refusing a
+self-approval](../approvals/#refusing-a-self-approval)).
+
+For a change made once in a while, `kubectl edit` is the same change in an
+editor:
+
+```sh
+kubectl edit ptahschema storefront -n application
+```
+
+```yaml
+spec:
+  desired:
+    ociRef: oci://registry.example/acme/storefront@sha256:<digest>
+```
+
+A `PtahMigration` holds the same line under `spec.artifact`. A resource kept in
+a repository changes that line in its manifest, applied the way the rest of it
+is, and that edit is also how a source moves between a ConfigMap, Git and an
+artifact. A script without the plugin can patch the field, which checks none
+of what set-source checks:
+
+```sh
+kubectl patch ptahschema storefront -n application --type json \
+  -p '[{"op":"replace","path":"/spec/desired/ociRef","value":"oci://registry.example/acme/storefront@sha256:<digest>"}]'
+```
+
 ## Mutable tags and registry outages
 
 Every reconciliation interval resolves the requested reference again. A moved
@@ -1246,7 +1358,7 @@ need a Secret grant but use the same per-Job snapshot boundary and 1 MiB limit.
 
 Digest-pinned references reduce change ambiguity and are recommended for
 production. Promote the same digest between environments rather than rebuilding
-equivalent tags.
+equivalent tags; [`kubectl ptah set-source`](#set-source) takes nothing else.
 
 ## External database targets
 

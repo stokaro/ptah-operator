@@ -106,6 +106,13 @@ type WaitOptions struct {
 	// Plan narrows TargetApplied, for a PtahSchema only, to the plan of that
 	// name or fingerprint. Another plan applied first stops the wait.
 	Plan string
+	// Source narrows TargetInSync and TargetApproval to the OCI reference
+	// SetSource wrote, pinned by digest. A document counts only while the
+	// spec still asks for it, and only once the operator worked from it: a
+	// schema waiting for approval with a plan computed from its digest, and
+	// otherwise the artifact the operator resolved. A spec that names another
+	// source stops the wait.
+	Source string
 }
 
 // Result is the document that met the target.
@@ -282,7 +289,7 @@ func Wait(ctx context.Context, reader client.Reader, ref Ref, options WaitOption
 			}
 			if verdict.done {
 				return Result{
-					Ref: ref, Target: options.Target, Phase: current.phase,
+					Ref: ref, Target: verdict.target(options.Target), Phase: current.phase,
 					Generation: current.generation, ObservedGeneration: current.observedGeneration,
 					ObservedAt: current.observedAt, Reads: reads, Object: current.object,
 				}, nil
@@ -370,6 +377,16 @@ type verdict struct {
 	done    bool
 	stop    *StopError
 	waiting string
+	// reached is the target a done verdict met, where the wait's own target
+	// names more than one (TargetPlanned).
+	reached Target
+}
+
+func (v verdict) target(asked Target) Target {
+	if v.reached != "" {
+		return v.reached
+	}
+	return asked
 }
 
 // freshness decides which reading of the database a target may count: one
@@ -422,6 +439,7 @@ type waiter struct {
 	ref           Ref
 	options       WaitOptions
 	token         string
+	sourceDigest  string
 	minGeneration int64
 	baseline      *snapshot
 	fresh         freshness
@@ -447,6 +465,10 @@ type waiter struct {
 
 func newWaiter(ref Ref, options WaitOptions) (*waiter, error) {
 	target, err := ParseTarget(string(options.Target))
+	if options.Target == TargetPlanned && options.Source != "" {
+		// Not a target a command line names: the end of a change of source.
+		target, err = TargetPlanned, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -473,6 +495,16 @@ func newWaiter(ref Ref, options WaitOptions) (*waiter, error) {
 	if options.Plan != "" && (options.Target != TargetApplied || ref.Family != FamilySchema) {
 		return nil, errors.New("a plan narrows only a wait for a PtahSchema to be applied: a migration run records no plan")
 	}
+	if options.Source != "" {
+		if options.Target != TargetInSync && options.Target != TargetApproval && options.Target != TargetPlanned {
+			return nil, fmt.Errorf("a source narrows only a wait for %s or %s", TargetInSync, TargetApproval)
+		}
+		pinned, err := ParsePinnedReference(options.Source)
+		if err != nil {
+			return nil, err
+		}
+		w.sourceDigest = pinned.Digest
+	}
 	if options.Since != nil {
 		since, err := snapshotOf(options.Since)
 		if err != nil {
@@ -495,7 +527,7 @@ func (w *waiter) begin(baseline snapshot) {
 	w.minGeneration = w.options.Generation
 	if w.minGeneration == 0 {
 		switch w.options.Target {
-		case TargetInSync, TargetApproval, TargetSuspended:
+		case TargetInSync, TargetApproval, TargetSuspended, TargetPlanned:
 			w.minGeneration = baseline.generation
 		}
 	}
@@ -520,6 +552,16 @@ func (w *waiter) begin(baseline snapshot) {
 }
 
 func (w *waiter) check(s snapshot) verdict {
+	if w.options.Source == "" {
+		return w.checkTarget(s)
+	}
+	if stop, moved := w.sourceMoved(s); moved {
+		return stop
+	}
+	return w.checkSource(s)
+}
+
+func (w *waiter) checkTarget(s snapshot) verdict {
 	switch w.options.Target {
 	case TargetRead:
 		return w.checkRead(s)
@@ -597,7 +639,12 @@ func (w *waiter) checkRead(s snapshot) verdict {
 }
 
 func (w *waiter) checkInSync(s snapshot) verdict {
-	fresh := w.fresh.see(s)
+	return w.inSync(s, w.fresh.see(s))
+}
+
+// inSync decides TargetInSync on a document whose reading fresh says counts
+// or not.
+func (w *waiter) inSync(s snapshot, fresh bool) verdict {
 	if v, ok := w.generationReached(s); !ok {
 		return v
 	}
@@ -617,7 +664,12 @@ func (w *waiter) checkInSync(s snapshot) verdict {
 }
 
 func (w *waiter) checkApproval(s snapshot) verdict {
-	fresh := w.fresh.see(s)
+	return w.approval(s, w.fresh.see(s))
+}
+
+// approval decides TargetApproval on a document whose reading fresh says
+// counts or not.
+func (w *waiter) approval(s snapshot, fresh bool) verdict {
 	if v, ok := w.generationReached(s); !ok {
 		return v
 	}

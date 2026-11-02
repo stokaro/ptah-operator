@@ -47,6 +47,16 @@ on the upgrade. A script that reads the text of `kubectl ptah` has to move to
   on the resource, `wait` needs `get`. The changes, `approve` included, take
   `--wait`. [Waiting for the operator](../../use/operations/#wait) has the
   targets.
+- **`kubectl ptah set-source`.** `kubectl ptah set-source schema/NAME --oci
+  REF` or `migration/NAME` points a resource at another artifact, given as a
+  reference pinned by digest, which `ptah schema push --format reference` and
+  `ptah migrations push --format reference` print. It changes the reference
+  and nothing else, keeps the verification policy, the registry credential, the
+  transport and the apply policy, and refuses a tag, a ConfigMap or Git source,
+  and a resource with an Apply already running. With `--wait` it stays until a
+  plan from the new artifact waits for a decision or the resource is in sync
+  from it. It needs `get` and `patch`, like suspend. [Moving to a new
+  artifact](../../use/operations/#set-source) has the rest.
 - **Exit statuses.** A write the plugin sends exits 4 when nothing was
   approved or changed, 5 when RBAC or the API server refused it, and 6 when it
   was sent without an answer and may have been stored. A wait exits 7 when it

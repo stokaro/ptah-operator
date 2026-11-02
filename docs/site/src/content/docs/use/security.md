@@ -599,10 +599,11 @@ that access is used with is `kubectl ptah`. Its read commands only read: they
 need `get` on the schema, the plan and its chunks and nothing else, and list
 approvals only where `list` on them is granted. `kubectl ptah approve` creates
 an approval as the person who runs it, and needs `create` on the approval kinds
-as well. `kubectl ptah suspend`, `resume` and `refresh` patch the resource as
-the person who runs them, and need `patch` on it, which no field narrows: an
-identity that may suspend a resource may edit the rest of its spec too, so
-grant it with the desired-state author's verbs and not with the approver's;
+as well. `kubectl ptah suspend`, `resume`, `refresh` and `set-source` patch the
+resource as the person who runs them, and need `patch` on it, which no field
+narrows: an identity that may suspend a resource or point it at another
+artifact may edit the rest of its spec too, so grant it with the desired-state
+author's verbs and not with the approver's;
 [Read a plan](../read-a-plan/) carries the Role and the
 [install](../read-a-plan/#install).
 

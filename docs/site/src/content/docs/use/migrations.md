@@ -101,6 +101,20 @@ kubectl -n application patch configmap ptah-migration-verification-policy \
 A schema and a migration against the same database each keep their own, beside
 the `sharedRealm` both of them set.
 
+A new version of the sequence is a new artifact. `ptah migrations push
+--format reference` prints its reference pinned by digest, and `kubectl ptah
+set-source` points the resource at it, changing `spec.artifact.ociRef` and
+nothing else:
+
+```sh
+kubectl ptah set-source migration/orders -n application --oci "$REF" --for approval
+```
+
+The operator reads the history again and plans the versions the new artifact
+has that the database does not. [Moving to a new
+artifact](../operations/#set-source) says what set-source refuses, an Apply in
+flight among them, and how to make the same change with `kubectl edit`.
+
 ## Choosing a transaction mode
 
 By default the operator names no transaction mode and Ptah picks one. That is

@@ -89,9 +89,10 @@ controller runs there, so what they prove is the API server's own verdict:
   rule's message. One row has the authorizer judge `kubectl ptah`'s reads: a
   reader granted only the documented get loads the schema and migration views,
   the migration's plan included, and is refused only the optional lists of
-  approvals and acknowledgments. Another drives `suspend`, `resume`, `refresh`
-  and `wait` as a person granted get and patch and a watcher granted get; where
-  it waits, it writes the status a controller would between the wait's reads.
+  approvals and acknowledgments. Others drive `suspend`, `resume`, `refresh`,
+  `set-source` and `wait` as a person granted get and patch and a watcher
+  granted get; where they wait, they write the status a controller would
+  between the wait's reads.
 - `admissionpolicy` renders the chart and installs what a completed install
   leaves bound: every ValidatingAdmissionPolicy with its binding, none of them
   a hook. It sends each policy the request it exists to refuse and the write it

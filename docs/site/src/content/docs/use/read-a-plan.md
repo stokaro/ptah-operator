@@ -18,12 +18,13 @@ mount. Those projections are created only when the Apply is dispatched.
 and never create or change a resource, start a Job, or connect to your
 database. The commands that write do so as you, and none of them connects to a
 database either: `kubectl ptah approve` creates the approval of a plan you
-reviewed, which [Exact-plan approvals](../approvals/) describes, and
+reviewed, which [Exact-plan approvals](../approvals/) describes;
 `suspend`, `resume` and `refresh` set one field or annotation of a schema or a
 migration, which [Operations](../operations/#suspension-and-deletion)
-describes. `kubectl ptah wait` reads a resource until the operator has done
-what you are waiting for; [Waiting for the operator](../operations/#wait) has
-the targets.
+describes; and `set-source` points one at another artifact pinned by digest,
+which [Moving to a new artifact](../operations/#set-source) describes.
+`kubectl ptah wait` reads a resource until the operator has done what you are
+waiting for; [Waiting for the operator](../operations/#wait) has the targets.
 
 ```sh
 kubectl ptah plan storefront -n application
@@ -163,10 +164,12 @@ Exit status: `0` printed, approved, changed or reached, `1` could not read or
 verify, `2` the command line, `3` nothing stored to print, approve, change or
 wait on. The commands that write add `4` nothing approved or changed (the plan
 changed, the operator would not admit an approval now, the fingerprint given is
-not the current plan's, you declined, or the resource was deleted and created
-again), `5` refused by RBAC or the API server, and `6` sent with no answer: the
-approval or the change may have been stored. A wait adds `7` timed out and `8`
-the resource will not reach the target.
+not the current plan's, you declined, the resource was deleted and created
+again, or set-source met a source that is not an OCI artifact, an Apply
+running, or a source another writer changed after it was read), `5` refused by
+RBAC or the API server, and `6` sent with no answer: the approval or the
+change may have been stored. A wait adds `7` timed out and `8` the resource
+will not reach the target.
 
 ## Where a schema stands {#schema}
 
@@ -509,8 +512,9 @@ protection: anyone who can read them can read the SQL, with or without this
 plugin. That is why the database URL is in a Secret and the plan is not.
 :::
 
-`kubectl ptah suspend`, `resume` and `refresh` read the resource and patch it
-as you, so they need `get` and `patch` on `ptahschemas` or `ptahmigrations`:
+`kubectl ptah suspend`, `resume`, `refresh` and `set-source` read the resource
+and patch it as you, so they need `get` and `patch` on `ptahschemas` or
+`ptahmigrations`:
 
 ```yaml
   - apiGroups: [operator.ptah.run]
@@ -519,9 +523,9 @@ as you, so they need `get` and `patch` on `ptahschemas` or `ptahmigrations`:
 ```
 
 RBAC grants `patch` on the whole object, not on one field: whoever may suspend
-a resource may also edit the rest of its spec, with `kubectl edit` or any other
-client. `examples/desired-state-author-role.yaml` carries these verbs for the
-people who own desired state. The chart's approver ClusterRole does not, and
+a resource or change its artifact may also edit the rest of its spec, with
+`kubectl edit` or any other client. `examples/desired-state-author-role.yaml`
+carries these verbs for the people who own desired state. The chart's approver ClusterRole does not, and
 the read commands do not need them. `kubectl ptah wait` needs `get` on the
 resource and nothing else, and `approve --wait` reads with the same `get`
 approve already has.
