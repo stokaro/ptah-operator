@@ -123,3 +123,41 @@ func TestPrefixPatternPrefersTheLongestName(t *testing.T) {
 		t.Fatal("the pattern matched a name shorter than its floor")
 	}
 }
+
+// kubectl ptah writes the namespace and UIDs into sentences, followed by one
+// space. Padding them as if they were table cells pushed the rest of each
+// sentence across the line: "in namespace demo" followed by forty spaces and
+// "reached in-sync." in run 41372805333. A column gap is two spaces or more.
+func TestNormalizerPadsAColumnAndNotASentence(t *testing.T) {
+	t.Parallel()
+	namespace := "ptah-test-a-1-37-0-demo-41372805333-1-0123456789"
+	rewriter := normalizer{rules: append([]rewrite{{
+		pattern: regexp.MustCompile(regexp.QuoteMeta(namespace)), replacement: "demo",
+	}}, technicalIdentifiers...)}
+	for _, row := range []struct{ name, line, want string }{
+		{
+			name: "a namespace in a sentence",
+			line: "ptahschema/storefront in namespace " + namespace + " reached in-sync.",
+			want: "ptahschema/storefront in namespace demo reached in-sync.",
+		},
+		{
+			name: "a flag value in a command a view suggests",
+			line: "kubectl ptah approve schema/storefront -n " + namespace + " reviews it.",
+			want: "kubectl ptah approve schema/storefront -n demo reviews it.",
+		},
+		{
+			name: "a UID in a wrapped paragraph",
+			line: "  0f5a3c1e-2b4d-4e6f-8a9b-0c1d2e3f4a5b and the operation above.",
+			want: "  <uid> and the operation above.",
+		},
+		{
+			name: "a namespace in a table column",
+			line: namespace + "   Active   5m",
+			want: "demo" + strings.Repeat(" ", len(namespace)-len("demo")) + "   Active   5m",
+		},
+	} {
+		if got := rewriter.apply(row.line); got != row.want {
+			t.Errorf("%s: apply wrote %q, expected %q", row.name, got, row.want)
+		}
+	}
+}

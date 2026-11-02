@@ -139,9 +139,12 @@ func (n normalizer) apply(text string) string {
 //
 // kubectl pads a column to its widest value, so shortening a name inside one
 // moves every column after it. Where the replacement sits in a column -- the
-// text after it is a space -- it is padded back to the width it replaced, and
-// the columns stay where the command put them. Nothing but spaces is added,
-// trailing ones are dropped, and a name in prose is left exactly as it was.
+// text after it is the gap between two columns, at least two spaces -- it is
+// padded back to the width it replaced, and the columns stay where the command
+// put them. kubectl and kubectl ptah both leave two or more spaces between
+// columns, and prose leaves one, so a name in a sentence ("in namespace demo
+// reached in-sync") is left exactly as it was. Nothing but spaces is added,
+// and trailing ones are dropped.
 func replaceKeepingColumns(line string, rule rewrite) string {
 	var built strings.Builder
 	rest := line
@@ -157,7 +160,7 @@ func replaceKeepingColumns(line string, rule rewrite) string {
 		rest = rest[match[1]:]
 
 		padding := (match[1] - match[0]) - len(replacement)
-		if padding > 0 && strings.HasPrefix(rest, " ") {
+		if padding > 0 && strings.HasPrefix(rest, "  ") {
 			built.WriteString(strings.Repeat(" ", padding))
 		}
 	}
