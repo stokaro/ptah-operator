@@ -43,10 +43,12 @@ on the upgrade. A script that reads the text of `kubectl ptah` has to move to
   annotation and says that the read has not happened yet. wait reads a schema
   or a migration until it is in sync, waits for an approval, has applied, is
   suspended, or has ended the read a refresh asked for, and never counts what
-  was already true when it began. The three that write need `get` and `patch`
-  on the resource, `wait` needs `get`. The changes, `approve` included, take
-  `--wait`. [Waiting for the operator](../../use/operations/#wait) has the
-  targets.
+  was already true when it began. A schema plan its own policy refuses,
+  destructive while `allowDestructive` is false or any plan under apply
+  `Never`, stops a wait for in-sync, approval or applied at once. The three
+  that write need `get` and `patch` on the resource, `wait` needs `get`. The
+  changes, `approve` included, take `--wait`. [Waiting for the
+  operator](../../use/operations/#wait) has the targets.
 - **`kubectl ptah set-source`.** `kubectl ptah set-source schema/NAME --oci
   REF` or `migration/NAME` points a resource at another artifact, given as a
   reference pinned by digest, which `ptah schema push --format reference` and
@@ -55,8 +57,9 @@ on the upgrade. A script that reads the text of `kubectl ptah` has to move to
   transport and the apply policy, and refuses a tag, a ConfigMap or Git source,
   and a resource with an Apply already running. With `--wait` it stays until a
   plan from the new artifact waits for a decision or the resource is in sync
-  from it. It needs `get` and `patch`, like suspend. [Moving to a new
-  artifact](../../use/operations/#set-source) has the rest.
+  from it, and stops when the policy refuses that plan. It needs `get` and
+  `patch`, like suspend. [Moving to a new artifact](../../use/operations/#set-source)
+  has the rest.
 - **Exit statuses.** A write the plugin sends exits 4 when nothing was
   approved or changed, 5 when RBAC or the API server refused it, and 6 when it
   was sent without an answer and may have been stored. A wait exits 7 when it

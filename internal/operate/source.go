@@ -460,6 +460,9 @@ const (
 // look.
 func (w *waiter) checkSource(s snapshot) verdict {
 	fresh := w.fresh.see(s)
+	if held, ok := w.policyHeld(s, fresh); ok {
+		return held
+	}
 	approval := w.approval(s, fresh)
 	if approval.done {
 		approval = w.sourceReached(s, TargetApproval)

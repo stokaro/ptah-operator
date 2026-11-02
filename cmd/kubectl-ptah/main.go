@@ -506,7 +506,8 @@ edit of the resource.
   --oci <reference>        required: oci://HOST/REPOSITORY@sha256:<64 hex>
   --wait                   wait until the operator has planned from the new
                            reference: a plan waits for an approval, or the
-                           resource rests in sync, whichever comes first
+                           resource rests in sync, whichever comes first.
+                           It stops on a schema plan the policy refuses
   --for <target>           approval or in-sync, to wait for that one alone;
                            naming one implies --wait. A wait for approval
                            stops if the resource rests in sync instead
@@ -545,8 +546,9 @@ operator has to have observed the generation the resource had then.
 
 A wait that times out names the phase and the condition that holds the
 resource, as the last read found them, and what it still waits for. One that
-cannot reach its target, such as an Apply that failed or a run whose outcome
-nobody established, stops at once.
+cannot reach its target, such as an Apply that failed, a run whose outcome
+nobody established, or a schema plan its own policy refuses (destructive while
+allowDestructive is false, or any plan under apply Never), stops at once.
 
 suspend, resume, refresh and set-source patch the resource as you: they need
 get and patch on ptahschemas or ptahmigrations. wait needs get. The resource is

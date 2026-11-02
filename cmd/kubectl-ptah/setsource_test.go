@@ -446,6 +446,47 @@ func TestSetSourceWaitForApprovalStopsWhenNothingIsPlanned(t *testing.T) {
 	})
 }
 
+// refused is the operator's answer to generation 5 of a schema whose plan
+// from the new reference is destructive while spec.policy.allowDestructive
+// is false, with the conditions setPlanPolicyStatus writes.
+var refused = schemaStatus(func(status *operatorv1alpha1.PtahSchemaStatus) {
+	at := metav1.NewTime(readAgainAt)
+	status.ObservedGeneration, status.Phase, status.Target.LastObservedAt = 5, operatorv1alpha1.PhaseBlocked, &at
+	status.Source = operatorv1alpha1.SchemaSourceStatus{RequestedReference: newRef, ResolvedReference: newRef, Digest: newDigest, Verified: true}
+	status.Plan = &operatorv1alpha1.CurrentPlanStatus{Name: "ptah-plan-0132bf7579a7c04e68e35110", UID: "uid-plan",
+		Fingerprint: "sha256:fp", ArtifactDigest: newDigest, Destructive: true}
+	status.Conditions = []metav1.Condition{
+		{Type: operatorv1alpha1.ConditionReady, Status: metav1.ConditionFalse, Reason: "PolicyBlocked",
+			Message: "Plan is blocked by destructive-change policy", ObservedGeneration: 5},
+		{Type: operatorv1alpha1.ConditionApprovalRequired, Status: metav1.ConditionFalse, Reason: "DestructiveChangesDisabled",
+			Message: "Plan contains destructive changes and policy disallows them; read them with kubectl ptah plan, " +
+				"then either narrow the desired schema or set spec.policy.allowDestructive", ObservedGeneration: 5},
+	}
+})
+
+// --wait on an artifact whose plan the policy refuses stops once the
+// operator has refused it, with exit status 8, the refusal and the
+// controller's message, rather than running to its timeout.
+func TestSetSourceWaitStopsOnAPlanThePolicyRefuses(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		api := newCluster(t, onArtifact("schema", operatorv1alpha1.ApplyPolicyAlways))
+		api.then(unchanged, refused)
+
+		code, stdout, stderr := runCommand(t, bumping{api}, "set-source", "schema/storefront", "--oci", newRef, "--wait")
+
+		if code != exitWillNotReach || strings.Contains(stdout, "reached") {
+			t.Fatalf("set-source --wait onto a refused plan = %d, stdout %q, stderr %q", code, stdout, stderr)
+		}
+		requireSays(t, "the stop", stderr,
+			"kubectl-ptah: ptahschema/storefront in namespace demo will not reach approval or in-sync: PolicyBlocked.\n",
+			"  Phase:       Blocked\n",
+			"  Why:         spec.policy holds plan ptah-plan-0132bf7579a7c04e68e35110 (DestructiveChangesDisabled): Plan "+
+				"contains destructive changes and policy disallows them; read them with kubectl ptah plan, then either "+
+				"narrow the desired schema or set spec.policy.allowDestructive\n",
+			"kubectl ptah schema storefront -n demo shows where it stands.")
+	})
+}
+
 // racing is another writer who sets the reference to reference between the
 // command's read and its patch.
 type racing struct {

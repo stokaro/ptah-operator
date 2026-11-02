@@ -119,8 +119,9 @@ whether it was stored. After a 6, `kubectl ptah schema application -n
 application` lists the approvals that name the schema; read it before
 approving again. With `--wait`, 7 means the approval is stored and the Apply
 had not ended in time, and 8 that it will not end applied: it failed, nobody
-established its outcome, the reading afterwards did not confirm it, or another
-plan was applied. Both print the phase and what holds the schema.
+established its outcome, the reading afterwards did not confirm it, another
+plan was applied, or the schema's own policy holds the plan that replaced it.
+Both print the phase and what holds the schema.
 
 Creation is rejected if the plan is already stale, its immutable storage is
 not committed, the verification-policy ConfigMap changed, or the approval

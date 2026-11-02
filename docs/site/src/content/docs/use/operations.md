@@ -1244,10 +1244,14 @@ to no plan, and the resource returns to `InSync`.
 computed from it waits for a decision, or the resource rests in sync from it,
 whichever comes first. `--for approval` or `--for in-sync` waits for that one
 alone, and a wait for approval stops with exit status 8 when the resource
-rests in sync instead, since no plan from the change will wait. Every ending
-needs the operator to have observed the generation the change made and a
-reading that began after it, and a document that carries another artifact
-does not count. A wait whose resource is pointed somewhere else meanwhile
+rests in sync instead, since no plan from the change will wait. A schema plan
+the resource's own policy holds -- destructive while
+`spec.policy.allowDestructive` is false, or any plan under apply `Never` --
+stops either wait with exit status 8 once the operator has refused it, with
+the reason and the operator's message: no approval is asked for and nothing
+applies it until the spec changes. Every ending needs the operator to have
+observed the generation the change made and a reading that began after it,
+and a document that carries another artifact does not count. A wait whose resource is pointed somewhere else meanwhile
 stops with exit status 8, as [any wait](#wait) does on a target it can no
 longer reach.
 
@@ -1616,9 +1620,32 @@ A target the resource cannot reach any more stops the wait at once with exit
 status 8: an Apply that failed, a run whose outcome nobody established, a
 reading afterwards that did not confirm the Apply, another plan applied than
 the one named, a resource deleted or being deleted, or a wait for suspension
-on a resource whose spec does not ask for it. With `-o yaml` or `-o json` the
-command prints the resource as the wait last read it, and nothing when it did
-not reach the target. Waiting needs `get` on the resource and nothing else.
+on a resource whose spec does not ask for it.
+
+A schema plan the resource's own policy holds stops a wait for `in-sync`,
+`approval` or `applied` the same way: a destructive plan while
+`spec.policy.allowDestructive` is false, or any plan under apply `Never`. No
+approval is asked for and nothing applies it until the spec changes. The wait
+reads the refusal from `ApprovalRequired`, which the operator keeps while it
+resolves, verifies and reads the database again at its interval, so a wait
+that reads it mid-cycle, outside `Blocked`, stops as well. As with every
+target, the refusal counts only when it is for the generation the resource has
+now and was planned from a reading that began after the wait did:
+
+```text
+kubectl-ptah: ptahschema/storefront in namespace application will not reach in-sync: PolicyBlocked.
+  Phase:       Blocked
+  Why:         spec.policy holds plan ptah-plan-0132bf7579a7c04e68e35110 (DestructiveChangesDisabled): Plan contains destructive changes and policy disallows them; read them with kubectl ptah plan, then either narrow the desired schema or set spec.policy.allowDestructive
+kubectl ptah schema storefront -n application shows where it stands.
+```
+
+A resource its database realm blocks keeps a wait running: another resource's
+change or an administrator's grant ends that refusal, not a change to this
+one, and a timeout names it.
+
+With `-o yaml` or `-o json` the command prints the resource as the wait last
+read it, and nothing when it did not reach the target. Waiting needs `get` on
+the resource and nothing else.
 
 ## A migration run nobody accounted for
 
