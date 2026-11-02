@@ -2176,6 +2176,21 @@ chmod 600 \
 	"$TLS_PROXY_CA_CONFIG_FILE" \
 	"$TLS_PROXY_CERT_KEY_FILE" "$TLS_PROXY_CERT_REQUEST_FILE" \
 	"$TLS_PROXY_CERT_FILE" "$TLS_PROXY_CERT_EXT_FILE"
+# The modules are fetched before the first go command, with three attempts,
+# so a module proxy that answers for reasons of its own is not reported as a
+# failed step: run 41358175291 lost a job to one "stream error ...
+# INTERNAL_ERROR" from proxy.golang.org while compiling the phases, and run
+# 41463890340 lost one the same way in the certificate check below, which ran
+# before the retried download did. go.sum pins every module, so a retry can
+# only fetch the same bytes or fail again.
+module_download_attempt=1
+until go -C "$ROOT_DIR" mod download; do
+	[ "$module_download_attempt" -lt 3 ] ||
+		fail "the Go modules could not be downloaded in $module_download_attempt attempts"
+	printf 'e2e: module download attempt %s failed; retrying\n' "$module_download_attempt"
+	module_download_attempt=$((module_download_attempt + 1))
+	sleep 5
+done
 if ! go -C "$ROOT_DIR" run ./test/e2e/handcraftoci verify-certificate \
 	"$TLS_PROXY_CA_FILE" "$TLS_PROXY_CERT_FILE" "$TLS_PROXY_DNS_NAME" \
 	>/dev/null; then
@@ -2531,19 +2546,6 @@ fi
 timing_next bootstrap go-phases
 GO_PHASE_BINARY=$WORK_DIR/ptah-e2e.test
 if [ "$E2E_STOP_AFTER" != bootstrap ]; then
-	# The modules are fetched first, with three attempts, so a module proxy
-	# that answers for reasons of its own is not reported as code that does not
-	# compile: run 41358175291 lost a job to one "stream error ... INTERNAL_ERROR"
-	# from proxy.golang.org. go.sum pins every module, so a retry can only fetch
-	# the same bytes or fail again.
-	module_download_attempt=1
-	until go -C "$ROOT_DIR" mod download; do
-		[ "$module_download_attempt" -lt 3 ] ||
-			fail "the Go modules could not be downloaded in $module_download_attempt attempts"
-		printf 'e2e: module download attempt %s failed; retrying\n' "$module_download_attempt"
-		module_download_attempt=$((module_download_attempt + 1))
-		sleep 5
-	done
 	go -C "$ROOT_DIR" test -tags e2e -c -o "$GO_PHASE_BINARY" ./test/e2e ||
 		fail "the Go acceptance phases do not compile"
 fi
