@@ -420,11 +420,12 @@ lab_reset() {
 
 # lab_manifest renders one manifest template.
 #
-# The template is the file a reader reads; what is substituted is only what
-# cannot be written down in advance -- the namespace this lab happened to get,
-# the registry it runs, and the digest a push returned. The policy fields are
-# substituted too, because the scenarios differ in exactly those and a second
-# near-identical manifest is how two of them drift apart.
+# The templates are the lab's, for the preparation a run starts from and for
+# the probes that drive the lab; what a run applies in front of a reader is a
+# file under demo/manifests, or YAML its step shows whole. What is substituted
+# is only what cannot be written down in advance -- the namespace this lab
+# happened to get, the registry it runs, and the digest a push returned -- and
+# the policy fields the callers differ in.
 #
 # What it will not do is choose a policy. A renderer that defaulted `apply` to
 # something other than the API's default would be deciding, quietly, the one
@@ -434,7 +435,7 @@ lab_reset() {
 lab_manifest() {
 	lab_manifest_name=$1
 	lab_manifest_digest=$2
-	lab_manifest_file="$LAB_ROOT/demo/manifests/${lab_manifest_name}.yaml"
+	lab_manifest_file="$LAB_ROOT/demo/lib/templates/${lab_manifest_name}.yaml"
 	[ -f "$lab_manifest_file" ] || {
 		printf 'lab: no manifest template at %s\n' "$lab_manifest_file" >&2
 		exit 1

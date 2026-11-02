@@ -225,7 +225,7 @@ write_kubeconfig "$APPROVER" "$WORK_DIR/approver-kubeconfig"
 
 mkdir -p "$WORK_DIR/repeat"
 cp "$ROOT_DIR/demo/schemas/v1.sql" "$WORK_DIR/repeat/schema.sql"
-cp "$ROOT_DIR/demo/manifests/storefront.yaml" "$WORK_DIR/repeat/storefront.yaml"
+cp "$ROOT_DIR/demo/lib/templates/storefront.yaml" "$WORK_DIR/repeat/storefront.yaml"
 cd "$WORK_DIR/repeat"
 
 if [ -e demo/bin/lab ]; then

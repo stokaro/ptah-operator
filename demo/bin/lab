@@ -50,7 +50,7 @@ usage: demo/bin/lab <command>
   prepare              create the namespace, its routes, credentials and policy
   reset                remove every schema, plan and approval, and empty the database
   manifest <name> <digest>
-                       render demo/manifests/<name>.yaml for this lab
+                       render demo/lib/templates/<name>.yaml for this lab
   credentials          print the registry credentials this lab generated
   tools                print a directory holding ptah and kubectl-ptah, building them once
   registry             print the address a publishing client uses
