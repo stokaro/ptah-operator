@@ -67,11 +67,12 @@ steps:
   # points the cluster at the second, keeping the repository and the digest:
   # the digest is what the operator verifies, and the registry Secret's
   # registry key names the second address, so the operator sends credentials
-  # to no other.
+  # to no other. ${NAME:?} stops the shell on a name that is unset or empty,
+  # so the step cannot pass by printing a label with nothing after it.
   - note: One registry, two addresses. You push to the first; Pods in the cluster pull from the second.
     run: |
-      echo "push to:   $PTAH_OCI_REGISTRY"
-      echo "pull from: $REGISTRY_IN_CLUSTER"
+      echo "push to:   ${PTAH_OCI_REGISTRY:?is not set}"
+      echo "pull from: ${REGISTRY_IN_CLUSTER:?is not set}"
     expect:
       exit: 0
       stdout_contains: ["push to:   ", "pull from: "]
