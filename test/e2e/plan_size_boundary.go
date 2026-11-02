@@ -67,10 +67,18 @@ func executablePlanAtLimit(plan *ptahv1alpha1.PtahSchemaPlan, document []byte, d
 				ascii = suffix
 			}
 		}
+		// The statement opens with the table it creates, quoted the way the
+		// dialect quotes it. Ptah up to v0.16.0 wrote a "-- POSTGRES TABLE:
+		// <name> --" line ahead of it and v0.17.0 writes none, so the predicate
+		// holds the statement itself rather than a comment the planner owns.
+		quote := `"`
+		if dialect == "mysql" {
+			quote = "`"
+		}
+		opening := "CREATE TABLE " + quote + name + quote + " ("
 		matches := 0
 		for _, statement := range parsed.Statements {
-			header := "-- " + strings.ToUpper(dialect) + " TABLE: " + name + " --\nCREATE TABLE "
-			if strings.HasPrefix(statement.SQL, header) && strings.Count(statement.SQL, "<") == count &&
+			if strings.HasPrefix(statement.SQL, opening) && strings.Count(statement.SQL, "<") == count &&
 				strings.Count(statement.SQL, "DEFAULT '"+strings.Repeat("<", count)+strings.Repeat("x", ascii)+"'") == 1 {
 				matches++
 			}
