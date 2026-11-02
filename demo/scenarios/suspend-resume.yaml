@@ -62,7 +62,8 @@ steps:
             keep: applied
 
   # Without --wait: a suspended resource plans nothing, so neither a plan
-  # waiting for an approval nor convergence would come.
+  # waiting for an approval nor convergence would come. set-source says so,
+  # and names the resume that lets the change take effect.
   - note: Now publish a change it would otherwise pick up, and point the resource at it.
     run: |
       DIGEST=$(ptah schema push "oci://$PTAH_OCI_REGISTRY/schemas/demo:v2-$$" \
@@ -71,7 +72,11 @@ steps:
         --oci "oci://$REGISTRY_IN_CLUSTER/schemas/demo@$DIGEST"
     expect:
       exit: 0
-      stdout_contains: [Source set for]
+      stdout_contains:
+        - Source set for
+        - "The resource is suspended: the operator starts no Job until it is resumed"
+        - kubectl ptah resume schema/storefront
+      stdout_absent: [Once the operator observes generation]
       resource:
         kind: ptahschema
         name: storefront
@@ -81,7 +86,8 @@ steps:
 
   # A wait for convergence that cannot come, bounded, so the transcript shows
   # the operator doing nothing: the timeout names the phase and the condition
-  # that holds the resource.
+  # that holds the resource, as the last read found them. The read the wait's
+  # own deadline cut short is not reported as a failed one.
   #
   # The proof does not rest on the 30 seconds. status.observedGeneration at
   # the generation set-source wrote says the operator has already handled the
@@ -96,7 +102,8 @@ steps:
     show: [stderr]
     expect:
       exit: 7
-      stderr_contains: [did not reach in-sync, Suspended]
+      stderr_contains: [did not reach in-sync, "Phase:       Suspended", "Held by:     Suspended=True, Requested"]
+      stderr_absent: [Last read, deadline exceeded]
       resource:
         kind: ptahschema
         name: storefront
