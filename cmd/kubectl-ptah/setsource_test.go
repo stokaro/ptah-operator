@@ -189,6 +189,10 @@ func TestSetSourceRefusesAReferenceItCannotPin(t *testing.T) {
 			[]string{"which means tag latest", "ptah oci resolve oci://registry.example/shop/storefront"}},
 		{"a tag beside the digest", []string{"set-source", "schema/storefront", "--oci", "oci://registry.example/shop/storefront:1.5.0@" + newDigest},
 			[]string{"names tag 1.5.0 beside its digest", "ptah oci resolve <reference>"}},
+		{"another reference after the registry", []string{"set-source", "schema/storefront", "--oci",
+			"oci://registry.example/oci://registry.example/shop/storefront@" + newDigest},
+			[]string{"has oci://registry.example/shop/storefront where its repository path belongs, and a repository path " +
+				"carries no scheme: the operator would read repository oci from it and drop the rest unread.", "Nothing was sent."}},
 		{"no scheme", []string{"set-source", "schema/storefront", "--oci", "registry.example/shop/storefront@" + newDigest},
 			[]string{"oci:// scheme", "ptah schema push --format reference"}},
 		{"another algorithm", []string{"set-source", "schema/storefront", "--oci", "oci://registry.example/shop/storefront@sha512:" + strings.Repeat("b", 128)},

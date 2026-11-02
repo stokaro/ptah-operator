@@ -1214,8 +1214,10 @@ own answer. A Ptah whose push has no `--format` prints the digest in its
 receipt; `ptah oci resolve` on the tag just pushed pins it, provided nothing
 pushed to that tag since. set-source takes
 `oci://HOST/REPOSITORY@sha256:<64 hex>` and nothing looser: a tag, a tag
-beside a digest, or anything the operator's own parser refuses is refused
-before the cluster is read, with exit status 2. It resolves no tag itself.
+beside a digest, something after the registry that is not a repository path
+(another reference pasted there, say), or anything the operator's own parser
+refuses is refused before the cluster is read, with exit status 2. The
+refusal names which. It resolves no tag itself.
 
 It sets `spec.desired.ociRef` of a `PtahSchema` or `spec.artifact.ociRef` of a
 `PtahMigration` and no other field. The verification policy, the registry
