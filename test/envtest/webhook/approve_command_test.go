@@ -11,6 +11,7 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
@@ -165,7 +166,13 @@ func (a *afterTheRead) Create(ctx context.Context, object client.Object, options
 // for Load's content read.
 func (fixture approvalFixture) review(t *testing.T) approve.Review {
 	t.Helper()
-	spec, err := desiredspec.Of(fixture.schema.Spec)
+	// The spec as the API server sends it, which is what approve compares.
+	raw := &unstructured.Unstructured{}
+	raw.SetGroupVersionKind(operatorv1alpha1.GroupVersion.WithKind("PtahSchema"))
+	if err := admin.Get(context.Background(), client.ObjectKeyFromObject(fixture.schema), raw); err != nil {
+		t.Fatalf("read the fixture's schema: %v", err)
+	}
+	spec, err := desiredspec.Of(raw.Object["spec"])
 	if err != nil {
 		t.Fatalf("read the fixture's spec: %v", err)
 	}

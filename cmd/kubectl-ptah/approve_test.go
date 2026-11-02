@@ -16,6 +16,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
 
@@ -192,7 +193,8 @@ func TestApproveSaysWhyNothingCanBeApprovedNow(t *testing.T) {
 
 	code, _, stderr := runApprove(t, api, "", false, "schema/storefront", "--plan-fingerprint", fingerprint)
 
-	if code != exitNotDone || len(api.created) != 0 || !strings.Contains(stderr, "The schema is Blocked, not waiting for an approval") {
+	if code != exitNotDone || len(api.created) != 0 ||
+		!strings.Contains(stderr, "spec.policy holds this plan (DestructiveChangesDisabled), and no approval is asked for until the spec changes.") {
 		t.Fatalf("approve = %d, %d creates, stderr %q", code, len(api.created), stderr)
 	}
 
@@ -203,7 +205,7 @@ func TestApproveSaysWhyNothingCanBeApprovedNow(t *testing.T) {
 	code, stdout, stderr := runApprove(t, api, "yes\n", true, "schema/storefront")
 
 	if code != exitNotDone || stdout != "" || len(api.created) != 0 ||
-		!strings.Contains(stderr, "is Blocked") || strings.Contains(stderr, "Type yes") {
+		!strings.Contains(stderr, "spec.policy holds this plan") || strings.Contains(stderr, "Type yes") {
 		t.Fatalf("approve on a terminal = %d, %d creates, stdout %q, stderr %q", code, len(api.created), stdout, stderr)
 	}
 }
@@ -221,7 +223,7 @@ type rereading struct {
 
 func (r *rereading) Get(ctx context.Context, key client.ObjectKey, object client.Object, options ...client.GetOption) error {
 	var step func(*operatorv1alpha1.PtahSchemaStatus)
-	if _, schema := object.(*operatorv1alpha1.PtahSchema); schema {
+	if readsSchema(object) {
 		r.mu.Lock()
 		if r.armed && len(r.steps) > 0 {
 			step, r.steps = r.steps[0], r.steps[1:]
@@ -239,6 +241,16 @@ func (r *rereading) Get(ctx context.Context, key client.ObjectKey, object client
 		}
 	}
 	return r.admitting.Get(ctx, key, object, options...)
+}
+
+// readsSchema reports a read of a schema, typed or not: approve reads it as
+// unstructured.
+func readsSchema(object client.Object) bool {
+	if _, typed := object.(*operatorv1alpha1.PtahSchema); typed {
+		return true
+	}
+	raw, ok := object.(*unstructured.Unstructured)
+	return ok && raw.GetKind() == "PtahSchema"
 }
 
 func (r *rereading) arm() {
@@ -398,8 +410,8 @@ func TestApproveAnswersAtOnceAGateNoReadReopens(t *testing.T) {
 			if code != exitNotDone || len(api.created) != 0 || time.Since(began) != 0 {
 				t.Fatalf("approve = %d after %s and %d creates, stderr %q", code, time.Since(began), len(api.created), stderr)
 			}
-			if stderr != "kubectl-ptah: The operator is running Resolve for this schema. An approval is admitted once it is back "+
-				"at the approval gate; run this command again then. Nothing was approved.\n" {
+			if stderr != "kubectl-ptah: spec.policy holds this plan (DestructiveChangesDisabled), and no approval is asked for "+
+				"until the spec changes: Plan contains destructive changes. Nothing was approved.\n" {
 				t.Fatalf("approve said %q", stderr)
 			}
 		})

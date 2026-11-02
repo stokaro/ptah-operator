@@ -12,6 +12,8 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
@@ -32,8 +34,8 @@ type operating struct {
 
 func (o *operating) Get(ctx context.Context, key client.ObjectKey, object client.Object, options ...client.GetOption) error {
 	var step func(context.Context, client.Client) error
-	switch object.(type) {
-	case *operatorv1alpha1.PtahSchema, *operatorv1alpha1.PtahMigration:
+	switch resourceKind(object) {
+	case "PtahSchema", "PtahMigration":
 		o.mu.Lock()
 		if len(o.steps) > 0 {
 			step, o.steps = o.steps[0], o.steps[1:]
@@ -50,6 +52,20 @@ func (o *operating) Get(ctx context.Context, key client.ObjectKey, object client
 		}
 	}
 	return o.answering.Get(ctx, key, object, options...)
+}
+
+// resourceKind is the kind a read asks for, typed or not: approve reads a
+// schema or a migration as unstructured.
+func resourceKind(object client.Object) string {
+	switch object.(type) {
+	case *operatorv1alpha1.PtahSchema:
+		return "PtahSchema"
+	case *operatorv1alpha1.PtahMigration:
+		return "PtahMigration"
+	case *unstructured.Unstructured:
+		return object.GetObjectKind().GroupVersionKind().Kind
+	}
+	return ""
 }
 
 // readFails is a step that answers the read with err instead.
@@ -137,6 +153,14 @@ func TestSubmitWaitsForTheGateWhileTheOperatorReadsAgain(t *testing.T) {
 		// the decision did not need.
 		outcome approve.Outcome
 		says    string
+		// unsaid is what the answer must not say.
+		unsaid string
+		// spent, when set, is how long Submit took: one poll per read it
+		// waited for, and nothing after the read that decided.
+		spent time.Duration
+		// atTheGate is a first read that finds the gate open, so Submit does
+		// not wait.
+		atTheGate bool
 	}{
 		{
 			name: "the read ends at the gate with the reviewed plan",
@@ -258,7 +282,7 @@ func TestSubmitWaitsForTheGateWhileTheOperatorReadsAgain(t *testing.T) {
 			outcome: approve.Closed, says: "approved already, by bob",
 		},
 		{
-			name: "the read ends with the plan no longer requiring an approval",
+			name: "the read ends with the plan held by the policy",
 			steps: func(reviewed operatorv1alpha1.CurrentPlanStatus) []func(context.Context, client.Client) error {
 				return []func(context.Context, client.Client) error{
 					schemaStatus(claimed(operatorv1alpha1.PhaseResolving, operatorv1alpha1.OperationResolve)),
@@ -270,7 +294,7 @@ func TestSubmitWaitsForTheGateWhileTheOperatorReadsAgain(t *testing.T) {
 					}),
 				}
 			},
-			outcome: approve.Closed, says: "The schema is Blocked, not waiting for an approval",
+			outcome: approve.Closed, says: "spec.policy holds this plan (DestructiveChangesDisabled), and no approval is asked for until the spec changes.",
 		},
 		{
 			name: "the read ends with no plan",
@@ -283,6 +307,45 @@ func TestSubmitWaitsForTheGateWhileTheOperatorReadsAgain(t *testing.T) {
 				}
 			},
 			outcome: approve.Changed, says: "has no current plan any more",
+		},
+		{
+			// RBAC's refusal is not a read that failed on the way: the wait
+			// ends at the read that met it.
+			name: "a read refused mid-wait",
+			steps: func(operatorv1alpha1.CurrentPlanStatus) []func(context.Context, client.Client) error {
+				return []func(context.Context, client.Client) error{
+					schemaStatus(claimed(operatorv1alpha1.PhaseResolving, operatorv1alpha1.OperationResolve)),
+					failing(apierrors.NewForbidden(schema.GroupResource{Group: "operator.ptah.run", Resource: "ptahschemas"},
+						"storefront", errors.New(`User "dev" cannot get resource "ptahschemas"`))),
+				}
+			},
+			outcome: approve.Failed, says: `Nothing was approved: read PtahSchema application/storefront: ptahschemas.operator.ptah.run "storefront" is forbidden`,
+			spent: 2 * time.Second,
+		},
+		{
+			// A read that failed and a read that answered after it: the wait
+			// ends on the operator still reading, not on the earlier failure.
+			name: "a read fails once and the operator is still reading at the deadline",
+			steps: func(operatorv1alpha1.CurrentPlanStatus) []func(context.Context, client.Client) error {
+				return []func(context.Context, client.Client) error{
+					schemaStatus(claimed(operatorv1alpha1.PhaseResolving, operatorv1alpha1.OperationResolve)),
+					failing(apierrors.NewServiceUnavailable("the API server is restarting")),
+					schemaStatus(claimed(operatorv1alpha1.PhaseObserving, operatorv1alpha1.OperationObserve)),
+				}
+			},
+			outcome: approve.Closed, says: "The operator was still reading schema/storefront again after 5m.", unsaid: "failed",
+			spent: 5 * time.Minute,
+		},
+		{
+			// spec.suspend set after the review, before the operator acted on
+			// it: no desired state changed, so the approval goes.
+			name: "the spec suspended while the plan waits at the gate",
+			steps: func(operatorv1alpha1.CurrentPlanStatus) []func(context.Context, client.Client) error {
+				return []func(context.Context, client.Client) error{
+					specEdited(1, func(spec *operatorv1alpha1.PtahSchemaSpec) { spec.Suspend = true }),
+				}
+			},
+			outcome: approve.Admitted, atTheGate: true,
 		},
 		{
 			name: "the read does not end within the wait",
@@ -305,15 +368,23 @@ func TestSubmitWaitsForTheGateWhileTheOperatorReadsAgain(t *testing.T) {
 				reviewed := *lab.Schema().Status.Plan
 				api := &operating{answering: &answering{Client: lab.Client()}, t: t, steps: test.steps(reviewed)}
 				var waited []string
+				began := time.Now()
 
 				result := approve.Submit(context.Background(), api, review, approve.Options{
 					Await: 5 * time.Minute, CallTimeout: 30 * time.Second, Waiting: func(why string) { waited = append(waited, why) },
 				})
 
-				if result.Outcome != test.outcome || !strings.Contains(result.Message, test.says) || api.left() != 0 {
+				if result.Outcome != test.outcome || !strings.Contains(result.Message, test.says) || api.left() != 0 ||
+					(test.unsaid != "" && strings.Contains(result.Message, test.unsaid)) {
 					t.Fatalf("Submit() = %+v with %d steps left, want %s naming %q", result, api.left(), test.outcome, test.says)
 				}
-				if len(waited) != 1 || !strings.Contains(waited[0], "reading") {
+				if spent := time.Since(began); test.spent != 0 && spent != test.spent {
+					t.Fatalf("Submit() took %s, want %s", spent, test.spent)
+				}
+				switch {
+				case test.atTheGate && len(waited) != 0:
+					t.Fatalf("Submit() said it waited %q at an open gate", waited)
+				case !test.atTheGate && (len(waited) != 1 || !strings.Contains(waited[0], "reading")):
 					t.Fatalf("Submit() said it waited %q, want once, naming the read", waited)
 				}
 				created := 0
@@ -421,7 +492,10 @@ func TestSubmitAnswersAtOnceAGateNoReadReopens(t *testing.T) {
 				})
 				return lab.Client(), approve.Schema, planreadtest.Namespace, "storefront"
 			},
-			says: "The operator is running Resolve for this schema.",
+			// The plan never reaches the approval gate under this spec, and
+			// the answer says so rather than to try again later.
+			says: "spec.policy holds this plan (DestructiveChangesDisabled), and no approval is asked for until the spec " +
+				"changes: Plan contains destructive changes.",
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -500,6 +574,116 @@ func TestSubmitAnswersAFailedReadAtOnceBeforeItWaits(t *testing.T) {
 		if result.Outcome != approve.Failed || len(api.created) != 0 || time.Since(began) != 0 ||
 			result.Message != "Nothing was approved: read PtahSchema application/storefront: the API server is restarting" {
 			t.Fatalf("Submit() = %+v after %s, want the failed read answered at once", result, time.Since(began))
+		}
+	})
+}
+
+// skewed is the API server of a newer API: its schema spec carries
+// execution.futureTimeout, a field this plugin's types do not know, at the
+// value the next read takes from values.
+type skewed struct {
+	*answering
+	mu     sync.Mutex
+	values []string
+}
+
+func (k *skewed) Get(ctx context.Context, key client.ObjectKey, object client.Object, options ...client.GetOption) error {
+	if err := k.answering.Get(ctx, key, object, options...); err != nil {
+		return err
+	}
+	raw, ok := object.(*unstructured.Unstructured)
+	if !ok || raw.GetKind() != "PtahSchema" {
+		return nil
+	}
+	k.mu.Lock()
+	value := k.values[0]
+	if len(k.values) > 1 {
+		k.values = k.values[1:]
+	}
+	k.mu.Unlock()
+	return unstructured.SetNestedField(raw.Object, value, "spec", "execution", "futureTimeout")
+}
+
+// A field of the spec this plugin's types do not know is part of the spec the
+// person reviewed the plan under, as it is for admission: a change to it
+// alone refuses the approval, and the same value sends it.
+func TestSubmitHoldsTheReviewToFieldsItsTypesDoNotKnow(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name    string
+		answer  string
+		outcome approve.Outcome
+	}{
+		{"the same value", "30s", approve.Admitted},
+		{"another value", "60s", approve.Changed},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			lab, _ := waiting(t)
+			api := &skewed{answering: &answering{Client: lab.Client()}, values: []string{"30s", test.answer}}
+			review, err := approve.Load(context.Background(), api, approve.Schema, planreadtest.Namespace, "storefront")
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+
+			result := approve.Submit(context.Background(), api, review, approve.Options{})
+
+			if result.Outcome != test.outcome {
+				t.Fatalf("Submit() = %+v, want %s", result, test.outcome)
+			}
+			if test.outcome == approve.Changed && (!strings.Contains(result.Message, "The spec of schema/storefront changed") || len(api.created) != 0) {
+				t.Fatalf("Submit() = %+v after %d creates, want the changed spec named and nothing sent", result, len(api.created))
+			}
+		})
+	}
+}
+
+// A newer plan the plugin cannot read, met while it waits: the plan it names
+// is not the one reviewed, which is the answer, at once. Reading it again
+// would change nothing.
+func TestSubmitAnswersANewerPlanItCannotReadAtOnce(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		base := &answering{Client: planreadtest.NewClient(t, waitingMigration(nil)...)}
+		review, err := approve.Load(context.Background(), base, approve.Migration, "application", "shipments")
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		readingHistory := func(ctx context.Context, c client.Client) error {
+			migration := &operatorv1alpha1.PtahMigration{}
+			if err := c.Get(ctx, client.ObjectKey{Namespace: "application", Name: "shipments"}, migration); err != nil {
+				return err
+			}
+			migration.Status.Phase = operatorv1alpha1.MigrationPhaseReading
+			migration.Status.ActiveOperation = &operatorv1alpha1.MigrationOperationStatus{Type: operatorv1alpha1.MigrationOperationHistory, ID: "read"}
+			return c.Update(ctx, migration)
+		}
+		newerUnreadable := func(ctx context.Context, c client.Client) error {
+			newer := &operatorv1alpha1.PtahMigrationPlan{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "application", Name: "shipments-p-15", UID: "uid-p-15"},
+				Spec: operatorv1alpha1.PtahMigrationPlanSpec{ContractVersion: 99, Fingerprint: "sha256:15",
+					MigrationRef: operatorv1alpha1.ImmutableObjectReference{Name: "shipments", UID: "uid-shipments"}},
+			}
+			if err := c.Create(ctx, newer); err != nil {
+				return err
+			}
+			migration := &operatorv1alpha1.PtahMigration{}
+			if err := c.Get(ctx, client.ObjectKey{Namespace: "application", Name: "shipments"}, migration); err != nil {
+				return err
+			}
+			migration.Status.Phase, migration.Status.ActiveOperation = operatorv1alpha1.MigrationPhaseAwaitingApproval, nil
+			migration.Status.Plan = &operatorv1alpha1.ImmutableObjectReference{Name: newer.Name, UID: newer.UID}
+			return c.Update(ctx, migration)
+		}
+		api := &operating{answering: base, t: t, steps: []func(context.Context, client.Client) error{readingHistory, newerUnreadable}}
+		began := time.Now()
+
+		result := approve.Submit(context.Background(), api, review, approve.Options{Name: "shipments-14", Await: 5 * time.Minute})
+
+		if result.Outcome != approve.Changed || !strings.Contains(result.Message, "A newer plan, shipments-p-15, replaced shipments-p-14") ||
+			len(base.created) != 0 || time.Since(began) != 2*time.Second {
+			t.Fatalf("Submit() = %+v after %s and %d creates, want the newer plan named at the read that met it",
+				result, time.Since(began), len(base.created))
 		}
 	})
 }

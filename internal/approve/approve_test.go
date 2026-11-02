@@ -811,7 +811,7 @@ type racing struct {
 
 func (r *racing) Get(ctx context.Context, key client.ObjectKey, object client.Object, options ...client.GetOption) error {
 	err := r.Reader.Get(ctx, key, object, options...)
-	if _, schema := object.(*operatorv1alpha1.PtahSchema); schema && !r.done {
+	if resourceKind(object) == "PtahSchema" && !r.done {
 		r.done = true
 		r.replace()
 	}

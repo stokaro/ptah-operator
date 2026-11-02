@@ -218,6 +218,18 @@ func Submit(ctx context.Context, c client.Client, review Review, opts Options) R
 			return Result{Outcome: Changed, Message: fmt.Sprintf(
 				"%s/%s was deleted after you reviewed its plan. Nothing was approved.", review.Family, review.Name)}
 		case err != nil && !errors.Is(err, ErrNothingToApprove):
+			// An answer this plugin cannot use is not a read that failed on
+			// the way: reading again changes nothing. The status it came with
+			// may already name another plan, which is the answer to give.
+			var local unreadable
+			if errors.As(err, &local) {
+				if current.ResourceUID != "" {
+					if why := changedSince(review, current); why != "" {
+						return Result{Outcome: Changed, Message: why + " Nothing was approved; run the command again to review the plan that is current now."}
+					}
+				}
+				return Result{Outcome: Failed, Message: fmt.Sprintf("Nothing was approved: %v", err)}
+			}
 			// Once Submit waits, a read the API server may answer next time is
 			// read again until the wait is over; before, nothing was promised.
 			if gate.deadline.IsZero() || !operate.Retryable(err) {
