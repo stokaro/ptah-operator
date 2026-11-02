@@ -76,14 +76,19 @@ step that reads anything else:
 | `NAMESPACE` | the namespace the schema lives in | the namespace they chose |
 | `OPERATOR_NAMESPACE` | where the chart installed the operator | their Helm release |
 | `CONTROLLER` | the controller Deployment's name | `helm get manifest`, or `kubectl get deploy` |
+| `EXECUTOR_IMAGE` | the executor image the chart runs, digest-pinned | the chart's `executorImage` value |
 | `REGISTRY_IN_CLUSTER` | the registry address a Pod resolves | their registry's in-cluster name |
 | `PTAH_OCI_REGISTRY` | the registry address the push goes to | their registry |
 | `PTAH_OCI_USERNAME`, `PTAH_OCI_PASSWORD` | the credentials for that push | their registry's credentials |
 
-In the lab, the first five come from `demo/.lab/environment`, which the
+In the lab, the first six come from `demo/.lab/environment`, which the
 bootstrap wrote, and the three `PTAH_OCI_` values from `demo/bin/lab
-credentials`, which prints the generated registry's. Both are the environment
-handing a reader what it generated.
+credentials`, which prints the generated registry's; the recorder runs it once
+and passes them to every step, the way a CI job passes a registry credential.
+Both are the environment handing a reader what it generated. Ptah reads
+`PTAH_OCI_USERNAME` and `PTAH_OCI_PASSWORD` itself, so no step needs to export
+or print them; on a workstation `ptah oci login` stores the credential once
+instead.
 
 A step also expects three commands on `PATH`: `kubectl`, `ptah` and
 `kubectl-ptah`. A reader installs all three -- the last from

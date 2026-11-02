@@ -157,7 +157,8 @@ approval names, and not the reason on a condition.
 
 A step is published, and a reader repeats it, so a step reads only names a
 reader can have: `KUBECONFIG`, `NAMESPACE`, `OPERATOR_NAMESPACE`, `CONTROLLER`,
-`REGISTRY_IN_CLUSTER`, the three `PTAH_OCI_*` credentials, `PATH` and `HOME`.
+`EXECUTOR_IMAGE`, `REGISTRY_IN_CLUSTER`, the three `PTAH_OCI_*` credentials,
+`PATH` and `HOME`.
 Anything else the step sets itself, in the same block, where a reader sees it
 being set.
 

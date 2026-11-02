@@ -131,6 +131,7 @@ func TestLabEnvironmentCarriesWhatAStepReads(t *testing.T) {
 		"E2E_TEST_NAMESPACE=demo",
 		"E2E_OPERATOR_NAMESPACE=ptah-system",
 		"E2E_CONTROLLER_NAME=ptah-operator",
+		"E2E_EXECUTOR_IMAGE=registry.example/ptah@sha256:0123",
 		"E2E_UNDECLARED=surprise",
 		"",
 	}, "\n"))
@@ -143,7 +144,8 @@ func TestLabEnvironmentCarriesWhatAStepReads(t *testing.T) {
 		t.Fatalf("environment: %v", err)
 	}
 	joined := strings.Join(variables, "\n")
-	for _, want := range []string{"NAMESPACE=demo", "OPERATOR_NAMESPACE=ptah-system", "CONTROLLER=ptah-operator", "LAB_ROOT=/repository"} {
+	for _, want := range []string{"NAMESPACE=demo", "OPERATOR_NAMESPACE=ptah-system", "CONTROLLER=ptah-operator",
+		"EXECUTOR_IMAGE=registry.example/ptah@sha256:0123", "LAB_ROOT=/repository"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("environment does not carry %s", want)
 		}
@@ -204,5 +206,38 @@ func TestRecordEachRunsEveryScenarioAndWritesNothingOnAFailure(t *testing.T) {
 	recorded, err = recordEach(context.Background(), loaded[:1], run, &diagnostics, func(string, ...any) {})
 	if err != nil || len(recorded) != 1 {
 		t.Fatalf("a clean run returned %d recordings and error %v", len(recorded), err)
+	}
+}
+
+// The registry credential reaches a step the way it reaches a CI job, as the
+// environment ptah reads, and it comes from the lab's own command. A lab that
+// printed one of the three names short would leave every push in the run
+// without it, so a missing one stops the recording before anything runs.
+//
+// Not parallel: it executes a file it has just written, and a parallel test
+// forking meanwhile can hold that file open and fail the exec with "text file
+// busy". Sequential tests run before the parallel ones are released.
+func TestRegistryEnvironmentReadsWhatTheLabPrints(t *testing.T) {
+	lab := func(t *testing.T, printed string) string {
+		t.Helper()
+		root := t.TempDir()
+		write(t, filepath.Join(root, "demo", "bin", "lab"), "#!/bin/sh\nprintf '%s' '"+printed+"'\n")
+		if err := os.Chmod(filepath.Join(root, "demo", "bin", "lab"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return root
+	}
+	root := lab(t, "PTAH_OCI_USERNAME=pusher\nPTAH_OCI_PASSWORD=secret\nPTAH_OCI_REGISTRY=127.0.0.1:5001\n")
+	entries, err := registryEnvironment(root, filepath.Join(root, "environment"))
+	if err != nil {
+		t.Fatalf("registryEnvironment: %v", err)
+	}
+	if got := strings.Join(entries, ","); got != "PTAH_OCI_REGISTRY=127.0.0.1:5001,PTAH_OCI_USERNAME=pusher,PTAH_OCI_PASSWORD=secret" {
+		t.Fatalf("read %s", got)
+	}
+	root = lab(t, "PTAH_OCI_USERNAME=pusher\nPTAH_OCI_REGISTRY=127.0.0.1:5001\n")
+	if _, err := registryEnvironment(root, filepath.Join(root, "environment")); err == nil ||
+		!strings.Contains(err.Error(), "PTAH_OCI_PASSWORD") {
+		t.Fatalf("a lab that printed no password was accepted: %v", err)
 	}
 }

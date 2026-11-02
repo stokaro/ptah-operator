@@ -94,6 +94,11 @@ func run(arguments []string, diagnostics io.Writer) error {
 	if err != nil {
 		return err
 	}
+	registry, err := registryEnvironment(*root, environmentFile)
+	if err != nil {
+		return err
+	}
+	variables = append(variables, registry...)
 
 	log := func(format string, arguments ...any) {
 		fmt.Fprintf(diagnostics, "record: "+format+"\n", arguments...)

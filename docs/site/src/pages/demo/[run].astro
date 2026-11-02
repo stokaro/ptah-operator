@@ -82,11 +82,17 @@ const base = import.meta.env.BASE_URL;
 		<li><span class="ptah-demo-lab-label">NAMESPACE</span><span class="ptah-demo-lab-value">the namespace the schema and its database credentials live in</span></li>
 		<li><span class="ptah-demo-lab-label">OPERATOR_NAMESPACE</span><span class="ptah-demo-lab-value">where the chart installed the operator</span></li>
 		<li><span class="ptah-demo-lab-label">CONTROLLER</span><span class="ptah-demo-lab-value">the controller Deployment&rsquo;s name, from that release</span></li>
+		<li><span class="ptah-demo-lab-label">EXECUTOR_IMAGE</span><span class="ptah-demo-lab-value">the executor image the chart runs, its <code>executorImage</code> value</span></li>
 		<li><span class="ptah-demo-lab-label">REGISTRY_IN_CLUSTER</span><span class="ptah-demo-lab-value">the registry address a Pod in the cluster resolves</span></li>
 		<li><span class="ptah-demo-lab-label">PTAH_OCI_REGISTRY</span><span class="ptah-demo-lab-value">the registry address the push goes to</span></li>
-		<li><span class="ptah-demo-lab-label">PTAH_OCI_USERNAME</span><span class="ptah-demo-lab-value">the account that push uses</span></li>
+		<li><span class="ptah-demo-lab-label">PTAH_OCI_USERNAME</span><span class="ptah-demo-lab-value">the account that push uses, read by <code>ptah</code> itself</span></li>
 		<li><span class="ptah-demo-lab-label">PTAH_OCI_PASSWORD</span><span class="ptah-demo-lab-value">its password, which no command prints</span></li>
 	</ul>
+	<p>
+		The last two are how a CI job hands <code>ptah</code> a registry credential. On a workstation,
+		<code>ptah oci login</code> stores it once instead, reading the password from a prompt or from
+		standard input rather than from the command line.
+	</p>
 	<p>
 		A session also uses <code>demo/bin/lab</code> in two places, and both are the lab handing over what
 		it generated rather than doing the demonstration&rsquo;s work:

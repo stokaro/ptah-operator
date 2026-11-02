@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -59,6 +60,42 @@ func (l lab) required(name string) (string, error) {
 				"hack/e2e-kind.sh than this recorder expects", l.path, name)
 	}
 	return value, nil
+}
+
+// registryVariables are the names `demo/bin/lab credentials` prints: the
+// registry a push goes to and the account it pushes as. They reach a step the
+// way they reach a CI job, as environment variables Ptah reads itself.
+var registryVariables = []string{"PTAH_OCI_REGISTRY", "PTAH_OCI_USERNAME", "PTAH_OCI_PASSWORD"}
+
+// registryEnvironment asks the lab for the registry a push goes to and its
+// credentials, and returns them as environment entries.
+//
+// The lab's own command answers rather than this program reading the files
+// behind it: when Docker is on another machine, the address it prints is a
+// forwarded port the command opens first.
+func registryEnvironment(root, environmentFile string) ([]string, error) {
+	command := exec.Command(filepath.Join(root, "demo", "bin", "lab"), "credentials")
+	command.Dir = root
+	command.Env = append(os.Environ(), "LAB_ROOT="+root, "LAB_ENVIRONMENT="+environmentFile)
+	output, err := command.Output()
+	if err != nil {
+		return nil, fmt.Errorf("ask the lab for its registry credentials: %w", err)
+	}
+	found := map[string]string{}
+	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+		name, value, ok := strings.Cut(line, "=")
+		if ok {
+			found[name] = value
+		}
+	}
+	entries := make([]string, 0, len(registryVariables))
+	for _, name := range registryVariables {
+		if strings.TrimSpace(found[name]) == "" {
+			return nil, fmt.Errorf("demo/bin/lab credentials printed no %s", name)
+		}
+		entries = append(entries, name+"="+found[name])
+	}
+	return entries, nil
 }
 
 // labVariables are the names a scenario step may read from the environment.
@@ -134,6 +171,9 @@ func (l lab) environment(root string) ([]string, error) {
 		// registry: a push goes to PTAH_OCI_REGISTRY over a forwarded port, and
 		// the operator resolves the same digest through this one.
 		"REGISTRY_IN_CLUSTER=" + l.values["E2E_REGISTRY_HOST"],
+		// The executor image the chart installed, digest-pinned: a Job that
+		// runs Ptah in the cluster, as adoption's baseline does, runs this one.
+		"EXECUTOR_IMAGE=" + l.values["E2E_EXECUTOR_IMAGE"],
 	}
 	for _, name := range labVariables {
 		if value, ok := l.values[name]; ok {

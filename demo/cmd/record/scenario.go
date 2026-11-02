@@ -536,6 +536,7 @@ var publishedVariables = map[string]bool{
 	"NAMESPACE":           true,
 	"OPERATOR_NAMESPACE":  true,
 	"CONTROLLER":          true,
+	"EXECUTOR_IMAGE":      true,
 	"REGISTRY_IN_CLUSTER": true,
 	"PTAH_OCI_REGISTRY":   true,
 	"PTAH_OCI_USERNAME":   true,
