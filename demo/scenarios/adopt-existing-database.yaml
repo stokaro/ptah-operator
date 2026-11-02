@@ -66,7 +66,9 @@ steps:
       exit: 0
       stdout_contains: [job.batch/baseline-v2 created]
 
-  - note: Refused. The shadow, built from the files, has a carrier column this database lacks.
+  # The log is baseline replaying the files into the shadow, then its verdict:
+  # the migrations it says it applied ran in the shadow, not in the target.
+  - note: Refused. Replayed into the shadow, the files make a carrier column this database lacks.
     run: |
       kubectl -n "$NAMESPACE" wait --for=condition=Failed job/baseline-v2 --timeout=3m
       kubectl -n "$NAMESPACE" logs job/baseline-v2
@@ -91,7 +93,7 @@ steps:
       exit: 0
       stdout_contains: ["+            - --version=1", job.batch/baseline-v1 created]
 
-  - note: It records version 1, and says so.
+  - note: The replay matches this time, so it records version 1, and says so.
     run: |
       kubectl -n "$NAMESPACE" wait --for=condition=Complete job/baseline-v1 --timeout=3m
       kubectl -n "$NAMESPACE" logs job/baseline-v1

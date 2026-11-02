@@ -11,7 +11,7 @@ reset:
   - demo/bin/lab reset
 
 steps:
-  - note: Four migrations, and one of them is not a migration. The name is the whole contract.
+  - note: Four versions, each with its down file, and one is not a migration. The name is the contract.
     run: ls demo/migrations-checkpoint
     expect:
       exit: 0
