@@ -149,7 +149,8 @@ how a scenario proves that something did not happen in between -- the last run
 of a migration is the same Job before and after another reading of its
 history -- without printing a comparison a reader would have to repeat. The
 transcript prints every UID the same way, so the comparison is the
-recorder's.
+recorder's. `absent: true` requires a field to be unset, which is how a step
+says nothing is in flight.
 
 ## What a transcript may say
 

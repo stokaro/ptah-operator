@@ -126,6 +126,9 @@ type field struct {
 	Keep string `yaml:"keep"`
 	// SameAs requires the value an earlier step kept under this name.
 	SameAs string `yaml:"sameAs"`
+	// Absent requires the path to be unset or null: no operation in flight,
+	// read from the object rather than from a phase that might pass over it.
+	Absent bool `yaml:"absent"`
 }
 
 // condition reads a Kubernetes condition as fields.
@@ -391,7 +394,7 @@ func (f field) validate(where string) []error {
 		problems = append(problems, fmt.Errorf("%s reads a field with no path", where))
 	}
 	asked := 0
-	for _, set := range []bool{f.Equals != "", f.NotEmpty, f.Keep != "", f.SameAs != ""} {
+	for _, set := range []bool{f.Equals != "", f.NotEmpty, f.Keep != "", f.SameAs != "", f.Absent} {
 		if set {
 			asked++
 		}
@@ -399,14 +402,14 @@ func (f field) validate(where string) []error {
 	switch {
 	case asked == 0:
 		problems = append(problems, fmt.Errorf(
-			"%s reads %s and asks nothing of it; say equals, notEmpty, keep or sameAs", where, f.Path))
+			"%s reads %s and asks nothing of it; say equals, notEmpty, keep, sameAs or absent", where, f.Path))
 	case f.Equals != "" && f.NotEmpty:
 		problems = append(problems, fmt.Errorf(
 			"%s reads %s with both equals and notEmpty; notEmpty is what you say when you "+
 				"cannot name the value", where, f.Path))
 	case asked > 1:
 		problems = append(problems, fmt.Errorf(
-			"%s reads %s with more than one of equals, notEmpty, keep and sameAs; say one", where, f.Path))
+			"%s reads %s with more than one of equals, notEmpty, keep, sameAs and absent; say one", where, f.Path))
 	}
 	return problems
 }
@@ -502,6 +505,12 @@ func read(object map[string]any, path string) (string, bool) {
 // reads it from there.
 func (f field) matches(object map[string]any, kept map[string]string) error {
 	value, present := read(object, f.Path)
+	if f.Absent {
+		if present {
+			return fmt.Errorf("%s is %q, expected it unset", f.Path, value)
+		}
+		return nil
+	}
 	if !present {
 		return fmt.Errorf("%s is not set", f.Path)
 	}

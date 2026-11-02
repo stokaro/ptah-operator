@@ -72,6 +72,17 @@ func TestScenarioValidateRefusesAnUncheckedStep(t *testing.T) {
 			want: "cannot name the value",
 		},
 		{
+			name: "a field required both set to a value and unset",
+			steps: []step{{
+				Run: "kubectl get ptahschema",
+				Expect: &expectation{Exit: &exit, Resource: &observation{
+					Kind: "ptahschema", Name: "storefront",
+					Fields: []field{{Path: "status.activeOperation", Equals: "Apply", Absent: true}},
+				}},
+			}},
+			want: "say one",
+		},
+		{
 			name: "a generation value that is not current",
 			steps: []step{{
 				Run: "kubectl get ptahschema",
@@ -250,6 +261,18 @@ func TestFieldMatches(t *testing.T) {
 		{name: "a null", read: field{Path: "status.plan", NotEmpty: true}, problem: "status.plan is not set"},
 		{name: "a path nothing wrote", read: field{Path: "status.drift", NotEmpty: true}, problem: "is not set"},
 		{name: "a path through a scalar", read: field{Path: "status.phase.name", NotEmpty: true}, problem: "is not set"},
+		{name: "unset, as a null", read: field{Path: "status.plan", Absent: true}},
+		{name: "unset, as a path nothing wrote", read: field{Path: "status.activeOperation", Absent: true}},
+		{
+			name:    "unset, while it holds a value",
+			read:    field{Path: "status.phase", Absent: true},
+			problem: `status.phase is "InSync", expected it unset`,
+		},
+		{
+			name:    "unset, while it holds an object",
+			read:    field{Path: "status.applied", Absent: true},
+			problem: "status.applied is ",
+		},
 	}
 
 	for _, test := range tests {

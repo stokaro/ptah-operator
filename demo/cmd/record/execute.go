@@ -312,6 +312,8 @@ func (o observation) describe() string {
 			claims = append(claims, fmt.Sprintf("%s is set, kept as %s", read.Path, read.Keep))
 		case read.SameAs != "":
 			claims = append(claims, fmt.Sprintf("%s is the value kept as %s", read.Path, read.SameAs))
+		case read.Absent:
+			claims = append(claims, read.Path+" is unset")
 		default:
 			claims = append(claims, fmt.Sprintf("%s=%s", read.Path, read.Equals))
 		}
