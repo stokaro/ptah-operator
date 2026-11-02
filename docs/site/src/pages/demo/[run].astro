@@ -30,6 +30,7 @@ const base = import.meta.env.BASE_URL;
 >
 	<p class="ptah-demo-lede">{run.tagline}</p>
 	<p class="ptah-demo-learn"><strong>What it shows.</strong> {run.learn}</p>
+	{run.start && <p class="ptah-demo-learn"><strong>Where it starts.</strong> {run.start}</p>}
 
 	<p class="ptah-demo-replay">
 		A replay of a verified run, not a live cluster. {run.checks.length}
@@ -75,26 +76,70 @@ const base = import.meta.env.BASE_URL;
 		recorder refuses a step that reads a name this list does not hold. The commands are
 		<code>kubectl</code>, <code>ptah</code> and <code>kubectl ptah</code>, each of which you
 		install once; the last one is <a href={`${base}use/read-a-plan/#install`}>the operator&rsquo;s
-		own client</a>.
+		own client</a>. They run from the root of a clone of this repository, which holds the files they
+		name: the SQL under <code>demo/schemas</code>, <code>demo/migrations</code>,
+		<code>demo/migrations-checkpoint</code> and <code>demo/mysql</code>, the reference data under
+		<code>demo/reference</code>, and the manifests under <code>demo/manifests</code>.
 	</p>
 	<ul class="ptah-demo-lab">
 		<li><span class="ptah-demo-lab-label">KUBECONFIG</span><span class="ptah-demo-lab-value">the cluster the commands run against</span></li>
-		<li><span class="ptah-demo-lab-label">NAMESPACE</span><span class="ptah-demo-lab-value">the namespace the schema and its database credentials live in</span></li>
+		<li><span class="ptah-demo-lab-label">NAMESPACE</span><span class="ptah-demo-lab-value">the namespace the resources and their database credentials live in</span></li>
 		<li><span class="ptah-demo-lab-label">OPERATOR_NAMESPACE</span><span class="ptah-demo-lab-value">where the chart installed the operator</span></li>
 		<li><span class="ptah-demo-lab-label">CONTROLLER</span><span class="ptah-demo-lab-value">the controller Deployment&rsquo;s name, from that release</span></li>
+		<li><span class="ptah-demo-lab-label">EXECUTOR_IMAGE</span><span class="ptah-demo-lab-value">the executor image the chart runs, its <code>executorImage</code> value</span></li>
 		<li><span class="ptah-demo-lab-label">REGISTRY_IN_CLUSTER</span><span class="ptah-demo-lab-value">the registry address a Pod in the cluster resolves</span></li>
 		<li><span class="ptah-demo-lab-label">PTAH_OCI_REGISTRY</span><span class="ptah-demo-lab-value">the registry address the push goes to</span></li>
-		<li><span class="ptah-demo-lab-label">PTAH_OCI_USERNAME</span><span class="ptah-demo-lab-value">the account that push uses</span></li>
+		<li><span class="ptah-demo-lab-label">PTAH_OCI_USERNAME</span><span class="ptah-demo-lab-value">the account that push uses, read by <code>ptah</code> itself</span></li>
 		<li><span class="ptah-demo-lab-label">PTAH_OCI_PASSWORD</span><span class="ptah-demo-lab-value">its password, which no command prints</span></li>
 	</ul>
 	<p>
-		A session also uses <code>demo/bin/lab</code> in two places, and both are the lab handing over what
-		it generated rather than doing the demonstration&rsquo;s work:
-		<code>lab credentials</code> prints the three registry values above, and <code>lab manifest</code>
-		fills the published template with values the step states. Run
-		<code>demo/acceptance/reproduce.sh</code> to watch the same scenario repeated from a directory
-		where neither exists, by an account that may not create a Job, with the plan approved by a
-		second account that may create neither a schema nor a Job.
+		The last two are how a CI job hands <code>ptah</code> a registry credential. On a workstation,
+		<code>ptah oci login</code> stores it once instead, reading the password from a prompt or from
+		standard input rather than from the command line.
+	</p>
+	<p>
+		The registry has two addresses, the way a registry in an ordinary deployment does: a push goes
+		to <code>PTAH_OCI_REGISTRY</code>, and the resource names <code>REGISTRY_IN_CLUSTER</code> with
+		the same repository and digest. The registry Secret a resource names says which address its
+		credential is for, and the operator sends it to no other.
+	</p>
+	<p>
+		The lab itself appears in one command, <code>demo/bin/lab versions</code> in Stand up the lab,
+		which says what the lab is made of. What a run starts from is its preparation, which is not
+		recorded; <strong>Where it starts</strong> above says what that is and which run ends there. Run
+		<code>demo/acceptance/reproduce.sh</code> to watch Approve a plan repeated from a directory where
+		the lab&rsquo;s scripts do not exist, by an account that may not create a Job, with the plan
+		approved by a second account that may create neither a schema nor a Job, and then the same
+		schema published with <code>ptah schema push</code> and moved to its next revision with
+		<code>kubectl ptah set-source</code>.
+	</p>
+
+	<h2>The same changes, as edits</h2>
+	<p>
+		Each <code>kubectl ptah</code> command that changes a resource changes one field of it, so the
+		same change is an ordinary edit, with <code>kubectl edit ptahschema storefront -n "$NAMESPACE"</code>
+		or in a manifest you apply; the runs that keep their resources as files under
+		<code>demo/manifests</code> make their changes that way. What the commands add is checking:
+		set-source takes only a reference pinned by digest, changes nothing while an Apply may be
+		running, and changes nothing another writer changed since it read the resource.
+	</p>
+	{/* Not in .ptah-demo-checks: check-demo-page counts that table's rows as
+		the run's checks. */}
+	<table>
+		<thead>
+			<tr><th>Command</th><th>The line it changes</th></tr>
+		</thead>
+		<tbody>
+			<tr><td><code>kubectl ptah suspend</code></td><td><code>spec.suspend: true</code></td></tr>
+			<tr><td><code>kubectl ptah resume</code></td><td><code>spec.suspend: false</code></td></tr>
+			<tr><td><code>kubectl ptah set-source --oci</code></td><td><code>spec.desired.ociRef</code> of a schema, <code>spec.artifact.ociRef</code> of a migration</td></tr>
+			<tr><td><code>kubectl ptah refresh</code></td><td>the annotation <code>operator.ptah.run/read-requested-at</code>, set to the time of the request</td></tr>
+		</tbody>
+	</table>
+	<p>
+		An approval is not one of them. It is an object of its own, created once by the person who
+		decided: <code>kubectl ptah approve --dry-run client</code> prints it as YAML for a repository, to
+		be created with <code>kubectl create</code>, and never edited afterwards.
 	</p>
 
 	<p>

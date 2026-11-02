@@ -2,19 +2,13 @@ id: versioned-migration
 title: Run a prepared migration sequence
 tagline: Numbered SQL files in an artifact, matched against the database's own record of what has run.
 learn: How the versioned workflow differs from the declarative one, and what the database is asked before anything executes.
+start: >-
+  An empty database and a namespace with the lab's Secrets, as Stand up the lab leaves them, with no
+  migration history.
 tags: [Lifecycle]
 
 reset:
   - demo/bin/lab reset
-  # `ptah migrations push` is the product's own command, run the way a reader
-  # or a CI job runs it. The harness owns no migration-directory format: what
-  # publishes the artifact is the same Ptah the operator executes.
-  - |
-    eval "$(demo/bin/lab credentials)"
-    export PTAH_OCI_USERNAME PTAH_OCI_PASSWORD PTAH_OCI_REGISTRY
-    ptah migrations push "oci://$PTAH_OCI_REGISTRY/migrations/demo:v1-$$" \
-      --migrations-dir demo/migrations --dir-format ptah --version "v1-$$" --plain-http \
-      | sed -n 's/^Digest: //p' > demo/.lab/migration-digest
 
 steps:
   - note: The sequence is files. Numbered, with a direction, and written by a person.
@@ -29,30 +23,62 @@ steps:
       exit: 0
       stdout_contains: [ADD COLUMN carrier, "UPDATE shipments", SET NOT NULL]
 
-  - note: The resource names the sequence, the database, and what may be done about the difference.
-    run: APPLY=OnApproval demo/bin/lab manifest shipments "$(cat demo/.lab/migration-digest)" | tee demo/.lab/shipments.yaml
+  # ptah migrations push is the product's own command, run the way a reader or
+  # a CI job runs it. The resource names the database, the artifact by digest,
+  # and what may be done about the difference: apply OnApproval.
+  - note: Publish the directory, and create the resource that names it and asks for a person.
+    run: |
+      REF=$(ptah migrations push "oci://$PTAH_OCI_REGISTRY/migrations/demo:v1-$$" \
+        --migrations-dir demo/migrations --dir-format ptah --version "v1-$$" --plain-http --format reference)
+      PULL="oci://$REGISTRY_IN_CLUSTER/${REF#"oci://$PTAH_OCI_REGISTRY/"}"
+      kubectl apply -n "$NAMESPACE" -f - <<EOF
+      apiVersion: operator.ptah.run/v1alpha1
+      kind: PtahMigration
+      metadata:
+        name: shipments
+      spec:
+        target:
+          engine: PostgreSQL
+          coordinationKey: demo/storefront/primary
+          urlFrom: {name: demo-database, key: url}
+        artifact:
+          ociRef: $PULL
+          registryAuthFrom: {name: demo-registry}
+          verificationPolicyFrom: {name: demo-migration-verification-policy, key: policy.yaml}
+          transport: {plainHTTP: true}
+        policy:
+          apply: OnApproval
+          lockTimeout: 30s
+        interval: 1m
+      EOF
     sync: publishing
     expect:
       exit: 0
-      stdout_contains: ["kind: PtahMigration", "apply: OnApproval"]
+      stdout_contains: [shipments created]
+      resource:
+        kind: ptahmigration
+        name: shipments
+        fields:
+          - path: spec.policy.apply
+            equals: OnApproval
 
-  - note: Apply it. The operator resolves the artifact, verifies it, and reads the database's history.
-    run: kubectl apply -f demo/.lab/shipments.yaml
+  - note: The operator resolves the artifact, verifies it, and reads the database's history.
+    run: kubectl ptah wait migration/shipments -n "$NAMESPACE" --for approval
+    sync: awaiting approval
     expect:
       exit: 0
-      stdout_contains: [created]
+      stdout_contains: [reached approval]
+      resource:
+        kind: ptahmigration
+        name: shipments
+        generation: current
+        condition:
+          type: ApprovalRequired
+          status: "True"
+          reason: AwaitingApproval
 
   - note: Two migrations pending against an empty history, and a plan waiting for a decision.
-    await:
-      kind: ptahmigration
-      name: shipments
-      timeout: 6m
-      condition:
-        type: ApprovalRequired
-        status: "True"
-        reason: AwaitingApproval
     run: kubectl ptah migration shipments -n "$NAMESPACE"
-    sync: awaiting approval
     expect:
       exit: 0
       # The order and the descriptions, and no statement anywhere: a published
@@ -62,48 +88,26 @@ steps:
 
   - note: No migration has run, and reading the history wrote nothing. The database is still empty.
     # Ptah reads the history without creating its revision table, so a
-    # database nobody has migrated reads as an empty history. The count is a
-    # query because \dt prints nothing to stdout for an empty database.
-    run: |
-      kubectl -n "$NAMESPACE" exec deploy/demo-psql -- psql -tAc "SELECT 'tables: ' || count(*) FROM pg_tables WHERE schemaname = current_schema()"
+    # database nobody has migrated reads as an empty history. \dt says so on
+    # stderr, so that is the stream this step shows.
+    run: kubectl -n "$NAMESPACE" exec deploy/demo-psql -- psql -c "\dt"
+    show: [stderr]
     expect:
       exit: 0
-      stdout_contains: ["tables: 0"]
+      stderr_contains: ["Did not find any relations"]
 
-  - note: An approval names the migration, the plan and its fingerprint. The rest is read off the plan.
-    run: |
-      kubectl -n "$NAMESPACE" get ptahmigration shipments -o json > demo/.lab/migration.json
-      kubectl -n "$NAMESPACE" get ptahmigrationplan \
-        "$(jq -r .status.plan.name demo/.lab/migration.json)" -o json > demo/.lab/migration-plan.json
-      jq -n --slurpfile migration demo/.lab/migration.json --slurpfile plan demo/.lab/migration-plan.json '
-        {
-          apiVersion: "operator.ptah.run/v1alpha1", kind: "PtahMigrationApproval",
-          metadata: {name: "shipments-v1"},
-          spec: {
-            migrationRef: {name: $migration[0].metadata.name, uid: $migration[0].metadata.uid},
-            planRef:      {name: $plan[0].metadata.name,      uid: $plan[0].metadata.uid},
-            planFingerprint: $plan[0].spec.fingerprint
-          }
-        }' | tee demo/.lab/migration-approval.json | jq -c .spec
-    expect:
-      exit: 0
-      stdout_contains: ['"planFingerprint":"sha256:']
-
-  - note: Create it. The webhook stamps who you are and holds the three to the live plan.
-    run: kubectl -n "$NAMESPACE" create -f demo/.lab/migration-approval.json
+  # A migration plan records versions and checksums; its SQL stays in the
+  # artifact, and approve says so rather than claiming to have shown it.
+  - note: Approve it. The plan is versions and checksums, and the approval names its fingerprint.
+    run: kubectl ptah approve migration/shipments -n "$NAMESPACE" --name shipments-v1 --wait
+    answers:
+      - prompt: "Type yes to approve: "
+        type: "yes"
     sync: approved
     expect:
       exit: 0
-      stdout_contains: [created]
-
-  - note: The plan's fingerprint covers the history, so an approval cannot outlive another run.
-    run: |
-      jq -r '.spec | {fingerprint, historyFingerprint, artifactDigest}' demo/.lab/migration-plan.json
-      kubectl -n "$NAMESPACE" get ptahmigrationapproval shipments-v1 -o json \
-        | jq -r '.spec | {approver: .approver.username, planFingerprint}'
-    expect:
-      exit: 0
-      stdout_contains: [historyFingerprint, approver, planFingerprint]
+      stdout_contains: ["Fingerprint:", "checksum", "not shown here", "Type yes to approve: yes",
+        "Approved: PtahMigrationApproval", reached applied]
       resource:
         kind: ptahmigrationapproval
         name: shipments-v1
@@ -115,32 +119,46 @@ steps:
           - path: spec.mutationRequestUID
             notEmpty: true
 
-  - note: With the decision recorded, the sequence runs and the history is read back to confirm it.
-    await:
-      kind: ptahmigration
-      name: shipments
-      timeout: 6m
-      condition:
-        type: Ready
-        status: "True"
-        reason: HistoryMatched
+  - note: The sequence ran, and the column is constrained the way migration 2 left it.
     run: kubectl -n "$NAMESPACE" exec deploy/demo-psql -- psql -c "\d shipments"
     sync: converged
     expect:
       exit: 0
       stdout_contains: [carrier, "not null"]
 
+  # The verdict comes from the revision table, read back after the run, not
+  # from the Job's exit code; the approval is listed with the run it allowed.
   - note: The verdict is the database's, read from the revision table and not from the Job's exit code.
     run: kubectl ptah migration shipments -n "$NAMESPACE"
     expect:
       exit: 0
-      stdout_contains: [InSync, "Current version:      2", "Last run:             Applied", "Versions:           1, 2"]
+      stdout_contains: [InSync, "Current version:      2", "Pending:              0", "Last run:             Applied",
+        "Versions:           1, 2", "No plan is published.", shipments-v1]
       stdout_absent: ["CREATE TABLE", "ALTER TABLE"]
+      resource:
+        kind: ptahmigration
+        name: shipments
+        condition:
+          type: Ready
+          status: "True"
+          reason: HistoryMatched
+        fields:
+          - path: status.lastRun.jobUID
+            keep: the-run
 
-  - note: Reconciling again runs nothing. The history already holds both, so there is nothing pending.
-    run: |
-      kubectl -n "$NAMESPACE" get ptahmigration shipments -o json \
-        | jq -r '"pending: \(.status.history.pendingCount)", "applied: \(.status.history.appliedCount)", "plan: \(.status.plan // "none")"'
+  # A read request asks for a reading of the history now rather than at the
+  # interval, and starts no Apply. The wait counts only the read it asked for.
+  - note: Read the history again. There is nothing pending, so nothing runs.
+    run: kubectl ptah refresh migration/shipments -n "$NAMESPACE" --wait
     expect:
       exit: 0
-      stdout_contains: ["pending: 0", "applied: 2", "plan: none"]
+      stdout_contains: [Read requested for, reached read]
+      resource:
+        kind: ptahmigration
+        name: shipments
+        fields:
+          - path: status.history.pendingCount
+            equals: "0"
+          # The last run is still the one above: the read started no other.
+          - path: status.lastRun.jobUID
+            sameAs: the-run

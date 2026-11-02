@@ -93,16 +93,17 @@ The lab builds that binary for you; outside it you
 scenario is about: a converged schema carries no current plan, because there is
 nothing left to do.
 
-And the conditions, which are what the operator says rather than what a Job
-did:
+And where the schema stands, which is what the operator says rather than what a
+Job did:
 
 ```sh
-kubectl -n "$NAMESPACE" get ptahschema storefront \
-  -o jsonpath='{range .status.conditions[*]}{.type}{"\t"}{.status}{"\t"}{.reason}{"\n"}{end}'
+kubectl ptah schema storefront -n "$NAMESPACE"
 ```
 
-`InSync=True` with reason `ScopedConverged` is convergence. `Applying=False`
-with reason `JobCompleted` beside it is a different claim: the Job finished.
+It prints the phase, the policy, what the last reading of the database found,
+and every condition with its reason and message. `InSync=True` with reason
+`ScopedConverged` is convergence. `Applying=False` with reason `JobCompleted`
+beside it is a different claim: the Job finished.
 
 ## And to a column it added
 
@@ -115,17 +116,19 @@ at the new digest, and converges again. The plan it derives is an `ALTER` and a
 `CREATE` against the database as it actually is, not a second `CREATE TABLE` of
 what is already there.
 
-Seven more scenarios show what the operator refuses and what it does when
+The other scenarios show what the operator refuses and what it does when
 something goes wrong: a destructive change the policy stops, a plan waiting for
 a person to approve it, an approval that has been used and cannot be used
-again, drift closed without being asked, a database that is not there, and a
-reconciliation suspended and resumed. `demo/scenarios/` is all of them, and
+again, drift closed without being asked, a database that is not there, a
+reconciliation suspended and resumed, and the migration runs beside them.
+Each says where it starts and how to get there. `demo/scenarios/` is all of
+them, and
 
 ```sh
 make demo-record
 ```
 
-runs every one against the lab. It takes about twenty minutes and leaves the
+runs every one against the lab. It takes about 45 minutes on a CI runner and leaves the
 cluster in whatever state the last scenario wanted, so run it when you want the
 whole set rather than when you want to look at one.
 

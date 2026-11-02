@@ -1,0 +1,42 @@
+# A prepared migration sequence against MySQL, read from a ConfigMap, at each
+# of three releases: 1 creates the deliveries table, 2 adds a migration whose
+# last statement fails, and 3 carries that migration corrected. The three
+# files differ in the ConfigMap and the files selected from it.
+#
+# MySQL commits each DDL statement on its own, so a migration that fails
+# halfway has already changed the schema, and no transaction mode takes that
+# back. transactionMode: none says so.
+apiVersion: operator.ptah.run/v1alpha1
+kind: PtahMigration
+metadata:
+  name: deliveries
+spec:
+  target:
+    engine: MySQL
+    # A database of its own, so this key is its own realm.
+    coordinationKey: demo/deliveries/mysql
+    urlFrom:
+      name: demo-mysql-database
+      key: url
+  artifact:
+    configMap:
+      name: deliveries-release-3
+      items:
+        - key: 0000000001_create_deliveries.up.sql
+          path: 0000000001_create_deliveries.up.sql
+        - key: 0000000001_create_deliveries.down.sql
+          path: 0000000001_create_deliveries.down.sql
+        - key: 0000000002_add_status.up.sql
+          path: 0000000002_add_status.up.sql
+        - key: 0000000002_add_status.down.sql
+          path: 0000000002_add_status.down.sql
+  policy:
+    # Every run waits for a person.
+    apply: OnApproval
+    lockTimeout: 30s
+    transactionMode: none
+  interval: 1m
+  execution:
+    activeDeadlineSeconds: 300
+    failureRetryInterval: 10s
+    connectTimeout: 30s

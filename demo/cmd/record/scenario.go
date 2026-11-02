@@ -19,11 +19,16 @@ import (
 // it runs, and definitionDigest leaves it out. Every other field is in the
 // digest without being listed there.
 type scenario struct {
-	ID      string   `yaml:"id"`
-	Title   string   `yaml:"title" digest:"-"`
-	Tagline string   `yaml:"tagline" digest:"-"`
-	Learn   string   `yaml:"learn" digest:"-"`
-	Tags    []string `yaml:"tags" digest:"-"`
+	ID      string `yaml:"id"`
+	Title   string `yaml:"title" digest:"-"`
+	Tagline string `yaml:"tagline" digest:"-"`
+	Learn   string `yaml:"learn" digest:"-"`
+	// Start says where the scenario begins and how a reader gets there: an
+	// empty namespace, or the state another scenario ends in. The reset is
+	// what reaches it here, and it is not published, so this sentence is what
+	// stands in for it on the page.
+	Start string   `yaml:"start" digest:"-"`
+	Tags  []string `yaml:"tags" digest:"-"`
 	// Reset returns the lab to this scenario's starting point. It runs before
 	// the steps and is not recorded: a reader is watching the scenario, not the
 	// preparation.
@@ -55,9 +60,26 @@ type step struct {
 	// step that demonstrates a refusal names stderr, because the refusal is
 	// what the reader came to see.
 	Show []string `yaml:"show"`
+	// Answers are what a person types at the terminal the command runs on,
+	// each one after the command has printed its prompt. A step with answers
+	// runs on a pseudo-terminal rather than on pipes: a command that asks for
+	// a decision asks only a terminal, and refuses an answer piped into it.
+	// The terminal echoes what was typed, so the transcript shows the answer
+	// where the person typed it, and stdout and stderr arrive as one stream.
+	Answers []answer `yaml:"answers"`
 	// Expect is what has to hold once the command has run. A step without it is
 	// refused.
 	Expect *expectation `yaml:"expect"`
+}
+
+// answer is one reply typed at a terminal.
+type answer struct {
+	// Prompt is text the command prints when it stops to ask. The answer is
+	// typed once the terminal has shown it, and not before: typed earlier, the
+	// terminal would echo it above the question.
+	Prompt string `yaml:"prompt"`
+	// Type is the line typed in reply, without its newline.
+	Type string `yaml:"type"`
 }
 
 // expectation is the condition under which this step's output may be published.
@@ -66,6 +88,7 @@ type expectation struct {
 	StdoutContains []string     `yaml:"stdout_contains"`
 	StderrContains []string     `yaml:"stderr_contains"`
 	StdoutAbsent   []string     `yaml:"stdout_absent"`
+	StderrAbsent   []string     `yaml:"stderr_absent"`
 	Resource       *observation `yaml:"resource"`
 }
 
@@ -97,6 +120,16 @@ type field struct {
 	Path     string `yaml:"path"`
 	Equals   string `yaml:"equals"`
 	NotEmpty bool   `yaml:"notEmpty"`
+	// Keep records the value, which has to be set, under a name a later step
+	// compares with SameAs. It is how a scenario proves that something did not
+	// happen between two steps -- the same Job's UID before and after another
+	// pass -- without printing a comparison a reader would have to repeat.
+	Keep string `yaml:"keep"`
+	// SameAs requires the value an earlier step kept under this name.
+	SameAs string `yaml:"sameAs"`
+	// Absent requires the path to be unset or null: no operation in flight,
+	// read from the object rather than from a phase that might pass over it.
+	Absent bool `yaml:"absent"`
 }
 
 // condition reads a Kubernetes condition as fields.
@@ -122,6 +155,7 @@ func (s scenario) validate() error {
 		{"title", s.Title},
 		{"tagline", s.Tagline},
 		{"learn", s.Learn},
+		{"start", s.Start},
 	} {
 		if strings.TrimSpace(declared.value) == "" {
 			problems = append(problems, fmt.Errorf("%s: %s is empty", s.ID, declared.name))
@@ -137,7 +171,43 @@ func (s scenario) validate() error {
 		problems = append(problems, current.validate(s.ID, index)...)
 	}
 	problems = append(problems, s.validateRepeatedWaits()...)
+	problems = append(problems, s.validateKeptValues()...)
 	return errors.Join(problems...)
+}
+
+// validateKeptValues refuses a comparison with a value no earlier step keeps,
+// and a name kept twice. A sameAs that named nothing would compare the field
+// with nothing, and the step would publish a claim it never checked.
+func (s scenario) validateKeptValues() []error {
+	var problems []error
+	kept := map[string]int{}
+	for index, current := range s.Steps {
+		if current.Expect == nil || current.Expect.Resource == nil {
+			continue
+		}
+		where := fmt.Sprintf("%s step %d", s.ID, index+1)
+		for _, read := range current.Expect.Resource.Fields {
+			if read.SameAs != "" {
+				if _, ok := kept[read.SameAs]; !ok {
+					problems = append(problems, fmt.Errorf(
+						"%s compares %s with the value kept as %q, which no earlier step keeps",
+						where, read.Path, read.SameAs))
+				}
+			}
+		}
+		for _, read := range current.Expect.Resource.Fields {
+			if read.Keep == "" {
+				continue
+			}
+			if earlier, ok := kept[read.Keep]; ok {
+				problems = append(problems, fmt.Errorf(
+					"%s keeps a value as %q, which step %d already keeps", where, read.Keep, earlier))
+				continue
+			}
+			kept[read.Keep] = index + 1
+		}
+	}
+	return problems
 }
 
 // validateRepeatedWaits refuses a second await on a condition an earlier step
@@ -219,8 +289,16 @@ func (s step) validate(scenarioID string, index int) []error {
 			problems = append(problems, fmt.Errorf("%s shows %q, which is neither stdout nor stderr", where, name))
 		}
 	}
+	problems = append(problems, s.validateAnswers(where)...)
 	if s.Await != nil {
 		problems = append(problems, s.Await.validate(where+" await")...)
+		for _, read := range s.Await.Fields {
+			if read.Keep != "" || read.SameAs != "" {
+				problems = append(problems, fmt.Errorf(
+					"%s await keeps or compares %s; a wait reads the object many times, so only an "+
+						"expectation, which reads it once, may keep a value", where, read.Path))
+			}
+		}
 	}
 	if s.Expect == nil {
 		problems = append(problems, fmt.Errorf(
@@ -233,6 +311,43 @@ func (s step) validate(scenarioID string, index int) []error {
 	}
 	if s.Expect.Resource != nil {
 		problems = append(problems, s.Expect.Resource.validate(where+" resource")...)
+	}
+	return problems
+}
+
+// validateAnswers refuses answers a terminal could not deliver as written,
+// and a step that would type them more than once.
+func (s step) validateAnswers(where string) []error {
+	if len(s.Answers) == 0 {
+		return nil
+	}
+	var problems []error
+	for index, one := range s.Answers {
+		switch {
+		case strings.TrimSpace(one.Prompt) == "":
+			problems = append(problems, fmt.Errorf("%s answer %d waits for no prompt", where, index+1))
+		case strings.ContainsAny(one.Prompt, "\r\n"):
+			// A terminal writes a line break as CR LF, so a prompt that spans
+			// two lines would never be found in what it showed.
+			problems = append(problems, fmt.Errorf("%s answer %d waits for a prompt of more than one line", where, index+1))
+		}
+		if strings.TrimSpace(one.Type) == "" || strings.ContainsAny(one.Type, "\r\n") {
+			problems = append(problems, fmt.Errorf("%s answer %d types %q; an answer is one line of text", where, index+1, one.Type))
+		}
+	}
+	if s.Retry != 0 {
+		problems = append(problems, fmt.Errorf(
+			"%s answers a prompt and retries; typing the answer again is a second decision, not a second look", where))
+	}
+	for _, name := range s.Show {
+		if name == "stderr" {
+			problems = append(problems, fmt.Errorf(
+				"%s shows stderr, and a terminal carries one stream; what the command wrote is in stdout", where))
+		}
+	}
+	if s.Expect != nil && (len(s.Expect.StderrContains) > 0 || len(s.Expect.StderrAbsent) > 0) {
+		problems = append(problems, fmt.Errorf(
+			"%s expects text on stderr, and a terminal carries one stream; expect it in stdout", where))
 	}
 	return problems
 }
@@ -279,14 +394,23 @@ func (f field) validate(where string) []error {
 	if strings.TrimSpace(f.Path) == "" {
 		problems = append(problems, fmt.Errorf("%s reads a field with no path", where))
 	}
-	if f.Equals == "" && !f.NotEmpty {
-		problems = append(problems, fmt.Errorf(
-			"%s reads %s and asks nothing of it; say equals or notEmpty", where, f.Path))
+	asked := 0
+	for _, set := range []bool{f.Equals != "", f.NotEmpty, f.Keep != "", f.SameAs != "", f.Absent} {
+		if set {
+			asked++
+		}
 	}
-	if f.Equals != "" && f.NotEmpty {
+	switch {
+	case asked == 0:
+		problems = append(problems, fmt.Errorf(
+			"%s reads %s and asks nothing of it; say equals, notEmpty, keep, sameAs or absent", where, f.Path))
+	case f.Equals != "" && f.NotEmpty:
 		problems = append(problems, fmt.Errorf(
 			"%s reads %s with both equals and notEmpty; notEmpty is what you say when you "+
 				"cannot name the value", where, f.Path))
+	case asked > 1:
+		problems = append(problems, fmt.Errorf(
+			"%s reads %s with more than one of equals, notEmpty, keep, sameAs and absent; say one", where, f.Path))
 	}
 	return problems
 }
@@ -378,14 +502,35 @@ func read(object map[string]any, path string) (string, bool) {
 }
 
 // matches reports whether the object carries the value this field expects.
-func (f field) matches(object map[string]any) error {
+// A field that keeps its value writes it into kept, and one that compares
+// reads it from there.
+func (f field) matches(object map[string]any, kept map[string]string) error {
 	value, present := read(object, f.Path)
+	if f.Absent {
+		if present {
+			return fmt.Errorf("%s is %q, expected it unset", f.Path, value)
+		}
+		return nil
+	}
 	if !present {
 		return fmt.Errorf("%s is not set", f.Path)
 	}
-	if f.NotEmpty {
+	if f.NotEmpty || f.Keep != "" {
 		if strings.TrimSpace(value) == "" {
 			return fmt.Errorf("%s is empty", f.Path)
+		}
+		if f.Keep != "" {
+			kept[f.Keep] = value
+		}
+		return nil
+	}
+	if f.SameAs != "" {
+		earlier, ok := kept[f.SameAs]
+		switch {
+		case !ok:
+			return fmt.Errorf("no step kept a value as %q to compare %s with", f.SameAs, f.Path)
+		case value != earlier:
+			return fmt.Errorf("%s is %q, and the value kept as %q is %q", f.Path, value, f.SameAs, earlier)
 		}
 		return nil
 	}
@@ -407,6 +552,7 @@ var publishedVariables = map[string]bool{
 	"NAMESPACE":           true,
 	"OPERATOR_NAMESPACE":  true,
 	"CONTROLLER":          true,
+	"EXECUTOR_IMAGE":      true,
 	"REGISTRY_IN_CLUSTER": true,
 	"PTAH_OCI_REGISTRY":   true,
 	"PTAH_OCI_USERNAME":   true,

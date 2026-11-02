@@ -1,0 +1,36 @@
+# A prepared migration sequence, read from a ConfigMap, at each of two
+# releases of an application. shipments-release-1.yaml selects the migration
+# that creates the shipments table; shipments-release-2.yaml keeps it and adds
+# the one that fills a carrier column from the rows it finds. The two files
+# differ in the ConfigMap, the files selected from it, and whether a person
+# approves what runs.
+apiVersion: operator.ptah.run/v1alpha1
+kind: PtahMigration
+metadata:
+  name: shipments
+spec:
+  target:
+    engine: PostgreSQL
+    # The same database the storefront runs use, under the same key; the
+    # runs never manage it at the same time.
+    coordinationKey: demo/storefront/primary
+    urlFrom:
+      name: demo-database
+      key: url
+  artifact:
+    configMap:
+      name: shipments-release-1
+      items:
+        - key: 0000000001_create_shipments.up.sql
+          path: 0000000001_create_shipments.up.sql
+        - key: 0000000001_create_shipments.down.sql
+          path: 0000000001_create_shipments.down.sql
+  policy:
+    apply: Always
+    # The wait for the database's own migration lock, not a Kubernetes Lease.
+    lockTimeout: 30s
+  interval: 1m
+  execution:
+    activeDeadlineSeconds: 300
+    failureRetryInterval: 10s
+    connectTimeout: 30s

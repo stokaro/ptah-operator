@@ -2,6 +2,9 @@ id: lab-setup
 title: Stand up the lab
 tagline: A four-node kind cluster, the chart from a package, and every image pinned by digest.
 learn: What the other runs are against, and how to tell an install that finished from one that started.
+start: >-
+  The lab make demo-up builds, with nothing of the runs in its namespace. This run is the setup the
+  others start from, and its checks are installation evidence rather than lessons.
 tags: [Lab]
 
 reset:
@@ -15,40 +18,61 @@ steps:
       exit: 0
       stdout_contains: [kubernetes, kind, operator, executor, ptah]
 
-  - note: The operator runs in its own namespace, two replicas, one leader.
-    run: kubectl -n "$OPERATOR_NAMESPACE" get deployment
+  # The rollout is the installation evidence: a Deployment that has rolled
+  # out has its replicas available, not merely created. The recorder reads the
+  # condition itself as well, independently of what the command printed.
+  - note: An install that finished, not one that started. The rollout is complete.
+    run: kubectl -n "$OPERATOR_NAMESPACE" rollout status deployment "$CONTROLLER" --timeout=3m
     expect:
       exit: 0
-      stdout_contains: [ptah]
+      stdout_contains: [successfully rolled out]
+      resource:
+        kind: deployment
+        name: $CONTROLLER
+        namespace: $OPERATOR_NAMESPACE
+        condition:
+          type: Available
+          status: "True"
+          reason: MinimumReplicasAvailable
 
-  - note: Available means the install finished. The image is a digest, so one exact build runs.
-    await:
-      kind: deployment
-      name: $CONTROLLER
-      namespace: $OPERATOR_NAMESPACE
-      timeout: 3m
-      condition:
-        type: Available
-        status: "True"
-        reason: MinimumReplicasAvailable
+  - note: Two replicas, one leader, and every image a digest, so one exact build runs.
+    run: kubectl -n "$OPERATOR_NAMESPACE" get deployment -o wide
+    expect:
+      exit: 0
+      stdout_contains: [ptah, "@sha256:"]
+
+  - note: The kinds the operator serves. A schema, its plan, and the approval that lets it run.
+    run: kubectl api-resources --api-group=operator.ptah.run
+    expect:
+      exit: 0
+      stdout_contains: [ptahschemas, ptahschemaplans, ptahschemaapprovals, ptahmigrations]
+
+  - note: Each of those is served once its CRD is Established.
     run: |
-      kubectl -n "$OPERATOR_NAMESPACE" get deployment -o json \
-        | jq -r '.items[].spec.template.spec.containers[].image'
+      kubectl wait --for=condition=Established --timeout=1m \
+        crd/ptahschemas.operator.ptah.run crd/ptahschemaplans.operator.ptah.run crd/ptahschemaapprovals.operator.ptah.run
     expect:
       exit: 0
-      stdout_contains: ["@sha256:"]
+      stdout_contains: [ptahschemas.operator.ptah.run condition met, ptahschemaapprovals.operator.ptah.run condition met]
 
-  - note: Three resources -- the desired state, the plan, and the decision that lets it run.
-    run: |
-      kubectl get crd -o custom-columns=NAME:.metadata.name,ESTABLISHED:'.status.conditions[?(@.type=="Established")].status' \
-        ptahschemas.operator.ptah.run ptahschemaplans.operator.ptah.run ptahschemaapprovals.operator.ptah.run
-    expect:
-      exit: 0
-      stdout_contains: [ptahschemas, ptahschemaplans, ptahschemaapprovals]
-
-  - note: The namespace it works in. Credentials are Secrets; the policy cannot be edited.
+  - note: The namespace the runs work in. Credentials are Secrets; the policy cannot be edited.
     run: kubectl -n "$NAMESPACE" get secret,configmap
     expect:
       exit: 0
       stdout_contains: [demo-database, demo-registry, demo-verification-policy]
       stdout_absent: [password]
+
+  # The registry is one registry with two names, the way a registry in an
+  # ordinary deployment is. Every run that publishes pushes to the first and
+  # points the cluster at the second, keeping the repository and the digest:
+  # the digest is what the operator verifies, and the registry Secret's
+  # registry key names the second address, so the operator sends credentials
+  # to no other. ${NAME:?} stops the shell on a name that is unset or empty,
+  # so the step cannot pass by printing a label with nothing after it.
+  - note: One registry, two addresses. You push to the first; Pods in the cluster pull from the second.
+    run: |
+      echo "push to:   ${PTAH_OCI_REGISTRY:?is not set}"
+      echo "pull from: ${REGISTRY_IN_CLUSTER:?is not set}"
+    expect:
+      exit: 0
+      stdout_contains: ["push to:   ", "pull from: "]

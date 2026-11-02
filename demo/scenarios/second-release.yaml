@@ -2,43 +2,42 @@ id: second-release
 title: Ship a second release onto rows that already exist
 tagline: A backfill that runs against real data, and a history that says it ran once.
 learn: What a release adds when the database already has a history, and how to tell it did not run twice.
+start: >-
+  An empty database and a namespace with the lab's Secrets. Each release is a ConfigMap of migration
+  files and a manifest that selects them, the delivery a team uses when its manifests already carry the
+  files; Run a prepared migration sequence shows the same resource reading an artifact.
 tags: [Lifecycle]
 
 reset:
   - demo/bin/lab reset
-  # Two artifacts, the way two releases of an application ship them: the first
-  # carries only the migration that creates the table, the second keeps it and
-  # adds the one that fills a new column from the rows it finds.
-  - |
-    eval "$(demo/bin/lab credentials)"
-    export PTAH_OCI_USERNAME PTAH_OCI_PASSWORD PTAH_OCI_REGISTRY
-    rm -rf demo/.lab/release-1 && mkdir -p demo/.lab/release-1
-    cp demo/migrations/0000000001_create_shipments.* demo/.lab/release-1/
-    ptah migrations push "oci://$PTAH_OCI_REGISTRY/migrations/demo:release-1-$$" \
-      --migrations-dir demo/.lab/release-1 --dir-format ptah --version "release-1-$$" --plain-http \
-      | sed -n 's/^Digest: //p' > demo/.lab/release-1-digest
-    ptah migrations push "oci://$PTAH_OCI_REGISTRY/migrations/demo:release-2-$$" \
-      --migrations-dir demo/migrations --dir-format ptah --version "release-2-$$" --plain-http \
-      | sed -n 's/^Digest: //p' > demo/.lab/release-2-digest
 
 steps:
   - note: The first release carries one migration, and this resource applies it on its own.
-    run: APPLY=Always demo/bin/lab manifest shipments "$(cat demo/.lab/release-1-digest)" | kubectl apply -f -
+    run: |
+      kubectl -n "$NAMESPACE" create configmap shipments-release-1 \
+        --from-file=demo/migrations/0000000001_create_shipments.up.sql \
+        --from-file=demo/migrations/0000000001_create_shipments.down.sql
+      kubectl -n "$NAMESPACE" apply -f demo/manifests/second-release/shipments-release-1.yaml
     sync: first release
     expect:
       exit: 0
-      stdout_contains: [created]
+      stdout_contains: [configmap/shipments-release-1 created, shipments created]
+
+  - note: Under apply Always it runs without waiting for anyone.
+    run: kubectl ptah wait migration/shipments -n "$NAMESPACE" --for in-sync
+    expect:
+      exit: 0
+      stdout_contains: [reached in-sync]
+      resource:
+        kind: ptahmigration
+        name: shipments
+        generation: current
+        condition:
+          type: Ready
+          status: "True"
+          reason: HistoryMatched
 
   - note: The table exists and the history records version 1.
-    await:
-      kind: ptahmigration
-      name: shipments
-      timeout: 6m
-      generation: current
-      condition:
-        type: Ready
-        status: "True"
-        reason: HistoryMatched
     run: kubectl ptah migration shipments -n "$NAMESPACE"
     expect:
       exit: 0
@@ -59,110 +58,95 @@ steps:
       exit: 0
       stdout_contains: [ADD COLUMN carrier, "UPDATE shipments", "LIKE 'EU-%'", SET NOT NULL]
 
+  # The resource is the same manifest at the next release: another ConfigMap,
+  # the files it adds, and apply OnApproval. In an editor it is the same edit.
   - note: Point the resource at the second release, and ask for a decision this time.
     run: |
-      APPLY=OnApproval demo/bin/lab manifest shipments "$(cat demo/.lab/release-2-digest)" \
-        | tee demo/.lab/shipments.yaml | kubectl apply -f -
+      diff -u demo/manifests/second-release/shipments-release-1.yaml demo/manifests/second-release/shipments-release-2.yaml
+      kubectl -n "$NAMESPACE" create configmap shipments-release-2 --from-file=demo/migrations
+      kubectl -n "$NAMESPACE" apply -f demo/manifests/second-release/shipments-release-2.yaml
     sync: second release
     expect:
       exit: 0
-      stdout_contains: [configured]
+      stdout_contains: ["+      name: shipments-release-2", "+    apply: OnApproval", shipments configured]
 
-  - note: The plan holds only version 2. Version 1 is in the history, so it is not offered again.
-    await:
-      kind: ptahmigration
-      name: shipments
-      timeout: 6m
-      generation: current
-      condition:
-        type: ApprovalRequired
-        status: "True"
-        reason: AwaitingApproval
-    run: |
-      kubectl -n "$NAMESPACE" get ptahmigrationplan \
-        "$(kubectl -n "$NAMESPACE" get ptahmigration shipments -o jsonpath='{.status.plan.name}')" -o json \
-        | jq -r '.spec.migrations[] | "planned: \(.version) \(.description)"'
+  - note: The operator reads the history and plans what it does not hold yet.
+    run: kubectl ptah wait migration/shipments -n "$NAMESPACE" --for approval
     sync: awaiting approval
     expect:
       exit: 0
-      stdout_contains: ["planned: 2 Add Carrier"]
-      stdout_absent: ["planned: 1"]
+      stdout_contains: [reached approval]
+      resource:
+        kind: ptahmigration
+        name: shipments
+        generation: current
+        condition:
+          type: ApprovalRequired
+          status: "True"
+          reason: AwaitingApproval
 
-  - note: Approve that plan by name, UID and fingerprint.
-    run: |
-      kubectl -n "$NAMESPACE" get ptahmigration shipments -o json > demo/.lab/migration.json
-      kubectl -n "$NAMESPACE" get ptahmigrationplan \
-        "$(jq -r .status.plan.name demo/.lab/migration.json)" -o json > demo/.lab/migration-plan.json
-      jq -n --slurpfile migration demo/.lab/migration.json --slurpfile plan demo/.lab/migration-plan.json '
-        {
-          apiVersion: "operator.ptah.run/v1alpha1", kind: "PtahMigrationApproval",
-          metadata: {name: "shipments-release-2"},
-          spec: {
-            migrationRef: {name: $migration[0].metadata.name, uid: $migration[0].metadata.uid},
-            planRef:      {name: $plan[0].metadata.name,      uid: $plan[0].metadata.uid},
-            planFingerprint: $plan[0].spec.fingerprint
-          }
-        }' | kubectl -n "$NAMESPACE" create -f -
+  - note: The plan holds only version 2. Version 1 is in the history, so it is not offered again.
+    run: kubectl ptah migration shipments -n "$NAMESPACE"
+    expect:
+      exit: 0
+      stdout_contains: ["Pending:              1", "1 migration from version 1", Add Carrier]
+      stdout_absent: [Create Shipments]
+
+  - note: Approve that plan. The command shows it again, asks, and waits for the run.
+    run: kubectl ptah approve migration/shipments -n "$NAMESPACE" --name shipments-release-2 --wait
+    answers:
+      - prompt: "Type yes to approve: "
+        type: "yes"
     sync: approved
     expect:
       exit: 0
-      stdout_contains: [created]
+      stdout_contains: ["From version 1", Add Carrier, "Type yes to approve: yes", "Approved: PtahMigrationApproval", reached applied]
 
   - note: The same three rows, each with a carrier its reference decided.
-    # The approval changes no spec, so there is no generation to wait on: the
-    # read is repeated until the run has reached the rows.
-    retry: 6m
-    run: |
-      kubectl -n "$NAMESPACE" exec deploy/demo-psql -- psql -c "SELECT * FROM shipments ORDER BY id"
-      kubectl -n "$NAMESPACE" exec deploy/demo-psql -- psql -tAc \
-        "SELECT id || ' ' || reference || ' ' || carrier FROM shipments ORDER BY id"
+    run: kubectl -n "$NAMESPACE" exec deploy/demo-psql -- psql -c "SELECT id, reference, carrier FROM shipments ORDER BY id"
     sync: converged
     expect:
       exit: 0
-      stdout_contains: ["(3 rows)", "1 EU-1001 dhl", "2 US-2002 ups", "3 EU-1003 dhl"]
+      stdout_contains: ["EU-1001   | dhl", "US-2002   | ups", "EU-1003   | dhl", "(3 rows)"]
 
-  - note: The run applied version 2 alone. Keep its Job's UID, to compare after the next pass.
-    # The rows change when the run commits, and the resource records the run
-    # when the operator reads its Job afterwards; the history read that follows
-    # is what says the record is there.
-    await:
-      kind: ptahmigration
-      name: shipments
-      timeout: 6m
-      generation: current
-      condition:
-        type: Ready
-        status: "True"
-        reason: HistoryMatched
-    run: |
-      kubectl -n "$NAMESPACE" get ptahmigration shipments -o json \
-        | jq -r '"applied: \(.status.lastRun.appliedVersions | join(","))", "job: \(.status.lastRun.jobUID)"' \
-        | tee demo/.lab/release-2-run
+  # The Job's name and UID identify the run. The recorder keeps the UID here
+  # and compares it after the next read: a transcript prints every UID the
+  # same way, so the comparison is the recorder's rather than the reader's.
+  - note: The run applied version 2 alone, and the resource names the Job that ran it.
+    run: kubectl ptah migration shipments -n "$NAMESPACE"
     expect:
       exit: 0
-      stdout_contains: ["applied: 2", "job: "]
+      stdout_contains: ["Last run:             Applied", "Versions:           2", "Pending:              0"]
+      resource:
+        kind: ptahmigration
+        name: shipments
+        condition:
+          type: Ready
+          status: "True"
+          reason: HistoryMatched
+        fields:
+          - path: status.lastRun.jobUID
+            keep: release-2-run
 
-  - note: Change only the interval. The operator has to read the history again to settle it.
-    run: kubectl -n "$NAMESPACE" patch ptahmigration shipments --type merge -p '{"spec":{"interval":"2m"}}'
+  # A read request asks the operator to read the history now rather than at
+  # its interval. It starts no Apply and approves nothing, and the wait counts
+  # only the read it asked for.
+  - note: Ask for another reading of the history, and wait for it.
+    run: kubectl ptah refresh migration/shipments -n "$NAMESPACE" --wait
     expect:
       exit: 0
-      stdout_contains: [patched]
+      stdout_contains: [Read requested for, reached read]
 
-  - note: That pass found nothing pending, and the last run is still the one kept above.
-    await:
-      kind: ptahmigration
-      name: shipments
-      timeout: 6m
-      generation: current
-      condition:
-        type: Ready
-        status: "True"
-        reason: HistoryMatched
-    run: |
-      kubectl -n "$NAMESPACE" get ptahmigration shipments -o json \
-        | jq -r '"applied: \(.status.lastRun.appliedVersions | join(","))", "job: \(.status.lastRun.jobUID)"' \
-        | diff demo/.lab/release-2-run - && echo "the same run, and no other"
-      kubectl -n "$NAMESPACE" exec deploy/demo-psql -- psql -tAc "SELECT count(*) FROM shipments"
+  - note: That reading found nothing pending, and the last run is still the one above.
+    run: kubectl ptah migration shipments -n "$NAMESPACE"
     expect:
       exit: 0
-      stdout_contains: ["the same run, and no other", "3"]
+      stdout_contains: ["Last run:             Applied", "Versions:           2", "Pending:              0"]
+      resource:
+        kind: ptahmigration
+        name: shipments
+        fields:
+          - path: status.lastRun.jobUID
+            sameAs: release-2-run
+          - path: status.history.pendingCount
+            equals: "0"

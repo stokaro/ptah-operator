@@ -2,63 +2,88 @@ id: checkpoint-bootstrap
 title: Start a new database from a checkpoint
 tagline: A fresh database runs the snapshot and what came after it, and ends up where the long way ends.
 learn: What a checkpoint replaces, who selects it, and how the operator proves the shortcut arrived at the same place.
+start: >-
+  An empty database with no migration history, and a namespace with the lab's Secrets, as Stand up the
+  lab leaves them.
 tags: [Lifecycle]
 
 reset:
   - demo/bin/lab reset
-  # The same `ptah migrations push` the versioned scene uses, over a directory
-  # that carries a checkpoint. Nothing about publishing changes: what changes is
-  # one file's name.
-  - |
-    eval "$(demo/bin/lab credentials)"
-    export PTAH_OCI_USERNAME PTAH_OCI_PASSWORD PTAH_OCI_REGISTRY
-    ptah migrations push "oci://$PTAH_OCI_REGISTRY/migrations/demo:ckpt-$$" \
-      --migrations-dir demo/migrations-checkpoint --dir-format ptah --version "ckpt-$$" --plain-http \
-      | sed -n 's/^Digest: //p' > demo/.lab/checkpoint-digest
 
 steps:
-  - note: Four files, and one of them is not a migration. The name is the whole contract.
-    run: ls demo/migrations-checkpoint | grep -v down
+  - note: Four versions, each with its down file, and one is not a migration. The name is the contract.
+    run: ls demo/migrations-checkpoint
     expect:
       exit: 0
       stdout_contains: [0000000003_snapshot.checkpoint.up.sql, 0000000004_add_delivered_at.up.sql]
 
   - note: The checkpoint records where migration 2 left the column, not where migration 1 created it.
-    run: sed -n '/CREATE TABLE/,$p' demo/migrations-checkpoint/0000000003_snapshot.checkpoint.up.sql
+    run: cat demo/migrations-checkpoint/0000000003_snapshot.checkpoint.up.sql
     expect:
       exit: 0
       stdout_contains: ["carrier TEXT NOT NULL"]
 
-  - note: The resource points at the whole artifact. Nothing in it names the checkpoint.
-    run: APPLY=Always demo/bin/lab manifest shipments "$(cat demo/.lab/checkpoint-digest)" | grep -v '^ *#'
-    expect:
-      exit: 0
-      stdout_contains: ["kind: PtahMigration", "ociRef: oci://", "apply: Always"]
-      # The claim the step is here to make: a reader who looks for checkpoint 3
-      # in the resource does not find it, because selecting one is Ptah's job.
-      stdout_absent: ["0000000003", checkpoint]
-
-  - note: Apply that resource to a database with no migration history.
-    run: APPLY=Always demo/bin/lab manifest shipments "$(cat demo/.lab/checkpoint-digest)" | kubectl apply -f -
+  # The same ptah migrations push the versioned run uses, over a directory that
+  # carries a checkpoint. Nothing about publishing changes: what changes is one
+  # file's name. Nothing in the resource names the checkpoint either:
+  # selecting one is Ptah's job, from the history the database has.
+  - note: Publish it, and point a resource at the whole artifact. Nothing in it names the checkpoint.
+    run: |
+      REF=$(ptah migrations push "oci://$PTAH_OCI_REGISTRY/migrations/demo:ckpt-$$" \
+        --migrations-dir demo/migrations-checkpoint --dir-format ptah --version "ckpt-$$" --plain-http --format reference)
+      PULL="oci://$REGISTRY_IN_CLUSTER/${REF#"oci://$PTAH_OCI_REGISTRY/"}"
+      kubectl apply -n "$NAMESPACE" -f - <<EOF
+      apiVersion: operator.ptah.run/v1alpha1
+      kind: PtahMigration
+      metadata:
+        name: shipments
+      spec:
+        target:
+          engine: PostgreSQL
+          coordinationKey: demo/storefront/primary
+          urlFrom: {name: demo-database, key: url}
+        artifact:
+          ociRef: $PULL
+          registryAuthFrom: {name: demo-registry}
+          verificationPolicyFrom: {name: demo-migration-verification-policy, key: policy.yaml}
+          transport: {plainHTTP: true}
+        policy:
+          apply: Always
+          lockTimeout: 30s
+        interval: 1m
+      EOF
     sync: publishing
     expect:
       exit: 0
-      stdout_contains: [created]
+      stdout_contains: [shipments created]
+      resource:
+        kind: ptahmigration
+        name: shipments
+        fields:
+          - path: spec.policy.apply
+            equals: Always
 
-  - note: An empty history let the checkpoint stand in for 1 and 2, and 4 ran after it.
-    await:
-      kind: ptahmigration
-      name: shipments
-      timeout: 6m
-      condition:
-        type: Ready
-        status: "True"
-        reason: HistoryMatched
-    run: kubectl ptah migration shipments -n "$NAMESPACE"
+  - note: Against a database with no history, under apply Always, it runs without waiting for anyone.
+    run: kubectl ptah wait migration/shipments -n "$NAMESPACE" --for in-sync
     sync: converged
     expect:
       exit: 0
-      stdout_contains: [InSync, "Current version:      4", "Versions:           3, 4"]
+      stdout_contains: [reached in-sync]
+      resource:
+        kind: ptahmigration
+        name: shipments
+        generation: current
+        condition:
+          type: Ready
+          status: "True"
+          reason: HistoryMatched
+
+  - note: An empty history let the checkpoint stand in for 1 and 2, and 4 ran after it. Nothing is left.
+    run: kubectl ptah migration shipments -n "$NAMESPACE"
+    expect:
+      exit: 0
+      stdout_contains: [InSync, "Current version:      4", "Pending:              0", "Versions:           3, 4",
+        "No plan is published."]
       stdout_absent: ["CREATE TABLE", "ALTER TABLE"]
 
   - note: The table is what replaying all four would have built, down to the constraint.
@@ -66,11 +91,3 @@ steps:
     expect:
       exit: 0
       stdout_contains: [carrier, delivered_at, "not null"]
-
-  - note: Nothing is pending. The shortcut is finished, not paused.
-    run: |
-      kubectl -n "$NAMESPACE" get ptahmigration shipments -o json \
-        | jq -r '"pending: \(.status.history.pendingCount)", "current: \(.status.history.currentVersion)", "plan: \(.status.plan // "none")"'
-    expect:
-      exit: 0
-      stdout_contains: ["pending: 0", "current: 4", "plan: none"]

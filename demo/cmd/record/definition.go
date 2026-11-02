@@ -95,10 +95,13 @@ func yamlKey(field reflect.StructField) string {
 // staleRecordings names every recording whose scenario has changed under it,
 // and every recording naming a scenario that no longer exists.
 //
-// A recording that predates the digest carries none, and is reported as
-// unbound rather than as matching: "nobody checked" and "checked and agreed"
-// are the distinction this whole binding exists to make.
-func staleRecordings(record runRecord, current []scenario) []string {
+// inputs is each scenario's inputDigest, by id: a file a scenario reads that
+// changed is the same finding as the scenario file changing.
+//
+// A recording that predates a digest carries none, and is reported as unbound
+// rather than as matching: "nobody checked" and "checked and agreed" are the
+// distinction this whole binding exists to make.
+func staleRecordings(record runRecord, current []scenario, inputs map[string]string) []string {
 	digests := map[string]string{}
 	for _, one := range current {
 		digests[one.ID] = definitionDigest(one)
@@ -118,6 +121,14 @@ func staleRecordings(record runRecord, current []scenario) []string {
 			findings = append(findings, fmt.Sprintf(
 				"%s: the scenario changed under the recording; re-record it",
 				recorded.ID))
+		case recorded.InputDigest == "":
+			findings = append(findings, fmt.Sprintf(
+				"%s: the recording carries no input digest, so nothing has checked it against the files it read",
+				recorded.ID))
+		case recorded.InputDigest != inputs[recorded.ID]:
+			findings = append(findings, fmt.Sprintf(
+				"%s: a file the scenario reads changed under the recording; re-record it",
+				recorded.ID))
 		}
 	}
 	return findings
@@ -131,7 +142,7 @@ func staleRecordings(record runRecord, current []scenario) []string {
 // With only set, current holds that one scenario, so the record is narrowed
 // to it as well: every other recording would otherwise read as naming a
 // scenario the tree no longer declares.
-func verifyRecordings(path string, current []scenario, only string, diagnostics io.Writer) error {
+func verifyRecordings(root, path string, current []scenario, only string, diagnostics io.Writer) error {
 	contents, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("read the run record: %w", err)
@@ -149,7 +160,11 @@ func verifyRecordings(path string, current []scenario, only string, diagnostics 
 	if len(record.Scenarios) == 0 {
 		return fmt.Errorf("the run record holds no recording, so nothing was verified")
 	}
-	findings := staleRecordings(record, current)
+	inputs, err := inputDigests(root, current)
+	if err != nil {
+		return err
+	}
+	findings := staleRecordings(record, current, inputs)
 	if len(findings) == 0 {
 		fmt.Fprintf(diagnostics, "record: %d recordings still represent their scenarios\n", len(record.Scenarios))
 		return nil

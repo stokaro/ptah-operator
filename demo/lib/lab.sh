@@ -413,18 +413,40 @@ lab_reset() {
 	k -n "$E2E_TEST_NAMESPACE" delete job -l app.kubernetes.io/name=demo-adopt \
 		--ignore-not-found --wait=true --timeout=60s >/dev/null ||
 		lab_fail "could not remove an earlier adoption's baseline Jobs"
-	k -n "$E2E_TEST_NAMESPACE" delete configmap adopt-migrations \
-		--ignore-not-found --wait=true --timeout=60s >/dev/null ||
-		lab_fail "could not remove an earlier adoption's migration files"
+	# Every ConfigMap but the lab's own: the runs create theirs with kubectl
+	# create configmap, which refuses a name that is already taken, and the
+	# command a run shows sets no label to select them by. What stays is the
+	# CA bundle Kubernetes publishes, the verification policies lab_prepare
+	# writes, and the bootstrap's e2e- ConfigMaps. A snapshot the operator
+	# copied a source into goes too, as it would with its resource.
+	lab_reset_configmaps=$(k -n "$E2E_TEST_NAMESPACE" get configmap -o name) ||
+		lab_fail "could not list the ConfigMaps in the demonstration namespace"
+	printf '%s\n' "$lab_reset_configmaps" | while IFS= read -r lab_reset_configmap; do
+		case $lab_reset_configmap in
+		'' | configmap/kube-root-ca.crt | configmap/demo-verification-policy | \
+			configmap/demo-migration-verification-policy | configmap/e2e-*) continue ;;
+		esac
+		k -n "$E2E_TEST_NAMESPACE" delete "$lab_reset_configmap" --ignore-not-found \
+			--wait=true --timeout=60s >/dev/null || exit 1
+	done || lab_fail "could not remove the ConfigMaps an earlier run created"
+	# The fault failure-recovery plants, which its own reset plants again.
+	k -n "$E2E_TEST_NAMESPACE" delete secret demo-database-broken --ignore-not-found >/dev/null ||
+		lab_fail "could not remove the Secret an earlier run planted"
+	# Events name an object by kind and name, not by UID, so kubectl events
+	# --for ptahschema/storefront would list what every earlier run's
+	# storefront did beside this one's.
+	k -n "$E2E_TEST_NAMESPACE" delete events --all >/dev/null ||
+		lab_fail "could not remove the Events earlier runs left"
 }
 
 # lab_manifest renders one manifest template.
 #
-# The template is the file a reader reads; what is substituted is only what
-# cannot be written down in advance -- the namespace this lab happened to get,
-# the registry it runs, and the digest a push returned. The policy fields are
-# substituted too, because the scenarios differ in exactly those and a second
-# near-identical manifest is how two of them drift apart.
+# The templates are the lab's, for the preparation a run starts from and for
+# the probes that drive the lab; what a run applies in front of a reader is a
+# file under demo/manifests, or YAML its step shows whole. What is substituted
+# is only what cannot be written down in advance -- the namespace this lab
+# happened to get, the registry it runs, and the digest a push returned -- and
+# the policy fields the callers differ in.
 #
 # What it will not do is choose a policy. A renderer that defaulted `apply` to
 # something other than the API's default would be deciding, quietly, the one
@@ -434,7 +456,7 @@ lab_reset() {
 lab_manifest() {
 	lab_manifest_name=$1
 	lab_manifest_digest=$2
-	lab_manifest_file="$LAB_ROOT/demo/manifests/${lab_manifest_name}.yaml"
+	lab_manifest_file="$LAB_ROOT/demo/lib/templates/${lab_manifest_name}.yaml"
 	[ -f "$lab_manifest_file" ] || {
 		printf 'lab: no manifest template at %s\n' "$lab_manifest_file" >&2
 		exit 1

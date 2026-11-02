@@ -14,6 +14,8 @@ claims held on the live cluster.
 **`scenarios/`** declares what a scenario is: the state it starts from, the
 steps a reader watches, the narration between them, and the conditions that
 have to hold. [`scenarios/README.md`](scenarios/README.md) is the format.
+What a step applies is a file under `manifests/`, one directory per scenario,
+or YAML the step shows whole.
 
 **`cmd/kubectl-ptah`** is the client a scenario uses to show a stored plan,
 through its read commands. It ships to readers as a `kubectl` plugin; here it
@@ -59,9 +61,13 @@ same way: `kubectl exec deploy/demo-mysql-client -- mysql demo -e "<statement>"`
 with nothing secret on the command line.
 
 The script has two duties and no third. It stands the environment up, and it
-composes a manifest out of values a caller states. It decides nothing a
-scenario shows: `lab manifest` refuses to run without `APPLY=`, because the
-apply policy is the reader's choice and a script that picked one would be
+prepares the state a scenario starts from, out of templates under
+`lib/templates/` and values a caller states. It decides nothing a scenario
+shows, and no scenario step runs it except `lab versions`, which says what the
+lab is made of: a step applies a manifest a reader can read, and changes it
+with `kubectl ptah` or by applying the next version of the file. `lab manifest`
+refuses to run without `APPLY=`, because even in the preparation the apply
+policy is the scenario's choice and a script that picked one would be
 answering the question the scenario asks.
 
 ## The environment a step runs in
@@ -76,14 +82,19 @@ step that reads anything else:
 | `NAMESPACE` | the namespace the schema lives in | the namespace they chose |
 | `OPERATOR_NAMESPACE` | where the chart installed the operator | their Helm release |
 | `CONTROLLER` | the controller Deployment's name | `helm get manifest`, or `kubectl get deploy` |
+| `EXECUTOR_IMAGE` | the executor image the chart runs, digest-pinned | the chart's `executorImage` value |
 | `REGISTRY_IN_CLUSTER` | the registry address a Pod resolves | their registry's in-cluster name |
 | `PTAH_OCI_REGISTRY` | the registry address the push goes to | their registry |
 | `PTAH_OCI_USERNAME`, `PTAH_OCI_PASSWORD` | the credentials for that push | their registry's credentials |
 
-In the lab, the first five come from `demo/.lab/environment`, which the
+In the lab, the first six come from `demo/.lab/environment`, which the
 bootstrap wrote, and the three `PTAH_OCI_` values from `demo/bin/lab
-credentials`, which prints the generated registry's. Both are the environment
-handing a reader what it generated.
+credentials`, which prints the generated registry's; the recorder runs it once
+and passes them to every step, the way a CI job passes a registry credential.
+Both are the environment handing a reader what it generated. Ptah reads
+`PTAH_OCI_USERNAME` and `PTAH_OCI_PASSWORD` itself, so no step needs to export
+or print them; on a workstation `ptah oci login` stores the credential once
+instead.
 
 A step also expects three commands on `PATH`: `kubectl`, `ptah` and
 `kubectl-ptah`. A reader installs all three -- the last from
@@ -101,9 +112,9 @@ the name it read.
 make demo-reproduce
 ```
 
-It runs the first scenario's published commands against a live lab with
-`demo/bin/lab` unreachable, under a ServiceAccount that may not create a Job,
-and asserts the schema converged. The first half is the claim the pages make:
+It runs the commands the manual-approval scenario publishes against a live lab
+with `demo/bin/lab` unreachable, under a ServiceAccount that may not create a
+Job, and asserts the schema converged. The first half is the claim the pages make:
 what a scenario shows is `kubectl`, `ptah` and a manifest, and a reader needs
 nothing of ours to repeat it. The second is the claim the operator makes: the
 executor's Job is the operator's to create, and a reader who cannot create one
@@ -114,7 +125,20 @@ refuses `apply: Always` to anyone outside its exempt groups, and a
 ServiceAccount is in none of them, so the reproduction is on the path a reader
 with a default install is on: a second ServiceAccount, bound to the chart's
 approver ClusterRole and unable to create a schema or a Job, approves the plan
-the way the manual-approval scenario shows, and the operator applies it.
+with `kubectl ptah approve`, and the operator applies it. With no terminal to
+answer on, it passes `--plan-fingerprint` with the fingerprint of the plan it
+read, which is how a script approves.
+
+Then it takes the artifact path the other scenarios publish. `ptah schema push`
+publishes the same SQL, with the lab's registry credentials in
+`PTAH_OCI_USERNAME` and `PTAH_OCI_PASSWORD`, and the resource is applied again
+naming that digest instead of the ConfigMap. `kubectl ptah set-source` does not
+make that move, since an artifact also needs a verification policy, which only
+the person editing the resource names. The database already holds that
+revision, so the resource converges without a plan. `ptah schema push`
+publishes the next revision, `kubectl ptah set-source --wait` points the
+resource at it and waits for its plan, and the approver approves that plan the
+same way.
 
 ## Recording
 
@@ -125,16 +149,22 @@ go run ./demo/cmd/record -root . -check           # parse and validate, run noth
 make verify-demo-recording                        # is the recording still of the scenarios
 ```
 
-A failed expectation ends the scenario and writes nothing. Recording the rest
-of it would publish a session that continued past the point where the
-demonstration stopped being true.
+A failed expectation ends the scenario, and the recorder goes on to the next
+one, which starts with a reset; at the end it names every scenario that failed
+and writes nothing. Recording the rest of a failed scenario would publish a
+session that continued past the point where the demonstration stopped being
+true, and a recording with one scenario missing is not the set the site
+publishes.
 
 Each recorded scenario carries a digest of what the scenario file says it runs:
 the reset, and for every step its command, wait, retry, phase, streams and
 expectations. The title, tagline, lesson, tags and notes are left out, since
-rewording them does not change what ran. `make verify-demo-recording` computes
-the digest again from the files and refuses a recording that no longer matches,
-without a cluster. `make verify-source` runs it, so a pull request that changes
+rewording them does not change what ran. A second digest covers the files its
+commands name under `demo/manifests`, `demo/schemas`, `demo/migrations`,
+`demo/migrations-checkpoint`, `demo/mysql` and `demo/reference`, since a
+manifest can change while the command that applies it stays the same.
+`make verify-demo-recording` computes both again from the files and refuses a
+recording that no longer matches, without a cluster. `make verify-source` runs it, so a pull request that changes
 what a scenario runs has to carry a new recording. With no cluster at hand,
 `gh workflow run demo.yml --ref <branch>` records on the branch and uploads
 `demo/recordings/runs.json` as the run's `demonstration-recording` artifact.
@@ -188,8 +218,8 @@ scripts are POSIX shell throughout.
 
 ## When something fails
 
-The recorder prints every check of the run that stopped, passed and failed,
-before the failure. The failing one names the object and what it read.
+The recorder prints every check of each scenario that stopped, passed and
+failed, before its failure. The failing one names the object and what it read.
 
 The lab stays up after a failure, which is the point of it being a lab:
 
@@ -200,17 +230,26 @@ kubectl --kubeconfig "$E2E_KUBECONFIG" -n "$E2E_OPERATOR_NAMESPACE" logs -l app.
 kubectl --kubeconfig "$E2E_KUBECONFIG" -n "$E2E_TEST_NAMESPACE" exec deploy/demo-psql -- psql -c '\dt'
 ```
 
-Three failures are worth naming because each looks like the operator being
+Some failures are worth naming because each looks like the operator being
 wrong and is not:
 
 - **A wait that returns at once.** A condition that was already true proves
-  nothing about what a step just did. A step that changes the spec waits with
-  `generation: current`; a step that changes only the database uses `retry` and
-  watches the database settle.
+  nothing about what a step just did. The steps wait where a reader can see
+  it, with `kubectl ptah wait` or a command's `--wait`, which count only a
+  reading of the database that began after the wait did; a `kubectl wait` on a
+  condition is used only where the condition cannot have been true before.
+- **An approval refused for no visible reason.** `kubectl ptah approve` asks on
+  a terminal and refuses an answer piped into it, so a step that approves runs
+  on one: it names the prompt in `answers`, and the recorder types the answer
+  once the prompt is on the screen. Admission takes no approval while the
+  operator reads the database again at its interval; approve then waits up to
+  five minutes for that read to end and sends the approval only if the same
+  plan is waiting again, and says so on the terminal.
 - **A publish that is refused.** A Ptah artifact is not byte-identical between
   two pushes of one file, and a tag is write-once. Every `ptah schema push` in
   a scenario ends its tag with `$$` for that reason; what the operator is
-  pointed at is the digest the push returned, never the tag.
+  pointed at is the reference the push printed with `--format reference`,
+  pinned by digest, never the tag.
 - **A plan that cannot be found.** A converged schema carries no current plan,
   because there is nothing left to do. After convergence the plan that ran is
   found by the fingerprint `status.applied` names, not through `status.plan`.

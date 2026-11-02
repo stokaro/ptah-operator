@@ -44,7 +44,9 @@ func run(arguments []string, diagnostics io.Writer) error {
 		only        = flags.String("only", "", "record one scenario by id, for iterating on it")
 		checkOnly   = flags.Bool("check", false, "load and validate the scenarios, run nothing")
 		verify      = flags.String("verify", "", "report recordings in this run record whose scenario has changed under them, and run nothing")
-		stepTimeout = flags.Duration("step-timeout", 5*time.Minute, "how long one command may take")
+		// Longer than the five minutes a kubectl ptah wait takes by default, so a
+		// wait that runs out says why itself rather than being killed first.
+		stepTimeout = flags.Duration("step-timeout", 10*time.Minute, "how long one command may take")
 		quiet       = flags.Bool("quiet", false, "say nothing but failures")
 	)
 	if err := flags.Parse(arguments); err != nil {
@@ -62,7 +64,7 @@ func run(arguments []string, diagnostics io.Writer) error {
 		}
 	}
 	if *verify != "" {
-		return verifyRecordings(*verify, loaded, *only, diagnostics)
+		return verifyRecordings(*root, *verify, loaded, *only, diagnostics)
 	}
 	if *checkOnly {
 		fmt.Fprintf(diagnostics, "record: %d scenarios, %d steps, all valid\n", len(loaded), countSteps(loaded))
@@ -92,6 +94,11 @@ func run(arguments []string, diagnostics io.Writer) error {
 	if err != nil {
 		return err
 	}
+	registry, err := registryEnvironment(*root, environmentFile)
+	if err != nil {
+		return err
+	}
+	variables = append(variables, registry...)
 
 	log := func(format string, arguments ...any) {
 		fmt.Fprintf(diagnostics, "record: "+format+"\n", arguments...)
@@ -139,14 +146,9 @@ func run(arguments []string, diagnostics io.Writer) error {
 		}
 	}
 	started := time.Now()
-	for _, one := range loaded {
-		recorded, err := recorder.run(ctx, one)
-		record.Scenarios = append(record.Scenarios, recorded)
-		if err != nil {
-			writeRecordDiagnostics(diagnostics, record)
-			return err
-		}
-		log("scenario %s: %d checks passed", one.ID, len(recorded.Checks))
+	record.Scenarios, err = recordEach(ctx, loaded, recorder.run, diagnostics, log)
+	if err != nil {
+		return err
 	}
 	record.RecordedAt = started.UTC().Format(time.RFC3339)
 	if existing != nil {
@@ -159,6 +161,46 @@ func run(arguments []string, diagnostics io.Writer) error {
 	}
 	log("wrote %s: %d scenarios, %d checks", outputFile, len(record.Scenarios), record.checks())
 	return nil
+}
+
+// recordEach records every scenario, and fails when any of them failed.
+//
+// A scenario that fails ends there, and the next one still runs: each starts
+// with a reset, so one that stopped halfway leaves nothing the next one reads.
+// The run then reports every scenario that no longer holds rather than the
+// first, which on a lab that takes most of an hour to stand up is the
+// difference between one repair and several runs. What failed returns no
+// recordings, since a recording with a scenario missing is not the set the
+// site publishes.
+func recordEach(
+	ctx context.Context,
+	loaded []scenario,
+	run func(context.Context, scenario) (recording, error),
+	diagnostics io.Writer,
+	log func(format string, arguments ...any),
+) ([]recording, error) {
+	var recorded []recording
+	var failed []error
+	for _, one := range loaded {
+		if ctx.Err() != nil {
+			failed = append(failed, fmt.Errorf("%s: not run: %w", one.ID, ctx.Err()))
+			continue
+		}
+		result, err := run(ctx, one)
+		if err != nil {
+			writeRecordDiagnostics(diagnostics, runRecord{Scenarios: []recording{result}})
+			fmt.Fprintf(diagnostics, "record: scenario %s failed: %v\n", one.ID, err)
+			failed = append(failed, err)
+			continue
+		}
+		recorded = append(recorded, result)
+		log("scenario %s: %d checks passed", one.ID, len(result.Checks))
+	}
+	if len(failed) > 0 {
+		return nil, fmt.Errorf("%d of %d scenarios failed, so nothing was written:\n%w",
+			len(failed), len(loaded), errors.Join(failed...))
+	}
+	return recorded, nil
 }
 
 // runRecord is everything one recording session produced.

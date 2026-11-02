@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestScenarioValidateRefusesAnUncheckedStep(t *testing.T) {
@@ -71,6 +72,17 @@ func TestScenarioValidateRefusesAnUncheckedStep(t *testing.T) {
 			want: "cannot name the value",
 		},
 		{
+			name: "a field required both set to a value and unset",
+			steps: []step{{
+				Run: "kubectl get ptahschema",
+				Expect: &expectation{Exit: &exit, Resource: &observation{
+					Kind: "ptahschema", Name: "storefront",
+					Fields: []field{{Path: "status.activeOperation", Equals: "Apply", Absent: true}},
+				}},
+			}},
+			want: "say one",
+		},
+		{
 			name: "a generation value that is not current",
 			steps: []step{{
 				Run: "kubectl get ptahschema",
@@ -100,7 +112,7 @@ func TestScenarioValidateRefusesAnUncheckedStep(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			subject := scenario{
-				ID: "example", Title: "Example", Tagline: "A tagline.", Learn: "A lesson.",
+				ID: "example", Title: "Example", Tagline: "A tagline.", Learn: "A lesson.", Start: "An empty namespace.",
 				Tags: []string{"Lab"}, Steps: test.steps,
 			}
 			err := subject.validate()
@@ -119,7 +131,7 @@ func TestScenarioValidateAcceptsACheckedScenario(t *testing.T) {
 	exit := 0
 	subject := scenario{
 		ID: "first-apply", Title: "Apply a schema", Tagline: "A tagline.", Learn: "A lesson.",
-		Tags: []string{"Lifecycle"},
+		Start: "An empty namespace.", Tags: []string{"Lifecycle"},
 		Steps: []step{{
 			Note: "Apply it.",
 			Run:  "kubectl apply -f storefront.yaml",
@@ -249,12 +261,24 @@ func TestFieldMatches(t *testing.T) {
 		{name: "a null", read: field{Path: "status.plan", NotEmpty: true}, problem: "status.plan is not set"},
 		{name: "a path nothing wrote", read: field{Path: "status.drift", NotEmpty: true}, problem: "is not set"},
 		{name: "a path through a scalar", read: field{Path: "status.phase.name", NotEmpty: true}, problem: "is not set"},
+		{name: "unset, as a null", read: field{Path: "status.plan", Absent: true}},
+		{name: "unset, as a path nothing wrote", read: field{Path: "status.activeOperation", Absent: true}},
+		{
+			name:    "unset, while it holds a value",
+			read:    field{Path: "status.phase", Absent: true},
+			problem: `status.phase is "InSync", expected it unset`,
+		},
+		{
+			name:    "unset, while it holds an object",
+			read:    field{Path: "status.applied", Absent: true},
+			problem: "status.applied is ",
+		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			err := test.read.matches(object)
+			err := test.read.matches(object, map[string]string{})
 			if test.problem == "" {
 				if err != nil {
 					t.Fatalf("matches refused a value it names: %v", err)
@@ -438,7 +462,7 @@ func TestScenarioValidateRefusesARepeatedWait(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			subject := scenario{
-				ID: "example", Title: "Example", Tagline: "A tagline.", Learn: "A lesson.",
+				ID: "example", Title: "Example", Tagline: "A tagline.", Learn: "A lesson.", Start: "An empty namespace.",
 				Tags: []string{"Lab"}, Steps: test.steps,
 			}
 			err := subject.validate()
@@ -453,6 +477,152 @@ func TestScenarioValidateRefusesARepeatedWait(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("validate said %q, which does not carry %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestScenarioValidateRefusesAnswersATerminalCannotDeliver(t *testing.T) {
+	t.Parallel()
+	exit := 0
+	approve := func(change func(*step)) []step {
+		one := step{
+			Run:     "kubectl ptah approve schema/storefront --wait",
+			Answers: []answer{{Prompt: "Type yes to approve: ", Type: "yes"}},
+			Expect:  &expectation{Exit: &exit, StdoutContains: []string{"Approved"}},
+		}
+		change(&one)
+		return []step{one}
+	}
+	for _, row := range []struct {
+		name  string
+		steps []step
+		want  string
+	}{
+		{name: "an answer after its prompt", steps: approve(func(*step) {})},
+		{name: "no prompt", steps: approve(func(s *step) { s.Answers[0].Prompt = " " }), want: "waits for no prompt"},
+		{
+			name:  "a prompt over two lines",
+			steps: approve(func(s *step) { s.Answers[0].Prompt = "plan\nType yes: " }),
+			want:  "more than one line",
+		},
+		{name: "two lines typed", steps: approve(func(s *step) { s.Answers[0].Type = "yes\nyes" }), want: "one line of text"},
+		{name: "a retry", steps: approve(func(s *step) { s.Retry = time.Minute }), want: "second decision"},
+		{name: "stderr shown", steps: approve(func(s *step) { s.Show = []string{"stderr"} }), want: "one stream"},
+		{
+			name:  "stderr expected",
+			steps: approve(func(s *step) { s.Expect.StderrContains = []string{"Waiting"} }),
+			want:  "expect it in stdout",
+		},
+		{
+			name:  "stderr refused",
+			steps: approve(func(s *step) { s.Expect.StderrAbsent = []string{"Waiting"} }),
+			want:  "expect it in stdout",
+		},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			subject := scenario{
+				ID: "example", Title: "Example", Tagline: "A tagline.", Learn: "A lesson.",
+				Start: "An empty namespace.", Tags: []string{"Lifecycle"}, Steps: row.steps,
+			}
+			err := subject.validate()
+			switch {
+			case row.want == "" && err != nil:
+				t.Fatalf("validate refused %s: %v", row.name, err)
+			case row.want != "" && (err == nil || !strings.Contains(err.Error(), row.want)):
+				t.Fatalf("validate said %v, which does not carry %q", err, row.want)
+			}
+		})
+	}
+}
+
+// A kept value is how a scenario proves that nothing happened between two of
+// its steps, so the rows that matter are the ones that would let a different
+// value, or no value, pass as the same.
+func TestKeptValuesCompareOneReadingWithALaterOne(t *testing.T) {
+	t.Parallel()
+	read := func(t *testing.T, raw string) map[string]any {
+		t.Helper()
+		var object map[string]any
+		if err := json.Unmarshal([]byte(raw), &object); err != nil {
+			t.Fatalf("fixture: %v", err)
+		}
+		return object
+	}
+	before := read(t, `{"status":{"lastRun":{"jobUID":"run-1"}}}`)
+	same := read(t, `{"status":{"lastRun":{"jobUID":"run-1"}}}`)
+	another := read(t, `{"status":{"lastRun":{"jobUID":"run-2"}}}`)
+	none := read(t, `{"status":{}}`)
+
+	kept := map[string]string{}
+	if err := (field{Path: "status.lastRun.jobUID", Keep: "run"}).matches(before, kept); err != nil {
+		t.Fatalf("keeping a value that is set: %v", err)
+	}
+	if kept["run"] != "run-1" {
+		t.Fatalf("kept %q, expected run-1", kept["run"])
+	}
+	compare := field{Path: "status.lastRun.jobUID", SameAs: "run"}
+	if err := compare.matches(same, kept); err != nil {
+		t.Fatalf("the same value was refused: %v", err)
+	}
+	if err := compare.matches(another, kept); err == nil || !strings.Contains(err.Error(), `"run-1"`) {
+		t.Fatalf("another value passed as the kept one: %v", err)
+	}
+	if err := compare.matches(none, kept); err == nil {
+		t.Fatal("a value nothing wrote passed as the kept one")
+	}
+	if err := (field{Path: "status.lastRun.jobUID", Keep: "empty"}).matches(none, kept); err == nil {
+		t.Fatal("a value nothing wrote was kept, so a later comparison would compare nothing")
+	}
+	if err := (field{Path: "status.lastRun.jobUID", SameAs: "never"}).matches(same, kept); err == nil {
+		t.Fatal("a comparison with a name nothing kept passed")
+	}
+}
+
+func TestScenarioValidateRefusesAComparisonWithNothingKept(t *testing.T) {
+	t.Parallel()
+	exit := 0
+	reading := func(read field) step {
+		return step{Run: "kubectl ptah migration shipments", Expect: &expectation{Exit: &exit, Resource: &observation{
+			Kind: "ptahmigration", Name: "shipments", Fields: []field{read},
+		}}}
+	}
+	keep := reading(field{Path: "status.lastRun.jobUID", Keep: "run"})
+	compare := reading(field{Path: "status.lastRun.jobUID", SameAs: "run"})
+	waitAndKeep := step{
+		Run: "kubectl ptah migration shipments",
+		Await: &observation{Kind: "ptahmigration", Name: "shipments",
+			Fields: []field{{Path: "status.lastRun.jobUID", Keep: "run"}}},
+		Expect: &expectation{Exit: &exit},
+	}
+	for _, row := range []struct {
+		name  string
+		steps []step
+		want  string
+	}{
+		{name: "kept, then compared", steps: []step{keep, compare}},
+		{name: "compared before anything kept it", steps: []step{compare, keep}, want: "no earlier step keeps"},
+		{name: "kept twice", steps: []step{keep, keep}, want: "already keeps"},
+		{name: "kept by a wait", steps: []step{waitAndKeep}, want: "only an expectation"},
+		{
+			name:  "kept and compared by one field",
+			steps: []step{reading(field{Path: "status.lastRun.jobUID", Keep: "run", SameAs: "run"})},
+			want:  "say one",
+		},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			subject := scenario{
+				ID: "example", Title: "Example", Tagline: "A tagline.", Learn: "A lesson.",
+				Start: "An empty namespace.", Tags: []string{"Lifecycle"}, Steps: row.steps,
+			}
+			err := subject.validate()
+			switch {
+			case row.want == "" && err != nil:
+				t.Fatalf("validate refused %s: %v", row.name, err)
+			case row.want != "" && (err == nil || !strings.Contains(err.Error(), row.want)):
+				t.Fatalf("validate said %v, which does not carry %q", err, row.want)
 			}
 		})
 	}

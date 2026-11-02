@@ -2,97 +2,153 @@ id: suspend-resume
 title: Suspend and resume
 tagline: One field stops reconciliation without deleting anything, and resuming picks up where it stopped.
 learn: How to take a database out of the operator's hands during an incident, and give it back.
+start: >-
+  Where Apply a schema ends: storefront converged on schemas/v1.sql, published as an artifact,
+  under apply Always.
 tags: [Operations]
 
 reset:
   - demo/bin/lab reset
-  # The lab generates the registry's credentials and address, and says what
-  # they are. What publishes the artifact is `ptah schema push`, the product's
-  # own command, run the way a reader or a CI job runs it.
   - |
-    eval "$(demo/bin/lab credentials)"
-    export PTAH_OCI_USERNAME PTAH_OCI_PASSWORD PTAH_OCI_REGISTRY
-    ptah schema push "oci://$PTAH_OCI_REGISTRY/schemas/demo:v1-$$" \
-      --schema-file demo/schemas/v1.sql --dialect postgres --plain-http \
-      | sed -n 's/^Digest: //p' > demo/.lab/digest
-  - APPLY=Always demo/bin/lab manifest storefront "$(cat demo/.lab/digest)" | kubectl apply -f -
+    REF=$(ptah schema push "oci://$PTAH_OCI_REGISTRY/schemas/demo:v1-$$" \
+      --schema-file demo/schemas/v1.sql --dialect postgres --plain-http --format reference)
+    APPLY=Always demo/bin/lab manifest storefront "${REF##*@}" | kubectl apply -f -
   - kubectl -n "$NAMESPACE" wait --for=condition=InSync --timeout=360s ptahschema/storefront
 
 steps:
   - note: Converged, and reconciliation is active.
-    run: |
-      kubectl -n "$NAMESPACE" get ptahschema storefront -o json \
-        | jq -r '.status.conditions[] | select(.type == "Suspended") | "\(.type)\t\(.status)\t\(.reason)"'
+    run: kubectl ptah schema storefront -n "$NAMESPACE"
     sync: converged
     expect:
       exit: 0
-      stdout_contains: [Suspended, "False", Active]
-
-  - note: Suspend it. One boolean, and the resource stays exactly where it is.
-    run: kubectl -n "$NAMESPACE" patch ptahschema storefront --type=merge -p '{"spec":{"suspend":true}}'
-    sync: suspended
-    expect:
-      exit: 0
-      stdout_contains: [patched]
-
-  - note: The operator says it is suspended, with the reason on the condition.
-    await:
-      kind: ptahschema
-      name: storefront
-      timeout: 3m
-      generation: current
-      condition:
-        type: Suspended
-        status: "True"
-        reason: Requested
-    run: kubectl -n "$NAMESPACE" get ptahschema storefront -o jsonpath='{.status.phase}{"\n"}'
-    expect:
-      exit: 0
-      stdout_contains: [Suspended]
-
-  - note: Now publish a change it would otherwise pick up, and point the resource at it.
-    run: |
-      eval "$(demo/bin/lab credentials)"
-      export PTAH_OCI_USERNAME PTAH_OCI_PASSWORD PTAH_OCI_REGISTRY
-      DIGEST=$(ptah schema push "oci://$PTAH_OCI_REGISTRY/schemas/demo:v2-$$" \
-        --schema-file demo/schemas/v2.sql --dialect postgres --plain-http \
-        | sed -n 's/^Digest: //p')
-      kubectl -n "$NAMESPACE" patch ptahschema storefront --type=merge \
-        -p "{\"spec\":{\"desired\":{\"ociRef\":\"oci://$REGISTRY_IN_CLUSTER/schemas/demo@$DIGEST\"}}}"
-    expect:
-      exit: 0
-      stdout_contains: [patched]
-
-  - note: Nothing happens, which is the point. The database is untouched.
-    run: kubectl -n "$NAMESPACE" exec deploy/demo-psql -- psql -c "\dt"
-    expect:
-      exit: 0
-      stdout_absent: [orders]
+      stdout_contains: [InSync, Suspended, Active]
       resource:
         kind: ptahschema
         name: storefront
         condition:
           type: Suspended
+          status: "False"
+          reason: Active
+
+  # suspend sets spec.suspend and nothing else, and says what it asked for
+  # beside what the operator had observed. --wait stays until the operator
+  # reports the resource Suspended with nothing in flight. The same change in
+  # an editor is the line suspend: true under spec, through kubectl edit.
+  #
+  # The values kept here are what the operator last resolved, read and
+  # applied, taken once nothing is in flight, so no operation that was running
+  # can move them afterward.
+  - note: Suspend it. One field, and the resource stays exactly where it is.
+    run: kubectl ptah suspend schema/storefront -n "$NAMESPACE" --wait
+    sync: suspended
+    expect:
+      exit: 0
+      stdout_contains: [Suspend requested, "spec.suspend true", reached suspended]
+      resource:
+        kind: ptahschema
+        name: storefront
+        generation: current
+        condition:
+          type: Suspended
           status: "True"
           reason: Requested
+        fields:
+          - path: status.source.digest
+            keep: resolved
+          - path: status.target.lastObservedAt
+            keep: observed
+          - path: status.applied.planFingerprint
+            keep: applied
 
+  # Without --wait: a suspended resource plans nothing, so neither a plan
+  # waiting for an approval nor convergence would come. set-source says so,
+  # and names the resume that lets the change take effect.
+  - note: Now publish a change it would otherwise pick up, and point the resource at it.
+    run: |
+      REF=$(ptah schema push "oci://$PTAH_OCI_REGISTRY/schemas/demo:v2-$$" \
+        --schema-file demo/schemas/v2.sql --dialect postgres --plain-http --format reference)
+      kubectl ptah set-source schema/storefront -n "$NAMESPACE" \
+        --oci "oci://$REGISTRY_IN_CLUSTER/${REF#"oci://$PTAH_OCI_REGISTRY/"}"
+    expect:
+      exit: 0
+      stdout_contains:
+        - Source set for
+        - "The resource is suspended: the operator starts no Job until it is resumed"
+        - kubectl ptah resume schema/storefront
+      stdout_absent: [Once the operator observes generation]
+      resource:
+        kind: ptahschema
+        name: storefront
+        fields:
+          - path: metadata.generation
+            keep: pointed
+
+  # A wait for convergence that cannot come, bounded, so the transcript shows
+  # the operator doing nothing: the timeout names the phase and the condition
+  # that holds the resource, as the last read found them. The read the wait's
+  # own deadline cut short is not reported as a failed one.
+  #
+  # The proof does not rest on the 30 seconds. status.observedGeneration at
+  # the generation set-source wrote says the operator has already handled the
+  # new source, and the Suspended condition at that generation says how. The
+  # kept values say what it did not do: it resolved no artifact, read nothing
+  # from the database and applied nothing, and nothing is in flight. A
+  # suspended schema's pass ends there, with no claim and no requeue
+  # (internal/controller/schema_controller.go), so whatever wakes it, nothing
+  # starts while spec.suspend stays true.
+  - note: Nothing happens, which is the point. A wait gives up and names what holds it.
+    run: kubectl ptah wait schema/storefront -n "$NAMESPACE" --for in-sync --timeout 30s
+    show: [stderr]
+    expect:
+      exit: 7
+      stderr_contains: [did not reach in-sync, "Phase:       Suspended", "Held by:     Suspended=True, Requested"]
+      stderr_absent: [Last read, deadline exceeded]
+      resource:
+        kind: ptahschema
+        name: storefront
+        generation: current
+        condition:
+          type: Suspended
+          status: "True"
+          reason: Requested
+        fields:
+          - path: status.observedGeneration
+            sameAs: pointed
+          - path: status.source.digest
+            sameAs: resolved
+          - path: status.target.lastObservedAt
+            sameAs: observed
+          - path: status.applied.planFingerprint
+            sameAs: applied
+          - path: status.activeOperation
+            absent: true
+
+  - note: The database is untouched.
+    run: kubectl -n "$NAMESPACE" exec deploy/demo-psql -- psql -c "\dt"
+    expect:
+      exit: 0
+      stdout_contains: [customers]
+      stdout_absent: [orders]
+
+  # resume clears spec.suspend. --wait stays until the operator has read the
+  # database again after the change and the resource rests in sync; under
+  # apply Always, that includes applying the plan the new revision needs.
   - note: Resume, and it starts from what is actually there rather than from what it remembered.
-    run: kubectl -n "$NAMESPACE" patch ptahschema storefront --type=merge -p '{"spec":{"suspend":false}}'
+    run: kubectl ptah resume schema/storefront -n "$NAMESPACE" --wait
     sync: applying
     expect:
       exit: 0
-      stdout_contains: [patched]
+      stdout_contains: [Resume requested, reached in-sync]
+      resource:
+        kind: ptahschema
+        name: storefront
+        generation: current
+        condition:
+          type: InSync
+          status: "True"
+          reason: ScopedConverged
 
-  - note: It plans against the live database and converges on the revision it was given.
-    await:
-      kind: ptahschema
-      name: storefront
-      timeout: 6m
-      generation: current
-      condition:
-        type: InSync
-        status: "True"
-        reason: ScopedConverged
+  - note: It planned against the live database and converged on the revision it was given.
     run: kubectl -n "$NAMESPACE" exec deploy/demo-psql -- psql -c "\dt"
     sync: converged
     expect:

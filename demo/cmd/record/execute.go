@@ -20,6 +20,9 @@ type recorder struct {
 	// otherwise hold the whole recording, and the run that produced no
 	// recording is the one nobody can read.
 	stepTimeout time.Duration
+	// promptTimeout bounds the wait for each prompt a step answers, while the
+	// command runs. Zero is defaultPromptTimeout.
+	promptTimeout time.Duration
 	// pollInterval is how often an await re-reads the object.
 	pollInterval time.Duration
 	// normalizer prepares captured text for publication, and refuses text
@@ -29,6 +32,9 @@ type recorder struct {
 	source map[string]string
 	// log receives progress, so a run that takes minutes says what it is on.
 	log func(format string, arguments ...any)
+	// kept holds the values the current scenario's steps kept for a later
+	// step to compare with. It starts empty with every scenario.
+	kept map[string]string
 }
 
 // outcome is what one command did.
@@ -63,15 +69,20 @@ type recording struct {
 	// the moment this ran. A reader comparing it with the scenario's digest
 	// today learns whether the transcript still represents it, without
 	// checking the repository out.
-	DefinitionDigest string   `json:"definitionDigest,omitempty"`
-	Title            string   `json:"title"`
-	Tagline          string   `json:"tagline"`
-	Learn            string   `json:"learn"`
-	Tags             []string `json:"tags"`
-	Commands         int      `json:"commands"`
-	Lines            int      `json:"lines"`
-	Events           []event  `json:"events"`
-	Checks           []check  `json:"checks"`
+	DefinitionDigest string `json:"definitionDigest,omitempty"`
+	// InputDigest is the files the scenario's commands read, as they were
+	// when this ran: a manifest it applies, the SQL it pushes, a file it
+	// prints. The scenario file can stay the same while one of them changes.
+	InputDigest string   `json:"inputDigest,omitempty"`
+	Title       string   `json:"title"`
+	Tagline     string   `json:"tagline"`
+	Learn       string   `json:"learn"`
+	Start       string   `json:"start"`
+	Tags        []string `json:"tags"`
+	Commands    int      `json:"commands"`
+	Lines       int      `json:"lines"`
+	Events      []event  `json:"events"`
+	Checks      []check  `json:"checks"`
 }
 
 // run executes one scenario and returns what a reader will see.
@@ -80,6 +91,13 @@ type recording struct {
 // publish a session that continued past the point where the demonstration
 // stopped being true.
 func (r *recorder) run(ctx context.Context, current scenario) (recording, error) {
+	r.kept = map[string]string{}
+	// Before the reset: the files are what this run reads, and a scenario
+	// that names one that is not there would fail partway through.
+	inputs, err := inputDigest(r.root, current)
+	if err != nil {
+		return recording{}, err
+	}
 	r.log("scenario %s: resetting", current.ID)
 	for _, command := range current.Reset {
 		result, err := r.shell(ctx, command)
@@ -98,9 +116,11 @@ func (r *recorder) run(ctx context.Context, current scenario) (recording, error)
 		ID:               current.ID,
 		Source:           r.source,
 		DefinitionDigest: definitionDigest(current),
+		InputDigest:      inputs,
 		Title:            strings.TrimSpace(current.Title),
 		Tagline:          strings.TrimSpace(current.Tagline),
 		Learn:            strings.TrimSpace(current.Learn),
+		Start:            strings.TrimSpace(current.Start),
 		Tags:             current.Tags,
 	}
 	for index, one := range current.Steps {
@@ -270,6 +290,11 @@ func (e expectation) evaluate(result outcome) error {
 			problems = append(problems, fmt.Errorf("stdout contains %q, which it must not", unwanted))
 		}
 	}
+	for _, unwanted := range e.StderrAbsent {
+		if strings.Contains(result.stderr, unwanted) {
+			problems = append(problems, fmt.Errorf("stderr contains %q, which it must not", unwanted))
+		}
+	}
 	return errors.Join(problems...)
 }
 
@@ -285,6 +310,9 @@ func (e expectation) describe() string {
 	for _, unwanted := range e.StdoutAbsent {
 		claims = append(claims, fmt.Sprintf("never prints %q", unwanted))
 	}
+	for _, unwanted := range e.StderrAbsent {
+		claims = append(claims, fmt.Sprintf("never reports %q", unwanted))
+	}
 	return strings.Join(claims, ", ")
 }
 
@@ -299,11 +327,18 @@ func (o observation) describe() string {
 		claims = append(claims, fmt.Sprintf("%s=%s (%s)", o.Condition.Type, o.Condition.Status, o.Condition.Reason))
 	}
 	for _, read := range o.Fields {
-		if read.NotEmpty {
+		switch {
+		case read.NotEmpty:
 			claims = append(claims, read.Path+" is set")
-			continue
+		case read.Keep != "":
+			claims = append(claims, fmt.Sprintf("%s is set, kept as %s", read.Path, read.Keep))
+		case read.SameAs != "":
+			claims = append(claims, fmt.Sprintf("%s is the value kept as %s", read.Path, read.SameAs))
+		case read.Absent:
+			claims = append(claims, read.Path+" is unset")
+		default:
+			claims = append(claims, fmt.Sprintf("%s=%s", read.Path, read.Equals))
 		}
-		claims = append(claims, fmt.Sprintf("%s=%s", read.Path, read.Equals))
 	}
 	return subject + ": " + strings.Join(claims, ", ")
 }
@@ -373,8 +408,11 @@ func (r *recorder) observe(ctx context.Context, expected observation) error {
 		if err := json.Unmarshal(object, &read); err != nil {
 			problems = append(problems, fmt.Errorf("read %s/%s: %w", expected.Kind, expected.Name, err))
 		} else {
+			if r.kept == nil {
+				r.kept = map[string]string{}
+			}
 			for _, one := range expected.Fields {
-				problems = append(problems, one.matches(read))
+				problems = append(problems, one.matches(read, r.kept))
 			}
 		}
 	}
@@ -470,6 +508,14 @@ func generationOf(object []byte) (int64, bool, error) {
 // something settle, and re-running is what a reader does. What is published is
 // the run that held.
 func (r *recorder) attempt(ctx context.Context, current step, expected expectation) (outcome, error, error) {
+	if len(current.Answers) > 0 {
+		// Once: validate refuses a retry beside answers.
+		result, err := r.terminal(ctx, current.Run, current.Answers)
+		if err != nil {
+			return result, nil, err
+		}
+		return result, expected.evaluate(result), nil
+	}
 	deadline := time.Now().Add(current.Retry)
 	for {
 		result, err := r.shell(ctx, current.Run)
