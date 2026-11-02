@@ -366,6 +366,16 @@ func TestApprovePrintsTheManifestOnAClientDryRun(t *testing.T) {
 	if !reflect.DeepEqual(manifest, want) {
 		t.Fatalf("the manifest is\n%s\nwant exactly %v", stdout, want)
 	}
+	// stdout is the YAML and nothing else, so a redirect is a file kubectl
+	// create takes; who should create it goes to stderr.
+	if document, err := yaml.Marshal(want); err != nil || stdout != string(document) {
+		t.Fatalf("stdout is\n%s\nwant exactly\n%s", stdout, document)
+	}
+	const creator = "Create this approval as the person who decided: admission records whoever creates it as the approver, " +
+		"a GitOps controller that applies it included.\n"
+	if strings.Count(stderr, creator) != 1 || strings.Contains(stdout, "GitOps") {
+		t.Fatalf("stderr %q does not carry %q once, or stdout carries it", stderr, creator)
+	}
 
 	_, again, _ := runApprove(t, api, "", false, "schema/storefront", "--dry-run", "client", "--plan-fingerprint", fingerprint)
 	_, named, _ := runApprove(t, api, "", false, "schema/storefront", "--dry-run", "client", "--plan-fingerprint", fingerprint, "--name", "storefront-reviewed")

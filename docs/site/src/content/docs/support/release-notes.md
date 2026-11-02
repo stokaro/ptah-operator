@@ -36,8 +36,10 @@ on the upgrade. A script that reads the text of `kubectl ptah` has to move to
   changed. An answer given while the operator reads the resource again at its
   interval is sent when that read ends, if the same plan is waiting again.
   `--plan-fingerprint` approves from a script and `--dry-run client` prints the
-  manifest instead. It needs `create` on the approval kind besides the plan
-  reads, which the chart's approver ClusterRole carries.
+  manifest instead, which the person who decided creates: a GitOps controller
+  that applies it is recorded as the approver. It needs `create` on the
+  approval kind besides the plan reads, which the chart's approver
+  ClusterRole carries.
   [Exact-plan approvals](../../use/approvals/) shows it.
 - **`kubectl ptah suspend`, `resume`, `refresh` and `wait`.** suspend and
   resume set `spec.suspend` and nothing else, and report what they asked for

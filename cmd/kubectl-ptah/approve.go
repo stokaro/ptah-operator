@@ -174,7 +174,13 @@ func approveCommand(ctx context.Context, arguments []string, stdin io.Reader, in
 		if format == "text" {
 			format = "yaml"
 		}
-		return printObject(stdout, stderr, approve.Manifest(review, *name), format)
+		if code := printObject(stdout, stderr, approve.Manifest(review, *name), format); code != exitOK {
+			return code
+		}
+		// stdout is the manifest alone, for a redirect; who creates it is
+		// said beside it.
+		fmt.Fprintln(stderr, printedApprover)
+		return exitOK
 	}
 
 	submitCtx, cancelSubmit := context.WithTimeout(ctx, *timeout)
@@ -241,6 +247,13 @@ func approveCommand(ctx context.Context, arguments []string, stdin io.Reader, in
 		return exitFailed
 	}
 }
+
+// printedApprover is what a printed approval leaves to whoever creates it.
+// Admission stamps the approver from the identity that creates the object,
+// so a GitOps controller that applies it from a repository is recorded in
+// place of the person who reviewed the plan.
+const printedApprover = "Create this approval as the person who decided: admission records whoever creates it as the approver, " +
+	"a GitOps controller that applies it included."
 
 // gateTimeout is how long approve waits, once the person has decided, for
 // the operator to end a read of the resource and be back at the approval
