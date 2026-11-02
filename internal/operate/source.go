@@ -207,6 +207,9 @@ type SourceResult struct {
 	// Unresolved is a migration with a run nobody accounted for. While the
 	// record stands the migration publishes no plan.
 	Unresolved bool
+	// Suspended reports spec.suspend: a suspended resource starts no Job, so
+	// nothing resolves the new reference until it is resumed.
+	Suspended bool
 	// Source is the source as the answer carried it.
 	Source Source
 	// Object is the resource as the answer carried it, a baseline for a
@@ -412,6 +415,7 @@ func sourceResult(ref Ref, previous string, changed bool, s snapshot, source Sou
 		Running: s.operation, ProofOwed: s.proof, Source: source, Object: s.object,
 	}
 	result.Unresolved = s.unresolved != nil
+	result.Suspended = s.suspend
 	return result
 }
 

@@ -135,6 +135,36 @@ func TestSetSourceSaysWhatTheApplyPolicyLetsThePlanDo(t *testing.T) {
 	}
 }
 
+// A suspended resource starts no Job, so the change waits for resume, and
+// the report says so instead of saying what the operator does next.
+func TestSetSourceOnASuspendedResourceSaysNothingHappensUntilResume(t *testing.T) {
+	for _, family := range []string{"schema", "migration"} {
+		t.Run(family, func(t *testing.T) {
+			object := onArtifact(family, operatorv1alpha1.ApplyPolicyAlways)
+			switch typed := object.(type) {
+			case *operatorv1alpha1.PtahSchema:
+				typed.Spec.Suspend, typed.Status.Phase = true, operatorv1alpha1.PhaseSuspended
+			case *operatorv1alpha1.PtahMigration:
+				typed.Spec.Suspend, typed.Status.Phase = true, operatorv1alpha1.MigrationPhaseSuspended
+			}
+			api := newCluster(t, object)
+
+			code, stdout, stderr := runCommand(t, api, "set-source", family+"/storefront", "--oci", newRef)
+
+			if code != exitOK || referenceOn(t, api, family) != newRef {
+				t.Fatalf("set-source on a suspended %s = %d, stderr %q", family, code, stderr)
+			}
+			requireSays(t, "set-source's report", stdout, "Source set for", "Observed:  generation 4, phase Suspended",
+				"The resource is suspended: the operator starts no Job until it is resumed, so nothing resolves the new "+
+					"reference before then, and a wait for its plan lasts until then too. After kubectl ptah resume "+
+					family+"/storefront -n demo the operator resolves the new reference")
+			if strings.Contains(stdout, "Once the operator observes generation") {
+				t.Fatalf("the report on a suspended %s says the operator acts once it observes the change: %q", family, stdout)
+			}
+		})
+	}
+}
+
 // A reference set-source cannot pin is refused before the cluster is
 // reached, with the commands that print one.
 func TestSetSourceRefusesAReferenceItCannotPin(t *testing.T) {

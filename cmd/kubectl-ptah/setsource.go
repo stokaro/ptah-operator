@@ -185,9 +185,19 @@ func writeSourceReport(out io.Writer, result operate.SourceResult, waiting bool)
 		if ref.Family == operate.FamilyMigration {
 			reads = "reads the migration history and plans the versions still pending"
 		}
-		fmt.Fprintf(&text, "Once the operator observes generation %d it resolves the new reference, checks it against "+
-			"the verification policy, %s. A plan or an approval from the previous artifact does not carry over.\n",
-			result.Generation, reads)
+		if result.Suspended {
+			// Suspension starts no Job, Resolve included, whatever the
+			// generation; resume is what lets the change take effect.
+			fmt.Fprintf(&text, "The resource is suspended: the operator starts no Job until it is resumed, so nothing "+
+				"resolves the new reference before then, and a wait for its plan lasts until then too. After kubectl "+
+				"ptah resume %s/%s -n %s the operator resolves the new reference, checks it against the verification "+
+				"policy, %s. A plan or an approval from the previous artifact does not carry over.\n",
+				ref.Family, ref.Name, ref.Namespace, reads)
+		} else {
+			fmt.Fprintf(&text, "Once the operator observes generation %d it resolves the new reference, checks it against "+
+				"the verification policy, %s. A plan or an approval from the previous artifact does not carry over.\n",
+				result.Generation, reads)
+		}
 		switch {
 		case result.ProofOwed:
 			text.WriteString("The proof that the last Apply converged comes first: it outranks a newer generation, " +

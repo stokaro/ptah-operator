@@ -521,7 +521,8 @@ The operator resolves the new reference, verifies it, reads the database and
 plans again, and a plan or an approval of the previous artifact does not carry
 over. Under apply policy OnApproval the new plan waits for an approval; under
 Always it runs without a person, except a schema plan that is destructive or
-changes privileges.
+changes privileges. On a suspended resource nothing of this happens until it
+is resumed.
 
 wait reads a schema or a migration until it reaches a target, and counts
 nothing that was already true when it began: a reading of the database has to

@@ -1240,6 +1240,9 @@ Under `Always`, then, set-source can be all it takes for a new revision to
 reach the database. An artifact that asks for nothing the database lacks leads
 to no plan, and the resource returns to `InSync`.
 
+A suspended resource starts no Job, so none of this happens until it is
+resumed; set-source stores the change and its report says so.
+
 `--wait` stays until the operator has planned from the new reference: a plan
 computed from it waits for a decision, or the resource rests in sync from it,
 whichever comes first. `--for approval` or `--for in-sync` waits for that one
