@@ -514,6 +514,11 @@ func TestScenarioValidateRefusesAnswersATerminalCannotDeliver(t *testing.T) {
 			steps: approve(func(s *step) { s.Expect.StderrContains = []string{"Waiting"} }),
 			want:  "expect it in stdout",
 		},
+		{
+			name:  "stderr refused",
+			steps: approve(func(s *step) { s.Expect.StderrAbsent = []string{"Waiting"} }),
+			want:  "expect it in stdout",
+		},
 	} {
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()

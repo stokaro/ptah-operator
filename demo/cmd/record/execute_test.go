@@ -13,8 +13,9 @@ func TestExpectationEvaluateReportsEveryFailure(t *testing.T) {
 		StdoutContains: []string{"created", "storefront"},
 		StdoutAbsent:   []string{"password"},
 		StderrContains: []string{"warning"},
+		StderrAbsent:   []string{"deadline"},
 	}
-	err := expected.evaluate(outcome{stdout: "password: hunter2\n", stderr: "", exit: 1})
+	err := expected.evaluate(outcome{stdout: "password: hunter2\n", stderr: "Last read: context deadline exceeded\n", exit: 1})
 	if err == nil {
 		t.Fatal("evaluate accepted an outcome that failed every clause")
 	}
@@ -24,6 +25,7 @@ func TestExpectationEvaluateReportsEveryFailure(t *testing.T) {
 		`stdout does not contain "storefront"`,
 		`stderr does not contain "warning"`,
 		`stdout contains "password"`,
+		`stderr contains "deadline"`,
 	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("evaluate did not report %q; it said %q", want, err)
@@ -43,9 +45,10 @@ func TestExpectationEvaluateAcceptsWhatItNames(t *testing.T) {
 func TestExpectationDescribeSaysWhatItClaims(t *testing.T) {
 	t.Parallel()
 	exit := 0
-	expected := expectation{Exit: &exit, StdoutContains: []string{"InSync"}, StdoutAbsent: []string{"password"}}
+	expected := expectation{Exit: &exit, StdoutContains: []string{"InSync"}, StdoutAbsent: []string{"password"},
+		StderrAbsent: []string{"deadline"}}
 	got := expected.describe()
-	for _, want := range []string{"exits 0", `prints "InSync"`, `never prints "password"`} {
+	for _, want := range []string{"exits 0", `prints "InSync"`, `never prints "password"`, `never reports "deadline"`} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("describe said %q, which does not carry %q", got, want)
 		}

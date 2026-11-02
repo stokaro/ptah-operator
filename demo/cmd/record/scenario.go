@@ -88,6 +88,7 @@ type expectation struct {
 	StdoutContains []string     `yaml:"stdout_contains"`
 	StderrContains []string     `yaml:"stderr_contains"`
 	StdoutAbsent   []string     `yaml:"stdout_absent"`
+	StderrAbsent   []string     `yaml:"stderr_absent"`
 	Resource       *observation `yaml:"resource"`
 }
 
@@ -344,7 +345,7 @@ func (s step) validateAnswers(where string) []error {
 				"%s shows stderr, and a terminal carries one stream; what the command wrote is in stdout", where))
 		}
 	}
-	if s.Expect != nil && len(s.Expect.StderrContains) > 0 {
+	if s.Expect != nil && (len(s.Expect.StderrContains) > 0 || len(s.Expect.StderrAbsent) > 0) {
 		problems = append(problems, fmt.Errorf(
 			"%s expects text on stderr, and a terminal carries one stream; expect it in stdout", where))
 	}

@@ -290,6 +290,11 @@ func (e expectation) evaluate(result outcome) error {
 			problems = append(problems, fmt.Errorf("stdout contains %q, which it must not", unwanted))
 		}
 	}
+	for _, unwanted := range e.StderrAbsent {
+		if strings.Contains(result.stderr, unwanted) {
+			problems = append(problems, fmt.Errorf("stderr contains %q, which it must not", unwanted))
+		}
+	}
 	return errors.Join(problems...)
 }
 
@@ -304,6 +309,9 @@ func (e expectation) describe() string {
 	}
 	for _, unwanted := range e.StdoutAbsent {
 		claims = append(claims, fmt.Sprintf("never prints %q", unwanted))
+	}
+	for _, unwanted := range e.StderrAbsent {
+		claims = append(claims, fmt.Sprintf("never reports %q", unwanted))
 	}
 	return strings.Join(claims, ", ")
 }
