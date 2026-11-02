@@ -20,13 +20,27 @@ func openTerminal() (controller, replica *os.File, err error) {
 			_ = controller.Close()
 		}
 	}()
-	fd := int(controller.Fd())
-	if err = unix.IoctlSetPointerInt(fd, unix.TIOCSPTLCK, 0); err != nil {
-		return nil, nil, fmt.Errorf("unlock the terminal: %w", err)
-	}
-	number, err := unix.IoctlGetUint32(fd, unix.TIOCGPTN)
+	// Through Control rather than Fd: Fd puts the descriptor in blocking mode,
+	// and a blocking read is one that closing the file cannot end.
+	raw, err := controller.SyscallConn()
 	if err != nil {
-		return nil, nil, fmt.Errorf("name the terminal: %w", err)
+		return nil, nil, err
+	}
+	var number uint32
+	var ioctlErr error
+	if err = raw.Control(func(fd uintptr) {
+		if ioctlErr = unix.IoctlSetPointerInt(int(fd), unix.TIOCSPTLCK, 0); ioctlErr != nil {
+			ioctlErr = fmt.Errorf("unlock the terminal: %w", ioctlErr)
+			return
+		}
+		if number, ioctlErr = unix.IoctlGetUint32(int(fd), unix.TIOCGPTN); ioctlErr != nil {
+			ioctlErr = fmt.Errorf("name the terminal: %w", ioctlErr)
+		}
+	}); err != nil {
+		return nil, nil, err
+	}
+	if err = ioctlErr; err != nil {
+		return nil, nil, err
 	}
 	replica, err = os.OpenFile(fmt.Sprintf("/dev/pts/%d", number), os.O_RDWR|syscall.O_NOCTTY, 0)
 	if err != nil {

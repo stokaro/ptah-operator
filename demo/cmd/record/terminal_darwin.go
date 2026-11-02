@@ -21,17 +21,32 @@ func openTerminal() (controller, replica *os.File, err error) {
 			_ = controller.Close()
 		}
 	}()
-	fd := controller.Fd()
-	if err = ioctl(fd, syscall.TIOCPTYGRANT, 0); err != nil {
-		return nil, nil, fmt.Errorf("grant the terminal: %w", err)
-	}
-	if err = ioctl(fd, syscall.TIOCPTYUNLK, 0); err != nil {
-		return nil, nil, fmt.Errorf("unlock the terminal: %w", err)
+	// Through Control rather than Fd: Fd puts the descriptor in blocking mode,
+	// and a blocking read is one that closing the file cannot end.
+	raw, err := controller.SyscallConn()
+	if err != nil {
+		return nil, nil, err
 	}
 	// TIOCPTYGNAME writes the replica's path into a buffer of 128 bytes.
 	name := make([]byte, 128)
-	if err = ioctl(fd, syscall.TIOCPTYGNAME, uintptr(unsafe.Pointer(&name[0]))); err != nil {
-		return nil, nil, fmt.Errorf("name the terminal: %w", err)
+	var ioctlErr error
+	if err = raw.Control(func(fd uintptr) {
+		if ioctlErr = ioctl(fd, syscall.TIOCPTYGRANT, 0); ioctlErr != nil {
+			ioctlErr = fmt.Errorf("grant the terminal: %w", ioctlErr)
+			return
+		}
+		if ioctlErr = ioctl(fd, syscall.TIOCPTYUNLK, 0); ioctlErr != nil {
+			ioctlErr = fmt.Errorf("unlock the terminal: %w", ioctlErr)
+			return
+		}
+		if ioctlErr = ioctl(fd, syscall.TIOCPTYGNAME, uintptr(unsafe.Pointer(&name[0]))); ioctlErr != nil {
+			ioctlErr = fmt.Errorf("name the terminal: %w", ioctlErr)
+		}
+	}); err != nil {
+		return nil, nil, err
+	}
+	if err = ioctlErr; err != nil {
+		return nil, nil, err
 	}
 	end := bytes.IndexByte(name, 0)
 	if end <= 0 {
