@@ -230,8 +230,8 @@
     },
     {
       "protocolVersion": 1,
-      "sourceDigest": "sha256:323eb64843b27e1d05ddd3c8c53cc7cfdae2d582d99a5ce2313a5fd20e8bc0d9",
-      "reason": "Run Ptah v0.17.0. Its plan, apply, drift and migration documents decode as v0.16.0's did, and it adds no drift category. internal/dataplane changes only comments: the contract version notes name v0.17.0, and the plan document's notes say why the annotations and inputs v0.17.0 writes for an executable provider stay undeclared, so a plan carrying either is still refused. The executor image changes, which retires every plan and approval made under the old one. Commands, payloads, result frames, delivery identity, SQL authority and retry limits are unchanged."
+      "sourceDigest": "sha256:d7b54d453594b1db0060f67fd89b75c8a23b6b0a832fff53ec4bb8f2d2e49cec",
+      "reason": "Run Ptah v0.17.0. Its plan, apply, drift and migration documents decode as v0.16.0's did, and it adds no drift category. internal/dataplane changes only comments: the contract version notes name v0.17.0, and the plan document's notes say why the annotations and inputs v0.17.0 writes for an executable provider stay undeclared: Ptah resolves an input from its own environment, which in an Apply Pod holds the database credential. A plan carrying either is still refused. The executor image changes, which retires every plan and approval made under the old one. Commands, payloads, result frames, delivery identity, SQL authority and retry limits are unchanged."
     }
   ]
 }

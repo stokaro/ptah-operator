@@ -19,9 +19,10 @@ after asking whether the table exists.
 - Isolated database: `ptah_e2e_retarget`
 
 The database name and client address are the ones the earlier reading carried
-from its cluster run, so the tests' identities stay. Run with the executor built
-from the previous pin on an empty database, the same probe reproduced that
-earlier 17-record reading exactly.
+from its cluster run, so the tests' identities stay. Run on an empty database
+with the executor built from the pin before v0.13.0, Ptah commit `f6e562c5`
+(`v0.9.0-73-gf6e562c5b`), the same probe reproduced that earlier 17-record
+reading exactly.
 
 The permitted statements are reviewed against the Ptah implementation of v0.14.0, and the search-path
 read against v0.17.0:
@@ -34,9 +35,12 @@ read against v0.17.0:
 
 v0.13.0's History no longer creates the table or checks its version type and
 columns. The predicate keeps those statements, because the Apply it also
-governs still sends them, and adds the two reads above. Additional statements,
-changed table/schema/column parameters, arbitrary SELECT or WITH statements,
-and failed unauthorized SQL are refused.
+governs still sends them, and admits the two reads v0.13.0 sends in their
+place: the count of the default table in `information_schema.tables` and
+`SELECT * FROM "schema_migrations" WHERE 1 = 0`. It admits v0.17.0's
+search-path read as well. Additional statements, changed table/schema/column
+parameters, arbitrary SELECT or WITH statements, and failed unauthorized SQL
+are refused.
 
 This reading validates the parser and the allowed diagnostic control. It does
 not establish that a later approval-refusal scenario passed. That result

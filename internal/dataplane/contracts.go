@@ -277,12 +277,13 @@ type PlanStatement struct {
 // PlanFile is the plan document `schema plan --output` saves. It is decoded
 // strictly: a field it does not declare refuses the plan.
 //
-// Two fields Ptah v0.17.0 can write stay undeclared on purpose: a plan's
-// annotations and a statement's inputs. Ptah writes them only for an engine an
-// executable provider serves, never for PostgreSQL or MySQL, and an input
-// names an environment value the Apply would have to supply, which no Apply
-// Pod carries. A plan with either is refused rather than approved and then
-// failed at Apply.
+// A plan's annotations and a statement's inputs, which Ptah v0.17.0 writes
+// only for an engine an executable provider serves, stay undeclared on
+// purpose. An input names an environment variable that Ptah reads with
+// os.LookupEnv in its own process at Apply and hands to the provider, and in
+// an Apply Pod that environment holds the database credential, so an approved
+// plan could name it. The operator runs PostgreSQL and MySQL, which Ptah plans
+// without a provider, and refuses a plan that carries either field.
 type PlanFile struct {
 	FormatVersion   int      `json:"format_version"`
 	Name            string   `json:"name"`
