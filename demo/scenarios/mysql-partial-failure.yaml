@@ -21,7 +21,13 @@ steps:
     sync: release 1
     expect:
       exit: 0
-      stdout_contains: [configmap/deliveries-release-3 created, deliveries created]
+      # Each ConfigMap by name: the loop's status is the last command's, so a
+      # create that failed earlier shows only in what it did not print.
+      stdout_contains:
+        - configmap/deliveries-release-1 created
+        - configmap/deliveries-release-2 created
+        - configmap/deliveries-release-3 created
+        - deliveries created
 
   - note: The operator reads the history and plans release 1.
     run: kubectl ptah wait migration/deliveries -n "$NAMESPACE" --for approval
