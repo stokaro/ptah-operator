@@ -153,6 +153,7 @@ func TestSchemaSpecWriterRestampsOnlyWhenSpecChanges(t *testing.T) {
 		handler := &SchemaSpecWriterHandler{Decoder: cradmission.NewDecoder(specWriterScheme(t))}
 		old := writerTestSchema(recorded)
 		updated := writerTestSchema(recorded)
+		updated.Spec.Desired.OCIRef = "oci://registry.test/acme/app:next"
 		updated.Spec.Suspend = true
 		request := updateWriterRequest(t, old, updated, authenticationv1.UserInfo{Username: "bob@example.com", UID: "idp-456"})
 		response := handler.Handle(context.Background(), request)
@@ -288,6 +289,7 @@ func TestMigrationSpecWriterRestampsOnlyWhenSpecChanges(t *testing.T) {
 		handler := &MigrationSpecWriterHandler{Decoder: cradmission.NewDecoder(specWriterScheme(t))}
 		old := writerTestMigration(recorded)
 		updated := writerTestMigration(recorded)
+		updated.Spec.Artifact.OCIRef = "oci://registry.test/acme/migrations:next"
 		updated.Spec.Suspend = true
 		request := updateWriterRequest(t, old, updated, authenticationv1.UserInfo{Username: "bob@example.com", UID: "idp-456"})
 		response := handler.Handle(context.Background(), request)
@@ -329,6 +331,109 @@ func TestMigrationSpecWriterRestampsOnlyWhenSpecChanges(t *testing.T) {
 			t.Fatalf("metadata-only patch %s let a forged writer through", patchJSON)
 		}
 	})
+}
+
+// TestSpecWriterKeepsTheWriterAcrossASuspendToggle holds both handlers to the
+// recorded writer when an update changes spec.suspend and nothing else. The
+// request drops the annotations, the way a client that rebuilt the object
+// would, so the handler has to put the stored writer back rather than leave
+// the request's value alone; and the toggle comes from someone else, who must
+// not be recorded.
+func TestSpecWriterKeepsTheWriterAcrossASuspendToggle(t *testing.T) {
+	t.Parallel()
+	recorded := map[string]string{
+		LastSpecWriterUsernameAnnotation: "alice@example.com",
+		LastSpecWriterUIDAnnotation:      "idp-123",
+	}
+	toggler := authenticationv1.UserInfo{Username: "bob@example.com", UID: "idp-456"}
+	suspendedSchema := writerTestSchema(nil)
+	suspendedSchema.Spec.Suspend = true
+	suspendedMigration := writerTestMigration(nil)
+	suspendedMigration.Spec.Suspend = true
+	for _, row := range []struct {
+		name    string
+		handler cradmission.Handler
+		request cradmission.Request
+	}{
+		{"schema suspended", &SchemaSpecWriterHandler{Decoder: cradmission.NewDecoder(specWriterScheme(t))},
+			updateWriterRequest(t, writerTestSchema(recorded), suspendedSchema, toggler)},
+		{"schema resumed", &SchemaSpecWriterHandler{Decoder: cradmission.NewDecoder(specWriterScheme(t))},
+			updateWriterRequest(t, func() any { s := writerTestSchema(recorded); s.Spec.Suspend = true; return s }(), writerTestSchema(nil), toggler)},
+		{"migration suspended", &MigrationSpecWriterHandler{Decoder: cradmission.NewDecoder(specWriterScheme(t))},
+			updateWriterRequest(t, writerTestMigration(recorded), suspendedMigration, toggler)},
+		{"migration resumed", &MigrationSpecWriterHandler{Decoder: cradmission.NewDecoder(specWriterScheme(t))},
+			updateWriterRequest(t, func() any { m := writerTestMigration(recorded); m.Spec.Suspend = true; return m }(), writerTestMigration(nil), toggler)},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			response := row.handler.Handle(context.Background(), row.request)
+			if !response.Allowed {
+				t.Fatalf("Handle() denied a suspend toggle: %#v", response.Result)
+			}
+			patchJSON, err := json.Marshal(response.Patches)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !containsJSON(patchJSON, "alice@example.com") || !containsJSON(patchJSON, "idp-123") {
+				t.Fatalf("patch %s does not restore the recorded writer", patchJSON)
+			}
+			if containsJSON(patchJSON, "bob@example.com") || containsJSON(patchJSON, "idp-456") {
+				t.Fatalf("patch %s records whoever toggled suspend", patchJSON)
+			}
+		})
+	}
+}
+
+// TestSpecWriterJudgesTheSpecAsTheAPIServerSendsIt sends the JSON the API
+// server sends rather than a typed object: suspend defaults to false, so a
+// real request carries "suspend": false where a marshaled Go object omits it.
+// Only the top-level key is set aside; a key named suspend anywhere else in
+// the spec is a change like any other.
+func TestSpecWriterJudgesTheSpecAsTheAPIServerSendsIt(t *testing.T) {
+	t.Parallel()
+	const recorded = `"annotations": {"operator.ptah.run/last-spec-writer-username": "alice@example.com", "operator.ptah.run/last-spec-writer-uid": "idp-123"}`
+	toggler := authenticationv1.UserInfo{Username: "bob@example.com", UID: "idp-456"}
+	for _, row := range []struct {
+		name       string
+		old, new   string
+		wantWriter string
+	}{
+		{
+			name:       "an explicit false turned true keeps the recorded writer",
+			old:        `{"metadata": {` + recorded + `}, "spec": {"suspend": false, "desired": {"ociRef": "oci://registry.test/acme/app@sha256:aa"}}}`,
+			new:        `{"metadata": {}, "spec": {"suspend": true, "desired": {"ociRef": "oci://registry.test/acme/app@sha256:aa"}}}`,
+			wantWriter: "alice@example.com",
+		},
+		{
+			name:       "a nested key named suspend is a spec change",
+			old:        `{"metadata": {` + recorded + `}, "spec": {"suspend": false, "execution": {"nodeSelector": {"suspend": "a"}}}}`,
+			new:        `{"metadata": {` + recorded + `}, "spec": {"suspend": false, "execution": {"nodeSelector": {"suspend": "b"}}}}`,
+			wantWriter: "bob@example.com",
+		},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			for _, handler := range []cradmission.Handler{
+				&SchemaSpecWriterHandler{Decoder: cradmission.NewDecoder(specWriterScheme(t))},
+				&MigrationSpecWriterHandler{Decoder: cradmission.NewDecoder(specWriterScheme(t))},
+			} {
+				request := updateWriterRequest(t, json.RawMessage(row.old), json.RawMessage(row.new), toggler)
+				response := handler.Handle(context.Background(), request)
+				if !response.Allowed {
+					t.Fatalf("%T denied the update: %#v", handler, response.Result)
+				}
+				patchJSON, err := json.Marshal(response.Patches)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, writer := range []string{"alice@example.com", "bob@example.com"} {
+					if containsJSON(patchJSON, writer) != (writer == row.wantWriter) {
+						t.Fatalf("%T patch %s, want the recorded writer to be %s", handler, patchJSON, row.wantWriter)
+					}
+				}
+			}
+		})
+	}
 }
 
 // TestMigrationSpecWriterProducesNoPatchForAFinalizerOnlyUpdate mirrors the

@@ -124,14 +124,17 @@ or who last changed its spec, in two annotations
 webhook ever writes: it overwrites whatever a request carried for them, so an
 author cannot name someone else, and it leaves them untouched on an update
 that does not change spec, so the manager's own finalizer and status writes
-never move the recorded name. When the installation's flag is true, the
-approval webhook refuses an approval whose approver is exactly that identity,
-or whose resource carries no recorded identity at all, with a reason that says
-so.
+never move the recorded name. A change to `spec.suspend` alone does not count
+either. Suspending and resuming change when the operator acts, not what it
+plans, and counting them would let whoever paused a resource move the record
+off its author, who could then approve their own change. When the
+installation's flag is true, the approval webhook refuses an approval whose
+approver is exactly that identity, or whose resource carries no recorded
+identity at all, with a reason that says so.
 
 Editing spec after a plan is awaiting approval already retires that plan and
 its binding, so a fresh plan is always judged against whoever most recently
-touched the spec it was computed from.
+changed the spec it was computed from.
 
 The mutating webhook that stamps the two annotations is itself installed only
 while the switch is on, so a schema or migration written before an
@@ -141,7 +144,8 @@ approvals are refused, by the same "no spec writer is recorded" reason a
 missing annotation always gets, until its spec is next changed and the
 webhook has a create or update to stamp. Plan for that gap when turning the
 switch on: an existing schema or migration stops taking approvals until an
-edit, however small, records its first writer.
+edit of its spec other than `spec.suspend`, however small, records its first
+writer.
 
 Identity here is exactly what the cluster's authentication reports for a
 request: a username, and a UID where the authenticator supplies one. A

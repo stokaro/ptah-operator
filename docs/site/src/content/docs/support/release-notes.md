@@ -16,6 +16,19 @@ release that says so, and this is where it is said. A version that asks
 nothing of you says so in as many words, rather than leaving you to read it
 out of silence.
 
+## 0.2.9
+
+**Before you upgrade.** The manager image is new, so keep `--force-conflicts`
+on the upgrade. Nothing else.
+
+- **Four-eyes approvals.** With `approvals.requireDistinctApprover` on,
+  suspending or resuming a schema or a migration no longer records whoever did
+  it as the last spec writer. Before, a colleague who paused and resumed a
+  resource became the recorded writer, and the author of the change could then
+  approve it. A spec edit other than `spec.suspend` records its writer as
+  before. A record that a toggle moved before the upgrade stays as it is until
+  the spec is next changed.
+
 ## 0.2.8
 
 **Before you upgrade.** The manager image is new, so keep `--force-conflicts`

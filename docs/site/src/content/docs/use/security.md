@@ -343,7 +343,7 @@ author's own RBAC over their namespace cannot reach it.
 
 A mutating webhook on `PtahSchema` and `PtahMigration` records the
 authenticated identity behind every `CREATE` and every `UPDATE` that changes
-`spec`, in two annotations only that webhook ever writes: it overwrites
+`spec` other than `spec.suspend`, in two annotations only that webhook ever writes: it overwrites
 whatever a request carried for them, the same way the approval webhook
 overwrites a forged `spec.approver`, so an author cannot name someone else as
 the resource's writer any more than they can name someone else as the
@@ -364,9 +364,10 @@ One consequence follows directly: a resource written while the switch was off
 carries no recorded writer, and turning the switch on does not retroactively
 supply one. Its approvals are refused, by the same "no spec writer is
 recorded" reason a missing annotation always produces, until its spec is next
-changed and the now-installed webhook has a write to stamp. An installer
-turning this on should expect that gap, not read it as the control
-misbehaving.
+changed and the now-installed webhook has a write to stamp. Suspending or
+resuming it is not such a change: the webhook does not count `spec.suspend`.
+An installer turning this on should expect that gap, not read it as the
+control misbehaving.
 
 The record is metadata rather than `spec` or `status` on purpose. `status` is
 a subresource on both kinds, and the API server resets it to its previous

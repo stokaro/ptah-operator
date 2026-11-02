@@ -17,11 +17,12 @@ import (
 
 // LastSpecWriterUsernameAnnotation and LastSpecWriterUIDAnnotation record the
 // authenticated identity that created a PtahSchema or a PtahMigration, or last
-// changed its spec. Only SchemaSpecWriterHandler and MigrationSpecWriterHandler
-// write them: each overwrites whatever a request carried for these two keys,
-// so an author cannot name someone else, and each leaves them exactly as they
-// were on a request that does not change spec, so a metadata-only edit -- a
-// finalizer, a label -- cannot smuggle a forged value in either.
+// changed its spec other than spec.suspend. Only SchemaSpecWriterHandler and
+// MigrationSpecWriterHandler write them: each overwrites whatever a request
+// carried for these two keys, so an author cannot name someone else, and each
+// leaves them exactly as they were on a request that does not change spec, so
+// a metadata-only edit -- a finalizer, a label -- cannot smuggle a forged value
+// in either.
 //
 // The two keys are metadata rather than spec or status. Status is a
 // subresource on both kinds, so a write through the main resource can never
@@ -38,8 +39,9 @@ const (
 // specWriterValues says what the two reserved annotations must hold after a
 // request: stamped from the requester when the request creates the resource or
 // changes its spec, and carried unchanged from the stored object otherwise, so
-// a finalizer patch or a label edit can neither erase the recorded writer nor
-// forge a new one. A key absent from the result must be absent from the object.
+// a finalizer patch, a label edit or a suspend toggle can neither erase the
+// recorded writer nor forge a new one. A key absent from the result must be
+// absent from the object.
 func specWriterValues(req cradmission.Request) (map[string]string, error) {
 	values := map[string]string{}
 	if req.Operation == admissionv1.Update {
@@ -50,7 +52,7 @@ func specWriterValues(req cradmission.Request) (map[string]string, error) {
 		if err := json.Unmarshal(req.OldObject.Raw, &stored); err != nil {
 			return nil, fmt.Errorf("decode the stored object: %w", err)
 		}
-		if reflect.DeepEqual(current.Spec, stored.Spec) {
+		if reflect.DeepEqual(withoutSuspend(current.Spec), withoutSuspend(stored.Spec)) {
 			for _, key := range specWriterAnnotations {
 				if value, ok := stored.Metadata.Annotations[key]; ok {
 					values[key] = value
@@ -64,6 +66,26 @@ func specWriterValues(req cradmission.Request) (map[string]string, error) {
 		values[LastSpecWriterUIDAnnotation] = uid
 	}
 	return values, nil
+}
+
+// withoutSuspend is the spec the recorded writer is judged by: all of it but
+// spec.suspend. Suspending and resuming change when the operator acts, not
+// what it plans, so whoever only pauses a resource has not written the desired
+// state its next plan comes from. Counting the toggle would let anyone with
+// patch move the recorded writer off the author, and the author could then
+// approve their own change.
+func withoutSuspend(spec any) any {
+	fields, ok := spec.(map[string]any)
+	if !ok {
+		return spec
+	}
+	kept := make(map[string]any, len(fields))
+	for key, value := range fields {
+		if key != "suspend" {
+			kept[key] = value
+		}
+	}
+	return kept
 }
 
 // specWriterAnnotations is the order the patch names the reserved keys in.
