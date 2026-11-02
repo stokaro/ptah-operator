@@ -99,6 +99,10 @@ admission's own words.
   version, the kind, a name made of the schema's name and the start of the
   fingerprint, the namespace and the three references, and nothing else.
   `examples/approval.yaml` is the same object written by hand.
+- `--wait` stays, once the approval is stored, until the operator has applied
+  the plan and read the database afterwards, for five minutes unless
+  `--wait-timeout` says otherwise. It counts only an Apply recorded after the
+  approval was created, and for a schema only one of the plan you approved.
 
 Create a printed approval with `kubectl create -f`, as the person who decided.
 Admission records whoever creates the object as its approver, so the identity
@@ -113,7 +117,10 @@ Exit status 4 means nothing was approved, 5 that RBAC or the API server
 refused the approval, and 6 that the request was sent and no answer said
 whether it was stored. After a 6, `kubectl ptah schema application -n
 application` lists the approvals that name the schema; read it before
-approving again.
+approving again. With `--wait`, 7 means the approval is stored and the Apply
+had not ended in time, and 8 that it will not end applied: it failed, nobody
+established its outcome, the reading afterwards did not confirm it, or another
+plan was applied. Both print the phase and what holds the schema.
 
 Creation is rejected if the plan is already stale, its immutable storage is
 not committed, the verification-policy ConfigMap changed, or the approval
@@ -176,7 +183,9 @@ identity at all, with a reason that says so.
 
 Editing spec after a plan is awaiting approval already retires that plan and
 its binding, so a fresh plan is always judged against whoever most recently
-changed the spec it was computed from.
+changed the spec it was computed from. `kubectl ptah suspend` and `resume`
+change only `spec.suspend` and record nobody, and `kubectl ptah refresh`
+writes an annotation, changes no spec, and records nobody either.
 
 The mutating webhook that stamps the two annotations is itself installed only
 while the switch is on, so a schema or migration written before an

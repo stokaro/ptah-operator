@@ -297,6 +297,19 @@ the reasons are the stable interface.
 
 - [Condition reasons](../troubleshoot/condition-reasons/)
 
+### How do I wait until the operator has acted on my change? {#wait-for-the-operator}
+
+`kubectl ptah wait schema/<name> --for in-sync -n <namespace>` reads the
+resource until the operator reports it in sync, and gives up at `--timeout`;
+`--for` also takes `approval`, `applied` and `suspended`. It counts nothing
+that was already true when it began. A condition that is `True` says what the
+operator saw last, so a schema that was `InSync` before somebody changed its
+database stays `InSync` until it reads the database again: ask for that read
+with `kubectl ptah refresh schema/<name> --wait`. A change made with the
+plugin, an approval included, waits in the same command with `--wait`.
+
+- [Operations](../use/operations/#wait)
+
 ### I found a bug in the operator. Where does it go? {#reporting-an-operator-bug}
 
 The operator is a separate repository, `github.com/stokaro/ptah-operator`, with

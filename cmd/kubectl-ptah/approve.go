@@ -17,23 +17,8 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/stokaro/ptah-operator/internal/approve"
+	"github.com/stokaro/ptah-operator/internal/operate"
 	"github.com/stokaro/ptah-operator/internal/statusview"
-)
-
-// Exit statuses of approve, beside the ones every command shares.
-const (
-	// exitNotApproved covers an approval this command did not send: the
-	// plan changed during review, the operator would not admit one now, the
-	// fingerprint given is not the current plan's, or the person declined.
-	exitNotApproved = 4
-	// exitRefused covers an approval the API server refused with a 4xx, in
-	// its own words: RBAC, admission, the schema, a name already taken, a
-	// credential it did not accept, or a request it was too busy to take.
-	// Nothing was stored.
-	exitRefused = 5
-	// exitUnknown covers an approval that was sent and whose fate no answer
-	// told. It may have been stored.
-	exitUnknown = 6
 )
 
 func stdinIsTerminal() bool {
@@ -57,11 +42,14 @@ func approveCommand(ctx context.Context, arguments []string, stdin io.Reader, in
 		kubeconfig  = flags.String("kubeconfig", "", "path to a kubeconfig file (default: KUBECONFIG, then ~/.kube/config)")
 		kubeContext = flags.String("context", "", "kubeconfig context to use (default: the current one)")
 		timeout     = flags.Duration("timeout", 30*time.Second, "how long to wait for the API server")
+		wait        = flags.Bool("wait", false, "once the approval is stored, wait until the operator has applied the plan and read the database afterwards")
+		waitTimeout = flags.Duration("wait-timeout", defaultWaitTimeout, "how long --wait waits")
 	)
 	if err := flags.Parse(arguments); err != nil {
 		if errors.Is(err, pflag.ErrHelp) {
 			return exitOK
 		}
+		fmt.Fprintf(stderr, "kubectl-ptah: %v\n", err)
 		return exitUsage
 	}
 	if flags.NArg() != 1 {
@@ -78,6 +66,14 @@ func approveCommand(ctx context.Context, arguments []string, stdin io.Reader, in
 	case "none", "client", "server":
 	default:
 		fmt.Fprintf(stderr, "kubectl-ptah: --dry-run is none, client or server, not %q\n", *dryRun)
+		return exitUsage
+	}
+	switch {
+	case *wait && *dryRun != "none":
+		fmt.Fprintf(stderr, "kubectl-ptah: --wait waits for the Apply an approval allows, and a dry run stores no approval\n")
+		return exitUsage
+	case *wait && *waitTimeout <= 0:
+		fmt.Fprintf(stderr, "kubectl-ptah: --wait-timeout has to be longer than zero, not %s\n", *waitTimeout)
 		return exitUsage
 	}
 	switch *output {
@@ -111,7 +107,7 @@ func approveCommand(ctx context.Context, arguments []string, stdin io.Reader, in
 		// The plan the status names is not stored: an approval in any mode
 		// would bind an object nobody reviewed.
 		fmt.Fprintf(stderr, "kubectl-ptah: %s Nothing was approved.\n", review.Closed)
-		return exitNotApproved
+		return exitNotDone
 	}
 
 	// Every mode, --dry-run client included, takes the same decision: the
@@ -122,7 +118,7 @@ func approveCommand(ctx context.Context, arguments []string, stdin io.Reader, in
 		if *fingerprint != review.Fingerprint {
 			fmt.Fprintf(stderr, "kubectl-ptah: the current plan of %s/%s is %s with fingerprint %s, not the %s given. Nothing was approved; review the current plan.\n",
 				family, resource, review.PlanName, statusview.Clean(review.Fingerprint), statusview.Clean(*fingerprint))
-			return exitNotApproved
+			return exitNotDone
 		}
 	} else if !interactive {
 		fmt.Fprintf(stderr, "kubectl-ptah: approve asks for a decision on a terminal. Without one, pass --plan-fingerprint with the fingerprint of the plan you reviewed (kubectl ptah plan %s shows it).\n", resource)
@@ -131,7 +127,7 @@ func approveCommand(ctx context.Context, arguments []string, stdin io.Reader, in
 	if !review.Open {
 		if !printOnly {
 			fmt.Fprintf(stderr, "kubectl-ptah: %s Nothing was approved.\n", review.Closed)
-			return exitNotApproved
+			return exitNotDone
 		}
 		// A manifest outlives the moment: the operator reading again at its
 		// interval closes the gate for a while, and the plan stays current.
@@ -159,7 +155,7 @@ func approveCommand(ctx context.Context, arguments []string, stdin io.Reader, in
 		answer, _ := bufio.NewReader(stdin).ReadString('\n')
 		if strings.TrimSpace(answer) != "yes" {
 			fmt.Fprintln(stderr, "Nothing was approved.")
-			return exitNotApproved
+			return exitNotDone
 		}
 	}
 
@@ -176,11 +172,24 @@ func approveCommand(ctx context.Context, arguments []string, stdin io.Reader, in
 
 	submitCtx, cancelSubmit := context.WithTimeout(ctx, *timeout)
 	defer cancelSubmit()
+	target := operate.Ref{Family: operate.Family(family), Namespace: resolved, Name: resource}
+	var baseline client.Object
+	if *wait {
+		// The resource before the approval exists is the wait's baseline: no
+		// Apply it records can be one this approval allowed.
+		if baseline, err = readResource(submitCtx, cluster, target); err != nil {
+			fmt.Fprintf(stderr, "kubectl-ptah: %v\nNothing was approved.\n", err)
+			return exitFailed
+		}
+	}
 	result := approve.Submit(submitCtx, cluster, review, approve.Options{Name: *name, ServerDryRun: *dryRun == "server"})
 	switch result.Outcome {
 	case approve.Admitted, approve.Previewed:
 		if *output != "text" {
-			return printObject(stdout, stderr, result.Approval, *output)
+			if code := printObject(stdout, stderr, result.Approval, *output); code != exitOK || !*wait {
+				return code
+			}
+			return waitForApply(ctx, cluster, target, review, baseline, *waitTimeout, false, stdout, stderr)
 		}
 		approver, at := result.Approver()
 		verb := "Approved"
@@ -194,13 +203,16 @@ func approveCommand(ctx context.Context, arguments []string, stdin io.Reader, in
 		fmt.Fprintf(stdout, "%s: %s %s/%s, recorded by admission as %s%s.\nIt binds plan %s, fingerprint %s.\n",
 			verb, family.ApprovalKind(), resolved, result.Approval.GetName(), statusview.Clean(approver), when,
 			review.PlanName, statusview.Clean(review.Fingerprint))
+		if *wait {
+			return waitForApply(ctx, cluster, target, review, baseline, *waitTimeout, true, stdout, stderr)
+		}
 		if result.Outcome == approve.Admitted {
 			fmt.Fprintf(stdout, "The operator runs it under the resource's policy; kubectl ptah %s %s -n %s shows how far it got.\n", family, resource, resolved)
 		}
 		return exitOK
 	case approve.Changed, approve.Closed:
 		fmt.Fprintf(stderr, "kubectl-ptah: %s\n", result.Message)
-		return exitNotApproved
+		return exitNotDone
 	case approve.Forbidden, approve.Refused:
 		fmt.Fprintf(stderr, "kubectl-ptah: %s\n", result.Message)
 		return exitRefused
@@ -213,8 +225,9 @@ func approveCommand(ctx context.Context, arguments []string, stdin io.Reader, in
 	}
 }
 
-// printObject writes an approval as YAML or JSON, the way kubectl prints one.
+// printObject writes an object as YAML or JSON, the way kubectl prints one.
 func printObject(stdout, stderr io.Writer, object client.Object, format string) int {
+	kind := object.GetObjectKind().GroupVersionKind().Kind
 	object.SetManagedFields(nil)
 	var (
 		data []byte
@@ -227,12 +240,28 @@ func printObject(stdout, stderr io.Writer, object client.Object, format string) 
 		data, err = yaml.Marshal(object)
 	}
 	if err != nil {
-		fmt.Fprintf(stderr, "kubectl-ptah: encode the approval: %v\n", err)
+		fmt.Fprintf(stderr, "kubectl-ptah: encode the %s: %v\n", kind, err)
 		return exitFailed
 	}
 	if _, err := stdout.Write(data); err != nil {
-		fmt.Fprintf(stderr, "kubectl-ptah: write the approval: %v\n", err)
+		fmt.Fprintf(stderr, "kubectl-ptah: write the %s: %v\n", kind, err)
 		return exitFailed
 	}
 	return exitOK
+}
+
+// waitForApply waits for the operator to apply the plan an approval was
+// stored for, and to read the database afterwards. For a schema only that
+// plan counts; a migration run records no plan.
+func waitForApply(ctx context.Context, reader client.Reader, ref operate.Ref, review approve.Review, baseline client.Object,
+	timeout time.Duration, text bool, stdout, stderr io.Writer) int {
+	options := operate.WaitOptions{Target: operate.TargetApplied, Timeout: timeout, Since: baseline}
+	if ref.Family == operate.FamilySchema {
+		options.Plan = review.PlanName
+	}
+	result, code := waitFor(ctx, reader, ref, options, text, stderr)
+	if code == exitOK && text {
+		writeReached(stdout, result)
+	}
+	return code
 }

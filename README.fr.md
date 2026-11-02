@@ -85,6 +85,9 @@ Ce client est publié avec chaque version sous forme de plugin `kubectl` pour
 les plateformes clientes prises en charge. Ses commandes de lecture ne font que
 lire ; `kubectl ptah approve` crée, en votre nom, l’approbation d’un plan que
 vous avez relu, et requiert `create` sur les types d’approbation.
+`kubectl ptah suspend`, `resume` et `refresh` modifient un schéma ou une
+migration par un patch, en votre nom, et `kubectl ptah wait` attend que
+l’opérateur ait traité une modification.
 [Lire un plan](https://operator.ptah.run/edge/use/read-a-plan/#install)
 décrit son installation et les droits RBAC requis dans le namespace.
 

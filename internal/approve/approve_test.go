@@ -30,6 +30,11 @@ func TestParseTargetNamesTheFamily(t *testing.T) {
 	}{
 		{"schema/storefront", approve.Schema, "storefront"},
 		{"migration/shipments", approve.Migration, "shipments"},
+		// As kubectl spells the kind, and as suspend, resume, refresh and
+		// wait read it.
+		{"ptahschema/storefront", approve.Schema, "storefront"},
+		{"PtahSchemas/storefront", approve.Schema, "storefront"},
+		{"ptahm/shipments", approve.Migration, "shipments"},
 	} {
 		family, name, err := approve.ParseTarget(test.target)
 		if err != nil || family != test.family || name != test.name {
@@ -39,7 +44,7 @@ func TestParseTargetNamesTheFamily(t *testing.T) {
 	// A bare name could be a schema or a migration of the same name, and an
 	// approval for the wrong one is an approval nobody reviewed.
 	for _, target := range []string{"storefront", "schema/", "/storefront", "schemas/storefront",
-		"ptahschema/storefront", "plan/storefront", "schema/a/b"} {
+		"ptahschemaapproval/storefront", "plan/storefront", "schema/a/b"} {
 		if _, _, err := approve.ParseTarget(target); err == nil {
 			t.Fatalf("ParseTarget(%q) accepted it", target)
 		}

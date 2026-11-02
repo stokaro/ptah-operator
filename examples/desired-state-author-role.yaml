@@ -12,6 +12,10 @@ rules:
   # because turning the approval requirement off is not an approval. The
   # chart's applyPolicyGuard, on by default, is what refuses Always to every
   # identity outside the groups it names.
+  #
+  # get and patch are also what kubectl ptah suspend, resume and refresh
+  # need. RBAC grants patch on the whole object, so there is no narrower role
+  # that only suspends.
   - apiGroups: ["operator.ptah.run"]
     resources: ["ptahschemas", "ptahmigrations"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]

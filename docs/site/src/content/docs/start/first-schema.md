@@ -110,10 +110,10 @@ records for it.
 An approval names the schema with its UID, the plan with its UID and that
 plan's fingerprint, and admission stamps who approved and when. `kubectl ptah
 approve` shows the plan again with those identities, asks for a decision, and
-creates the approval as you:
+creates the approval as you. `--wait` keeps it there until the plan has run:
 
 ```sh
-kubectl ptah approve schema/application -n application
+kubectl ptah approve schema/application -n application --wait
 ```
 
 It reads the schema once more before it sends anything. If a newer plan
@@ -132,7 +132,12 @@ its chunks; `examples/approver-plan-reader-role.yaml` is the reader half alone.
 from the one that writes the desired state.
 
 With the decision recorded the plan runs, and convergence is proved by a second
-observation rather than by the Job finishing:
+observation rather than by the Job finishing. That is what `--wait` waits for:
+an Apply of the plan you approved, recorded after the approval, and the
+operator's reading of the database afterwards. If that takes longer than five
+minutes, or the Apply fails, it says which, with the phase and the condition
+holding the schema; [Waiting for the operator](../../use/operations/#wait) has
+the rest. Then read where the schema stands:
 
 ```sh
 kubectl ptah schema application -n application

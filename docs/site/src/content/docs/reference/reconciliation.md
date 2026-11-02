@@ -258,6 +258,12 @@ kubectl annotate ptahmigration orders \
   operator.ptah.run/read-requested-at="$(date -u +%Y-%m-%dT%H:%M:%SZ)" --overwrite
 ```
 
+`kubectl ptah refresh migration/orders -n application` writes the same
+annotation, with a value later than any the resource holds and than the last
+one `status.lastReadRequest` answered, so a second request a moment after the
+first is not taken for an answered one. With `--wait` it waits for the read
+the request starts, under the rules below.
+
 A value `status.lastReadRequest` does not record as answered is answered once
 no operation is running. In `InSync`, `Blocked`, `ReadyToApply`,
 `AwaitingApproval` and a migration's `Planning`, the answer records the value
@@ -266,6 +272,13 @@ in `status.lastReadRequest`, moves `nextReconciliationTime` to now and writes a
 have started: Resolve, then Observe for a schema or the history read for a
 migration. A plan that waits for approval is kept unless the new reading
 retires it, as at any interval.
+
+A resource `Blocked` because its engine is not supported (`UnsupportedEngine`)
+or because its database realm does not admit it (`RealmConflict`,
+`RealmNotAuthorized`) does not answer: the controller checks the engine and the
+realm before it reaches the request, and the request waits until those checks
+pass. `Blocked` for any other reason, such as a policy that refuses the plan,
+answers as above.
 
 The request never starts a mutating operation and does not shorten a retry
 delay: a `Failed` resource answers it when its retry starts. A read already

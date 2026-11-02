@@ -146,7 +146,7 @@ func TestApproveSendsNothingWithoutAYes(t *testing.T) {
 
 		code, _, stderr := runApprove(t, api, answer, true, "schema/storefront")
 
-		if code != exitNotApproved || len(api.created) != 0 || !strings.Contains(stderr, "Nothing was approved") {
+		if code != exitNotDone || len(api.created) != 0 || !strings.Contains(stderr, "Nothing was approved") {
 			t.Fatalf("approve after %q = %d, %d creates, stderr %q", answer, code, len(api.created), stderr)
 		}
 	}
@@ -173,7 +173,7 @@ func TestApproveRefusesAFingerprintThatIsNotTheCurrentPlans(t *testing.T) {
 
 	code, _, stderr := runApprove(t, api, "", false, "schema/storefront", "--plan-fingerprint", "sha256:reviewed-yesterday")
 
-	if code != exitNotApproved || len(api.created) != 0 || !strings.Contains(stderr, "not the sha256:reviewed-yesterday given") {
+	if code != exitNotDone || len(api.created) != 0 || !strings.Contains(stderr, "not the sha256:reviewed-yesterday given") {
 		t.Fatalf("approve = %d, %d creates, stderr %q", code, len(api.created), stderr)
 	}
 }
@@ -187,7 +187,7 @@ func TestApproveSaysWhyNothingCanBeApprovedNow(t *testing.T) {
 
 	code, _, stderr := runApprove(t, api, "", false, "schema/storefront", "--plan-fingerprint", fingerprint)
 
-	if code != exitNotApproved || len(api.created) != 0 || !strings.Contains(stderr, "running Observe") {
+	if code != exitNotDone || len(api.created) != 0 || !strings.Contains(stderr, "running Observe") {
 		t.Fatalf("approve = %d, %d creates, stderr %q", code, len(api.created), stderr)
 	}
 
@@ -197,7 +197,7 @@ func TestApproveSaysWhyNothingCanBeApprovedNow(t *testing.T) {
 
 	code, stdout, stderr := runApprove(t, api, "yes\n", true, "schema/storefront")
 
-	if code != exitNotApproved || stdout != "" || len(api.created) != 0 ||
+	if code != exitNotDone || stdout != "" || len(api.created) != 0 ||
 		!strings.Contains(stderr, "running Observe") || strings.Contains(stderr, "Type yes") {
 		t.Fatalf("approve on a terminal = %d, %d creates, stdout %q, stderr %q", code, len(api.created), stdout, stderr)
 	}
@@ -253,7 +253,7 @@ func TestApproveOnAClientDryRunTakesTheSameDecision(t *testing.T) {
 
 		code, stdout, stderr := runApprove(t, api, "", false, "schema/storefront", "--dry-run", "client", "--plan-fingerprint", "sha256:reviewed-yesterday")
 
-		if code != exitNotApproved || stdout != "" || !strings.Contains(stderr, "not the sha256:reviewed-yesterday given") {
+		if code != exitNotDone || stdout != "" || !strings.Contains(stderr, "not the sha256:reviewed-yesterday given") {
 			t.Fatalf("approve --dry-run=client = %d, stdout %q, stderr %q", code, stdout, stderr)
 		}
 	})
@@ -286,7 +286,7 @@ func TestApproveOnAClientDryRunTakesTheSameDecision(t *testing.T) {
 
 		code, stdout, stderr := runApprove(t, api, "no\n", true, "schema/storefront", "--dry-run", "client")
 
-		if code != exitNotApproved || stdout != "" || len(api.created) != 0 {
+		if code != exitNotDone || stdout != "" || len(api.created) != 0 {
 			t.Fatalf("approve --dry-run=client after no = %d, stdout %q, stderr %q", code, stdout, stderr)
 		}
 	})
@@ -392,7 +392,7 @@ func TestApproveRefusesAMigrationPlanThatIsNotStored(t *testing.T) {
 			code, stdout, stderr := runApproveWith(t, api, "application", strings.NewReader(test.input), test.interactive,
 				append([]string{"migration/shipments"}, test.arguments...)...)
 
-			if code != exitNotApproved || stdout != "" || len(api.created) != 0 ||
+			if code != exitNotDone || stdout != "" || len(api.created) != 0 ||
 				!strings.Contains(stderr, "PtahMigrationPlan application/shipments-p-14 is not the plan PtahMigration shipments names") {
 				t.Fatalf("approve = %d after %d creates, stdout %q, stderr %q", code, len(api.created), stdout, stderr)
 			}
@@ -458,7 +458,7 @@ func TestApproveExitsByWhatTheAPIServerSaid(t *testing.T) {
 
 func TestApproveNamesTheResourceItApproves(t *testing.T) {
 	api, _ := approvable(t, nil)
-	for _, arguments := range [][]string{{"storefront"}, {"ptahschema/storefront"}, {}, {"schema/storefront", "schema/other"}} {
+	for _, arguments := range [][]string{{"storefront"}, {"schemas/storefront"}, {}, {"schema/storefront", "schema/other"}} {
 		if code, _, _ := runApprove(t, api, "", false, arguments...); code != exitUsage {
 			t.Fatalf("approve %q = %d, want usage", arguments, code)
 		}
@@ -471,5 +471,17 @@ func TestApproveNamesTheResourceItApproves(t *testing.T) {
 	}
 	if len(api.created) != 0 {
 		t.Fatalf("%d approvals were sent for commands that named nothing approvable", len(api.created))
+	}
+}
+
+// approve reads the family as every other verb does: kubectl's spelling of
+// the kind names the same resource.
+func TestApproveTakesTheKindAsKubectlSpellsIt(t *testing.T) {
+	api, fingerprint := approvable(t, nil)
+
+	code, _, stderr := runApprove(t, api, "", false, "ptahschema/storefront", "--plan-fingerprint", fingerprint)
+
+	if code != exitOK || len(api.created) != 1 {
+		t.Fatalf("approve ptahschema/storefront = %d after %d creates; stderr %q", code, len(api.created), stderr)
 	}
 }

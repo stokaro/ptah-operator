@@ -7,8 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"net/http"
-	"regexp"
 	"strings"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -18,6 +16,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/apirefusal"
 	"github.com/stokaro/ptah-operator/internal/statusview"
 )
 
@@ -248,17 +247,15 @@ func changedSince(reviewed, current Review) string {
 // lost. The API server's and admission's own words are passed on: they are
 // the answer this identity gets from kubectl too.
 func refusal(ctx context.Context, c client.Reader, review Review, name string, err error) Result {
-	var status apierrors.APIStatus
-	if !errors.As(err, &status) {
+	if !apirefusal.Definite(err) {
 		return Result{Outcome: Unknown, Message: unknownMessage(err, review)}
 	}
-	code := status.Status().Code
-	if code < http.StatusBadRequest || code >= http.StatusInternalServerError {
-		return Result{Outcome: Unknown, Message: unknownMessage(err, review)}
+	message := err.Error()
+	if status := apierrors.APIStatus(nil); errors.As(err, &status) {
+		message = status.Status().Message
 	}
-	message := status.Status().Message
 	switch {
-	case apierrors.IsForbidden(err) && rbacRefusal.MatchString(message):
+	case apirefusal.ByRBAC(err):
 		return Result{Outcome: Forbidden, Message: message + "\nNothing was approved."}
 	case apierrors.IsAlreadyExists(err):
 		return Result{Outcome: Refused, Message: message + "\n" + taken(ctx, c, review, name)}
@@ -306,13 +303,6 @@ func taken(ctx context.Context, c client.Reader, review Review, name string) str
 func listsApprovals(review Review) string {
 	return fmt.Sprintf("kubectl ptah %s %s -n %s shows", review.Family, review.Name, review.Namespace)
 }
-
-// rbacRefusal is the authorizer's refusal of the request itself, which begins
-// with the resource, names the user, and says which verb it may not use.
-// Admission refuses with 403 as well, in its own words, and a refusal it
-// passes on from its own reads names the manager's identity further in: it
-// begins with "admission webhook", which this does not match.
-var rbacRefusal = regexp.MustCompile(`^\S+(?: "[^"]*")? is forbidden: User "(?:[^"\\]|\\.)*" cannot [a-z]+ resource "`)
 
 func unknownMessage(err error, review Review) string {
 	var netErr net.Error

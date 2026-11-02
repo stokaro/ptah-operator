@@ -1,8 +1,6 @@
 package controller
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"time"
 
 	"sigs.k8s.io/controller-runtime/pkg/event"
@@ -28,23 +26,12 @@ func readRequestOf(annotations map[string]string, answered string) readRequest {
 	if !ok {
 		return readRequest{}
 	}
-	token := readRequestToken(value)
+	token := operatorv1alpha1.ReadRequestToken(value)
 	if token == answered {
 		return readRequest{token: token}
 	}
 	_, err := time.Parse(time.RFC3339, value)
 	return readRequest{token: token, pending: true, instant: err == nil}
-}
-
-// readRequestToken is how status records an annotation value: as given up to
-// MaxReadRequestLength bytes, as its SHA-256 digest beyond, so any value can
-// be recorded as answered and none is answered twice.
-func readRequestToken(value string) string {
-	if len(value) <= operatorv1alpha1.MaxReadRequestLength {
-		return value
-	}
-	sum := sha256.Sum256([]byte(value))
-	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
 // readOnRequest says what a pending read request does in a phase that has no

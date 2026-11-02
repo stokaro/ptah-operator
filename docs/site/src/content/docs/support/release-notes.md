@@ -35,10 +35,24 @@ on the upgrade. A script that reads the text of `kubectl ptah` has to move to
   before it sends anything and approves nothing if the plan changed.
   `--plan-fingerprint` approves from a script and `--dry-run client` prints the
   manifest instead. It needs `create` on the approval kind besides the plan
-  reads, which the chart's approver ClusterRole carries. It exits 4 when
-  nothing was approved, 5 when RBAC or the API server refused, and 6 when the
-  approval was sent without an answer. [Exact-plan approvals](../../use/approvals/)
-  shows it.
+  reads, which the chart's approver ClusterRole carries.
+  [Exact-plan approvals](../../use/approvals/) shows it.
+- **`kubectl ptah suspend`, `resume`, `refresh` and `wait`.** suspend and
+  resume set `spec.suspend` and nothing else, and report what they asked for
+  beside what the operator had observed. refresh writes the read-request
+  annotation and says that the read has not happened yet. wait reads a schema
+  or a migration until it is in sync, waits for an approval, has applied, is
+  suspended, or has ended the read a refresh asked for, and never counts what
+  was already true when it began. The three that write need `get` and `patch`
+  on the resource, `wait` needs `get`. The changes, `approve` included, take
+  `--wait`. [Waiting for the operator](../../use/operations/#wait) has the
+  targets.
+- **Exit statuses.** A write the plugin sends exits 4 when nothing was
+  approved or changed, 5 when RBAC or the API server refused it, and 6 when it
+  was sent without an answer and may have been stored. A wait exits 7 when it
+  timed out, naming what holds the resource, and 8 when the resource can no
+  longer reach the target. An unknown flag is named on stderr instead of
+  exiting 2 in silence.
 - **Four-eyes approvals.** With `approvals.requireDistinctApprover` on,
   suspending or resuming a schema or a migration no longer records whoever did
   it as the last spec writer. Before, a colleague who paused and resumed a

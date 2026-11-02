@@ -1270,27 +1270,86 @@ to be exposed on a Kubernetes node or on the host running a kind test cluster.
 
 ## Suspension and deletion
 
-Setting `spec.suspend=true` prevents new Jobs. If an apply is already active,
-the controller continues observing that Job until its outcome is safe to
-classify; it does not delete the Pod mid-mutation.
+Setting `spec.suspend=true` prevents new Jobs and cancels no SQL. If an apply
+is already active, the controller continues observing that Job until its
+outcome is safe to classify; it does not delete the Pod mid-mutation.
 
-For a `PtahMigration` that classification is `Unknown`, whatever the run did.
+For either kind that classification is `Unknown`, whatever the run did.
 Suspending is a spec edit, the generation it bumps is one of the inputs the
-Apply claim was decided from, and a claim whose inputs changed while its Job ran
-is recorded as [a run nobody accounted for](#a-migration-run-nobody-accounted-for)
-without its result being read. The Lease goes back once nothing the run
-dispatched can still write. The record stays while the resource is suspended,
-because a suspended migration takes no reading, and it clears on the first
-reading after resume that finds nothing of the artifact pending on the same
-database. To have the run's own result recorded, let it finish before
-suspending.
+Apply claim was decided from, and a claim whose inputs changed while its Job
+ran is recorded without its result being read.
 
-If a `PtahSchema` Apply outcome still needs convergence proof, suspension
-retains and renews that operation's database-realm Lease. This deliberately
-blocks later mutations in the same realm until the resource is resumed and the
-read-only proof completes, or until the resource is deleted. Releasing the
-Lease while retaining unresolved proof would let an intervening Apply
-contaminate the audit result.
+A `PtahMigration` records it as
+[a run nobody accounted for](#a-migration-run-nobody-accounted-for). The Lease
+goes back once nothing the run dispatched can still write. The record stays
+while the resource is suspended, because a suspended migration takes no
+reading, and it clears on the first reading after resume that finds nothing of
+the artifact pending on the same database.
+
+A `PtahSchema` records no applied plan for it, and owes a proof that reads the
+database, which waits for resume and for the Apply's execution deadline and
+grace period. To have the run's own result recorded in either kind, let it
+finish before suspending:
+`kubectl ptah suspend` names an Apply it finds running, and
+`kubectl ptah wait migration/orders --for applied -n application` waits for
+one to end and the operator's reading afterwards.
+
+While a `PtahSchema` owes the proof of an Apply, suspension starts no proof
+Job and drops a proof claim whose Job was not created; a proof Observe already
+running ends, and the Plan that completes the proof waits for resume. The
+schema retains and renews the Apply's database-realm Lease meanwhile. This
+deliberately blocks later mutations in the same realm until the resource is
+resumed and the read-only proof completes, or until the resource is deleted.
+Releasing the Lease while retaining unresolved proof would let an intervening
+Apply contaminate the audit result.
+
+`kubectl ptah suspend` sets the field and nothing else, and `kubectl ptah
+resume` clears it:
+
+```sh
+kubectl ptah suspend schema/storefront -n application
+kubectl ptah resume schema/storefront -n application
+```
+
+Each prints the state it asked for, `spec.suspend` and the generation that
+holds it, beside what the operator had observed when the API server answered:
+the generation it last acted on and its phase, and an operation still in
+flight, and what the suspension does to it. A read under way when the
+suspension arrives, a migration's read of its history after a run included,
+is dropped rather than waited for, since it changes nothing; its Job stops at
+its own deadline.
+Running one again sends nothing when the field already holds the value.
+With `--wait`, suspend stays until the operator reports the resource
+`Suspended` with nothing in flight, and resume until the resource is back in
+sync from a reading taken after the change, or, with `--for approval` or
+`--for applied`, until a plan waits for a decision or an Apply has ended.
+[Waiting for the operator](#wait) has the rules every wait follows. The
+commands need `get` and `patch` on the resource.
+
+For an edit made once in a while, `kubectl edit` is the same change in an
+editor:
+
+```sh
+kubectl edit ptahschema storefront -n application
+```
+
+```yaml
+spec:
+  suspend: true
+```
+
+A resource kept in a repository is suspended by the same line in its manifest,
+applied the way the rest of it is. A script can patch the field:
+
+```sh
+kubectl patch ptahschema storefront -n application --type merge -p '{"spec":{"suspend":true}}'
+```
+
+Suspending or resuming changes the spec, so it moves the generation like any
+other edit. With `approvals.requireDistinctApprover` on, it also records
+whoever made it as the resource's last spec writer, and that identity cannot
+approve the plans that follow ([Refusing a
+self-approval](../approvals/#refusing-a-self-approval)).
 
 Deleting a `PtahSchema` never runs SQL. The transient finalizer exists only to
 observe an already active operation and release coordination safely. It waits
@@ -1365,8 +1424,21 @@ The operator does not perform automatic rollback. Repair the desired artifact
 or database deliberately, then let observation produce a new plan.
 
 Observation reads the database at the resource's next interval. To read it as
-soon as no operation is running instead, after a repair, annotate the resource
-with the time of the request:
+soon as no operation is running instead, after a repair, ask for a read:
+
+```bash
+kubectl ptah refresh schema/storefront -n application --wait
+```
+
+`refresh` writes the time of the request into the
+`operator.ptah.run/read-requested-at` annotation, later than any value the
+resource already holds, so two requests a moment apart are two requests. The
+operator takes it once no operation is running, the resource is not suspended
+and no retry delay is pending. A read that was already under way when the
+request arrived does not answer it, because it may have read the database
+before the repair. Without `--wait` the command says only that the request was
+written, which is not the read; with it, the command stays until the read the
+request asked for has ended. A script can write the annotation itself:
 
 ```bash
 kubectl annotate ptahschema storefront \
@@ -1377,6 +1449,60 @@ kubectl annotate ptahschema storefront \
 starts an Apply and never shortens a retry delay; [Reading again on
 request](../../reference/reconciliation/#reading-again-on-request) has the
 rules.
+
+## Waiting for the operator {#wait}
+
+A change takes effect when the operator acts on it: it reads, plans and applies
+on its own schedule, and a condition can stay `True` long after the state it
+described has moved. `kubectl ptah wait` reads a resource until it reaches a
+target, and gives up at a timeout:
+
+```sh
+kubectl ptah wait schema/storefront --for in-sync --timeout 10m -n application
+```
+
+| `--for` | Ends when |
+| --- | --- |
+| `in-sync` | the resource rests in sync at the generation it had when the wait began, from a reading of the database that began after the wait did |
+| `approval` | a plan computed from such a reading waits for an approval, with none recorded on it yet |
+| `applied` | an Apply or a migration run that ended after the wait began is recorded applied, and the operator's reading afterwards confirms it; one that ended before does not count, even when that reading ends after; `--plan` narrows a schema's to one plan |
+| `suspended` | the operator reports the resource `Suspended` for that generation, with nothing in flight; a schema still owing the proof of an Apply reaches it, since that proof starts no Job until resume |
+| `read` | the read a `kubectl ptah refresh` asked for has ended; `--read-request` names the request |
+
+Nothing that was already true when the wait began counts. A schema that was
+`InSync` before somebody changed its database by hand stays `InSync` until it
+reads the database again, so waiting for in-sync after such a change waits for
+that reading: ask for it with `kubectl ptah refresh --wait`, or start the wait
+before the change. Approving a plan and refreshing change no generation, which
+is why a wait does not stop at the generation alone. A change made with the
+plugin waits in the same command with `--wait`, from the answer to the change
+itself; `kubectl ptah approve --wait` waits for the Apply of the plan it
+approved.
+
+A wait that times out exits 7 and prints the phase, the condition holding the
+resource and what the wait still needed:
+
+```text
+kubectl-ptah: ptahschema/storefront in namespace application did not reach in-sync within 10m0s.
+  Phase:       AwaitingApproval
+  Held by:     Ready=False, AwaitingApproval: Plan is waiting for approval
+  Waiting for: phase InSync with InSync True at generation 4
+kubectl ptah schema storefront -n application shows every condition with its message.
+```
+
+A wait started again after a timeout does not count a read that was already
+under way, because that read may have begun before the change being waited
+on. When the timeout found one, it says so and names
+`kubectl ptah refresh schema/storefront --wait -n application`, which asks for
+a read that begins later and waits for it.
+
+A target the resource cannot reach any more stops the wait at once with exit
+status 8: an Apply that failed, a run whose outcome nobody established, a
+reading afterwards that did not confirm the Apply, another plan applied than
+the one named, a resource deleted or being deleted, or a wait for suspension
+on a resource whose spec does not ask for it. With `-o yaml` or `-o json` the
+command prints the resource as the wait last read it, and nothing when it did
+not reach the target. Waiting needs `get` on the resource and nothing else.
 
 ## A migration run nobody accounted for
 

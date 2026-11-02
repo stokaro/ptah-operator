@@ -263,10 +263,14 @@ those files produce against what the database has, so files that are not the
 artifact's prove nothing about the artifact.
 
 **Nothing may be applying while this runs.** If the resource already exists,
-suspend it and wait for its operation Jobs to finish; a plan approved earlier
-can otherwise dispatch an Apply into the middle of adoption, and that Apply
-would run the whole sequence against a database that already carries the
-schema. If it does not exist yet, create it after baseline rather than before.
+suspend it before you start: a plan approved earlier can otherwise dispatch an
+Apply into the middle of adoption, and that Apply would run the whole sequence
+against a database that already carries the schema.
+`kubectl ptah suspend migration/orders -n application --wait` returns once
+the operator reports the migration `Suspended`, with no Apply running and none
+able to start. A read the suspension dropped can keep its Job running to that
+Job's own deadline; it changes nothing, and `kubectl get jobs -n application`
+shows when it is gone. If it does not exist yet, create it after baseline rather than before.
 
 #### Run it {#adopt-run}
 
@@ -281,7 +285,8 @@ ptah migrations baseline \
   --shadow-db "$SHADOW_DATABASE_URL"
 ```
 
-4. Create the `PtahMigration`, or resume the suspended one.
+4. Create the `PtahMigration`, or resume the suspended one with
+   `kubectl ptah resume migration/orders -n application`.
 
 #### What proves it worked {#adopt-evidence}
 
@@ -354,7 +359,9 @@ kubectl ptah approve migration/orders -n application
 It shows no SQL: a migration plan records versions and checksums, and the
 statements live in the source the plan binds, whose digest the review prints.
 It reads the migration again before it sends anything, and approves nothing if
-the plan was replaced or the operator would not admit an approval now.
+the plan was replaced or the operator would not admit an approval now. With
+`--wait` it then stays until the run has ended and the operator has read the
+history back.
 `--dry-run client` prints the approval as YAML with the identifiers filled in,
 after the same decision, to keep in a repository:
 

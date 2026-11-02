@@ -43,7 +43,7 @@ func TestAReadRequestIsReadFromTheAnnotationAgainstWhatStatusAnswered(t *testing
 		{name: "a date without a time", annotations: map[string]string{operatorv1alpha1.ReadRequestAnnotation: "2026-08-30"},
 			want: readRequest{token: "2026-08-30", pending: true}},
 		{name: "a value past the bound", annotations: map[string]string{operatorv1alpha1.ReadRequestAnnotation: long},
-			want: readRequest{token: readRequestToken(long), pending: true}},
+			want: readRequest{token: operatorv1alpha1.ReadRequestToken(long), pending: true}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -57,15 +57,15 @@ func TestAReadRequestIsReadFromTheAnnotationAgainstWhatStatusAnswered(t *testing
 func TestAReadRequestTokenFitsTheStatusField(t *testing.T) {
 	t.Parallel()
 	long := strings.Repeat("y", 4096)
-	token := readRequestToken(long)
+	token := operatorv1alpha1.ReadRequestToken(long)
 	if !strings.HasPrefix(token, "sha256:") || len(token) != len("sha256:")+64 {
-		t.Fatalf("readRequestToken(4096 bytes) = %q, want a sha256 digest", token)
+		t.Fatalf("operatorv1alpha1.ReadRequestToken(4096 bytes) = %q, want a sha256 digest", token)
 	}
-	if readRequestToken(long+"z") == token {
+	if operatorv1alpha1.ReadRequestToken(long+"z") == token {
 		t.Fatal("two long values gave one token, so the second would read as answered")
 	}
-	if exact := strings.Repeat("z", operatorv1alpha1.MaxReadRequestLength); readRequestToken(exact) != exact {
-		t.Fatalf("a value at the bound is recorded as %q, not as given", readRequestToken(exact))
+	if exact := strings.Repeat("z", operatorv1alpha1.MaxReadRequestLength); operatorv1alpha1.ReadRequestToken(exact) != exact {
+		t.Fatalf("a value at the bound is recorded as %q, not as given", operatorv1alpha1.ReadRequestToken(exact))
 	}
 }
 
