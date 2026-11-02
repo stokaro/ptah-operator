@@ -413,14 +413,22 @@ lab_reset() {
 	k -n "$E2E_TEST_NAMESPACE" delete job -l app.kubernetes.io/name=demo-adopt \
 		--ignore-not-found --wait=true --timeout=60s >/dev/null ||
 		lab_fail "could not remove an earlier adoption's baseline Jobs"
-	# The ConfigMaps the runs create with kubectl create configmap, which
-	# refuses a name that is already taken. They are named here rather than
-	# selected by a label because the command a run shows sets none; the
-	# snapshots the operator copies them into go with the resources above.
-	k -n "$E2E_TEST_NAMESPACE" delete configmap --ignore-not-found --wait=true --timeout=60s \
-		storefront-v1 shipments-migrations shipments-release-1 shipments-release-2 \
-		deliveries-release-1 deliveries-release-2 deliveries-release-3 >/dev/null ||
-		lab_fail "could not remove the ConfigMaps an earlier run created"
+	# Every ConfigMap but the lab's own: the runs create theirs with kubectl
+	# create configmap, which refuses a name that is already taken, and the
+	# command a run shows sets no label to select them by. What stays is the
+	# CA bundle Kubernetes publishes, the verification policies lab_prepare
+	# writes, and the bootstrap's e2e- ConfigMaps. A snapshot the operator
+	# copied a source into goes too, as it would with its resource.
+	lab_reset_configmaps=$(k -n "$E2E_TEST_NAMESPACE" get configmap -o name) ||
+		lab_fail "could not list the ConfigMaps in the demonstration namespace"
+	printf '%s\n' "$lab_reset_configmaps" | while IFS= read -r lab_reset_configmap; do
+		case $lab_reset_configmap in
+		'' | configmap/kube-root-ca.crt | configmap/demo-verification-policy | \
+			configmap/demo-migration-verification-policy | configmap/e2e-*) continue ;;
+		esac
+		k -n "$E2E_TEST_NAMESPACE" delete "$lab_reset_configmap" --ignore-not-found \
+			--wait=true --timeout=60s >/dev/null || exit 1
+	done || lab_fail "could not remove the ConfigMaps an earlier run created"
 	# The fault failure-recovery plants, which its own reset plants again.
 	k -n "$E2E_TEST_NAMESPACE" delete secret demo-database-broken --ignore-not-found >/dev/null ||
 		lab_fail "could not remove the Secret an earlier run planted"
