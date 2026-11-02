@@ -190,7 +190,7 @@ func TestSchemaSQLPlanValidation(t *testing.T) {
 			}
 			raw := schemaAuditReading(t, engine, "drift-validate-plan")
 			counts, err := check(raw, "plan")
-			want := map[string]int{"postgresql": 44, "mysql": 19}[engine]
+			want := map[string]int{"postgresql": 45, "mysql": 19}[engine]
 			if err != nil || len(counts) != 1 || counts[mysqlAuditHost] != want {
 				t.Fatalf("native Plan validation: counts=%v, error=%v", counts, err)
 			}
@@ -335,15 +335,15 @@ func TestSchemaSQLContractHasActualWitnessesAtThePinnedSource(t *testing.T) {
 			var readings []witness
 			for _, variant := range []string{"", "destructive-", "exclusion-wide-", "exclusion-narrow-", "initial-v1-", "tag-v2-", "tag-v3-", "drift-"} {
 				for _, operation := range []string{"observe", "plan"} {
-					count := map[string]map[string]int{"postgresql": {"observe": 46, "plan": 84}, "mysql": {"observe": 16, "plan": 31}}[engine][operation]
+					count := map[string]map[string]int{"postgresql": {"observe": 47, "plan": 85}, "mysql": {"observe": 16, "plan": 31}}[engine][operation]
 					if variant == "initial-v1-" {
-						count = map[string]map[string]int{"postgresql": {"observe": 40, "plan": 77}, "mysql": {"observe": 15, "plan": 29}}[engine][operation]
+						count = map[string]map[string]int{"postgresql": {"observe": 41, "plan": 78}, "mysql": {"observe": 15, "plan": 29}}[engine][operation]
 					}
 					readings = append(readings, witness{variant + operation, operation, count})
 				}
 			}
-			readings = append(readings, witness{"drift-validate-plan", "plan", map[string]int{"postgresql": 44, "mysql": 19}[engine]},
-				witness{"drift-stale-apply", "stale-apply", map[string]int{"postgresql": 44, "mysql": 19}[engine]})
+			readings = append(readings, witness{"drift-validate-plan", "plan", map[string]int{"postgresql": 45, "mysql": 19}[engine]},
+				witness{"drift-stale-apply", "stale-apply", map[string]int{"postgresql": 45, "mysql": 19}[engine]})
 			if engine == "mysql" {
 				readings = append(readings, witness{"lock-45-plan", "plan", 81}, witness{"lock-60-plan", "plan", 81})
 			}

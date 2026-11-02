@@ -148,10 +148,10 @@ class WorkloadTests(unittest.TestCase):
                 current = version if slot < 5 else 0
                 # Independently pinned outputs from native calibration. Returning
                 # round one when round nine was requested must fail this verifier.
-                repeated = {0: (242, 21015, 84141), 1: (121, 10507, 42067),
-                            9: (181, 14447, 57845)}[current][slot % 3]
+                repeated = {0: (244, 21024, 84175), 1: (122, 10511, 42083),
+                            9: (183, 14453, 57868)}[current][slot % 3]
                 if engine == 'MySQL':
-                    repeated = (498, 42088, 168510)[slot % 3]
+                    repeated = (506, 42118, 168630)[slot % 3]
                 result = []
                 for table in range(tables):
                     # The stale-reading control deliberately returns an older

@@ -166,8 +166,9 @@ kubectl ptah approve schema/application -n application --wait
 ```
 
 `--format reference` prints the reference of the artifact the push wrote,
-pinned by its digest, which is the only kind of reference `set-source` takes;
-a Ptah without it prints the digest in its receipt instead.
+pinned by its digest, which is the only kind of reference `set-source` takes.
+It came in Ptah v0.17.0; an older push prints the digest in its receipt
+instead.
 It changes `spec.desired.ociRef` and nothing else: the verification policy you
 created above holds the new artifact too. `--for approval` waits until the
 operator has planned from it, and the plan is the difference between the new

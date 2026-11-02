@@ -20,8 +20,22 @@ out of silence.
 
 **Before you upgrade.** The manager image is new, so keep `--force-conflicts`
 on the upgrade. A script that reads the text of `kubectl ptah` has to move to
-`-o json`. Nothing else.
+`-o json`. A plan waiting for approval has to be approved again once the
+executor moves to Ptah v0.17.0. Nothing else.
 
+- **Executor.** The verified executor is now Ptah v0.17.0. A new executor
+  retires the execution binding, as in 0.2.8: approve again whatever was
+  waiting, after the resource has read its database with v0.17.0 and planned.
+  Applied state is not touched. v0.17.0 adds no drift category, and the plan,
+  apply, drift and migration documents the operator reads keep their shape.
+  Its `ptah schema push` and `ptah migrations push` take `--format reference`,
+  which prints the pinned reference `kubectl ptah set-source` takes, and
+  `--format json`. A plan no longer carries the `-- POSTGRES TABLE`,
+  `-- MYSQL TABLE` and `-- ALTER statements: --` comment lines, so
+  `kubectl ptah plan -o sql` shows only the comments that describe a change.
+  On PostgreSQL every operation now reads the session's search path when it
+  connects, so a database audit that lists what the executor sends sees one
+  more read.
 - **`kubectl ptah` output.** The text `kubectl ptah schema`, `migration` and
   `plan` print is for people, and its layout changed: wider label columns, the
   conditions as a table with their messages, approvals and acknowledgments,

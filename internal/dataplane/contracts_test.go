@@ -281,6 +281,32 @@ func TestDecodePlanFailsClosed(t *testing.T) {
 	}
 }
 
+// Ptah v0.17.0 writes annotations on a plan and inputs on a statement for an
+// engine an executable provider serves. The operator plans neither kind, so
+// both stay undeclared and refuse the plan: declaring one is a decision about
+// what an Apply Pod can run, not a field to add so that a decode passes.
+func TestDecodePlanRefusesProviderExecutionFields(t *testing.T) {
+	t.Parallel()
+	base := `{"format_version":1,"name":"p","dialect":"postgres","from_fingerprint":"from","to_fingerprint":"to",` +
+		`"destructive":false,"statements":[{"sql":"CREATE TABLE t (id bigint)","severity":"safe","reason":"new table"}]}`
+	if _, err := dataplane.DecodePlan([]byte(base), "PostgreSQL"); err != nil {
+		t.Fatalf("DecodePlan() refused the plan without provider fields: %v", err)
+	}
+	for field, document := range map[string]string{
+		"annotations": strings.Replace(base, `"destructive":false`,
+			`"destructive":false,"annotations":[{"before":0,"text":"note"}]`, 1),
+		"inputs": strings.Replace(base, `"reason":"new table"`,
+			`"reason":"new table","inputs":[{"source":"environment","name":"TOKEN"}]`, 1),
+	} {
+		t.Run(field, func(t *testing.T) {
+			t.Parallel()
+			if _, err := dataplane.DecodePlan([]byte(document), "PostgreSQL"); err == nil || !strings.Contains(err.Error(), field) {
+				t.Fatalf("DecodePlan() error = %v, want the %s field refused", err, field)
+			}
+		})
+	}
+}
+
 // The fixtures are plan files the Ptah v0.14.0 release image saved with
 // `schema plan --output` against PostgreSQL 17, stored as written: pg_trgm and
 // a table on an empty database; a table with a row-security policy on an empty

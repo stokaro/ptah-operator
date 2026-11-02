@@ -329,7 +329,7 @@ func postgresMigrationHistoryStatement(statement, parameters string) bool {
 		switch statement {
 		case "-- ping", "SELECT version()", "SELECT current_schema()",
 			"SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'timescaledb')",
-			postgresHistoryCreate, postgresHistoryRead, postgresHistoryColumnsProbe:
+			postgresSearchPathRead, postgresHistoryCreate, postgresHistoryRead, postgresHistoryColumnsProbe:
 			return true
 		}
 	}
@@ -349,6 +349,10 @@ func postgresMigrationHistoryStatement(statement, parameters string) bool {
 	}
 	return false
 }
+
+// Ptah v0.17.0 reads the session's search path when it connects, so it can
+// resolve an unqualified name the way PostgreSQL does.
+const postgresSearchPathRead = `SELECT s FROM unnest(current_schemas(false)) WITH ORDINALITY AS path(s, n) ORDER BY n`
 
 const postgresHistoryExists = `SELECT COUNT(*)
 FROM information_schema.tables

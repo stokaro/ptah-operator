@@ -274,6 +274,15 @@ type PlanStatement struct {
 	AccessReason string   `json:"access_reason,omitempty"`
 }
 
+// PlanFile is the plan document `schema plan --output` saves. It is decoded
+// strictly: a field it does not declare refuses the plan.
+//
+// Two fields Ptah v0.17.0 can write stay undeclared on purpose: a plan's
+// annotations and a statement's inputs. Ptah writes them only for an engine an
+// executable provider serves, never for PostgreSQL or MySQL, and an input
+// names an environment value the Apply would have to supply, which no Apply
+// Pod carries. A plan with either is refused rather than approved and then
+// failed at Apply.
 type PlanFile struct {
 	FormatVersion   int      `json:"format_version"`
 	Name            string   `json:"name"`

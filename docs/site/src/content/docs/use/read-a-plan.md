@@ -98,7 +98,6 @@ Stored:         2026-09-13T08:04:05Z
 Applied:        2026-09-13T08:04:24Z
 
 Statement 1 of 1: safe (does not remove data or tighten constraints)
--- POSTGRES TABLE: customers --
 CREATE TABLE "customers" (
   "id" bigint PRIMARY KEY NOT NULL,
   "email" text NOT NULL
@@ -113,7 +112,6 @@ Statements that do different things read differently:
 ```text
 Statement 1 of 2: safe (does not remove data or tighten constraints)
 -- Add/modify columns for table: e2e_widgets
--- ALTER statements: --
 ALTER TABLE "e2e_widgets" ADD COLUMN "fault_token" text;
 
 Statement 2 of 2: destructive (DROP TABLE removes the table and all rows)

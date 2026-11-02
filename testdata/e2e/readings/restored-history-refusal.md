@@ -1,9 +1,11 @@
 # Restored migration history refusal journals
 
-These readings were captured from the pinned Ptah executor, the Ptah v0.16.0
-release image, on isolated PostgreSQL 17.11 and MySQL 8.4.11 servers on
-2026-10-25. They exercise the migration selection guard used by the operator's
-`restoredHistoryProof`.
+These readings were captured from the pinned Ptah executor on isolated
+PostgreSQL 17.11 and MySQL 8.4.11 servers: the PostgreSQL reading with the Ptah
+v0.17.0 release image on 2026-11-02, and the MySQL reading with the v0.16.0
+release image on 2026-10-25, which the v0.17.0 image reproduced record for
+record on 2026-11-02. They exercise the migration selection guard used by the
+operator's `restoredHistoryProof`.
 
 The probe applied the repository's two-migration fixture, then removed
 migration 2's column and revision row. `migrations up --expect-sequence`
@@ -19,12 +21,16 @@ fixture. MySQL also used its explicit `--tx-mode none`.
   v0.14.0 and v0.15.0 images reproduced them record for record. The v0.16.0
   image does not: its refused Apply reads the revision table again under the
   migration lock before it refuses, which the History contract already
-  permits, so the readings here are v0.16.0's.
-- Executor image: `ghcr.io/stokaro/ptah@sha256:b8a9ac7c695e7af9f66787880b0cd722017474f5d05c08a81e0db297df311cf4`
+  permits, so the MySQL reading here is v0.16.0's. The v0.17.0 image adds one
+  PostgreSQL record: it reads the session's search path when it connects,
+  which the History contract now permits too.
+- Executor image: `ghcr.io/stokaro/ptah@sha256:181e279720916ed455bf9fe8f1620b8e0d71dd37cc127b3ae662317697c92548`
+  for PostgreSQL, and `ghcr.io/stokaro/ptah@sha256:b8a9ac7c695e7af9f66787880b0cd722017474f5d05c08a81e0db297df311cf4`
+  for MySQL
 - Database: `ptah_audit_restore`; account: `ptah_audit`
 - Executor client address in each isolated network: `172.19.0.3`
 
-The PostgreSQL reading retains all 31 received SQL records from the refused
+The PostgreSQL reading retains all 32 received SQL records from the refused
 executor's address. The MySQL reading retains all 77 protocol records from
 that account, including 34 Query/Execute records and the connection boundaries.
 SQL, parameters and hex-encoded MySQL argument bytes are unchanged. Administrator
@@ -35,7 +41,7 @@ networks were removed; the borrowed images were preserved.
 
 - Reading: [postgresql-restored-history-refusal.jsonl](postgresql-restored-history-refusal.jsonl)
 - Server image: `postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73`
-- Reading SHA-256: `5fc37626c2c30b7265823cb62f93ab2fd924bdc65946d1b477dbd6f7b85fdca1`
+- Reading SHA-256: `e015110b4c2e769f908057bac540455c620e666ea987eebca1f6882194fc7057`
 
 ## Mysql
 
