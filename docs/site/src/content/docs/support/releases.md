@@ -64,7 +64,7 @@ preflight fails closed and requires a new release commit.
 ## Make a release
 
 These steps are in the order that works, and each note beside them was paid
-for by a release that took another path. `v0.2.8` stands for the version being
+for by a release that took another path. `v0.2.9` stands for the version being
 made; the pull request that prepares a version changes it on this page.
 
 ### Before the tag
@@ -74,7 +74,7 @@ made; the pull request that prepares a version changes it on this page.
    [Configuration](../../use/configuration/), this page, the tag
    `support/qualification/probes/fresh_install_test.py` pins, and the
    version's section in [Release notes](../release-notes/).
-   `go run ./hack/releaseverify -tag v0.2.8` reports whether they name one
+   `go run ./hack/releaseverify -tag v0.2.9` reports whether they name one
    version.
 2. **Merge, and wait for the complete CI run on that exact `master`
    commit.** A newer merge cancels it, and a commit whose run was cancelled
@@ -118,8 +118,8 @@ Push an annotated tag on the recorded commit:
 
 ```sh
 commit=replace-with-the-recorded-commit
-git tag -a v0.2.8 -m "ptah-operator 0.2.8" "$commit"
-git push origin refs/tags/v0.2.8
+git tag -a v0.2.9 -m "ptah-operator 0.2.9" "$commit"
+git push origin refs/tags/v0.2.9
 ```
 
 Approve the `release` environment of the run the push started. It prepares
@@ -165,7 +165,7 @@ Request publication from the tag with the recorded manifest digest:
 
 ```sh
 qualified_manifest_sha256='replace-with-the-recorded-64-character-digest'
-gh workflow run release.yml --ref v0.2.8 \
+gh workflow run release.yml --ref v0.2.9 \
   -f action=publish -f manifest_sha256="$qualified_manifest_sha256"
 ```
 
@@ -192,7 +192,7 @@ over the previous release as the operations guide describes, on each
 architecture:
 
 ```sh
-tag=v0.2.8
+tag=v0.2.9
 previous=replace-with-the-previous-release
 for arch in amd64 arm64; do
   gh workflow run fresh-install.yml --ref master -f tag="$tag" -f architecture="$arch"
@@ -206,7 +206,7 @@ Once they pass, declare the release in one pull request:
 - **Its row in `support/ptah.json`.** The executor pin and the measured scope
   are the development row's as the tag holds it. Set
   `documentation.published` to `true` and `documentation.source` to
-  `v0.2.8` to build its guide from the tag. Do not declare a published guide
+  `v0.2.9` to build its guide from the tag. Do not declare a published guide
   before the tag exists.
 - **The compatibility table.** Run `npm run compatibility:write` in
   `docs/site`; the Documentation workflow refuses a table the catalog no
@@ -472,7 +472,7 @@ every other ref is refused, and attestations still require the resolved release
 commit and the exact signer workflow:
 
 ```sh
-tag=v0.2.8
+tag=v0.2.9
 version=${tag#v}
 repository=stokaro/ptah-operator
 source_sha="$(gh api "repos/$repository/commits/$tag" --jq .sha)"
