@@ -112,9 +112,9 @@ the name it read.
 make demo-reproduce
 ```
 
-It runs the first scenario's published commands against a live lab with
-`demo/bin/lab` unreachable, under a ServiceAccount that may not create a Job,
-and asserts the schema converged. The first half is the claim the pages make:
+It runs the commands the manual-approval scenario publishes against a live lab
+with `demo/bin/lab` unreachable, under a ServiceAccount that may not create a
+Job, and asserts the schema converged. The first half is the claim the pages make:
 what a scenario shows is `kubectl`, `ptah` and a manifest, and a reader needs
 nothing of ours to repeat it. The second is the claim the operator makes: the
 executor's Job is the operator's to create, and a reader who cannot create one
@@ -125,7 +125,9 @@ refuses `apply: Always` to anyone outside its exempt groups, and a
 ServiceAccount is in none of them, so the reproduction is on the path a reader
 with a default install is on: a second ServiceAccount, bound to the chart's
 approver ClusterRole and unable to create a schema or a Job, approves the plan
-the way the manual-approval scenario shows, and the operator applies it.
+with `kubectl ptah approve`, and the operator applies it. With no terminal to
+answer on, it passes `--plan-fingerprint` with the fingerprint of the plan it
+read, which is how a script approves.
 
 ## Recording
 
