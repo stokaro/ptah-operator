@@ -49,9 +49,10 @@ on the upgrade. A script that reads the text of `kubectl ptah` has to move to
   annotation and says that the read has not happened yet. wait reads a schema
   or a migration until it is in sync, waits for an approval, has applied, is
   suspended, or has ended the read a refresh asked for, and never counts what
-  was already true when it began. A schema plan its own policy refuses,
-  destructive while `allowDestructive` is false or any plan under apply
-  `Never`, stops a wait for in-sync, approval or applied at once. The three
+  was already true when it began. A plan the resource's own policy holds, a
+  schema plan that is destructive while `allowDestructive` is false or any
+  plan under apply `Never`, stops a wait for in-sync, approval or applied once
+  the operator has planned it again after the wait began. The three
   that write need `get` and `patch` on the resource, `wait` needs `get`. The
   changes, `approve` included, take `--wait`. [Waiting for the
   operator](../../use/operations/#wait) has the targets.

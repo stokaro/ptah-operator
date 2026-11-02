@@ -559,9 +559,11 @@ operator has to have observed the generation the resource had then.
 
 A wait that times out names the phase and the condition that holds the
 resource, as the last read found them, and what it still waits for. One that
-cannot reach its target, such as an Apply that failed, a run whose outcome
-nobody established, or a schema plan its own policy refuses (destructive while
-allowDestructive is false, or any plan under apply Never), stops at once.
+cannot reach its target, such as an Apply that failed or a run whose outcome
+nobody established, stops at once. So does a wait on a plan the resource's own
+policy holds (a schema plan that is destructive while allowDestructive is
+false, or any plan under apply Never), once the operator has planned it again
+after the wait began.
 
 suspend, resume, refresh and set-source patch the resource as you: they need
 get and patch on ptahschemas or ptahmigrations. wait needs get. The resource is

@@ -1249,16 +1249,16 @@ resumed; set-source stores the change and its report says so.
 computed from it waits for a decision, or the resource rests in sync from it,
 whichever comes first. `--for approval` or `--for in-sync` waits for that one
 alone, and a wait for approval stops with exit status 8 when the resource
-rests in sync instead, since no plan from the change will wait. A schema plan
-the resource's own policy holds -- destructive while
+rests in sync instead, since no plan from the change will wait. A plan the
+resource's own policy holds -- a schema plan that is destructive while
 `spec.policy.allowDestructive` is false, or any plan under apply `Never` --
-stops either wait with exit status 8 once the operator has refused it, with
+stops either wait with exit status 8 once the operator has published it, with
 the reason and the operator's message: no approval is asked for and nothing
 applies it until the spec changes. Every ending needs the operator to have
 observed the generation the change made and a reading that began after it,
-and a document that carries another artifact does not count. A wait whose resource is pointed somewhere else meanwhile
-stops with exit status 8, as [any wait](#wait) does on a target it can no
-longer reach.
+and a document that carries another artifact does not count. A wait whose
+resource is pointed somewhere else meanwhile stops with exit status 8, as
+[any wait](#wait) does on a target it can no longer reach.
 
 set-source changes nothing, and exits 4, for:
 
@@ -1627,13 +1627,14 @@ reading afterwards that did not confirm the Apply, another plan applied than
 the one named, a resource deleted or being deleted, or a wait for suspension
 on a resource whose spec does not ask for it.
 
-A schema plan the resource's own policy holds stops a wait for `in-sync`,
-`approval` or `applied` the same way: a destructive plan while
-`spec.policy.allowDestructive` is false, or any plan under apply `Never`. No
-approval is asked for and nothing applies it until the spec changes. The wait
-reads the refusal from `ApprovalRequired`, which the operator keeps while it
-resolves, verifies and reads the database again at its interval, so a wait
-that reads it mid-cycle, outside `Blocked`, stops as well. As with every
+A plan the resource's own policy holds stops a wait for `in-sync`,
+`approval` or `applied` the same way: a schema plan that is destructive while
+`spec.policy.allowDestructive` is false, or any plan of either kind under
+apply `Never`. No approval is asked for and nothing applies it until the spec
+changes. The wait reads the refusal from the condition the operator keeps
+while it resolves, verifies and reads again at its interval -- a schema's
+`ApprovalRequired`, a migration's `Ready` -- so a wait that reads it
+mid-cycle, outside `Blocked` or `Planning`, stops as well. As with every
 target, the refusal counts only when it is for the generation the resource has
 now and was planned from a reading that began after the wait did:
 

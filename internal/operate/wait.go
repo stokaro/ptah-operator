@@ -160,11 +160,12 @@ const (
 	// StopNotSuspended is a wait for suspension on a resource whose spec
 	// does not ask for it.
 	StopNotSuspended StopReason = "NotSuspended"
-	// StopPolicyBlocked is a schema whose current plan its own policy holds:
-	// a destructive plan spec.policy.allowDestructive does not allow, or any
-	// plan under spec.policy.apply Never. No approval is asked for and no
-	// Apply runs, and every later reading of the same database plans the
-	// same, until the spec changes.
+	// StopPolicyBlocked is a resource whose current plan its own policy
+	// holds: a schema plan that is destructive while
+	// spec.policy.allowDestructive is false, or any plan of either family
+	// under spec.policy.apply Never. No approval is asked for and no Apply
+	// runs, and every later reading of the same database plans the same,
+	// until the spec changes.
 	StopPolicyBlocked StopReason = "PolicyBlocked"
 	// StopDeleting is a resource that is being deleted.
 	StopDeleting StopReason = "Deleting"
@@ -665,55 +666,68 @@ func (w *waiter) checkInSync(s snapshot) verdict {
 	return w.inSync(s, fresh)
 }
 
-// policyHeld stops a wait on a schema whose current plan its own policy
-// holds (StopPolicyBlocked): ApprovalRequired False for
-// DestructiveChangesDisabled or ApplyDisabled, written for the generation the
-// resource has now, beside a plan from a reading the target may count. None
-// of in-sync, approval and applied follows such a plan.
+// policyHeld stops a wait on a resource whose current plan its own policy
+// holds (StopPolicyBlocked), at the generation the resource has now and
+// beside a plan from a reading the target may count. None of in-sync,
+// approval and applied follows such a plan.
 //
-// The decision rests on ApprovalRequired because the operator writes it with
-// the plan (setPlanPolicyStatus in internal/controller) and leaves it alone
-// while it resolves, verifies and reads the database again at its interval.
-// The phase leaves Blocked and Ready reads OperationInProgress for part of
-// every cycle while the refusal stands.
+// For a schema the refusal is ApprovalRequired False for
+// DestructiveChangesDisabled or ApplyDisabled. The operator writes it with the
+// plan (setPlanPolicyStatus in internal/controller) and leaves it alone while
+// it resolves, verifies and reads the database again at its interval, while
+// the phase leaves Blocked and Ready reads OperationInProgress. The plan beside
+// it dates it: the Observe harvest clears status.plan in the same write that
+// records the reading, and only the plan computed after it puts one back, so a
+// refusal beside the reading of a cycle that has not planned yet has no plan
+// beside it.
 //
-// The plan beside the condition dates it. A schema's Observe harvest clears
-// status.plan in the same write that records the reading, and only the plan
-// computed after it puts one back, so a plan in status was computed from the
-// reading the document records. A refusal beside the reading of a cycle that
-// has not planned yet would be the previous plan's; there is no plan beside
-// it. A migration's history harvest leaves the previous plan in place, and a
-// migration keeps no policy refusal on ApprovalRequired, so only a schema is
-// decided here.
+// For a migration it is Ready False for ApplyDisabled, which publishing a plan
+// under apply policy Never writes (applyMigrationPolicyPhase). A claim writes
+// the phase and Progressing and leaves Ready alone, and the harvest of the
+// history writes Ready in the same write that records the reading, on every
+// branch. So ApplyDisabled beside a reading was written by the publication
+// that followed that reading. A migration keeps the previous plan through a
+// read, so the plan dates nothing there.
 //
 // A database realm that blocks the resource does not stop the wait: another
 // resource's change or the realm's grant ends that refusal, not this
 // resource's spec, and the timeout names it.
 func (w *waiter) policyHeld(s snapshot, fresh bool) (verdict, bool) {
-	if s.family != FamilySchema || s.plan == nil || !fresh {
+	if s.plan == nil || !fresh {
 		return verdict{}, false
 	}
-	held := s.condition(operatorv1alpha1.ConditionApprovalRequired)
+	held := s.policyHold()
 	// The generation is the resource's own, which is never below the one the
 	// wait requires: a spec edited since the refusal may be the edit that
 	// allows the plan. It also holds a wait for a source to a plan from that
 	// source, since sourceMoved has stopped one whose spec names another.
-	if held == nil || held.Status != metav1.ConditionFalse || !policyRefusal(held.Reason) ||
-		held.ObservedGeneration < s.generation {
+	if held == nil || held.ObservedGeneration < s.generation {
 		return verdict{}, false
 	}
 	return w.stop(s, StopPolicyBlocked, fmt.Sprintf("spec.policy holds plan %s (%s): %s",
 		s.plan.name, held.Reason, held.Message)), true
 }
 
-// policyRefusal reports an ApprovalRequired reason that says the resource's
-// own policy holds its plan.
-func policyRefusal(reason string) bool {
-	switch operatorv1alpha1.ConditionReason(reason) {
-	case operatorv1alpha1.ReasonDestructiveChangesDisabled, operatorv1alpha1.ReasonApplyDisabled:
-		return true
+// policyHold is the condition that says the resource's own policy holds its
+// current plan, or nil.
+func (s snapshot) policyHold() *metav1.Condition {
+	switch s.family {
+	case FamilySchema:
+		held := s.condition(operatorv1alpha1.ConditionApprovalRequired)
+		if held != nil && held.Status == metav1.ConditionFalse {
+			switch operatorv1alpha1.ConditionReason(held.Reason) {
+			case operatorv1alpha1.ReasonDestructiveChangesDisabled, operatorv1alpha1.ReasonApplyDisabled:
+				return held
+			}
+		}
+	case FamilyMigration:
+		held := s.condition(operatorv1alpha1.ConditionMigrationReady)
+		if held != nil && held.Status == metav1.ConditionFalse &&
+			held.Reason == string(operatorv1alpha1.ReasonApplyDisabled) {
+			return held
+		}
 	}
-	return false
+	return nil
 }
 
 // inSync decides TargetInSync on a document whose reading fresh says counts
@@ -780,7 +794,14 @@ func (w *waiter) checkApplied(s snapshot) verdict {
 	// asks it.
 	fresh := w.fresh.see(s)
 	if s.family == FamilyMigration {
-		return w.checkRun(s)
+		run := w.checkRun(s)
+		if run.done || run.stop != nil {
+			return run
+		}
+		if held, ok := w.policyHeld(s, fresh); ok {
+			return held
+		}
+		return run
 	}
 	b := w.baseline
 	// status.applied is written only by the proof that read the database

@@ -269,3 +269,95 @@ func TestWaitForASourceStopsOnAPlanThePolicyHolds(t *testing.T) {
 		})
 	}
 }
+
+// neverPublished is a migration's conditions once the operator published a
+// plan under spec.policy.apply Never (applyMigrationPolicyPhase).
+func neverPublished(generation int64) []metav1.Condition {
+	return []metav1.Condition{
+		condition(operatorv1alpha1.ConditionMigrationApprovalRequired, metav1.ConditionFalse, "NotRequired",
+			"The apply policy is Never, so no approval is consulted", generation),
+		condition(operatorv1alpha1.ConditionMigrationReady, metav1.ConditionFalse, "ApplyDisabled",
+			"1 migrations are pending and the apply policy is Never", generation),
+		condition(operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionFalse, "ApplyDisabled",
+			"The apply policy is Never, so nothing runs from here", generation),
+	}
+}
+
+// migrationClaimed is what a claim writes over conditions: Progressing in
+// progress. Ready is left as it was.
+func migrationClaimed(operation string, conditions []metav1.Condition) []metav1.Condition {
+	return rewritten(conditions, condition(operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionTrue,
+		"OperationInProgress", operation+" operation is in progress", 3))
+}
+
+// historyHarvested is what the harvest of the history writes over conditions
+// when versions are pending, in the write that records the reading.
+func historyHarvested(conditions []metav1.Condition) []metav1.Condition {
+	return rewritten(conditions,
+		condition(operatorv1alpha1.ConditionMigrationReady, metav1.ConditionFalse, "MigrationsPending", "1 migrations are pending", 3),
+		condition(operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionTrue, "MigrationsPending",
+			"A plan for 1 pending migrations is being published", 3))
+}
+
+// A migration under apply policy Never rests in Planning with its plan
+// published, and nothing applies it: a wait for in-sync or applied stops on
+// it as on a schema plan the policy holds, by Ready, which a claim leaves
+// alone and the harvest of the history rewrites with the reading.
+func TestWaitStopsOnAMigrationPlanUnderApplyNever(t *testing.T) {
+	t.Parallel()
+
+	plan := &planDoc{name: "shipments-p-14", uid: "uid-p-14"}
+	resting := doc{phase: "Planning", observedAt: at(0), plan: plan, conditions: neverPublished(3)}
+	cycle := []doc{
+		resting,
+		{phase: "Resolving", operation: "Resolve", observedAt: at(0), plan: plan, conditions: migrationClaimed("Resolve", neverPublished(3))},
+		{phase: "Reading", operation: "History", observedAt: at(0), plan: plan, conditions: migrationClaimed("History", neverPublished(3))},
+		// The harvest keeps the previous plan and rewrites Ready.
+		{phase: "Planning", observedAt: at(30), plan: plan, conditions: historyHarvested(neverPublished(3))},
+		{phase: "Planning", observedAt: at(30), plan: plan, conditions: neverPublished(3)},
+	}
+	for _, row := range []struct {
+		name      string
+		target    operate.Target
+		docs      []doc
+		wantStop  int
+		wantPhase string
+	}{
+		{name: "in-sync: the plan the read after the wait began published", target: operate.TargetInSync, docs: cycle,
+			wantStop: 5, wantPhase: "Planning"},
+		{name: "applied: the same plan", target: operate.TargetApplied, docs: cycle, wantStop: 5, wantPhase: "Planning"},
+		{name: "in-sync: read mid-cycle, after a publication the wait saw no rest of", target: operate.TargetInSync,
+			docs: []doc{resting, {phase: "Resolving", operation: "Resolve", observedAt: at(30), plan: plan,
+				conditions: migrationClaimed("Resolve", neverPublished(3))}},
+			wantStop: 2, wantPhase: "Resolving"},
+		{name: "in-sync: a publication before the wait began", target: operate.TargetInSync, docs: []doc{resting}},
+		{name: "in-sync: a reading after the wait began, before its plan", target: operate.TargetInSync, docs: cycle[:4]},
+		{name: "in-sync: a refusal for an older generation", target: operate.TargetInSync, docs: []doc{
+			resting, {generation: 4, observedGeneration: 3, phase: "Planning", observedAt: at(30), plan: plan, conditions: neverPublished(3)},
+		}},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+
+			tl := &timeline{family: operate.FamilyMigration, docs: row.docs}
+			_, err := operate.Wait(context.Background(), tl.reader(t), refOf(operate.FamilyMigration), operate.WaitOptions{
+				Target: row.target, Timeout: timeout, Interval: interval, Clock: newStepClock(),
+			})
+
+			if row.wantStop == 0 {
+				var timedOut *operate.TimeoutError
+				if !errors.As(err, &timedOut) {
+					t.Fatalf("err = %v, want a timeout", err)
+				}
+				return
+			}
+			var stop *operate.StopError
+			if !errors.As(err, &stop) || stop.Reason != operate.StopPolicyBlocked || stop.Phase != row.wantPhase ||
+				tl.readCount() != row.wantStop ||
+				!strings.Contains(stop.Message, "spec.policy holds plan shipments-p-14 (ApplyDisabled): 1 migrations are pending and the apply policy is Never") {
+				t.Fatalf("err = %v after %d reads, want a %s stop in phase %s at read %d", err, tl.readCount(),
+					operate.StopPolicyBlocked, row.wantPhase, row.wantStop)
+			}
+		})
+	}
+}
