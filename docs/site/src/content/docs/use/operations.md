@@ -1591,8 +1591,8 @@ plugin waits in the same command with `--wait`, from the answer to the change
 itself; `kubectl ptah approve --wait` waits for the Apply of the plan it
 approved.
 
-A wait that times out exits 7 and prints the phase, the condition holding the
-resource and what the wait still needed:
+A wait that times out exits 7 and prints the phase and the condition holding
+the resource as the last read found them, and what the wait still needed:
 
 ```text
 kubectl-ptah: ptahschema/storefront in namespace application did not reach in-sync within 10m0s.
@@ -1601,6 +1601,10 @@ kubectl-ptah: ptahschema/storefront in namespace application did not reach in-sy
   Waiting for: phase InSync with InSync True at generation 4
 kubectl ptah schema storefront -n application shows every condition with its message.
 ```
+
+When the last reads failed, the timeout names that failure as well. The read a
+wait makes at its deadline is cut short by the deadline itself, and is not one
+of them.
 
 A wait started again after a timeout does not count a read that was already
 under way, because that read may have begun before the change being waited

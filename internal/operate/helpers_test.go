@@ -257,6 +257,11 @@ func (tl *timeline) reader(t *testing.T) client.Reader {
 				if err != nil {
 					return err
 				}
+				// A real client sends nothing on a context that has ended,
+				// and the fake one would answer.
+				if err := ctx.Err(); err != nil {
+					return err
+				}
 				if err := replace(ctx, c, next.object(tl.family)); err != nil {
 					return err
 				}

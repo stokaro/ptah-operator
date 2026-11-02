@@ -543,9 +543,10 @@ operator has to have observed the generation the resource had then.
 
   kubectl ptah wait schema/storefront --for in-sync --timeout 10m -n application
 
-A wait that times out names the phase, the condition that holds the resource
-and what it still waits for. One that cannot reach its target, such as an
-Apply that failed or a run whose outcome nobody established, stops at once.
+A wait that times out names the phase and the condition that holds the
+resource, as the last read found them, and what it still waits for. One that
+cannot reach its target, such as an Apply that failed or a run whose outcome
+nobody established, stops at once.
 
 suspend, resume, refresh and set-source patch the resource as you: they need
 get and patch on ptahschemas or ptahmigrations. wait needs get. The resource is

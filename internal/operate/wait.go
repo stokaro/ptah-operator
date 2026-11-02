@@ -196,7 +196,9 @@ type TimeoutError struct {
 	// Waiting is what the target still needed in the last document read.
 	Waiting string
 	// LastError is the error of the last read, when it failed and was
-	// retried.
+	// retried. A read the wait's own deadline cut short is not counted: the
+	// deadline is the timeout this error reports, not news about the
+	// resource. When no read answered at all, LastError says so.
 	LastError error
 	// ReadUnderWay reports that the last document read showed a read of the
 	// database in flight. A wait begun after it skips that read's harvest,
@@ -297,10 +299,14 @@ func Wait(ctx context.Context, reader client.Reader, ref Ref, options WaitOption
 			waiting = verdict.waiting
 		case ctx.Err() != nil:
 			return Result{}, fmt.Errorf("wait for %s: %w", ref, ctx.Err())
-		case errors.Is(err, context.DeadlineExceeded):
-			// The read carried the wait's own deadline: the timeout below
-			// reports it.
-			lastErr = err
+		case errors.Is(err, context.DeadlineExceeded) && !clock.Now().Before(deadline):
+			// The read carried the wait's own deadline and ran into it, which
+			// the read at the deadline always does. The timeout below reports
+			// what the last read that answered found, or why the last one
+			// before this failed.
+			if last == nil && lastErr == nil {
+				lastErr = errNoAnswer
+			}
 		case apierrors.IsNotFound(err) && w.baseline != nil:
 			// The resource the wait began on is gone; a resource with no
 			// finalizer goes without a deleting document between.
@@ -334,6 +340,10 @@ func Wait(ctx context.Context, reader client.Reader, ref Ref, options WaitOption
 		}
 	}
 }
+
+// errNoAnswer is a timeout before which no read was answered: each read ran
+// into the wait's deadline, which says nothing about the resource.
+var errNoAnswer = errors.New("the API server answered no read before the timeout")
 
 // get reads the resource. With the real clock the read carries the wait's
 // deadline; an injected clock's instants are not the context's.

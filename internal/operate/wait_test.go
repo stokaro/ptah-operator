@@ -3,8 +3,10 @@ package operate_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -1510,12 +1512,79 @@ func TestWaitWithTheRealClockBoundsAReadThatHangs(t *testing.T) {
 		Target: operate.TargetInSync, Timeout: 200 * time.Millisecond, Interval: time.Hour,
 	})
 	elapsed := time.Since(began)
+	// No read answered, and the report says that rather than naming the
+	// wait's own deadline as the read's failure.
 	var timedOut *operate.TimeoutError
-	if !errors.As(err, &timedOut) || !errors.Is(timedOut.LastError, context.DeadlineExceeded) {
-		t.Fatalf("err = %v, want a TimeoutError after the read hit the deadline", err)
+	if !errors.As(err, &timedOut) || timedOut.Phase != "" || timedOut.LastError == nil ||
+		errors.Is(timedOut.LastError, context.DeadlineExceeded) ||
+		!strings.Contains(err.Error(), "last read failed: the API server answered no read before the timeout") {
+		t.Fatalf("err = %v, want a TimeoutError saying no read was answered", err)
 	}
 	if elapsed > 10*time.Second {
 		t.Fatalf("a read that hangs held the wait %s past a 200ms timeout", elapsed)
+	}
+}
+
+// With the real clock the read at the deadline carries a context that has
+// already ended, so it never reaches the API server. The timeout reports the
+// last document that was read, and a failure an earlier read met, never the
+// wait's own deadline as a failed read.
+func TestWaitWithTheRealClockReportsTheLastReadOnTimeout(t *testing.T) {
+	t.Parallel()
+
+	suspended := doc{suspend: true, phase: "Suspended", observedAt: at(0), conditions: suspendedConditions(operate.FamilySchema, 3)}
+	unavailable := apierrors.NewServiceUnavailable("the API server is restarting")
+	// A request the client's own timeout ended, well before the wait's.
+	clientTimeout := fmt.Errorf("Get \"https://10.96.0.1/apis\": %w", context.DeadlineExceeded)
+	for _, row := range []struct {
+		name string
+		errs map[int]error
+		// wantLast is the failure the timeout names; nil for none.
+		wantLast error
+	}{
+		{name: "every read before the deadline answered"},
+		{
+			name: "the reads after the first failed",
+			// The read at the deadline is not one of them: it never reaches
+			// the API server.
+			errs:     map[int]error{1: unavailable, 2: unavailable, 3: unavailable, 4: unavailable},
+			wantLast: unavailable,
+		},
+		{
+			name:     "the reads after the first timed out on their own",
+			errs:     map[int]error{1: clientTimeout, 2: clientTimeout, 3: clientTimeout, 4: clientTimeout},
+			wantLast: clientTimeout,
+		},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+
+			synctest.Test(t, func(t *testing.T) {
+				tl := &timeline{family: operate.FamilySchema, docs: []doc{suspended}, errs: row.errs}
+				_, err := operate.Wait(context.Background(), tl.reader(t), refOf(operate.FamilySchema), operate.WaitOptions{
+					Target: operate.TargetInSync, Timeout: 5 * time.Second, Interval: time.Second,
+				})
+
+				var timedOut *operate.TimeoutError
+				if !errors.As(err, &timedOut) {
+					t.Fatalf("err = %v, want a TimeoutError", err)
+				}
+				// Reads at 0 to 4 seconds, and the one at the deadline.
+				if tl.readCount() != 6 {
+					t.Fatalf("read %d times, want 6", tl.readCount())
+				}
+				if timedOut.Phase != "Suspended" || timedOut.Blocker == nil ||
+					timedOut.Blocker.Type != operatorv1alpha1.ConditionSuspended || timedOut.LastError != row.wantLast {
+					t.Fatalf("timeout = %+v, want phase Suspended held by Suspended, last failure %v", timedOut, row.wantLast)
+				}
+				switch {
+				case row.wantLast == nil && strings.Contains(err.Error(), "last read failed"):
+					t.Fatalf("%q reports the wait's own deadline as a failed read", err)
+				case row.wantLast != nil && !strings.Contains(err.Error(), "last read failed: "+row.wantLast.Error()):
+					t.Fatalf("%q does not name the failure %q", err, row.wantLast)
+				}
+			})
+		})
 	}
 }
 

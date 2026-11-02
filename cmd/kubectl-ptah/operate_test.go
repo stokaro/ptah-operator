@@ -86,6 +86,11 @@ func newCluster(t *testing.T, objects ...client.Object) *cluster {
 }
 
 func (c *cluster) Get(ctx context.Context, key client.ObjectKey, object client.Object, options ...client.GetOption) error {
+	// A real client sends nothing on a context that has ended, and the fake
+	// one would answer.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	c.mu.Lock()
 	err := c.readErr
 	var step func(client.Object)
@@ -617,6 +622,33 @@ func TestWaitTimeoutNamesWhatHoldsTheResource(t *testing.T) {
 		}
 		requireSays(t, "the timeout", stderr, "did not reach in-sync within 30s.", "Phase:       AwaitingApproval",
 			"Held by:     Ready=False, AwaitingApproval: Plan is waiting for approval")
+	})
+}
+
+// The read a wait makes at its deadline carries a context that has already
+// ended. The timeout names the state the last answered read found and what
+// holds it, and does not report the wait's own deadline as a failed read.
+func TestWaitTimeoutReportsTheLastStateRead(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		suspended := resting("schema").(*operatorv1alpha1.PtahSchema)
+		suspended.Spec.Suspend = true
+		suspended.Status.Phase = operatorv1alpha1.PhaseSuspended
+		suspended.Status.Conditions = append(suspended.Status.Conditions, metav1.Condition{
+			Type: operatorv1alpha1.ConditionSuspended, Status: metav1.ConditionTrue, Reason: "Requested",
+			Message: "New database operations are suspended", ObservedGeneration: 4})
+		api := newCluster(t, suspended)
+
+		code, stdout, stderr := runCommand(t, api, "wait", "schema/storefront", "--for", "in-sync", "--timeout", "30s")
+
+		if code != exitTimedOut || stdout != "" {
+			t.Fatalf("wait on a suspended schema = %d, stdout %q, stderr %q", code, stdout, stderr)
+		}
+		requireSays(t, "the timeout", stderr, "did not reach in-sync within 30s.", "Phase:       Suspended",
+			"Held by:     Suspended=True, Requested: New database operations are suspended",
+			"Waiting for: a read of the database that began after the wait did (the last one is from 2026-10-01T09:00:00Z)")
+		if strings.Contains(stderr, "Last read") || strings.Contains(stderr, "deadline") {
+			t.Fatalf("the timeout reports the wait's own deadline as a failed read:\n%s", stderr)
+		}
 	})
 }
 
