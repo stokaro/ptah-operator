@@ -125,9 +125,12 @@ go run ./demo/cmd/record -root . -check           # parse and validate, run noth
 make verify-demo-recording                        # is the recording still of the scenarios
 ```
 
-A failed expectation ends the scenario and writes nothing. Recording the rest
-of it would publish a session that continued past the point where the
-demonstration stopped being true.
+A failed expectation ends the scenario, and the recorder goes on to the next
+one, which starts with a reset; at the end it names every scenario that failed
+and writes nothing. Recording the rest of a failed scenario would publish a
+session that continued past the point where the demonstration stopped being
+true, and a recording with one scenario missing is not the set the site
+publishes.
 
 Each recorded scenario carries a digest of what the scenario file says it runs:
 the reset, and for every step its command, wait, retry, phase, streams and
@@ -188,8 +191,8 @@ scripts are POSIX shell throughout.
 
 ## When something fails
 
-The recorder prints every check of the run that stopped, passed and failed,
-before the failure. The failing one names the object and what it read.
+The recorder prints every check of each scenario that stopped, passed and
+failed, before its failure. The failing one names the object and what it read.
 
 The lab stays up after a failure, which is the point of it being a lab:
 

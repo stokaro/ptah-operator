@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -163,5 +165,44 @@ func write(t *testing.T, path, content string) {
 	}
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
+// A failed scenario used to end the whole run, so a set that took most of an
+// hour to reach reported one failure and hid the rest. The rows hold the two
+// halves of the replacement: every scenario runs and every failure is named,
+// and a run with any failure returns nothing to write.
+func TestRecordEachRunsEveryScenarioAndWritesNothingOnAFailure(t *testing.T) {
+	t.Parallel()
+	loaded := []scenario{{ID: "first"}, {ID: "broken"}, {ID: "last"}, {ID: "also-broken"}}
+	var ran []string
+	run := func(_ context.Context, one scenario) (recording, error) {
+		ran = append(ran, one.ID)
+		if strings.Contains(one.ID, "broken") {
+			return recording{ID: one.ID, Checks: []check{{Scenario: one.ID, Step: 1, Claim: "exits 0"}}},
+				fmt.Errorf("%s step 1: exited 1, expected 0", one.ID)
+		}
+		return recording{ID: one.ID}, nil
+	}
+	var diagnostics strings.Builder
+	recorded, err := recordEach(context.Background(), loaded, run, &diagnostics, func(string, ...any) {})
+	if got := strings.Join(ran, ","); got != "first,broken,last,also-broken" {
+		t.Fatalf("ran %s; every scenario has to run past a failure", got)
+	}
+	if err == nil || recorded != nil {
+		t.Fatalf("a run with failures returned %d recordings and error %v", len(recorded), err)
+	}
+	for _, want := range []string{"2 of 4 scenarios failed", "broken step 1", "also-broken step 1"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("the error does not say %q: %v", want, err)
+		}
+	}
+	if !strings.Contains(diagnostics.String(), "FAIL broken step 1") {
+		t.Fatalf("the failed scenario's checks were not printed:\n%s", diagnostics.String())
+	}
+
+	recorded, err = recordEach(context.Background(), loaded[:1], run, &diagnostics, func(string, ...any) {})
+	if err != nil || len(recorded) != 1 {
+		t.Fatalf("a clean run returned %d recordings and error %v", len(recorded), err)
 	}
 }
