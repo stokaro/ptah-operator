@@ -35,6 +35,7 @@ id: first-apply
 title: Apply a schema
 tagline: A tagline.
 learn: A lesson.
+start: An empty namespace.
 tags: [Lifecycle]
 steps:
   - run: kubectl get ptahschema
@@ -61,6 +62,7 @@ id: first-apply
 title: Apply a schema
 tagline: A tagline.
 learn: A lesson.
+start: An empty namespace.
 tags: [Lifecycle]
 steps:
   - run: kubectl get ptahschema

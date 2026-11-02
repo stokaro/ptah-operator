@@ -70,6 +70,7 @@ type recording struct {
 	Title            string   `json:"title"`
 	Tagline          string   `json:"tagline"`
 	Learn            string   `json:"learn"`
+	Start            string   `json:"start"`
 	Tags             []string `json:"tags"`
 	Commands         int      `json:"commands"`
 	Lines            int      `json:"lines"`
@@ -105,6 +106,7 @@ func (r *recorder) run(ctx context.Context, current scenario) (recording, error)
 		Title:            strings.TrimSpace(current.Title),
 		Tagline:          strings.TrimSpace(current.Tagline),
 		Learn:            strings.TrimSpace(current.Learn),
+		Start:            strings.TrimSpace(current.Start),
 		Tags:             current.Tags,
 	}
 	for index, one := range current.Steps {

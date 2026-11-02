@@ -2,6 +2,10 @@ id: first-apply
 title: Apply a schema
 tagline: Publish a schema as an artifact, point the operator at it, and watch it converge.
 learn: What the operator does between a desired state and a database, and how it says it is done.
+start: >-
+  An empty database and a namespace with the lab's Secrets, as Stand up the lab leaves them. Ptah reads
+  the registry credentials from PTAH_OCI_USERNAME and PTAH_OCI_PASSWORD, the way a CI job passes them;
+  on a workstation, ptah oci login stores them once instead.
 tags: [Lifecycle]
 
 reset:
@@ -15,84 +19,75 @@ steps:
       exit: 0
       stdout_contains: [CREATE TABLE customers]
 
-  - note: The lab tells you where its registry is and what it generated for you.
+  # Publishing is ptah's own command, run the way a reader or a CI job runs it.
+  # The tag ends in $$ because a tag in this registry is written once; what
+  # the resource names is the digest, never the tag. The push goes to the
+  # registry's address on this machine, and the resource names the address
+  # the cluster pulls from, with the same repository and digest.
+  - note: Publish it, then create the resource that names that artifact by digest.
     run: |
-      eval "$(demo/bin/lab credentials)"
-      export PTAH_OCI_USERNAME PTAH_OCI_PASSWORD PTAH_OCI_REGISTRY
-      echo "registry: $PTAH_OCI_REGISTRY"
-    sync: publishing
-    expect:
-      exit: 0
-      stdout_contains: ["registry: "]
-      stdout_absent: ["PTAH_OCI_PASSWORD"]
-
-  - note: Publish the schema. This is ptah's own command, run as you or CI would.
-    run: |
-      eval "$(demo/bin/lab credentials)"
-      export PTAH_OCI_USERNAME PTAH_OCI_PASSWORD PTAH_OCI_REGISTRY
-      ptah schema push "oci://$PTAH_OCI_REGISTRY/schemas/demo:v1-$$" \
-        --schema-file demo/schemas/v1.sql --dialect postgres --plain-http \
-        | tee /dev/stderr | sed -n 's/^Digest: //p' > demo/.lab/digest
-    show: [stderr]
-    expect:
-      exit: 0
-      stderr_contains: ["Pushed schema as oci://", "Digest: sha256:"]
-
-  - note: The resource names the artifact by digest, and the credentials by Secret.
-    run: APPLY=Always demo/bin/lab manifest storefront "$(cat demo/.lab/digest)" | tee demo/.lab/storefront.yaml
+      DIGEST=$(ptah schema push "oci://$PTAH_OCI_REGISTRY/schemas/demo:v1-$$" \
+        --schema-file demo/schemas/v1.sql --dialect postgres --plain-http | sed -n 's/^Digest: //p')
+      kubectl apply -n "$NAMESPACE" -f - <<EOF
+      apiVersion: operator.ptah.run/v1alpha1
+      kind: PtahSchema
+      metadata:
+        name: storefront
+      spec:
+        target:
+          engine: PostgreSQL
+          coordinationKey: demo/storefront/primary
+          urlFrom: {name: demo-database, key: url}
+        desired:
+          ociRef: oci://$REGISTRY_IN_CLUSTER/schemas/demo@$DIGEST
+          registryAuthFrom: {name: demo-registry}
+          verificationPolicyFrom: {name: demo-verification-policy, key: policy.yaml}
+          transport: {plainHTTP: true}
+        policy:
+          apply: Always
+          allowDestructive: false
+          driftSeverity: all
+        interval: 1m
+      EOF
     sync: applying
     expect:
       exit: 0
-      stdout_contains: ["kind: PtahSchema", "ociRef: oci://", "urlFrom"]
-      stdout_absent: ["password:"]
-
-  - note: Apply it. Nothing else is typed after this; the operator does the rest.
-    run: kubectl apply -f demo/.lab/storefront.yaml
-    expect:
-      exit: 0
-      stdout_contains: [created]
-
-  - note: Resolve, verify, observe, plan, apply, and prove. Each is a condition.
-    await:
-      kind: ptahschema
-      name: storefront
-      timeout: 6m
-      condition:
-        type: InSync
-        status: "True"
-        reason: ScopedConverged
-    run: |
-      kubectl -n "$NAMESPACE" get ptahschema storefront -o json \
-        | jq -r '.status.conditions[] | "\(.type)\t\(.status)\t\(.reason)"' | column -t -s "$(printf '\t')"
-    sync: converged
-    expect:
-      exit: 0
-      # The claim is the condition, read as fields in the resource block below.
-      # What stdout is asked for is only that the reader was shown it.
-      stdout_contains: [InSync, ScopedConverged, JobCompleted]
+      stdout_contains: [storefront created]
       resource:
         kind: ptahschema
         name: storefront
-        condition:
-          type: Ready
-          status: "True"
-          reason: InSync
         fields:
-          - path: status.phase
-            equals: InSync
+          - path: spec.desired.ociRef
+            notEmpty: true
+          - path: spec.policy.apply
+            equals: Always
+
+  # The wait counts only a reading of the database that began after it did,
+  # so the schema it reports in sync is one the operator read after the
+  # resource existed.
+  - note: Resolve, verify, observe, plan, apply, and prove. Nothing else is typed until it is done.
+    run: kubectl ptah wait schema/storefront -n "$NAMESPACE" --for in-sync
+    sync: converged
+    expect:
+      exit: 0
+      stdout_contains: [reached in-sync]
+      resource:
+        kind: ptahschema
+        name: storefront
+        generation: current
+        condition:
+          type: InSync
+          status: "True"
+          reason: ScopedConverged
+        fields:
           - path: status.applied.artifactDigest
             notEmpty: true
 
-  - note: Applying says False, reason JobCompleted. A finished Job is not a converged database.
-    run: |
-      kubectl -n "$NAMESPACE" get ptahschema storefront -o json \
-        | jq -r '.status.conditions[] | select(.type == "Applying" or .type == "InSync") | "\(.type): \(.message)"'
+  - note: Each step is a condition. Applying False, JobCompleted is a finished Job, not convergence.
+    run: kubectl ptah schema storefront -n "$NAMESPACE"
     expect:
       exit: 0
-      # A message is prose and will be reworded. What this step claims is in
-      # the resource block: the reason on Applying is JobCompleted, and that is
-      # not the same thing as converged.
-      stdout_contains: ["Applying:", "InSync:"]
+      stdout_contains: ["Phase:", InSync, ScopedConverged, JobCompleted]
       resource:
         kind: ptahschema
         name: storefront
@@ -100,12 +95,6 @@ steps:
           type: Applying
           status: "False"
           reason: JobCompleted
-
-  - note: The plan it derived, and the SQL that plan carried.
-    run: kubectl -n "$NAMESPACE" get ptahschemaplan
-    expect:
-      exit: 0
-      stdout_contains: [storefront]
 
   - note: What it ran is stored, and one read-only command prints it.
     # The plan lives in immutable PtahSchemaPlanChunk objects that a manifest

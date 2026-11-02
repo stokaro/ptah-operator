@@ -413,9 +413,14 @@ lab_reset() {
 	k -n "$E2E_TEST_NAMESPACE" delete job -l app.kubernetes.io/name=demo-adopt \
 		--ignore-not-found --wait=true --timeout=60s >/dev/null ||
 		lab_fail "could not remove an earlier adoption's baseline Jobs"
-	k -n "$E2E_TEST_NAMESPACE" delete configmap adopt-migrations \
-		--ignore-not-found --wait=true --timeout=60s >/dev/null ||
-		lab_fail "could not remove an earlier adoption's migration files"
+	# The ConfigMaps the runs create with kubectl create configmap, which
+	# refuses a name that is already taken. They are named here rather than
+	# selected by a label because the command a run shows sets none; the
+	# snapshots the operator copies them into go with the resources above.
+	k -n "$E2E_TEST_NAMESPACE" delete configmap --ignore-not-found --wait=true --timeout=60s \
+		storefront-v1 shipments-migrations shipments-release-1 shipments-release-2 \
+		deliveries-release-1 deliveries-release-2 deliveries-release-3 >/dev/null ||
+		lab_fail "could not remove the ConfigMaps an earlier run created"
 }
 
 # lab_manifest renders one manifest template.

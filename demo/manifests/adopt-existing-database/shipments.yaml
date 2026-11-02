@@ -1,0 +1,37 @@
+# The migration sequence the adopted database carries on from, read from the
+# same ConfigMap baseline read.
+#
+# Created after baseline, never before: a resource that existed during
+# adoption could have an approved plan dispatch the whole sequence against a
+# database that already has the schema.
+apiVersion: operator.ptah.run/v1alpha1
+kind: PtahMigration
+metadata:
+  name: shipments
+spec:
+  target:
+    engine: PostgreSQL
+    coordinationKey: demo/storefront/primary
+    urlFrom:
+      name: demo-database
+      key: url
+  artifact:
+    configMap:
+      name: shipments-migrations
+      items:
+        - key: 0000000001_create_shipments.up.sql
+          path: 0000000001_create_shipments.up.sql
+        - key: 0000000001_create_shipments.down.sql
+          path: 0000000001_create_shipments.down.sql
+        - key: 0000000002_add_carrier.up.sql
+          path: 0000000002_add_carrier.up.sql
+        - key: 0000000002_add_carrier.down.sql
+          path: 0000000002_add_carrier.down.sql
+  policy:
+    apply: OnApproval
+    lockTimeout: 30s
+  interval: 1m
+  execution:
+    activeDeadlineSeconds: 300
+    failureRetryInterval: 10s
+    connectTimeout: 30s

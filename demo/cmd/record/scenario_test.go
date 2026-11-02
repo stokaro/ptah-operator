@@ -101,7 +101,7 @@ func TestScenarioValidateRefusesAnUncheckedStep(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			subject := scenario{
-				ID: "example", Title: "Example", Tagline: "A tagline.", Learn: "A lesson.",
+				ID: "example", Title: "Example", Tagline: "A tagline.", Learn: "A lesson.", Start: "An empty namespace.",
 				Tags: []string{"Lab"}, Steps: test.steps,
 			}
 			err := subject.validate()
@@ -120,7 +120,7 @@ func TestScenarioValidateAcceptsACheckedScenario(t *testing.T) {
 	exit := 0
 	subject := scenario{
 		ID: "first-apply", Title: "Apply a schema", Tagline: "A tagline.", Learn: "A lesson.",
-		Tags: []string{"Lifecycle"},
+		Start: "An empty namespace.", Tags: []string{"Lifecycle"},
 		Steps: []step{{
 			Note: "Apply it.",
 			Run:  "kubectl apply -f storefront.yaml",
@@ -439,7 +439,7 @@ func TestScenarioValidateRefusesARepeatedWait(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			subject := scenario{
-				ID: "example", Title: "Example", Tagline: "A tagline.", Learn: "A lesson.",
+				ID: "example", Title: "Example", Tagline: "A tagline.", Learn: "A lesson.", Start: "An empty namespace.",
 				Tags: []string{"Lab"}, Steps: test.steps,
 			}
 			err := subject.validate()
@@ -496,7 +496,7 @@ func TestScenarioValidateRefusesAnswersATerminalCannotDeliver(t *testing.T) {
 			t.Parallel()
 			subject := scenario{
 				ID: "example", Title: "Example", Tagline: "A tagline.", Learn: "A lesson.",
-				Tags: []string{"Lifecycle"}, Steps: row.steps,
+				Start: "An empty namespace.", Tags: []string{"Lifecycle"}, Steps: row.steps,
 			}
 			err := subject.validate()
 			switch {
@@ -587,7 +587,7 @@ func TestScenarioValidateRefusesAComparisonWithNothingKept(t *testing.T) {
 			t.Parallel()
 			subject := scenario{
 				ID: "example", Title: "Example", Tagline: "A tagline.", Learn: "A lesson.",
-				Tags: []string{"Lifecycle"}, Steps: row.steps,
+				Start: "An empty namespace.", Tags: []string{"Lifecycle"}, Steps: row.steps,
 			}
 			err := subject.validate()
 			switch {

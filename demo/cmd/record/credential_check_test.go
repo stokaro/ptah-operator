@@ -74,7 +74,7 @@ func TestTheCredentialCheckReadsPastTheBytesItPrints(t *testing.T) {
 				t.Fatalf("the check refused a clean status: %v\n%s\n%s", err, stdout, stderr)
 			}
 			if !row.refused {
-				for _, want := range []string{"checked the whole status", credentialStepID, "OperationFailed"} {
+				for _, want := range []string{"checked the whole status", credentialStepID} {
 					if !strings.Contains(stdout, want) {
 						t.Fatalf("the check printed no %q:\n%s", want, stdout)
 					}

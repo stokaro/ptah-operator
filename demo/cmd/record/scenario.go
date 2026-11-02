@@ -19,11 +19,16 @@ import (
 // it runs, and definitionDigest leaves it out. Every other field is in the
 // digest without being listed there.
 type scenario struct {
-	ID      string   `yaml:"id"`
-	Title   string   `yaml:"title" digest:"-"`
-	Tagline string   `yaml:"tagline" digest:"-"`
-	Learn   string   `yaml:"learn" digest:"-"`
-	Tags    []string `yaml:"tags" digest:"-"`
+	ID      string `yaml:"id"`
+	Title   string `yaml:"title" digest:"-"`
+	Tagline string `yaml:"tagline" digest:"-"`
+	Learn   string `yaml:"learn" digest:"-"`
+	// Start says where the scenario begins and how a reader gets there: an
+	// empty namespace, or the state another scenario ends in. The reset is
+	// what reaches it here, and it is not published, so this sentence is what
+	// stands in for it on the page.
+	Start string   `yaml:"start" digest:"-"`
+	Tags  []string `yaml:"tags" digest:"-"`
 	// Reset returns the lab to this scenario's starting point. It runs before
 	// the steps and is not recorded: a reader is watching the scenario, not the
 	// preparation.
@@ -146,6 +151,7 @@ func (s scenario) validate() error {
 		{"title", s.Title},
 		{"tagline", s.Tagline},
 		{"learn", s.Learn},
+		{"start", s.Start},
 	} {
 		if strings.TrimSpace(declared.value) == "" {
 			problems = append(problems, fmt.Errorf("%s: %s is empty", s.ID, declared.name))

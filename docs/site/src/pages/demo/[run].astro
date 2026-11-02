@@ -30,6 +30,7 @@ const base = import.meta.env.BASE_URL;
 >
 	<p class="ptah-demo-lede">{run.tagline}</p>
 	<p class="ptah-demo-learn"><strong>What it shows.</strong> {run.learn}</p>
+	{run.start && <p class="ptah-demo-learn"><strong>Where it starts.</strong> {run.start}</p>}
 
 	<p class="ptah-demo-replay">
 		A replay of a verified run, not a live cluster. {run.checks.length}

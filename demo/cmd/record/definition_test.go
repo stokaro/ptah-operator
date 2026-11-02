@@ -275,7 +275,7 @@ func TestTheDigestCanWriteEveryScenarioField(t *testing.T) {
 		}
 	}
 	slices.Sort(excluded)
-	narration := []string{"scenario.learn", "scenario.tagline", "scenario.tags", "scenario.title", "step.note"}
+	narration := []string{"scenario.learn", "scenario.start", "scenario.tagline", "scenario.tags", "scenario.title", "step.note"}
 	if !slices.Equal(excluded, narration) {
 		t.Errorf("the digest leaves out %v; only the narration %v may be left out", excluded, narration)
 	}
@@ -294,6 +294,7 @@ func TestVerifyAcceptsAnUnchangedRecordingAndRefusesAChangedScenario(t *testing.
 title: A probe
 tagline: One step, waited for and checked.
 learn: What -verify compares.
+start: An empty namespace.
 tags: [Lifecycle]
 steps:
   - note: Wait for the schema to converge, then read it.
@@ -379,6 +380,7 @@ func TestVerifyOnlyChecksTheNamedRecording(t *testing.T) {
 title: A probe
 tagline: One step.
 learn: What -only narrows.
+start: An empty namespace.
 tags: [Lifecycle]
 steps:
   - note: Read it.

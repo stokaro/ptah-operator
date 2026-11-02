@@ -14,6 +14,8 @@ claims held on the live cluster.
 **`scenarios/`** declares what a scenario is: the state it starts from, the
 steps a reader watches, the narration between them, and the conditions that
 have to hold. [`scenarios/README.md`](scenarios/README.md) is the format.
+What a step applies is a file under `manifests/`, one directory per scenario,
+or YAML the step shows whole.
 
 **`cmd/kubectl-ptah`** is the client a scenario uses to show a stored plan,
 through its read commands. It ships to readers as a `kubectl` plugin; here it
@@ -59,9 +61,13 @@ same way: `kubectl exec deploy/demo-mysql-client -- mysql demo -e "<statement>"`
 with nothing secret on the command line.
 
 The script has two duties and no third. It stands the environment up, and it
-composes a manifest out of values a caller states. It decides nothing a
-scenario shows: `lab manifest` refuses to run without `APPLY=`, because the
-apply policy is the reader's choice and a script that picked one would be
+prepares the state a scenario starts from, out of templates under
+`lib/templates/` and values a caller states. It decides nothing a scenario
+shows, and no scenario step runs it except `lab versions`, which says what the
+lab is made of: a step applies a manifest a reader can read, and changes it
+with `kubectl ptah` or by applying the next version of the file. `lab manifest`
+refuses to run without `APPLY=`, because even in the preparation the apply
+policy is the scenario's choice and a script that picked one would be
 answering the question the scenario asks.
 
 ## The environment a step runs in
@@ -208,13 +214,20 @@ kubectl --kubeconfig "$E2E_KUBECONFIG" -n "$E2E_OPERATOR_NAMESPACE" logs -l app.
 kubectl --kubeconfig "$E2E_KUBECONFIG" -n "$E2E_TEST_NAMESPACE" exec deploy/demo-psql -- psql -c '\dt'
 ```
 
-Three failures are worth naming because each looks like the operator being
+Some failures are worth naming because each looks like the operator being
 wrong and is not:
 
 - **A wait that returns at once.** A condition that was already true proves
-  nothing about what a step just did. A step that changes the spec waits with
-  `generation: current`; a step that changes only the database uses `retry` and
-  watches the database settle.
+  nothing about what a step just did. The steps wait where a reader can see
+  it, with `kubectl ptah wait` or a command's `--wait`, which count only a
+  reading of the database that began after the wait did; a `kubectl wait` on a
+  condition is used only where the condition cannot have been true before.
+- **An approval refused for no visible reason.** `kubectl ptah approve` asks on
+  a terminal and refuses an answer piped into it, so a step that approves runs
+  on one: it names the prompt in `answers`, and the recorder types the answer
+  once the prompt is on the screen. It also refuses while the operator is
+  reading the database again at its interval, so a step approves right after
+  the wait that found the plan waiting.
 - **A publish that is refused.** A Ptah artifact is not byte-identical between
   two pushes of one file, and a tag is write-once. Every `ptah schema push` in
   a scenario ends its tag with `$$` for that reason; what the operator is

@@ -2,64 +2,64 @@ id: failure-recovery
 title: Fail, then recover
 tagline: Point it at a database that is not there. It says so, keeps trying, and converges when it is.
 learn: What a failure looks like in the status, and that recovery needs no intervention beyond the fix.
+start: >-
+  An empty database, and a Secret named demo-database-broken that the lab planted as the fault: a URL,
+  with a user and password, for a host that does not exist. The schema is read from a ConfigMap, the
+  delivery a team uses when its manifests already carry the files.
 tags: [Operations]
 
 reset:
   - demo/bin/lab reset
-  # The lab generates the registry's credentials and address, and says what
-  # they are. What publishes the artifact is `ptah schema push`, the product's
-  # own command, run the way a reader or a CI job runs it.
-  - |
-    eval "$(demo/bin/lab credentials)"
-    export PTAH_OCI_USERNAME PTAH_OCI_PASSWORD PTAH_OCI_REGISTRY
-    ptah schema push "oci://$PTAH_OCI_REGISTRY/schemas/demo:v1-$$" \
-      --schema-file demo/schemas/v1.sql --dialect postgres --plain-http \
-      | sed -n 's/^Digest: //p' > demo/.lab/digest
+  # The fault this run recovers from, planted where a mistyped Secret name
+  # would lead.
   - kubectl -n "$NAMESPACE" delete secret demo-database-broken --ignore-not-found
-  - kubectl -n "$NAMESPACE" create secret generic demo-database-broken --from-literal=url='postgres://nobody:nobody@no-such-database.demo.svc.cluster.local:5432/storefront?sslmode=disable' 
+  - kubectl -n "$NAMESPACE" create secret generic demo-database-broken --from-literal=url='postgres://nobody:nobody@no-such-database.demo.svc.cluster.local:5432/storefront?sslmode=disable'
 
 steps:
-  - note: The same resource, pointed at a database that does not answer.
+  - note: The schema as a ConfigMap, and a resource pointed at a Secret whose database does not answer.
     run: |
-      APPLY=Always demo/bin/lab manifest storefront "$(cat demo/.lab/digest)" \
-        | sed 's/name: demo-database/name: demo-database-broken/' \
-        | kubectl apply -f -
+      kubectl -n "$NAMESPACE" create configmap storefront-v1 --from-file=schema.sql=demo/schemas/v1.sql
+      kubectl -n "$NAMESPACE" apply -f demo/manifests/failure-recovery/storefront-unreachable.yaml
     sync: applying
     expect:
       exit: 0
-      stdout_contains: [created]
+      stdout_contains: [configmap/storefront-v1 created, storefront created]
 
-  - note: It reports the database as unreachable, with a reason a machine can read.
-    await:
-      kind: ptahschema
-      name: storefront
-      timeout: 6m
-      generation: current
-      condition:
-        type: ReconciliationFailed
-        status: "True"
-        reason: OperationFailed
-    run: |
-      kubectl -n "$NAMESPACE" get ptahschema storefront -o json \
-        | jq -r '.status.phase, (.status.conditions[] | select(.type == "ReconciliationFailed") | .message)'
+  - note: Wait for the operator to give its verdict.
+    run: kubectl -n "$NAMESPACE" wait ptahschema/storefront --for=condition=ReconciliationFailed --timeout=6m
     sync: failed
     expect:
       exit: 0
-      stdout_contains: [Failed]
+      stdout_contains: [condition met]
+      resource:
+        kind: ptahschema
+        name: storefront
+        generation: current
+        condition:
+          type: ReconciliationFailed
+          status: "True"
+          reason: OperationFailed
 
-  - note: A failure is an event too, so it is in the record rather than only in a log.
-    run: kubectl -n "$NAMESPACE" get events --field-selector involvedObject.name=storefront --sort-by=.lastTimestamp | tail -5
+  - note: It reports the database as unreachable, with a reason a machine can read.
+    run: kubectl ptah schema storefront -n "$NAMESPACE"
     expect:
       exit: 0
-      stdout_contains: [storefront]
+      stdout_contains: [Failed, ReconciliationFailed, OperationFailed]
+      stdout_absent: ["nobody:nobody", no-such-database]
 
-  # The check reads the whole status rather than a prefix of it, and it looks
-  # for the credential this scenario planted rather than only for the ones the
-  # lab generated and the recorder scans for. What it prints afterwards is two
-  # fields, so the transcript stays short; the fields are not the check, and a
-  # reader is told so. A status it could not read is a refusal: an empty one
-  # contains no credential, and the check would have passed on nothing.
-  - note: No credential in any of it, and the check reads all of it.
+  - note: A failure is an event too, so it is in the record rather than only in a log.
+    run: kubectl events -n "$NAMESPACE" --for ptahschema/storefront
+    expect:
+      exit: 0
+      stdout_contains: [storefront, OperationFailed]
+      stdout_absent: ["nobody:nobody", no-such-database]
+
+  # Verification rather than a task. It reads the whole status rather than a
+  # prefix of it, and looks for the credential this run planted rather than
+  # only for the ones the lab generated and the recorder scans for. A status
+  # it could not read is a refusal: an empty one contains no credential, and
+  # the check would have passed on nothing.
+  - note: "Verification: no credential in the status, and the check reads all of it."
     run: |
       status=$(kubectl -n "$NAMESPACE" get ptahschema storefront -o json | jq -ce '.status | objects') || {
         printf 'could not read the status, so nothing was checked\n' >&2
@@ -73,38 +73,29 @@ steps:
       done
       printf 'checked the whole status, %s bytes, no credential in it\n' \
         "$(printf '%s' "$status" | wc -c | tr -d ' ')"
-      printf '%s' "$status" | jq -r '
-        "phase   " + .phase,
-        "reason  " + (.conditions[] | select(.type == "ReconciliationFailed") | .reason)'
     expect:
       exit: 0
-      stdout_contains: ["checked the whole status", "no credential in it", OperationFailed]
+      stdout_contains: ["checked the whole status", "no credential in it"]
       stdout_absent: ["nobody:nobody"]
 
-  - note: Now fix the one thing that was wrong.
+  # The repair is one line of the manifest, applied the way the rest of it
+  # was. In an editor it is the same line: kubectl edit ptahschema storefront,
+  # spec.target.urlFrom.name.
+  - note: The fix is one line of the manifest. Apply it.
     run: |
-      kubectl -n "$NAMESPACE" patch ptahschema storefront --type=merge \
-        -p '{"spec":{"target":{"urlFrom":{"name":"demo-database","key":"url"}}}}'
+      diff -u demo/manifests/failure-recovery/storefront-unreachable.yaml demo/manifests/failure-recovery/storefront.yaml
+      kubectl -n "$NAMESPACE" apply -f demo/manifests/failure-recovery/storefront.yaml
     sync: applying
     expect:
       exit: 0
-      stdout_contains: [patched]
+      stdout_contains: ["-      name: demo-database-broken", "+      name: demo-database", storefront configured]
 
   - note: It retries on its own interval and converges. Nothing was restarted by hand.
-    await:
-      kind: ptahschema
-      name: storefront
-      timeout: 6m
-      generation: current
-      condition:
-        type: InSync
-        status: "True"
-        reason: ScopedConverged
-    run: kubectl -n "$NAMESPACE" exec deploy/demo-psql -- psql -c "\dt"
+    run: kubectl ptah wait schema/storefront -n "$NAMESPACE" --for in-sync
     sync: converged
     expect:
       exit: 0
-      stdout_contains: [customers]
+      stdout_contains: [reached in-sync]
       resource:
         kind: ptahschema
         name: storefront
@@ -112,3 +103,9 @@ steps:
           type: ReconciliationFailed
           status: "False"
           reason: Succeeded
+
+  - note: And the database has the table.
+    run: kubectl -n "$NAMESPACE" exec deploy/demo-psql -- psql -c "\dt"
+    expect:
+      exit: 0
+      stdout_contains: [customers]
