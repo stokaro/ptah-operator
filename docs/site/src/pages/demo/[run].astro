@@ -77,8 +77,9 @@ const base = import.meta.env.BASE_URL;
 		<code>kubectl</code>, <code>ptah</code> and <code>kubectl ptah</code>, each of which you
 		install once; the last one is <a href={`${base}use/read-a-plan/#install`}>the operator&rsquo;s
 		own client</a>. They run from the root of a clone of this repository, which holds the files they
-		name: the SQL under <code>demo/schemas</code> and <code>demo/migrations</code>, and the
-		manifests under <code>demo/manifests</code>.
+		name: the SQL under <code>demo/schemas</code>, <code>demo/migrations</code>,
+		<code>demo/migrations-checkpoint</code> and <code>demo/mysql</code>, the reference data under
+		<code>demo/reference</code>, and the manifests under <code>demo/manifests</code>.
 	</p>
 	<ul class="ptah-demo-lab">
 		<li><span class="ptah-demo-lab-label">KUBECONFIG</span><span class="ptah-demo-lab-value">the cluster the commands run against</span></li>

@@ -128,7 +128,7 @@ them, and
 make demo-record
 ```
 
-runs every one against the lab. It takes about half an hour and leaves the
+runs every one against the lab. It takes about 45 minutes on a CI runner and leaves the
 cluster in whatever state the last scenario wanted, so run it when you want the
 whole set rather than when you want to look at one.
 
