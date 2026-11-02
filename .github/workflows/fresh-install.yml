@@ -111,8 +111,8 @@ jobs:
           install_dir="$RUNNER_TEMP/bin"
           mkdir -p "$install_dir"
           base_url="https://dl.k8s.io/release/v${{ steps.support.outputs.kubernetes_version }}/bin/linux/$(go env GOHOSTARCH)"
-          curl --fail --location --silent --show-error --output "$install_dir/kubectl" "$base_url/kubectl"
-          curl --fail --location --silent --show-error --output "$RUNNER_TEMP/kubectl.sha256" "$base_url/kubectl.sha256"
+          curl --fail --location --silent --show-error --retry 5 --retry-all-errors --retry-delay 5 --output "$install_dir/kubectl" "$base_url/kubectl"
+          curl --fail --location --silent --show-error --retry 5 --retry-all-errors --retry-delay 5 --output "$RUNNER_TEMP/kubectl.sha256" "$base_url/kubectl.sha256"
           echo "$(<"$RUNNER_TEMP/kubectl.sha256")  $install_dir/kubectl" | sha256sum --check
           chmod 0755 "$install_dir/kubectl"
           echo "$install_dir" >> "$GITHUB_PATH"
@@ -130,8 +130,8 @@ jobs:
           release="https://github.com/stokaro/ptah/releases/download/$PTAH_VERSION"
           download="$RUNNER_TEMP/ptah-download"
           mkdir -p "$download"
-          curl --fail --location --silent --show-error --output "$download/$archive" "$release/$archive"
-          curl --fail --location --silent --show-error --output "$download/checksums.txt" "$release/checksums.txt"
+          curl --fail --location --silent --show-error --retry 5 --retry-all-errors --retry-delay 5 --output "$download/$archive" "$release/$archive"
+          curl --fail --location --silent --show-error --retry 5 --retry-all-errors --retry-delay 5 --output "$download/checksums.txt" "$release/checksums.txt"
           (cd "$download" && grep -E "  ${archive}\$" checksums.txt | sha256sum --check --strict)
           tar -xzf "$download/$archive" -C "$download" ptah
           install -m 0755 "$download/ptah" "$RUNNER_TEMP/bin/ptah"

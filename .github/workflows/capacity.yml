@@ -109,8 +109,8 @@ jobs:
           install_dir="$RUNNER_TEMP/bin"
           mkdir -p "$install_dir"
           base_url="https://dl.k8s.io/release/v${{ steps.target.outputs.kubernetes_version }}/bin/linux/amd64"
-          curl --fail --location --silent --show-error --output "$install_dir/kubectl" "$base_url/kubectl"
-          curl --fail --location --silent --show-error --output "$RUNNER_TEMP/kubectl.sha256" "$base_url/kubectl.sha256"
+          curl --fail --location --silent --show-error --retry 5 --retry-all-errors --retry-delay 5 --output "$install_dir/kubectl" "$base_url/kubectl"
+          curl --fail --location --silent --show-error --retry 5 --retry-all-errors --retry-delay 5 --output "$RUNNER_TEMP/kubectl.sha256" "$base_url/kubectl.sha256"
           echo "$(<"$RUNNER_TEMP/kubectl.sha256")  $install_dir/kubectl" | sha256sum --check
           chmod 0755 "$install_dir/kubectl"
           echo "$install_dir" >> "$GITHUB_PATH"
