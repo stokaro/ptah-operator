@@ -90,14 +90,15 @@ steps:
           status: "True"
           reason: Waiting
 
-  # The approval is still listed, and still names the plan that ran: the
-  # applied one, which is not the plan now waiting.
-  - note: A new plan, waiting again. The old approval names the plan that already ran.
+  # The approval is still listed, with its conditions, beside a plan it does
+  # not name: the spec changed, so the schema no longer reports the plan that
+  # ran as its applied one, and the approval's plan is neither.
+  - note: A new plan, waiting again. The old approval names a plan that is not the current one.
     run: kubectl ptah schema storefront -n "$NAMESPACE"
     sync: awaiting approval
     expect:
       exit: 0
-      stdout_contains: [AwaitingApproval, not approved, storefront-v1, the applied plan]
+      stdout_contains: [AwaitingApproval, not approved, storefront-v1, not the current plan]
       resource:
         kind: ptahschemaapproval
         name: storefront-v1

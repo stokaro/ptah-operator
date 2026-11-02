@@ -43,7 +43,7 @@ func TestPluginTextStepsExpectWhatTheRendererWrites(t *testing.T) {
 		"destructive-block#2": demoSchemaBlocked(),
 		"stale-approval#1":    demoSchemaAwaitingApproval("ptah-plan-0aa1"),
 		"stale-approval#2":    withApproval(demoSchemaInSync(), demoConsumedApproval(true)),
-		"stale-approval#3":    withApproval(demoSchemaAwaitingApproval("ptah-plan-0bb2"), demoConsumedApproval(true)),
+		"stale-approval#3":    withApproval(demoSchemaAwaitingApproval("ptah-plan-0bb2"), demoSupersededApproval()),
 		"suspend-resume#1":    demoSchemaInSync(),
 		"drift#1":             demoSchemaInSync(),
 		"failure-recovery#1":  demoSchemaFailed(),
@@ -243,6 +243,16 @@ func demoConsumedApproval(stale bool) schemaview.ApprovalView {
 			Message: "The approved plan no longer matches the current database state"})
 	}
 	approval.Conditions = demoConditions(conditions...)
+	return approval
+}
+
+// demoSupersededApproval is that approval once the spec changed: the schema
+// records no applied plan for the new generation, so the plan the approval
+// names is neither the current one nor the applied one. Run 41368208251 read
+// it so.
+func demoSupersededApproval() schemaview.ApprovalView {
+	approval := demoConsumedApproval(true)
+	approval.AppliedPlan = false
 	return approval
 }
 
