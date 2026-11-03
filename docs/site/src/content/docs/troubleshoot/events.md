@@ -40,8 +40,8 @@ The log-loss window and summary fallback apply only to
 | `MigrationRunFinished` | Normal or Warning | `PtahMigration` | An Apply finished and the message names what it did. The type follows the outcome: Applied and UpToDate are Normal, and Failed, Partial and Unknown are Warnings. |
 | `MigrationRunUncertain` | Warning | `PtahMigration` | A migration run ended without establishing what it committed, and the resource records that until something resolves it. |
 | `OperationCompleted` | Normal | `PtahSchema` | An operation finished and its result was accepted. |
-| `OperationFailed` | Warning | `PtahSchema`, `PtahMigration` | An operation failed. The message carries the failure. |
-| `OperationRetried` | Warning | `PtahMigration` | An attempt failed and another will follow. The message names the attempt number. |
+| `OperationFailed` | Warning | `PtahSchema`, `PtahMigration` | An operation failed. The message carries the failure; for a database the operation could not open, its kind and the Secret the URL came from, as [A database the operation could not open](../condition-reasons/#a-database-the-operation-could-not-open) lists. |
+| `OperationRetried` | Warning | `PtahMigration` | An attempt failed and another will follow. The message names the attempt number and the failure, as `OperationFailed` does. |
 | `OperationStarted` | Normal | `PtahSchema`, `PtahMigration` | A Job was created for the named operation. |
 | `PlanPublicationRefused` | Warning | `PtahSchema` | The API server refused to store the plan a Plan operation computed, and the message carries the refusal: an admission policy or webhook, a quota, RBAC, or the object's size. The Plan runs again after the failure interval, so a policy or quota that stops refusing lets the next plan through. |
 | `PlanStale` | Warning | `PtahSchema` | The plan stopped matching what it was computed against, so nothing applies it. |

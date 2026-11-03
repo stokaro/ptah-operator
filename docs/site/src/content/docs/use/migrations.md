@@ -435,7 +435,7 @@ matters most:
 | --- | --- |
 | `UpToDate` | The database already had every planned migration |
 | `Applied` | Every selected migration is recorded applied |
-| `Failed` | A migration failed and committed nothing; fix the cause and it runs again |
+| `Failed` | A migration failed and committed nothing, or the run stopped before it selected one, as on a database it could not open; fix the cause and it runs again |
 | `Partial` | A migration committed some of its statements and not the rest |
 | `Unknown` | The evidence could not be read |
 

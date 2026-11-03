@@ -46,7 +46,7 @@ decision.
 | `NoChanges` | Scoped planning produced no executable statements. |
 | `NotRequired` | Policy allows this plan without separate approval: it destroys nothing and changes no privilege. |
 | `Observed` | A database observation completed successfully. |
-| `OperationFailed` | A read-only or mutating operation failed. |
+| `OperationFailed` | A read-only or mutating operation failed. When it could not open the target database, the message starts with the kind of failure; see [A database the operation could not open](#a-database-the-operation-could-not-open). |
 | `OperationInProgress` | A durable operation claim is active. |
 | `OutcomeUnknown` | Apply attribution is uncertain and only read-only proof may proceed. |
 | `Pending` | Resolved artifact content has not yet been verified. |
@@ -143,6 +143,47 @@ A run that failed on a statement says the same, with the migration it failed
 in and the count of those before it that it applied. The statement the
 database refused is in that file, and running the file against a copy of the
 database shows why.
+
+## A database the operation could not open
+
+An operation that cannot open its connection to the target database fails with
+`OperationFailed`. Its message starts with the kind of failure Ptah reported,
+says what that kind means, and names the Secret key the operation read the URL
+from:
+
+```
+database_unreachable: the target database did not answer: its host did not resolve, refused the connection, or did not respond in time. Check the host and port in the URL that Secret "orders-database" holds under key "url", and that the database is running and accepts connections from this namespace
+```
+
+The Secret and the key are the ones `spec.target.urlFrom` named when the
+operation started. The same sentence is the condition message, the
+`OperationFailed` Warning Event, and what `kubectl ptah schema` and
+`kubectl ptah migration` print.
+
+| Kind | What Ptah found | Where to look |
+| --- | --- | --- |
+| `database_unreachable` | The host did not resolve, refused the connection, or did not answer in time. | The host and port in the URL, the database's Service, and any NetworkPolicy between this namespace and the database. |
+| `authentication_failed` | The server did not accept the credentials: a wrong password, an unknown or locked user, an expired password, or no host rule that admits the connection. | The user and password in the URL. |
+| `database_not_found` | The server has no database by the name the URL gives. | The database name in the URL, or create the database. |
+| `permission_denied` | The server accepted the credentials and refused the user the database: no `CONNECT` privilege on PostgreSQL, no privilege on the database on MySQL. MySQL answers this way whether or not the database exists. | The user in the URL, and what the database grants it. |
+| `tls_failed` | The TLS handshake did not complete: the server's certificate did not verify, or the server and the URL disagree about TLS. | The TLS parameters in the URL, and the certificate the server presents. |
+
+The message carries nothing Ptah or the database wrote. Ptah's own sentence
+names the host, the user and the database it tried, and it does not leave the
+operation Pod; running the same Ptah command against the database yourself
+prints it.
+
+Ptah classifies only the connection to the target. Any other failure keeps the
+code it had: `child_exit: ptah exited with code 2` from an observation or a
+migration history read, `invalid_plan_output` from a Plan, `apply_failed` from
+an Apply. A development database, a registry or a Git remote that cannot be
+reached is one of those, and so is a PostgreSQL URL with `sslmode=require`
+against a server that offers no TLS, which the driver reports in a form Ptah
+cannot classify.
+
+A migration Apply that could not open its database ran nothing. Its run is
+recorded `Failed` with the same sentence, and the history read that follows
+fails the same way until the database answers.
 
 ## A change a policy fences off
 
