@@ -51,7 +51,7 @@ func TestParseTargetFailureKindReadsOnlyTheVocabulary(t *testing.T) {
 
 // targetFailureCases is what each directory under testdata/target-failures
 // was captured against, and the kind Ptah named for it. The directories are
-// the documents a build of stokaro/ptah#5173 (4240c407) printed on standard
+// the documents a build of stokaro/ptah 71c5b28a (#5173) printed on standard
 // output against PostgreSQL 17 and MySQL 8.4, stored as printed: a host that
 // does not resolve, a port nothing listens on, a wrong password, a role the
 // server does not know, a database it does not hold, a role refused CONNECT

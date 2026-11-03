@@ -220,7 +220,7 @@ func TestDecodeSchemaApplyRefusesWhatItCannotAccountFor(t *testing.T) {
 	}
 }
 
-// The two fixtures are the documents a build of stokaro/ptah#5173 (4240c407)
+// The two fixtures are the documents a build of stokaro/ptah 71c5b28a (#5173)
 // printed for one added column on PostgreSQL 17: `schema plan --output
 // /w/plan.json --json` and `schema apply --plan /w/plan.json --dry-run --json`,
 // stored as printed. v0.13.0 printed version 1 of both, v0.14.0 version 2 of

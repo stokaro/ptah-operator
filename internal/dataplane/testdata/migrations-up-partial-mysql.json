@@ -54,9 +54,9 @@
       "total": 4,
       "error": "failed to execute migration SQL: SQL execution failed: Error 1062 (23000): Duplicate entry '1' for key 'ledger.PRIMARY'\nSQL: INSERT INTO ledger VALUES (1)",
       "error_stmt": "INSERT INTO ledger VALUES (1)",
-      "execution_time": 23000000,
+      "execution_time": 20000000,
       "checksum": "partial:h1:y1Y89ErE2NoVfQZGy1G9R+wqQ+AmVZUdl89k5wRC+VI=",
-      "applied_at": "2026-11-02T23:37:57Z",
+      "applied_at": "2026-11-03T10:57:23Z",
       "dirty": true
     },
     "contract_version": 2,
@@ -67,8 +67,8 @@
         "description": "Create Journal",
         "checksum": "13b25f6bd2f01da4971414612246d6a706c27cd9e62c435091da235ad5f35163",
         "applied_checksum": "13b25f6bd2f01da4971414612246d6a706c27cd9e62c435091da235ad5f35163",
-        "applied_at": "2026-11-02T23:37:57Z",
-        "execution_time_ms": 17,
+        "applied_at": "2026-11-03T10:57:23Z",
+        "execution_time_ms": 14,
         "state": "applied"
       },
       {
@@ -76,8 +76,8 @@
         "version_key": "2",
         "description": "Fill Ledger",
         "checksum": "a3c51eba5c7dd4cd93f750d3c1506177936e6dd7c853bc2828414082d05eccdb",
-        "applied_at": "2026-11-02T23:37:57Z",
-        "execution_time_ms": 23,
+        "applied_at": "2026-11-03T10:57:23Z",
+        "execution_time_ms": 20,
         "state": "dirty"
       }
     ],

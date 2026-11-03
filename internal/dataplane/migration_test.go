@@ -288,7 +288,7 @@ func runWithFailure(outcome, planned, applied, failure string) string {
 }
 
 // The two fixtures are `ptah migrations up --json` documents, captured from a
-// build of stokaro/ptah#5173 (4240c407) against PostgreSQL 17 and MySQL 8.4
+// build of stokaro/ptah 71c5b28a (#5173) against PostgreSQL 17 and MySQL 8.4
 // and stored as it printed them, at run contract version 2. Both run two
 // migrations; the second fails. On PostgreSQL its second of three statements
 // reads a table that does not exist, and the run commits nothing of it. On

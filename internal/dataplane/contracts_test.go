@@ -307,7 +307,7 @@ func TestDecodePlanRefusesProviderExecutionFields(t *testing.T) {
 	}
 }
 
-// The fixtures are plan files a build of stokaro/ptah#5173 (4240c407) saved
+// The fixtures are plan files a build of stokaro/ptah 71c5b28a (#5173) saved
 // with `schema plan --output` against PostgreSQL 17, stored as written; the
 // v0.14.0 release image saved the same shapes. They are pg_trgm and
 // a table on an empty database; a table with a row-security policy on an empty

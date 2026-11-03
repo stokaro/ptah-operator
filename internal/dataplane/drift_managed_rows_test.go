@@ -9,7 +9,7 @@ import (
 )
 
 // The fixture is a `ptah schema drift --format json` document, captured from a
-// build of stokaro/ptah#5173 (4240c407) against a PostgreSQL 17 database that
+// build of stokaro/ptah 71c5b28a (#5173) against a PostgreSQL 17 database that
 // applied the reference-data end-to-end fixtures (testdata/e2e/reference/v1)
 // and was then edited by hand: one declared row deleted, one changed, and one
 // row added that the declaration does not hold. Two fields were removed after
@@ -105,7 +105,7 @@ func TestDriftReportDigestIgnoresRowDrift(t *testing.T) {
 }
 
 // The fixture is a `ptah schema drift --format json` document, captured from a
-// build of stokaro/ptah#5173 (4240c407) against PostgreSQL 17: the desired
+// build of stokaro/ptah 71c5b28a (#5173) against PostgreSQL 17: the desired
 // schema declares pg_trgm and a table, and the database holds the table and
 // lacks the extension. Ptah's extension owner reports it under feature_changes
 // with the type of object after a colon, and counts it in the inventory under
