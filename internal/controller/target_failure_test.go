@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -210,41 +211,101 @@ func TestASchemaNamesWhyItsTargetCouldNotBeOpened(t *testing.T) {
 func TestAMigrationHistoryNamesWhyItsTargetCouldNotBeOpened(t *testing.T) {
 	t.Parallel()
 
-	migration := migrationFixture()
-	migration.Status.ExecutionBinding = migrationExecutionBinding()
-	migration.Status.Artifact = resolvedMigrationArtifact()
-	migration.Status.Phase = operatorv1alpha1.MigrationPhaseReading
-	migration.Finalizers = []string{migrationOperationFinalizer}
-	operation := migrationClaim(t, migration, operatorv1alpha1.MigrationOperationHistory)
+	for _, test := range []struct {
+		name string
+		url  *corev1.SecretKeySelector
+	}{
+		{name: "the fixture's Secret"},
+		{
+			// Status keeps the sentence whole for the longest name and key
+			// Kubernetes admits; the Event keeps 512 bytes of it.
+			name: "the longest Secret name and key",
+			url: &corev1.SecretKeySelector{
+				LocalObjectReference: corev1.LocalObjectReference{Name: strings.Repeat("n", 253)},
+				Key:                  strings.Repeat("k", 253),
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			migration := migrationFixture()
+			if test.url != nil {
+				migration.Spec.Target.URLFrom = *test.url
+			}
+			migration.Status.ExecutionBinding = migrationExecutionBinding()
+			migration.Status.Artifact = resolvedMigrationArtifact()
+			migration.Status.Phase = operatorv1alpha1.MigrationPhaseReading
+			migration.Finalizers = []string{migrationOperationFinalizer}
+			operation := migrationClaim(t, migration, operatorv1alpha1.MigrationOperationHistory)
+			job, pod := terminalMigrationWorkload(migration, batchv1.JobComplete)
+			frame := migrationFrame(t, runner.Result{
+				ProtocolVersion: runner.ProtocolVersion, Operation: runner.OperationMigrationHistory,
+				OperationID: operation.ID, ChildExitCode: 2,
+				Error: &runner.ResultError{Code: string(dataplane.TargetPermissionDenied), Message: frameText},
+			})
+			reconciler, api := fakeMigrationReconciler(t, staticLogs{content: frame}, migration, job, pod, verificationPolicyConfigMap())
+			recorder := record.NewFakeRecorder(32)
+			reconciler.Recorder = recorder
+
+			if _, err := reconciler.Reconcile(context.Background(), migrationRequest(migration)); err != nil {
+				t.Fatalf("Reconcile() error = %v", err)
+			}
+			actual := readMigration(t, api, migration)
+			want := targetFailureMessage(dataplane.TargetPermissionDenied, migration.Spec.Target.URLFrom)
+			progressing := meta.FindStatusCondition(actual.Status.Conditions, operatorv1alpha1.ConditionMigrationProgressing)
+			if progressing == nil || progressing.Reason != string(operatorv1alpha1.ReasonOperationFailed) || progressing.Message != want {
+				t.Fatalf("Progressing = %#v, want OperationFailed with %q", progressing, want)
+			}
+			if event := findEvent(recorder, "Warning OperationRetried"); !strings.HasSuffix(event, ": "+bounded(want, 512)) {
+				t.Fatalf("OperationRetried event = %q, want it to end with the sentence", event)
+			}
+			assertNoFrameText(t, recorder, actual.Status)
+		})
+	}
+}
+
+// notStartedApply is a migration whose Apply claim's Pod reported a run that
+// stopped before it selected anything, with the error the frame carried, and
+// the reconciler that harvests it at the fixture's fixed instant.
+func notStartedApply(
+	t *testing.T,
+	policy operatorv1alpha1.ApplyPolicy,
+	failure *runner.ResultError,
+) (*operatorv1alpha1.PtahMigration, *MigrationReconciler, client.WithWatch, *record.FakeRecorder) {
+	t.Helper()
+	migration, plan := awaitingApprovalFixture(t)
+	if policy == operatorv1alpha1.ApplyPolicyAlways {
+		migration.Spec.Policy.Apply = policy
+		repolicyPlan(t, migration, plan)
+	}
+	operation := applyClaimFor(t, migration, plan)
 	job, pod := terminalMigrationWorkload(migration, batchv1.JobComplete)
 	frame := migrationFrame(t, runner.Result{
-		ProtocolVersion: runner.ProtocolVersion, Operation: runner.OperationMigrationHistory,
-		OperationID: operation.ID, ChildExitCode: 2,
-		Error: &runner.ResultError{Code: string(dataplane.TargetPermissionDenied), Message: frameText},
+		ProtocolVersion: runner.ProtocolVersion, Operation: runner.OperationMigrationApply,
+		OperationID: operation.ID, ChildExitCode: 2, MutationStarted: true,
+		CoordinationDigest:   operation.CoordinationDigest,
+		TargetIdentityDigest: migration.Status.History.TargetIdentityDigest,
+		MigrationRun: &dataplane.MigrationRunReport{
+			ContractVersion: dataplane.SupportedMigrationRunContract, Direction: "up",
+			Outcome: dataplane.MigrationOutcomeFailed,
+		},
+		Error: failure,
 	})
-	reconciler, api := fakeMigrationReconciler(t, staticLogs{content: frame}, migration, job, pod, verificationPolicyConfigMap())
+	reconciler, api := fakeMigrationReconciler(
+		t, staticLogs{content: frame}, migration, plan, job, pod, verificationPolicyConfigMap(),
+	)
+	holdMigrationApplyLease(t, reconciler, api, migration)
 	recorder := record.NewFakeRecorder(32)
 	reconciler.Recorder = recorder
-
-	if _, err := reconciler.Reconcile(context.Background(), migrationRequest(migration)); err != nil {
-		t.Fatalf("Reconcile() error = %v", err)
-	}
-	actual := readMigration(t, api, migration)
-	want := targetFailureMessage(dataplane.TargetPermissionDenied, migration.Spec.Target.URLFrom)
-	progressing := meta.FindStatusCondition(actual.Status.Conditions, operatorv1alpha1.ConditionMigrationProgressing)
-	if progressing == nil || progressing.Reason != string(operatorv1alpha1.ReasonOperationFailed) || progressing.Message != want {
-		t.Fatalf("Progressing = %#v, want OperationFailed with %q", progressing, want)
-	}
-	if event := findEvent(recorder, "Warning OperationRetried"); !strings.HasSuffix(event, ": "+want) {
-		t.Fatalf("OperationRetried event = %q, want it to end with the sentence", event)
-	}
-	assertNoFrameText(t, recorder, actual.Status)
+	return migration, reconciler, api, recorder
 }
 
 // TestAMigrationRunThatNeverSelectedSaysWhy records the run of an Apply that
 // stopped before it selected anything. With a kind the run's message is the
 // kind's sentence; without one it says the run ran nothing, rather than
-// naming a migration that never started or a selection that moved.
+// naming a migration that never started or a selection that moved. The
+// resource waits the failure interval, with Ready and Progressing saying why,
+// and the Event carries the whole message.
 func TestAMigrationRunThatNeverSelectedSaysWhy(t *testing.T) {
 	t.Parallel()
 
@@ -261,6 +322,13 @@ func TestAMigrationRunThatNeverSelectedSaysWhy(t *testing.T) {
 			},
 		},
 		{
+			name:    "a target that did not answer",
+			failure: &runner.ResultError{Code: string(dataplane.TargetDatabaseUnreachable), Message: frameText},
+			want: func(migration *operatorv1alpha1.PtahMigration) string {
+				return targetFailureMessage(dataplane.TargetDatabaseUnreachable, migration.Spec.Target.URLFrom)
+			},
+		},
+		{
 			name:    "a failure with no kind",
 			failure: &runner.ResultError{Code: "child_exit", Message: "ptah exited with code 2"},
 			want: func(*operatorv1alpha1.PtahMigration) string {
@@ -270,26 +338,7 @@ func TestAMigrationRunThatNeverSelectedSaysWhy(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			migration, plan := awaitingApprovalFixture(t)
-			operation := applyClaimFor(t, migration, plan)
-			job, pod := terminalMigrationWorkload(migration, batchv1.JobComplete)
-			frame := migrationFrame(t, runner.Result{
-				ProtocolVersion: runner.ProtocolVersion, Operation: runner.OperationMigrationApply,
-				OperationID: operation.ID, ChildExitCode: 2, MutationStarted: true,
-				CoordinationDigest:   operation.CoordinationDigest,
-				TargetIdentityDigest: migration.Status.History.TargetIdentityDigest,
-				MigrationRun: &dataplane.MigrationRunReport{
-					ContractVersion: dataplane.SupportedMigrationRunContract, Direction: "up",
-					Outcome: dataplane.MigrationOutcomeFailed,
-				},
-				Error: test.failure,
-			})
-			reconciler, api := fakeMigrationReconciler(
-				t, staticLogs{content: frame}, migration, plan, job, pod, verificationPolicyConfigMap(),
-			)
-			holdMigrationApplyLease(t, reconciler, api, migration)
-			recorder := record.NewFakeRecorder(32)
-			reconciler.Recorder = recorder
+			migration, reconciler, api, recorder := notStartedApply(t, operatorv1alpha1.ApplyPolicyOnApproval, test.failure)
 
 			if _, err := reconciler.Reconcile(context.Background(), migrationRequest(migration)); err != nil {
 				t.Fatalf("Reconcile() error = %v", err)
@@ -300,14 +349,151 @@ func TestAMigrationRunThatNeverSelectedSaysWhy(t *testing.T) {
 				run.Message != want || len(run.AppliedVersions) != 0 {
 				t.Fatalf("LastRun = %#v, want a failed run that says %q", run, want)
 			}
-			if actual.Status.UnresolvedRun != nil || actual.Status.Phase != operatorv1alpha1.MigrationPhaseVerifyingHistory {
-				t.Fatalf("phase %q unresolved %#v, want the history read that follows a failed run",
-					actual.Status.Phase, actual.Status.UnresolvedRun)
+			due := reconciler.now().Add(migrationFailureRetry(migration))
+			if actual.Status.UnresolvedRun != nil || actual.Status.Phase != operatorv1alpha1.MigrationPhaseFailed ||
+				actual.Status.NextReconciliationTime == nil || !actual.Status.NextReconciliationTime.Time.Equal(due) {
+				t.Fatalf("phase %q next %v unresolved %#v, want Failed until %v",
+					actual.Status.Phase, actual.Status.NextReconciliationTime, actual.Status.UnresolvedRun, due)
 			}
-			if event := findEvent(recorder, "Warning MigrationRunFinished"); !strings.HasSuffix(event, bounded(want, 256)) {
-				t.Fatalf("MigrationRunFinished event = %q, want it to end with the run's message", event)
+			for _, conditionType := range []string{
+				operatorv1alpha1.ConditionMigrationReady, operatorv1alpha1.ConditionMigrationProgressing,
+			} {
+				condition := meta.FindStatusCondition(actual.Status.Conditions, conditionType)
+				if condition == nil || condition.Status != metav1.ConditionFalse ||
+					condition.Reason != string(operatorv1alpha1.ReasonOperationFailed) || condition.Message != want {
+					t.Fatalf("%s = %#v, want False OperationFailed with %q", conditionType, condition, want)
+				}
+			}
+			if event := findEvent(recorder, "Warning MigrationRunFinished"); event != "Warning MigrationRunFinished Failed: "+want {
+				t.Fatalf("MigrationRunFinished event = %q, want the whole message", event)
 			}
 			assertNoFrameText(t, recorder, actual.Status)
 		})
+	}
+}
+
+// TestARunThatNeverSelectedClaimsNoApplyBeforeTheInterval follows a run that
+// stopped before it selected anything under the Always policy, at the instant
+// it ended: whatever the resource does next, it claims no Apply until the
+// failure interval has passed, and then starts again from resolution.
+//
+// Ptah refuses some runs before selecting for a reason the history read does
+// not share, so a history read straight after would publish the same plan and
+// Always would claim the same refused Apply at once, once per pair of Job
+// lifetimes, with a Warning and a failure counted each time.
+func TestARunThatNeverSelectedClaimsNoApplyBeforeTheInterval(t *testing.T) {
+	t.Parallel()
+
+	migration, reconciler, api, _ := notStartedApply(t, operatorv1alpha1.ApplyPolicyAlways,
+		&runner.ResultError{Code: "child_exit", Message: "ptah exited with code 2"})
+	if _, err := reconciler.Reconcile(context.Background(), migrationRequest(migration)); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	current := readMigration(t, api, migration)
+	ended := reconciler.now()
+
+	// Without pacing the next pass reads the history back: let it, and carry
+	// the plan that read publishes, so the pass after it is the one that
+	// would claim the Apply.
+	objects := []client.Object{verificationPolicyConfigMap()}
+	if current.Status.Phase == operatorv1alpha1.MigrationPhaseVerifyingHistory {
+		read, readAPI := readMigrationHistory(t, current, pendingMigrationHistory())
+		plans := &operatorv1alpha1.PtahMigrationPlanList{}
+		if err := readAPI.List(context.Background(), plans); err != nil {
+			t.Fatal(err)
+		}
+		for i := range plans.Items {
+			objects = append(objects, plans.Items[i].DeepCopy())
+		}
+		current = read
+	}
+	objects = append(objects, current.DeepCopy())
+	for _, object := range objects {
+		object.SetResourceVersion("")
+	}
+	next, nextAPI := fakeMigrationReconciler(t, staticLogs{}, objects...)
+	next.Clock = func() time.Time { return ended }
+	if _, err := next.Reconcile(context.Background(), migrationRequest(current)); err != nil {
+		t.Fatalf("Reconcile() at the instant the run ended: %v", err)
+	}
+	waiting := readMigration(t, nextAPI, current)
+	if active := waiting.Status.ActiveOperation; active != nil {
+		t.Fatalf("the pass at the instant the run ended claimed %s attempt %d, want nothing before %v",
+			active.Type, active.Attempt, waiting.Status.NextReconciliationTime)
+	}
+
+	due := ended.Add(migrationFailureRetry(migration))
+	next.Clock = func() time.Time { return due }
+	if _, err := next.Reconcile(context.Background(), migrationRequest(waiting)); err != nil {
+		t.Fatalf("Reconcile() when the interval passed: %v", err)
+	}
+	resumed := readMigration(t, nextAPI, waiting)
+	if active := resumed.Status.ActiveOperation; active == nil || active.Type != operatorv1alpha1.MigrationOperationResolve {
+		t.Fatalf("the pass when the interval passed claimed %#v, want a Resolve", active)
+	}
+}
+
+// TestAFrameWithAKindAndNoRunIsNotRepeated holds the one frame the runner does
+// not write -- a target failure with no run report -- to the operator's
+// sentence, on the path that records an Apply nobody accounted for.
+func TestAFrameWithAKindAndNoRunIsNotRepeated(t *testing.T) {
+	t.Parallel()
+
+	migration, plan := awaitingApprovalFixture(t)
+	operation := applyClaimFor(t, migration, plan)
+	reported := (&MigrationReconciler{}).frameMigrationApply(context.Background(), migration, runner.Result{
+		ProtocolVersion: runner.ProtocolVersion, Operation: runner.OperationMigrationApply,
+		OperationID: operation.ID, ChildExitCode: 2, MutationStarted: true, Uncertain: true,
+		Error: &runner.ResultError{Code: string(dataplane.TargetTLSFailed), Message: frameText},
+	})
+	want := targetFailureMessage(dataplane.TargetTLSFailed, migration.Spec.Target.URLFrom)
+	if reported.run != nil || reported.failure == nil || reported.failure.Error() != want {
+		t.Fatalf("frameMigrationApply() = %+v, want no run and the failure %q", reported, want)
+	}
+}
+
+// TestAMigrationNamesTheSecretItsClaimBound reads the Secret from the active
+// claim, which a spec edited after dispatch does not change.
+func TestAMigrationNamesTheSecretItsClaimBound(t *testing.T) {
+	t.Parallel()
+
+	migration := migrationFixture()
+	migration.Spec.Target.URLFrom = corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "edited"}, Key: "dsn"}
+	if got := migrationURLSecret(migration); got.Name != "edited" || got.Key != "dsn" {
+		t.Fatalf("migrationURLSecret() with no claim = %+v, want the spec's", got)
+	}
+	migration.Status.ActiveOperation = &operatorv1alpha1.MigrationOperationStatus{
+		Target: &operatorv1alpha1.DatabaseTargetBinding{URLFrom: corev1.SecretKeySelector{
+			LocalObjectReference: corev1.LocalObjectReference{Name: "dispatched"}, Key: "url"}},
+	}
+	if got := migrationURLSecret(migration); got.Name != "dispatched" || got.Key != "url" {
+		t.Fatalf("migrationURLSecret() = %+v, want the claim's", got)
+	}
+}
+
+// TestATargetFailureSentenceFitsStatusWhole holds every kind's sentence, for
+// the longest Secret name and key Kubernetes admits, under the 1024 bytes the
+// conditions and a run's message keep, and, for a name and key of a hundred
+// bytes each, under the 512 every failure Event keeps.
+func TestATargetFailureSentenceFitsStatusWhole(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name   string
+		length int
+		limit  int
+	}{
+		{"the longest name and key", 253, 1024},
+		{"a name and key of a hundred bytes", 100, migrationRunEventBytes},
+	} {
+		url := corev1.SecretKeySelector{
+			LocalObjectReference: corev1.LocalObjectReference{Name: strings.Repeat("n", test.length)},
+			Key:                  strings.Repeat("k", test.length),
+		}
+		for _, kind := range dataplane.TargetFailureKinds() {
+			if message := targetFailureMessage(kind, url); len(message) > test.limit {
+				t.Errorf("%s: %s is %d bytes, more than %d", test.name, kind, len(message), test.limit)
+			}
+		}
 	}
 }

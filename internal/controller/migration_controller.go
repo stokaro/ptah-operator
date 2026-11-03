@@ -1713,8 +1713,11 @@ func (r *MigrationReconciler) retryMigrationOperationAs(
 	}
 	next.JobName = name
 	migration.Status.ActiveOperation = next
+	// The condition keeps 1024 bytes, as a schema's does, so a failure to open
+	// the target is whole in status whatever the Secret name and key; the
+	// Event below keeps 512.
 	setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionTrue,
-		reason, bounded(failure.Error(), 512))
+		reason, bounded(failure.Error(), 1024))
 	if err := r.patchMigrationStatus(ctx, before, migration); err != nil {
 		return ctrl.Result{}, err
 	}

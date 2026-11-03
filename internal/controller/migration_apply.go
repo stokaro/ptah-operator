@@ -406,6 +406,11 @@ type migrationRunAccount struct {
 	applied []int64
 	message string
 	failure *operatorv1alpha1.MigrationRunFailureStatus
+	// stoppedBeforeSelecting is a run that failed before Ptah selected any
+	// migration, so it ran nothing and read no history. Only a frame's report
+	// can say so; a termination summary cannot tell it from a first migration
+	// that failed.
+	stoppedBeforeSelecting bool
 }
 
 // frameMigrationApply is what a result frame says about a migration Apply.
@@ -506,6 +511,7 @@ func (r *MigrationReconciler) reportedMigrationRun(
 		failure: migrationRunFailure(report.Failure),
 	}
 	if report.StoppedBeforeSelecting() {
+		run.stoppedBeforeSelecting = true
 		run.message = "The run stopped before it selected any migration, and ran none"
 		if failure != nil {
 			if kind, known := dataplane.ParseTargetFailureKind(failure.Code); known {
@@ -547,8 +553,8 @@ func (r *MigrationReconciler) recordMigrationRun(
 		Failure:         run.failure,
 	}
 	migration.Status.Plan = nil
-	switch outcome {
-	case operatorv1alpha1.MigrationRunOutcomePartial, operatorv1alpha1.MigrationRunOutcomeUnknown:
+	switch {
+	case outcome == operatorv1alpha1.MigrationRunOutcomePartial || outcome == operatorv1alpha1.MigrationRunOutcomeUnknown:
 		// Neither may be retried. A partial run committed some of a migration's
 		// statements and not the rest, and an unknown one cannot say whether it
 		// did; running the same file again would run those statements twice.
@@ -563,6 +569,24 @@ func (r *MigrationReconciler) recordMigrationRun(
 			operatorv1alpha1.ReasonApplyOutcomeUnknown, "The run stopped and may not be retried")
 		next := metav1.NewTime(r.now().Add(migrationInterval(migration)))
 		migration.Status.NextReconciliationTime = &next
+	case run.stoppedBeforeSelecting:
+		// A run that stopped before it selected anything ran nothing and left
+		// the history as the plan read it, so reading it back now would find
+		// the same plan and, under the Always policy, start the same refusal
+		// at once. Ptah refuses some runs for a reason the history read does
+		// not share -- a lock or a timeout the server cannot carry, a lint
+		// policy that does not load -- and the target that could not be
+		// opened may answer the read and not the run. So the resource waits
+		// the failure interval as a failed operation does, and then starts the
+		// read-only chain again from resolution, which reads the history
+		// before anything is planned or applied.
+		migration.Status.Phase = operatorv1alpha1.MigrationPhaseFailed
+		next := metav1.NewTime(r.now().Add(migrationFailureRetry(migration)))
+		migration.Status.NextReconciliationTime = &next
+		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationReady, metav1.ConditionFalse,
+			operatorv1alpha1.ReasonOperationFailed, bounded(message, 1024))
+		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionFalse,
+			operatorv1alpha1.ReasonOperationFailed, bounded(message, 1024))
 	default:
 		// Every other outcome is confirmed by reading the history back. What the
 		// run claims and what the revision table holds are two statements, and
@@ -579,7 +603,8 @@ func (r *MigrationReconciler) recordMigrationRun(
 	if err := r.retireMigrationClaim(ctx, before, migration, mutationlifecycle.DispositionAccounted, false); err != nil {
 		return ctrl.Result{}, err
 	}
-	r.event(migration, migrationRunEventType(outcome), "MigrationRunFinished", "%s: %s", outcome, bounded(message, 256))
+	r.event(migration, migrationRunEventType(outcome), "MigrationRunFinished", "%s: %s", outcome,
+		bounded(message, migrationRunEventBytes))
 	r.observeMigrationRun(operation, outcome)
 	return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
 }
@@ -1211,9 +1236,16 @@ func migrationRunMessage(report dataplane.MigrationRunReport) string {
 	}
 }
 
-// migrationDescriptionBytes bounds the description a run message quotes, so
-// the whole sentence fits the 256 bytes the MigrationRunFinished Event keeps.
+// migrationDescriptionBytes bounds the description a run message quotes, so a
+// message about a migration stays within 256 bytes and its version, counts
+// and the database's answer are never the part an Event cuts.
 const migrationDescriptionBytes = 64
+
+// migrationRunEventBytes is how much of a run's message its
+// MigrationRunFinished Event keeps: as much as the other failure Events, which
+// holds a target failure's sentence whole for any Secret name and key under
+// about a hundred bytes each. The run's own status keeps 1024.
+const migrationRunEventBytes = 512
 
 // stoppedMigration is the migration a failed run stopped in, from the run's
 // own report: the revision row it left dirty, or, where it left none, the
