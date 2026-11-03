@@ -912,7 +912,7 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 	}
 	if result.Error != nil {
 		return r.retryMigrationOperation(ctx, migration, job,
-			fmt.Errorf("%s: %s", result.Error.Code, bounded(result.Error.Message, 512)))
+			resultFailure(result.Error, operationURLSecret(operation.Target, migration.Spec.Target.URLFrom)))
 	}
 	if result.Truncation != nil && result.Truncation.Stdout {
 		return r.retryMigrationOperation(ctx, migration, job, fmt.Errorf("the %s result was truncated", operation.Type))

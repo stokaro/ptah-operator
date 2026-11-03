@@ -420,13 +420,13 @@ func (r *MigrationReconciler) frameMigrationApply(
 		targetIdentityDigest: result.TargetIdentityDigest,
 	}
 	if result.MigrationRun != nil {
-		run := r.reportedMigrationRun(ctx, migration, result.MigrationRun)
+		run := r.reportedMigrationRun(ctx, migration, result.MigrationRun, result.Error)
 		reported.run = &run
 		return reported
 	}
 	reported.failure = errors.New("the Apply produced no readable account of what the database now holds")
 	if result.Error != nil {
-		reported.failure = fmt.Errorf("%s: %s", result.Error.Code, bounded(result.Error.Message, 512))
+		reported.failure = resultFailure(result.Error, migrationURLSecret(migration))
 	}
 	return reported
 }
@@ -467,19 +467,31 @@ func (r *MigrationReconciler) consumeMigrationRun(
 	result runner.Result,
 ) (ctrl.Result, error) {
 	return r.recordMigrationRun(ctx, migration, job,
-		r.reportedMigrationRun(ctx, migration, result.MigrationRun), result.TargetIdentityDigest)
+		r.reportedMigrationRun(ctx, migration, result.MigrationRun, result.Error), result.TargetIdentityDigest)
+}
+
+// migrationURLSecret is the Secret key the active migration operation read
+// its target URL from.
+func migrationURLSecret(migration *operatorv1alpha1.PtahMigration) corev1.SecretKeySelector {
+	var bound *operatorv1alpha1.DatabaseTargetBinding
+	if operation := migration.Status.ActiveOperation; operation != nil {
+		bound = operation.Target
+	}
+	return operationURLSecret(bound, migration.Spec.Target.URLFrom)
 }
 
 // reportedMigrationRun is a run report in the terms status keeps. A missing
 // report is an unknown outcome.
 //
 // A run that stopped before it selected anything ran nothing, and its message
-// says so rather than naming a migration that never started or a selection
-// that moved.
+// says so. When the runner named the reason a target could not be opened, the
+// message is that reason's, which the frame carries as the result's code; a
+// run that read the history is described by what it did, whatever the code.
 func (r *MigrationReconciler) reportedMigrationRun(
 	ctx context.Context,
 	migration *operatorv1alpha1.PtahMigration,
 	report *dataplane.MigrationRunReport,
+	failure *runner.ResultError,
 ) migrationRunAccount {
 	if report == nil {
 		return migrationRunAccount{
@@ -495,6 +507,11 @@ func (r *MigrationReconciler) reportedMigrationRun(
 	}
 	if report.StoppedBeforeSelecting() {
 		run.message = "The run stopped before it selected any migration, and ran none"
+		if failure != nil {
+			if kind, known := dataplane.ParseTargetFailureKind(failure.Code); known {
+				run.message = targetFailureMessage(kind, migrationURLSecret(migration))
+			}
+		}
 		return run
 	}
 	if refusal, refused := r.sequenceRefusal(ctx, migration, migration.Status.ActiveOperation, *report); refused {
