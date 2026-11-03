@@ -64,6 +64,20 @@ func TestDecodeDriftRefusesAnInventoryItCannotKeep(t *testing.T) {
 			want: "cannot unmarshal number 2147483648"},
 		{name: "more kinds than the vocabulary pairs", inventory: "[" + strings.Join(many, ",") + "]",
 			want: "drift report counts 129 kinds, more than the 128 any vocabulary pairs"},
+		{name: "a feature kind twice", inventory: `[{"kind":"ptah.run/pgpolicy/policy-change","desired":1,"observed":1},` +
+			`{"kind":"ptah.run/pgpolicy/policy-change","desired":1,"observed":0}]`,
+			want: "drift report counts kind ptah.run/pgpolicy/policy-change twice"},
+		{name: "a negative feature count", inventory: `[{"kind":"ptah.run/pgextension/extension-change","desired":1,"observed":-1}]`,
+			want: "drift report counts kind ptah.run/pgextension/extension-change below zero"},
+		{name: "a feature kind with no domain", inventory: `[{"kind":"pgextension/extension-change","desired":1,"observed":1}]`,
+			want: "drift report counts a kind no finding category names"},
+		{name: "a feature kind with no path", inventory: `[{"kind":"ptah.run","desired":1,"observed":1}]`,
+			want: "drift report counts a kind no finding category names"},
+		{name: "a feature kind with an object name", inventory: `[{"kind":"ptah.run/pgextension/extension change pg_trgm","desired":1,"observed":1}]`,
+			want: "drift report counts a kind no finding category names"},
+		{name: "a feature kind past its bound", inventory: `[{"kind":"ptah.run/` + strings.Repeat("a", dataplane.MaxDriftFindingKindBytes) +
+			`","desired":1,"observed":1}]`,
+			want: "drift report counts a kind no finding category names"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -87,5 +101,31 @@ func TestIsKnownDriftInventoryKind(t *testing.T) {
 		if got := dataplane.IsKnownDriftInventoryKind(kind); got != want {
 			t.Errorf("IsKnownDriftInventoryKind(%q) = %v, want %v", kind, got, want)
 		}
+	}
+}
+
+// Ptah counts the objects a feature owner compares under the kind of its
+// feature_changes category. Status cannot keep that kind, so the decoder holds
+// the entry to the vocabulary's form for a kind and leaves it out, keeping the
+// entries a stem names in the order Ptah wrote them.
+func TestDecodeDriftLeavesFeatureKindsOutOfTheInventory(t *testing.T) {
+	t.Parallel()
+	report, err := dataplane.DecodeDrift([]byte(driftWithInventory(
+		`[{"kind":"columns","desired":2,"observed":2},{"kind":"ptah.run/pgextension/extension-change","desired":1,"observed":0},`+
+			`{"kind":"ptah.run/pgpolicy/policy-change","desired":1,"observed":1},{"kind":"tables","desired":1,"observed":1}]`)), 0)
+	if err != nil {
+		t.Fatalf("DecodeDrift() error = %v", err)
+	}
+	if got := fmt.Sprint(report.Inventory); got != "[{columns 2 2} {tables 1 1}]" {
+		t.Fatalf("inventory = %s", got)
+	}
+
+	only, err := dataplane.DecodeDrift([]byte(driftWithInventory(
+		`[{"kind":"ptah.run/pgextension/extension-change","desired":1,"observed":1}]`)), 0)
+	if err != nil {
+		t.Fatalf("DecodeDrift() error = %v", err)
+	}
+	if only.Inventory != nil {
+		t.Fatalf("an inventory of feature kinds alone decoded to %v, want none", only.Inventory)
 	}
 }

@@ -441,33 +441,55 @@ func DecodeDrift(data []byte, exitCode int) (DriftReport, error) {
 		}
 		seenFindings[finding.Category] = struct{}{}
 	}
-	if err := validateDriftInventory(report.Inventory); err != nil {
+	inventory, err := validateDriftInventory(report.Inventory)
+	if err != nil {
 		return DriftReport{}, err
 	}
+	report.Inventory = inventory
 	return report, nil
 }
 
 // validateDriftInventory holds an inventory to the vocabulary: each kind
-// once, a kind the findings could name, and no negative count.
-func validateDriftInventory(inventory []DriftInventoryEntry) error {
+// once, a kind the findings could name, and no negative count. It returns the
+// entries the report keeps.
+//
+// Ptah counts the objects a feature owner compares (stokaro/ptah#5149) under
+// the kind its feature_changes category carries, such as
+// ptah.run/pgextension/extension-change. Status keeps an inventory kind as the
+// stem of a pair of fixed categories, and its schema refuses a feature kind,
+// so such an entry is held to the form a qualified category's kind takes and
+// then left out: the inventory reads as it did before Ptah counted them.
+func validateDriftInventory(inventory []DriftInventoryEntry) ([]DriftInventoryEntry, error) {
 	if len(inventory) > MaxDriftInventoryEntries {
-		return fmt.Errorf("drift report counts %d kinds, more than the %d any vocabulary pairs",
+		return nil, fmt.Errorf("drift report counts %d kinds, more than the %d any vocabulary pairs",
 			len(inventory), MaxDriftInventoryEntries)
 	}
+	var kept []DriftInventoryEntry
 	seen := make(map[string]struct{}, len(inventory))
 	for _, entry := range inventory {
-		if !IsKnownDriftInventoryKind(entry.Kind) {
-			return fmt.Errorf("drift report counts a kind no finding category names")
+		feature := isFeatureInventoryKind(entry.Kind)
+		if !IsKnownDriftInventoryKind(entry.Kind) && !feature {
+			return nil, fmt.Errorf("drift report counts a kind no finding category names")
 		}
 		if _, repeated := seen[entry.Kind]; repeated {
-			return fmt.Errorf("drift report counts kind %s twice", entry.Kind)
+			return nil, fmt.Errorf("drift report counts kind %s twice", entry.Kind)
 		}
 		seen[entry.Kind] = struct{}{}
 		if entry.Desired < 0 || entry.Observed < 0 {
-			return fmt.Errorf("drift report counts kind %s below zero", entry.Kind)
+			return nil, fmt.Errorf("drift report counts kind %s below zero", entry.Kind)
+		}
+		if !feature {
+			kept = append(kept, entry)
 		}
 	}
-	return nil
+	return kept, nil
+}
+
+// isFeatureInventoryKind reports whether kind is the kind a feature owner's
+// qualified category carries: a lowercase dotted domain and a path, of the
+// length the vocabulary admits after the colon.
+func isFeatureInventoryKind(kind string) bool {
+	return len(kind) <= MaxDriftFindingKindBytes && driftFindingKindPattern.MatchString(kind)
 }
 
 // DriftReportDigest identifies the exact comparison result emitted by one

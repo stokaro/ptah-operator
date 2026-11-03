@@ -1049,9 +1049,11 @@ categories, so `tables` counts what `tables_added` and `tables_removed` are
 found among, and an inventory entry joins its findings by that stem. A kind
 with no finding counts the same on both sides; the columns of a table found
 only in the database are not counted. A kind neither side holds is left out. The counts name no object, and objects a
-feature owner compares, such as PostgreSQL extensions and policies, are not
-counted. The inventory is written and replaced with the findings, and a Ptah
-that does not count leaves it absent.
+feature owner compares, such as PostgreSQL extensions and policies, are left
+out too: Ptah counts them under the kind their `feature_changes` category
+carries, such as `ptah.run/pgextension/extension-change`, and status keeps a
+kind only as the stem of a pair of categories. The inventory is written and
+replaced with the findings, and a Ptah that does not count leaves it absent.
 
 ```yaml
 status:
