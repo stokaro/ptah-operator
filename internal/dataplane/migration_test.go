@@ -607,3 +607,31 @@ func TestStoppedBeforeSelectingIsOnlyARunThatReadNoHistory(t *testing.T) {
 		})
 	}
 }
+
+// TestStoppedBeforeSelectingNamesNothingElse holds the predicate to its whole
+// shape on report values that no decoded document reaches, as a frame could
+// carry them: a failed run with no history that still names a selection, an
+// applied version or a failed statement is not one that ran nothing.
+func TestStoppedBeforeSelectingNamesNothingElse(t *testing.T) {
+	t.Parallel()
+
+	stopped := dataplane.MigrationRunReport{Outcome: dataplane.MigrationOutcomeFailed}
+	if !stopped.StoppedBeforeSelecting() {
+		t.Fatal("a failed run with no history and nothing named is not one that stopped before selecting")
+	}
+	for name, mutate := range map[string]func(*dataplane.MigrationRunReport){
+		"a history":      func(r *dataplane.MigrationRunReport) { r.Status = &dataplane.MigrationStatusReport{} },
+		"a selection":    func(r *dataplane.MigrationRunReport) { r.Planned = []int64{1} },
+		"an applied one": func(r *dataplane.MigrationRunReport) { r.Applied = []int64{1} },
+		"a failed statement": func(r *dataplane.MigrationRunReport) {
+			r.Failure = &dataplane.MigrationRunFailure{Version: 1, Statement: 1, Statements: 1}
+		},
+		"another outcome": func(r *dataplane.MigrationRunReport) { r.Outcome = dataplane.MigrationOutcomeUnknown },
+	} {
+		report := stopped
+		mutate(&report)
+		if report.StoppedBeforeSelecting() {
+			t.Errorf("a failed run with %s reads as one that stopped before selecting", name)
+		}
+	}
+}

@@ -1437,11 +1437,13 @@ func stoppedByContext(err error) bool {
 	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)
 }
 
-// targetFailureOf is the kind of failure a report's error names, for a child
-// that exited on its own and nonzero. A kind beside a zero exit contradicts
-// the report it came in, and is read as none.
+// targetFailureOf is the kind of failure a schema plan or apply report's
+// error names, for a child that exited nonzero. A kind beside a zero exit
+// contradicts the report it came in, and is read as none. Its callers read a
+// report only from a child that exited on its own: each has already returned
+// on a child this process stopped, whose report is never read.
 func targetFailureOf(failure *dataplane.CommandError, outcome commandOutcome) (dataplane.TargetFailureKind, bool) {
-	if outcome.err != nil || outcome.exitCode == 0 {
+	if outcome.exitCode == 0 {
 		return "", false
 	}
 	return failure.TargetFailure()

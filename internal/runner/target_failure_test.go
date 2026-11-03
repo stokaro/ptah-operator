@@ -39,8 +39,11 @@ type targetFailureRun struct {
 	unclassified string
 }
 
+// targetFailurePlan is the plan every scripted plan read saves.
+var targetFailurePlan = validPlanDocument("CREATE TABLE target_failure (id bigint)")
+
 func targetFailureRuns() map[string]targetFailureRun {
-	plan := validPlanDocument("CREATE TABLE target_failure (id bigint)")
+	plan := targetFailurePlan
 	return map[string]targetFailureRun{
 		"observe": {
 			operation: OperationObserve,
@@ -318,6 +321,33 @@ func TestAKindIsReadOnlyFromAFailureItDescribes(t *testing.T) {
 			want: "execution_error",
 		},
 		{
+			name: "a migration run that never selected and exited zero",
+			run:  runs["migration apply"],
+			responses: []scriptedResponse{{
+				stdout: `{"contract_version":2,"command":"migrations up","direction":"up","outcome":"failed","error":` + unreachable + `}`,
+			}},
+			want: "",
+		},
+		{
+			name: "a migration run that never selected, stopped at its deadline",
+			run:  runs["migration apply"],
+			responses: []scriptedResponse{{
+				stdout:   `{"contract_version":2,"command":"migrations up","direction":"up","outcome":"failed","error":` + unreachable + `}`,
+				exitCode: -1, err: context.DeadlineExceeded,
+			}},
+			want: "execution_error",
+		},
+		{
+			name: "a dry run that refused the plan",
+			run:  runs["plan validation"],
+			responses: []scriptedResponse{planResponse(targetFailurePlan), planResponse(targetFailurePlan), {
+				stdout: `{"contract_version":4,"command":"schema apply","outcome":"refused","plan_name":"operator-plan",` +
+					`"plan_digest":"` + sha256Digest([]byte(targetFailurePlan)) + `","refusal":{"code":"stale-plan"},"error":` + unreachable + `}`,
+				exitCode: 2,
+			}},
+			want: "invalid_plan_output",
+		},
+		{
 			name: "a migration run that selected and read the history",
 			run:  runs["migration apply"],
 			responses: []scriptedResponse{{
@@ -333,7 +363,10 @@ func TestAKindIsReadOnlyFromAFailureItDescribes(t *testing.T) {
 			run := test.run
 			run.responses = func(*testing.T, string, int) []scriptedResponse { return test.responses }
 			result, written := runTargetFailure(t, run, "", 0)
-			if result.Error == nil || result.Error.Code != test.want {
+			switch {
+			case test.want == "" && result.Error != nil:
+				t.Fatalf("Run() error = %#v, want none", result.Error)
+			case test.want != "" && (result.Error == nil || result.Error.Code != test.want):
 				t.Fatalf("Run() error = %#v, want %s", result.Error, test.want)
 			}
 			if strings.Contains(written, "CHILD-TEXT") {

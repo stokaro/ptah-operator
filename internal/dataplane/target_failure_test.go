@@ -272,3 +272,27 @@ func TestTheVocabularyIsPtahs(t *testing.T) {
 		t.Fatalf("TargetFailureKinds() = %q, want %q", got, want)
 	}
 }
+
+// TestDecodeDriftReadsOnlyItsOwnContract holds a drift report to the contract
+// version and command it reads, against a converged report it accepts. The
+// report Ptah v0.17.0 printed had neither field.
+func TestDecodeDriftReadsOnlyItsOwnContract(t *testing.T) {
+	t.Parallel()
+
+	const converged = `{"contract_version":1,"command":"schema drift","drift":false,"failed":false,` +
+		`"failure_threshold":"all","highest_severity":"","dialect":"postgres","diff":{}}`
+	if _, err := dataplane.DecodeDrift([]byte(converged), 0); err != nil {
+		t.Fatalf("DecodeDrift() refused a converged report: %v", err)
+	}
+	for name, document := range map[string]string{
+		"the report Ptah v0.17.0 printed": strings.Replace(converged, `"contract_version":1,"command":"schema drift",`, ``, 1),
+		"no contract version":             strings.Replace(converged, `"contract_version":1,`, ``, 1),
+		"a newer contract version":        strings.Replace(converged, `"contract_version":1`, `"contract_version":2`, 1),
+		"no command":                      strings.Replace(converged, `"command":"schema drift",`, ``, 1),
+		"another command's document":      strings.Replace(converged, `"schema drift"`, `"migrations status"`, 1),
+	} {
+		if report, err := dataplane.DecodeDrift([]byte(document), 0); err == nil {
+			t.Errorf("DecodeDrift() accepted %s as %+v", name, report)
+		}
+	}
+}
