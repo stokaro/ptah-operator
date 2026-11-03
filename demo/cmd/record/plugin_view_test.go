@@ -7,13 +7,16 @@ import (
 	"testing"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/migrationview"
 	"github.com/stokaro/ptah-operator/internal/schemaview"
 	"github.com/stokaro/ptah-operator/internal/sourceview"
 	"github.com/stokaro/ptah-operator/internal/statusview"
+	"github.com/stokaro/ptah-operator/internal/targetfailure"
 )
 
 // A scenario step that runs `kubectl ptah schema` or `kubectl ptah migration`
@@ -217,12 +220,19 @@ func demoSchemaBlocked() schemaview.View {
 	return view
 }
 
+// demoSchemaFailed is the storefront schema after its first observation could
+// not reach the host its URL names. The message is the controller's own
+// sentence for that kind, written by the package the controller calls, for
+// the Secret the unreachable manifest names.
 func demoSchemaFailed() schemaview.View {
 	view := fromConfigMap(demoSchema(string(operatorv1alpha1.PhaseFailed)), "storefront-v1")
 	view.Observation = nil
+	unreachable := targetfailure.Message(dataplane.TargetDatabaseUnreachable, corev1.SecretKeySelector{
+		LocalObjectReference: corev1.LocalObjectReference{Name: "demo-database-broken"}, Key: "url",
+	})
 	view.Conditions = demoConditions(
 		metav1.Condition{Type: "Ready", Status: "False", Reason: "OperationFailed", Message: "Reconciliation did not complete"},
-		metav1.Condition{Type: "ReconciliationFailed", Status: "True", Reason: "OperationFailed", Message: "child_exit: ptah exited with code 2"},
+		metav1.Condition{Type: "ReconciliationFailed", Status: "True", Reason: "OperationFailed", Message: unreachable},
 	)
 	return view
 }
