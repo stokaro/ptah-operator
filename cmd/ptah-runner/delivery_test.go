@@ -150,7 +150,7 @@ func applyExecutable(t *testing.T) (string, string) {
 	// report. This exercises command dispatch, not a database transaction.
 	script := `#!/bin/sh
 printf 'run\n' >> "$PTAH_TEST_INVOCATIONS"
-printf '%s\n' '{"contract_version":1,"direction":"up","outcome":"applied","planned":[3,4],"applied":[3,4],"status":{"contract_version":1,"current_version":4,"total_migrations":4,"has_pending_changes":false}}'
+printf '%s\n' '{"contract_version":2,"command":"migrations up","direction":"up","outcome":"applied","planned":[3,4],"applied":[3,4],"status":{"contract_version":2,"current_version":4,"total_migrations":4,"has_pending_changes":false}}'
 `
 	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
 		t.Fatal(err)

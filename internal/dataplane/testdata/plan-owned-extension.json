@@ -16,7 +16,7 @@
       "owned": true
     },
     {
-      "sql": "-- POSTGRES TABLE: e2e_extension_widgets --\nCREATE TABLE \"e2e_extension_widgets\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" text NOT NULL\n)",
+      "sql": "CREATE TABLE \"e2e_extension_widgets\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" text NOT NULL\n)",
       "severity": "safe",
       "reason": "does not remove data or tighten constraints"
     }

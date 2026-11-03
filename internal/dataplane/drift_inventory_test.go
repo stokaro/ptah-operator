@@ -11,7 +11,7 @@ import (
 // driftWithInventory is a converged report, as Ptah prints one, that carries
 // the given inventory.
 func driftWithInventory(inventory string) string {
-	return `{"drift":false,"failed":false,"failure_threshold":"all","highest_severity":"","dialect":"postgres",` +
+	return `{"contract_version":1,"command":"schema drift","drift":false,"failed":false,"failure_threshold":"all","highest_severity":"","dialect":"postgres",` +
 		`"diff":{"tables_added":[]},"inventory":` + inventory + `}`
 }
 
@@ -29,7 +29,7 @@ func TestDecodeDriftReadsTheInventory(t *testing.T) {
 		t.Fatalf("inventory = %s", got)
 	}
 
-	uncounted, err := dataplane.DecodeDrift([]byte(`{"drift":false,"failed":false,"failure_threshold":"all",`+
+	uncounted, err := dataplane.DecodeDrift([]byte(`{"contract_version":1,"command":"schema drift","drift":false,"failed":false,"failure_threshold":"all",`+
 		`"highest_severity":"","dialect":"postgres","diff":{}}`), 0)
 	if err != nil {
 		t.Fatalf("DecodeDrift() error = %v", err)

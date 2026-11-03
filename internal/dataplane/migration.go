@@ -16,8 +16,20 @@ const (
 	// fields this operator knows may still be present and may already mean
 	// something else, and a history read under the wrong contract is a history
 	// nobody checked.
-	SupportedMigrationStatusContract = 1
-	SupportedMigrationRunContract    = 1
+	//
+	// Version 2 of both is stokaro/ptah#5173's. A status run that cannot read
+	// the history now prints a failure document in the status contract's
+	// version, which a version 1 reader would take for a database with nothing
+	// applied; a run document carries error as an object with a kind, and a
+	// run that stopped before it selected anything is failed with nothing
+	// planned and no status.
+	SupportedMigrationStatusContract = 2
+	SupportedMigrationRunContract    = 2
+
+	// MigrationStatusCommand and MigrationRunCommand are the commands the two
+	// documents name. A status embedded in a run document names none.
+	MigrationStatusCommand = "migrations status"
+	MigrationRunCommand    = "migrations up"
 
 	// Migration states a status document reports per migration.
 	MigrationStateApplied           = "applied"
@@ -139,20 +151,30 @@ type MigrationDirty struct {
 
 // MigrationRunReport is Ptah's `migrations up --json` document.
 type MigrationRunReport struct {
-	ContractVersion int                    `json:"contract_version"`
-	Direction       string                 `json:"direction"`
-	Outcome         string                 `json:"outcome"`
-	Planned         []int64                `json:"planned,omitempty"`
-	Applied         []int64                `json:"applied,omitempty"`
-	Error           string                 `json:"error,omitempty"`
-	Failure         *MigrationRunFailure   `json:"failure,omitempty"`
-	Status          *MigrationStatusReport `json:"status,omitempty"`
+	ContractVersion int     `json:"contract_version"`
+	Direction       string  `json:"direction"`
+	Outcome         string  `json:"outcome"`
+	Planned         []int64 `json:"planned,omitempty"`
+	Applied         []int64 `json:"applied,omitempty"`
+	// Error is why the run failed. Its message can quote a row, so the runner
+	// reads its kind and drops the object before the report reaches a frame.
+	Error   *CommandError          `json:"error,omitempty"`
+	Failure *MigrationRunFailure   `json:"failure,omitempty"`
+	Status  *MigrationStatusReport `json:"status,omitempty"`
+}
+
+// StoppedBeforeSelecting reports a run that failed before Ptah selected any
+// migration: it read no history, planned and applied nothing, and sent no
+// migration statement. A target that could not be opened ends a run this way.
+func (r MigrationRunReport) StoppedBeforeSelecting() bool {
+	return r.Outcome == MigrationOutcomeFailed && r.Status == nil &&
+		len(r.Planned) == 0 && len(r.Applied) == 0 && r.Failure == nil
 }
 
 // MigrationRunFailure is the statement a run stopped at and the code the
 // database answered with. Ptah writes it only when a statement reached the
-// database and failed. Unlike Error it carries no text, so it names no row and
-// may reach status and Events (#69, #678).
+// database and failed. Unlike Error's message it carries no text, so it names
+// no row and may reach status and Events (#69, #678).
 type MigrationRunFailure struct {
 	Version    int64 `json:"version"`
 	Statement  int   `json:"statement"`
@@ -263,9 +285,32 @@ func (r MigrationStatusReport) OutOfOrder() []int64 {
 	return versions
 }
 
+// migrationEnvelope is what a top-level migration document says about
+// itself: the command that printed it, and the error a failure carries.
+type migrationEnvelope struct {
+	Command string        `json:"command"`
+	Error   *CommandError `json:"error"`
+}
+
 // DecodeMigrationStatus reads a status document and refuses everything it
 // cannot fully account for.
+//
+// The failure document `migrations status` prints when it cannot read the
+// history is refused here, before anything reads it as a status: it carries
+// the status contract version and none of the status fields, so it would
+// otherwise read as a database with nothing applied.
+// DecodeMigrationStatusFailure reads it.
 func DecodeMigrationStatus(data []byte) (MigrationStatusReport, error) {
+	var envelope migrationEnvelope
+	if err := decodeJSON(data, &envelope, false); err != nil {
+		return MigrationStatusReport{}, fmt.Errorf("decode migration status: %w", err)
+	}
+	if envelope.Command != MigrationStatusCommand {
+		return MigrationStatusReport{}, fmt.Errorf("migration status names another command than %s", MigrationStatusCommand)
+	}
+	if envelope.Error != nil {
+		return MigrationStatusReport{}, fmt.Errorf("migration status is a failure document")
+	}
 	var report MigrationStatusReport
 	if err := decodeJSON(data, &report, false); err != nil {
 		return MigrationStatusReport{}, fmt.Errorf("decode migration status: %w", err)
@@ -344,6 +389,13 @@ func (m MigrationRecord) validateRow() error {
 
 // DecodeMigrationRun reads a run document, including the status it carries.
 func DecodeMigrationRun(data []byte) (MigrationRunReport, error) {
+	var envelope migrationEnvelope
+	if err := decodeJSON(data, &envelope, false); err != nil {
+		return MigrationRunReport{}, fmt.Errorf("decode migration run: %w", err)
+	}
+	if envelope.Command != MigrationRunCommand {
+		return MigrationRunReport{}, fmt.Errorf("migration run names another command than %s", MigrationRunCommand)
+	}
 	var report MigrationRunReport
 	if err := decodeJSON(data, &report, false); err != nil {
 		return MigrationRunReport{}, fmt.Errorf("decode migration run: %w", err)
@@ -383,6 +435,14 @@ func DecodeMigrationRun(data []byte) (MigrationRunReport, error) {
 		if err := report.Failure.validate(report); err != nil {
 			return MigrationRunReport{}, err
 		}
+	}
+	// A failed run that read no history afterwards stopped before it
+	// selected anything. One that names a selection, an applied version or a
+	// failed statement contradicts that, and nothing could say what the
+	// database holds after it.
+	if report.Outcome == MigrationOutcomeFailed && report.Status == nil && !report.StoppedBeforeSelecting() {
+		return MigrationRunReport{}, fmt.Errorf(
+			"migration run reports failed with no history and names a selection, an applied version or a failed statement")
 	}
 	return report, nil
 }

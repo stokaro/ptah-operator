@@ -463,7 +463,9 @@ func decodeMigrationReport(result *Result, config Config, outcome commandOutcome
 		}
 		return
 	}
-	report.Error = ""
+	// The error object leaves the report: its message is Ptah's, and can quote
+	// a row.
+	report.Error = nil
 	redactMigrationHistoryError(report.Status)
 	result.MigrationRun = &report
 	// The report is the only thing that may narrow what was claimed before the
@@ -821,8 +823,10 @@ func planStatements(plan dataplane.PlanFile) []string {
 // fenceRefusalMessage is the sentence a fence refusal is reported with: the
 // report's own, which names the fenced tables and no row.
 func fenceRefusalMessage(report dataplane.SchemaPlanReport) string {
-	if message := strings.TrimSpace(report.Error); message != "" {
-		return message
+	if report.Error != nil {
+		if message := strings.TrimSpace(report.Error.Message); message != "" {
+			return message
+		}
 	}
 	if len(report.Refusal.Tables) != 0 {
 		return "refusing to change protected table(s) " + strings.Join(report.Refusal.Tables, ", ")

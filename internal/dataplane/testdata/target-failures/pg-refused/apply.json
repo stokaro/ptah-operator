@@ -1,0 +1,11 @@
+{
+  "contract_version": 4,
+  "command": "schema apply",
+  "outcome": "failed",
+  "plan_name": "plan_4e66ccfc3f82",
+  "plan_digest": "sha256:d16024aa02c830c82afdf6a8e801fa41286bb7c36985075c236ab48055fac7d5",
+  "error": {
+    "kind": "database_unreachable",
+    "message": "connect to --db-url: failed to ping database: failed to connect to `user=postgres database=t_new_tbl`: 172.20.0.2:5439 (fk760-pg): dial error: dial tcp 172.20.0.2:5439: connect: connection refused"
+  }
+}

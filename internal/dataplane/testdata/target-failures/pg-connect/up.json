@@ -1,0 +1,10 @@
+{
+  "contract_version": 2,
+  "command": "migrations up",
+  "direction": "up",
+  "outcome": "failed",
+  "error": {
+    "kind": "permission_denied",
+    "message": "error connecting to database: failed to ping database: failed to connect to `user=noconnect database=nc`: 172.20.0.2:5432 (fk760-pg): server error: FATAL: permission denied for database \"nc\" (SQLSTATE 42501)"
+  }
+}

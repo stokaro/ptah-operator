@@ -31,13 +31,13 @@ func TestARunMessageNamesTheMigrationItStoppedIn(t *testing.T) {
 	failed := func(status *dataplane.MigrationStatusReport) dataplane.MigrationRunReport {
 		return dataplane.MigrationRunReport{
 			Outcome: dataplane.MigrationOutcomeFailed, Planned: []int64{1, 2, 3}, Applied: []int64{1},
-			Error: `relation "ledger_entries" does not exist`, Status: status,
+			Error: &dataplane.CommandError{Message: `relation "ledger_entries" does not exist`}, Status: status,
 		}
 	}
 	partial := func(status *dataplane.MigrationStatusReport) dataplane.MigrationRunReport {
 		return dataplane.MigrationRunReport{
 			Outcome: dataplane.MigrationOutcomePartial, Planned: []int64{2, 3},
-			Error: `Duplicate entry 'DE' for key 'countries.PRIMARY'`, Status: status,
+			Error: &dataplane.CommandError{Message: `Duplicate entry 'DE' for key 'countries.PRIMARY'`}, Status: status,
 		}
 	}
 	failing := func(report dataplane.MigrationRunReport, failure dataplane.MigrationRunFailure) dataplane.MigrationRunReport {
@@ -237,7 +237,7 @@ func TestARunMessageKeepsItsPointInsideTheEvent(t *testing.T) {
 }
 
 // TestARunMessageFromPtahsOwnDocuments writes the message for the run
-// documents Ptah v0.14.0 printed (see internal/dataplane/testdata), so the
+// documents Ptah printed (see internal/dataplane/testdata), so the
 // sentence a reader sees is the one a real failure on each engine produces.
 func TestARunMessageFromPtahsOwnDocuments(t *testing.T) {
 	t.Parallel()

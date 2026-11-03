@@ -1,5 +1,6 @@
 {
-  "contract_version": 1,
+  "contract_version": 2,
+  "command": "migrations up",
   "direction": "up",
   "outcome": "failed",
   "planned": [
@@ -16,7 +17,9 @@
   "applied_keys": [
     "1"
   ],
-  "error": "failed to apply migration 2: failed to execute migration SQL: SQL execution failed: ERROR: relation \"ledger_entries\" does not exist (SQLSTATE 42P01)\nSQL: SELECT count(*) FROM ledger_entries",
+  "error": {
+    "message": "failed to apply migration 2: failed to execute migration SQL: SQL execution failed: ERROR: relation \"ledger_entries\" does not exist (SQLSTATE 42P01)\nSQL: SELECT count(*) FROM ledger_entries"
+  },
   "failure": {
     "version": 2,
     "version_key": "2",
@@ -50,26 +53,30 @@
       "total": 3,
       "error": "failed to execute migration SQL: SQL execution failed: ERROR: relation \"ledger_entries\" does not exist (SQLSTATE 42P01)\nSQL: SELECT count(*) FROM ledger_entries",
       "error_stmt": "SELECT count(*) FROM ledger_entries",
-      "execution_time": 8000000,
-      "checksum": "9bfd30b0a665a04d3ab1773875f97e10839dcfa4c75c87d47901846ac135e13e",
-      "applied_at": "2026-10-21T14:54:39.982064Z",
+      "execution_time": 14000000,
+      "checksum": "5d928358a310afe50a04144729313cef595ca7c789a7c38fb56446bb87a9efe3",
+      "applied_at": "2026-11-02T23:55:28.888574Z",
       "dirty": true
     },
-    "contract_version": 1,
+    "contract_version": 2,
     "migrations": [
       {
         "version": 1,
         "version_key": "1",
         "description": "Create Journal",
-        "checksum": "7e1b886aaeecb4ff35f9c0cdd01a06aac0822947141a5307a7f3cb10b3932616",
-        "applied_checksum": "7e1b886aaeecb4ff35f9c0cdd01a06aac0822947141a5307a7f3cb10b3932616",
+        "checksum": "0249f3552919832926887346473c26716b7b8ccbf0dc54491d2208bf7483a3c7",
+        "applied_checksum": "0249f3552919832926887346473c26716b7b8ccbf0dc54491d2208bf7483a3c7",
+        "applied_at": "2026-11-02T23:55:28.884844Z",
+        "execution_time_ms": 13,
         "state": "applied"
       },
       {
         "version": 2,
         "version_key": "2",
         "description": "Read Ledger",
-        "checksum": "9bfd30b0a665a04d3ab1773875f97e10839dcfa4c75c87d47901846ac135e13e",
+        "checksum": "5d928358a310afe50a04144729313cef595ca7c789a7c38fb56446bb87a9efe3",
+        "applied_at": "2026-11-02T23:55:28.888574Z",
+        "execution_time_ms": 14,
         "state": "dirty"
       }
     ],

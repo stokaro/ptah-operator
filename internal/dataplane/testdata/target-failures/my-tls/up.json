@@ -1,0 +1,10 @@
+{
+  "contract_version": 2,
+  "command": "migrations up",
+  "direction": "up",
+  "outcome": "failed",
+  "error": {
+    "kind": "tls_failed",
+    "message": "error connecting to database: failed to ping database: tls: failed to verify certificate: x509: certificate is not valid for any names, but wanted to match fk760-mysql"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "contract_version": 3,
+  "command": "schema plan",
+  "outcome": "failed",
+  "error": {
+    "kind": "database_not_found",
+    "message": "connect to --db-url: failed to ping database: Error 1049 (42000): Unknown database 'no_such_db'"
+  }
+}

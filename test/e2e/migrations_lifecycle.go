@@ -16,6 +16,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/migrationplan"
 )
 
@@ -35,9 +36,10 @@ func awaitingApprovalGate(migration *ptahv1alpha1.PtahMigration, digest string, 
 		return fmt.Errorf("it is %s", status.Phase)
 	case status.Artifact == nil || status.Artifact.Digest != digest:
 		return errors.New("its artifact is not the published digest")
-	case history == nil || history.ContractVersion != 1 || history.CurrentVersion != 0 || history.AppliedCount != 0 ||
+	case history == nil || history.ContractVersion != dataplane.SupportedMigrationStatusContract ||
+		history.CurrentVersion != 0 || history.AppliedCount != 0 ||
 		history.PendingCount != 3 || history.Dirty || len(history.ModifiedVersions) != 0:
-		return fmt.Errorf("its history is not an empty contract-1 history with three pending: %+v", history)
+		return fmt.Errorf("its history is not an empty history of the current contract with three pending: %+v", history)
 	case !sha256Pattern.MatchString(history.Fingerprint) || !sha256Pattern.MatchString(history.TargetIdentityDigest):
 		return errors.New("its history has no fingerprint or target identity")
 	case status.ExecutionBinding == nil || status.ExecutionBinding.ControllerStateVersion != stateVersion:

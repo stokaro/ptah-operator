@@ -39,6 +39,15 @@ const (
 	// sequences, triggers, views and validated constraints.
 	DriftFindingVocabularyVersion = 3
 
+	// SupportedDriftContract is the version of the document `ptah schema
+	// drift --format json` prints that this operator reads, and DriftCommand
+	// the command that document names. Ptah gave the report a version in
+	// stokaro/ptah#5173, together with the failure document the command now
+	// prints in its place. A report without one comes from an earlier Ptah and
+	// is refused.
+	SupportedDriftContract = 1
+	DriftCommand           = "schema drift"
+
 	// MaxDriftFindingKindBytes bounds the kind a qualified category carries.
 	// The longest qualified category is 25 bytes before the kind, so a category
 	// the vocabulary admits is at most 153 bytes.
@@ -226,6 +235,8 @@ type DriftInventoryEntry struct {
 }
 
 type DriftReport struct {
+	ContractVersion  int             `json:"contract_version"`
+	Command          string          `json:"command"`
 	Drift            bool            `json:"drift"`
 	Failed           bool            `json:"failed"`
 	FailureThreshold string          `json:"failure_threshold"`
@@ -239,7 +250,10 @@ type DriftReport struct {
 	// Inventory is absent from a Ptah that does not count, which the
 	// operator reads as a report with no inventory rather than an empty one.
 	Inventory []DriftInventoryEntry `json:"inventory,omitempty"`
-	Error     string                `json:"error,omitempty"`
+	// Error is present only on the failure document the command prints in
+	// place of a report, which DecodeDrift refuses and DecodeDriftFailure
+	// reads.
+	Error *CommandError `json:"error,omitempty"`
 }
 
 // MaxDriftInventoryEntries bounds a report's inventory, as
@@ -416,8 +430,17 @@ func DecodeDrift(data []byte, exitCode int) (DriftReport, error) {
 	if err := decodeJSON(data, &report, false); err != nil {
 		return DriftReport{}, fmt.Errorf("decode drift report: %w", err)
 	}
-	if report.Error != "" {
-		return DriftReport{}, fmt.Errorf("drift observation failed: %s", bounded(report.Error, 1024))
+	if report.ContractVersion != SupportedDriftContract {
+		return DriftReport{}, fmt.Errorf("drift report contract version %d is not the %d this operator reads",
+			report.ContractVersion, SupportedDriftContract)
+	}
+	if report.Command != DriftCommand {
+		return DriftReport{}, fmt.Errorf("drift report names another command than %s", DriftCommand)
+	}
+	// A failure document is not a report. Its message is not repeated: it is
+	// what Ptah or the database wrote, and DecodeDriftFailure reads its kind.
+	if report.Error != nil {
+		return DriftReport{}, fmt.Errorf("drift observation failed")
 	}
 	if report.Failed && !report.Drift {
 		return DriftReport{}, fmt.Errorf("drift report says failed=true without drift")
@@ -1042,11 +1065,4 @@ func dialectMatches(engine, dialect string) bool {
 	default:
 		return false
 	}
-}
-
-func bounded(value string, limit int) string {
-	if len(value) <= limit {
-		return value
-	}
-	return value[:limit] + "..."
 }

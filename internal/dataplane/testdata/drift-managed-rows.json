@@ -1,9 +1,11 @@
 {
+  "contract_version": 1,
+  "command": "schema drift",
   "drift": true,
   "failed": true,
   "failure_threshold": "all",
   "highest_severity": "destructive",
-  "dialect": "sqlite",
+  "dialect": "postgres",
   "findings": [
     {
       "category": "data_rows_inserted",
@@ -19,6 +21,23 @@
       "category": "data_rows_deleted",
       "count": 1,
       "severity": "destructive"
+    }
+  ],
+  "inventory": [
+    {
+      "kind": "columns",
+      "desired": 5,
+      "observed": 5
+    },
+    {
+      "kind": "constraints",
+      "desired": 1,
+      "observed": 1
+    },
+    {
+      "kind": "tables",
+      "desired": 2,
+      "observed": 2
     }
   ],
   "managed_data": {
@@ -50,11 +69,14 @@
   },
   "diff": {
     "identifier_semantics": {
-      "default_schema": "main",
+      "default_schema": "public",
+      "search_path": [
+        "public"
+      ],
       "index_namespace": "schema",
-      "index_names": "ascii_case_insensitive",
-      "table_names": "ascii_case_insensitive",
-      "column_names": "ascii_case_insensitive"
+      "index_names": "exact",
+      "table_names": "exact",
+      "column_names": "exact"
     },
     "tables_added": null,
     "tables_removed": null,
@@ -64,38 +86,15 @@
     "enums_modified": null,
     "indexes_added": null,
     "indexes_removed": null,
-    "extensions_added": [],
-    "extensions_removed": [],
-    "extensions_modified": [],
+    "index_visibility_changed": null,
     "functions_added": null,
     "functions_removed": null,
     "functions_modified": null,
     "sequences_added": null,
     "sequences_removed": null,
     "sequences_modified": null,
-    "domains_added": null,
-    "domains_removed": null,
-    "domains_modified": null,
-    "composite_types_added": null,
-    "composite_types_removed": null,
-    "composite_types_modified": null,
-    "ranges_added": null,
-    "ranges_removed": null,
-    "ranges_modified": null,
     "views_added": null,
     "views_removed": null,
-    "hypertables_added": null,
-    "hypertables_removed": null,
-    "hypertables_modified": null,
-    "continuous_aggregates_added": null,
-    "continuous_aggregates_removed": null,
-    "continuous_aggregates_modified": null,
-    "synonyms_added": null,
-    "synonyms_removed": null,
-    "synonyms_modified": null,
-    "extended_properties_added": null,
-    "extended_properties_removed": null,
-    "extended_properties_modified": null,
     "views_modified": null,
     "materialized_views_added": null,
     "materialized_views_removed": null,
@@ -106,8 +105,10 @@
     "rls_policies_added": null,
     "rls_policies_removed": null,
     "rls_policies_modified": null,
+    "object_comments_changed": null,
     "rls_enabled_tables_added": null,
     "rls_enabled_tables_removed": null,
+    "rls_force_changed": null,
     "roles_added": null,
     "roles_removed": null,
     "roles_modified": null,
@@ -115,12 +116,10 @@
     "grants_removed": null,
     "grant_options_added": null,
     "grant_options_revoked": null,
-    "default_privileges_added": null,
-    "default_privileges_removed": null,
-    "default_privilege_options_added": null,
-    "default_privilege_options_revoked": null,
     "constraints_added": null,
     "constraints_removed": null,
-    "foreign_keys_removed_with_tables": null
+    "foreign_keys_removed_with_tables": null,
+    "constraint_comments_changed": null,
+    "constraints_validated": null
   }
 }

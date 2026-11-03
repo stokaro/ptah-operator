@@ -1,6 +1,7 @@
 package dataplane_test
 
 import (
+	"fmt"
 	"os"
 	"testing"
 
@@ -8,11 +9,12 @@ import (
 )
 
 // The fixture is a `ptah schema drift --format json` document, captured from a
-// run against a SQLite database holding the reference-data end-to-end
-// fixtures: one declared row missing, one edited by hand, and one row in the
-// table the declaration no longer holds. Two fields were removed after the
-// capture, and nothing else: `sources` and `database_url` name the machine that
-// produced it, and the second carries a connection string.
+// build of stokaro/ptah#5173 (4240c407) against a PostgreSQL 17 database that
+// applied the reference-data end-to-end fixtures (testdata/e2e/reference/v1)
+// and was then edited by hand: one declared row deleted, one changed, and one
+// row added that the declaration does not hold. Two fields were removed after
+// the capture, and nothing else: `sources` and `database_url` name the machine
+// that produced it, and the second carries a connection string.
 //
 // It is captured rather than written because the question is what Ptah emits,
 // and a document written here could only prove that the reader agrees with its
@@ -102,11 +104,13 @@ func TestDriftReportDigestIgnoresRowDrift(t *testing.T) {
 	}
 }
 
-// The fixture is a `ptah schema drift --format json` document, captured from
-// the Ptah v0.14.0 release image against PostgreSQL 17: the desired schema
-// declares pg_trgm and the database lacks it. Ptah's extension owner reports it
-// under feature_changes with the type of object after a colon. `sources` and
-// `database_url` were removed after the capture, as above, and nothing else.
+// The fixture is a `ptah schema drift --format json` document, captured from a
+// build of stokaro/ptah#5173 (4240c407) against PostgreSQL 17: the desired
+// schema declares pg_trgm and a table, and the database holds the table and
+// lacks the extension. Ptah's extension owner reports it under feature_changes
+// with the type of object after a colon, and counts it in the inventory under
+// that kind. `sources` and `database_url` were removed after the capture, as
+// above, and nothing else.
 func TestDecodeDriftAcceptsAFeatureCategoryWithItsKind(t *testing.T) {
 	t.Parallel()
 
@@ -121,5 +125,10 @@ func TestDecodeDriftAcceptsAFeatureCategoryWithItsKind(t *testing.T) {
 	want := dataplane.DriftFinding{Category: "feature_changes:ptah.run/pgextension/extension-change", Count: 1, Severity: "safe"}
 	if len(report.Findings) != 1 || report.Findings[0] != want {
 		t.Fatalf("findings = %+v, want %+v", report.Findings, want)
+	}
+	// Ptah counted the extension under its feature kind as well. Status keeps
+	// no such kind, so the inventory is the two the table counts.
+	if got := fmt.Sprint(report.Inventory); got != "[{columns 2 2} {tables 1 1}]" {
+		t.Fatalf("inventory = %s", got)
 	}
 }

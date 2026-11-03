@@ -16,6 +16,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
 	"github.com/stokaro/ptah-operator/internal/migrationview"
 	"github.com/stokaro/ptah-operator/internal/statusview"
@@ -327,7 +328,8 @@ func mtAwaiting() *ptahv1alpha1.PtahMigration {
 		Artifact:         &ptahv1alpha1.SourceAccessBinding{Digest: mtDigest},
 		ExecutionBinding: &ptahv1alpha1.ExecutionBindingStatus{ControllerStateVersion: 2},
 		History: &ptahv1alpha1.MigrationHistoryStatus{
-			ContractVersion: 1, PendingCount: 3, Fingerprint: builderDigest('2'), TargetIdentityDigest: builderDigest('3'),
+			ContractVersion: dataplane.SupportedMigrationStatusContract, PendingCount: 3,
+			Fingerprint: builderDigest('2'), TargetIdentityDigest: builderDigest('3'),
 		},
 		Plan: &ptahv1alpha1.ImmutableObjectReference{Name: "ptah-mplan-abc", UID: "plan-uid"},
 		Conditions: []metav1.Condition{
@@ -347,9 +349,12 @@ func TestAwaitingApprovalGate(t *testing.T) {
 			"another digest": func(m *ptahv1alpha1.PtahMigration) {
 				m.Status.Artifact.Digest = builderDigest('9')
 			},
-			"no artifact":               func(m *ptahv1alpha1.PtahMigration) { m.Status.Artifact = nil },
-			"no history":                func(m *ptahv1alpha1.PtahMigration) { m.Status.History = nil },
-			"another history contract":  func(m *ptahv1alpha1.PtahMigration) { m.Status.History.ContractVersion = 2 },
+			"no artifact":              func(m *ptahv1alpha1.PtahMigration) { m.Status.Artifact = nil },
+			"no history":               func(m *ptahv1alpha1.PtahMigration) { m.Status.History = nil },
+			"another history contract": func(m *ptahv1alpha1.PtahMigration) { m.Status.History.ContractVersion = 3 },
+			"the history Ptah v0.17.0 read": func(m *ptahv1alpha1.PtahMigration) {
+				m.Status.History.ContractVersion = 1
+			},
 			"a version already applied": func(m *ptahv1alpha1.PtahMigration) { m.Status.History.CurrentVersion = 1 },
 			"an applied count":          func(m *ptahv1alpha1.PtahMigration) { m.Status.History.AppliedCount = 1 },
 			"two pending":               func(m *ptahv1alpha1.PtahMigration) { m.Status.History.PendingCount = 2 },

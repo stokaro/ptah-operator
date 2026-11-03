@@ -1,0 +1,8 @@
+{
+  "contract_version": 1,
+  "command": "schema drift",
+  "error": {
+    "kind": "database_unreachable",
+    "message": "error connecting to database: failed to ping database: dial tcp 172.20.0.3:3309: connect: connection refused"
+  }
+}

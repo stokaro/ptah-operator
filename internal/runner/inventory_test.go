@@ -93,7 +93,7 @@ func TestFrameRefusesAnInventoryItCannotKeep(t *testing.T) {
 // vocabulary does not.
 func TestObserveFramesTheInventory(t *testing.T) {
 	t.Parallel()
-	report := `{"drift":false,"failed":false,"failure_threshold":"all","highest_severity":"","dialect":"postgres",` +
+	report := `{"contract_version":1,"command":"schema drift","drift":false,"failed":false,"failure_threshold":"all","highest_severity":"","dialect":"postgres",` +
 		`"diff":{"tables_added":[]},"inventory":[{"kind":"tables","desired":12,"observed":12},` +
 		`{"kind":"columns","desired":87,"observed":87}]}`
 	result := Run(context.Background(), Config{

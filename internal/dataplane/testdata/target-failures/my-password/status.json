@@ -1,0 +1,8 @@
+{
+  "contract_version": 2,
+  "command": "migrations status",
+  "error": {
+    "kind": "authentication_failed",
+    "message": "error connecting to database: failed to ping database: Error 1045 (28000): Access denied for user 'root'@'172.20.0.4' (using password: YES)"
+  }
+}

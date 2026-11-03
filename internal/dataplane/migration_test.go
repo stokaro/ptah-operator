@@ -11,7 +11,8 @@ import (
 )
 
 const migrationStatusDocument = `{
-  "contract_version": 1,
+  "contract_version": 2,
+  "command": "migrations status",
   "current_version": 2,
   "checkpoint_version": 0,
   "applied_migrations": [1, 2],
@@ -47,7 +48,7 @@ func TestDecodeMigrationStatus_ReadsWhatAPlanNeeds(t *testing.T) {
 }
 
 func TestDecodeMigrationStatus_NamesAModifiedMigration(t *testing.T) {
-	document := `{"contract_version":1,"current_version":1,"total_migrations":1,"has_pending_changes":false,
+	document := `{"contract_version":2,"command":"migrations status","current_version":1,"total_migrations":1,"has_pending_changes":false,
 	  "migrations":[{"version":1,"checksum":"h1:new","applied_checksum":"h1:old","state":"modified"}]}`
 
 	report, err := dataplane.DecodeMigrationStatus([]byte(document))
@@ -68,7 +69,7 @@ func TestDecodeMigrationStatus_NamesAModifiedMigration(t *testing.T) {
 // question a plan asks. This document is what the pinned Ptah printed after a
 // checkpoint bootstrap against PostgreSQL.
 func TestDecodeMigrationStatus_ReadsTheSelectionRatherThanRecountingIt(t *testing.T) {
-	document := `{"contract_version":1,"current_version":4,"total_migrations":4,
+	document := `{"contract_version":2,"command":"migrations status","current_version":4,"total_migrations":4,
 	  "applied_migrations":[3,4],"pending_migrations":[],"has_pending_changes":false,
 	  "migrations":[
 	    {"version":1,"checksum":"h1:one","state":"pending"},
@@ -90,7 +91,7 @@ func TestDecodeMigrationStatus_ReadsTheSelectionRatherThanRecountingIt(t *testin
 // A document that carries no selection is read the old way rather than as an
 // empty one, so a build that reports only states still produces a plan.
 func TestDecodeMigrationStatus_FallsBackToTheStatesWhenNoSelectionIsPublished(t *testing.T) {
-	document := `{"contract_version":1,"current_version":1,"total_migrations":2,"has_pending_changes":true,
+	document := `{"contract_version":2,"command":"migrations status","current_version":1,"total_migrations":2,"has_pending_changes":true,
 	  "migrations":[
 	    {"version":1,"checksum":"h1:one","applied_checksum":"h1:one","state":"applied"},
 	    {"version":2,"checksum":"h1:two","state":"pending"}
@@ -113,7 +114,7 @@ func TestDecodeMigrationStatus_FallsBackToTheStatesWhenNoSelectionIsPublished(t 
 // unchanged.
 func TestDecodeMigrationStatus_ReadsWhenEachRowRan(t *testing.T) {
 	t.Parallel()
-	document := `{"contract_version":1,"current_version":2,"total_migrations":3,"has_pending_changes":true,
+	document := `{"contract_version":2,"command":"migrations status","current_version":2,"total_migrations":3,"has_pending_changes":true,
 	  "pending_migrations":[3],
 	  "migrations":[
 	    {"version":1,"description":"create accounts","checksum":"h1:one","applied_checksum":"h1:one",
@@ -131,8 +132,10 @@ func TestDecodeMigrationStatus_ReadsWhenEachRowRan(t *testing.T) {
 	if err != nil {
 		t.Fatalf("encode the result frame: %v", err)
 	}
-	relayed, err := dataplane.DecodeMigrationStatus(frame)
-	if err != nil {
+	// The controller reads the frame as the runner wrote it, with no command:
+	// the frame is the runner's document, not Ptah's.
+	var relayed dataplane.MigrationStatusReport
+	if err := json.Unmarshal(frame, &relayed); err != nil {
 		t.Fatalf("decode the result frame: %v", err)
 	}
 
@@ -157,62 +160,87 @@ func TestDecodeMigrationStatus_FailurePath(t *testing.T) {
 		message  string
 	}{
 		{
-			name:     "unknown contract version",
+			name:     "the contract version Ptah v0.17.0 printed",
+			document: `{"contract_version":1,"command":"migrations status","total_migrations":0,"has_pending_changes":false}`,
+			message:  "migration status contract version 1 is not the 2 this operator reads",
+		},
+		{
+			name:     "no command",
 			document: `{"contract_version":2,"total_migrations":0,"has_pending_changes":false}`,
-			message:  "migration status contract version 2 is not the 1 this operator reads",
+			message:  "migration status names another command than migrations status",
+		},
+		{
+			name:     "a run document",
+			document: `{"contract_version":2,"command":"migrations up","total_migrations":0,"has_pending_changes":false}`,
+			message:  "migration status names another command than migrations status",
+		},
+		{
+			// The document a status run prints when it cannot read the
+			// history carries none of the status fields, so read as one it
+			// would be a database with nothing applied.
+			name: "the failure document a status run prints",
+			document: `{"contract_version":2,"command":"migrations status",` +
+				`"error":{"kind":"database_unreachable","message":"error connecting to database"}}`,
+			message: "migration status is a failure document",
+		},
+		{
+			name: "a failure document whose error has no kind",
+			document: `{"contract_version":2,"command":"migrations status",` +
+				`"error":{"message":"open /in/migrations: no such file or directory"}}`,
+			message: "migration status is a failure document",
 		},
 		{
 			name: "unknown state",
-			document: `{"contract_version":1,"total_migrations":1,"has_pending_changes":false,
+			document: `{"contract_version":2,"command":"migrations status","total_migrations":1,"has_pending_changes":false,
 			  "migrations":[{"version":1,"checksum":"h1:one","state":"quarantined"}]}`,
 			message: `migration status reports state "quarantined" for version 1, which this operator does not know`,
 		},
 		{
 			name: "repeated version",
-			document: `{"contract_version":1,"total_migrations":2,"has_pending_changes":false,
+			document: `{"contract_version":2,"command":"migrations status","total_migrations":2,"has_pending_changes":false,
 			  "migrations":[{"version":1,"checksum":"a","state":"applied"},{"version":1,"checksum":"b","state":"applied"}]}`,
 			message: "migration status lists version 1 twice",
 		},
 		{
 			name: "more migrations than it counts",
-			document: `{"contract_version":1,"total_migrations":1,"has_pending_changes":false,
+			document: `{"contract_version":2,"command":"migrations status","total_migrations":1,"has_pending_changes":false,
 			  "migrations":[{"version":1,"checksum":"a","state":"applied"},{"version":2,"checksum":"b","state":"pending"}]}`,
 			message: "migration status lists 2 migrations and counts 1",
 		},
 		{
 			name: "a time on a migration with no revision row",
-			document: `{"contract_version":1,"total_migrations":1,"has_pending_changes":true,
+			document: `{"contract_version":2,"command":"migrations status","total_migrations":1,"has_pending_changes":true,
 			  "migrations":[{"version":1,"checksum":"a","applied_at":"2026-10-24T07:42:30Z","state":"pending"}]}`,
 			message: `migration status reports when version 1 ran, and its state "pending" has no revision row`,
 		},
 		{
 			name: "a duration on a checkpoint-covered migration",
-			document: `{"contract_version":1,"total_migrations":1,"has_pending_changes":false,
+			document: `{"contract_version":2,"command":"migrations status","total_migrations":1,"has_pending_changes":false,
 			  "migrations":[{"version":1,"checksum":"a","execution_time_ms":3,"state":"checkpoint-covered"}]}`,
 			message: `migration status reports when version 1 ran, and its state "checkpoint-covered" has no revision row`,
 		},
 		{
 			name: "a duration and no time",
-			document: `{"contract_version":1,"total_migrations":1,"has_pending_changes":false,
+			document: `{"contract_version":2,"command":"migrations status","total_migrations":1,"has_pending_changes":false,
 			  "migrations":[{"version":1,"checksum":"a","applied_checksum":"a","execution_time_ms":3,"state":"applied"}]}`,
 			message: "migration status reports how long version 1 ran and not when",
 		},
 		{
 			name: "a negative duration",
-			document: `{"contract_version":1,"total_migrations":1,"has_pending_changes":false,
+			document: `{"contract_version":2,"command":"migrations status","total_migrations":1,"has_pending_changes":false,
 			  "migrations":[{"version":1,"checksum":"a","applied_checksum":"a","applied_at":"2026-10-24T07:42:30Z",
 			  "execution_time_ms":-1,"state":"applied"}]}`,
 			message: "migration status reports version 1 ran for -1 milliseconds",
 		},
 		{
 			name: "a description no file name holds",
-			document: `{"contract_version":1,"total_migrations":1,"has_pending_changes":false,
+			document: `{"contract_version":2,"command":"migrations status","total_migrations":1,"has_pending_changes":false,
 			  "migrations":[{"version":1,"description":"` + strings.Repeat("d", 256) + `","checksum":"a","state":"applied"}]}`,
 			message: "migration status reports a description of 256 bytes for version 1, longer than a file name holds",
 		},
 		{
 			name: "a checksum no digest spells",
-			document: `{"contract_version":1,"total_migrations":1,"has_pending_changes":false,
+			document: `{"contract_version":2,"command":"migrations status","total_migrations":1,"has_pending_changes":false,
 			  "migrations":[{"version":1,"checksum":"a","applied_checksum":"` + strings.Repeat("c", 129) + `","state":"applied"}]}`,
 			message: "migration status reports a checksum longer than 128 bytes for version 1",
 		},
@@ -229,9 +257,9 @@ func TestDecodeMigrationStatus_FailurePath(t *testing.T) {
 }
 
 func TestDecodeMigrationRun_ReadsTheEvidence(t *testing.T) {
-	document := `{"contract_version":1,"direction":"up","outcome":"partial","planned":[3],"applied":[],
-	  "error":"failed to apply migration 3",
-	  "status":{"contract_version":1,"current_version":2,"total_migrations":3,"has_pending_changes":true,
+	document := `{"contract_version":2,"command":"migrations up","direction":"up","outcome":"partial","planned":[3],"applied":[],
+	  "error":{"message":"failed to apply migration 3"},
+	  "status":{"contract_version":2,"current_version":2,"total_migrations":3,"has_pending_changes":true,
 	    "dirty_revision":{"version":3,"applied":2,"total":5}}}`
 
 	report, err := dataplane.DecodeMigrationRun([]byte(document))
@@ -251,19 +279,22 @@ func TestDecodeMigrationRun_ReadsTheEvidence(t *testing.T) {
 }
 
 // runWithFailure is a run document carrying the failure given, for the rows
-// that hold a failure to the run around it.
+// that hold a failure to the run around it, with the history Ptah read after
+// the run.
 func runWithFailure(outcome, planned, applied, failure string) string {
-	return `{"contract_version":1,"direction":"up","outcome":"` + outcome + `","planned":` + planned +
-		`,"applied":` + applied + `,"failure":` + failure + `}`
+	return `{"contract_version":2,"command":"migrations up","direction":"up","outcome":"` + outcome + `","planned":` + planned +
+		`,"applied":` + applied + `,"failure":` + failure +
+		`,"status":{"contract_version":2,"current_version":1,"total_migrations":4,"has_pending_changes":true}}`
 }
 
-// The two fixtures are `ptah migrations up --json` documents, captured from
-// the Ptah v0.14.0 release image (ghcr.io/stokaro/ptah@sha256:6c7a5d62...)
-// against PostgreSQL 17 and MySQL 8.4 and stored as it printed them. Both run two migrations; the second fails. On PostgreSQL its
-// second of three statements reads a table that does not exist, and the run
-// commits nothing of it. On MySQL its first statement creates a table, so the
+// The two fixtures are `ptah migrations up --json` documents, captured from a
+// build of stokaro/ptah#5173 (4240c407) against PostgreSQL 17 and MySQL 8.4
+// and stored as it printed them, at run contract version 2. Both run two
+// migrations; the second fails. On PostgreSQL its second of three statements
+// reads a table that does not exist, and the run commits nothing of it. On
+// MySQL, run with --tx-mode none, its first statement creates a table, so the
 // duplicate key that stops its third of four leaves two committed: a partial
-// run, and an error sentence that quotes the row.
+// run, and an error message that quotes the row.
 func loadMigrationRun(t *testing.T, name string) []byte {
 	t.Helper()
 	data, err := os.ReadFile("testdata/" + name)
@@ -352,18 +383,52 @@ func TestDecodeMigrationRun_FailurePath(t *testing.T) {
 		message  string
 	}{
 		{
+			name:     "the contract version Ptah v0.17.0 printed",
+			document: `{"contract_version":1,"command":"migrations up","direction":"up","outcome":"applied"}`,
+			message:  "migration run contract version 1 is not the 2 this operator reads",
+		},
+		{
+			name:     "no command",
+			document: `{"contract_version":2,"direction":"up","outcome":"applied"}`,
+			message:  "migration run names another command than migrations up",
+		},
+		{
+			name:     "a status document",
+			document: `{"contract_version":2,"command":"migrations status","direction":"up","outcome":"applied"}`,
+			message:  "migration run names another command than migrations up",
+		},
+		{
+			name:     "failed with no history and a selection",
+			document: `{"contract_version":2,"command":"migrations up","direction":"up","outcome":"failed","planned":[1]}`,
+			message: "migration run reports failed with no history and names a selection, " +
+				"an applied version or a failed statement",
+		},
+		{
+			name:     "failed with no history and an applied version",
+			document: `{"contract_version":2,"command":"migrations up","direction":"up","outcome":"failed","planned":[1],"applied":[1]}`,
+			message: "migration run reports failed with no history and names a selection, " +
+				"an applied version or a failed statement",
+		},
+		{
+			name: "failed with no history and a failed statement",
+			document: `{"contract_version":2,"command":"migrations up","direction":"up","outcome":"failed","planned":[2],` +
+				`"failure":{"version":2,"statement":1,"statements":1}}`,
+			message: "migration run reports failed with no history and names a selection, " +
+				"an applied version or a failed statement",
+		},
+		{
 			name:     "unknown outcome",
-			document: `{"contract_version":1,"direction":"up","outcome":"probably-fine"}`,
+			document: `{"contract_version":2,"command":"migrations up","direction":"up","outcome":"probably-fine"}`,
 			message:  `migration run reports outcome "probably-fine", which this operator does not know`,
 		},
 		{
 			name:     "down direction",
-			document: `{"contract_version":1,"direction":"down","outcome":"applied"}`,
+			document: `{"contract_version":2,"command":"migrations up","direction":"down","outcome":"applied"}`,
 			message:  `migration run reports direction "down"; this operator dispatches up only`,
 		},
 		{
 			name:     "applied what it never planned",
-			document: `{"contract_version":1,"direction":"up","outcome":"applied","planned":[1],"applied":[1,2]}`,
+			document: `{"contract_version":2,"command":"migrations up","direction":"up","outcome":"applied","planned":[1],"applied":[1,2]}`,
 			message:  "migration run reports version 2 applied and never planned",
 		},
 		{
@@ -457,7 +522,7 @@ func TestEmptySelectionSurvivesTheResultFrame(t *testing.T) {
 
 	// The document Ptah prints for a database that bootstrapped from the
 	// checkpoint at version 3: three and four ran, one and two never will.
-	bootstrapped := []byte(`{"contract_version":1,"current_version":4,` +
+	bootstrapped := []byte(`{"contract_version":2,"command":"migrations status","current_version":4,` +
 		`"pending_migrations":[],` +
 		`"migrations":[{"version":1,"state":"pending"},{"version":2,"state":"pending"},` +
 		`{"version":3,"state":"applied"},{"version":4,"state":"applied"}]}`)
@@ -488,5 +553,57 @@ func TestEmptySelectionSurvivesTheResultFrame(t *testing.T) {
 	}
 	if got := relayed.Pending(); len(got) != 0 {
 		t.Fatalf("after the result frame pending is %v, want none", got)
+	}
+}
+
+// TestStoppedBeforeSelectingIsOnlyARunThatReadNoHistory holds the one shape a
+// run that never selected anything takes, as Ptah printed it for a database it
+// could not reach, against the shapes that read alike and selected something:
+// the refusal of a selection the approval did not name reads the history and
+// selects nothing, and a failed statement reads it after the run.
+func TestStoppedBeforeSelectingIsOnlyARunThatReadNoHistory(t *testing.T) {
+	t.Parallel()
+
+	unreachable, err := os.ReadFile("testdata/target-failures/pg-refused/up.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name     string
+		document []byte
+		stopped  bool
+	}{
+		{"a target that could not be opened", unreachable, true},
+		{
+			"a selection the approval did not name",
+			[]byte(`{"contract_version":2,"command":"migrations up","direction":"up","outcome":"failed",` +
+				`"error":{"message":"the history moved after the sequence was approved"},` +
+				`"status":{"contract_version":2,"current_version":3,"total_migrations":3,"has_pending_changes":false}}`),
+			false,
+		},
+		{"a failed statement", loadMigrationRun(t, "migrations-up-failed-postgres.json"), false},
+		{"a partial run", loadMigrationRun(t, "migrations-up-partial-mysql.json"), false},
+		{
+			"an outcome nobody knows, with no history",
+			[]byte(`{"contract_version":2,"command":"migrations up","direction":"up","outcome":"unknown","planned":[1]}`),
+			false,
+		},
+		{
+			"a run that applied everything",
+			[]byte(`{"contract_version":2,"command":"migrations up","direction":"up","outcome":"applied","planned":[1],"applied":[1],` +
+				`"status":{"contract_version":2,"current_version":1,"total_migrations":1,"has_pending_changes":false}}`),
+			false,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			report, err := dataplane.DecodeMigrationRun(test.document)
+			if err != nil {
+				t.Fatalf("DecodeMigrationRun() error = %v", err)
+			}
+			if got := report.StoppedBeforeSelecting(); got != test.stopped {
+				t.Fatalf("StoppedBeforeSelecting() = %v, want %v", got, test.stopped)
+			}
+		})
 	}
 }

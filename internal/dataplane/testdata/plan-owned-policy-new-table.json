@@ -7,7 +7,7 @@
   "destructive": false,
   "statements": [
     {
-      "sql": "-- POSTGRES TABLE: e2e_policy_notes --\nCREATE TABLE \"e2e_policy_notes\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"owner_name\" text NOT NULL\n)",
+      "sql": "CREATE TABLE \"e2e_policy_notes\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"owner_name\" text NOT NULL\n)",
       "severity": "safe",
       "reason": "does not remove data or tighten constraints"
     },

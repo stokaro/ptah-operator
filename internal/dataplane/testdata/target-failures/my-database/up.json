@@ -1,0 +1,10 @@
+{
+  "contract_version": 2,
+  "command": "migrations up",
+  "direction": "up",
+  "outcome": "failed",
+  "error": {
+    "kind": "database_not_found",
+    "message": "error connecting to database: failed to ping database: Error 1049 (42000): Unknown database 'no_such_db'"
+  }
+}

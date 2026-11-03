@@ -472,6 +472,10 @@ func (r *MigrationReconciler) consumeMigrationRun(
 
 // reportedMigrationRun is a run report in the terms status keeps. A missing
 // report is an unknown outcome.
+//
+// A run that stopped before it selected anything ran nothing, and its message
+// says so rather than naming a migration that never started or a selection
+// that moved.
 func (r *MigrationReconciler) reportedMigrationRun(
 	ctx context.Context,
 	migration *operatorv1alpha1.PtahMigration,
@@ -488,6 +492,10 @@ func (r *MigrationReconciler) reportedMigrationRun(
 		applied: boundedVersions(report.Applied, 256),
 		message: migrationRunMessage(*report),
 		failure: migrationRunFailure(report.Failure),
+	}
+	if report.StoppedBeforeSelecting() {
+		run.message = "The run stopped before it selected any migration, and ran none"
+		return run
 	}
 	if refusal, refused := r.sequenceRefusal(ctx, migration, migration.Status.ActiveOperation, *report); refused {
 		run.message = refusal

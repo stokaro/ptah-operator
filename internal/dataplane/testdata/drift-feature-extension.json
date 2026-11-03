@@ -1,4 +1,6 @@
 {
+  "contract_version": 1,
+  "command": "schema drift",
   "drift": true,
   "failed": true,
   "failure_threshold": "all",
@@ -9,6 +11,23 @@
       "category": "feature_changes:ptah.run/pgextension/extension-change",
       "count": 1,
       "severity": "safe"
+    }
+  ],
+  "inventory": [
+    {
+      "kind": "columns",
+      "desired": 2,
+      "observed": 2
+    },
+    {
+      "kind": "ptah.run/pgextension/extension-change",
+      "desired": 1,
+      "observed": 0
+    },
+    {
+      "kind": "tables",
+      "desired": 1,
+      "observed": 1
     }
   ],
   "diff": {
@@ -41,6 +60,9 @@
     ],
     "identifier_semantics": {
       "default_schema": "public",
+      "search_path": [
+        "public"
+      ],
       "index_namespace": "schema",
       "index_names": "exact",
       "table_names": "exact",
