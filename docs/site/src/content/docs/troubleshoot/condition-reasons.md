@@ -146,9 +146,9 @@ database shows why.
 
 ## A database the operation could not open
 
-An operation that cannot open its connection to the target database fails with
-`OperationFailed`. Its message starts with the kind of failure Ptah reported,
-says what that kind means, and names the Secret key the operation read the URL
+When an operation cannot open its connection to the target database, what the
+operator says about it starts with the kind of failure Ptah reported, then
+says what that kind means and names the Secret key the operation read the URL
 from:
 
 ```
@@ -156,9 +156,20 @@ database_unreachable: the target database did not answer: its host did not resol
 ```
 
 The Secret and the key are the ones `spec.target.urlFrom` named when the
-operation started. The same sentence is the condition message, the
-`OperationFailed` Warning Event, and what `kubectl ptah schema` and
-`kubectl ptah migration` print.
+operation started. Where the sentence appears depends on the stage that
+failed:
+
+| Stage | Where the sentence appears, and what follows |
+| --- | --- |
+| `PtahSchema` Observe or Plan | `ReconciliationFailed=True` with reason `OperationFailed`, and an `OperationFailed` Warning Event. The operation runs again after `spec.execution.failureRetryInterval`. |
+| `PtahSchema` Apply | `ReconciliationFailed=True` with reason `ApplyOutcomeUnknown`, and an `ApplyOutcomeUnknown` Warning Event whose text is fixed. Every Apply error is followed by a read-only observation before anything else runs; while the database still cannot be opened, that observation fails as above, with reason `OperationFailed` and the same sentence. |
+| `PtahMigration` history read | `Progressing=True` with reason `OperationFailed`, and an `OperationRetried` Warning Event. The read runs again after `spec.execution.failureRetryInterval`. |
+| `PtahMigration` Apply | `status.lastRun` is `Failed` with the sentence as its message, `Ready=False` and `Progressing=False` carry it with reason `OperationFailed`, and a `MigrationRunFinished` Warning Event carries it. The run ran nothing, so nothing is read back at once: the resource waits `spec.execution.failureRetryInterval` and then starts again from resolution, which reads the history before anything is planned or applied. |
+
+`kubectl ptah schema` and `kubectl ptah migration` print each condition with
+its message, and the resource's status keeps the sentence whole. An Event
+keeps 512 bytes of it, which holds the whole sentence while the Secret's name
+and key together stay under 230 bytes.
 
 | Kind | What Ptah found | Where to look |
 | --- | --- | --- |
@@ -179,11 +190,11 @@ migration history read, `invalid_plan_output` from a Plan, `apply_failed` from
 an Apply. A development database, a registry or a Git remote that cannot be
 reached is one of those, and so is a PostgreSQL URL with `sslmode=require`
 against a server that offers no TLS, which the driver reports in a form Ptah
-cannot classify.
-
-A migration Apply that could not open its database ran nothing. Its run is
-recorded `Failed` with the same sentence, and the history read that follows
-fails the same way until the database answers.
+cannot classify. A migration Apply that Ptah stopped before it selected any
+migration for another reason -- a lock or a timeout the server cannot carry, a
+lint policy that does not load -- is recorded the same way, `Failed` with the
+message "The run stopped before it selected any migration, and ran none", and
+waits the same interval.
 
 ## A change a policy fences off
 

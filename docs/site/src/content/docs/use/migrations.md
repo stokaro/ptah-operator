@@ -448,6 +448,13 @@ the unresolved run as a block of its own, with what
 [A migration run nobody accounted for](../operations/#a-migration-run-nobody-accounted-for)
 says to do about it.
 
+A run that stopped before it selected any migration ran nothing and read no
+history, so there is nothing to read back at once: the resource records it
+`Failed`, waits `spec.execution.failureRetryInterval`, and starts again from
+resolution, which reads the history before anything is planned or applied.
+[A database the operation could not open](../../troubleshoot/condition-reasons/#a-database-the-operation-could-not-open)
+says what its message names.
+
 Every other outcome is confirmed by reading the history back. What a run claims
 and what the revision table holds are two statements, and only the second one
 settles the resource.
