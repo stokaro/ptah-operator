@@ -335,9 +335,9 @@ func TestSchemaSQLContractHasActualWitnessesAtThePinnedSource(t *testing.T) {
 			var readings []witness
 			for _, variant := range []string{"", "destructive-", "exclusion-wide-", "exclusion-narrow-", "initial-v1-", "tag-v2-", "tag-v3-", "drift-"} {
 				for _, operation := range []string{"observe", "plan"} {
-					count := map[string]map[string]int{"postgresql": {"observe": 47, "plan": 85}, "mysql": {"observe": 16, "plan": 31}}[engine][operation]
+					count := map[string]map[string]int{"postgresql": {"observe": 48, "plan": 85}, "mysql": {"observe": 16, "plan": 31}}[engine][operation]
 					if variant == "initial-v1-" {
-						count = map[string]map[string]int{"postgresql": {"observe": 41, "plan": 78}, "mysql": {"observe": 15, "plan": 29}}[engine][operation]
+						count = map[string]map[string]int{"postgresql": {"observe": 42, "plan": 78}, "mysql": {"observe": 15, "plan": 29}}[engine][operation]
 					}
 					readings = append(readings, witness{variant + operation, operation, count})
 				}

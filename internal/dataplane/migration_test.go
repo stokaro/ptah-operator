@@ -287,14 +287,16 @@ func runWithFailure(outcome, planned, applied, failure string) string {
 		`,"status":{"contract_version":2,"current_version":1,"total_migrations":4,"has_pending_changes":true}}`
 }
 
-// The two fixtures are `ptah migrations up --json` documents, captured from a
-// build of stokaro/ptah 71c5b28a (#5173) against PostgreSQL 17 and MySQL 8.4
-// and stored as it printed them, at run contract version 2. Both run two
-// migrations; the second fails. On PostgreSQL its second of three statements
-// reads a table that does not exist, and the run commits nothing of it. On
-// MySQL, run with --tx-mode none, its first statement creates a table, so the
-// duplicate key that stops its third of four leaves two committed: a partial
-// run, and an error message that quotes the row.
+// The two fixtures are `ptah migrations up --json` documents, captured from
+// the Ptah v0.18.0 release image,
+// ghcr.io/stokaro/ptah@sha256:9f8797986124add44d0232a17cd17e6f03cfec76b1711efc53c169483b7b4303,
+// against PostgreSQL 17 and MySQL 8.4 and stored as it printed them, at run
+// contract version 2. Both run two migrations; the second fails. On
+// PostgreSQL its second of three statements reads a table that does not
+// exist, and the run commits nothing of it. On MySQL, run with --tx-mode
+// none, its first statement creates a table, so the duplicate key that stops
+// its third of four leaves two committed: a partial run, and an error message
+// that quotes the row.
 func loadMigrationRun(t *testing.T, name string) []byte {
 	t.Helper()
 	data, err := os.ReadFile("testdata/" + name)

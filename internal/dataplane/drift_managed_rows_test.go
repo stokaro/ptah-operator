@@ -8,13 +8,15 @@ import (
 	"github.com/stokaro/ptah-operator/internal/dataplane"
 )
 
-// The fixture is a `ptah schema drift --format json` document, captured from a
-// build of stokaro/ptah 71c5b28a (#5173) against a PostgreSQL 17 database that
-// applied the reference-data end-to-end fixtures (testdata/e2e/reference/v1)
-// and was then edited by hand: one declared row deleted, one changed, and one
-// row added that the declaration does not hold. Two fields were removed after
-// the capture, and nothing else: `sources` and `database_url` name the machine
-// that produced it, and the second carries a connection string.
+// The fixture is a `ptah schema drift --format json` document, captured from
+// the Ptah v0.18.0 release image,
+// ghcr.io/stokaro/ptah@sha256:9f8797986124add44d0232a17cd17e6f03cfec76b1711efc53c169483b7b4303,
+// against a PostgreSQL 17 database that applied the reference-data end-to-end
+// fixtures (testdata/e2e/reference/v1) and was then edited by hand: one
+// declared row deleted, one changed, and one row added that the declaration
+// does not hold. Two fields were removed after the capture, and nothing else:
+// `sources` and `database_url` name the machine that produced it, and the
+// second carries a connection string.
 //
 // It is captured rather than written because the question is what Ptah emits,
 // and a document written here could only prove that the reader agrees with its
@@ -104,8 +106,8 @@ func TestDriftReportDigestIgnoresRowDrift(t *testing.T) {
 	}
 }
 
-// The fixture is a `ptah schema drift --format json` document, captured from a
-// build of stokaro/ptah 71c5b28a (#5173) against PostgreSQL 17: the desired
+// The fixture is a `ptah schema drift --format json` document, captured from
+// the Ptah v0.18.0 release image against PostgreSQL 17: the desired
 // schema declares pg_trgm and a table, and the database holds the table and
 // lacks the extension. Ptah's extension owner reports it under feature_changes
 // with the type of object after a colon, and counts it in the inventory under
@@ -128,6 +130,37 @@ func TestDecodeDriftAcceptsAFeatureCategoryWithItsKind(t *testing.T) {
 	}
 	// Ptah counted the extension under its feature kind as well. Status keeps
 	// no such kind, so the inventory is the two the table counts.
+	if got := fmt.Sprint(report.Inventory); got != "[{columns 2 2} {tables 1 1}]" {
+		t.Fatalf("inventory = %s", got)
+	}
+}
+
+// The fixture is the drift document the Ptah v0.18.0 release image printed
+// against a PostgreSQL 17 database that holds a table with row security on and
+// no policy, for a desired schema that declares the policy. Ptah's policy
+// owner reports one change under two categories, the access it widens as
+// destructive and the change itself as safe, and counts two feature kinds in
+// the inventory: the policy, and since stokaro/ptah#5150 the table's row
+// security state, which matches. `sources` and `database_url` were removed
+// after the capture, as above, and nothing else.
+func TestDecodeDriftKeepsPolicyFindingsAndDropsTheirInventoryKinds(t *testing.T) {
+	t.Parallel()
+
+	data, err := os.ReadFile("testdata/drift-feature-policy.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := dataplane.DecodeDrift(data, 1)
+	if err != nil {
+		t.Fatalf("DecodeDrift() rejected Ptah's report of a policy the database lacks: %v", err)
+	}
+	want := []dataplane.DriftFinding{
+		{Category: "feature_access_widened:ptah.run/pgpolicy/policy-change", Count: 1, Severity: "destructive"},
+		{Category: "feature_changes:ptah.run/pgpolicy/policy-change", Count: 1, Severity: "safe"},
+	}
+	if fmt.Sprint(report.Findings) != fmt.Sprint(want) {
+		t.Fatalf("findings = %+v, want %+v", report.Findings, want)
+	}
 	if got := fmt.Sprint(report.Inventory); got != "[{columns 2 2} {tables 1 1}]" {
 		t.Fatalf("inventory = %s", got)
 	}

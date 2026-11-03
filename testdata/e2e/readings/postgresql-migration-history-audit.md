@@ -10,10 +10,11 @@ two PostgreSQL migrations, so History reads an existing revision table; its
 statements include everything it sends to an empty database, where it stops
 after asking whether the table exists.
 
-- Ptah source: `38bd6e91cfe3a70543046da9c3ada05a0460a103`, the v0.17.0 release image `support/ptah.json`
-  now pins. The reading was first taken on 2026-10-10 with the v0.13.0 release image (`eb69f8c4`), and
-  the v0.14.0, v0.15.0 and v0.16.0 images reproduced it record for record. The v0.17.0 image adds one
-  record, the search-path read below, and changes no other
+- Ptah source: `38bd6e91cfe3a70543046da9c3ada05a0460a103`, the v0.17.0 release image. The reading was
+  first taken on 2026-10-10 with the v0.13.0 release image (`eb69f8c4`), and the v0.14.0, v0.15.0 and
+  v0.16.0 images reproduced it record for record. The v0.17.0 image adds one record, the search-path
+  read below, and changes no other. On 2026-11-04 the v0.18.0 release image (`6e1d430e`) reproduced it
+  record for record
 - Server image: `postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73`
 - Client address: `10.244.3.97`
 - Isolated database: `ptah_e2e_retarget`

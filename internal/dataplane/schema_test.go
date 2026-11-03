@@ -220,13 +220,15 @@ func TestDecodeSchemaApplyRefusesWhatItCannotAccountFor(t *testing.T) {
 	}
 }
 
-// The two fixtures are the documents a build of stokaro/ptah 71c5b28a (#5173)
+// The two fixtures are the documents the Ptah v0.18.0 release image,
+// ghcr.io/stokaro/ptah@sha256:9f8797986124add44d0232a17cd17e6f03cfec76b1711efc53c169483b7b4303,
 // printed for one added column on PostgreSQL 17: `schema plan --output
 // /w/plan.json --json` and `schema apply --plan /w/plan.json --dry-run --json`,
 // stored as printed. v0.13.0 printed version 1 of both, v0.14.0 version 2 of
-// both, v0.15.0 through v0.17.0 plan version 2 and apply version 3, and #5173
-// plan version 3 and apply version 4, each naming its command. A decoder held
-// only to fixtures written here would not have noticed any of those moves.
+// both, v0.15.0 through v0.17.0 plan version 2 and apply version 3, and
+// v0.18.0 plan version 3 and apply version 4, each naming its command. A
+// decoder held only to fixtures written here would not have noticed any of
+// those moves.
 func TestDecodeSchemaReportsPtahPrinted(t *testing.T) {
 	t.Parallel()
 
