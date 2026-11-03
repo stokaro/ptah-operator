@@ -18,6 +18,7 @@ import (
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/runner"
+	"github.com/stokaro/ptah-operator/internal/targetfailure"
 	"github.com/stokaro/ptah-operator/internal/targetlock"
 )
 
@@ -26,44 +27,16 @@ import (
 // failure the controller writes its own sentence and reads none of it.
 const frameText = "FRAME-TEXT failed to connect to `user=app_owner database=orders`: db.internal.example"
 
-// TestEachTargetFailureKindHasItsSentence holds each kind to the sentence a
-// condition, an Event and kubectl ptah show for it: the kind, what it means,
-// and the Secret key the operation read its URL from.
-func TestEachTargetFailureKindHasItsSentence(t *testing.T) {
+// TestResultFailureWritesTheKindsSentence holds a frame whose code is a kind
+// to the operator's sentence for it, whatever the frame's message says.
+func TestResultFailureWritesTheKindsSentence(t *testing.T) {
 	t.Parallel()
 
 	url := corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "demo-database-broken"}, Key: "url"}
-	want := map[dataplane.TargetFailureKind]string{
-		dataplane.TargetDatabaseUnreachable: "database_unreachable: the target database did not answer: its host did not " +
-			"resolve, refused the connection, or did not respond in time. Check the host and port in the URL that " +
-			`Secret "demo-database-broken" holds under key "url", and that the database is running and accepts ` +
-			"connections from this namespace",
-		dataplane.TargetAuthenticationFailed: "authentication_failed: the target database refused the credentials. " +
-			`Check the user and password in the URL that Secret "demo-database-broken" holds under key "url"`,
-		dataplane.TargetDatabaseNotFound: "database_not_found: the target database server has no database by the name " +
-			`the URL gives. Check the database name in the URL that Secret "demo-database-broken" holds under key "url", ` +
-			"or create the database",
-		dataplane.TargetPermissionDenied: "permission_denied: the target database server accepted the credentials and " +
-			`refused the user access to the database. Check the user in the URL that Secret "demo-database-broken" holds ` +
-			`under key "url", or grant that user access to the database`,
-		dataplane.TargetTLSFailed: "tls_failed: the TLS handshake with the target database failed. Check the TLS settings " +
-			`in the URL that Secret "demo-database-broken" holds under key "url" against the certificate the server presents`,
-	}
-	if len(want) != len(dataplane.TargetFailureKinds()) {
-		t.Fatalf("the table names %d kinds, the vocabulary %d", len(want), len(dataplane.TargetFailureKinds()))
-	}
 	for _, kind := range dataplane.TargetFailureKinds() {
-		message := targetFailureMessage(kind, url)
-		if message != want[kind] {
-			t.Errorf("targetFailureMessage(%s) =\n%q\nwant\n%q", kind, message, want[kind])
-		}
-		// An Event keeps 512 bytes of it, and a condition 1024.
-		if len(message) > 512 {
-			t.Errorf("targetFailureMessage(%s) is %d bytes, more than an Event keeps", kind, len(message))
-		}
-		failure := resultFailure(&runner.ResultError{Code: string(kind), Message: frameText}, url)
-		if failure.Error() != want[kind] {
-			t.Errorf("resultFailure(%s) = %q, want the kind's sentence", kind, failure.Error())
+		want := targetfailure.Message(kind, url)
+		if failure := resultFailure(&runner.ResultError{Code: string(kind), Message: frameText}, url); failure.Error() != want {
+			t.Errorf("resultFailure(%s) = %q, want %q", kind, failure.Error(), want)
 		}
 	}
 }
@@ -84,7 +57,7 @@ func TestResultFailureReadsOnlyTheKindOfATargetFailure(t *testing.T) {
 		{
 			name:    "a kind",
 			failure: runner.ResultError{Code: "database_not_found", Message: frameText},
-			want:    targetFailureMessage(dataplane.TargetDatabaseNotFound, url),
+			want:    targetfailure.Message(dataplane.TargetDatabaseNotFound, url),
 		},
 		{
 			name:    "an exit status",
@@ -190,7 +163,7 @@ func TestASchemaNamesWhyItsTargetCouldNotBeOpened(t *testing.T) {
 		t.Fatalf("Reconcile() error = %v", err)
 	}
 	actual := safetyGetSchema(t, api, schema)
-	want := targetFailureMessage(dataplane.TargetDatabaseUnreachable, schema.Spec.Target.URLFrom)
+	want := targetfailure.Message(dataplane.TargetDatabaseUnreachable, schema.Spec.Target.URLFrom)
 	failed := meta.FindStatusCondition(actual.Status.Conditions, operatorv1alpha1.ConditionReconciliationFailed)
 	if failed == nil || failed.Status != metav1.ConditionTrue || failed.Reason != string(operatorv1alpha1.ReasonOperationFailed) ||
 		failed.Message != want {
@@ -251,7 +224,7 @@ func TestAMigrationHistoryNamesWhyItsTargetCouldNotBeOpened(t *testing.T) {
 				t.Fatalf("Reconcile() error = %v", err)
 			}
 			actual := readMigration(t, api, migration)
-			want := targetFailureMessage(dataplane.TargetPermissionDenied, migration.Spec.Target.URLFrom)
+			want := targetfailure.Message(dataplane.TargetPermissionDenied, migration.Spec.Target.URLFrom)
 			progressing := meta.FindStatusCondition(actual.Status.Conditions, operatorv1alpha1.ConditionMigrationProgressing)
 			if progressing == nil || progressing.Reason != string(operatorv1alpha1.ReasonOperationFailed) || progressing.Message != want {
 				t.Fatalf("Progressing = %#v, want OperationFailed with %q", progressing, want)
@@ -318,14 +291,14 @@ func TestAMigrationRunThatNeverSelectedSaysWhy(t *testing.T) {
 			name:    "a target that refused the credentials",
 			failure: &runner.ResultError{Code: string(dataplane.TargetAuthenticationFailed), Message: frameText},
 			want: func(migration *operatorv1alpha1.PtahMigration) string {
-				return targetFailureMessage(dataplane.TargetAuthenticationFailed, migration.Spec.Target.URLFrom)
+				return targetfailure.Message(dataplane.TargetAuthenticationFailed, migration.Spec.Target.URLFrom)
 			},
 		},
 		{
 			name:    "a target that did not answer",
 			failure: &runner.ResultError{Code: string(dataplane.TargetDatabaseUnreachable), Message: frameText},
 			want: func(migration *operatorv1alpha1.PtahMigration) string {
-				return targetFailureMessage(dataplane.TargetDatabaseUnreachable, migration.Spec.Target.URLFrom)
+				return targetfailure.Message(dataplane.TargetDatabaseUnreachable, migration.Spec.Target.URLFrom)
 			},
 		},
 		{
@@ -446,7 +419,7 @@ func TestAFrameWithAKindAndNoRunIsNotRepeated(t *testing.T) {
 		OperationID: operation.ID, ChildExitCode: 2, MutationStarted: true, Uncertain: true,
 		Error: &runner.ResultError{Code: string(dataplane.TargetTLSFailed), Message: frameText},
 	})
-	want := targetFailureMessage(dataplane.TargetTLSFailed, migration.Spec.Target.URLFrom)
+	want := targetfailure.Message(dataplane.TargetTLSFailed, migration.Spec.Target.URLFrom)
 	if reported.run != nil || reported.failure == nil || reported.failure.Error() != want {
 		t.Fatalf("frameMigrationApply() = %+v, want no run and the failure %q", reported, want)
 	}
@@ -491,7 +464,7 @@ func TestATargetFailureSentenceFitsStatusWhole(t *testing.T) {
 			Key:                  strings.Repeat("k", test.length),
 		}
 		for _, kind := range dataplane.TargetFailureKinds() {
-			if message := targetFailureMessage(kind, url); len(message) > test.limit {
+			if message := targetfailure.Message(kind, url); len(message) > test.limit {
 				t.Errorf("%s: %s is %d bytes, more than %d", test.name, kind, len(message), test.limit)
 			}
 		}

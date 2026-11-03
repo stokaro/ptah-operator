@@ -29,6 +29,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/runner"
 	"github.com/stokaro/ptah-operator/internal/sourcebinding"
 	"github.com/stokaro/ptah-operator/internal/sourcepolicy"
+	"github.com/stokaro/ptah-operator/internal/targetfailure"
 	"github.com/stokaro/ptah-operator/internal/targetlock"
 	"github.com/stokaro/ptah-operator/internal/telemetry"
 	"github.com/stokaro/ptah-operator/internal/workload"
@@ -515,7 +516,7 @@ func (r *MigrationReconciler) reportedMigrationRun(
 		run.message = "The run stopped before it selected any migration, and ran none"
 		if failure != nil {
 			if kind, known := dataplane.ParseTargetFailureKind(failure.Code); known {
-				run.message = targetFailureMessage(kind, migrationURLSecret(migration))
+				run.message = targetfailure.Message(kind, migrationURLSecret(migration))
 			}
 		}
 		return run
