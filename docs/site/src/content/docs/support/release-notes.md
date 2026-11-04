@@ -38,9 +38,11 @@ first, and four rewritten catalog reads. Nothing else.
   lists the kinds and where each stage shows them.
 - **A migration run that never started.** A migration Apply that Ptah stopped
   before it selected any migration, as on a database it could not open, is
-  now `Failed` and starts again after `spec.execution.failureRetryInterval`.
-  Before, it was `Unknown` and stopped the migration until a person accounted
-  for the run.
+  now `Failed`. After `spec.execution.failureRetryInterval` the resource reads
+  its history and plans again. Under `apply: Always` the new plan runs; under
+  `OnApproval` it waits for an approval, because the run consumed the one it
+  carried. Before, it was `Unknown` and stopped the migration until a person
+  accounted for the run.
 - **Executor.** The verified executor is now Ptah v0.18.0. A new executor
   retires the execution binding, as in 0.2.9: approve again whatever was
   waiting, after the resource has read its database with v0.18.0 and planned.
