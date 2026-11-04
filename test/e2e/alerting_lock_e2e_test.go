@@ -24,6 +24,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -260,19 +261,25 @@ func (a *alertingRun) lockReleaseCase(m *migrationRun, schemaTemplate *ptahv1.Pt
 	username := "system:serviceaccount:" + a.in.OperatorNamespace + ":" + account
 	manager, err := a.cluster.As(rest.ImpersonationConfig{UserName: username, UID: string(serviceAccount.UID), Groups: []string{"system:serviceaccounts", "system:serviceaccounts:" + a.in.OperatorNamespace, "system:authenticated"}, Extra: map[string][]string{"authentication.kubernetes.io/pod-name": {managerPod}, "authentication.kubernetes.io/pod-uid": {managerPodUID}}})
 	a.check(err, "use the real manager identity for the release probe")
+	// The manager renews the held Lease on every reconcile of the gated Apply,
+	// so a renewal can land between the read and the dry-run write. The API
+	// server checks resourceVersion before admission, and a conflict would hide
+	// whether the policy admits or refuses the write, so read again and retry.
 	probe := func(clear bool) error {
-		lease := &coordinationv1.Lease{}
-		if err := a.cluster.Client.Get(a.ctx, client.ObjectKeyFromObject(originalLease), lease); err != nil {
-			return err
-		}
-		if clear {
-			empty := ""
-			lease.Spec.HolderIdentity = &empty
-		} else {
-			renewed := metav1.NewMicroTime(time.Now().UTC())
-			lease.Spec.RenewTime = &renewed
-		}
-		return manager.Update(a.ctx, lease, client.DryRunAll)
+		return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			lease := &coordinationv1.Lease{}
+			if err := a.cluster.Client.Get(a.ctx, client.ObjectKeyFromObject(originalLease), lease); err != nil {
+				return err
+			}
+			if clear {
+				empty := ""
+				lease.Spec.HolderIdentity = &empty
+			} else {
+				renewed := metav1.NewMicroTime(time.Now().UTC())
+				lease.Spec.RenewTime = &renewed
+			}
+			return manager.Update(a.ctx, lease, client.DryRunAll)
+		})
 	}
 	a.check(probe(true), "admit the release before injecting its failure")
 	policy, binding := alLockReleasePolicy(originalLease, username)
