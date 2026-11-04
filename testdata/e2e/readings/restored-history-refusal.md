@@ -1,11 +1,12 @@
 # Restored migration history refusal journals
 
-These readings were captured from the pinned Ptah executor on isolated
-PostgreSQL 17.11 and MySQL 8.4.11 servers: the PostgreSQL reading with the Ptah
-v0.17.0 release image on 2026-11-02, and the MySQL reading with the v0.16.0
-release image on 2026-10-25, which the v0.17.0 image reproduced record for
-record on 2026-11-02. They exercise the migration selection guard used by the
-operator's `restoredHistoryProof`.
+These readings were captured from the Ptah executor on isolated PostgreSQL
+17.11 and MySQL 8.4.11 servers: the PostgreSQL reading with the Ptah v0.17.0
+release image on 2026-11-02, and the MySQL reading with the v0.16.0 release
+image on 2026-10-25, which the v0.17.0 image reproduced record for record on
+2026-11-02. On 2026-11-04 the v0.18.0 release image (`6e1d430e`) reproduced
+both record for record. They exercise the migration selection guard used by
+the operator's `restoredHistoryProof`.
 
 The probe applied the repository's two-migration fixture, then removed
 migration 2's column and revision row. `migrations up --expect-sequence`

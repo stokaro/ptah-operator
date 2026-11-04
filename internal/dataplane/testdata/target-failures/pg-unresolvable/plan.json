@@ -1,0 +1,9 @@
+{
+  "contract_version": 3,
+  "command": "schema plan",
+  "outcome": "failed",
+  "error": {
+    "kind": "database_unreachable",
+    "message": "connect to --db-url: failed to ping database: failed to connect to `user=postgres database=t_new_tbl`: hostname resolving error: lookup fk760-no-such-host.invalid on 127.0.0.11:53: no such host"
+  }
+}

@@ -912,7 +912,7 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 	}
 	if result.Error != nil {
 		return r.retryMigrationOperation(ctx, migration, job,
-			fmt.Errorf("%s: %s", result.Error.Code, bounded(result.Error.Message, 512)))
+			resultFailure(result.Error, operationURLSecret(operation.Target, migration.Spec.Target.URLFrom)))
 	}
 	if result.Truncation != nil && result.Truncation.Stdout {
 		return r.retryMigrationOperation(ctx, migration, job, fmt.Errorf("the %s result was truncated", operation.Type))
@@ -1713,8 +1713,11 @@ func (r *MigrationReconciler) retryMigrationOperationAs(
 	}
 	next.JobName = name
 	migration.Status.ActiveOperation = next
+	// The condition keeps 1024 bytes, as a schema's does, so a failure to open
+	// the target is whole in status whatever the Secret name and key; the
+	// Event below keeps 512.
 	setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionTrue,
-		reason, bounded(failure.Error(), 512))
+		reason, bounded(failure.Error(), 1024))
 	if err := r.patchMigrationStatus(ctx, before, migration); err != nil {
 		return ctrl.Result{}, err
 	}

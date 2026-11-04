@@ -1152,7 +1152,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 		return r.retryOperation(ctx, schema, job, fmt.Errorf("%s Job failed", operation.Type))
 	}
 	if result.Error != nil {
-		err := fmt.Errorf("%s: %s", result.Error.Code, bounded(result.Error.Message, 512))
+		err := resultFailure(result.Error, operationURLSecret(operation.Target, schema.Spec.Target.URLFrom))
 		if operation.Type == operatorv1alpha1.OperationVerify && result.Error.Code == "verification_refused" {
 			localDigestPinRefusal := result.ChildExitCode == 0 && len(result.VerificationRequirements) == 1 &&
 				result.VerificationRequirements[0] == "require_digest_pin"

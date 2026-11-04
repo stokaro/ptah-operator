@@ -435,7 +435,7 @@ matters most:
 | --- | --- |
 | `UpToDate` | The database already had every planned migration |
 | `Applied` | Every selected migration is recorded applied |
-| `Failed` | A migration failed and committed nothing; fix the cause and it runs again |
+| `Failed` | A migration failed and committed nothing, or the run stopped before it selected one, as on a database it could not open; fix the cause and the resource plans the run again |
 | `Partial` | A migration committed some of its statements and not the rest |
 | `Unknown` | The evidence could not be read |
 
@@ -447,6 +447,15 @@ it. `kubectl ptah migration` prints the last run with the Job it ran as, and
 the unresolved run as a block of its own, with what
 [A migration run nobody accounted for](../operations/#a-migration-run-nobody-accounted-for)
 says to do about it.
+
+A run that stopped before it selected any migration ran nothing and read no
+history, so there is nothing to read back at once: the resource records it
+`Failed`, waits `spec.execution.failureRetryInterval`, and starts again from
+resolution, which reads the history before anything is planned or applied.
+Under `apply: Always` the new plan runs; under `OnApproval` it waits for an
+approval, because the run consumed the one it carried.
+[A database the operation could not open](../../troubleshoot/condition-reasons/#a-database-the-operation-could-not-open)
+says what its message names.
 
 Every other outcome is confirmed by reading the history back. What a run claims
 and what the revision table holds are two statements, and only the second one

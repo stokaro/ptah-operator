@@ -1,18 +1,19 @@
 {
-  "contract_version": 2,
+  "contract_version": 3,
+  "command": "schema plan",
   "outcome": "changes",
-  "plan_digest": "sha256:abd0a1b39d694f9aad5b77ec30e8369d4e369964e699b1c330fab81752b6690d",
+  "plan_digest": "sha256:d16024aa02c830c82afdf6a8e801fa41286bb7c36985075c236ab48055fac7d5",
   "plan_path": "/w/plan.json",
   "plan": {
     "format_version": 1,
-    "name": "plan_630995a42695",
+    "name": "plan_4e66ccfc3f82",
     "dialect": "postgres",
-    "from_fingerprint": "sha256:fe0a5fb0b916d8dbf035ed4628c530a10ddfc7bc1156f6e1a7884d425105f21d",
-    "to_fingerprint": "sha256:cb9386e767e4248e4f271933a5dd6a5f7eed02900eaf876e1c63831ac4d308af",
+    "from_fingerprint": "sha256:f6ca8486111bee58d99c7f9a5ea92e302e655f7e177c7e43fe5dd0f39e7d8af6",
+    "to_fingerprint": "sha256:c85572bdba5c8e9c495b037d456567a125b6b7f9d68da85ed5183d33cff2924d",
     "destructive": false,
     "statements": [
       {
-        "sql": "-- Add/modify columns for table: items\n-- ALTER statements: --\nALTER TABLE \"items\" ADD COLUMN \"note\" TEXT",
+        "sql": "-- Add/modify columns for table: e2e_widgets\nALTER TABLE \"e2e_widgets\" ADD COLUMN \"note\" text",
         "severity": "safe",
         "reason": "does not remove data or tighten constraints"
       }

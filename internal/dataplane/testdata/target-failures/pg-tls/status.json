@@ -1,0 +1,8 @@
+{
+  "contract_version": 2,
+  "command": "migrations status",
+  "error": {
+    "kind": "tls_failed",
+    "message": "error connecting to database: failed to ping database: failed to connect to `user=postgres database=t_new_tbl`: 172.20.0.2:5432 (fk760-pg): failed to write startup message: write failed: tls: failed to verify certificate: x509: certificate relies on legacy Common Name field, use SANs instead"
+  }
+}

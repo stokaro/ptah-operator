@@ -18,6 +18,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/runner"
 	"github.com/stokaro/ptah-operator/test/e2e/harness"
 )
@@ -348,8 +349,8 @@ func (m *migrationRun) unsupportedRunnerProtocol() {
 	m.scan(logs, "the complete supported migration Apply result")
 	result, err := readOperationResult(m.ctx, m.cluster.Client, freshJob, freshPod, runner.OperationMigrationApply, freshJob.Annotations[annotationOperationID], logs)
 	m.check(err, "parse the actual restored runner result under protocol 1")
-	if result.Error != nil || result.ChildExitCode != 0 || result.Truncation != nil || result.MigrationRun == nil || result.MigrationRun.ContractVersion != 1 ||
-		result.MigrationRun.Outcome != "applied" || !slices.Equal(result.MigrationRun.Applied, []int64{1, 2, 3}) || result.MigrationRun.Error != "" {
+	if result.Error != nil || result.ChildExitCode != 0 || result.Truncation != nil || result.MigrationRun == nil || result.MigrationRun.ContractVersion != dataplane.SupportedMigrationRunContract ||
+		result.MigrationRun.Outcome != "applied" || !slices.Equal(result.MigrationRun.Applied, []int64{1, 2, 3}) || result.MigrationRun.Error != nil {
 		m.fatalf("the restored runner did not return a complete successful native migration result")
 	}
 	audit.assertRecords(beforeApply, audit.snapshot(), freshPod, true)

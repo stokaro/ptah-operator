@@ -1,5 +1,6 @@
 {
-  "contract_version": 1,
+  "contract_version": 2,
+  "command": "migrations up",
   "direction": "up",
   "outcome": "partial",
   "planned": [
@@ -16,7 +17,9 @@
   "applied_keys": [
     "1"
   ],
-  "error": "failed to apply migration 2: failed to execute migration SQL: SQL execution failed: Error 1062 (23000): Duplicate entry '1' for key 'ledger.PRIMARY'\nSQL: INSERT INTO ledger VALUES (1)",
+  "error": {
+    "message": "failed to apply migration 2: failed to execute migration SQL: SQL execution failed: Error 1062 (23000): Duplicate entry '1' for key 'ledger.PRIMARY'\nSQL: INSERT INTO ledger VALUES (1)"
+  },
   "failure": {
     "version": 2,
     "version_key": "2",
@@ -51,26 +54,30 @@
       "total": 4,
       "error": "failed to execute migration SQL: SQL execution failed: Error 1062 (23000): Duplicate entry '1' for key 'ledger.PRIMARY'\nSQL: INSERT INTO ledger VALUES (1)",
       "error_stmt": "INSERT INTO ledger VALUES (1)",
-      "execution_time": 26000000,
-      "checksum": "partial:h1:TJqpfPVKMrbkviVn5fzUT7Y7vRtu+l91DcHG7UPSi4Q=",
-      "applied_at": "2026-10-21T14:54:42Z",
+      "execution_time": 15000000,
+      "checksum": "partial:h1:y1Y89ErE2NoVfQZGy1G9R+wqQ+AmVZUdl89k5wRC+VI=",
+      "applied_at": "2026-11-04T15:42:49Z",
       "dirty": true
     },
-    "contract_version": 1,
+    "contract_version": 2,
     "migrations": [
       {
         "version": 1,
         "version_key": "1",
         "description": "Create Journal",
-        "checksum": "b7e3d83d6fd22faa53d4131301194cc91e14db21868ccc1043676bc91c544ed5",
-        "applied_checksum": "b7e3d83d6fd22faa53d4131301194cc91e14db21868ccc1043676bc91c544ed5",
+        "checksum": "13b25f6bd2f01da4971414612246d6a706c27cd9e62c435091da235ad5f35163",
+        "applied_checksum": "13b25f6bd2f01da4971414612246d6a706c27cd9e62c435091da235ad5f35163",
+        "applied_at": "2026-11-04T15:42:49Z",
+        "execution_time_ms": 12,
         "state": "applied"
       },
       {
         "version": 2,
         "version_key": "2",
         "description": "Fill Ledger",
-        "checksum": "ae47c7fdeb056c96413a8ecb757575e4eaf722844930832e4828ab7f28c3b125",
+        "checksum": "a3c51eba5c7dd4cd93f750d3c1506177936e6dd7c853bc2828414082d05eccdb",
+        "applied_at": "2026-11-04T15:42:49Z",
+        "execution_time_ms": 15,
         "state": "dirty"
       }
     ],

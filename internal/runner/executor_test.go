@@ -32,8 +32,8 @@ const (
 // stoppedBetweenFiles is what `ptah migrations up --json` writes when it is
 // stopped after the first of two planned migrations committed and before the
 // second began: a failed run that accounts for the one it applied.
-const stoppedBetweenFiles = `{"contract_version":1,"direction":"up","outcome":"failed","planned":[3,4],"applied":[3],` +
-	`"error":"context canceled","status":{"contract_version":1,"current_version":3,"total_migrations":4,` +
+const stoppedBetweenFiles = `{"contract_version":2,"command":"migrations up","direction":"up","outcome":"failed","planned":[3,4],"applied":[3],` +
+	`"error":{"message":"context canceled"},"status":{"contract_version":2,"current_version":3,"total_migrations":4,` +
 	`"has_pending_changes":true}}` + "\n"
 
 func TestMain(m *testing.M) {

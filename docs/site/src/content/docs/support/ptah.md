@@ -21,11 +21,11 @@ things, and [the next section](#three-states-kept-apart) says what.
 <!-- BEGIN GENERATED COMPATIBILITY -->
 **Axis:** Operator version to the Ptah build the operator executes, identified by the digest-pinned executorImage and the ptahVersion bound beside it. It is not the Ptah CLI a person used to build the OCI artifact. The runner is not a third axis: it is built from the operator source this row names, and the exact protocol both halves speak is in runnerProtocolVersion.
 
-**Last measured:** 2026-11-02.
+**Last measured:** 2026-11-04.
 
 | Operator | Declared range | Verified builds | Guide |
 | --- | --- | --- | --- |
-| `edge` | No range | `v0.17.0` | [edge](https://operator.ptah.run/edge/) |
+| `edge` | No range | `v0.18.0` | [edge](https://operator.ptah.run/edge/) |
 | `v0.2.9` | No range | `v0.17.0` | [v0.2.9](https://operator.ptah.run/v0.2.9/) |
 | `v0.2.8` | No range | `v0.16.0` | [v0.2.8](https://operator.ptah.run/v0.2.8/) |
 | `v0.2.7` | No range | `v0.15.0` | [v0.2.7](https://operator.ptah.run/v0.2.7/) |
@@ -45,11 +45,12 @@ The development state. Its guide is at [https://operator.ptah.run/edge/](https:/
 
 **Verified:**
 
-- Ptah `v0.17.0`. Commit [`38bd6e91cfe3a70543046da9c3ada05a0460a103`](https://github.com/stokaro/ptah/commit/38bd6e91cfe3a70543046da9c3ada05a0460a103), runner protocol version 1, evidence `kubernetes-e2e`. The complete OCI resolution and verification, observation, planning, approval, apply, failure-recovery and convergence lifecycle against PostgreSQL and MySQL, on every supported Kubernetes minor, for both artifact formats this operator reads: application/vnd.stokaro.ptah.schema.v1 for a declared schema, whose declared rows converge on both engines, and application/vnd.stokaro.ptah.migrations.v1 for a versioned migration directory, whose history read, approval gate and applied sequence run against PostgreSQL and MySQL.
+- Ptah `v0.18.0`. Commit [`6e1d430e51312de325a8f0238e601547a6c473d5`](https://github.com/stokaro/ptah/commit/6e1d430e51312de325a8f0238e601547a6c473d5), runner protocol version 1, evidence `kubernetes-e2e`. The complete OCI resolution and verification, observation, planning, approval, apply, failure-recovery and convergence lifecycle against PostgreSQL and MySQL, on every supported Kubernetes minor, for both artifact formats this operator reads: application/vnd.stokaro.ptah.schema.v1 for a declared schema, whose declared rows converge on both engines, and application/vnd.stokaro.ptah.migrations.v1 for a versioned migration directory, whose history read, approval gate and applied sequence run against PostgreSQL and MySQL.
 
 **Limitations:**
 
 - The verified build is the release image of the Ptah version under Verified, pinned by digest and run as Ptah published it: the operator builds no executor of its own. It contains stokaro/ptah#3777 and #3794, the complete `--json` documents of `schema plan` and `schema apply` that the operator reads on every declared-schema Plan and Apply. An executor without #3777, v0.9.0 included, rejects `--json` with exit code 2.
+- The verified build contains stokaro/ptah#5173, which names in every document why a command could not open its target database: plan contract 3, apply 4, migration status and run 2, and a drift report of version 1. The operator reads those versions and no others, so an executor without #5173, v0.17.0 included, fails every Observe, Plan, Apply and migration read on a document it refuses.
 - The migration machine contracts -- `migrations status --json` carrying contract_version and a per-migration record, and `migrations up --json` carrying an outcome -- reached Ptah after v0.3.0-201, and `migrations up --expect-sequence`, which the operator passes on every migration Apply, reached it in v0.9.0. A build older than v0.9.0 resolves and verifies a migration artifact and then fails at its own history document or at the flag every migration Apply passes, so the versioned workflow needs at least v0.9.0 rather than any build that has the commands.
 - The verified scope is the operator's database support window, PostgreSQL 17.x and MySQL 8.4.x LTS. Other engines Ptah addresses are unverified here, whatever the Ptah build.
 - The published verified set is a repository document. It is not compiled into the manager, and nothing compares a running executor's ptahVersion against it, so a combination outside this set is outside what the matrix measured rather than something the operator refuses. What is refused before a database is mutated is a change of any bound execution component between the plan and the apply -- Ptah, the executor image, the runner protocol version, the controller-state version -- checked before the Job is created. The manager's image and revision and the runner image are recorded and not bound: a manager release that changes only them applies the plans and approvals its predecessor left. What is refused after a Job has run is a runner speaking another protocol version, which is a rejected result frame rather than a prevented mutation. Pinning both the executor image and its ptahVersion at install is a requirement on whoever installs, not a check at runtime.
@@ -60,9 +61,11 @@ A released version. Its guide is at [https://operator.ptah.run/v0.2.9/](https://
 
 **Declared:** the same as [`edge`](#edge).
 
-**Verified:** the same as [`edge`](#edge).
+**Verified:**
 
-**Limitations:** the same as [`edge`](#edge).
+- Ptah `v0.17.0`. Commit [`38bd6e91cfe3a70543046da9c3ada05a0460a103`](https://github.com/stokaro/ptah/commit/38bd6e91cfe3a70543046da9c3ada05a0460a103), runner protocol version 1, evidence `kubernetes-e2e`. The scope is the same as for [`edge`](#edge).
+
+**Limitations:** the same as [`edge`](#edge) without its second limitation.
 
 ### v0.2.8
 
@@ -74,7 +77,7 @@ A released version. Its guide is at [https://operator.ptah.run/v0.2.8/](https://
 
 - Ptah `v0.16.0`. Commit [`91e28d4331950e949590fd9ac404373bc17b572d`](https://github.com/stokaro/ptah/commit/91e28d4331950e949590fd9ac404373bc17b572d), runner protocol version 1, evidence `kubernetes-e2e`. The scope is the same as for [`edge`](#edge).
 
-**Limitations:** the same as [`edge`](#edge).
+**Limitations:** the same as [`v0.2.9`](#v029).
 
 ### v0.2.7
 
@@ -86,7 +89,7 @@ A released version. Its guide is at [https://operator.ptah.run/v0.2.7/](https://
 
 - Ptah `v0.15.0`. Commit [`6ba0a93a44d3decd6782d88e57b88151edd4c788`](https://github.com/stokaro/ptah/commit/6ba0a93a44d3decd6782d88e57b88151edd4c788), runner protocol version 1, evidence `kubernetes-e2e`. The scope is the same as for [`edge`](#edge).
 
-**Limitations:** the same as [`edge`](#edge).
+**Limitations:** the same as [`v0.2.9`](#v029).
 
 ### v0.2.6
 
@@ -98,7 +101,7 @@ A released version. Its guide is at [https://operator.ptah.run/v0.2.6/](https://
 
 - Ptah `v0.14.0`. Commit [`e046527f79c58651d2082dce65b5ceb48dbc2606`](https://github.com/stokaro/ptah/commit/e046527f79c58651d2082dce65b5ceb48dbc2606), runner protocol version 1, evidence `kubernetes-e2e`. The scope is the same as for [`edge`](#edge).
 
-**Limitations:** the same as [`edge`](#edge).
+**Limitations:** the same as [`v0.2.9`](#v029).
 
 ### v0.2.5
 
@@ -110,7 +113,7 @@ A released version. Its guide is at [https://operator.ptah.run/v0.2.5/](https://
 
 - Ptah `v0.13.0`. Commit [`eb69f8c4435643c5c9f3fbd1c9953b9ba0f44b6f`](https://github.com/stokaro/ptah/commit/eb69f8c4435643c5c9f3fbd1c9953b9ba0f44b6f), runner protocol version 1, evidence `kubernetes-e2e`. The scope is the same as for [`edge`](#edge).
 
-**Limitations:** the same as [`edge`](#edge).
+**Limitations:** the same as [`v0.2.9`](#v029).
 
 ### v0.2.4
 
@@ -120,7 +123,7 @@ A released version. Its guide is at [https://operator.ptah.run/v0.2.4/](https://
 
 **Verified:** the same as [`v0.2.5`](#v025).
 
-**Limitations:** the same as [`edge`](#edge).
+**Limitations:** the same as [`v0.2.9`](#v029).
 
 ### v0.2.3
 
@@ -130,7 +133,7 @@ A released version. Its guide is at [https://operator.ptah.run/v0.2.3/](https://
 
 **Verified:** the same as [`v0.2.5`](#v025).
 
-**Limitations:** the same as [`edge`](#edge).
+**Limitations:** the same as [`v0.2.9`](#v029).
 
 ### v0.2.2
 
@@ -140,7 +143,7 @@ A released version. Its guide is at [https://operator.ptah.run/v0.2.2/](https://
 
 **Verified:** the same as [`v0.2.5`](#v025).
 
-**Limitations:** the same as [`edge`](#edge).
+**Limitations:** the same as [`v0.2.9`](#v029).
 
 ### v0.2.1
 
@@ -150,7 +153,7 @@ A released version. Its guide is at [https://operator.ptah.run/v0.2.1/](https://
 
 **Verified:** the same as [`v0.2.5`](#v025).
 
-**Limitations:** the same as [`edge`](#edge).
+**Limitations:** the same as [`v0.2.9`](#v029).
 
 ### v0.2.0
 
@@ -160,7 +163,7 @@ A released version. Its guide is at [https://operator.ptah.run/v0.2.0/](https://
 
 **Verified:** the same as [`v0.2.5`](#v025).
 
-**Limitations:** the same as [`edge`](#edge).
+**Limitations:** the same as [`v0.2.9`](#v029).
 
 ### Evidence
 

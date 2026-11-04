@@ -735,7 +735,7 @@ func TestPlanWithCredentialSubstringFailsWithoutEmittingMutatedPayload(t *testin
 func TestObserveDriftExitOneIsAFramedResult(t *testing.T) {
 	t.Parallel()
 
-	report := `{"drift":true,"failed":true,"failure_threshold":"all","highest_severity":"warning","dialect":"postgres","findings":[{"category":"columns_added","count":1,"severity":"warning"}],"diff":{"columns_added":["app.users.email"]}}`
+	report := `{"contract_version":1,"command":"schema drift","drift":true,"failed":true,"failure_threshold":"all","highest_severity":"warning","dialect":"postgres","findings":[{"category":"columns_added","count":1,"severity":"warning"}],"diff":{"columns_added":["app.users.email"]}}`
 	executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: report, exitCode: 1}}}
 	result := Run(context.Background(), Config{
 		Operation:   OperationObserve,
@@ -782,6 +782,7 @@ func TestObservePublishesCanonicalFindingSummaries(t *testing.T) {
 		{Category: "indexes_added", Count: 2, Severity: "warning"},
 	}
 	report, err := json.Marshal(dataplane.DriftReport{
+		ContractVersion: dataplane.SupportedDriftContract, Command: dataplane.DriftCommand,
 		Drift: true, Failed: true, FailureThreshold: "all", HighestSeverity: " DESTRUCTIVE ",
 		Dialect: "postgres", Findings: findings, Diff: json.RawMessage(`{"changed":true}`),
 	})
@@ -832,6 +833,7 @@ func TestObserveFramesEveryCategoryOfTheLargestReport(t *testing.T) {
 		return strings.Compare(left.Category, right.Category)
 	})
 	report, err := json.Marshal(dataplane.DriftReport{
+		ContractVersion: dataplane.SupportedDriftContract, Command: dataplane.DriftCommand,
 		Drift: true, Failed: true, FailureThreshold: "all", HighestSeverity: "safe",
 		Dialect: "postgres", Findings: findings, Diff: json.RawMessage(`{"changed":true}`),
 	})
@@ -876,7 +878,7 @@ func TestObserveFramesTheForcedRowSecurityCategories(t *testing.T) {
 		t.Run(test.category, func(t *testing.T) {
 			t.Parallel()
 			operationID := "observe-" + strings.ReplaceAll(test.category, "_", "-")
-			report := fmt.Sprintf(`{"drift":true,"failed":true,"failure_threshold":"all","highest_severity":%q,"dialect":"postgres","findings":[{"category":%q,"count":1,"severity":%q}],"diff":{"changed":true}}`,
+			report := fmt.Sprintf(`{"contract_version":1,"command":"schema drift","drift":true,"failed":true,"failure_threshold":"all","highest_severity":%q,"dialect":"postgres","findings":[{"category":%q,"count":1,"severity":%q}],"diff":{"changed":true}}`,
 				test.severity, test.category, test.severity)
 			result := Run(context.Background(), Config{
 				Operation: OperationObserve, Environment: withRunnerProtocol(databaseEnvironment(operationID)),
@@ -915,7 +917,7 @@ func TestObserveFramesEveryCategoryThePinnedPtahEmits(t *testing.T) {
 		t.Run(category, func(t *testing.T) {
 			t.Parallel()
 			operationID := "observe-pinned-" + strings.NewReplacer("_", "-", ":", "-", ".", "-", "/", "-").Replace(category)
-			report := fmt.Sprintf(`{"drift":true,"failed":true,"failure_threshold":"all","highest_severity":"warning","dialect":"postgres","findings":[{"category":%q,"count":3,"severity":"warning"}],"diff":{"changed":true}}`,
+			report := fmt.Sprintf(`{"contract_version":1,"command":"schema drift","drift":true,"failed":true,"failure_threshold":"all","highest_severity":"warning","dialect":"postgres","findings":[{"category":%q,"count":3,"severity":"warning"}],"diff":{"changed":true}}`,
 				category)
 			result := Run(context.Background(), Config{
 				Operation: OperationObserve, Environment: withRunnerProtocol(databaseEnvironment(operationID)),
@@ -1003,7 +1005,7 @@ func TestObserveRefusesMoreFindingsThanAFrameHolds(t *testing.T) {
 	for index := range maxDriftFindings + 1 {
 		findings = append(findings, fmt.Sprintf(`{"category":"feature_changes:example.org/kind/k%03d","count":1,"severity":"safe"}`, index))
 	}
-	report := `{"drift":true,"failed":true,"failure_threshold":"all","highest_severity":"safe","dialect":"postgres","findings":[` +
+	report := `{"contract_version":1,"command":"schema drift","drift":true,"failed":true,"failure_threshold":"all","highest_severity":"safe","dialect":"postgres","findings":[` +
 		strings.Join(findings, ",") + `],"diff":{"changed":true}}`
 	result := Run(context.Background(), Config{
 		Operation: OperationObserve, Environment: withRunnerProtocol(databaseEnvironment("observe-too-many-findings")),
@@ -1018,7 +1020,7 @@ func TestObserveRefusesMoreFindingsThanAFrameHolds(t *testing.T) {
 func TestObserveRejectsUnknownIdentifierFindingCategory(t *testing.T) {
 	t.Parallel()
 
-	report := `{"drift":true,"failed":true,"failure_threshold":"all","highest_severity":"warning","dialect":"postgres","findings":[{"category":"private_schema_name","count":1,"severity":"warning"}],"diff":{}}`
+	report := `{"contract_version":1,"command":"schema drift","drift":true,"failed":true,"failure_threshold":"all","highest_severity":"warning","dialect":"postgres","findings":[{"category":"private_schema_name","count":1,"severity":"warning"}],"diff":{}}`
 	result := Run(context.Background(), Config{
 		Operation: OperationObserve, Environment: withRunnerProtocol(databaseEnvironment("observe-unknown-finding")),
 		Executor: &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: report, exitCode: 1}}},
@@ -1031,7 +1033,7 @@ func TestObserveRejectsUnknownIdentifierFindingCategory(t *testing.T) {
 func TestObserveRejectsFindingSeverityInconsistentWithHighest(t *testing.T) {
 	t.Parallel()
 
-	report := `{"drift":true,"failed":true,"failure_threshold":"all","highest_severity":"warning","dialect":"postgres","findings":[{"category":"tables_added","count":1,"severity":"safe"}],"diff":{}}`
+	report := `{"contract_version":1,"command":"schema drift","drift":true,"failed":true,"failure_threshold":"all","highest_severity":"warning","dialect":"postgres","findings":[{"category":"tables_added","count":1,"severity":"safe"}],"diff":{}}`
 	result := Run(context.Background(), Config{
 		Operation: OperationObserve, Environment: withRunnerProtocol(databaseEnvironment("observe-inconsistent-finding-severity")),
 		Executor: &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: report, exitCode: 1}}},
@@ -1044,7 +1046,7 @@ func TestObserveRejectsFindingSeverityInconsistentWithHighest(t *testing.T) {
 func TestObserveNormalizesNativeConvergedSafeSeverity(t *testing.T) {
 	t.Parallel()
 
-	report := `{"drift":false,"failed":false,"failure_threshold":"all","highest_severity":"safe","dialect":"postgres","findings":[],"diff":{"tables_added":[],"tables_removed":[],"columns_added":[],"columns_removed":[],"columns_changed":[]}}`
+	report := `{"contract_version":1,"command":"schema drift","drift":false,"failed":false,"failure_threshold":"all","highest_severity":"safe","dialect":"postgres","findings":[],"diff":{"tables_added":[],"tables_removed":[],"columns_added":[],"columns_removed":[],"columns_changed":[]}}`
 	executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: report}}}
 	result := Run(context.Background(), Config{
 		Operation: OperationObserve, Environment: withRunnerProtocol(databaseEnvironment("observe-converged-safe")), Executor: executor,
@@ -1066,7 +1068,7 @@ func TestObserveNormalizesNativeConvergedSafeSeverity(t *testing.T) {
 func TestObservePreservesSafeSeverityForRealDrift(t *testing.T) {
 	t.Parallel()
 
-	report := `{"drift":true,"failed":true,"failure_threshold":"all","highest_severity":" SAFE ","dialect":"postgres","findings":[{"category":"tables_added","count":1,"severity":"safe"}],"diff":{"tables_added":["app.audit"]}}`
+	report := `{"contract_version":1,"command":"schema drift","drift":true,"failed":true,"failure_threshold":"all","highest_severity":" SAFE ","dialect":"postgres","findings":[{"category":"tables_added","count":1,"severity":"safe"}],"diff":{"tables_added":["app.audit"]}}`
 	executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: report, exitCode: 1}}}
 	result := Run(context.Background(), Config{
 		Operation: OperationObserve, Environment: withRunnerProtocol(databaseEnvironment("observe-real-safe-drift")), Executor: executor,
@@ -1094,11 +1096,11 @@ func TestObserveFramesDriftTheReportHasNoCategoryFor(t *testing.T) {
 	}{
 		{
 			name:   "findings absent",
-			report: `{"drift":true,"failed":true,"failure_threshold":"all","highest_severity":"safe","dialect":"postgres","diff":` + grantOnlyDiff + `}`,
+			report: `{"contract_version":1,"command":"schema drift","drift":true,"failed":true,"failure_threshold":"all","highest_severity":"safe","dialect":"postgres","diff":` + grantOnlyDiff + `}`,
 		},
 		{
 			name:   "findings empty",
-			report: `{"drift":true,"failed":true,"failure_threshold":"all","highest_severity":"safe","dialect":"postgres","findings":[],"diff":` + grantOnlyDiff + `}`,
+			report: `{"contract_version":1,"command":"schema drift","drift":true,"failed":true,"failure_threshold":"all","highest_severity":"safe","dialect":"postgres","findings":[],"diff":` + grantOnlyDiff + `}`,
 		},
 	}
 	for _, test := range tests {
@@ -1144,7 +1146,7 @@ func TestObserveFramesDriftTheReportHasNoCategoryFor(t *testing.T) {
 func TestObserveRefusesAnUncategorizedDriftAboveSafe(t *testing.T) {
 	t.Parallel()
 
-	report := `{"drift":true,"failed":true,"failure_threshold":"all","highest_severity":"warning","dialect":"postgres","diff":{"grants_added":[]}}`
+	report := `{"contract_version":1,"command":"schema drift","drift":true,"failed":true,"failure_threshold":"all","highest_severity":"warning","dialect":"postgres","diff":{"grants_added":[]}}`
 	result := Run(context.Background(), Config{
 		Operation: OperationObserve, Environment: withRunnerProtocol(databaseEnvironment("observe-uncategorized-warning")),
 		Executor: &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: report, exitCode: 1}}},
@@ -1164,15 +1166,15 @@ func TestObserveFramesInconsistentConvergedSummaryAsInvalid(t *testing.T) {
 	}{
 		{
 			name:   "drift severity",
-			report: `{"drift":false,"failed":false,"failure_threshold":"all","highest_severity":"warning","dialect":"postgres","findings":[],"diff":{}}`,
+			report: `{"contract_version":1,"command":"schema drift","drift":false,"failed":false,"failure_threshold":"all","highest_severity":"warning","dialect":"postgres","findings":[],"diff":{}}`,
 		},
 		{
 			name:   "positive finding",
-			report: `{"drift":false,"failed":false,"failure_threshold":"all","highest_severity":"safe","dialect":"postgres","findings":[{"category":"columns_added","count":1,"severity":"safe"}],"diff":{}}`,
+			report: `{"contract_version":1,"command":"schema drift","drift":false,"failed":false,"failure_threshold":"all","highest_severity":"safe","dialect":"postgres","findings":[{"category":"columns_added","count":1,"severity":"safe"}],"diff":{}}`,
 		},
 		{
 			name:   "zero-count finding",
-			report: `{"drift":false,"failed":false,"failure_threshold":"all","highest_severity":"","dialect":"postgres","findings":[{"category":"columns_added","count":0,"severity":"safe"}],"diff":{}}`,
+			report: `{"contract_version":1,"command":"schema drift","drift":false,"failed":false,"failure_threshold":"all","highest_severity":"","dialect":"postgres","findings":[{"category":"columns_added","count":0,"severity":"safe"}],"diff":{}}`,
 		},
 	}
 	for _, test := range tests {
@@ -1207,7 +1209,7 @@ func TestObserveNeverPublishesNativeFailureDetails(t *testing.T) {
 	t.Parallel()
 
 	const sensitiveLiteral = "operator-private-schema-literal"
-	report := `{"drift":false,"failed":false,"failure_threshold":"all","highest_severity":"","dialect":"postgres","findings":[],"diff":{},"error":"failed near ` + sensitiveLiteral + `"}`
+	report := `{"contract_version":1,"command":"schema drift","drift":false,"failed":false,"failure_threshold":"all","highest_severity":"","dialect":"postgres","findings":[],"diff":{},"error":{"kind":"database_unreachable","message":"failed near ` + sensitiveLiteral + `"}}`
 	executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{
 		stdout: report,
 		stderr: "native parse failure: DEFAULT '" + sensitiveLiteral + "'\n",
@@ -1440,7 +1442,7 @@ func TestApplyNeverPublishesNativeFailureDiagnostics(t *testing.T) {
 			response: scriptedResponse{
 				stdout: encodeApplyReport(t, dataplane.SchemaApplyReport{
 					ContractVersion: dataplane.SupportedSchemaApplyContract, Outcome: dataplane.SchemaApplyOutcomeFailed,
-					Error: "the planned changes cannot run inside a transaction\n" + failedStatement,
+					Error: &dataplane.CommandError{Message: "the planned changes cannot run inside a transaction\n" + failedStatement},
 				}),
 				exitCode: 1,
 			},
@@ -1451,7 +1453,7 @@ func TestApplyNeverPublishesNativeFailureDiagnostics(t *testing.T) {
 			response: scriptedResponse{
 				stdout: encodeApplyReport(t, dataplane.SchemaApplyReport{
 					ContractVersion: dataplane.SupportedSchemaApplyContract, Outcome: dataplane.SchemaApplyOutcomeUnknown,
-					Units: sqlUnits(failedStatement), Error: "apply schema changes: " + failedStatement,
+					Units: sqlUnits(failedStatement), Error: &dataplane.CommandError{Message: "apply schema changes: " + failedStatement},
 				}),
 				exitCode: 1,
 			},
@@ -1831,7 +1833,7 @@ func TestApplyFailureIsUncertainAndMustNotBeReplayed(t *testing.T) {
 	executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{
 		stdout: encodeApplyReport(t, dataplane.SchemaApplyReport{
 			ContractVersion: dataplane.SupportedSchemaApplyContract, Outcome: dataplane.SchemaApplyOutcomeUnknown,
-			PlanDigest: sha256Digest(plan), Error: "connection lost",
+			PlanDigest: sha256Digest(plan), Error: &dataplane.CommandError{Message: "connection lost"},
 		}),
 		stderr:   "connection lost",
 		exitCode: 1,
@@ -1881,7 +1883,7 @@ func TestApplyNativeStalePlanAfterDispatchStillHasUnknownOutcome(t *testing.T) {
 						PlanFingerprint:     "sha256:" + strings.Repeat("a", 64),
 						DatabaseFingerprint: "sha256:" + strings.Repeat("c", 64),
 					},
-					Error: "pre-planned migration is stale",
+					Error: &dataplane.CommandError{Message: "pre-planned migration is stale"},
 				}),
 				exitCode: 2,
 			}}}
@@ -1928,7 +1930,7 @@ func TestApplyReadsItsReportOnEveryExit(t *testing.T) {
 			value.Outcome = dataplane.SchemaApplyOutcomeRefused
 			value.Units = nil
 			value.Refusal = &dataplane.SchemaRefusal{Code: code}
-			value.Error = "refused"
+			value.Error = &dataplane.CommandError{Message: "refused"}
 		})
 	}
 	outcome := func(outcome string) string {
@@ -2132,8 +2134,8 @@ func TestPlanReportsAFencedRefusalAsItsOwnOutcome(t *testing.T) {
 		{
 			name: "the fence refused the plan",
 			response: scriptedResponse{
-				stdout: `{"contract_version":2,"outcome":"refused","refusal":{"code":"protected-table",` +
-					`"tables":["countries","ref.regions"]},"error":"` + fenceSentence + `"}`,
+				stdout: `{"contract_version":3,"command":"schema plan","outcome":"refused","refusal":{"code":"protected-table",` +
+					`"tables":["countries","ref.regions"]},"error":{"message":"` + fenceSentence + `"}}`,
 				stderr:   "error: " + fenceSentence + "\n",
 				exitCode: 2,
 			},
@@ -2143,7 +2145,7 @@ func TestPlanReportsAFencedRefusalAsItsOwnOutcome(t *testing.T) {
 		{
 			name: "the fence refused the plan and gave no sentence",
 			response: scriptedResponse{
-				stdout: `{"contract_version":2,"outcome":"refused","refusal":{"code":"protected-table",` +
+				stdout: `{"contract_version":3,"command":"schema plan","outcome":"refused","refusal":{"code":"protected-table",` +
 					`"tables":["countries","ref.regions"]}}`,
 				exitCode: 2,
 			},
@@ -2153,7 +2155,7 @@ func TestPlanReportsAFencedRefusalAsItsOwnOutcome(t *testing.T) {
 		{
 			name: "a refusal of a kind this runner does not know",
 			response: scriptedResponse{
-				stdout:   `{"contract_version":2,"outcome":"refused","refusal":{"code":"quota-exceeded"},"error":"quota"}`,
+				stdout:   `{"contract_version":3,"command":"schema plan","outcome":"refused","refusal":{"code":"quota-exceeded"},"error":{"message":"quota"}}`,
 				exitCode: 2,
 			},
 			wantCode: "plan_refused",
@@ -2162,7 +2164,7 @@ func TestPlanReportsAFencedRefusalAsItsOwnOutcome(t *testing.T) {
 		{
 			name: "the plan failed while standard error reads like a fence",
 			response: scriptedResponse{
-				stdout:   `{"contract_version":2,"outcome":"failed","error":"connect to --db-url: dial tcp: connection refused"}`,
+				stdout:   `{"contract_version":3,"command":"schema plan","outcome":"failed","error":{"message":"connect to --db-url: dial tcp: connection refused"}}`,
 				stderr:   "error: " + fenceSentence + "\n",
 				exitCode: 1,
 			},
@@ -2253,7 +2255,7 @@ func TestPlanNoChangesComesFromTheReport(t *testing.T) {
 		{
 			name: "a report naming a saved plan",
 			responses: []scriptedResponse{
-				{stdout: `{"contract_version":2,"outcome":"no-changes","plan_path":"/tmp/plan.json"}`},
+				{stdout: `{"contract_version":3,"command":"schema plan","outcome":"no-changes","plan_path":"/tmp/plan.json"}`},
 			},
 		},
 	} {
@@ -2295,10 +2297,13 @@ func TestPlanRefusesAReportItCannotAccountFor(t *testing.T) {
 		response scriptedResponse
 	}{
 		{name: "a newer contract version", response: respond(func(outputPath string) string {
-			return strings.Replace(planReport(outputPath, plan), `"contract_version":2`, `"contract_version":3`, 1)
+			return strings.Replace(planReport(outputPath, plan), `"contract_version":3`, `"contract_version":4`, 1)
 		})},
-		{name: "the version Ptah v0.13.0 printed", response: respond(func(outputPath string) string {
-			return strings.Replace(planReport(outputPath, plan), `"contract_version":2`, `"contract_version":1`, 1)
+		{name: "the version Ptah v0.17.0 printed", response: respond(func(outputPath string) string {
+			return strings.Replace(planReport(outputPath, plan), `"contract_version":3`, `"contract_version":2`, 1)
+		})},
+		{name: "another command's document", response: respond(func(outputPath string) string {
+			return strings.Replace(planReport(outputPath, plan), `"command":"schema plan"`, `"command":"schema apply"`, 1)
 		})},
 		{name: "an outcome nobody declared", response: respond(func(outputPath string) string {
 			return strings.Replace(planReport(outputPath, plan), `"outcome":"changes"`, `"outcome":"partial"`, 1)
@@ -2367,8 +2372,8 @@ func TestObserveRejectsAReportWithoutSameReadDiffIdentity(t *testing.T) {
 	t.Parallel()
 
 	for _, report := range []string{
-		`{"drift":false,"failed":false,"failure_threshold":"all","highest_severity":"","dialect":"postgres","findings":[]}`,
-		`{"drift":false,"failed":false,"failure_threshold":"all","highest_severity":"","dialect":"mysql","findings":[],"diff":{}}`,
+		`{"contract_version":1,"command":"schema drift","drift":false,"failed":false,"failure_threshold":"all","highest_severity":"","dialect":"postgres","findings":[]}`,
+		`{"contract_version":1,"command":"schema drift","drift":false,"failed":false,"failure_threshold":"all","highest_severity":"","dialect":"mysql","findings":[],"diff":{}}`,
 	} {
 		executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: report}}}
 		result := Run(context.Background(), Config{
@@ -3347,14 +3352,14 @@ func planResponse(plan string) scriptedResponse {
 // plan embedded as it is.
 func planReport(outputPath, plan string) string {
 	return fmt.Sprintf(
-		`{"contract_version":2,"outcome":"changes","plan_digest":%q,"plan_path":%q,"plan":%s}`+"\n",
+		`{"contract_version":3,"command":"schema plan","outcome":"changes","plan_digest":%q,"plan_path":%q,"plan":%s}`+"\n",
 		sha256Digest([]byte(plan)), outputPath, strings.TrimSpace(plan),
 	)
 }
 
 // planNoChangesReport is what a plan read prints when the database already
 // matches: no plan, and nothing saved.
-const planNoChangesReport = `{"contract_version":2,"outcome":"no-changes"}` + "\n"
+const planNoChangesReport = `{"contract_version":3,"command":"schema plan","outcome":"no-changes"}` + "\n"
 
 func planNoChangesResponse() scriptedResponse {
 	return scriptedResponse{stdout: planNoChangesReport, stderr: "Schema is synced, no changes to be made.\n"}
@@ -3389,6 +3394,9 @@ func sqlUnits(statements ...string) []dataplane.SchemaApplyUnit {
 // against its fixture than Ptah's is against a plan it wrote.
 func encodeApplyReport(t *testing.T, report dataplane.SchemaApplyReport) string {
 	t.Helper()
+	if report.Command == "" {
+		report.Command = dataplane.SchemaApplyCommand
+	}
 	var document bytes.Buffer
 	encoder := json.NewEncoder(&document)
 	encoder.SetEscapeHTML(false)
@@ -3416,9 +3424,9 @@ func mustDecodePlan(t *testing.T, plan string) dataplane.PlanFile {
 // the run's own top-level error, and the dirty revision's.
 func migrationRunDocumentWithDirtyError(outcome, runError, dirtyError string) string {
 	return fmt.Sprintf(
-		`{"contract_version":1,"direction":"up","outcome":%q,"planned":[3],"applied":[],`+
-			`"error":%q,`+
-			`"status":{"contract_version":1,"current_version":2,"total_migrations":3,"has_pending_changes":true,`+
+		`{"contract_version":2,"command":"migrations up","direction":"up","outcome":%q,"planned":[3],"applied":[],`+
+			`"error":{"message":%q},`+
+			`"status":{"contract_version":2,"current_version":2,"total_migrations":3,"has_pending_changes":true,`+
 			`"dirty_revision":{"version":3,"applied":2,"total":5,"error":%q}}}`,
 		outcome, runError, dirtyError,
 	)
@@ -3445,8 +3453,8 @@ func TestMigrationRunRedactsTheDatabasesFreeTextError(t *testing.T) {
 	if result.MigrationRun == nil || result.MigrationRun.Status == nil || result.MigrationRun.Status.DirtyRevision == nil {
 		t.Fatalf("Run() = %#v, want the run report the child wrote", result)
 	}
-	if result.MigrationRun.Error != "" {
-		t.Fatalf("MigrationRun.Error = %q, want it redacted", result.MigrationRun.Error)
+	if result.MigrationRun.Error != nil {
+		t.Fatalf("MigrationRun.Error = %+v, want it dropped", result.MigrationRun.Error)
 	}
 	if result.MigrationRun.Status.DirtyRevision.Error != "" {
 		t.Fatalf("MigrationRun.Status.DirtyRevision.Error = %q, want it redacted", result.MigrationRun.Status.DirtyRevision.Error)
@@ -3518,9 +3526,9 @@ func TestMigrationRunRefusesAFailureThatContradictsIt(t *testing.T) {
 	} {
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
-			document := `{"contract_version":1,"direction":"up","outcome":"failed","planned":[3,4],"applied":[3],` +
+			document := `{"contract_version":2,"command":"migrations up","direction":"up","outcome":"failed","planned":[3,4],"applied":[3],` +
 				`"failure":{"version":` + row.version + `,"statement":1,"statements":1,"sqlstate":"42P01"},` +
-				`"status":{"contract_version":1,"current_version":3,"total_migrations":4,"has_pending_changes":true}}`
+				`"status":{"contract_version":2,"current_version":3,"total_migrations":4,"has_pending_changes":true}}`
 			executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: document, exitCode: 1}}}
 			result := Run(context.Background(), Config{
 				Operation:   OperationMigrationApply,
@@ -3547,7 +3555,7 @@ func TestMigrationHistoryRedactsTheDirtyRevisionError(t *testing.T) {
 
 	const declaredRowValue = "check constraint \"countries_code_check\" is violated by some row"
 	document := fmt.Sprintf(
-		`{"contract_version":1,"current_version":2,"total_migrations":3,"has_pending_changes":true,`+
+		`{"contract_version":2,"command":"migrations status","current_version":2,"total_migrations":3,"has_pending_changes":true,`+
 			`"pending_migrations":[3],"dirty_revision":{"version":3,"applied":2,"total":5,"error":%q}}`,
 		declaredRowValue,
 	)
@@ -3574,9 +3582,9 @@ func TestMigrationHistoryRedactsTheDirtyRevisionError(t *testing.T) {
 
 func migrationRunDocument(outcome string) string {
 	return fmt.Sprintf(
-		`{"contract_version":1,"direction":"up","outcome":%q,"planned":[3],"applied":[],`+
-			`"error":"failed to apply migration 3",`+
-			`"status":{"contract_version":1,"current_version":2,"total_migrations":3,"has_pending_changes":true,`+
+		`{"contract_version":2,"command":"migrations up","direction":"up","outcome":%q,"planned":[3],"applied":[],`+
+			`"error":{"message":"failed to apply migration 3"},`+
+			`"status":{"contract_version":2,"current_version":2,"total_migrations":3,"has_pending_changes":true,`+
 			`"dirty_revision":{"version":3,"applied":2,"total":5}}}`,
 		outcome,
 	)

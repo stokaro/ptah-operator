@@ -704,7 +704,11 @@ Native stderr from Plan and Apply is discarded rather than forwarded: under
 `--json` it lists the planned statements, which can carry declared row values.
 Apply native stdout is never copied into the structured result or runner
 diagnostics, including failure paths, and neither is the error sentence its
-report carries. Only generic typed failures leave the runner. A stale plan is
+report carries. Only generic typed failures leave the runner. A document
+whose error names why the target could not be opened, from the closed set of
+kinds Ptah declares, is reported by that kind and a sentence of the runner's
+own, on every operation that opens the target; the error's message is not
+read, and a kind outside the set is read as none. A stale plan is
 reported as `stale_plan`, whether the schema or the declared rows moved, and
 like every other Apply failure it stays uncertain until an observation settles
 it: another Pod of the same Job may have run, so no one child's report proves

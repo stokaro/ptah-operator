@@ -16,6 +16,44 @@ release that says so, and this is where it is said. A version that asks
 nothing of you says so in as many words, rather than leaving you to read it
 out of silence.
 
+## 0.2.10
+
+**Before you upgrade.** The manager image is new, so keep `--force-conflicts`
+on the upgrade. An alert or a script that matches `child_exit: ptah exited
+with code 2` to find a database the operator could not open has to match the
+kind of failure instead. A plan waiting for approval has to be approved again
+once the executor moves to Ptah v0.18.0, and a database audit that lists what
+the executor sends to PostgreSQL has to expect drift to list the schemas
+first, and four rewritten catalog reads. Nothing else.
+
+- **A database the operation could not open.** When Ptah cannot open the
+  target database, the condition message and the Warning Event start with
+  the kind of failure: `database_unreachable`, `authentication_failed`,
+  `database_not_found`, `permission_denied` or `tls_failed`. A fixed sentence
+  follows that says what the kind means and names the Secret and key in
+  `spec.target.urlFrom` to check. Before, the same failure read
+  `child_exit: ptah exited with code 2`. Nothing Ptah or the database wrote
+  reaches status or Events.
+  [A database the operation could not open](../../troubleshoot/condition-reasons/#a-database-the-operation-could-not-open)
+  lists the kinds and where each stage shows them.
+- **A migration run that never started.** A migration Apply that Ptah stopped
+  before it selected any migration, as on a database it could not open, is
+  now `Failed`. After `spec.execution.failureRetryInterval` the resource reads
+  its history and plans again. Under `apply: Always` the new plan runs; under
+  `OnApproval` it waits for an approval, because the run consumed the one it
+  carried. Before, it was `Unknown` and stopped the migration until a person
+  accounted for the run.
+- **Executor.** The verified executor is now Ptah v0.18.0. A new executor
+  retires the execution binding, as in 0.2.9: approve again whatever was
+  waiting, after the resource has read its database with v0.18.0 and planned.
+  Applied state is not touched. v0.18.0 names its command in every document
+  and moves the plan, apply and migration document versions; this operator
+  reads them and refuses the old ones, so the operator and the executor move
+  together. On PostgreSQL, drift now reads every schema the URL covers, as
+  planning already did: with a URL that pins no `search_path`, the tables of a
+  schema the desired schema declares nothing in count as drift, the same
+  tables a plan already proposed to drop.
+
 ## 0.2.9
 
 **Before you upgrade.** The manager image is new, so keep `--force-conflicts`

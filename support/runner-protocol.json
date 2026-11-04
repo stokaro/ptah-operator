@@ -232,6 +232,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:d7b54d453594b1db0060f67fd89b75c8a23b6b0a832fff53ec4bb8f2d2e49cec",
       "reason": "Run Ptah v0.17.0. Its plan, apply, drift and migration documents decode as v0.16.0's did, and it adds no drift category. internal/dataplane changes only comments: the contract version notes name v0.17.0, and the plan document's notes say why the annotations and inputs v0.17.0 writes for an executable provider stay undeclared: Ptah resolves an input from its own environment, which in an Apply Pod holds the database credential. A plan carrying either is still refused. The executor image changes, which retires every plan and approval made under the old one. Commands, payloads, result frames, delivery identity, SQL authority and retry limits are unchanged."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:6a4119d1d4bafce73af08d572d6cc72e2107e56f64ccb825db35bb4f8e33b8fc",
+      "reason": "Read the documents of stokaro/ptah#5173, which names why a command could not open its target database (#760). Plan contract 3, apply 4, migration run 2 and migration status 2 carry error as an object with a kind from a closed vocabulary, the drift report gains contract version 1, every document names its command, and drift and status print a failure document in place of their report. The runner reads the kind on Observe, Plan, Apply and both migration operations and reports it as the result's error code with a sentence of its own; the message is never read, a kind outside the vocabulary is none, and a run report's error object is dropped before framing. Inventory entries under a feature kind are checked and left out. The frame's fields and its validation are unchanged: an error code was always an open string. The executor image changes with it, which retires every plan and approval made under the old one."
     }
   ]
 }

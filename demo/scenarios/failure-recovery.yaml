@@ -40,18 +40,18 @@ steps:
           status: "True"
           reason: OperationFailed
 
-  - note: It failed, with a reason a machine can read. The message is only the exit code of ptah.
+  - note: It failed, and says why and where to look. The host did not answer; the URL is in that Secret.
     run: kubectl ptah schema storefront -n "$NAMESPACE"
     expect:
       exit: 0
-      stdout_contains: [Failed, ReconciliationFailed, OperationFailed, "ptah exited with code"]
+      stdout_contains: [Failed, ReconciliationFailed, OperationFailed, database_unreachable, '"demo-database-broken"']
       stdout_absent: ["nobody:nobody", no-such-database]
 
   - note: A failure is an event too, so it is in the record rather than only in a log.
     run: kubectl events -n "$NAMESPACE" --for ptahschema/storefront
     expect:
       exit: 0
-      stdout_contains: [storefront, OperationFailed]
+      stdout_contains: [storefront, OperationFailed, database_unreachable]
       stdout_absent: ["nobody:nobody", no-such-database]
 
   # Verification rather than a task. It reads the whole status rather than a

@@ -1,0 +1,10 @@
+{
+  "contract_version": 2,
+  "command": "migrations up",
+  "direction": "up",
+  "outcome": "failed",
+  "error": {
+    "kind": "authentication_failed",
+    "message": "error connecting to database: failed to ping database: failed to connect to `user=postgres database=t_new_tbl`: 172.20.0.2:5432 (fk760-pg): failed SASL auth: FATAL: password authentication failed for user \"postgres\" (SQLSTATE 28P01)"
+  }
+}

@@ -39,6 +39,15 @@ const (
 	// sequences, triggers, views and validated constraints.
 	DriftFindingVocabularyVersion = 3
 
+	// SupportedDriftContract is the version of the document `ptah schema
+	// drift --format json` prints that this operator reads, and DriftCommand
+	// the command that document names. Ptah gave the report a version in
+	// stokaro/ptah#5173, together with the failure document the command now
+	// prints in its place. A report without one comes from an earlier Ptah and
+	// is refused.
+	SupportedDriftContract = 1
+	DriftCommand           = "schema drift"
+
 	// MaxDriftFindingKindBytes bounds the kind a qualified category carries.
 	// The longest qualified category is 25 bytes before the kind, so a category
 	// the vocabulary admits is at most 153 bytes.
@@ -226,6 +235,8 @@ type DriftInventoryEntry struct {
 }
 
 type DriftReport struct {
+	ContractVersion  int             `json:"contract_version"`
+	Command          string          `json:"command"`
 	Drift            bool            `json:"drift"`
 	Failed           bool            `json:"failed"`
 	FailureThreshold string          `json:"failure_threshold"`
@@ -239,7 +250,10 @@ type DriftReport struct {
 	// Inventory is absent from a Ptah that does not count, which the
 	// operator reads as a report with no inventory rather than an empty one.
 	Inventory []DriftInventoryEntry `json:"inventory,omitempty"`
-	Error     string                `json:"error,omitempty"`
+	// Error is present only on the failure document the command prints in
+	// place of a report, which DecodeDrift refuses and DecodeDriftFailure
+	// reads.
+	Error *CommandError `json:"error,omitempty"`
 }
 
 // MaxDriftInventoryEntries bounds a report's inventory, as
@@ -416,8 +430,17 @@ func DecodeDrift(data []byte, exitCode int) (DriftReport, error) {
 	if err := decodeJSON(data, &report, false); err != nil {
 		return DriftReport{}, fmt.Errorf("decode drift report: %w", err)
 	}
-	if report.Error != "" {
-		return DriftReport{}, fmt.Errorf("drift observation failed: %s", bounded(report.Error, 1024))
+	if report.ContractVersion != SupportedDriftContract {
+		return DriftReport{}, fmt.Errorf("drift report contract version %d is not the %d this operator reads",
+			report.ContractVersion, SupportedDriftContract)
+	}
+	if report.Command != DriftCommand {
+		return DriftReport{}, fmt.Errorf("drift report names another command than %s", DriftCommand)
+	}
+	// A failure document is not a report. Its message is not repeated: it is
+	// what Ptah or the database wrote, and DecodeDriftFailure reads its kind.
+	if report.Error != nil {
+		return DriftReport{}, fmt.Errorf("drift observation failed")
 	}
 	if report.Failed && !report.Drift {
 		return DriftReport{}, fmt.Errorf("drift report says failed=true without drift")
@@ -441,33 +464,55 @@ func DecodeDrift(data []byte, exitCode int) (DriftReport, error) {
 		}
 		seenFindings[finding.Category] = struct{}{}
 	}
-	if err := validateDriftInventory(report.Inventory); err != nil {
+	inventory, err := validateDriftInventory(report.Inventory)
+	if err != nil {
 		return DriftReport{}, err
 	}
+	report.Inventory = inventory
 	return report, nil
 }
 
 // validateDriftInventory holds an inventory to the vocabulary: each kind
-// once, a kind the findings could name, and no negative count.
-func validateDriftInventory(inventory []DriftInventoryEntry) error {
+// once, a kind the findings could name, and no negative count. It returns the
+// entries the report keeps.
+//
+// Ptah counts the objects a feature owner compares (stokaro/ptah#5149) under
+// the kind its feature_changes category carries, such as
+// ptah.run/pgextension/extension-change. Status keeps an inventory kind as the
+// stem of a pair of fixed categories, and its schema refuses a feature kind,
+// so such an entry is held to the form a qualified category's kind takes and
+// then left out: the inventory reads as it did before Ptah counted them.
+func validateDriftInventory(inventory []DriftInventoryEntry) ([]DriftInventoryEntry, error) {
 	if len(inventory) > MaxDriftInventoryEntries {
-		return fmt.Errorf("drift report counts %d kinds, more than the %d any vocabulary pairs",
+		return nil, fmt.Errorf("drift report counts %d kinds, more than the %d any vocabulary pairs",
 			len(inventory), MaxDriftInventoryEntries)
 	}
+	var kept []DriftInventoryEntry
 	seen := make(map[string]struct{}, len(inventory))
 	for _, entry := range inventory {
-		if !IsKnownDriftInventoryKind(entry.Kind) {
-			return fmt.Errorf("drift report counts a kind no finding category names")
+		feature := isFeatureInventoryKind(entry.Kind)
+		if !IsKnownDriftInventoryKind(entry.Kind) && !feature {
+			return nil, fmt.Errorf("drift report counts a kind no finding category names")
 		}
 		if _, repeated := seen[entry.Kind]; repeated {
-			return fmt.Errorf("drift report counts kind %s twice", entry.Kind)
+			return nil, fmt.Errorf("drift report counts kind %s twice", entry.Kind)
 		}
 		seen[entry.Kind] = struct{}{}
 		if entry.Desired < 0 || entry.Observed < 0 {
-			return fmt.Errorf("drift report counts kind %s below zero", entry.Kind)
+			return nil, fmt.Errorf("drift report counts kind %s below zero", entry.Kind)
+		}
+		if !feature {
+			kept = append(kept, entry)
 		}
 	}
-	return nil
+	return kept, nil
+}
+
+// isFeatureInventoryKind reports whether kind is the kind a feature owner's
+// qualified category carries: a lowercase dotted domain and a path, of the
+// length the vocabulary admits after the colon.
+func isFeatureInventoryKind(kind string) bool {
+	return len(kind) <= MaxDriftFindingKindBytes && driftFindingKindPattern.MatchString(kind)
 }
 
 // DriftReportDigest identifies the exact comparison result emitted by one
@@ -1020,11 +1065,4 @@ func dialectMatches(engine, dialect string) bool {
 	default:
 		return false
 	}
-}
-
-func bounded(value string, limit int) string {
-	if len(value) <= limit {
-		return value
-	}
-	return value[:limit] + "..."
 }

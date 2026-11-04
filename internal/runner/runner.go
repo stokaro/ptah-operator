@@ -445,6 +445,17 @@ func decodeMigrationReport(result *Result, config Config, outcome commandOutcome
 	if config.Operation == OperationMigrationHistory {
 		report, err := dataplane.DecodeMigrationStatus(outcome.stdout.bytes())
 		if err != nil {
+			// A status run that could not read the history prints a failure
+			// document in place of the status. Its kind is read when the child
+			// exited on its own and nonzero; anything else stays as the exit
+			// already reported it.
+			if outcome.err == nil && outcome.exitCode != 0 {
+				if failure, decodeErr := dataplane.DecodeMigrationStatusFailure(outcome.stdout.bytes()); decodeErr == nil {
+					if kind, known := failure.TargetFailure(); known {
+						setTargetFailure(result, kind, redactor, config.Diagnostics)
+					}
+				}
+			}
 			if result.Error == nil {
 				setResultError(result, "invalid_migration_history_output",
 					errors.New("migration history output failed strict validation"), redactor, config.Diagnostics)
@@ -463,7 +474,14 @@ func decodeMigrationReport(result *Result, config Config, outcome commandOutcome
 		}
 		return
 	}
-	report.Error = ""
+	// A run that stopped before it selected anything, on a target it could
+	// not open, is reported by the kind of failure. The error object leaves
+	// the report either way: its message is Ptah's, and can quote a row.
+	if kind, known := report.Error.TargetFailure(); known && outcome.err == nil && outcome.exitCode != 0 &&
+		report.StoppedBeforeSelecting() {
+		setTargetFailure(result, kind, redactor, config.Diagnostics)
+	}
+	report.Error = nil
 	redactMigrationHistoryError(report.Status)
 	result.MigrationRun = &report
 	// The report is the only thing that may narrow what was claimed before the
@@ -734,6 +752,10 @@ func readNativePlan(
 		setResultError(result, "plan_refused", fmt.Errorf("ptah refused to plan the change (%s)", report.Refusal.Code), redactor, config.Diagnostics)
 		return nativePlan{}, false
 	case dataplane.SchemaPlanOutcomeFailed:
+		if kind, known := targetFailureOf(report.Error, outcome); known {
+			setTargetFailure(result, kind, redactor, config.Diagnostics)
+			return nativePlan{}, false
+		}
 		setResultError(result, "invalid_plan_output", errors.New("plan command did not complete successfully"), redactor, config.Diagnostics)
 		return nativePlan{}, false
 	}
@@ -787,6 +809,10 @@ func validatePlanDryRun(
 		setResultError(result, "invalid_plan_output", reportDecodeError("apply", outcome), redactor, config.Diagnostics)
 		return false
 	}
+	if kind, known := targetFailureOf(report.Error, outcome); known && report.Outcome == dataplane.SchemaApplyOutcomeFailed {
+		setTargetFailure(result, kind, redactor, config.Diagnostics)
+		return false
+	}
 	switch {
 	case report.Outcome != dataplane.SchemaApplyOutcomeDryRun:
 		reason := report.Outcome
@@ -821,8 +847,10 @@ func planStatements(plan dataplane.PlanFile) []string {
 // fenceRefusalMessage is the sentence a fence refusal is reported with: the
 // report's own, which names the fenced tables and no row.
 func fenceRefusalMessage(report dataplane.SchemaPlanReport) string {
-	if message := strings.TrimSpace(report.Error); message != "" {
-		return message
+	if report.Error != nil {
+		if message := strings.TrimSpace(report.Error.Message); message != "" {
+			return message
+		}
 	}
 	if len(report.Refusal.Tables) != 0 {
 		return "refusing to change protected table(s) " + strings.Join(report.Refusal.Tables, ", ")
@@ -1080,6 +1108,15 @@ func runObserve(ctx context.Context, config Config, environment []string, inputs
 		return result
 	}
 	if driftOutcome.exitCode != 0 && driftOutcome.exitCode != 1 {
+		// A drift run that failed prints a failure document in place of its
+		// report. Its kind names a target that could not be opened; any other
+		// failure is reported by its exit status alone.
+		if failure, err := dataplane.DecodeDriftFailure(driftOutcome.stdout.bytes()); err == nil {
+			if kind, known := failure.TargetFailure(); known {
+				setTargetFailure(&result, kind, redactor, config.Diagnostics)
+				return result
+			}
+		}
 		setResultError(&result, "child_exit", fmt.Errorf("ptah exited with code %d", driftOutcome.exitCode), redactor, config.Diagnostics)
 		return result
 	}
@@ -1349,6 +1386,10 @@ func finishSchemaApply(result *Result, outcome commandOutcome, redactor Redactor
 		setResultError(result, "apply_refused",
 			fmt.Errorf("ptah refused the approved plan (%s)", report.Refusal.Code), redactor, diagnostics)
 	case dataplane.SchemaApplyOutcomeFailed:
+		if kind, known := targetFailureOf(report.Error, outcome); known {
+			setTargetFailure(result, kind, redactor, diagnostics)
+			return
+		}
 		setResultError(result, "apply_failed",
 			errors.New("ptah reported that the apply failed before it sent any statement"), redactor, diagnostics)
 	case dataplane.SchemaApplyOutcomeUnknown:
@@ -1394,6 +1435,27 @@ func staleApplyMessage(refusal *dataplane.SchemaRefusal) error {
 // is terminating and the runner passed the signal on.
 func stoppedByContext(err error) bool {
 	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)
+}
+
+// targetFailureOf is the kind of failure a schema plan or apply report's
+// error names, for a child that exited nonzero. A kind beside a zero exit
+// contradicts the report it came in, and is read as none. Its callers read a
+// report only from a child that exited on its own: each has already returned
+// on a child this process stopped, whose report is never read.
+func targetFailureOf(failure *dataplane.CommandError, outcome commandOutcome) (dataplane.TargetFailureKind, bool) {
+	if outcome.exitCode == 0 {
+		return "", false
+	}
+	return failure.TargetFailure()
+}
+
+// setTargetFailure reports a child that could not open its target database.
+// The code is the kind, from a closed vocabulary, and the message is the
+// runner's own sentence for it. Nothing the child wrote is carried: neither
+// its message, which can quote what the database answered, nor a kind outside
+// the vocabulary, which is no kind at all.
+func setTargetFailure(result *Result, kind dataplane.TargetFailureKind, redactor Redactor, diagnostics io.Writer) {
+	setResultError(result, string(kind), errors.New(kind.Description()), redactor, diagnostics)
 }
 
 // childFailure says why a child has no exit status to report. The operation

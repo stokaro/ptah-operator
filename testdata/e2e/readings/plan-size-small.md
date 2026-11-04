@@ -1,5 +1,5 @@
-The two small plan documents were generated on 2026-11-02 by the executor
-`support/ptah.json` pins, the Ptah v0.17.0 release image
+The two small plan documents were generated on 2026-11-02 by the Ptah
+v0.17.0 release image
 `ghcr.io/stokaro/ptah@sha256:181e279720916ed455bf9fe8f1620b8e0d71dd37cc127b3ae662317697c92548`
 (commit `38bd6e91cfe3a70543046da9c3ada05a0460a103`). It ran
 `ptah schema plan --schema-file <source> --output <plan> --json` against empty
@@ -15,7 +15,12 @@ their statements and byte sizes exactly; only the plan name and the
 fingerprints, which identify the database the plan read, differed. v0.17.0 no
 longer writes the `-- POSTGRES TABLE: <name> --` or `-- MYSQL TABLE: <name> --`
 line in front of each `CREATE TABLE`, so its documents are shorter: 741 bytes
-instead of 784 on PostgreSQL, and 23,309 instead of 27,709 on MySQL.
+instead of 784 on PostgreSQL, and 23,309 instead of 27,709 on MySQL. On
+2026-11-04 the v0.18.0 release image
+`ghcr.io/stokaro/ptah@sha256:9f8797986124add44d0232a17cd17e6f03cfec76b1711efc53c169483b7b4303`
+(commit `6e1d430e51312de325a8f0238e601547a6c473d5`), run the same way against
+PostgreSQL 17.11 and MySQL 8.4.13, reproduced both documents' statements and
+byte sizes exactly; only the plan name and the fingerprints differed.
 
 The SQL source contains 32 `<` bytes in defaults. PostgreSQL uses one TEXT
 column. MySQL distributes the total over 100 VARCHAR(16000) columns in a fixed

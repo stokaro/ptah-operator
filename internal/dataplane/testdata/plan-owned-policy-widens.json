@@ -1,8 +1,8 @@
 {
   "format_version": 1,
-  "name": "plan_871cf9af7dc2",
+  "name": "plan_a1c90965816f",
   "dialect": "postgres",
-  "from_fingerprint": "sha256:814b65227634ce6b66c1cd4134540afd0169fd64a3cef8fdbf0b9c7289c874f7",
+  "from_fingerprint": "sha256:47b2f733fe0d157f6d39e6caba3d1544274ec664d4517401e1f4d615e860e5cc",
   "to_fingerprint": "sha256:ad94cc426261b9a2087e18e32ee065ba0d8d300317eed1d9cbb8f240a0c757e4",
   "destructive": true,
   "statements": [

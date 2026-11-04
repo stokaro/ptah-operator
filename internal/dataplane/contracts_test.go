@@ -187,7 +187,7 @@ func TestDecodeInspectAcceptsAndDiscardsDocumentedNativeDetail(t *testing.T) {
 
 func TestDecodeDriftThresholdExitContract(t *testing.T) {
 	t.Parallel()
-	failed := `{"drift":true,"failed":true,"failure_threshold":"all","highest_severity":"warning","dialect":"postgres","findings":[{"category":"columns_added","count":1,"severity":"warning"}]}`
+	failed := `{"contract_version":1,"command":"schema drift","drift":true,"failed":true,"failure_threshold":"all","highest_severity":"warning","dialect":"postgres","findings":[{"category":"columns_added","count":1,"severity":"warning"}]}`
 	if _, err := dataplane.DecodeDrift([]byte(failed), 1); err != nil {
 		t.Fatalf("DecodeDrift() rejected expected drift: %v", err)
 	}
@@ -195,7 +195,7 @@ func TestDecodeDriftThresholdExitContract(t *testing.T) {
 		t.Fatal("DecodeDrift() accepted an inconsistent exit code")
 	}
 
-	belowThreshold := `{"drift":true,"failed":false,"failure_threshold":"destructive","highest_severity":"warning","dialect":"postgres","findings":[{"category":"columns_added","count":1,"severity":"warning"}]}`
+	belowThreshold := `{"contract_version":1,"command":"schema drift","drift":true,"failed":false,"failure_threshold":"destructive","highest_severity":"warning","dialect":"postgres","findings":[{"category":"columns_added","count":1,"severity":"warning"}]}`
 	if _, err := dataplane.DecodeDrift([]byte(belowThreshold), 0); err != nil {
 		t.Fatalf("DecodeDrift() rejected non-failing drift: %v", err)
 	}
@@ -203,7 +203,7 @@ func TestDecodeDriftThresholdExitContract(t *testing.T) {
 		t.Fatal("DecodeDrift() accepted exit 1 when failed=false")
 	}
 
-	inconsistent := `{"drift":false,"failed":true,"failure_threshold":"all","highest_severity":"","dialect":"postgres","findings":[]}`
+	inconsistent := `{"contract_version":1,"command":"schema drift","drift":false,"failed":true,"failure_threshold":"all","highest_severity":"","dialect":"postgres","findings":[]}`
 	if _, err := dataplane.DecodeDrift([]byte(inconsistent), 1); err == nil {
 		t.Fatal("DecodeDrift() accepted failed=true without drift")
 	}
@@ -228,7 +228,7 @@ func TestDecodeDriftRejectsUnsafeFindingSummaries(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			report := `{"drift":true,"failed":true,"failure_threshold":"all","highest_severity":"warning","dialect":"postgres","findings":` + test.findings + `}`
+			report := `{"contract_version":1,"command":"schema drift","drift":true,"failed":true,"failure_threshold":"all","highest_severity":"warning","dialect":"postgres","findings":` + test.findings + `}`
 			if _, err := dataplane.DecodeDrift([]byte(report), 1); err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("DecodeDrift() error = %v, want %q", err, test.want)
 			}
@@ -239,7 +239,7 @@ func TestDecodeDriftRejectsUnsafeFindingSummaries(t *testing.T) {
 func TestDriftReportDigestIsCanonicalAndRequiresDiff(t *testing.T) {
 	t.Parallel()
 
-	left, err := dataplane.DecodeDrift([]byte(`{"drift":true,"failed":true,"failure_threshold":"all","highest_severity":"warning","dialect":"postgres","findings":[{"category":"columns_added","count":1,"severity":"warning"}],"diff":{"tables_removed":[],"columns_added":["app.users.email"]}}`), 1)
+	left, err := dataplane.DecodeDrift([]byte(`{"contract_version":1,"command":"schema drift","drift":true,"failed":true,"failure_threshold":"all","highest_severity":"warning","dialect":"postgres","findings":[{"category":"columns_added","count":1,"severity":"warning"}],"diff":{"tables_removed":[],"columns_added":["app.users.email"]}}`), 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -307,9 +307,11 @@ func TestDecodePlanRefusesProviderExecutionFields(t *testing.T) {
 	}
 }
 
-// The fixtures are plan files the Ptah v0.14.0 release image saved with
-// `schema plan --output` against PostgreSQL 17, stored as written: pg_trgm and
-// a table on an empty database; a table with a row-security policy on an empty
+// The fixtures are plan files the Ptah v0.18.0 release image,
+// ghcr.io/stokaro/ptah@sha256:9f8797986124add44d0232a17cd17e6f03cfec76b1711efc53c169483b7b4303,
+// saved with `schema plan --output` against PostgreSQL 17, stored as written;
+// the v0.14.0 release image saved the same shapes. They are pg_trgm and a
+// table on an empty database; a table with a row-security policy on an empty
 // database; and the policy alone on a database that already held the table
 // with row security on. Ptah marks each statement its extension or policy
 // owner rendered, and the operator refused all three plans until the fields

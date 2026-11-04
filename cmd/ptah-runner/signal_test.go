@@ -40,8 +40,8 @@ const (
 
 	// stoppedBetweenFiles is the account a run stopped after the first of two
 	// planned migrations committed leaves: failed, with that one applied.
-	stoppedBetweenFiles = `{"contract_version":1,"direction":"up","outcome":"failed","planned":[3,4],"applied":[3],` +
-		`"error":"context canceled","status":{"contract_version":1,"current_version":3,"total_migrations":4,` +
+	stoppedBetweenFiles = `{"contract_version":2,"command":"migrations up","direction":"up","outcome":"failed","planned":[3,4],"applied":[3],` +
+		`"error":{"message":"context canceled"},"status":{"contract_version":2,"current_version":3,"total_migrations":4,` +
 		`"has_pending_changes":true}}` + "\n"
 )
 

@@ -18,17 +18,18 @@ const (
 	// rather than read for the fields this operator recognizes, because those
 	// fields may already mean something else.
 	//
-	// Plan version 2 is Ptah v0.14.0's through v0.17.0's. It changed
-	// the shape of undecided, which this operator does not read, and added
-	// provider_diagnostic; every field and outcome read here means what it
-	// meant in version 1.
-	//
-	// Apply version 3 is Ptah v0.15.0's through v0.17.0's. It lists the planned
-	// operations as units, each with its SQL or a native operation's summary,
-	// where version 2 listed statements. Outcome, plan digest and refusal mean
-	// what they meant in version 2.
-	SupportedSchemaPlanContract  = 2
-	SupportedSchemaApplyContract = 3
+	// Plan version 3 and apply version 4 are stokaro/ptah#5173's. Each carries
+	// error as an object, the kind of a failure to open the target and Ptah's
+	// message, where the versions before carried the message alone, and names
+	// its command. Every outcome, the plan digest, the units an apply lists and
+	// the refusal mean what they meant in plan version 2 and apply version 3.
+	SupportedSchemaPlanContract  = 3
+	SupportedSchemaApplyContract = 4
+
+	// SchemaPlanCommand and SchemaApplyCommand are the commands the two
+	// documents name. A document naming another is refused.
+	SchemaPlanCommand  = "schema plan"
+	SchemaApplyCommand = "schema apply"
 )
 
 // Outcomes a plan document reports.
@@ -101,24 +102,30 @@ type SchemaRefusal struct {
 // --output wrote is the plan, and PlanDigest is what binds the report to it.
 type SchemaPlanReport struct {
 	ContractVersion int            `json:"contract_version"`
+	Command         string         `json:"command"`
 	Outcome         string         `json:"outcome"`
 	PlanDigest      string         `json:"plan_digest,omitempty"`
 	PlanPath        string         `json:"plan_path,omitempty"`
 	Refusal         *SchemaRefusal `json:"refusal,omitempty"`
-	// Error is the sentence Ptah printed on standard error. It may quote a
-	// statement, so it is for a fence refusal's tables and nothing else.
-	Error string `json:"error,omitempty"`
+	// Error is why the run failed or refused. Its message is the sentence
+	// Ptah printed on standard error and may quote a statement, so it is for a
+	// fence refusal's tables and nothing else; its kind names a target that
+	// could not be opened.
+	Error *CommandError `json:"error,omitempty"`
 }
 
 // SchemaApplyReport is Ptah's `schema apply --json` document.
 type SchemaApplyReport struct {
 	ContractVersion int               `json:"contract_version"`
+	Command         string            `json:"command"`
 	Outcome         string            `json:"outcome"`
 	PlanName        string            `json:"plan_name,omitempty"`
 	PlanDigest      string            `json:"plan_digest,omitempty"`
 	Units           []SchemaApplyUnit `json:"units,omitempty"`
 	Refusal         *SchemaRefusal    `json:"refusal,omitempty"`
-	Error           string            `json:"error,omitempty"`
+	// Error is why the run failed, refused or ended unknown. Only its kind is
+	// read.
+	Error *CommandError `json:"error,omitempty"`
 }
 
 // SchemaApplyUnit is one planned operation an apply document lists: its SQL,
@@ -162,6 +169,9 @@ func DecodeSchemaPlan(data []byte) (SchemaPlanReport, error) {
 			report.ContractVersion, SupportedSchemaPlanContract,
 		)
 	}
+	if report.Command != SchemaPlanCommand {
+		return SchemaPlanReport{}, fmt.Errorf("schema plan report names another command than %s", SchemaPlanCommand)
+	}
 	if !slices.Contains(schemaPlanOutcomes, report.Outcome) {
 		return SchemaPlanReport{}, fmt.Errorf("schema plan reports outcome %q, which this operator does not know", report.Outcome)
 	}
@@ -193,6 +203,9 @@ func DecodeSchemaApply(data []byte) (SchemaApplyReport, error) {
 			"schema apply contract version %d is not the %d this operator reads",
 			report.ContractVersion, SupportedSchemaApplyContract,
 		)
+	}
+	if report.Command != SchemaApplyCommand {
+		return SchemaApplyReport{}, fmt.Errorf("schema apply report names another command than %s", SchemaApplyCommand)
 	}
 	if !slices.Contains(schemaApplyOutcomes, report.Outcome) {
 		return SchemaApplyReport{}, fmt.Errorf("schema apply reports outcome %q, which this operator does not know", report.Outcome)
