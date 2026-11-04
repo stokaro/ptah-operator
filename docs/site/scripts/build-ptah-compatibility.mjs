@@ -156,6 +156,43 @@ function sameAs(field, entry, earlier) {
   return match ? `the same as [\`${prose(match.operator)}\`](#${anchor(match)}).` : null;
 }
 
+// ORDINALS name a list position the way a reader counts it.
+const ORDINALS = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth', 'ninth', 'tenth'];
+
+function ordinals(indices) {
+  const names = indices.map((index) => ORDINALS[index] ?? `number ${index + 1}`);
+  return names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`;
+}
+
+// fewerLimitations names the first earlier version whose limitations are this
+// one's, in the same order, and more. The development state gains a limitation
+// when it moves to a Ptah build with a new requirement, and a release that ran
+// the older build does not carry it. Printing the release's list again would
+// say every shared sentence twice, so it points at the longer list and names
+// the limitations of it that do not apply.
+function fewerLimitations(entry, earlier) {
+  const own = FIELDS.limitations(entry);
+  if (own.length === 0) return null;
+  for (const other of earlier) {
+    const theirs = FIELDS.limitations(other);
+    if (theirs.length <= own.length) continue;
+    const extra = [];
+    let matched = 0;
+    theirs.forEach((limitation, index) => {
+      if (matched < own.length && limitation === own[matched]) {
+        matched += 1;
+      } else {
+        extra.push(index);
+      }
+    });
+    if (matched === own.length) {
+      const noun = extra.length === 1 ? 'limitation' : 'limitations';
+      return `the same as [\`${prose(other.operator)}\`](#${anchor(other)}) without its ${ordinals(extra)} ${noun}.`;
+    }
+  }
+  return null;
+}
+
 function section(entry, earlier) {
   const lines = [`### ${prose(entry.operator)}`, ''];
   const stage = entry.stage === 'development' ? 'The development state.' : 'A released version.';
@@ -179,7 +216,7 @@ function section(entry, earlier) {
 
   const limitations = entry.limitations ?? [];
   if (limitations.length > 0) {
-    const sameLimitations = sameAs('limitations', entry, earlier);
+    const sameLimitations = sameAs('limitations', entry, earlier) ?? fewerLimitations(entry, earlier);
     if (sameLimitations) {
       lines.push(`**Limitations:** ${sameLimitations}`, '');
     } else {
@@ -371,6 +408,31 @@ function selftest() {
       !rebuilt.includes('**Limitations:** the same as [`edge`](#edge).')) {
     throw new Error('a version that ran another build repeated or lost its shared prose');
   }
+  // A release that lacks a limitation the development state gained points at
+  // the longer list and names what does not apply, rather than repeating the
+  // limitations the two share. A list that is not the other's minus some
+  // items, or has them in another order, keeps its own prose.
+  const gained = structuredClone(catalog);
+  gained.releases[0].limitations = ['run `ptah migrations up` with the flag', 'a requirement of the newer build'];
+  const gainedBlock = render(check(gained));
+  const older = gainedBlock.slice(gainedBlock.indexOf('### v0.3.0'), gainedBlock.indexOf('### v0.4.0'));
+  if (!older.includes('**Limitations:** the same as [`edge`](#edge) without its second limitation.')) {
+    throw new Error('a release without the newer limitation repeated the shared ones or lost the reference');
+  }
+  if (gainedBlock.split('with the flag').length !== 2) throw new Error('a shared limitation was printed twice');
+  if (!gainedBlock.slice(gainedBlock.indexOf('### v0.4.0')).includes('**Limitations:** the same as [`v0.3.0`](#v030).')) {
+    throw new Error('an exact match lost to a narrower one');
+  }
+  const reordered = structuredClone(gained);
+  reordered.releases[0].limitations = ['a requirement of the newer build', 'another', 'run `ptah migrations up` with the flag'];
+  reordered.releases[3].limitations = ['run `ptah migrations up` with the flag', 'a requirement of the newer build'];
+  const reorderedBlock = render(check(reordered));
+  if (reorderedBlock.slice(reorderedBlock.indexOf('### v0.3.0'), reorderedBlock.indexOf('### v0.4.0')).includes('without its')) {
+    throw new Error('a list in another order was referenced as a narrower copy');
+  }
+  if (ordinals([1]) !== 'second' || ordinals([0, 2, 11]) !== 'first, third and number 12') {
+    throw new Error('list positions are not named the way a reader counts them');
+  }
   if (anchor({ operator: 'v0.2.0' }) !== 'v020') throw new Error('a version anchor is not the heading slug');
   if (!block.includes('- `kubernetes-e2e`: the suite one declaration')) throw new Error('the evidence is not described');
 
@@ -404,7 +466,7 @@ function selftest() {
 
   console.log(
     'build-ptah-compatibility.mjs --selftest: OK (declared, verified, release and commit pin, absent, ' +
-      'guide links, one-line prose, repeated versions, refusals, staleness)',
+      'guide links, one-line prose, repeated versions, narrower limitations, refusals, staleness)',
   );
 }
 
