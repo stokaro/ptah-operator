@@ -16,6 +16,7 @@ row that matches is where to go.
 | A return to an earlier revision | [Roll back to an earlier revision](#rollback) |
 | A release with neither runtime Deployment left | [Repair a release that lost its runtime](#repair-runtime) |
 | Removing the operator from a cluster | [Uninstall the release](#uninstall) |
+| A namespace stuck in `Terminating`, or tearing one down in CI or a lab | [Deleting a namespace](#delete-namespace) |
 | A resource that is not converging, and no obvious refusal | [Finding a resource that has stopped converging](#finding-a-resource-that-has-stopped-converging) |
 | A resource in `Blocked`, or a condition you do not recognize | [Condition reasons](../../troubleshoot/condition-reasons/) |
 | A migration whose Apply ended `Partial` or `Unknown` | [A migration run nobody accounted for](#a-migration-run-nobody-accounted-for) |
@@ -437,6 +438,10 @@ install a decision rather than a hope.
 
 A ServiceAccount you created is never deleted by the chart, and any credential
 or grant issued outside Kubernetes RBAC has to be retired by hand.
+
+With the release gone, nothing refuses the deletion of a `PtahResultRecord` in
+any namespace, whether or not its
+[retention window](#delete-namespace) has ended.
 
 #### Run it {#uninstall-run}
 
@@ -1519,6 +1524,115 @@ resource takes that database while a Pod that may still be executing SQL is
 unaccounted for -- which is the reason the wait is worth its cost. Recover the node or force-delete the Pod; removing the
 `operator.ptah.run/migration-operation` finalizer by hand is the last resort,
 and it is a statement that nothing is executing against that database any more.
+
+### Deleting a namespace {#delete-namespace}
+
+A namespace that ran a `PtahSchema` or a `PtahMigration` stays `Terminating` for
+about an hour after its last operation. `kubectl delete namespace --wait=true`
+blocks for all of that time, and a namespace of the same name cannot be created
+until the old one is gone.
+
+Each operation leaves `PtahResultRecord` objects behind: its result, and the
+credential that delivered it. The admission webhook refuses to delete one until
+at least an hour after it was written, for every caller, the namespace
+controller and a cluster administrator included. The hour is longer than the
+five-minute backup lag plus the thirty-minute recovery bound the operator is
+qualified against, so a recovery that starts right after an operation still
+finds what that operation reported.
+[Backup and recovery](../recovery/#what-to-preserve) says what the records are
+for.
+
+The rest of the namespace goes first. What remains says why it waits:
+
+```sh
+kubectl get namespace <namespace> \
+  -o jsonpath='{.status.conditions[?(@.type=="NamespaceDeletionContentFailure")].message}'
+```
+
+```text
+Failed to delete all resource types, 1 remaining: admission webhook "vcontrollerwrite.operator.ptah.run" denied the request: result publication retention has not authorized deletion: record ptah-result-17b56fc4280e1d0fb0c22f0e053a105826c6cc7423103c740b1b53302693d95d cannot be deleted before 2026-11-06T16:24:52Z
+```
+
+The time is the earliest that one record can go, in UTC. It is not when the
+namespace will be gone. The API server stops at the first record it is refused,
+so the message names the first by name, and the others can have later times.
+At the named time the operator checks again, and the next refusal can name a
+later one. The list says how long the whole wait is:
+
+```sh
+kubectl get ptahresultrecords -n <namespace> --sort-by=.metadata.creationTimestamp \
+  -o custom-columns=NAME:.metadata.name,TYPE:.spec.type,CREATED:.metadata.creationTimestamp,DELETING:.metadata.deletionTimestamp
+```
+
+The last record can go an hour after the newest time in either column. `DELETING`
+is set where nothing had recorded the attempt as finished when the namespace's
+deletion began. A terminating namespace refuses the `retired` record that would
+start the window, so the manager starts it with a foreground deletion of the
+record instead, and the hour runs from that time. A namespace deleted in the
+middle of an operation therefore waits about an hour from its deletion, however
+old the rest of its records are.
+
+The manager's collector removes each record once its window has ended, and the
+namespace follows.
+
+A message that ends at `has not authorized deletion`, with no time, is not about
+time. A credential record says the same thing as
+`result record write violates its immutable operation binding`. The record's
+operation may still be pinned by its resource, its original Job may still exist,
+the records it depends on may still have to go first, or the manager may have
+failed to read one of those. No time would lift any of them, so the message names
+none. In a terminating namespace they normally clear on their own, as the resource
+and its Job go and the collector removes records in order. If one outlasts the last
+window, the manager is the place to look: the collector runs on the leader. A
+`failed calling webhook` message means the manager is not answering at all; see
+[Webhook certificate lifecycle](#webhook-certificate-lifecycle).
+
+#### What does not shorten it
+
+With the operator installed, nothing does. These look as though they should:
+
+- `kubectl delete ptahresultrecord` is refused the same way. With
+  `--cascade=foreground` it is refused where a `retired` record exists, and where
+  none exists it starts a window instead of ending one.
+- Scaling the manager to zero leaves the webhook unanswered. Its `failurePolicy`
+  is `Fail`, so every deletion is refused until the manager returns, and nothing
+  collects the records meanwhile.
+- `resultDelivery.enabled=false` makes it worse. The manager then runs no
+  collector, and its webhook refuses to delete these records and names no time,
+  so the namespace waits until delivery is back on or the release is uninstalled.
+
+Do not remove the webhook configuration by hand to get past this. That leaves a
+release running without any of the guards the configuration holds, and it says
+nothing to whoever owns the installation.
+
+#### Tearing down CI and labs {#teardown}
+
+Delete the cluster, when the cluster is disposable. Retention lives in the
+cluster, so it goes with it. `kind delete cluster` took two seconds on a
+single-node cluster, and this repository's own harness does the same rather than
+wait.
+
+When the cluster stays and the operator can go, uninstall the release first:
+
+```sh
+kubectl delete ptahschemas,ptahmigrations --all -n <namespace> --wait=true
+helm uninstall <release> -n <release-namespace> --wait --timeout 5m
+kubectl delete namespace <namespace> --wait=true
+```
+
+Nothing refuses the deletion once the webhook is gone. On kind with Kubernetes
+1.37.0 the uninstall took 7 seconds, and the namespace, with 10 records inside
+their window, was gone 8 seconds later. Namespaces already `Terminating` followed
+within 40 seconds of the uninstall, including one refused for 30 minutes. Delete
+the resources first: a resource whose operation is active carries a finalizer
+only the manager removes, and with the manager gone the namespace would wait for
+that instead.
+
+The uninstall takes retention away from every namespace in the cluster until the
+next install, which is why this is a path for a lab and not for an installation
+you keep. Records in other namespaces lose their protection at once, and those
+whose resource is gone can be removed by garbage collection before the next
+install.
 
 ## Failure recovery
 

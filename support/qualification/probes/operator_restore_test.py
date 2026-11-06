@@ -234,6 +234,7 @@ if __name__ == '__main__':
 
 
 HELD = json.loads((Path(__file__).resolve().parent / 'testdata/restore/namespace-held-by-result-retention.json').read_text())
+HELD_UNTIL = json.loads((Path(__file__).resolve().parent / 'testdata/restore/namespace-held-by-result-retention-window.json').read_text())
 
 
 class CleanupTest(unittest.TestCase):
@@ -263,10 +264,11 @@ class CleanupTest(unittest.TestCase):
         self.assertEqual(probe.report['namespaceCleanup'], 'removed')
 
     def test_a_namespace_held_only_by_result_retention_is_clean(self):
-        with patch('operator_restore.NAMESPACE_SETTLE_SECONDS', 0), patch('operator_restore.time.sleep'):
-            probe = self.probe(namespace=HELD)
-            self.assertTrue(probe.cleanup_namespace())
-        self.assertIn('1 result records under the retention window', probe.report['namespaceCleanup'])
+        for name, namespace in {'plain denial': HELD, 'denial with the end of the window': HELD_UNTIL}.items():
+            with self.subTest(name=name), patch('operator_restore.NAMESPACE_SETTLE_SECONDS', 0), patch('operator_restore.time.sleep'):
+                probe = self.probe(namespace=namespace)
+                self.assertTrue(probe.cleanup_namespace())
+                self.assertIn('1 result records under the retention window', probe.report['namespaceCleanup'])
 
     def test_anything_else_holding_the_namespace_fails_the_cleanup(self):
         other = copy.deepcopy(HELD)
@@ -281,6 +283,27 @@ class CleanupTest(unittest.TestCase):
                                 'namespace unreadable': self.probe(failing={'read the owned recovery namespace while it terminates'})}.items():
                 with self.subTest(name=name):
                     self.assertFalse(probe.cleanup_namespace())
+
+    def test_the_end_of_the_window_is_read_only_in_the_shape_the_operator_writes(self):
+        self.assertTrue(retention_holds(HELD_UNTIL))
+        message = next(c for c in HELD_UNTIL['status']['conditions'] if c['type'] == 'NamespaceDeletionContentFailure')['message']
+        self.assertIn(' cannot be deleted before 2026-11-06T16:24:52Z', message)
+        for name, edit in {
+            'no time': lambda m: m.replace(' before 2026-11-06T16:24:52Z', ' before'),
+            'not a time': lambda m: m.replace('2026-11-06T16:24:52Z', 'soon'),
+            'a time in another zone': lambda m: m.replace('16:24:52Z', '16:24:52+01:00'),
+            'no record': lambda m: m.replace(': record ptah-result-', ': ptah-result-'),
+            'something after the time': lambda m: m + ': and more',
+            'a binding violation': lambda m: m.split('denied the request: ')[0] + 'denied the request: result record write violates its immutable operation binding',
+        }.items():
+            with self.subTest(name=name):
+                namespace = copy.deepcopy(HELD_UNTIL)
+                changed = edit(message)
+                self.assertNotEqual(changed, message)
+                for condition in namespace['status']['conditions']:
+                    if condition['type'] == 'NamespaceDeletionContentFailure':
+                        condition['message'] = changed
+                self.assertFalse(retention_holds(namespace))
 
     def test_retention_is_read_from_the_api_servers_own_verdict(self):
         self.assertTrue(retention_holds(HELD))

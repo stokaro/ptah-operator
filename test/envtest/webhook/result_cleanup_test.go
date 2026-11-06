@@ -2,11 +2,14 @@ package webhook_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
 	api "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/resultcleanup"
+	"github.com/stokaro/ptah-operator/internal/resultdelivery/jobconfig"
+	"github.com/stokaro/ptah-operator/internal/resultretention"
 	"github.com/stokaro/ptah-operator/internal/resultstore"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -63,9 +66,7 @@ func TestResultCollectorInTerminatingNamespace(t *testing.T) {
 			}
 			withoutFence := record.DeepCopy()
 			withoutFence.Finalizers = nil
-			if err := admin.Update(t.Context(), withoutFence); err == nil {
-				t.Fatal("early finalizer removal discarded the retirement fence")
-			}
+			requireDenied(t, admin.Update(t.Context(), withoutFence), controllerWriteWebhook, windowDenial(&record))
 		}
 		if err := admin.Delete(t.Context(), &record); err == nil {
 			t.Fatalf("early deletion of %s bypassed the retention window", record.Spec.Type)
@@ -107,6 +108,71 @@ func TestResultCollectorInTerminatingNamespace(t *testing.T) {
 	}
 	if len(list.Items) != 0 {
 		t.Fatalf("foreground completion left %d records", len(list.Items))
+	}
+}
+
+// windowDenial is the refusal of a record still inside its own window.
+func windowDenial(record *api.PtahResultRecord) string {
+	return "result publication retention has not authorized deletion: record " + record.Name +
+		" cannot be deleted before " + record.CreationTimestamp.Add(resultretention.MinimumWindow).UTC().Format(time.RFC3339)
+}
+
+// A namespace's deletion quotes this refusal in its conditions, and the time in
+// it is what a person acts on. The policy clock runs twenty minutes ahead of the
+// API server that stamped the records, so a time computed from the clock instead
+// of the stored creationTimestamp reads differently and fails the row.
+func TestRetentionDenialNamesTheEndOfTheWindow(t *testing.T) {
+	f, identity, store := publicationFixture(t, true)
+	payload := publicationPayload(t, identity)
+	if _, err := store.Publish(t.Context(), identity.Binding, payload, publicationDigest(payload)); err != nil {
+		t.Fatal(err)
+	}
+	read := func(name string) *api.PtahResultRecord {
+		t.Helper()
+		record := &api.PtahResultRecord{}
+		if err := admin.Get(t.Context(), client.ObjectKey{Namespace: f.namespace, Name: name}, record); err != nil {
+			t.Fatal(err)
+		}
+		return record
+	}
+	b := identity.Binding
+	intentName, _ := resultstore.Name(b)
+	intent, credential := read(intentName), read(jobconfig.CredentialName(b.UID, b.OperationID, b.JobName))
+	collection := func(record *api.PtahResultRecord) error {
+		return admin.DeleteAllOf(t.Context(), &api.PtahResultRecord{}, client.InNamespace(f.namespace), client.MatchingFields{"metadata.name": record.Name}, client.DryRunAll)
+	}
+	defer cleanupClockOffset.Store(0)
+
+	cleanupClockOffset.Store(int64(20 * time.Minute))
+	for _, record := range []*api.PtahResultRecord{intent, credential} {
+		t.Run(record.Spec.Type+" inside its window", func(t *testing.T) {
+			requireDenied(t, admin.Delete(t.Context(), record, client.DryRunAll), controllerWriteWebhook, windowDenial(record))
+			// A namespace's deletion is a collection request, which has no name.
+			requireDenied(t, collection(record), controllerWriteWebhook, windowDenial(record))
+			// The active claim refuses the retirement a foreground request asks
+			// for, and the time the ordinary deletion named still holds.
+			requireDenied(t, admin.Delete(t.Context(), record, client.PropagationPolicy(metav1.DeletePropagationForeground), client.DryRunAll), controllerWriteWebhook, windowDenial(record))
+		})
+	}
+
+	// Past the window the resource still pins the attempt. No time would lift
+	// that, so the refusal names none.
+	cleanupClockOffset.Store(int64(2 * time.Hour))
+	for _, row := range []struct {
+		record *api.PtahResultRecord
+		reason string
+	}{
+		{intent, "retention has not authorized deletion"},
+		{credential, "immutable operation binding"},
+	} {
+		t.Run(row.record.Spec.Type+" past its window", func(t *testing.T) {
+			for _, err := range []error{admin.Delete(t.Context(), row.record, client.DryRunAll), collection(row.record)} {
+				requireDenied(t, err, controllerWriteWebhook, row.reason)
+				if strings.Contains(err.Error(), "cannot be deleted before") {
+					t.Fatalf("a refusal that is not about time named one: %v", err)
+				}
+			}
+		})
 	}
 }
 
