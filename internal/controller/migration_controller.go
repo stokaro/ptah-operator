@@ -523,6 +523,10 @@ func (r *MigrationReconciler) reconcileMigrationExecutionBinding(
 	}
 	before := migration.DeepCopy()
 	migration.Status.ExecutionBinding = binding
+	if current != nil {
+		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationDatabaseReachable, metav1.ConditionUnknown,
+			operatorv1alpha1.ReasonExecutionBindingChanged, "The last reading of the target is historical evidence from the previous execution binding")
+	}
 	if migration.Status.ActiveOperation == nil {
 		if err := r.patchMigrationStatus(ctx, before, migration); err != nil {
 			return ctrl.Result{}, true, err
@@ -1116,6 +1120,7 @@ func (r *MigrationReconciler) consumeMigrationResult(
 		if err := r.recordMigrationHistory(migration, *result.MigrationHistory, result.TargetIdentityDigest); err != nil {
 			return r.retryMigrationOperation(ctx, migration, job, err)
 		}
+		setMigrationTargetOpened(migration, "The migration history was read")
 		// The plan is published after this status is persisted, not here. A
 		// plan names the evidence it was computed from, and the admission
 		// guard re-derives it from the migration's own stored status: a plan
@@ -1714,6 +1719,7 @@ func (r *MigrationReconciler) retryMigrationOperationAs(
 	// Event below keeps 512.
 	setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionTrue,
 		reason, bounded(failure.Error(), 1024))
+	setMigrationTargetFailure(migration, failure)
 	if err := r.patchMigrationStatus(ctx, before, migration); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -1825,6 +1831,10 @@ func (r *MigrationReconciler) migrationBlocked(
 	setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue, reason, message)
 	setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationReady, metav1.ConditionFalse, reason, message)
 	setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionFalse, reason, message)
+	if reason == operatorv1alpha1.ReasonUnsupportedEngine {
+		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationDatabaseReachable, metav1.ConditionUnknown, reason,
+			"Database access is disabled for an unsupported engine")
+	}
 	return ctrl.Result{}, r.patchMigrationStatus(ctx, before, migration)
 }
 
@@ -2245,6 +2255,20 @@ func setMigrationCondition(
 		Type: conditionType, Status: status, Reason: string(reason), Message: bounded(message, 1024),
 		ObservedGeneration: migration.Generation, LastTransitionTime: metav1.Now(),
 	})
+}
+
+// setMigrationTargetFailure moves DatabaseReachable when failure names why the
+// target could not be opened, and otherwise leaves it as it was.
+func setMigrationTargetFailure(migration *operatorv1alpha1.PtahMigration, failure error) {
+	if unreached, message, named := databaseUnreached(failure); named {
+		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationDatabaseReachable, metav1.ConditionFalse, unreached, message)
+	}
+}
+
+// setMigrationTargetOpened records an operation that opened the target.
+func setMigrationTargetOpened(migration *operatorv1alpha1.PtahMigration, message string) {
+	setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationDatabaseReachable, metav1.ConditionTrue,
+		operatorv1alpha1.ReasonObserved, message)
 }
 
 // validateMigrationJobIntent holds a Job the controller read back to the Job

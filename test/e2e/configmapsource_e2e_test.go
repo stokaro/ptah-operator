@@ -40,6 +40,7 @@ func TestConfigMapSources(t *testing.T) {
 		{"configmap-migration", c.migrationFromConfigMap},
 		{"configmap-snapshot-refused", c.replacedSnapshotRefused},
 		{"configmap-unreadable-source", c.unreadableSources},
+		{"database-reachable-kind", c.targetReachability},
 	} {
 		if !run.Scenario(scenario.name, c.scenario(scenario.body)) {
 			return
@@ -225,6 +226,8 @@ func (c *configMapRun) reset() {
 		&ptahv1alpha1.PtahMigration{ObjectMeta: metav1.ObjectMeta{Namespace: c.in.TestNamespace, Name: configMapMigration}},
 		&ptahv1alpha1.PtahMigration{ObjectMeta: metav1.ObjectMeta{Namespace: c.in.TestNamespace, Name: configMapUnreadableMigration}},
 		&ptahv1alpha1.PtahMigrationApproval{ObjectMeta: metav1.ObjectMeta{Namespace: c.in.TestNamespace, Name: "e2e-configmap-migration-v1"}},
+		&ptahv1alpha1.PtahSchema{ObjectMeta: metav1.ObjectMeta{Namespace: c.in.TestNamespace, Name: reachabilitySchema}},
+		&ptahv1alpha1.PtahMigration{ObjectMeta: metav1.ObjectMeta{Namespace: c.in.TestNamespace, Name: reachabilityMigration}},
 	}
 	for _, approval := range []string{"e2e-configmap-schema-v1", "e2e-configmap-schema-v2", "e2e-configmap-schema-v3"} {
 		objects = append(objects, &ptahv1alpha1.PtahSchemaApproval{ObjectMeta: metav1.ObjectMeta{Namespace: c.in.TestNamespace, Name: approval}})
@@ -232,7 +235,8 @@ func (c *configMapRun) reset() {
 	for _, object := range objects {
 		c.deleteAndWait(object)
 	}
-	for _, database := range []string{configMapSchemaDatabase, configMapMigrationDatabase, configMapUnreadableDatabase} {
+	for _, database := range []string{configMapSchemaDatabase, configMapMigrationDatabase, configMapUnreadableDatabase,
+		reachabilitySchemaDatabase, reachabilityMigrationDatabase} {
 		_, err := serverSQL(c.ctx, c.cluster, c.in.TestNamespace, c.engine, "DROP DATABASE IF EXISTS "+database+" WITH (FORCE)")
 		c.check(err, "drop database %s", database)
 	}
@@ -261,9 +265,21 @@ func (c *configMapRun) deleteAndWait(object client.Object) {
 // Secret its resource reads the URL from.
 func (c *configMapRun) createDatabase(database, secret string) {
 	c.t.Helper()
+	c.createDatabaseWithPassword(database, secret, c.password)
+}
+
+// createDatabaseWithPassword is createDatabase with a URL that carries password.
+func (c *configMapRun) createDatabaseWithPassword(database, secret, password string) {
+	c.t.Helper()
 	_, err := serverSQL(c.ctx, c.cluster, c.in.TestNamespace, c.engine, "CREATE DATABASE "+database)
 	c.check(err, "create database %s", database)
-	url := c.engine.databaseURL(c.in.TestNamespace, migrationDatabaseUser, c.password, database)
+	c.applyDatabaseSecret(database, secret, password)
+}
+
+// applyDatabaseSecret writes the Secret a resource reads its URL from.
+func (c *configMapRun) applyDatabaseSecret(database, secret, password string) {
+	c.t.Helper()
+	url := c.engine.databaseURL(c.in.TestNamespace, migrationDatabaseUser, password, database)
 	c.check(c.apply(map[string]any{
 		"apiVersion": "v1", "kind": "Secret", "type": "Opaque",
 		"metadata": map[string]any{"namespace": c.in.TestNamespace, "name": secret},
@@ -763,6 +779,8 @@ func (c *configMapRun) finish() {
 	for _, object := range []client.Object{
 		&ptahv1alpha1.PtahSchema{ObjectMeta: metav1.ObjectMeta{Namespace: c.in.TestNamespace, Name: configMapSchema}},
 		&ptahv1alpha1.PtahMigration{ObjectMeta: metav1.ObjectMeta{Namespace: c.in.TestNamespace, Name: configMapMigration}},
+		&ptahv1alpha1.PtahSchema{ObjectMeta: metav1.ObjectMeta{Namespace: c.in.TestNamespace, Name: reachabilitySchema}},
+		&ptahv1alpha1.PtahMigration{ObjectMeta: metav1.ObjectMeta{Namespace: c.in.TestNamespace, Name: reachabilityMigration}},
 	} {
 		patch := client.RawPatch(types.MergePatchType, []byte(`{"spec":{"suspend":true}}`))
 		c.check(c.cluster.Client.Patch(c.ctx, object, patch, client.FieldOwner(harness.FieldOwner)), "suspend %s", object.GetName())

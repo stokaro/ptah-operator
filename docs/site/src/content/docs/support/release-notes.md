@@ -74,6 +74,18 @@ Nothing else.
   says how to read the reason and how to make the resource read the repaired
   file. A schema whose `fetch-schema` step fails now names that step and its
   exit status.
+- **`DatabaseReachable` says which kind it was.** `DatabaseReachable` is `False`
+  when an operation's result names a kind, with a reason for each:
+  `DatabaseUnreachable`, `AuthenticationFailed`, `DatabaseNotFound`,
+  `PermissionDenied` or `TLSFailed`. `PtahMigration` now publishes the condition
+  too. A successful Plan or Apply sets `True` as an Observe does, so a Plan
+  retried after the database came back does not leave it `False` for a whole
+  `spec.interval`. It means the target answered the last time an operation opened
+  it, and a failure with no kind leaves it as it was. An alert can key on the
+  reason instead of the start of the message. `ReconciliationFailed`, `Ready` and
+  `Progressing` keep their reasons. After a rollback, an earlier manager leaves a
+  migration's `DatabaseReachable` as this one last wrote it, and reads nothing
+  from it.
 - **A migration run that never started.** A migration Apply that Ptah stopped
   before it selected any migration, as on a database it could not open, is
   now `Failed`. After `spec.execution.failureRetryInterval` the resource reads

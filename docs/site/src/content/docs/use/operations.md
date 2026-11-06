@@ -2321,7 +2321,10 @@ on rows rather than on rates.
 Turning that into a Prometheus series needs an exporter that reads object
 status and emits per-object gauges; `kube-state-metrics` does exactly this for
 custom resources, and its cardinality is then your choice rather than the
-operator's. Durable state and freshness gauges shipped by the operator itself
+operator's. The reason of `DatabaseReachable` is what such a series can key on
+to tell a closed database from refused credentials;
+[the kinds](../../troubleshoot/condition-reasons/#a-database-the-operation-could-not-open)
+list each reason. Durable state and freshness gauges shipped by the operator itself
 are tracked in
 [issue #226](https://github.com/stokaro/ptah-operator/issues/226).
 

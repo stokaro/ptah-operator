@@ -1811,6 +1811,10 @@ func (r *SchemaReconciler) consumeResultWithTransport(ctx context.Context, schem
 				setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionTrue, operatorv1alpha1.ReasonPublished, "Exact plan bytes are stored in immutable chunks")
 			}
 		}
+		// A Plan retried after the database came back is the first operation to
+		// open it, and the next Observe may be a whole interval away. It goes
+		// ahead of the proof below, whose retired binding makes this Unknown.
+		setCondition(schema, operatorv1alpha1.ConditionDatabaseReachable, metav1.ConditionTrue, operatorv1alpha1.ReasonObserved, "Database schema was observed")
 		if pending != nil {
 			if completedProofExecutionBindingErr != nil {
 				// Proof and historical Apply attribution are committed, but the
@@ -1863,6 +1867,7 @@ func (r *SchemaReconciler) consumeResultWithTransport(ctx context.Context, schem
 		}
 		schema.Status.PendingObservation = pending
 		schema.Status.Phase = operatorv1alpha1.PhaseVerifyingConvergence
+		setCondition(schema, operatorv1alpha1.ConditionDatabaseReachable, metav1.ConditionTrue, operatorv1alpha1.ReasonObserved, "The Apply opened the database")
 		setCondition(schema, operatorv1alpha1.ConditionApplying, metav1.ConditionFalse, operatorv1alpha1.ReasonJobCompleted, "Apply Job completed; convergence observation is pending")
 		setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonVerifyingConvergence, "Apply completion has not yet been independently observed")
 	}
@@ -4801,9 +4806,15 @@ func markExecutionBindingRefreshRequired(schema *operatorv1alpha1.PtahSchema) {
 	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonExecutionBindingChanged, "A complete read-only reconciliation is required under the current execution binding")
 }
 
+// setFailure records why an operation failed. reason answers whether the
+// operation failed, and DatabaseReachable answers whether the target could be
+// opened, so a failure that names a kind moves the second in the same write.
 func setFailure(schema *operatorv1alpha1.PtahSchema, reason operatorv1alpha1.ConditionReason, failure error) {
 	setCondition(schema, operatorv1alpha1.ConditionReconciliationFailed, metav1.ConditionTrue, reason, bounded(failure.Error(), 1024))
 	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, reason, "Reconciliation did not complete")
+	if unreached, message, named := databaseUnreached(failure); named {
+		setCondition(schema, operatorv1alpha1.ConditionDatabaseReachable, metav1.ConditionFalse, unreached, message)
+	}
 }
 
 func clearFailure(schema *operatorv1alpha1.PtahSchema) {

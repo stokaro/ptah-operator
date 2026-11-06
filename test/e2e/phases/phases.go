@@ -686,7 +686,9 @@ type ConfigMapSourceInputs struct {
 // again and retiring the snapshot nothing names, and an edit to an unselected
 // key planning nothing; a snapshot replaced after approval refused by the Pod
 // before the operation container starts; and a desired file Ptah cannot read
-// named in the condition and the Event, for a schema and a migration.
+// named in the condition and the Event, for a schema and a migration. On the same
+// sources it proves DatabaseReachable: a wrong password in the URL reaches False
+// with the authentication reason, and correcting the Secret reaches True.
 var ConfigMapSources = define[ConfigMapSourceInputs](Phase{
 	Name:    "configmap-sources",
 	Test:    "TestConfigMapSources",
@@ -697,6 +699,7 @@ var ConfigMapSources = define[ConfigMapSourceInputs](Phase{
 		"configmap-migration",
 		"configmap-snapshot-refused",
 		"configmap-unreadable-source",
+		"database-reachable-kind",
 	},
 })
 

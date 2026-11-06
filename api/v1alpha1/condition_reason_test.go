@@ -77,6 +77,11 @@ func TestConditionReasonWireContract(t *testing.T) {
 		{"unsupported engine", operatorv1alpha1.ReasonUnsupportedEngine, "UnsupportedEngine"},
 		{"verifying convergence", operatorv1alpha1.ReasonVerifyingConvergence, "VerifyingConvergence"},
 		{"waiting", operatorv1alpha1.ReasonWaiting, "Waiting"},
+		{"database unreachable", operatorv1alpha1.ReasonDatabaseUnreachable, "DatabaseUnreachable"},
+		{"authentication failed", operatorv1alpha1.ReasonAuthenticationFailed, "AuthenticationFailed"},
+		{"database not found", operatorv1alpha1.ReasonDatabaseNotFound, "DatabaseNotFound"},
+		{"permission denied", operatorv1alpha1.ReasonPermissionDenied, "PermissionDenied"},
+		{"TLS failed", operatorv1alpha1.ReasonTLSFailed, "TLSFailed"},
 	}
 
 	wirePattern := regexp.MustCompile(`^[A-Z][A-Za-z0-9]{0,62}$`)
