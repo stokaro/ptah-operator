@@ -182,6 +182,26 @@ type MigrationOperationStatus struct {
 	// dispatch so the run is attributable to the decision that permitted it.
 	ApprovalRef *ImmutableObjectReference `json:"approvalRef,omitempty"`
 
+	// Actor is the name this Apply writes to the database's own migration log:
+	// the username admission stamped on the approval ApprovalRef names, or,
+	// under apply: Always, a fixed name that says no person approved. The value
+	// is personal data when it names a person, and the run writes it to the
+	// target database.
+	//
+	// It is percent-encoded so that every character set stores it and the kubelet
+	// expands nothing in it: each byte outside 0x20-0x7E, and % and $, are %XX,
+	// and a name over the bound is cut between characters and ends in "...". The
+	// rest of printable ASCII reads unchanged, and the schema refuses any other
+	// form.
+	//
+	// The claim keeps its own copy so the Job it builds stays the same whatever
+	// happens to the approval afterwards. A claim written by a release without
+	// this field has none, and its Job sets no actor, so a later manager still
+	// builds the Job that release dispatched and adopts it.
+	// +kubebuilder:validation:MaxLength=256
+	// +kubebuilder:validation:Pattern=`^([ -#&-~]|%([01][0-9A-F]|2[45]|7F|[89A-F][0-9A-F]))*$`
+	Actor string `json:"actor,omitempty"`
+
 	// AdmissionSnapshot is the Pod envelope resolved before dispatch and bound
 	// into the Job and its Pod template. It is what lets Pod admission permit
 	// the built-in mutations that are modeled and safe while refusing any other

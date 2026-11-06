@@ -224,7 +224,7 @@ cannot authorize a second dispatch.
 | | Enforcement |
 | --- | --- |
 | `PtahSchema` | `markApprovalConsumed` through `ensureCurrentApproval`, before the marker; skipped by `findApproval` |
-| `PtahMigration` | `consumeMigrationApproval` before the marker, skipped by `findMigrationApproval` |
+| `PtahMigration` | `consumeMigrationApproval` before the marker, skipped by `findMigrationApproval`; an approval deleted or replaced by then retires the claim |
 
 ## Create, confirm, record
 

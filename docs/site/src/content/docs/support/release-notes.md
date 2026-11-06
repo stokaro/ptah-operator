@@ -32,7 +32,10 @@ start. A script that reads `status.target.inventory` has to expect a kind that
 is not a stem. Ptah Console up to 0.3.x misstates such a kind until
 [ptah-console#166](https://github.com/stokaro/ptah-console/issues/166) is fixed:
 it says a dropped extension's counts and findings disagree, and shows a changed
-policy at 100% coverage with its finding under other findings. Nothing else.
+policy at 100% coverage with its finding under other findings. A migration Apply
+now writes the approver's username to the target database, so check what that
+means for the retention of its backups and dumps if the name is an email address.
+Nothing else.
 
 - **One command to install.** A release now publishes its chart to
   `oci://ghcr.io/stokaro/charts/ptah-operator` with its images stamped in, signed
@@ -78,6 +81,30 @@ policy at 100% coverage with its finding under other findings. Nothing else.
   `OnApproval` it waits for an approval, because the run consumed the one it
   carried. Before, it was `Unknown` and stopped the migration until a person
   accounted for the run.
+- **Who approved a migration.** A `PtahMigration` Apply now names its approver
+  in the database's own `schema_migrations_log`, so an audit can read who approved
+  a run after the approval or the cluster is gone. Before, `actor` was empty and
+  `actor_source` read `unknown`. The source now reads `provided`, Ptah's word for
+  a name it took on trust. A name outside printable ASCII is percent-encoded so
+  that every character set can store it, and so are `%` and `$`: `oidc:José
+  García` reads `oidc:Jos%C3%A9 Garc%C3%ADa`, and a percent decoder that leaves
+  `+` alone reads it back. Under `apply: Always` the name is
+  `system:ptah-operator:apply-always:<namespace>/<name>`, and admission now
+  refuses a migration approval from a username under `system:ptah-operator:`. The
+  name is personal data; [the security
+  model](../../use/security/#approver-in-the-database) says what it is worth and
+  when a row is lost. A `PtahSchema` has no such log, and
+  [What survives a lost cluster](../../use/recovery/#what-survives-a-lost-cluster)
+  lists what each resource leaves. Rows already written stay as they are.
+- **A run dispatched across this upgrade.** The executor moves in this release, so
+  the execution binding changes under a dispatched Apply. It is recorded `Unknown`
+  and blocks the resource until a History reading or an acknowledgment settles it,
+  and its rows carry no name.
+- **A withdrawn migration approval.** Deleting or replacing a
+  `PtahMigrationApproval` after the Apply is claimed and before its Job exists now
+  retires the claim, and no Job runs. Before, the run went ahead under the
+  withdrawn approval. Once the Job exists, deleting the approval changes nothing
+  about the run.
 - **Executor.** The verified executor is now Ptah v0.18.0. A new executor
   retires the execution binding, as in 0.2.9: approve again whatever was
   waiting, after the resource has read its database with v0.18.0 and planned.

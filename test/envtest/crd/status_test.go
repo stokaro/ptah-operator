@@ -293,6 +293,70 @@ func driftFindings(t *testing.T) apiextensionsv1.JSONSchemaProps {
 	return apiextensionsv1.JSONSchemaProps{}
 }
 
+// The name a migration records in the database's log sits in the claim, bounded
+// by the column it ends up in and held to the form the encoder writes. The stored
+// rows are read back, so pruning would fail them as well as a refusal would.
+func TestPtahMigrationClaimBoundsTheActorItRecords(t *testing.T) {
+	plane.Require(t)
+	t.Parallel()
+
+	namespace := newNamespace(t, "migration-actor")
+	migration := migrationBase(namespace)()
+	if err := api.Create(context.Background(), migration); err != nil {
+		t.Fatalf("store PtahMigration %s: %v", migration.GetName(), err)
+	}
+	digest := "sha256:" + strings.Repeat("a", 64)
+	claim := func(actor string) map[string]any {
+		return map[string]any{
+			"type": "Apply", "id": digest, "inputFingerprint": digest, "jobName": "ptah-m-apply-orders",
+			"startedAt": "2026-11-06T12:00:00Z", "attempt": int64(1),
+			"executionBindingID": "v1-" + strings.Repeat("b", 32), "actor": actor,
+		}
+	}
+
+	for _, actor := range []string{
+		"kubernetes-admin",
+		"oidc:Jos%C3%A9 Garc%C3%ADa %24(HOME)",
+		"system:ptah-operator:apply-always:team-a/orders",
+		strings.Repeat("a", 256),
+		strings.Repeat("a", 247) + "%C3%A9...",
+	} {
+		stored := reread(t, migration)
+		set(t, stored, claim(actor), "status", "activeOperation")
+		if err := api.Status().Update(context.Background(), stored); err != nil {
+			t.Fatalf("the status refused the actor %q: %v", actor, err)
+		}
+		got, _, err := unstructured.NestedString(reread(t, migration).Object, "status", "activeOperation", "actor")
+		if err != nil || got != actor {
+			t.Fatalf("the claim read back actor %q (%v), want %q", got, err, actor)
+		}
+	}
+
+	for _, test := range []struct {
+		name  string
+		actor string
+		want  string
+	}{
+		{"one character over the column", strings.Repeat("a", 257), "Too long"},
+		{"a variable reference the kubelet would expand", "oidc:$(HOME)", "should match"},
+		{"a name that was not encoded", "oidc:José García", "should match"},
+		{"a line break", "some\none", "should match"},
+		{"a percent sign that opens no escape", "50%off", "should match"},
+		{"an escape cut in half", "oidc:Jos%C3%A", "should match"},
+		{"a lowercase escape", "oidc:Jos%c3%a9", "should match"},
+		{"an escape of a byte that stays as it stands", "%41", "should match"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			refused := reread(t, migration)
+			set(t, refused, claim(test.actor), "status", "activeOperation")
+			err := api.Status().Update(context.Background(), refused, client.DryRunAll)
+			if mismatch := refusalMismatch(err, cause{"status.activeOperation.actor", test.want}); mismatch != nil {
+				t.Error(mismatch)
+			}
+		})
+	}
+}
+
 // driftFindingsBound is the most summaries status.target.driftFindings holds.
 func driftFindingsBound(t *testing.T) int64 {
 	t.Helper()

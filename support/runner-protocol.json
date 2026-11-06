@@ -252,6 +252,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:d900aa44af80c8c5afabae6eb389cbd3bd7a8ad6b33a5eebf6f4016e5d59b6b7",
       "reason": "Say why a desired file could not be read (#788). When Observe, Plan or a migration history read fails and its document names no target failure kind, the runner runs Ptah once more with no database URL and no credential, schema validate or migrations status against an in-memory SQLite database, and reports a load failure under the new code desired_source_unreadable with Ptah's reason, redacted and cut at 512 bytes. The frame's shape, what the runner enforces and how a manager classifies the failure are unchanged: a read-only failure of any code retries the claim, so a manager of any release reads this one as it reads the code it replaces. Protocol 1 stays."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:259c0f8938d1bb6146ad15f60ce9bac1cee78ae0f690e1f342398de1ae79e19f",
+      "reason": "Add status.activeOperation.actor to the PtahMigration type in api/v1alpha1, a package the runner links for its types (#800). No runner source file changes. The manager percent-encodes the approver's username, or takes a fixed name under apply: Always, copies it into an Apply claim and sets PTAH_ACTOR on the Job. The runner hands that variable to its child as it hands every other executor setting, and Ptah's own binding reads it as --actor. A runner of an earlier build behaves the same, and a Job without the variable runs as before. Commands, payloads, result frames, delivery identity, SQL authority and retry limits are unchanged."
     }
   ]
 }

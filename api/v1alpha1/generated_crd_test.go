@@ -22,6 +22,7 @@ import (
 	structuralcel "k8s.io/apiextensions-apiserver/pkg/apiserver/schema/cel"
 	structuraldefaulting "k8s.io/apiextensions-apiserver/pkg/apiserver/schema/defaulting"
 	structurallisttype "k8s.io/apiextensions-apiserver/pkg/apiserver/schema/listtype"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/apimachinery/pkg/util/yaml"
@@ -30,6 +31,7 @@ import (
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/plancontract"
+	"github.com/stokaro/ptah-operator/internal/workload"
 )
 
 func TestGeneratedCRDsContainSafetyCriticalFields(t *testing.T) {
@@ -345,6 +347,100 @@ func TestGeneratedPtahSchemaCRDHoldsTheInventoryKindToTheDecoder(t *testing.T) {
 	}
 	if int64(len(tooLong)) <= *kind.MaxLength {
 		t.Errorf("the kind admits %d bytes, which the decoder refuses", len(tooLong))
+	}
+}
+
+// status.activeOperation.actor holds what the encoder writes and nothing else, so
+// the API server refuses a claim whose name could not reach the log. Both
+// directions are exhaustive: every byte a name can hold, as the encoder treats it,
+// and every three bytes an escape could be. The bound is the column's.
+//
+// The one thing the pattern leaves to the encoder is whitespace at the edges,
+// which the encoder trims: a regular expression would need its alternatives twice
+// to refuse it, and a space there stores and decodes like any other.
+func TestGeneratedPtahMigrationCRDHoldsTheActorToTheEncoder(t *testing.T) {
+	t.Parallel()
+
+	crd := loadGeneratedCRD(t, filepath.Join(
+		repositoryRoot(t),
+		"config", "crd", "bases", "operator.ptah.run_ptahmigrations.yaml",
+	))
+	actor := storageVersionSchema(t, crd).Properties["status"].Properties["activeOperation"].Properties["actor"]
+	if actor.MaxLength == nil || *actor.MaxLength != int64(workload.MaxMigrationActorBytes) {
+		t.Fatalf("the actor holds at most %v characters, and the encoder writes %d bytes", actor.MaxLength, workload.MaxMigrationActorBytes)
+	}
+	pattern, err := regexp.Compile(actor.Pattern)
+	if err != nil {
+		t.Fatalf("the actor pattern %q does not compile: %v", actor.Pattern, err)
+	}
+	encode := func(username string) string {
+		approval := &operatorv1alpha1.PtahMigrationApproval{}
+		approval.Spec.Approver.Username = username
+		return workload.MigrationActor(&operatorv1alpha1.PtahMigration{}, approval)
+	}
+
+	// What the encoder writes, the pattern admits. A row outside the single bytes
+	// below: a name that is cut, and the name that stands for no person.
+	always := workload.MigrationActor(&operatorv1alpha1.PtahMigration{
+		ObjectMeta: metav1.ObjectMeta{Namespace: strings.Repeat("n", 63), Name: strings.Repeat("m", 63)},
+	}, nil)
+	for _, value := range []string{
+		encode("kubernetes-admin"), encode("denis+ptah@example.test"), encode("oidc:José García $(HOME)"),
+		encode(strings.Repeat("Д", 100)), encode(strings.Repeat("%", 100)), encode(strings.Repeat("$(KUBERNETES_PORT)", 14)),
+		encode(strings.Repeat("a", 247) + "é" + "bbbb"), encode(strings.Repeat("a", 250) + "é"),
+		always,
+	} {
+		if !pattern.MatchString(value) {
+			t.Errorf("the actor pattern refuses %q, which the encoder writes", value)
+		}
+		if int64(len(value)) > *actor.MaxLength {
+			t.Errorf("the actor holds %d characters, and the encoder writes %d in %q", *actor.MaxLength, len(value), value)
+		}
+	}
+
+	// Every byte, between two letters so that trimming is not in the way. The
+	// pattern admits a byte as it stands exactly when the encoder leaves it alone,
+	// and it admits what the encoder writes for each of the others.
+	written := map[string]bool{}
+	unchanged := 0
+	for value := 0; value <= 0xFF; value++ {
+		raw := "a" + string([]byte{byte(value)}) + "a"
+		encoded := encode(raw)
+		if !pattern.MatchString(encoded) {
+			t.Errorf("the actor pattern refuses %q, which the encoder writes for byte %#02x", encoded, value)
+		}
+		if encoded == raw {
+			unchanged++
+		} else {
+			written[strings.TrimSuffix(strings.TrimPrefix(encoded, "a"), "a")] = true
+		}
+		if admitted := pattern.MatchString(raw); admitted != (encoded == raw) {
+			t.Errorf("for byte %#02x the pattern admits it as it stands = %t, and the encoder writes %q", value, admitted, encoded)
+		}
+	}
+	// Printable ASCII is 95 bytes, and % and $ are the two the encoder takes out.
+	if unchanged != 93 || len(written) != 163 {
+		t.Fatalf("the encoder leaves %d bytes alone and writes %d escapes, want 93 and 163, so this row is not over the bytes it claims",
+			unchanged, len(written))
+	}
+
+	// Every %XY there can be. The pattern admits one exactly when the encoder writes
+	// it, so a lowercase digit, a digit that is no digit, and an escape of a byte
+	// that stays as it stands are all refused.
+	for first := 0; first <= 0xFF; first++ {
+		for second := 0; second <= 0xFF; second++ {
+			escape := "%" + string([]byte{byte(first), byte(second)})
+			if admitted := pattern.MatchString("a" + escape + "a"); admitted != written[escape] {
+				t.Errorf("the actor pattern admits %q = %t, and the encoder writes it = %t", escape, admitted, written[escape])
+			}
+		}
+	}
+
+	// A % that opens no escape, and the shapes a mistake would write.
+	for _, value := range []string{"%", "a%", "%4", "%C", "%C3%A", "$(HOME)", "José", "a\nb"} {
+		if pattern.MatchString(value) {
+			t.Errorf("the actor pattern admits %q, which the encoder never writes", value)
+		}
 	}
 }
 

@@ -225,6 +225,10 @@ func (r *MigrationReconciler) findMigrationApproval(
 	return found, nil
 }
 
+// errMigrationApprovalWithdrawn is an approval the claim names that is gone, or
+// was replaced under its name, when the claim comes to spend it.
+var errMigrationApprovalWithdrawn = errors.New("the approval this Apply was claimed under was deleted or replaced before dispatch")
+
 // claimMigrationApply writes the claim that authorizes one execution. Every
 // bound the run is held to -- the Lease it serializes under, the instant after
 // which it may not dispatch, and the instant after which it may not still be
@@ -304,6 +308,7 @@ func (r *MigrationReconciler) claimMigrationApply(
 	if approval != nil {
 		operation.ApprovalRef = &operatorv1alpha1.ImmutableObjectReference{Name: approval.Name, UID: approval.UID}
 	}
+	operation.Actor = workload.MigrationActor(migration, approval)
 	operation.JobName, err = r.Jobs.NameForMigration(migration, *operation)
 	if err != nil {
 		return r.migrationOperationFailure(ctx, migration, fmt.Errorf("name the Apply Job: %w", err))
@@ -1147,10 +1152,15 @@ func (r *MigrationReconciler) consumeMigrationApproval(
 	approval := &operatorv1alpha1.PtahMigrationApproval{}
 	key := types.NamespacedName{Namespace: migration.Namespace, Name: reference.Name}
 	if err := r.directReader().Get(ctx, key, approval); err != nil {
-		return client.IgnoreNotFound(err)
+		if apierrors.IsNotFound(err) {
+			return errMigrationApprovalWithdrawn
+		}
+		return err
 	}
-	if approval.UID != reference.UID ||
-		meta.IsStatusConditionTrue(approval.Status.Conditions, operatorv1alpha1.ConditionApprovalConsumed) {
+	if approval.UID != reference.UID {
+		return errMigrationApprovalWithdrawn
+	}
+	if meta.IsStatusConditionTrue(approval.Status.Conditions, operatorv1alpha1.ConditionApprovalConsumed) {
 		return nil
 	}
 	before := approval.DeepCopy()

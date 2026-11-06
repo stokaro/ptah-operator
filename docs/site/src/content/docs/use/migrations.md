@@ -480,7 +480,10 @@ from the repository is recorded in that person's place.
 The webhook refuses an approval the evidence no longer supports: a replaced
 plan, a history somebody else moved in the meantime, a re-resolved artifact, a
 changed verification policy, a rolled-out executor, or a migration that is not
-waiting for a decision. An approval authorizes one execution.
+waiting for a decision. An approval authorizes one execution. Deleting or
+replacing it before the run's Job exists withdraws it: the claim is retired, no
+Job runs, and the resource plans again. Once the Job exists, deleting the approval
+changes nothing about the run.
 `kubectl ptah migration orders -n application` lists the approvals that name
 the migration, whether each names the current plan, and the `Consumed`
 condition the controller writes once the approved plan is dispatched.
@@ -543,6 +546,36 @@ false wherever the resource has stopped or is waiting for a person, and its
 reason says which: `AwaitingApproval`, `ApplyDisabled`, `HistoryDirty`,
 `HistoryModified`, `HistoryOutOfOrder`, `HistoryAhead`, `ApplyOutcomeUnknown`,
 `HistoryMatched`.
+
+## Who the database's log names
+
+Ptah keeps its own record of each run in the target database,
+`schema_migrations_log`, and the operator tells it who to name. After an approved
+run, every row holds the approver's username in `actor`:
+
+```text
+ version |  state  |      actor       | actor_source
+---------+---------+------------------+--------------
+       1 | started | kubernetes-admin | provided
+       1 | applied | kubernetes-admin | provided
+```
+
+The record survives losing the cluster, and deleting the approval changes nothing
+about it. The name comes from the approval the run consumes, and the claim keeps
+its own copy from the moment it is written, so what the run records is settled
+before its Job exists. Under `apply: Always` nobody approved, and the rows read
+`system:ptah-operator:apply-always:<namespace>/<name>`.
+
+A name outside printable ASCII is percent-encoded, so every character set can
+store it, and so are `%` and `$`. An ordinary username or email reads unchanged,
+and `oidc:José García` reads `oidc:Jos%C3%A9 Garc%C3%ADa`. Read it back with a
+percent decoder that leaves `+` alone, such as Python's `urllib.parse.unquote`.
+
+The value is personal data, and `provided` means Ptah took the name on trust.
+[The approver's name in the target
+database](../security/#approver-in-the-database) says what that means and when a
+name is shortened or a row is lost, and [What survives a lost
+cluster](../recovery/#what-survives-a-lost-cluster) says what else is left.
 
 ## What never appears
 

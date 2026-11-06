@@ -277,6 +277,12 @@ func migrationDataPlane(
 				literalEnv(runner.EnvDispatchNotAfter, operation.DispatchNotAfter.UTC().Format(time.RFC3339Nano)),
 				literalEnv(runner.EnvExecutionNotAfter, operation.ExecutionNotAfter.UTC().Format(time.RFC3339Nano)),
 			)
+			// Only from the claim, and only when the claim carries a name. A
+			// claim a release without the field wrote has none, so this builds
+			// the Job that release dispatched and a later manager adopts it.
+			if operation.Actor != "" {
+				environment = append(environment, literalEnv(EnvMigrationActor, operation.Actor))
+			}
 		}
 	}
 	return environment, volumes, mounts, annotations, nil

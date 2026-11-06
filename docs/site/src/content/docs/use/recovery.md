@@ -162,6 +162,65 @@ holder that no longer exists and makes it wait out an interval for nothing.
 Do not start the manager between steps. Its first reconciliation will act on
 whatever is present, and a partial restore is a different resource.
 
+## What survives a lost cluster {#what-survives-a-lost-cluster}
+
+With no backup, what is left is what Ptah wrote into the database. The database
+answers for a migration and says almost nothing about a schema.
+
+| Resource | What the database still holds | What is gone unless you exported it |
+| --- | --- | --- |
+| `PtahMigration` | Every version applied, in the revision table, and in `schema_migrations_log` every attempt whose log write succeeded: the run, the version, the outcome, the checksum, the time and the actor | The resource and its status, `status.lastRun` and `status.unresolvedRun` among them |
+| `PtahMigrationPlan` | Nothing of the plan. The versions that ran and their checksums are in the two tables above | The plan and its fingerprint |
+| `PtahMigrationApproval` | The approver's username, on the log rows the run it authorized wrote, percent-encoded where it leaves printable ASCII | The object: the approver's UID and groups, when they approved, which plan fingerprint they approved, and any approval no run consumed |
+| `PtahMigrationRunAcknowledgment` | Nothing | Who accounted for a run, and what they said |
+| `PtahSchema` | The schema itself and nothing about how it got there. Ptah keeps no table for a declared schema | The resource and its status |
+| `PtahSchemaPlan` and `PtahSchemaPlanChunk` | Nothing | The plan and its SQL |
+| `PtahSchemaApproval` | Nothing | Who approved, when, and what |
+| `PtahRealm` | Nothing | The grant |
+| `PtahResultRecord` | Nothing | The result it delivered |
+
+A schema's plans and approvals are lost with the cluster unless you export them.
+`ptah schema apply` writes no log and takes no actor, so afterwards the database
+cannot say who approved a schema change, or that anyone did. Recovery does not
+need that: a rebuilt `PtahSchema` observes the live schema and plans the
+difference. An audit may. The operator exports nothing, so keep what an audit
+needs outside the cluster: a [backup](#what-to-preserve) that includes the
+approvals and plans, or the API server's audit log, if its audit policy records
+writes to these kinds, which is where each approval's creation and who made it
+would be.
+
+For a migration, read the record with SQL or with Ptah:
+
+```sql
+SELECT logged_at, version, state, actor, actor_source
+FROM schema_migrations_log
+ORDER BY logged_at, seq;
+```
+
+```sh
+PTAH_DB_URL="$DATABASE_URL" ptah migrations log
+```
+
+On MySQL `ptah migrations log` needs `parseTime=true` in the URL and fails on the
+`logged_at` column without it; the SQL above works either way. A run that
+stopped mid-flight has a `started` row and no outcome. A run Ptah stops before it
+selects a migration writes no row, and neither does one with nothing to do, so
+the absence of a row does not show that no run was attempted.
+
+An `actor` outside printable ASCII is percent-encoded, so every character set can
+store it, and so are `%` and `$`: `oidc:Jos%C3%A9 Garc%C3%ADa` is
+`oidc:José García`. Read it back with a percent decoder that leaves `+` alone:
+
+```sh
+python3 -c 'import sys, urllib.parse; print(urllib.parse.unquote(sys.argv[1]))' 'oidc:Jos%C3%A9 Garc%C3%ADa'
+```
+
+Rows written before
+operator 0.2.10 hold no actor and the source `unknown`, and nothing fills them in
+afterwards. [The approver's name in the target
+database](../security/#approver-in-the-database) says what the value is worth,
+and when a row is lost.
+
 ## What does not survive
 
 A restore that changes UIDs invalidates every binding that names one, and the

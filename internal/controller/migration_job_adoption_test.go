@@ -46,6 +46,12 @@ type dispatchedRun struct {
 // about it.
 type runShape struct {
 	dispatcher workload.Builder
+	// policy is the apply policy the resource was claimed under, when it is not
+	// the fixture's own. The claim's input fingerprint and the plan both bind it.
+	policy operatorv1alpha1.ApplyPolicy
+	// claim changes the claim the Job is built from, before the Job is built,
+	// the way a dispatching release's claim would have read.
+	claim func(*operatorv1alpha1.MigrationOperationStatus)
 	// alter changes the Job as the dispatching release wrote it, before the
 	// claim's admission snapshot is resolved, so the snapshot pins the altered
 	// template the way a real dispatch pins whatever its builder wrote.
@@ -72,6 +78,10 @@ func runDispatchedBy(
 	switch operationType {
 	case operatorv1alpha1.MigrationOperationApply:
 		migration, plan = awaitingApprovalFixture(t)
+		if shape.policy != "" {
+			migration.Spec.Policy.Apply = shape.policy
+			repolicyPlan(t, migration, plan)
+		}
 		applyClaimFor(t, migration, plan)
 	case operatorv1alpha1.MigrationOperationHistory:
 		migration = migrationFixture()
@@ -84,6 +94,9 @@ func runDispatchedBy(
 		t.Fatalf("no dispatched-run fixture for a %s claim", operationType)
 	}
 	operation := migration.Status.ActiveOperation
+	if shape.claim != nil {
+		shape.claim(operation)
+	}
 	build := func() *batchv1.Job {
 		t.Helper()
 		job, err := shape.dispatcher.BuildMigration(migration, *operation, plan)
