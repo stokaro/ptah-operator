@@ -2107,9 +2107,13 @@ and survive an unrelated refusal rewriting the resource's conditions.
 
 A schema Apply whose runner reported it could not open the target counts here
 until the database answers and the proof completes, because one Pod's report
-does not speak for its Job. `DatabaseReachable=False` on the resource, with
+does not speak for its Job. `DatabaseReachable=False`, with
 [a reason for the kind](../../troubleshoot/condition-reasons/#a-database-the-operation-could-not-open),
-is what tells that page from one about a mutation that may have run.
+says the target cannot be opened now. It does not say that nothing ran: an Apply
+that sent statements and lost the connection reads the same once its proof finds
+the database closed. Only the completed proof settles the record. The
+`ApplyOutcomeUnknown` Event carries the sentence when the Apply's own Pod reported
+it could not open the target, and the fixed text otherwise.
 
 The leader reads both resource families and both plan kinds directly from the
 API server once per scrape, sharing those results across the unresolved,

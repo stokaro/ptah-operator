@@ -194,12 +194,20 @@ last time an operation opened it, not that it answers now. A failure that names
 no kind leaves the condition as it was, so a schema can read `True` beside a
 `ReconciliationFailed=True` whose message is `child_exit: ptah exited with code
 2`. The first operation that opens the target afterwards sets `True`, including
-a Plan retried after the database came back.
+a Plan retried after the database came back. That holds for a Plan that failed
+after a read came back from the target: `protected_table`, `plan_refused`,
+`unstable_plan`, `credential_leak`, `plan_seal_failed`, and a plan the API server
+refused to store. `invalid_plan_output` leaves the condition, because the runner
+also writes it for a child that never reached the target.
+
+`False` is not live either. It says what the last operation that reported on the
+target found. Neither family's suspend path writes this condition, so a resource
+suspended for maintenance keeps `False`, and an alert on it keeps firing.
 
 `lastTransitionTime` moves only when the status changes. A move from one kind to
-another changes the reason and keeps the time, so while the condition stays
-`False` the time dates when the target stopped answering, not when the current
-kind began.
+another changes the reason and keeps the time. The time dates when an operation
+first reported the failure, not when the target stopped answering: with
+`spec.interval: 1h`, the outage may be an hour older than the condition says.
 
 The message carries nothing Ptah or the database wrote. Ptah's own sentence
 names the host, the user and the database it tried, and it does not leave the

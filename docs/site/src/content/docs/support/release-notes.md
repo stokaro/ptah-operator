@@ -80,8 +80,9 @@ Nothing else.
   `PermissionDenied` or `TLSFailed`. `PtahMigration` now publishes the condition
   too. A successful Plan or Apply sets `True` as an Observe does, so a Plan
   retried after the database came back does not leave it `False` for a whole
-  `spec.interval`. It means the target answered the last time an operation opened
-  it, and a failure with no kind leaves it as it was. An alert can key on the
+  `spec.interval`, and so does a Plan that failed after a read came back from the
+  target. It means the target answered the last time an operation opened it, and a
+  failure with no kind leaves it as it was. An alert can key on the
   reason instead of the start of the message. `ReconciliationFailed`, `Ready` and
   `Progressing` keep their reasons. After a rollback, an earlier manager leaves a
   migration's `DatabaseReachable` as this one last wrote it, and reads nothing
@@ -91,7 +92,8 @@ Nothing else.
   result named one; any other Apply error keeps the fixed text. The outcome, the
   unresolved count and `PtahOperatorUnresolvedApply` do not change: a database
   that goes away between the Plan and the Apply keeps paging until it answers and
-  the read-only proof completes, and `DatabaseReachable=False` says why.
+  the read-only proof completes. `DatabaseReachable=False` says the target cannot
+  be opened now, not that nothing ran; only the completed proof settles the record.
 - **A migration run that never started.** A migration Apply that Ptah stopped
   before it selected any migration, as on a database it could not open, is
   now `Failed`. After `spec.execution.failureRetryInterval` the resource reads
