@@ -297,6 +297,55 @@ func TestTerminalPodEvidenceNeedsEveryContainerTerminated(t *testing.T) {
 	}
 }
 
+// A schema artifact fetch-schema cannot parse ends a Pod this way: kind printed
+// it as Init:Error, with the step terminated at exit 2.
+func TestTerminalPodEvidenceAcceptsAPodStoppedAtAnInitContainer(t *testing.T) {
+	t.Parallel()
+	terminated := func(code int32) corev1.ContainerState {
+		return corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: code}}
+	}
+	waiting := corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "PodInitializing"}}
+	running := corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}
+	stopped := func() *corev1.Pod {
+		pod := validEvidence().pod
+		pod.Spec = corev1.PodSpec{
+			InitContainers: []corev1.Container{{Name: "install-runner"}, {Name: "fetch-schema"}, {Name: "after"}},
+			Containers:     []corev1.Container{{Name: "ptah"}},
+		}
+		pod.Status.Phase = corev1.PodFailed
+		pod.Status.InitContainerStatuses = []corev1.ContainerStatus{
+			{Name: "install-runner", State: terminated(0)},
+			{Name: "fetch-schema", State: terminated(2)},
+			{Name: "after", State: waiting},
+		}
+		pod.Status.ContainerStatuses = []corev1.ContainerStatus{{Name: "ptah", State: waiting}}
+		return pod
+	}
+	if !terminalPodEvidence(stopped(), evidencePodUID, evidenceJobUID) {
+		t.Fatal("a Pod stopped at its failed init container was refused")
+	}
+	for name, edit := range map[string]func(*corev1.Pod){
+		"that never failed an init container": func(p *corev1.Pod) { p.Status.InitContainerStatuses[1].State = terminated(0) },
+		"still in an init container":          func(p *corev1.Pod) { p.Status.InitContainerStatuses[1].State = running },
+		"with no status for an earlier step":  func(p *corev1.Pod) { p.Status.InitContainerStatuses = p.Status.InitContainerStatuses[1:] },
+		"whose next init container ran":       func(p *corev1.Pod) { p.Status.InitContainerStatuses[2].State = terminated(0) },
+		"whose main container ran":            func(p *corev1.Pod) { p.Status.ContainerStatuses[0].State = terminated(0) },
+		"whose main container is running":     func(p *corev1.Pod) { p.Status.ContainerStatuses[0].State = running },
+		"that restarted":                      func(p *corev1.Pod) { p.Status.InitContainerStatuses[1].RestartCount = 1 },
+		"with no failed phase":                func(p *corev1.Pod) { p.Status.Phase = corev1.PodSucceeded },
+		"with an ephemeral container running": func(p *corev1.Pod) {
+			p.Spec.EphemeralContainers = []corev1.EphemeralContainer{{EphemeralContainerCommon: corev1.EphemeralContainerCommon{Name: "debug"}}}
+			p.Status.EphemeralContainerStatuses = []corev1.ContainerStatus{{Name: "debug", State: running}}
+		},
+	} {
+		candidate := stopped()
+		edit(candidate)
+		if terminalPodEvidence(candidate, evidencePodUID, evidenceJobUID) {
+			t.Errorf("a Pod %s was accepted", name)
+		}
+	}
+}
+
 func admittedPod() *corev1.Pod {
 	identity := controllerIdentity{image: "manager@sha256:" + strings.Repeat("a", 64), revision: "abc", stateVersion: "3"}
 	resources := *operationContainerDefaults.DeepCopy()
