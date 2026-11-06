@@ -237,6 +237,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:6a4119d1d4bafce73af08d572d6cc72e2107e56f64ccb825db35bb4f8e33b8fc",
       "reason": "Read the documents of stokaro/ptah#5173, which names why a command could not open its target database (#760). Plan contract 3, apply 4, migration run 2 and migration status 2 carry error as an object with a kind from a closed vocabulary, the drift report gains contract version 1, every document names its command, and drift and status print a failure document in place of their report. The runner reads the kind on Observe, Plan, Apply and both migration operations and reports it as the result's error code with a sentence of its own; the message is never read, a kind outside the vocabulary is none, and a run report's error object is dropped before framing. Inventory entries under a feature kind are checked and left out. The frame's fields and its validation are unchanged: an error code was always an open string. The executor image changes with it, which retires every plan and approval made under the old one."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:c913028cc89457c30fb3c8f06c509c369fcb269457b4602d67c378033a5c7c7c",
+      "reason": "Update dependencies from the Renovate batch #772 to #783. The linked packages of k8s.io/api, apimachinery, client-go, utils and x/net are byte-identical, so only go.sum moved; x/term and x/oauth2 change only go.mod. oras-go v2.7.0 reports a failed read after the expected bytes as a read error instead of trailing data, in a package the runner reaches only through reference parsing. x/text v0.43.0 rewrites bidi isolate matching, x/sys v0.49.0 adds CPU feature flags and aligns the Getdents buffer, and x/crypto v0.58.0 adds loong64 assembly the runner does not ship. client_golang v1.25.0, prometheus/common v0.73.1 and procfs v0.22.0 change metric collection, linked through controller-runtime and served to nobody; common's OpenMetrics parser adds pandatix/go-abnf to the closure. Runner commands, payloads, result validation, delivery identity, SQL authority and retry limits are unchanged."
     }
   ]
 }

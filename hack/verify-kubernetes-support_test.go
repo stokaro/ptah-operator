@@ -515,7 +515,7 @@ func TestVerifyWorkflowRejectsSupportGateMutations(t *testing.T) {
 		},
 		"wrong artifact action": {
 			old: "        id: release-chart-evidence\n        if: ${{ matrix.suite == 'lifecycle' }}\n" +
-				"        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1\n",
+				"        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2\n",
 			new: "        id: release-chart-evidence\n        if: ${{ matrix.suite == 'lifecycle' }}\n" +
 				"        uses: actions/upload-artifact@main\n",
 		},

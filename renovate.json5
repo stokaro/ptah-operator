@@ -55,9 +55,7 @@
       // Every workflow pins its actions by digest, and the same digests are
       // literals in `hack/verify-kubernetes-support.go` and
       // `hack/releaseverify/main.go`; the Helm and Buildx versions inside the
-      // steps are literals there too; and each audited workflow is held to a
-      // SHA-256 of the whole file (`ciWorkflowSHA256`, `updateWorkflowSHA256`,
-      // `releasecontract.WorkflowSHA256`). Renovate can move none of those, and
+      // steps are literals there too. Renovate can move none of those, and
       // the hosted app runs no post-upgrade commands. Opened automatically, the
       // updates were merged red and left master refusing its own workflows.
       // Asked for, the pull request is the start of a change a person finishes.
@@ -65,7 +63,7 @@
       matchManagers: ['github-actions'],
       dependencyDashboardApproval: true,
       prBodyNotes: [
-        'Not mergeable as opened. Move the same digests and versions in `hack/verify-kubernetes-support.go` and `hack/releaseverify/main.go`, then the whole-file digests they name, until `make verify` passes; each refusal names what is still stale.',
+        'Not mergeable as opened. Move the same digests and versions in `hack/verify-kubernetes-support.go` and `hack/releaseverify/main.go` until `make verify` passes; each refusal names what is still stale.',
       ],
     },
     {
@@ -92,6 +90,15 @@
       // without the regenerated output and is refused until somebody commits it.
       matchPackageNames: ['kubernetes-sigs/controller-tools'],
       dependencyDashboardApproval: true,
+    },
+    {
+      // controller-runtime's admission API takes jsonpatch/v2 operations, so
+      // the v3 module cannot replace it. Renovate offered v3 anyway (#783):
+      // nothing imported it, the next tidy removed it, and v2 was left
+      // downgraded to the version controller-runtime requires.
+      matchPackageNames: ['gomodules.xyz/jsonpatch/v2'],
+      matchUpdateTypes: ['major'],
+      enabled: false,
     },
     {
       // The manager image is this project's own artifact, not a dependency.

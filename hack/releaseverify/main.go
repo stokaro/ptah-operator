@@ -50,7 +50,7 @@ const (
 	imageName             = "ghcr.io/stokaro/ptah-operator"
 	ptahCatalogPath       = "support/ptah.json"
 	kubernetesSupportPath = "support/kubernetes.json"
-	buildxVersion         = "v0.37.1"
+	buildxVersion         = "v0.38.2"
 	buildkitImage         = "moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8"
 	sbomDigest            = "sha256:ae4f3b554449e7e25548e7d8ccc029d17357348e30c6e3df01b92bc93654d6a9"
 	sbomGenerator         = "docker.io/docker/buildkit-syft-scanner:stable-1@" + sbomDigest
@@ -1606,7 +1606,7 @@ func verifyWorkflowSemantics(document []byte) error {
 			"journal-attestation": "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6",
 			"build-checkpoint":    "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6",
 			"asset-attestation":   "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6",
-			"client":              "goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94",
+			"client":              "goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de",
 			"image-attestation":   "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6",
 			"setup-cosign":        "sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6",
 			"evidence-download":   downloadArtifactAction,
@@ -2011,8 +2011,8 @@ func verifyAttestationStep(steps map[string]workflowStep, id string, bindings ma
 }
 
 const (
-	uploadArtifactAction   = "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
-	downloadArtifactAction = "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"
+	uploadArtifactAction   = "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9"
+	downloadArtifactAction = "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333"
 )
 
 // verifyAcceptanceEvidenceSteps holds the path the acceptance evidence takes:

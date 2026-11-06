@@ -67,7 +67,7 @@ const (
 	// The Helm the chart-rendering jobs install. One pin, so what CI renders
 	// and what a release renders are the same program.
 	helmSetupAction = "azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4"
-	helmVersion     = "v4.3.0"
+	helmVersion     = "v4.3.1"
 
 	ciSupportMatrixTimeoutMinutes = 10
 	// The verify job outlasts both go test timeouts plus what runs before and
@@ -875,7 +875,7 @@ func verifyCIWorkflowSemantics(path string, workflow workflowDocument, contents 
 		"KIND_NODE_IMAGE: ${{ matrix.node_image }}",
 		"K8S_VERSION: ${{ matrix.kubernetes_version }}",
 		"run: make e2e",
-		"uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+		"uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
 	}
 	for _, marker := range required {
 		if !bytes.Contains(contents, []byte(marker)) {
@@ -1288,7 +1288,7 @@ printf 'baseline=%s\n' "$baseline" >> "$GITHUB_OUTPUT"
 		path,
 		"kubernetes-e2e",
 		unconditionalUpload,
-		"actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+		"actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
 		map[string]string{
 			"name":              "installed-release-chart-${{ matrix.minor_slug }}",
 			"path":              "${{ runner.temp }}/ptah-operator-${{ matrix.minor_slug }}.tgz",
@@ -4367,8 +4367,8 @@ func verifyFailurePreservingExitTrap(path string, contents []byte, cleanups ...s
 const (
 	e2eImagesArtifactName = "shared-task-images"
 	e2eImagesArtifactPath = "${{ runner.temp }}/task-images"
-	uploadArtifactPin     = "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
-	downloadArtifactPin   = "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"
+	uploadArtifactPin     = "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9"
+	downloadArtifactPin   = "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333"
 )
 
 // verifySharedImageHandover requires the built images to leave the preparation
