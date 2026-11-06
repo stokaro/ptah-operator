@@ -40,11 +40,18 @@ steps:
           status: "True"
           reason: OperationFailed
 
-  - note: It failed, and says why and where to look. The host did not answer; the URL is in that Secret.
+  - note: It failed and says why. DatabaseReachable names the kind; the URL is in that Secret.
     run: kubectl ptah schema storefront -n "$NAMESPACE"
     expect:
       exit: 0
-      stdout_contains: [Failed, ReconciliationFailed, OperationFailed, database_unreachable, '"demo-database-broken"']
+      stdout_contains:
+        - Failed
+        - ReconciliationFailed
+        - OperationFailed
+        - database_unreachable
+        - '"demo-database-broken"'
+        - DatabaseReachable
+        - DatabaseUnreachable
       stdout_absent: ["nobody:nobody", no-such-database]
 
   - note: A failure is an event too, so it is in the record rather than only in a log.

@@ -90,3 +90,22 @@ before the census refused it, which the refusal kept. `TestRealmRecheckScheduled
 refuses that reading as read at 22:20:27Z and accepts copies of it carrying a
 deadline a refusal sets. The projection holds no Secret names, credentials or
 plan SQL.
+
+`configmap-refused-schema.json`, `configmap-recovered-schema.json`,
+`configmap-refused-migration.json` and `configmap-recovered-migration.json` are
+the statuses the row `database-reachable-kind` matched on Kubernetes 1.35.8, in CI
+job 128045251878 of run 42261374839, with the Ptah v0.18.0 executor. The run built
+head `3669373e` of the pull request. They are stored as the row printed them, one
+line each. A schema and a migration read a URL whose password the data plane's
+PostgreSQL refuses, and each reports `DatabaseReachable=False` with reason
+`AuthenticationFailed` and the operator's sentence, beside `ReconciliationFailed`
+or `Progressing` with `OperationFailed` and the same sentence. Once the Secret is
+corrected, each reports `True` with reason `Observed`. The recovered schema had
+already claimed the Plan that follows its Observe, so its phase reads `Planning`,
+and the recovered migration had published its plan and waits for an approval.
+`TestTargetRefusedCredentialsRefusesEveryOtherReading` and
+`TestTargetAnsweredAgainRefusesEveryOtherReading` accept these readings and refuse
+copies of them with the one field each mistake would change, including
+`DatabaseReachable=True` with reason `Observed` beside the `authentication_failed`
+sentence. The readings name Secrets only by name and key and hold no credentials
+or plan SQL.

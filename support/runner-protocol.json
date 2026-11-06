@@ -257,6 +257,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:259c0f8938d1bb6146ad15f60ce9bac1cee78ae0f690e1f342398de1ae79e19f",
       "reason": "Add status.activeOperation.actor to the PtahMigration type in api/v1alpha1, a package the runner links for its types (#800). No runner source file changes. The manager percent-encodes the approver's username, or takes a fixed name under apply: Always, copies it into an Apply claim and sets PTAH_ACTOR on the Job. The runner hands that variable to its child as it hands every other executor setting, and Ptah's own binding reads it as --actor. A runner of an earlier build behaves the same, and a Job without the variable runs as before. Commands, payloads, result frames, delivery identity, SQL authority and retry limits are unchanged."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:193b0428fda939793ecc1094722619349c4f71f5eb4371604eba20f4516683de",
+      "reason": "Add the DatabaseReachable condition reasons and the migration condition name to api/v1alpha1 (#793). The runner links that package and reads neither: what it accepts, enforces and returns is unchanged."
     }
   ]
 }

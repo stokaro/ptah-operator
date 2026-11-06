@@ -29,7 +29,6 @@ import (
 	"github.com/stokaro/ptah-operator/internal/runner"
 	"github.com/stokaro/ptah-operator/internal/sourcebinding"
 	"github.com/stokaro/ptah-operator/internal/sourcepolicy"
-	"github.com/stokaro/ptah-operator/internal/targetfailure"
 	"github.com/stokaro/ptah-operator/internal/targetlock"
 	"github.com/stokaro/ptah-operator/internal/telemetry"
 	"github.com/stokaro/ptah-operator/internal/workload"
@@ -417,6 +416,13 @@ type migrationRunAccount struct {
 	// can say so; a termination summary cannot tell it from a first migration
 	// that failed.
 	stoppedBeforeSelecting bool
+	// targetFailure is why the run could not open its target, when it stopped
+	// before selecting and the frame named a kind.
+	targetFailure error
+	// openedTarget is a run whose report shows it reached the database. A
+	// termination summary cannot show that, so a run read from one leaves
+	// DatabaseReachable to the history read that follows.
+	openedTarget bool
 }
 
 // frameMigrationApply is what a result frame says about a migration Apply.
@@ -521,11 +527,13 @@ func (r *MigrationReconciler) reportedMigrationRun(
 		run.message = "The run stopped before it selected any migration, and ran none"
 		if failure != nil {
 			if kind, known := dataplane.ParseTargetFailureKind(failure.Code); known {
-				run.message = targetfailure.Message(kind, migrationURLSecret(migration))
+				run.targetFailure = &targetFailureError{kind: kind, url: migrationURLSecret(migration)}
+				run.message = run.targetFailure.Error()
 			}
 		}
 		return run
 	}
+	run.openedTarget = true
 	if refusal, refused := r.sequenceRefusal(ctx, migration, migration.Status.ActiveOperation, *report); refused {
 		run.message = refusal
 	}
@@ -559,6 +567,10 @@ func (r *MigrationReconciler) recordMigrationRun(
 		Failure:         run.failure,
 	}
 	migration.Status.Plan = nil
+	setMigrationTargetFailure(migration, run.targetFailure)
+	if run.openedTarget {
+		setMigrationTargetOpened(migration, "The Apply opened the database")
+	}
 	switch {
 	case outcome == operatorv1alpha1.MigrationRunOutcomePartial || outcome == operatorv1alpha1.MigrationRunOutcomeUnknown:
 		// Neither may be retried. A partial run committed some of a migration's
@@ -1073,6 +1085,7 @@ func (r *MigrationReconciler) retireUncertainMigrationApply(
 		operatorv1alpha1.ReasonApplyOutcomeUnknown, "What the dispatched run did is unknown until the database is read")
 	setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionFalse,
 		operatorv1alpha1.ReasonApplyOutcomeUnknown, "The dispatched run's outcome is unknown and may not be retried")
+	setMigrationTargetFailure(migration, failure)
 	next := metav1.NewTime(r.now().Add(migrationInterval(migration)))
 	migration.Status.NextReconciliationTime = &next
 	if job != nil {

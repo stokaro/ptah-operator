@@ -1189,6 +1189,9 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 			// dispatch was possible, every Apply error requires read-only proof.
 			return r.finishUncertainApplyWithEvidence(ctx, schema, job, err, evidence.PodUIDs, evidence.PodCount, !evidence.Trusted)
 		}
+		if operation.Type == operatorv1alpha1.OperationPlan && planReadTheTarget(result.Error.Code) {
+			return r.retryOperationAs(ctx, schema, job, operatorv1alpha1.ReasonOperationFailed, err, setSchemaTargetObserved)
+		}
 		return r.retryOperation(ctx, schema, job, err)
 	}
 	if result.Truncation != nil && result.Truncation.Stdout {
@@ -1455,6 +1458,8 @@ func (r *SchemaReconciler) refuseProtectedTable(
 	schema.Status.NextReconciliationTime = &next
 	schema.Status.Phase = operatorv1alpha1.PhaseBlocked
 	clearFailure(schema)
+	// The fence compared the plan with the target, so the target answered.
+	setSchemaTargetObserved(schema)
 	setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse,
 		operatorv1alpha1.ReasonProtectedTable,
 		"No plan may change a table spec.policy.protectedTables fences off")
@@ -1653,7 +1658,7 @@ func (r *SchemaReconciler) consumeResultWithTransport(ctx context.Context, schem
 			return ctrl.Result{}, err
 		}
 		schema.Status.Plan = nil
-		setCondition(schema, operatorv1alpha1.ConditionDatabaseReachable, metav1.ConditionTrue, operatorv1alpha1.ReasonObserved, "Database schema was observed")
+		setSchemaTargetObserved(schema)
 		setCondition(schema, operatorv1alpha1.ConditionDriftDetected, metav1.ConditionUnknown, operatorv1alpha1.ReasonScopedPlanPending, "Raw drift was recorded; the authoritative managed scope is being planned")
 		setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionUnknown, operatorv1alpha1.ReasonScopedPlanPending, "Convergence is unknown until scoped planning completes")
 		setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonScopedPlanPending, "A read-only scoped plan is required")
@@ -1799,7 +1804,7 @@ func (r *SchemaReconciler) consumeResultWithTransport(ctx context.Context, schem
 					// failed one, with the refusal on the resource.
 					failure := fmt.Errorf("publish the plan: %w", err)
 					r.event(schema, corev1.EventTypeWarning, "PlanPublicationRefused", "%s", bounded(failure.Error(), 512))
-					return r.retryOperationAs(ctx, schema, job, operatorv1alpha1.ReasonPlanPublicationRefused, failure, nil)
+					return r.retryOperationAs(ctx, schema, job, operatorv1alpha1.ReasonPlanPublicationRefused, failure, setSchemaTargetObserved)
 				}
 				schema.Status.Plan = currentPlanStatus(published)
 				setPlanPolicyStatus(schema, published)
@@ -1811,6 +1816,10 @@ func (r *SchemaReconciler) consumeResultWithTransport(ctx context.Context, schem
 				setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionTrue, operatorv1alpha1.ReasonPublished, "Exact plan bytes are stored in immutable chunks")
 			}
 		}
+		// A Plan retried after the database came back is the first operation to
+		// open it, and the next Observe may be a whole interval away. It goes
+		// ahead of the proof below, whose retired binding makes this Unknown.
+		setSchemaTargetObserved(schema)
 		if pending != nil {
 			if completedProofExecutionBindingErr != nil {
 				// Proof and historical Apply attribution are committed, but the
@@ -1863,6 +1872,7 @@ func (r *SchemaReconciler) consumeResultWithTransport(ctx context.Context, schem
 		}
 		schema.Status.PendingObservation = pending
 		schema.Status.Phase = operatorv1alpha1.PhaseVerifyingConvergence
+		setCondition(schema, operatorv1alpha1.ConditionDatabaseReachable, metav1.ConditionTrue, operatorv1alpha1.ReasonObserved, "The Apply opened the database")
 		setCondition(schema, operatorv1alpha1.ConditionApplying, metav1.ConditionFalse, operatorv1alpha1.ReasonJobCompleted, "Apply Job completed; convergence observation is pending")
 		setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonVerifyingConvergence, "Apply completion has not yet been independently observed")
 	}
@@ -2531,7 +2541,7 @@ func (r *SchemaReconciler) finishUncertainApplyWithEvidenceAndBinding(
 		r.Telemetry.ObserveFailure(telemetry.FamilySchema, telemetry.FailureStageApply, telemetry.FailureUncertain)
 	}
 	r.observeOperation(operation, telemetry.OperationUncertain)
-	r.event(schema, corev1.EventTypeWarning, "ApplyOutcomeUnknown", "Apply outcome is uncertain; observing database state")
+	r.event(schema, corev1.EventTypeWarning, "ApplyOutcomeUnknown", "%s", uncertainApplyEvent(failure))
 	return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
 }
 
@@ -4801,9 +4811,20 @@ func markExecutionBindingRefreshRequired(schema *operatorv1alpha1.PtahSchema) {
 	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonExecutionBindingChanged, "A complete read-only reconciliation is required under the current execution binding")
 }
 
+// setFailure records why an operation failed. reason answers whether the
+// operation failed, and DatabaseReachable answers whether the target could be
+// opened, so a failure that names a kind moves the second in the same write.
 func setFailure(schema *operatorv1alpha1.PtahSchema, reason operatorv1alpha1.ConditionReason, failure error) {
 	setCondition(schema, operatorv1alpha1.ConditionReconciliationFailed, metav1.ConditionTrue, reason, bounded(failure.Error(), 1024))
 	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, reason, "Reconciliation did not complete")
+	if unreached, message, named := databaseUnreached(failure); named {
+		setCondition(schema, operatorv1alpha1.ConditionDatabaseReachable, metav1.ConditionFalse, unreached, message)
+	}
+}
+
+// setSchemaTargetObserved records an Observe or a Plan that read the target.
+func setSchemaTargetObserved(schema *operatorv1alpha1.PtahSchema) {
+	setCondition(schema, operatorv1alpha1.ConditionDatabaseReachable, metav1.ConditionTrue, operatorv1alpha1.ReasonObserved, "Database schema was observed")
 }
 
 func clearFailure(schema *operatorv1alpha1.PtahSchema) {

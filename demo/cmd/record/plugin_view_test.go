@@ -233,6 +233,7 @@ func demoSchemaFailed() schemaview.View {
 	view.Conditions = demoConditions(
 		metav1.Condition{Type: "Ready", Status: "False", Reason: "OperationFailed", Message: "Reconciliation did not complete"},
 		metav1.Condition{Type: "ReconciliationFailed", Status: "True", Reason: "OperationFailed", Message: unreachable},
+		metav1.Condition{Type: "DatabaseReachable", Status: "False", Reason: "DatabaseUnreachable", Message: unreachable},
 	)
 	return view
 }

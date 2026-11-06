@@ -1745,6 +1745,13 @@ const (
 	ReasonUnsupportedEngine       ConditionReason = "UnsupportedEngine"
 	ReasonVerifyingConvergence    ConditionReason = "VerifyingConvergence"
 	ReasonWaiting                 ConditionReason = "Waiting"
+	// The reasons DatabaseReachable carries when an operation could not open
+	// its target database, one for each kind of failure Ptah reports.
+	ReasonDatabaseUnreachable  ConditionReason = "DatabaseUnreachable"
+	ReasonAuthenticationFailed ConditionReason = "AuthenticationFailed"
+	ReasonDatabaseNotFound     ConditionReason = "DatabaseNotFound"
+	ReasonPermissionDenied     ConditionReason = "PermissionDenied"
+	ReasonTLSFailed            ConditionReason = "TLSFailed"
 )
 
 // +kubebuilder:validation:XValidation:rule="oldSelf.hasValue() || self.metadata.name.size() <= 63",message="metadata.name must be at most 63 bytes, because it is carried whole in the labels of the Jobs this resource dispatches",optionalOldSelf=true

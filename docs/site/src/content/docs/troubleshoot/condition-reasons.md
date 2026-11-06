@@ -18,16 +18,19 @@ decision.
 | --- | --- |
 | `Active` | Reconciliation is not suspended. |
 | `ApplyDisabled` | Policy records plans but forbids Apply. |
-| `ApplyOutcomeUnknown` | Apply failed without proof of whether mutation occurred. |
+| `ApplyOutcomeUnknown` | Apply failed without proof of whether mutation occurred, including an Apply whose runner reported it could not open the target: one Pod's report does not speak for its Job. |
 | `ApplyPending` | A plan that destroys nothing and changes no privilege is eligible for automatic Apply. |
 | `ApprovalRevoked` | A reserved approval became invalid before dispatch. |
 | `ApprovedPlan` | The exact current approved plan is applying. |
 | `ArtifactUnverified` | No plan is usable because artifact verification did not succeed. |
+| `AuthenticationFailed` | `DatabaseReachable` is false because the target database refused the credentials in the URL. |
 | `AwaitingApproval` | The current immutable plan needs a new exact approval. |
 | `CommitResolved` | A Git source's ref was read at a commit, and the content digest of the files it selects there was recorded. |
 | `ConfigurationError` | Controller-side configuration or declared input is invalid. |
 | `ConvergedAfterUnknownOutcome` | Read-only proof found convergence after an unattributable Apply outcome. |
 | `CurrentPlan` | An approval exactly matches the current immutable plan. |
+| `DatabaseNotFound` | `DatabaseReachable` is false because the server has no database by the name the URL gives. |
+| `DatabaseUnreachable` | `DatabaseReachable` is false because the host did not resolve, refused the connection, or did not answer in time. |
 | `DesiredStateChanged` | New desired inputs arrived after older work completed. |
 | `DestructiveChangesDisabled` | A destructive plan is blocked by policy. |
 | `DigestPinned` | A requested OCI reference resolved to immutable content. |
@@ -45,11 +48,12 @@ decision.
 | `MigrationsPending` | The migration artifact carries versions the database has not applied. |
 | `NoChanges` | Scoped planning produced no executable statements. |
 | `NotRequired` | Policy allows this plan without separate approval: it destroys nothing and changes no privilege. |
-| `Observed` | A database observation completed successfully. |
+| `Observed` | `DatabaseReachable` is true because an operation opened the target database: an Observe, a Plan or an Apply on a schema, a history read or an Apply that ran on a migration. |
 | `OperationFailed` | A read-only or mutating operation failed. When it could not open the target database, the message starts with the kind of failure; see [A database the operation could not open](#a-database-the-operation-could-not-open). |
 | `OperationInProgress` | A durable operation claim is active. |
 | `OutcomeUnknown` | Apply attribution is uncertain and only read-only proof may proceed. |
 | `Pending` | Resolved artifact content has not yet been verified. |
+| `PermissionDenied` | `DatabaseReachable` is false because the server accepted the credentials and refused the user access to the database. |
 | `PlanNoLongerCurrent` | An approval's plan binding is no longer current. |
 | `PlanPublicationRefused` | The API server refused to store the plan a Plan operation computed: an admission policy or webhook, a quota, RBAC, or the object's size. The message carries the refusal. The Plan runs again after `spec.execution.failureRetryInterval`, so a policy or quota that stops refusing lets the next plan through. |
 | `PlanReady` | An exact immutable plan is ready for approval. |
@@ -88,6 +92,7 @@ decision.
 | `SupersededApproval` | A duplicate approval lost to another approval for the same plan. |
 | `SupportedEngine` | The selected database engine has an implemented operator lifecycle. |
 | `Suspended` | Reconciliation is suspended and no new operation may start. |
+| `TLSFailed` | `DatabaseReachable` is false because the TLS handshake with the target database did not complete. |
 | `UnsupportedEngine` | The selected engine has no implemented operator lifecycle. |
 | `VerifyingConvergence` | Apply completed but independent read-only proof has not. |
 | `Waiting` | The controller is waiting for an approval bound to the current plan. |
@@ -156,13 +161,14 @@ database_unreachable: the target database did not answer: its host did not resol
 ```
 
 The Secret and the key are the ones `spec.target.urlFrom` named when the
-operation started. Where the sentence appears depends on the stage that
-failed:
+operation started. On every stage the sentence is the message of
+`DatabaseReachable=False`, whose reason names the kind. Where else it appears
+depends on the stage that failed:
 
 | Stage | Where the sentence appears, and what follows |
 | --- | --- |
 | `PtahSchema` Observe or Plan | `ReconciliationFailed=True` with reason `OperationFailed`, and an `OperationFailed` Warning Event. The operation runs again after `spec.execution.failureRetryInterval`. |
-| `PtahSchema` Apply | `ReconciliationFailed=True` with reason `ApplyOutcomeUnknown`, and an `ApplyOutcomeUnknown` Warning Event whose text is fixed. Every Apply error is followed by a read-only observation before anything else runs; while the database still cannot be opened, that observation fails as above, with reason `OperationFailed` and the same sentence. |
+| `PtahSchema` Apply | `ReconciliationFailed=True` with reason `ApplyOutcomeUnknown`, and an `ApplyOutcomeUnknown` Warning Event that carries the sentence. Every Apply error is followed by a read-only observation before anything else runs; while the database still cannot be opened, that observation fails as above, with reason `OperationFailed` and the same sentence. The outcome stays unknown until the proof completes, so `ptah_operator_unresolved_attempts{family="schema"}` counts it and `PtahOperatorUnresolvedApply` fires for as long as the database is away. |
 | `PtahMigration` history read | `Progressing=True` with reason `OperationFailed`, and an `OperationRetried` Warning Event. The read runs again after `spec.execution.failureRetryInterval`. |
 | `PtahMigration` Apply | `status.lastRun` is `Failed` with the sentence as its message, `Ready=False` and `Progressing=False` carry it with reason `OperationFailed`, and a `MigrationRunFinished` Warning Event carries it. The run ran nothing, so nothing is read back at once: the resource waits `spec.execution.failureRetryInterval` and then starts again from resolution, which reads the history before anything is planned or applied. |
 
@@ -171,13 +177,37 @@ its message, and the resource's status keeps the sentence whole. An Event
 keeps 512 bytes of it, which holds the whole sentence while the Secret's name
 and key together stay under 230 bytes.
 
-| Kind | What Ptah found | Where to look |
-| --- | --- | --- |
-| `database_unreachable` | The host did not resolve, refused the connection, or did not answer in time. | The host and port in the URL, the database's Service, and any NetworkPolicy between this namespace and the database. |
-| `authentication_failed` | The server did not accept the credentials: a wrong password, an unknown or locked user, an expired password, or no host rule that admits the connection. | The user and password in the URL. |
-| `database_not_found` | The server has no database by the name the URL gives. | The database name in the URL, or create the database. |
-| `permission_denied` | The server accepted the credentials and refused the user the database: no `CONNECT` privilege on PostgreSQL, no privilege on the database on MySQL. MySQL answers this way whether or not the database exists. | The user in the URL, and what the database grants it. |
-| `tls_failed` | The TLS handshake did not complete: the server's certificate did not verify, or the server and the URL disagree about TLS. | The TLS parameters in the URL, and the certificate the server presents. |
+| Kind | `DatabaseReachable` reason | What Ptah found | Where to look |
+| --- | --- | --- | --- |
+| `database_unreachable` | `DatabaseUnreachable` | The host did not resolve, refused the connection, or did not answer in time. | The host and port in the URL, the database's Service, and any NetworkPolicy between this namespace and the database. |
+| `authentication_failed` | `AuthenticationFailed` | The server did not accept the credentials: a wrong password, an unknown or locked user, an expired password, or no host rule that admits the connection. | The user and password in the URL. |
+| `database_not_found` | `DatabaseNotFound` | The server has no database by the name the URL gives. | The database name in the URL, or create the database. |
+| `permission_denied` | `PermissionDenied` | The server accepted the credentials and refused the user the database: no `CONNECT` privilege on PostgreSQL, no privilege on the database on MySQL. MySQL answers this way whether or not the database exists. | The user in the URL, and what the database grants it. |
+| `tls_failed` | `TLSFailed` | The TLS handshake did not complete: the server's certificate did not verify, or the server and the URL disagree about TLS. | The TLS parameters in the URL, and the certificate the server presents. |
+
+An alert keys on the reason of `DatabaseReachable`, because a message may change
+without an API version. `ReconciliationFailed`, `Ready` and `Progressing` keep
+saying whether the operation failed, with the reasons in the table above.
+
+`DatabaseReachable=True` with reason `Observed` means the target answered the
+last time an operation opened it, not that it answers now. A failure that names
+no kind leaves the condition as it was, so a schema can read `True` beside a
+`ReconciliationFailed=True` whose message is `child_exit: ptah exited with code
+2`. The first operation that opens the target afterwards sets `True`, including
+a Plan retried after the database came back. That holds for a Plan that failed
+after a read came back from the target: `protected_table`, `plan_refused`,
+`unstable_plan`, `credential_leak`, `plan_seal_failed`, and a plan the API server
+refused to store. `invalid_plan_output` leaves the condition, because the runner
+also writes it for a child that never reached the target.
+
+`False` is not live either. It says what the last operation that reported on the
+target found. Neither family's suspend path writes this condition, so a resource
+suspended for maintenance keeps `False`, and an alert on it keeps firing.
+
+`lastTransitionTime` moves only when the status changes. A move from one kind to
+another changes the reason and keeps the time. The time dates when an operation
+first reported the failure, not when the target stopped answering: with
+`spec.interval: 1h`, the outage may be an hour older than the condition says.
 
 The message carries nothing Ptah or the database wrote. Ptah's own sentence
 names the host, the user and the database it tried, and it does not leave the

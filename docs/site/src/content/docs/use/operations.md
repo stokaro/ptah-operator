@@ -2105,6 +2105,16 @@ and survive an unrelated refusal rewriting the resource's conditions.
 | `ptah_operator_unresolved_view_synced{}` | 1 when the leader read the complete state for this scrape |
 | `ptah_operator_unresolved_view_read_failures_total{}` | Scrapes that could not read that state |
 
+A schema Apply whose runner reported it could not open the target counts here
+until the database answers and the proof completes, because one Pod's report
+does not speak for its Job. `DatabaseReachable=False`, with
+[a reason for the kind](../../troubleshoot/condition-reasons/#a-database-the-operation-could-not-open),
+says the target cannot be opened now. It does not say that nothing ran: an Apply
+that sent statements and lost the connection reads the same once its proof finds
+the database closed. Only the completed proof settles the record. The
+`ApplyOutcomeUnknown` Event carries the sentence when the Apply's own Pod reported
+it could not open the target, and the fixed text otherwise.
+
 The leader reads both resource families and both plan kinds directly from the
 API server once per scrape, sharing those results across the unresolved,
 resource-state and plan-store gauges. All four lists share a three-second
@@ -2321,7 +2331,10 @@ on rows rather than on rates.
 Turning that into a Prometheus series needs an exporter that reads object
 status and emits per-object gauges; `kube-state-metrics` does exactly this for
 custom resources, and its cardinality is then your choice rather than the
-operator's. Durable state and freshness gauges shipped by the operator itself
+operator's. The reason of `DatabaseReachable` is what such a series can key on
+to tell a closed database from refused credentials;
+[the kinds](../../troubleshoot/condition-reasons/#a-database-the-operation-could-not-open)
+list each reason. Durable state and freshness gauges shipped by the operator itself
 are tracked in
 [issue #226](https://github.com/stokaro/ptah-operator/issues/226).
 

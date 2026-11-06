@@ -1,25 +1,25 @@
 {
-  "recordedAt": "2026-11-04T16:19:59Z",
+  "recordedAt": "2026-11-06T15:53:53Z",
   "lab": {
-    "CONTROLLER_IMAGE": "e2e-registry.ptah-test-a-1-37-0-demo-41864409600-1-b17e3d1753.svc.cluster.local:5000/ptah-operator@sha256:21ae22a2b2c4239534c2587605f08d1d7f8a8f173dffbe73ebcb061dc7743847",
-    "CONTROLLER_REVISION": "2818830c3dc76ea6b27bffcabd4e765c2f08ea10",
-    "EXECUTOR_IMAGE": "e2e-registry.ptah-test-a-1-37-0-demo-41864409600-1-b17e3d1753.svc.cluster.local:5000/ptah-executor@sha256:9f8797986124add44d0232a17cd17e6f03cfec76b1711efc53c169483b7b4303",
-    "KIND_CLUSTER_NAME": "ptah-e2e-1-37-0-demo-41864409-b17e3d1753",
+    "CONTROLLER_IMAGE": "e2e-registry.ptah-test-a-1-37-0-demo-42245723415-1-244d6d4043.svc.cluster.local:5000/ptah-operator@sha256:95a15ea10a9e8985748269943615e7cef8b99e02d78238ffcf48809c8a028fe1",
+    "CONTROLLER_REVISION": "e41a04412bb12281b068f8b6bc1f7f83025522aa",
+    "EXECUTOR_IMAGE": "e2e-registry.ptah-test-a-1-37-0-demo-42245723415-1-244d6d4043.svc.cluster.local:5000/ptah-executor@sha256:9f8797986124add44d0232a17cd17e6f03cfec76b1711efc53c169483b7b4303",
+    "KIND_CLUSTER_NAME": "ptah-e2e-1-37-0-demo-42245723-244d6d4043",
     "KUBERNETES_VERSION": "1.37.0",
     "PTAH_REVISION": "6e1d430e51312de325a8f0238e601547a6c473d5",
     "PTAH_VERSION": "v0.18.0",
-    "RUNNER_IMAGE": "e2e-registry.ptah-test-a-1-37-0-demo-41864409600-1-b17e3d1753.svc.cluster.local:5000/ptah-runner@sha256:21ae22a2b2c4239534c2587605f08d1d7f8a8f173dffbe73ebcb061dc7743847"
+    "RUNNER_IMAGE": "e2e-registry.ptah-test-a-1-37-0-demo-42245723415-1-244d6d4043.svc.cluster.local:5000/ptah-runner@sha256:95a15ea10a9e8985748269943615e7cef8b99e02d78238ffcf48809c8a028fe1"
   },
   "source": {
-    "commit": "2818830c3dc76ea6b27bffcabd4e765c2f08ea10",
-    "describe": "v0.2.9-14-g2818830"
+    "commit": "e41a04412bb12281b068f8b6bc1f7f83025522aa",
+    "describe": "v0.2.9-17-ge41a044"
   },
   "scenarios": [
     {
       "id": "adopt-existing-database",
       "source": {
-        "commit": "2818830c3dc76ea6b27bffcabd4e765c2f08ea10",
-        "describe": "v0.2.9-14-g2818830"
+        "commit": "e41a04412bb12281b068f8b6bc1f7f83025522aa",
+        "describe": "v0.2.9-17-ge41a044"
       },
       "definitionDigest": "sha256:39e4cd2b2b664fafd6f125f03647a0c489214a9b08c07228812d43f70a4b9bd4",
       "inputDigest": "sha256:882776109d85db1943b14160b54e98b2be353864759b66c3266ade890327859b",
@@ -31,7 +31,7 @@
         "Lifecycle"
       ],
       "commands": 16,
-      "lines": 288,
+      "lines": 289,
       "events": [
         [
           "note",
@@ -463,27 +463,27 @@
         ],
         [
           "out",
-          "2026/11/04 16:20:07 INFO Migrating up currentVersion=0 totalMigrations=2"
+          "2026/11/06 15:54:03 INFO Migrating up currentVersion=0 totalMigrations=2"
         ],
         [
           "out",
-          "2026/11/04 16:20:07 INFO Applying migration version=1 description=\"Create Shipments\""
+          "2026/11/06 15:54:03 INFO Applying migration version=1 description=\"Create Shipments\""
         ],
         [
           "out",
-          "2026/11/04 16:20:07 INFO Applied migration version=1 description=\"Create Shipments\""
+          "2026/11/06 15:54:03 INFO Applied migration version=1 description=\"Create Shipments\""
         ],
         [
           "out",
-          "2026/11/04 16:20:07 INFO Applying migration version=2 description=\"Add Carrier\""
+          "2026/11/06 15:54:03 INFO Applying migration version=2 description=\"Add Carrier\""
         ],
         [
           "out",
-          "2026/11/04 16:20:07 INFO Applied migration version=2 description=\"Add Carrier\""
+          "2026/11/06 15:54:03 INFO Applied migration version=2 description=\"Add Carrier\""
         ],
         [
           "out",
-          "2026/11/04 16:20:07 INFO All migrations applied successfully"
+          "2026/11/06 15:54:03 INFO All migrations applied successfully"
         ],
         [
           "out",
@@ -535,11 +535,11 @@
         ],
         [
           "out",
-          "--- demo/manifests/adopt-existing-database/baseline-v2.yaml\t2026-11-04 16:08:25.840264682 +0000"
+          "--- demo/manifests/adopt-existing-database/baseline-v2.yaml\t2026-11-06 15:43:50.129352363 +0000"
         ],
         [
           "out",
-          "+++ demo/manifests/adopt-existing-database/baseline-v1.yaml\t2026-11-04 16:08:25.840202990 +0000"
+          "+++ demo/manifests/adopt-existing-database/baseline-v1.yaml\t2026-11-06 15:43:50.129308016 +0000"
         ],
         [
           "out",
@@ -639,19 +639,19 @@
         ],
         [
           "out",
-          "2026/11/04 16:20:15 INFO Migrating up currentVersion=0 totalMigrations=1"
+          "2026/11/06 15:54:10 INFO Migrating up currentVersion=0 totalMigrations=1"
         ],
         [
           "out",
-          "2026/11/04 16:20:15 INFO Applying migration version=1 description=\"Create Shipments\""
+          "2026/11/06 15:54:10 INFO Applying migration version=1 description=\"Create Shipments\""
         ],
         [
           "out",
-          "2026/11/04 16:20:15 INFO Applied migration version=1 description=\"Create Shipments\""
+          "2026/11/06 15:54:10 INFO Applied migration version=1 description=\"Create Shipments\""
         ],
         [
           "out",
-          "2026/11/04 16:20:15 INFO All migrations applied successfully"
+          "2026/11/06 15:54:10 INFO All migrations applied successfully"
         ],
         [
           "out",
@@ -907,7 +907,7 @@
         ],
         [
           "out",
-          "  Plan:       ptah-mplan-44272cad5f74871d0fdf0e82"
+          "  Plan:       ptah-mplan-d6a4d397d300de3cdbf71642"
         ],
         [
           "out",
@@ -943,7 +943,7 @@
         ],
         [
           "out",
-          "Snapshot:             ptah-src-23160f5e23c7951d6d77aa04"
+          "Snapshot:             ptah-src-9d6168dd59ca5f4d99da0580"
         ],
         [
           "out",
@@ -971,7 +971,7 @@
         ],
         [
           "out",
-          "Plan ptah-mplan-44272cad5f74871d0fdf0e82, 1 migration from version 1:"
+          "Plan ptah-mplan-d6a4d397d300de3cdbf71642, 1 migration from version 1:"
         ],
         [
           "out",
@@ -1007,23 +1007,27 @@
         ],
         [
           "out",
-          "  TYPE              STATUS  REASON            SINCE                 MESSAGE"
+          "  TYPE               STATUS  REASON            SINCE                 MESSAGE"
         ],
         [
           "out",
-          "  Progressing       False   AwaitingApproval  \u003ctime\u003e                Nothing runs until a person writes the approval"
+          "  Progressing        False   AwaitingApproval  \u003ctime\u003e                Nothing runs until a person writes the approval"
         ],
         [
           "out",
-          "  Blocked           False   HistoryMatched    \u003ctime\u003e                The history continues this artifact"
+          "  Blocked            False   HistoryMatched    \u003ctime\u003e                The history continues this artifact"
         ],
         [
           "out",
-          "  Ready             False   AwaitingApproval  \u003ctime\u003e                The plan is waiting for the approval its policy requires"
+          "  Ready              False   AwaitingApproval  \u003ctime\u003e                The plan is waiting for the approval its policy requires"
         ],
         [
           "out",
-          "  ApprovalRequired  True    AwaitingApproval  \u003ctime\u003e                1 planned migrations need an approval naming this plan"
+          "  DatabaseReachable  True    Observed          \u003ctime\u003e                The migration history was read"
+        ],
+        [
+          "out",
+          "  ApprovalRequired   True    AwaitingApproval  \u003ctime\u003e                1 planned migrations need an approval naming this plan"
         ],
         [
           "blank",
@@ -1051,11 +1055,11 @@
         ],
         [
           "out",
-          "Plan:          ptah-mplan-44272cad5f74871d0fdf0e82, UID \u003cuid\u003e"
+          "Plan:          ptah-mplan-d6a4d397d300de3cdbf71642, UID \u003cuid\u003e"
         ],
         [
           "out",
-          "Fingerprint:   sha256:44272cad5f74871d0fdf0e82203b5f76f6fd7e21abd209f66fc878d339fe8d0e"
+          "Fingerprint:   sha256:d6a4d397d300de3cdbf716427a052732e0b8e975f9072d47767a2656afec34c9"
         ],
         [
           "blank",
@@ -1103,7 +1107,7 @@
         ],
         [
           "out",
-          "Approve plan ptah-mplan-44272cad5f74871d0fdf0e82 of migration/shipments in demo? Type yes to approve: yes"
+          "Approve plan ptah-mplan-d6a4d397d300de3cdbf71642 of migration/shipments in demo? Type yes to approve: yes"
         ],
         [
           "out",
@@ -1111,7 +1115,7 @@
         ],
         [
           "out",
-          "It binds plan ptah-mplan-44272cad5f74871d0fdf0e82, fingerprint sha256:44272cad5f74871d0fdf0e82203b5f76f6fd7e21abd209f66fc878d339fe8d0e."
+          "It binds plan ptah-mplan-d6a4d397d300de3cdbf71642, fingerprint sha256:d6a4d397d300de3cdbf716427a052732e0b8e975f9072d47767a2656afec34c9."
         ],
         [
           "out",
@@ -1135,7 +1139,7 @@
         ],
         [
           "out",
-          "  Last run:   Applied, Job ptah-m-apply-shipments-49a2e099af01ea46"
+          "  Last run:   Applied, Job ptah-m-apply-shipments-0bbce50c6d44e028"
         ],
         [
           "out",
@@ -1320,8 +1324,8 @@
     {
       "id": "checkpoint-bootstrap",
       "source": {
-        "commit": "2818830c3dc76ea6b27bffcabd4e765c2f08ea10",
-        "describe": "v0.2.9-14-g2818830"
+        "commit": "e41a04412bb12281b068f8b6bc1f7f83025522aa",
+        "describe": "v0.2.9-17-ge41a044"
       },
       "definitionDigest": "sha256:5364a1a77dce00472b9fbad6e5625f2b4825c37eb1183fabe7ad25ae03e48271",
       "inputDigest": "sha256:0c474159d3325cf6aef859c744ffaf88661fa073d716501833c65c0569ea1c7f",
@@ -1333,7 +1337,7 @@
         "Lifecycle"
       ],
       "commands": 6,
-      "lines": 105,
+      "lines": 106,
       "events": [
         [
           "note",
@@ -1613,7 +1617,7 @@
         ],
         [
           "out",
-          "Artifact:             oci://e2e-registry.demo.svc.cluster.local:5000/migrations/demo@sha256:9811bd737fb9c7f750cbe2fabcf0daa06d786006b4efa32b145b91afa88f83ee"
+          "Artifact:             oci://e2e-registry.demo.svc.cluster.local:5000/migrations/demo@sha256:ecfa0b3b09c606dca0fdc3c6954b913cc3a2c6b5dddc0f174f7a8d4cd432f611"
         ],
         [
           "out",
@@ -1645,7 +1649,7 @@
         ],
         [
           "out",
-          "  Job:                ptah-m-apply-shipments-6d405e79c62c0188, UID \u003cuid\u003e"
+          "  Job:                ptah-m-apply-shipments-c78299f690622125, UID \u003cuid\u003e"
         ],
         [
           "out",
@@ -1689,27 +1693,31 @@
         ],
         [
           "out",
-          "  TYPE              STATUS  REASON           SINCE                 MESSAGE"
+          "  TYPE               STATUS  REASON           SINCE                 MESSAGE"
         ],
         [
           "out",
-          "  Progressing       False   HistoryMatched   \u003ctime\u003e                Nothing is pending"
+          "  Progressing        False   HistoryMatched   \u003ctime\u003e                Nothing is pending"
         ],
         [
           "out",
-          "  ArtifactVerified  True    PolicySatisfied  \u003ctime\u003e                The resolved artifact satisfied its verification policy"
+          "  ArtifactVerified   True    PolicySatisfied  \u003ctime\u003e                The resolved artifact satisfied its verification policy"
         ],
         [
           "out",
-          "  Blocked           False   HistoryMatched   \u003ctime\u003e                The history continues this artifact"
+          "  Blocked            False   HistoryMatched   \u003ctime\u003e                The history continues this artifact"
         ],
         [
           "out",
-          "  Ready             True    HistoryMatched   \u003ctime\u003e                The database has every migration this artifact carries"
+          "  Ready              True    HistoryMatched   \u003ctime\u003e                The database has every migration this artifact carries"
         ],
         [
           "out",
-          "  ApprovalRequired  False   Satisfied        \u003ctime\u003e                The plan's approval requirements are satisfied"
+          "  DatabaseReachable  True    Observed         \u003ctime\u003e                The migration history was read"
+        ],
+        [
+          "out",
+          "  ApprovalRequired   False   Satisfied        \u003ctime\u003e                The plan's approval requirements are satisfied"
         ],
         [
           "blank",
@@ -1818,8 +1826,8 @@
     {
       "id": "destructive-block",
       "source": {
-        "commit": "2818830c3dc76ea6b27bffcabd4e765c2f08ea10",
-        "describe": "v0.2.9-14-g2818830"
+        "commit": "e41a04412bb12281b068f8b6bc1f7f83025522aa",
+        "describe": "v0.2.9-17-ge41a044"
       },
       "definitionDigest": "sha256:76067393c0d09e172637c8a04c2fef2e0102c3f32c0698d5c03579cb8d62213e",
       "inputDigest": "sha256:41c51e870711100b4c55e7f1abe985845e562881dc6e9dc3f6bf3aded97aada3",
@@ -1879,11 +1887,11 @@
         ],
         [
           "out",
-          "--- demo/schemas/v2.sql\t2026-11-04 16:08:25.843087747 +0000"
+          "--- demo/schemas/v2.sql\t2026-11-06 15:43:50.132249928 +0000"
         ],
         [
           "out",
-          "+++ demo/schemas/v3.sql\t2026-11-04 16:08:25.843087747 +0000"
+          "+++ demo/schemas/v3.sql\t2026-11-06 15:43:50.132249928 +0000"
         ],
         [
           "out",
@@ -1935,7 +1943,7 @@
         ],
         [
           "out",
-          "Artifact:             oci://e2e-registry.demo.svc.cluster.local:5000/schemas/demo@sha256:2533e77876592d2149307fae971a1270beb9daf10dbdd54d7e151d1d14ed6860"
+          "Artifact:             oci://e2e-registry.demo.svc.cluster.local:5000/schemas/demo@sha256:48a955b1c06f6098aff4bbc618cb184e659d97c70b577eaaa799ad4c71c4a611"
         ],
         [
           "out",
@@ -1951,7 +1959,7 @@
         ],
         [
           "out",
-          "Applied:              ptah-plan-ec2176ea35aa77251d7a9e47 at \u003ctime\u003e"
+          "Applied:              ptah-plan-184821b9b344ce8f57d552ce at \u003ctime\u003e"
         ],
         [
           "blank",
@@ -2067,11 +2075,11 @@
         ],
         [
           "out",
-          "  Requested: spec.desired.ociRef oci://e2e-registry.demo.svc.cluster.local:5000/schemas/demo@sha256:ec6607726212f43cf6a173bbac095f9554a2c0716d63351d1a2b422f8faa6f39, generation 2"
+          "  Requested: spec.desired.ociRef oci://e2e-registry.demo.svc.cluster.local:5000/schemas/demo@sha256:e13912df5506f0e69ac064420b0efd81537a614b1fd3a5ab14a2484f72aa35ae, generation 2"
         ],
         [
           "out",
-          "  Replaced:  oci://e2e-registry.demo.svc.cluster.local:5000/schemas/demo@sha256:2533e77876592d2149307fae971a1270beb9daf10dbdd54d7e151d1d14ed6860"
+          "  Replaced:  oci://e2e-registry.demo.svc.cluster.local:5000/schemas/demo@sha256:48a955b1c06f6098aff4bbc618cb184e659d97c70b577eaaa799ad4c71c4a611"
         ],
         [
           "out",
@@ -2083,7 +2091,7 @@
         ],
         [
           "out",
-          "  Resolved:  oci://e2e-registry.demo.svc.cluster.local:5000/schemas/demo@sha256:2533e77876592d2149307fae971a1270beb9daf10dbdd54d7e151d1d14ed6860, verified"
+          "  Resolved:  oci://e2e-registry.demo.svc.cluster.local:5000/schemas/demo@sha256:48a955b1c06f6098aff4bbc618cb184e659d97c70b577eaaa799ad4c71c4a611, verified"
         ],
         [
           "out",
@@ -2111,7 +2119,7 @@
         ],
         [
           "err",
-          "  Why:         spec.policy holds plan ptah-plan-7d439973c04f9635bf557cc3 (DestructiveChangesDisabled): Plan contains destructive changes and policy disallows them; read them with kubectl ptah plan, then either narrow the desired schema or set spec.policy.allowDestructive"
+          "  Why:         spec.policy holds plan ptah-plan-cd86a29c807088ae947b1623 (DestructiveChangesDisabled): Plan contains destructive changes and policy disallows them; read them with kubectl ptah plan, then either narrow the desired schema or set spec.policy.allowDestructive"
         ],
         [
           "err",
@@ -2147,7 +2155,7 @@
         ],
         [
           "out",
-          "Artifact:             oci://e2e-registry.demo.svc.cluster.local:5000/schemas/demo@sha256:ec6607726212f43cf6a173bbac095f9554a2c0716d63351d1a2b422f8faa6f39"
+          "Artifact:             oci://e2e-registry.demo.svc.cluster.local:5000/schemas/demo@sha256:e13912df5506f0e69ac064420b0efd81537a614b1fd3a5ab14a2484f72aa35ae"
         ],
         [
           "out",
@@ -2171,7 +2179,7 @@
         ],
         [
           "out",
-          "Plan ptah-plan-7d439973c04f9635bf557cc3, 1 statement, stored \u003ctime\u003e"
+          "Plan ptah-plan-cd86a29c807088ae947b1623, 1 statement, stored \u003ctime\u003e"
         ],
         [
           "out",
@@ -2279,11 +2287,11 @@
         ],
         [
           "out",
-          "Plan:           current (ptah-plan-7d439973c04f9635bf557cc3)"
+          "Plan:           current (ptah-plan-cd86a29c807088ae947b1623)"
         ],
         [
           "out",
-          "Fingerprint:    sha256:7d439973c04f9635bf557cc35deb713f25b936e86a20b2147e88b4c407fd40bb"
+          "Fingerprint:    sha256:cd86a29c807088ae947b1623df5d6db126a9d2864007367a25db8e28bf91e20f"
         ],
         [
           "out",
@@ -2426,8 +2434,8 @@
     {
       "id": "drift",
       "source": {
-        "commit": "2818830c3dc76ea6b27bffcabd4e765c2f08ea10",
-        "describe": "v0.2.9-14-g2818830"
+        "commit": "e41a04412bb12281b068f8b6bc1f7f83025522aa",
+        "describe": "v0.2.9-17-ge41a044"
       },
       "definitionDigest": "sha256:7de708eb78b6401501a777c332f4d86eb8c44f719fab915f9d780097a5233377",
       "inputDigest": "sha256:4b24b74683df4c53282c852d8cf44060e2ed532d4ebbe27e5688fcfce5ff09ae",
@@ -2471,7 +2479,7 @@
         ],
         [
           "out",
-          "Artifact:             oci://e2e-registry.demo.svc.cluster.local:5000/schemas/demo@sha256:7849c8d5956a34af6d9fa87bedd754f2297ac4827b2ece099239c895300a07f5"
+          "Artifact:             oci://e2e-registry.demo.svc.cluster.local:5000/schemas/demo@sha256:a166d562143b4f650dd3ec5cc6e8a62919e6c191a352fa108fd5019f0bb46d4b"
         ],
         [
           "out",
@@ -2487,7 +2495,7 @@
         ],
         [
           "out",
-          "Applied:              ptah-plan-0cdfb609f2fc3f52df9229c4 at \u003ctime\u003e"
+          "Applied:              ptah-plan-4936145202ac9b897a444c5a at \u003ctime\u003e"
         ],
         [
           "blank",
@@ -2784,10 +2792,10 @@
     {
       "id": "failure-recovery",
       "source": {
-        "commit": "2818830c3dc76ea6b27bffcabd4e765c2f08ea10",
-        "describe": "v0.2.9-14-g2818830"
+        "commit": "e41a04412bb12281b068f8b6bc1f7f83025522aa",
+        "describe": "v0.2.9-17-ge41a044"
       },
-      "definitionDigest": "sha256:82370b1e4381e6fdc171dd65b2c13a1c1ca1e74249104d7ae7729968a89aeb5f",
+      "definitionDigest": "sha256:f10da8c721617ffadc763f62428c0d193677b55a2ed33d4e830810ac8500f2b6",
       "inputDigest": "sha256:6551760a553bfc61a63726bb5e8e1b61bac9a46b02afea9085c0e28e49c9124d",
       "title": "Fail, then recover",
       "tagline": "Point it at a database that is not there. It says so, keeps trying, and converges when it is.",
@@ -2797,7 +2805,7 @@
         "Operations"
       ],
       "commands": 8,
-      "lines": 85,
+      "lines": 86,
       "events": [
         [
           "sync",
@@ -2841,7 +2849,7 @@
         ],
         [
           "note",
-          "# It failed, and says why and where to look. The host did not answer; the URL is in that Secret."
+          "# It failed and says why. DatabaseReachable names the kind; the URL is in that Secret."
         ],
         [
           "cmd",
@@ -2873,7 +2881,7 @@
         ],
         [
           "out",
-          "Snapshot:             ptah-src-491f3ca23e6e08bedb4b4ab2"
+          "Snapshot:             ptah-src-e04e29cc2f668516c762e831"
         ],
         [
           "out",
@@ -2909,27 +2917,31 @@
         ],
         [
           "out",
-          "  TYPE                  STATUS  REASON           SINCE                 MESSAGE"
+          "  TYPE                  STATUS  REASON               SINCE                 MESSAGE"
         ],
         [
           "out",
-          "  EngineSupported       True    SupportedEngine  \u003ctime\u003e                Database engine \"PostgreSQL\" is supported"
+          "  EngineSupported       True    SupportedEngine      \u003ctime\u003e                Database engine \"PostgreSQL\" is supported"
         ],
         [
           "out",
-          "  Suspended             False   Active           \u003ctime\u003e                Reconciliation is active"
+          "  Suspended             False   Active               \u003ctime\u003e                Reconciliation is active"
         ],
         [
           "out",
-          "  ReconciliationFailed  True    OperationFailed  \u003ctime\u003e                database_unreachable: the target database did not answer: its host did not resolve, refused the connection, or did not respond in time. Check the host and port in the URL that Secret \"demo-database-broken\" holds under key \"url\", and that the database is running and accepts connections from this namespace"
+          "  ReconciliationFailed  True    OperationFailed      \u003ctime\u003e                database_unreachable: the target database did not answer: its host did not resolve, refused the connection, or did not respond in time. Check the host and port in the URL that Secret \"demo-database-broken\" holds under key \"url\", and that the database is running and accepts connections from this namespace"
         ],
         [
           "out",
-          "  ArtifactResolved      True    SnapshotTaken    \u003ctime\u003e                ConfigMap storefront-v1 was copied into snapshot ptah-src-491f3ca23e6e08bedb4b4ab2"
+          "  ArtifactResolved      True    SnapshotTaken        \u003ctime\u003e                ConfigMap storefront-v1 was copied into snapshot ptah-src-e04e29cc2f668516c762e831"
         ],
         [
           "out",
-          "  Ready                 False   OperationFailed  \u003ctime\u003e                Reconciliation did not complete"
+          "  Ready                 False   OperationFailed      \u003ctime\u003e                Reconciliation did not complete"
+        ],
+        [
+          "out",
+          "  DatabaseReachable     False   DatabaseUnreachable  \u003ctime\u003e                database_unreachable: the target database did not answer: its host did not resolve, refused the connection, or did not respond in time. Check the host and port in the URL that Secret \"demo-database-broken\" holds under key \"url\", and that the database is running and accepts connections from this namespace"
         ],
         [
           "blank",
@@ -2953,7 +2965,7 @@
         ],
         [
           "out",
-          "11s         Normal    OperationStarted   PtahSchema/storefront   Observe Job ptah-observe-storefront-6b341841f423e829 started"
+          "10s         Normal    OperationStarted   PtahSchema/storefront   Observe Job ptah-observe-storefront-9fcc2b9e1ab607d2 started"
         ],
         [
           "out",
@@ -3029,7 +3041,7 @@
         ],
         [
           "out",
-          "checked the whole status, 3138 bytes, no credential in it"
+          "checked the whole status, 3604 bytes, no credential in it"
         ],
         [
           "sync",
@@ -3049,11 +3061,11 @@
         ],
         [
           "out",
-          "--- demo/manifests/failure-recovery/storefront-unreachable.yaml\t2026-11-04 16:08:25.840264682 +0000"
+          "--- demo/manifests/failure-recovery/storefront-unreachable.yaml\t2026-11-06 15:43:50.129352363 +0000"
         ],
         [
           "out",
-          "+++ demo/manifests/failure-recovery/storefront.yaml\t2026-11-04 16:08:25.840363070 +0000"
+          "+++ demo/manifests/failure-recovery/storefront.yaml\t2026-11-06 15:43:50.129445411 +0000"
         ],
         [
           "out",
@@ -3178,7 +3190,7 @@
         {
           "scenario": "failure-recovery",
           "step": 3,
-          "claim": "exits 0, prints \"Failed\", prints \"ReconciliationFailed\", prints \"OperationFailed\", prints \"database_unreachable\", prints \"\\\"demo-database-broken\\\"\", never prints \"nobody:nobody\", never prints \"no-such-database\"",
+          "claim": "exits 0, prints \"Failed\", prints \"ReconciliationFailed\", prints \"OperationFailed\", prints \"database_unreachable\", prints \"\\\"demo-database-broken\\\"\", prints \"DatabaseReachable\", prints \"DatabaseUnreachable\", never prints \"nobody:nobody\", never prints \"no-such-database\"",
           "passed": true
         },
         {
@@ -3222,8 +3234,8 @@
     {
       "id": "first-apply",
       "source": {
-        "commit": "2818830c3dc76ea6b27bffcabd4e765c2f08ea10",
-        "describe": "v0.2.9-14-g2818830"
+        "commit": "e41a04412bb12281b068f8b6bc1f7f83025522aa",
+        "describe": "v0.2.9-17-ge41a044"
       },
       "definitionDigest": "sha256:c4ca26b66142bce3125e5442431030ea89a682042b7b1078328f3fd5d931daf3",
       "inputDigest": "sha256:c06d0222cd9ce919b5b7a0aa4edcfe9616dfed8df68517b47bca2d6cc5b4e017",
@@ -3431,7 +3443,7 @@
         ],
         [
           "out",
-          "Artifact:             oci://e2e-registry.demo.svc.cluster.local:5000/schemas/demo@sha256:f49a824eddc18f240f91094c08e450f0634d6c81fbed025176522c88d7a536e5"
+          "Artifact:             oci://e2e-registry.demo.svc.cluster.local:5000/schemas/demo@sha256:6ad6029f939d2850ce43f060c43fe27e82df0ebb0db6e5ea06708905f67d063c"
         ],
         [
           "out",
@@ -3447,7 +3459,7 @@
         ],
         [
           "out",
-          "Applied:              ptah-plan-8dff56ec93db164bc25f8aa7 at \u003ctime\u003e"
+          "Applied:              ptah-plan-19ccc0a05dac5ac9c1ec8883 at \u003ctime\u003e"
         ],
         [
           "blank",
@@ -3654,8 +3666,8 @@
     {
       "id": "lab-setup",
       "source": {
-        "commit": "2818830c3dc76ea6b27bffcabd4e765c2f08ea10",
-        "describe": "v0.2.9-14-g2818830"
+        "commit": "e41a04412bb12281b068f8b6bc1f7f83025522aa",
+        "describe": "v0.2.9-17-ge41a044"
       },
       "definitionDigest": "sha256:95720118da2527c727efa716118eba5d46bee3aef733620cbb651e9c1a67a62f",
       "inputDigest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -3691,7 +3703,7 @@
         ],
         [
           "out",
-          "operator    2818830c3dc76ea6b27bffcabd4e765c2f08ea10"
+          "operator    e41a04412bb12281b068f8b6bc1f7f83025522aa"
         ],
         [
           "out",
@@ -3727,11 +3739,11 @@
         ],
         [
           "out",
-          "ptah-operator-cert-rotator                                     1/1     1            1           13m   certificate-rotator   e2e-registry.demo.svc.cluster.local:5000/ptah-operator@sha256:21ae22a2b2c4239534c2587605f08d1d7f8a8f173dffbe73ebcb061dc7743847   app.kubernetes.io/component=certificate-rotation,app.kubernetes.io/instance=ptah,app.kubernetes.io/name=ptah-operator"
+          "ptah-operator-cert-rotator                                     1/1     1            1           13m   certificate-rotator   e2e-registry.demo.svc.cluster.local:5000/ptah-operator@sha256:95a15ea10a9e8985748269943615e7cef8b99e02d78238ffcf48809c8a028fe1   app.kubernetes.io/component=certificate-rotation,app.kubernetes.io/instance=ptah,app.kubernetes.io/name=ptah-operator"
         ],
         [
           "out",
-          "ptah-operator                                                  2/2     2            2           13m   manager               e2e-registry.demo.svc.cluster.local:5000/ptah-operator@sha256:21ae22a2b2c4239534c2587605f08d1d7f8a8f173dffbe73ebcb061dc7743847   app.kubernetes.io/component=controller,app.kubernetes.io/instance=ptah,app.kubernetes.io/name=ptah-operator"
+          "ptah-operator                                                  2/2     2            2           13m   manager               e2e-registry.demo.svc.cluster.local:5000/ptah-operator@sha256:95a15ea10a9e8985748269943615e7cef8b99e02d78238ffcf48809c8a028fe1   app.kubernetes.io/component=controller,app.kubernetes.io/instance=ptah,app.kubernetes.io/name=ptah-operator"
         ],
         [
           "note",
@@ -3823,23 +3835,23 @@
         ],
         [
           "out",
-          "secret/demo-database          Opaque                           6      13m"
+          "secret/demo-database          Opaque                           6      12m"
         ],
         [
           "out",
-          "secret/demo-mysql-database    Opaque                           5      13m"
+          "secret/demo-mysql-database    Opaque                           5      12m"
         ],
         [
           "out",
-          "secret/demo-registry          Opaque                           4      13m"
+          "secret/demo-registry          Opaque                           4      12m"
         ],
         [
           "out",
-          "secret/demo-registry-pull     kubernetes.io/dockerconfigjson   1      13m"
+          "secret/demo-registry-pull     kubernetes.io/dockerconfigjson   1      12m"
         ],
         [
           "out",
-          "secret/demo-shadow-database   Opaque                           2      13m"
+          "secret/demo-shadow-database   Opaque                           2      12m"
         ],
         [
           "blank",
@@ -3851,19 +3863,19 @@
         ],
         [
           "out",
-          "configmap/demo-migration-verification-policy   1      13m"
+          "configmap/demo-migration-verification-policy   1      12m"
         ],
         [
           "out",
-          "configmap/demo-verification-policy             1      13m"
+          "configmap/demo-verification-policy             1      12m"
         ],
         [
           "out",
-          "configmap/e2e-verification-policy              1      14m"
+          "configmap/e2e-verification-policy              1      13m"
         ],
         [
           "out",
-          "configmap/kube-root-ca.crt                     1      14m"
+          "configmap/kube-root-ca.crt                     1      13m"
         ],
         [
           "note",
@@ -3879,7 +3891,7 @@
         ],
         [
           "out",
-          "push to:   127.0.0.1:20533"
+          "push to:   127.0.0.1:20432"
         ],
         [
           "out",
@@ -3940,8 +3952,8 @@
     {
       "id": "manual-approval",
       "source": {
-        "commit": "2818830c3dc76ea6b27bffcabd4e765c2f08ea10",
-        "describe": "v0.2.9-14-g2818830"
+        "commit": "e41a04412bb12281b068f8b6bc1f7f83025522aa",
+        "describe": "v0.2.9-17-ge41a044"
       },
       "definitionDigest": "sha256:ba9248982a093de83f194224da23906df82aea9a755502943852e17dbe0c874a",
       "inputDigest": "sha256:12bdb42544c30a5c86c0acb75c1e07b4717314727c915624dfbfea6e2884629e",
@@ -4157,7 +4169,7 @@
         ],
         [
           "out",
-          "  Plan:       ptah-plan-849b56a280b74b02ff049938, fingerprint sha256:849b56a280b74b02ff049938d69ede2e49ad887f977bf7c4b078e5b5d339e3a2"
+          "  Plan:       ptah-plan-44f2a9565324d384d873dc64, fingerprint sha256:44f2a9565324d384d873dc646ec0169218f8d93bdf82708b2b2171c04d7a81c0"
         ],
         [
           "out",
@@ -4193,7 +4205,7 @@
         ],
         [
           "out",
-          "Snapshot:             ptah-src-490f8f6a8ecdd8658ff6eb10"
+          "Snapshot:             ptah-src-675290a01840eb1c6a64d05e"
         ],
         [
           "out",
@@ -4217,7 +4229,7 @@
         ],
         [
           "out",
-          "Plan ptah-plan-849b56a280b74b02ff049938, 1 statement, stored \u003ctime\u003e"
+          "Plan ptah-plan-44f2a9565324d384d873dc64, 1 statement, stored \u003ctime\u003e"
         ],
         [
           "out",
@@ -4261,7 +4273,7 @@
         ],
         [
           "out",
-          "  ArtifactResolved      True    SnapshotTaken     \u003ctime\u003e                ConfigMap storefront-v1 was copied into snapshot ptah-src-490f8f6a8ecdd8658ff6eb10"
+          "  ArtifactResolved      True    SnapshotTaken     \u003ctime\u003e                ConfigMap storefront-v1 was copied into snapshot ptah-src-675290a01840eb1c6a64d05e"
         ],
         [
           "out",
@@ -4329,11 +4341,11 @@
         ],
         [
           "out",
-          "Plan:          ptah-plan-849b56a280b74b02ff049938, UID \u003cuid\u003e"
+          "Plan:          ptah-plan-44f2a9565324d384d873dc64, UID \u003cuid\u003e"
         ],
         [
           "out",
-          "Fingerprint:   sha256:849b56a280b74b02ff049938d69ede2e49ad887f977bf7c4b078e5b5d339e3a2"
+          "Fingerprint:   sha256:44f2a9565324d384d873dc646ec0169218f8d93bdf82708b2b2171c04d7a81c0"
         ],
         [
           "blank",
@@ -4345,11 +4357,11 @@
         ],
         [
           "out",
-          "Plan:           current (ptah-plan-849b56a280b74b02ff049938)"
+          "Plan:           current (ptah-plan-44f2a9565324d384d873dc64)"
         ],
         [
           "out",
-          "Fingerprint:    sha256:849b56a280b74b02ff049938d69ede2e49ad887f977bf7c4b078e5b5d339e3a2"
+          "Fingerprint:    sha256:44f2a9565324d384d873dc646ec0169218f8d93bdf82708b2b2171c04d7a81c0"
         ],
         [
           "out",
@@ -4405,7 +4417,7 @@
         ],
         [
           "out",
-          "Approve plan ptah-plan-849b56a280b74b02ff049938 of schema/storefront in demo? Type yes to approve: yes"
+          "Approve plan ptah-plan-44f2a9565324d384d873dc64 of schema/storefront in demo? Type yes to approve: yes"
         ],
         [
           "out",
@@ -4413,7 +4425,7 @@
         ],
         [
           "out",
-          "It binds plan ptah-plan-849b56a280b74b02ff049938, fingerprint sha256:849b56a280b74b02ff049938d69ede2e49ad887f977bf7c4b078e5b5d339e3a2."
+          "It binds plan ptah-plan-44f2a9565324d384d873dc64, fingerprint sha256:44f2a9565324d384d873dc646ec0169218f8d93bdf82708b2b2171c04d7a81c0."
         ],
         [
           "out",
@@ -4437,7 +4449,7 @@
         ],
         [
           "out",
-          "  Applied:    plan ptah-plan-849b56a280b74b02ff049938, fingerprint sha256:849b56a280b74b02ff049938d69ede2e49ad887f977bf7c4b078e5b5d339e3a2, at \u003ctime\u003e"
+          "  Applied:    plan ptah-plan-44f2a9565324d384d873dc64, fingerprint sha256:44f2a9565324d384d873dc646ec0169218f8d93bdf82708b2b2171c04d7a81c0, at \u003ctime\u003e"
         ],
         [
           "out",
@@ -4505,7 +4517,7 @@
         ],
         [
           "out",
-          "Snapshot:             ptah-src-490f8f6a8ecdd8658ff6eb10"
+          "Snapshot:             ptah-src-675290a01840eb1c6a64d05e"
         ],
         [
           "out",
@@ -4521,7 +4533,7 @@
         ],
         [
           "out",
-          "Applied:              ptah-plan-849b56a280b74b02ff049938 at \u003ctime\u003e"
+          "Applied:              ptah-plan-44f2a9565324d384d873dc64 at \u003ctime\u003e"
         ],
         [
           "blank",
@@ -4549,7 +4561,7 @@
         ],
         [
           "out",
-          "    plan ptah-plan-849b56a280b74b02ff049938, the applied plan"
+          "    plan ptah-plan-44f2a9565324d384d873dc64, the applied plan"
         ],
         [
           "out",
@@ -4593,7 +4605,7 @@
         ],
         [
           "out",
-          "  ArtifactResolved      True    SnapshotTaken    \u003ctime\u003e                ConfigMap storefront-v1 was copied into snapshot ptah-src-490f8f6a8ecdd8658ff6eb10"
+          "  ArtifactResolved      True    SnapshotTaken    \u003ctime\u003e                ConfigMap storefront-v1 was copied into snapshot ptah-src-675290a01840eb1c6a64d05e"
         ],
         [
           "out",
@@ -4710,8 +4722,8 @@
     {
       "id": "mysql-partial-failure",
       "source": {
-        "commit": "2818830c3dc76ea6b27bffcabd4e765c2f08ea10",
-        "describe": "v0.2.9-14-g2818830"
+        "commit": "e41a04412bb12281b068f8b6bc1f7f83025522aa",
+        "describe": "v0.2.9-17-ge41a044"
       },
       "definitionDigest": "sha256:ddd034142e7a9ef63e4107572b94ee3020a1b6d80df924544bd02772a909c562",
       "inputDigest": "sha256:55d549d0383ce914177c56bbfef93f1cac384631fff34e2439aa066d3b3c8a44",
@@ -4723,7 +4735,7 @@
         "Operations"
       ],
       "commands": 19,
-      "lines": 310,
+      "lines": 312,
       "events": [
         [
           "sync",
@@ -4791,7 +4803,7 @@
         ],
         [
           "out",
-          "  Plan:       ptah-mplan-c0110832f8cc46cebb8679a8"
+          "  Plan:       ptah-mplan-764624aaaaeac40e5531dfa1"
         ],
         [
           "out",
@@ -4811,11 +4823,11 @@
         ],
         [
           "out",
-          "Plan:          ptah-mplan-c0110832f8cc46cebb8679a8, UID \u003cuid\u003e"
+          "Plan:          ptah-mplan-764624aaaaeac40e5531dfa1, UID \u003cuid\u003e"
         ],
         [
           "out",
-          "Fingerprint:   sha256:c0110832f8cc46cebb8679a830dea3a9146051b25c0a3e8aa102af34a913454b"
+          "Fingerprint:   sha256:764624aaaaeac40e5531dfa15e45fde40bf853433aec771efb7681a7b85e06d7"
         ],
         [
           "blank",
@@ -4863,7 +4875,7 @@
         ],
         [
           "out",
-          "Approve plan ptah-mplan-c0110832f8cc46cebb8679a8 of migration/deliveries in demo? Type yes to approve: yes"
+          "Approve plan ptah-mplan-764624aaaaeac40e5531dfa1 of migration/deliveries in demo? Type yes to approve: yes"
         ],
         [
           "out",
@@ -4871,7 +4883,7 @@
         ],
         [
           "out",
-          "It binds plan ptah-mplan-c0110832f8cc46cebb8679a8, fingerprint sha256:c0110832f8cc46cebb8679a830dea3a9146051b25c0a3e8aa102af34a913454b."
+          "It binds plan ptah-mplan-764624aaaaeac40e5531dfa1, fingerprint sha256:764624aaaaeac40e5531dfa15e45fde40bf853433aec771efb7681a7b85e06d7."
         ],
         [
           "out",
@@ -4895,7 +4907,7 @@
         ],
         [
           "out",
-          "  Last run:   Applied, Job ptah-m-apply-deliveries-076b1d6383295d09"
+          "  Last run:   Applied, Job ptah-m-apply-deliveries-08d5f2ef5f3fab0b"
         ],
         [
           "out",
@@ -4991,11 +5003,11 @@
         ],
         [
           "out",
-          "--- demo/manifests/mysql-partial-failure/deliveries-release-1.yaml\t2026-11-04 16:08:25.840363070 +0000"
+          "--- demo/manifests/mysql-partial-failure/deliveries-release-1.yaml\t2026-11-06 15:43:50.129445411 +0000"
         ],
         [
           "out",
-          "+++ demo/manifests/mysql-partial-failure/deliveries-release-2.yaml\t2026-11-04 16:08:25.840474767 +0000"
+          "+++ demo/manifests/mysql-partial-failure/deliveries-release-2.yaml\t2026-11-06 15:43:50.129549857 +0000"
         ],
         [
           "out",
@@ -5099,7 +5111,7 @@
         ],
         [
           "out",
-          "  Plan:       ptah-mplan-f0fd50dfc9063696f95f64e2"
+          "  Plan:       ptah-mplan-326d290ba57156a43719f067"
         ],
         [
           "out",
@@ -5123,11 +5135,11 @@
         ],
         [
           "out",
-          "Plan:          ptah-mplan-f0fd50dfc9063696f95f64e2, UID \u003cuid\u003e"
+          "Plan:          ptah-mplan-326d290ba57156a43719f067, UID \u003cuid\u003e"
         ],
         [
           "out",
-          "Fingerprint:   sha256:f0fd50dfc9063696f95f64e2534dc03a0141b27d950b17b314ff009ce9b49911"
+          "Fingerprint:   sha256:326d290ba57156a43719f067f927c9aac56c077b0ae9157a7f00ba98e8627b71"
         ],
         [
           "blank",
@@ -5175,7 +5187,7 @@
         ],
         [
           "out",
-          "Approve plan ptah-mplan-f0fd50dfc9063696f95f64e2 of migration/deliveries in demo? Type yes to approve: yes"
+          "Approve plan ptah-mplan-326d290ba57156a43719f067 of migration/deliveries in demo? Type yes to approve: yes"
         ],
         [
           "out",
@@ -5183,7 +5195,7 @@
         ],
         [
           "out",
-          "It binds plan ptah-mplan-f0fd50dfc9063696f95f64e2, fingerprint sha256:f0fd50dfc9063696f95f64e2534dc03a0141b27d950b17b314ff009ce9b49911."
+          "It binds plan ptah-mplan-326d290ba57156a43719f067, fingerprint sha256:326d290ba57156a43719f067f927c9aac56c077b0ae9157a7f00ba98e8627b71."
         ],
         [
           "out",
@@ -5199,7 +5211,7 @@
         ],
         [
           "out",
-          "  Why:         the run of plan ptah-mplan-f0fd50dfc9063696f95f64e2 (Job ptah-m-apply-deliveries-f0e70859b0dc88cb) ended Partial: its effect on the database is not established, and nothing runs until a reading or a person accounts for it"
+          "  Why:         the run of plan ptah-mplan-326d290ba57156a43719f067 (Job ptah-m-apply-deliveries-d39d4ab836ba46f0) ended Partial: its effect on the database is not established, and nothing runs until a reading or a person accounts for it"
         ],
         [
           "out",
@@ -5239,7 +5251,7 @@
         ],
         [
           "out",
-          "Snapshot:             ptah-src-acc6dfd13a6a3ad3ac7c0f25"
+          "Snapshot:             ptah-src-a3da8502bfbe74f678b2bcd8"
         ],
         [
           "out",
@@ -5271,7 +5283,7 @@
         ],
         [
           "out",
-          "  Job:                ptah-m-apply-deliveries-f0e70859b0dc88cb, UID \u003cuid\u003e"
+          "  Job:                ptah-m-apply-deliveries-d39d4ab836ba46f0, UID \u003cuid\u003e"
         ],
         [
           "out",
@@ -5291,19 +5303,19 @@
         ],
         [
           "out",
-          "  Operation:          sha256:67b898106287a63b3326a1c96aef48a24ed924ca50571ef38a0ef2d2ebed7bf6"
+          "  Operation:          sha256:37caeeb7fd1a7327de00243b63b4d6c7bf97b80723c2b4fd5619abeb87b9337a"
         ],
         [
           "out",
-          "  Job:                ptah-m-apply-deliveries-f0e70859b0dc88cb, UID \u003cuid\u003e"
+          "  Job:                ptah-m-apply-deliveries-d39d4ab836ba46f0, UID \u003cuid\u003e"
         ],
         [
           "out",
-          "  Plan:               ptah-mplan-f0fd50dfc9063696f95f64e2, UID \u003cuid\u003e"
+          "  Plan:               ptah-mplan-326d290ba57156a43719f067, UID \u003cuid\u003e"
         ],
         [
           "out",
-          "  Database:           sha256:e1114077902c00bac6b52148f7397647d5bff42db19f7119e7b615a000f687c8 (target identity digest)"
+          "  Database:           sha256:1a2e9094d366828c3ce1ca286ad6d9931ce4cc3b5d020554d68fb53feb9a02c5 (target identity digest)"
         ],
         [
           "out",
@@ -5383,7 +5395,7 @@
         ],
         [
           "out",
-          "    plan ptah-mplan-f0fd50dfc9063696f95f64e2, not the current plan"
+          "    plan ptah-mplan-326d290ba57156a43719f067, not the current plan"
         ],
         [
           "out",
@@ -5403,7 +5415,7 @@
         ],
         [
           "out",
-          "    plan ptah-mplan-c0110832f8cc46cebb8679a8, not the current plan"
+          "    plan ptah-mplan-764624aaaaeac40e5531dfa1, not the current plan"
         ],
         [
           "out",
@@ -5431,23 +5443,27 @@
         ],
         [
           "out",
-          "  TYPE              STATUS  REASON               SINCE                 MESSAGE"
+          "  TYPE               STATUS  REASON               SINCE                 MESSAGE"
         ],
         [
           "out",
-          "  Progressing       False   ApplyOutcomeUnknown  \u003ctime\u003e                The run stopped and may not be retried"
+          "  Progressing        False   ApplyOutcomeUnknown  \u003ctime\u003e                The run stopped and may not be retried"
         ],
         [
           "out",
-          "  Blocked           True    ApplyOutcomeUnknown  \u003ctime\u003e                Migration 2 (Add Status) committed 2 of its 3 statements, then failed with SQLSTATE 42S22 (error 1054); retrying the file would run them twice"
+          "  Blocked            True    ApplyOutcomeUnknown  \u003ctime\u003e                Migration 2 (Add Status) committed 2 of its 3 statements, then failed with SQLSTATE 42S22 (error 1054); retrying the file would run them twice"
         ],
         [
           "out",
-          "  Ready             False   ApplyOutcomeUnknown  \u003ctime\u003e                The database has to be read by a person before anything else runs"
+          "  Ready              False   ApplyOutcomeUnknown  \u003ctime\u003e                The database has to be read by a person before anything else runs"
         ],
         [
           "out",
-          "  ApprovalRequired  False   Satisfied            \u003ctime\u003e                The plan's approval requirements are satisfied"
+          "  DatabaseReachable  True    Observed             \u003ctime\u003e                The Apply opened the database"
+        ],
+        [
+          "out",
+          "  ApprovalRequired   False   Satisfied            \u003ctime\u003e                The plan's approval requirements are satisfied"
         ],
         [
           "blank",
@@ -5595,7 +5611,7 @@
         ],
         [
           "out",
-          "Snapshot:             ptah-src-a84ad79d41fb05dea3b168dc"
+          "Snapshot:             ptah-src-8419fbac2e7266e67b6cc2bf"
         ],
         [
           "out",
@@ -5627,7 +5643,7 @@
         ],
         [
           "out",
-          "  Job:                ptah-m-apply-deliveries-f0e70859b0dc88cb, UID \u003cuid\u003e"
+          "  Job:                ptah-m-apply-deliveries-d39d4ab836ba46f0, UID \u003cuid\u003e"
         ],
         [
           "out",
@@ -5643,7 +5659,7 @@
         ],
         [
           "out",
-          "Settled run:          Partial run sha256:67b898106287a63b3326a1c96aef48a24ed924ca50571ef38a0ef2d2ebed7bf6, by a history read at \u003ctime\u003e"
+          "Settled run:          Partial run sha256:37caeeb7fd1a7327de00243b63b4d6c7bf97b80723c2b4fd5619abeb87b9337a, by a history read at \u003ctime\u003e"
         ],
         [
           "blank",
@@ -5671,7 +5687,7 @@
         ],
         [
           "out",
-          "    plan ptah-mplan-f0fd50dfc9063696f95f64e2, not the current plan"
+          "    plan ptah-mplan-326d290ba57156a43719f067, not the current plan"
         ],
         [
           "out",
@@ -5691,7 +5707,7 @@
         ],
         [
           "out",
-          "    plan ptah-mplan-c0110832f8cc46cebb8679a8, not the current plan"
+          "    plan ptah-mplan-764624aaaaeac40e5531dfa1, not the current plan"
         ],
         [
           "out",
@@ -5719,23 +5735,27 @@
         ],
         [
           "out",
-          "  TYPE              STATUS  REASON          SINCE                 MESSAGE"
+          "  TYPE               STATUS  REASON          SINCE                 MESSAGE"
         ],
         [
           "out",
-          "  Progressing       False   HistoryMatched  \u003ctime\u003e                Nothing is pending"
+          "  Progressing        False   HistoryMatched  \u003ctime\u003e                Nothing is pending"
         ],
         [
           "out",
-          "  Blocked           False   HistoryMatched  \u003ctime\u003e                The history continues this artifact"
+          "  Blocked            False   HistoryMatched  \u003ctime\u003e                The history continues this artifact"
         ],
         [
           "out",
-          "  Ready             True    HistoryMatched  \u003ctime\u003e                The database has every migration this artifact carries"
+          "  Ready              True    HistoryMatched  \u003ctime\u003e                The database has every migration this artifact carries"
         ],
         [
           "out",
-          "  ApprovalRequired  False   Satisfied       \u003ctime\u003e                The plan's approval requirements are satisfied (written for generation 2)"
+          "  DatabaseReachable  True    Observed        \u003ctime\u003e                The migration history was read"
+        ],
+        [
+          "out",
+          "  ApprovalRequired   False   Satisfied       \u003ctime\u003e                The plan's approval requirements are satisfied (written for generation 2)"
         ],
         [
           "blank",
@@ -5763,11 +5783,11 @@
         ],
         [
           "out",
-          "--- demo/manifests/mysql-partial-failure/deliveries-release-2.yaml\t2026-11-04 16:08:25.840474767 +0000"
+          "--- demo/manifests/mysql-partial-failure/deliveries-release-2.yaml\t2026-11-06 15:43:50.129549857 +0000"
         ],
         [
           "out",
-          "+++ demo/manifests/mysql-partial-failure/deliveries-release-3.yaml\t2026-11-04 16:08:25.840474767 +0000"
+          "+++ demo/manifests/mysql-partial-failure/deliveries-release-3.yaml\t2026-11-06 15:43:50.129549857 +0000"
         ],
         [
           "out",
@@ -5835,7 +5855,7 @@
         ],
         [
           "out",
-          "  Plan:       ptah-mplan-310624b88059b08b581b9d3b"
+          "  Plan:       ptah-mplan-a878adf5aaa37100b7d3fcd8"
         ],
         [
           "out",
@@ -5859,11 +5879,11 @@
         ],
         [
           "out",
-          "Plan:          ptah-mplan-310624b88059b08b581b9d3b, UID \u003cuid\u003e"
+          "Plan:          ptah-mplan-a878adf5aaa37100b7d3fcd8, UID \u003cuid\u003e"
         ],
         [
           "out",
-          "Fingerprint:   sha256:310624b88059b08b581b9d3b0cdbf997f4ca090b554e168fc17c1df4ea4ab3ee"
+          "Fingerprint:   sha256:a878adf5aaa37100b7d3fcd8d06d9c73dd5cce7ba36a7577fdf98db85d5581d1"
         ],
         [
           "blank",
@@ -5911,7 +5931,7 @@
         ],
         [
           "out",
-          "Approve plan ptah-mplan-310624b88059b08b581b9d3b of migration/deliveries in demo? Type yes to approve: yes"
+          "Approve plan ptah-mplan-a878adf5aaa37100b7d3fcd8 of migration/deliveries in demo? Type yes to approve: yes"
         ],
         [
           "out",
@@ -5919,7 +5939,7 @@
         ],
         [
           "out",
-          "It binds plan ptah-mplan-310624b88059b08b581b9d3b, fingerprint sha256:310624b88059b08b581b9d3b0cdbf997f4ca090b554e168fc17c1df4ea4ab3ee."
+          "It binds plan ptah-mplan-a878adf5aaa37100b7d3fcd8, fingerprint sha256:a878adf5aaa37100b7d3fcd8d06d9c73dd5cce7ba36a7577fdf98db85d5581d1."
         ],
         [
           "out",
@@ -5943,7 +5963,7 @@
         ],
         [
           "out",
-          "  Last run:   Applied, Job ptah-m-apply-deliveries-3a8c6e69fbbd2de8"
+          "  Last run:   Applied, Job ptah-m-apply-deliveries-57fdd3de247e4f4d"
         ],
         [
           "out",
@@ -6154,8 +6174,8 @@
     {
       "id": "reference-data",
       "source": {
-        "commit": "2818830c3dc76ea6b27bffcabd4e765c2f08ea10",
-        "describe": "v0.2.9-14-g2818830"
+        "commit": "e41a04412bb12281b068f8b6bc1f7f83025522aa",
+        "describe": "v0.2.9-17-ge41a044"
       },
       "definitionDigest": "sha256:0db6b2458240b7fe123d2732a57c72d55ced5b5dcfd3e93e2e07f21e5c6f376a",
       "inputDigest": "sha256:22a3c8db6306e0616e6b0a09b9c0084672bc617acb6420336472e1121f6cd484",
@@ -6563,11 +6583,11 @@
         ],
         [
           "out",
-          "--- demo/reference/v1/catalog.go\t2026-11-04 16:08:25.842086148 +0000"
+          "--- demo/reference/v1/catalog.go\t2026-11-06 15:43:50.131325648 +0000"
         ],
         [
           "out",
-          "+++ demo/reference/v2/catalog.go\t2026-11-04 16:08:25.842150364 +0000"
+          "+++ demo/reference/v2/catalog.go\t2026-11-06 15:43:50.131378137 +0000"
         ],
         [
           "out",
@@ -6631,11 +6651,11 @@
         ],
         [
           "out",
-          "  Requested: spec.desired.ociRef oci://e2e-registry.demo.svc.cluster.local:5000/schemas/catalog@sha256:2745e2a4993bb3e90d0e411bbc9f61155f48e62f9b48e09c506c11a87e20159e, generation 2"
+          "  Requested: spec.desired.ociRef oci://e2e-registry.demo.svc.cluster.local:5000/schemas/catalog@sha256:ecbac067952775a673ebd74e567b01c8a449b288f6874770fac0553d1de4a250, generation 2"
         ],
         [
           "out",
-          "  Replaced:  oci://e2e-registry.demo.svc.cluster.local:5000/schemas/catalog@sha256:256b2e85777431e38cabf8d7ae1b03e70653ce272f558f5c780c1c93e9049c9f"
+          "  Replaced:  oci://e2e-registry.demo.svc.cluster.local:5000/schemas/catalog@sha256:a6f61d0b1b0bf62c64b3094a050e67dba93b56dbe1943be99417b4478e987254"
         ],
         [
           "out",
@@ -6647,7 +6667,7 @@
         ],
         [
           "out",
-          "  Resolved:  oci://e2e-registry.demo.svc.cluster.local:5000/schemas/catalog@sha256:256b2e85777431e38cabf8d7ae1b03e70653ce272f558f5c780c1c93e9049c9f, verified"
+          "  Resolved:  oci://e2e-registry.demo.svc.cluster.local:5000/schemas/catalog@sha256:a6f61d0b1b0bf62c64b3094a050e67dba93b56dbe1943be99417b4478e987254, verified"
         ],
         [
           "out",
@@ -6799,11 +6819,11 @@
         ],
         [
           "out",
-          "--- demo/reference/v2/catalog.go\t2026-11-04 16:08:25.842150364 +0000"
+          "--- demo/reference/v2/catalog.go\t2026-11-06 15:43:50.131378137 +0000"
         ],
         [
           "out",
-          "+++ demo/reference/v3/catalog.go\t2026-11-04 16:08:25.842213028 +0000"
+          "+++ demo/reference/v3/catalog.go\t2026-11-06 15:43:50.131434270 +0000"
         ],
         [
           "out",
@@ -6951,11 +6971,11 @@
         ],
         [
           "out",
-          "  Requested: spec.desired.ociRef oci://e2e-registry.demo.svc.cluster.local:5000/schemas/catalog@sha256:06b6712fed7bce95b6682b6edcbac67067b3d6a09ba6dc3d449a31af294cf070, generation 3"
+          "  Requested: spec.desired.ociRef oci://e2e-registry.demo.svc.cluster.local:5000/schemas/catalog@sha256:f27065d62af70bf54c7a4b760dc8ca47b98ca09ca0e59d2cb3f27a1ac6948830, generation 3"
         ],
         [
           "out",
-          "  Replaced:  oci://e2e-registry.demo.svc.cluster.local:5000/schemas/catalog@sha256:2745e2a4993bb3e90d0e411bbc9f61155f48e62f9b48e09c506c11a87e20159e"
+          "  Replaced:  oci://e2e-registry.demo.svc.cluster.local:5000/schemas/catalog@sha256:ecbac067952775a673ebd74e567b01c8a449b288f6874770fac0553d1de4a250"
         ],
         [
           "out",
@@ -6967,7 +6987,7 @@
         ],
         [
           "out",
-          "  Resolved:  oci://e2e-registry.demo.svc.cluster.local:5000/schemas/catalog@sha256:2745e2a4993bb3e90d0e411bbc9f61155f48e62f9b48e09c506c11a87e20159e, verified"
+          "  Resolved:  oci://e2e-registry.demo.svc.cluster.local:5000/schemas/catalog@sha256:ecbac067952775a673ebd74e567b01c8a449b288f6874770fac0553d1de4a250, verified"
         ],
         [
           "out",
@@ -7158,8 +7178,8 @@
     {
       "id": "schema-update",
       "source": {
-        "commit": "2818830c3dc76ea6b27bffcabd4e765c2f08ea10",
-        "describe": "v0.2.9-14-g2818830"
+        "commit": "e41a04412bb12281b068f8b6bc1f7f83025522aa",
+        "describe": "v0.2.9-17-ge41a044"
       },
       "definitionDigest": "sha256:8f39a43b8a1a12fc6e567d5bf9787a8e54fd12061f4dae6b2a01bc99889224b3",
       "inputDigest": "sha256:906b6ebae9db8812d0a23955acb3b76275ff13265098944cb7ac4e4b4e442b29",
@@ -7215,11 +7235,11 @@
         ],
         [
           "out",
-          "--- demo/schemas/v1.sql\t2026-11-04 16:08:25.843087747 +0000"
+          "--- demo/schemas/v1.sql\t2026-11-06 15:43:50.132249928 +0000"
         ],
         [
           "out",
-          "+++ demo/schemas/v2.sql\t2026-11-04 16:08:25.843087747 +0000"
+          "+++ demo/schemas/v2.sql\t2026-11-06 15:43:50.132249928 +0000"
         ],
         [
           "out",
@@ -7303,11 +7323,11 @@
         ],
         [
           "out",
-          "  Requested: spec.desired.ociRef oci://e2e-registry.demo.svc.cluster.local:5000/schemas/demo@sha256:92902ff8aed05cee05e38bda8b821fe52a80ed8faf672e8526c3b627adac13df, generation 2"
+          "  Requested: spec.desired.ociRef oci://e2e-registry.demo.svc.cluster.local:5000/schemas/demo@sha256:f3a064913b75f547e59b2edca48bff564d0d27dd0da378622bed19c58166f027, generation 2"
         ],
         [
           "out",
-          "  Replaced:  oci://e2e-registry.demo.svc.cluster.local:5000/schemas/demo@sha256:34fdeea023d71b0752243749bd6a0ebe093d77aa2a4b0fe280a9063a8f6c6a81"
+          "  Replaced:  oci://e2e-registry.demo.svc.cluster.local:5000/schemas/demo@sha256:f0644fc6d4a9f66d77f4754b6f4193a7734a6623849e691dbbcf6a11278871f1"
         ],
         [
           "out",
@@ -7319,7 +7339,7 @@
         ],
         [
           "out",
-          "  Resolved:  oci://e2e-registry.demo.svc.cluster.local:5000/schemas/demo@sha256:34fdeea023d71b0752243749bd6a0ebe093d77aa2a4b0fe280a9063a8f6c6a81, verified"
+          "  Resolved:  oci://e2e-registry.demo.svc.cluster.local:5000/schemas/demo@sha256:f0644fc6d4a9f66d77f4754b6f4193a7734a6623849e691dbbcf6a11278871f1, verified"
         ],
         [
           "out",
@@ -7494,8 +7514,8 @@
     {
       "id": "second-release",
       "source": {
-        "commit": "2818830c3dc76ea6b27bffcabd4e765c2f08ea10",
-        "describe": "v0.2.9-14-g2818830"
+        "commit": "e41a04412bb12281b068f8b6bc1f7f83025522aa",
+        "describe": "v0.2.9-17-ge41a044"
       },
       "definitionDigest": "sha256:b0d507979e1c72ea133439c0891cdc77c28952d893c570b8c40dde98385b09e1",
       "inputDigest": "sha256:4e9cc3f356eacfa6daa6e7882ea8c6ef3a61fcaecb62168e013138bb7f38aa28",
@@ -7507,7 +7527,7 @@
         "Lifecycle"
       ],
       "commands": 13,
-      "lines": 259,
+      "lines": 263,
       "events": [
         [
           "sync",
@@ -7599,7 +7619,7 @@
         ],
         [
           "out",
-          "Snapshot:             ptah-src-4e281a7e3fb77d62ea9d36af"
+          "Snapshot:             ptah-src-6f8bb774edbc0011eebdbda9"
         ],
         [
           "out",
@@ -7631,7 +7651,7 @@
         ],
         [
           "out",
-          "  Job:                ptah-m-apply-shipments-b41cc2111028ffe5, UID \u003cuid\u003e"
+          "  Job:                ptah-m-apply-shipments-ca2cf5e18d575a21, UID \u003cuid\u003e"
         ],
         [
           "out",
@@ -7675,23 +7695,27 @@
         ],
         [
           "out",
-          "  TYPE              STATUS  REASON          SINCE                 MESSAGE"
+          "  TYPE               STATUS  REASON          SINCE                 MESSAGE"
         ],
         [
           "out",
-          "  Progressing       False   HistoryMatched  \u003ctime\u003e                Nothing is pending"
+          "  Progressing        False   HistoryMatched  \u003ctime\u003e                Nothing is pending"
         ],
         [
           "out",
-          "  Blocked           False   HistoryMatched  \u003ctime\u003e                The history continues this artifact"
+          "  Blocked            False   HistoryMatched  \u003ctime\u003e                The history continues this artifact"
         ],
         [
           "out",
-          "  Ready             True    HistoryMatched  \u003ctime\u003e                The database has every migration this artifact carries"
+          "  Ready              True    HistoryMatched  \u003ctime\u003e                The database has every migration this artifact carries"
         ],
         [
           "out",
-          "  ApprovalRequired  False   Satisfied       \u003ctime\u003e                The plan's approval requirements are satisfied"
+          "  DatabaseReachable  True    Observed        \u003ctime\u003e                The migration history was read"
+        ],
+        [
+          "out",
+          "  ApprovalRequired   False   Satisfied       \u003ctime\u003e                The plan's approval requirements are satisfied"
         ],
         [
           "blank",
@@ -7799,11 +7823,11 @@
         ],
         [
           "out",
-          "--- demo/manifests/second-release/shipments-release-1.yaml\t2026-11-04 16:08:25.840474767 +0000"
+          "--- demo/manifests/second-release/shipments-release-1.yaml\t2026-11-06 15:43:50.129549857 +0000"
         ],
         [
           "out",
-          "+++ demo/manifests/second-release/shipments-release-2.yaml\t2026-11-04 16:08:25.840571241 +0000"
+          "+++ demo/manifests/second-release/shipments-release-2.yaml\t2026-11-06 15:43:50.129643477 +0000"
         ],
         [
           "out",
@@ -7927,7 +7951,7 @@
         ],
         [
           "out",
-          "  Plan:       ptah-mplan-5e6f0a5b6e8d086b40cecc22"
+          "  Plan:       ptah-mplan-2e528f729e726001a7904389"
         ],
         [
           "out",
@@ -7963,7 +7987,7 @@
         ],
         [
           "out",
-          "Snapshot:             ptah-src-f1ebb92bb23a3bb14adcf6ad"
+          "Snapshot:             ptah-src-3144c6a88019fac0d24a30a1"
         ],
         [
           "out",
@@ -7995,7 +8019,7 @@
         ],
         [
           "out",
-          "  Job:                ptah-m-apply-shipments-b41cc2111028ffe5, UID \u003cuid\u003e"
+          "  Job:                ptah-m-apply-shipments-ca2cf5e18d575a21, UID \u003cuid\u003e"
         ],
         [
           "out",
@@ -8011,7 +8035,7 @@
         ],
         [
           "out",
-          "Plan ptah-mplan-5e6f0a5b6e8d086b40cecc22, 1 migration from version 1:"
+          "Plan ptah-mplan-2e528f729e726001a7904389, 1 migration from version 1:"
         ],
         [
           "out",
@@ -8047,23 +8071,27 @@
         ],
         [
           "out",
-          "  TYPE              STATUS  REASON            SINCE                 MESSAGE"
+          "  TYPE               STATUS  REASON            SINCE                 MESSAGE"
         ],
         [
           "out",
-          "  Progressing       False   AwaitingApproval  \u003ctime\u003e                Nothing runs until a person writes the approval"
+          "  Progressing        False   AwaitingApproval  \u003ctime\u003e                Nothing runs until a person writes the approval"
         ],
         [
           "out",
-          "  Blocked           False   HistoryMatched    \u003ctime\u003e                The history continues this artifact"
+          "  Blocked            False   HistoryMatched    \u003ctime\u003e                The history continues this artifact"
         ],
         [
           "out",
-          "  Ready             False   AwaitingApproval  \u003ctime\u003e                The plan is waiting for the approval its policy requires"
+          "  Ready              False   AwaitingApproval  \u003ctime\u003e                The plan is waiting for the approval its policy requires"
         ],
         [
           "out",
-          "  ApprovalRequired  True    AwaitingApproval  \u003ctime\u003e                1 planned migrations need an approval naming this plan"
+          "  DatabaseReachable  True    Observed          \u003ctime\u003e                The migration history was read"
+        ],
+        [
+          "out",
+          "  ApprovalRequired   True    AwaitingApproval  \u003ctime\u003e                1 planned migrations need an approval naming this plan"
         ],
         [
           "blank",
@@ -8091,11 +8119,11 @@
         ],
         [
           "out",
-          "Plan:          ptah-mplan-5e6f0a5b6e8d086b40cecc22, UID \u003cuid\u003e"
+          "Plan:          ptah-mplan-2e528f729e726001a7904389, UID \u003cuid\u003e"
         ],
         [
           "out",
-          "Fingerprint:   sha256:5e6f0a5b6e8d086b40cecc22a4d292cff6abef40750fd3b49349c633be30b460"
+          "Fingerprint:   sha256:2e528f729e726001a790438964f7effa1c39e25c73d7231d6cc6a88304b9f21a"
         ],
         [
           "blank",
@@ -8143,7 +8171,7 @@
         ],
         [
           "out",
-          "Approve plan ptah-mplan-5e6f0a5b6e8d086b40cecc22 of migration/shipments in demo? Type yes to approve: yes"
+          "Approve plan ptah-mplan-2e528f729e726001a7904389 of migration/shipments in demo? Type yes to approve: yes"
         ],
         [
           "out",
@@ -8151,7 +8179,7 @@
         ],
         [
           "out",
-          "It binds plan ptah-mplan-5e6f0a5b6e8d086b40cecc22, fingerprint sha256:5e6f0a5b6e8d086b40cecc22a4d292cff6abef40750fd3b49349c633be30b460."
+          "It binds plan ptah-mplan-2e528f729e726001a7904389, fingerprint sha256:2e528f729e726001a790438964f7effa1c39e25c73d7231d6cc6a88304b9f21a."
         ],
         [
           "out",
@@ -8175,7 +8203,7 @@
         ],
         [
           "out",
-          "  Last run:   Applied, Job ptah-m-apply-shipments-001a841140a3a15a"
+          "  Last run:   Applied, Job ptah-m-apply-shipments-b32808cbfb2f2abf"
         ],
         [
           "out",
@@ -8247,7 +8275,7 @@
         ],
         [
           "out",
-          "Snapshot:             ptah-src-f1ebb92bb23a3bb14adcf6ad"
+          "Snapshot:             ptah-src-3144c6a88019fac0d24a30a1"
         ],
         [
           "out",
@@ -8279,7 +8307,7 @@
         ],
         [
           "out",
-          "  Job:                ptah-m-apply-shipments-001a841140a3a15a, UID \u003cuid\u003e"
+          "  Job:                ptah-m-apply-shipments-b32808cbfb2f2abf, UID \u003cuid\u003e"
         ],
         [
           "out",
@@ -8315,7 +8343,7 @@
         ],
         [
           "out",
-          "    plan ptah-mplan-5e6f0a5b6e8d086b40cecc22, not the current plan"
+          "    plan ptah-mplan-2e528f729e726001a7904389, not the current plan"
         ],
         [
           "out",
@@ -8343,23 +8371,27 @@
         ],
         [
           "out",
-          "  TYPE              STATUS  REASON          SINCE                 MESSAGE"
+          "  TYPE               STATUS  REASON          SINCE                 MESSAGE"
         ],
         [
           "out",
-          "  Progressing       False   HistoryMatched  \u003ctime\u003e                Nothing is pending"
+          "  Progressing        False   HistoryMatched  \u003ctime\u003e                Nothing is pending"
         ],
         [
           "out",
-          "  Blocked           False   HistoryMatched  \u003ctime\u003e                The history continues this artifact"
+          "  Blocked            False   HistoryMatched  \u003ctime\u003e                The history continues this artifact"
         ],
         [
           "out",
-          "  Ready             True    HistoryMatched  \u003ctime\u003e                The database has every migration this artifact carries"
+          "  Ready              True    HistoryMatched  \u003ctime\u003e                The database has every migration this artifact carries"
         ],
         [
           "out",
-          "  ApprovalRequired  False   Satisfied       \u003ctime\u003e                The plan's approval requirements are satisfied"
+          "  DatabaseReachable  True    Observed        \u003ctime\u003e                The migration history was read"
+        ],
+        [
+          "out",
+          "  ApprovalRequired   False   Satisfied       \u003ctime\u003e                The plan's approval requirements are satisfied"
         ],
         [
           "blank",
@@ -8443,7 +8475,7 @@
         ],
         [
           "out",
-          "Snapshot:             ptah-src-f1ebb92bb23a3bb14adcf6ad"
+          "Snapshot:             ptah-src-3144c6a88019fac0d24a30a1"
         ],
         [
           "out",
@@ -8475,7 +8507,7 @@
         ],
         [
           "out",
-          "  Job:                ptah-m-apply-shipments-001a841140a3a15a, UID \u003cuid\u003e"
+          "  Job:                ptah-m-apply-shipments-b32808cbfb2f2abf, UID \u003cuid\u003e"
         ],
         [
           "out",
@@ -8511,7 +8543,7 @@
         ],
         [
           "out",
-          "    plan ptah-mplan-5e6f0a5b6e8d086b40cecc22, not the current plan"
+          "    plan ptah-mplan-2e528f729e726001a7904389, not the current plan"
         ],
         [
           "out",
@@ -8539,23 +8571,27 @@
         ],
         [
           "out",
-          "  TYPE              STATUS  REASON          SINCE                 MESSAGE"
+          "  TYPE               STATUS  REASON          SINCE                 MESSAGE"
         ],
         [
           "out",
-          "  Progressing       False   HistoryMatched  \u003ctime\u003e                Nothing is pending"
+          "  Progressing        False   HistoryMatched  \u003ctime\u003e                Nothing is pending"
         ],
         [
           "out",
-          "  Blocked           False   HistoryMatched  \u003ctime\u003e                The history continues this artifact"
+          "  Blocked            False   HistoryMatched  \u003ctime\u003e                The history continues this artifact"
         ],
         [
           "out",
-          "  Ready             True    HistoryMatched  \u003ctime\u003e                The database has every migration this artifact carries"
+          "  Ready              True    HistoryMatched  \u003ctime\u003e                The database has every migration this artifact carries"
         ],
         [
           "out",
-          "  ApprovalRequired  False   Satisfied       \u003ctime\u003e                The plan's approval requirements are satisfied"
+          "  DatabaseReachable  True    Observed        \u003ctime\u003e                The migration history was read"
+        ],
+        [
+          "out",
+          "  ApprovalRequired   False   Satisfied       \u003ctime\u003e                The plan's approval requirements are satisfied"
         ],
         [
           "blank",
@@ -8674,8 +8710,8 @@
     {
       "id": "stale-approval",
       "source": {
-        "commit": "2818830c3dc76ea6b27bffcabd4e765c2f08ea10",
-        "describe": "v0.2.9-14-g2818830"
+        "commit": "e41a04412bb12281b068f8b6bc1f7f83025522aa",
+        "describe": "v0.2.9-17-ge41a044"
       },
       "definitionDigest": "sha256:7f687ef712778cd82dd17aef80e294a23c17daf1b03d88736e89cc1185261706",
       "inputDigest": "sha256:98871168238fbdd7c82abb78502fd2df9ce71bca747400daaae94f35fef090d3",
@@ -8723,7 +8759,7 @@
         ],
         [
           "out",
-          "Snapshot:             ptah-src-b8dc6cccc77c71372589b4d0"
+          "Snapshot:             ptah-src-c6bc01fb77137ee5f3689b7a"
         ],
         [
           "out",
@@ -8747,7 +8783,7 @@
         ],
         [
           "out",
-          "Plan ptah-plan-1ab04d2edcd375300322a2da, 1 statement, stored \u003ctime\u003e"
+          "Plan ptah-plan-db7e8231f8cd1d18f4f5ee61, 1 statement, stored \u003ctime\u003e"
         ],
         [
           "out",
@@ -8791,7 +8827,7 @@
         ],
         [
           "out",
-          "  ArtifactResolved      True    SnapshotTaken     \u003ctime\u003e                ConfigMap storefront-v1 was copied into snapshot ptah-src-b8dc6cccc77c71372589b4d0"
+          "  ArtifactResolved      True    SnapshotTaken     \u003ctime\u003e                ConfigMap storefront-v1 was copied into snapshot ptah-src-c6bc01fb77137ee5f3689b7a"
         ],
         [
           "out",
@@ -8847,11 +8883,11 @@
         ],
         [
           "out",
-          "Plan:          ptah-plan-1ab04d2edcd375300322a2da, UID \u003cuid\u003e"
+          "Plan:          ptah-plan-db7e8231f8cd1d18f4f5ee61, UID \u003cuid\u003e"
         ],
         [
           "out",
-          "Fingerprint:   sha256:1ab04d2edcd375300322a2da9332981eaa5108605ca5271c899e374509c7fea2"
+          "Fingerprint:   sha256:db7e8231f8cd1d18f4f5ee6102987360e2e3dd9349a3c4a831872a0d7f2f5489"
         ],
         [
           "blank",
@@ -8863,11 +8899,11 @@
         ],
         [
           "out",
-          "Plan:           current (ptah-plan-1ab04d2edcd375300322a2da)"
+          "Plan:           current (ptah-plan-db7e8231f8cd1d18f4f5ee61)"
         ],
         [
           "out",
-          "Fingerprint:    sha256:1ab04d2edcd375300322a2da9332981eaa5108605ca5271c899e374509c7fea2"
+          "Fingerprint:    sha256:db7e8231f8cd1d18f4f5ee6102987360e2e3dd9349a3c4a831872a0d7f2f5489"
         ],
         [
           "out",
@@ -8923,7 +8959,7 @@
         ],
         [
           "out",
-          "Approve plan ptah-plan-1ab04d2edcd375300322a2da of schema/storefront in demo? Type yes to approve: yes"
+          "Approve plan ptah-plan-db7e8231f8cd1d18f4f5ee61 of schema/storefront in demo? Type yes to approve: yes"
         ],
         [
           "out",
@@ -8931,7 +8967,7 @@
         ],
         [
           "out",
-          "It binds plan ptah-plan-1ab04d2edcd375300322a2da, fingerprint sha256:1ab04d2edcd375300322a2da9332981eaa5108605ca5271c899e374509c7fea2."
+          "It binds plan ptah-plan-db7e8231f8cd1d18f4f5ee61, fingerprint sha256:db7e8231f8cd1d18f4f5ee6102987360e2e3dd9349a3c4a831872a0d7f2f5489."
         ],
         [
           "out",
@@ -8955,7 +8991,7 @@
         ],
         [
           "out",
-          "  Applied:    plan ptah-plan-1ab04d2edcd375300322a2da, fingerprint sha256:1ab04d2edcd375300322a2da9332981eaa5108605ca5271c899e374509c7fea2, at \u003ctime\u003e"
+          "  Applied:    plan ptah-plan-db7e8231f8cd1d18f4f5ee61, fingerprint sha256:db7e8231f8cd1d18f4f5ee6102987360e2e3dd9349a3c4a831872a0d7f2f5489, at \u003ctime\u003e"
         ],
         [
           "out",
@@ -8995,7 +9031,7 @@
         ],
         [
           "out",
-          "Snapshot:             ptah-src-b8dc6cccc77c71372589b4d0"
+          "Snapshot:             ptah-src-c6bc01fb77137ee5f3689b7a"
         ],
         [
           "out",
@@ -9011,7 +9047,7 @@
         ],
         [
           "out",
-          "Applied:              ptah-plan-1ab04d2edcd375300322a2da at \u003ctime\u003e"
+          "Applied:              ptah-plan-db7e8231f8cd1d18f4f5ee61 at \u003ctime\u003e"
         ],
         [
           "blank",
@@ -9039,7 +9075,7 @@
         ],
         [
           "out",
-          "    plan ptah-plan-1ab04d2edcd375300322a2da, the applied plan"
+          "    plan ptah-plan-db7e8231f8cd1d18f4f5ee61, the applied plan"
         ],
         [
           "out",
@@ -9083,7 +9119,7 @@
         ],
         [
           "out",
-          "  ArtifactResolved      True    SnapshotTaken    \u003ctime\u003e                ConfigMap storefront-v1 was copied into snapshot ptah-src-b8dc6cccc77c71372589b4d0"
+          "  ArtifactResolved      True    SnapshotTaken    \u003ctime\u003e                ConfigMap storefront-v1 was copied into snapshot ptah-src-c6bc01fb77137ee5f3689b7a"
         ],
         [
           "out",
@@ -9147,11 +9183,11 @@
         ],
         [
           "out",
-          "--- demo/manifests/manual-approval/storefront.yaml\t2026-11-04 16:08:25.840363070 +0000"
+          "--- demo/manifests/manual-approval/storefront.yaml\t2026-11-06 15:43:50.129445411 +0000"
         ],
         [
           "out",
-          "+++ demo/manifests/stale-approval/storefront-v2.yaml\t2026-11-04 16:08:25.840571241 +0000"
+          "+++ demo/manifests/stale-approval/storefront-v2.yaml\t2026-11-06 15:43:50.129643477 +0000"
         ],
         [
           "out",
@@ -9219,7 +9255,7 @@
         ],
         [
           "out",
-          "  Plan:       ptah-plan-72e730606b7809a1c5c21fb2, fingerprint sha256:72e730606b7809a1c5c21fb2c845ce3bb3b76eb9f7d39780019a91e11953375b"
+          "  Plan:       ptah-plan-bb0da5837c4717e13602c3d6, fingerprint sha256:bb0da5837c4717e13602c3d674cf525624448fad3979fd0168ce9a77f15c0893"
         ],
         [
           "out",
@@ -9259,7 +9295,7 @@
         ],
         [
           "out",
-          "Snapshot:             ptah-src-a576d8197dd10281030ddd6b"
+          "Snapshot:             ptah-src-e0f1610dca5b4bf7d8a9db93"
         ],
         [
           "out",
@@ -9287,7 +9323,7 @@
         ],
         [
           "out",
-          "Plan ptah-plan-72e730606b7809a1c5c21fb2, 3 statements, stored \u003ctime\u003e"
+          "Plan ptah-plan-bb0da5837c4717e13602c3d6, 3 statements, stored \u003ctime\u003e"
         ],
         [
           "out",
@@ -9315,7 +9351,7 @@
         ],
         [
           "out",
-          "    plan ptah-plan-1ab04d2edcd375300322a2da, not the current plan"
+          "    plan ptah-plan-db7e8231f8cd1d18f4f5ee61, not the current plan"
         ],
         [
           "out",
@@ -9359,7 +9395,7 @@
         ],
         [
           "out",
-          "  ArtifactResolved      True    SnapshotTaken     \u003ctime\u003e                ConfigMap storefront-v2 was copied into snapshot ptah-src-a576d8197dd10281030ddd6b"
+          "  ArtifactResolved      True    SnapshotTaken     \u003ctime\u003e                ConfigMap storefront-v2 was copied into snapshot ptah-src-e0f1610dca5b4bf7d8a9db93"
         ],
         [
           "out",
@@ -9516,8 +9552,8 @@
     {
       "id": "suspend-resume",
       "source": {
-        "commit": "2818830c3dc76ea6b27bffcabd4e765c2f08ea10",
-        "describe": "v0.2.9-14-g2818830"
+        "commit": "e41a04412bb12281b068f8b6bc1f7f83025522aa",
+        "describe": "v0.2.9-17-ge41a044"
       },
       "definitionDigest": "sha256:2cebeb98fb2ad2245551290da8fd1fb6c797fc58ddf8b394d4e3f645a2c7e819",
       "inputDigest": "sha256:906b6ebae9db8812d0a23955acb3b76275ff13265098944cb7ac4e4b4e442b29",
@@ -9561,7 +9597,7 @@
         ],
         [
           "out",
-          "Artifact:             oci://e2e-registry.demo.svc.cluster.local:5000/schemas/demo@sha256:a8f2a307c88e654e11cc4662601223de5ab2f165ed44ed721b5b2e94411303e4"
+          "Artifact:             oci://e2e-registry.demo.svc.cluster.local:5000/schemas/demo@sha256:d37d109e8daeef0ecec76a01d6bf544ebcc689096c6afde820978a89bbd86bba"
         ],
         [
           "out",
@@ -9577,7 +9613,7 @@
         ],
         [
           "out",
-          "Applied:              ptah-plan-a653e4dea42e9bbfda7df03a at \u003ctime\u003e"
+          "Applied:              ptah-plan-4914bbc5bd92eaeb3d6ee93e at \u003ctime\u003e"
         ],
         [
           "blank",
@@ -9737,11 +9773,11 @@
         ],
         [
           "out",
-          "  Requested: spec.desired.ociRef oci://e2e-registry.demo.svc.cluster.local:5000/schemas/demo@sha256:bb01117e787a5c42b505f55dcd81214ebcc4466690997ae06e48ab21af0edc2c, generation 3"
+          "  Requested: spec.desired.ociRef oci://e2e-registry.demo.svc.cluster.local:5000/schemas/demo@sha256:971f61819228fc1abeea82ad4ee04e9872c0ff21387b127ab7b72ee89fce7bc5, generation 3"
         ],
         [
           "out",
-          "  Replaced:  oci://e2e-registry.demo.svc.cluster.local:5000/schemas/demo@sha256:a8f2a307c88e654e11cc4662601223de5ab2f165ed44ed721b5b2e94411303e4"
+          "  Replaced:  oci://e2e-registry.demo.svc.cluster.local:5000/schemas/demo@sha256:d37d109e8daeef0ecec76a01d6bf544ebcc689096c6afde820978a89bbd86bba"
         ],
         [
           "out",
@@ -9753,7 +9789,7 @@
         ],
         [
           "out",
-          "  Resolved:  oci://e2e-registry.demo.svc.cluster.local:5000/schemas/demo@sha256:a8f2a307c88e654e11cc4662601223de5ab2f165ed44ed721b5b2e94411303e4, verified"
+          "  Resolved:  oci://e2e-registry.demo.svc.cluster.local:5000/schemas/demo@sha256:d37d109e8daeef0ecec76a01d6bf544ebcc689096c6afde820978a89bbd86bba, verified"
         ],
         [
           "out",
@@ -9994,8 +10030,8 @@
     {
       "id": "versioned-migration",
       "source": {
-        "commit": "2818830c3dc76ea6b27bffcabd4e765c2f08ea10",
-        "describe": "v0.2.9-14-g2818830"
+        "commit": "e41a04412bb12281b068f8b6bc1f7f83025522aa",
+        "describe": "v0.2.9-17-ge41a044"
       },
       "definitionDigest": "sha256:54b815d130b47e2481bba036e03deaabccb62ff006ac27fc9d2edcd00bb4c9cd",
       "inputDigest": "sha256:36253b0509df8c59d9dc0e704064c6037ac3724c32de4a60bf5f0172b5652710",
@@ -10007,7 +10043,7 @@
         "Lifecycle"
       ],
       "commands": 10,
-      "lines": 165,
+      "lines": 167,
       "events": [
         [
           "note",
@@ -10199,7 +10235,7 @@
         ],
         [
           "out",
-          "  Plan:       ptah-mplan-6fc0a0daba4693479f3b82f6"
+          "  Plan:       ptah-mplan-25391ad68e5b1de3d6b762c2"
         ],
         [
           "out",
@@ -10231,7 +10267,7 @@
         ],
         [
           "out",
-          "Artifact:             oci://e2e-registry.demo.svc.cluster.local:5000/migrations/demo@sha256:deef39d49d7f778527036bb10922cecce9296f4a1dac0a546b95c0a4e27923a3"
+          "Artifact:             oci://e2e-registry.demo.svc.cluster.local:5000/migrations/demo@sha256:2b51d514c95602c6c8787d54299231399f2b5310f6036eef26ced59a38fe6cc9"
         ],
         [
           "out",
@@ -10255,7 +10291,7 @@
         ],
         [
           "out",
-          "Plan ptah-mplan-6fc0a0daba4693479f3b82f6, 2 migrations from version 0:"
+          "Plan ptah-mplan-25391ad68e5b1de3d6b762c2, 2 migrations from version 0:"
         ],
         [
           "out",
@@ -10295,27 +10331,31 @@
         ],
         [
           "out",
-          "  TYPE              STATUS  REASON            SINCE                 MESSAGE"
+          "  TYPE               STATUS  REASON            SINCE                 MESSAGE"
         ],
         [
           "out",
-          "  Progressing       False   AwaitingApproval  \u003ctime\u003e                Nothing runs until a person writes the approval"
+          "  Progressing        False   AwaitingApproval  \u003ctime\u003e                Nothing runs until a person writes the approval"
         ],
         [
           "out",
-          "  ArtifactVerified  True    PolicySatisfied   \u003ctime\u003e                The resolved artifact satisfied its verification policy"
+          "  ArtifactVerified   True    PolicySatisfied   \u003ctime\u003e                The resolved artifact satisfied its verification policy"
         ],
         [
           "out",
-          "  Blocked           False   HistoryMatched    \u003ctime\u003e                The history continues this artifact"
+          "  Blocked            False   HistoryMatched    \u003ctime\u003e                The history continues this artifact"
         ],
         [
           "out",
-          "  Ready             False   AwaitingApproval  \u003ctime\u003e                The plan is waiting for the approval its policy requires"
+          "  Ready              False   AwaitingApproval  \u003ctime\u003e                The plan is waiting for the approval its policy requires"
         ],
         [
           "out",
-          "  ApprovalRequired  True    AwaitingApproval  \u003ctime\u003e                2 planned migrations need an approval naming this plan"
+          "  DatabaseReachable  True    Observed          \u003ctime\u003e                The migration history was read"
+        ],
+        [
+          "out",
+          "  ApprovalRequired   True    AwaitingApproval  \u003ctime\u003e                2 planned migrations need an approval naming this plan"
         ],
         [
           "blank",
@@ -10355,11 +10395,11 @@
         ],
         [
           "out",
-          "Plan:          ptah-mplan-6fc0a0daba4693479f3b82f6, UID \u003cuid\u003e"
+          "Plan:          ptah-mplan-25391ad68e5b1de3d6b762c2, UID \u003cuid\u003e"
         ],
         [
           "out",
-          "Fingerprint:   sha256:6fc0a0daba4693479f3b82f6835e679267ae9d6d67234a5952a7943aed50f184"
+          "Fingerprint:   sha256:25391ad68e5b1de3d6b762c2464fa7247e5885e0a22b049dbb7faa2a857fce22"
         ],
         [
           "blank",
@@ -10403,7 +10443,7 @@
         ],
         [
           "out",
-          "  Artifact:        sha256:deef39d49d7f778527036bb10922cecce9296f4a1dac0a546b95c0a4e27923a3"
+          "  Artifact:        sha256:2b51d514c95602c6c8787d54299231399f2b5310f6036eef26ced59a38fe6cc9"
         ],
         [
           "blank",
@@ -10411,7 +10451,7 @@
         ],
         [
           "out",
-          "Approve plan ptah-mplan-6fc0a0daba4693479f3b82f6 of migration/shipments in demo? Type yes to approve: yes"
+          "Approve plan ptah-mplan-25391ad68e5b1de3d6b762c2 of migration/shipments in demo? Type yes to approve: yes"
         ],
         [
           "out",
@@ -10419,7 +10459,7 @@
         ],
         [
           "out",
-          "It binds plan ptah-mplan-6fc0a0daba4693479f3b82f6, fingerprint sha256:6fc0a0daba4693479f3b82f6835e679267ae9d6d67234a5952a7943aed50f184."
+          "It binds plan ptah-mplan-25391ad68e5b1de3d6b762c2, fingerprint sha256:25391ad68e5b1de3d6b762c2464fa7247e5885e0a22b049dbb7faa2a857fce22."
         ],
         [
           "out",
@@ -10443,7 +10483,7 @@
         ],
         [
           "out",
-          "  Last run:   Applied, Job ptah-m-apply-shipments-f0b8c4edb57327a1"
+          "  Last run:   Applied, Job ptah-m-apply-shipments-f7bc8d76ee81ff84"
         ],
         [
           "out",
@@ -10519,7 +10559,7 @@
         ],
         [
           "out",
-          "Artifact:             oci://e2e-registry.demo.svc.cluster.local:5000/migrations/demo@sha256:deef39d49d7f778527036bb10922cecce9296f4a1dac0a546b95c0a4e27923a3"
+          "Artifact:             oci://e2e-registry.demo.svc.cluster.local:5000/migrations/demo@sha256:2b51d514c95602c6c8787d54299231399f2b5310f6036eef26ced59a38fe6cc9"
         ],
         [
           "out",
@@ -10547,7 +10587,7 @@
         ],
         [
           "out",
-          "  Job:                ptah-m-apply-shipments-f0b8c4edb57327a1, UID \u003cuid\u003e"
+          "  Job:                ptah-m-apply-shipments-f7bc8d76ee81ff84, UID \u003cuid\u003e"
         ],
         [
           "out",
@@ -10583,7 +10623,7 @@
         ],
         [
           "out",
-          "    plan ptah-mplan-6fc0a0daba4693479f3b82f6, not the current plan"
+          "    plan ptah-mplan-25391ad68e5b1de3d6b762c2, not the current plan"
         ],
         [
           "out",
@@ -10611,27 +10651,31 @@
         ],
         [
           "out",
-          "  TYPE              STATUS  REASON           SINCE                 MESSAGE"
+          "  TYPE               STATUS  REASON           SINCE                 MESSAGE"
         ],
         [
           "out",
-          "  Progressing       False   HistoryMatched   \u003ctime\u003e                Nothing is pending"
+          "  Progressing        False   HistoryMatched   \u003ctime\u003e                Nothing is pending"
         ],
         [
           "out",
-          "  ArtifactVerified  True    PolicySatisfied  \u003ctime\u003e                The resolved artifact satisfied its verification policy"
+          "  ArtifactVerified   True    PolicySatisfied  \u003ctime\u003e                The resolved artifact satisfied its verification policy"
         ],
         [
           "out",
-          "  Blocked           False   HistoryMatched   \u003ctime\u003e                The history continues this artifact"
+          "  Blocked            False   HistoryMatched   \u003ctime\u003e                The history continues this artifact"
         ],
         [
           "out",
-          "  Ready             True    HistoryMatched   \u003ctime\u003e                The database has every migration this artifact carries"
+          "  Ready              True    HistoryMatched   \u003ctime\u003e                The database has every migration this artifact carries"
         ],
         [
           "out",
-          "  ApprovalRequired  False   Satisfied        \u003ctime\u003e                The plan's approval requirements are satisfied"
+          "  DatabaseReachable  True    Observed         \u003ctime\u003e                The migration history was read"
+        ],
+        [
+          "out",
+          "  ApprovalRequired   False   Satisfied        \u003ctime\u003e                The plan's approval requirements are satisfied"
         ],
         [
           "blank",

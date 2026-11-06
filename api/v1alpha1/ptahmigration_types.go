@@ -617,7 +617,7 @@ type PtahMigrationStatus struct {
 	Phase MigrationPhase `json:"phase,omitempty"`
 
 	// Conditions are the readable verdicts: whether the artifact resolved and
-	// verified, whether the history could be read, whether a plan is ready,
+	// verified, whether the database was reachable, whether a plan is ready,
 	// whether an approval is required, and whether the sequence is in sync.
 	// +listType=map
 	// +listMapKey=type
@@ -723,6 +723,9 @@ const (
 	// ConditionMigrationApprovalRequired reports a plan waiting for the exact
 	// approval its policy requires.
 	ConditionMigrationApprovalRequired = "ApprovalRequired"
+	// ConditionMigrationDatabaseReachable reports whether the target answered
+	// the last operation that opened it, and why it did not.
+	ConditionMigrationDatabaseReachable = "DatabaseReachable"
 )
 
 // +kubebuilder:validation:XValidation:rule="oldSelf.hasValue() || self.metadata.name.size() <= 63",message="metadata.name must be at most 63 bytes, because it is carried whole in the labels of the Jobs this resource dispatches",optionalOldSelf=true
