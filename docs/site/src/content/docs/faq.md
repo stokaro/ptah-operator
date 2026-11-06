@@ -271,9 +271,9 @@ administrator for a `PtahRealm` that lists both, and name it with
 
 No, and it should not have it. On PostgreSQL, make the login the owner of the
 managed objects or a member of a dedicated no-login owner role, then grant only
-connect, schema usage, object creation, and the catalog visibility needed to
-inspect them. Widen to extensions, roles, or other schemas only when the artifact
-manages those object kinds.
+connect, schema usage, and object creation. Widen to extensions, roles, or other
+schemas only when the artifact manages those object kinds. That login cannot see
+a table another role created, so its drift report leaves that table out.
 
 - [Databases and privileges](../support/databases/)
 
@@ -305,8 +305,10 @@ resource until the operator reports it in sync, and gives up at `--timeout`;
 that was already true when it began. A condition that is `True` says what the
 operator saw last, so a schema that was `InSync` before somebody changed its
 database stays `InSync` until it reads the database again: ask for that read
-with `kubectl ptah refresh schema/<name> --wait`. A change made with the
-plugin, an approval included, waits in the same command with `--wait`.
+with `kubectl ptah refresh schema/<name> --wait`. That read covers
+[what the login can see](../support/databases/#what-the-login-cannot-see). A
+change made with the plugin, an approval included, waits in the same command
+with `--wait`.
 
 - [Operations](../use/operations/#wait)
 

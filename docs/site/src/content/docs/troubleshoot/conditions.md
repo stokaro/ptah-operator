@@ -34,6 +34,9 @@ retired execution binding made the last evidence historical.
 | `ReconciliationFailed` | True when an operation failed, carrying the failure text. False when the latest operation completed. |
 | `Suspended` | True when the spec requests suspension and no new database operation may start. False when reconciliation is active. |
 
+`DriftDetected` and `InSync` answer for
+[what the login can see](../../support/databases/#what-the-login-cannot-see).
+
 ## PtahMigration
 
 | Condition | What it says |

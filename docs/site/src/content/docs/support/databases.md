@@ -41,8 +41,11 @@ The login needs only:
 - `CONNECT` on the target database;
 - `USAGE` on each managed schema;
 - the ability to create objects in each managed schema;
-- ownership of every object the desired schema may alter or drop;
-- catalog visibility needed to inspect those objects.
+- ownership of every object the desired schema may alter or drop.
+
+That authority plans and applies what the login owns. It does not let the login
+read everything in the database, and a table it cannot read stays out of the
+drift report: [What the login cannot see](#what-the-login-cannot-see).
 
 Grant extension, role, or cross-schema authority only when the desired artifact
 actually manages those object kinds. Keep the login out of superuser and
@@ -62,6 +65,104 @@ grant-option privileges. The operator rejects credential-bearing principal DDL
 and MySQL connection parameters that can inject session SQL. `multiStatements`
 is always rejected. Conventional IPv6 MySQL URLs must include an explicit port;
 the network DSN form remains supported without one.
+
+The privileges above decide which object kinds the account can see, and a kind
+it cannot see stays out of the drift report:
+[What the login cannot see](#what-the-login-cannot-see).
+
+## What the login cannot see
+
+The executor reads the database as the login in the target URL, and a comparison
+reads what that login cannot see as not there. An empty `driftFindings` list
+says the login found no difference. It does not say that nobody added anything.
+
+This section describes Ptah v0.18.0, the executor this operator build pins
+([Ptah compatibility](../ptah/)), measured with `schema drift` and `schema plan`,
+the commands an Observe and a Plan run, against PostgreSQL 17.11 and MySQL
+8.4.11. Another executor build can answer differently.
+[stokaro/ptah-operator#792](https://github.com/stokaro/ptah-operator/issues/792)
+tracks PostgreSQL, and
+[stokaro/ptah#5497](https://github.com/stokaro/ptah/issues/5497) tracks MySQL.
+
+### PostgreSQL
+
+The executor reads tables, columns and constraints from `information_schema`,
+which lists only what the connecting role holds a privilege on. The login this
+page describes holds nothing on a table another role created. When that table
+is the only difference, `schema drift` exits 0 with `"drift": false` and
+`schema plan` answers `no-changes`, which is what a resource needs to stay
+`InSync`. A login that owns through a no-login owner role reads the same.
+
+| Created by another role | The login | The login with `pg_read_all_data` | A superuser |
+| --- | --- | --- | --- |
+| A table | not reported | `tables_removed` | `tables_removed` |
+| That table's primary key | not reported | not reported | `constraints_removed` |
+| A view | `views_removed` | `views_removed` | `views_removed` |
+| A function | `functions_removed` | `functions_removed` | `functions_removed` |
+| An index on a table the login owns | `indexes_removed` | `indexes_removed` | `indexes_removed` |
+
+A change to a table the login owns is reported whoever made it. The same gap
+covers a table in a schema the login holds no `USAGE` on. A table the desired
+schema declares reads as missing when the login holds nothing on it: the report
+counts `tables_added`, rated safe, the plan says `CREATE TABLE`, and its Apply
+fails because the relation already exists, with an unknown outcome.
+
+Granting `pg_read_all_data` brings the table into the report and leaves its
+constraints out, because `information_schema.table_constraints` does not count
+`SELECT`. The plan then holds a `DROP TABLE` the login cannot run: its Apply
+fails with `must be owner of table` and an unknown outcome. The role also lets
+the login read the data of every table in every database it can connect to. It
+does not close this gap, so do not grant it for this.
+
+Until the pinned executor changes, check for such a table yourself. Run this as
+the login. `pg_catalog` lists every table to every role, so it needs no grant:
+
+```sql
+SELECT n.nspname, c.relname, pg_get_userbyid(c.relowner)
+FROM pg_catalog.pg_class c
+JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+WHERE c.relkind IN ('r', 'p')
+  AND n.nspname <> 'information_schema'
+  AND n.nspname NOT LIKE 'pg\_%'
+  AND NOT pg_has_role(c.relowner, 'USAGE')
+ORDER BY 1, 2;
+```
+
+Each row is a table the login does not own, which covers every table the report
+can miss. Have its owner drop one that should not exist. For one that should
+stay, suspend the resource, hand the table to the login with
+`ALTER TABLE ... OWNER TO`, and declare it in the desired schema before resuming:
+the plan drops what the declaration leaves out, and the login can now run that.
+
+A superuser running `ptah schema drift` at the pinned digest gets the whole
+report. Keep that role out of the resource, because an Apply runs with the
+authority of the login.
+
+### MySQL
+
+An account with `SELECT` on the database sees its tables, views, indexes and
+constraints. Triggers and routines take privileges of their own:
+
+| Account, on the managed database unless noted | Not reported |
+| --- | --- |
+| `SELECT`, `CREATE`, `ALTER`, `DROP`, `INDEX`, `REFERENCES` | triggers, functions, procedures |
+| The above with `TRIGGER` | functions, procedures |
+| The above with `SHOW_ROUTINE`, granted globally | none of these |
+| `root` | none of these |
+
+When a trigger or a routine is the only difference, `schema drift` exits 0 with
+`"drift": false` and `schema plan` answers `no-changes`. `CREATE ROUTINE` and
+`ALTER ROUTINE` on the database show a routine without its body when another
+account defined it: the read then fails at exit 2, naming `SHOW_ROUTINE`, so an
+Observe fails too. An account with table-level grants does not see a table it
+holds nothing on. A hand-made event is not reported under any account, `root`
+included.
+
+Until the pinned executor changes, add `TRIGGER` on the database and
+`SHOW_ROUTINE` globally where a hand-made trigger or routine has to show up.
+`TRIGGER` lets the account create and drop triggers, and `SHOW_ROUTINE` reads
+routine definitions in every database. To keep the account as it is, run
+`ptah schema drift` at the pinned digest as an account that holds them.
 
 ## Proving a custom privilege set
 

@@ -292,7 +292,9 @@ ConfigMap's name, and `Snapshot`, the copy every operation reads.
 `Source policy` appears only when the resource names one.
 
 `Observed: not yet` and `Drift: none` are different answers. The first is a
-schema nothing has read; the second is a database that matches its declaration.
+schema nothing has read; the second is a database that matches its declaration
+as far as the login can read it, which
+[leaves some objects out](../../support/databases/#what-the-login-cannot-see).
 
 A change the drift report has no category for prints
 `Drift: found, in no category the report counts; the plan says what changes`.
