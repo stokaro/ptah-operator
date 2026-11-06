@@ -27,6 +27,14 @@
 		font-family: var(--font-sans);
 		overflow-x: auto;
 	}
+
+	/* A diagram scales down to the width it is given, so on a phone the frame's
+	 * 18px a side comes straight out of the size its labels are drawn at. */
+	@media (max-width: 30rem) {
+		.sl-markdown-content pre.mermaid {
+			padding-inline: 0.25rem;
+		}
+	}
 </style>
 
 <script>

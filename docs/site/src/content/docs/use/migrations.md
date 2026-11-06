@@ -37,6 +37,10 @@ both. The migration files reach the container that runs SQL
 through an init container that fetched them; the process holding your database
 URL never talks to your registry.
 
+[From source to verified change](../../reference/reconciliation/#from-source-to-verified-change)
+draws this path beside the schema's, with who does what at each stage, and
+[Run one from the command line](#stage-by-stage) walks it.
+
 ## The minimal resource
 
 `examples/ptahmigration.yaml` is the annotated version; this is the shape:
@@ -114,6 +118,76 @@ The operator reads the history again and plans the versions the new artifact
 has that the database does not. [Moving to a new
 artifact](../operations/#set-source) says what set-source refuses, an Apply in
 flight among them, and how to make the same change with `kubectl edit`.
+
+## Run one from the command line {#stage-by-stage}
+
+`kubectl` and `kubectl ptah` are all this takes.
+[Ptah Console](https://github.com/stokaro/ptah-console) is optional, and no step
+needs it.
+
+The sequence below comes from a ConfigMap, so it needs no registry and no
+verification policy. `examples/configmap-kustomize` holds two migrations and a
+`PtahMigration` that selects them, and these commands use them directly, without
+Kustomize. Run them from a checkout of the
+[version you installed](../../start/install/#choose-a-version-once), against a
+database of its own. Keep its URL in a private file with no trailing newline and
+set `DATABASE_URL_FILE` to its path, as
+[First schema](../../start/first-schema/#create-what-the-schema-reads) does. That
+page also creates the namespace.
+
+```sh
+kubectl -n application create secret generic orders-database \
+  --from-file=url="$DATABASE_URL_FILE"
+kubectl -n application create configmap orders-migrations \
+  --from-file=examples/configmap-kustomize/db/migrations/
+kubectl -n application apply -f examples/configmap-kustomize/ptahmigration.yaml
+kubectl -n application wait ptahmigration/orders \
+  --for=condition=ApprovalRequired --timeout=5m
+kubectl ptah migration orders -n application
+kubectl ptah approve migration/orders -n application --wait
+kubectl ptah migration orders -n application
+```
+
+`kubectl ptah migration orders -n application` shows the phase and every
+condition below, at any stage.
+
+| Stage | Run | Expect | Then |
+| --- | --- | --- | --- |
+| 1 Source | `kubectl create secret`, `kubectl create configmap` and `kubectl apply` | `Source: ConfigMap orders-migrations`, and its `Snapshot` | Wait for the plan |
+| 2 Plan | `kubectl -n application wait ptahmigration/orders --for=condition=ApprovalRequired --timeout=5m`, then `kubectl ptah migration orders -n application` | Phase `AwaitingApproval`, `ApprovalRequired=True`, reason `AwaitingApproval`, `Pending: 2`, and each version with its description. No SQL: the statements are in the files | Decide |
+| 3 Decision | `kubectl ptah approve migration/orders -n application --wait` | Each version with its checksum, then `Approved:`, with the identity admission stamped | The command stays for stages 4 and 5 |
+| 4 Execution | Nothing more. To watch from elsewhere, `kubectl -n application get ptahmigration orders -w` | Phase `Applying`, then `VerifyingHistory` and `Reading` | The command ends with `reached applied` |
+| 5 Verification | `kubectl ptah migration orders -n application` | Phase `InSync`, `Ready=True`, reason `HistoryMatched`, `Pending: 0`, `Last run: Applied` | Read the history |
+| 6 History | The commands below | The journal holds `PlanPublished`, `ApprovalAccepted` and `RunFinished` with outcome `Succeeded`, and `status.history.revisions` a row for each migration | Add a migration: a file in the ConfigMap and an item in the resource |
+
+You can read the history at any stage, and reading it changes nothing:
+
+```sh
+kubectl -n application get ptahmigration orders -o jsonpath='{.status.journal}' | jq
+kubectl -n application get ptahmigration orders -o jsonpath='{.status.history.revisions}' | jq
+kubectl events -n application --for ptahmigration/orders
+```
+
+The journal dates the run as a whole. How long each migration took comes from
+the revision table, where the table records it.
+[The lifecycle journal](../../reference/reconciliation/#the-lifecycle-journal)
+says how far back the journal, the Events and the finished Jobs reach.
+
+A stage can go another way:
+
+- At stage 2, phase `InSync` means nothing is pending, and `Blocked` means
+  [the history refused](#what-the-history-says). The `kubectl wait` times out in
+  both cases.
+- At stage 3, an `approve` that approves nothing found the plan replaced, or being
+  replaced. Run it again, and it shows the current one.
+- At stage 4, exit status 7 means the run has not ended yet and 8 that it will not
+  end applied. Both say what holds the migration, and
+  [What the run reports](#what-the-run-reports) says what follows each outcome.
+
+An artifact source, as in [the minimal resource](#the-minimal-resource), adds a
+Resolve and a Verify Job at stage 1 and changes nothing after it. A Git source
+adds a Resolve Job, and
+[Deliver from a ConfigMap or Git](../sources/) has the fields.
 
 ## Choosing a transaction mode
 
@@ -435,7 +509,7 @@ matters most:
 | --- | --- |
 | `UpToDate` | The database already had every planned migration |
 | `Applied` | Every selected migration is recorded applied |
-| `Failed` | A migration failed and committed nothing, or the run stopped before it selected one, as on a database it could not open; fix the cause and the resource plans the run again |
+| `Failed` | A migration failed and committed nothing, or the run stopped before it selected one, as on a database it could not open. The first leaves a [dirty revision row](#what-the-history-says), which a person has to repair before anything else runs. After the second, fix the cause and the resource plans the run again |
 | `Partial` | A migration committed some of its statements and not the rest |
 | `Unknown` | The evidence could not be read |
 
