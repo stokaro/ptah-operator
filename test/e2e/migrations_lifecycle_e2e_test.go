@@ -17,9 +17,11 @@ import (
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/test/e2e/harness"
 )
 
 // engineMigrations takes the engine's migration from a database nothing has
@@ -46,7 +48,7 @@ func (m *migrationRun) engineMigrations() {
 	m.planUID, m.planFingerprint = string(plan.UID), plan.Spec.Fingerprint
 
 	approval := "e2e-migrations-" + m.engine.name + "-approval"
-	m.check(m.approve(approval, m.migrationName(), m.plan, m.planUID, m.planFingerprint), "approve %s", m.plan)
+	m.approveAsAPerson(approval, m.migrationName(), m.plan, m.planUID, m.planFingerprint)
 	m.assertApprovalStamped(approval)
 	m.waitForPhase(ptahv1alpha1.MigrationPhaseInSync)
 	settled := m.assertInSync()
@@ -58,6 +60,7 @@ func (m *migrationRun) engineMigrations() {
 	// settled view is a statement about the settled state.
 	m.waitForPhase(ptahv1alpha1.MigrationPhaseInSync)
 	m.assertKubectlPtahMigration(ptahv1alpha1.MigrationPhaseInSync)
+	m.assertLogOutlivesTheApproval(approval)
 
 	m.hungResultReadProof()
 	m.realmAdmitsOnlyListedClaimants()
@@ -314,6 +317,60 @@ func (m *migrationRun) assertApprovalStamped(approval string) {
 	m.scanObject(stored.Object, "approval "+approval)
 	if err := migrationApprovalStamped(stored, m.migrationName(), m.planOf(m.plan)); err != nil {
 		m.fatalf("approval %s was not stamped and bound to the exact plan: %v", approval, err)
+	}
+}
+
+// approveAsAPerson creates the approval as loggedPerson, and fails naming the
+// refusal. The administrator impersonates the name; admission reads the
+// impersonated identity, which is the one it stamps.
+func (m *migrationRun) approveAsAPerson(name, migration, plan, planUID, fingerprint string) {
+	m.t.Helper()
+	current := &ptahv1alpha1.PtahMigration{}
+	m.check(m.get(migration, current), "read %s", migration)
+	if current.UID == "" {
+		m.fatalf("%s has no UID", migration)
+	}
+	config := rest.CopyConfig(m.cluster.Config)
+	config.Impersonate = rest.ImpersonationConfig{UserName: loggedPerson, Groups: []string{"system:masters"}}
+	person, err := client.New(config, client.Options{Scheme: m.cluster.Scheme})
+	m.check(err, "build a client that approves as %s", loggedPerson)
+	m.check(person.Create(m.ctx, &unstructured.Unstructured{
+		Object: migrationApprovalDocument(m.in.TestNamespace, name, migration, string(current.UID), plan, planUID, fingerprint),
+	}, client.FieldOwner(harness.FieldOwner), client.FieldValidation("Strict")), "approve %s as %s", plan, loggedPerson)
+}
+
+// assertLogOutlivesTheApproval is the record that survives a lost cluster. It
+// reads who admission recorded, removes the approval that says so, and reads the
+// same person out of the database, where nothing in the cluster can be the source
+// of the answer: the log holds the name percent-encoded, and it decodes back to
+// the stamp.
+func (m *migrationRun) assertLogOutlivesTheApproval(name string) {
+	m.t.Helper()
+	approval := &ptahv1alpha1.PtahMigrationApproval{}
+	m.check(m.get(name, approval), "read approval %s", name)
+	stamped := approval.Spec.Approver.Username
+	if stamped != loggedPerson {
+		m.fatalf("admission stamped approval %s with %q, and the row approved it as %q", name, stamped, loggedPerson)
+	}
+	m.deleteAndWait(approval, "the consumed approval "+name)
+	m.assertRunLogNames(m.migrationDatabase(), loggedPersonInTheLog, 1, 2, 3)
+	if err := loggedNameDecodesTo(loggedPersonInTheLog, stamped); err != nil {
+		m.fatalf("the name the log holds is not the approver's: %v", err)
+	}
+	m.logf("PASS %s names %q, stamped %q, in the database's own log after its approval was deleted",
+		m.engine.kind, loggedPersonInTheLog, stamped)
+}
+
+// assertRunLogNames reads the database's log and holds it to one run of the
+// versions given, with the name given on every row.
+func (m *migrationRun) assertRunLogNames(database, actor string, versions ...int64) {
+	m.t.Helper()
+	output, err := m.sqlStatement(database, m.engine.migrationLogQuery())
+	m.check(err, "read schema_migrations_log in %s", database)
+	rows, err := parseMigrationLog(output)
+	m.check(err, "parse schema_migrations_log in %s", database)
+	if err := runLogNames(rows, actor, versions...); err != nil {
+		m.fatalf("schema_migrations_log in %s does not name %q for versions %v: %v; it holds %+v", database, actor, versions, err, rows)
 	}
 }
 

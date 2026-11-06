@@ -652,6 +652,84 @@ the non-configurable `Fail` policy, so an unavailable webhook cannot admit a
 caller-supplied identity stamp. Ordinary Kubernetes RBAC is not treated as
 field-level authorization.
 
+## The approver's name in the target database {#approver-in-the-database}
+
+A `PtahMigration` Apply writes who approved it to the database it migrates. The
+value is the username the API server authenticated when the approval was
+created, the one admission stamped in `spec.approver.username`, and it lands in
+`schema_migrations_log.actor` on every row the run writes. It is not a secret.
+It is personal data whenever it names a person, and an OIDC username is often an
+email address.
+
+That copy leaves the cluster, and Kubernetes RBAC stops applying to it. Anyone
+who can read that table reads the name, and backups, replicas and dumps of the
+database carry it. The operator never deletes a row and has no setting that
+turns the write off, so retention and erasure belong to whoever owns the
+database. Editing or removing a row with SQL is safe for the operator and for
+Ptah: neither reads this table to decide anything, and `ptah migrations status`
+stays the answer to where the database stands. Choose the claim your
+authenticator uses as the username with this in mind.
+
+Inside the cluster the same encoded value sits in
+`status.activeOperation.actor` while the run is claimed, and in the `PTAH_ACTOR`
+variable of the Apply Job's executor container, so whoever may read Jobs or Pods
+in the namespace reads it until the Job is removed. It reaches the executor
+through that variable alone and is never on a command line. Ptah prints it on
+neither stdout nor stderr on a run measured with v0.18.0, and the operator puts
+it in no condition, Event or metric.
+
+**What the record is worth.** `actor_source` reads `provided`, Ptah's word for a
+name a caller supplied and Ptah did not check. The operator supplies what
+admission stamped, but nothing in the database shows that: someone who runs
+`ptah migrations up --actor` writes the same source, and the table is an ordinary
+table that the account running migrations can write. It answers who approved a
+migration after the cluster is gone. It does not prove it against someone who
+holds that account. An audit that needs proof also keeps the API server's audit
+log outside the cluster, if its audit policy records writes to these kinds: that
+is where each approval's creation and who made it would be.
+
+**A run nobody approved.** Under `spec.policy.apply: Always` the value is
+`system:ptah-operator:apply-always:<namespace>/<name>`, which names no person.
+Admission refuses a migration approval from a username under
+`system:ptah-operator:`, so `system:ptah-operator:apply-always:` is how a reader
+tells such a run from an approved one, since the source reads `provided` for
+both. Match that whole prefix. A ServiceAccount that approves reads
+`system:serviceaccount:...`, so `LIKE 'system:%'` would count approved runs as
+unapproved.
+
+**How the name is stored.** The operator cannot know the target database's
+character set when it writes the claim, so it percent-encodes the name first:
+every byte outside `0x20`-`0x7E`, and `%` and `$`, become `%XX`. `$` is there
+because the kubelet expands `$(VAR)` in a container's environment, so a username
+could otherwise grow past the column on its way to the process. Spaces, colons
+and the rest of printable ASCII stay as they are, so an ordinary username or
+email reads unchanged, and `oidc:José García` reads
+`oidc:Jos%C3%A9 Garc%C3%ADa`. Read it back with any percent decoder that leaves
+`+` alone:
+
+```sh
+python3 -c 'import sys, urllib.parse; print(urllib.parse.unquote(sys.argv[1]))' 'oidc:Jos%C3%A9 Garc%C3%ADa'
+```
+
+A form decoder, such as Python's `unquote_plus` or Go's `url.QueryUnescape`,
+reads a `+` in the name as a space. Use `unquote` or `url.PathUnescape`.
+
+**When the name is shortened.** The column holds 256 characters. A name whose
+encoded form is longer is cut between two of its characters and ends in `...`,
+so no escape is cut in half and what remains still decodes. The part that was
+cut cannot be recovered from the log. Encoding can take a name over the bound: a
+Cyrillic letter takes 6 bytes and an emoji 12.
+
+**When the row is lost.** Ptah writes the log beside the run, and a failed write
+does not fail the run: the migration applies and exits 0, and the only trace is
+a warning on the executor's stderr. The encoded name itself no longer causes
+that. Measured on Ptah v0.18.0, it is stored byte for byte in MySQL under
+`latin1`, `utf8mb3` and `utf8mb4`, strict or not, and in PostgreSQL under
+`LATIN1`, `SQL_ASCII` and `UTF8`. Anything else that refuses the write still
+loses the row, such as a trigger or a privilege that makes the table read-only.
+A run Ptah stops before it selects a migration writes no row at all, as on a
+database it could not open or a history that moved after the approval.
+
 ## Output handling
 
 The runner never invokes a shell. It checks command arguments against known
@@ -663,7 +741,8 @@ both are non-secret operator inputs. A key is hashed with the normalized engine
 and the resource's namespace, a realm's name with the normalized engine, and
 the plaintext key is never copied into status.
 Status otherwise stores only hashes, counts, classification, immutable
-references, and timestamps.
+references, timestamps, and the
+[approver's name](#approver-in-the-database) on a migration Apply's claim.
 
 The credential-free target identity includes connection-security semantics,
 not merely host and database names. Rotating password or certificate bytes is

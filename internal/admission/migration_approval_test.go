@@ -335,6 +335,48 @@ func migrationApprovalRequest(
 // migrationApprovalFixture returns a handler whose reader holds a migration
 // awaiting approval, its published plan and its verification policy, plus the
 // approval an approver would submit.
+// The log tells a run nobody approved by this prefix, with no cluster left to ask,
+// so a username under it cannot approve. Both passes refuse it: the mutating one
+// has just stamped it, and the validating one sees what was stored. The rows beside
+// it are the identities the refusal must not reach.
+func TestMigrationApprovalRefusesAUsernameUnderTheReservedPrefix(t *testing.T) {
+	t.Parallel()
+
+	for _, mutate := range []bool{true, false} {
+		for _, row := range []struct {
+			name     string
+			username string
+			refused  bool
+		}{
+			{"the identity of a real Always run", "system:ptah-operator:apply-always:team-a/app", true},
+			{"anything else under the prefix", "system:ptah-operator:someone", true},
+			{"the prefix alone", "system:ptah-operator:", true},
+			{"a ServiceAccount", "system:serviceaccount:ptah:approver", false},
+			{"a name that shares the start of the prefix", "system:ptah-operator-approver", false},
+			{"the prefix in another case", "SYSTEM:ptah-operator:someone", false},
+			{"a person", "operator@example.test", false},
+		} {
+			t.Run(fmt.Sprintf("mutate=%t/%s", mutate, row.name), func(t *testing.T) {
+				t.Parallel()
+
+				handler, approval := migrationApprovalFixture(t, mutate, nil)
+				if !mutate {
+					approval.Spec.Approver.Username = row.username
+				}
+				request := migrationApprovalRequest(t, approval, admissionv1.Create)
+				request.UserInfo = authenticationv1.UserInfo{Username: row.username, UID: approval.Spec.Approver.UID, Groups: approval.Spec.Approver.Groups}
+				response := handler.Handle(context.Background(), request)
+				if response.Allowed == row.refused {
+					t.Fatalf("Allowed = %t, want %t: %#v", response.Allowed, !row.refused, response.Result)
+				}
+				if row.refused && !strings.Contains(response.Result.Message, "system:ptah-operator:") {
+					t.Fatalf("the refusal says %q, want it to name the prefix", response.Result.Message)
+				}
+			})
+		}
+	}
+}
+
 func migrationApprovalFixture(
 	t *testing.T,
 	mutate bool,

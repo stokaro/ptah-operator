@@ -403,9 +403,83 @@ func TestValidationHandlerBindsMigrationApplyJobsToTheirPlan(t *testing.T) {
 	}
 }
 
+// The webhook rebuilds the Job from the claim it reads for itself, so the name a
+// run will write to the database's log is the claim's: a Job that carries
+// another one, or one the claim does not record, is not admitted, and the Job
+// the claim does build is.
+func TestValidationHandlerBindsMigrationApplyJobsToTheActorTheirClaimRecords(t *testing.T) {
+	t.Parallel()
+
+	const recorded = "oidc:Jos%C3%A9 Garc%C3%ADa"
+	carried := func(job *batchv1.Job) *corev1.EnvVar {
+		environment := job.Spec.Template.Spec.Containers[0].Env
+		for index := range environment {
+			if environment[index].Name == workload.EnvMigrationActor {
+				return &environment[index]
+			}
+		}
+		t.Fatalf("Job %s carries no actor, so this row proves nothing about one", job.Name)
+		return nil
+	}
+
+	t.Run("the Job the claim builds", func(t *testing.T) {
+		t.Parallel()
+		migration, plan, job := migrationApplyJobFixtureNaming(t, recorded)
+		if got := carried(job).Value; got != recorded {
+			t.Fatalf("the Job carries %q, want %q", got, recorded)
+		}
+		response := migrationHandlerFixture(t, migration, plan).Handle(context.Background(), requestFor(t, admissionv1.Create, job))
+		if !response.Allowed {
+			t.Fatalf("the Job the claim builds was denied: %s", responseMessage(response))
+		}
+	})
+
+	for _, test := range []struct {
+		name   string
+		mutate func(*operatorv1alpha1.PtahMigration, *batchv1.Job)
+	}{
+		{
+			name: "a Job that carries another name",
+			mutate: func(_ *operatorv1alpha1.PtahMigration, job *batchv1.Job) {
+				carried(job).Value = "someone-else"
+			},
+		},
+		{
+			name: "a name the claim does not record",
+			mutate: func(migration *operatorv1alpha1.PtahMigration, _ *batchv1.Job) {
+				migration.Status.ActiveOperation.Actor = ""
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			migration, plan, job := migrationApplyJobFixtureNaming(t, recorded)
+			test.mutate(migration, job)
+			response := migrationHandlerFixture(t, migration, plan).Handle(context.Background(), requestFor(t, admissionv1.Create, job))
+			if response.Allowed {
+				t.Fatal("a Job that does not carry its claim's name was admitted")
+			}
+			if want := "the Job's spec is not the one its claim builds"; !strings.Contains(responseMessage(response), want) {
+				t.Fatalf("denial = %q, want it to say %q", responseMessage(response), want)
+			}
+		})
+	}
+}
+
 // migrationApplyJobFixture is an Apply claim, the immutable plan it names, and
 // the Job that claim authorizes.
 func migrationApplyJobFixture(t *testing.T) (
+	*operatorv1alpha1.PtahMigration,
+	*operatorv1alpha1.PtahMigrationPlan,
+	*batchv1.Job,
+) {
+	t.Helper()
+	return migrationApplyJobFixtureNaming(t, "")
+}
+
+// migrationApplyJobFixtureNaming is migrationApplyJobFixture for a claim that
+// records the name given.
+func migrationApplyJobFixtureNaming(t *testing.T, actor string) (
 	*operatorv1alpha1.PtahMigration,
 	*operatorv1alpha1.PtahMigrationPlan,
 	*batchv1.Job,
@@ -432,6 +506,7 @@ func migrationApplyJobFixture(t *testing.T) (
 
 	operation := migration.Status.ActiveOperation
 	operation.Type = operatorv1alpha1.MigrationOperationApply
+	operation.Actor = actor
 	operation.AdmissionSnapshot = nil
 	operation.PlanRef = &operatorv1alpha1.ImmutableObjectReference{Name: plan.Name, UID: plan.UID}
 	// Second precision, because that is what the API server stores and what

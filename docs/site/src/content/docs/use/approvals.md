@@ -36,6 +36,16 @@ An approval names the schema with its UID, the plan with its UID and the plan's
 fingerprint, and nothing else a person writes: admission stamps who approved
 and when. Review the plan first.
 
+A `PtahMigration` run also writes the approver's username to the
+[target database](../security/#approver-in-the-database), where it outlives the
+approval and the cluster. A name outside printable ASCII is percent-encoded
+there, as are `%` and `$`, and a percent decoder that leaves `+` alone, such as
+Python's `urllib.parse.unquote`, reads it back. A username under
+`system:ptah-operator:` cannot approve a migration, because the log names a run
+nobody approved that way. A `PtahSchema` run writes nothing of the kind: its
+[approvals are lost with the cluster](../recovery/#what-survives-a-lost-cluster)
+unless you export them.
+
 The plan resource contains immutable chunk names and digests; the exact SQL is
 in the `PtahSchemaPlanChunk` objects it names, which the controller writes with
 the plan and which are deleted with it. Reading them takes one RBAC rule, `get`

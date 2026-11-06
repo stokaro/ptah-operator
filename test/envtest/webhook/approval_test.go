@@ -4,17 +4,21 @@ import (
 	"context"
 	"maps"
 	"slices"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/controllerstate"
+	"github.com/stokaro/ptah-operator/internal/coordination"
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
+	"github.com/stokaro/ptah-operator/internal/migrationplan"
 	"github.com/stokaro/ptah-operator/internal/runner"
 )
 
@@ -41,7 +45,7 @@ func newApprovalFixture(t *testing.T) approvalFixture {
 	namespace := newNamespace(t, "approvals")
 	policy := createPolicy(t, namespace)
 	schema := createSchema(t, namespace, "orders")
-	coordination := coordinationDigest(t, schema)
+	coordinationValue := coordinationDigest(t, schema)
 
 	plan := &operatorv1alpha1.PtahSchemaPlan{
 		ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: planName},
@@ -52,7 +56,7 @@ func newApprovalFixture(t *testing.T) approvalFixture {
 			ContentDigest:            digest("b"),
 			Size:                     64,
 			ArtifactDigest:           digest("c"),
-			CoordinationDigest:       coordination,
+			CoordinationDigest:       coordinationValue,
 			TargetIdentityDigest:     digest("d"),
 			ActualStateFingerprint:   digest("e"),
 			DesiredStateFingerprint:  digest("f"),
@@ -97,7 +101,7 @@ func newApprovalFixture(t *testing.T) approvalFixture {
 			VerificationPolicyDigest: policyDigest(),
 		},
 		Target: operatorv1alpha1.TargetStatus{
-			CoordinationDigest: coordination,
+			CoordinationDigest: coordinationValue,
 			IdentityDigest:     plan.Spec.TargetIdentityDigest,
 		},
 		Plan: &operatorv1alpha1.CurrentPlanStatus{
@@ -273,6 +277,26 @@ func TestApprovalWebhooks(t *testing.T) {
 		requireDenied(t, err, "mmigrationapproval.operator.ptah.run", "read referenced migration plan")
 	})
 
+	t.Run("a username with a space, a colon and non-ASCII characters is stamped unchanged", func(t *testing.T) {
+		t.Parallel()
+		// An authenticator is free to produce this, and a migration records the
+		// stamp in the database's log, percent-encoded from what is stored here,
+		// so the name has to survive the request header it arrives in and the
+		// webhook that copies it.
+		const username = "oidc:José García $(HOME)"
+		approval := fixture.approval("approve-as-an-awkward-name", fixture.plan.Spec.Fingerprint)
+		if err := clientAs(t, username, approverRole).Create(ctx, approval); err != nil {
+			t.Fatalf("create PtahSchemaApproval %s as %q: %v", client.ObjectKeyFromObject(approval), username, err)
+		}
+		stored := &operatorv1alpha1.PtahSchemaApproval{}
+		if err := admin.Get(ctx, client.ObjectKeyFromObject(approval), stored); err != nil {
+			t.Fatalf("read PtahSchemaApproval %s back: %v", client.ObjectKeyFromObject(approval), err)
+		}
+		if stored.Spec.Approver.Username != username {
+			t.Fatalf("stored approver = %q, want %q", stored.Spec.Approver.Username, username)
+		}
+	})
+
 	t.Run("a stored approval takes a metadata update and keeps its decision", func(t *testing.T) {
 		t.Parallel()
 		// The validating webhook matches UPDATE as well as CREATE. A label is
@@ -293,3 +317,149 @@ func TestApprovalWebhooks(t *testing.T) {
 		}
 	})
 }
+
+// migrationApprovalFixture is a migration waiting for a person, as
+// newApprovalFixture is a schema: a plan, and the status a manager writes when the
+// plan needs an approval. There is no manager here, so the fixture writes it.
+type migrationApprovalFixture struct {
+	namespace string
+	migration *operatorv1alpha1.PtahMigration
+	plan      *operatorv1alpha1.PtahMigrationPlan
+}
+
+func newMigrationApprovalFixture(t *testing.T) migrationApprovalFixture {
+	t.Helper()
+	ctx := context.Background()
+	namespace := newNamespace(t, "migration-approvals")
+	policy := createPolicy(t, namespace)
+	migration := createMigration(t, namespace, "orders")
+	coordinationValue, err := coordination.Digest(namespace, migration.Spec.Target)
+	if err != nil {
+		t.Fatalf("derive the coordination digest of %s/%s: %v", namespace, migration.Name, err)
+	}
+
+	plan, err := migrationplan.Desired(migration, operatorv1alpha1.PtahMigrationPlanSpec{
+		ContractVersion:          migrationplan.ContractVersion,
+		MigrationRef:             operatorv1alpha1.ImmutableObjectReference{Name: migration.Name, UID: migration.UID},
+		Fingerprint:              digest("a"),
+		Migrations:               []operatorv1alpha1.PlannedMigration{{Version: 3, Checksum: "checksum-3"}},
+		HistoryFingerprint:       digest("b"),
+		CurrentVersion:           2,
+		ArtifactDigest:           digest("c"),
+		CoordinationDigest:       coordinationValue,
+		TargetIdentityDigest:     digest("d"),
+		PolicyFingerprint:        digest("1"),
+		VerificationPolicyUID:    policy.UID,
+		VerificationPolicyDigest: policyDigest(),
+		ExecutionBindingID:       executionBindingID,
+		ControllerImage:          manager.controllerImage,
+		ControllerRevision:       controllerRevision,
+		ControllerStateVersion:   controllerstate.CurrentVersion,
+		PtahVersion:              manager.ptahVersion,
+		ExecutorImage:            manager.executorImage,
+		RunnerImage:              manager.runnerImage,
+		RunnerProtocolVersion:    int32(runner.ProtocolVersion),
+		CreatedAt:                now(),
+	})
+	if err != nil {
+		t.Fatalf("build the plan of %s/%s: %v", namespace, migration.Name, err)
+	}
+	if err := admin.Create(ctx, plan); err != nil {
+		t.Fatalf("create PtahMigrationPlan %s/%s: %v", namespace, plan.Name, err)
+	}
+
+	migration.Status = operatorv1alpha1.PtahMigrationStatus{
+		ObservedGeneration: migration.Generation,
+		Phase:              operatorv1alpha1.MigrationPhaseAwaitingApproval,
+		ExecutionBinding:   executionBinding(),
+		Artifact: &operatorv1alpha1.SourceAccessBinding{
+			ResolvedReference: "oci://ghcr.io/example/orders-migrations@" + plan.Spec.ArtifactDigest,
+			Digest:            plan.Spec.ArtifactDigest,
+		},
+		History: &operatorv1alpha1.MigrationHistoryStatus{
+			ObservedAt: now(), ContractVersion: 1, CurrentVersion: 2,
+			Fingerprint: plan.Spec.HistoryFingerprint, TargetIdentityDigest: plan.Spec.TargetIdentityDigest,
+			AppliedCount: 1, PendingCount: 1,
+		},
+		Plan: &operatorv1alpha1.ImmutableObjectReference{Name: plan.Name, UID: plan.UID},
+		Conditions: []metav1.Condition{{
+			Type: operatorv1alpha1.ConditionMigrationApprovalRequired, Status: metav1.ConditionTrue,
+			Reason: string(operatorv1alpha1.ReasonAwaitingApproval), Message: "the plan is waiting for a person", LastTransitionTime: now(),
+		}},
+	}
+	writeStatus(t, migration)
+
+	grant(t, namespace, "approvers", rbacv1.Subject{Kind: rbacv1.GroupKind, APIGroup: rbacv1.GroupName, Name: approverRole},
+		rbacv1.PolicyRule{
+			APIGroups: []string{operatorv1alpha1.GroupVersion.Group},
+			Resources: []string{"ptahmigrationapprovals"},
+			Verbs:     []string{"create", "get"},
+		})
+	return migrationApprovalFixture{namespace: namespace, migration: migration, plan: plan}
+}
+
+// approval is what a person writes: which migration, which plan, and the plan's
+// fingerprint.
+func (fixture migrationApprovalFixture) approval(name string) *unstructured.Unstructured {
+	return &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": operatorv1alpha1.GroupVersion.String(),
+		"kind":       "PtahMigrationApproval",
+		"metadata":   map[string]any{"namespace": fixture.namespace, "name": name},
+		"spec": map[string]any{
+			"migrationRef":    map[string]any{"name": fixture.migration.Name, "uid": string(fixture.migration.UID)},
+			"planRef":         map[string]any{"name": fixture.plan.Name, "uid": string(fixture.plan.UID)},
+			"planFingerprint": fixture.plan.Spec.Fingerprint,
+		},
+	}}
+}
+
+// A migration approval goes through a handler of its own, and what it stamps is
+// what a run writes to the database's log. So the row is here as well as on the
+// schema family: a handler that changed the name would pass the other.
+func TestMigrationApprovalWebhooksStampTheIdentity(t *testing.T) {
+	plane.Require(t)
+	fixture := newMigrationApprovalFixture(t)
+	ctx := context.Background()
+
+	for _, username := range []string{
+		"oidc:José García $(HOME)",
+		"Mixed.Case@Example.Test",
+		"system:serviceaccount:ptah:approver",
+	} {
+		t.Run(username, func(t *testing.T) {
+			t.Parallel()
+			approval := fixture.approval("approve-" + strings.ToLower(digestOf(username)[7:19]))
+			// Nobody signs for someone else, whatever the request says.
+			if err := unstructured.SetNestedField(approval.Object, map[string]any{
+				"username": "someone-else", "uid": "forged", "groups": []any{"system:masters"},
+			}, "spec", "approver"); err != nil {
+				t.Fatal(err)
+			}
+			if err := clientAs(t, username, approverRole).Create(ctx, approval); err != nil {
+				t.Fatalf("create PtahMigrationApproval %s as %q: %v", client.ObjectKeyFromObject(approval), username, err)
+			}
+			stored := &operatorv1alpha1.PtahMigrationApproval{}
+			if err := admin.Get(ctx, client.ObjectKeyFromObject(approval), stored); err != nil {
+				t.Fatalf("read PtahMigrationApproval %s back: %v", client.ObjectKeyFromObject(approval), err)
+			}
+			if stored.Spec.Approver.Username != username {
+				t.Fatalf("stored approver = %q, want %q", stored.Spec.Approver.Username, username)
+			}
+		})
+	}
+
+	// A username equal to a real Always run's name would read in the log as a run
+	// nobody approved, and the API server accepts it through impersonation.
+	t.Run("a username under the reserved prefix is refused", func(t *testing.T) {
+		t.Parallel()
+		approval := fixture.approval("approve-as-the-policy")
+		username := "system:ptah-operator:apply-always:" + fixture.namespace + "/orders"
+		err := clientAs(t, username, approverRole).Create(ctx, approval)
+		requireDenied(t, err, "mmigrationapproval.operator.ptah.run", "the operator records that prefix for runs no person approved")
+		if err := admin.Get(ctx, client.ObjectKeyFromObject(approval), &operatorv1alpha1.PtahMigrationApproval{}); !apierrors.IsNotFound(err) {
+			t.Fatalf("the refused approval was stored: %v", err)
+		}
+	})
+}
+
+func digestOf(value string) string { return fingerprint.DigestBytes([]byte(value)) }

@@ -202,8 +202,17 @@ func (d *migrationDispatch) Refuse(
 	return d.r.migrationOperationFailure(ctx, d.migration, failure)
 }
 
+// Consume spends the approval, and refuses the claim when that approval is gone.
+// Nothing has dispatched at this step, because dispatch refuses a claim that may
+// have, so the claim can be retired. A withdrawn approval authorizes nothing, and
+// the run would otherwise write that person's name to the database's log for
+// good.
 func (d *migrationDispatch) Consume(ctx context.Context) mutationlifecycle.Outcome {
-	if err := d.r.consumeMigrationApproval(ctx, d.migration, d.operation().ApprovalRef); err != nil {
+	err := d.r.consumeMigrationApproval(ctx, d.migration, d.operation().ApprovalRef)
+	if errors.Is(err, errMigrationApprovalWithdrawn) {
+		return mutationlifecycle.Stop(d.r.discardMigrationOperation(ctx, d.migration, telemetry.OperationStale, err))
+	}
+	if err != nil {
 		return mutationlifecycle.Stop(ctrl.Result{}, err)
 	}
 	return mutationlifecycle.Proceed()

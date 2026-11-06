@@ -22,6 +22,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/policy"
 	"github.com/stokaro/ptah-operator/internal/sourcebinding"
 	"github.com/stokaro/ptah-operator/internal/sourcepolicy"
+	"github.com/stokaro/ptah-operator/internal/workload"
 )
 
 // MigrationApprovalHandler stamps authenticated identity onto one migration
@@ -141,6 +142,12 @@ func (h *MigrationApprovalHandler) validateMigrationBinding(
 	ctx context.Context,
 	approval *operatorv1alpha1.PtahMigrationApproval,
 ) error {
+	// The run writes this name to the database's log, where a reader tells a run
+	// nobody approved by this prefix, with no cluster left to ask.
+	if strings.HasPrefix(approval.Spec.Approver.Username, workload.ReservedActorPrefix) {
+		return fmt.Errorf("a username under %s cannot approve a migration: the operator records that prefix for runs no person approved",
+			workload.ReservedActorPrefix)
+	}
 	if err := requireExplicitDecision(
 		"migration", approval.Spec.MigrationRef, approval.Spec.PlanRef, approval.Spec.PlanFingerprint,
 	); err != nil {

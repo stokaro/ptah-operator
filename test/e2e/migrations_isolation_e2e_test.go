@@ -1458,6 +1458,9 @@ func (m *migrationRun) rebuildDrill() {
 	if revisions := r.revisions(); revisions != "1,2" {
 		m.fatalf("%s did not bring its database to version 2; it records [%s]", r.name, revisions)
 	}
+	// Nobody approved that run, and the database's own log says so: it names the
+	// policy and the resource rather than a person or the user the process ran as.
+	m.assertRunLogNames(r.database, alwaysPolicyActor(m.in.TestNamespace, r.name), 1, 2)
 
 	// An approval for [3], its Apply claimed and held.
 	moved := &ptahv1alpha1.PtahMigration{}
