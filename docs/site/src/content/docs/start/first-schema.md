@@ -43,6 +43,10 @@ kubectl -n application create secret generic application-database \
   --from-file=url="$DATABASE_URL_FILE"
 ```
 
+If the URL lives in Vault or another store, a tool can write this Secret instead:
+[Credentials from an external secret store](../../reference/credentials-and-admission/#external-secret-stores)
+has a tested path and what a rotation does.
+
 The schema is the state you want the database to reach, not a list of changes.
 The file's extension tells Ptah its format:
 

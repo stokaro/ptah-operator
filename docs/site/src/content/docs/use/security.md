@@ -669,7 +669,10 @@ The credential-free target identity includes connection-security semantics,
 not merely host and database names. Rotating password or certificate bytes is
 allowed when the non-secret route and certificate paths stay fixed, while a
 change to TLS verification, channel binding, authentication requirements, or
-plaintext fallback invalidates the plan before the mutating child dispatches.
+plaintext fallback invalidates the plan before the mutating child dispatches. The
+username is part of that identity too. What each kind of rotation did to a waiting
+plan and a running Apply, as measured, is in
+[When the credential rotates](../../reference/credentials-and-admission/#external-secret-stores-rotation).
 
 Raw drift details are parsed in memory and excluded from the structured result.
 Observe exposes one canonical category aggregate for each category the report
