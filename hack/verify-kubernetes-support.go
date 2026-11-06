@@ -144,6 +144,9 @@ type matrixEntry struct {
 	// falls back to its own default when this is empty, which it is on every job
 	// of the acceptance matrix.
 	PostgresSourceImage string `json:"postgres_source_image,omitempty"`
+	// The date the catalog says that image was built. The driver holds it to
+	// what Docker reports for the image, because the age rule reads this date.
+	PostgresImageCreated string `json:"postgres_image_created,omitempty"`
 	// The acceptance suite this job runs, in the acceptance matrix only. A job
 	// is one minor and one suite, so the four suites of a minor run at once
 	// against clusters of their own. The plain matrix keeps its old shape,
@@ -1264,8 +1267,9 @@ printf 'baseline=%s\n' "$baseline" >> "$GITHUB_OUTPUT"
 		"DOCKER_CONTEXT":         "${{ steps.docker-context.outputs.name }}",
 		"E2E_DIRECT_HOST_ACCESS": "1",
 		// Empty on the acceptance matrix, so the driver's default stands; the
-		// added database lines name their image here.
-		"E2E_POSTGRES_SOURCE_IMAGE": "${{ matrix.postgres_source_image }}",
+		// added database lines name their image, and the date it was built, here.
+		"E2E_POSTGRES_SOURCE_IMAGE":  "${{ matrix.postgres_source_image }}",
+		"E2E_POSTGRES_IMAGE_CREATED": "${{ matrix.postgres_image_created }}",
 		// No Ptah source reaches a lifecycle job: the executor is the Ptah
 		// image the catalog pins beside this commit, copied by digest.
 		"E2E_PREBUILT_IMAGE_DIR": "${{ runner.temp }}/task-images",
@@ -5643,6 +5647,16 @@ const (
 	databaseLineSupported = "supported"
 )
 
+const (
+	// databaseLinesWorkflowName is the caller's name, which ci.yml's concurrency
+	// group reads through github.workflow. Under CI's name the two workflows would
+	// share a group on a ref, and each would cancel the other.
+	databaseLinesWorkflowName = "Added database lines"
+	// databaseLinesCallerJob prefixes every called job's name. A release reads a
+	// supported line's jobs by those names.
+	databaseLinesCallerJob = "Added lines"
+)
+
 // ciAcceptanceOutput is how the support matrix step chooses what it exports.
 const ciAcceptanceOutput = "${{ inputs.database_lines && 'database-lines' || 'acceptance' }}"
 
@@ -5714,6 +5728,17 @@ func loadDatabaseCatalog(path string, now time.Time) (databaseCatalog, error) {
 		if !pinnedImagePattern.MatchString(line.Image) {
 			return fmt.Errorf("%s: %s %s must be pinned by digest: %q", path, line.Engine, line.Line, line.Image)
 		}
+		// The lifecycle holds both PostgreSQL servers to the tag, so a green run
+		// proves the tag's major version, whatever this row says.
+		if line.Engine == "postgresql" {
+			major, err := phases.PostgresImageMajor(line.Image)
+			if err != nil {
+				return fmt.Errorf("%s: %w", path, err)
+			}
+			if want := strconv.Itoa(major) + ".x"; line.Line != want {
+				return fmt.Errorf("%s: the line is %q and its image names %s", path, line.Line, want)
+			}
+		}
 		key := line.Engine + " " + line.Line
 		if seen[key] {
 			return fmt.Errorf("%s: %s appears twice", path, key)
@@ -5741,13 +5766,6 @@ func validateAddedDatabaseLine(path string, line addedDatabaseLine, now time.Tim
 	if line.Engine != "postgresql" {
 		return fmt.Errorf("%s: %s %s cannot be added yet: the lifecycle job hands the driver a PostgreSQL image and no other",
 			path, line.Engine, line.Line)
-	}
-	major, err := phases.PostgresImageMajor(line.Image)
-	if err != nil {
-		return fmt.Errorf("%s: %w", path, err)
-	}
-	if want := strconv.Itoa(major) + ".x"; line.Line != want {
-		return fmt.Errorf("%s: the line is %q and its image names %s", path, line.Line, want)
 	}
 	created, err := time.Parse(time.DateOnly, line.ImageCreated)
 	if err != nil {
@@ -5784,10 +5802,24 @@ func verifyDatabaseCatalog(catalog databaseCatalog, suites e2eSuiteCatalog, driv
 	if err := verifyDatabaseBaselineDefaults(catalog, driverPath, driver); err != nil {
 		return err
 	}
+	if err := verifyDatabaseImageDateCheck(driverPath, driver); err != nil {
+		return err
+	}
 	if err := verifyDatabaseLeftOutSuites(catalog, suites, driverPath, driver); err != nil {
 		return err
 	}
 	return verifyDatabasePage(catalog, pagePath)
+}
+
+// verifyDatabaseImageDateCheck holds the driver to reading an added line's build
+// date from the image it pulled. The age rule above reads a date somebody typed,
+// so it refuses nothing unless a run compares that date with the image.
+func verifyDatabaseImageDateCheck(driverPath string, driver []byte) error {
+	return verifyOrderedSourceContract(driverPath, driver, []sourceContractStep{
+		exactSourceLine("the PostgreSQL source image pulled", `mirror_task_image "$E2E_POSTGRES_SOURCE_IMAGE" postgresql`),
+		exactSourceLine("an added line's date read", `if [ -n "$E2E_POSTGRES_IMAGE_CREATED" ]; then`),
+		exactSourceLine("the date held to the image", `image_created_on "$postgres_image_created" "$E2E_POSTGRES_IMAGE_CREATED" ||`),
+	})
 }
 
 // verifyDatabaseBaselineDefaults holds the baseline rows to what a lifecycle runs
@@ -5888,6 +5920,13 @@ func verifyDatabasePage(catalog databaseCatalog, path string) error {
 		return fmt.Errorf("%s: the support table does not match %s: it holds the baseline and the supported added lines, and nothing else",
 			path, databaseCatalogPath)
 	}
+	// The table is not the only place a reader takes a claim from, so the digest
+	// of a line that has no green run stays off the page altogether.
+	for _, line := range catalog.Added {
+		if line.State != databaseLineSupported && strings.Contains(string(contents), line.Image[strings.Index(line.Image, "@")+1:]) {
+			return fmt.Errorf("%s: names the image of %s %s, which is %s", path, line.Engine, line.Line, line.State)
+		}
+	}
 	return nil
 }
 
@@ -5917,6 +5956,7 @@ func databaseLineMatrix(minors []matrixEntry, suites e2eSuiteCatalog, catalog da
 			entry.Minor = fmt.Sprintf("%s on %s %d", entry.Minor, databaseEngineNames[line.Engine], major)
 			entry.MinorSlug = fmt.Sprintf("%s-%s-%d", entry.MinorSlug, line.Engine, major)
 			entry.PostgresSourceImage = line.Image
+			entry.PostgresImageCreated = line.ImageCreated
 			entries = append(entries, entry)
 		}
 	}
@@ -5977,6 +6017,10 @@ func verifyDatabaseLinesWorkflow(path string) error {
 	if len(shape.Other) != 0 {
 		return fmt.Errorf("%s: a top-level key is outside the audited shape of this workflow", path)
 	}
+	if shape.Name != databaseLinesWorkflowName {
+		return fmt.Errorf("%s: must be named %q, and it is %q: ci.yml builds its concurrency group from the name, so another workflow's would cancel its runs",
+			path, databaseLinesWorkflowName, shape.Name)
+	}
 	if err := verifyDatabaseLinesTriggers(path, shape.On); err != nil {
 		return err
 	}
@@ -5991,6 +6035,10 @@ func verifyDatabaseLinesWorkflow(path string) error {
 	job, ok := shape.Jobs["lifecycle"]
 	if !ok || len(shape.Jobs) != 1 || len(job.Other) != 0 {
 		return fmt.Errorf("%s: must be one job, lifecycle, that calls ci.yml and passes it nothing but its input", path)
+	}
+	if job.Name != databaseLinesCallerJob {
+		return fmt.Errorf("%s: lifecycle must be named %q, and it is %q: a release reads a supported line's jobs by that name",
+			path, databaseLinesCallerJob, job.Name)
 	}
 	if job.Uses != "./.github/workflows/ci.yml" {
 		return fmt.Errorf("%s: lifecycle must run ci.yml from this commit, and it uses %q", path, job.Uses)

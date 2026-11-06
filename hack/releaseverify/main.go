@@ -106,6 +106,7 @@ func main() {
 	evidenceOutput := flag.String("acceptance-evidence-output", "", "path to write the acceptance evidence bundle to")
 	evidenceSource := flag.String("acceptance-evidence-source", "", "release source commit the evidence must be about")
 	evidenceEpoch := flag.Int64("acceptance-evidence-epoch", 0, "commit time, in Unix seconds, every bundle entry carries")
+	verifyDatabaseLines := flag.Bool("verify-database-lines", false, "read the run each supported database line names as its evidence")
 	flag.Parse()
 
 	if err := verifyRepository(*root, *tag); err != nil {
@@ -213,6 +214,20 @@ func main() {
 			if job.artifact != "" {
 				fmt.Println(job.artifact)
 			}
+		}
+		return
+	}
+	if *verifyDatabaseLines {
+		apiURL := os.Getenv("GITHUB_API_URL")
+		if apiURL == "" {
+			apiURL = "https://api.github.com"
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		client := &http.Client{Timeout: 15 * time.Second}
+		if err := verifySupportedDatabaseLines(ctx, client, apiURL, os.Getenv("GITHUB_REPOSITORY"), *root, os.Getenv("GH_TOKEN")); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
 		}
 		return
 	}
@@ -1493,7 +1508,7 @@ func verifyWorkflowSemantics(document []byte) error {
 		return errors.New("support-preflight must expose only its verified chart, source, run, Kubernetes window and acceptance evidence")
 	}
 	if err := verifyStepContract("support-preflight", preflight.Steps,
-		[]string{"checkout", "setup-go", "support-evidence", "acceptance-evidence", "acceptance-evidence-upload"},
+		[]string{"checkout", "setup-go", "support-evidence", "database-line-evidence", "acceptance-evidence", "acceptance-evidence-upload"},
 		map[string]string{
 			"checkout":                   "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
 			"setup-go":                   "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e",
@@ -1858,6 +1873,9 @@ func verifyWorkflowSemantics(document []byte) error {
 		"the release list does not show every uploaded asset"); err != nil {
 		return err
 	}
+	if err := verifyDatabaseLineEvidenceStep(preflightSteps); err != nil {
+		return err
+	}
 	if err := verifyAcceptanceEvidenceSteps(preflightSteps, steps); err != nil {
 		return err
 	}
@@ -2052,6 +2070,20 @@ const (
 // verifyAcceptanceEvidenceSteps holds the path the acceptance evidence takes:
 // the preflight bundles the run it verified and reports the digest, and the
 // publish job takes those exact bytes, and only those, into the release.
+// verifyDatabaseLineEvidenceStep holds the preflight to running the check, which
+// reads the runs itself and is shown to refuse what it has to in its own tests.
+func verifyDatabaseLineEvidenceStep(preflightSteps map[string]workflowStep) error {
+	step, err := requireStep(preflightSteps, "database-line-evidence")
+	if err != nil {
+		return err
+	}
+	if step.If != "" || step.Run != "go run ./hack/releaseverify -verify-database-lines" ||
+		!equalStringMap(step.Env, map[string]string{"GH_TOKEN": "${{ secrets.GITHUB_TOKEN }}"}) {
+		return errors.New("the database line evidence must be read unconditionally, with the preflight's own token, by hack/releaseverify")
+	}
+	return nil
+}
+
 func verifyAcceptanceEvidenceSteps(preflightSteps, publishSteps map[string]workflowStep) error {
 	bundle, err := requireStep(preflightSteps, "acceptance-evidence")
 	if err != nil {

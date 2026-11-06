@@ -247,6 +247,14 @@ nothing else, on a schedule, on request, and on a pull request that changes that
 workflow or the catalog. A called run belongs to its caller, so a release never
 reads one as a CI run. A line stays `pending` until a run is green on it; then it
 is `supported`, names that run in `evidenceRun`, and takes its row in the table.
+A pull request's run counts only if it concludes: a push cancels it, and so does
+merging or closing the pull request, so wait for the verdict.
+
+The release preflight reads each supported line's `evidenceRun` through
+`hack/releaseverify`: that line's jobs and the jobs every line shares, not the
+run's conclusion, because a failed cell on another line fails the run's gate. The
+run's commit has to name the same image, and the run has to cover this commit's
+minors and suites, so a re-pin or a new minor needs a new run.
 
 Leave a suite out only when the driver hands every one of its phases another
 engine, which the verifier checks. The tag of a line's image has to name its major

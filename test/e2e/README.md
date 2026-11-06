@@ -56,7 +56,8 @@ addressed by the digest produced by that registry before Kubernetes starts it.
 Overrides supplied with `E2E_REGISTRY_IMAGE`, `E2E_POSTGRES_SOURCE_IMAGE`, and
 `E2E_MYSQL_SOURCE_IMAGE` must also be digest-pinned. The tag of
 `E2E_POSTGRES_SOURCE_IMAGE` has to name a PostgreSQL major version, and both
-PostgreSQL servers are held to it.
+PostgreSQL servers are held to it. `E2E_POSTGRES_IMAGE_CREATED`, when it is set,
+names the day Docker has to report for that image.
 
 `DOCKER_CONTEXT` defaults to `remote-dev-container`. The harness rejects the
 local default and OrbStack contexts, and it derives an SSH tunnel from the

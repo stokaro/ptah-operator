@@ -9,8 +9,11 @@ name: Added database lines
 # It runs on a schedule, so a line that broke is found without a release asking,
 # and on request before a release, which the release procedure says how to read.
 # A pull request runs it when it changes this file or the catalog, the two changes
-# that decide what this run proves, so an added or re-pinned line shows its result
-# before it merges without anyone having to ask.
+# that decide what this run proves, so an added or re-pinned line can show its
+# result before it merges. That run is only evidence if it is left to conclude: a
+# push to the pull request starts a new one and cancels it, and merging or closing
+# the pull request cancels it through cancel-closed-pull-request.yml. Wait for the
+# verdict before doing either.
 #
 # It calls ci.yml rather than copying its jobs, so what proves a line is what
 # proves a commit. hack/verify-kubernetes-support.go holds this file to that.

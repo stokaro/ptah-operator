@@ -122,6 +122,9 @@ E2E_ENVIRONMENT_FILE=${E2E_ENVIRONMENT_FILE:-}
 E2E_REGISTRY_IMAGE=${E2E_REGISTRY_IMAGE:-registry:3@sha256:1be55279f18a2fe1a74edf2664cac61c1bea305b7b4642dab412e7affdcb3e33}
 E2E_POSTGRES_SOURCE_IMAGE=${E2E_POSTGRES_SOURCE_IMAGE:-postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73}
 E2E_MYSQL_SOURCE_IMAGE=${E2E_MYSQL_SOURCE_IMAGE:-mysql:8.4@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb}
+# The date support/databases.json says an added line's image was built. Nothing
+# else names it, so a run of the default image compares nothing.
+E2E_POSTGRES_IMAGE_CREATED=${E2E_POSTGRES_IMAGE_CREATED:-}
 # The alerting phase's Prometheus and Alertmanager. Prometheus is the release
 # support/tools.json pins promtool from, so the rules run under the evaluator
 # their unit tests ran under.
@@ -258,6 +261,15 @@ is_pinned_image() {
 # in test/e2e/phases carries the same expression for the phases.
 postgres_image_major() {
 	printf '%s\n' "$1" | sed -nE 's/^[^@]*:([1-9][0-9]*)[^/:@]*@sha256:[0-9a-f]{64}$/\1/p'
+}
+
+# image_created_on reports whether Docker's created time for an image, the first
+# argument, falls on the date the second names.
+image_created_on() {
+	case $1 in
+		"$2"T*) return 0 ;;
+	esac
+	return 1
 }
 
 # postgres_data_directory prints the directory the official image of a major
@@ -2793,6 +2805,16 @@ else
 fi
 mirror_task_image "$E2E_POSTGRES_SOURCE_IMAGE" postgresql
 E2E_POSTGRES_IMAGE=$PUSHED_IMAGE_REF
+# A digest has to be two weeks old before a line pins it, and the catalog's date
+# is what that rule reads. The date has to be this image's own for the rule to
+# mean anything.
+if [ -n "$E2E_POSTGRES_IMAGE_CREATED" ]; then
+	postgres_image_created=$(docker --context "$DOCKER_CONTEXT" image inspect \
+		--format '{{.Created}}' "$E2E_POSTGRES_SOURCE_IMAGE") ||
+		fail "could not read when $E2E_POSTGRES_SOURCE_IMAGE was built"
+	image_created_on "$postgres_image_created" "$E2E_POSTGRES_IMAGE_CREATED" ||
+		fail "$E2E_POSTGRES_SOURCE_IMAGE was built at $postgres_image_created, and support/databases.json says $E2E_POSTGRES_IMAGE_CREATED"
+fi
 mirror_task_image "$E2E_MYSQL_SOURCE_IMAGE" mysql
 E2E_MYSQL_IMAGE=$PUSHED_IMAGE_REF
 # Pulled only where the alerting phase runs: every other suite would fetch two

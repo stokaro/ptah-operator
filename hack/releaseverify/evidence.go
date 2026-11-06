@@ -81,30 +81,18 @@ func requiredAcceptanceJobs(root string) ([]acceptanceJob, error) {
 	if err != nil {
 		return nil, err
 	}
-	document, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(acceptanceSuitesPath)))
+	suites, err := readAcceptanceSuites(root)
 	if err != nil {
-		return nil, fmt.Errorf("read the acceptance suites: %w", err)
+		return nil, err
 	}
-	var catalog struct {
-		Suites []struct {
-			Name string `json:"name"`
-			Slug string `json:"slug"`
-		} `json:"suites"`
-	}
-	if err := json.Unmarshal(document, &catalog); err != nil {
-		return nil, fmt.Errorf("parse %s: %w", acceptanceSuitesPath, err)
-	}
-	if len(catalog.Suites) == 0 {
-		return nil, fmt.Errorf("%s declares no suite, so a release would require no lifecycle", acceptanceSuitesPath)
-	}
-	jobs := make([]acceptanceJob, 0, len(gatePrerequisiteJobs)+len(catalog.Suites)*3+1)
+	jobs := make([]acceptanceJob, 0, len(gatePrerequisiteJobs)+len(suites)*3+1)
 	for _, name := range gatePrerequisiteJobs {
 		jobs = append(jobs, acceptanceJob{name: name})
 	}
 	seen := make(map[string]struct{})
 	for _, minor := range strings.Split(window, ",") {
 		minorSlug := strings.ReplaceAll(minor, ".", "-")
-		for _, suite := range catalog.Suites {
+		for _, suite := range suites {
 			if !acceptanceSlugPattern.MatchString(suite.Slug) || strings.TrimSpace(suite.Name) != suite.Name || suite.Name == "" {
 				return nil, fmt.Errorf("%s declares suite %q with slug %q, which cannot name a job and its artifact", acceptanceSuitesPath, suite.Name, suite.Slug)
 			}
@@ -121,6 +109,28 @@ func requiredAcceptanceJobs(root string) ([]acceptanceJob, error) {
 		}
 	}
 	return append(jobs, acceptanceJob{name: supportGateJobName}), nil
+}
+
+type acceptanceSuite struct {
+	Name string `json:"name"`
+	Slug string `json:"slug"`
+}
+
+func readAcceptanceSuites(root string) ([]acceptanceSuite, error) {
+	document, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(acceptanceSuitesPath)))
+	if err != nil {
+		return nil, fmt.Errorf("read the acceptance suites: %w", err)
+	}
+	var catalog struct {
+		Suites []acceptanceSuite `json:"suites"`
+	}
+	if err := json.Unmarshal(document, &catalog); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", acceptanceSuitesPath, err)
+	}
+	if len(catalog.Suites) == 0 {
+		return nil, fmt.Errorf("%s declares no suite, so a release would require no lifecycle", acceptanceSuitesPath)
+	}
+	return catalog.Suites, nil
 }
 
 // acceptanceEvidence is jobs.json: which run proved the release, and each
@@ -172,9 +182,12 @@ func checkAcceptanceJobs(evidence acceptanceEvidence, required []acceptanceJob) 
 }
 
 type workflowRunRecord struct {
-	ID         int64   `json:"id"`
-	RunAttempt int     `json:"run_attempt"`
-	HeadSHA    string  `json:"head_sha"`
+	ID             int64  `json:"id"`
+	RunAttempt     int    `json:"run_attempt"`
+	HeadSHA        string `json:"head_sha"`
+	HeadRepository struct {
+		FullName string `json:"full_name"`
+	} `json:"head_repository"`
 	Event      string  `json:"event"`
 	Path       string  `json:"path"`
 	Status     string  `json:"status"`

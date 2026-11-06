@@ -1,0 +1,11 @@
+{
+  "comment": ["A catalog for the tests. It stays pending and on these digests when the real one moves."],
+  "schemaVersion": 1,
+  "baseline": [
+    {"engine": "postgresql", "line": "17.x", "image": "postgres:17-alpine@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+    {"engine": "mysql", "line": "8.4.x LTS", "image": "mysql:8.4@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+  ],
+  "added": [
+    {"engine": "postgresql", "line": "18.x", "image": "postgres:18-alpine@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", "imageCreated": "2026-01-01", "state": "pending", "leftOut": [{"suite": "migrations-mysql", "reason": "It runs MySQL alone."}]}
+  ]
+}

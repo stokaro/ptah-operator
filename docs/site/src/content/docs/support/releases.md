@@ -94,19 +94,30 @@ made; the pull request that prepares a version changes it on this page.
    gh workflow run database-lines.yml --ref master
    ```
 
-   Then read what it concluded for that exact commit:
+   Then read each `supported` line's jobs on that exact commit, by its full SHA,
+   and the jobs every line shares. A failed cell on any line fails the run's gate,
+   so the run's own conclusion cannot say which line failed:
 
    ```sh
    commit=replace-with-the-recorded-commit
-   gh run list --workflow database-lines.yml --commit "$commit" \
-     --json databaseId,event,status,conclusion
+   run="$(gh run list --workflow database-lines.yml --commit "$commit" --limit 1 \
+     --json databaseId --jq '.[0].databaseId')"
+   gh run view "$run" --json jobs \
+     --jq '.jobs[] | select(.name | contains("on PostgreSQL 18 ")) | .conclusion' | sort -u
+   gh run view "$run" --json jobs \
+     --jq '.jobs[] | select(.name | test(" / (Build Kubernetes support matrix|Verify source and generated files|Race detector|Build the shared task images)$")) | .conclusion' | sort -u
    ```
 
-   Hold the tag until a `supported` line has a `success` on the commit: the
+   Each command has to print `success` and nothing else, or the tag waits: the
    version's support table names that line. A failure on a `pending` line claims
    nothing, holds nothing and belongs in its issue. Keep the run ID with the
-   commit and the CI run. The Release workflow does not read this run, so this
-   step is what stands between a red line and a version that names it.
+   commit and the CI run.
+
+   The Release workflow cannot read this run, because a commit cannot name a run
+   started after it. Its preflight reads `evidenceRun`, the run that made each
+   `supported` line supported, the same way, and refuses a run of another
+   workflow, a commit that names another image, or a run that misses a minor or a
+   suite this commit supports. This step is what ties the line to this commit.
 4. **Check the repository settings.** Immutable releases are enabled. The
    `release` environment requires a reviewer, accepts only the exact
    `master` branch and `v*` tags, and contains the fine-grained
