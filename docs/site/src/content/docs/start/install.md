@@ -19,8 +19,9 @@ digests to choose, read [Try it locally](../try-it/) instead.
 - `kubectl`, and `jq` for the commands on the pages that follow.
 - The chart, at a version you chose deliberately. The next section is how.
 - Three image digests and one Ptah version, covered below.
-- A database the operator can reach, and an OCI registry it can read. Both are
-  needed by [First schema](../first-schema/) rather than by the install.
+- A database the operator can reach, which [First schema](../first-schema/)
+  needs rather than the install. A registry is optional and comes
+  [later on that page](../first-schema/#from-a-registry).
 
 ## Choose a version, once
 

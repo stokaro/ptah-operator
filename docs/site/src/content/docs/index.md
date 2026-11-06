@@ -9,9 +9,9 @@ head:
 ---
 
 Ptah Operator is a Kubernetes-native control plane for continuously converging
-PostgreSQL and MySQL schemas from immutable OCI artifacts. Database work runs
-in short-lived, hardened Jobs; the controller itself has no permission to read
-database Secrets.
+PostgreSQL and MySQL schemas from immutable OCI artifacts, ConfigMaps or Git.
+Database work runs in short-lived, hardened Jobs; the controller itself has no
+permission to read database Secrets.
 
 The API is currently `v1alpha1`. Treat it as an implementation preview until
 the complete database end-to-end matrix is green and a release is published.
@@ -62,7 +62,8 @@ Key safety properties:
 ## Where to go next
 
 [Install](start/install/) the chart, then give it
-[a first schema](start/first-schema/). What the operator does with that
+[a first schema](start/first-schema/): a Secret, a ConfigMap and a `PtahSchema`,
+with no registry to set up first. What the operator does with that
 schema afterwards is [operations](use/operations/), and what it refuses is
 [the security model](use/security/).
 

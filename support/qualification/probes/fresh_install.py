@@ -9,11 +9,11 @@ installation, then the first schema on the engine the run names. Each engine
 runs on its own fresh cluster, the way a reader picks one.
 
 What a reader brings is provided as a fixture and kept apart from the guide: a
-database server for that engine with an owner login, an anonymous registry the
-cluster can read, and the schema published to it with the pinned Ptah. Every
-place the guide asks the reader to substitute a value is listed in the
-transcript beside the value used. A command that differs from the published
-text is a finding, not a step.
+database server for that engine with a login that is not a superuser, and for
+the registry the guide comes to, an anonymous one the cluster can read with the
+schema published to it by the pinned Ptah. Every place the guide asks the reader
+to substitute a value is listed in the transcript beside the value used. A
+command that differs from the published text is a finding, not a step.
 
 With --upgrade-from, the walkthrough first installs the published predecessor
 through its own guide and converges the first schema on it. It then verifies
@@ -183,6 +183,15 @@ def upgrade_command(install, operations):
         raise ValueError('the operations guide no longer upgrades with --force-conflicts')
     last = '  --set-string "execution.ptahVersion=$ptah_version"\n'
     return substitute(install, [(last, last.rstrip('\n') + ' \\\n  --force-conflicts\n')])
+
+
+def starts_from_a_configmap(create):
+    """Whether a first schema guide needs no registry before its first plan.
+
+    A guide through v0.2.9 publishes an artifact first, and an upgrade drill
+    still reads that guide at the predecessor's commit.
+    """
+    return any('create configmap application-schema' in block for block in create)
 
 
 def with_values(install, path):
@@ -378,7 +387,8 @@ class Walkthrough:
         self.transcript.record(step='crds-established', count=len(established), names=sorted(established))
 
     def fixture(self):
-        """Stand up what a reader brings: a database server and an anonymous registry."""
+        """Stand up what a reader brings: a database server and an anonymous registry,
+        which a guide that starts from a ConfigMap reaches at its next step."""
         server = SERVERS[self.engine]
         images = {server['name']: os.environ[server['image']], 'registry': os.environ['GUIDE_REGISTRY_IMAGE']}
         for value in images.values():
@@ -431,20 +441,31 @@ class Walkthrough:
         raise RuntimeError(f'{engine} administration failed: {result.stderr}')
 
     def database_url(self, engine):
-        """Create the owner login the databases page asks for, and its URL."""
+        """Create the login the first schema page and the databases page ask
+        for, with those privileges and no others, and its URL."""
         password = self.passwords['application']
         if engine == 'postgresql':
-            self.admin_sql(engine, f"CREATE ROLE application LOGIN PASSWORD '{password}';\nCREATE DATABASE application OWNER application;\n")
+            self.admin_sql(engine, f"CREATE ROLE application LOGIN PASSWORD '{password}' NOSUPERUSER NOCREATEDB NOCREATEROLE;\n"
+                                   "CREATE DATABASE application;\n"
+                                   "REVOKE ALL ON DATABASE application FROM PUBLIC;\n"
+                                   "GRANT CONNECT ON DATABASE application TO application;\n"
+                                   "\\c application\n"
+                                   "GRANT USAGE, CREATE ON SCHEMA public TO application;\n")
             return f'postgres://application:{password}@postgres.{self.fixtures}.svc.cluster.local:5432/application?sslmode=disable'
         self.admin_sql(engine, f"CREATE DATABASE application;\nCREATE USER 'application'@'%' IDENTIFIED BY '{password}';\n"
-                               "GRANT ALL PRIVILEGES ON application.* TO 'application'@'%';\n")
+                               "GRANT SELECT, CREATE, ALTER, DROP, INDEX, REFERENCES ON application.* TO 'application'@'%';\n")
         return f'mysql://application:{password}@tcp(mysql.{self.fixtures}.svc.cluster.local:3306)/application'
 
     def publish(self, engine):
-        """Publish the reader's schema with the pinned Ptah, through a port-forward."""
+        """Publish the reader's schema with the pinned Ptah, through a port-forward.
+
+        A guide that starts from a ConfigMap has had the reader write the file.
+        One that starts from an artifact takes it as given.
+        """
         dialect = 'postgres' if engine == 'postgresql' else 'mysql'
-        schema = self.work / f'schema-{engine}.sql'
-        schema.write_text('CREATE TABLE customers (\n  id BIGINT PRIMARY KEY,\n  email VARCHAR(320) NOT NULL\n);\n')
+        schema = self.work / 'schema.sql'
+        if not schema.exists():
+            schema.write_text('CREATE TABLE customers (\n  id BIGINT PRIMARY KEY,\n  email VARCHAR(320) NOT NULL\n);\n')
         log = (self.work / f'registry-forward-{engine}.log').open('w')
         forward = subprocess.Popen(['kubectl', '-n', self.fixtures, 'port-forward', 'service/registry', '0:5000'],
                                    stdout=log, stderr=subprocess.STDOUT, env=self.env)
@@ -482,8 +503,101 @@ class Walkthrough:
         url_file = self.work / f'database-url-{engine}'
         url_file.write_text(self.database_url(engine))
         url_file.chmod(0o600)
-        reference = self.publish(engine)
+        from_configmap = starts_from_a_configmap(create)
+        if from_configmap:
+            self.create_from_configmap(engine, create, url_file)
+        else:
+            self.create_from_artifact(engine, create, url_file)
+        self.wait_phase('AwaitingApproval', 'ApprovalRequired')
+
+        self.transcript.run(f'install-plugin-{engine}', self.plugin_install(), self.work, self.env, source='use/read-a-plan.md#install')
+        for index, block in enumerate(stops):
+            # kubectl ptah approve shows the plan and asks for a decision; the
+            # reader types yes. A guide from before it created the approval
+            # with kubectl create.
+            typed = 'yes\n' if 'kubectl ptah approve ' in block else None
+            self.transcript.run(f'waits-for-you-{engine}-{index}', block, self.work, self.env,
+                                source='start/first-schema.md#it-stops-and-waits-for-you', typed=typed)
+            if typed or 'kubectl -n application create -f -' in block:
+                self.wait_condition('InSync', 'True', 'ScopedConverged')
+        self.require_converged(engine)
+        if from_configmap:
+            self.next_version(engine, page)
+            self.move_to_artifact(engine, page)
+            self.next_artifact(engine, page)
+            self.require_converged(engine)
+
+    def require_converged(self, engine):
+        conditions = self.kubectl('-n', 'application', 'get', 'ptahschema', 'application', '-o', 'json')
+        status = json.loads(conditions.stdout)['status']
+        in_sync = [c for c in status.get('conditions', []) if c['type'] == 'InSync']
+        if not in_sync or in_sync[0]['status'] != 'True' or in_sync[0]['reason'] != 'ScopedConverged':
+            raise RuntimeError(f'{engine}: the schema did not converge: {in_sync}')
+        if not self.has_customers(engine):
+            raise RuntimeError(f'{engine}: the database has no customers table after convergence')
+        self.transcript.record(step=f'database-{engine}', table='customers', present=True, inSync=in_sync[0])
+
+    def create_from_configmap(self, engine, create, url_file):
+        """The guide's first run: a Secret, a ConfigMap and the resource."""
+        secret, schema, resource = create
+        secret = substitute(secret, [('DATABASE_URL_FILE=/path/to/private/database-url\n', f'DATABASE_URL_FILE={shlex.quote(str(url_file))}\n')])
+        self.transcript.record(step=f'substitute-{engine}', databaseURLFile='private, mode 0600')
+        self.transcript.run(f'create-reads-{engine}', secret, self.work, self.env, source='start/first-schema.md#create-what-the-schema-reads')
+        self.transcript.run(f'create-schema-{engine}', schema, self.work, self.env, source='start/first-schema.md#create-what-the-schema-reads')
+        if engine == 'mysql':
+            resource = substitute(resource, [('engine: PostgreSQL\n', 'engine: MySQL\n')])
+            self.transcript.record(step='substitute-mysql', added='engine: MySQL, as the guide says for a MySQL database')
+        self.transcript.run(f'apply-{engine}', resource, self.work, self.env, source='start/first-schema.md#create-what-the-schema-reads')
+
+    def next_version(self, engine, page):
+        """The guide's change to the file: a new plan, approved like the first."""
+        block = blocks(page, 'The next version')
+        if len(block) != 1 or 'kubectl ptah approve ' not in block[0]:
+            raise ValueError('the guide no longer changes the schema in one block ending in an approval')
+        self.transcript.run(f'next-version-{engine}', block[0], self.work, self.env,
+                            source='start/first-schema.md#the-next-version', typed='yes\n')
+        self.wait_condition('InSync', 'True', 'ScopedConverged')
+
+    def move_to_artifact(self, engine, page):
+        """The guide's next step: the same schema, moved to an artifact.
+
+        The artifact holds what the database already has, so the operator has
+        nothing to plan and the schema has to come back in sync on its own.
+        """
+        section = blocks(page, '#from-a-registry')
+        policy = [block for block in section if 'create configmap ptah-verification-policy' in block]
+        if len(policy) != 1:
+            raise ValueError('the guide no longer creates the verification policy once')
+        self.examples()
         manifest = 'examples/ptahschema.yaml' if engine == 'postgresql' else 'examples/ptahschema-mysql.yaml'
+        reference = self.publish(engine)
+        self.fill_artifact(engine, manifest, reference)
+        self.transcript.run(f'create-policy-{engine}', policy[0], self.work, self.env, source='start/first-schema.md#from-a-registry')
+        self.apply_and_stop_watching(engine, manifest, section)
+        self.wait_condition('ArtifactVerified', 'True', 'PolicySatisfied')
+        self.wait_condition('InSync', 'True', 'ScopedConverged')
+
+    def next_artifact(self, engine, page):
+        """A change to the schema from then on: a new artifact, and its plan.
+
+        The fixture pushes it, through its port-forward, in place of the guide's
+        push; set-source and the approval run as written.
+        """
+        block = [b for b in blocks(page, '#from-a-registry') if 'kubectl ptah set-source ' in b]
+        if len(block) != 1:
+            raise ValueError('the guide no longer moves to a new artifact in one block')
+        push = re.search(r'^REF=\$\(ptah schema push .*?\)\n', block[0], re.S | re.M)
+        if not push:
+            raise ValueError('the guide no longer reads the reference from its push')
+        schema = self.work / 'schema.sql'
+        schema.write_text(substitute(schema.read_text(), [('  name VARCHAR(200)\n', '  name VARCHAR(200),\n  phone VARCHAR(40)\n')]))
+        reference = self.publish(engine)
+        self.transcript.record(step=f'substitute-next-artifact-{engine}', ociRef=reference)
+        self.transcript.run(f'next-artifact-{engine}', block[0].replace(push[0], f'REF={shlex.quote(reference)}\n'),
+                            self.work, self.env, source='start/first-schema.md#from-a-registry', typed='yes\n')
+        self.wait_condition('InSync', 'True', 'ScopedConverged')
+
+    def fill_artifact(self, engine, manifest, reference):
         path = self.work / manifest
         text = path.read_text()
         placeholder = re.search(r'ociRef: (oci://\S+@sha256:<digest>)', text)
@@ -498,36 +612,25 @@ class Walkthrough:
                                added='desired.transport.plainHTTP=true for the anonymous plain-HTTP fixture registry',
                                databaseURLFile='private, mode 0600')
 
+    def apply_and_stop_watching(self, engine, manifest, candidates):
+        """Run the block that applies a manifest, without the watch that follows.
+
+        A watch never returns; the reader stops it once the phase shows.
+        """
+        applying = [block for block in candidates if f'kubectl apply -f {manifest}\n' in block]
+        if len(applying) != 1 or 'get ptahschema application -w' not in applying[0]:
+            raise ValueError(f'the guide no longer applies {manifest} and watches the schema')
+        self.transcript.run(f'apply-{engine}', applying[0].split('kubectl -n application get ptahschema application -w')[0],
+                            self.work, self.env, source=f'start/first-schema.md (apply {manifest}; the watch is bounded)')
+
+    def create_from_artifact(self, engine, create, url_file):
+        """A guide that publishes an artifact first, as the one through v0.2.9."""
+        reference = self.publish(engine)
+        manifest = 'examples/ptahschema.yaml' if engine == 'postgresql' else 'examples/ptahschema-mysql.yaml'
+        self.fill_artifact(engine, manifest, reference)
         secret_block = substitute(create[0], [('DATABASE_URL_FILE=/path/to/private/database-url\n', f'DATABASE_URL_FILE={shlex.quote(str(url_file))}\n')])
         self.transcript.run(f'create-reads-{engine}', secret_block, self.work, self.env, source='start/first-schema.md#create-what-the-schema-reads')
-        apply_index = 1 if engine == 'postgresql' else 2
-        apply_block = create[apply_index]
-        if f'kubectl apply -f {manifest}\n' not in apply_block or 'get ptahschema application -w' not in apply_block:
-            raise ValueError(f'the guide no longer applies {manifest} and watches the schema')
-        # A watch never returns; the reader stops it once the phase shows. This
-        # runs the apply as written and then waits for that phase.
-        self.transcript.run(f'apply-{engine}', apply_block.split('kubectl -n application get ptahschema application -w')[0],
-                            self.work, self.env, source=f'start/first-schema.md (apply {manifest}; the watch is bounded)')
-        self.wait_phase('AwaitingApproval', 'ApprovalRequired')
-
-        self.transcript.run(f'install-plugin-{engine}', self.plugin_install(), self.work, self.env, source='use/read-a-plan.md#install')
-        for index, block in enumerate(stops):
-            # kubectl ptah approve shows the plan and asks for a decision; the
-            # reader types yes. A guide from before it created the approval
-            # with kubectl create.
-            typed = 'yes\n' if 'kubectl ptah approve ' in block else None
-            self.transcript.run(f'waits-for-you-{engine}-{index}', block, self.work, self.env,
-                                source='start/first-schema.md#it-stops-and-waits-for-you', typed=typed)
-            if typed or 'kubectl -n application create -f -' in block:
-                self.wait_condition('InSync', 'True', 'ScopedConverged')
-        conditions = self.kubectl('-n', 'application', 'get', 'ptahschema', 'application', '-o', 'json')
-        status = json.loads(conditions.stdout)['status']
-        in_sync = [c for c in status.get('conditions', []) if c['type'] == 'InSync']
-        if not in_sync or in_sync[0]['status'] != 'True' or in_sync[0]['reason'] != 'ScopedConverged':
-            raise RuntimeError(f'{engine}: the schema did not converge: {in_sync}')
-        if not self.has_customers(engine):
-            raise RuntimeError(f'{engine}: the database has no customers table after convergence')
-        self.transcript.record(step=f'database-{engine}', table='customers', present=True, inSync=in_sync[0])
+        self.apply_and_stop_watching(engine, manifest, create[1:])
 
     def has_customers(self, engine):
         tables = self.admin_sql(engine, "SELECT table_name FROM information_schema.tables WHERE table_name = 'customers';\n"

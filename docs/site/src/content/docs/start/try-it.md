@@ -9,7 +9,7 @@ created. It touches nothing you already run.
 
 Read it first if you want to know whether this operator fits before deciding
 how to run it against your own database. [Install](../install/) is the other
-direction: your cluster, your database, your registry.
+direction: your cluster and your database.
 
 ## What you need
 

@@ -6,8 +6,8 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from fresh_install import (SERVERS, Transcript, blocks, converged_after, fixture_deployment, runtime_findings, substitute,
-                           upgrade_command)
+from fresh_install import (SERVERS, Transcript, blocks, converged_after, fixture_deployment, runtime_findings,
+                           starts_from_a_configmap, substitute, upgrade_command)
 
 DOCS = Path(__file__).resolve().parents[3] / 'docs/site/src/content/docs'
 
@@ -231,15 +231,42 @@ class PublishedGuideTest(unittest.TestCase):
     def test_the_first_schema_guide_has_the_blocks_the_walkthrough_runs(self):
         page = self.read('start/first-schema.md')
         create = blocks(page, 'Create what the schema reads')
+        self.assertTrue(starts_from_a_configmap(create))
         self.assertEqual(len(create), 3)
         substitute(create[0], [('DATABASE_URL_FILE=/path/to/private/database-url\n', 'DATABASE_URL_FILE=x\n')])
-        self.assertIn('kubectl apply -f examples/ptahschema.yaml\n', create[1])
-        self.assertIn('kubectl apply -f examples/ptahschema-mysql.yaml\n', create[2])
-        for block in create[1:]:
-            self.assertIn('kubectl -n application get ptahschema application -w', block)
+        self.assertIn('kubectl -n application create configmap application-schema', create[1])
+        self.assertIn('CREATE TABLE customers', create[1])
+        substitute(create[2], [('engine: PostgreSQL\n', 'engine: MySQL\n')])
+        self.assertIn('kubectl -n application wait ptahschema/application', create[2])
+        following = blocks(page, 'The next version')
+        self.assertEqual(len(following), 1)
+        self.assertIn('kubectl ptah approve schema/application -n application --wait', following[0])
+        substitute(following[0], [('  name VARCHAR(200)\n', '  name VARCHAR(200),\n  phone VARCHAR(40)\n')])
+        registry = blocks(page, '#from-a-registry')
+        moves = [block for block in registry if 'kubectl ptah set-source ' in block]
+        self.assertEqual(len(moves), 1)
+        self.assertRegex(moves[0], r'(?ms)^REF=\$\(ptah schema push .*?\)\n')
+        self.assertEqual(sum('create configmap ptah-verification-policy' in block for block in registry), 1)
+        self.assertEqual(sum('kubectl apply -f examples/ptahschema.yaml\n' in block for block in registry), 1)
+        self.assertEqual(sum('kubectl apply -f examples/ptahschema-mysql.yaml\n' in block for block in registry), 1)
+        for block in registry:
+            if 'kubectl apply -f' in block:
+                self.assertIn('kubectl -n application get ptahschema application -w', block)
         stops = blocks(page, 'It stops, and waits for you')
         self.assertEqual(len(stops), 3)
         self.assertTrue(any('kubectl ptah approve schema/application -n application' in block for block in stops))
+
+    def test_a_guide_through_v0_2_9_still_reads_as_starting_from_an_artifact(self):
+        # An upgrade drill reads the predecessor's guide at its own commit: its
+        # opening created a verification policy and applied an example.
+        predecessor = [
+            'DATABASE_URL_FILE=/path/to/private/database-url\nkubectl create namespace application\n'
+            'kubectl -n application create configmap ptah-verification-policy \\\n'
+            '  --from-file=policy.yaml=examples/verification-policy.yaml\n',
+            'kubectl apply -f examples/ptahschema.yaml\n',
+            'kubectl apply -f examples/ptahschema-mysql.yaml\n',
+        ]
+        self.assertFalse(starts_from_a_configmap(predecessor))
 
     def test_the_plugin_install_has_the_placeholders_the_walkthrough_fills(self):
         block = ''.join(blocks(self.read('use/read-a-plan.md'), 'Install it'))
