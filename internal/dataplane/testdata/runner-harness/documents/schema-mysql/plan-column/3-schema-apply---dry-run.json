@@ -1,0 +1,12 @@
+{
+  "contract_version": 4,
+  "command": "schema apply",
+  "outcome": "dry-run",
+  "plan_name": "plan_475d4bfc3e05",
+  "plan_digest": "sha256:2eac772983d20731d143feaf40b021b6adaf56c67dae317ace9beebe969b4634",
+  "units": [
+    {
+      "sql": "-- Modify table: e2e_widgets\nALTER TABLE `e2e_widgets` ADD COLUMN `note` varchar(255)"
+    }
+  ]
+}

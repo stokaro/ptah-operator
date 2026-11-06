@@ -1,0 +1,17 @@
+{
+  "source": "git",
+  "reference": "git+https://e2e-git.ptah-test.svc/acme/app.git",
+  "commit": "7c63b477b7bc3d4eaf899d687d57d88fab63fedc",
+  "path": "db/schema.sql",
+  "content_digest": "sha256:51fdf83bf045136ef654e793dd439ad572c8ca52250d7c5f824ecf70e216f518",
+  "files": [
+    {
+      "path": "schema.sql",
+      "size": 99,
+      "sha256": "7b74d1928b393854a295ccbf584d160bf8c1aa46937a949b3159b252616fff08"
+    }
+  ],
+  "written": [
+    "/fetch-work/ptah-git-fetch-1639669697/schema.sql"
+  ]
+}

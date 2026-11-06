@@ -1,0 +1,2 @@
+Pulled oci://harness-registry:5000/schemas/policy-existing-table@sha256:9c8cd6872c0894842766fb795110466bdc7cbedfa6ee44af1c12e154d6965c07 to /source/schema.hcl
+Digest: sha256:9c8cd6872c0894842766fb795110466bdc7cbedfa6ee44af1c12e154d6965c07

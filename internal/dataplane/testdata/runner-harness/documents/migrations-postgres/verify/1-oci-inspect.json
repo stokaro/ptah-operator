@@ -1,0 +1,53 @@
+{
+  "reference": "oci://harness-registry:5000/migrations/migrations-postgres@sha256:00c31e847d5da8efc260ae6c21e84f9a94c0ebe243aae7a9aa18193064bb96be",
+  "pinned_reference": "oci://harness-registry:5000/migrations/migrations-postgres@sha256:00c31e847d5da8efc260ae6c21e84f9a94c0ebe243aae7a9aa18193064bb96be",
+  "digest": "sha256:00c31e847d5da8efc260ae6c21e84f9a94c0ebe243aae7a9aa18193064bb96be",
+  "media_type": "application/vnd.oci.image.manifest.v1+json",
+  "size": 2074,
+  "artifact_type": "application/vnd.stokaro.ptah.migrations.v1",
+  "annotations": {
+    "io.stokaro.ptah.kind": "application/vnd.stokaro.ptah.migrations.v1",
+    "io.stokaro.ptah.migration-format": "auto",
+    "io.stokaro.ptah.version": "0.18.0",
+    "org.opencontainers.image.created": "2026-11-06T16:38:18Z",
+    "org.opencontainers.image.revision": "6e1d430e51312de325a8f0238e601547a6c473d5"
+  },
+  "layers": [
+    {
+      "name": "0000000001_create_widgets.down.sql",
+      "media_type": "application/vnd.stokaro.ptah.migration.file.v1",
+      "size": 34,
+      "digest": "sha256:29bb9461463236d02007d44c625d48577f682fbbbc4a56906ca3acaca733b969"
+    },
+    {
+      "name": "0000000001_create_widgets.up.sql",
+      "media_type": "application/vnd.stokaro.ptah.migration.file.v1",
+      "size": 187,
+      "digest": "sha256:2b419c169de3fadfeee8e0d89d565aa716e54c3a11acde99050c40f580f512b6"
+    },
+    {
+      "name": "0000000002_add_widget_color.down.sql",
+      "media_type": "application/vnd.stokaro.ptah.migration.file.v1",
+      "size": 53,
+      "digest": "sha256:75d1f48b4508521cb07cdd6ad2c4f8d633c183ecf99b3218f22f70599dd98585"
+    },
+    {
+      "name": "0000000002_add_widget_color.up.sql",
+      "media_type": "application/vnd.stokaro.ptah.migration.file.v1",
+      "size": 176,
+      "digest": "sha256:7dfd4c547143d1118f4cd8946e0e7aea3d40b23c48b9ead1ecc710b2cff65afc"
+    },
+    {
+      "name": "0000000003_recolor_first_widget.down.sql",
+      "media_type": "application/vnd.stokaro.ptah.migration.file.v1",
+      "size": 63,
+      "digest": "sha256:84e32da709dbfad84e75285d122952e6c9ce03958781e7c6e56a03b655435b61"
+    },
+    {
+      "name": "0000000003_recolor_first_widget.up.sql",
+      "media_type": "application/vnd.stokaro.ptah.migration.file.v1",
+      "size": 62,
+      "digest": "sha256:c50d9a9d36bb9ae45af4c5793bcc05013c75dbd9b48b1ef76ad7f6c8dca1cd41"
+    }
+  ]
+}

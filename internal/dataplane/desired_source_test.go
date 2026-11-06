@@ -9,10 +9,9 @@ import (
 	"github.com/stokaro/ptah-operator/internal/dataplane"
 )
 
-// desiredSourceFixture is one file of testdata/desired-source, as the Ptah
-// v0.18.0 release image,
-// ghcr.io/stokaro/ptah@sha256:9f8797986124add44d0232a17cd17e6f03cfec76b1711efc53c169483b7b4303,
-// printed it on standard output. validate-* is `schema validate
+// desiredSourceFixture is one file of testdata/desired-source, as the image
+// support/ptah.json pins printed it on standard output, and `make
+// runner-harness-write` regenerates them. validate-* is `schema validate
 // --dialect=<engine>` with PTAH_SCHEMA_FILE and no network. scratch-* is
 // `migrations status --db-url=sqlite:///:memory: --json` with
 // PTAH_MIGRATIONS_DIR and no network. drift-*, plan-* and status-* are the

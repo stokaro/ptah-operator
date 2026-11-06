@@ -1,0 +1,12 @@
+{
+  "contract_version": 4,
+  "command": "schema apply",
+  "outcome": "applied",
+  "plan_name": "plan_61db41e6cdef",
+  "plan_digest": "sha256:509baf411c742268b425c73c3625d886368badb2ca275c7cf018ed339b651776",
+  "units": [
+    {
+      "sql": "CREATE POLICY \"e2e_policy_notes_owner\" ON \"e2e_policy_notes\"\n    USING (owner_name = current_user)"
+    }
+  ]
+}

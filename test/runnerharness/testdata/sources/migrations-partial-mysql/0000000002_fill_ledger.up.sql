@@ -1,0 +1,9 @@
+CREATE TABLE ledger (
+    id INTEGER PRIMARY KEY
+);
+
+INSERT INTO ledger VALUES (1);
+
+INSERT INTO ledger VALUES (1);
+
+INSERT INTO ledger VALUES (2);

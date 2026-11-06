@@ -1,0 +1,15 @@
+{
+  "format_version": 1,
+  "name": "plan_1278622e7843",
+  "dialect": "postgres",
+  "from_fingerprint": "sha256:b53f16e6e4f3187bd68e99db9d33403d529c47336604bfeaeb46582515f9efa8",
+  "to_fingerprint": "sha256:1fbd9b350cb53343c205bb72b5502349a2fb826a9cfc4997b68947d11a402fb1",
+  "destructive": false,
+  "statements": [
+    {
+      "sql": "CREATE TABLE \"e2e_widgets\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" text NOT NULL\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    }
+  ]
+}

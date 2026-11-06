@@ -1,0 +1,28 @@
+{
+  "current_version": 1,
+  "applied_migrations": [
+    1
+  ],
+  "applied_migration_keys": [
+    "1"
+  ],
+  "pending_migrations": [],
+  "out_of_order_migrations": [],
+  "total_migrations": 1,
+  "has_pending_changes": false,
+  "contract_version": 2,
+  "command": "migrations status",
+  "migrations": [
+    {
+      "version": 1,
+      "version_key": "1",
+      "description": "Create Parts",
+      "checksum": "7e68677f8835d267f2e134414a1b79b092490248199efcbcd92e31685f75fdc7",
+      "applied_checksum": "7e68677f8835d267f2e134414a1b79b092490248199efcbcd92e31685f75fdc7",
+      "applied_at": "2026-11-06T16:39:55Z",
+      "execution_time_ms": 8,
+      "state": "applied"
+    }
+  ],
+  "current_version_key": "1"
+}

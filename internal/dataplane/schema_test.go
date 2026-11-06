@@ -220,11 +220,9 @@ func TestDecodeSchemaApplyRefusesWhatItCannotAccountFor(t *testing.T) {
 	}
 }
 
-// The two fixtures are the documents the Ptah v0.18.0 release image,
-// ghcr.io/stokaro/ptah@sha256:9f8797986124add44d0232a17cd17e6f03cfec76b1711efc53c169483b7b4303,
-// printed for one added column on PostgreSQL 17: `schema plan --output
-// /w/plan.json --json` and `schema apply --plan /w/plan.json --dry-run --json`,
-// stored as printed. v0.13.0 printed version 1 of both, v0.14.0 version 2 of
+// The two fixtures are the documents the image support/ptah.json pins printed
+// for one added column on PostgreSQL 17, the plan read and the plan validation a
+// Plan runs, stored as printed by `make runner-harness-write`. v0.13.0 printed version 1 of both, v0.14.0 version 2 of
 // both, v0.15.0 through v0.17.0 plan version 2 and apply version 3, and
 // v0.18.0 plan version 3 and apply version 4, each naming its command. A
 // decoder held only to fixtures written here would not have noticed any of
@@ -240,7 +238,7 @@ func TestDecodeSchemaReportsPtahPrinted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DecodeSchemaPlan() refused what Ptah printed: %v", err)
 	}
-	if planned.Outcome != dataplane.SchemaPlanOutcomeChanges || planned.PlanPath != "/w/plan.json" {
+	if planned.Outcome != dataplane.SchemaPlanOutcomeChanges || !strings.HasSuffix(planned.PlanPath, "/first.plan.json") {
 		t.Fatalf("plan report = %+v", planned)
 	}
 	dryRun, err := os.ReadFile("testdata/schema-apply-dry-run-report.json")

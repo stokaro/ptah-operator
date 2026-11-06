@@ -2,10 +2,10 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "failed",
-  "plan_name": "plan_90966f017e13",
-  "plan_digest": "sha256:9f7c11f1656cf751d6beabf42fe5ceeded5eb0ff51647dd69c3e6c66d68a62ce",
+  "plan_name": "plan_4b43ac3a06de",
+  "plan_digest": "sha256:acf7ceb9516605364d756ddbff3b8b916b1a1895b62a97f86457d7709387de23",
   "error": {
     "kind": "database_unreachable",
-    "message": "connect to --db-url: failed to ping database: dial tcp: lookup fk760-no-such-host.invalid on 127.0.0.11:53: no such host"
+    "message": "connect to --db-url: failed to ping database: dial tcp: lookup harness-no-such-host.invalid on 127.0.0.11:53: server misbehaving"
   }
 }

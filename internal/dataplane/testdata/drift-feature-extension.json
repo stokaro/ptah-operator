@@ -20,6 +20,11 @@
       "observed": 2
     },
     {
+      "kind": "constraints",
+      "desired": 1,
+      "observed": 1
+    },
+    {
       "kind": "ptah.run/pgextension/extension-change",
       "desired": 1,
       "observed": 0

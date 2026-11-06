@@ -4,6 +4,6 @@
   "outcome": "failed",
   "error": {
     "kind": "permission_denied",
-    "message": "connect to --db-url: failed to ping database: failed to connect to `user=noconnect database=nc`: 172.20.0.2:5432 (fk760-pg): server error: FATAL: permission denied for database \"nc\" (SQLSTATE 42501)"
+    "message": "connect to --db-url: failed to ping database: failed to connect to `user=noconnect database=harness_refused`: 172.20.0.2:5432 (harness-postgres): server error: FATAL: permission denied for database \"harness_refused\" (SQLSTATE 42501)"
   }
 }

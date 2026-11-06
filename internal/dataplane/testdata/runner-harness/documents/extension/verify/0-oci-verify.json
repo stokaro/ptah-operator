@@ -1,0 +1,9 @@
+{
+  "reference": "oci://harness-registry:5000/schemas/extension@sha256:826b0841ee3278c741e0f4cc256bbd3212f4729989c0b2fd1821e86720b160d2",
+  "digest": "sha256:826b0841ee3278c741e0f4cc256bbd3212f4729989c0b2fd1821e86720b160d2",
+  "satisfied": [
+    "require_digest_pin",
+    "artifact_types"
+  ],
+  "findings": []
+}

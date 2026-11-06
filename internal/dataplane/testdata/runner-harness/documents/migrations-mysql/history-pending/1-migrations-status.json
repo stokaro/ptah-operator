@@ -1,0 +1,42 @@
+{
+  "current_version": 0,
+  "applied_migrations": [],
+  "pending_migrations": [
+    1,
+    2,
+    3
+  ],
+  "pending_migration_keys": [
+    "1",
+    "2",
+    "3"
+  ],
+  "out_of_order_migrations": [],
+  "total_migrations": 3,
+  "has_pending_changes": true,
+  "contract_version": 2,
+  "command": "migrations status",
+  "migrations": [
+    {
+      "version": 1,
+      "version_key": "1",
+      "description": "Create Widgets",
+      "checksum": "c8df07c7da0d3d1f7526202a8a3bbb4a8f82e138fcbf239c65d723b2c22f1f57",
+      "state": "pending"
+    },
+    {
+      "version": 2,
+      "version_key": "2",
+      "description": "Add Widget Color",
+      "checksum": "6e477d09d93468be12290fbc6085b39a9112d46e726585aece1fc4195d9d4f34",
+      "state": "pending"
+    },
+    {
+      "version": 3,
+      "version_key": "3",
+      "description": "Recolor First Widget",
+      "checksum": "c50d9a9d36bb9ae45af4c5793bcc05013c75dbd9b48b1ef76ad7f6c8dca1cd41",
+      "state": "pending"
+    }
+  ]
+}

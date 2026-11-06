@@ -1,0 +1,12 @@
+{
+  "contract_version": 4,
+  "command": "schema apply",
+  "outcome": "applied",
+  "plan_name": "plan_39728415ad91",
+  "plan_digest": "sha256:36a62c9505da0b854e1c48a8df799586abcaef5baf36c362d5aaeddeaf33eaa2",
+  "units": [
+    {
+      "sql": "CREATE TABLE \"e2e_git_items\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" text NOT NULL\n)"
+    }
+  ]
+}

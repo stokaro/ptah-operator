@@ -1,0 +1,15 @@
+{
+  "format_version": 1,
+  "name": "plan_cd698c60f55a",
+  "dialect": "postgres",
+  "from_fingerprint": "sha256:f6ca8486111bee58d99c7f9a5ea92e302e655f7e177c7e43fe5dd0f39e7d8af6",
+  "to_fingerprint": "sha256:58717f183f30327018c682c307394a6ba4b89c3dc6f2f4254b065b853692afa4",
+  "destructive": false,
+  "statements": [
+    {
+      "sql": "-- Add/modify columns for table: e2e_widgets\nALTER TABLE \"e2e_widgets\" ADD COLUMN \"note\" text",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    }
+  ]
+}

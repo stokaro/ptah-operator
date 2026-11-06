@@ -3,6 +3,6 @@
   "command": "migrations status",
   "error": {
     "kind": "authentication_failed",
-    "message": "error connecting to database: failed to ping database: failed to connect to `user=nobody database=t_new_tbl`: 172.20.0.2:5432 (fk760-pg): failed SASL auth: FATAL: password authentication failed for user \"nobody\" (SQLSTATE 28P01)"
+    "message": "error connecting to database: failed to ping database: failed to connect to `user=nobody database=harness_fault`: 172.20.0.2:5432 (harness-postgres): failed SASL auth: FATAL: password authentication failed for user \"nobody\" (SQLSTATE 28P01)"
   }
 }

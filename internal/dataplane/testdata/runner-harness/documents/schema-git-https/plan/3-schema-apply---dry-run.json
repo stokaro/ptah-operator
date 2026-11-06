@@ -1,0 +1,12 @@
+{
+  "contract_version": 4,
+  "command": "schema apply",
+  "outcome": "dry-run",
+  "plan_name": "plan_401aed2aa9fa",
+  "plan_digest": "sha256:94a5614cbcfcd39b5a4a352785113207857e2e19ea0e1ed5745d7b702cca0f88",
+  "units": [
+    {
+      "sql": "CREATE TABLE \"e2e_git_items\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" text NOT NULL,\n  \"sku\" text\n)"
+    }
+  ]
+}

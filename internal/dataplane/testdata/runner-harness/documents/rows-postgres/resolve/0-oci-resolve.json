@@ -1,0 +1,7 @@
+{
+  "reference": "oci://harness-registry:5000/schemas/rows-postgres:v1",
+  "pinned_reference": "oci://harness-registry:5000/schemas/rows-postgres@sha256:498a5f654f1d9752f6b4c3d963c07846983830fe40658106ae742d6bc582de28",
+  "digest": "sha256:498a5f654f1d9752f6b4c3d963c07846983830fe40658106ae742d6bc582de28",
+  "media_type": "application/vnd.oci.image.manifest.v1+json",
+  "size": 1042
+}

@@ -1,0 +1,14 @@
+{
+  "contract_version": 3,
+  "command": "schema plan",
+  "outcome": "refused",
+  "refusal": {
+    "code": "protected-table",
+    "tables": [
+      "regions"
+    ]
+  },
+  "error": {
+    "message": "refusing to change protected table(s) regions: a protected table is fenced off from the declarative path, which has no override; drop the entry to plan the change, or write the rows as a migration with `ptah migrations data --allow-prod`"
+  }
+}

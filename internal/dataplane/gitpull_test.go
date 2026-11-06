@@ -13,32 +13,22 @@ import (
 	"github.com/stokaro/ptah-operator/internal/dataplane"
 )
 
-// The directories under testdata/git-pull are the pulls the Ptah v0.18.0
-// release image,
-// ghcr.io/stokaro/ptah@sha256:9f8797986124add44d0232a17cd17e6f03cfec76b1711efc53c169483b7b4303,
-// ran against the end-to-end Git server (test/e2e/gitserver), serving the
-// repository test/e2e/gitrepo builds from gitRepositorySpec(2) with the keys
-// newGitServerKeys generates, on a Docker network that names it
-// e2e-git.ptah-test.svc. The server took the flags the git-sources phase gives
-// it, except that it listened on 443 and 22 itself where the phase's Service
-// maps those ports, so the URLs carry no port and the known-hosts line matches.
-// The two refused-commit directories read gitRewrittenSpec() instead, whose
+// The directories under testdata/git-pull are the pulls the image
+// support/ptah.json pins ran against the end-to-end Git server
+// (test/e2e/gitserver), and `make runner-harness-write` regenerates them. The
+// server holds the repository gitfixture.RepositorySpec(2) describes, with keys
+// generated for the run, on a Docker network that names it
+// e2e-git.ptah-test.svc. It takes the flags the git-sources phase gives it,
+// except that it listens on 443 and 22 itself where the phase's Service maps
+// those ports, so the URLs carry no port and the known-hosts line matches. The
+// two refused-commit directories read gitfixture.RewrittenSpec() instead, whose
 // rewrite takes the old tip of main off the server.
 //
-// Each pull ran in a container shaped like the fetch container, with the
-// contents of the directory's args file after the image name:
-//
-//	docker run --rm --network <network> --read-only --user 65532:65532 \
-//	  --cap-drop ALL --security-opt no-new-privileges \
-//	  --tmpfs /fetch-work:rw,mode=0700,uid=65532,gid=65532 \
-//	  --env HOME=/fetch-work --env TMPDIR=/fetch-work \
-//	  --env PTAH_GIT_PASSWORD | --env PTAH_GIT_SSH_KEY_FILE=/credentials/git/ssh-key \
-//	  --mount type=volume,src=<credentials>,dst=/credentials,readonly \
-//	  <image> <args>
-//
-// stdout, stderr and exit-code are what it printed and how it exited, stored as
-// printed: nothing in them names the capturing machine, so nothing was removed.
-// The keys and the token were generated for the capture and discarded.
+// Each pull runs in a container with the shape of a Job's fetch container, with
+// the contents of the directory's args file as its arguments. stdout, stderr and
+// exit-code are what it printed and how it exited, stored as printed: nothing in
+// them names the capturing machine, so nothing was removed. The keys and the
+// token are generated for the run and discarded.
 //
 // They are captured rather than written because the question is what Ptah
 // emits, and a document written here could only prove that the reader agrees

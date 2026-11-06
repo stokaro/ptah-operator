@@ -572,6 +572,30 @@ func TestVerifyWorkflowRejectsSupportGateMutations(t *testing.T) {
 			old: "    needs: [kubernetes-e2e]\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n",
 			new: "    needs: [kubernetes-e2e, kubernetes-support-gate]\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n",
 		},
+		"conditional runner harness": {
+			old: "  runner-harness:\n    name: Runner against the pinned Ptah image\n    runs-on: ubuntu-latest\n",
+			new: "  runner-harness:\n    name: Runner against the pinned Ptah image\n    if: github.event_name == 'pull_request'\n    runs-on: ubuntu-latest\n",
+		},
+		"runner harness behind another job": {
+			old: "  runner-harness:\n    name: Runner against the pinned Ptah image\n    runs-on: ubuntu-latest\n",
+			new: "  runner-harness:\n    name: Runner against the pinned Ptah image\n    needs: [verify]\n    runs-on: ubuntu-latest\n",
+		},
+		"renamed runner harness": {
+			old: "    name: Runner against the pinned Ptah image\n",
+			new: "    name: Runner against the pinned Ptah image, sometimes\n",
+		},
+		"runner harness that compares nothing": {
+			old: "        run: make runner-harness\n",
+			new: "        run: go test ./test/runnerharness\n",
+		},
+		"runner harness with no Docker context": {
+			old: "          DOCKER_CONTEXT: default\n",
+			new: "",
+		},
+		"runner harness without the captures of a failure": {
+			old: "        id: harness-captures\n        if: ${{ failure() }}\n",
+			new: "        id: harness-captures\n",
+		},
 		"gate timeout drift": {
 			old: "    needs: [support-matrix, verify, race, prepare-images, kubernetes-e2e]\n    runs-on: ubuntu-latest\n    timeout-minutes: 5\n",
 			new: "    needs: [support-matrix, verify, race, prepare-images, kubernetes-e2e]\n    runs-on: ubuntu-latest\n    timeout-minutes: 4\n",

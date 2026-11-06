@@ -5,6 +5,6 @@
   "outcome": "failed",
   "error": {
     "kind": "authentication_failed",
-    "message": "error connecting to database: failed to ping database: Error 1045 (28000): Access denied for user 'root'@'172.20.0.4' (using password: YES)"
+    "message": "error connecting to database: failed to ping database: Error 1045 (28000): Access denied for user 'root'@'172.20.0.7' (using password: YES)"
   }
 }

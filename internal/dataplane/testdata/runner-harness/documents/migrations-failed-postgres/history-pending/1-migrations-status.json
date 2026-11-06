@@ -1,0 +1,33 @@
+{
+  "current_version": 0,
+  "applied_migrations": [],
+  "pending_migrations": [
+    1,
+    2
+  ],
+  "pending_migration_keys": [
+    "1",
+    "2"
+  ],
+  "out_of_order_migrations": [],
+  "total_migrations": 2,
+  "has_pending_changes": true,
+  "contract_version": 2,
+  "command": "migrations status",
+  "migrations": [
+    {
+      "version": 1,
+      "version_key": "1",
+      "description": "Create Journal",
+      "checksum": "67f4527b52ac79b49c44f4aec04c7aee71d39f464407d9fadda8168bb411cc53",
+      "state": "pending"
+    },
+    {
+      "version": 2,
+      "version_key": "2",
+      "description": "Read Ledger",
+      "checksum": "1db819cdfd55318996c4747a8b643cc2b940d0113e4f11ceefecdf45ac9bb5f0",
+      "state": "pending"
+    }
+  ]
+}

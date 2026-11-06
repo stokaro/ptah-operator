@@ -1,0 +1,2 @@
+Pulled oci://harness-registry:5000/schemas/rows-postgres@sha256:498a5f654f1d9752f6b4c3d963c07846983830fe40658106ae742d6bc582de28 to /source/schema.hcl, /source/managed-data.json
+Digest: sha256:498a5f654f1d9752f6b4c3d963c07846983830fe40658106ae742d6bc582de28

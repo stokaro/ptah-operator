@@ -1,0 +1,3 @@
+CREATE TABLE journal (
+    id INTEGER PRIMARY KEY
+);

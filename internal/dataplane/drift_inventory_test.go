@@ -122,9 +122,9 @@ func TestDecodeDriftKeepsFeatureKindsInTheInventory(t *testing.T) {
 		want   string
 	}{
 		{"testdata/drift-feature-extension.json",
-			"[{columns 2 2} {ptah.run/pgextension/extension-change 1 0} {tables 1 1}]"},
+			"[{columns 2 2} {constraints 1 1} {ptah.run/pgextension/extension-change 1 0} {tables 1 1}]"},
 		{"testdata/drift-feature-policy.json",
-			"[{columns 2 2} {ptah.run/pgpolicy/policy-change 1 0} {ptah.run/pgpolicy/table-state-change 1 1} {tables 1 1}]"},
+			"[{columns 2 2} {constraints 1 1} {ptah.run/pgpolicy/policy-change 1 0} {ptah.run/pgpolicy/table-state-change 1 1} {tables 1 1}]"},
 	} {
 		t.Run(test.report, func(t *testing.T) {
 			t.Parallel()

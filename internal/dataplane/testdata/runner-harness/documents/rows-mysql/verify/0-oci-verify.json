@@ -1,0 +1,9 @@
+{
+  "reference": "oci://harness-registry:5000/schemas/rows-mysql@sha256:55ab8da2787d9eb1246776d45542beb33d7270997a281d2516b59f3205b4e174",
+  "digest": "sha256:55ab8da2787d9eb1246776d45542beb33d7270997a281d2516b59f3205b4e174",
+  "satisfied": [
+    "require_digest_pin",
+    "artifact_types"
+  ],
+  "findings": []
+}

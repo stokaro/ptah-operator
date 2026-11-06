@@ -276,6 +276,80 @@ that has not been run against any Ptah build gets `unverifiedReason` rather than
 an empty list, and the table then shows a version nobody has measured instead of
 a version that works with everything.
 
+## Repinning Ptah
+
+A repin moves `verified[].ptahImage` and the fields beside it to another Ptah
+release. Do these in one change, in this order.
+
+Make the catalog edit [Changing the claim](#changing-the-claim) describes, since
+everything below reads the pin from it. Then regenerate the captures from the new
+image, and read the diff:
+
+```sh
+DOCKER_CONTEXT=<context> make runner-harness-write
+```
+
+The target builds the runner from this commit and runs it inside the pinned
+image, in a container with the shape of an operation Pod, against PostgreSQL,
+MySQL, an OCI registry and the end-to-end Git server. It runs every runner
+operation from OCI and Git sources, and the Git fetch before an operation, on
+schemas that carry an added column, an extension, a policy on a new and on an
+existing table, declared rows, a source it cannot load, and every target fault the
+failure kinds name. It rewrites what changed under `internal/dataplane/testdata`: a document, the
+arguments, an exit status, a line of standard error, a result frame. On a pin
+that moved nothing it changes nothing, so the diff is what the release changed. A
+document the operator's decoders refuse fails the run instead of being written:
+fix the decoder first, and move any contract counter the
+[API compatibility page](../api-compatibility/#contract-counters) asks for.
+
+`make runner-harness` runs the same rows and compares. A change of shape is any
+difference left once the volatile values are masked: a field added, removed or
+retyped, an element added or removed, a contract version, an outcome, an exit
+status, a refusal line, an argument. The volatile values are declared in
+`test/runnerharness/shape.go`, and each is what a second run on one pin moved:
+the times and durations a migration records, an address, the digest of an
+artifact, whose manifest records when it was pushed, the correlation id on a log
+line, and the random part of a name the runner makes under `TMPDIR`. A plan's
+digest, a fingerprint and a Git content digest are held. CI runs it on every pull
+request and every push to `master`, and a commit that moved the pin without new
+captures fails in `go test` before that job starts.
+
+Recapture the SQL readings under `testdata/e2e/readings`, which record every
+statement each schema and migration command sent to the database. Run the probe
+once with `--compare` and the executor the readings were taken with, to show the
+procedure reproduces them, then with the new one:
+
+```sh
+python3 support/qualification/probes/schema_sql_readings.py \
+  --context <context> --executor-image <image> --out testdata/e2e/readings
+```
+
+Recalibrate `support/capacity/input-calibration.json`, since a release that
+changes what a plan holds changes how much input fits a limit. Run the verifier
+once per engine with the release's binary, on the Docker host, because copying the
+binary over a client's link runs past the probe's step limit. Write the commit and
+the report digests into the file, and any repeated characters a band now needs,
+and add the measurement to `support/qualification/0.2.0-capacity-inputs.md`:
+
+```sh
+python3 support/qualification/probes/capacity_fixture_verify.py \
+  --engine <engine> --docker-context <context> \
+  --ptah-binary <binary> --ptah-sha256 <digest> --output <new directory>
+```
+
+Search the non-test files in `test/e2e` for literal Ptah output, and recapture
+every reading their unit tests hold them to. A predicate that matches a header a
+new release no longer writes stays green offline as long as its fixture came from
+the old one:
+
+```sh
+grep -rnE 'ptah |-- (POSTGRES|MYSQL)|contract_version' test/e2e --include='*.go' --exclude='*_test.go'
+```
+
+Then let the matrix run against the new build. The harness does not replace
+kind: admission, RBAC, the Job and Pod lifecycle, NetworkPolicy and durable result
+delivery are proven there.
+
 ## Correcting a release guide
 
 A release's pages are built from that release's own tag, so a correction cannot

@@ -51,10 +51,9 @@ func TestParseTargetFailureKindReadsOnlyTheVocabulary(t *testing.T) {
 
 // targetFailureCases is what each directory under testdata/target-failures
 // was captured against, and the kind Ptah named for it. The directories are
-// the documents the Ptah v0.18.0 release image,
-// ghcr.io/stokaro/ptah@sha256:9f8797986124add44d0232a17cd17e6f03cfec76b1711efc53c169483b7b4303,
-// printed on standard output against PostgreSQL 17 and MySQL 8.4, stored as
-// printed: a host that does not resolve, a port nothing listens on, a wrong
+// the documents the image support/ptah.json pins printed on standard output
+// against PostgreSQL 17 and MySQL 8.4, stored as printed, and `make
+// runner-harness-write` regenerates them: a host that does not resolve, a port nothing listens on, a wrong
 // password, a role the server does not know, a database it does not hold, a
 // role refused CONNECT (PostgreSQL) or a user with no privilege on the
 // database (MySQL), and a certificate that does not verify.

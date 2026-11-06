@@ -4,6 +4,6 @@
   "outcome": "failed",
   "error": {
     "kind": "database_unreachable",
-    "message": "connect to --db-url: failed to ping database: failed to connect to `user=postgres database=t_new_tbl`: 172.20.0.2:5439 (fk760-pg): dial error: dial tcp 172.20.0.2:5439: connect: connection refused"
+    "message": "connect to --db-url: failed to ping database: failed to connect to `user=postgres database=harness_fault`: 172.20.0.2:5439 (harness-postgres): dial error: dial tcp 172.20.0.2:5439: connect: connection refused"
   }
 }

@@ -1,0 +1,3 @@
+Pulled oci://harness-registry:5000/migrations/migrations-postgres@sha256:00c31e847d5da8efc260ae6c21e84f9a94c0ebe243aae7a9aa18193064bb96be to /source/migrations
+Digest: sha256:00c31e847d5da8efc260ae6c21e84f9a94c0ebe243aae7a9aa18193064bb96be
+Format: auto

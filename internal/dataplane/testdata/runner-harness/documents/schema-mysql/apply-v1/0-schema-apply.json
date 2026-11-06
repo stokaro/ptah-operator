@@ -1,0 +1,24 @@
+{
+  "contract_version": 4,
+  "command": "schema apply",
+  "outcome": "applied",
+  "plan_name": "plan_4b43ac3a06de",
+  "plan_digest": "sha256:acf7ceb9516605364d756ddbff3b8b916b1a1895b62a97f86457d7709387de23",
+  "units": [
+    {
+      "sql": "CREATE TABLE `e2e_order_parent` (\n  `id` bigint PRIMARY KEY\n)"
+    },
+    {
+      "sql": "CREATE TABLE `e2e_order_child` (\n  `a` bigint NOT NULL,\n  `b` bigint NOT NULL\n)"
+    },
+    {
+      "sql": "CREATE TABLE `e2e_widgets` (\n  `id` bigint PRIMARY KEY,\n  `name` varchar(255) NOT NULL\n)"
+    },
+    {
+      "sql": "CREATE INDEX `b_2` ON `e2e_order_child` (`b`)"
+    },
+    {
+      "sql": "ALTER TABLE `e2e_order_child` ADD CONSTRAINT `b` FOREIGN KEY (`a`) REFERENCES `e2e_order_parent`(`id`)"
+    }
+  ]
+}

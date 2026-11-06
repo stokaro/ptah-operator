@@ -1,0 +1,7 @@
+{
+  "reference": "oci://harness-registry:5000/migrations/migrations-mysql:v1",
+  "pinned_reference": "oci://harness-registry:5000/migrations/migrations-mysql@sha256:cfbea0096a9b8f2614ae4740bd65f303e96e873c5ecaabbeb0b7b08c70c9cf57",
+  "digest": "sha256:cfbea0096a9b8f2614ae4740bd65f303e96e873c5ecaabbeb0b7b08c70c9cf57",
+  "media_type": "application/vnd.oci.image.manifest.v1+json",
+  "size": 2074
+}

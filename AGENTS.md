@@ -56,6 +56,7 @@ purpose.
 make build          # the five binaries
 make test           # unit contour
 make test-envtest   # CRDs, admission policies and webhooks against a real API server
+make runner-harness # the runner against the pinned Ptah image, in Docker, without a cluster
 make generate       # deepcopy
 make manifests      # CRDs and RBAC from the markers
 make chart-policies # the chart's admission policy templates, from the Go definitions
@@ -125,6 +126,36 @@ inside the support window. The target sets `PTAH_REQUIRE_ENVTEST=1`, so a
 missing control plane fails it. A plain `go test ./...` without
 `KUBEBUILDER_ASSETS` skips these packages and says why. CI runs the target inside
 `make verify-source`, with the binaries cached.
+
+## The runner harness
+
+`make runner-harness` runs the runner against the image `support/ptah.json` pins,
+without a cluster, in a few minutes. CI runs it once on every pull request and
+push to `master`, on the runner's own Docker; `DOCKER_CONTEXT` names the daemon
+anywhere else, and the variable has no default. It lives in `test/runnerharness`:
+
+- `Translate` turns the Job `internal/workload` builds for an operation into
+  `docker run`: the user, the read-only root file system, the dropped capabilities,
+  the environment and the mounts come from the Job, and a field it does not know
+  how to reproduce is refused rather than ignored. No value is written twice.
+- `recorder` is the runner from this commit at the path the Job installs it to,
+  calling `runner.Run` and `runner.FetchGitSource` with a recording `Executor`
+  that keeps each child's arguments, output, exit status and peak memory.
+- `Declared` is the set of operations and commands a run is counted against. A
+  command added to the runner without a row fails `TestDeclaredCommandsAreTheOnesInTheSource`
+  offline, and a row that reaches one fails the run.
+- `CompareCaptures` and `Masker` in `shape.go` and `store.go` say what a change of
+  shape is and which values are volatile. A rule that masked nothing in a complete
+  run fails it.
+
+Every document is decoded with `internal/dataplane`, every result is framed and
+parsed back with the manager's parser, and everything is compared with the
+captures under `internal/dataplane/testdata`. `make runner-harness-write`
+regenerates them, and [the Ptah compatibility page](docs/site/src/content/docs/support/ptah.md#repinning-ptah)
+has the procedure. `PTAH_REQUIRE_RUNNER_HARNESS=1`, which both targets set, makes a
+missing daemon or image a failure; a plain `go test ./...` skips the run and says
+why, and still holds the committed captures to the pin, the decoders and the
+declared set.
 
 ## What a green master says
 
