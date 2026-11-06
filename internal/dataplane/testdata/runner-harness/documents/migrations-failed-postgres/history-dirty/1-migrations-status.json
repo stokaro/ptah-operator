@@ -1,0 +1,56 @@
+{
+  "current_version": 1,
+  "applied_migrations": [
+    1
+  ],
+  "applied_migration_keys": [
+    "1"
+  ],
+  "pending_migrations": [
+    2
+  ],
+  "pending_migration_keys": [
+    "2"
+  ],
+  "out_of_order_migrations": [],
+  "total_migrations": 2,
+  "has_pending_changes": true,
+  "dirty_revision": {
+    "version": 2,
+    "description": "Read Ledger",
+    "state": "failed",
+    "direction": "up",
+    "applied": 0,
+    "total": 3,
+    "error": "failed to execute migration SQL: SQL execution failed: ERROR: relation \"ledger_entries\" does not exist (SQLSTATE 42P01)\nSQL: SELECT count(*) FROM ledger_entries",
+    "error_stmt": "SELECT count(*) FROM ledger_entries",
+    "execution_time": 7000000,
+    "checksum": "1db819cdfd55318996c4747a8b643cc2b940d0113e4f11ceefecdf45ac9bb5f0",
+    "applied_at": "2026-11-06T16:38:44.281962Z",
+    "dirty": true
+  },
+  "contract_version": 2,
+  "command": "migrations status",
+  "migrations": [
+    {
+      "version": 1,
+      "version_key": "1",
+      "description": "Create Journal",
+      "checksum": "67f4527b52ac79b49c44f4aec04c7aee71d39f464407d9fadda8168bb411cc53",
+      "applied_checksum": "67f4527b52ac79b49c44f4aec04c7aee71d39f464407d9fadda8168bb411cc53",
+      "applied_at": "2026-11-06T16:38:44.280671Z",
+      "execution_time_ms": 7,
+      "state": "applied"
+    },
+    {
+      "version": 2,
+      "version_key": "2",
+      "description": "Read Ledger",
+      "checksum": "1db819cdfd55318996c4747a8b643cc2b940d0113e4f11ceefecdf45ac9bb5f0",
+      "applied_at": "2026-11-06T16:38:44.281962Z",
+      "execution_time_ms": 7,
+      "state": "dirty"
+    }
+  ],
+  "current_version_key": "2"
+}

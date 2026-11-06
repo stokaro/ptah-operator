@@ -1,0 +1,34 @@
+{
+  "current_version": 0,
+  "applied_migrations": [],
+  "pending_migrations": [
+    1,
+    2
+  ],
+  "pending_migration_keys": [
+    "1",
+    "2"
+  ],
+  "out_of_order_migrations": [],
+  "total_migrations": 2,
+  "has_pending_changes": true,
+  "contract_version": 2,
+  "command": "migrations status",
+  "migrations": [
+    {
+      "version": 1,
+      "version_key": "1",
+      "description": "Create Widgets",
+      "checksum": "2b419c169de3fadfeee8e0d89d565aa716e54c3a11acde99050c40f580f512b6",
+      "state": "pending"
+    },
+    {
+      "version": 2,
+      "version_key": "2",
+      "description": "Wait To Be Stopped",
+      "checksum": "bdd8335407a496677f0b3bf02f7f7fb5beef01202b45dc7b462ed2ac1694c721",
+      "transaction_mode": "none",
+      "state": "pending"
+    }
+  ]
+}

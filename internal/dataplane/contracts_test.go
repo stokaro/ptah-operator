@@ -307,10 +307,10 @@ func TestDecodePlanRefusesProviderExecutionFields(t *testing.T) {
 	}
 }
 
-// The fixtures are plan files the Ptah v0.18.0 release image,
-// ghcr.io/stokaro/ptah@sha256:9f8797986124add44d0232a17cd17e6f03cfec76b1711efc53c169483b7b4303,
-// saved with `schema plan --output` against PostgreSQL 17, stored as written;
-// the v0.14.0 release image saved the same shapes. They are pg_trgm and a
+// The fixtures are plan files the image support/ptah.json pins saved with
+// `schema plan --output` against PostgreSQL 17, stored as written by `make
+// runner-harness-write`; the v0.14.0 release image saved the same shapes. They
+// are pg_trgm and a
 // table on an empty database; a table with a row-security policy on an empty
 // database; and the policy alone on a database that already held the table
 // with row security on. Ptah marks each statement its extension or policy

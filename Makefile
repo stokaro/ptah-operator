@@ -14,7 +14,7 @@ DOCKER_CONTEXT ?= remote-dev-container
 IMG ?= ghcr.io/stokaro/ptah-operator:dev
 REVISION ?= $(shell git rev-parse --verify HEAD 2>/dev/null)
 
-.PHONY: all build test test-envtest test-race vet fmt-check generate manifests chart-policies verify verify-source verify-crd-schema-history verify-kubernetes-support verify-ptah-support update-kubernetes-support verify-runner-protocol verify-release docker-build acceptance-coverage acceptance-record acceptance-issue-map scan-vulnerabilities e2e-static e2e
+.PHONY: all build test test-envtest test-race runner-harness runner-harness-write vet fmt-check generate manifests chart-policies verify verify-source verify-crd-schema-history verify-kubernetes-support verify-ptah-support update-kubernetes-support verify-runner-protocol verify-release docker-build acceptance-coverage acceptance-record acceptance-issue-map scan-vulnerabilities e2e-static e2e
 
 # A second declaration rather than a longer first one: the lifecycle targets
 # above are audited as one line, and appending to it is a change to that audit
@@ -73,6 +73,20 @@ test-envtest:
 		use $(ENVTEST_KUBERNETES_VERSION) --index "$(ENVTEST_INDEX)" \
 		$(if $(ENVTEST_BIN_DIR),--bin-dir "$(ENVTEST_BIN_DIR)") -p path)" || exit $$?; \
 	KUBEBUILDER_ASSETS="$$assets" PTAH_REQUIRE_ENVTEST=1 $(GO) test -count=1 -timeout=10m ./test/envtest/...
+
+# The runner against the Ptah image support/ptah.json pins, without a cluster:
+# every operation, every document decoded, every frame parsed, and all of it
+# compared with the captures under internal/dataplane/testdata. It needs a Docker
+# daemon, named by DOCKER_CONTEXT, and fails rather than skips when it has none.
+# runner-harness-write regenerates the captures: a repin is that one command and
+# a reviewed diff. AGENTS.md says what the run holds.
+RUNNER_HARNESS_TEST = PTAH_REQUIRE_RUNNER_HARNESS=1 $(GO) test -count=1 -timeout=15m -parallel=8 -v -run '^TestRunnerAgainstThePinnedImage$$' ./test/runnerharness
+
+runner-harness:
+	$(RUNNER_HARNESS_TEST)
+
+runner-harness-write:
+	RUNNER_HARNESS_WRITE=1 $(RUNNER_HARNESS_TEST)
 
 test-race:
 	@# The skipped suites are the shell mutation tables. Each row rewrites a

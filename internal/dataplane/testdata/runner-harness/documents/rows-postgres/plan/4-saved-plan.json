@@ -1,0 +1,35 @@
+{
+  "format_version": 1,
+  "name": "plan_7041cdb531d8",
+  "dialect": "postgres",
+  "from_fingerprint": "sha256:b53f16e6e4f3187bd68e99db9d33403d529c47336604bfeaeb46582515f9efa8",
+  "to_fingerprint": "sha256:e090c04393e384b4ba7413a76d77a774c43820cf0355cb8ebf6f7f1c758ecf6b",
+  "destructive": false,
+  "statements": [
+    {
+      "sql": "CREATE TABLE \"regions\" (\n  \"code\" VARCHAR(8) PRIMARY KEY NOT NULL,\n  \"name\" VARCHAR(64) NOT NULL\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "CREATE TABLE \"countries\" (\n  \"code\" VARCHAR(2) PRIMARY KEY NOT NULL,\n  \"name\" VARCHAR(64) NOT NULL,\n  \"region_code\" VARCHAR(8) NOT NULL\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "ALTER TABLE \"countries\" ADD CONSTRAINT \"fk_countries_region\" FOREIGN KEY (\"region_code\") REFERENCES \"regions\"(\"code\")",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "INSERT INTO \"regions\" (\"code\", \"name\") VALUES ('amer', 'Americas');",
+      "severity": "safe",
+      "reason": "inserts declared rows into regions"
+    },
+    {
+      "sql": "INSERT INTO \"regions\" (\"code\", \"name\") VALUES ('emea', 'Europe, Middle East and Africa');",
+      "severity": "safe",
+      "reason": "inserts declared rows into regions"
+    }
+  ]
+}

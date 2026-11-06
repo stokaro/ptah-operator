@@ -1,0 +1,18 @@
+{
+  "contract_version": 4,
+  "command": "schema apply",
+  "outcome": "dry-run",
+  "plan_name": "plan_aa9cb6ef7fac",
+  "plan_digest": "sha256:061caa7c65af1680d4fdbfaaac0adf963bfe917fc4ee5307defb029cf69ae90d",
+  "units": [
+    {
+      "sql": "INSERT INTO \"regions\" (\"code\", \"name\") VALUES ('amer', 'Americas');"
+    },
+    {
+      "sql": "UPDATE \"regions\" SET \"name\" = 'Europe, Middle East and Africa' WHERE \"code\" = 'emea';"
+    },
+    {
+      "sql": "DELETE FROM \"regions\" WHERE \"code\" = 'apac';"
+    }
+  ]
+}

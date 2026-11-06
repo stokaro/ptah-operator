@@ -29,7 +29,7 @@ const (
 	testGitURL    = "https://e2e-git.ptah-test.svc/acme/app.git"
 	testGitCommit = "3f1c2b0a9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a"
 	// testGitCaptures holds what the pinned Ptah image printed for this phase's
-	// repository; internal/dataplane/gitpull_test.go says how it was captured.
+	// repository; test/runnerharness captures it.
 	testGitCaptures = "../../internal/dataplane/testdata/git-pull"
 )
 
@@ -63,8 +63,8 @@ func TestTheGitRefusalRowsMatchWhatPtahPrinted(t *testing.T) {
 
 // The captured reports answer the repository this phase serves: the commit ids
 // it computes from the Spec, and the content digests it binds. A change to the
-// repository that leaves the captures behind fails here, and they are to be
-// captured again.
+// repository that leaves the captures behind fails here, and `make
+// runner-harness-write` captures them again.
 func TestTheGitCapturesAnswerThePhasesRepository(t *testing.T) {
 	t.Parallel()
 	built, err := gitrepo.Build(gitRepositorySpec(2))
@@ -103,7 +103,7 @@ func TestTheGitCapturesAnswerThePhasesRepository(t *testing.T) {
 				t.Fatal(err)
 			}
 			if report.Commit != row.commit || report.ContentDigest != row.digest {
-				t.Fatalf("the capture read %s at %s, and the phase's repository gives %s at %s",
+				t.Fatalf("the capture read %s at %s, and the phase's repository gives %s at %s: run `make runner-harness-write`",
 					report.ContentDigest, report.Commit, row.digest, row.commit)
 			}
 		})
@@ -309,10 +309,10 @@ func TestGitServerKeysFitTogether(t *testing.T) {
 		t.Fatal(err)
 	}
 	roots := x509.NewCertPool()
-	if !roots.AppendCertsFromPEM(keys.caPEM) {
+	if !roots.AppendCertsFromPEM(keys.CAPEM) {
 		t.Fatal("the CA does not parse")
 	}
-	block, _ := pem.Decode(keys.certificatePEM)
+	block, _ := pem.Decode(keys.CertificatePEM)
 	certificate, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {
 		t.Fatal(err)
@@ -323,12 +323,12 @@ func TestGitServerKeysFitTogether(t *testing.T) {
 	if _, err := certificate.Verify(x509.VerifyOptions{DNSName: "git.example.com", Roots: roots}); err == nil {
 		t.Fatal("the certificate verifies for another host")
 	}
-	hostSigner, err := ssh.ParsePrivateKey(keys.hostKeyPEM)
+	hostSigner, err := ssh.ParsePrivateKey(keys.HostKeyPEM)
 	if err != nil {
 		t.Fatal(err)
 	}
 	file := filepath.Join(t.TempDir(), "known_hosts")
-	if err := os.WriteFile(file, keys.knownHosts, 0o600); err != nil {
+	if err := os.WriteFile(file, keys.KnownHosts, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	callback, err := knownhosts.New(file)
@@ -339,11 +339,11 @@ func TestGitServerKeysFitTogether(t *testing.T) {
 	if err := callback(host+":22", address, hostSigner.PublicKey()); err != nil {
 		t.Fatalf("the known hosts refuse the host key: %v", err)
 	}
-	clientSigner, err := ssh.ParsePrivateKey(keys.clientKeyPEM)
+	clientSigner, err := ssh.ParsePrivateKey(keys.ClientKeyPEM)
 	if err != nil {
 		t.Fatal(err)
 	}
-	authorized, _, _, _, err := ssh.ParseAuthorizedKey(keys.authorizedKey)
+	authorized, _, _, _, err := ssh.ParseAuthorizedKey(keys.AuthorizedKey)
 	if err != nil || string(authorized.Marshal()) != string(clientSigner.PublicKey().Marshal()) {
 		t.Fatalf("the authorized key is not the client's: %v", err)
 	}
@@ -352,7 +352,7 @@ func TestGitServerKeysFitTogether(t *testing.T) {
 	}
 	// The other known hosts pin a key the server does not hold.
 	other := filepath.Join(t.TempDir(), "known_hosts")
-	if err := os.WriteFile(other, keys.otherKnownHosts, 0o600); err != nil {
+	if err := os.WriteFile(other, keys.OtherKnownHosts, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	otherCallback, err := knownhosts.New(other)
@@ -362,7 +362,7 @@ func TestGitServerKeysFitTogether(t *testing.T) {
 	if otherCallback(host+":22", address, hostSigner.PublicKey()) == nil {
 		t.Fatal("the other known hosts accept the server's host key")
 	}
-	if keys.token == "" || grantDigest(keys.caPEM) == grantDigest(keys.knownHosts) {
+	if keys.Token == "" || grantDigest(keys.CAPEM) == grantDigest(keys.KnownHosts) {
 		t.Fatal("the token or the grants are empty")
 	}
 }

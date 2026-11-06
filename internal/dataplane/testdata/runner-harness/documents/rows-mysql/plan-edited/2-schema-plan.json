@@ -1,0 +1,45 @@
+{
+  "contract_version": 3,
+  "command": "schema plan",
+  "outcome": "changes",
+  "plan_digest": "sha256:a51cb9f57ef858c2d404f7c9c32f95ca459801f96a4bdf23243efe98fe3f16ba",
+  "plan_path": "/work/ptah-plan-output-923142552/second.plan.json",
+  "plan": {
+    "format_version": 1,
+    "name": "plan_b5c80129e474",
+    "dialect": "mysql",
+    "from_fingerprint": "sha256:2d0c13b87902ac099273b7f35f50170a80319b075b376d87b7a7ad96456334b2",
+    "to_fingerprint": "sha256:e090c04393e384b4ba7413a76d77a774c43820cf0355cb8ebf6f7f1c758ecf6b",
+    "managed_rows": [
+      {
+        "table": "regions",
+        "keys": [
+          "code"
+        ],
+        "columns": [
+          "code",
+          "name"
+        ]
+      }
+    ],
+    "rows_fingerprint": "sha256:55eef1beb585b1b80787e60197813dcc35c74f6f52be37ffee8401e3a443c3f2",
+    "destructive": true,
+    "statements": [
+      {
+        "sql": "INSERT INTO `regions` (`code`, `name`) VALUES ('amer', 'Americas');",
+        "severity": "safe",
+        "reason": "inserts declared rows into regions"
+      },
+      {
+        "sql": "UPDATE `regions` SET `name` = 'Europe, Middle East and Africa' WHERE `code` = 'emea';",
+        "severity": "warning",
+        "reason": "overwrites managed columns of a row in regions"
+      },
+      {
+        "sql": "DELETE FROM `regions` WHERE `code` = 'apac';",
+        "severity": "destructive",
+        "reason": "removes a row from regions that the declaration no longer holds"
+      }
+    ]
+  }
+}

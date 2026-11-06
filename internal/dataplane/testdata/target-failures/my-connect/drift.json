@@ -3,6 +3,6 @@
   "command": "schema drift",
   "error": {
     "kind": "permission_denied",
-    "message": "error connecting to database: failed to ping database: Error 1044 (42000): Access denied for user 'nodb'@'%' to database 't_new_tbl'"
+    "message": "error connecting to database: failed to ping database: Error 1044 (42000): Access denied for user 'nodb'@'%' to database 'harness_refused'"
   }
 }

@@ -1,0 +1,9 @@
+{
+  "reference": "oci://harness-registry:5000/schemas/schema-verify-refused@sha256:7600d30057cb17fcc9857a538afcbb4a7165aca1702e250bb64abe305a458dfb",
+  "digest": "sha256:7600d30057cb17fcc9857a538afcbb4a7165aca1702e250bb64abe305a458dfb",
+  "satisfied": [
+    "require_digest_pin",
+    "artifact_types"
+  ],
+  "findings": []
+}

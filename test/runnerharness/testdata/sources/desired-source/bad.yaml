@@ -1,0 +1,4 @@
+tables:
+  - name: t
+    password: hunter2-yaml
+   bad: [unclosed

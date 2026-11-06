@@ -1,0 +1,2 @@
+Pulled oci://harness-registry:5000/schemas/schema-mysql@sha256:b25475fea3d2e703428c4f55dced8883441160039892868e6ddcba37965fbf87 to /source/schema.hcl
+Digest: sha256:b25475fea3d2e703428c4f55dced8883441160039892868e6ddcba37965fbf87

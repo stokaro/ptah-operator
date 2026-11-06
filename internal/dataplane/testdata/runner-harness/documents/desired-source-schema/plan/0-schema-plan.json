@@ -1,0 +1,8 @@
+{
+  "contract_version": 3,
+  "command": "schema plan",
+  "outcome": "failed",
+  "error": {
+    "message": "error parsing schema file: read SQL schema file /source/schema/schema.sql: expected '(' after table name: expected Operator, got Identifier at position 180"
+  }
+}

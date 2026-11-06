@@ -4,6 +4,6 @@
   "outcome": "failed",
   "error": {
     "kind": "tls_failed",
-    "message": "connect to --db-url: failed to ping database: failed to connect to `user=postgres database=t_new_tbl`: 172.20.0.2:5432 (fk760-pg): failed to write startup message: write failed: tls: failed to verify certificate: x509: certificate relies on legacy Common Name field, use SANs instead"
+    "message": "connect to --db-url: failed to ping database: failed to connect to `user=postgres database=harness_fault`: 172.20.0.2:5432 (harness-postgres): failed to write startup message: write failed: tls: failed to verify certificate: x509: certificate relies on legacy Common Name field, use SANs instead"
   }
 }

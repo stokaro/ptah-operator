@@ -1,0 +1,15 @@
+{
+  "format_version": 1,
+  "name": "plan_475d4bfc3e05",
+  "dialect": "mysql",
+  "from_fingerprint": "sha256:17cff4a0711a79bf6f8dcbaa191df91410b6e3a9b7785c99cf602d1f00aaa471",
+  "to_fingerprint": "sha256:8973bb390eb82ed19fadf72504443bec6802ab3ab7853fca5e28870d3d27279c",
+  "destructive": false,
+  "statements": [
+    {
+      "sql": "-- Modify table: e2e_widgets\nALTER TABLE `e2e_widgets` ADD COLUMN `note` varchar(255)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    }
+  ]
+}

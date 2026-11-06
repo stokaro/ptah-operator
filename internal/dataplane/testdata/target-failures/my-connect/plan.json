@@ -4,6 +4,6 @@
   "outcome": "failed",
   "error": {
     "kind": "permission_denied",
-    "message": "connect to --db-url: failed to ping database: Error 1044 (42000): Access denied for user 'nodb'@'%' to database 't_new_tbl'"
+    "message": "connect to --db-url: failed to ping database: Error 1044 (42000): Access denied for user 'nodb'@'%' to database 'harness_refused'"
   }
 }

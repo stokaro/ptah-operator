@@ -340,6 +340,55 @@ jobs:
         shell: bash
         run: make test-race
 
+  # The runner's contract with Ptah, without a cluster: the runner from this
+  # commit inside the image support/ptah.json pins, in the shape of an operation
+  # Pod, against databases, a registry and a Git server on one Docker network.
+  # It depends on no Kubernetes minor, so it runs once. AGENTS.md says what it
+  # holds, and hack/verify-kubernetes-support.go holds this job's shape.
+  runner-harness:
+    name: Runner against the pinned Ptah image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        id: harness-checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Go
+        id: harness-setup-go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Cache the Go build output
+        id: harness-build-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/.cache/go-build
+          key: go-build-${{ runner.os }}-runner-harness-${{ hashFiles('go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            go-build-${{ runner.os }}-runner-harness-${{ hashFiles('go.sum') }}-
+            go-build-${{ runner.os }}-runner-harness-
+      - name: Run the runner against the pinned Ptah image
+        id: project-runner-harness
+        env:
+          DOCKER_CONTEXT: default
+          RUNNER_HARNESS_OUT: ${{ runner.temp }}/runner-harness
+        shell: bash
+        run: make runner-harness
+      # What the run printed, so a change of shape can be read without running
+      # it again.
+      - name: Keep the captures of a failed run
+        id: harness-captures
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: runner-harness-captures
+          path: ${{ runner.temp }}/runner-harness
+          if-no-files-found: ignore
+
   # The three task images do not depend on the Kubernetes minor: the operator,
   # the synthetic next release and the isolated fixture are built from one
   # commit. Building them once and handing the bytes to every lifecycle keeps

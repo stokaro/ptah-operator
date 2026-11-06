@@ -14,8 +14,8 @@ import (
 )
 
 // The directories under internal/dataplane/testdata/git-pull are the pulls the
-// pinned Ptah release image ran; internal/dataplane/gitpull_test.go names the
-// image digest and the command. These tests are in the package because
+// pinned Ptah image ran; `make runner-harness-write` regenerates them. These
+// tests are in the package because
 // gitPullExit and the trust GitPull takes are not exported, and the arguments
 // reach a child with paths the runner chose, which the capture's cannot equal.
 

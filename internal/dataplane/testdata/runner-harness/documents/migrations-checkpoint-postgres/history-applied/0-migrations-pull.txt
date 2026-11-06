@@ -1,0 +1,3 @@
+Pulled oci://harness-registry:5000/migrations/migrations-checkpoint-postgres@sha256:641b3201a08221cf6e1f197b820bb9c6d5789357daa531d679badad0266dafdf to /source/migrations
+Digest: sha256:641b3201a08221cf6e1f197b820bb9c6d5789357daa531d679badad0266dafdf
+Format: auto

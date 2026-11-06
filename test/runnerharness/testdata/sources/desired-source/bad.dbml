@@ -1,0 +1,3 @@
+Table t {
+  id bigint [note: "hunter2-dbml"
+}

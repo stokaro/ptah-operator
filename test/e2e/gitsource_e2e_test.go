@@ -176,25 +176,25 @@ func (c *gitRun) standUp() {
 	object := func(name string) metav1.ObjectMeta { return metav1.ObjectMeta{Namespace: namespace, Name: name} }
 	c.put(&corev1.ConfigMap{ObjectMeta: object(gitSpecConfigMap), Data: map[string]string{"spec.json": spec}})
 	c.put(&corev1.Secret{ObjectMeta: object(gitServerSecret), Data: map[string][]byte{
-		"tls.crt": c.keys.certificatePEM, "tls.key": c.keys.keyPEM, "token": []byte(c.keys.token),
-		"ssh_host_key": c.keys.hostKeyPEM, "authorized_key": c.keys.authorizedKey,
+		"tls.crt": c.keys.CertificatePEM, "tls.key": c.keys.KeyPEM, "token": []byte(c.keys.Token),
+		"ssh_host_key": c.keys.HostKeyPEM, "authorized_key": c.keys.AuthorizedKey,
 	}})
-	c.put(&corev1.ConfigMap{ObjectMeta: object(gitCAConfigMap), Data: map[string]string{"ca.pem": string(c.keys.caPEM)}})
-	c.put(&corev1.ConfigMap{ObjectMeta: object(gitKnownHostsConfigMap), Data: map[string]string{"known_hosts": string(c.keys.knownHosts)}})
-	c.put(&corev1.ConfigMap{ObjectMeta: object(gitOtherHostsConfigMap), Data: map[string]string{"known_hosts": string(c.keys.otherKnownHosts)}})
+	c.put(&corev1.ConfigMap{ObjectMeta: object(gitCAConfigMap), Data: map[string]string{"ca.pem": string(c.keys.CAPEM)}})
+	c.put(&corev1.ConfigMap{ObjectMeta: object(gitKnownHostsConfigMap), Data: map[string]string{"known_hosts": string(c.keys.KnownHosts)}})
+	c.put(&corev1.ConfigMap{ObjectMeta: object(gitOtherHostsConfigMap), Data: map[string]string{"known_hosts": string(c.keys.OtherKnownHosts)}})
 	// The Secrets' owner grants each credential one host and the exact trust
 	// it may be sent under. The last grants the token for another host.
 	c.put(&corev1.Secret{ObjectMeta: object(gitTokenCredential), Data: map[string][]byte{
-		"password": []byte(c.keys.token), "host": []byte(c.host), "caSHA256": []byte(grantDigest(c.keys.caPEM)),
+		"password": []byte(c.keys.Token), "host": []byte(c.host), "caSHA256": []byte(grantDigest(c.keys.CAPEM)),
 	}})
 	c.put(&corev1.Secret{ObjectMeta: object(gitDeployKeyCredential), Data: map[string][]byte{
-		"sshPrivateKey": c.keys.clientKeyPEM, "host": []byte(c.host), "knownHostsSHA256": []byte(grantDigest(c.keys.knownHosts)),
+		"sshPrivateKey": c.keys.ClientKeyPEM, "host": []byte(c.host), "knownHostsSHA256": []byte(grantDigest(c.keys.KnownHosts)),
 	}})
 	c.put(&corev1.Secret{ObjectMeta: object(gitOtherHostsCredential), Data: map[string][]byte{
-		"sshPrivateKey": c.keys.clientKeyPEM, "host": []byte(c.host), "knownHostsSHA256": []byte(grantDigest(c.keys.otherKnownHosts)),
+		"sshPrivateKey": c.keys.ClientKeyPEM, "host": []byte(c.host), "knownHostsSHA256": []byte(grantDigest(c.keys.OtherKnownHosts)),
 	}})
 	c.put(&corev1.Secret{ObjectMeta: object(gitElsewhereCredential), Data: map[string][]byte{
-		"password": []byte(c.keys.token), "host": []byte("git.example.com"), "caSHA256": []byte(grantDigest(c.keys.caPEM)),
+		"password": []byte(c.keys.Token), "host": []byte("git.example.com"), "caSHA256": []byte(grantDigest(c.keys.CAPEM)),
 	}})
 
 	labels := map[string]string{"app.kubernetes.io/name": gitServer}
@@ -920,7 +920,7 @@ func (c *gitRun) unreadableSchema() {
 		err := unreadableSourceSays(message, unreadablePartitionFile, unreadablePartitionReason)
 		return err == nil, fmt.Sprint(err)
 	})
-	if strings.Contains(message, gitUnreadableDatabase) || strings.Contains(message, c.password) || strings.Contains(message, c.keys.token) {
+	if strings.Contains(message, gitUnreadableDatabase) || strings.Contains(message, c.password) || strings.Contains(message, c.keys.Token) {
 		c.fatalf("the reason names the target or the source's credential: %s", message)
 	}
 	c.wait("the OperationFailed Event to say why", func() (bool, string) {

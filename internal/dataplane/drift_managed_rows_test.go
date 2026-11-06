@@ -8,13 +8,12 @@ import (
 	"github.com/stokaro/ptah-operator/internal/dataplane"
 )
 
-// The fixture is a `ptah schema drift --format json` document, captured from
-// the Ptah v0.18.0 release image,
-// ghcr.io/stokaro/ptah@sha256:9f8797986124add44d0232a17cd17e6f03cfec76b1711efc53c169483b7b4303,
-// against a PostgreSQL 17 database that applied the reference-data end-to-end
-// fixtures (testdata/e2e/reference/v1) and was then edited by hand: one
-// declared row deleted, one changed, and one row added that the declaration
-// does not hold. Two fields were removed after the capture, and nothing else:
+// The fixture is a `ptah schema drift --format json` document the image
+// support/ptah.json pins printed, and `make runner-harness-write` regenerates
+// it, against a PostgreSQL 17 database that applied the reference-data
+// end-to-end fixtures (testdata/e2e/reference/v1) and was then edited by hand:
+// one declared row deleted, one changed, and one row added that the declaration
+// does not hold. Two fields are removed before it is stored, and nothing else:
 // `sources` and `database_url` name the machine that produced it, and the
 // second carries a connection string.
 //
@@ -107,11 +106,11 @@ func TestDriftReportDigestIgnoresRowDrift(t *testing.T) {
 }
 
 // The fixture is a `ptah schema drift --format json` document, captured from
-// the Ptah v0.18.0 release image against PostgreSQL 17: the desired
+// the pinned image against PostgreSQL 17: the desired
 // schema declares pg_trgm and a table, and the database holds the table and
 // lacks the extension. Ptah's extension owner reports it under feature_changes
 // with the type of object after a colon, and counts it in the inventory under
-// that kind. `sources` and `database_url` were removed after the capture, as
+// that kind. `sources` and `database_url` are removed before it is stored, as
 // above, and nothing else.
 func TestDecodeDriftAcceptsAFeatureCategoryWithItsKind(t *testing.T) {
 	t.Parallel()
@@ -128,21 +127,22 @@ func TestDecodeDriftAcceptsAFeatureCategoryWithItsKind(t *testing.T) {
 	if len(report.Findings) != 1 || report.Findings[0] != want {
 		t.Fatalf("findings = %+v, want %+v", report.Findings, want)
 	}
-	// Ptah counted the extension under its feature kind as well, beside the two
-	// the table counts.
-	if got := fmt.Sprint(report.Inventory); got != "[{columns 2 2} {ptah.run/pgextension/extension-change 1 0} {tables 1 1}]" {
+	// Ptah counted the extension under its feature kind as well, beside what the
+	// table counts. The primary key counts because a Pod reads the schema `schema
+	// pull` wrote, the HCL an artifact holds, and that form names it.
+	if got := fmt.Sprint(report.Inventory); got != "[{columns 2 2} {constraints 1 1} {ptah.run/pgextension/extension-change 1 0} {tables 1 1}]" {
 		t.Fatalf("inventory = %s", got)
 	}
 }
 
-// The fixture is the drift document the Ptah v0.18.0 release image printed
+// The fixture is the drift document the pinned image printed
 // against a PostgreSQL 17 database that holds a table with row security on and
 // no policy, for a desired schema that declares the policy. Ptah's policy
 // owner reports one change under two categories, the access it widens as
 // destructive and the change itself as safe, and counts two feature kinds in
 // the inventory: the policy, and since stokaro/ptah#5150 the table's row
-// security state, which matches. `sources` and `database_url` were removed
-// after the capture, as above, and nothing else.
+// security state, which matches. `sources` and `database_url` are removed before
+// it is stored, as above, and nothing else.
 func TestDecodeDriftKeepsPolicyFindingsAndTheirInventoryKinds(t *testing.T) {
 	t.Parallel()
 
@@ -161,7 +161,7 @@ func TestDecodeDriftKeepsPolicyFindingsAndTheirInventoryKinds(t *testing.T) {
 	if fmt.Sprint(report.Findings) != fmt.Sprint(want) {
 		t.Fatalf("findings = %+v, want %+v", report.Findings, want)
 	}
-	if got := fmt.Sprint(report.Inventory); got != "[{columns 2 2} {ptah.run/pgpolicy/policy-change 1 0} {ptah.run/pgpolicy/table-state-change 1 1} {tables 1 1}]" {
+	if got := fmt.Sprint(report.Inventory); got != "[{columns 2 2} {constraints 1 1} {ptah.run/pgpolicy/policy-change 1 0} {ptah.run/pgpolicy/table-state-change 1 1} {tables 1 1}]" {
 		t.Fatalf("inventory = %s", got)
 	}
 }

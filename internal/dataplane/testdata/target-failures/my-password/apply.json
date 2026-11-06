@@ -2,10 +2,10 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "failed",
-  "plan_name": "plan_90966f017e13",
-  "plan_digest": "sha256:9f7c11f1656cf751d6beabf42fe5ceeded5eb0ff51647dd69c3e6c66d68a62ce",
+  "plan_name": "plan_4b43ac3a06de",
+  "plan_digest": "sha256:acf7ceb9516605364d756ddbff3b8b916b1a1895b62a97f86457d7709387de23",
   "error": {
     "kind": "authentication_failed",
-    "message": "connect to --db-url: failed to ping database: Error 1045 (28000): Access denied for user 'root'@'172.20.0.4' (using password: YES)"
+    "message": "connect to --db-url: failed to ping database: Error 1045 (28000): Access denied for user 'root'@'172.20.0.7' (using password: YES)"
   }
 }

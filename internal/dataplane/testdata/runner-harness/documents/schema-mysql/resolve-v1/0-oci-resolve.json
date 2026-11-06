@@ -1,0 +1,7 @@
+{
+  "reference": "oci://harness-registry:5000/schemas/schema-mysql:v1",
+  "pinned_reference": "oci://harness-registry:5000/schemas/schema-mysql@sha256:572ae4899ef93c79464ef6a73e1fa7657ac0aceec9513d58783dd045f2ebb89f",
+  "digest": "sha256:572ae4899ef93c79464ef6a73e1fa7657ac0aceec9513d58783dd045f2ebb89f",
+  "media_type": "application/vnd.oci.image.manifest.v1+json",
+  "size": 813
+}

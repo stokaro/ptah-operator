@@ -93,6 +93,7 @@ const (
 	ciKubernetesE2ETimeoutMinutes     = 90
 	ciPrepareImagesTimeoutMinutes     = 45
 	ciKubernetesSupportTimeoutMinutes = 5
+	ciRunnerHarnessTimeoutMinutes     = 20
 	ciLifecycleTimingsTimeoutMinutes  = 10
 	releaseQueueAPIMarginMinutes      = 5
 	releasePreflightOverheadMinutes   = 10
@@ -889,7 +890,7 @@ func verifyCIWorkflowSemantics(path string, workflow workflowDocument, contents 
 		return fmt.Errorf("%s: workflow environment must contain only the audited GOFLAGS value", path)
 	}
 	for _, jobName := range []string{
-		"support-matrix", "verify", "race", "kubernetes-e2e", "kubernetes-support-gate",
+		"support-matrix", "verify", "race", "runner-harness", "kubernetes-e2e", "kubernetes-support-gate",
 	} {
 		job, err := requireWorkflowJob(path, workflow, jobName)
 		if err != nil {
@@ -1315,6 +1316,9 @@ printf 'baseline=%s\n' "$baseline" >> "$GITHUB_OUTPUT"
 	if err := verifyCIRunBound(path, workflow, ciRunEndMinutes); err != nil {
 		return err
 	}
+	if err := verifyRunnerHarnessJob(path, workflow); err != nil {
+		return err
+	}
 
 	gate := workflow.Jobs["kubernetes-support-gate"]
 	if gate.Name != "Kubernetes support gate" {
@@ -1380,6 +1384,52 @@ func verifyJobOutlastsTests(path string, limit int) error {
 			"and make test-envtest's %d-minute timeout plus the %d minutes its control plane takes to fetch: %d minutes",
 			path, limit, makeTestTimeoutMinutes, ciVerifyBeforeTestMinutes,
 			makeEnvtestTimeoutMinutes, ciEnvtestFetchMinutes, budget)
+	}
+	return nil
+}
+
+// verifyRunnerHarnessJob holds the runner harness to one unconditional job, on
+// every pull request and every push to master, with no fan-out. It stays out of
+// the gate's needs: a release requires the whole run to conclude success, so a
+// failure here stops a release as a lifecycle's does.
+func verifyRunnerHarnessJob(path string, workflow workflowDocument) error {
+	const jobName = "runner-harness"
+	job, ok := workflow.Jobs[jobName]
+	if !ok {
+		return fmt.Errorf("%s: no %s job: the runner's contract with Ptah would be proven on kind alone", path, jobName)
+	}
+	if job.Name != "Runner against the pinned Ptah image" {
+		return fmt.Errorf("%s: job %s has unexpected name %q", path, jobName, job.Name)
+	}
+	if job.If != "" || len(job.Needs) != 0 ||
+		job.RunsOn != "ubuntu-latest" || job.TimeoutMinutes != ciRunnerHarnessTimeoutMinutes ||
+		len(job.Permissions) != 0 || job.Environment != "" || job.Strategy.FailFast != nil ||
+		len(job.Strategy.Matrix) != 0 {
+		return fmt.Errorf("%s: %s must be an unconditional isolated ubuntu-latest job with a %d-minute timeout and no matrix",
+			path, jobName, ciRunnerHarnessTimeoutMinutes)
+	}
+	steps, err := requireWorkflowStepOrder(path, jobName, job, []string{
+		"harness-checkout", "harness-setup-go", "harness-build-cache", "project-runner-harness", "harness-captures",
+	})
+	if err != nil {
+		return err
+	}
+	if err := verifyRaceSetupSteps(path, jobName, steps[0], steps[1]); err != nil {
+		return err
+	}
+	if err := verifyGoBuildCacheStep(path, jobName, steps[2], jobName); err != nil {
+		return err
+	}
+	if steps[3].If != "" || steps[3].Uses != "" || steps[3].Run != "make runner-harness" ||
+		steps[3].Shell != "bash" || steps[3].WorkingDirectory != "" || len(steps[3].With) != 0 ||
+		!equalStringMap(steps[3].Env, map[string]string{
+			"DOCKER_CONTEXT":     "default",
+			"RUNNER_HARNESS_OUT": "${{ runner.temp }}/runner-harness",
+		}) {
+		return fmt.Errorf("%s: %s must be the unconditional audited make runner-harness invocation on the runner's Docker", path, jobName)
+	}
+	if steps[4].If != "${{ failure() }}" || !strings.HasPrefix(steps[4].Uses, "actions/upload-artifact@") {
+		return fmt.Errorf("%s: %s keeps what a failed run printed, and only then", path, jobName)
 	}
 	return nil
 }

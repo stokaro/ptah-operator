@@ -1,0 +1,35 @@
+{
+  "format_version": 1,
+  "name": "plan_4b43ac3a06de",
+  "dialect": "mysql",
+  "from_fingerprint": "sha256:58747d936f5f2b2c82f40a2746d41e4ccb3cf1b1870800902bc644076b1a6d05",
+  "to_fingerprint": "sha256:dd6d61d838d6a045feb2551637938c47104f538a015a3959d401b6d1e66fb106",
+  "destructive": false,
+  "statements": [
+    {
+      "sql": "CREATE TABLE `e2e_order_parent` (\n  `id` bigint PRIMARY KEY\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "CREATE TABLE `e2e_order_child` (\n  `a` bigint NOT NULL,\n  `b` bigint NOT NULL\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "CREATE TABLE `e2e_widgets` (\n  `id` bigint PRIMARY KEY,\n  `name` varchar(255) NOT NULL\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "CREATE INDEX `b_2` ON `e2e_order_child` (`b`)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "ALTER TABLE `e2e_order_child` ADD CONSTRAINT `b` FOREIGN KEY (`a`) REFERENCES `e2e_order_parent`(`id`)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    }
+  ]
+}

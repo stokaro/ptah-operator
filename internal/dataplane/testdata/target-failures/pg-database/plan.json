@@ -4,6 +4,6 @@
   "outcome": "failed",
   "error": {
     "kind": "database_not_found",
-    "message": "connect to --db-url: failed to ping database: failed to connect to `user=postgres database=no_such_db`: 172.20.0.2:5432 (fk760-pg): server error: FATAL: database \"no_such_db\" does not exist (SQLSTATE 3D000)"
+    "message": "connect to --db-url: failed to ping database: failed to connect to `user=postgres database=no_such_db`: 172.20.0.2:5432 (harness-postgres): server error: FATAL: database \"no_such_db\" does not exist (SQLSTATE 3D000)"
   }
 }

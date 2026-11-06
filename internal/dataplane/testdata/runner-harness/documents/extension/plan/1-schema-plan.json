@@ -1,0 +1,31 @@
+{
+  "contract_version": 3,
+  "command": "schema plan",
+  "outcome": "changes",
+  "plan_digest": "sha256:a12362697390485142a8dcb207024b819b26b75e9eb8c59fcced4a3dd13a55ab",
+  "plan_path": "/work/ptah-plan-output-989768963/first.plan.json",
+  "plan": {
+    "format_version": 1,
+    "name": "plan_ce430c238122",
+    "dialect": "postgres",
+    "from_fingerprint": "sha256:b53f16e6e4f3187bd68e99db9d33403d529c47336604bfeaeb46582515f9efa8",
+    "to_fingerprint": "sha256:5d5a1ead565b21c5fdd923e65379f91e5db13020405bda6cf13360ec9f830e69",
+    "destructive": false,
+    "statements": [
+      {
+        "transactions": [
+          "allowed"
+        ],
+        "sql": "CREATE EXTENSION IF NOT EXISTS \"pg_trgm\"",
+        "severity": "safe",
+        "reason": "does not remove data or tighten constraints",
+        "owned": true
+      },
+      {
+        "sql": "CREATE TABLE \"e2e_extension_widgets\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" text NOT NULL\n)",
+        "severity": "safe",
+        "reason": "does not remove data or tighten constraints"
+      }
+    ]
+  }
+}

@@ -31,8 +31,8 @@
     },
     {
       "kind": "constraints",
-      "desired": 1,
-      "observed": 1
+      "desired": 3,
+      "observed": 3
     },
     {
       "kind": "tables",

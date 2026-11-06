@@ -1,0 +1,7 @@
+{
+  "reference": "oci://harness-registry:5000/schemas/extension:v1",
+  "pinned_reference": "oci://harness-registry:5000/schemas/extension@sha256:826b0841ee3278c741e0f4cc256bbd3212f4729989c0b2fd1821e86720b160d2",
+  "digest": "sha256:826b0841ee3278c741e0f4cc256bbd3212f4729989c0b2fd1821e86720b160d2",
+  "media_type": "application/vnd.oci.image.manifest.v1+json",
+  "size": 813
+}

@@ -1,0 +1,22 @@
+{
+  "contract_version": 3,
+  "command": "schema plan",
+  "outcome": "changes",
+  "plan_digest": "sha256:94a5614cbcfcd39b5a4a352785113207857e2e19ea0e1ed5745d7b702cca0f88",
+  "plan_path": "/work/ptah-plan-output-982577226/second.plan.json",
+  "plan": {
+    "format_version": 1,
+    "name": "plan_401aed2aa9fa",
+    "dialect": "postgres",
+    "from_fingerprint": "sha256:b53f16e6e4f3187bd68e99db9d33403d529c47336604bfeaeb46582515f9efa8",
+    "to_fingerprint": "sha256:f3a7f00524a9e60b8cc2e9ded2b6a3bced297f2fe41297cffb3e222d9f8921b7",
+    "destructive": false,
+    "statements": [
+      {
+        "sql": "CREATE TABLE \"e2e_git_items\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" text NOT NULL,\n  \"sku\" text\n)",
+        "severity": "safe",
+        "reason": "does not remove data or tighten constraints"
+      }
+    ]
+  }
+}

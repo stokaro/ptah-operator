@@ -203,11 +203,13 @@ func TestObserveFramesTheFeatureKindsPtahPrinted(t *testing.T) {
 	}{
 		{"../dataplane/testdata/drift-feature-extension.json", []DriftInventorySummary{
 			{Kind: "columns", Desired: 2, Observed: 2},
+			{Kind: "constraints", Desired: 1, Observed: 1},
 			{Kind: "ptah.run/pgextension/extension-change", Desired: 1, Observed: 0},
 			{Kind: "tables", Desired: 1, Observed: 1},
 		}},
 		{"../dataplane/testdata/drift-feature-policy.json", []DriftInventorySummary{
 			{Kind: "columns", Desired: 2, Observed: 2},
+			{Kind: "constraints", Desired: 1, Observed: 1},
 			{Kind: "ptah.run/pgpolicy/policy-change", Desired: 1, Observed: 0},
 			{Kind: "ptah.run/pgpolicy/table-state-change", Desired: 1, Observed: 1},
 			{Kind: "tables", Desired: 1, Observed: 1},
