@@ -1,0 +1,7 @@
+{
+  "contract_version": 2,
+  "command": "migrations status",
+  "error": {
+    "message": "error registering migrations: failed to load up migration 0000000001_init.up.sql: invalid migration directives in 0000000001_init.up.sql: invalid +ptah no_transaction value \"sometimes\": expected true or false"
+  }
+}

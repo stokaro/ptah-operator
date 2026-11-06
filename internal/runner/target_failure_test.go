@@ -109,11 +109,13 @@ func targetFailureRuns() map[string]targetFailureRun {
 		"migration history": {
 			operation: OperationMigrationHistory,
 			responses: func(_ *testing.T, failure string, exit int) []scriptedResponse {
+				// With no kind the runner asks whether the files load, and here
+				// they do, so the failure keeps its code.
 				return []scriptedResponse{{
 					stdout:   `{"contract_version":2,"command":"migrations status","error":` + failure + `}`,
 					stderr:   "error: " + childText + "\n",
 					exitCode: exit,
-				}}
+				}, {}}
 			},
 			environment:  func(*testing.T) []string { return migrationEnvironment("target-failure-history") },
 			unclassified: "child_exit",

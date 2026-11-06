@@ -6,12 +6,14 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
@@ -37,6 +39,7 @@ func TestConfigMapSources(t *testing.T) {
 		{"configmap-schema-edits", c.schemaEdits},
 		{"configmap-migration", c.migrationFromConfigMap},
 		{"configmap-snapshot-refused", c.replacedSnapshotRefused},
+		{"configmap-unreadable-source", c.unreadableSources},
 	} {
 		if !run.Scenario(scenario.name, c.scenario(scenario.body)) {
 			return
@@ -218,7 +221,9 @@ func (c *configMapRun) reset() {
 	c.t.Helper()
 	objects := []client.Object{
 		&ptahv1alpha1.PtahSchema{ObjectMeta: metav1.ObjectMeta{Namespace: c.in.TestNamespace, Name: configMapSchema}},
+		&ptahv1alpha1.PtahSchema{ObjectMeta: metav1.ObjectMeta{Namespace: c.in.TestNamespace, Name: configMapUnreadableSchema}},
 		&ptahv1alpha1.PtahMigration{ObjectMeta: metav1.ObjectMeta{Namespace: c.in.TestNamespace, Name: configMapMigration}},
+		&ptahv1alpha1.PtahMigration{ObjectMeta: metav1.ObjectMeta{Namespace: c.in.TestNamespace, Name: configMapUnreadableMigration}},
 		&ptahv1alpha1.PtahMigrationApproval{ObjectMeta: metav1.ObjectMeta{Namespace: c.in.TestNamespace, Name: "e2e-configmap-migration-v1"}},
 	}
 	for _, approval := range []string{"e2e-configmap-schema-v1", "e2e-configmap-schema-v2", "e2e-configmap-schema-v3"} {
@@ -227,7 +232,7 @@ func (c *configMapRun) reset() {
 	for _, object := range objects {
 		c.deleteAndWait(object)
 	}
-	for _, database := range []string{configMapSchemaDatabase, configMapMigrationDatabase} {
+	for _, database := range []string{configMapSchemaDatabase, configMapMigrationDatabase, configMapUnreadableDatabase} {
 		_, err := serverSQL(c.ctx, c.cluster, c.in.TestNamespace, c.engine, "DROP DATABASE IF EXISTS "+database+" WITH (FORCE)")
 		c.check(err, "drop database %s", database)
 	}
@@ -617,6 +622,138 @@ func (c *configMapRun) replacedSnapshotRefused() {
 		c.fatalf("the replaced snapshot's statement reached the database")
 	}
 	c.logf("PASS a snapshot replaced after approval was refused by the Pod: %s", refusal)
+}
+
+// unreadableSources delivers a schema file Ptah cannot read and a migration
+// file it cannot load, each through a ConfigMap, and reads the reason where a
+// person reads it. Repairing the schema file lets the same resource plan, so a
+// reason that is true of one revision does not outlive it. A read that keeps
+// failing holds the snapshot it was given, so the repair is the edit and then
+// the suspend and resume the troubleshooting page gives. The resources are
+// removed afterward: neither is a state a later scenario reads.
+func (c *configMapRun) unreadableSources() {
+	c.t.Helper()
+	c.createDatabase(configMapUnreadableDatabase, configMapUnreadableSecret)
+	target := map[string]any{
+		"engine": "PostgreSQL", "coordinationKey": "e2e/" + configMapUnreadableDatabase,
+		"urlFrom": map[string]any{"name": configMapUnreadableSecret, "key": "url"},
+	}
+	// A short retry: the proof waits through the failed attempts it reads.
+	execution := map[string]any{"activeDeadlineSeconds": int64(600), "failureRetryInterval": "10s"}
+
+	c.check(c.apply(c.sourceDocument(configMapUnreadableSchemaSource, map[string]string{"schema.sql": unreadablePartitionSchema})),
+		"apply ConfigMap %s", configMapUnreadableSchemaSource)
+	c.check(c.create(map[string]any{
+		"apiVersion": ptahSchemaAPIVersion, "kind": "PtahSchema",
+		"metadata": map[string]any{"namespace": c.in.TestNamespace, "name": configMapUnreadableSchema},
+		"spec": map[string]any{
+			"target": target,
+			"desired": map[string]any{"configMap": map[string]any{
+				"name":  configMapUnreadableSchemaSource,
+				"items": []any{map[string]any{"key": "schema.sql", "path": "schema.sql"}},
+			}},
+			"interval": configMapInterval, "policy": map[string]any{"apply": "OnApproval"}, "execution": execution,
+		},
+	}), "create PtahSchema %s", configMapUnreadableSchema)
+	schema := &ptahv1alpha1.PtahSchema{}
+	var message string
+	c.wait("the schema to say why it could not read its file", func() (bool, string) {
+		if err := c.get(configMapUnreadableSchema, schema); err != nil {
+			return false, err.Error()
+		}
+		failed := meta.FindStatusCondition(schema.Status.Conditions, ptahv1alpha1.ConditionReconciliationFailed)
+		if failed == nil || failed.Status != metav1.ConditionTrue || failed.Reason != string(ptahv1alpha1.ReasonOperationFailed) {
+			return false, fmt.Sprintf("%s, ReconciliationFailed %+v", schema.Status.Phase, failed)
+		}
+		message = failed.Message
+		err := unreadableSourceSays(message, unreadablePartitionFile, unreadablePartitionReason)
+		return err == nil, fmt.Sprint(err)
+	})
+	c.checkUnreadableText(message)
+	c.waitForUnreadableEvent(schema.UID, "OperationFailed", unreadablePartitionFile, unreadablePartitionReason)
+	c.editSource(configMapUnreadableSchemaSource, "schema.sql", configMapSchemaRevisions[0])
+	c.setUnreadableSchemaSuspended(true)
+	c.wait("the schema to be suspended with nothing in flight", func() (bool, string) {
+		if err := c.get(configMapUnreadableSchema, schema); err != nil {
+			return false, err.Error()
+		}
+		return schema.Status.Phase == ptahv1alpha1.PhaseSuspended && schema.Status.ActiveOperation == nil, string(schema.Status.Phase)
+	})
+	c.setUnreadableSchemaSuspended(false)
+	c.wait("the schema to plan once its file reads", func() (bool, string) {
+		if err := c.get(configMapUnreadableSchema, schema); err != nil {
+			return false, err.Error()
+		}
+		failed := meta.FindStatusCondition(schema.Status.Conditions, ptahv1alpha1.ConditionReconciliationFailed)
+		repaired := schema.Status.Plan != nil && failed != nil && failed.Status == metav1.ConditionFalse
+		return repaired, fmt.Sprintf("%s, ReconciliationFailed %+v", schema.Status.Phase, failed)
+	})
+	c.deleteAndWait(schema)
+	c.logf("PASS a schema from a ConfigMap said why its file could not be read: %s", message)
+
+	data := map[string]string{}
+	items := []any{}
+	for _, file := range unreadableMigrationFiles {
+		data[file.key] = file.body
+		items = append(items, map[string]any{"key": file.key, "path": file.path})
+	}
+	c.check(c.apply(c.sourceDocument(configMapUnreadableMigrationSource, data)), "apply ConfigMap %s", configMapUnreadableMigrationSource)
+	c.check(c.create(map[string]any{
+		"apiVersion": ptahSchemaAPIVersion, "kind": "PtahMigration",
+		"metadata": map[string]any{"namespace": c.in.TestNamespace, "name": configMapUnreadableMigration},
+		"spec": map[string]any{
+			"target": target, "artifact": map[string]any{"configMap": map[string]any{"name": configMapUnreadableMigrationSource, "items": items}},
+			"interval": configMapInterval, "policy": map[string]any{"apply": "OnApproval"}, "execution": execution,
+		},
+	}), "create PtahMigration %s", configMapUnreadableMigration)
+	migration := &ptahv1alpha1.PtahMigration{}
+	c.wait("the migration to say why it could not load its file", func() (bool, string) {
+		if err := c.get(configMapUnreadableMigration, migration); err != nil {
+			return false, err.Error()
+		}
+		progressing := meta.FindStatusCondition(migration.Status.Conditions, ptahv1alpha1.ConditionMigrationProgressing)
+		if progressing == nil || progressing.Reason != string(ptahv1alpha1.ReasonOperationFailed) {
+			return false, fmt.Sprintf("%s, Progressing %+v", migration.Status.Phase, progressing)
+		}
+		message = progressing.Message
+		err := unreadableSourceSays(message, unreadableMigrationFile, unreadableMigrationReason)
+		return err == nil, fmt.Sprint(err)
+	})
+	c.checkUnreadableText(message)
+	c.waitForUnreadableEvent(migration.UID, "OperationRetried", unreadableMigrationFile, unreadableMigrationReason)
+	c.deleteAndWait(migration)
+	c.logf("PASS a migration from a ConfigMap said why its file could not be loaded: %s", message)
+}
+
+func (c *configMapRun) setUnreadableSchemaSuspended(suspended bool) {
+	c.t.Helper()
+	patch := client.RawPatch(types.MergePatchType, fmt.Appendf(nil, `{"spec":{"suspend":%t}}`, suspended))
+	schema := &ptahv1alpha1.PtahSchema{ObjectMeta: metav1.ObjectMeta{Namespace: c.in.TestNamespace, Name: configMapUnreadableSchema}}
+	c.check(c.cluster.Client.Patch(c.ctx, schema, patch, client.FieldOwner(harness.FieldOwner)), "set spec.suspend on %s", schema.Name)
+}
+
+// checkUnreadableText holds a reason to what the run that wrote it could know:
+// the file, and neither the target's name nor its password.
+func (c *configMapRun) checkUnreadableText(message string) {
+	c.t.Helper()
+	if strings.Contains(message, configMapUnreadableDatabase) || strings.Contains(message, c.password) {
+		c.fatalf("the reason names the target: %s", message)
+	}
+}
+
+// waitForUnreadableEvent waits for the Event that repeats a reason. Events are
+// written after the status patch, so a reading of the condition does not yet
+// promise one.
+func (c *configMapRun) waitForUnreadableEvent(owner types.UID, reason, file, want string) {
+	c.t.Helper()
+	c.wait("the "+reason+" Event to say why", func() (bool, string) {
+		events := &corev1.EventList{}
+		if err := c.cluster.Client.List(c.ctx, events, client.InNamespace(c.in.TestNamespace)); err != nil {
+			return false, err.Error()
+		}
+		err := unreadableSourceEvent(events.Items, owner, reason, file, want)
+		return err == nil, fmt.Sprint(err)
+	})
 }
 
 // finish suspends both resources, so no read of theirs lands inside a later

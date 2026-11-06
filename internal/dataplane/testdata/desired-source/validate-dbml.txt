@@ -1,0 +1,1 @@
+postgres: source: error parsing schema file: /work/bad.dbml:3:1: expected a setting, found "}"

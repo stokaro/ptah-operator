@@ -714,6 +714,30 @@ like every other Apply failure it stays uncertain until an observation settles
 it: another Pod of the same Job may have run, so no one child's report proves
 that nothing was sent.
 
+A desired file Ptah cannot read is the one failure reported in Ptah's words.
+When Observe, Plan or a migration history read fails and its document names no
+such kind, the runner asks Ptah again in a second child: `schema validate` for a
+schema, and `migrations status` against an in-memory SQLite database for a
+migration directory. That child is told the path of the desired files, `HOME`
+and `TMPDIR`, and nothing else of the Pod's environment, so it holds no database
+URL and no credential and has no connection to quote. The failed command's own
+error is still not read: it had a connection, and its sentence could repeat what
+the database answered. When the second child reports that the files do not load,
+the frame carries its reason under the code `desired_source_unreadable`, with
+the credentials of the Pod's environment redacted and cut at 512 bytes, and the
+controller writes that reason to the condition and the Event. Any other answer
+leaves the failure with the code it had.
+
+That reason can quote the file. A parser names the token it stopped at, and a
+YAML error repeats the start of the value it could not decode:
+`unsupported SQL statement: SELCT at position 153`, or
+``cannot unmarshal !!str `hunter2...` ``. Status and Events are readable by more
+roles than the file is: the diagnostic reader may read them and is denied
+ConfigMaps and plan chunks, so a fragment of a source file can reach someone who
+cannot read the file itself. The redactor removes the credentials the Pod holds.
+It does not know what else in a file is sensitive, so keep a value that must not
+reach status out of a desired file.
+
 A successful Plan frame is the one frame that carries the plan: it transports
 the exact plan bytes through the authenticated receiver before they are
 committed to immutable chunks. See [Plan results stay out of logs](#pod-logs-carry-plans).

@@ -13,6 +13,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"maps"
 	"math/big"
 	"slices"
 	"strings"
@@ -100,6 +101,15 @@ const (
 	gitLFSRefusal       = gitrefusal.LFSPointer + gitLFSPath
 )
 
+// The schema file Ptah reads and cannot parse, in a database of its own: the
+// drift command connects before it reads the file.
+const (
+	gitUnreadableSchema   = "e2e-git-unreadable"
+	gitUnreadableDatabase = "ptah_e2e_git_unreadable"
+	gitUnreadableSecret   = "e2e-git-unreadable-database"
+	gitUnreadablePath     = "db/unreadable/" + unreadablePartitionFile
+)
+
 // gitSchemaRevisions are the desired schema the phase declares, in order: a
 // table, then a column on it, then, after the history is rewritten, a second
 // column.
@@ -128,6 +138,19 @@ func gitRepositorySpec(main int) gitrepo.Spec {
 // replaced commit is no longer on the server.
 func gitRewrittenSpec() gitrepo.Spec {
 	return gitrepo.Spec{Commits: gitCommits(true), Branches: map[string]int{"main": 2}, Tags: map[string]int{"v1": 0}}
+}
+
+// gitUnreadableSpec is the repository after the force-push with one more commit
+// on main, which adds a schema file Ptah cannot parse. Only the phase's last
+// scenario serves it: the Git captures name the commits before it, which this
+// leaves as they were.
+func gitUnreadableSpec() gitrepo.Spec {
+	commits := gitCommits(true)
+	last := commits[len(commits)-1]
+	files := maps.Clone(last.Files)
+	files[gitUnreadablePath] = unreadablePartitionSchema
+	commits = append(commits, gitrepo.CommitSpec{Message: "Add a schema the parser cannot read", Files: files, Submodules: last.Submodules})
+	return gitrepo.Spec{Commits: commits, Branches: map[string]int{"main": len(commits) - 1}, Tags: map[string]int{"v1": 0}}
 }
 
 func gitCommits(rewritten bool) []gitrepo.CommitSpec {

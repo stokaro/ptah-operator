@@ -185,7 +185,8 @@ operation Pod; running the same Ptah command against the database yourself
 prints it.
 
 Ptah classifies only the connection to the target. Any other failure keeps the
-code it had: `child_exit: ptah exited with code 2` from an observation or a
+code it had, unless [the desired file does not load](#a-desired-file-ptah-could-not-read):
+`child_exit: ptah exited with code 2` from an observation or a
 migration history read, `invalid_plan_output` from a Plan, `apply_failed` from
 an Apply. A development database, a registry or a Git remote that cannot be
 reached is one of those, and so is a PostgreSQL URL with `sslmode=require`
@@ -195,6 +196,66 @@ migration for another reason -- a lock or a timeout the server cannot carry, a
 lint policy that does not load -- is recorded the same way, `Failed` with the
 message "The run stopped before it selected any migration, and ran none", and
 waits the same interval.
+
+## A desired file Ptah could not read
+
+When Ptah cannot load a desired schema or a migration directory, what the
+operator says starts with the code `desired_source_unreadable` and carries Ptah's
+reason, which names the file:
+
+```
+desired_source_unreadable: error parsing schema file: read SQL schema file /source/schema/schema.sql: expected '(' after table name: expected Operator, got Identifier at position 180
+desired_source_unreadable: failed to load up migration 0000000001_init.up.sql: invalid migration directives in 0000000001_init.up.sql: invalid +ptah no_transaction value "sometimes": expected true or false
+```
+
+The path is where the file sits in the operation Pod: `/source/schema/` and the
+path a ConfigMap item names or the last part of a Git path. In a SQL file,
+`position` is the offset in bytes from the start of the file, and
+`head -c 180 schema.sql | tail -n 1` prints the line it stopped on. YAML, HCL and
+DBML name a line.
+
+| Stage | Where the reason appears, and what follows |
+| --- | --- |
+| `PtahSchema` Observe or Plan | `ReconciliationFailed=True` with reason `OperationFailed`, and an `OperationFailed` Warning Event. |
+| `PtahMigration` history read | `Progressing=True` with reason `OperationFailed`, and an `OperationRetried` Warning Event. |
+
+The operation runs again after `spec.execution.failureRetryInterval`, on the same
+files. **Repairing the source does not end that by itself:** a read that keeps
+failing holds the snapshot, commit or digest it was given, and the source is read
+again only once that read is gone. After you repair the file, suspend and resume
+the resource, or make any other edit to its spec:
+
+```bash
+kubectl ptah suspend schema/storefront -n application --wait
+kubectl ptah resume schema/storefront -n application
+```
+
+`kubectl ptah refresh` does not do this: a read request is answered between
+operations, and this operation does not end.
+
+The reason comes from a second run of Ptah that holds no database URL and no
+credential, so it cannot quote the database. It can quote a fragment of the file,
+as [Output handling](../../use/security/#output-handling) describes.
+
+Not everything that stops a desired file reaches this code. Ptah reads no SQL
+statement of a migration file until it runs it, so a statement that does not
+parse passes the history read and fails the Apply on the database. A desired
+schema that loads and that the comparison then refuses, such as a foreign key to
+a table it does not declare, keeps `child_exit`: the runner reports only a load
+failure, because a structural problem `schema validate` finds is not always one
+the failed command refused. `ptah schema validate` prints those.
+
+A schema published to an OCI registry is different, because Ptah reads it before
+the operation starts. `ptah schema push` refuses a file it cannot parse, with the
+same reason, so no such artifact comes from Ptah. An artifact built another way,
+or by a newer Ptah than the executor, fails in the `fetch-schema` init container,
+and the message names only the step: `the fetch-schema step exited 2, so the run
+never started`. That container holds the registry credentials, so what it wrote
+stays in its log:
+
+```bash
+kubectl logs -n application job/<job> -c fetch-schema
+```
 
 ## A change a policy fences off
 

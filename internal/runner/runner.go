@@ -397,7 +397,7 @@ func Run(ctx context.Context, config Config) Result {
 	// writes the same document. Truncated output is not a document, so it is
 	// not read.
 	if config.Operation == OperationMigrationHistory || config.Operation == OperationMigrationApply {
-		decodeMigrationReport(&result, config, outcome, redactor)
+		decodeMigrationReport(ctx, &result, config, environment, inputs, outcome, redactor)
 	}
 	if result.Error == nil {
 		switch config.Operation {
@@ -438,7 +438,15 @@ func Run(ctx context.Context, config Config) Result {
 // inside one. A child that was killed before it wrote one leaves nothing that
 // decodes, and the frame keeps claiming a started, uncertain mutation. Any
 // other failure to run the child leaves no document at all, and is not read.
-func decodeMigrationReport(result *Result, config Config, outcome commandOutcome, redactor Redactor) {
+func decodeMigrationReport(
+	ctx context.Context,
+	result *Result,
+	config Config,
+	environment []string,
+	inputs Inputs,
+	outcome commandOutcome,
+	redactor Redactor,
+) {
 	if (outcome.err != nil && !stoppedByContext(outcome.err)) || outcome.stdout.dropped() != 0 {
 		return
 	}
@@ -447,13 +455,14 @@ func decodeMigrationReport(result *Result, config Config, outcome commandOutcome
 		if err != nil {
 			// A status run that could not read the history prints a failure
 			// document in place of the status. Its kind is read when the child
-			// exited on its own and nonzero; anything else stays as the exit
-			// already reported it.
+			// exited on its own and nonzero. With no kind, the files are asked
+			// about in a run that has no target; anything else stays as the
+			// exit already reported it.
 			if outcome.err == nil && outcome.exitCode != 0 {
-				if failure, decodeErr := dataplane.DecodeMigrationStatusFailure(outcome.stdout.bytes()); decodeErr == nil {
-					if kind, known := failure.TargetFailure(); known {
-						setTargetFailure(result, kind, redactor, config.Diagnostics)
-					}
+				if kind, known := migrationStatusFailureKind(outcome); known {
+					setTargetFailure(result, kind, redactor, config.Diagnostics)
+				} else {
+					reportUnreadableMigrationFiles(ctx, config, environment, inputs, result, redactor)
 				}
 			}
 			if result.Error == nil {
@@ -492,6 +501,16 @@ func decodeMigrationReport(result *Result, config Config, outcome commandOutcome
 	// Partial and unknown are the two outcomes no retry may follow.
 	result.Uncertain = report.Outcome == dataplane.MigrationOutcomePartial ||
 		report.Outcome == dataplane.MigrationOutcomeUnknown
+}
+
+// migrationStatusFailureKind is the kind of failure a status run's failure
+// document names, if it printed one and the kind is in the vocabulary.
+func migrationStatusFailureKind(outcome commandOutcome) (dataplane.TargetFailureKind, bool) {
+	failure, err := dataplane.DecodeMigrationStatusFailure(outcome.stdout.bytes())
+	if err != nil {
+		return "", false
+	}
+	return failure.TargetFailure()
 }
 
 // redactMigrationHistoryError clears the free-text error a dirty revision
@@ -606,6 +625,9 @@ func runPlan(
 		}
 		return spec, nil
 	}
+	reportUnreadable := func() bool {
+		return reportUnreadableSchema(ctx, config, environment, inputs, &result, redactor)
+	}
 	var reads [2]nativePlan
 	for index, name := range []string{"first.plan.json", "second.plan.json"} {
 		outputPath := filepath.Join(outputDir, name)
@@ -618,7 +640,7 @@ func runPlan(
 			setResultError(&result, "credential_in_arguments", err, redactor, config.Diagnostics)
 			return result
 		}
-		read, ok := readNativePlan(ctx, config, spec, outputPath, &result, redactor)
+		read, ok := readNativePlan(ctx, config, spec, outputPath, &result, redactor, reportUnreadable)
 		if !ok {
 			return result
 		}
@@ -717,8 +739,9 @@ type nativePlan struct {
 // sentence, which names the tables and no row. Any other refusal is reported
 // by its code, and a failure, a report this runner cannot read, a plan saved
 // somewhere else and a file whose digest is not the reported one are all
-// invalid plan output. The exit status decides nothing; see
-// noteReportedSuccess.
+// invalid plan output. A failure that names no target failure kind first asks
+// reportUnreadable whether the desired schema loads. The exit status decides
+// nothing; see noteReportedSuccess.
 func readNativePlan(
 	ctx context.Context,
 	config Config,
@@ -726,6 +749,7 @@ func readNativePlan(
 	outputPath string,
 	result *Result,
 	redactor Redactor,
+	reportUnreadable func() bool,
 ) (nativePlan, bool) {
 	outcome := executeReportCommand(ctx, config, spec, planReportLimit(config.MaxPlanBytes))
 	result.ChildExitCode = outcome.exitCode
@@ -754,6 +778,9 @@ func readNativePlan(
 	case dataplane.SchemaPlanOutcomeFailed:
 		if kind, known := targetFailureOf(report.Error, outcome); known {
 			setTargetFailure(result, kind, redactor, config.Diagnostics)
+			return nativePlan{}, false
+		}
+		if reportUnreadable() {
 			return nativePlan{}, false
 		}
 		setResultError(result, "invalid_plan_output", errors.New("plan command did not complete successfully"), redactor, config.Diagnostics)
@@ -1109,13 +1136,17 @@ func runObserve(ctx context.Context, config Config, environment []string, inputs
 	}
 	if driftOutcome.exitCode != 0 && driftOutcome.exitCode != 1 {
 		// A drift run that failed prints a failure document in place of its
-		// report. Its kind names a target that could not be opened; any other
-		// failure is reported by its exit status alone.
+		// report. Its kind names a target that could not be opened. With no
+		// kind, the desired schema is asked about in a run that has no target;
+		// any other failure is reported by its exit status alone.
 		if failure, err := dataplane.DecodeDriftFailure(driftOutcome.stdout.bytes()); err == nil {
 			if kind, known := failure.TargetFailure(); known {
 				setTargetFailure(&result, kind, redactor, config.Diagnostics)
 				return result
 			}
+		}
+		if reportUnreadableSchema(ctx, config, environment, inputs, &result, redactor) {
+			return result
 		}
 		setResultError(&result, "child_exit", fmt.Errorf("ptah exited with code %d", driftOutcome.exitCode), redactor, config.Diagnostics)
 		return result
