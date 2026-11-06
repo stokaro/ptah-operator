@@ -65,6 +65,11 @@ func TestResultFailureReadsOnlyTheKindOfATargetFailure(t *testing.T) {
 			want:    "child_exit: ptah exited with code 2",
 		},
 		{
+			name:    "a desired file that does not load",
+			failure: runner.ResultError{Code: runner.CodeDesiredSourceUnreadable, Message: "read SQL schema file schema.sql: expected '('"},
+			want:    "desired_source_unreadable: read SQL schema file schema.sql: expected '('",
+		},
+		{
 			name:    "a code that only resembles a kind",
 			failure: runner.ResultError{Code: "Database_Unreachable", Message: "ptah exited with code 2"},
 			want:    "Database_Unreachable: ptah exited with code 2",

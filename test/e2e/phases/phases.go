@@ -684,8 +684,9 @@ type ConfigMapSourceInputs struct {
 // a ConfigMap: each applied with no registry, through a snapshot the manager
 // wrote and the operation Pods checked; an edit to a selected key planning
 // again and retiring the snapshot nothing names, and an edit to an unselected
-// key planning nothing; and a snapshot replaced after approval refused by the
-// Pod before the operation container starts.
+// key planning nothing; a snapshot replaced after approval refused by the Pod
+// before the operation container starts; and a desired file Ptah cannot read
+// named in the condition and the Event, for a schema and a migration.
 var ConfigMapSources = define[ConfigMapSourceInputs](Phase{
 	Name:    "configmap-sources",
 	Test:    "TestConfigMapSources",
@@ -695,6 +696,7 @@ var ConfigMapSources = define[ConfigMapSourceInputs](Phase{
 		"configmap-schema-edits",
 		"configmap-migration",
 		"configmap-snapshot-refused",
+		"configmap-unreadable-source",
 	},
 })
 
@@ -723,7 +725,8 @@ type GitSourceInputs struct {
 // directory from a tag over SSH with a deploy key and pinned known hosts; a
 // credential granted for another host, refused before Ptah runs; and a
 // submodule, an LFS pointer and a host key the known hosts do not pin, each
-// refused at its Resolve.
+// refused at its Resolve; and a schema file Ptah cannot read named in the
+// condition and the Event.
 var GitSources = define[GitSourceInputs](Phase{
 	Name:    "git-sources",
 	Test:    "TestGitSources",
@@ -737,6 +740,7 @@ var GitSources = define[GitSourceInputs](Phase{
 		"git-migration-ssh",
 		"git-credential-refused",
 		"git-source-refused",
+		"git-source-unreadable",
 	},
 })
 

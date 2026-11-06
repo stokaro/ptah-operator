@@ -2074,6 +2074,15 @@ the plan Ptah saved. Resolve and Verify emit bounded typed evidence, Observe emi
 only summaries, and Apply emits no native output. Native stderr never crosses
 those operation boundaries; controller-facing failures are generic and typed.
 
+One failure is reported in Ptah's words: a desired schema or a migration
+directory Ptah cannot load. The words come from a second run of Ptah that holds
+no database URL and no credential, and they reach the condition and the Event
+under the code `desired_source_unreadable`, redacted and cut at 512 bytes. That
+run cannot quote the database. The reason can quote a fragment of the file, and
+[Output handling](../security/#output-handling) says who that reaches.
+[A desired file Ptah could not read](../../troubleshoot/condition-reasons/#a-desired-file-ptah-could-not-read)
+says what a person does with it.
+
 Kubernetes Events provide the object-scoped audit trail for operation claims,
 completion, policy refusal, approval changes, and failures. Alert on a sustained
 increase in `ptah_operator_failures_total` and on any increase in

@@ -37,6 +37,15 @@ const (
 	// snapshotCopyContainer is the init container that checks a snapshot and
 	// copies it.
 	snapshotCopyContainer = "copy-source-snapshot"
+
+	// The resources that deliver a file Ptah cannot read, on a database of
+	// their own: Ptah connects to the target before it reads the file.
+	configMapUnreadableDatabase        = "ptah_e2e_configmap_unreadable"
+	configMapUnreadableSecret          = "e2e-configmap-unreadable-database"
+	configMapUnreadableSchema          = "e2e-configmap-unreadable-schema"
+	configMapUnreadableSchemaSource    = "e2e-configmap-unreadable-schema-source"
+	configMapUnreadableMigration       = "e2e-configmap-unreadable-migration"
+	configMapUnreadableMigrationSource = "e2e-configmap-unreadable-migration-source"
 )
 
 // snapshotContentRefusal is what the copy reports when the snapshot does not

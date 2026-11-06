@@ -900,7 +900,7 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 		return r.settleMigrationApply(ctx, migration, job, r.frameMigrationApply(ctx, migration, result))
 	}
 	if parseErr != nil {
-		if boundary, boundaryErr := r.failedInitBoundary(ctx, migration, job); boundaryErr != nil {
+		if boundary, boundaryErr := failedInitBoundary(ctx, r.directReader(), job); boundaryErr != nil {
 			return ctrl.Result{}, boundaryErr
 		} else if boundary != "" {
 			return r.retryMigrationOperation(ctx, migration, job, errors.New(boundary))
@@ -1636,15 +1636,11 @@ func (r *MigrationReconciler) migrationInputFingerprint(
 // evidence this controller puts in a status; the name and the exit code are
 // structured fields Kubernetes sets, and they are enough to say which boundary
 // failed.
-func (r *MigrationReconciler) failedInitBoundary(
-	ctx context.Context,
-	migration *operatorv1alpha1.PtahMigration,
-	job *batchv1.Job,
-) (string, error) {
+func failedInitBoundary(ctx context.Context, reader client.Reader, job *batchv1.Job) (string, error) {
 	if job == nil {
 		return "", nil
 	}
-	pods, err := podsOwnedByJob(ctx, r.directReader(), migration.Namespace, job.Name, job.UID)
+	pods, err := podsOwnedByJob(ctx, reader, job.Namespace, job.Name, job.UID)
 	if err != nil {
 		return "", err
 	}

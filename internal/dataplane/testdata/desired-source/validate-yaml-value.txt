@@ -1,0 +1,2 @@
+postgres: source: error parsing schema file: parse YAML schema: yaml: unmarshal errors:
+  line 1: cannot unmarshal !!str `hunter2...` into map[string]yamlschema.tableSpec

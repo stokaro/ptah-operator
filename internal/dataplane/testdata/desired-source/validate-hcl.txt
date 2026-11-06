@@ -1,0 +1,1 @@
+postgres: source: error parsing schema file: parse HCL schema: /work/bad.hcl:3,31-32: Invalid single-argument block definition; A single-line block definition must end with a closing brace immediately after its single argument definition.

@@ -1,0 +1,7 @@
+{
+  "contract_version": 1,
+  "command": "schema drift",
+  "error": {
+    "message": "error comparing schemas: invalid foreign key: field \"id\" references unknown table \"nope\""
+  }
+}

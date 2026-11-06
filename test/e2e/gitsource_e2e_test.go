@@ -47,6 +47,7 @@ func TestGitSources(t *testing.T) {
 		{"git-migration-ssh", c.migrationOverSSH},
 		{"git-credential-refused", c.credentialForAnotherHost},
 		{"git-source-refused", c.refusedSources},
+		{"git-source-unreadable", c.unreadableSchema},
 	} {
 		if !run.Scenario(scenario.name, c.scenario(scenario.body)) {
 			return
@@ -377,7 +378,7 @@ func (c *gitRun) reset() {
 		&ptahv1alpha1.PtahMigration{ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: gitMigration}},
 		&ptahv1alpha1.PtahMigrationApproval{ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: "e2e-git-migration-v1"}},
 	}
-	for _, schema := range []string{gitSchema, gitRefusedSchema, gitPinnedSchema, gitSubmoduleSchema, gitLFSSchema, gitHostKeySchema} {
+	for _, schema := range []string{gitSchema, gitRefusedSchema, gitPinnedSchema, gitSubmoduleSchema, gitLFSSchema, gitHostKeySchema, gitUnreadableSchema} {
 		objects = append(objects, &ptahv1alpha1.PtahSchema{ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: schema}})
 	}
 	for _, approval := range []string{"e2e-git-schema-v1", "e2e-git-schema-v2", "e2e-git-schema-v3", "e2e-git-pinned-v1"} {
@@ -389,7 +390,7 @@ func (c *gitRun) reset() {
 	for _, object := range objects {
 		c.deleteAndWait(object)
 	}
-	for _, database := range []string{gitSchemaDatabase, gitMigrationDatabase, gitPinnedDatabase} {
+	for _, database := range []string{gitSchemaDatabase, gitMigrationDatabase, gitPinnedDatabase, gitUnreadableDatabase} {
 		_, err := serverSQL(c.ctx, c.cluster, namespace, c.engine, "DROP DATABASE IF EXISTS "+database+" WITH (FORCE)")
 		c.check(err, "drop database %s", database)
 	}
@@ -893,6 +894,45 @@ func (c *gitRun) refusedSources() {
 		c.deleteAndWait(c.onlyResolved(row.name))
 		c.logf("PASS %s was refused at its Resolve: %s", row.name, refusal)
 	}
+}
+
+// unreadableSchema selects a file of the branch that Ptah fetches and cannot
+// parse. The fetch succeeds, so the reason comes from the operation container,
+// as a ConfigMap's does, and it names the file at its path in the source volume.
+func (c *gitRun) unreadableSchema() {
+	c.t.Helper()
+	spec := gitUnreadableSpec()
+	c.serve(spec, len(spec.Commits)-1)
+	c.createDatabase(gitUnreadableDatabase, gitUnreadableSecret)
+	c.check(c.create(c.schemaDocumentFor(gitUnreadableSchema, gitUnreadableSecret, gitUnreadableDatabase,
+		c.httpsSource(gitUnreadablePath, gitTokenCredential))), "create PtahSchema %s", gitUnreadableSchema)
+	schema := &ptahv1alpha1.PtahSchema{}
+	var message string
+	c.wait("the schema to say why it could not read its file", func() (bool, string) {
+		if err := c.get(gitUnreadableSchema, schema); err != nil {
+			return false, err.Error()
+		}
+		failed := meta.FindStatusCondition(schema.Status.Conditions, ptahv1alpha1.ConditionReconciliationFailed)
+		if failed == nil || failed.Status != metav1.ConditionTrue || failed.Reason != string(ptahv1alpha1.ReasonOperationFailed) {
+			return false, fmt.Sprintf("%s, ReconciliationFailed %+v", schema.Status.Phase, failed)
+		}
+		message = failed.Message
+		err := unreadableSourceSays(message, unreadablePartitionFile, unreadablePartitionReason)
+		return err == nil, fmt.Sprint(err)
+	})
+	if strings.Contains(message, gitUnreadableDatabase) || strings.Contains(message, c.password) || strings.Contains(message, c.keys.token) {
+		c.fatalf("the reason names the target or the source's credential: %s", message)
+	}
+	c.wait("the OperationFailed Event to say why", func() (bool, string) {
+		events := &corev1.EventList{}
+		if err := c.cluster.Client.List(c.ctx, events, client.InNamespace(c.in.TestNamespace)); err != nil {
+			return false, err.Error()
+		}
+		err := unreadableSourceEvent(events.Items, schema.UID, "OperationFailed", unreadablePartitionFile, unreadablePartitionReason)
+		return err == nil, fmt.Sprint(err)
+	})
+	c.deleteAndWait(schema)
+	c.logf("PASS a schema from Git said why its file could not be read: %s", message)
 }
 
 // deploymentLogs is the latest log of a Deployment's Pod.

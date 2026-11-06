@@ -1147,6 +1147,11 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 			)
 		}
 		if parseErr != nil {
+			if boundary, boundaryErr := failedInitBoundary(ctx, r.directReader(), job); boundaryErr != nil {
+				return ctrl.Result{}, boundaryErr
+			} else if boundary != "" {
+				return r.retryOperation(ctx, schema, job, errors.New(boundary))
+			}
 			return r.retryOperation(ctx, schema, job, fmt.Errorf("read %s result: %w", operation.Type, parseErr))
 		}
 		return r.retryOperation(ctx, schema, job, fmt.Errorf("%s Job failed", operation.Type))
