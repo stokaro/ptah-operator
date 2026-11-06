@@ -1,0 +1,22 @@
+{
+  "source": "git",
+  "reference": "git+https://e2e-git.ptah-test.svc/acme/app.git",
+  "commit": "7c63b477b7bc3d4eaf899d687d57d88fab63fedc",
+  "path": "db/migrations",
+  "content_digest": "sha256:8a7eb2be8871d4eb80e45bf4620c00390da96a1ef1afea0aa9a6b94c87d365bc",
+  "files": [
+    {
+      "path": "0000000001_create_parts.down.sql",
+      "size": 26,
+      "sha256": "6ec150323aba46568568cb95cd1f923fe90265e485b0f42a467f9f31aef9d290"
+    },
+    {
+      "path": "0000000001_create_parts.up.sql",
+      "size": 83,
+      "sha256": "7e68677f8835d267f2e134414a1b79b092490248199efcbcd92e31685f75fdc7"
+    }
+  ],
+  "written": [
+    "/fetch-work/ptah-git-fetch-capture/migrations"
+  ]
+}

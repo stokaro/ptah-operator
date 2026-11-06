@@ -1,0 +1,16 @@
+migrations
+pull
+git+ssh://git@e2e-git.ptah-test.svc/acme/app.git
+--path
+db/migrations
+--tag
+v1
+--commit
+ee7f9f4a97d8a24bf8f6bb6724f9e95c3f3b90a8
+--expect-digest
+sha256:8a7eb2be8871d4eb80e45bf4620c00390da96a1ef1afea0aa9a6b94c87d365bc
+--known-hosts-file
+/credentials/git-known-hosts/known_hosts
+--out
+/fetch-work/ptah-git-fetch-capture/migrations
+--json

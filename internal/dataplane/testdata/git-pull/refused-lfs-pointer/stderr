@@ -1,0 +1,1 @@
+error: selected path is a Git LFS pointer: db/lfs.sql; Ptah reads the bytes in the repository and runs no LFS step

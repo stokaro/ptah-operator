@@ -1,0 +1,12 @@
+schema
+pull
+git+ssh://git@e2e-git.ptah-test.svc/acme/app.git
+--path
+db/schema.sql
+--branch
+main
+--known-hosts-file
+/credentials/git-known-hosts-other/known_hosts
+--out
+/fetch-work/ptah-git-fetch-capture/schema.sql
+--json

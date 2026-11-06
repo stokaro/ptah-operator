@@ -27,6 +27,7 @@ import (
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/sourcebinding"
 	"github.com/stokaro/ptah-operator/internal/sourcecontent"
+	"github.com/stokaro/ptah-operator/test/e2e/gitrefusal"
 	"github.com/stokaro/ptah-operator/test/e2e/gitrepo"
 )
 
@@ -94,6 +95,9 @@ const (
 	gitLFSPath         = "db/lfs.sql"
 	gitLFSPointer      = "version https://git-lfs.github.com/spec/v1\n" +
 		"oid sha256:4d7a214614ab2935c943f9e0ff69d22eadbb8f32b1258daaa5e2ca24d17e2393\nsize 12345\n"
+	// What the refused sources' rows match in a condition message.
+	gitSubmoduleRefusal = gitrefusal.Submodule + gitSubmodulePath
+	gitLFSRefusal       = gitrefusal.LFSPointer + gitLFSPath
 )
 
 // gitSchemaRevisions are the desired schema the phase declares, in order: a

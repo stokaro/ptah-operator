@@ -1,0 +1,16 @@
+schema
+pull
+git+https://e2e-git.ptah-test.svc/acme/app.git
+--path
+db/schema.sql
+--branch
+main
+--commit
+7c63b477b7bc3d4eaf899d687d57d88fab63fedc
+--expect-digest
+sha256:952d69cc98f2d0e50b972f041f86f3368b0986107ee26025e5817adddebe27ab
+--ca-file
+/credentials/git-ca/ca.pem
+--out
+/fetch-work/ptah-git-fetch-capture/schema.sql
+--json
