@@ -787,20 +787,24 @@ func (c *configMapRun) finish() {
 	}
 }
 
-// cleanup prints what the two resources decided when the phase failed. The
-// statuses carry no SQL and no credential by contract.
+// cleanup prints what the phase's resources decided when it failed. The statuses
+// carry no SQL and no credential by contract.
 func (c *configMapRun) cleanup() {
 	if c.cluster == nil || !c.parent.Failed() {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	schema := &ptahv1alpha1.PtahSchema{}
-	if c.cluster.Client.Get(ctx, c.key(configMapSchema), schema) == nil {
-		_, _ = fmt.Fprintf(os.Stderr, "e2e ConfigMap sources: schema status %+v\n", schema.Status)
+	for _, name := range []string{configMapSchema, reachabilitySchema} {
+		schema := &ptahv1alpha1.PtahSchema{}
+		if c.cluster.Client.Get(ctx, c.key(name), schema) == nil {
+			_, _ = fmt.Fprintf(os.Stderr, "e2e ConfigMap sources: schema %s status %+v\n", name, schema.Status)
+		}
 	}
-	migration := &ptahv1alpha1.PtahMigration{}
-	if c.cluster.Client.Get(ctx, c.key(configMapMigration), migration) == nil {
-		_, _ = fmt.Fprintf(os.Stderr, "e2e ConfigMap sources: migration status %+v\n", migration.Status)
+	for _, name := range []string{configMapMigration, reachabilityMigration} {
+		migration := &ptahv1alpha1.PtahMigration{}
+		if c.cluster.Client.Get(ctx, c.key(name), migration) == nil {
+			_, _ = fmt.Fprintf(os.Stderr, "e2e ConfigMap sources: migration %s status %+v\n", name, migration.Status)
+		}
 	}
 }
