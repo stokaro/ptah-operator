@@ -17,6 +17,7 @@ export const sidebar = [
       { label: 'Try it locally', link: '/start/try-it/' },
       { label: 'Install', link: '/start/install/' },
       { label: 'First schema', link: '/start/first-schema/' },
+      { label: 'Compared with SchemaHero', link: '/start/compare-schemahero/' },
     ],
   },
   {
@@ -107,5 +108,5 @@ export const sidebar = [
   { label: 'Conditions', link: '/troubleshoot/conditions/' },
   { label: 'Condition reasons', link: '/troubleshoot/condition-reasons/' },
   { label: 'Events', link: '/troubleshoot/events/' },
-  { label: 'FAQ', link: '/faq/', badge: { text: '30', variant: 'default' } },
+  { label: 'FAQ', link: '/faq/', badge: { text: '31', variant: 'default' } },
 ];

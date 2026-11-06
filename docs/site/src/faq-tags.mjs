@@ -19,6 +19,7 @@
 /** @type {Record<string, string[]>} */
 export const questionTags = {
   "what-the-operator-does": ["getting-started", "scope"],
+  "compare-schemahero": ["getting-started", "scope"],
   "ptahschema-and-migration-directory": ["migrations", "scope"],
   "operator-does-not-provision": ["scope", "database-access"],
   "is-it-production-ready": ["getting-started", "compatibility"],
