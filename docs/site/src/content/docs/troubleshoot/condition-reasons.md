@@ -18,7 +18,7 @@ decision.
 | --- | --- |
 | `Active` | Reconciliation is not suspended. |
 | `ApplyDisabled` | Policy records plans but forbids Apply. |
-| `ApplyOutcomeUnknown` | Apply failed without proof of whether mutation occurred. |
+| `ApplyOutcomeUnknown` | Apply failed without proof of whether mutation occurred, including an Apply whose runner reported it could not open the target: one Pod's report does not speak for its Job. |
 | `ApplyPending` | A plan that destroys nothing and changes no privilege is eligible for automatic Apply. |
 | `ApprovalRevoked` | A reserved approval became invalid before dispatch. |
 | `ApprovedPlan` | The exact current approved plan is applying. |
@@ -168,7 +168,7 @@ depends on the stage that failed:
 | Stage | Where the sentence appears, and what follows |
 | --- | --- |
 | `PtahSchema` Observe or Plan | `ReconciliationFailed=True` with reason `OperationFailed`, and an `OperationFailed` Warning Event. The operation runs again after `spec.execution.failureRetryInterval`. |
-| `PtahSchema` Apply | `ReconciliationFailed=True` with reason `ApplyOutcomeUnknown`, and an `ApplyOutcomeUnknown` Warning Event whose text is fixed. Every Apply error is followed by a read-only observation before anything else runs; while the database still cannot be opened, that observation fails as above, with reason `OperationFailed` and the same sentence. |
+| `PtahSchema` Apply | `ReconciliationFailed=True` with reason `ApplyOutcomeUnknown`, and an `ApplyOutcomeUnknown` Warning Event that carries the sentence. Every Apply error is followed by a read-only observation before anything else runs; while the database still cannot be opened, that observation fails as above, with reason `OperationFailed` and the same sentence. The outcome stays unknown until the proof completes, so `ptah_operator_unresolved_attempts{family="schema"}` counts it and `PtahOperatorUnresolvedApply` fires for as long as the database is away. |
 | `PtahMigration` history read | `Progressing=True` with reason `OperationFailed`, and an `OperationRetried` Warning Event. The read runs again after `spec.execution.failureRetryInterval`. |
 | `PtahMigration` Apply | `status.lastRun` is `Failed` with the sentence as its message, `Ready=False` and `Progressing=False` carry it with reason `OperationFailed`, and a `MigrationRunFinished` Warning Event carries it. The run ran nothing, so nothing is read back at once: the resource waits `spec.execution.failureRetryInterval` and then starts again from resolution, which reads the history before anything is planned or applied. |
 

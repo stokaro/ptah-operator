@@ -2536,7 +2536,7 @@ func (r *SchemaReconciler) finishUncertainApplyWithEvidenceAndBinding(
 		r.Telemetry.ObserveFailure(telemetry.FamilySchema, telemetry.FailureStageApply, telemetry.FailureUncertain)
 	}
 	r.observeOperation(operation, telemetry.OperationUncertain)
-	r.event(schema, corev1.EventTypeWarning, "ApplyOutcomeUnknown", "Apply outcome is uncertain; observing database state")
+	r.event(schema, corev1.EventTypeWarning, "ApplyOutcomeUnknown", "%s", uncertainApplyEvent(failure))
 	return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
 }
 

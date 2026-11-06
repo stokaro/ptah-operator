@@ -45,6 +45,20 @@ type targetFailureError struct {
 
 func (e *targetFailureError) Error() string { return targetfailure.Message(e.kind, e.url) }
 
+// uncertainApplyEvent is the text of the ApplyOutcomeUnknown Event. A result that
+// named a kind says why the Pod that reported it could not open the target, and
+// keeps as much of the sentence as any failure Event. Every other Apply error
+// keeps the fixed text, because what it holds may quote the runner. Either way the
+// outcome stays unknown: one Pod's report does not speak for its Job.
+func uncertainApplyEvent(failure error) string {
+	const fixed = "Apply outcome is uncertain; observing database state"
+	var target *targetFailureError
+	if errors.As(failure, &target) {
+		return fixed + ": " + bounded(target.Error(), 512)
+	}
+	return fixed
+}
+
 // databaseReachableReasons is the reason DatabaseReachable carries for each
 // kind. A consumer keys an alert on it, because a condition's message may
 // change without an API version.

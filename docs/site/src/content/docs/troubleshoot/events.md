@@ -28,7 +28,7 @@ The log-loss window and summary fallback apply only to
 | Reason | Type | Recorded on | What it says |
 | --- | --- | --- | --- |
 | `AdmissionSnapshotRefreshed` | Normal | `PtahSchema`, `PtahMigration` | A claim that had not dispatched found the Pod template it would dispatch different from the one its admission snapshot recorded, usually because a new manager release took over. The claim stands, and the snapshot is resolved again before its Job is created. This happens once per claim; a template that changes again retires the claim. |
-| `ApplyOutcomeUnknown` | Warning | `PtahSchema` | An Apply ended with no proof of whether it changed the database, so a read-only observation starts to establish what happened. |
+| `ApplyOutcomeUnknown` | Warning | `PtahSchema` | An Apply ended with no proof of whether it changed the database, so a read-only observation starts to establish what happened. When the result named why the target could not be opened, the Event carries the operator's sentence for that kind; any other error keeps the fixed text. |
 | `ApprovalAccepted` | Normal | `PtahSchema` | An authenticated approval was accepted for the current immutable plan. |
 | `ApprovalRequired` | Normal | `PtahSchema` | The current immutable plan needs an approval before anything applies it. |
 | `ApprovalRevoked` | Warning | `PtahSchema` | The recorded approval became invalid before the Apply Job was created, so no Job was created. |

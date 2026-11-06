@@ -2105,6 +2105,12 @@ and survive an unrelated refusal rewriting the resource's conditions.
 | `ptah_operator_unresolved_view_synced{}` | 1 when the leader read the complete state for this scrape |
 | `ptah_operator_unresolved_view_read_failures_total{}` | Scrapes that could not read that state |
 
+A schema Apply whose runner reported it could not open the target counts here
+until the database answers and the proof completes, because one Pod's report
+does not speak for its Job. `DatabaseReachable=False` on the resource, with
+[a reason for the kind](../../troubleshoot/condition-reasons/#a-database-the-operation-could-not-open),
+is what tells that page from one about a mutation that may have run.
+
 The leader reads both resource families and both plan kinds directly from the
 API server once per scrape, sharing those results across the unresolved,
 resource-state and plan-store gauges. All four lists share a three-second

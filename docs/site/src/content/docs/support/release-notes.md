@@ -86,6 +86,12 @@ Nothing else.
   `Progressing` keep their reasons. After a rollback, an earlier manager leaves a
   migration's `DatabaseReachable` as this one last wrote it, and reads nothing
   from it.
+- **An Apply that could not open its database says so in the Event.** The
+  `ApplyOutcomeUnknown` Event carries the sentence for the kind when the Apply's
+  result named one; any other Apply error keeps the fixed text. The outcome, the
+  unresolved count and `PtahOperatorUnresolvedApply` do not change: a database
+  that goes away between the Plan and the Apply keeps paging until it answers and
+  the read-only proof completes, and `DatabaseReachable=False` says why.
 - **A migration run that never started.** A migration Apply that Ptah stopped
   before it selected any migration, as on a database it could not open, is
   now `Failed`. After `spec.execution.failureRetryInterval` the resource reads
