@@ -47,7 +47,8 @@ Approval is not an operation — it is a phase in which nothing runs.
 - **Observe** fetches the verified schema by digest and validates a raw,
   read-only drift report. The report's detail stays inside the runner: status
   receives a digest, a dialect, a total count, the highest severity, and
-  bounded category-level aggregates.
+  bounded category-level aggregates. The report covers
+  [what the login can see](../../support/databases/#what-the-login-cannot-see).
 - **Plan** performs two independent native scoped plans while holding the
   database-realm Lease, accepts only byte-identical results, and then makes the
   native Apply path parse and dry-run those exact bytes. A no-change result is

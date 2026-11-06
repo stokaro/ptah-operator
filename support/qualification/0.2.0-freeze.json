@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-11-04T15:45:09.554637+00:00",
+  "frozenAt": "2026-11-06T15:42:15.348232+00:00",
   "profileSourceCommit": "1259f4d59343fef049307085e3ea77d2971677cb",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
@@ -32,7 +32,7 @@
     },
     {
       "path": "docs/site/src/content/docs/support/databases.md",
-      "sha256": "20d5cff4c9a2f9b0905f08e37ffb18e7abc6e1555addf39359dbd94c832fef56"
+      "sha256": "3d22fa1e835f6b7f7a8ea7f2380c7a740803336433de45ec5a5dadb64f5a1426"
     },
     {
       "path": "support/qualification/kindnet/Dockerfile",
@@ -79,10 +79,10 @@
     "disposition": "v0.2.9 is the published predecessor of the next candidate. The upgrade from it is walked through both releases' guides by support/qualification/probes/fresh_install.py --upgrade-from on both platforms; the synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 68,
+  "revision": 69,
   "supersedes": {
-    "freezeCommit": "6287ac6a36b0704b2455bb225e703e4dca63cd12",
-    "sha256": "672b671ae3765207bb91a2dfc83a0b0c07448c573ddf74bb2adafa653525b254"
+    "freezeCommit": "c1776289e1bd94268223d74fa44b69fe654d5e46",
+    "sha256": "3d52fe2f24ef0d0673ab8cdfaa4e70bb4601210764b4db0a01afa9337bea92aa"
   },
-  "revisionReason": "Move the Ptah build under test to the v0.18.0 release image, commit 6e1d430e, whose documents name why a command could not open its target database and move the plan, apply, migration status and migration run contracts. It adds no drift category. Phases, scenarios, cells, platforms, the profile and its targets are unchanged."
+  "revisionReason": "The databases page now says what the login it documents cannot see at the pinned Ptah v0.18.0, measured on PostgreSQL 17.11 and MySQL 8.4.11 (#792), and no longer says that login has the catalog visibility it needs. It names no new privilege the supported engines require. Phases, scenarios, cells, platforms, the profile and its targets are unchanged."
 }
