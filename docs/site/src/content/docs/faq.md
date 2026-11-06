@@ -78,11 +78,17 @@ operator version.
 
 `image.digest`, `execution.executorImage`, and `execution.runnerImage` are
 registry manifest digests, and `execution.ptahVersion` is the identity verified
-from the executor image's own provenance. A default would let the chart assign a
-version identity to a digest nobody measured. All four are recorded on every
-plan, Job and applied status. The executor image and `ptahVersion` are also
-bound into every plan fingerprint and approval; the manager and runner digests
-are not, so an operator patch release keeps pending approvals.
+from the executor image's own provenance. A default in `values.yaml` would let
+the chart assign a version identity to a digest nobody measured. All four are
+recorded on every plan, Job and applied status. The executor image and
+`ptahVersion` are also bound into every plan fingerprint and approval; the
+manager and runner digests are not, so an operator patch release keeps pending
+approvals.
+
+The chart a release publishes to its OCI registry from v0.2.10 installs with no
+values: it carries the digests and the version that release was tested with, and
+refuses half of an override. The error above comes from the chart in the source
+tree or a release's chart asset.
 
 - [Configuration](../use/configuration/#the-three-values-with-no-default)
 

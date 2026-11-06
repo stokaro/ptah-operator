@@ -28,6 +28,14 @@ first, and four rewritten catalog reads. A script that matches the whole text
 of `result publication retention has not authorized deletion` has to match its
 start. Nothing else.
 
+- **One command to install.** A release now publishes its chart to
+  `oci://ghcr.io/stokaro/charts/ptah-operator` with its images stamped in, signed
+  and attested, so `helm upgrade --install ptah-operator
+  oci://ghcr.io/stokaro/charts/ptah-operator --version 0.2.10` needs no values.
+  [Install](../../start/install/#choose-a-version-once) has the command beside its
+  verification. A chart from the source tree and the `.tgz` asset still refuse to
+  install without the four values, and they now say so in the chart's own message
+  rather than a schema error.
 - **A namespace waiting on result retention.** The refusal now says when: it
   names the record and the time it can be deleted, as `record <name> cannot be
   deleted before <time>`, wherever time is the reason, credential records

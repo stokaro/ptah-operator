@@ -160,7 +160,6 @@ for the resource and the approval, and [Security model](../../use/security/) for
 what the operator is and is not allowed to read.
 
 The lab installs a verified combination because this repository declares one.
-Doing the same against your own cluster means supplying the manager, runner and
-executor digests and the Ptah version yourself. A published release names all
-of them in its release manifest, and [Install](../install/) says which field is
-which.
+A published release does the same for your own cluster: from v0.2.10 its chart
+carries the manager, runner and executor digests and the Ptah version, and
+[Install](../install/) is one command.

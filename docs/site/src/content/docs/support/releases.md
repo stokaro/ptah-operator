@@ -11,7 +11,10 @@ the qualified manifest digest. The artifact set contains:
 - a reference to the Ptah release image the operator runs as its executor,
   the one `support/ptah.json` pins by digest at the selected source;
 - a reproducible Helm chart asset whose version and `appVersion` match the tag;
-- a keyless signature and GitHub build provenance for the image digest;
+- the same chart with the release's images stamped in, as the OCI artifact
+  `oci://ghcr.io/stokaro/charts/ptah-operator`;
+- a keyless signature and GitHub build provenance for the image digest and for
+  the stamped chart's digest;
 - GitHub build provenance for every downloadable asset;
 - the reproducibly packaged chart, a digest manifest, and SHA-256 checksums;
 - the acceptance evidence of the CI run that proved the candidate.
@@ -24,7 +27,7 @@ itself.
 The release workflow refuses a mismatched tag, mutable external Docker image
 input, unpinned action, incomplete publish permission set, or manager image tag
 that differs from the chart version. It publishes no version or `latest` image
-alias.
+alias. The stamped chart gets one version tag, after publication, and no `latest`.
 
 A build is eligible for release only after the same commit passes the complete
 real-cluster lifecycle on every minor in the generated Kubernetes support
@@ -173,15 +176,18 @@ This run requires approval of the protected `release` environment again. It
 refuses a missing draft, an incomplete prepared journal or a different manifest
 before any build can start. It re-verifies the complete existing transaction,
 then compares the manifest digest again immediately before publishing. It does
-not replace the selected image digests or assets. A published immutable release
-remains a read-only verification state. A manual dispatch without an action
-still runs smoke checks. Preparation accepts `master` or the exact release tag;
-publication requires the exact release tag.
+not replace the selected image digests or assets. Its last step, after the
+publication, gives the stamped chart its version tag. A published immutable
+release remains a read-only verification state, except that requesting
+publication again adds that tag if it is missing, which is how to recover if the
+step failed. A manual dispatch without an action still runs smoke checks.
+Preparation accepts `master` or the exact release tag; publication requires the
+exact release tag.
 
 On the first publication, GHCR packages may not exist until the workflow
-pushes them. If either anonymous image check fails because its package is
-private, make that package public and rerun the same transaction as described
-below. Do not move the tag or replace a published artifact.
+pushes them. If an anonymous check of an image or of the chart fails because its
+package is private, make that package public and rerun the same transaction as
+described below. Do not move the tag or replace a published artifact.
 
 ### After publication
 
@@ -273,9 +279,43 @@ The release manifest records the image as `executor` and the build it carries
 as `executor-ptah-commit` and `executor-ptah-version`. The verifier refuses a
 manifest whose image, commit or version differs from the catalog at the tag.
 
-The chart still has no executor default. The release names a build; the
-installer decides to pin it, and can pin another verified executor instead.
+The chart in the source tree and the chart asset still have no executor default.
+The release names a build, and the chart it publishes to its registry carries
+that build; an installer can pin another verified executor instead.
 [Ptah compatibility](../ptah/) says what the pinned build was run against.
+
+## The published chart
+
+The chart asset is the chart the acceptance matrix installed, and it refuses to
+install without four values. The release derives a second chart from it for the
+registry, with those four answered. Only `Chart.yaml` differs: three annotations
+name the image, the executor and the Ptah version the manifest names, and every
+other file keeps its bytes.
+
+The answers are annotations rather than defaults in `values.yaml` because Helm
+merges values before a template sees them, so a template could not tell a stamped
+default from a value somebody set. With `values.yaml` unchanged, an empty value
+means nobody set it, which is how the chart refuses half a selection: an
+`execution.executorImage` with no `execution.ptahVersion`, or the reverse, and an
+`image.digest` or an `image.repository` with no `execution.runnerImage`, or the
+reverse. It also means a `--reuse-values` upgrade carries no previous digests
+into the next chart. Nothing in a values file can reach the annotations, and a
+chart without them keeps refusing to render.
+
+`hack/chartstamp` is the derivation. It reads no clock, so the asset and the
+manifest determine the chart's bytes and its registry digest, and anyone holding
+those can compute both:
+
+```sh
+go run ./hack/chartpublish stamp -chart "ptah-operator-$version.tgz" \
+  -manifest release-manifest.txt -output stamped
+```
+
+That prints the reference, and refuses a chart that does not stamp to the digest
+the manifest records.
+
+A release before v0.2.10 has no such chart: its templates do not read the
+annotations.
 
 ## Controller-state contract
 
@@ -371,6 +411,20 @@ pins. The image includes a maximal BuildKit provenance record and SBOM. Chart pa
 source timestamps to the source commit time and CI requires two independent
 packages to be byte-identical.
 
+The stamped chart's digest goes into the final manifest as `chart-oci`, computed
+from the chart asset and the digests beside it before anything reaches the
+registry. The workflow pushes the chart by that digest, under no tag, then attests
+and signs it, and reads it back without signing in before publishing. Its bytes
+can always be computed again, so it needs no retention tag: a rerun pushes the same
+digest, and `hack/releaseverify` derives it again in every mode, so a rerun that
+would stamp anything else fails closed. A draft's chart has no version tag, so
+`helm --version` cannot reach it. The last step of the publication gives it that
+tag once the release is published and immutable, refuses a version tag that already
+holds another digest, and reads the tag back without signing in. `hack/chartpublish`
+is these steps. A failure in the last one leaves the release published, with its
+chart readable by digest; the failed run also holds back the Docker Hub mirror, and
+requesting publication again recovers both.
+
 The workflow attests `release-manifest.txt`, compares the prepared draft body,
 then replaces that body with the same authenticated final manifest bytes before
 synchronizing the release assets. It never replaces uploaded asset bytes.
@@ -399,8 +453,8 @@ rebuilds into the same transaction tag and checkpoints the action's returned
 digest. It reproduces the chart bytes deterministically and resumes missing
 additive steps. A published immutable release is a read-only recovery state:
 the workflow re-authenticates its tag, body, assets, both image signatures,
-image attestations, and anonymous image availability, then succeeds without
-mutation. A published but mutable release, a moved source tag, a mismatched
+image attestations, and anonymous image availability, then succeeds, and the only
+thing it may add is a missing chart version tag. A published but mutable release, a moved source tag, a mismatched
 asset, or an unavailable state check fails closed. No step uses asset
 replacement.
 
@@ -435,7 +489,7 @@ the workflow authenticates and compares their contents before publication. The
 workflow requires a fine-grained `IMMUTABLE_RELEASES_READ_TOKEN` with repository
 Administration read permission and checks the setting before pushing anything.
 Keep this token only in the protected `release` environment, never as a general
-repository secret. The final step requires both the API's immutable flag and a
+repository secret. The publishing step requires both the API's immutable flag and a
 valid release attestation.
 
 Configure the `release` environment with required reviewers and restrict it to
@@ -448,10 +502,11 @@ boundary: a workflow file loaded from an unreviewed tag must never receive the
 environment secret or OIDC publication authority.
 
 Administrators must also make the image package `ghcr.io/stokaro/ptah-operator`
-public before the first release. The workflow logs out of GHCR and proves that
-the exact image digest is anonymously readable before publishing the draft.
+and the chart package `ghcr.io/stokaro/charts/ptah-operator` public before the
+first release of each. The workflow logs out of GHCR and proves that the exact
+image and chart digests are anonymously readable before publishing the draft.
 GHCR creates a package on its first push. If a first release stops at the
-anonymous check because the package is still private, make it public and rerun
+anonymous check because a package is still private, make it public and rerun
 the workflow; the rerun resumes the same transaction.
 
 Immediately before publishing, the workflow re-fetches the draft body and exact
@@ -564,13 +619,47 @@ executor="$(sed -n 's/^executor=//p' release-manifest.txt)"
 ptah_version="$(sed -n 's/^executor-ptah-version=//p' release-manifest.txt)"
 ```
 
+## Install from the registry {#install-from-the-registry}
+
+From v0.2.10 the release publishes the chart with those digests and that version
+stamped in, as [the published chart](#the-published-chart) describes. Its digest
+is `chart-oci` in the manifest you authenticated above. Verify it the way you
+verified the image, then install exactly that digest, with no values:
+
+```sh
+chart="$(sed -n 's/^chart-oci=//p' release-manifest.txt)"
+
+gh attestation verify "oci://$chart" \
+  --repo "$repository" \
+  --source-ref "$source_ref" \
+  --source-digest "$source_sha" \
+  --signer-workflow "$repository/.github/workflows/release.yml"
+cosign verify \
+  --certificate-identity "$identity" \
+  --certificate-oidc-issuer='https://token.actions.githubusercontent.com' \
+  "$chart"
+
+helm upgrade --install ptah-operator "oci://$chart" \
+  --namespace ptah-system \
+  --create-namespace
+```
+
+`helm show chart "oci://$chart"` prints the image, the executor and the version
+the chart stamps, as annotations, and they are the `image`, `executor` and
+`executor-ptah-version` above.
+
+[Install](../../start/install/#choose-a-version-once) has the shorter form, by
+version tag. A version tag exists once the release is published. Check for it
+with `helm show chart oci://ghcr.io/stokaro/charts/ptah-operator --version "$version"`,
+and it resolves to the same digest.
+
 ## Install by digest
 
 The chart asset, manager/runner image, and Ptah executor are all pinned
-separately. A release names an executor, and the chart takes it only as an
-explicit value. That lets an operator release be promoted without silently
-changing the database executable, and lets an installation pin another
-verified executor with the same operator release.
+separately. The chart asset takes an executor only as an explicit value. That
+lets an operator release be promoted without silently changing the database
+executable, and lets an installation pin another verified executor with the same
+operator release.
 
 ```sh
 helm upgrade --install ptah-operator \
@@ -590,12 +679,13 @@ byte once the release is published, so it is the same digest, and the
 attestations above, which are keyed by digest, verify it under either name. To
 pull from Docker Hub, set `image.repository` to
 `docker.io/stokaro/ptah-operator` and give `execution.runnerImage` as
-`docker.io/stokaro/ptah-operator@` followed by the same digest. Docker Hub
-limits anonymous pulls; GHCR does not.
+`docker.io/stokaro/ptah-operator@` followed by the same digest. With the chart
+from the registry, give `image.digest` as well: it takes the manager and the
+runner as one selection. Docker Hub limits anonymous pulls; GHCR does not.
 
-`execution.ptahVersion` has no chart default and is not inferred from the image
-reference. Set it to the version identity established by the provenance of the
-exact executor digest. For the executor a release publishes, that is
+`execution.ptahVersion` has no default in `values.yaml` and is not inferred from
+the image reference. Set it to the version identity established by the provenance
+of the exact executor digest. For the executor a release publishes, that is
 `executor-ptah-version` in the authenticated manifest. For any other executor,
 it is whatever that image's own provenance establishes. The operator records
 that pair in plans, approvals, operation Jobs, and applied status, so an

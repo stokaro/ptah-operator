@@ -14,6 +14,9 @@ import (
 	"testing"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/stokaro/ptah-operator/hack/chartstamp"
+	"github.com/stokaro/ptah-operator/hack/chartstamp/chartstamptest"
 )
 
 func TestYAMLScalars(t *testing.T) {
@@ -576,6 +579,16 @@ func TestVerifyWorkflowRejectsCriticalMutations(t *testing.T) {
 		"publish gate attestation":  {`gh attestation verify "$gate_dir/$name"`, `test -f "$gate_dir/$name"`, false},
 		"starter cleanup":           {`gh api --method DELETE`, `gh api --method GET`, false},
 		"signature identity":        {`--certificate-identity "$identity"`, `--certificate-identity-regexp '.*'`, false},
+
+		// The stamped chart: each step one command, in this order.
+		"chart digest not recorded": {`go run ./hack/chartpublish record -chart "$chart_path" -manifest "$manifest"`, `true`, false},
+		"chart stage with a tag":    {`stage -chart '${{ steps.chart-package.outputs.path }}' -manifest dist/release-manifest.txt`, `stage -chart '${{ steps.chart-package.outputs.path }}' -manifest dist/release-manifest.txt -to "$CHART:0.1.0"`, false},
+		"chart stage in a publish":  {"id: chart-stage\n        if: steps.transaction.outputs.mode != 'published'", "id: chart-stage\n        if: env.RELEASE_ACTION == 'publish'", false},
+		"chart attestation subject": {`subject-digest: ${{ steps.chart-stage.outputs.digest }}`, `subject-digest: ${{ steps.artifacts.outputs.image-digest }}`, false},
+		"chart signature name":      {`cosign sign --yes "${{ steps.chart-stage.outputs.reference }}"`, `cosign sign --yes "ghcr.io/stokaro/charts/ptah-operator:latest"`, false},
+		"chart verify skipped":      {"id: chart-verify\n", "id: chart-verify\n        if: github.event_name == 'never'\n", false},
+		"version tag on a draft":    {"id: chart-tag\n        if: env.RELEASE_ACTION == 'publish' || steps.transaction.outputs.mode == 'published'", "id: chart-tag\n        if: env.RELEASE_ACTION == 'prepare'", false},
+		"version tag run elsewhere": {"id: chart-tag\n", "id: chart-tag-moved\n", false},
 		"retention tag binding":     {`          cmp "$image_dir/index.json" "$image_dir/tag-index.json"`, `          true`, false},
 		"platform contract":         {`              ["linux/amd64", "linux/arm64"] and`, `              ["linux/amd64"] and`, false},
 		"max provenance":            {`            -provenance-revision "$GITHUB_SHA"`, `            -provenance-revision unknown`, false},
@@ -699,7 +712,7 @@ func TestVerifyReleaseAssets(t *testing.T) {
 	directory := t.TempDir()
 	chartName := "ptah-operator-0.1.0.tgz"
 	chartPath := filepath.Join(directory, chartName)
-	chart := []byte("deterministic chart bytes")
+	chart := chartstamptest.PackagedChart(t, "0.1.0")
 	if err := os.WriteFile(chartPath, chart, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -719,7 +732,7 @@ func TestVerifyReleaseAssets(t *testing.T) {
 	if err := os.WriteFile(evidencePath, evidence, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	manifest := fmt.Sprintf("version=0.1.0\n"+
+	unrecorded := fmt.Sprintf("version=0.1.0\n"+
 		"source-repository=%s\n"+
 		"source-ref=refs/tags/%s\n"+
 		"source-sha=%s\n"+
@@ -738,6 +751,12 @@ func TestVerifyReleaseAssets(t *testing.T) {
 		repositoryName, tag, sourceSHA, imageName, digest, imageName, sourceSHA,
 		pin.Image, pin.Commit, pin.Version,
 		chartName, chartSum, strings.Join(assets, ","), evidenceSum, supportWindow)
+	// The record the release's own program adds, which the verifier has to read.
+	recorded, stamped, err := chartstamp.RecordInManifest([]byte(unrecorded), chart)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest := string(recorded)
 	executorLines := fmt.Sprintf("executor=%s\n"+
 		"executor-ptah-commit=%s\n"+
 		"executor-ptah-version=%s\n",
@@ -783,6 +802,13 @@ func TestVerifyReleaseAssets(t *testing.T) {
 		"a client asset nobody built": strings.Replace(manifest,
 			"client-assets="+strings.Join(assets, ","),
 			"client-assets=kubectl-ptah-plan9-386", 1),
+		"a chart digest the asset does not stamp to": strings.Replace(manifest,
+			stamped.Reference(), chartstamp.Repository+"@sha256:"+strings.Repeat("3", 64), 1),
+		"a chart in another repository": strings.Replace(manifest,
+			stamped.Reference(), "ghcr.io/stokaro/other@"+stamped.Digest, 1),
+		"a chart named by a tag": strings.Replace(manifest,
+			stamped.Reference(), chartstamp.Repository+":0.1.0", 1),
+		"no chart in the registry": unrecorded,
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := os.WriteFile(manifestPath, []byte(mutation), 0o600); err != nil {
@@ -806,7 +832,7 @@ func TestVerifyReleaseAssets(t *testing.T) {
 			// it: an installer reading it would find no executor to pin.
 			name:     "a manifest without the executor",
 			manifest: strings.Replace(manifest, executorLines, "", 1),
-			problem:  "release manifest has 13 records, expected 16",
+			problem:  "release manifest has 14 records, expected 17",
 		},
 		{
 			// A tag moves; only a digest names the bytes the suite ran.
@@ -883,7 +909,7 @@ func TestVerifyReleaseAssets(t *testing.T) {
 		{
 			name:     "a manifest without the bundle",
 			manifest: strings.Replace(manifest, "acceptance-evidence-sha256="+evidenceSum+"\n", "", 1),
-			problem:  "release manifest has 15 records, expected 16",
+			problem:  "release manifest has 16 records, expected 17",
 		},
 		{
 			name: "a manifest naming another bundle",
@@ -967,6 +993,30 @@ func TestVerifyReleaseAssets(t *testing.T) {
 	}
 	if err := verifyReleaseAssets(root, manifestPath, checksumsPath, chartPath, tag, sourceSHA, ""); err == nil {
 		t.Fatal("verifyReleaseAssets() accepted a changed chart")
+	}
+}
+
+func TestASourceChartWithAStampIsRefused(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	for _, path := range []string{"charts/ptah-operator/Chart.yaml", "charts/ptah-operator/values.yaml", "Dockerfile", "go.mod",
+		".github/workflows/release.yml", "support/kubernetes.json", "support/ptah.json", "support/e2e-suites.json"} {
+		body, err := os.ReadFile(filepath.Join("..", "..", path))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if path == "charts/ptah-operator/Chart.yaml" {
+			body = append(body, []byte("  "+chartstamp.AnnotationExecutor+": x\n")...)
+		}
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(root, path)), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, path), body, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := verifyRepository(root, ""); err == nil || !strings.Contains(err.Error(), "carries a release stamp") {
+		t.Fatalf("verifyRepository() = %v, want the stamp refused", err)
 	}
 }
 

@@ -69,9 +69,10 @@ did in that scenario, and they are not a statement about every workload.
 
 ## Where SchemaHero is simpler
 
-`kubectl schemahero install` is one command with no values. A published release
-of this operator takes [four values from its release manifest](../install/), and
-making that one command is
+`kubectl schemahero install` is one command with no values. From v0.2.10 a published
+release of this operator is [one `helm` command with no values](../install/), with
+every image still pinned by digest, and a release before that takes four values
+from its release manifest. An install command in the plugin is
 [tracked](https://github.com/stokaro/ptah-operator/issues/789).
 
 SchemaHero's `Database` resource has connection types for PostgreSQL, MySQL,

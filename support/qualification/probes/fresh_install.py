@@ -21,6 +21,11 @@ the target release and runs its installation command as the upgrade the
 operations guide describes, and requires the runtime to come up on the
 target's image with the converged schema still converged: refreshed by the new
 manager, with the applied record it had and no plan asking for approval.
+
+For a release that publishes its chart to an OCI registry, the fresh PostgreSQL
+walkthrough installs that chart with no values, and the schema's status has to
+record the release's images. MySQL installs the chart asset by digest, so a fresh
+installation walks both paths.
 """
 
 import argparse
@@ -175,6 +180,29 @@ def converged_after(schema, before, started, executor, ptah_version):
             and in_sync[0]['status'] == 'True' and in_sync[0]['reason'] == 'ScopedConverged')
 
 
+def installs_from_registry(releases, engine, predecessor):
+    """Whether this walkthrough takes the release guide's registry path."""
+    return engine == 'postgresql' and not predecessor and '{#install-from-the-registry}' in releases
+
+
+def recorded_identity_findings(status, identities):
+    """What a converged schema records that the release does not name.
+
+    A chart that takes its images from a stamp owes the same record as one given
+    them as values, so this reads what the operator wrote rather than the chart.
+    """
+    binding, applied = status.get('executionBinding') or {}, status.get('applied') or {}
+    wanted = {
+        'executionBinding.executorImage': (binding.get('executorImage'), identities['executor']),
+        'executionBinding.ptahVersion': (binding.get('ptahVersion'), identities['ptah_version']),
+        'applied.executorImage': (applied.get('executorImage'), identities['executor']),
+        'applied.ptahVersion': (applied.get('ptahVersion'), identities['ptah_version']),
+        'applied.controllerImage': (applied.get('controllerImage'), identities['image']),
+        'applied.runnerImage': (applied.get('runnerImage'), identities['image']),
+    }
+    return [f'{field} is {got}, and the release names {want}' for field, (got, want) in wanted.items() if got != want]
+
+
 def upgrade_command(install, operations):
     """The release's installation command as the operations guide upgrades:
     with the flag it names for an upgrade that changes the manager image."""
@@ -266,6 +294,7 @@ class Walkthrough:
         if args.engine is not None and args.engine not in SERVERS:
             raise ValueError(f'the walkthrough runs one of {sorted(SERVERS)}')
         self.engine = args.engine
+        self.from_registry = False
         self.work = Path(args.work).resolve()
         self.work.mkdir(mode=0o700, parents=True, exist_ok=False)
         self.transcript = Transcript(args.evidence)
@@ -298,7 +327,9 @@ class Walkthrough:
         self.source = source
         releases = self.docs('support/releases.md')
         verify = ''.join(blocks(releases, 'Verify before installation'))
-        install = ''.join(blocks(releases, 'Install by digest'))
+        self.from_registry = installs_from_registry(releases, self.engine, self.predecessor)
+        section = '#install-from-the-registry' if self.from_registry else 'Install by digest'
+        install = ''.join(blocks(releases, section))
         if f'tag={self.tag}\n' not in verify:
             raise ValueError(f'the published verification names another tag than {self.tag}')
         if upgrade:
@@ -316,7 +347,7 @@ class Walkthrough:
         directory = self.work / self.tag
         directory.mkdir(mode=0o700)
         result = self.transcript.run('upgrade' if upgrade else 'verify-and-install', script, directory, self.env,
-                                     source='support/releases.md#verify-before-installation,#install-by-digest'
+                                     source=f'support/releases.md#verify-before-installation,{section}'
                                             + (' with use/operations.md#upgrade-run' if upgrade else ''))
         identities = dict(line.split('=', 1) for line in result.stdout.splitlines() if re.match(r'^(image|executor|ptah_version)=', line))
         self.transcript.record(step='release-identities', releaseSource=source, **identities)
@@ -688,9 +719,16 @@ class Walkthrough:
             return self.upgrade()
         identities = self.verify_and_install()
         self.confirm_installed()
+        if self.from_registry:
+            self.runtime_on(identities['image'])
         self.fixture()
         self.examples()
         self.first_schema(self.engine)
+        if self.from_registry:
+            status = json.loads(self.kubectl('-n', 'application', 'get', 'ptahschema', 'application', '-o', 'json').stdout)['status']
+            findings = recorded_identity_findings(status, identities)
+            if findings:
+                raise RuntimeError('the schema does not record the release: ' + '; '.join(findings))
         self.transcript.record(step='complete', tag=self.tag, engine=self.engine, releaseSource=self.source, **identities)
 
     def upgrade(self):

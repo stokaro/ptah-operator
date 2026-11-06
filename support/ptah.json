@@ -12,7 +12,7 @@
       },
       "declared": {
         "range": null,
-        "statement": "No range is claimed. The chart ships no executor default, installation requires both a digest-pinned executorImage and the ptahVersion verified from that image's provenance, and the supported build is exactly the one the lifecycle matrix exercised."
+        "statement": "No range is claimed. The chart in the source tree and the chart asset ship no executor default, and installing either requires both a digest-pinned executorImage and the ptahVersion verified from that image's provenance. The chart a release publishes to its OCI registry carries that release's pair, and refuses half an override. The supported build is exactly the one the lifecycle matrix exercised."
       },
       "verified": [
         {

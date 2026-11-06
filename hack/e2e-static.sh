@@ -1332,7 +1332,7 @@ if helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" \
 	exit 1
 fi
 grep -F 'ptahVersion' "$MISSING_PTAH_VERSION_ERROR" >/dev/null || {
-	printf '%s\n' 'e2e static: missing executor version did not produce an actionable schema error' >&2
+	printf '%s\n' 'e2e static: missing executor version did not produce an actionable error' >&2
 	exit 1
 }
 
