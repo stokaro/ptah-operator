@@ -25,6 +25,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/test/e2e/gitrefusal"
 	"github.com/stokaro/ptah-operator/test/e2e/gitrepo"
 	"github.com/stokaro/ptah-operator/test/e2e/harness"
 	"github.com/stokaro/ptah-operator/test/e2e/phases"
@@ -654,7 +655,7 @@ func (c *gitRun) forcePushedBranch() {
 	}
 
 	c.resolveNowFor(gitPinnedSchema, "59m")
-	refusal := c.refusedAtResolve(gitPinnedSchema, "no branch or tag names commit "+gone)
+	refusal := c.refusedAtResolve(gitPinnedSchema, gitrefusal.CommitNotNamed+gone)
 	after := c.schemaNamed(gitPinnedSchema)
 	if after.Status.Source.Git == nil || after.Status.Source.Git.Commit != gone {
 		c.fatalf("the refused pinned schema reports the source %+v, want the commit it applied, %s", after.Status.Source.Git, gone)
@@ -881,9 +882,9 @@ func (c *gitRun) refusedSources() {
 		source gitSchemaSource
 		want   string
 	}{
-		{gitSubmoduleSchema, c.httpsSource(gitSubmodulePath, gitTokenCredential), "selected path is a submodule: " + gitSubmodulePath},
-		{gitLFSSchema, c.httpsSource(gitLFSPath, gitTokenCredential), "selected path is a Git LFS pointer: " + gitLFSPath},
-		{gitHostKeySchema, otherHosts, "knownhosts: key mismatch"},
+		{gitSubmoduleSchema, c.httpsSource(gitSubmodulePath, gitTokenCredential), gitSubmoduleRefusal},
+		{gitLFSSchema, c.httpsSource(gitLFSPath, gitTokenCredential), gitLFSRefusal},
+		{gitHostKeySchema, otherHosts, gitrefusal.HostKeyMismatch},
 	} {
 		// The Resolve refuses before anything reads the database; a key of
 		// their own keeps them from sharing the schema's coordination.

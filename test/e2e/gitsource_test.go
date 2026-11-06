@@ -19,14 +19,96 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/sourcebinding"
+	"github.com/stokaro/ptah-operator/test/e2e/gitrefusal"
 	"github.com/stokaro/ptah-operator/test/e2e/gitrepo"
 )
 
 const (
 	testGitURL    = "https://e2e-git.ptah-test.svc/acme/app.git"
 	testGitCommit = "3f1c2b0a9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a"
+	// testGitCaptures holds what the pinned Ptah image printed for this phase's
+	// repository; internal/dataplane/gitpull_test.go says how it was captured.
+	testGitCaptures = "../../internal/dataplane/testdata/git-pull"
 )
+
+// The rows that read Ptah's refusals in a condition message match what the
+// pinned image printed for these sources. refusedSources and forcePushedBranch
+// send the same sources and match the same words, against a cluster.
+func TestTheGitRefusalRowsMatchWhatPtahPrinted(t *testing.T) {
+	t.Parallel()
+	built, err := gitrepo.Build(gitRepositorySpec(2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for capture, want := range map[string]string{
+		"refused-submodule":     gitSubmoduleRefusal,
+		"refused-lfs-pointer":   gitLFSRefusal,
+		"refused-host-key":      gitrefusal.HostKeyMismatch,
+		"refused-commit-pinned": gitrefusal.CommitNotNamed + built.Commit(2).String(),
+	} {
+		t.Run(capture, func(t *testing.T) {
+			t.Parallel()
+			stderr, err := os.ReadFile(filepath.Join(testGitCaptures, capture, "stderr"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(stderr), want) {
+				t.Fatalf("the capture printed %q, and the row matches %q", stderr, want)
+			}
+		})
+	}
+}
+
+// The captured reports answer the repository this phase serves: the commit ids
+// it computes from the Spec, and the content digests it binds. A change to the
+// repository that leaves the captures behind fails here, and they are to be
+// captured again.
+func TestTheGitCapturesAnswerThePhasesRepository(t *testing.T) {
+	t.Parallel()
+	built, err := gitrepo.Build(gitRepositorySpec(2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, tip := built.Commit(0).String(), built.Commit(2).String()
+	schemaAtFirst, err := gitSchemaContent(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	schemaAtTip, err := gitSchemaContent(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	migrations, err := gitMigrationContent()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const overHTTPS, overSSH = "git+" + testGitURL, "git+ssh://git@e2e-git.ptah-test.svc/" + gitRepository
+	for _, row := range []struct{ capture, reference, path, commit, digest string }{
+		{"schema-https-branch", overHTTPS, gitSchemaPath, tip, schemaAtTip},
+		{"schema-https-tag", overHTTPS, gitSchemaPath, first, schemaAtFirst},
+		{"schema-ssh-branch", overSSH, gitSchemaPath, tip, schemaAtTip},
+		{"migrations-https-branch", overHTTPS, gitMigrationPath, tip, migrations},
+		{"migrations-ssh-tag", overSSH, gitMigrationPath, first, migrations},
+	} {
+		t.Run(row.capture, func(t *testing.T) {
+			t.Parallel()
+			stdout, err := os.ReadFile(filepath.Join(testGitCaptures, row.capture, "stdout"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			report, err := dataplane.DecodeGitPull(stdout, row.reference, row.path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if report.Commit != row.commit || report.ContentDigest != row.digest {
+				t.Fatalf("the capture read %s at %s, and the phase's repository gives %s at %s",
+					report.ContentDigest, report.Commit, row.digest, row.commit)
+			}
+		})
+	}
+}
 
 // The repository the phase serves gives commits whose selected files are the
 // ones the phase expects: commit 1 changes only what nothing selects.
