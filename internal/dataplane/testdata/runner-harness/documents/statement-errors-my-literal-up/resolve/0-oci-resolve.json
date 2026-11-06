@@ -1,0 +1,7 @@
+{
+  "reference": "oci://harness-registry:5000/migrations/statement-errors-my-literal-up:v1",
+  "pinned_reference": "oci://harness-registry:5000/migrations/statement-errors-my-literal-up@sha256:007fa9cc75b1f50466e610b63bfc8acd98cf2cc6ca57df5b1f4ec74bb646bae5",
+  "digest": "sha256:007fa9cc75b1f50466e610b63bfc8acd98cf2cc6ca57df5b1f4ec74bb646bae5",
+  "media_type": "application/vnd.oci.image.manifest.v1+json",
+  "size": 1076
+}

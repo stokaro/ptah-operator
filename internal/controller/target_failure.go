@@ -31,7 +31,7 @@ func resultFailure(failure *runner.ResultError, url corev1.SecretKeySelector) er
 	if kind, known := dataplane.ParseTargetFailureKind(failure.Code); known {
 		return &targetFailureError{kind: kind, url: url}
 	}
-	return fmt.Errorf("%s: %s", failure.Code, bounded(failure.Message, 512))
+	return resultCodeError{code: failure.Code, message: fmt.Sprintf("%s: %s", failure.Code, bounded(failure.Message, 512))}
 }
 
 // targetFailureError is a failure that names why an operation could not open

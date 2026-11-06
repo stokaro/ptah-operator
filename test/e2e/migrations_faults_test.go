@@ -158,6 +158,8 @@ func TestStoppedRunNamesItsMigrationRefusesEachClause(t *testing.T) {
 		{"a partial run's message", message(
 			"Migration 2 (Wait To Be Stopped) committed 1 of its 2 statements and not the rest; " +
 				"retrying the file would run them twice")},
+		{"a word run on to the sentence", message(
+			"Migration 2 (Wait To Be Stopped) failed at statement 1 of 1 and committed nothing; 1 migrations before it are recorded appliedly")},
 	})
 	// Whether a canceled statement comes back with a code depends on the
 	// driver, so each shape the controller writes for one is admitted.
@@ -165,6 +167,11 @@ func TestStoppedRunNamesItsMigrationRefusesEachClause(t *testing.T) {
 		"Migration 2 (Wait To Be Stopped) failed at statement 1 of 1 with SQLSTATE 57014 and committed nothing; 1 migrations before it are recorded applied",
 		"Migration 2 (Wait To Be Stopped) failed at statement 1 of 1 with SQLSTATE 70100 (error 1317) and committed nothing; 1 migrations before it are recorded applied",
 		"Migration 2 (Wait To Be Stopped) failed at statement 1 of 1 with error 2013 and committed nothing; 1 migrations before it are recorded applied",
+		// What the controller ends a failed run's message with, under each policy.
+		"Migration 2 (Wait To Be Stopped) failed at statement 1 of 1 and committed nothing; 1 migrations before it are recorded applied. " +
+			"What Ptah reported is in the Pod log for 24 hours after the Job finishes: kubectl logs -n team-a job/ptah-m-apply-orders-1 -c ptah",
+		"Migration 2 (Wait To Be Stopped) failed at statement 1 of 1 and committed nothing; 1 migrations before it are recorded applied. " +
+			"What Ptah reported is in the Pod log for 5 minutes after the Job finishes: kubectl logs -n team-a job/ptah-m-apply-orders-1 -c ptah",
 	} {
 		reading := mfMigration(t, named)
 		reading.Status.LastRun.Message = text

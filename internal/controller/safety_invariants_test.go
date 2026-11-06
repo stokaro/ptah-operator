@@ -398,6 +398,7 @@ func TestRunningApplyContinuityLossPersistsUnknownThroughValidatedCleanup(t *tes
 	schema.Status.Plan.ControllerImage = testControllerImage
 	schema.Status.Plan.ControllerRevision = testControllerRevision
 	schema.Status.Plan.ControllerStateVersion = schema.Status.ExecutionBinding.ControllerStateVersion
+	schema.Status.Plan.Approval = &operatorv1alpha1.ConsumedApprovalStatus{Name: "approval", UID: "approval-uid"}
 	operation := schema.Status.ActiveOperation
 	bindActiveInput(t, schema)
 	ensureTestAdmissionSnapshot(schema)
@@ -451,7 +452,7 @@ func TestRunningApplyContinuityLossPersistsUnknownThroughValidatedCleanup(t *tes
 		t.Fatal(err)
 	}
 	if persistedJob.Spec.TTLSecondsAfterFinished == nil ||
-		*persistedJob.Spec.TTLSecondsAfterFinished != jobCleanupTTLSeconds || jobTerminal(persistedJob) {
+		*persistedJob.Spec.TTLSecondsAfterFinished != failedApplyTTLSeconds || jobTerminal(persistedJob) {
 		t.Fatalf("running Apply cleanup = TTL %#v, terminal %t", persistedJob.Spec.TTLSecondsAfterFinished, jobTerminal(persistedJob))
 	}
 	persisted := safetyGetSchema(t, api, schema)
@@ -491,6 +492,7 @@ func TestDeletingRetiredApplyCrossesValidatedCleanupBoundary(t *testing.T) {
 	deletedAt := metav1.NewTime(time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC))
 	schema.DeletionTimestamp = &deletedAt
 	pending := schema.Status.PendingObservation
+	pending.Plan.Approval = &operatorv1alpha1.ConsumedApprovalStatus{Name: "approval", UID: "approval-uid"}
 	pending.CoordinationDigest = testCoordinationDigest
 	pending.Plan.CoordinationDigest = testCoordinationDigest
 	pending.LeaseDurationSeconds = 960
@@ -528,7 +530,7 @@ func TestDeletingRetiredApplyCrossesValidatedCleanupBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 	if persistedJob.Spec.TTLSecondsAfterFinished == nil ||
-		*persistedJob.Spec.TTLSecondsAfterFinished != jobCleanupTTLSeconds {
+		*persistedJob.Spec.TTLSecondsAfterFinished != failedApplyTTLSeconds {
 		t.Fatalf("retired Apply cleanup TTL = %#v", persistedJob.Spec.TTLSecondsAfterFinished)
 	}
 
@@ -3760,7 +3762,7 @@ func TestExecutionBindingChangeCleansCurrentApplyOnlyAfterTerminalJob(t *testing
 		t.Fatal(err)
 	}
 	if persistedJob.Spec.TTLSecondsAfterFinished == nil ||
-		*persistedJob.Spec.TTLSecondsAfterFinished != jobCleanupTTLSeconds || logs.reads != 0 {
+		*persistedJob.Spec.TTLSecondsAfterFinished != failedApplyTTLSeconds || logs.reads != 0 {
 		t.Fatalf("current-format Apply cleanup: TTL=%#v log reads=%d", persistedJob.Spec.TTLSecondsAfterFinished, logs.reads)
 	}
 	jobs := &batchv1.JobList{}
@@ -3921,7 +3923,7 @@ func TestExecutionBindingChangeCleansTerminalPredecessorApplyWithoutTrustingResu
 		t.Fatal(err)
 	}
 	if persistedJob.Spec.TTLSecondsAfterFinished == nil ||
-		*persistedJob.Spec.TTLSecondsAfterFinished != jobCleanupTTLSeconds || logs.reads != 0 {
+		*persistedJob.Spec.TTLSecondsAfterFinished != failedApplyTTLSeconds || logs.reads != 0 {
 		t.Fatalf("predecessor Apply cleanup: TTL=%#v log reads=%d", persistedJob.Spec.TTLSecondsAfterFinished, logs.reads)
 	}
 
@@ -4074,7 +4076,7 @@ func TestRetiredPredecessorApplyLateCreateAdoptsUIDBeforePodFenceAndCleanup(t *t
 		t.Fatal(err)
 	}
 	if persistedJob.Spec.TTLSecondsAfterFinished == nil ||
-		*persistedJob.Spec.TTLSecondsAfterFinished != jobCleanupTTLSeconds || logs.reads != 0 {
+		*persistedJob.Spec.TTLSecondsAfterFinished != failedApplyTTLSeconds || logs.reads != 0 {
 		t.Fatalf("late predecessor Apply cleanup: TTL=%#v log reads=%d", persistedJob.Spec.TTLSecondsAfterFinished, logs.reads)
 	}
 	cleaned := safetyGetSchema(t, api, schema)

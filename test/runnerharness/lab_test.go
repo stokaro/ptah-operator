@@ -661,6 +661,8 @@ type rowOutcome struct {
 	result  runner.Result
 	plan    []byte
 	refusal string
+	// logs is what the Pod's containers wrote to their logs.
+	logs []byte
 }
 
 const operationContainer = "ptah"
@@ -709,7 +711,7 @@ func (l *lab) runRow(t *testing.T, row rowSpec) rowOutcome {
 		}
 		finished = true
 	})
-	outcome := rowOutcome{refusal: refusal}
+	outcome := rowOutcome{refusal: refusal, logs: logs}
 	record := runnerharness.Row{
 		Name: row.name, Operation: string(row.operation), Source: row.source, Engine: row.engine,
 		Refusal: l.masker.Text(refusal),

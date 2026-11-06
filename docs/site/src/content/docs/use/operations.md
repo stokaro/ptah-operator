@@ -1163,7 +1163,8 @@ Apply has stopped.
 The manager's own image digest and source revision, and the runner image
 digest, are recorded and not bound. A plan records the manager that published
 it and a Job the manager that dispatched it; neither is in a plan fingerprint
-or an approval. A Job is collected five minutes after it is harvested, so the
+or an approval. A Job is collected five minutes after it is harvested, or 24
+hours after a failed Apply a person approved, so the
 harvest copies its dispatcher into status, beside the publisher the plan
 names: `status.pendingObservation.dispatchedBy` and then
 `status.applied.dispatchedBy` for a schema, `status.lastRun.dispatchedBy` and
@@ -2071,7 +2072,8 @@ managed object identity; lifecycle records add the closed `operation`, numeric
 `requeue` and `requeueAfter`. Executor stdout and stderr are treated as
 untrusted secret-bearing data: only a strictly validated Plan may transport
 the plan Ptah saved. Resolve and Verify emit bounded typed evidence, Observe emits
-only summaries, and Apply emits no native output. Controller-facing failures are
+only summaries, and Apply emits no native output but the one line
+[its Pod log](#failed-apply-log) keeps of a failure. Controller-facing failures are
 typed, and each carries a sentence of the runner's own apart from these, which
 carry Ptah's words:
 
@@ -2088,7 +2090,9 @@ carry Ptah's words:
 
 Each is redacted, stripped of control characters, joined onto one line and cut to
 a bound, and [Output handling](../security/#output-handling) says what bounds each
-one and who it reaches.
+one and who it reaches. A failed Apply also writes Ptah's words to its Pod log, and
+to nothing a controller reads, as
+[the next section](#failed-apply-log) says.
 
 Kubernetes Events provide the object-scoped audit trail for operation claims,
 completion, policy refusal, approval changes, and failures. Alert on a sustained
@@ -2096,6 +2100,89 @@ increase in `ptah_operator_failures_total` and on any increase in
 `ptah_operator_applies_total{outcome="uncertain"}`. Use status Conditions and
 Events to identify the affected object instead of adding unbounded identity
 labels to metrics.
+
+### What a failed Apply leaves in its Pod log {#failed-apply-log}
+
+When a schema or a migration Apply fails, the runner writes one line to the log
+of its operation Pod, the first line of what Ptah reported:
+
+```text
+ptah-runner: ptah reported: apply schema changes: failed to execute SQL statement: SQL execution failed: ERROR: could not create unique index "[in the statement]" (SQLSTATE 23505)
+```
+
+That line stays out of status, Events, the result frame and the termination
+summary. It is there because it is the reason a person needs, and it can carry a
+role, a host, a database name and values read from a row. MySQL quotes the
+duplicate value, `Duplicate entry 'alice@example.com' for key
+'orders.orders_one_per_customer'`, and PostgreSQL quotes the value a cast refused,
+`invalid input syntax for type integer: "not-a-number"`.
+
+The plan's own text stays out of the line. A database often quotes the statement it
+refused, and Ptah ends its sentence with that statement, so the runner compares each
+quoted part of the line with it and replaces what they share with `[in the
+statement]`, before it cuts the line. That covers a literal, a password in a literal
+and a name the statement declares, which is why the example above does not name its
+index. A value read from a table is not in the statement, so it stays. The runner
+also removes the secrets in the Pod's environment, in any case, and replaces control
+characters with a space, so a row cannot rewrite a reader's terminal. Nothing can
+recognize a row as a row.
+
+Anything that ships Pod logs elsewhere carries the line too, so a log pipeline
+receives row values from a failed Apply. Whoever holds `pods/log` in the namespace can
+read it, which includes the diagnostic reader role. A target failure with a known
+kind writes no such line, because the operator's own sentence already names what to
+check.
+
+How long the log stays depends on who authorized the run:
+
+| The Apply | Its Job keeps the log |
+| --- | --- |
+| A person approved it, and it failed or its outcome is unknown | 24 hours after the Job finishes |
+| No approval names it, under `apply: Always`, and it failed or its outcome is unknown | 5 minutes |
+| It succeeded | 5 minutes |
+
+Under `apply: Always` the same failure repeats every cycle and each run writes a fresh
+log, so 24 hours would hold one Job per cycle, about 1,400 to 2,900 Jobs a day per
+resource at a 30 to 60 second cycle. So a run under `Always` that fails and then stops
+repeating keeps its log five minutes: a resource suspended after the failure, or a
+migration run that ended partial or unknown and is blocked. Read the log in that time,
+or ship Pod logs somewhere that keeps them. A plan that changes privileges needs an
+approval under `Always` as well, and its Apply keeps the 24 hours.
+
+The `Applying` condition of a schema, `status.lastRun.message` of a migration and the
+Warning Event say where to read the log and for how long, from the TTL the Job holds:
+
+```bash
+kubectl logs -n application job/ptah-apply-orders-5d06b0eaaa30addb -c ptah
+```
+
+They say so only when there is something to read. A target that could not be opened,
+a refused or stale plan and an init container that failed write no such line, so the
+status points at none. A run whose result nobody read, because its frame was lost or
+its Job ran more than one Pod, says `Anything the run wrote is in the Pod log`. An
+execution binding change during a running Apply retires the claim with no Job to name,
+so a `RetiredApplyLogKept` Warning Event says the same once the Job's Pods have
+stopped. When admission refuses the 24 hours, as the guard of the previous release
+does after a Helm upgrade that failed once the manager rolled out, the Job keeps five
+minutes, and a `FailedApplyLogShortened` Warning Event and a line in the manager's log
+say so.
+
+The 24 hours is how long Kubernetes keeps the Job. A node that is replaced takes the
+Pod's log with it sooner, and deleting the resource collects the Job with it. A
+retained Job counts toward a `count/jobs.batch` quota, and a full quota stops every
+operation in the namespace, because each one needs a Job. Approvals bound how many
+pile up, since each needs a person. Once you have read a finished Job's log, `kubectl
+delete job -n <namespace> <job>` frees the quota and takes the Pod with it. The run is
+already recorded by then, so the resource goes on as it would have. The result records
+of its attempt stay at least as long as the Job does.
+
+An Apply Job Kubernetes marked `Failed`, because its deadline passed or its Pod was
+lost, stays `Failed` for those 24 hours. A run that delivered its result exits zero, so
+a statement the database refused usually leaves a `Complete` Job, and this does not
+apply to it. If you run the `KubeJobFailed` alert from kube-prometheus, which fires
+when `kube_job_failed` stays above zero for 15 minutes, it fires for such a Job and
+keeps firing until the Job is gone. Five minutes never reached that alert, and 24 hours
+does. Deleting the Job once you have read its log clears it.
 
 ### What is still unaccounted for {#unresolved-gauges}
 
@@ -2350,10 +2437,15 @@ are tracked in
 Plans are owned by the schema, and a plan's chunks by the plan. Old plan objects may remain useful as
 audit evidence until Kubernetes garbage collection removes the owning schema;
 only the exact UID and fingerprint in `status.plan` are current. Completed Jobs
-receive a short cleanup TTL before the controller clears the active operation;
-failure to schedule that TTL leaves the operation retryable. The exact current
-Apply may receive the same TTL while still running when the controller must
-persist an uncertain outcome; the countdown starts only after the Job finishes.
+receive a cleanup TTL before the controller clears the active operation: five
+minutes, or [24 hours](#failed-apply-log) for an Apply a person approved that failed
+or whose outcome is unknown. Failure to schedule that TTL leaves the operation
+retryable. A guard that refuses the 24 hours, as the guard of the previous release
+does for a moment during an upgrade, gets the five minutes instead, with a
+`FailedApplyLogShortened` Warning Event, and the resource says which the Job holds.
+The exact current Apply may receive its TTL while still
+running when the controller must persist an uncertain outcome; the countdown
+starts only after the Job finishes.
 During schema deletion, a terminal Job that cannot satisfy the exact cleanup
 admission contract is left to owner garbage collection instead of blocking the
 finalizer on a weaker write.

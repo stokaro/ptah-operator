@@ -4,6 +4,7 @@ package e2e
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -21,6 +22,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/jobclaim"
 	"github.com/stokaro/ptah-operator/internal/sourcecontent"
 	"github.com/stokaro/ptah-operator/internal/sourcesnapshot"
 	"github.com/stokaro/ptah-operator/test/e2e/harness"
@@ -41,6 +43,7 @@ func TestConfigMapSources(t *testing.T) {
 		{"configmap-snapshot-refused", c.replacedSnapshotRefused},
 		{"configmap-unreadable-source", c.unreadableSources},
 		{"database-reachable-kind", c.targetReachability},
+		{"configmap-refused-statement", c.refusedStatements},
 	} {
 		if !run.Scenario(scenario.name, c.scenario(scenario.body)) {
 			return
@@ -223,11 +226,16 @@ func (c *configMapRun) reset() {
 	objects := []client.Object{
 		&ptahv1alpha1.PtahSchema{ObjectMeta: metav1.ObjectMeta{Namespace: c.in.TestNamespace, Name: configMapSchema}},
 		&ptahv1alpha1.PtahSchema{ObjectMeta: metav1.ObjectMeta{Namespace: c.in.TestNamespace, Name: configMapUnreadableSchema}},
+		&ptahv1alpha1.PtahSchema{ObjectMeta: metav1.ObjectMeta{Namespace: c.in.TestNamespace, Name: configMapRefusedSchema}},
 		&ptahv1alpha1.PtahMigration{ObjectMeta: metav1.ObjectMeta{Namespace: c.in.TestNamespace, Name: configMapMigration}},
 		&ptahv1alpha1.PtahMigration{ObjectMeta: metav1.ObjectMeta{Namespace: c.in.TestNamespace, Name: configMapUnreadableMigration}},
+		&ptahv1alpha1.PtahMigration{ObjectMeta: metav1.ObjectMeta{Namespace: c.in.TestNamespace, Name: configMapRefusedMigration}},
 		&ptahv1alpha1.PtahMigrationApproval{ObjectMeta: metav1.ObjectMeta{Namespace: c.in.TestNamespace, Name: "e2e-configmap-migration-v1"}},
 		&ptahv1alpha1.PtahSchema{ObjectMeta: metav1.ObjectMeta{Namespace: c.in.TestNamespace, Name: reachabilitySchema}},
 		&ptahv1alpha1.PtahMigration{ObjectMeta: metav1.ObjectMeta{Namespace: c.in.TestNamespace, Name: reachabilityMigration}},
+		&ptahv1alpha1.PtahMigrationApproval{ObjectMeta: metav1.ObjectMeta{Namespace: c.in.TestNamespace, Name: "e2e-configmap-refused-migration"}},
+		&ptahv1alpha1.PtahSchemaApproval{ObjectMeta: metav1.ObjectMeta{Namespace: c.in.TestNamespace, Name: "e2e-configmap-refused-v1"}},
+		&ptahv1alpha1.PtahSchemaApproval{ObjectMeta: metav1.ObjectMeta{Namespace: c.in.TestNamespace, Name: "e2e-configmap-refused-v2"}},
 	}
 	for _, approval := range []string{"e2e-configmap-schema-v1", "e2e-configmap-schema-v2", "e2e-configmap-schema-v3"} {
 		objects = append(objects, &ptahv1alpha1.PtahSchemaApproval{ObjectMeta: metav1.ObjectMeta{Namespace: c.in.TestNamespace, Name: approval}})
@@ -236,7 +244,7 @@ func (c *configMapRun) reset() {
 		c.deleteAndWait(object)
 	}
 	for _, database := range []string{configMapSchemaDatabase, configMapMigrationDatabase, configMapUnreadableDatabase,
-		reachabilitySchemaDatabase, reachabilityMigrationDatabase} {
+		configMapRefusedDatabase, reachabilitySchemaDatabase, reachabilityMigrationDatabase} {
 		_, err := serverSQL(c.ctx, c.cluster, c.in.TestNamespace, c.engine, "DROP DATABASE IF EXISTS "+database+" WITH (FORCE)")
 		c.check(err, "drop database %s", database)
 	}
@@ -769,6 +777,238 @@ func (c *configMapRun) waitForUnreadableEvent(owner types.UID, reason, file, wan
 		}
 		err := unreadableSourceEvent(events.Items, owner, reason, file, want)
 		return err == nil, fmt.Sprint(err)
+	})
+}
+
+// refusedStatements makes a database refuse a statement of an approved plan, for
+// a schema and for a migration, and reads the reason where a person reads it: the
+// Pod log of a Job kept for 24 hours, pointed at from status and the Event. The
+// resources are removed afterward, and their Jobs with them.
+func (c *configMapRun) refusedStatements() {
+	c.t.Helper()
+	c.createDatabase(configMapRefusedDatabase, configMapRefusedSecret)
+	c.refusedSchemaStatement()
+	c.refusedMigrationStatement()
+}
+
+func (c *configMapRun) refusedTarget() map[string]any {
+	return map[string]any{
+		"engine": "PostgreSQL", "coordinationKey": "e2e/" + configMapRefusedDatabase,
+		"urlFrom": map[string]any{"name": configMapRefusedSecret, "key": "url"},
+	}
+}
+
+// waitForRefusedSchema waits for one reading that satisfies done and returns it.
+func (c *configMapRun) waitForRefusedSchema(what string, done func(*ptahv1alpha1.PtahSchema) bool) *ptahv1alpha1.PtahSchema {
+	c.t.Helper()
+	var matched *ptahv1alpha1.PtahSchema
+	c.wait(what, func() (bool, string) {
+		schema := &ptahv1alpha1.PtahSchema{}
+		if err := c.get(configMapRefusedSchema, schema); err != nil {
+			return false, err.Error()
+		}
+		if done(schema) {
+			matched = schema
+			return true, ""
+		}
+		return false, fmt.Sprintf("%s, conditions %+v", schema.Status.Phase, schema.Status.Conditions)
+	})
+	return matched
+}
+
+func (c *configMapRun) approveRefusedPlan(approval string, schema *ptahv1alpha1.PtahSchema) {
+	c.t.Helper()
+	plan := &ptahv1alpha1.PtahSchemaPlan{}
+	c.check(c.get(schema.Status.Plan.Name, plan), "read plan %s", schema.Status.Plan.Name)
+	c.check(c.create(approvalDocument(c.in.TestNamespace, approval, configMapRefusedSchema, string(schema.UID),
+		plan.Name, string(plan.UID), plan.Spec.Fingerprint)), "approve plan %s", plan.Name)
+}
+
+// applyJobs are the Apply Jobs of one resource.
+func (c *configMapRun) applyJobs(label, name string) []batchv1.Job {
+	c.t.Helper()
+	jobs := &batchv1.JobList{}
+	c.check(c.cluster.Client.List(c.ctx, jobs, client.InNamespace(c.in.TestNamespace),
+		client.MatchingLabels{label: name, labelOperation: "apply"}), "list the Apply Jobs of %s", name)
+	return jobs.Items
+}
+
+// refusedSchemaStatement is the reproduction of stokaro/ptah-operator#787: a
+// schema in sync on a table whose rows share a customer, and a plan that adds a
+// unique index on them.
+func (c *configMapRun) refusedSchemaStatement() {
+	c.t.Helper()
+	c.check(c.apply(c.sourceDocument(configMapRefusedSchemaSource, map[string]string{"schema.sql": configMapRefusedTable})),
+		"apply ConfigMap %s", configMapRefusedSchemaSource)
+	c.check(c.create(map[string]any{
+		"apiVersion": ptahSchemaAPIVersion, "kind": "PtahSchema",
+		"metadata": map[string]any{"namespace": c.in.TestNamespace, "name": configMapRefusedSchema},
+		"spec": map[string]any{
+			"target": c.refusedTarget(),
+			"desired": map[string]any{"configMap": map[string]any{
+				"name":  configMapRefusedSchemaSource,
+				"items": []any{map[string]any{"key": "schema.sql", "path": "schema.sql"}},
+			}},
+			"interval": configMapInterval, "policy": map[string]any{"apply": "OnApproval"},
+			"execution": map[string]any{"activeDeadlineSeconds": int64(600)},
+		},
+	}), "create PtahSchema %s", configMapRefusedSchema)
+	first := c.waitForRefusedSchema("the table's plan", awaitingSchemaPlan(""))
+	c.approveRefusedPlan("e2e-configmap-refused-v1", first)
+	c.waitForRefusedSchema("the table to apply", inSyncSchema)
+
+	// A run that succeeded keeps the five minutes, read before they can pass.
+	applied := c.applyJobs(labelSchema, configMapRefusedSchema)
+	if len(applied) != 1 || applied[0].Spec.TTLSecondsAfterFinished == nil ||
+		*applied[0].Spec.TTLSecondsAfterFinished != jobclaim.CleanupTTLSeconds {
+		c.fatalf("the Apply that succeeded left %+v, want one Job with the short cleanup TTL", applied)
+	}
+	succeeded := applied[0].Name
+
+	_, err := databaseSQL(c.ctx, c.cluster, c.in.TestNamespace, c.engine, configMapRefusedDatabase,
+		"INSERT INTO e2e_refused_orders (id, customer_id) VALUES (1, 42), (2, 42)")
+	c.check(err, "give two rows the same customer")
+	version := c.editSource(configMapRefusedSchemaSource, "schema.sql", configMapRefusedTable+"\n"+configMapRefusedIndex)
+	second := c.waitForRefusedSchema("the index's plan", func(schema *ptahv1alpha1.PtahSchema) bool {
+		return sourceReadAt(schema.Status.Source.ConfigMap, schema.Status.Source.Snapshot, version) && awaitingSchemaPlan("")(schema)
+	})
+	c.approveRefusedPlan("e2e-configmap-refused-v2", second)
+	refused := c.waitForRefusedSchema("the Apply's outcome to be unknown", func(schema *ptahv1alpha1.PtahSchema) bool {
+		applying := meta.FindStatusCondition(schema.Status.Conditions, ptahv1alpha1.ConditionApplying)
+		return applying != nil && applying.Reason == string(ptahv1alpha1.ReasonOutcomeUnknown)
+	})
+	applying := meta.FindStatusCondition(refused.Status.Conditions, ptahv1alpha1.ConditionApplying)
+	var job *batchv1.Job
+	for _, candidate := range c.applyJobs(labelSchema, configMapRefusedSchema) {
+		if candidate.Name != succeeded {
+			job = candidate.DeepCopy()
+		}
+	}
+	if job == nil {
+		c.fatalf("the refused Apply left no Job of its own")
+	}
+	c.check(failedApplyPointerSays(applying.Message, c.in.TestNamespace, job.Name), "Applying")
+	c.assertFailedApplyEvidence(job, refused.UID, refused.Status, "ApplyOutcomeUnknown")
+	c.deleteRetainedJob(job)
+	c.deleteAndWait(refused)
+	c.logf("PASS a statement the database refused left its answer in the Pod log of %s, and said where", job.Name)
+}
+
+// refusedMigrationStatement is the same refusal on a migration's second file. A
+// run that failed is read back, not retried, and the run's record names it.
+func (c *configMapRun) refusedMigrationStatement() {
+	c.t.Helper()
+	data := map[string]string{}
+	items := []any{}
+	for _, file := range configMapRefusedMigrationFiles {
+		data[file.key] = file.body
+		items = append(items, map[string]any{"key": file.key, "path": file.path})
+	}
+	c.check(c.apply(c.sourceDocument(configMapRefusedMigrationSource, data)), "apply ConfigMap %s", configMapRefusedMigrationSource)
+	c.check(c.create(map[string]any{
+		"apiVersion": ptahSchemaAPIVersion, "kind": "PtahMigration",
+		"metadata": map[string]any{"namespace": c.in.TestNamespace, "name": configMapRefusedMigration},
+		"spec": map[string]any{
+			"target": c.refusedTarget(), "artifact": map[string]any{"configMap": map[string]any{"name": configMapRefusedMigrationSource, "items": items}},
+			"interval": configMapInterval, "policy": map[string]any{"apply": "OnApproval"},
+			"execution": map[string]any{"activeDeadlineSeconds": int64(600)},
+		},
+	}), "create PtahMigration %s", configMapRefusedMigration)
+	var migration *ptahv1alpha1.PtahMigration
+	wait := func(what string, done func(*ptahv1alpha1.PtahMigration) bool) {
+		c.t.Helper()
+		c.wait(what, func() (bool, string) {
+			read := &ptahv1alpha1.PtahMigration{}
+			if err := c.get(configMapRefusedMigration, read); err != nil {
+				return false, err.Error()
+			}
+			migration = read
+			return done(read), fmt.Sprintf("%s, last run %+v", read.Status.Phase, read.Status.LastRun)
+		})
+	}
+	wait("the migration plan", func(read *ptahv1alpha1.PtahMigration) bool {
+		return read.Status.Phase == ptahv1alpha1.MigrationPhaseAwaitingApproval && read.Status.Plan != nil && settledMigration(read)
+	})
+	plan := &ptahv1alpha1.PtahMigrationPlan{}
+	c.check(c.get(migration.Status.Plan.Name, plan), "read plan %s", migration.Status.Plan.Name)
+	c.check(c.create(migrationApprovalDocument(c.in.TestNamespace, "e2e-configmap-refused-migration", configMapRefusedMigration,
+		string(migration.UID), plan.Name, string(plan.UID), plan.Spec.Fingerprint)), "approve plan %s", plan.Name)
+	wait("the run to be recorded as failed", func(read *ptahv1alpha1.PtahMigration) bool {
+		return read.Status.LastRun != nil && read.Status.LastRun.Outcome == ptahv1alpha1.MigrationRunOutcomeFailed
+	})
+	run := migration.Status.LastRun
+	if run.Failure == nil || run.Failure.SQLState != refusedStatementSQLState {
+		c.fatalf("the run recorded failure %+v, want SQLSTATE %s", run.Failure, refusedStatementSQLState)
+	}
+	c.check(failedApplyPointerSays(run.Message, c.in.TestNamespace, run.JobName), "status.lastRun.message")
+	job := &batchv1.Job{}
+	c.check(c.get(run.JobName, job), "read Job %s", run.JobName)
+	c.assertFailedApplyEvidence(job, migration.UID, migration.Status, "MigrationRunFinished")
+	c.deleteRetainedJob(job)
+	read := &ptahv1alpha1.PtahMigration{}
+	c.check(c.get(migration.Name, read), "read PtahMigration %s", migration.Name)
+	if read.Status.LastRun == nil || read.Status.LastRun.Outcome != ptahv1alpha1.MigrationRunOutcomeFailed {
+		c.fatalf("deleting the Job moved the record of the run: %+v", read.Status.LastRun)
+	}
+	c.deleteAndWait(migration)
+	c.logf("PASS a migration statement the database refused left its answer in the Pod log of %s", job.Name)
+}
+
+// assertFailedApplyEvidence reads what stays where: the Job kept, the answer in
+// its Pod's log without the statement, and neither in status or in an Event, whose
+// message says where the log is.
+// deleteRetainedJob does what the security page tells a person who has read the log:
+// `kubectl delete job`, which takes the Pod with it, and with the Pod what the node
+// keeps of its containers.
+func (c *configMapRun) deleteRetainedJob(job *batchv1.Job) {
+	c.t.Helper()
+	_, stderr, err := c.cluster.Kubectl(c.ctx, "-n", c.in.TestNamespace, "delete", "job", job.Name)
+	if err != nil {
+		c.fatalf("kubectl delete job %s: %v: %s", job.Name, err, stderr)
+	}
+	c.wait("the Pod of Job "+job.Name+" to go with it", func() (bool, string) {
+		pods := &corev1.PodList{}
+		if err := c.cluster.Client.List(c.ctx, pods, client.InNamespace(c.in.TestNamespace)); err != nil {
+			return false, err.Error()
+		}
+		owned := ownedPods(pods.Items, job.UID)
+		return len(owned) == 0, fmt.Sprintf("%d Pods remain", len(owned))
+	})
+}
+
+func (c *configMapRun) assertFailedApplyEvidence(job *batchv1.Job, owner types.UID, status any, eventReason string) {
+	c.t.Helper()
+	c.check(failedApplyJobRetained(job), "the failed Apply's Job")
+	pods := &corev1.PodList{}
+	c.check(c.cluster.Client.List(c.ctx, pods, client.InNamespace(c.in.TestNamespace)), "list the Pods of Job %s", job.Name)
+	owned := ownedPods(pods.Items, job.UID)
+	if len(owned) != 1 {
+		c.fatalf("Job %s has %d Pods, want the one that ran", job.Name, len(owned))
+	}
+	log, err := c.cluster.ContainerLog(c.ctx, c.in.TestNamespace, owned[0].Name, "ptah")
+	c.check(err, "read the log of Pod %s", owned[0].Name)
+	c.check(failedApplyLogSays(log), "the log of Pod %s", owned[0].Name)
+	encoded, err := json.Marshal(status)
+	c.check(err, "encode the status")
+	c.check(statusKeepsTheAnswerOut("the status", string(encoded)), "the status")
+	c.wait("the "+eventReason+" Event to say where the log is", func() (bool, string) {
+		events := &corev1.EventList{}
+		if err := c.cluster.Client.List(c.ctx, events, client.InNamespace(c.in.TestNamespace)); err != nil {
+			return false, err.Error()
+		}
+		examined := 0
+		for index := range events.Items {
+			event := &events.Items[index]
+			if event.InvolvedObject.UID != owner {
+				continue
+			}
+			examined++
+			c.check(statusKeepsTheAnswerOut("the "+event.Reason+" Event", event.Message), "an Event of the resource")
+			if event.Reason == eventReason && failedApplyPointerSays(event.Message, c.in.TestNamespace, job.Name) == nil {
+				return true, ""
+			}
+		}
+		return false, fmt.Sprintf("%d Events of the resource, none says where the log is", examined)
 	})
 }
 

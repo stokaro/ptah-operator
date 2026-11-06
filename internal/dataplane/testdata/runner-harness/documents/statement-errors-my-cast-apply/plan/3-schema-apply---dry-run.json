@@ -1,0 +1,12 @@
+{
+  "contract_version": 4,
+  "command": "schema apply",
+  "outcome": "dry-run",
+  "plan_name": "plan_f4543fb7ed18",
+  "plan_digest": "sha256:87c4016ee17ce5317f0b11ec0b2becc5aeddb9a4df79401312622f8492832e36",
+  "units": [
+    {
+      "sql": "-- Modify table: items\n-- Modify column items.qty: type: text -\u003e integer\nALTER TABLE `items` MODIFY COLUMN `qty` integer"
+    }
+  ]
+}

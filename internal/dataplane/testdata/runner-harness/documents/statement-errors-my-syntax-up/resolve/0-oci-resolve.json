@@ -1,0 +1,7 @@
+{
+  "reference": "oci://harness-registry:5000/migrations/statement-errors-my-syntax-up:v1",
+  "pinned_reference": "oci://harness-registry:5000/migrations/statement-errors-my-syntax-up@sha256:b9f17bf5bdb205da9c430c64e5a38c00d9ce6722e19e9b177d71f48e1f30b607",
+  "digest": "sha256:b9f17bf5bdb205da9c430c64e5a38c00d9ce6722e19e9b177d71f48e1f30b607",
+  "media_type": "application/vnd.oci.image.manifest.v1+json",
+  "size": 1076
+}

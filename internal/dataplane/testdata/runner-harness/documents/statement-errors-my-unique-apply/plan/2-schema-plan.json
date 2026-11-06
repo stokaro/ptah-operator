@@ -1,0 +1,22 @@
+{
+  "contract_version": 3,
+  "command": "schema plan",
+  "outcome": "changes",
+  "plan_digest": "sha256:f66d338b1cc817db506f8ac7283c2db73b858b7e83a18700d897c5cb1b5f53e7",
+  "plan_path": "/work/ptah-plan-output-4280756895/second.plan.json",
+  "plan": {
+    "format_version": 1,
+    "name": "plan_e5464fad5e3d",
+    "dialect": "mysql",
+    "from_fingerprint": "sha256:2c0e5f62125075c5d6553be6926f5768565526f899041ffc5ac657e851793fa7",
+    "to_fingerprint": "sha256:c719010e73c3c56fedef7de8a6d09b3bfecd489d84d979a55ca55fdec22a5271",
+    "destructive": false,
+    "statements": [
+      {
+        "sql": "CREATE UNIQUE INDEX `orders_one_per_customer` ON `orders` (`customer_email`)",
+        "severity": "warning",
+        "reason": "CREATE UNIQUE INDEX can fail on existing duplicate values"
+      }
+    ]
+  }
+}

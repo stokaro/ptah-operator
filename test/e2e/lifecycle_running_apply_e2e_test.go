@@ -834,14 +834,15 @@ func (l *lifecycleRun) waitForPredecessorApplyJobTerminal() {
 // observation that follows. Either account names this Job; a fence would have
 // moved the epoch instead. It also names the manager that dispatched the Job,
 // read from the Job's own Pod template: the predecessor, not the successor
-// that harvested it, because the Job is collected five minutes later and the
-// record is what is left.
+// that harvested it, because the Job is collected once its TTL runs out and the
+// record is what is left. The TTL follows what the frame said: a run that reported
+// success keeps five minutes, and an unknown outcome 24 hours.
 func (l *lifecycleRun) waitForPredecessorApplyJobCleanup() {
 	l.t.Helper()
 	state := &l.runningApply
 	for deadline := time.Now().Add(240 * time.Second); time.Now().Before(deadline); {
 		job, err := l.predecessorApplyJobDocument(state.jobName)
-		if err == nil && predecessorApplyTTL(job) == 300 {
+		if err == nil && cleanupScheduled(predecessorApplyTTL(job)) {
 			if schema, err := l.predecessorApplySchemaDocument(); err == nil {
 				dispatcher := predecessorApplyDispatcher(job)
 				if dispatcher == "" || dispatcher == l.in.nextControllerImage {

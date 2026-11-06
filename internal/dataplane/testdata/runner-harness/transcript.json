@@ -9003,5 +9003,2211 @@
       "stdout": "",
       "verificationPolicyDigest": "sha256:5c26424746ad176d68e5d7c64ee3603f3d8ed4a3045acb15d44600acf8aaec07"
     }
+  },
+  {
+    "name": "statement-errors-my-cast-apply/apply",
+    "operation": "apply",
+    "source": "none",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "schema apply",
+        "args": [
+          "schema",
+          "apply",
+          "--plan",
+          "/work/ptah-plan-<random>.hcl",
+          "--auto-approve",
+          "--json"
+        ],
+        "exit": 2,
+        "stderr": "Planned schema changes:\n-- Modify table: items\n-- Modify column items.qty: type: text -> integer\nALTER TABLE `items` MODIFY COLUMN `qty` integer;\nAuto-approval enabled; applying schema changes.\nerror: apply schema changes: failed to execute SQL statement: SQL execution failed: Error 1366 (HY000): Incorrect integer value: 'row-value-not-a-number' for column 'qty' at row 1\nSQL: -- Modify table: items\n-- Modify column items.qty: type: text -> integer\nALTER TABLE `items` MODIFY COLUMN `qty` integer\n",
+        "stdout": "statement-errors/my-cast-apply.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "error": {
+        "code": "apply_outcome_unknown",
+        "message": "ptah sent the statements and returned an error, so how far they got is unknown"
+      },
+      "mutationStarted": true,
+      "operation": "apply",
+      "operationId": "sha256:93d6129860652681dc5e646e3abf3a1c07970bf372ffebe316538875275c0f02",
+      "planContentDigest": "sha256:87c4016ee17ce5317f0b11ec0b2becc5aeddb9a4df79401312622f8492832e36",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:cb752d8d3b6891f65b155ece418db2f71ca31d5765467ce11c382fba44c28ded",
+      "uncertain": true
+    }
+  },
+  {
+    "name": "statement-errors-my-cast-apply/observe",
+    "operation": "observe",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "schema pull",
+        "args": [
+          "schema",
+          "pull",
+          "oci://harness-registry:5000/schemas/statement-errors-my-cast-apply@<digest>",
+          "--out",
+          "/source/schema.hcl"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/statement-errors-my-cast-apply/observe/0-schema-pull.txt"
+      },
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 1,
+        "stdout": "runner-harness/documents/statement-errors-my-cast-apply/observe/1-schema-drift.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "driftFindingCount": 1,
+      "driftFindings": [
+        {
+          "category": "columns_modified",
+          "count": 1,
+          "severity": "warning"
+        }
+      ],
+      "driftInventory": [
+        {
+          "desired": 2,
+          "kind": "columns",
+          "observed": 2
+        },
+        {
+          "desired": 1,
+          "kind": "constraints",
+          "observed": 1
+        },
+        {
+          "desired": 1,
+          "kind": "tables",
+          "observed": 1
+        }
+      ],
+      "driftReportDigest": "sha256:ec50a9d3d2c06370c45f7fbc27962a0949b318b4c44ec34ef0f6bb1b0dd3c42c",
+      "highestDriftSeverity": "warning",
+      "observedDialect": "mysql",
+      "observedDrift": true,
+      "operation": "observe",
+      "operationId": "sha256:f0a37b44a989e9c50fbf4a99fe5c809a706696431ed85dfdad23a059b5d55bd8",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:cb752d8d3b6891f65b155ece418db2f71ca31d5765467ce11c382fba44c28ded"
+    }
+  },
+  {
+    "name": "statement-errors-my-cast-apply/plan",
+    "operation": "plan",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "schema pull",
+        "args": [
+          "schema",
+          "pull",
+          "oci://harness-registry:5000/schemas/statement-errors-my-cast-apply@<digest>",
+          "--out",
+          "/source/schema.hcl"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/statement-errors-my-cast-apply/plan/0-schema-pull.txt"
+      },
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\n-- Modify table: items\n-- Modify column items.qty: type: text -> integer\nALTER TABLE `items` MODIFY COLUMN `qty` integer;\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
+        "stdout": "runner-harness/documents/statement-errors-my-cast-apply/plan/1-schema-plan.json"
+      },
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/second.plan.json",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\n-- Modify table: items\n-- Modify column items.qty: type: text -> integer\nALTER TABLE `items` MODIFY COLUMN `qty` integer;\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
+        "stdout": "runner-harness/documents/statement-errors-my-cast-apply/plan/2-schema-plan.json"
+      },
+      {
+        "command": "schema apply --dry-run",
+        "args": [
+          "schema",
+          "apply",
+          "--plan",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--auto-approve",
+          "--json",
+          "--dry-run"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\n-- Modify table: items\n-- Modify column items.qty: type: text -> integer\nALTER TABLE `items` MODIFY COLUMN `qty` integer;\n",
+        "stdout": "runner-harness/documents/statement-errors-my-cast-apply/plan/3-schema-apply---dry-run.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "operation": "plan",
+      "operationId": "sha256:3da5ba2de04d31fef1aabb2b050f0f56ce3fb1a5ce965f5d3d9ab3f6ec0c1746",
+      "planContentDigest": "sha256:87c4016ee17ce5317f0b11ec0b2becc5aeddb9a4df79401312622f8492832e36",
+      "planOutcome": "Changes",
+      "protocolVersion": 1,
+      "stdout": "<sealed plan>",
+      "targetIdentityDigest": "sha256:cb752d8d3b6891f65b155ece418db2f71ca31d5765467ce11c382fba44c28ded"
+    },
+    "savedPlan": "runner-harness/documents/statement-errors-my-cast-apply/plan/4-saved-plan.json"
+  },
+  {
+    "name": "statement-errors-my-cast-apply/resolve",
+    "operation": "resolve",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "oci resolve",
+        "args": [
+          "oci",
+          "resolve",
+          "oci://harness-registry:5000/schemas/statement-errors-my-cast-apply:v1",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/statement-errors-my-cast-apply/resolve/0-oci-resolve.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "operation": "resolve",
+      "operationId": "sha256:3bd0280c21565fb0c9cdf814a563eba2887b6d9a73647989b4ebcdfa0b3d78fb",
+      "protocolVersion": 1,
+      "resolvedDigest": "<volatile>",
+      "resolvedMediaType": "application/vnd.oci.image.manifest.v1+json",
+      "resolvedReference": "oci://harness-registry:5000/schemas/statement-errors-my-cast-apply@<digest>",
+      "resolvedSize": 813,
+      "stdout": ""
+    }
+  },
+  {
+    "name": "statement-errors-my-cast-apply/verify",
+    "operation": "verify",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "oci verify",
+        "args": [
+          "oci",
+          "verify",
+          "oci://harness-registry:5000/schemas/statement-errors-my-cast-apply@<digest>",
+          "--policy",
+          "/work/ptah-verification-policy-<random>.yaml",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/statement-errors-my-cast-apply/verify/0-oci-verify.json"
+      },
+      {
+        "command": "oci inspect",
+        "args": [
+          "oci",
+          "inspect",
+          "oci://harness-registry:5000/schemas/statement-errors-my-cast-apply@<digest>",
+          "--format",
+          "json",
+          "--no-referrers"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/statement-errors-my-cast-apply/verify/1-oci-inspect.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "observedArtifactType": "application/vnd.stokaro.ptah.schema.v1",
+      "operation": "verify",
+      "operationId": "sha256:af8ccd2e63c41efc0ccf5f7144406c33f04e0578482f72342b53af00c049ce19",
+      "protocolVersion": 1,
+      "resolvedDigest": "<volatile>",
+      "stdout": "",
+      "verificationPolicyDigest": "sha256:81767d37e728289983aae9da4b00dc0388f1af18a6768c30df5e47f6b2aa0a8d"
+    }
+  },
+  {
+    "name": "statement-errors-my-control-up/apply",
+    "operation": "migration-apply",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "migrations pull",
+        "args": [
+          "migrations",
+          "pull",
+          "oci://harness-registry:5000/migrations/statement-errors-my-control-up@<digest>",
+          "--out",
+          "/source/migrations"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/statement-errors-my-control-up/apply/0-migrations-pull.txt"
+      },
+      {
+        "command": "migrations up",
+        "args": [
+          "migrations",
+          "up",
+          "--migrations-dir",
+          "/source/migrations",
+          "--json",
+          "--expect-sequence",
+          "/work/ptah-expected-sequence-<random>.json"
+        ],
+        "exit": 2,
+        "stderr": "=== MIGRATE UP ===\nDatabase: mysql://root:***@harness-mysql:3306/harness_my_control_up\nDialect: mysql\nMigrations directory: /source/migrations\nMigration directory format: auto\nTransaction mode: file\n\nCurrent version: 0\nTotal migrations: 1\nPending migrations: 1\n\ntime=<time> level=INFO msg=\"Migrating up\" correlation_id=<random> command=migrations.up currentVersion=0 totalMigrations=1\ntime=<time> level=INFO msg=\"Applying migration\" correlation_id=<random> command=migrations.up version=1 description=Change\nerror: error running migrations: failed to apply migration 1: failed to execute migration SQL: SQL execution failed: Error 1062 (23000): Duplicate entry 'esc-\u001b[2K-\rFORGED-TEXT' for key 'orders.orders_one_per_customer'\nSQL: CREATE UNIQUE INDEX orders_one_per_customer ON orders (customer_email)\n",
+        "stdout": "statement-errors/my-control-up.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "error": {
+        "code": "child_exit",
+        "message": "ptah exited with code 2"
+      },
+      "migrationRun": {
+        "contract_version": 2,
+        "direction": "up",
+        "failure": {
+          "error_number": 1062,
+          "sqlstate": "23000",
+          "statement": 1,
+          "statements": 1,
+          "version": 1
+        },
+        "outcome": "failed",
+        "planned": [
+          1
+        ],
+        "status": {
+          "contract_version": 2,
+          "current_version": 0,
+          "dirty_revision": {
+            "applied": 0,
+            "total": 1,
+            "version": 1
+          },
+          "has_pending_changes": true,
+          "migrations": [
+            {
+              "applied_at": "<volatile>",
+              "checksum": "a4b1d996525f9948a5da288631d84a28b38b16bbc2c0e90f4f3b2043063d92cf",
+              "description": "Change",
+              "execution_time_ms": 0,
+              "state": "dirty",
+              "version": 1,
+              "version_key": "1"
+            }
+          ],
+          "pending_migrations": [
+            1
+          ],
+          "total_migrations": 1
+        }
+      },
+      "mutationStarted": true,
+      "operation": "migration-apply",
+      "operationId": "sha256:8502eda12a33db5dad1ac56235701429289b0d6087182ff3d3eda3e121d26225",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:5c47620affccd35a12f3d99e70757c3d35b5249c36fef4be69e7e677fc225a84"
+    }
+  },
+  {
+    "name": "statement-errors-my-control-up/history",
+    "operation": "migration-history",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "migrations pull",
+        "args": [
+          "migrations",
+          "pull",
+          "oci://harness-registry:5000/migrations/statement-errors-my-control-up@<digest>",
+          "--out",
+          "/source/migrations"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/statement-errors-my-control-up/history/0-migrations-pull.txt"
+      },
+      {
+        "command": "migrations status",
+        "args": [
+          "migrations",
+          "status",
+          "--migrations-dir",
+          "/source/migrations",
+          "--json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/statement-errors-my-control-up/history/1-migrations-status.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "migrationHistory": {
+        "contract_version": 2,
+        "current_version": 0,
+        "has_pending_changes": true,
+        "migrations": [
+          {
+            "checksum": "a4b1d996525f9948a5da288631d84a28b38b16bbc2c0e90f4f3b2043063d92cf",
+            "description": "Change",
+            "state": "pending",
+            "version": 1,
+            "version_key": "1"
+          }
+        ],
+        "pending_migrations": [
+          1
+        ],
+        "total_migrations": 1
+      },
+      "operation": "migration-history",
+      "operationId": "sha256:a93da7688fc734a065866f280fc4f2ff08ee3507a508045e187206fec4b817a5",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:5c47620affccd35a12f3d99e70757c3d35b5249c36fef4be69e7e677fc225a84"
+    }
+  },
+  {
+    "name": "statement-errors-my-control-up/resolve",
+    "operation": "resolve",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "oci resolve",
+        "args": [
+          "oci",
+          "resolve",
+          "oci://harness-registry:5000/migrations/statement-errors-my-control-up:v1",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/statement-errors-my-control-up/resolve/0-oci-resolve.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "operation": "resolve",
+      "operationId": "sha256:5c22d401025f8013b879cc7876c6dcbb578f55915977fa1beb0b9b68363e65b1",
+      "protocolVersion": 1,
+      "resolvedDigest": "<volatile>",
+      "resolvedMediaType": "application/vnd.oci.image.manifest.v1+json",
+      "resolvedReference": "oci://harness-registry:5000/migrations/statement-errors-my-control-up@<digest>",
+      "resolvedSize": 1076,
+      "stdout": ""
+    }
+  },
+  {
+    "name": "statement-errors-my-literal-up/apply",
+    "operation": "migration-apply",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "migrations pull",
+        "args": [
+          "migrations",
+          "pull",
+          "oci://harness-registry:5000/migrations/statement-errors-my-literal-up@<digest>",
+          "--out",
+          "/source/migrations"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/statement-errors-my-literal-up/apply/0-migrations-pull.txt"
+      },
+      {
+        "command": "migrations up",
+        "args": [
+          "migrations",
+          "up",
+          "--migrations-dir",
+          "/source/migrations",
+          "--json",
+          "--expect-sequence",
+          "/work/ptah-expected-sequence-<random>.json"
+        ],
+        "exit": 2,
+        "stderr": "=== MIGRATE UP ===\nDatabase: mysql://root:***@harness-mysql:3306/harness_my_literal_up\nDialect: mysql\nMigrations directory: /source/migrations\nMigration directory format: auto\nTransaction mode: file\n\nCurrent version: 0\nTotal migrations: 1\nPending migrations: 1\n\ntime=<time> level=INFO msg=\"Migrating up\" correlation_id=<random> command=migrations.up currentVersion=0 totalMigrations=1\ntime=<time> level=INFO msg=\"Applying migration\" correlation_id=<random> command=migrations.up version=1 description=Change\nerror: error running migrations: failed to apply migration 1: failed to execute migration SQL: SQL execution failed: Error 1062 (23000): Duplicate entry 'declared-literal-in-plan@example.com' for key 'orders.customer_email'\nSQL: INSERT INTO orders (id, customer_email) VALUES (2, 'declared-literal-in-plan@example.com')\n",
+        "stdout": "statement-errors/my-literal-up.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "error": {
+        "code": "child_exit",
+        "message": "ptah exited with code 2"
+      },
+      "migrationRun": {
+        "contract_version": 2,
+        "direction": "up",
+        "failure": {
+          "error_number": 1062,
+          "sqlstate": "23000",
+          "statement": 1,
+          "statements": 1,
+          "version": 1
+        },
+        "outcome": "failed",
+        "planned": [
+          1
+        ],
+        "status": {
+          "contract_version": 2,
+          "current_version": 0,
+          "dirty_revision": {
+            "applied": 0,
+            "total": 1,
+            "version": 1
+          },
+          "has_pending_changes": true,
+          "migrations": [
+            {
+              "applied_at": "<volatile>",
+              "checksum": "e79a2c2ea5d73f816e8f835d9840280a8254419cc9437d3f4a2e2d58431bc8ac",
+              "description": "Change",
+              "execution_time_ms": 0,
+              "state": "dirty",
+              "version": 1,
+              "version_key": "1"
+            }
+          ],
+          "pending_migrations": [
+            1
+          ],
+          "total_migrations": 1
+        }
+      },
+      "mutationStarted": true,
+      "operation": "migration-apply",
+      "operationId": "sha256:85d6daffc43ed60415a19a8da5717b87705c870d10cd6528684969c086ec154a",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:93f046652772b924906501cb7850cb433c4d989235df4428646561ea74a8898e"
+    }
+  },
+  {
+    "name": "statement-errors-my-literal-up/history",
+    "operation": "migration-history",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "migrations pull",
+        "args": [
+          "migrations",
+          "pull",
+          "oci://harness-registry:5000/migrations/statement-errors-my-literal-up@<digest>",
+          "--out",
+          "/source/migrations"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/statement-errors-my-literal-up/history/0-migrations-pull.txt"
+      },
+      {
+        "command": "migrations status",
+        "args": [
+          "migrations",
+          "status",
+          "--migrations-dir",
+          "/source/migrations",
+          "--json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/statement-errors-my-literal-up/history/1-migrations-status.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "migrationHistory": {
+        "contract_version": 2,
+        "current_version": 0,
+        "has_pending_changes": true,
+        "migrations": [
+          {
+            "checksum": "e79a2c2ea5d73f816e8f835d9840280a8254419cc9437d3f4a2e2d58431bc8ac",
+            "description": "Change",
+            "state": "pending",
+            "version": 1,
+            "version_key": "1"
+          }
+        ],
+        "pending_migrations": [
+          1
+        ],
+        "total_migrations": 1
+      },
+      "operation": "migration-history",
+      "operationId": "sha256:00663782b3a3aae97e901b4cc7802bdf65a95bf7bc406882b1dac7f4890b9438",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:93f046652772b924906501cb7850cb433c4d989235df4428646561ea74a8898e"
+    }
+  },
+  {
+    "name": "statement-errors-my-literal-up/resolve",
+    "operation": "resolve",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "oci resolve",
+        "args": [
+          "oci",
+          "resolve",
+          "oci://harness-registry:5000/migrations/statement-errors-my-literal-up:v1",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/statement-errors-my-literal-up/resolve/0-oci-resolve.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "operation": "resolve",
+      "operationId": "sha256:b90560008048e7b09c6508f696324995f9551d73a590ec2b37f2eb523c482a39",
+      "protocolVersion": 1,
+      "resolvedDigest": "<volatile>",
+      "resolvedMediaType": "application/vnd.oci.image.manifest.v1+json",
+      "resolvedReference": "oci://harness-registry:5000/migrations/statement-errors-my-literal-up@<digest>",
+      "resolvedSize": 1076,
+      "stdout": ""
+    }
+  },
+  {
+    "name": "statement-errors-my-syntax-up/apply",
+    "operation": "migration-apply",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "migrations pull",
+        "args": [
+          "migrations",
+          "pull",
+          "oci://harness-registry:5000/migrations/statement-errors-my-syntax-up@<digest>",
+          "--out",
+          "/source/migrations"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/statement-errors-my-syntax-up/apply/0-migrations-pull.txt"
+      },
+      {
+        "command": "migrations up",
+        "args": [
+          "migrations",
+          "up",
+          "--migrations-dir",
+          "/source/migrations",
+          "--json",
+          "--expect-sequence",
+          "/work/ptah-expected-sequence-<random>.json"
+        ],
+        "exit": 2,
+        "stderr": "=== MIGRATE UP ===\nDatabase: mysql://root:***@harness-mysql:3306/harness_my_syntax_up\nDialect: mysql\nMigrations directory: /source/migrations\nMigration directory format: auto\nTransaction mode: file\n\nCurrent version: 0\nTotal migrations: 1\nPending migrations: 1\n\ntime=<time> level=INFO msg=\"Migrating up\" correlation_id=<random> command=migrations.up currentVersion=0 totalMigrations=1\ntime=<time> level=INFO msg=\"Applying migration\" correlation_id=<random> command=migrations.up version=1 description=Change\nerror: error running migrations: failed to apply migration 1: failed to execute migration SQL: SQL execution failed: Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'CREAT USER 'app'@'%' IDENTIFIED BY 'plan-secret-literal'' at line 1\nSQL: CREAT USER 'app'@'%' IDENTIFIED BY 'plan-secret-literal'\n",
+        "stdout": "statement-errors/my-syntax-up.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "error": {
+        "code": "child_exit",
+        "message": "ptah exited with code 2"
+      },
+      "migrationRun": {
+        "contract_version": 2,
+        "direction": "up",
+        "failure": {
+          "error_number": 1064,
+          "sqlstate": "42000",
+          "statement": 1,
+          "statements": 1,
+          "version": 1
+        },
+        "outcome": "failed",
+        "planned": [
+          1
+        ],
+        "status": {
+          "contract_version": 2,
+          "current_version": 0,
+          "dirty_revision": {
+            "applied": 0,
+            "total": 1,
+            "version": 1
+          },
+          "has_pending_changes": true,
+          "migrations": [
+            {
+              "applied_at": "<volatile>",
+              "checksum": "6ab9f8db23d171f34bee425b6e2985d0ae428d17cedc36cdfa36de404366871c",
+              "description": "Change",
+              "execution_time_ms": 0,
+              "state": "dirty",
+              "version": 1,
+              "version_key": "1"
+            }
+          ],
+          "pending_migrations": [
+            1
+          ],
+          "total_migrations": 1
+        }
+      },
+      "mutationStarted": true,
+      "operation": "migration-apply",
+      "operationId": "sha256:9cb23a962a1ec67fe44783607ee167a9585371dcb3ab127ef03100ae99f1d785",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:dccffbc1f28dc02830b7d7fce6ea62fb40c9aabe15b89984385087862d95af18"
+    }
+  },
+  {
+    "name": "statement-errors-my-syntax-up/history",
+    "operation": "migration-history",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "migrations pull",
+        "args": [
+          "migrations",
+          "pull",
+          "oci://harness-registry:5000/migrations/statement-errors-my-syntax-up@<digest>",
+          "--out",
+          "/source/migrations"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/statement-errors-my-syntax-up/history/0-migrations-pull.txt"
+      },
+      {
+        "command": "migrations status",
+        "args": [
+          "migrations",
+          "status",
+          "--migrations-dir",
+          "/source/migrations",
+          "--json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/statement-errors-my-syntax-up/history/1-migrations-status.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "migrationHistory": {
+        "contract_version": 2,
+        "current_version": 0,
+        "has_pending_changes": true,
+        "migrations": [
+          {
+            "checksum": "6ab9f8db23d171f34bee425b6e2985d0ae428d17cedc36cdfa36de404366871c",
+            "description": "Change",
+            "state": "pending",
+            "version": 1,
+            "version_key": "1"
+          }
+        ],
+        "pending_migrations": [
+          1
+        ],
+        "total_migrations": 1
+      },
+      "operation": "migration-history",
+      "operationId": "sha256:1b0085416a6e82234e4c83ca203c14e5fdb9b05c27a1ce4c8ab2d96dc6ebf262",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:dccffbc1f28dc02830b7d7fce6ea62fb40c9aabe15b89984385087862d95af18"
+    }
+  },
+  {
+    "name": "statement-errors-my-syntax-up/resolve",
+    "operation": "resolve",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "oci resolve",
+        "args": [
+          "oci",
+          "resolve",
+          "oci://harness-registry:5000/migrations/statement-errors-my-syntax-up:v1",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/statement-errors-my-syntax-up/resolve/0-oci-resolve.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "operation": "resolve",
+      "operationId": "sha256:b1acb58f0900bae7e921954428163d2d0035031ff7cb27235f8a677ad22298b6",
+      "protocolVersion": 1,
+      "resolvedDigest": "<volatile>",
+      "resolvedMediaType": "application/vnd.oci.image.manifest.v1+json",
+      "resolvedReference": "oci://harness-registry:5000/migrations/statement-errors-my-syntax-up@<digest>",
+      "resolvedSize": 1076,
+      "stdout": ""
+    }
+  },
+  {
+    "name": "statement-errors-my-unique-apply/apply",
+    "operation": "apply",
+    "source": "none",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "schema apply",
+        "args": [
+          "schema",
+          "apply",
+          "--plan",
+          "/work/ptah-plan-<random>.hcl",
+          "--auto-approve",
+          "--json"
+        ],
+        "exit": 2,
+        "stderr": "Planned schema changes:\nCREATE UNIQUE INDEX `orders_one_per_customer` ON `orders` (`customer_email`);\nAuto-approval enabled; applying schema changes.\nerror: apply schema changes: failed to execute SQL statement: SQL execution failed: Error 1062 (23000): Duplicate entry 'row-value@example.com' for key 'orders.orders_one_per_customer'\nSQL: CREATE UNIQUE INDEX `orders_one_per_customer` ON `orders` (`customer_email`)\n",
+        "stdout": "statement-errors/my-unique-apply.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "error": {
+        "code": "apply_outcome_unknown",
+        "message": "ptah sent the statements and returned an error, so how far they got is unknown"
+      },
+      "mutationStarted": true,
+      "operation": "apply",
+      "operationId": "sha256:1b7778cf61c2787555361dcfeb2e7025ada658f6b2f7c80703432049685fce3c",
+      "planContentDigest": "sha256:f66d338b1cc817db506f8ac7283c2db73b858b7e83a18700d897c5cb1b5f53e7",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:fd17c58807e204f45377095d0adb64dfae57dbaa35be6e110e70fc1f51f5f2cb",
+      "uncertain": true
+    }
+  },
+  {
+    "name": "statement-errors-my-unique-apply/observe",
+    "operation": "observe",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "schema pull",
+        "args": [
+          "schema",
+          "pull",
+          "oci://harness-registry:5000/schemas/statement-errors-my-unique-apply@<digest>",
+          "--out",
+          "/source/schema.hcl"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/statement-errors-my-unique-apply/observe/0-schema-pull.txt"
+      },
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 1,
+        "stdout": "runner-harness/documents/statement-errors-my-unique-apply/observe/1-schema-drift.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "driftFindingCount": 1,
+      "driftFindings": [
+        {
+          "category": "indexes_added",
+          "count": 1,
+          "severity": "warning"
+        }
+      ],
+      "driftInventory": [
+        {
+          "desired": 2,
+          "kind": "columns",
+          "observed": 2
+        },
+        {
+          "desired": 1,
+          "kind": "constraints",
+          "observed": 1
+        },
+        {
+          "desired": 1,
+          "kind": "indexes",
+          "observed": 0
+        },
+        {
+          "desired": 1,
+          "kind": "tables",
+          "observed": 1
+        }
+      ],
+      "driftReportDigest": "sha256:d359c97977774032ff4599176ca2db565aa85d84acb533c61ad3715a8f1cc5c6",
+      "highestDriftSeverity": "warning",
+      "observedDialect": "mysql",
+      "observedDrift": true,
+      "operation": "observe",
+      "operationId": "sha256:766bfd1fbba3506b785d938b5558ca71900ed521ffb34f9070d80f70101757fa",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:fd17c58807e204f45377095d0adb64dfae57dbaa35be6e110e70fc1f51f5f2cb"
+    }
+  },
+  {
+    "name": "statement-errors-my-unique-apply/plan",
+    "operation": "plan",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "schema pull",
+        "args": [
+          "schema",
+          "pull",
+          "oci://harness-registry:5000/schemas/statement-errors-my-unique-apply@<digest>",
+          "--out",
+          "/source/schema.hcl"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/statement-errors-my-unique-apply/plan/0-schema-pull.txt"
+      },
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nCREATE UNIQUE INDEX `orders_one_per_customer` ON `orders` (`customer_email`);\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
+        "stdout": "runner-harness/documents/statement-errors-my-unique-apply/plan/1-schema-plan.json"
+      },
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/second.plan.json",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nCREATE UNIQUE INDEX `orders_one_per_customer` ON `orders` (`customer_email`);\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
+        "stdout": "runner-harness/documents/statement-errors-my-unique-apply/plan/2-schema-plan.json"
+      },
+      {
+        "command": "schema apply --dry-run",
+        "args": [
+          "schema",
+          "apply",
+          "--plan",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--auto-approve",
+          "--json",
+          "--dry-run"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nCREATE UNIQUE INDEX `orders_one_per_customer` ON `orders` (`customer_email`);\n",
+        "stdout": "runner-harness/documents/statement-errors-my-unique-apply/plan/3-schema-apply---dry-run.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "operation": "plan",
+      "operationId": "sha256:c3a47ad85cfb82d8e3edf92e20feb04d4477dec18066d216070152826eb7d226",
+      "planContentDigest": "sha256:f66d338b1cc817db506f8ac7283c2db73b858b7e83a18700d897c5cb1b5f53e7",
+      "planOutcome": "Changes",
+      "protocolVersion": 1,
+      "stdout": "<sealed plan>",
+      "targetIdentityDigest": "sha256:fd17c58807e204f45377095d0adb64dfae57dbaa35be6e110e70fc1f51f5f2cb"
+    },
+    "savedPlan": "runner-harness/documents/statement-errors-my-unique-apply/plan/4-saved-plan.json"
+  },
+  {
+    "name": "statement-errors-my-unique-apply/resolve",
+    "operation": "resolve",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "oci resolve",
+        "args": [
+          "oci",
+          "resolve",
+          "oci://harness-registry:5000/schemas/statement-errors-my-unique-apply:v1",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/statement-errors-my-unique-apply/resolve/0-oci-resolve.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "operation": "resolve",
+      "operationId": "sha256:93676317555619e8175af275d2d4ad23128baac93775c4de880c8e9afc3b5611",
+      "protocolVersion": 1,
+      "resolvedDigest": "<volatile>",
+      "resolvedMediaType": "application/vnd.oci.image.manifest.v1+json",
+      "resolvedReference": "oci://harness-registry:5000/schemas/statement-errors-my-unique-apply@<digest>",
+      "resolvedSize": 813,
+      "stdout": ""
+    }
+  },
+  {
+    "name": "statement-errors-my-unique-apply/verify",
+    "operation": "verify",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "oci verify",
+        "args": [
+          "oci",
+          "verify",
+          "oci://harness-registry:5000/schemas/statement-errors-my-unique-apply@<digest>",
+          "--policy",
+          "/work/ptah-verification-policy-<random>.yaml",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/statement-errors-my-unique-apply/verify/0-oci-verify.json"
+      },
+      {
+        "command": "oci inspect",
+        "args": [
+          "oci",
+          "inspect",
+          "oci://harness-registry:5000/schemas/statement-errors-my-unique-apply@<digest>",
+          "--format",
+          "json",
+          "--no-referrers"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/statement-errors-my-unique-apply/verify/1-oci-inspect.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "observedArtifactType": "application/vnd.stokaro.ptah.schema.v1",
+      "operation": "verify",
+      "operationId": "sha256:315985e96041823ad914b446d0278f7829df2664bb41ca4674bd633ea91d479d",
+      "protocolVersion": 1,
+      "resolvedDigest": "<volatile>",
+      "stdout": "",
+      "verificationPolicyDigest": "sha256:81767d37e728289983aae9da4b00dc0388f1af18a6768c30df5e47f6b2aa0a8d"
+    }
+  },
+  {
+    "name": "statement-errors-my-unique-up/apply",
+    "operation": "migration-apply",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "migrations pull",
+        "args": [
+          "migrations",
+          "pull",
+          "oci://harness-registry:5000/migrations/statement-errors-my-unique-up@<digest>",
+          "--out",
+          "/source/migrations"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/statement-errors-my-unique-up/apply/0-migrations-pull.txt"
+      },
+      {
+        "command": "migrations up",
+        "args": [
+          "migrations",
+          "up",
+          "--migrations-dir",
+          "/source/migrations",
+          "--json",
+          "--expect-sequence",
+          "/work/ptah-expected-sequence-<random>.json"
+        ],
+        "exit": 2,
+        "stderr": "=== MIGRATE UP ===\nDatabase: mysql://root:***@harness-mysql:3306/harness_my_unique_up\nDialect: mysql\nMigrations directory: /source/migrations\nMigration directory format: auto\nTransaction mode: file\n\nCurrent version: 0\nTotal migrations: 1\nPending migrations: 1\n\ntime=<time> level=INFO msg=\"Migrating up\" correlation_id=<random> command=migrations.up currentVersion=0 totalMigrations=1\ntime=<time> level=INFO msg=\"Applying migration\" correlation_id=<random> command=migrations.up version=1 description=Change\nerror: error running migrations: failed to apply migration 1: failed to execute migration SQL: SQL execution failed: Error 1062 (23000): Duplicate entry 'row-value@example.com' for key 'orders.orders_one_per_customer'\nSQL: CREATE UNIQUE INDEX orders_one_per_customer ON orders (customer_email)\n",
+        "stdout": "statement-errors/my-unique-up.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "error": {
+        "code": "child_exit",
+        "message": "ptah exited with code 2"
+      },
+      "migrationRun": {
+        "contract_version": 2,
+        "direction": "up",
+        "failure": {
+          "error_number": 1062,
+          "sqlstate": "23000",
+          "statement": 1,
+          "statements": 1,
+          "version": 1
+        },
+        "outcome": "failed",
+        "planned": [
+          1
+        ],
+        "status": {
+          "contract_version": 2,
+          "current_version": 0,
+          "dirty_revision": {
+            "applied": 0,
+            "total": 1,
+            "version": 1
+          },
+          "has_pending_changes": true,
+          "migrations": [
+            {
+              "applied_at": "<volatile>",
+              "checksum": "a4b1d996525f9948a5da288631d84a28b38b16bbc2c0e90f4f3b2043063d92cf",
+              "description": "Change",
+              "execution_time_ms": 0,
+              "state": "dirty",
+              "version": 1,
+              "version_key": "1"
+            }
+          ],
+          "pending_migrations": [
+            1
+          ],
+          "total_migrations": 1
+        }
+      },
+      "mutationStarted": true,
+      "operation": "migration-apply",
+      "operationId": "sha256:d67ea4e79b217d1626a05d678cffb2b823a0b2e365029078a89e2ef43a2213a9",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:046962fb07d8f0855a59d264fc02543bcd6851769a4cd6d561af0778678fb72c"
+    }
+  },
+  {
+    "name": "statement-errors-my-unique-up/history",
+    "operation": "migration-history",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "migrations pull",
+        "args": [
+          "migrations",
+          "pull",
+          "oci://harness-registry:5000/migrations/statement-errors-my-unique-up@<digest>",
+          "--out",
+          "/source/migrations"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/statement-errors-my-unique-up/history/0-migrations-pull.txt"
+      },
+      {
+        "command": "migrations status",
+        "args": [
+          "migrations",
+          "status",
+          "--migrations-dir",
+          "/source/migrations",
+          "--json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/statement-errors-my-unique-up/history/1-migrations-status.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "migrationHistory": {
+        "contract_version": 2,
+        "current_version": 0,
+        "has_pending_changes": true,
+        "migrations": [
+          {
+            "checksum": "a4b1d996525f9948a5da288631d84a28b38b16bbc2c0e90f4f3b2043063d92cf",
+            "description": "Change",
+            "state": "pending",
+            "version": 1,
+            "version_key": "1"
+          }
+        ],
+        "pending_migrations": [
+          1
+        ],
+        "total_migrations": 1
+      },
+      "operation": "migration-history",
+      "operationId": "sha256:2f5c3370081f7b444f7c35cf7e4bc7ca140704653a55e33868b06b8fec6d175d",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:046962fb07d8f0855a59d264fc02543bcd6851769a4cd6d561af0778678fb72c"
+    }
+  },
+  {
+    "name": "statement-errors-my-unique-up/resolve",
+    "operation": "resolve",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "oci resolve",
+        "args": [
+          "oci",
+          "resolve",
+          "oci://harness-registry:5000/migrations/statement-errors-my-unique-up:v1",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/statement-errors-my-unique-up/resolve/0-oci-resolve.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "operation": "resolve",
+      "operationId": "sha256:d983a59dd349ad3cdd9cdd62f2e0ba88c047c99b63ce1534c64f500aeb7cfc5b",
+      "protocolVersion": 1,
+      "resolvedDigest": "<volatile>",
+      "resolvedMediaType": "application/vnd.oci.image.manifest.v1+json",
+      "resolvedReference": "oci://harness-registry:5000/migrations/statement-errors-my-unique-up@<digest>",
+      "resolvedSize": 1076,
+      "stdout": ""
+    }
+  },
+  {
+    "name": "statement-errors-pg-insert-up/apply",
+    "operation": "migration-apply",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "migrations pull",
+        "args": [
+          "migrations",
+          "pull",
+          "oci://harness-registry:5000/migrations/statement-errors-pg-insert-up@<digest>",
+          "--out",
+          "/source/migrations"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/statement-errors-pg-insert-up/apply/0-migrations-pull.txt"
+      },
+      {
+        "command": "migrations up",
+        "args": [
+          "migrations",
+          "up",
+          "--migrations-dir",
+          "/source/migrations",
+          "--json",
+          "--expect-sequence",
+          "/work/ptah-expected-sequence-<random>.json"
+        ],
+        "exit": 2,
+        "stderr": "=== MIGRATE UP ===\nDatabase: postgres://postgres:***@harness-postgres:5432/harness_pg_insert_up?sslmode=disable\nDialect: postgres\nMigrations directory: /source/migrations\nMigration directory format: auto\nTransaction mode: file\n\nCurrent version: 0\nTotal migrations: 1\nPending migrations: 1\n\ntime=<time> level=INFO msg=\"Migrating up\" correlation_id=<random> command=migrations.up currentVersion=0 totalMigrations=1\ntime=<time> level=INFO msg=\"Applying migration\" correlation_id=<random> command=migrations.up version=1 description=Change\nerror: error running migrations: failed to apply migration 1: failed to execute migration SQL: SQL execution failed: ERROR: duplicate key value violates unique constraint \"orders_pkey\" (SQLSTATE 23505)\nSQL: INSERT INTO orders (id, customer_id, note) VALUES (1, 7, 'literal-in-the-migration-file')\n",
+        "stdout": "statement-errors/pg-insert-up.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "error": {
+        "code": "child_exit",
+        "message": "ptah exited with code 2"
+      },
+      "migrationRun": {
+        "contract_version": 2,
+        "direction": "up",
+        "failure": {
+          "sqlstate": "23505",
+          "statement": 1,
+          "statements": 1,
+          "version": 1
+        },
+        "outcome": "failed",
+        "planned": [
+          1
+        ],
+        "status": {
+          "contract_version": 2,
+          "current_version": 0,
+          "dirty_revision": {
+            "applied": 0,
+            "total": 1,
+            "version": 1
+          },
+          "has_pending_changes": true,
+          "migrations": [
+            {
+              "applied_at": "<volatile>",
+              "checksum": "e55c69e8a04fabd6e3308e73e7748b908c1b0f86827162016d33291eb31f81c1",
+              "description": "Change",
+              "execution_time_ms": 0,
+              "state": "dirty",
+              "version": 1,
+              "version_key": "1"
+            }
+          ],
+          "pending_migrations": [
+            1
+          ],
+          "total_migrations": 1
+        }
+      },
+      "mutationStarted": true,
+      "operation": "migration-apply",
+      "operationId": "sha256:da7a3e6b0eabea207f08c23a53f28edf4e01fba48e7385729c565985ea9a2c6c",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:bcd4dc77fc7be03461f8be80a6a31bf216ce3a2b004a66d9142350ef10a82ca9"
+    }
+  },
+  {
+    "name": "statement-errors-pg-insert-up/history",
+    "operation": "migration-history",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "migrations pull",
+        "args": [
+          "migrations",
+          "pull",
+          "oci://harness-registry:5000/migrations/statement-errors-pg-insert-up@<digest>",
+          "--out",
+          "/source/migrations"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/statement-errors-pg-insert-up/history/0-migrations-pull.txt"
+      },
+      {
+        "command": "migrations status",
+        "args": [
+          "migrations",
+          "status",
+          "--migrations-dir",
+          "/source/migrations",
+          "--json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/statement-errors-pg-insert-up/history/1-migrations-status.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "migrationHistory": {
+        "contract_version": 2,
+        "current_version": 0,
+        "has_pending_changes": true,
+        "migrations": [
+          {
+            "checksum": "e55c69e8a04fabd6e3308e73e7748b908c1b0f86827162016d33291eb31f81c1",
+            "description": "Change",
+            "state": "pending",
+            "version": 1,
+            "version_key": "1"
+          }
+        ],
+        "pending_migrations": [
+          1
+        ],
+        "total_migrations": 1
+      },
+      "operation": "migration-history",
+      "operationId": "sha256:7aa8591f5ae4b4ea1126f032c0f8f3f25c59b67dbe413e099876779e6ee9f6eb",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:bcd4dc77fc7be03461f8be80a6a31bf216ce3a2b004a66d9142350ef10a82ca9"
+    }
+  },
+  {
+    "name": "statement-errors-pg-insert-up/resolve",
+    "operation": "resolve",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "oci resolve",
+        "args": [
+          "oci",
+          "resolve",
+          "oci://harness-registry:5000/migrations/statement-errors-pg-insert-up:v1",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/statement-errors-pg-insert-up/resolve/0-oci-resolve.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "operation": "resolve",
+      "operationId": "sha256:267ec07a98dc37a0873125a31f51acc0f0a5a4af7fc5926ff84329c0d7a0a317",
+      "protocolVersion": 1,
+      "resolvedDigest": "<volatile>",
+      "resolvedMediaType": "application/vnd.oci.image.manifest.v1+json",
+      "resolvedReference": "oci://harness-registry:5000/migrations/statement-errors-pg-insert-up@<digest>",
+      "resolvedSize": 1076,
+      "stdout": ""
+    }
+  },
+  {
+    "name": "statement-errors-pg-literal-up/apply",
+    "operation": "migration-apply",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "migrations pull",
+        "args": [
+          "migrations",
+          "pull",
+          "oci://harness-registry:5000/migrations/statement-errors-pg-literal-up@<digest>",
+          "--out",
+          "/source/migrations"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/statement-errors-pg-literal-up/apply/0-migrations-pull.txt"
+      },
+      {
+        "command": "migrations up",
+        "args": [
+          "migrations",
+          "up",
+          "--migrations-dir",
+          "/source/migrations",
+          "--json",
+          "--expect-sequence",
+          "/work/ptah-expected-sequence-<random>.json"
+        ],
+        "exit": 2,
+        "stderr": "=== MIGRATE UP ===\nDatabase: postgres://postgres:***@harness-postgres:5432/harness_pg_literal_up?sslmode=disable\nDialect: postgres\nMigrations directory: /source/migrations\nMigration directory format: auto\nTransaction mode: file\n\nCurrent version: 0\nTotal migrations: 1\nPending migrations: 1\n\ntime=<time> level=INFO msg=\"Migrating up\" correlation_id=<random> command=migrations.up currentVersion=0 totalMigrations=1\ntime=<time> level=INFO msg=\"Applying migration\" correlation_id=<random> command=migrations.up version=1 description=Change\nerror: error running migrations: failed to apply migration 1: failed to execute migration SQL: SQL execution failed: ERROR: invalid input syntax for type integer: \"declared-literal-in-plan\" (SQLSTATE 22P02)\nSQL: INSERT INTO items (id, qty) VALUES (1, 'declared-literal-in-plan')\n",
+        "stdout": "statement-errors/pg-literal-up.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "error": {
+        "code": "child_exit",
+        "message": "ptah exited with code 2"
+      },
+      "migrationRun": {
+        "contract_version": 2,
+        "direction": "up",
+        "failure": {
+          "sqlstate": "22P02",
+          "statement": 1,
+          "statements": 1,
+          "version": 1
+        },
+        "outcome": "failed",
+        "planned": [
+          1
+        ],
+        "status": {
+          "contract_version": 2,
+          "current_version": 0,
+          "dirty_revision": {
+            "applied": 0,
+            "total": 1,
+            "version": 1
+          },
+          "has_pending_changes": true,
+          "migrations": [
+            {
+              "applied_at": "<volatile>",
+              "checksum": "a735b3a85a56b8ed7288cad387b50a0d67c9b59966bece592639d8bb14dbae5d",
+              "description": "Change",
+              "execution_time_ms": 0,
+              "state": "dirty",
+              "version": 1,
+              "version_key": "1"
+            }
+          ],
+          "pending_migrations": [
+            1
+          ],
+          "total_migrations": 1
+        }
+      },
+      "mutationStarted": true,
+      "operation": "migration-apply",
+      "operationId": "sha256:e62ef0def8f467def62fd4d8b8f0f912dad81e0270b367386394e2c5574a8393",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:1b9738e9f13cf505114ea9ad7d288d679e49926f2e51109d7ccfcac3af511f59"
+    }
+  },
+  {
+    "name": "statement-errors-pg-literal-up/history",
+    "operation": "migration-history",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "migrations pull",
+        "args": [
+          "migrations",
+          "pull",
+          "oci://harness-registry:5000/migrations/statement-errors-pg-literal-up@<digest>",
+          "--out",
+          "/source/migrations"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/statement-errors-pg-literal-up/history/0-migrations-pull.txt"
+      },
+      {
+        "command": "migrations status",
+        "args": [
+          "migrations",
+          "status",
+          "--migrations-dir",
+          "/source/migrations",
+          "--json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/statement-errors-pg-literal-up/history/1-migrations-status.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "migrationHistory": {
+        "contract_version": 2,
+        "current_version": 0,
+        "has_pending_changes": true,
+        "migrations": [
+          {
+            "checksum": "a735b3a85a56b8ed7288cad387b50a0d67c9b59966bece592639d8bb14dbae5d",
+            "description": "Change",
+            "state": "pending",
+            "version": 1,
+            "version_key": "1"
+          }
+        ],
+        "pending_migrations": [
+          1
+        ],
+        "total_migrations": 1
+      },
+      "operation": "migration-history",
+      "operationId": "sha256:6e91eb45e5c84d0e88514737d64e6dd1f79052e89ab7b65fc64352eb8f7994c6",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:1b9738e9f13cf505114ea9ad7d288d679e49926f2e51109d7ccfcac3af511f59"
+    }
+  },
+  {
+    "name": "statement-errors-pg-literal-up/resolve",
+    "operation": "resolve",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "oci resolve",
+        "args": [
+          "oci",
+          "resolve",
+          "oci://harness-registry:5000/migrations/statement-errors-pg-literal-up:v1",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/statement-errors-pg-literal-up/resolve/0-oci-resolve.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "operation": "resolve",
+      "operationId": "sha256:facfb26522f7f88804725831fc59f9b4824ee9986ac8e28007619c86d29bbe02",
+      "protocolVersion": 1,
+      "resolvedDigest": "<volatile>",
+      "resolvedMediaType": "application/vnd.oci.image.manifest.v1+json",
+      "resolvedReference": "oci://harness-registry:5000/migrations/statement-errors-pg-literal-up@<digest>",
+      "resolvedSize": 1076,
+      "stdout": ""
+    }
+  },
+  {
+    "name": "statement-errors-pg-rowcast-up/apply",
+    "operation": "migration-apply",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "migrations pull",
+        "args": [
+          "migrations",
+          "pull",
+          "oci://harness-registry:5000/migrations/statement-errors-pg-rowcast-up@<digest>",
+          "--out",
+          "/source/migrations"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/statement-errors-pg-rowcast-up/apply/0-migrations-pull.txt"
+      },
+      {
+        "command": "migrations up",
+        "args": [
+          "migrations",
+          "up",
+          "--migrations-dir",
+          "/source/migrations",
+          "--json",
+          "--expect-sequence",
+          "/work/ptah-expected-sequence-<random>.json"
+        ],
+        "exit": 2,
+        "stderr": "=== MIGRATE UP ===\nDatabase: postgres://postgres:***@harness-postgres:5432/harness_pg_rowcast_up?sslmode=disable\nDialect: postgres\nMigrations directory: /source/migrations\nMigration directory format: auto\nTransaction mode: file\n\nCurrent version: 0\nTotal migrations: 1\nPending migrations: 1\n\ntime=<time> level=INFO msg=\"Migrating up\" correlation_id=<random> command=migrations.up currentVersion=0 totalMigrations=1\ntime=<time> level=INFO msg=\"Applying migration\" correlation_id=<random> command=migrations.up version=1 description=Change\nerror: error running migrations: failed to apply migration 1: failed to execute migration SQL: SQL execution failed: ERROR: invalid input syntax for type integer: \"row-value-not-a-number\" (SQLSTATE 22P02)\nSQL: ALTER TABLE items ALTER COLUMN qty TYPE integer USING qty::integer\n",
+        "stdout": "statement-errors/pg-rowcast-up.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "error": {
+        "code": "child_exit",
+        "message": "ptah exited with code 2"
+      },
+      "migrationRun": {
+        "contract_version": 2,
+        "direction": "up",
+        "failure": {
+          "sqlstate": "22P02",
+          "statement": 1,
+          "statements": 1,
+          "version": 1
+        },
+        "outcome": "failed",
+        "planned": [
+          1
+        ],
+        "status": {
+          "contract_version": 2,
+          "current_version": 0,
+          "dirty_revision": {
+            "applied": 0,
+            "total": 1,
+            "version": 1
+          },
+          "has_pending_changes": true,
+          "migrations": [
+            {
+              "applied_at": "<volatile>",
+              "checksum": "9aac794bd5b66cc61e455ab8df652abac917f078367cbfceddc5250a4740c54d",
+              "description": "Change",
+              "execution_time_ms": 0,
+              "state": "dirty",
+              "version": 1,
+              "version_key": "1"
+            }
+          ],
+          "pending_migrations": [
+            1
+          ],
+          "total_migrations": 1
+        }
+      },
+      "mutationStarted": true,
+      "operation": "migration-apply",
+      "operationId": "sha256:92587b4a2ff6d554e0f18624f74cb8309416250d24f4bc1a7283754a9b54664d",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:4d6fbcb26d17fc526087c1b00db09d39f043e33a9d4c10ad930e66d96becc9aa"
+    }
+  },
+  {
+    "name": "statement-errors-pg-rowcast-up/history",
+    "operation": "migration-history",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "migrations pull",
+        "args": [
+          "migrations",
+          "pull",
+          "oci://harness-registry:5000/migrations/statement-errors-pg-rowcast-up@<digest>",
+          "--out",
+          "/source/migrations"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/statement-errors-pg-rowcast-up/history/0-migrations-pull.txt"
+      },
+      {
+        "command": "migrations status",
+        "args": [
+          "migrations",
+          "status",
+          "--migrations-dir",
+          "/source/migrations",
+          "--json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/statement-errors-pg-rowcast-up/history/1-migrations-status.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "migrationHistory": {
+        "contract_version": 2,
+        "current_version": 0,
+        "has_pending_changes": true,
+        "migrations": [
+          {
+            "checksum": "9aac794bd5b66cc61e455ab8df652abac917f078367cbfceddc5250a4740c54d",
+            "description": "Change",
+            "state": "pending",
+            "version": 1,
+            "version_key": "1"
+          }
+        ],
+        "pending_migrations": [
+          1
+        ],
+        "total_migrations": 1
+      },
+      "operation": "migration-history",
+      "operationId": "sha256:fc8979c3af4f3ea9fa4504e3f475f1e873b3999612a296619d14dfeec822a19a",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:4d6fbcb26d17fc526087c1b00db09d39f043e33a9d4c10ad930e66d96becc9aa"
+    }
+  },
+  {
+    "name": "statement-errors-pg-rowcast-up/resolve",
+    "operation": "resolve",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "oci resolve",
+        "args": [
+          "oci",
+          "resolve",
+          "oci://harness-registry:5000/migrations/statement-errors-pg-rowcast-up:v1",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/statement-errors-pg-rowcast-up/resolve/0-oci-resolve.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "operation": "resolve",
+      "operationId": "sha256:ebc809eacb510cf7bf136e86c13f3485ef3d905952c2a43de66f5ed45e8bb5ef",
+      "protocolVersion": 1,
+      "resolvedDigest": "<volatile>",
+      "resolvedMediaType": "application/vnd.oci.image.manifest.v1+json",
+      "resolvedReference": "oci://harness-registry:5000/migrations/statement-errors-pg-rowcast-up@<digest>",
+      "resolvedSize": 1076,
+      "stdout": ""
+    }
+  },
+  {
+    "name": "statement-errors-pg-unique-apply/apply",
+    "operation": "apply",
+    "source": "none",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema apply",
+        "args": [
+          "schema",
+          "apply",
+          "--plan",
+          "/work/ptah-plan-<random>.hcl",
+          "--auto-approve",
+          "--json"
+        ],
+        "exit": 2,
+        "stderr": "Planned schema changes:\nCREATE UNIQUE INDEX IF NOT EXISTS \"orders_one_per_customer\" ON \"orders\" (\"customer_id\");\nAuto-approval enabled; applying schema changes.\nerror: apply schema changes: failed to execute SQL statement: SQL execution failed: ERROR: could not create unique index \"orders_one_per_customer\" (SQLSTATE 23505)\nSQL: CREATE UNIQUE INDEX IF NOT EXISTS \"orders_one_per_customer\" ON \"orders\" (\"customer_id\")\n",
+        "stdout": "statement-errors/pg-unique-apply.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "error": {
+        "code": "apply_outcome_unknown",
+        "message": "ptah sent the statements and returned an error, so how far they got is unknown"
+      },
+      "mutationStarted": true,
+      "operation": "apply",
+      "operationId": "sha256:c1a99cbcc0db807b9233dc9c299d5b0f0935658aa1aa3e153a11f05f1cb78f61",
+      "planContentDigest": "sha256:003a9702f537e0fe956e93a14b54590dc2b048c1401c6f1dfe0233a80398c5d8",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:84bc3f41a1da37f178ab17555c21a47c18eeb53429180faee85603f114644842",
+      "uncertain": true
+    }
+  },
+  {
+    "name": "statement-errors-pg-unique-apply/observe",
+    "operation": "observe",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema pull",
+        "args": [
+          "schema",
+          "pull",
+          "oci://harness-registry:5000/schemas/statement-errors-pg-unique-apply@<digest>",
+          "--out",
+          "/source/schema.hcl"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/statement-errors-pg-unique-apply/observe/0-schema-pull.txt"
+      },
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 1,
+        "stdout": "runner-harness/documents/statement-errors-pg-unique-apply/observe/1-schema-drift.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "driftFindingCount": 1,
+      "driftFindings": [
+        {
+          "category": "indexes_added",
+          "count": 1,
+          "severity": "warning"
+        }
+      ],
+      "driftInventory": [
+        {
+          "desired": 3,
+          "kind": "columns",
+          "observed": 3
+        },
+        {
+          "desired": 1,
+          "kind": "constraints",
+          "observed": 1
+        },
+        {
+          "desired": 1,
+          "kind": "indexes",
+          "observed": 0
+        },
+        {
+          "desired": 1,
+          "kind": "tables",
+          "observed": 1
+        }
+      ],
+      "driftReportDigest": "sha256:1e9e2451f0a63e43d2679d558f68cb5336b4c3300d3c5de656c25e50f59df52a",
+      "highestDriftSeverity": "warning",
+      "observedDialect": "postgres",
+      "observedDrift": true,
+      "operation": "observe",
+      "operationId": "sha256:c6ef9cfdbdb3153b02bcc6bb42ffa4d985efa8bc080b09c40daf2dc736f32582",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:84bc3f41a1da37f178ab17555c21a47c18eeb53429180faee85603f114644842"
+    }
+  },
+  {
+    "name": "statement-errors-pg-unique-apply/plan",
+    "operation": "plan",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema pull",
+        "args": [
+          "schema",
+          "pull",
+          "oci://harness-registry:5000/schemas/statement-errors-pg-unique-apply@<digest>",
+          "--out",
+          "/source/schema.hcl"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/statement-errors-pg-unique-apply/plan/0-schema-pull.txt"
+      },
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nCREATE UNIQUE INDEX IF NOT EXISTS \"orders_one_per_customer\" ON \"orders\" (\"customer_id\");\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
+        "stdout": "runner-harness/documents/statement-errors-pg-unique-apply/plan/1-schema-plan.json"
+      },
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/second.plan.json",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nCREATE UNIQUE INDEX IF NOT EXISTS \"orders_one_per_customer\" ON \"orders\" (\"customer_id\");\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
+        "stdout": "runner-harness/documents/statement-errors-pg-unique-apply/plan/2-schema-plan.json"
+      },
+      {
+        "command": "schema apply --dry-run",
+        "args": [
+          "schema",
+          "apply",
+          "--plan",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--auto-approve",
+          "--json",
+          "--dry-run"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nCREATE UNIQUE INDEX IF NOT EXISTS \"orders_one_per_customer\" ON \"orders\" (\"customer_id\");\n",
+        "stdout": "runner-harness/documents/statement-errors-pg-unique-apply/plan/3-schema-apply---dry-run.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "operation": "plan",
+      "operationId": "sha256:a5ea4e54b515c5128026744c7db7ac5db4978f48865cb8f088196f7db076fc6f",
+      "planContentDigest": "sha256:003a9702f537e0fe956e93a14b54590dc2b048c1401c6f1dfe0233a80398c5d8",
+      "planOutcome": "Changes",
+      "protocolVersion": 1,
+      "stdout": "<sealed plan>",
+      "targetIdentityDigest": "sha256:84bc3f41a1da37f178ab17555c21a47c18eeb53429180faee85603f114644842"
+    },
+    "savedPlan": "runner-harness/documents/statement-errors-pg-unique-apply/plan/4-saved-plan.json"
+  },
+  {
+    "name": "statement-errors-pg-unique-apply/resolve",
+    "operation": "resolve",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "oci resolve",
+        "args": [
+          "oci",
+          "resolve",
+          "oci://harness-registry:5000/schemas/statement-errors-pg-unique-apply:v1",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/statement-errors-pg-unique-apply/resolve/0-oci-resolve.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "operation": "resolve",
+      "operationId": "sha256:28dcdf65108e53aa314d06a8aec203b1a3c20b63e700a6303522e12d654d9ac6",
+      "protocolVersion": 1,
+      "resolvedDigest": "<volatile>",
+      "resolvedMediaType": "application/vnd.oci.image.manifest.v1+json",
+      "resolvedReference": "oci://harness-registry:5000/schemas/statement-errors-pg-unique-apply@<digest>",
+      "resolvedSize": 813,
+      "stdout": ""
+    }
+  },
+  {
+    "name": "statement-errors-pg-unique-apply/verify",
+    "operation": "verify",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "oci verify",
+        "args": [
+          "oci",
+          "verify",
+          "oci://harness-registry:5000/schemas/statement-errors-pg-unique-apply@<digest>",
+          "--policy",
+          "/work/ptah-verification-policy-<random>.yaml",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/statement-errors-pg-unique-apply/verify/0-oci-verify.json"
+      },
+      {
+        "command": "oci inspect",
+        "args": [
+          "oci",
+          "inspect",
+          "oci://harness-registry:5000/schemas/statement-errors-pg-unique-apply@<digest>",
+          "--format",
+          "json",
+          "--no-referrers"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/statement-errors-pg-unique-apply/verify/1-oci-inspect.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "observedArtifactType": "application/vnd.stokaro.ptah.schema.v1",
+      "operation": "verify",
+      "operationId": "sha256:2b72079f24c3f4aeb6393f0609d50ec366d19a27ad858428b4d6d6000ed30ad5",
+      "protocolVersion": 1,
+      "resolvedDigest": "<volatile>",
+      "stdout": "",
+      "verificationPolicyDigest": "sha256:81767d37e728289983aae9da4b00dc0388f1af18a6768c30df5e47f6b2aa0a8d"
+    }
+  },
+  {
+    "name": "statement-errors-pg-unique-up/apply",
+    "operation": "migration-apply",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "migrations pull",
+        "args": [
+          "migrations",
+          "pull",
+          "oci://harness-registry:5000/migrations/statement-errors-pg-unique-up@<digest>",
+          "--out",
+          "/source/migrations"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/statement-errors-pg-unique-up/apply/0-migrations-pull.txt"
+      },
+      {
+        "command": "migrations up",
+        "args": [
+          "migrations",
+          "up",
+          "--migrations-dir",
+          "/source/migrations",
+          "--json",
+          "--expect-sequence",
+          "/work/ptah-expected-sequence-<random>.json"
+        ],
+        "exit": 2,
+        "stderr": "=== MIGRATE UP ===\nDatabase: postgres://postgres:***@harness-postgres:5432/harness_pg_unique_up?sslmode=disable\nDialect: postgres\nMigrations directory: /source/migrations\nMigration directory format: auto\nTransaction mode: file\n\nCurrent version: 0\nTotal migrations: 1\nPending migrations: 1\n\ntime=<time> level=INFO msg=\"Migrating up\" correlation_id=<random> command=migrations.up currentVersion=0 totalMigrations=1\ntime=<time> level=INFO msg=\"Applying migration\" correlation_id=<random> command=migrations.up version=1 description=Change\nerror: error running migrations: failed to apply migration 1: failed to execute migration SQL: SQL execution failed: ERROR: could not create unique index \"orders_one_per_customer\" (SQLSTATE 23505)\nSQL: CREATE UNIQUE INDEX orders_one_per_customer ON orders (customer_id)\n",
+        "stdout": "statement-errors/pg-unique-up.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "error": {
+        "code": "child_exit",
+        "message": "ptah exited with code 2"
+      },
+      "migrationRun": {
+        "contract_version": 2,
+        "direction": "up",
+        "failure": {
+          "sqlstate": "23505",
+          "statement": 1,
+          "statements": 1,
+          "version": 1
+        },
+        "outcome": "failed",
+        "planned": [
+          1
+        ],
+        "status": {
+          "contract_version": 2,
+          "current_version": 0,
+          "dirty_revision": {
+            "applied": 0,
+            "total": 1,
+            "version": 1
+          },
+          "has_pending_changes": true,
+          "migrations": [
+            {
+              "applied_at": "<volatile>",
+              "checksum": "5b8001839097958a8872c003520d34c87c908caedff8d5c7d7858c9049608b37",
+              "description": "Change",
+              "execution_time_ms": 0,
+              "state": "dirty",
+              "version": 1,
+              "version_key": "1"
+            }
+          ],
+          "pending_migrations": [
+            1
+          ],
+          "total_migrations": 1
+        }
+      },
+      "mutationStarted": true,
+      "operation": "migration-apply",
+      "operationId": "sha256:83cb3e82cc132a984319dbba846b076a757303d9fe68df410aabb54601910030",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:8d8e3184a4b39ff04fe091ed616724699fed9a54af1d1b73f2b97af41efd6b62"
+    }
+  },
+  {
+    "name": "statement-errors-pg-unique-up/history",
+    "operation": "migration-history",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "migrations pull",
+        "args": [
+          "migrations",
+          "pull",
+          "oci://harness-registry:5000/migrations/statement-errors-pg-unique-up@<digest>",
+          "--out",
+          "/source/migrations"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/statement-errors-pg-unique-up/history/0-migrations-pull.txt"
+      },
+      {
+        "command": "migrations status",
+        "args": [
+          "migrations",
+          "status",
+          "--migrations-dir",
+          "/source/migrations",
+          "--json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/statement-errors-pg-unique-up/history/1-migrations-status.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "migrationHistory": {
+        "contract_version": 2,
+        "current_version": 0,
+        "has_pending_changes": true,
+        "migrations": [
+          {
+            "checksum": "5b8001839097958a8872c003520d34c87c908caedff8d5c7d7858c9049608b37",
+            "description": "Change",
+            "state": "pending",
+            "version": 1,
+            "version_key": "1"
+          }
+        ],
+        "pending_migrations": [
+          1
+        ],
+        "total_migrations": 1
+      },
+      "operation": "migration-history",
+      "operationId": "sha256:09999add7a1952b003a571d523eb448398215750f5f4fedee274046bdceec5cb",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:8d8e3184a4b39ff04fe091ed616724699fed9a54af1d1b73f2b97af41efd6b62"
+    }
+  },
+  {
+    "name": "statement-errors-pg-unique-up/resolve",
+    "operation": "resolve",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "oci resolve",
+        "args": [
+          "oci",
+          "resolve",
+          "oci://harness-registry:5000/migrations/statement-errors-pg-unique-up:v1",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/statement-errors-pg-unique-up/resolve/0-oci-resolve.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "operation": "resolve",
+      "operationId": "sha256:d5f9b891a87fbd893784ace3f36ef76a5ef14e24f6c783e6681ef6e29e1c6654",
+      "protocolVersion": 1,
+      "resolvedDigest": "<volatile>",
+      "resolvedMediaType": "application/vnd.oci.image.manifest.v1+json",
+      "resolvedReference": "oci://harness-registry:5000/migrations/statement-errors-pg-unique-up@<digest>",
+      "resolvedSize": 1076,
+      "stdout": ""
+    }
   }
 ]

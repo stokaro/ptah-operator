@@ -267,6 +267,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:d7c034d5d291579de3e80e35056f689c418fa2a8e54dab0ce5857398ea978562",
       "reason": "Hold every path that carries Ptah's words to one function (#788). A desired file's reason, a fence refusal, a failed Git pull's last line and a failed Git fetch's log line are now redacted in any case and before their whitespace changes, with control and format characters replaced, on one line and cut at a character boundary. A schema's reason names its file when Ptah's words do not, and is cut at 485 bytes so it fits an Event whole. The frame's shape, what the runner enforces and every result code are unchanged, so a manager of any release reads this runner's output as it read the last one, and how a manager classifies a failure does not change. Protocol 1 stays."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:c6f4bb73889e3684dc9c9034b5b79233184c398993ab2df6c047acb4e30f407d",
+      "reason": "Say why an Apply failed when a statement returned an error (#787). A failed or unknown Apply and a failed migration run now write the first line of Ptah's error.message to the Pod log, on the diagnostic stream, with quoted text the failed statement also holds replaced, redacted and cut at 1 KiB. The statement Ptah appends after the line break stays out. freeText also takes the frame's marker out of every line it returns. The frame, the termination summary, the result record and every result code are unchanged, so a manager of any release reads this runner's output as it reads the last one, and how a manager classifies a failure does not change. Protocol 1 stays."
     }
   ]
 }

@@ -407,6 +407,8 @@ type reportedMigrationApply struct {
 
 // migrationRunAccount is a run report in the terms status keeps.
 type migrationRunAccount struct {
+	// log is what can be said of the run's Pod log.
+	log     applyLogReading
 	outcome operatorv1alpha1.MigrationRunOutcome
 	applied []int64
 	message string
@@ -512,11 +514,13 @@ func (r *MigrationReconciler) reportedMigrationRun(
 ) migrationRunAccount {
 	if report == nil {
 		return migrationRunAccount{
+			log:     applyLogUnread,
 			outcome: operatorv1alpha1.MigrationRunOutcomeUnknown,
 			message: "The run produced no readable evidence",
 		}
 	}
 	run := migrationRunAccount{
+		log:     applyLogHoldsReport,
 		outcome: migrationRunOutcome(report.Outcome),
 		applied: boundedVersions(report.Applied, 256),
 		message: migrationRunMessage(*report),
@@ -529,6 +533,7 @@ func (r *MigrationReconciler) reportedMigrationRun(
 			if kind, known := dataplane.ParseTargetFailureKind(failure.Code); known {
 				run.targetFailure = &targetFailureError{kind: kind, url: migrationURLSecret(migration)}
 				run.message = run.targetFailure.Error()
+				run.log = applyLogSaysNothing
 			}
 		}
 		return run
@@ -553,6 +558,19 @@ func (r *MigrationReconciler) recordMigrationRun(
 	operation := migration.Status.ActiveOperation
 	outcome := run.outcome
 	message := run.message
+	switch outcome {
+	case operatorv1alpha1.MigrationRunOutcomeApplied, operatorv1alpha1.MigrationRunOutcomeUpToDate:
+		if err := r.markJobHarvested(ctx, job); err != nil {
+			return ctrl.Result{}, err
+		}
+	default:
+		if err := retainFailedApplyJob(ctx, r.Client, job, operation.ApprovalRef != nil, func(text string) {
+			r.event(migration, corev1.EventTypeWarning, "FailedApplyLogShortened", "%s", text)
+		}); err != nil {
+			return ctrl.Result{}, err
+		}
+		message = withLogPointer(message, job, run.log)
+	}
 	finishedAt := metav1.NewTime(r.now())
 	before := migration.DeepCopy()
 	migration.Status.LastRun = &operatorv1alpha1.MigrationRunStatus{
@@ -612,9 +630,6 @@ func (r *MigrationReconciler) recordMigrationRun(
 		migration.Status.Phase = operatorv1alpha1.MigrationPhaseVerifyingHistory
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionTrue,
 			operatorv1alpha1.ReasonVerifyingConvergence, "Reading the history back to confirm what the run did")
-	}
-	if err := r.markJobHarvested(ctx, job); err != nil {
-		return ctrl.Result{}, err
 	}
 	// The run was read from its one Pod after the Job reached a terminal
 	// condition, so nothing it dispatched can still write.
@@ -1042,6 +1057,28 @@ func (r *MigrationReconciler) retireUncertainMigrationApply(
 	mayStillWrite bool,
 ) (ctrl.Result, error) {
 	operation := migration.Status.ActiveOperation
+	if job != nil {
+		// Scheduling the Job's cleanup is tidiness; recording a run nobody
+		// accounted for is the point. A TTL this manager cannot set leaves a
+		// Job to live out its own deadline, which Kubernetes already bounds. A
+		// record it cannot write leaves a claim active over a Job a later pass
+		// can bind and process -- the exact replay this path exists to refuse.
+		//
+		// The guard refuses the cleanup patch whenever the claim does not name
+		// this Job by UID, which is every Apply that failed before its create
+		// was confirmed. So the failure is reported and the record is written.
+		approved := operation != nil && operation.ApprovalRef != nil
+		if err := retainFailedApplyJob(ctx, r.Client, job, approved, func(text string) {
+			r.event(migration, corev1.EventTypeWarning, "FailedApplyLogShortened", "%s", text)
+		}); err != nil {
+			r.event(migration, corev1.EventTypeWarning, "MigrationJobCleanupDeferred",
+				"%s Job %q keeps its own deadline because its cleanup could not be scheduled: %s",
+				operation.Type, job.Name, bounded(err.Error(), 512))
+		}
+		if pointer := failedApplyLogPointer(job, failedApplyLogReading(ctx, r.directReader(), job, failure)); pointer != "" {
+			failure = fmt.Errorf("%w. %s", failure, pointer)
+		}
+	}
 	before := migration.DeepCopy()
 	finishedAt := metav1.NewTime(r.now())
 	run := &operatorv1alpha1.MigrationRunStatus{
@@ -1088,22 +1125,6 @@ func (r *MigrationReconciler) retireUncertainMigrationApply(
 	setMigrationTargetFailure(migration, failure)
 	next := metav1.NewTime(r.now().Add(migrationInterval(migration)))
 	migration.Status.NextReconciliationTime = &next
-	if job != nil {
-		// Scheduling the Job's cleanup is tidiness; recording a run nobody
-		// accounted for is the point. A TTL this manager cannot set leaves a
-		// Job to live out its own deadline, which Kubernetes already bounds. A
-		// record it cannot write leaves a claim active over a Job a later pass
-		// can bind and process -- the exact replay this path exists to refuse.
-		//
-		// The guard refuses the cleanup patch whenever the claim does not name
-		// this Job by UID, which is every Apply that failed before its create
-		// was confirmed. So the failure is reported and the record is written.
-		if err := r.markJobHarvested(ctx, job); err != nil {
-			r.event(migration, corev1.EventTypeWarning, "MigrationJobCleanupDeferred",
-				"%s Job %q keeps its own deadline because its cleanup could not be scheduled: %s",
-				operation.Type, job.Name, bounded(err.Error(), 512))
-		}
-	}
 	if err := r.retireMigrationClaim(
 		ctx, before, migration, mutationlifecycle.DispositionUnaccounted, mayStillWrite,
 	); err != nil {

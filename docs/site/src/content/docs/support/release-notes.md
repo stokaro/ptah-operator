@@ -23,7 +23,9 @@ on the upgrade. An alert or a script that matches `child_exit: ptah exited
 with code 2` to find a database the operator could not open has to match the
 kind of failure instead, and one that matches it or `invalid_plan_output` to
 find a desired file Ptah could not read has to match
-`desired_source_unreadable`. A plan waiting for approval has to be approved again
+`desired_source_unreadable`. A pipeline that ships Pod logs now receives what the
+database answered when an Apply fails, row values included, so decide what it may
+store first. A plan waiting for approval has to be approved again
 once the executor moves to Ptah v0.18.0, and a database audit that lists what
 the executor sends to PostgreSQL has to expect drift to list the schemas
 first, and four rewritten catalog reads. A script that matches the whole text
@@ -94,6 +96,21 @@ Nothing else.
   that goes away between the Plan and the Apply keeps paging until it answers and
   the read-only proof completes. `DatabaseReachable=False` says the target cannot
   be opened now, not that nothing ran; only the completed proof settles the record.
+- **A statement the database refused.** When an Apply fails, the operation Pod's
+  log holds one line with what the database said, and the `Applying` condition of
+  a schema, `status.lastRun.message` of a migration and the Warning Event say how
+  to read it. That line can carry a role, a host, a database name and values read
+  from a row, and it stays out of status, Events and the result frame. Text the failed
+  statement also holds is replaced with `[in the statement]`.
+  [What a failed Apply leaves in its Pod log](../../use/operations/#failed-apply-log)
+  says who can read it. The operator's handling of the failure does not change.
+- **A failed Apply a person approved keeps its Job 24 hours.** Its Pod log stays for 24
+  hours after the Job finishes, in both families, and every other finished Job keeps
+  five minutes, a failure under `apply: Always` included, since that failure repeats
+  with a fresh log. A retained Job counts toward a `count/jobs.batch` quota, and one
+  Kubernetes marked `Failed` keeps a `KubeJobFailed` alert firing until it is gone. A
+  Job the previous release harvested keeps the TTL it has, and after a rollback a Job
+  that holds 24 hours is collected on that time with nothing further from the manager.
 - **A migration run that never started.** A migration Apply that Ptah stopped
   before it selected any migration, as on a database it could not open, is
   now `Failed`. After `spec.execution.failureRetryInterval` the resource reads

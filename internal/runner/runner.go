@@ -485,7 +485,9 @@ func decodeMigrationReport(
 	}
 	// A run that stopped before it selected anything, on a target it could
 	// not open, is reported by the kind of failure. The error object leaves
-	// the report either way: its message is Ptah's, and can quote a row.
+	// the report either way: its message is Ptah's, and can quote a row, so it
+	// stays in the Pod log and out of the frame.
+	logReportedError(report.Error, redactor, config.Diagnostics)
 	if kind, known := report.Error.TargetFailure(); known && outcome.err == nil && outcome.exitCode != 0 &&
 		report.StoppedBeforeSelecting() {
 		setTargetFailure(result, kind, redactor, config.Diagnostics)
@@ -1344,7 +1346,8 @@ func consumeOutcome(
 // Standard error is discarded, never parsed and never forwarded. It lists the
 // planned statements, and a statement can carry a declared row value or a
 // credential that the plan gate keeps out of every frame, so the runner's own
-// diagnostics may not carry it either. The document says how the run ended.
+// diagnostics may not carry it either. The document says how the run ended, and
+// logReportedError keeps the database's answer from it without the statement.
 func executeReportCommand(ctx context.Context, config Config, spec CommandSpec, stdoutLimit int64) commandOutcome {
 	stdout := newBoundedBuffer(stdoutLimit)
 	exitCode, err := config.Executor.Execute(ctx, spec, stdout, io.Discard)
@@ -1421,10 +1424,12 @@ func finishSchemaApply(result *Result, outcome commandOutcome, redactor Redactor
 			setTargetFailure(result, kind, redactor, diagnostics)
 			return
 		}
-		setResultError(result, "apply_failed",
+		logReportedError(report.Error, redactor, diagnostics)
+		setResultError(result, codeApplyFailed,
 			errors.New("ptah reported that the apply failed before it sent any statement"), redactor, diagnostics)
 	case dataplane.SchemaApplyOutcomeUnknown:
-		setResultError(result, "apply_outcome_unknown",
+		logReportedError(report.Error, redactor, diagnostics)
+		setResultError(result, codeApplyOutcomeUnknown,
 			errors.New("ptah sent the statements and returned an error, so how far they got is unknown"), redactor, diagnostics)
 	default:
 		setResultError(result, "invalid_apply_output",

@@ -412,6 +412,7 @@ func TestARotationNamesTheJobOfAnUnknownApply(t *testing.T) {
 	pending.Plan.CoordinationDigest = testCoordinationDigest
 	pending.LeaseDurationSeconds = 960
 	pending.LeaseEpoch = testLeaseEpoch
+	pending.Plan.Approval = &operatorv1alpha1.ConsumedApprovalStatus{Name: "approval", UID: "approval-uid"}
 	job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: corev1.ConditionTrue}}
 	reconciler, api := fakeReconciler(t, &safetyCountingLogs{}, schema, job)
 	reconciler.Jobs = rotatedJobs
@@ -430,8 +431,8 @@ func TestARotationNamesTheJobOfAnUnknownApply(t *testing.T) {
 	})
 
 	reconcileRetirementPass(t, reconciler, request, "schedule the unharvested Apply Job's cleanup")
-	if ttl := jobTTL(t, api, job); ttl == nil || *ttl != jobCleanupTTLSeconds {
-		t.Fatalf("unharvested Apply Job cleanup TTL = %v, want %d", ttl, jobCleanupTTLSeconds)
+	if ttl := jobTTL(t, api, job); ttl == nil || *ttl != failedApplyTTLSeconds {
+		t.Fatalf("unharvested Apply Job cleanup TTL = %v, want %d", ttl, failedApplyTTLSeconds)
 	}
 	if settled := safetyGetSchema(t, api, schema); settled.Status.PendingBindingRetirement != nil {
 		t.Fatalf("the retirement outlived the cleanup it owed: %#v", settled.Status.PendingBindingRetirement)

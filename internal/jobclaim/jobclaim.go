@@ -39,6 +39,12 @@ import (
 // built.
 const CleanupTTLSeconds int32 = 300
 
+// FailedApplyRetentionTTLSeconds is the TTL of the Job of an Apply that failed
+// or whose outcome is unknown. Its Pod log is the one place that holds what the
+// database answered, and a person may come to read it the next morning. Every
+// other finished Job keeps CleanupTTLSeconds.
+const FailedApplyRetentionTTLSeconds int32 = 86400
+
 var (
 	managerImagePattern = regexp.MustCompile(`^[^[:space:]@]+@sha256:[0-9a-f]{64}$`)
 	sha256Pattern       = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
@@ -317,7 +323,8 @@ func matchBuilt(job, normalized *batchv1.Job, claim Claim) error {
 		}
 	}
 	if claim.Stored && actual.Spec.TTLSecondsAfterFinished != nil &&
-		*actual.Spec.TTLSecondsAfterFinished == CleanupTTLSeconds {
+		(*actual.Spec.TTLSecondsAfterFinished == CleanupTTLSeconds ||
+			(claim.Mutating && *actual.Spec.TTLSecondsAfterFinished == FailedApplyRetentionTTLSeconds)) {
 		actual.Spec.TTLSecondsAfterFinished = expected.Spec.TTLSecondsAfterFinished
 	}
 	if !apiequality.Semantic.DeepEqualWithNilDifferentFromEmpty(actual.Spec, expected.Spec) {

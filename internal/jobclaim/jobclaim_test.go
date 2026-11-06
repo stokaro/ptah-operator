@@ -393,6 +393,57 @@ func TestOnlyAStoredJobMayCarryTheCleanupTTL(t *testing.T) {
 	}
 }
 
+// The long TTL is the one a failed Apply's Job keeps, so a Job read back holding
+// it is its claim's only when that claim is the Apply. A manager that finds it on a
+// read-only Job, or on a Job being created, is looking at something it did not do.
+func TestOnlyAnApplysStoredJobMayCarryTheLongTTL(t *testing.T) {
+	t.Parallel()
+
+	long := jobclaim.FailedApplyRetentionTTLSeconds
+	for _, family := range families(t) {
+		t.Run(family.name, func(t *testing.T) {
+			t.Parallel()
+
+			readOnly := family.claim
+			readOnly.Built, readOnly.Stored = family.built, true
+			job := stored(family.built)
+			job.Spec.TTLSecondsAfterFinished = &long
+			if err := jobclaim.Match(job, readOnly); err == nil {
+				t.Fatal("a read-only claim accepted a Job holding the long TTL")
+			}
+
+			applying := family.claim
+			applying.Mutating = true
+			built := family.built.DeepCopy()
+			workload.MarkMutatingOperation(built.Annotations)
+			applying.Built, applying.Stored = built, true
+			retained := stored(built)
+			retained.Spec.TTLSecondsAfterFinished = &long
+			if err := jobclaim.Match(retained, applying); err != nil {
+				t.Fatalf("an Apply claim refused a Job holding the long TTL: %v", err)
+			}
+			// A Job holding the five minutes stays its claim's: a previous release
+			// harvested it, and no release moves a TTL.
+			short := jobclaim.CleanupTTLSeconds
+			harvested := stored(built)
+			harvested.Spec.TTLSecondsAfterFinished = &short
+			if err := jobclaim.Match(harvested, applying); err != nil {
+				t.Fatalf("an Apply claim refused a Job a previous release harvested: %v", err)
+			}
+			another := long - 1
+			moved := stored(built)
+			moved.Spec.TTLSecondsAfterFinished = &another
+			if err := jobclaim.Match(moved, applying); err == nil {
+				t.Fatal("an Apply claim accepted a Job holding neither TTL")
+			}
+			applying.Stored = false
+			if err := jobclaim.Match(retained, applying); err == nil {
+				t.Fatal("a Job being created carried the long TTL")
+			}
+		})
+	}
+}
+
 // A submitted Job's metadata is the manager's whole request, so anything in
 // it beyond what the API server assigns has to be what the claim builds. A
 // stored Job's metadata beyond its labels, annotations and owner is written

@@ -1,0 +1,62 @@
+{
+  "contract_version": 2,
+  "command": "migrations up",
+  "direction": "up",
+  "outcome": "failed",
+  "planned": [
+    1
+  ],
+  "planned_keys": [
+    "1"
+  ],
+  "error": {
+    "message": "failed to apply migration 1: failed to execute migration SQL: SQL execution failed: ERROR: invalid input syntax for type integer: \"declared-literal-in-plan\" (SQLSTATE 22P02)\nSQL: INSERT INTO items (id, qty) VALUES (1, 'declared-literal-in-plan')"
+  },
+  "failure": {
+    "version": 1,
+    "version_key": "1",
+    "statement": 1,
+    "statements": 1,
+    "sqlstate": "22P02"
+  },
+  "status": {
+    "current_version": 0,
+    "applied_migrations": [],
+    "pending_migrations": [
+      1
+    ],
+    "pending_migration_keys": [
+      "1"
+    ],
+    "out_of_order_migrations": [],
+    "total_migrations": 1,
+    "has_pending_changes": true,
+    "dirty_revision": {
+      "version": 1,
+      "description": "Change",
+      "state": "failed",
+      "direction": "up",
+      "applied": 0,
+      "total": 1,
+      "error": "failed to execute migration SQL: SQL execution failed: ERROR: invalid input syntax for type integer: \"declared-literal-in-plan\" (SQLSTATE 22P02)\nSQL: INSERT INTO items (id, qty) VALUES (1, 'declared-literal-in-plan')",
+      "error_stmt": "INSERT INTO items (id, qty) VALUES (1, 'declared-literal-in-plan')",
+      "execution_time": 10000000,
+      "checksum": "a735b3a85a56b8ed7288cad387b50a0d67c9b59966bece592639d8bb14dbae5d",
+      "applied_at": "2026-11-06T19:54:17.748628Z",
+      "dirty": true
+    },
+    "contract_version": 2,
+    "migrations": [
+      {
+        "version": 1,
+        "version_key": "1",
+        "description": "Change",
+        "checksum": "a735b3a85a56b8ed7288cad387b50a0d67c9b59966bece592639d8bb14dbae5d",
+        "applied_at": "2026-11-06T19:54:17.748628Z",
+        "execution_time_ms": 10,
+        "state": "dirty"
+      }
+    ],
+    "current_version_key": "1"
+  }
+}

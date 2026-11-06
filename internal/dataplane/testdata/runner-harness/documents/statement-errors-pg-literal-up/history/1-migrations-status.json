@@ -1,0 +1,24 @@
+{
+  "current_version": 0,
+  "applied_migrations": [],
+  "pending_migrations": [
+    1
+  ],
+  "pending_migration_keys": [
+    "1"
+  ],
+  "out_of_order_migrations": [],
+  "total_migrations": 1,
+  "has_pending_changes": true,
+  "contract_version": 2,
+  "command": "migrations status",
+  "migrations": [
+    {
+      "version": 1,
+      "version_key": "1",
+      "description": "Change",
+      "checksum": "a735b3a85a56b8ed7288cad387b50a0d67c9b59966bece592639d8bb14dbae5d",
+      "state": "pending"
+    }
+  ]
+}

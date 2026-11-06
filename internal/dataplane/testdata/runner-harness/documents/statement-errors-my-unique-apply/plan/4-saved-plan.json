@@ -1,0 +1,15 @@
+{
+  "format_version": 1,
+  "name": "plan_e5464fad5e3d",
+  "dialect": "mysql",
+  "from_fingerprint": "sha256:2c0e5f62125075c5d6553be6926f5768565526f899041ffc5ac657e851793fa7",
+  "to_fingerprint": "sha256:c719010e73c3c56fedef7de8a6d09b3bfecd489d84d979a55ca55fdec22a5271",
+  "destructive": false,
+  "statements": [
+    {
+      "sql": "CREATE UNIQUE INDEX `orders_one_per_customer` ON `orders` (`customer_email`)",
+      "severity": "warning",
+      "reason": "CREATE UNIQUE INDEX can fail on existing duplicate values"
+    }
+  ]
+}

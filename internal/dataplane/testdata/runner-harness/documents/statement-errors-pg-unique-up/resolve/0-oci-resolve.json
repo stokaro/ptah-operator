@@ -1,0 +1,7 @@
+{
+  "reference": "oci://harness-registry:5000/migrations/statement-errors-pg-unique-up:v1",
+  "pinned_reference": "oci://harness-registry:5000/migrations/statement-errors-pg-unique-up@sha256:8d8a69bb4821bf71255abf673dc2dae85a85d68fac803cf9d4d6449ba2ca98ae",
+  "digest": "sha256:8d8a69bb4821bf71255abf673dc2dae85a85d68fac803cf9d4d6449ba2ca98ae",
+  "media_type": "application/vnd.oci.image.manifest.v1+json",
+  "size": 1076
+}

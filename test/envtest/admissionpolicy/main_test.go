@@ -40,7 +40,7 @@ func setup() error {
 	if err != nil {
 		return err
 	}
-	if err := setupTenant(ctx); err != nil {
+	if err := setupTenantAndCleanupJobs(ctx); err != nil {
 		return err
 	}
 	return setupSnapshots(ctx)

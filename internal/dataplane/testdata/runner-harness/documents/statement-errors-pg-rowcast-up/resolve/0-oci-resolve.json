@@ -1,0 +1,7 @@
+{
+  "reference": "oci://harness-registry:5000/migrations/statement-errors-pg-rowcast-up:v1",
+  "pinned_reference": "oci://harness-registry:5000/migrations/statement-errors-pg-rowcast-up@sha256:116c951b62465649ad6f09662712a2367ec240e1212694d99d66675c83b7968f",
+  "digest": "sha256:116c951b62465649ad6f09662712a2367ec240e1212694d99d66675c83b7968f",
+  "media_type": "application/vnd.oci.image.manifest.v1+json",
+  "size": 1076
+}

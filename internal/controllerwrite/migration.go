@@ -113,6 +113,9 @@ func (v *Validator) validateMigrationJobUpdate(
 	if operation == nil || operation.JobName != oldJob.Name || operation.JobUID != oldJob.UID {
 		return denyf("Job is not the exact active migration operation instance")
 	}
+	if err := validateCleanupTTLApproved(*job.Spec.TTLSecondsAfterFinished, operation.ApprovalRef != nil); err != nil {
+		return err
+	}
 	if err := validateClaimBoundMigrationJobCleanup(migration, operation, oldJob); err != nil {
 		return denyf("migration Job cleanup is outside the persisted operation claim: %v", err)
 	}

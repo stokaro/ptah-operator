@@ -35,6 +35,16 @@ func TestFreeTextLeavesOneBoundedReadableLine(t *testing.T) {
 			text: "postgres://other:another@db.example/orders failed",
 			want: "postgres://other:" + RedactionMarker + "@db.example/orders failed",
 		},
+		"the frame's marker": {
+			text: "entry 'PTAH_RUNNER_RESULT_V1 12 abc'",
+			want: "entry '[frame marker] 12 abc'",
+		},
+		// A tab reads as a space once the words are joined, which is what a frame
+		// header needs, so the marker goes after that.
+		"the frame's marker before a tab": {
+			text: "PTAH_RUNNER_RESULT_V1\t12 abc",
+			want: "[frame marker] 12 abc",
+		},
 		"a line break and its indentation": {text: "yaml: unmarshal errors:\n  line 1: cannot", want: "yaml: unmarshal errors: line 1: cannot"},
 		"control bytes in a file name": {
 			text: "0000000001_a\x1b]0;pwn\x07.up.sql",

@@ -1,0 +1,12 @@
+{
+  "contract_version": 4,
+  "command": "schema apply",
+  "outcome": "dry-run",
+  "plan_name": "plan_e5464fad5e3d",
+  "plan_digest": "sha256:f66d338b1cc817db506f8ac7283c2db73b858b7e83a18700d897c5cb1b5f53e7",
+  "units": [
+    {
+      "sql": "CREATE UNIQUE INDEX `orders_one_per_customer` ON `orders` (`customer_email`)"
+    }
+  ]
+}

@@ -138,7 +138,9 @@ func TestControllerObjectGuardCELContracts(t *testing.T) {
 	entries := testControllerObjectGuard().entries()
 	for _, entry := range entries {
 		for index, validation := range entry.validations {
-			if validation.Message != entry.denialMessage {
+			// The two cleanup TTL validations say why in words of their own.
+			ttlValidation := validation.Message == controllerJobCleanupTTLMessage || validation.Message == controllerJobRetentionTTLMessage
+			if validation.Message != entry.denialMessage && !(entry.resource == "jobs" && ttlValidation) {
 				t.Fatalf("%s validation %d lacks its typed denial message", entry.resource, index)
 			}
 			assertCELExpressionHeadroom(t, entry.resource, validation.Expression)
@@ -167,7 +169,7 @@ func TestControllerObjectGuardCELContracts(t *testing.T) {
 		`object.metadata.labels["operator.ptah.run/operation"] == "apply"`,
 		`"operator.ptah.run/plan-content-digest"`,
 		`dyn(oldObject).status.conditions.exists`,
-		`dyn(object).spec.ttlSecondsAfterFinished == 300`,
+		`dyn(object).spec.ttlSecondsAfterFinished in [300, 86400]`,
 		`dyn(object).spec.template == dyn(oldObject).spec.template`,
 		`has(dyn(object).spec.managedBy) == has(dyn(oldObject).spec.managedBy)`,
 	} {

@@ -1453,7 +1453,9 @@ func TestApplyNeverPublishesNativeFailureDiagnostics(t *testing.T) {
 			response: scriptedResponse{
 				stdout: encodeApplyReport(t, dataplane.SchemaApplyReport{
 					ContractVersion: dataplane.SupportedSchemaApplyContract, Outcome: dataplane.SchemaApplyOutcomeUnknown,
-					Units: sqlUnits(failedStatement), Error: &dataplane.CommandError{Message: "apply schema changes: " + failedStatement},
+					Units: sqlUnits(failedStatement), Error: &dataplane.CommandError{
+						Message: "apply schema changes: SQL execution failed: ERROR: boom (SQLSTATE 23505)\nSQL: " + failedStatement,
+					},
 				}),
 				exitCode: 1,
 			},

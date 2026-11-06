@@ -328,7 +328,7 @@ new fingerprint, and `REVOKE` brought the first one back.
 An Apply approved after the `GRANT` and before that read reported
 `ApplyOutcomeUnknown` and ran no statement, and the resource went back to
 `AwaitingApproval` with the new plan. The reason is only in the Pod's log, `database
-schema no longer matches the approved plan`, and the Job is deleted five minutes
+schema no longer matches the approved plan`, and the Job is deleted 24 hours
 later. A rotation that creates a user and grants it a group role moves that
 fingerprint for every plan waiting on the server, and so would a store that generates
 users that way. No such store was run.
