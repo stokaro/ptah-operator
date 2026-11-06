@@ -1,0 +1,38 @@
+{
+  "status": {
+    "source": {
+      "digest": "sha256:9ad3b271fa08397f4b10abe86232ce3ace3a16743c1fbdd88d1051301568227a"
+    },
+    "target": {
+      "highestDriftSeverity": "safe",
+      "driftFindingCount": 1,
+      "driftFindings": [
+        {
+          "category": "feature_changes:ptah.run/pgextension/extension-change",
+          "count": 1,
+          "severity": "safe"
+        }
+      ],
+      "inventory": [
+        {
+          "kind": "columns",
+          "desired": 2,
+          "observed": 2
+        },
+        {
+          "kind": "ptah.run/pgextension/extension-change",
+          "desired": 1,
+          "observed": 0
+        },
+        {
+          "kind": "tables",
+          "desired": 1,
+          "observed": 1
+        }
+      ]
+    },
+    "applied": {
+      "artifactDigest": "sha256:9ad3b271fa08397f4b10abe86232ce3ace3a16743c1fbdd88d1051301568227a"
+    }
+  }
+}

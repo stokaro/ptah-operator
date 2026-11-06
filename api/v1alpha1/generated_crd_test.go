@@ -274,6 +274,80 @@ func TestGeneratedPtahSchemaCRDUsesTheClosedDriftCategoryVocabulary(t *testing.T
 	}
 }
 
+// status.target.inventory keeps what the decoder keeps. The bound holds every
+// entry a report may list, the pattern and the length admit every kind the
+// decoder admits, and what the decoder refuses for its form the status refuses
+// too. The pattern is a form rather than the vocabulary, as it always was: a
+// stem no category pairs fits it, and the decoder refuses that report first.
+func TestGeneratedPtahSchemaCRDHoldsTheInventoryKindToTheDecoder(t *testing.T) {
+	t.Parallel()
+
+	crd := loadGeneratedCRD(t, filepath.Join(
+		repositoryRoot(t),
+		"config", "crd", "bases", "operator.ptah.run_ptahschemas.yaml",
+	))
+	inventory := storageVersionSchema(t, crd).Properties["status"].Properties["target"].Properties["inventory"]
+	if inventory.Items == nil || inventory.Items.Schema == nil {
+		t.Fatal("status.target.inventory has no item schema")
+	}
+	if inventory.XListType == nil || *inventory.XListType != "map" || !slices.Equal(inventory.XListMapKeys, []string{"kind"}) {
+		t.Errorf("status.target.inventory is not a list keyed by kind: list type %v, keys %q",
+			inventory.XListType, inventory.XListMapKeys)
+	}
+	if inventory.MaxItems == nil || *inventory.MaxItems != dataplane.MaxDriftInventoryEntries {
+		t.Errorf("status.target.inventory holds at most %v kinds, and a report may list %d",
+			inventory.MaxItems, dataplane.MaxDriftInventoryEntries)
+	}
+	kind := inventory.Items.Schema.Properties["kind"]
+	if kind.MaxLength == nil || *kind.MaxLength != dataplane.MaxDriftFindingKindBytes {
+		t.Fatalf("the kind holds at most %v bytes, and a report may name %d", kind.MaxLength, dataplane.MaxDriftFindingKindBytes)
+	}
+	if !strings.Contains(kind.Pattern, dataplane.DriftFindingKindPattern) {
+		t.Errorf("the kind pattern %q does not repeat the decoder's %q", kind.Pattern, dataplane.DriftFindingKindPattern)
+	}
+	pattern, err := regexp.Compile(kind.Pattern)
+	if err != nil {
+		t.Fatalf("the kind pattern does not compile: %v", err)
+	}
+
+	var stems []string
+	for _, category := range dataplane.DriftFindingCategories() {
+		if stem, added := strings.CutSuffix(category, "_added"); added && dataplane.IsKnownDriftInventoryKind(stem) {
+			stems = append(stems, stem)
+		}
+	}
+	if len(stems) == 0 {
+		t.Fatal("the vocabulary pairs no stem, so this test would hold the pattern to nothing")
+	}
+	longest := strings.Repeat("a", 60) + ".io/" + strings.Repeat("b", dataplane.MaxDriftFindingKindBytes-64)
+	for _, value := range append(stems, "ptah.run/pgextension/extension-change", "ptah.run/pgpolicy/policy-change",
+		"ptah.run/pgpolicy/table-state-change", longest) {
+		if !dataplane.IsKnownDriftInventoryKind(value) {
+			t.Fatalf("the decoder refuses %q, so this row proves nothing about the pattern", value)
+		}
+		if !pattern.MatchString(value) || int64(len(value)) > *kind.MaxLength {
+			t.Errorf("the status refuses %q, which the decoder admits", value)
+		}
+	}
+	for _, value := range []string{"", "public.users", "ptah.run", "ptahrun/extension", "Ptah.run/pgextension/extension-change",
+		"ptah.run/pgextension/extension change", "ptah.run/", "tables-added", "Tables",
+		"feature_changes:ptah.run/pgextension/extension-change"} {
+		if dataplane.IsKnownDriftInventoryKind(value) {
+			t.Fatalf("the decoder admits %q, so this row proves nothing about the pattern", value)
+		}
+		if pattern.MatchString(value) {
+			t.Errorf("the kind pattern admits %q, which the decoder refuses", value)
+		}
+	}
+	tooLong := longest + "b"
+	if dataplane.IsKnownDriftInventoryKind(tooLong) {
+		t.Fatalf("the decoder admits %d bytes, so this row proves nothing about the bound", len(tooLong))
+	}
+	if int64(len(tooLong)) <= *kind.MaxLength {
+		t.Errorf("the kind admits %d bytes, which the decoder refuses", len(tooLong))
+	}
+}
+
 func TestGeneratedPtahSchemaCRDRejectsDuplicateExclusions(t *testing.T) {
 	t.Parallel()
 

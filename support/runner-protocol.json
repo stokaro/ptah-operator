@@ -242,6 +242,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:c913028cc89457c30fb3c8f06c509c369fcb269457b4602d67c378033a5c7c7c",
       "reason": "Update dependencies from the Renovate batch #772 to #783. The linked packages of k8s.io/api, apimachinery, client-go, utils and x/net are byte-identical, so only go.sum moved; x/term and x/oauth2 change only go.mod. oras-go v2.7.0 reports a failed read after the expected bytes as a read error instead of trailing data, in a package the runner reaches only through reference parsing. x/text v0.43.0 rewrites bidi isolate matching, x/sys v0.49.0 adds CPU feature flags and aligns the Getdents buffer, and x/crypto v0.58.0 adds loong64 assembly the runner does not ship. client_golang v1.25.0, prometheus/common v0.73.1 and procfs v0.22.0 change metric collection, linked through controller-runtime and served to nobody; common's OpenMetrics parser adds pandatix/go-abnf to the closure. Runner commands, payloads, result validation, delivery identity, SQL authority and retry limits are unchanged."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:e92a761a02827f423709ddb417b12b60b616bc58cca8f31f6e7f3baee367cdb5",
+      "reason": "Keep feature kinds in an observation's inventory (#795). driftInventory admits a feature kind beside a stem, in the same order; every earlier frame still parses, and commands, payloads, delivery identity, SQL authority and retry limits are unchanged. No earlier manager reads such a frame on a supported path: the change moves the CRD schema version, after which an earlier release's hook refuses the rollback and its init container refuses the CRDs. Job adoption is not that fence: a schema Job is adopted with its runner image carried. With CRDs restored by hand, every tagged release pairs an older Ptah, so the binding rotates and the Job is not read. Under the same binding, or with this runner set as execution.runnerImage beside Ptah v0.18.0, an earlier manager does read the frame: it refuses it as malformed, stores nothing and runs the read-only Observe again. Migration frames carry no inventory."
     }
   ]
 }

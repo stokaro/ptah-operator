@@ -26,7 +26,11 @@ once the executor moves to Ptah v0.18.0, and a database audit that lists what
 the executor sends to PostgreSQL has to expect drift to list the schemas
 first, and four rewritten catalog reads. A script that matches the whole text
 of `result publication retention has not authorized deletion` has to match its
-start. Nothing else.
+start. A script that reads `status.target.inventory` has to expect a kind that
+is not a stem. Ptah Console up to 0.3.x misstates such a kind until
+[ptah-console#166](https://github.com/stokaro/ptah-console/issues/166) is fixed:
+it says a dropped extension's counts and findings disagree, and shows a changed
+policy at 100% coverage with its finding under other findings. Nothing else.
 
 - **One command to install.** A release now publishes its chart to
   `oci://ghcr.io/stokaro/charts/ptah-operator` with its images stamped in, signed
@@ -70,6 +74,16 @@ start. Nothing else.
   planning already did: with a URL that pins no `search_path`, the tables of a
   schema the desired schema declares nothing in count as drift, the same
   tables a plan already proposed to drop.
+- **Extensions and policies in the inventory.** `status.target.inventory` now
+  counts what a feature owner compares, which Ptah v0.18.0 reports. An entry
+  `ptah.run/pgextension/extension-change` with `desired: 1` and `observed: 0`
+  says the database holds none of the one extension the schema declares. A kind
+  like this joins `feature_changes:<kind>` and `feature_access_*:<kind>`, where
+  a stem such as `tables` joins `tables_added` and `tables_removed`.
+  [Operations](../../use/operations/) shows one. The kind may now be 128 bytes
+  long, so the CRD schema version moves, and
+  [a rollback](../../use/operations/#rollback) to an earlier version is refused
+  once this one has updated the CRDs.
 
 ## 0.2.9
 

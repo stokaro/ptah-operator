@@ -17,9 +17,10 @@ import (
 // vocabulary, the result frame and the CRD's category enum each refused that
 // before. The schema declares pg_trgm and a table, a person approves the plan
 // that creates both, and once the schema converged the extension is dropped by
-// hand. The next Observe has to store Ptah's category as it is. The schema
-// then waits for a person to approve the plan that puts the extension back,
-// and the row leaves it there.
+// hand. The next Observe has to store Ptah's category as it is, and the
+// inventory entry that says one extension is declared and none is held (#795).
+// The schema then waits for a person to approve the plan that puts the
+// extension back, and the row leaves it there.
 func (d *dataPlane) postgresqlExtensionDrift() {
 	d.t.Helper()
 	d.logf("checking that a dropped PostgreSQL extension reaches status in Ptah's category")
@@ -62,7 +63,8 @@ func (d *dataPlane) postgresqlExtensionDrift() {
 	drifted := d.waitForSchema(schemaName, "an Observe to count the dropped extension in Ptah's category",
 		func(s *ptahv1alpha1.PtahSchema) bool { return droppedExtensionObserved(s, digest) })
 	d.printExtensionDriftReading(drifted)
-	d.logf("PASS a dropped PostgreSQL extension is stored as %s", pgExtensionChange)
+	d.logf("PASS a dropped PostgreSQL extension is stored as %s, and counted under %s with desired 1 and observed 0",
+		pgExtensionChange, pgExtensionKind)
 }
 
 // isolatedPostgreSQLExtensionCount counts one installed extension in one

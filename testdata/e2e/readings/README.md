@@ -48,10 +48,24 @@ row printed it. After the schema converged on its artifact, the extension was
 dropped by hand, and the next Observe stored one safe finding,
 `feature_changes:ptah.run/pgextension/extension-change`, counted once; the jobs
 for Kubernetes 1.36 and 1.37 printed the same finding. The schema had already
-started the Plan that follows the drift, so the phase reads `Planning`.
-`TestDroppedExtensionObservedRefusesEveryOtherReading` accepts this reading and
-refuses copies of it that change the one field each mistake would change. It
+started the Plan that follows the drift, so the phase reads `Planning`. It
 names Secrets only by name and key and holds no credentials or plan SQL.
+Ptah v0.14.0 counted nothing, so it carries no `inventory`, and
+`TestDroppedExtensionObservedRefusesACapturedStatusWithoutTheEntry` requires the
+row's predicate to refuse it for that alone.
+
+`postgresql-extension-drift-inventory.json` is derived, not read from a
+cluster. It is what the same row should match since #795, and no run had printed
+it when it was written. Its source digest, findings and applied digest are
+copied from `postgresql-extension-drift.json`. Its `inventory` is the one in
+`internal/dataplane/testdata/drift-feature-extension.json`, the report the Ptah
+v0.18.0 release image printed for the same schema shape, in the form
+`objectInventory` copies it to status:
+`TestExtensionReadingCountsWhatPtahPrinted` and
+`TestObjectInventoryKeepsTheFramedReport` hold it to both.
+`TestDroppedExtensionObservedRefusesEveryOtherReading` accepts this reading and
+refuses copies of it that change the one field each mistake would change. Replace
+it with the document the row prints once a run has printed one.
 
 `journal-plan-published-again.json` is the journal of the schema `storefront`
 in the Ptah Console acceptance lab, read on October 24, 2026 from Kubernetes

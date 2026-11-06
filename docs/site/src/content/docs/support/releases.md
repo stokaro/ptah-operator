@@ -338,6 +338,16 @@ During release preparation, the version was reset to 1 with the other
 From the first release on, it moves only when a manager writes state that a
 manager of an earlier release could not read.
 
+A feature kind in `status.target.inventory`, such as
+`ptah.run/pgextension/extension-change`, left the version as it was. An earlier
+manager reads the kind as a string and decides nothing on it, and its next
+Observe replaces the list. Its CRD holds a kind to the stem pattern, but the
+chart does not put that CRD back: the earlier release's hook refuses the newer
+schema. If someone restores it by hand, the API server keeps the stored entry.
+It admits a write that leaves the entry as it was, changes its counts or removes
+it, and refuses only a feature kind the object does not already hold.
+`TestAStoredFeatureKindUnderTheEarlierCRD` measures each of those.
+
 The number is declared in two places that this repository holds equal:
 `CONTROLLER_STATE_VERSION` in the `Makefile`, which stamps
 `operator.ptah.run/controller-state-version` into every shipped CRD, and
@@ -719,15 +729,17 @@ acknowledgment then settles, and runs a dispatched read-only Job of either
 family again.
 [Normal status progression](../../use/operations/#normal-status-progression)
 states the rule. The runner's enforcement is bound through the runner protocol
-version rather than its digest, and a release that changes what the runner
-enforces bumps that version.
+version rather than its digest. A release that changes what the runner enforces
+bumps that version, unless the
+[rule for contract counters](../api-compatibility/#contract-counters) keeps the
+number.
 
 Two checks hold that rule. `make verify-source` runs `hack/verifyrunnerprotocol`,
 which digests the source the runner is built from -- every non-test Go file of
 this module that `./cmd/ptah-runner` imports, and the `go.sum` lines of every
 other module it imports -- and refuses a digest that moved while
-`runner.ProtocolVersion` did not. A change that leaves the runner's contract as
-it was is declared in `support/runner-protocol.json` with its reason, under the
+`runner.ProtocolVersion` did not. A change that keeps the number is declared in
+`support/runner-protocol.json` with its reason, under the
 protocol version it was made in. At run time, every Job names the protocol its
 manager speaks in `PTAH_RUNNER_PROTOCOL_VERSION`, and a runner that speaks
 another one -- an `execution.runnerImage` from another release -- refuses the

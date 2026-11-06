@@ -174,8 +174,8 @@ type DriftFindingSummary struct {
 const maxDriftFindings = 128
 
 // DriftInventorySummary counts one kind of object on both sides of an
-// observation's comparison. It carries no name, so it is as safe to frame as
-// a finding's count.
+// observation's comparison. Kind is a stem or a feature kind, as the report
+// wrote it. It carries no name, so it is as safe to frame as a finding's count.
 type DriftInventorySummary struct {
 	Kind     string `json:"kind"`
 	Desired  int32  `json:"desired"`
