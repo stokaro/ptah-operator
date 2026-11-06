@@ -9,6 +9,162 @@ rather than merged. What the operator is put together from is
 [Architecture](../architecture/); what enforces each promise, per family, is
 [Execution guarantees](../guarantees/).
 
+## From source to verified change {#from-source-to-verified-change}
+
+A change reaches a database along one path, whichever resource carries it. You
+declare what you want, the operator plans it and holds it to your policy, a
+Ptah executor runs it in a Job, and a later read proves what happened. The
+[schema](#the-schema-lifecycle) and [migration](#the-migration-lifecycle)
+lifecycles below are the precise reference. To walk the path with commands, use
+[First schema](../../start/first-schema/#stage-by-stage) or
+[Run versioned migrations](../../use/migrations/#stage-by-stage).
+
+`kubectl` and the [`kubectl ptah` plugin](../../use/read-a-plan/) cover every
+stage. [Ptah Console](https://github.com/stokaro/ptah-console) is optional: it
+is another interface to the same Kubernetes resources, under the same RBAC and
+admission rules, and it runs no database change itself. Running the standalone
+Ptah CLI directly against a database is a different path. No plan, approval or
+journal entry records it, and the operator finds the result at its next read.
+
+```mermaid
+---
+config:
+  look: classic
+  themeVariables:
+    fontSize: 14px
+  flowchart:
+    wrappingWidth: 340
+    nodeSpacing: 16
+    rankSpacing: 26
+---
+flowchart TD
+  accTitle: The path of a database change, in six numbered stages
+  accDescr: The table after this diagram gives each stage and who does what in it. Ptah Console is optional, and no stage needs it.
+  subgraph you["You act through either, at any stage"]
+    direction LR
+    cli(["kubectl, kubectl ptah"])
+    console(["Optional: Ptah Console"])
+  end
+  source["<b>1 Source</b><br/>You: apply the resource, or change its source<br/>Kubernetes: PtahSchema or PtahMigration<br/>Operator: pins a snapshot, commit or digest<br/>Executor: fetches a Git or OCI source"]
+  plan["<b>2 Plan</b><br/>You: read the plan and its findings<br/>Kubernetes: an immutable plan<br/>Operator: publishes it<br/>Executor: reads the database or its history"]
+  decision["<b>3 Decision</b><br/>You: approve that exact plan, if policy asks<br/>Kubernetes: an approval bound to it<br/>Operator: refuses, waits or proceeds, by policy<br/>Executor: runs nothing"]
+  execution["<b>4 Execution</b><br/>You: watch status<br/>Kubernetes: one Job, one Lease<br/>Operator: starts the Job once its gates hold<br/>Executor: runs the plan or the sequence"]
+  verification["<b>5 Verification</b><br/>You: read the verdict<br/>Kubernetes: status conditions<br/>Operator: believes this read, not the Job's exit<br/>Executor: reads the database or history again"]
+  insync(["In sync, until the next read"])
+  history["<b>6 History</b>, at any stage<br/>You: read it; reading changes nothing<br/>Kubernetes: status and Events, all bounded<br/>Operator: keeps the record<br/>Executor: runs nothing"]
+  you -->|"the same resources, RBAC and admission"| source
+  source --> plan --> decision --> execution --> verification --> insync
+  insync -.- history
+  classDef optional stroke-dasharray: 5 4
+  class console,history optional
+```
+
+The same path, with where to read about each stage. The executor is Ptah
+itself, run by the operator in a Job.
+
+| Stage | You | Kubernetes resources | Operator | Ptah executor |
+| --- | --- | --- | --- | --- |
+| [1 Source](../../use/sources/) | `kubectl apply`, or `kubectl ptah set-source` for another OCI artifact | `PtahSchema` or `PtahMigration`, and the source it names | Pins the content: a [ConfigMap snapshot](#a-configmap-source), a [Git commit](#a-git-source), or an OCI digest its verification policy accepts | Runs a Resolve Job for Git and OCI, and a Verify Job for OCI. A ConfigMap needs neither |
+| [2 Plan](../../use/read-a-plan/) | `kubectl ptah plan`, `schema` or `migration` shows the plan's identity, contents and findings | `PtahSchemaPlan` and its chunks, or `PtahMigrationPlan` | Publishes a plan bound to what was read | Observes the database and plans, or reads the revision table |
+| [3 Decision](../../use/approvals/) | `kubectl ptah approve`, when the policy asks | `PtahSchemaApproval` or `PtahMigrationApproval`, stamped by admission | Applies `spec.policy`: refuses, waits for an approval of this exact plan, or proceeds | Runs nothing |
+| [4 Execution](../../use/operations/#wait) | `kubectl ptah wait`, or `approve --wait` | An Apply Job and the database-realm Lease | Creates the Job once every gate holds | Runs the plan or the approved sequence |
+| [5 Verification](../../use/operations/#normal-status-progression) | `kubectl ptah schema` or `migration` | Status conditions | Takes this read as the proof, not the Job's exit | Reads the database or the revision table again |
+| [6 History](#the-lifecycle-journal) | `kubectl get`, `kubectl ptah plan --applied`, `kubectl events` | Status, stored plans and approvals, Events | Writes the record in the status writes it already makes | Runs nothing |
+
+History is not a step after verification, and reading it changes nothing.
+`status.journal` records when a plan was published, approved and applied and
+how each attempt ended. [The lifecycle journal](#the-lifecycle-journal) says how
+far back it reaches, and how much sooner Events and finished Jobs go. A migration
+also keeps the newest rows of its revision table in `status.history.revisions`,
+and its last run in `status.lastRun`. A schema keeps what its last confirmed
+Apply ran in `status.applied`, and `kubectl ptah plan --applied` prints that
+plan. None of this is an unlimited audit log, and what a resource holds depends
+on the version that wrote it: `coveredSince` says when its journal began, and a
+revision table too old to record a duration leaves a row's `executionMillis`
+absent.
+
+### Where the path turns {#where-the-path-turns}
+
+```mermaid
+---
+config:
+  look: classic
+  themeVariables:
+    fontSize: 14px
+  flowchart:
+    wrappingWidth: 260
+    nodeSpacing: 12
+    rankSpacing: 10
+    padding: 4
+    diagramPadding: 6
+---
+flowchart LR
+  accTitle: Where the path of a database change turns
+  accDescr: The list after this diagram gives each branch and what follows it.
+  before["2 Plan,<br/>3 Decision"]
+  execution["4 Execution"]
+  verification["5 Verification"]
+  reads["1, 2, 5"]
+  before --> nochange["<b>No change, nothing pending</b><br/>In sync. No Apply, no approval."]
+  before --> refused["<b>Refused</b><br/>Blocked: no Apply. Reads again<br/>at its interval until an input<br/>changes."]
+  before --> stale["<b>Plan went stale</b><br/>Back to 2 from a fresh read. An<br/>approval must name the new plan."]
+  execution --> unknown["<b>Schema: Apply uncertain</b><br/>Any Apply error counts. On to 5,<br/>a fresh observation. Never<br/>replayed."]
+  execution --> failed["<b>Migration: Failed</b><br/>No rollback. A revision row the<br/>run left holds it Blocked until a<br/>person repairs it. A later plan<br/>needs a new approval, if asked."]
+  execution --> unresolved["<b>Migration: Partial or Unknown</b><br/>No further Apply until a read with<br/>nothing pending, or a person's<br/>acknowledgment, settles it."]
+  verification --> remain["<b>Changes remain</b><br/>Back to 2. A new plan and, if<br/>policy asks, a new approval."]
+  reads --> retry["<b>A read fails</b><br/>Changed nothing. Retried after<br/>failureRetryInterval."]
+```
+
+The operator rolls nothing back. Each branch has its own recovery, and
+[Failure recovery](../../use/operations/#failure-recovery) has the detail.
+
+- **No change, nothing pending.** A no-change plan or a history with nothing
+  pending needs no Apply and no approval, and the resource reports `InSync`.
+- **Refused.** [`Blocked`](#blocked-is-a-refusal-not-a-fault) does not proceed
+  to Apply. It keeps reading at its interval, so a changed input is noticed
+  without anybody touching the resource. A migration's history refuses at stage
+  2 when it is dirty, modified, out of order or ahead. A migration under
+  `apply: Never` rests in `Planning` instead, with `Ready=False`, reason
+  `ApplyDisabled`.
+- **Plan went stale.** A changed input retires the plan before Apply. The
+  resource reads the database or the history again and plans again, and an
+  approval of the old plan does not carry over. `kubectl ptah approve` approves
+  nothing if the plan it showed was replaced. Read the replacement, then approve
+  that.
+- **Schema, Apply uncertain.** Every Apply error is reported as
+  `ApplyOutcomeUnknown`, and the plan is never replayed. A fresh read-only
+  observation comes before anything else. If it finds no change the schema is
+  `InSync`, with reason `ConvergedAfterUnknownOutcome`; otherwise it plans
+  again.
+- **Migration, `Failed`.** [`status.lastRun`](../../use/migrations/#what-the-run-reports)
+  says how far the run got. A migration that failed at a statement leaves a
+  dirty revision row, and the history read that follows holds the resource
+  `Blocked`, reason `HistoryDirty`, until a person
+  [repairs it with Ptah](../../use/migrations/#what-the-history-says). A run
+  that stopped before it selected a migration leaves no row, and the resource
+  starts again after `spec.execution.failureRetryInterval`. Either way a later
+  plan needs its own approval under `apply: OnApproval`, because the run spent
+  the one it carried.
+- **Migration, `Partial` or `Unknown`.** The run stays in
+  `status.unresolvedRun`, and the resource [publishes no plan and dispatches no
+  Apply](../../use/operations/#a-migration-run-nobody-accounted-for) until it is
+  settled. [A history read of that database with nothing pending](../../use/operations/#how-it-clears)
+  settles it. So does a [`PtahMigrationRunAcknowledgment` bound to that
+  run](../../use/operations/#clear-unresolved-run), which a person creates after
+  establishing what the run did.
+- **Changes remain.** A proof that still finds changes publishes a new plan.
+- **A read fails.** Resolve, Verify, Observe, Plan and a history read change
+  nothing, so they retry after `spec.execution.failureRetryInterval`.
+
+### What differs between a schema and a migration {#schema-and-migration}
+
+| | `PtahSchema` | `PtahMigration` |
+| --- | --- | --- |
+| The plan holds | The generated SQL, which `kubectl ptah plan` prints | The prepared versions and checksums. `kubectl ptah migration` and `approve` print no SQL: it stays in the source |
+| The proof is | A fresh observation and a no-change plan: `InSync=True`, reason `ScopedConverged` | A fresh history read: phase `InSync`, `Ready=True`, reason `HistoryMatched` |
+| An Apply nobody can account for | Goes straight to a fresh observation, which can settle it | Stops every later Apply until a read or a person settles it |
+| Walk it with | [First schema](../../start/first-schema/#stage-by-stage) | [Run versioned migrations](../../use/migrations/#stage-by-stage) |
+
 ## The schema lifecycle
 
 ```mermaid

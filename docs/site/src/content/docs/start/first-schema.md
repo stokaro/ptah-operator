@@ -8,6 +8,13 @@ is a file in a ConfigMap, so it needs no registry and no verification policy.
 [Read the schema from a registry](#from-a-registry) is the next step, and it is
 what a production installation should read before it chooses a source.
 
+The page walks the path
+[From source to verified change](../../reference/reconciliation/#from-source-to-verified-change)
+draws, with `kubectl` and `kubectl ptah` alone, and
+[Stage by stage](#stage-by-stage) lists what to run and expect at each stage.
+[Ptah Console](https://github.com/stokaro/ptah-console) is optional, and no step
+here needs it.
+
 ## Before you start
 
 - The operator installed and its CRDs established: [Install](../install/), and
@@ -158,6 +165,55 @@ finished, which is a different claim.
 
 Watch the whole sequence, including this one, in
 [the recorded runs](../../demo/).
+
+## Read what happened {#history}
+
+You can read this at any stage, and reading it changes nothing:
+
+```sh
+kubectl -n application get ptahschema application -o jsonpath='{.status.journal}' | jq
+kubectl ptah plan application --applied -n application
+kubectl events -n application --for ptahschema/application
+```
+
+The journal is the resource's own record. After the run above it holds
+`PlanPublished`, `ApprovalAccepted`, `ApplyFinished` with outcome `Succeeded`, and
+`Verified` with outcome `InSync`, each with its time. A plan that was replaced
+before anybody approved it stays there as a `PlanPublished` with nothing after
+it. `--applied` prints the plan that Apply ran; without the flag the command
+exits 3, because a converged schema has no current plan. The Events and the
+finished Jobs go first, and the journal is bounded too:
+[The lifecycle journal](../../reference/reconciliation/#the-lifecycle-journal)
+says how far back each one reaches.
+
+## Stage by stage {#stage-by-stage}
+
+The same run, against the stages of
+[From source to verified change](../../reference/reconciliation/#from-source-to-verified-change).
+`kubectl ptah schema application -n application` shows the phase and every
+condition below, at any stage.
+
+| Stage | Run | Expect | Then |
+| --- | --- | --- | --- |
+| 1 Source | The commands in [Create what the schema reads](#create-what-the-schema-reads) | `ArtifactResolved=True`, reason `SnapshotTaken` | Wait for the plan |
+| 2 Plan | `kubectl -n application wait ptahschema/application --for=condition=ApprovalRequired --timeout=5m`, then `kubectl ptah plan application -n application` | Phase `AwaitingApproval`, `PlanReady=True`, reason `Published`, and each statement with its severity | Decide |
+| 3 Decision | `kubectl ptah approve schema/application -n application --wait` | `Approved:`, with the identity admission stamped | The command stays for stages 4 and 5 |
+| 4 Execution | Nothing more. To watch from elsewhere, `kubectl -n application get ptahschema application -w` | Phase `Applying`, then `VerifyingConvergence` | The command ends with `reached applied` |
+| 5 Verification | `kubectl ptah schema application -n application` | Phase `InSync`, `InSync=True`, reason `ScopedConverged` | Read what happened |
+| 6 History | The commands in [Read what happened](#history) | The journal entries named there, and the approval with `Consumed=True`, reason `DispatchCommitted` | Make [the next version](#the-next-version) |
+
+A stage can go another way:
+
+- At stage 2, phase `InSync` with no plan means the database already matches, and
+  the `kubectl wait` times out. There is nothing to approve.
+- At stage 2, [`Blocked`](../../reference/reconciliation/#blocked-is-a-refusal-not-a-fault)
+  means something refuses the plan. `kubectl ptah schema` says what, and nothing
+  runs until an input changes.
+- At stage 3, an `approve` that approves nothing found the plan replaced, or being
+  replaced. Run it again, and it shows the current one.
+- At stage 4, exit status 7 means the Apply has not ended yet and 8 that it will
+  not end applied. Both say what holds the schema, and
+  [Failure recovery](../../use/operations/#failure-recovery) has the rest.
 
 ## The next version
 
