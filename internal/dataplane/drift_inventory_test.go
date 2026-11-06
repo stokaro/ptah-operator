@@ -2,6 +2,7 @@ package dataplane_test
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 
@@ -91,12 +92,18 @@ func TestDecodeDriftRefusesAnInventoryItCannotKeep(t *testing.T) {
 }
 
 // An inventory kind is the stem of an addition and a removal in the
-// vocabulary, and nothing else is.
+// vocabulary, or the kind a feature owner's categories carry, and nothing else
+// is.
 func TestIsKnownDriftInventoryKind(t *testing.T) {
 	t.Parallel()
 	for kind, want := range map[string]bool{
 		"tables": true, "columns": true, "rls_policies": true, "enum_values": true,
 		"": false, "tables_added": false, "data_rows": false, "rls_force": true, "widgets": false,
+		"ptah.run/pgextension/extension-change": true, "ptah.run/pgpolicy/table-state-change": true,
+		"ptah.run": false, "public.users": false, "Ptah.run/pgextension/extension-change": false,
+		"ptah.run/pgextension/extension change": false, "feature_changes:ptah.run/pgextension/extension-change": false,
+		strings.Repeat("a", 60) + ".io/" + strings.Repeat("b", dataplane.MaxDriftFindingKindBytes-64): true,
+		strings.Repeat("a", 60) + ".io/" + strings.Repeat("b", dataplane.MaxDriftFindingKindBytes-63): false,
 	} {
 		if got := dataplane.IsKnownDriftInventoryKind(kind); got != want {
 			t.Errorf("IsKnownDriftInventoryKind(%q) = %v, want %v", kind, got, want)
@@ -104,20 +111,35 @@ func TestIsKnownDriftInventoryKind(t *testing.T) {
 	}
 }
 
-// Ptah counts the objects a feature owner compares under the kind of its
-// feature_changes category. Status cannot keep that kind, so the decoder holds
-// the entry to the vocabulary's form for a kind and leaves it out, keeping the
-// entries a stem names in the order Ptah wrote them.
-func TestDecodeDriftLeavesFeatureKindsOutOfTheInventory(t *testing.T) {
+// Ptah counts the objects a feature owner compares under the kind its
+// qualified categories carry. The decoder keeps those entries beside the stems,
+// with their counts and in the order Ptah wrote them. The reports are the ones
+// the Ptah v0.18.0 release image printed.
+func TestDecodeDriftKeepsFeatureKindsInTheInventory(t *testing.T) {
 	t.Parallel()
-	report, err := dataplane.DecodeDrift([]byte(driftWithInventory(
-		`[{"kind":"columns","desired":2,"observed":2},{"kind":"ptah.run/pgextension/extension-change","desired":1,"observed":0},`+
-			`{"kind":"ptah.run/pgpolicy/policy-change","desired":1,"observed":1},{"kind":"tables","desired":1,"observed":1}]`)), 0)
-	if err != nil {
-		t.Fatalf("DecodeDrift() error = %v", err)
-	}
-	if got := fmt.Sprint(report.Inventory); got != "[{columns 2 2} {tables 1 1}]" {
-		t.Fatalf("inventory = %s", got)
+	for _, test := range []struct {
+		report string
+		want   string
+	}{
+		{"testdata/drift-feature-extension.json",
+			"[{columns 2 2} {ptah.run/pgextension/extension-change 1 0} {tables 1 1}]"},
+		{"testdata/drift-feature-policy.json",
+			"[{columns 2 2} {ptah.run/pgpolicy/policy-change 1 0} {ptah.run/pgpolicy/table-state-change 1 1} {tables 1 1}]"},
+	} {
+		t.Run(test.report, func(t *testing.T) {
+			t.Parallel()
+			data, err := os.ReadFile(test.report)
+			if err != nil {
+				t.Fatal(err)
+			}
+			report, err := dataplane.DecodeDrift(data, 1)
+			if err != nil {
+				t.Fatalf("DecodeDrift() error = %v", err)
+			}
+			if got := fmt.Sprint(report.Inventory); got != test.want {
+				t.Fatalf("inventory = %s, want %s", got, test.want)
+			}
+		})
 	}
 
 	only, err := dataplane.DecodeDrift([]byte(driftWithInventory(
@@ -125,7 +147,7 @@ func TestDecodeDriftLeavesFeatureKindsOutOfTheInventory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DecodeDrift() error = %v", err)
 	}
-	if only.Inventory != nil {
-		t.Fatalf("an inventory of feature kinds alone decoded to %v, want none", only.Inventory)
+	if got := fmt.Sprint(only.Inventory); got != "[{ptah.run/pgextension/extension-change 1 1}]" {
+		t.Fatalf("an inventory of a feature kind alone decoded to %s", got)
 	}
 }

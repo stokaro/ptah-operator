@@ -128,9 +128,9 @@ func TestDecodeDriftAcceptsAFeatureCategoryWithItsKind(t *testing.T) {
 	if len(report.Findings) != 1 || report.Findings[0] != want {
 		t.Fatalf("findings = %+v, want %+v", report.Findings, want)
 	}
-	// Ptah counted the extension under its feature kind as well. Status keeps
-	// no such kind, so the inventory is the two the table counts.
-	if got := fmt.Sprint(report.Inventory); got != "[{columns 2 2} {tables 1 1}]" {
+	// Ptah counted the extension under its feature kind as well, beside the two
+	// the table counts.
+	if got := fmt.Sprint(report.Inventory); got != "[{columns 2 2} {ptah.run/pgextension/extension-change 1 0} {tables 1 1}]" {
 		t.Fatalf("inventory = %s", got)
 	}
 }
@@ -143,7 +143,7 @@ func TestDecodeDriftAcceptsAFeatureCategoryWithItsKind(t *testing.T) {
 // the inventory: the policy, and since stokaro/ptah#5150 the table's row
 // security state, which matches. `sources` and `database_url` were removed
 // after the capture, as above, and nothing else.
-func TestDecodeDriftKeepsPolicyFindingsAndDropsTheirInventoryKinds(t *testing.T) {
+func TestDecodeDriftKeepsPolicyFindingsAndTheirInventoryKinds(t *testing.T) {
 	t.Parallel()
 
 	data, err := os.ReadFile("testdata/drift-feature-policy.json")
@@ -161,7 +161,7 @@ func TestDecodeDriftKeepsPolicyFindingsAndDropsTheirInventoryKinds(t *testing.T)
 	if fmt.Sprint(report.Findings) != fmt.Sprint(want) {
 		t.Fatalf("findings = %+v, want %+v", report.Findings, want)
 	}
-	if got := fmt.Sprint(report.Inventory); got != "[{columns 2 2} {tables 1 1}]" {
+	if got := fmt.Sprint(report.Inventory); got != "[{columns 2 2} {ptah.run/pgpolicy/policy-change 1 0} {ptah.run/pgpolicy/table-state-change 1 1} {tables 1 1}]" {
 		t.Fatalf("inventory = %s", got)
 	}
 }

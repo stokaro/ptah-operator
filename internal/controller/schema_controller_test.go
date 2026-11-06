@@ -2302,6 +2302,7 @@ func TestObservePersistsTheInventoryAndReplacesIt(t *testing.T) {
 	reconciler, api := fakeReconciler(t, staticLogs{}, first)
 	if _, err := reconciler.consumeResult(context.Background(), first, nil, observed([]runner.DriftInventorySummary{
 		{Kind: "columns", Desired: 87, Observed: 87},
+		{Kind: "ptah.run/pgextension/extension-change", Desired: 1, Observed: 0},
 		{Kind: "tables", Desired: 11, Observed: 12},
 	}), nil, 0); err != nil {
 		t.Fatalf("consumeResult() Observe error = %v", err)
@@ -2309,6 +2310,7 @@ func TestObservePersistsTheInventoryAndReplacesIt(t *testing.T) {
 	counted := read(api, first)
 	if want := []operatorv1alpha1.ObjectInventoryStatus{
 		{Kind: "columns", Desired: 87, Observed: 87},
+		{Kind: "ptah.run/pgextension/extension-change", Desired: 1, Observed: 0},
 		{Kind: "tables", Desired: 11, Observed: 12},
 	}; !reflect.DeepEqual(counted.Status.Target.Inventory, want) {
 		t.Fatalf("persisted inventory = %#v, want %#v", counted.Status.Target.Inventory, want)

@@ -1264,11 +1264,12 @@ type TargetStatus struct {
 	DriftFindings []DriftFindingStatus `json:"driftFindings,omitempty"`
 	// Inventory counts each kind of object that observation compared: how
 	// many the desired schema declares and how many the comparison found in
-	// the database, in the compared scope. A kind is the stem of its finding categories, so
-	// tables counts what tables_added and tables_removed are found among, and
-	// a kind neither side holds is left out. Counts only, written and
-	// replaced with the findings. A Ptah that does not count leaves it
-	// absent.
+	// the database, in the compared scope. A kind names the findings it joins,
+	// so tables counts what tables_added and tables_removed are found among,
+	// and ptah.run/pgextension/extension-change what
+	// feature_changes:ptah.run/pgextension/extension-change is. A kind neither
+	// side holds is left out. Counts only, written and replaced with the
+	// findings. A Ptah that does not count leaves it absent.
 	// +optional
 	// +kubebuilder:validation:MaxItems=128
 	// +listType=map
@@ -1279,11 +1280,15 @@ type TargetStatus struct {
 // ObjectInventoryStatus counts one kind of object on both sides of an
 // observation.
 type ObjectInventoryStatus struct {
-	// Kind is the stem of the kind's drift finding categories, such as
-	// tables or rls_policies.
+	// Kind is the stem of the kind's fixed drift finding categories, such as
+	// tables or rls_policies, or the kind a feature owner's qualified
+	// categories carry after the colon, such as
+	// ptah.run/pgextension/extension-change. A stem joins <stem>_added and
+	// <stem>_removed, and a feature kind joins feature_changes:<kind> and
+	// feature_access_*:<kind>. Either names a type of object, never an object.
 	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:MaxLength=64
-	// +kubebuilder:validation:Pattern=`^[a-z]([a-z_]*[a-z])?$`
+	// +kubebuilder:validation:MaxLength=128
+	// +kubebuilder:validation:Pattern=`^([a-z]([a-z_]*[a-z])?|[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+(/[A-Za-z0-9_-][A-Za-z0-9._-]*)+)$`
 	Kind string `json:"kind"`
 	// Desired is how many objects of the kind the desired schema declares.
 	// +kubebuilder:validation:Minimum=0

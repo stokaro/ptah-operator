@@ -1055,16 +1055,21 @@ says what each login misses at the pinned executor, and how to check for it.
 
 `status.target.inventory` counts each kind of object the same observation
 compared, on both sides: how many the desired schema declares and how many the
-comparison found in the database, within the compared scope. A kind is the stem of its finding
-categories, so `tables` counts what `tables_added` and `tables_removed` are
-found among, and an inventory entry joins its findings by that stem. A kind
+comparison found in the database, within the compared scope. A kind says which
+findings it joins. Most kinds are the stem of a pair of categories, so `tables`
+counts what `tables_added` and `tables_removed` are found among. Objects a
+feature owner compares, such as PostgreSQL extensions and policies, are counted
+under the kind their qualified categories carry, so
+`ptah.run/pgextension/extension-change` counts what
+`feature_changes:ptah.run/pgextension/extension-change` and
+`feature_access_*:ptah.run/pgextension/extension-change` are found among. A kind
 with no finding counts the same on both sides; the columns of a table found
-only in the database are not counted. A kind neither side holds is left out. The counts name no object, and objects a
-feature owner compares, such as PostgreSQL extensions and policies, are left
-out too: Ptah counts them under the kind their `feature_changes` category
-carries, such as `ptah.run/pgextension/extension-change`, and status keeps a
-kind only as the stem of a pair of categories. The inventory is written and
-replaced with the findings, and a Ptah that does not count leaves it absent.
+only in the database are not counted. A kind neither side holds is left out. The
+counts name no object. The inventory is written and replaced with the findings,
+and a Ptah that does not count leaves it absent.
+
+In this example the database holds one table too many and none of the one
+extension the schema declares:
 
 ```yaml
 status:
@@ -1073,10 +1078,16 @@ status:
       - category: tables_removed
         count: 1
         severity: destructive
+      - category: feature_changes:ptah.run/pgextension/extension-change
+        count: 1
+        severity: safe
     inventory:
       - kind: columns
         desired: 87
         observed: 87
+      - kind: ptah.run/pgextension/extension-change
+        desired: 1
+        observed: 0
       - kind: tables
         desired: 11
         observed: 12

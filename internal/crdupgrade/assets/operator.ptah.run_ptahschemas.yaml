@@ -4,8 +4,8 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     operator.ptah.run/controller-state-version: "1"
-    operator.ptah.run/crd-schema-version: "9"
-    operator.ptah.run/crd-schema-digest: "sha256:32fbf9f271d356718b4712c271b620aca823f78f7ebb0101c53b4cc1e9cc862f"
+    operator.ptah.run/crd-schema-version: "10"
+    operator.ptah.run/crd-schema-digest: "sha256:69355a73287792fb5a21cea0125c8463d2ae1da5af7bfad835665a7e27054c6f"
     controller-gen.kubebuilder.io/version: v0.23.0
   name: ptahschemas.operator.ptah.run
 spec:
@@ -2896,9 +2896,9 @@ spec:
                           minimum: 0
                           type: integer
                         kind:
-                          maxLength: 64
+                          maxLength: 128
                           minLength: 1
-                          pattern: ^[a-z]([a-z_]*[a-z])?$
+                          pattern: ^([a-z]([a-z_]*[a-z])?|[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+(/[A-Za-z0-9_-][A-Za-z0-9._-]*)+)$
                           type: string
                         observed:
                           format: int32
