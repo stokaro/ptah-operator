@@ -316,6 +316,16 @@ jobs:
             printf 'source-sha=%s\n' "$GITHUB_SHA"
             printf 'support-evidence-run-id=%s\n' "$evidence_run"
           } >> "$GITHUB_OUTPUT"
+      # A supported added line is named in the support table on the strength of a
+      # run in a workflow of its own, which no CI run includes. This reads that run
+      # line by line with a few API calls, waits for nothing, and with no supported
+      # line asks nothing.
+      - name: Require a green run behind every supported database line
+        id: database-line-evidence
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: go run ./hack/releaseverify -verify-database-lines
       # PA-12 of #242: the evidence has to outlive the CI run that produced it,
       # whose artifacts expire. This keeps what the run's acceptance jobs
       # recorded, those jobs as the API reports them, and the acceptance record

@@ -16,8 +16,11 @@ Kubernetes minor.
 
 The immutable references identify the current matrix environments; they do
 not restrict production to one image vendor. Other release lines are
-unsupported until they receive explicit matrix rows. The CRD selects an engine
-but intentionally does not trust a user-supplied server version. The executor
+unsupported. `support/databases.json` declares a line that is being added, and
+the `Added database lines` workflow runs that same lifecycle on it, on a
+schedule and before a release, on every supported Kubernetes minor. A line joins
+this table only after that run is green on it. The CRD selects an engine but
+intentionally does not trust a user-supplied server version. The executor
 discovers server capabilities from the live connection and refuses unsupported
 DDL instead of rendering for an asserted version.
 

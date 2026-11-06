@@ -1,0 +1,64 @@
+{
+  "comment": [
+    "The database release lines, and the only place they are written down.",
+    "hack/verify-kubernetes-support.go holds the table on",
+    "docs/site/src/content/docs/support/databases.md to this file, and builds the",
+    "matrix of the Added database lines workflow from it.",
+    "",
+    "baseline names what every CI run proves: the images hack/e2e-kind.sh defaults",
+    "to, which the verifier holds to these rows.",
+    "",
+    "added names a line that costs too much to run on every push. The workflow",
+    "runs each one on a schedule and before a release, over every supported",
+    "Kubernetes minor and every suite but the ones listed under leftOut. The state",
+    "is pending until a run is green on the line. Then it is supported, evidenceRun",
+    "names that run, and the line takes its row in the table. The bar for the table",
+    "does not change: the complete lifecycle, green on every supported minor.",
+    "",
+    "A run on a pull request is only evidence if it is left to conclude: a push to",
+    "the pull request cancels it, and merging or closing the pull request cancels it",
+    "through cancel-closed-pull-request.yml. Wait for the verdict, then promote.",
+    "",
+    "The release preflight reads evidenceRun line by line: its jobs for this line and",
+    "the jobs every line shares, on this commit's supported minors and suites, at a",
+    "commit that names this image. A re-pin or a new minor needs a new run.",
+    "",
+    "The image tag has to name the major version, because the lifecycle holds both",
+    "PostgreSQL servers to it, baseline or added. imageCreated is the day Docker",
+    "reports for the digest on linux/amd64. The verifier refuses one under two weeks",
+    "old, and each job of an added line refuses a date that is not the image's own.",
+    "",
+    "A suite can be left out only when the driver hands every one of its phases",
+    "another engine, because that suite cannot say anything about this line. A",
+    "suite that runs both engines stays: its PostgreSQL half is the reason to run",
+    "it, and the suite is the smallest unit the driver selects."
+  ],
+  "schemaVersion": 1,
+  "baseline": [
+    {
+      "engine": "postgresql",
+      "line": "17.x",
+      "image": "postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73"
+    },
+    {
+      "engine": "mysql",
+      "line": "8.4.x LTS",
+      "image": "mysql:8.4@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb"
+    }
+  ],
+  "added": [
+    {
+      "engine": "postgresql",
+      "line": "18.x",
+      "image": "postgres:18-alpine@sha256:898c60cb390d1085bc97bdd6a1ae968757421df394b071848b52b1c09c89d6a5",
+      "imageCreated": "2026-10-21",
+      "state": "pending",
+      "leftOut": [
+        {
+          "suite": "migrations-mysql",
+          "reason": "Its one phase is the versioned migration rows on MySQL. Its data-plane preparation starts PostgreSQL, and no row reads it."
+        }
+      ]
+    }
+  ]
+}

@@ -248,6 +248,9 @@ func dataPlaneInputsOK(in phases.DataPlaneInputs) error {
 	if !digestPinnedImage.MatchString(in.ExternalPostgresImage) {
 		return errors.New("E2E_EXTERNAL_POSTGRES_IMAGE must be digest-pinned")
 	}
+	if _, err := phases.PostgresImageMajor(in.ExternalPostgresImage); err != nil {
+		return fmt.Errorf("E2E_EXTERNAL_POSTGRES_IMAGE: %w", err)
+	}
 	if !dnsLabel.MatchString(in.TLSProxyService) {
 		return errors.New("E2E_TLS_PROXY_SERVICE must be a DNS label")
 	}

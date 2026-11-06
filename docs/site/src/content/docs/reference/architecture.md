@@ -303,4 +303,6 @@ supported minor and suite, its phases, resource families, engine inputs and
 scenarios, and the CI job that supplies its evidence. The strict
 `Kubernetes support gate` is what says they passed,
 and it fails on a skipped job, an incomplete matrix or a missing result rather
-than reporting green.
+than reporting green. `support/databases.json` declares the database release lines,
+and the `Added database lines` workflow runs the same jobs on the ones an
+ordinary run leaves out.

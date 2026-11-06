@@ -19,6 +19,16 @@ on:
         type: string
         required: false
         default: ""
+  # The Added database lines workflow runs this graph over support/databases.json
+  # rather than keeping a copy of it. A called run belongs to its caller, so it
+  # never appears among this workflow's runs, which are what a release reads.
+  workflow_call:
+    inputs:
+      database_lines:
+        description: Run the added database lines instead of the acceptance matrix
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -80,11 +90,13 @@ jobs:
       # jq -e there exported "null" for a missing field instead of failing.
       - name: Validate support metadata and export matrix
         id: matrix
+        env:
+          ACCEPTANCE_OUTPUT: ${{ inputs.database_lines && 'database-lines' || 'acceptance' }}
         shell: bash
         run: |
           set -euo pipefail
           matrix="$(go run ./hack/verify-kubernetes-support.go -output=matrix)"
-          acceptance="$(go run ./hack/verify-kubernetes-support.go -output=acceptance)"
+          acceptance="$(go run ./hack/verify-kubernetes-support.go -output="$ACCEPTANCE_OUTPUT")"
           kubernetes_version="$(jq -er '.[-1].kubernetes_version' <<<"$matrix")"
           node_image="$(jq -er '.[-1].node_image' <<<"$matrix")"
           kind_version="$(jq -er '.[-1].kind_version' <<<"$matrix")"
@@ -725,6 +737,9 @@ jobs:
           DOCKER_CONTEXT: ${{ steps.docker-context.outputs.name }}
           E2E_DIRECT_HOST_ACCESS: "1"
           E2E_PREBUILT_IMAGE_DIR: ${{ runner.temp }}/task-images
+          # Both empty on the acceptance matrix, where the driver uses its own default.
+          E2E_POSTGRES_SOURCE_IMAGE: ${{ matrix.postgres_source_image }}
+          E2E_POSTGRES_IMAGE_CREATED: ${{ matrix.postgres_image_created }}
           E2E_PTAH_REVISION: ${{ needs.support-matrix.outputs.ptah_commit }}
           E2E_RELEASE_MANIFEST: ${{ steps.release-manifest.outputs.path }}
           E2E_RELEASE_CHART_OUTPUT: ${{ runner.temp }}/ptah-operator-${{ matrix.minor_slug }}.tgz

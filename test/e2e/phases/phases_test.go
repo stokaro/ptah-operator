@@ -8,6 +8,49 @@ import (
 	"time"
 )
 
+func TestPostgresImageMajorReadsOnlyADigestPinnedTag(t *testing.T) {
+	t.Parallel()
+	digest := "@sha256:" + strings.Repeat("a", 64)
+	for image, want := range map[string]int{
+		"postgres:17-alpine" + digest:                              17,
+		"postgres:18-alpine" + digest:                              18,
+		"postgres:18.6-alpine3.24" + digest:                        18,
+		"registry.example:5000/mirror/postgres:18-alpine" + digest: 18,
+	} {
+		major, err := PostgresImageMajor(image)
+		if err != nil || major != want {
+			t.Errorf("PostgresImageMajor(%q) = %d, %v, want %d", image, major, err, want)
+		}
+	}
+	for _, image := range []string{
+		"postgres" + digest,
+		"registry.example:5000/postgres" + digest,
+		"postgres:alpine" + digest,
+		"postgres:alpine-18" + digest,
+		"postgres:0" + digest,
+		"postgres:18-alpine",
+		"postgres:18-alpine@sha256:abc",
+		"",
+	} {
+		if major, err := PostgresImageMajor(image); err == nil {
+			t.Errorf("PostgresImageMajor(%q) = %d, want a refusal", image, major)
+		}
+	}
+}
+
+func TestPostgresDataDirectoryFollowsTheVolumeTheImageDeclares(t *testing.T) {
+	t.Parallel()
+	for major, want := range map[int]string{
+		17: "/var/lib/postgresql/data",
+		18: "/var/lib/postgresql",
+		19: "/var/lib/postgresql",
+	} {
+		if got := PostgresDataDirectory(major); got != want {
+			t.Errorf("PostgresDataDirectory(%d) = %q, want %q", major, got, want)
+		}
+	}
+}
+
 func TestLoadReadsEveryDeclaredInput(t *testing.T) {
 	t.Parallel()
 	environment := map[string]string{

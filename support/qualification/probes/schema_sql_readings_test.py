@@ -3,7 +3,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from schema_sql_readings import ROOT, contract, received
+from schema_sql_readings import LINE_WITNESSES, ROOT, added_postgresql_lines, contract, contract_readings, received
 
 READINGS = ROOT / 'testdata/e2e/readings'
 CONTRACT = ROOT / 'test/e2e/schema-sql-contract.json'
@@ -13,6 +13,16 @@ class SchemaSQLReadingsTest(unittest.TestCase):
     def test_the_contract_is_exactly_what_the_checked_in_readings_witness(self):
         checked_in = json.loads(CONTRACT.read_text())
         self.assertEqual(contract(READINGS, checked_in['ptahCommit'], checked_in['scope']), checked_in)
+
+    def test_every_added_postgresql_line_witnesses_every_operation(self):
+        lines = added_postgresql_lines()
+        self.assertTrue(lines, 'the catalog adds no PostgreSQL line, so this checks nothing')
+        readings = contract_readings('postgresql')
+        for major, _ in lines:
+            witnessed = {operation for name, operation in readings if name.startswith(f'postgresql-{major}-')}
+            self.assertEqual(witnessed, {operation for _, operation in LINE_WITNESSES})
+            for name, _ in LINE_WITNESSES:
+                self.assertTrue((READINGS / f'postgresql-{major}-schema-{name}.jsonl').is_file())
 
     def test_statements_are_read_the_way_the_audit_reads_them(self):
         with tempfile.TemporaryDirectory() as directory:

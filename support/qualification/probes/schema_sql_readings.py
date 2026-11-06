@@ -4,6 +4,9 @@
 The executor's schema commands are run against disposable PostgreSQL 17 and
 MySQL 8.4 servers that journal every statement they receive, one isolated
 command per journal, following testdata/e2e/readings/schema-diagnostics.md.
+With --postgresql-line it runs the stale-plan sequence on an added PostgreSQL
+line from support/databases.json instead, and keeps the readings that witness
+each diagnostic operation on that server.
 The journals are written in the shape the checked-in readings use, with the
 executor's client address rewritten to the address those readings name, so a
 reading taken with the pinned executor can be compared byte for byte with the
@@ -30,6 +33,8 @@ SERVERS = {
     'postgresql': 'postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73',
     'mysql': 'mysql:8.4@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb',
 }
+# The readings an added PostgreSQL line keeps, and the operation each witnesses.
+LINE_WITNESSES = (('drift-observe', 'observe'), ('drift-plan', 'plan'), ('drift-stale-apply', 'stale-apply'))
 DATABASE = 'ptah_audit_schema'
 ACCOUNT = 'ptah_audit'
 AUDIT_HOST = '172.19.0.3'
@@ -54,8 +59,9 @@ def run(argv, data=None, check=True):
 class Lab:
     """One disposable server, its network, and the executor runs against it."""
 
-    def __init__(self, context, engine, image, database=DATABASE, address=AUDIT_HOST):
+    def __init__(self, context, engine, image, database=DATABASE, address=AUDIT_HOST, server_image=None):
         self.engine, self.image, self.database, self.address = engine, image, database, address
+        self.server_image = server_image or SERVERS[engine]
         self.docker = ['docker', '--context', context]
         self.name = f'ptah-sql-readings-{engine}-{secrets.token_hex(4)}'
         self.password = secrets.token_hex(16)
@@ -68,12 +74,12 @@ class Lab:
         if self.engine == 'postgresql':
             run(self.docker + ['run', '-d', '--name', server, '--network', self.name,
                                '-e', f'POSTGRES_USER={ACCOUNT}', '-e', f'POSTGRES_PASSWORD={self.password}', '-e', f'POSTGRES_DB={self.database}',
-                               SERVERS['postgresql'], '-c', 'log_statement=all', '-c', 'logging_collector=on',
+                               self.server_image, '-c', 'log_statement=all', '-c', 'logging_collector=on',
                                '-c', 'log_destination=jsonlog', '-c', 'log_directory=/tmp/pglog', '-c', 'log_filename=pg'])
         else:
             run(self.docker + ['run', '-d', '--name', server, '--network', self.name,
                                '-e', f'MYSQL_ROOT_PASSWORD={self.password}', '-e', f'MYSQL_DATABASE={self.database}',
-                               '-e', f'MYSQL_USER={ACCOUNT}', '-e', f'MYSQL_PASSWORD={self.password}', SERVERS['mysql'],
+                               '-e', f'MYSQL_USER={ACCOUNT}', '-e', f'MYSQL_PASSWORD={self.password}', self.server_image,
                                '--general-log=1', '--log-output=TABLE'])
         self.created.append(('container', server))
         self.server = server
@@ -213,26 +219,7 @@ def capture(context, image, engine, out):
                         raise RuntimeError(f'{engine} {variant} saved no plan')
                     (out / f'{engine}-schema-{variant}plan.json').write_bytes(saved.read_bytes())
                     saved.unlink()
-    # The stale-plan sequence: save a plan, change the database under it,
-    # refuse the old plan, then observe, plan, validate and apply afresh.
-    fault, v3 = f'{engine}-fault-v1.sql', f'{engine}-v3.sql'
-    with Lab(context, engine, image) as lab:
-        lab.seed(v3, statements=(CONTROL_V3,))
-        code, rows, first = lab.ptah(PLAN, desired=fault)
-        write(out, f'{engine}-schema-drift-plan-before.jsonl', rows, code, results)
-        lab.sql('ALTER TABLE e2e_widgets DROP COLUMN enabled;')
-        code, rows, _ = lab.ptah(APPLY, plan=first, environment={'PTAH_LOCK_TIMEOUT': '60s'})
-        write(out, f'{engine}-schema-drift-stale-apply.jsonl', rows, code, results)
-        code, rows, _ = lab.ptah(OBSERVE, desired=fault)
-        write(out, f'{engine}-schema-drift-observe.jsonl', rows, code, results)
-        code, rows, second = lab.ptah(PLAN, desired=fault)
-        write(out, f'{engine}-schema-drift-plan.jsonl', rows, code, results)
-        code, rows, _ = lab.ptah(APPLY + ['--dry-run'], plan=second, environment={'PTAH_LOCK_TIMEOUT': '30s'})
-        write(out, f'{engine}-schema-drift-validate-plan.jsonl', rows, code, results)
-        code, rows, _ = lab.ptah(APPLY, plan=second, environment={'PTAH_LOCK_TIMEOUT': '60s'})
-        write(out, f'{engine}-schema-drift-apply-current.jsonl', rows, code, results)
-        for plan in (first, second):
-            plan.unlink()
+    results.update(capture_stale_plan(context, image, engine, out, f'{engine}-schema-'))
     # A runner Plan reads the plan twice and validates the first read with a
     # dry run under the resource's lock timeout.
     if engine == 'mysql':
@@ -253,6 +240,41 @@ def capture(context, image, engine, out):
                 first.unlink()
                 again.unlink()
     return results
+
+
+def capture_stale_plan(context, image, engine, out, stem, server_image=None, keep=None):
+    """Save a plan, change the database under it, refuse the old plan, then observe, plan, validate and apply afresh."""
+    results = {}
+
+    def record(name, rows, code):
+        if keep is None or name in keep:
+            write(out, f'{stem}{name}.jsonl', rows, code, results)
+
+    fault, v3 = f'{engine}-fault-v1.sql', f'{engine}-v3.sql'
+    with Lab(context, engine, image, server_image=server_image) as lab:
+        lab.seed(v3, statements=(CONTROL_V3,))
+        code, rows, first = lab.ptah(PLAN, desired=fault)
+        record('drift-plan-before', rows, code)
+        lab.sql('ALTER TABLE e2e_widgets DROP COLUMN enabled;')
+        code, rows, _ = lab.ptah(APPLY, plan=first, environment={'PTAH_LOCK_TIMEOUT': '60s'})
+        record('drift-stale-apply', rows, code)
+        code, rows, _ = lab.ptah(OBSERVE, desired=fault)
+        record('drift-observe', rows, code)
+        code, rows, second = lab.ptah(PLAN, desired=fault)
+        record('drift-plan', rows, code)
+        code, rows, _ = lab.ptah(APPLY + ['--dry-run'], plan=second, environment={'PTAH_LOCK_TIMEOUT': '30s'})
+        record('drift-validate-plan', rows, code)
+        code, rows, _ = lab.ptah(APPLY, plan=second, environment={'PTAH_LOCK_TIMEOUT': '60s'})
+        record('drift-apply-current', rows, code)
+        for plan in (first, second):
+            plan.unlink()
+    return results
+
+
+def added_postgresql_lines():
+    """The added PostgreSQL lines the catalog declares, as (major, image)."""
+    catalog = json.loads((ROOT / 'support/databases.json').read_text())
+    return [(line['line'].removesuffix('.x'), line['image']) for line in catalog['added'] if line['engine'] == 'postgresql']
 
 
 def migration_directory(engine, versions, root):
@@ -329,6 +351,9 @@ def contract_readings(engine):
     readings += [(f'{engine}-schema-drift-validate-plan.jsonl', 'plan'), (f'{engine}-schema-drift-stale-apply.jsonl', 'stale-apply')]
     if engine == 'mysql':
         readings += [('mysql-schema-lock-45-plan.jsonl', 'plan'), ('mysql-schema-lock-60-plan.jsonl', 'plan')]
+    if engine == 'postgresql':
+        for major, _ in added_postgresql_lines():
+            readings += [(f'postgresql-{major}-schema-{name}.jsonl', operation) for name, operation in LINE_WITNESSES]
     return readings
 
 
@@ -375,6 +400,7 @@ def main():
     parser.add_argument('--engine', choices=sorted(SERVERS), action='append')
     parser.add_argument('--out', required=True, help='directory the readings are written to')
     parser.add_argument('--part', choices=('all', 'schema', 'migrations'), default='all')
+    parser.add_argument('--postgresql-line', help='capture an added PostgreSQL line from support/databases.json, such as 18')
     parser.add_argument('--compare', action='store_true',
                         help='compare every reading with the checked-in one instead of only writing it')
     parser.add_argument('--contract', help='instead of capturing, write the diagnostic contract the readings in --out witness')
@@ -394,7 +420,15 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
     results = {}
     scratch = Path(tempfile.mkdtemp(prefix='ptah-sql-readings-'))
-    for engine in args.engine or sorted(SERVERS):
+    if args.postgresql_line:
+        images = dict(added_postgresql_lines())
+        if args.postgresql_line not in images:
+            parser.error(f'support/databases.json adds no PostgreSQL line {args.postgresql_line}')
+        results.update(capture_stale_plan(args.context, args.executor_image, 'postgresql', out,
+                                          f'postgresql-{args.postgresql_line}-schema-',
+                                          server_image=images[args.postgresql_line],
+                                          keep={name for name, _ in LINE_WITNESSES}))
+    for engine in () if args.postgresql_line else args.engine or sorted(SERVERS):
         if args.part in ('all', 'schema'):
             results.update(capture(args.context, args.executor_image, engine, out))
         if args.part in ('all', 'migrations'):

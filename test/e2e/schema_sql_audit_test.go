@@ -331,6 +331,9 @@ func TestSchemaSQLContractHasActualWitnessesAtThePinnedSource(t *testing.T) {
 			type witness struct {
 				name, operation string
 				count           int
+				// stem names the server the reading was taken on, when it is an
+				// added line rather than the engine's baseline.
+				stem string
 			}
 			var readings []witness
 			for _, variant := range []string{"", "destructive-", "exclusion-wide-", "exclusion-narrow-", "initial-v1-", "tag-v2-", "tag-v3-", "drift-"} {
@@ -339,13 +342,22 @@ func TestSchemaSQLContractHasActualWitnessesAtThePinnedSource(t *testing.T) {
 					if variant == "initial-v1-" {
 						count = map[string]map[string]int{"postgresql": {"observe": 42, "plan": 78}, "mysql": {"observe": 15, "plan": 29}}[engine][operation]
 					}
-					readings = append(readings, witness{variant + operation, operation, count})
+					readings = append(readings, witness{name: variant + operation, operation: operation, count: count, stem: engine})
 				}
 			}
-			readings = append(readings, witness{"drift-validate-plan", "plan", map[string]int{"postgresql": 45, "mysql": 19}[engine]},
-				witness{"drift-stale-apply", "stale-apply", map[string]int{"postgresql": 45, "mysql": 19}[engine]})
+			readings = append(readings, witness{name: "drift-validate-plan", operation: "plan", count: map[string]int{"postgresql": 45, "mysql": 19}[engine], stem: engine},
+				witness{name: "drift-stale-apply", operation: "stale-apply", count: map[string]int{"postgresql": 45, "mysql": 19}[engine], stem: engine})
 			if engine == "mysql" {
-				readings = append(readings, witness{"lock-45-plan", "plan", 81}, witness{"lock-60-plan", "plan", 81})
+				readings = append(readings, witness{name: "lock-45-plan", operation: "plan", count: 81, stem: engine}, witness{name: "lock-60-plan", operation: "plan", count: 81, stem: engine})
+			}
+			// PostgreSQL 18 reads a column's NOT NULL constraint name where 17
+			// selects an empty string, so that one declaration has a witness only
+			// on the added line.
+			if engine == "postgresql" {
+				readings = append(readings,
+					witness{name: "drift-observe", operation: "observe", count: 48, stem: "postgresql-18"},
+					witness{name: "drift-plan", operation: "plan", count: 85, stem: "postgresql-18"},
+					witness{name: "drift-stale-apply", operation: "stale-apply", count: 45, stem: "postgresql-18"})
 			}
 			for _, reading := range readings {
 				actor := schemaAuditActor(reading.operation)
@@ -361,7 +373,7 @@ func TestSchemaSQLContractHasActualWitnessesAtThePinnedSource(t *testing.T) {
 				clients := map[string]operationSQLClient{mysqlAuditHost: actor}
 				var counts map[string]int
 				if engine == "postgresql" {
-					counts, err = postgresStatementRefusalSQL(schemaAuditReading(t, engine, reading.name), schemaAuditDatabase, clients, acceptsActor,
+					counts, err = postgresStatementRefusalSQL(schemaAuditReading(t, reading.stem, reading.name), schemaAuditDatabase, clients, acceptsActor,
 						func(a operationSQLClient, sql, parameters string) bool {
 							seen[schemaSQLKey{reading.operation, "query", sql, parameters}] = true
 							return pg(a, sql, parameters)
@@ -451,7 +463,7 @@ func TestSchemaSQLContractRefusesBroaderStatementsAndActors(t *testing.T) {
 				if accepts(actor, changed) {
 					t.Fatal("changed bind parameters passed")
 				}
-				for _, from := range []string{"pg_temp", "\"id\" bigint", "ptah_column_probe_0"} {
+				for _, from := range []string{"pg_temp", "\"id\" bigint", "ptah_column_probe_0", "con.contype = 'n'"} {
 					if strings.Contains(key.statement, from) {
 						changed = key
 						changed.statement = strings.ReplaceAll(key.statement, from, "unauthorized")

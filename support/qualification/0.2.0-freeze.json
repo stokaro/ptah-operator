@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-11-06T17:04:09.281168+00:00",
+  "frozenAt": "2026-11-06T17:43:01.318191+00:00",
   "profileSourceCommit": "1259f4d59343fef049307085e3ea77d2971677cb",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
@@ -32,7 +32,7 @@
     },
     {
       "path": "docs/site/src/content/docs/support/databases.md",
-      "sha256": "03a9cb10b282bb3705974ad23d9fa303bd890787e27731a6a811b529e1a88565"
+      "sha256": "5403025b4aaf9766ba3bf8837359d732a3d9c66e1430fe578ef17d55c93b15fe"
     },
     {
       "path": "support/qualification/kindnet/Dockerfile",
@@ -79,10 +79,10 @@
     "disposition": "v0.2.9 is the published predecessor of the next candidate. The upgrade from it is walked through both releases' guides by support/qualification/probes/fresh_install.py --upgrade-from on both platforms; the synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 71,
+  "revision": 72,
   "supersedes": {
-    "freezeCommit": "39eea2a089e0f28a32c5541bce1c39c4c77389c9",
-    "sha256": "489dad092f4d9f664bda4868620bf8985b4a96cbc2034f88b9b1e00b4f95c550"
+    "freezeCommit": "e8b2b6d3d7cd5b2e4022f26fcc4aeccac00aaba8",
+    "sha256": "cc4c5b3caea6446ff02a1ca04e1716853850c5b15d0d2c3916ce411af76ec74f"
   },
-  "revisionReason": "Add the scenarios configmap-unreadable-source and git-source-unreadable (#788): a desired schema and a migration file Ptah cannot load are named, with Ptah's reason, in the condition and the Event, and a repaired file plans once the resource is suspended and resumed. Phases, cells, platforms and targets do not change."
+  "revisionReason": "The databases page says how a release line is added: support/databases.json declares it, the Added database lines workflow runs the same lifecycle on it, and it joins the table only after that run is green. The bar, the table and the matrix of this profile are unchanged, and PostgreSQL 18 is not in the table."
 }

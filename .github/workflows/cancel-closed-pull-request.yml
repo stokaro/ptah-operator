@@ -5,6 +5,10 @@ name: Cancel closed pull request runs
 # reads their verdict any more: a merge is proven by master's own run, and a
 # closed pull request by nothing at all.
 #
+# An Added database lines run on the pull request is canceled with them, and its
+# verdict is still read: support/databases.json names such a run as a line's
+# evidence. A pull request that needs that verdict waits for it before closing.
+#
 # This cancels the pull_request runs of the closed pull request's head branch
 # and nothing else. A push, a tag, a schedule or another branch is never
 # touched, which hack/verify-kubernetes-support.go holds to the exact command.

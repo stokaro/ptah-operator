@@ -507,6 +507,11 @@ func TestVerifyWorkflowRejectsCriticalMutations(t *testing.T) {
 		"prepare producer overwritten": {`if [[ "$release_state" == prepared && "$SOURCE_REF" != "$GITHUB_REF" ]]; then`, `if [[ "$release_state" == fresh && "$SOURCE_REF" != "$GITHUB_REF" ]]; then`, false},
 		"selected chart replaced":      {`cmp "$chart_path" "$download_dir/$(basename "$chart_path")"`, `true`, false},
 
+		"database line step removed": {`id: database-line-evidence`, `id: renamed-evidence`, false},
+		"database line check":        {`run: go run ./hack/releaseverify -verify-database-lines`, `run: "true"`, false},
+		"database line condition":    {"        id: database-line-evidence\n", "        id: database-line-evidence\n        if: false\n", false},
+		"database line token":        {"        id: database-line-evidence\n        env:\n          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}\n", "        id: database-line-evidence\n        env:\n          GH_TOKEN: ${{ secrets.PAT }}\n", false},
+
 		"tag trigger":               {`      - "v*"`, `      - main`, false},
 		"tag job guard":             {`startsWith(github.ref, 'refs/tags/v')`, `startsWith(github.ref, 'refs/heads/')`, false},
 		"preflight permission":      {`      actions: read`, `      actions: write`, false},

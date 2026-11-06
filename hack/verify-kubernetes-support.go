@@ -40,6 +40,9 @@ import (
 const (
 	manifestPath                 = "support/kubernetes.json"
 	e2eSuitesPath                = "support/e2e-suites.json"
+	databaseCatalogPath          = "support/databases.json"
+	databasePagePath             = "docs/site/src/content/docs/support/databases.md"
+	databaseLinesWorkflowPath    = ".github/workflows/database-lines.yml"
 	goModPath                    = "go.mod"
 	chartPath                    = "charts/ptah-operator/Chart.yaml"
 	workflowPath                 = ".github/workflows/ci.yml"
@@ -137,6 +140,13 @@ type matrixEntry struct {
 	KubernetesVersion string `json:"kubernetes_version"`
 	NodeImage         string `json:"node_image"`
 	KindVersion       string `json:"kind_version"`
+	// The PostgreSQL line a job of the added database lines runs on. The driver
+	// falls back to its own default when this is empty, which it is on every job
+	// of the acceptance matrix.
+	PostgresSourceImage string `json:"postgres_source_image,omitempty"`
+	// The date the catalog says that image was built. The driver holds it to
+	// what Docker reports for the image, because the age rule reads this date.
+	PostgresImageCreated string `json:"postgres_image_created,omitempty"`
 	// The acceptance suite this job runs, in the acceptance matrix only. A job
 	// is one minor and one suite, so the four suites of a minor run at once
 	// against clusters of their own. The plain matrix keeps its old shape,
@@ -155,7 +165,7 @@ type parsedRelease struct {
 
 func main() {
 	output := flag.String("output", "verify",
-		"output mode: verify, proposal, matrix, acceptance, or helm-range")
+		"output mode: verify, proposal, matrix, acceptance, database-lines, or helm-range")
 	nowValue := flag.String("now", "", "UTC date used for freshness validation (YYYY-MM-DD; defaults to today)")
 	flag.Parse()
 	proposal := *output == "proposal"
@@ -172,6 +182,16 @@ func main() {
 		fatal(err)
 	}
 	if err := verifyE2ESuiteIsolationWorker(suites); err != nil {
+		fatal(err)
+	}
+	databases, err := loadDatabaseCatalog(databaseCatalogPath, now)
+	if err != nil {
+		fatal(err)
+	}
+	if err := verifyDatabaseCatalog(databases, suites, e2eHarnessPath, databasePagePath); err != nil {
+		fatal(err)
+	}
+	if err := verifyDatabaseLinesWorkflow(databaseLinesWorkflowPath); err != nil {
 		fatal(err)
 	}
 	manifest, parsed, err := loadAndValidateManifest(manifestPath, now)
@@ -235,7 +255,7 @@ func main() {
 			parsed[0].Minor, parsed[len(parsed)-1].Minor, len(parsed), len(suites.Suites), e2eSuiteCoveredPhases(suites))
 	case "proposal":
 		fmt.Printf("Kubernetes support proposal validated: %s-%s (%d minors); ordinary verification still enforces the frozen API boundary\n", parsed[0].Minor, parsed[len(parsed)-1].Minor, len(parsed))
-	case "matrix", "acceptance":
+	case "matrix", "acceptance", "database-lines":
 		minors := make([]matrixEntry, 0, len(parsed))
 		for _, item := range parsed {
 			minors = append(minors, matrixEntry{
@@ -247,8 +267,14 @@ func main() {
 			})
 		}
 		entries := minors
-		if *output == "acceptance" {
+		switch *output {
+		case "acceptance":
 			entries = e2eSuiteMatrix(minors, suites)
+		case "database-lines":
+			entries, err = databaseLineMatrix(minors, suites, databases)
+			if err != nil {
+				fatal(err)
+			}
 		}
 		encoded, err := json.Marshal(entries)
 		if err != nil {
@@ -909,6 +935,9 @@ func verifyCIWorkflowSemantics(path string, workflow workflowDocument, contents 
 	if supportMatrix.If != "" || supportMatrix.TimeoutMinutes != ciSupportMatrixTimeoutMinutes {
 		return fmt.Errorf("%s: support-matrix must run unconditionally with a %d-minute timeout", path, ciSupportMatrixTimeoutMinutes)
 	}
+	if err := verifyCIDatabaseLinesCall(path, workflow); err != nil {
+		return err
+	}
 	if !equalStringMap(supportMatrix.Outputs, map[string]string{
 		"matrix": "${{ steps.matrix.outputs.matrix }}",
 		// Every supported minor against every suite. A job is one pair, so the
@@ -936,7 +965,7 @@ func verifyCIWorkflowSemantics(path string, workflow workflowDocument, contents 
 	// field.
 	const wantMatrixRun = `set -euo pipefail
 matrix="$(go run ./hack/verify-kubernetes-support.go -output=matrix)"
-acceptance="$(go run ./hack/verify-kubernetes-support.go -output=acceptance)"
+acceptance="$(go run ./hack/verify-kubernetes-support.go -output="$ACCEPTANCE_OUTPUT")"
 kubernetes_version="$(jq -er '.[-1].kubernetes_version' <<<"$matrix")"
 node_image="$(jq -er '.[-1].node_image' <<<"$matrix")"
 kind_version="$(jq -er '.[-1].kind_version' <<<"$matrix")"
@@ -950,6 +979,13 @@ kind_version="$(jq -er '.[-1].kind_version' <<<"$matrix")"
 `
 	if matrixStep.If != "" || matrixStep.Shell != "bash" || matrixStep.Run != wantMatrixRun {
 		return fmt.Errorf("%s: support-matrix step must unconditionally export the verified dynamic matrix", path)
+	}
+	// Only a caller's database_lines reaches the added lines, and nothing else
+	// can name another output: every other run gets the acceptance matrix.
+	if !equalStringMap(matrixStep.Env, map[string]string{
+		"ACCEPTANCE_OUTPUT": ciAcceptanceOutput,
+	}) {
+		return fmt.Errorf("%s: the support matrix must choose its output from the database_lines input and nothing else", path)
 	}
 	// The Ptah pin travels the same way the Kubernetes matrix does, and for the
 	// same reason: the lifecycle job needs the tested commit before it can
@@ -1230,6 +1266,10 @@ printf 'baseline=%s\n' "$baseline" >> "$GITHUB_OUTPUT"
 	wantMatrixEnv := map[string]string{
 		"DOCKER_CONTEXT":         "${{ steps.docker-context.outputs.name }}",
 		"E2E_DIRECT_HOST_ACCESS": "1",
+		// Empty on the acceptance matrix, so the driver's default stands; the
+		// added database lines name their image, and the date it was built, here.
+		"E2E_POSTGRES_SOURCE_IMAGE":  "${{ matrix.postgres_source_image }}",
+		"E2E_POSTGRES_IMAGE_CREATED": "${{ matrix.postgres_image_created }}",
 		// No Ptah source reaches a lifecycle job: the executor is the Ptah
 		// image the catalog pins beside this commit, copied by digest.
 		"E2E_PREBUILT_IMAGE_DIR": "${{ runner.temp }}/task-images",
@@ -5590,6 +5630,457 @@ func verifyE2ESuiteIsolationWorker(catalog e2eSuiteCatalog) error {
 				"%s: suite %q declares isolationWorker and runs no phase that isolates a node",
 				e2eSuitesPath, suite.Name)
 		}
+	}
+	return nil
+}
+
+// The database release lines: support/databases.json declares them, the table a
+// reader sees is held to it, and the added ones run through ci.yml's own jobs in
+// a workflow of their own, so an ordinary push pays for none of them.
+
+// databaseImageMinimumAge is how long a digest has to have been public before a
+// line pins it. A fresh rebuild is the easiest place for a broken image to hide.
+const databaseImageMinimumAge = 14 * 24 * time.Hour
+
+const (
+	databaseLinePending   = "pending"
+	databaseLineSupported = "supported"
+)
+
+const (
+	// databaseLinesWorkflowName is the caller's name, which ci.yml's concurrency
+	// group reads through github.workflow. Under CI's name the two workflows would
+	// share a group on a ref, and each would cancel the other.
+	databaseLinesWorkflowName = "Added database lines"
+	// databaseLinesCallerJob prefixes every called job's name. A release reads a
+	// supported line's jobs by those names.
+	databaseLinesCallerJob = "Added lines"
+)
+
+// ciAcceptanceOutput is how the support matrix step chooses what it exports.
+const ciAcceptanceOutput = "${{ inputs.database_lines && 'database-lines' || 'acceptance' }}"
+
+// databaseEngineNames are the engines the table on the support page names. The
+// driver takes a PostgreSQL line through E2E_POSTGRES_SOURCE_IMAGE and the
+// lifecycle job hands it one, so only PostgreSQL can be added until that job
+// hands the MySQL image the same way.
+var databaseEngineNames = map[string]string{"postgresql": "PostgreSQL", "mysql": "MySQL"}
+
+var (
+	databaseEvidenceRun = regexp.MustCompile(`^[1-9][0-9]*$`)
+	pinnedImagePattern  = regexp.MustCompile(`^[^[:space:]@]+@sha256:[0-9a-f]{64}$`)
+)
+
+type databaseLine struct {
+	Engine string `json:"engine"`
+	Line   string `json:"line"`
+	Image  string `json:"image"`
+}
+
+type databaseLeftOutSuite struct {
+	Suite  string `json:"suite"`
+	Reason string `json:"reason"`
+}
+
+type addedDatabaseLine struct {
+	databaseLine
+	ImageCreated string                 `json:"imageCreated"`
+	State        string                 `json:"state"`
+	EvidenceRun  string                 `json:"evidenceRun,omitempty"`
+	LeftOut      []databaseLeftOutSuite `json:"leftOut"`
+}
+
+type databaseCatalog struct {
+	Comment       []string            `json:"comment"`
+	SchemaVersion int                 `json:"schemaVersion"`
+	Baseline      []databaseLine      `json:"baseline"`
+	Added         []addedDatabaseLine `json:"added"`
+}
+
+// loadDatabaseCatalog reads the catalog and refuses a line that cannot be run or
+// that claims more than it has: an unpinned image, a line its tag disagrees with,
+// a digest younger than two weeks, or a supported state with no run behind it.
+func loadDatabaseCatalog(path string, now time.Time) (databaseCatalog, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return databaseCatalog{}, fmt.Errorf("read the database catalog: %w", err)
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	var catalog databaseCatalog
+	if err := decoder.Decode(&catalog); err != nil {
+		return databaseCatalog{}, fmt.Errorf("%s: %w", path, err)
+	}
+	if catalog.SchemaVersion != 1 {
+		return databaseCatalog{}, fmt.Errorf("%s: schemaVersion is %d, and this program reads 1", path, catalog.SchemaVersion)
+	}
+	if len(catalog.Baseline) == 0 {
+		return databaseCatalog{}, fmt.Errorf("%s: names no baseline line", path)
+	}
+	seen := map[string]bool{}
+	claim := func(line databaseLine) error {
+		if _, known := databaseEngineNames[line.Engine]; !known {
+			return fmt.Errorf("%s: engine %q is not one the support page names", path, line.Engine)
+		}
+		if strings.TrimSpace(line.Line) == "" {
+			return fmt.Errorf("%s: a %s line does not say which release it is", path, line.Engine)
+		}
+		if !pinnedImagePattern.MatchString(line.Image) {
+			return fmt.Errorf("%s: %s %s must be pinned by digest: %q", path, line.Engine, line.Line, line.Image)
+		}
+		// The lifecycle holds both PostgreSQL servers to the tag, so a green run
+		// proves the tag's major version, whatever this row says.
+		if line.Engine == "postgresql" {
+			major, err := phases.PostgresImageMajor(line.Image)
+			if err != nil {
+				return fmt.Errorf("%s: %w", path, err)
+			}
+			if want := strconv.Itoa(major) + ".x"; line.Line != want {
+				return fmt.Errorf("%s: the line is %q and its image names %s", path, line.Line, want)
+			}
+		}
+		key := line.Engine + " " + line.Line
+		if seen[key] {
+			return fmt.Errorf("%s: %s appears twice", path, key)
+		}
+		seen[key] = true
+		return nil
+	}
+	for _, line := range catalog.Baseline {
+		if err := claim(line); err != nil {
+			return databaseCatalog{}, err
+		}
+	}
+	for _, line := range catalog.Added {
+		if err := claim(line.databaseLine); err != nil {
+			return databaseCatalog{}, err
+		}
+		if err := validateAddedDatabaseLine(path, line, now); err != nil {
+			return databaseCatalog{}, err
+		}
+	}
+	return catalog, nil
+}
+
+func validateAddedDatabaseLine(path string, line addedDatabaseLine, now time.Time) error {
+	if line.Engine != "postgresql" {
+		return fmt.Errorf("%s: %s %s cannot be added yet: the lifecycle job hands the driver a PostgreSQL image and no other",
+			path, line.Engine, line.Line)
+	}
+	created, err := time.Parse(time.DateOnly, line.ImageCreated)
+	if err != nil {
+		return fmt.Errorf("%s: %s imageCreated is not a date: %w", path, line.Line, err)
+	}
+	if now.Sub(created) < databaseImageMinimumAge {
+		return fmt.Errorf("%s: %s pins a digest created on %s, which is less than two weeks old",
+			path, line.Line, line.ImageCreated)
+	}
+	switch line.State {
+	case databaseLinePending:
+		if line.EvidenceRun != "" {
+			return fmt.Errorf("%s: %s is pending and names run %s; a green run makes it supported", path, line.Line, line.EvidenceRun)
+		}
+	case databaseLineSupported:
+		if !databaseEvidenceRun.MatchString(line.EvidenceRun) {
+			return fmt.Errorf("%s: %s is supported and names no run that proved it", path, line.Line)
+		}
+	default:
+		return fmt.Errorf("%s: %s has state %q, which is neither %s nor %s",
+			path, line.Line, line.State, databaseLinePending, databaseLineSupported)
+	}
+	return nil
+}
+
+// verifyDatabaseCatalog holds the catalog to the three things it describes: the
+// images the driver defaults to, the suites the driver can run, and the table a
+// reader takes for the support contract.
+func verifyDatabaseCatalog(catalog databaseCatalog, suites e2eSuiteCatalog, driverPath, pagePath string) error {
+	driver, err := os.ReadFile(driverPath)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", driverPath, err)
+	}
+	if err := verifyDatabaseBaselineDefaults(catalog, driverPath, driver); err != nil {
+		return err
+	}
+	if err := verifyDatabaseImageDateCheck(driverPath, driver); err != nil {
+		return err
+	}
+	if err := verifyDatabaseLeftOutSuites(catalog, suites, driverPath, driver); err != nil {
+		return err
+	}
+	return verifyDatabasePage(catalog, pagePath)
+}
+
+// verifyDatabaseImageDateCheck holds the driver to reading an added line's build
+// date from the image it pulled. The age rule above reads a date somebody typed,
+// so it refuses nothing unless a run compares that date with the image.
+func verifyDatabaseImageDateCheck(driverPath string, driver []byte) error {
+	return verifyOrderedSourceContract(driverPath, driver, []sourceContractStep{
+		exactSourceLine("the PostgreSQL source image pulled", `mirror_task_image "$E2E_POSTGRES_SOURCE_IMAGE" postgresql`),
+		exactSourceLine("an added line's date read", `if [ -n "$E2E_POSTGRES_IMAGE_CREATED" ]; then`),
+		exactSourceLine("the date held to the image", `image_created_on "$postgres_image_created" "$E2E_POSTGRES_IMAGE_CREATED" ||`),
+	})
+}
+
+// verifyDatabaseBaselineDefaults holds the baseline rows to what a lifecycle runs
+// when nothing names an image: a table that named another digest would describe
+// a server no CI run reached.
+func verifyDatabaseBaselineDefaults(catalog databaseCatalog, driverPath string, driver []byte) error {
+	inputs := map[string]string{"postgresql": "E2E_POSTGRES_SOURCE_IMAGE", "mysql": "E2E_MYSQL_SOURCE_IMAGE"}
+	checked := 0
+	for _, line := range catalog.Baseline {
+		input, known := inputs[line.Engine]
+		if !known {
+			return fmt.Errorf("%s: the driver has no image input for baseline engine %q", databaseCatalogPath, line.Engine)
+		}
+		want := fmt.Sprintf("%s=${%s:-%s}\n", input, input, line.Image)
+		if !bytes.Contains(driver, []byte("\n"+want)) {
+			return fmt.Errorf("%s: %s does not default to %s, which %s names as the %s baseline",
+				driverPath, input, line.Image, databaseCatalogPath, line.Line)
+		}
+		checked++
+	}
+	if checked != len(inputs) {
+		return fmt.Errorf("%s: names %d baseline lines, and the driver defaults %d images", databaseCatalogPath, checked, len(inputs))
+	}
+	return nil
+}
+
+// verifyDatabaseLeftOutSuites holds each exclusion to what makes it sound. A
+// suite can be left out only when the driver hands every one of its phases
+// another engine, so an exclusion that would save money by dropping a proof of
+// this line has nowhere to stand.
+func verifyDatabaseLeftOutSuites(catalog databaseCatalog, suites e2eSuiteCatalog, driverPath string, driver []byte) error {
+	engines := map[string]string{}
+	for _, invocation := range findPhaseInvocations(driver) {
+		for _, binding := range invocation.bindings {
+			if binding.name == "E2E_ENGINE" {
+				engines[invocation.phase] = binding.value
+			}
+		}
+	}
+	if len(engines) == 0 {
+		return fmt.Errorf("%s: no phase names an engine, so an exclusion cannot be checked", driverPath)
+	}
+	phasesOf := map[string][]string{}
+	for _, suite := range suites.Suites {
+		phasesOf[suite.Name] = suite.Phases
+	}
+	for _, line := range catalog.Added {
+		seen := map[string]bool{}
+		for _, leftOut := range line.LeftOut {
+			suitePhases, known := phasesOf[leftOut.Suite]
+			if !known {
+				return fmt.Errorf("%s: %s leaves out %q, which is not a suite in %s",
+					databaseCatalogPath, line.Line, leftOut.Suite, e2eSuitesPath)
+			}
+			if seen[leftOut.Suite] {
+				return fmt.Errorf("%s: %s leaves out %q twice", databaseCatalogPath, line.Line, leftOut.Suite)
+			}
+			seen[leftOut.Suite] = true
+			if strings.TrimSpace(leftOut.Reason) == "" {
+				return fmt.Errorf("%s: %s leaves out %q and does not say why", databaseCatalogPath, line.Line, leftOut.Suite)
+			}
+			for _, phase := range suitePhases {
+				engine, named := engines[phase]
+				if !named || engine == line.Engine {
+					return fmt.Errorf("%s: %s leaves out %q, whose phase %q can run on %s; only a suite on another engine proves nothing for this line",
+						databaseCatalogPath, line.Line, leftOut.Suite, phase, line.Engine)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// verifyDatabasePage holds the table to the catalog, row for row: the baseline
+// and the lines a green run has made supported, and nothing else. A pending line
+// in the table, marked or not, is the claim this exists to refuse.
+func verifyDatabasePage(catalog databaseCatalog, path string) error {
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", path, err)
+	}
+	var expected strings.Builder
+	expected.WriteString("| Engine | Supported release line | Matrix image |\n| --- | --- | --- |\n")
+	row := func(line databaseLine) {
+		fmt.Fprintf(&expected, "| %s | %s | `%s` |\n", databaseEngineNames[line.Engine], line.Line, line.Image)
+	}
+	for _, line := range catalog.Baseline {
+		row(line)
+	}
+	for _, line := range catalog.Added {
+		if line.State == databaseLineSupported {
+			row(line.databaseLine)
+		}
+	}
+	// The blank line ends the table, so a row after the expected ones is refused.
+	expected.WriteString("\n")
+	if !strings.Contains(string(contents), expected.String()) {
+		return fmt.Errorf("%s: the support table does not match %s: it holds the baseline and the supported added lines, and nothing else",
+			path, databaseCatalogPath)
+	}
+	// The table is not the only place a reader takes a claim from, so the digest
+	// of a line that has no green run stays off the page altogether.
+	for _, line := range catalog.Added {
+		if line.State != databaseLineSupported && strings.Contains(string(contents), line.Image[strings.Index(line.Image, "@")+1:]) {
+			return fmt.Errorf("%s: names the image of %s %s, which is %s", path, line.Engine, line.Line, line.State)
+		}
+	}
+	return nil
+}
+
+// databaseLineMatrix is every added line against every supported minor and every
+// suite the line does not leave out. ci.yml names a job, its cluster and its
+// artifacts after minor and minor_slug, and the release reads those templates, so
+// the line travels in those two fields rather than in a new one. Ordinary CI
+// jobs keep the names a release requires.
+func databaseLineMatrix(minors []matrixEntry, suites e2eSuiteCatalog, catalog databaseCatalog) ([]matrixEntry, error) {
+	if len(catalog.Added) == 0 {
+		return nil, fmt.Errorf("%s: names no added line, so the workflow has nothing to run", databaseCatalogPath)
+	}
+	var entries []matrixEntry
+	for _, line := range catalog.Added {
+		major, err := phases.PostgresImageMajor(line.Image)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", databaseCatalogPath, err)
+		}
+		leftOut := map[string]bool{}
+		for _, suite := range line.LeftOut {
+			leftOut[suite.Suite] = true
+		}
+		for _, entry := range e2eSuiteMatrix(minors, suites) {
+			if leftOut[entry.Suite] {
+				continue
+			}
+			entry.Minor = fmt.Sprintf("%s on %s %d", entry.Minor, databaseEngineNames[line.Engine], major)
+			entry.MinorSlug = fmt.Sprintf("%s-%s-%d", entry.MinorSlug, line.Engine, major)
+			entry.PostgresSourceImage = line.Image
+			entry.PostgresImageCreated = line.ImageCreated
+			entries = append(entries, entry)
+		}
+	}
+	return entries, nil
+}
+
+// verifyCIDatabaseLinesCall holds the one input ci.yml takes from a caller. The
+// matrix it selects is the whole of what it changes.
+func verifyCIDatabaseLinesCall(path string, workflow workflowDocument) error {
+	node, ok := workflow.On["workflow_call"]
+	if !ok {
+		return fmt.Errorf("%s: the Added database lines workflow runs this graph, so it must accept workflow_call", path)
+	}
+	var call struct {
+		Inputs map[string]struct {
+			Description string `yaml:"description"`
+			Type        string `yaml:"type"`
+			Required    bool   `yaml:"required"`
+			Default     *bool  `yaml:"default"`
+		} `yaml:"inputs"`
+		Other map[string]yaml.Node `yaml:",inline"`
+	}
+	if err := node.Decode(&call); err != nil {
+		return fmt.Errorf("%s: read workflow_call: %w", path, err)
+	}
+	input, ok := call.Inputs["database_lines"]
+	if !ok || len(call.Inputs) != 1 || len(call.Other) != 0 || input.Type != "boolean" || input.Required ||
+		input.Default == nil || *input.Default {
+		return fmt.Errorf("%s: workflow_call must take one optional boolean, database_lines, that defaults to false", path)
+	}
+	return nil
+}
+
+// verifyDatabaseLinesWorkflow holds the workflow to what makes it cost nothing
+// on an ordinary change: it runs on a schedule, on request, and on a pull request
+// that changes it or the catalog, and it runs ci.yml's jobs rather than a copy.
+func verifyDatabaseLinesWorkflow(path string) error {
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", path, err)
+	}
+	var shape struct {
+		Name        string               `yaml:"name"`
+		On          map[string]yaml.Node `yaml:"on"`
+		Permissions map[string]string    `yaml:"permissions"`
+		Concurrency workflowConcurrency  `yaml:"concurrency"`
+		Jobs        map[string]struct {
+			Name  string               `yaml:"name"`
+			Uses  string               `yaml:"uses"`
+			With  map[string]any       `yaml:"with"`
+			Other map[string]yaml.Node `yaml:",inline"`
+		} `yaml:"jobs"`
+		Other map[string]yaml.Node `yaml:",inline"`
+	}
+	if err := yaml.Unmarshal(contents, &shape); err != nil {
+		return fmt.Errorf("parse %s: %w", path, err)
+	}
+	if len(shape.Other) != 0 {
+		return fmt.Errorf("%s: a top-level key is outside the audited shape of this workflow", path)
+	}
+	if shape.Name != databaseLinesWorkflowName {
+		return fmt.Errorf("%s: must be named %q, and it is %q: ci.yml builds its concurrency group from the name, so another workflow's would cancel its runs",
+			path, databaseLinesWorkflowName, shape.Name)
+	}
+	if err := verifyDatabaseLinesTriggers(path, shape.On); err != nil {
+		return err
+	}
+	if !equalStringMap(shape.Permissions, map[string]string{"contents": "read", "actions": "read"}) {
+		return fmt.Errorf("%s: must hold what the lifecycle job reads and nothing else: contents and actions, read", path)
+	}
+	// ci.yml's own group is named after the calling workflow. This one has to
+	// differ from it, or the two would cancel each other.
+	if shape.Concurrency.Group != "database-lines-${{ github.ref }}" || !ciCancelsEverySupersededRun(shape.Concurrency.CancelInProgress) {
+		return fmt.Errorf("%s: a newer run must cancel the older one on its ref, in a group of its own", path)
+	}
+	job, ok := shape.Jobs["lifecycle"]
+	if !ok || len(shape.Jobs) != 1 || len(job.Other) != 0 {
+		return fmt.Errorf("%s: must be one job, lifecycle, that calls ci.yml and passes it nothing but its input", path)
+	}
+	if job.Name != databaseLinesCallerJob {
+		return fmt.Errorf("%s: lifecycle must be named %q, and it is %q: a release reads a supported line's jobs by that name",
+			path, databaseLinesCallerJob, job.Name)
+	}
+	if job.Uses != "./.github/workflows/ci.yml" {
+		return fmt.Errorf("%s: lifecycle must run ci.yml from this commit, and it uses %q", path, job.Uses)
+	}
+	if selected, ok := job.With["database_lines"].(bool); !ok || !selected || len(job.With) != 1 {
+		return fmt.Errorf("%s: lifecycle must pass database_lines: true and nothing else", path)
+	}
+	return nil
+}
+
+func verifyDatabaseLinesTriggers(path string, on map[string]yaml.Node) error {
+	if len(on) != 3 {
+		return fmt.Errorf("%s: runs on a schedule, on request and on a pull request that changes it, and on nothing else", path)
+	}
+	var schedule []struct {
+		Cron string `yaml:"cron"`
+	}
+	node, ok := on["schedule"]
+	if !ok || node.Decode(&schedule) != nil || len(schedule) != 1 || schedule[0].Cron == "" {
+		return fmt.Errorf("%s: must run on one schedule", path)
+	}
+	dispatch, ok := on["workflow_dispatch"]
+	if !ok {
+		return fmt.Errorf("%s: a release has to be able to ask for this run", path)
+	}
+	var inputs struct {
+		Inputs map[string]yaml.Node `yaml:"inputs"`
+	}
+	if dispatch.Decode(&inputs) != nil || len(inputs.Inputs) != 0 {
+		return fmt.Errorf("%s: a dispatch takes no input, so every run proves the catalog as it stands", path)
+	}
+	pull, ok := on["pull_request"]
+	if !ok {
+		return fmt.Errorf("%s: a pull request that changes the lines has to run them", path)
+	}
+	var filter struct {
+		Paths []string             `yaml:"paths"`
+		Other map[string]yaml.Node `yaml:",inline"`
+	}
+	if pull.Decode(&filter) != nil || len(filter.Other) != 0 ||
+		!equalStringSet(filter.Paths, []string{databaseLinesWorkflowPath, databaseCatalogPath}) {
+		return fmt.Errorf("%s: pull_request must be limited to this workflow and %s, so an ordinary pull request pays nothing", path, databaseCatalogPath)
 	}
 	return nil
 }

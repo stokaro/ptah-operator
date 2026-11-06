@@ -7,6 +7,8 @@ import (
 	"maps"
 	"reflect"
 	"slices"
+	"strconv"
+	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
@@ -16,6 +18,8 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/utils/ptr"
+
+	"github.com/stokaro/ptah-operator/test/e2e/phases"
 )
 
 // tlsProxyAddress is where the authenticated HTTPS registry proxy answers.
@@ -295,13 +299,32 @@ func externalEndpointSliceExact(slice *discoveryv1.EndpointSlice, service string
 	return nil
 }
 
+// postgresServerIsImageMajor holds a server's server_version_num to the major
+// version its source image names. A line reaches the support table on the
+// strength of a run on that line, so a run on any other server has to fail.
+func postgresServerIsImageMajor(versionNumber, image string) error {
+	major, err := phases.PostgresImageMajor(image)
+	if err != nil {
+		return err
+	}
+	number := strings.TrimSpace(versionNumber)
+	if len(number) != 6 || !strings.HasPrefix(number, strconv.Itoa(major)) || strings.Trim(number, "0123456789") != "" {
+		return fmt.Errorf("server_version_num %q is not major version %d", number, major)
+	}
+	return nil
+}
+
 // externalContainerContract holds the external PostgreSQL container to what
 // makes it a disposable database outside the cluster. HostConfig.Tmpfs pins
 // the tmpfs itself; Docker 29 stopped listing tmpfs in Mounts, so what Mounts
 // is held to is the absence of anything persistent, on daemons that list the
 // tmpfs and on daemons that do not.
 func externalContainerContract(inspection dockerInspection, id, image, owner, address string) error {
-	const dataDirectory = "/var/lib/postgresql/data"
+	major, err := phases.PostgresImageMajor(image)
+	if err != nil {
+		return err
+	}
+	dataDirectory := phases.PostgresDataDirectory(major)
 	switch {
 	case inspection.ID != id:
 		return errors.New("external PostgreSQL container identity changed")

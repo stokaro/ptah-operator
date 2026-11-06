@@ -16,7 +16,8 @@ import (
 
 const (
 	externalID      = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
-	externalImage   = "postgres@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+	externalImage   = "postgres:17-alpine@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+	externalImage18 = "postgres:18-alpine@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
 	externalOwner   = "ptah-e2e-1.35"
 	externalAddress = "172.18.0.6"
 )
@@ -53,6 +54,74 @@ func externalInspection(t *testing.T, edit func(map[string]any)) dockerInspectio
 		t.Fatal(err)
 	}
 	return inspection
+}
+
+// PostgreSQL 18's image declares its volume one level up. The server starts on
+// the old mount with PGDATA set, with an anonymous volume at the declared path
+// beside the tmpfs: a persistent mount the contract exists to refuse. These
+// inspections are the shape Docker 29.7.2 reported for that image.
+func TestExternalContainerContractFollowsTheImagesDeclaredVolume(t *testing.T) {
+	t.Parallel()
+	const newDirectory, oldDirectory = "/var/lib/postgresql", "/var/lib/postgresql/data"
+	inspect := func(image, tmpfs string, mounts ...any) dockerInspection {
+		return externalInspection(t, func(document map[string]any) {
+			document["Config"].(map[string]any)["Image"] = image
+			document["HostConfig"].(map[string]any)["Tmpfs"] = map[string]any{tmpfs: "rw,noexec,nosuid,nodev,size=536870912"}
+			document["Mounts"] = mounts
+		})
+	}
+	check := func(inspection dockerInspection, image string) error {
+		return externalContainerContract(inspection, externalID, image, externalOwner, externalAddress)
+	}
+	if err := check(inspect(externalImage18, newDirectory), externalImage18); err != nil {
+		t.Fatalf("PostgreSQL 18 on the directory its image declares was refused: %v", err)
+	}
+	listed := map[string]any{"Type": "tmpfs", "Destination": newDirectory}
+	if err := check(inspect(externalImage18, newDirectory, listed), externalImage18); err != nil {
+		t.Fatalf("a daemon that lists PostgreSQL 18's tmpfs was refused: %v", err)
+	}
+	anonymous := map[string]any{"Type": "volume", "Destination": newDirectory}
+	if err := check(inspect(externalImage18, oldDirectory, anonymous), externalImage18); err == nil {
+		t.Fatal("PostgreSQL 18 on the old mount, with the anonymous volume it leaves, was accepted")
+	}
+	if err := check(inspect(externalImage18, oldDirectory), externalImage18); err == nil {
+		t.Fatal("PostgreSQL 18 with its tmpfs at the old path was accepted")
+	}
+	if err := check(inspect(externalImage, newDirectory), externalImage); err == nil {
+		t.Fatal("PostgreSQL 17 with its tmpfs above the directory its image declares was accepted")
+	}
+	untagged := "postgres@sha256:" + strings.Repeat("d", 64)
+	if err := check(inspect(untagged, oldDirectory), untagged); err == nil || !strings.Contains(err.Error(), "major version") {
+		t.Fatalf("an image naming no major version was accepted: %v", err)
+	}
+}
+
+// A run on one line must not read as proof of another, so the number the server
+// reports is held to the tag, in both directions.
+func TestPostgresServerIsImageMajor(t *testing.T) {
+	t.Parallel()
+	for _, accepted := range []struct{ number, image string }{
+		{"180006\n", externalImage18},
+		{"170011\n", externalImage},
+		{" 180000 ", externalImage18},
+	} {
+		if err := postgresServerIsImageMajor(accepted.number, accepted.image); err != nil {
+			t.Errorf("server %q on %s was refused: %v", accepted.number, accepted.image, err)
+		}
+	}
+	for name, refused := range map[string]struct{ number, image string }{
+		"a 17 server on an 18 tag": {"170011", externalImage18},
+		"an 18 server on a 17 tag": {"180006", externalImage},
+		"an empty reading":         {"", externalImage18},
+		"not a number":             {"18xxxx", externalImage18},
+		"a banner":                 {"18.6", externalImage18},
+		"a short number":           {"18000", externalImage18},
+		"a tag with no major":      {"180006", "postgres@sha256:" + strings.Repeat("d", 64)},
+	} {
+		if err := postgresServerIsImageMajor(refused.number, refused.image); err == nil {
+			t.Errorf("%s was accepted", name)
+		}
+	}
 }
 
 func TestExternalContainerContractIsADisposableDatabase(t *testing.T) {

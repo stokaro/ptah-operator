@@ -1182,6 +1182,8 @@ assert_external_pg_mount_contract_rejects() {
 		exit 1
 	fi
 }
+# shellcheck disable=SC2034 # external_pg_mounts_are_ephemeral reads it, by eval above.
+EXTERNAL_PG_DATA_DIRECTORY=/var/lib/postgresql/data
 assert_external_pg_mount_contract_accepts \
 	'{"HostConfig":{"Tmpfs":{"/var/lib/postgresql/data":"rw,noexec,nosuid,nodev,size=536870912"},"Binds":null,"Mounts":null,"VolumesFrom":null},"Mounts":[]}'
 assert_external_pg_mount_contract_accepts \
@@ -1192,6 +1194,16 @@ assert_external_pg_mount_contract_rejects \
 	'{"HostConfig":{"Tmpfs":{"/var/lib/postgresql/data":"rw,noexec,nosuid,nodev,size=536870912"},"Binds":["/host:/var/lib/postgresql/data"],"Mounts":null,"VolumesFrom":null},"Mounts":[]}'
 assert_external_pg_mount_contract_rejects \
 	'{"HostConfig":{"Tmpfs":{"/var/lib/postgresql/data":"rw,nosuid,nodev,size=536870912"},"Binds":null,"Mounts":null,"VolumesFrom":null},"Mounts":[]}'
+# PostgreSQL 18's image declares its volume at /var/lib/postgresql. On the old
+# mount Docker adds an anonymous volume there, which is what this has to refuse.
+# shellcheck disable=SC2034 # external_pg_mounts_are_ephemeral reads it, by eval above.
+EXTERNAL_PG_DATA_DIRECTORY=/var/lib/postgresql
+assert_external_pg_mount_contract_accepts \
+	'{"HostConfig":{"Tmpfs":{"/var/lib/postgresql":"rw,noexec,nosuid,nodev,size=536870912"},"Binds":null,"Mounts":null,"VolumesFrom":null},"Mounts":[]}'
+assert_external_pg_mount_contract_rejects \
+	'{"HostConfig":{"Tmpfs":{"/var/lib/postgresql/data":"rw,noexec,nosuid,nodev,size=536870912"},"Binds":null,"Mounts":null,"VolumesFrom":null},"Mounts":[{"Type":"volume","Destination":"/var/lib/postgresql"}]}'
+assert_external_pg_mount_contract_rejects \
+	'{"HostConfig":{"Tmpfs":{"/var/lib/postgresql":"rw,noexec,nosuid,nodev,size=536870912"},"Binds":null,"Mounts":null,"VolumesFrom":null},"Mounts":[{"Type":"volume","Destination":"/var/lib/postgresql"}]}'
 
 # Docker Go templates are already single-quoted. Backslash-escaped quotes are
 # passed literally and make `docker inspect --format` fail before Helm install.
@@ -1223,7 +1235,7 @@ for external_create_marker in \
 	'docker --context "$DOCKER_CONTEXT" create --restart=no' \
 	'--network kind' \
 	'--env-file "$EXTERNAL_PG_ENV_FILE"' \
-	'--tmpfs '\''/var/lib/postgresql/data:rw,noexec,nosuid,nodev,size=536870912'\''' \
+	'--tmpfs "${EXTERNAL_PG_DATA_DIRECTORY}:rw,noexec,nosuid,nodev,size=536870912"' \
 	'--label "operator.ptah.run/e2e-owner=${CLUSTER_NAME}"' \
 	"--label 'operator.ptah.run/e2e-component=external-postgresql'" \
 	'"$E2E_POSTGRES_SOURCE_IMAGE"'; do
@@ -1257,7 +1269,7 @@ static_require_order "$(cat "$ROOT_DIR/hack/e2e-kind.sh")" \
 	'docker --context "$DOCKER_CONTEXT" start "$EXTERNAL_PG_CONTAINER_ID"' \
 	'EXTERNAL_PG_IP=$(docker --context "$DOCKER_CONTEXT" container inspect' \
 	'assert_external_pg_container_contract "$EXTERNAL_PG_CONTAINER_ID" "$EXTERNAL_PG_IP"' \
-	'external PostgreSQL fixture is not major version 17' \
+	'external PostgreSQL fixture is not major version $E2E_POSTGRES_MAJOR' \
 	'<"$EXTERNAL_PG_BOOTSTRAP_SQL_FILE" >/dev/null' \
 	'rm -f "$EXTERNAL_PG_ADMIN_PASSWORD_FILE" "$EXTERNAL_PG_BOOTSTRAP_SQL_FILE"' \
 	'external PostgreSQL fixture login retained administrative attributes' \

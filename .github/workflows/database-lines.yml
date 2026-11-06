@@ -1,0 +1,43 @@
+name: Added database lines
+
+# Every release line in support/databases.json that costs too much to run on
+# every push, through the complete lifecycle on every supported Kubernetes minor.
+# A line reaches the table on docs/site/src/content/docs/support/databases.md only
+# after this workflow is green on it. An ordinary push or pull request runs none
+# of this.
+#
+# It runs on a schedule, so a line that broke is found without a release asking,
+# and on request before a release, which the release procedure says how to read.
+# A pull request runs it when it changes this file or the catalog, the two changes
+# that decide what this run proves, so an added or re-pinned line can show its
+# result before it merges. That run is only evidence if it is left to conclude: a
+# push to the pull request starts a new one and cancels it, and merging or closing
+# the pull request cancels it through cancel-closed-pull-request.yml. Wait for the
+# verdict before doing either.
+#
+# It calls ci.yml rather than copying its jobs, so what proves a line is what
+# proves a commit. hack/verify-kubernetes-support.go holds this file to that.
+
+on:
+  schedule:
+    - cron: "43 3 * * 6"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/database-lines.yml
+      - support/databases.json
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: database-lines-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lifecycle:
+    name: Added lines
+    uses: ./.github/workflows/ci.yml
+    with:
+      database_lines: true

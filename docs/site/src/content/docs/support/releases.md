@@ -85,13 +85,46 @@ made; the pull request that prepares a version changes it on this page.
    prepared. The Documentation workflow has to pass on the same commit:
    nothing in the Go checks reads the tables it compares. Record the commit
    and the run. The pull request run alone cannot authorize publication.
-3. **Check the repository settings.** Immutable releases are enabled. The
+3. **Run the added database lines on the recorded commit.** Each line
+   `support/databases.json` adds runs in a workflow of its own, which a CI run
+   does not include. Start it beside the CI run of step 2, so the release waits
+   for one wall clock, not two:
+
+   ```sh
+   gh workflow run database-lines.yml --ref master
+   ```
+
+   Then read each `supported` line's jobs on that exact commit, by its full SHA,
+   and the jobs every line shares. A failed cell on any line fails the run's gate,
+   so the run's own conclusion cannot say which line failed:
+
+   ```sh
+   commit=replace-with-the-recorded-commit
+   run="$(gh run list --workflow database-lines.yml --commit "$commit" --limit 1 \
+     --json databaseId --jq '.[0].databaseId')"
+   gh run view "$run" --json jobs \
+     --jq '.jobs[] | select(.name | contains("on PostgreSQL 18 ")) | .conclusion' | sort -u
+   gh run view "$run" --json jobs \
+     --jq '.jobs[] | select(.name | test(" / (Build Kubernetes support matrix|Verify source and generated files|Race detector|Build the shared task images)$")) | .conclusion' | sort -u
+   ```
+
+   Each command has to print `success` and nothing else, or the tag waits: the
+   version's support table names that line. A failure on a `pending` line claims
+   nothing, holds nothing and belongs in its issue. Keep the run ID with the
+   commit and the CI run.
+
+   The Release workflow cannot read this run, because a commit cannot name a run
+   started after it. Its preflight reads `evidenceRun`, the run that made each
+   `supported` line supported, the same way, and refuses a run of another
+   workflow, a commit that names another image, or a run that misses a minor or a
+   suite this commit supports. This step is what ties the line to this commit.
+4. **Check the repository settings.** Immutable releases are enabled. The
    `release` environment requires a reviewer, accepts only the exact
    `master` branch and `v*` tags, and contains the fine-grained
    `IMMUTABLE_RELEASES_READ_TOKEN` described below. A repository secret is
    not a substitute for the environment secret. Version tag creation is
    protected, and updates and deletion are refused.
-4. **Read the generated acceptance record** with
+5. **Read the generated acceptance record** with
    `go run ./hack/acceptancecoverage -record -profile support/acceptance/lab-20.json`.
    The profile remains **Not assessed** and excludes database restore/RTO and
    production capacity/soak qualification. A successful build does not close
