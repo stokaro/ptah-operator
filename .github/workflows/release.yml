@@ -51,7 +51,7 @@ jobs:
         id: setup-helm
         uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4
         with:
-          version: v4.3.0
+          version: v4.3.1
       - name: Verify release metadata
         id: verify-release
         env:
@@ -99,7 +99,7 @@ jobs:
         id: setup-buildx
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e
         with:
-          version: v0.37.1
+          version: v0.38.2
           cache-binary: false
           driver-opts: |
             image=moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8
@@ -408,7 +408,7 @@ jobs:
         id: setup-buildx
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e
         with:
-          version: v0.37.1
+          version: v0.38.2
           cache-binary: false
           driver-opts: |
             image=moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8
@@ -754,10 +754,10 @@ jobs:
       - name: Build the kubectl plugin for the supported client platforms
         id: client
         if: steps.transaction.outputs.mode != 'published' && env.RELEASE_ACTION == 'prepare'
-        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
         with:
           distribution: goreleaser
-          version: v2.18.2
+          version: v2.20.0
           args: build --clean --skip=validate
       - name: Collect the acceptance evidence the preflight bundled
         id: evidence-download
