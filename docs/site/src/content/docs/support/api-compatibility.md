@@ -95,7 +95,9 @@ after it is held to the rules above.
 From the first release on, a counter moves only when something a tagged release
 could have stored or spoken changes. A change that leaves every stored and
 spoken form as it was keeps its number: the runner protocol records such a change in
-`support/runner-protocol.json` with its reason instead of moving. The CRD
+`support/runner-protocol.json` with its reason instead of moving. A new value in
+a result frame that an earlier manager refuses as malformed keeps the number too,
+because that refusal is what a version mismatch would give. The CRD
 schema version is the strictest of them, because its check compares every
 change with the commit before it: any change to a generated schema moves it.
 

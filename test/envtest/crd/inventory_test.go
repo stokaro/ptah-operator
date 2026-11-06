@@ -207,6 +207,16 @@ func TestAStoredFeatureKindUnderTheEarlierCRD(t *testing.T) {
 
 	holds(inventory(longest, columns, missing, tables))
 
+	// A new stem past the earlier bound fits the earlier pattern, so only the
+	// bound refuses it.
+	pastBound := reread(t, schema)
+	set(t, pastBound, inventory(longest, columns, missing, tables, entry(strings.Repeat("k", int(earlierKindBound)+1), 1, 1)),
+		"status", "target", "inventory")
+	if mismatch := refusalMismatch(api.Status().Update(context.Background(), pastBound, client.DryRunAll),
+		cause{"status.target.inventory[4].kind", "Too long"}); mismatch != nil {
+		t.Errorf("a new stem past the earlier bound: %v", mismatch)
+	}
+
 	if err := patchStatus(func(object *unstructured.Unstructured) {
 		set(t, object, int64(7), "status", "observedGeneration")
 	}); err != nil {

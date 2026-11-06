@@ -245,7 +245,7 @@
     },
     {
       "protocolVersion": 1,
-      "sourceDigest": "sha256:5719d4c6c961ddee26c9dc30c1975cb6cee85954fa113800ed0a971e06c6b360",
+      "sourceDigest": "sha256:e92a761a02827f423709ddb417b12b60b616bc58cca8f31f6e7f3baee367cdb5",
       "reason": "Keep feature kinds in an observation's inventory (#795). driftInventory admits a feature kind beside a stem, in the same order; every earlier frame still parses, and commands, payloads, delivery identity, SQL authority and retry limits are unchanged. No earlier manager reads such a frame on a supported path: the change moves the CRD schema version, after which an earlier release's hook refuses the rollback and its init container refuses the CRDs. Job adoption is not that fence: a schema Job is adopted with its runner image carried. With CRDs restored by hand, every tagged release pairs an older Ptah, so the binding rotates and the Job is not read. Under the same binding, or with this runner set as execution.runnerImage beside Ptah v0.18.0, an earlier manager does read the frame: it refuses it as malformed, stores nothing and runs the read-only Observe again. Migration frames carry no inventory."
     }
   ]

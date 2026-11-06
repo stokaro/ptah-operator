@@ -1283,9 +1283,9 @@ type ObjectInventoryStatus struct {
 	// Kind is the stem of the kind's fixed drift finding categories, such as
 	// tables or rls_policies, or the kind a feature owner's qualified
 	// categories carry after the colon, such as
-	// ptah.run/pgextension/extension-change. A stem joins <stem>_added and
-	// <stem>_removed, and a feature kind joins feature_changes:<kind> and
-	// feature_access_*:<kind>. Either names a type of object, never an object.
+	// ptah.run/pgextension/extension-change. A stem joins `<stem>_added` and
+	// `<stem>_removed`, and a feature kind joins `feature_changes:<kind>` and
+	// `feature_access_*:<kind>`. Either names a type of object, never an object.
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=128
 	// +kubebuilder:validation:Pattern=`^([a-z]([a-z_]*[a-z])?|[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+(/[A-Za-z0-9_-][A-Za-z0-9._-]*)+)$`

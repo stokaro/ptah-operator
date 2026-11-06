@@ -27,7 +27,10 @@ the executor sends to PostgreSQL has to expect drift to list the schemas
 first, and four rewritten catalog reads. A script that matches the whole text
 of `result publication retention has not authorized deletion` has to match its
 start. A script that reads `status.target.inventory` has to expect a kind that
-is not a stem. Nothing else.
+is not a stem. Ptah Console up to 0.3.x misstates such a kind until
+[ptah-console#166](https://github.com/stokaro/ptah-console/issues/166) is fixed:
+it says a dropped extension's counts and findings disagree, and shows a changed
+policy at 100% coverage with its finding under other findings. Nothing else.
 
 - **A namespace waiting on result retention.** The refusal now says when: it
   names the record and the time it can be deleted, as `record <name> cannot be
