@@ -22,6 +22,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -824,6 +825,48 @@ func (m *migrationRun) unknownLayerProof() {
 	}
 	m.finishFixture(name)
 	m.logf("PASS %s refused an artifact built newer than its executor, before opening the database", m.engine.kind)
+}
+
+// unreadableOCIFiles publishes a directory with a directive the loader refuses,
+// which `ptah migrations push` accepts, and reads the reason where a person reads
+// it. The fetch writes the files and the operation container reads them, so the
+// reason comes from that container, as it does from a ConfigMap or Git.
+func (m *migrationRun) unreadableOCIFiles() {
+	m.t.Helper()
+	name := "e2e-unreadable-oci-" + m.engine.name
+	secret := "e2e-" + m.engine.name + "-unreadable-oci-db"
+	m.isolatedDatabase("ptah_e2e_unreadable_oci", secret)
+	reference := m.reference("-unreadable")
+	m.publish("unreadable", m.fixtureDir("-unreadable"), reference)
+	m.mustCreate(m.migrationDocument(migrationSpec{
+		name: name, secret: secret, reference: reference,
+		coordinationKey: "e2e/unreadable-oci/" + m.engine.name, apply: "OnApproval", interval: "30s",
+	}))
+	var message string
+	var last error
+	if !m.miUntil(migrationPoll, func() bool {
+		progressing := meta.FindStatusCondition(m.migration(name).Status.Conditions, ptahv1alpha1.ConditionMigrationProgressing)
+		if progressing == nil || progressing.Reason != string(ptahv1alpha1.ReasonOperationFailed) {
+			last = fmt.Errorf("Progressing is %+v", progressing)
+			return false
+		}
+		message = progressing.Message
+		last = unreadableSourceSays(message, unreadableMigrationFile, unreadableMigrationReason)
+		return last == nil
+	}) {
+		m.fatalf("%s never said why its files could not be loaded within %s: %v", name, waitTimeout, last)
+	}
+	uid := m.migration(name).UID
+	if !m.miUntil(migrationPoll, func() bool {
+		events := &corev1.EventList{}
+		m.check(m.list(events), "read the Events of %s", name)
+		last = unreadableSourceEvent(events.Items, uid, "OperationRetried", unreadableMigrationFile, unreadableMigrationReason)
+		return last == nil
+	}) {
+		m.fatalf("the OperationRetried Event of %s never said why: %v", name, last)
+	}
+	m.finishFixture(name)
+	m.logf("PASS a %s migration from a registry said why its files could not be loaded: %s", m.engine.kind, message)
 }
 
 // publishUnknownLayerArtifact builds the artifact no product command builds:

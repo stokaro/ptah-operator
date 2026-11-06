@@ -68,6 +68,8 @@ const (
 	podMetadataPGSecret        = "e2e-postgresql-pod-metadata-db"
 	extensionPGDatabase        = "ptah_e2e_extension"
 	extensionPGSecret          = "e2e-postgresql-extension-db"
+	unreadableOCIPGDatabase    = "ptah_e2e_unreadable_oci"
+	unreadableOCIPGSecret      = "e2e-postgresql-unreadable-oci-db"
 	mysqlUser                  = "ptah_e2e"
 	mysqlDatabase              = "ptah_e2e"
 	mysqlSecret                = "e2e-mysql-db"
@@ -126,15 +128,16 @@ var cksumTable = func() (table [256]uint32) {
 // fixtures. Every one of them is a protected pattern: none may reach a status,
 // an Event, a log, a metric or a non-Secret object.
 type fixtureCredentials struct {
-	pgPassword        string
-	pgURL             string
-	customCAPGURL     string
-	fourEyesPGURL     string
-	podMetadataPGURL  string
-	extensionPGURL    string
-	mysqlPassword     string
-	mysqlRootPassword string
-	mysqlURL          string
+	pgPassword         string
+	pgURL              string
+	customCAPGURL      string
+	fourEyesPGURL      string
+	podMetadataPGURL   string
+	extensionPGURL     string
+	unreadableOCIPGURL string
+	mysqlPassword      string
+	mysqlRootPassword  string
+	mysqlURL           string
 }
 
 func deriveFixtureCredentials(namespace string) fixtureCredentials {
@@ -146,14 +149,15 @@ func deriveFixtureCredentials(namespace string) fixtureCredentials {
 			".svc.cluster.local:5432/" + database + "?sslmode=disable"
 	}
 	return fixtureCredentials{
-		pgPassword:        pgPassword,
-		pgURL:             pgURL(pgDatabase),
-		customCAPGURL:     pgURL(customCAPGDatabase),
-		fourEyesPGURL:     pgURL(fourEyesPGDatabase),
-		podMetadataPGURL:  pgURL(podMetadataPGDatabase),
-		extensionPGURL:    pgURL(extensionPGDatabase),
-		mysqlPassword:     mysqlPassword,
-		mysqlRootPassword: "e2eMyRoot" + suffix + "Q7",
+		pgPassword:         pgPassword,
+		pgURL:              pgURL(pgDatabase),
+		customCAPGURL:      pgURL(customCAPGDatabase),
+		fourEyesPGURL:      pgURL(fourEyesPGDatabase),
+		podMetadataPGURL:   pgURL(podMetadataPGDatabase),
+		extensionPGURL:     pgURL(extensionPGDatabase),
+		unreadableOCIPGURL: pgURL(unreadableOCIPGDatabase),
+		mysqlPassword:      mysqlPassword,
+		mysqlRootPassword:  "e2eMyRoot" + suffix + "Q7",
 		mysqlURL: "mysql://" + mysqlUser + ":" + mysqlPassword + "@tcp(" + mysqlService + "." + namespace +
 			".svc.cluster.local:3306)/" + mysqlDatabase,
 	}

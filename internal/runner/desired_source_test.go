@@ -241,6 +241,17 @@ func TestNoCheckRunsWithoutItsInputs(t *testing.T) {
 	without := func(environment []string, key string) []string {
 		return slices.DeleteFunc(slices.Clone(environment), func(entry string) bool { return strings.HasPrefix(entry, key+"=") })
 	}
+	// A migration has no input the check could lack: a run with no directory is
+	// refused before the command it would explain, so no child runs at all.
+	t.Run("no migration directory", func(t *testing.T) {
+		t.Parallel()
+		stripped := desiredSourceRuns()["migration history"]
+		stripped.environment = without(stripped.environment, envMigrationsDir)
+		result, executor, _ := runDesiredSource(t, stripped)
+		if result.Error == nil || result.Error.Code != "invalid_input" || len(executor.calls) != 0 {
+			t.Fatalf("Run() error = %#v after %d children, want invalid_input after none", result.Error, len(executor.calls))
+		}
+	})
 	run := desiredSourceRuns()["observe"]
 	for name, key := range map[string]string{"no schema file": envSchemaFile, "no engine": envExpectedDatabaseEngine} {
 		t.Run(name, func(t *testing.T) {
@@ -258,10 +269,13 @@ func TestNoCheckRunsWithoutItsInputs(t *testing.T) {
 // deadlineRecordingExecutor answers the first child with failed and records the
 // deadline the second one was given.
 type deadlineRecordingExecutor struct {
-	failed   scriptedResponse
-	calls    int
-	deadline time.Time
-	bounded  bool
+	failed scriptedResponse
+	calls  int
+	// startedAt is when the check started, which is what its deadline is
+	// measured from.
+	startedAt time.Time
+	deadline  time.Time
+	bounded   bool
 }
 
 func (e *deadlineRecordingExecutor) Execute(ctx context.Context, _ CommandSpec, stdout, _ io.Writer) (int, error) {
@@ -270,6 +284,7 @@ func (e *deadlineRecordingExecutor) Execute(ctx context.Context, _ CommandSpec, 
 		_, _ = io.WriteString(stdout, e.failed.stdout)
 		return e.failed.exitCode, nil
 	}
+	e.startedAt = time.Now()
 	e.deadline, e.bounded = ctx.Deadline()
 	return 0, nil
 }
@@ -279,15 +294,59 @@ func TestACheckIsBoundedInTime(t *testing.T) {
 
 	run := desiredSourceRuns()["observe"]
 	executor := &deadlineRecordingExecutor{failed: run.failed(t)}
-	started := time.Now()
 	result := Run(context.Background(), Config{
 		Operation: run.operation, Environment: withRunnerProtocol(run.environment), Executor: executor, TempDir: t.TempDir(),
 	})
 	if result.Error == nil || result.Error.Code != "child_exit" || executor.calls != 2 {
 		t.Fatalf("Run() error = %#v after %d children", result.Error, executor.calls)
 	}
-	if !executor.bounded || executor.deadline.After(started.Add(desiredSourceCheckTimeout+time.Minute)) {
-		t.Fatalf("the check ran with deadline %v (set: %v), want one within %s", executor.deadline, executor.bounded, desiredSourceCheckTimeout)
+	// The bound is written out, so a change to the constant has to change this
+	// too. The deadline was computed just before the check started, so what
+	// remains is at most the bound and only slightly under it.
+	const bound, slack = 30 * time.Second, 5 * time.Second
+	remaining := executor.deadline.Sub(executor.startedAt)
+	if !executor.bounded || remaining > bound || remaining < bound-slack {
+		t.Fatalf("the check had %s left when it started (deadline set: %v), want about %s", remaining, executor.bounded, bound)
+	}
+}
+
+// cancelingExecutor answers the first child with failed, ends the run's context
+// in the second, and records what the check's own context says then.
+type cancelingExecutor struct {
+	failed scriptedResponse
+	cancel context.CancelFunc
+	calls  int
+	err    error
+}
+
+func (e *cancelingExecutor) Execute(ctx context.Context, _ CommandSpec, stdout, _ io.Writer) (int, error) {
+	e.calls++
+	if e.calls == 1 {
+		_, _ = io.WriteString(stdout, e.failed.stdout)
+		return e.failed.exitCode, nil
+	}
+	e.cancel()
+	e.err = ctx.Err()
+	return 0, e.err
+}
+
+// TestACheckEndsWithThePod ends the run's context while the check runs. A check
+// on a context of its own would keep a Pod that is being terminated.
+func TestACheckEndsWithThePod(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	run := desiredSourceRuns()["observe"]
+	executor := &cancelingExecutor{failed: run.failed(t), cancel: cancel}
+	result := Run(ctx, Config{
+		Operation: run.operation, Environment: withRunnerProtocol(run.environment), Executor: executor, TempDir: t.TempDir(),
+	})
+	if executor.calls != 2 || !errors.Is(executor.err, context.Canceled) {
+		t.Fatalf("after %d children the check's context says %v, want it canceled with the run's", executor.calls, executor.err)
+	}
+	if result.Error == nil || result.Error.Code != "child_exit" {
+		t.Fatalf("Run() error = %#v, want the failure it had", result.Error)
 	}
 }
 
@@ -301,15 +360,26 @@ func TestAReasonIsRedactedAndBounded(t *testing.T) {
 	source := func(reason string) scriptedResponse {
 		return scriptedResponse{stdout: "postgres: source: " + reason + "\n", exitCode: 1}
 	}
+	// Ptah prints the token it stopped at in capitals, so that is how a file
+	// quotes the password: validate-sql-folded.txt is the capture.
 	t.Run("a credential in the file", func(t *testing.T) {
 		t.Parallel()
-		result, _, diagnostics := runDesiredSource(t, run, run.failed(t), source("unsupported SQL statement: secret at position 0"))
-		want := "unsupported SQL statement: " + RedactionMarker + " at position 0"
+		result, _, diagnostics := runDesiredSource(t, run, run.failed(t), source("read SQL schema file "+checkedSchemaFile+": unsupported SQL statement: SECRET at position 0"))
+		want := "read SQL schema file " + checkedSchemaFile + ": unsupported SQL statement: " + RedactionMarker + " at position 0"
 		if result.Error == nil || result.Error.Message != want {
 			t.Fatalf("Run() error = %#v, want %q", result.Error, want)
 		}
-		if strings.Contains(diagnostics, "secret") {
+		if strings.Contains(strings.ToLower(diagnostics), "secret") {
 			t.Fatalf("the Pod log carries the password:\n%s", diagnostics)
+		}
+	})
+	t.Run("the capture of a credential in capitals", func(t *testing.T) {
+		t.Parallel()
+		folded := run
+		folded.environment = append(slices.Clone(run.environment), EnvDatabaseURL+"=postgres://app:Hunter2Hunter2@db.example/orders")
+		result, _, _ := runDesiredSource(t, folded, run.failed(t), scriptedResponse{stdout: desiredSourceOutput(t, "validate-sql-folded.txt"), exitCode: 1})
+		if result.Error == nil || result.Error.Code != CodeDesiredSourceUnreadable || strings.Contains(result.Error.Message, "HUNTER2") {
+			t.Fatalf("Run() error = %#v, want the password redacted", result.Error)
 		}
 	})
 	// The bound falls inside the password. Redacting only after the cut would
@@ -324,10 +394,69 @@ func TestAReasonIsRedactedAndBounded(t *testing.T) {
 	})
 	t.Run("a long reason", func(t *testing.T) {
 		t.Parallel()
+		// The whole sentence is what the Event keeps 512 bytes of, so a reason
+		// at the bound reads the same in the condition and the Event.
+		if whole := len(CodeDesiredSourceUnreadable+": ") + maxDesiredSourceReasonBytes; whole != 512 {
+			t.Fatalf("the code and the longest reason take %d bytes, want the 512 an Event keeps", whole)
+		}
 		result, _, _ := runDesiredSource(t, run, run.failed(t), source(strings.Repeat("x", maxDesiredSourceReasonBytes-1)+"é and more"))
 		if result.Error == nil || len(result.Error.Message) > maxDesiredSourceReasonBytes ||
 			!utf8.ValidString(result.Error.Message) || strings.Contains(result.Error.Message, "more") {
 			t.Fatalf("Run() error = %#v, want at most %d bytes of valid text", result.Error, maxDesiredSourceReasonBytes)
 		}
 	})
+}
+
+// TestAReasonNamesTheSchemaFile prints what a YAML parser prints, which names no
+// file, and what a SQL parser prints, which does. The name is added once, and only
+// where Ptah's words leave it out.
+func TestAReasonNamesTheSchemaFile(t *testing.T) {
+	t.Parallel()
+
+	run := desiredSourceRuns()["observe"]
+	for fixture, want := range map[string]string{
+		"validate-yaml.txt": "schema.sql: error parsing schema file: parse YAML schema: yaml: line 1: did not find expected '-' indicator",
+		"validate-yaml-value.txt": "schema.sql: error parsing schema file: parse YAML schema: yaml: unmarshal errors: " +
+			"line 1: cannot unmarshal !!str `hunter2...` into map[string]yamlschema.tableSpec",
+		"validate-sql.txt": partitionReason,
+	} {
+		t.Run(fixture, func(t *testing.T) {
+			t.Parallel()
+			result, _, _ := runDesiredSource(t, run, run.failed(t), scriptedResponse{stdout: desiredSourceOutput(t, fixture), exitCode: 1})
+			if result.Error == nil || result.Error.Code != CodeDesiredSourceUnreadable || result.Error.Message != want {
+				t.Fatalf("Run() error = %#v, want %q", result.Error, want)
+			}
+		})
+	}
+}
+
+// TestAFileNameCannotReachAPersonsTerminal delivers the document a migration
+// directory printed through a registry, with a file name that sets a terminal's
+// title. None of it may reach the frame or the Pod log.
+func TestAFileNameCannotReachAPersonsTerminal(t *testing.T) {
+	t.Parallel()
+
+	run := desiredSourceRuns()["migration history"]
+	result, _, diagnostics := runDesiredSource(t, run, run.failed(t), scriptedResponse{stdout: desiredSourceOutput(t, "scratch-control-bytes.json"), exitCode: 2})
+	const want = "failed to load up migration 0000000001_a ]0;pwn .up.sql: invalid migration directives in " +
+		`0000000001_a ]0;pwn .up.sql: invalid +ptah no_transaction value "sometimes": expected true or false`
+	if result.Error == nil || result.Error.Code != CodeDesiredSourceUnreadable || result.Error.Message != want {
+		t.Fatalf("Run() error = %#v, want %q", result.Error, want)
+	}
+	if strings.ContainsAny(diagnostics, "\x1b\x07") {
+		t.Fatalf("the Pod log carries control bytes: %q", diagnostics)
+	}
+}
+
+// TestAReasonWithNothingReadableKeepsTheCode leaves the failure as it was, since
+// a frame's error needs a message and this reason has none to give.
+func TestAReasonWithNothingReadableKeepsTheCode(t *testing.T) {
+	t.Parallel()
+
+	run := desiredSourceRuns()["migration history"]
+	document := `{"contract_version":2,"command":"migrations status","error":{"message":"error registering migrations: \u001b\u0007"}}`
+	result, _, _ := runDesiredSource(t, run, run.failed(t), scriptedResponse{stdout: document, exitCode: 2})
+	if result.Error == nil || result.Error.Code != run.unclassified {
+		t.Fatalf("Run() error = %#v, want code %s", result.Error, run.unclassified)
+	}
 }

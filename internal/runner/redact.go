@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"unicode/utf8"
 )
 
 const RedactionMarker = "[REDACTED]"
@@ -22,6 +23,8 @@ var protectedEnvironmentKeys = []string{
 
 type Redactor struct {
 	secrets []string
+	// folded matches any of secrets in any case. Only redactFolded reads it.
+	folded *regexp.Regexp
 }
 
 func NewRedactor(environment []string) Redactor {
@@ -55,7 +58,29 @@ func NewRedactor(environment []string) Redactor {
 	sort.Slice(secrets, func(i, j int) bool {
 		return len(secrets[i]) > len(secrets[j])
 	})
-	return Redactor{secrets: secrets}
+	return Redactor{secrets: secrets, folded: foldedSecrets(secrets)}
+}
+
+// foldedSecrets matches the secrets in any case, longest first, as Redact tries
+// them. A secret that is not valid UTF-8 has no case to fold, and the exact
+// match in Redact still covers it. The expression is built from quoted literals,
+// so the only way it fails to compile is by being too large to hold, and then
+// the exact match is what is left.
+func foldedSecrets(secrets []string) *regexp.Regexp {
+	alternatives := make([]string, 0, len(secrets))
+	for _, secret := range secrets {
+		if utf8.ValidString(secret) {
+			alternatives = append(alternatives, regexp.QuoteMeta(secret))
+		}
+	}
+	if len(alternatives) == 0 {
+		return nil
+	}
+	pattern, err := regexp.Compile("(?i)" + strings.Join(alternatives, "|"))
+	if err != nil {
+		return nil
+	}
+	return pattern
 }
 
 func secretRepresentations(value string) []string {
@@ -142,6 +167,17 @@ func (r Redactor) Redact(value string) string {
 		value = strings.ReplaceAll(value, secret, RedactionMarker)
 	}
 	return redactURLPasswords(value)
+}
+
+// redactFolded is Redact for text a person reads, where a secret may have changed
+// case on its way: Ptah's SQL parser prints the token it stopped at in capitals.
+// Redact itself stays exact, because it also runs over captured output whose
+// bytes matter, where a table named like a password in another case is no secret.
+func (r Redactor) redactFolded(value string) string {
+	if r.folded == nil {
+		return r.Redact(value)
+	}
+	return redactURLPasswords(r.folded.ReplaceAllLiteralString(value, RedactionMarker))
 }
 
 // RedactCaptured also removes a trailing prefix of a protected value when a

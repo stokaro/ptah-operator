@@ -56,6 +56,7 @@ func TestDataPlane(t *testing.T) {
 		{"four-eyes-distinct-approver", d.fourEyesDistinctApprover},
 		{"pod-metadata-admission", d.podMetadataAdmission},
 		{"postgresql-extension-drift", d.postgresqlExtensionDrift},
+		{"oci-unreadable-schema", d.unreadableOCISchema},
 	} {
 		if !run.Scenario(scenario.name, d.scenario(scenario.body)) {
 			return
@@ -251,7 +252,7 @@ func newDataPlane(t *testing.T, run *harness.Run, in phases.DataPlaneInputs) *da
 	if d.scanner, err = newCredentialScanner(
 		d.registry.Password,
 		d.credentials.pgPassword, d.credentials.pgURL, d.credentials.customCAPGURL,
-		d.credentials.fourEyesPGURL, d.credentials.podMetadataPGURL, d.credentials.extensionPGURL,
+		d.credentials.fourEyesPGURL, d.credentials.podMetadataPGURL, d.credentials.extensionPGURL, d.credentials.unreadableOCIPGURL,
 		d.credentials.mysqlPassword, d.credentials.mysqlRootPassword, d.credentials.mysqlURL,
 		d.external.Password, d.external.URL,
 	); err != nil {

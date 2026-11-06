@@ -29,6 +29,11 @@ CREATE TABLE events_2026 PARTITION OF events
 
 	unreadableMigrationFile   = "0000000001_create_events.up.sql"
 	unreadableMigrationReason = `invalid +ptah no_transaction value "sometimes"`
+
+	// unreadableFetchStep is where a schema artifact the executor cannot parse
+	// stops, and unreadableFetchLogReason how Ptah words that in the step's log.
+	unreadableFetchStep      = "fetch-schema"
+	unreadableFetchLogReason = "parse schema artifact: parse HCL schema: schema.hcl:"
 )
 
 // unreadableMigrationFiles is a migration directory the loader refuses: the
@@ -54,11 +59,49 @@ func unreadableSourceSays(message, file, reason string) error {
 	return nil
 }
 
+// fetchStepSays holds a condition's or an Event's message to what a failed fetch
+// says: the step by name, and nothing the step wrote, since its container holds
+// the registry credentials. A message carrying the reason would read better and
+// break that boundary, so the row refuses one.
+func fetchStepSays(message, step string) error {
+	switch {
+	case !strings.Contains(message, "the "+step+" step exited "):
+		return fmt.Errorf("the message does not name step %s: %q", step, message)
+	case !strings.Contains(message, "so the run never started"):
+		return fmt.Errorf("the message does not say the run never started: %q", message)
+	case strings.Contains(message, "parse schema artifact"), strings.Contains(message, "schema.hcl"):
+		return fmt.Errorf("the message carries what the step wrote: %q", message)
+	}
+	return nil
+}
+
+// fetchStepLogSays holds the step's log to the reason status leaves out, which is
+// what a person with pods/log comes to read.
+func fetchStepLogSays(log []byte) error {
+	if !strings.Contains(string(log), unreadableFetchLogReason) {
+		return fmt.Errorf("the log does not say %q: %q", unreadableFetchLogReason, log)
+	}
+	return nil
+}
+
 // unreadableSourceEvent finds the Warning Event a failure wrote on one resource
-// with the reason in it. It reports what it examined, so a list with no Event of
-// that resource and that reason reads differently from one that says something
-// else.
+// with the reason in it.
 func unreadableSourceEvent(events []corev1.Event, owner types.UID, reason, file, want string) error {
+	return warningEventSays(events, owner, reason, func(message string) error {
+		return unreadableSourceSays(message, file, want)
+	})
+}
+
+// fetchStepEvent finds the Warning Event that names the step and nothing more.
+func fetchStepEvent(events []corev1.Event, owner types.UID, reason, step string) error {
+	return warningEventSays(events, owner, reason, func(message string) error {
+		return fetchStepSays(message, step)
+	})
+}
+
+// warningEventSays reports what it examined, so a list with no Event of that
+// resource and that reason reads differently from one that says something else.
+func warningEventSays(events []corev1.Event, owner types.UID, reason string, says func(string) error) error {
 	examined := 0
 	var last error
 	for index := range events {
@@ -67,7 +110,7 @@ func unreadableSourceEvent(events []corev1.Event, owner types.UID, reason, file,
 			continue
 		}
 		examined++
-		if last = unreadableSourceSays(event.Message, file, want); last == nil {
+		if last = says(event.Message); last == nil {
 			return nil
 		}
 	}

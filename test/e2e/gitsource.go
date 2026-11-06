@@ -83,13 +83,18 @@ const (
 	gitLFSRefusal       = gitrefusal.LFSPointer + gitLFSPath
 )
 
-// The schema file Ptah reads and cannot parse, in a database of its own: the
-// drift command connects before it reads the file.
+// The schema file and the migration directory Ptah reads and cannot load, each in
+// a database of its own: the command connects before it reads the files.
 const (
 	gitUnreadableSchema   = "e2e-git-unreadable"
 	gitUnreadableDatabase = "ptah_e2e_git_unreadable"
 	gitUnreadableSecret   = "e2e-git-unreadable-database"
 	gitUnreadablePath     = "db/unreadable/" + unreadablePartitionFile
+
+	gitUnreadableMigration         = "e2e-git-unreadable-migration"
+	gitUnreadableMigrationDatabase = "ptah_e2e_git_unreadable_migrations"
+	gitUnreadableMigrationSecret   = "e2e-git-unreadable-migration-database"
+	gitUnreadableMigrationPath     = "db/unreadable-migrations"
 )
 
 // The repository and the keys are shared with the runner harness, which serves
@@ -108,7 +113,8 @@ var (
 type gitServerKeys = gitfixture.Keys
 
 // gitUnreadableSpec is the repository after the force-push with one more commit
-// on main, which adds a schema file Ptah cannot parse. Only the phase's last
+// on main, which adds a schema file Ptah cannot parse and a migration directory it
+// cannot load. Only the phase's last
 // scenario serves it: the Git captures name the commits before it, which this
 // leaves as they were.
 func gitUnreadableSpec() gitrepo.Spec {
@@ -116,7 +122,10 @@ func gitUnreadableSpec() gitrepo.Spec {
 	last := spec.Commits[len(spec.Commits)-1]
 	files := maps.Clone(last.Files)
 	files[gitUnreadablePath] = unreadablePartitionSchema
-	spec.Commits = append(spec.Commits, gitrepo.CommitSpec{Message: "Add a schema the parser cannot read", Files: files, Submodules: last.Submodules})
+	for _, file := range unreadableMigrationFiles {
+		files[gitUnreadableMigrationPath+"/"+file.path] = file.body
+	}
+	spec.Commits = append(spec.Commits, gitrepo.CommitSpec{Message: "Add files Ptah cannot read", Files: files, Submodules: last.Submodules})
 	spec.Branches = map[string]int{"main": len(spec.Commits) - 1}
 	return spec
 }

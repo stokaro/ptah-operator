@@ -2071,17 +2071,24 @@ managed object identity; lifecycle records add the closed `operation`, numeric
 `requeue` and `requeueAfter`. Executor stdout and stderr are treated as
 untrusted secret-bearing data: only a strictly validated Plan may transport
 the plan Ptah saved. Resolve and Verify emit bounded typed evidence, Observe emits
-only summaries, and Apply emits no native output. Native stderr never crosses
-those operation boundaries; controller-facing failures are generic and typed.
+only summaries, and Apply emits no native output. Controller-facing failures are
+typed, and each carries a sentence of the runner's own apart from these, which
+carry Ptah's words:
 
-One failure is reported in Ptah's words: a desired schema or a migration
-directory Ptah cannot load. The words come from a second run of Ptah that holds
-no database URL and no credential, and they reach the condition and the Event
-under the code `desired_source_unreadable`, redacted and cut at 512 bytes. That
-run cannot quote the database. The reason can quote a fragment of the file, and
-[Output handling](../security/#output-handling) says who that reaches.
-[A desired file Ptah could not read](../../troubleshoot/condition-reasons/#a-desired-file-ptah-could-not-read)
-says what a person does with it.
+- A desired schema or migration directory Ptah cannot load, under
+  `desired_source_unreadable`. The words come from a second run of Ptah that holds
+  no database URL and no credential, so they cannot quote the database. They can
+  quote a fragment of the file.
+  [A desired file Ptah could not read](../../troubleshoot/condition-reasons/#a-desired-file-ptah-could-not-read)
+  says what a person does with them.
+- A plan that would change a protected table, under `protected_table`. The words
+  are the sentence of the `schema plan` report, which names the fenced tables.
+- A Git source a Resolve cannot fetch, under `child_exit`. The words are the last
+  line of native stderr from the pull, which names the refusal.
+
+Each is redacted, stripped of control characters, joined onto one line and cut to
+a bound, and [Output handling](../security/#output-handling) says what bounds each
+one and who it reaches.
 
 Kubernetes Events provide the object-scoped audit trail for operation claims,
 completion, policy refusal, approval changes, and failures. Alert on a sustained
