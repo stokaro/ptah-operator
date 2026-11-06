@@ -44,8 +44,10 @@ the same exact-plan approval.
 
 Both declare a schema as Kubernetes resources. Ptah Operator binds an approval
 to the state of the database and refuses to run when that state has moved.
-SchemaHero 0.26.2 binds an approval to the text of the SQL and runs that text.
-SchemaHero is quicker to install and lists more engines.
+SchemaHero 0.26.2 binds an approval to the text of the SQL and runs that text. It
+also keeps that SQL in the cluster, while `PtahMigration` runs files from your
+repository and the database records what ran. SchemaHero is quicker to install
+and lists more engines.
 
 - [Compared with SchemaHero](../start/compare-schemahero/)
 

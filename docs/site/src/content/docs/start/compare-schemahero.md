@@ -19,10 +19,28 @@ hand edits ran as a separate superuser. The
 [comparison on the blog](https://blog.ptah.run/posts/ptah-operator-vs-schemahero/)
 has the commands, the manifests and the recorded output for both sides.
 
+## Where the SQL lives
+
+SchemaHero generates SQL from a `Table` manifest and stores it in a `Migration`
+object in the cluster, so the reviewed SQL does not reach your repository.
+[`PtahMigration`](../../use/migrations/) takes numbered SQL files from a ConfigMap,
+Git or an OCI artifact, and the database records each version it applied in
+`schema_migrations`. After we deleted a cluster and applied the same manifests to a
+new one, the operator read that history and ran nothing again. SchemaHero had no
+migrations and no record in the database.
+
+Approvals are Kubernetes objects, so who approved is lost with the cluster in both
+products. Keeping that in the database is
+[tracked](https://github.com/stokaro/ptah-operator/issues/800). `PtahSchema` also
+computes its SQL and keeps its plans in the cluster.
+
 ## What we measured
 
 | What we tested | SchemaHero 0.26.2 | Ptah Operator 0.2.9 |
 | --- | --- | --- |
+| Where the reviewed SQL lives | In a `Migration` object in the cluster | In your repository, with `PtahMigration` |
+| The cluster is lost | No SQL and no record of what ran | Files in the repository, history in the database, and the next plan starts from where the database stands |
+| Renaming a column with data | Lost the data and stopped halfway | A reviewed `RENAME COLUMN` kept every row |
 | The database changed after review | Ran the old SQL, failed 32 times in three minutes, then applied it unattended once it could | Refused before any statement ran and planned again |
 | The spec changed again before approval | Ran the replaced plan, so the database no longer matched the spec | Refused the old fingerprint |
 | Unattended removal of a column with data | Dropped the column and its data | Blocked the plan and kept the data |
@@ -44,8 +62,6 @@ did in that scenario, and they are not a statement about every workload.
 - A guard on unattended apply: `applyPolicyGuard` keeps `apply: Always` with the
   groups you name, and a plan that changes privileges waits for an approval
   even then.
-- [Versioned migrations](../../use/migrations/) through `PtahMigration`, for a
-  team that keeps a migration directory.
 - [Immutable delivery](../../use/sources/) from an OCI artifact by digest, as well
   as from a ConfigMap or Git.
 - [Ptah Console](https://github.com/stokaro/ptah-console), an optional web console
