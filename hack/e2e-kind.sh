@@ -253,6 +253,24 @@ is_pinned_image() {
 	printf '%s\n' "$1" | grep -Eq '^[^[:space:]@]+@sha256:[0-9a-f]{64}$'
 }
 
+# postgres_image_major prints the PostgreSQL major version a digest-pinned image
+# names in its tag, and nothing for an image that names none. PostgresImageMajor
+# in test/e2e/phases carries the same expression for the phases.
+postgres_image_major() {
+	printf '%s\n' "$1" | sed -nE 's/^[^@]*:([1-9][0-9]*)[^/:@]*@sha256:[0-9a-f]{64}$/\1/p'
+}
+
+# postgres_data_directory prints the directory the official image of a major
+# version declares as its volume. PostgreSQL 18's image moved it up one level, and
+# a mount anywhere else leaves Docker an anonymous volume at the declared path.
+postgres_data_directory() {
+	if [ "$1" -ge 18 ]; then
+		printf '%s\n' /var/lib/postgresql
+	else
+		printf '%s\n' /var/lib/postgresql/data
+	fi
+}
+
 # The three images this task builds, each with the role it is loaded back as.
 # The role is what keeps the synthetic next release from being taken for the
 # candidate: they are built from the same commit and differ only in the manager
@@ -470,6 +488,12 @@ for source_image in "$E2E_REGISTRY_IMAGE" "$E2E_POSTGRES_SOURCE_IMAGE" "$E2E_MYS
 	is_pinned_image "$source_image" ||
 		fail "registry, database and monitoring source images must be pinned by digest: $source_image"
 done
+# The release line this run proves is the source image's tag, and the fixtures
+# below are held to it, so a run on another server cannot report this line.
+E2E_POSTGRES_MAJOR=$(postgres_image_major "$E2E_POSTGRES_SOURCE_IMAGE")
+[ -n "$E2E_POSTGRES_MAJOR" ] ||
+	fail "E2E_POSTGRES_SOURCE_IMAGE must name a PostgreSQL major version in its tag: $E2E_POSTGRES_SOURCE_IMAGE"
+EXTERNAL_PG_DATA_DIRECTORY=$(postgres_data_directory "$E2E_POSTGRES_MAJOR")
 
 # release_manifest_field prints the value of the one NAME= line the release
 # manifest carries, and fails on a field that is missing or repeated.
@@ -821,7 +845,7 @@ printf '%s\n' "$EXTERNAL_PG_PASSWORD" | grep -Eq '^[A-Za-z0-9]+$' ||
 	printf 'POSTGRES_PASSWORD='
 	cat "$EXTERNAL_PG_ADMIN_PASSWORD_FILE"
 	printf '\nPOSTGRES_DB=%s\n' "$EXTERNAL_PG_ADMIN_DATABASE"
-	printf '%s\n' 'PGDATA=/var/lib/postgresql/data/pgdata'
+	printf 'PGDATA=%s/pgdata\n' "$EXTERNAL_PG_DATA_DIRECTORY"
 } >"$EXTERNAL_PG_ENV_FILE"
 {
 	printf "CREATE ROLE %s WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD '%s';\n" \
@@ -1137,15 +1161,15 @@ remove_image_audit_container() {
 }
 
 external_pg_mounts_are_ephemeral() {
-	jq -e '
-      (.HostConfig.Tmpfs | keys) == ["/var/lib/postgresql/data"] and
-      ((.HostConfig.Tmpfs["/var/lib/postgresql/data"] | split(",") | sort) ==
+	jq -e --arg directory "$EXTERNAL_PG_DATA_DIRECTORY" '
+      (.HostConfig.Tmpfs | keys) == [$directory] and
+      ((.HostConfig.Tmpfs[$directory] | split(",") | sort) ==
         (["rw", "noexec", "nosuid", "nodev", "size=536870912"] | sort)) and
       ((.HostConfig.Binds // []) | length) == 0 and
       ((.HostConfig.Mounts // []) | length) == 0 and
       ((.HostConfig.VolumesFrom // []) | length) == 0 and
       ((.Mounts // []) | all(
-        .Type == "tmpfs" and .Destination == "/var/lib/postgresql/data"))
+        .Type == "tmpfs" and .Destination == $directory))
 	' >/dev/null
 }
 
@@ -2791,7 +2815,7 @@ docker --context "$DOCKER_CONTEXT" create --restart=no \
 	--name "$EXTERNAL_PG_CONTAINER" \
 	--network kind \
 	--env-file "$EXTERNAL_PG_ENV_FILE" \
-	--tmpfs '/var/lib/postgresql/data:rw,noexec,nosuid,nodev,size=536870912' \
+	--tmpfs "${EXTERNAL_PG_DATA_DIRECTORY}:rw,noexec,nosuid,nodev,size=536870912" \
 	--label "operator.ptah.run/e2e-owner=${CLUSTER_NAME}" \
 	--label 'operator.ptah.run/e2e-component=external-postgresql' \
 	"$E2E_POSTGRES_SOURCE_IMAGE" postgres \
@@ -2826,8 +2850,8 @@ done
 external_pg_server_version_num=$(docker --context "$DOCKER_CONTEXT" exec "$EXTERNAL_PG_CONTAINER_ID" \
 	sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atqc "SHOW server_version_num"')
 external_pg_server_version_num=$(printf '%s' "$external_pg_server_version_num" | tr -d '[:space:]')
-printf '%s\n' "$external_pg_server_version_num" | grep -Eq '^17[0-9]{4}$' ||
-	fail "external PostgreSQL fixture is not major version 17"
+printf '%s\n' "$external_pg_server_version_num" | grep -Eq "^${E2E_POSTGRES_MAJOR}[0-9]{4}\$" ||
+	fail "external PostgreSQL fixture is not major version $E2E_POSTGRES_MAJOR"
 docker --context "$DOCKER_CONTEXT" exec -i "$EXTERNAL_PG_CONTAINER_ID" \
 	sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD" exec psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1' \
 	<"$EXTERNAL_PG_BOOTSTRAP_SQL_FILE" >/dev/null

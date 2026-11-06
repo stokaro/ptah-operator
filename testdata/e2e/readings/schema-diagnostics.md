@@ -81,7 +81,7 @@ the wide plans still drop the excluded table after it.
 
 ## Permitted work and source review
 
-The contract carries 49 PostgreSQL statement/parameter sets and 32 MySQL
+The contract carries 50 PostgreSQL statement/parameter sets and 32 MySQL
 command/statement pairs. The predicate compares SQL, comments, whitespace,
 parameters and MySQL protocol commands byte for byte. Only the declaration's
 quoted MySQL database placeholder is expanded to the controlled fixture
@@ -152,6 +152,30 @@ match the support catalog. Mutation checks reject arbitrary SELECT/WITH,
 appended SQL, changed parameters, changed probe objects, wrong operations,
 unknown clients, databases or accounts, lost records, incomplete MySQL sessions
 and missing diagnostic controls. Error messages omit SQL and parameter values.
+
+## PostgreSQL 18
+
+An added PostgreSQL line from `support/databases.json` is held to the same
+contract, so it has witnesses of its own:
+
+```sh
+python3 support/qualification/probes/schema_sql_readings.py \
+  --context <docker context> --executor-image <image> --postgresql-line 18 --out <dir>
+```
+
+Running the whole capture on PostgreSQL 18.6 with the v0.18.0 image changed one
+statement against the PostgreSQL 17.11 readings. Ptah's column read selects
+`not_null_constraint_name` from `pg_constraint`, because 18 records a NOT NULL
+there as `contype = 'n'`, where 17 selects an empty string. Record counts, exit
+statuses and every other statement matched, and so did both migration History
+readings and both restored-history refusals. The saved exclusion plans differ in
+their source fingerprint and name and hold the same statements.
+
+That read is the one PostgreSQL declaration only an added line witnesses:
+`postgresql-18-schema-drift-observe`, `-drift-plan` and `-drift-stale-apply`, one
+per operation. The other readings are the PostgreSQL 17 ones. The contract
+permits the read on every server, and it is still a read of the catalog with
+no write, DDL, grant or transaction-control keyword outside comments and literals.
 
 ## The readings
 

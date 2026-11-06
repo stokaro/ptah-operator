@@ -19,6 +19,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
+
+	"github.com/stokaro/ptah-operator/test/e2e/phases"
 )
 
 // databasesAndFixtures stands up what every later row, and every migration
@@ -132,6 +134,9 @@ func (d *dataPlane) createDatabases() {
 	namespace := d.in.TestNamespace
 	username, password := d.registry.Username, d.registry.Password
 	pullConfig := dockerConfigJSON(d.registryHost, username, password)
+	major, err := phases.PostgresImageMajor(d.in.ExternalPostgresImage)
+	d.check(err, "read the PostgreSQL line under test")
+	dataDirectory := phases.PostgresDataDirectory(major)
 	secret := func(name, kind string, immutable bool, values map[string]string) map[string]any {
 		document := map[string]any{
 			"apiVersion": "v1", "kind": "Secret",
@@ -159,11 +164,11 @@ func (d *dataPlane) createDatabases() {
 			"url": d.credentials.customCAPGURL,
 		}),
 		databaseDeployment(namespace, pgService, "postgresql", d.in.PostgresImage, "postgresql", 5432, 2,
-			"/var/lib/postgresql/data", []any{
+			dataDirectory, []any{
 				secretEnv("POSTGRES_USER", pgSecret, "username"),
 				secretEnv("POSTGRES_PASSWORD", pgSecret, "password"),
 				secretEnv("POSTGRES_DB", pgSecret, "database"),
-				map[string]any{"name": "PGDATA", "value": "/var/lib/postgresql/data/pgdata"},
+				map[string]any{"name": "PGDATA", "value": dataDirectory + "/pgdata"},
 			}),
 		databaseService(namespace, pgService, "postgresql", 5432),
 		secret(mysqlSecret, "Opaque", false, map[string]string{
@@ -362,6 +367,13 @@ func (d *dataPlane) reportDatabaseVersions() {
 	postgres = removeLineBreaks(postgres)
 	if !postgresServerVersion.MatchString(postgres) {
 		d.fatalf("PostgreSQL returned an unexpected server_version")
+	}
+	// The Deployment's image is the source image copied into the task registry,
+	// which leaves its reference without the tag the line is named by.
+	number, err := d.psqlDefault("SHOW server_version_num")
+	d.check(err, "read the PostgreSQL server version number")
+	if err := postgresServerIsImageMajor(number, d.in.ExternalPostgresImage); err != nil {
+		d.fatalf("the in-cluster PostgreSQL is not the line under test: %v", err)
 	}
 	mysql, err := d.mysql("SELECT VERSION()")
 	d.check(err, "read the MySQL server version")
@@ -662,12 +674,10 @@ func (d *dataPlane) externalPGQuery(query string) string {
 	return output
 }
 
-var externalVersion = regexp.MustCompile(`^17[0-9]{4}$`)
-
 func (d *dataPlane) assertExternalPGServerVersion() {
 	d.t.Helper()
-	if !externalVersion.MatchString(removeWhitespace(d.externalPGQuery("SHOW server_version_num"))) {
-		d.fatalf("external PostgreSQL fixture is not major version 17")
+	if err := postgresServerIsImageMajor(d.externalPGQuery("SHOW server_version_num"), d.in.ExternalPostgresImage); err != nil {
+		d.fatalf("the external PostgreSQL is not the line under test: %v", err)
 	}
 }
 

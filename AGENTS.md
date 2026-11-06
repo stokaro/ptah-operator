@@ -233,6 +233,31 @@ beside them is which resource family each phase proves — and `go test
 ./hack/...` fails on a phase the driver runs that nothing declares, and on a
 declaration for a phase the driver stopped running.
 
+## The added database lines
+
+[`support/databases.json`](support/databases.json) declares the database release
+lines: the baseline every CI run proves, and the added lines that cost too much
+to run on every push. `hack/verify-kubernetes-support.go` holds the baseline to
+the images the driver defaults to, and the table on the databases page to the
+baseline plus the supported added lines, row for row.
+
+`.github/workflows/database-lines.yml` calls `ci.yml` with `database_lines: true`,
+which swaps the acceptance matrix for `-output=database-lines` and changes
+nothing else, on a schedule, on request, and on a pull request that changes that
+workflow or the catalog. A called run belongs to its caller, so a release never
+reads one as a CI run. A line stays `pending` until a run is green on it; then it
+is `supported`, names that run in `evidenceRun`, and takes its row in the table.
+
+Leave a suite out only when the driver hands every one of its phases another
+engine, which the verifier checks. The tag of a line's image has to name its major
+version: the driver and the data plane hold both PostgreSQL servers to it, so a
+run cannot report a line it did not reach.
+
+A new line can send SQL the audits have not seen. Run
+`support/qualification/probes/schema_sql_readings.py --postgresql-line <major>`
+and regenerate the contract, as
+[the readings](testdata/e2e/readings/schema-diagnostics.md#postgresql-18) describe.
+
 ## Where the task images come from
 
 The three images a run builds — the operator under test, the synthetic next

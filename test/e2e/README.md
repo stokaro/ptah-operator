@@ -54,7 +54,9 @@ The registry, PostgreSQL, MySQL, and both e2e build images have digest-pinned
 defaults. Each runtime image is copied into the disposable registry and
 addressed by the digest produced by that registry before Kubernetes starts it.
 Overrides supplied with `E2E_REGISTRY_IMAGE`, `E2E_POSTGRES_SOURCE_IMAGE`, and
-`E2E_MYSQL_SOURCE_IMAGE` must also be digest-pinned.
+`E2E_MYSQL_SOURCE_IMAGE` must also be digest-pinned. The tag of
+`E2E_POSTGRES_SOURCE_IMAGE` has to name a PostgreSQL major version, and both
+PostgreSQL servers are held to it.
 
 `DOCKER_CONTEXT` defaults to `remote-dev-container`. The harness rejects the
 local default and OrbStack contexts, and it derives an SSH tunnel from the
@@ -141,10 +143,10 @@ development-target Secret, verification-policy ConfigMap, and OCI CA ConfigMap
 selectors are likewise rejected by the real API server before any Job exists.
 
 The data-plane checks use an authenticated OCI registry plus disposable
-PostgreSQL and MySQL databases. They also start PostgreSQL 17 as a
-digest-pinned, task-labeled Docker container on the kind bridge, with a tmpfs
-data directory, no anonymous or persistent volume, no restart policy, and no
-published host port. A selectorless Service and an exact owner-bound
+PostgreSQL and MySQL databases. They also start the PostgreSQL line under test
+as a digest-pinned, task-labeled Docker container on the kind bridge, with a
+tmpfs on the directory its image declares as a volume, no anonymous or persistent
+volume, no restart policy, and no published host port. A selectorless Service and an exact owner-bound
 EndpointSlice with a unique managed-by label route operation Jobs to its
 captured bridge IP. The fixture role is demoted from superuser after
 initialization while retaining database ownership. The suite proves that no

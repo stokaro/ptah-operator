@@ -138,7 +138,7 @@ func validDataPlaneInputs() phases.DataPlaneInputs {
 		RegistryCredentialsFile: "/work/registry.json", DockerContext: "remote",
 		RegistryContainerID:         strings.Repeat("b", 64),
 		ExternalPostgresContainerID: strings.Repeat("c", 64), ExternalPostgresIP: "172.18.0.6",
-		ExternalPostgresService: "external-pg", ExternalPostgresImage: "registry/postgres" + digest,
+		ExternalPostgresService: "external-pg", ExternalPostgresImage: "registry/postgres:17-alpine" + digest,
 		ExternalPostgresOwner: "ptah-e2e-1.35", ExternalPostgresCredentialsFile: "/work/external.json",
 		TLSProxyService: "tls-proxy", TLSProxyCAFile: "/work/ca.pem", TLSProxyCertFile: "/work/tls.crt",
 		TLSProxyKeyFile: "/work/tls.key", Mode: "full",
@@ -176,6 +176,9 @@ func TestDataPlaneInputsRefuseWhatThePhaseCannotUse(t *testing.T) {
 		{"external Service not a label", func(in *phases.DataPlaneInputs) { in.ExternalPostgresService = "External" }, "DNS label"},
 		{"owner with a slash", func(in *phases.DataPlaneInputs) { in.ExternalPostgresOwner = "a/b" }, "unsupported characters"},
 		{"external image tagged", func(in *phases.DataPlaneInputs) { in.ExternalPostgresImage = "postgres:17" }, "digest-pinned"},
+		{"external image with no major version", func(in *phases.DataPlaneInputs) {
+			in.ExternalPostgresImage = "registry/postgres@sha256:" + strings.Repeat("a", 64)
+		}, "major version"},
 		{"proxy Service not a label", func(in *phases.DataPlaneInputs) { in.TLSProxyService = "-proxy" }, "DNS label"},
 		{"CA and key one file", func(in *phases.DataPlaneInputs) { in.TLSProxyKeyFile = in.TLSProxyCAFile }, "separate files"},
 		{"fixture image tagged", func(in *phases.DataPlaneInputs) { in.FixtureImage = "fixture:dev" }, "data-plane images"},

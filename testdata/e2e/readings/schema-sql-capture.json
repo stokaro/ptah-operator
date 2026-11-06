@@ -7,7 +7,8 @@
   "executorImage": "ghcr.io/stokaro/ptah@sha256:9f8797986124add44d0232a17cd17e6f03cfec76b1711efc53c169483b7b4303",
   "serverImages": {
     "postgresql": "postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73",
-    "mysql": "mysql:8.4@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb"
+    "mysql": "mysql:8.4@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb",
+    "postgresql-18": "postgres:18-alpine@sha256:898c60cb390d1085bc97bdd6a1ae968757421df394b071848b52b1c09c89d6a5"
   },
   "clientAddress": "172.19.0.3",
   "control": "The same procedure run with the executor of the previous pin, the Ptah v0.17.0 release image, reproduced every checked-in reading record for record, and all four saved exclusion plans byte for byte. The v0.18.0 image reproduced every MySQL reading, both migration History readings and both restored-history refusals. It changed every PostgreSQL schema reading: Observe now reads the schemas the connection covers before it reads them, as Plan already did (stokaro/ptah#5181); four catalog reads join pg_class with the index kinds left out (stokaro/ptah#5170), and the constraint read also leaves out a sequence's key (stokaro/ptah#5182). The narrowed PostgreSQL exclusion plan changed only its name and source fingerprint, because the exclusion now keys the excluded table in its effective schema (stokaro/ptah#5178; a build of its parent wrote the old fingerprint and a build of it the new one); the other three saved plans are byte for byte the same.",
@@ -137,6 +138,21 @@
       "exitCode": 0,
       "records": 73,
       "sha256": "32318edd62b247e38b8ed6caf9f6f846d7c73764cc77327a34a43d237bc160ef"
+    },
+    "postgresql-18-schema-drift-observe.jsonl": {
+      "exitCode": 1,
+      "records": 48,
+      "sha256": "fe327a232fcce3b29fe388f62175e5ca80188991cae5d9143d35367564325f67"
+    },
+    "postgresql-18-schema-drift-plan.jsonl": {
+      "exitCode": 0,
+      "records": 85,
+      "sha256": "59c559afb4f262079df890b5cf7c38de7947525475d114df6882cdb6fe4fb7c2"
+    },
+    "postgresql-18-schema-drift-stale-apply.jsonl": {
+      "exitCode": 2,
+      "records": 45,
+      "sha256": "0330c8ffe9bf601c04da15581ca3aca3c5b9671534d185128f9ec5fc964fa22a"
     },
     "postgresql-migration-history-audit.jsonl": {
       "exitCode": 0,

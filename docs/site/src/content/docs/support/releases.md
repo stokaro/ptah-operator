@@ -85,13 +85,35 @@ made; the pull request that prepares a version changes it on this page.
    prepared. The Documentation workflow has to pass on the same commit:
    nothing in the Go checks reads the tables it compares. Record the commit
    and the run. The pull request run alone cannot authorize publication.
-3. **Check the repository settings.** Immutable releases are enabled. The
+3. **Run the added database lines on the recorded commit.** Each line
+   `support/databases.json` adds runs in a workflow of its own, which a CI run
+   does not include. Start it beside the CI run of step 2, so the release waits
+   for one wall clock, not two:
+
+   ```sh
+   gh workflow run database-lines.yml --ref master
+   ```
+
+   Then read what it concluded for that exact commit:
+
+   ```sh
+   commit=replace-with-the-recorded-commit
+   gh run list --workflow database-lines.yml --commit "$commit" \
+     --json databaseId,event,status,conclusion
+   ```
+
+   Hold the tag until a `supported` line has a `success` on the commit: the
+   version's support table names that line. A failure on a `pending` line claims
+   nothing, holds nothing and belongs in its issue. Keep the run ID with the
+   commit and the CI run. The Release workflow does not read this run, so this
+   step is what stands between a red line and a version that names it.
+4. **Check the repository settings.** Immutable releases are enabled. The
    `release` environment requires a reviewer, accepts only the exact
    `master` branch and `v*` tags, and contains the fine-grained
    `IMMUTABLE_RELEASES_READ_TOKEN` described below. A repository secret is
    not a substitute for the environment secret. Version tag creation is
    protected, and updates and deletion are refused.
-4. **Read the generated acceptance record** with
+5. **Read the generated acceptance record** with
    `go run ./hack/acceptancecoverage -record -profile support/acceptance/lab-20.json`.
    The profile remains **Not assessed** and excludes database restore/RTO and
    production capacity/soak qualification. A successful build does not close
