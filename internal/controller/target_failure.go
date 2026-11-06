@@ -70,6 +70,19 @@ var databaseReachableReasons = map[dataplane.TargetFailureKind]operatorv1alpha1.
 	dataplane.TargetTLSFailed:            operatorv1alpha1.ReasonTLSFailed,
 }
 
+// planReadTheTarget reports an error code the runner writes for a Plan only after
+// a read came back from the target, so the failed Plan still opened it. The retry
+// is another Plan with no Observe before it, and a refusal that repeats would keep
+// an old reason for as long as it repeats. invalid_plan_output is not one of these:
+// the runner also writes it for a child that never reached the target.
+func planReadTheTarget(code string) bool {
+	switch code {
+	case "plan_refused", "unstable_plan", "credential_leak", "plan_seal_failed":
+		return true
+	}
+	return false
+}
+
 // databaseUnreached is what DatabaseReachable says after failure. A failure
 // that names no kind says nothing about the target: a development database, a
 // registry and a kind this operator does not know all end here, so the caller

@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -9,6 +10,7 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -797,5 +799,145 @@ func TestAMigrationDatabaseReachableIsUnknownWithoutEvidence(t *testing.T) {
 		if reachable := meta.FindStatusCondition(actual.Status.Conditions, operatorv1alpha1.ConditionMigrationDatabaseReachable); reachable != nil {
 			t.Fatalf("DatabaseReachable = %#v, want none before any operation ran", reachable)
 		}
+	})
+}
+
+// plansThatReadTheTarget are the codes the runner writes only after a Plan's read
+// came back from the target. protected_table has its own path, which reads as a
+// refusal and not as a failure.
+func plansThatReadTheTarget() map[string]*runner.ResultError {
+	return map[string]*runner.ResultError{
+		"a plan Ptah refused":             {Code: "plan_refused", Message: "ptah refused to plan the change (lock-timeout)"},
+		"two reads that differ":           {Code: "unstable_plan", Message: "consecutive plan reads did not return identical bytes"},
+		"a plan that holds a credential":  {Code: "credential_leak", Message: "plan output contains a protected credential or URL password"},
+		"a plan that could not be sealed": {Code: "plan_seal_failed", Message: "seal the plan"},
+	}
+}
+
+// assertReachedBeside holds every status write that says what the Plan came to,
+// which says picks out, to True on DatabaseReachable, so the condition cannot
+// arrive in a later write. It refuses to pass on no such write.
+func (s *statusWrites) assertReachedBeside(t *testing.T, says func([]metav1.Condition) bool) {
+	t.Helper()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	found := 0
+	for index, conditions := range s.writes {
+		if !says(conditions) {
+			continue
+		}
+		found++
+		reachable := meta.FindStatusCondition(conditions, operatorv1alpha1.ConditionDatabaseReachable)
+		if reachable == nil || reachable.Status != metav1.ConditionTrue {
+			t.Fatalf("write %d of %d carries DatabaseReachable = %#v, want True", index, len(s.writes), reachable)
+		}
+	}
+	if found == 0 {
+		t.Fatalf("none of %d status writes says what the Plan came to, so nothing was compared", len(s.writes))
+	}
+}
+
+func planPaths(t *testing.T) []targetOpeningSchema {
+	t.Helper()
+	var plans []targetOpeningSchema
+	for _, path := range targetOpeningSchemaPaths() {
+		if path.operation == runner.OperationPlan {
+			plans = append(plans, path)
+		}
+	}
+	if len(plans) != 2 {
+		t.Fatalf("%d Plan paths, want the Plan and the proof's Plan", len(plans))
+	}
+	return plans
+}
+
+// A Plan that came back from the target opened it, whatever came of the plan. The
+// retry runs another Plan rather than an Observe, so a refusal that repeats would
+// otherwise keep an old reason for as long as it repeats.
+func TestAPlanThatReadTheTargetSetsDatabaseReachable(t *testing.T) {
+	t.Parallel()
+	previous := previousReachability()["a target that refused"]
+	for _, path := range planPaths(t) {
+		for name, failure := range plansThatReadTheTarget() {
+			t.Run(path.name+"/"+name, func(t *testing.T) {
+				t.Parallel()
+				_, actual, writes := harvestSchemaFailure(t, path, failure, previous)
+				assertDatabaseReached(t, actual.Status.Conditions, "Database schema was observed")
+				writes.assertReachedBeside(t, func(conditions []metav1.Condition) bool {
+					failed := meta.FindStatusCondition(conditions, operatorv1alpha1.ConditionReconciliationFailed)
+					return failed != nil && failed.Status == metav1.ConditionTrue && strings.HasPrefix(failed.Message, failure.Code+": ")
+				})
+				failed := meta.FindStatusCondition(actual.Status.Conditions, operatorv1alpha1.ConditionReconciliationFailed)
+				if failed == nil || failed.Status != metav1.ConditionTrue || failed.Reason != string(operatorv1alpha1.ReasonOperationFailed) ||
+					!strings.HasPrefix(failed.Message, failure.Code+": ") {
+					t.Fatalf("ReconciliationFailed = %#v, want OperationFailed naming %s", failed, failure.Code)
+				}
+			})
+		}
+		t.Run(path.name+"/a fenced table", func(t *testing.T) {
+			t.Parallel()
+			_, actual, writes := harvestSchemaFailure(t, path,
+				&runner.ResultError{Code: "protected_table", Message: "the plan would change a protected table"}, previous)
+			assertDatabaseReached(t, actual.Status.Conditions, "Database schema was observed")
+			writes.assertReachedBeside(t, func(conditions []metav1.Condition) bool {
+				return conditionMatches(conditions, operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse, operatorv1alpha1.ReasonProtectedTable)
+			})
+			if actual.Status.Phase != operatorv1alpha1.PhaseBlocked {
+				t.Fatalf("Phase = %q, want Blocked", actual.Status.Phase)
+			}
+			failed := meta.FindStatusCondition(actual.Status.Conditions, operatorv1alpha1.ConditionReconciliationFailed)
+			if failed == nil || failed.Status != metav1.ConditionFalse {
+				t.Fatalf("ReconciliationFailed = %#v, want False", failed)
+			}
+		})
+	}
+}
+
+// Those codes speak for a Plan. On another operation, which the runner never
+// writes them for, they say nothing about the target.
+func TestThoseCodesSpeakOnlyForAPlan(t *testing.T) {
+	t.Parallel()
+	previous := previousReachability()["a target that refused"]
+	for _, path := range targetOpeningSchemaPaths() {
+		if path.operation == runner.OperationPlan {
+			continue
+		}
+		for name, failure := range plansThatReadTheTarget() {
+			t.Run(path.name+"/"+name, func(t *testing.T) {
+				t.Parallel()
+				_, actual, writes := harvestSchemaFailure(t, path, failure, previous)
+				if len(writes.writes) == 0 {
+					t.Fatal("the pass wrote no status, so it did not read the failure")
+				}
+				assertReachabilityKept(t, actual.Status.Conditions, previous)
+			})
+		}
+	}
+}
+
+// A plan the API server would not store was still computed from the target.
+func TestAPlanTheAPIServerRefusedSetsDatabaseReachable(t *testing.T) {
+	t.Parallel()
+	reconciler, api, schema := planHarvestFixture(t, operatorv1alpha1.ApplyPolicyOnApproval, safetyPlanDocument(t, "observed-state"))
+	stored := safetyGetSchema(t, api, schema)
+	previous := previousReachability()["a target that refused"]
+	stored.Status.Conditions = append(stored.Status.Conditions, *previous)
+	if err := api.Status().Update(context.Background(), stored); err != nil {
+		t.Fatal(err)
+	}
+	refusePlanWrites(t, reconciler, api, false, apierrors.NewForbidden(planResource(false), "plan", errors.New("not today")))
+	recording, writes := recordingStatusWrites(api.(client.WithWatch))
+	reconciler.Client = recording
+	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	actual := safetyGetSchema(t, api, schema)
+	failed := meta.FindStatusCondition(actual.Status.Conditions, operatorv1alpha1.ConditionReconciliationFailed)
+	if failed == nil || failed.Reason != string(operatorv1alpha1.ReasonPlanPublicationRefused) {
+		t.Fatalf("ReconciliationFailed = %#v, want PlanPublicationRefused", failed)
+	}
+	assertDatabaseReached(t, actual.Status.Conditions, "Database schema was observed")
+	writes.assertReachedBeside(t, func(conditions []metav1.Condition) bool {
+		return conditionMatches(conditions, operatorv1alpha1.ConditionReconciliationFailed, metav1.ConditionTrue, operatorv1alpha1.ReasonPlanPublicationRefused)
 	})
 }
