@@ -146,8 +146,8 @@ func TestResultCredentialAdmission(t *testing.T) {
 		requireDenied(t, admin.Update(ctx, next, client.DryRunAll), controllerWriteWebhook, "immutable operation binding")
 	})
 	t.Run("active record deletion is refused", func(t *testing.T) {
-		requireDenied(t, admin.Delete(ctx, record, client.DryRunAll), controllerWriteWebhook, "immutable operation binding")
-		requireDenied(t, admin.DeleteAllOf(ctx, &recordapi.PtahResultRecord{}, client.InNamespace(fixture.namespace), client.MatchingFields{"metadata.name": record.Name}, client.DryRunAll), controllerWriteWebhook, "immutable operation binding")
+		requireDenied(t, admin.Delete(ctx, record, client.DryRunAll), controllerWriteWebhook, windowDenial(record))
+		requireDenied(t, admin.DeleteAllOf(ctx, &recordapi.PtahResultRecord{}, client.InNamespace(fixture.namespace), client.MatchingFields{"metadata.name": record.Name}, client.DryRunAll), controllerWriteWebhook, windowDenial(record))
 	})
 	t.Run("unchanged Secret update is admitted", func(t *testing.T) {
 		if err := admin.Update(ctx, secret.DeepCopy(), client.DryRunAll); err != nil {
@@ -213,7 +213,7 @@ func TestResultCredentialAdmission(t *testing.T) {
 			t.Fatal(err)
 		}
 		requireDenied(t, attempt(), controllerWriteWebhook, "immutable operation binding")
-		requireDenied(t, admin.Delete(ctx, record, client.DryRunAll), controllerWriteWebhook, "immutable operation binding")
+		requireDenied(t, admin.Delete(ctx, record, client.DryRunAll), controllerWriteWebhook, windowDenial(record))
 	})
 	t.Run("retired record is collected before its Secret", func(t *testing.T) {
 		fixture.schema.Status.ActiveOperation = nil
@@ -258,7 +258,7 @@ func TestResultCredentialAdmission(t *testing.T) {
 		}
 		requireDenied(t, admin.Delete(ctx, secret, client.DryRunAll), controllerWriteWebhook, "immutable operation binding")
 		requireDenied(t, admin.Delete(ctx, record, client.PropagationPolicy(metav1.DeletePropagationOrphan), client.DryRunAll), controllerWriteWebhook, "require cascading deletion")
-		requireDenied(t, admin.Delete(ctx, record, client.DryRunAll), controllerWriteWebhook, "immutable operation binding")
+		requireDenied(t, admin.Delete(ctx, record, client.DryRunAll), controllerWriteWebhook, windowDenial(record))
 		cleanupClockOffset.Store(int64(2 * time.Hour))
 		defer cleanupClockOffset.Store(0)
 		requireDenied(t, admin.Delete(ctx, record, client.DryRunAll), controllerWriteWebhook, "immutable operation binding")

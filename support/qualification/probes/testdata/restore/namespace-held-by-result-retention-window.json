@@ -1,0 +1,62 @@
+{
+  "apiVersion": "v1",
+  "kind": "Namespace",
+  "metadata": {
+    "annotations": {
+      "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"v1\",\"kind\":\"Namespace\",\"metadata\":{\"annotations\":{},\"name\":\"ptah-op-790-aaa\"},\"spec\":{},\"status\":{}}\n"
+    },
+    "creationTimestamp": "2026-11-06T15:24:38Z",
+    "deletionTimestamp": "2026-11-06T15:26:13Z",
+    "labels": {
+      "kubernetes.io/metadata.name": "ptah-op-790-aaa"
+    },
+    "name": "ptah-op-790-aaa",
+    "resourceVersion": "1724",
+    "uid": "e34301e9-9ef5-4629-abf6-89f176f736e8"
+  },
+  "spec": {
+    "finalizers": [
+      "kubernetes"
+    ]
+  },
+  "status": {
+    "conditions": [
+      {
+        "lastTransitionTime": "2026-11-06T15:26:19Z",
+        "message": "All resources successfully discovered",
+        "reason": "ResourcesDiscovered",
+        "status": "False",
+        "type": "NamespaceDeletionDiscoveryFailure"
+      },
+      {
+        "lastTransitionTime": "2026-11-06T15:26:19Z",
+        "message": "All legacy kube types successfully parsed",
+        "reason": "ParsedGroupVersions",
+        "status": "False",
+        "type": "NamespaceDeletionGroupVersionParsingFailure"
+      },
+      {
+        "lastTransitionTime": "2026-11-06T15:26:19Z",
+        "message": "Failed to delete all resource types, 1 remaining: admission webhook \"vcontrollerwrite.operator.ptah.run\" denied the request: result publication retention has not authorized deletion: record ptah-result-17b56fc4280e1d0fb0c22f0e053a105826c6cc7423103c740b1b53302693d95d cannot be deleted before 2026-11-06T16:24:52Z",
+        "reason": "ContentDeletionFailed",
+        "status": "True",
+        "type": "NamespaceDeletionContentFailure"
+      },
+      {
+        "lastTransitionTime": "2026-11-06T15:26:19Z",
+        "message": "All content successfully removed",
+        "reason": "ContentRemoved",
+        "status": "False",
+        "type": "NamespaceContentRemaining"
+      },
+      {
+        "lastTransitionTime": "2026-11-06T15:26:19Z",
+        "message": "All content-preserving finalizers finished",
+        "reason": "ContentHasNoFinalizers",
+        "status": "False",
+        "type": "NamespaceFinalizersRemaining"
+      }
+    ],
+    "phase": "Terminating"
+  }
+}

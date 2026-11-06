@@ -31,6 +31,12 @@ from release v0.2.2 (`81b154ef69ae709a4a1aa39bab9db93fedb9b10d`). Its durable
 result records were the only content left, refused by the retention admission.
 Managed fields were omitted.
 
+`restore/namespace-held-by-result-retention-window.json` is the same reading
+after the denial began to name the record and the end of its window: a namespace
+on kind with Kubernetes 1.37.0 linux/amd64 on November 6, 2026, read 57 seconds
+after its deletion was requested, from a build of the change that introduced the
+wording. Its record was created at 15:24:52Z, so its window ends at 16:24:52Z.
+
 `monitoring-check/` holds readings of the v0.2.4 monitoring deployment check on
 kind with Kubernetes 1.35.8, October 19, 2026, with kube-prometheus-stack
 92.10.1 and release v0.2.4 (`d1859174288e7f67873c9f15950b7e6fabf8fd58`).

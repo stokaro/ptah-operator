@@ -24,8 +24,17 @@ with code 2` to find a database the operator could not open has to match the
 kind of failure instead. A plan waiting for approval has to be approved again
 once the executor moves to Ptah v0.18.0, and a database audit that lists what
 the executor sends to PostgreSQL has to expect drift to list the schemas
-first, and four rewritten catalog reads. Nothing else.
+first, and four rewritten catalog reads. A script that matches the whole text
+of `result publication retention has not authorized deletion` has to match its
+start. Nothing else.
 
+- **A namespace waiting on result retention.** The refusal now says when: it
+  names the record and the time it can be deleted, as `record <name> cannot be
+  deleted before <time>`, wherever time is the reason, credential records
+  included. A refusal for any other reason names no time. The window itself has
+  not changed.
+  [Deleting a namespace](../../use/operations/#delete-namespace) says how to read
+  it, why the wait exists, and how to tear down a test namespace.
 - **A database the operation could not open.** When Ptah cannot open the
   target database, the condition message and the Warning Event start with
   the kind of failure: `database_unreachable`, `authentication_failed`,

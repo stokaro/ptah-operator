@@ -55,7 +55,9 @@ func RootBinding(record *api.PtahResultRecord) (resultstore.Binding, error) {
 // AuthorizeDelete is the admission verdict, regardless of the DELETE
 // caller. record is the API server's stored admission object. Neither a
 // collector's cached decision nor an administrator's identity replaces these
-// current checks. Every API failure retains the evidence.
+// current checks. Every API failure retains the evidence. A refusal that is
+// about time is a resultretention.WindowError; every other refusal names no
+// instant, because none would lift it.
 func (p Policy) AuthorizeDelete(ctx context.Context, record *api.PtahResultRecord) error {
 	if p.Reader == nil || p.Window < resultretention.MinimumWindow || record == nil || record.UID == "" {
 		return ErrRetained
@@ -64,7 +66,7 @@ func (p Policy) AuthorizeDelete(ctx context.Context, record *api.PtahResultRecor
 	// server timestamp. No retirement or pin reading can authorize an earlier
 	// deletion. Reaching this bound still requires every live check below.
 	if !record.CreationTimestamp.IsZero() && p.now().Before(record.CreationTimestamp.Add(p.Window)) {
-		return resultretention.ErrWindow
+		return &resultretention.WindowError{Ends: record.CreationTimestamp.Add(p.Window)}
 	}
 	b, err := RootBinding(record)
 	var marker *api.PtahResultRecord
@@ -157,8 +159,11 @@ func (p Policy) AuthorizeDelete(ctx context.Context, record *api.PtahResultRecor
 	// A late API write also receives a complete retention window. It cannot
 	// become immediately disposable by arriving after retirement was recorded.
 	window := max(p.Window, time.Duration(r.RetentionSeconds)*time.Second)
-	if record.CreationTimestamp.IsZero() || p.now().Before(record.CreationTimestamp.Add(window)) {
+	if record.CreationTimestamp.IsZero() {
 		return resultretention.ErrWindow
+	}
+	if ends := record.CreationTimestamp.Add(window); p.now().Before(ends) {
+		return &resultretention.WindowError{Ends: ends}
 	}
 	// Keep the fence while the original Job can authenticate its original Pod.
 	// A replacement Job has a new UID and cannot revive the retired claim.
@@ -256,8 +261,15 @@ func (p Policy) foregroundBinding(ctx context.Context, record *api.PtahResultRec
 	if err := p.requireJobAbsent(ctx, b); err != nil {
 		return b, err
 	}
-	if record.CreationTimestamp.IsZero() || p.now().Before(root.DeletionTimestamp.Add(p.Window)) || p.now().Before(record.CreationTimestamp.Add(p.Window)) {
+	if record.CreationTimestamp.IsZero() {
 		return b, resultretention.ErrWindow
+	}
+	ends := root.DeletionTimestamp.Add(p.Window)
+	if created := record.CreationTimestamp.Add(p.Window); created.After(ends) {
+		ends = created
+	}
+	if p.now().Before(ends) {
+		return b, &resultretention.WindowError{Ends: ends}
 	}
 	return b, nil
 }

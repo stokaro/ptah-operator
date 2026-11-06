@@ -1118,6 +1118,12 @@ class OperatorProbe(db.Probe):
         return resource
 
 
+# A release up to 0.2.9 stops after "authorized deletion". Later ones add the
+# record and the end of its window when time is the reason.
+RETENTION_DENIAL = re.compile(r'denied the request: result publication retention has not authorized deletion'
+                              r'(?:: record [a-z0-9.-]+ cannot be deleted before \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)?\Z')
+
+
 def retention_holds(namespace):
     """Whether the API server reports result retention as all that keeps the namespace.
 
@@ -1130,7 +1136,7 @@ def retention_holds(namespace):
     message = (failure or {}).get('message', '')
     return (namespace.get('status', {}).get('phase') == 'Terminating' and (failure or {}).get('status') == 'True' and
             message.startswith('Failed to delete all resource types, 1 remaining: ') and
-            message.endswith('denied the request: result publication retention has not authorized deletion') and
+            RETENTION_DENIAL.search(message) is not None and
             (remaining or {}).get('status', 'False') == 'False')
 
 if __name__ == '__main__':

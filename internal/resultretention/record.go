@@ -29,6 +29,32 @@ var (
 	ErrRecord  = errors.New("invalid result retirement record")
 )
 
+// WindowError is a refusal because a window measured from a persisted API
+// server timestamp has not elapsed. It matches ErrWindow. Ends is the earliest
+// instant the refusing check can pass: the checks that follow it still run
+// then, and they can name a later window or refuse for another reason.
+type WindowError struct {
+	Ends time.Time
+}
+
+func (e *WindowError) Error() string {
+	return ErrWindow.Error() + ": it ends at " + e.Ends.UTC().Format(time.RFC3339)
+}
+
+func (*WindowError) Unwrap() error { return ErrWindow }
+
+// WindowEnd reports the instant err names. It answers false for every other
+// refusal, and for a bare ErrWindow, which has no persisted start to measure
+// from. No instant lifts a pin, a failed read or a record that cannot be bound,
+// so a caller must not claim one for them.
+func WindowEnd(err error) (time.Time, bool) {
+	var window *WindowError
+	if errors.As(err, &window) {
+		return window.Ends, true
+	}
+	return time.Time{}, false
+}
+
 // Source identifies the persisted root whose authenticated binding was read
 // before retirement. It carries no credential material or result payload.
 type Source struct {
@@ -135,7 +161,7 @@ func Eligible(ctx context.Context, reader client.Reader, record *api.PtahResultR
 	}
 	deadline := record.CreationTimestamp.Add(max(window, time.Duration(r.RetentionSeconds)*time.Second))
 	if now.Before(deadline) {
-		return ErrWindow
+		return &WindowError{Ends: deadline}
 	}
 	return nil
 }

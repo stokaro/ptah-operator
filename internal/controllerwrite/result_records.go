@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"time"
 
 	api "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/resultcredentials"
@@ -91,6 +92,9 @@ func (v *Validator) validateResultRecord(ctx context.Context, req admissionv1.Ad
 		if err == nil && !old.DeletionTimestamp.IsZero() && len(old.Finalizers) == 1 &&
 			old.Finalizers[0] == metav1.FinalizerDeleteDependents && len(next.Finalizers) == 0 && v.ResultCleanup != nil {
 			err = v.ResultCleanup.AuthorizeDelete(ctx, old)
+			if _, isTime := resultretention.WindowEnd(err); isTime {
+				return retentionDenial(old, err)
+			}
 		}
 	case admissionv1.Delete:
 		old, decodeErr := decode(req.OldObject.Raw)
@@ -109,16 +113,17 @@ func (v *Validator) validateResultRecord(ctx context.Context, req admissionv1.Ad
 			err = v.ResultCleanup.AuthorizeDelete(ctx, old)
 			var options metav1.DeleteOptions
 			if err != nil && len(req.Options.Raw) != 0 && json.Unmarshal(req.Options.Raw, &options) == nil &&
-				options.PropagationPolicy != nil && *options.PropagationPolicy == metav1.DeletePropagationForeground {
-				err = v.ResultCleanup.AuthorizeForegroundRetirement(ctx, old)
+				options.PropagationPolicy != nil && *options.PropagationPolicy == metav1.DeletePropagationForeground &&
+				v.ResultCleanup.AuthorizeForegroundRetirement(ctx, old) == nil {
+				err = nil
 			}
-			if err != nil && old.Spec.Type != "credential" {
-				return denyf("result publication retention has not authorized deletion")
+			if _, isTime := resultretention.WindowEnd(err); isTime || (err != nil && old.Spec.Type != "credential") {
+				return retentionDenial(old, err)
 			}
 		} else if old.Spec.Type == "credential" {
 			err = resultcredentials.ValidateRecordDelete(ctx, v.Reader, old)
 		} else {
-			return denyf("result publication retention has not authorized deletion")
+			return retentionDenial(old, nil)
 		}
 	default:
 		return denyf("unexpected result record operation")
@@ -128,6 +133,18 @@ func (v *Validator) validateResultRecord(ctx context.Context, req admissionv1.Ad
 		return denyf("result record write violates its immutable operation binding")
 	}
 	return nil
+}
+
+// retentionDenial words a refusal by the retention policy. Only a refusal about
+// time names a time. The instant comes from API server timestamps and the name
+// from the stored object, so neither is credential material or a parser
+// diagnostic. A namespace deletion quotes this message in its conditions, and
+// the operations page says how to read it.
+func retentionDenial(record *api.PtahResultRecord, err error) error {
+	if ends, isTime := resultretention.WindowEnd(err); isTime {
+		return denyf("result publication retention has not authorized deletion: record %s cannot be deleted before %s", record.Name, ends.UTC().Format(time.RFC3339))
+	}
+	return denyf("result publication retention has not authorized deletion")
 }
 
 func (v *Validator) validateResultRetirement(ctx context.Context, record *api.PtahResultRecord) error {
