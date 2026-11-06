@@ -34,13 +34,52 @@ func TestPlanSizeCalibration(t *testing.T) {
 			t.Fatal("accepted absent, changed, or oversized calibration measurements")
 		}
 	}
-	for _, c := range []planSizeCalibration{{}, {100, 0}, {100, 7}, {-1, 6}} {
+	// The measurement a database name one byte shorter than the first gives: a
+	// width no serializer writes, which would ask the generator for a default
+	// past what its columns hold.
+	if _, err := calibratePlanSize(600+32*6, 600+33*6-1, 601+32*6); err == nil {
+		t.Fatal("accepted a width of 5, which only a difference between database names can give")
+	}
+	for _, c := range []planSizeCalibration{{}, {100, 0}, {100, 7}, {-1, 6}, {100, 5}, {100, 2}} {
 		if _, _, err := c.lengths(8388608); err == nil {
 			t.Fatal("an invalid native calibration produced a boundary fixture")
 		}
 	}
 	if _, _, err := (planSizeCalibration{600, 6}).lengths(8388610); err == nil {
 		t.Fatal("produced an undeclared oversize case")
+	}
+}
+
+// A plan's scope holds a MySQL database's name, so the five databases the row
+// plans against have to agree in length for a difference between plans to measure
+// the default alone.
+func TestPlanSizeDatabasesHaveOneLength(t *testing.T) {
+	t.Parallel()
+	revisions := []string{"small", "plus", "ascii", "oversize", "maximum"}
+	for _, engine := range []string{"postgresql", "mysql"} {
+		seen := map[string]bool{}
+		for _, revision := range revisions {
+			name, err := planSizeDatabase(engine, revision)
+			if err != nil {
+				t.Fatalf("%s %s: %v", engine, revision, err)
+			}
+			want := len("e2e_size_") + len(engine) + len("_") + planSizeRevisionWidth
+			if len(name) != want || len(name) > 63 {
+				t.Errorf("%s has %d bytes, want %d and a name both engines accept", name, len(name), want)
+			}
+			if seen[name] {
+				t.Errorf("two revisions share the database %s", name)
+			}
+			seen[name] = true
+		}
+		if len(seen) != len(revisions) {
+			t.Fatalf("read %d names for %d revisions", len(seen), len(revisions))
+		}
+	}
+	for _, revision := range []string{"", "ninebytes"} {
+		if name, err := planSizeDatabase("mysql", revision); err == nil {
+			t.Errorf("the revision %q was named %s, and it cannot have the length the others have", revision, name)
+		}
 	}
 }
 

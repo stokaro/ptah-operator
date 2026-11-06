@@ -2,8 +2,8 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "dry-run",
-  "plan_name": "plan_ce430c238122",
-  "plan_digest": "sha256:a12362697390485142a8dcb207024b819b26b75e9eb8c59fcced4a3dd13a55ab",
+  "plan_name": "plan_8125ca75b609",
+  "plan_digest": "sha256:4ddb6030a8c4ed824ed9a2d329f9ffb45e12550b807b5d18aa9257b298e57a85",
   "units": [
     {
       "sql": "CREATE EXTENSION IF NOT EXISTS \"pg_trgm\""

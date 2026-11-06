@@ -2,10 +2,10 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "failed",
-  "plan_name": "plan_1278622e7843",
-  "plan_digest": "sha256:7ccf027b410c5cf7237f8f36ab32eb1be117cf3662e83976b4ebb205b8094eb7",
+  "plan_name": "plan_e33611e0ad1b",
+  "plan_digest": "sha256:00558f524a7c21d09025aaa5c9506b4e03585851d2a1ef6c45c075702e958e6a",
   "error": {
     "kind": "authentication_failed",
-    "message": "connect to --db-url: failed to ping database: failed to connect to `user=nobody database=harness_fault`: 172.20.0.2:5432 (harness-postgres): failed SASL auth: FATAL: password authentication failed for user \"nobody\" (SQLSTATE 28P01)"
+    "message": "connect to --db-url: failed to ping database: failed to connect to `user=nobody database=harness_fault`: 172.22.0.2:5432 (harness-postgres): failed SASL auth: FATAL: password authentication failed for user \"nobody\" (SQLSTATE 28P01)"
   }
 }

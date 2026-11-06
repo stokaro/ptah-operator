@@ -104,7 +104,8 @@ func (d *dataPlane) planSizeBoundaries() {
 			// Reach the accepted resource-name bound through actual Jobs,
 			// immutable chunks, projections and Apply, not storage alone.
 			name += strings.Repeat("s", 63-len(name))
-			database := "e2e_size_" + engine + "_" + revision
+			database, err := planSizeDatabase(engine, revision)
+			d.check(err, "name the %s plan-size database", revision)
 			secret := "e2e-size-db-" + engine + "-" + revision
 			if engine == "postgresql" {
 				f.query(engine, "postgres", "CREATE DATABASE "+database)

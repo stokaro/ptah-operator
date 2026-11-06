@@ -1049,11 +1049,12 @@ the statements and the privilege kinds they change. Since v0.16.0 Ptah lists
 grants, views, triggers and sequences under categories of their own, and a
 default privilege under `feature_access_*`.
 
-Findings cover what the login can read. A table somebody added by hand as
-another role can be in neither the findings nor the inventory, so an empty list
-does not prove that nobody added one.
+Findings cover what the login can read. On PostgreSQL that is every object,
+whoever created it. On MySQL a trigger or a routine somebody added by hand can be
+in neither the findings nor the inventory, so an empty list does not prove that
+nobody added one.
 [What the login cannot see](../../support/databases/#what-the-login-cannot-see)
-says what each login misses at the pinned executor, and how to check for it.
+says what each account misses at the pinned executor, and what it takes to see it.
 
 `status.target.inventory` counts each kind of object the same observation
 compared, on both sides: how many the desired schema declares and how many the
@@ -1732,7 +1733,7 @@ reads the database again, so waiting for in-sync after such a change waits for
 that reading: ask for it with `kubectl ptah refresh --wait`, or start the wait
 before the change. That reading covers
 [what the login can see](../../support/databases/#what-the-login-cannot-see), so
-a schema can stay `InSync` after a change the login cannot read. Approving a plan and refreshing change no generation, which
+on MySQL a schema can stay `InSync` after a change the account cannot read. Approving a plan and refreshing change no generation, which
 is why a wait does not stop at the generation alone. A change made with the
 plugin waits in the same command with `--wait`, from the answer to the change
 itself; `kubectl ptah approve --wait` waits for the Apply of the plan it

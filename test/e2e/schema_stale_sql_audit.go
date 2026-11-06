@@ -66,11 +66,18 @@ func (s *schemaStaleSQL) record(command, statement string) {
 	case "SELECT pg_advisory_unlock($1)", "SELECT RELEASE_LOCK('ptah_schema_apply')":
 		s.unlocked = true
 	}
-	if strings.Contains(statement, "FROM information_schema.columns col") ||
+	if strings.Contains(statement, postgresColumnReadMark) ||
 		strings.Contains(statement, "FROM information_schema.COLUMNS") && strings.Contains(statement, "ORDINAL_POSITION") {
 		s.columns = true
 	}
 }
+
+// postgresColumnReadMark is in the statement that reads PostgreSQL columns and in
+// no other statement the contract declares: the alias of the sequence a column
+// owns. Since v0.22.0 Ptah reads the columns from pg_catalog for every role
+// (stokaro/ptah#5499), so the relation it selects from no longer sets this read
+// apart. A unit test holds the mark to that read, on each server line.
+const postgresColumnReadMark = "AS owned_sequence_name"
 
 func (s *schemaStaleSQL) complete() error {
 	if !s.lock || !s.columns || !s.unlocked {

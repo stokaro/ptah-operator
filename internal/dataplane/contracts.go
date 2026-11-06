@@ -319,6 +319,12 @@ type PlanFile struct {
 	// carries the plan bytes as they are and reads nothing from this field; it
 	// is declared so the strict decoder accepts a plan that has it.
 	SchemasBeyondURL []string `json:"schemas_beyond_url,omitempty"`
+	// Scope is what the connection URL covered when Ptah computed the plan. Ptah
+	// v0.19.0 records it so that a stale plan's refusal can name both scopes
+	// (stokaro/ptah#5239), and it decides nothing else. The operator reads
+	// nothing from it either; it is declared so the strict decoder accepts every
+	// plan Ptah saves since then.
+	Scope *PlanScope `json:"scope,omitempty"`
 	// ManagedRows and RowsFingerprint describe the declared row sets this plan
 	// read, and the state it read them in. A plan that changes declared rows
 	// carries both, and a plan that changes only structure carries neither.
@@ -339,6 +345,14 @@ type PlanFile struct {
 	// field and cannot supply one, since a plan is decoded strictly; the list
 	// is the operator's own, in the order PrivilegeChangeKinds gives.
 	PrivilegeChanges []string `json:"-"`
+}
+
+// PlanScope is what the URL of a saved plan covered: "realm" for every schema of
+// a PostgreSQL database, or "schema" with the name of the one schema or MySQL
+// database it pins.
+type PlanScope struct {
+	Kind string `json:"kind"`
+	Name string `json:"name,omitempty"`
 }
 
 // PlanRowSet is one declared row set a plan read: the table it owns, the

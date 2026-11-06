@@ -2,11 +2,11 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "dry-run",
-  "plan_name": "plan_cd698c60f55a",
-  "plan_digest": "sha256:e1c739e1752a1048d599e5507418991a0fcd944284276f37bab54fa7f062da3e",
+  "plan_name": "plan_4193a9b06516",
+  "plan_digest": "sha256:428ef914c17d50007331d191fc78f2709b60cfbedf7339aecf49cff485017e56",
   "units": [
     {
-      "sql": "-- Add/modify columns for table: e2e_widgets\nALTER TABLE \"e2e_widgets\" ADD COLUMN \"note\" text"
+      "sql": "ALTER TABLE \"e2e_widgets\" ADD COLUMN \"note\" text"
     }
   ]
 }

@@ -411,6 +411,33 @@ func TestDecodePlanAcceptsSchemasBeyondTheURLScope(t *testing.T) {
 	}
 }
 
+// Ptah v0.19.0 records what the URL covered in every plan it saves, so a decoder
+// that does not declare it refuses every plan. A field inside it is still
+// refused, as anywhere else in the plan.
+func TestDecodePlanReadsTheScopeTheURLCovered(t *testing.T) {
+	t.Parallel()
+	plan := func(scope string) []byte {
+		return []byte(`{"format_version":1,"name":"p","dialect":"postgres","from_fingerprint":"from",` +
+			`"to_fingerprint":"to","scope":` + scope + `,"destructive":false,` +
+			`"statements":[{"sql":"CREATE TABLE events (id bigint)","severity":"safe","reason":"new table"}]}`)
+	}
+	for scope, want := range map[string]dataplane.PlanScope{
+		`{"kind":"realm"}`:                {Kind: "realm"},
+		`{"kind":"schema","name":"shop"}`: {Kind: "schema", Name: "shop"},
+	} {
+		decoded, err := dataplane.DecodePlan(plan(scope), "PostgreSQL")
+		if err != nil {
+			t.Fatalf("DecodePlan(%s) error = %v", scope, err)
+		}
+		if decoded.Scope == nil || *decoded.Scope != want {
+			t.Fatalf("scope of %s = %+v, want %+v", scope, decoded.Scope, want)
+		}
+	}
+	if _, err := dataplane.DecodePlan(plan(`{"kind":"realm","schemas":["shop"]}`), "PostgreSQL"); err == nil {
+		t.Fatal("a scope carrying a field the operator does not declare was accepted")
+	}
+}
+
 // And a description the operator cannot carry is still refused, rather than
 // accepted because the fields are now known.
 func TestDecodePlanRefusesAnUnusableDeclaredRowDescription(t *testing.T) {
@@ -488,6 +515,41 @@ func TestDecodePlanElevatesEveryUnderclassifiedDestructiveSQLFamily(t *testing.T
 			}
 			if !decoded.Destructive || decoded.Statements[0].Severity != "destructive" {
 				t.Fatalf("DecodePlan() = %#v, want destructive elevation", decoded)
+			}
+		})
+	}
+}
+
+// Ptah v0.22.0 rates these below destructive: what it plans for a database that
+// differs from its declaration, and a view rebuilt for a changed column list. They
+// change or lose data, so the operator's own reading is what keeps each of them
+// behind allowDestructive and an approval, under apply: Always too. A statement
+// that takes nothing away stays as Ptah rated it, and Always runs it.
+func TestDecodePlanRatesWhatPtahPlansForADatabaseThatDiffers(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name, dialect, severity, statement string
+		destructive                        bool
+	}{
+		{"a narrowed precision", "postgres", "safe", `ALTER TABLE "t" ALTER COLUMN "at" TYPE timestamp(0)`, true},
+		{"a narrowed precision on MySQL", "mysql", "safe", "ALTER TABLE `t` MODIFY COLUMN `at` timestamp", true},
+		{"an identity the declaration leaves out", "postgres", "safe", `ALTER TABLE "t" ALTER COLUMN "id" DROP IDENTITY`, true},
+		{"a serial default the declaration leaves out", "postgres", "safe", `ALTER TABLE "t" ALTER COLUMN "id" DROP DEFAULT`, true},
+		{"a view rebuilt for its column list", "postgres", "warning", `DROP VIEW "v"`, true},
+		{"a schema the declaration adds", "postgres", "safe", `CREATE SCHEMA IF NOT EXISTS "app"`, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			document := `{"format_version":1,"name":"p","dialect":` + strconv.Quote(test.dialect) +
+				`,"from_fingerprint":"from","to_fingerprint":"to","destructive":false,"statements":[{"sql":` +
+				strconv.Quote(test.statement) + `,"severity":` + strconv.Quote(test.severity) + `,"reason":"rated by Ptah"}]}`
+			decoded, err := dataplane.DecodePlan([]byte(document), test.dialect)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if decoded.Destructive != test.destructive {
+				t.Fatalf("destructive = %v, want %v", decoded.Destructive, test.destructive)
 			}
 		})
 	}

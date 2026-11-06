@@ -47,9 +47,11 @@ The login needs only:
 - the ability to create objects in each managed schema;
 - ownership of every object the desired schema may alter or drop.
 
-That authority plans and applies what the login owns. It does not let the login
-read everything in the database, and a table it cannot read stays out of the
-drift report: [What the login cannot see](#what-the-login-cannot-see).
+That authority plans and applies what the login owns. It is enough to report what
+another role added to the database, and not enough to change it. Owning the
+database or a schema is more: PostgreSQL lets the owner drop what is in it, whoever
+created that. [What the login cannot see](#what-the-login-cannot-see) says what
+follows from each.
 
 Grant extension, role, or cross-schema authority only when the desired artifact
 actually manages those object kinds. Keep the login out of superuser and
@@ -80,72 +82,74 @@ The executor reads the database as the login in the target URL, and a comparison
 reads what that login cannot see as not there. An empty `driftFindings` list
 says the login found no difference. It does not say that nobody added anything.
 
-This section describes Ptah v0.18.0, the executor this operator build pins
+This section describes Ptah v0.22.0, the executor this operator build pins
 ([Ptah compatibility](../ptah/)), measured with `schema drift` and `schema plan`,
 the commands an Observe and a Plan run, against PostgreSQL 17.11 and MySQL
-8.4.11. Another executor build can answer differently.
-[stokaro/ptah-operator#792](https://github.com/stokaro/ptah-operator/issues/792)
-tracks PostgreSQL, and
+8.4.11. Another executor build can answer differently. PostgreSQL has no gap at
+this build, and
 [stokaro/ptah#5497](https://github.com/stokaro/ptah/issues/5497) tracks MySQL.
 
 ### PostgreSQL
 
-The executor reads tables, columns and constraints from `information_schema`,
-which lists only what the connecting role holds a privilege on. The login this
-page describes holds nothing on a table another role created. When that table
-is the only difference, `schema drift` exits 0 with `"drift": false` and
-`schema plan` answers `no-changes`, which is what a resource needs to stay
-`InSync`. A login that owns through a no-login owner role reads the same.
+The executor reads a schema from `pg_catalog`, which lists every object to every
+role, so the report does not depend on what the login holds. The login this page
+describes gets the report a superuser gets, and a login that owns through a
+no-login owner role reads the same:
 
 | Created by another role | The login | The login with `pg_read_all_data` | A superuser |
 | --- | --- | --- | --- |
-| A table | not reported | `tables_removed` | `tables_removed` |
-| That table's primary key | not reported | not reported | `constraints_removed` |
+| A table | `tables_removed` | `tables_removed` | `tables_removed` |
+| That table's primary key | `constraints_removed` | `constraints_removed` | `constraints_removed` |
 | A view | `views_removed` | `views_removed` | `views_removed` |
 | A function | `functions_removed` | `functions_removed` | `functions_removed` |
 | An index on a table the login owns | `indexes_removed` | `indexes_removed` | `indexes_removed` |
+| A column on a table the login owns | `columns_removed` | `columns_removed` | `columns_removed` |
+| A table in a schema the login holds no `USAGE` on | `tables_removed` | `tables_removed` | `tables_removed` |
 
-A change to a table the login owns is reported whoever made it. The same gap
-covers a table in a schema the login holds no `USAGE` on. A table the desired
-schema declares reads as missing when the login holds nothing on it: the report
-counts `tables_added`, rated safe, the plan says `CREATE TABLE`, and its Apply
-fails because the relation already exists, with an unknown outcome.
+A table the desired schema declares reads as present whoever owns it: no finding,
+and the plan answers `no-changes`. Do not grant `pg_read_all_data` for this. It
+changes nothing in the report, and it lets the login read the data of every table
+in every database it can connect to.
 
-Granting `pg_read_all_data` brings the table into the report and leaves its
-constraints out, because `information_schema.table_constraints` does not count
-`SELECT`. The plan then holds a `DROP TABLE` the login cannot run: its Apply
-fails with `must be owner of table` and an unknown outcome. The role also lets
-the login read the data of every table in every database it can connect to. It
-does not close this gap, so do not grant it for this.
+The report also covers every schema the URL covers. With a URL that pins no
+`search_path` that is the whole database, so the table in the last row counts as
+drift, and the command warns on standard error that the plan drops it. Pin
+`search_path` in the URL to leave other schemas out.
 
-Until the pinned executor changes, check for such a table yourself. Run this as
-the login. `pg_catalog` lists every table to every role, so it needs no grant:
+The plan drops what the declaration leaves out, and reading an object does not
+give the login the authority to do that. For the login this page describes, a `DROP`
+of a table, a view or a function another role owns fails with `must be owner of
+table`, or of `view` or `function`, and an unknown outcome. For a table in a schema
+without `USAGE` it fails with `permission denied for schema`, the same way. A `DROP
+INDEX` on a table the login owns runs.
 
-```sql
-SELECT n.nspname, c.relname, pg_get_userbyid(c.relowner)
-FROM pg_catalog.pg_class c
-JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-WHERE c.relkind IN ('r', 'p')
-  AND n.nspname <> 'information_schema'
-  AND n.nspname NOT LIKE 'pg\_%'
-  AND NOT pg_has_role(c.relowner, 'USAGE')
-ORDER BY 1, 2;
-```
+A login that owns the database or the schema can run that `DROP`, whatever privilege
+it holds on the table: `has_table_privilege` reads false, the Apply succeeds, and the
+table and its rows are gone. It takes `allowDestructive: true` and an approval, so
+read what the plan drops before you give either to such a login.
 
-Each row is a table the login does not own, which covers every table the report
-can miss. Have its owner drop one that should not exist. For one that should
-stay, suspend the resource, hand the table to the login with
-`ALTER TABLE ... OWNER TO`, and declare it in the desired schema before resuming:
-the plan drops what the declaration leaves out, and the login can now run that.
+Such a plan does not go away by itself. It is destructive, so the resource stays
+blocked, and every later release of it plans the same `DROP` beside its own change:
+a new column reads `[ADD COLUMN, DROP TABLE]`, and the whole plan stops. Choose one:
 
-A superuser running `ptah schema drift` at the pinned digest gets the whole
-report. Keep that role out of the resource, because an Apply runs with the
-authority of the login.
+- A table that should stay, such as a monitoring agent's: list it in
+  `spec.policy.exclude`. It takes a table, a view, a function or a sequence by name,
+  a table in another schema as `other.t`, and a whole schema as `other.*`. The plan
+  leaves it alone and the rest of the schema converges. `status.target.driftFindings`
+  still counts it, because an Observe reads without exclusions.
+- A table that should not exist: have its owner drop it.
+- A table this schema should manage: suspend the resource, hand the table to the login
+  with `ALTER TABLE ... OWNER TO`, and declare it before resuming.
+
+A login with `USAGE` on no schema on its `search_path` has no current schema. The
+read fails at exit 2 and says so, so an Observe fails rather than finding nothing.
 
 ### MySQL
 
-An account with `SELECT` on the database sees its tables, views, indexes and
-constraints. Triggers and routines take privileges of their own:
+MySQL has no catalog that lists every object to every account, so here the report
+still depends on the privileges, as it did before this build. An account with
+`SELECT` on the database sees its tables, views, indexes and constraints. Triggers
+and routines take privileges of their own:
 
 | Account, on the managed database unless noted | Not reported |
 | --- | --- |

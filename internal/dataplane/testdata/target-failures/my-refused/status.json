@@ -3,6 +3,6 @@
   "command": "migrations status",
   "error": {
     "kind": "database_unreachable",
-    "message": "error connecting to database: failed to ping database: dial tcp 172.20.0.3:3309: connect: connection refused"
+    "message": "error connecting to database: failed to ping database: dial tcp 172.22.0.3:3309: connect: connection refused"
   }
 }

@@ -54,18 +54,29 @@ Ptah v0.14.0 counted nothing, so it carries no `inventory`, and
 `TestDroppedExtensionObservedRefusesACapturedStatusWithoutTheEntry` requires the
 row's predicate to refuse it for that alone.
 
-`postgresql-extension-drift-inventory.json` is derived, not read from a
-cluster. It is what the same row should match since #795, and no run had printed
-it when it was written. Its source digest, findings and applied digest are
-copied from `postgresql-extension-drift.json`. Its `inventory` is the one in
-`internal/dataplane/testdata/drift-feature-extension.json`, the report the Ptah
-v0.18.0 release image printed for the same schema shape, in the form
-`objectInventory` copies it to status:
+`postgresql-extension-drift-inventory.json` is the status the same row matched
+on Kubernetes 1.37.0, in CI job 128166245075 of run 42295975570. The run built
+`63f5de99`, the merge of `1e2fed14` onto `2845812f`, with the Ptah v0.22.0
+executor. It is stored as the row printed it, and the jobs for Kubernetes 1.35
+and 1.36 printed the same findings and inventory. The schema had already started
+the Plan that follows the drift, so the phase reads `Planning`. It names Secrets
+only by name and key and holds no credentials or plan SQL. Its `inventory` equals
+the one in `internal/dataplane/testdata/drift-feature-extension.json`, the report
+the same image printed for the same schema shape in the runner harness:
 `TestExtensionReadingCountsWhatPtahPrinted` and
-`TestObjectInventoryKeepsTheFramedReport` hold it to both.
+`TestObjectInventoryKeepsTheFramedReport` hold it to that report.
 `TestDroppedExtensionObservedRefusesEveryOtherReading` accepts this reading and
-refuses copies of it that change the one field each mistake would change. Replace
-it with the document the row prints once a run has printed one.
+refuses copies of it that change the one field each mistake would change.
+
+`postgresql-login-visibility-drift.json` is the status the data-plane row
+`postgresql-login-visibility-drift` matched in the same job, stored as the row
+printed it. The jobs for Kubernetes 1.35 and 1.36 printed the same findings and
+inventory. The login converged a schema it owns, the server's superuser added a
+table with a primary key, and the next Observe reported both. The phase reads
+`Planning` for the same reason. It names Secrets only by name and key and holds
+no credentials or plan SQL.
+`TestUnreadableTableObservedRefusesEveryOtherReading` accepts this reading and
+refuses copies of it that change the one field each mistake would change.
 
 `journal-plan-published-again.json` is the journal of the schema `storefront`
 in the Ptah Console acceptance lab, read on October 24, 2026 from Kubernetes

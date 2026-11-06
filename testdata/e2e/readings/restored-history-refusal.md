@@ -5,7 +5,8 @@ These readings were captured from the Ptah executor on isolated PostgreSQL
 release image on 2026-11-02, and the MySQL reading with the v0.16.0 release
 image on 2026-10-25, which the v0.17.0 image reproduced record for record on
 2026-11-02. On 2026-11-04 the v0.18.0 release image (`6e1d430e`) reproduced
-both record for record. They exercise the migration selection guard used by
+both record for record, and on 2026-11-06 so did the v0.22.0 release image
+(`0dd9190b`). They exercise the migration selection guard used by
 the operator's `restoredHistoryProof`.
 
 The probe applied the repository's two-migration fixture, then removed

@@ -340,6 +340,18 @@ desired-state author role does not:
 kubectl logs -n application job/<job> -c fetch-schema
 ```
 
+## A Plan that stops without saying why
+
+Ptah refuses some changes rather than plan them, and only its failure to open the
+target or to read the file reaches status. Any other sentence stays in the Pod, and
+what the operator says is `invalid_plan_output: plan command did not complete
+successfully`. Running `ptah schema plan` yourself, at the digest the operator pins,
+prints the sentence.
+
+| What Ptah refused | How it shows | What to do |
+| --- | --- | --- |
+| A view holds `security_invoker=true` or `security_barrier=true` and the desired schema does not state it. Removing the option would widen what the view's readers see. Since Ptah v0.22.0. | An Observe reports `views_modified`, and the Plan fails at every retry. | State the option in the schema and push it with a Ptah v0.22.0 CLI, since v0.18.0 cannot parse it: `true` to keep it, `false` to remove it. Or list the view in `spec.policy.exclude`. |
+
 ## A change a policy fences off
 
 `ProtectedTable` sets `Blocked=True` and leaves `Ready` false, publishes no

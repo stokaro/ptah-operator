@@ -14,13 +14,36 @@ type planSizeCalibration struct {
 	envelope, repeatedWidth int
 }
 
-// Fingerprint digests have fixed lengths. Only the generated default changes
-// between these three native plans; measure its serializer instead of assuming
-// whether this Ptah build escapes HTML-sensitive bytes.
+// planSizeRevisionWidth is the length of the longest revision the row names,
+// "oversize".
+const planSizeRevisionWidth = 8
+
+// planSizeDatabase names the database one revision of the row plans against, and
+// every name on an engine has the same length. Since Ptah v0.19.0 a MySQL plan's
+// scope holds the database name, so a longer name is a longer plan, and the
+// calibration reads any difference between two plans as the width of one repeated
+// byte. A name one byte shorter measures 5 where the serializer writes 6.
+func planSizeDatabase(engine, revision string) (string, error) {
+	if revision == "" || len(revision) > planSizeRevisionWidth {
+		return "", fmt.Errorf("plan-size revision %q is not 1 to %d bytes", revision, planSizeRevisionWidth)
+	}
+	return "e2e_size_" + engine + "_" + revision + strings.Repeat("x", planSizeRevisionWidth-len(revision)), nil
+}
+
+// planSizeWidth is what one repeated byte can take in a plan: itself, or the six
+// bytes of \u003c where the serializer escapes HTML-sensitive bytes.
+func planSizeWidth(width int) bool {
+	return width == 1 || width == 6
+}
+
+// Fingerprint digests have fixed lengths, and planSizeDatabase holds the scope's.
+// Only the generated default changes between these three native plans; measure
+// its serializer instead of assuming whether this Ptah build escapes
+// HTML-sensitive bytes.
 func calibratePlanSize(size32, size33, size32ASCII int) (planSizeCalibration, error) {
 	width := size33 - size32
 	base := size32 - 32*width
-	if width < 1 || width > 6 || size32ASCII-size32 != 1 || base <= 0 || base >= int(plancontract.MaxExecutableBytes) ||
+	if !planSizeWidth(width) || size32ASCII-size32 != 1 || base <= 0 || base >= int(plancontract.MaxExecutableBytes) ||
 		size32 >= int(plancontract.MaxExecutableBytes) || size33 >= int(plancontract.MaxExecutableBytes) || size32ASCII >= int(plancontract.MaxExecutableBytes) {
 		return planSizeCalibration{}, errors.New("native plans do not have the declared size-fixture serializer")
 	}
@@ -28,7 +51,7 @@ func calibratePlanSize(size32, size33, size32ASCII int) (planSizeCalibration, er
 }
 
 func (c planSizeCalibration) lengths(size int) (int, int, error) {
-	if c.envelope <= 0 || c.repeatedWidth < 1 || c.repeatedWidth > 6 || size < c.envelope || size > int(plancontract.MaxExecutableBytes)+1 {
+	if c.envelope <= 0 || !planSizeWidth(c.repeatedWidth) || size < c.envelope || size > int(plancontract.MaxExecutableBytes)+1 {
 		return 0, 0, errors.New("plan-size calibration cannot produce the requested boundary")
 	}
 	return (size - c.envelope) / c.repeatedWidth, (size - c.envelope) % c.repeatedWidth, nil

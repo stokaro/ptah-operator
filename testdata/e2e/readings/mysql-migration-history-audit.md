@@ -13,8 +13,9 @@ whether the table exists.
 - Server image: `mysql:8.4@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb`
 - Executor: the Ptah v0.13.0 release image, source `eb69f8c4435643c5c9f3fbd1c9953b9ba0f44b6f`. On
   2026-10-21 the same probe run with the v0.14.0 release image (`e046527f`) produced this reading
-  record for record, on 2026-11-03 so did the v0.17.0 release image, and on 2026-11-04 the v0.18.0
-  release image (`6e1d430e`), so it stands for those executors unchanged
+  record for record, on 2026-11-03 so did the v0.17.0 release image, on 2026-11-04 the v0.18.0
+  release image (`6e1d430e`), and on 2026-11-06 the v0.22.0 release image (`0dd9190b`), so it stands
+  for those executors unchanged
 - Client address: `172.19.0.3`
 - Database: `ptah_audit_history`
 

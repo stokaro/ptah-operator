@@ -290,8 +290,10 @@ administrator for a `PtahRealm` that lists both, and name it with
 No, and it should not have it. On PostgreSQL, make the login the owner of the
 managed objects or a member of a dedicated no-login owner role, then grant only
 connect, schema usage, and object creation. Widen to extensions, roles, or other
-schemas only when the artifact manages those object kinds. That login cannot see
-a table another role created, so its drift report leaves that table out.
+schemas only when the artifact manages those object kinds. That login still reads
+what another role created, so its drift report names such a table, and it cannot
+drop one unless it owns the database or the schema. List a table that should stay
+in `spec.policy.exclude`.
 
 - [Databases and privileges](../support/databases/)
 

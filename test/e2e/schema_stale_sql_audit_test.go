@@ -71,7 +71,7 @@ func TestSchemaStaleSQLUsesExactRefusedApply(t *testing.T) {
 					return strings.Contains(s, "pg_advisory_unlock(") || strings.Contains(s, "RELEASE_LOCK(")
 				},
 				"columns": func(s string) bool {
-					return strings.Contains(s, "FROM information_schema.columns col") || strings.Contains(s, "FROM information_schema.COLUMNS") && strings.Contains(s, "ORDINAL_POSITION")
+					return strings.Contains(s, postgresColumnReadMark) || strings.Contains(s, "FROM information_schema.COLUMNS") && strings.Contains(s, "ORDINAL_POSITION")
 				},
 			} {
 				t.Run("missing "+name, func(t *testing.T) {
@@ -137,6 +137,39 @@ func schemaJournalStatement(t *testing.T, engine string, line []byte) (string, s
 		t.Fatal(err)
 	}
 	return row.Command, string(value)
+}
+
+// The stale Apply has to have read the columns, so the mark has to name that read
+// and nothing else the contract lets an Apply send. Another catalog read that
+// mentions pg_attribute must not stand in for it. The contract declares that read
+// once for each server line it has witnesses on, since PostgreSQL 18 selects the
+// NOT NULL constraint's name where 17 selects an empty string.
+func TestPostgresColumnReadMarkNamesTheColumnRead(t *testing.T) {
+	t.Parallel()
+	policy, err := newSchemaSQLPolicy("postgresql", schemaAuditDatabase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const serverLines = 2
+	declared, marked, catalogReads := 0, 0, 0
+	for key := range policy.allowed {
+		if key.operation != "stale-apply" {
+			continue
+		}
+		declared++
+		if strings.Contains(key.statement, postgresColumnReadMark) {
+			marked++
+		}
+		if strings.Contains(key.statement, "FROM pg_attribute a") {
+			catalogReads++
+		}
+	}
+	if declared == 0 || marked != serverLines {
+		t.Fatalf("the column read mark matched %d of %d declared statements, want one on each of %d server lines", marked, declared, serverLines)
+	}
+	if catalogReads <= marked {
+		t.Fatalf("%d declared statements read pg_attribute and %d carry the mark, so nothing shows the mark refuses one", catalogReads, marked)
+	}
 }
 
 func TestSchemaStaleSQLAndHarnessPermissionsStayNarrow(t *testing.T) {

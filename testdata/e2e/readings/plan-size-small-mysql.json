@@ -1,9 +1,13 @@
 {
   "format_version": 1,
-  "name": "plan_d08f374f1033",
+  "name": "plan_6cc135662530",
   "dialect": "mysql",
-  "from_fingerprint": "sha256:ef889ae8f2dcac0ef29ee8ba60f148463205e0c7be48f0a22ebc11495252ba5c",
+  "from_fingerprint": "sha256:58747d936f5f2b2c82f40a2746d41e4ccb3cf1b1870800902bc644076b1a6d05",
   "to_fingerprint": "sha256:d70817bceff730714eede5d9c645930e094ae8421b1c43c7283f6c3b4588845b",
+  "scope": {
+    "kind": "schema",
+    "name": "plan_size"
+  },
   "destructive": false,
   "statements": [
     {

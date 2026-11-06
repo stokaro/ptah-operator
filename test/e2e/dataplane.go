@@ -70,6 +70,9 @@ const (
 	extensionPGSecret          = "e2e-postgresql-extension-db"
 	unreadableOCIPGDatabase    = "ptah_e2e_unreadable_oci"
 	unreadableOCIPGSecret      = "e2e-postgresql-unreadable-oci-db"
+	loginVisibilityPGDatabase  = "ptah_e2e_login_visibility"
+	loginVisibilityPGSecret    = "e2e-postgresql-login-visibility-db"
+	loginVisibilityPGLogin     = "ptah_e2e_documented"
 	mysqlUser                  = "ptah_e2e"
 	mysqlDatabase              = "ptah_e2e"
 	mysqlSecret                = "e2e-mysql-db"
@@ -135,9 +138,12 @@ type fixtureCredentials struct {
 	podMetadataPGURL   string
 	extensionPGURL     string
 	unreadableOCIPGURL string
-	mysqlPassword      string
-	mysqlRootPassword  string
-	mysqlURL           string
+	// loginVisibilityPGURL connects as the login support/databases.md documents,
+	// with the password every other PostgreSQL URL here carries.
+	loginVisibilityPGURL string
+	mysqlPassword        string
+	mysqlRootPassword    string
+	mysqlURL             string
 }
 
 func deriveFixtureCredentials(namespace string) fixtureCredentials {
@@ -156,8 +162,10 @@ func deriveFixtureCredentials(namespace string) fixtureCredentials {
 		podMetadataPGURL:   pgURL(podMetadataPGDatabase),
 		extensionPGURL:     pgURL(extensionPGDatabase),
 		unreadableOCIPGURL: pgURL(unreadableOCIPGDatabase),
-		mysqlPassword:      mysqlPassword,
-		mysqlRootPassword:  "e2eMyRoot" + suffix + "Q7",
+		loginVisibilityPGURL: "postgres://" + loginVisibilityPGLogin + ":" + pgPassword + "@" + pgService + "." + namespace +
+			".svc.cluster.local:5432/" + loginVisibilityPGDatabase + "?sslmode=disable",
+		mysqlPassword:     mysqlPassword,
+		mysqlRootPassword: "e2eMyRoot" + suffix + "Q7",
 		mysqlURL: "mysql://" + mysqlUser + ":" + mysqlPassword + "@tcp(" + mysqlService + "." + namespace +
 			".svc.cluster.local:3306)/" + mysqlDatabase,
 	}

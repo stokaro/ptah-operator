@@ -224,9 +224,9 @@ func TestDecodeSchemaApplyRefusesWhatItCannotAccountFor(t *testing.T) {
 // for one added column on PostgreSQL 17, the plan read and the plan validation a
 // Plan runs, stored as printed by `make runner-harness-write`. v0.13.0 printed version 1 of both, v0.14.0 version 2 of
 // both, v0.15.0 through v0.17.0 plan version 2 and apply version 3, and
-// v0.18.0 plan version 3 and apply version 4, each naming its command. A
-// decoder held only to fixtures written here would not have noticed any of
-// those moves.
+// v0.18.0 through v0.22.0 plan version 3 and apply version 4, each naming its
+// command. A decoder held only to fixtures written here would not have noticed
+// any of those moves, or the scope v0.19.0 added to the plan it embeds.
 func TestDecodeSchemaReportsPtahPrinted(t *testing.T) {
 	t.Parallel()
 

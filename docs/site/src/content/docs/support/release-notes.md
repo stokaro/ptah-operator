@@ -26,9 +26,10 @@ find a desired file Ptah could not read has to match
 `desired_source_unreadable`. A pipeline that ships Pod logs now receives what the
 database answered when an Apply fails, row values included, so decide what it may
 store first. A plan waiting for approval has to be approved again
-once the executor moves to Ptah v0.18.0, and a database audit that lists what
-the executor sends to PostgreSQL has to expect drift to list the schemas
-first, and four rewritten catalog reads. A script that matches the whole text
+once the executor moves to Ptah v0.22.0, a database audit that lists what the
+executor sends to PostgreSQL has to expect reads of `pg_catalog` in place of
+`information_schema`, and `kubectl ptah` and Ptah Console have to move with the
+operator. A script that matches the whole text
 of `result publication retention has not authorized deletion` has to match its
 start. A script that reads `status.target.inventory` has to expect a kind that
 is not a stem. Ptah Console up to 0.3.x misstates such a kind until
@@ -37,7 +38,31 @@ it says a dropped extension's counts and findings disagree, and shows a changed
 policy at 100% coverage with its finding under other findings. A migration Apply
 now writes the approver's username to the target database, so check what that
 means for the retention of its backups and dumps if the name is an email address.
-Nothing else.
+The move to Ptah v0.22.0 can also change what a running schema reports and plans,
+which the next paragraph covers. Nothing else.
+
+Ptah v0.22.0 compares more than the executor before it, so a database nobody
+touched can leave `InSync` on its first read after the upgrade if it differs from
+its declaration, as an adopted one or one with a hand change can. It now finds a
+column's fractional-seconds precision on PostgreSQL and MySQL
+([stokaro/ptah#5405](https://github.com/stokaro/ptah/pull/5405)), an identity or a
+`serial` default the declaration does not match
+([#5448](https://github.com/stokaro/ptah/pull/5448),
+[#5424](https://github.com/stokaro/ptah/pull/5424),
+[#5454](https://github.com/stokaro/ptah/pull/5454)), and a schema the artifact
+declares and the database lacks
+([#5402](https://github.com/stokaro/ptah/pull/5402)). Ptah rates those statements
+safe. The operator reads a retyped column and any `DROP` as destructive itself, so
+`ALTER COLUMN ... TYPE timestamp(0)`, MySQL `MODIFY COLUMN`, `DROP IDENTITY` and
+`DROP DEFAULT` stop at `allowDestructive` and then wait for an approval under every
+policy. Read them before you approve: the first two lose a column's fractional
+seconds. What only adds is not stopped: under `apply: Always` an identity or a
+sequence default the declaration asks for runs with nobody looking, and so does
+`CREATE SCHEMA`, which under the documented login fails with `permission denied for
+database` and an unknown outcome. Set `apply: OnApproval` until you have read the
+first report after the upgrade. `spec.suspend: true` holds a resource too, but it
+starts no read, so run `ptah schema drift` at the new digest yourself to see what
+it would report.
 
 - **One command to install.** A release now publishes its chart to
   `oci://ghcr.io/stokaro/charts/ptah-operator` with its images stamped in, signed
@@ -142,16 +167,60 @@ Nothing else.
   retires the claim, and no Job runs. Before, the run went ahead under the
   withdrawn approval. Once the Job exists, deleting the approval changes nothing
   about the run.
-- **Executor.** The verified executor is now Ptah v0.18.0. A new executor
+- **Executor.** The verified executor is now Ptah v0.22.0. A new executor
   retires the execution binding, as in 0.2.9: approve again whatever was
-  waiting, after the resource has read its database with v0.18.0 and planned.
-  Applied state is not touched. v0.18.0 names its command in every document
+  waiting, after the resource has read its database with v0.22.0 and planned.
+  Applied state is not touched. Ptah v0.18.0 names its command in every document
   and moves the plan, apply and migration document versions; this operator
   reads them and refuses the old ones, so the operator and the executor move
   together. On PostgreSQL, drift now reads every schema the URL covers, as
   planning already did: with a URL that pins no `search_path`, the tables of a
   schema the desired schema declares nothing in count as drift, the same
-  tables a plan already proposed to drop.
+  tables a plan already proposed to drop. Plans are written in Ptah's exact
+  statement style ([stokaro/ptah#5341](https://github.com/stokaro/ptah/pull/5341)):
+  the comment lines in front of a statement are gone, and a drop reads `DROP TABLE
+  "name"` where it read `DROP TABLE IF EXISTS "name" CASCADE`, so `kubectl ptah plan
+  -o sql` and a database audit show different text. Ptah now rates a view rebuilt for
+  a changed column list `warning`. The operator still reads its `DROP VIEW` as
+  destructive, so that plan is held as it was.
+- **A drop stops at what depends on it.** A table or column with a dependent the
+  plan does not name, such as a view or a foreign key in a schema the URL leaves out
+  or an object under `spec.policy.exclude`, used to go, and `CASCADE` took the view
+  or the key with it without a word. That Apply now fails with `cannot drop table
+  parent because other objects depend on it` (`2BP01`), an unknown outcome, and
+  nothing dropped. The next plan holds the same statement, so approving it again
+  fails the same way. Change or remove the dependent first, or keep the table or
+  column in the declaration.
+- **A view with a security option the artifact does not state.** A view holding
+  `security_invoker=true` or `security_barrier=true` that the artifact leaves out
+  read as converged. Now an Observe reports `views_modified`, and the Plan stops with
+  `invalid_plan_output: plan command did not complete successfully`, because the plan
+  that removed the option would widen what readers see
+  ([stokaro/ptah#5361](https://github.com/stokaro/ptah/pull/5361)). The resource does
+  not converge until you state the option in an artifact pushed with a v0.22.0 CLI,
+  or list the view in `spec.policy.exclude`.
+  [A Plan that stops without saying why](../../troubleshoot/condition-reasons/#a-plan-that-stops-without-saying-why)
+  has what to do.
+- **A plan's scope.** Since v0.19.0 Ptah records in each plan what the URL
+  covered, and this release reads that field. `kubectl ptah` and any Ptah Console
+  built on an earlier operator refuse such a plan as unsupported, so move them
+  with the operator.
+- **A table the login cannot read.** The executor reads a PostgreSQL schema
+  through `pg_catalog` for every role, so
+  [the login these pages describe](../databases/#what-the-login-cannot-see) now
+  reports a table another role added, and its primary key, as a superuser would.
+  A schema that read `InSync` because its login could not see such a table reports
+  it after its next read, though the database has not changed, and the plan drops
+  it. That plan is destructive, so it stays blocked unless `allowDestructive` is
+  set, and until someone acts every later release of that resource plans the same
+  `DROP` beside its own change and stops with it. With `allowDestructive` and an
+  approval the Apply fails with `must be owner of table`, unless the login owns the
+  database or the schema: then the table and its rows are gone, whatever privilege
+  the login holds on the table. For a table that should stay, such as a monitoring
+  agent's, list it in `spec.policy.exclude`. A table the desired schema declares no
+  longer reads as missing when the login holds nothing on it. MySQL accounts still
+  see what their privileges show, which
+  [stokaro/ptah#5497](https://github.com/stokaro/ptah/issues/5497) tracks.
 - **Extensions and policies in the inventory.** `status.target.inventory` now
   counts what a feature owner compares, which Ptah v0.18.0 reports. An entry
   `ptah.run/pgextension/extension-change` with `desired: 1` and `observed: 0`

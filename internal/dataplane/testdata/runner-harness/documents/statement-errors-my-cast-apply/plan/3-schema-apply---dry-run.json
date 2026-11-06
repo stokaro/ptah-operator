@@ -2,11 +2,11 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "dry-run",
-  "plan_name": "plan_f4543fb7ed18",
-  "plan_digest": "sha256:87c4016ee17ce5317f0b11ec0b2becc5aeddb9a4df79401312622f8492832e36",
+  "plan_name": "plan_5de14a26faee",
+  "plan_digest": "sha256:ca6c477bf8c0a34e703ddcf000e2081d8a16577d349955230089fc50a22ae3ce",
   "units": [
     {
-      "sql": "-- Modify table: items\n-- Modify column items.qty: type: text -\u003e integer\nALTER TABLE `items` MODIFY COLUMN `qty` integer"
+      "sql": "ALTER TABLE `items` MODIFY COLUMN `qty` integer"
     }
   ]
 }

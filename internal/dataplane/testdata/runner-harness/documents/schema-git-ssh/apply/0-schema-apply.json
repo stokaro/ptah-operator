@@ -3,7 +3,7 @@
   "command": "schema apply",
   "outcome": "applied",
   "plan_name": "plan_39728415ad91",
-  "plan_digest": "sha256:36a62c9505da0b854e1c48a8df799586abcaef5baf36c362d5aaeddeaf33eaa2",
+  "plan_digest": "sha256:7f889b089646e87b835554a96739fbfcc4f0255c87d241d47dc9f3fe77abc0fa",
   "units": [
     {
       "sql": "CREATE TABLE \"e2e_git_items\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" text NOT NULL\n)"
