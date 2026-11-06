@@ -13,7 +13,9 @@ and runs that text. Most of the differences below follow from that.
 
 We build Ptah Operator, so check the evidence. We ran released Ptah Operator
 0.2.9 and SchemaHero 0.26.2 on one Kubernetes 1.37 cluster with PostgreSQL 17.11,
-each scenario in its own namespace and database, on November 6, 2026. The
+each scenario in its own namespace and database, on November 6, 2026. Both
+connected as an [ordinary login](../../support/databases/#postgresql-authority), and
+hand edits ran as a separate superuser. The
 [comparison on the blog](https://blog.ptah.run/posts/ptah-operator-vs-schemahero/)
 has the commands, the manifests and the recorded output for both sides.
 
@@ -24,7 +26,7 @@ has the commands, the manifests and the recorded output for both sides.
 | The database changed after review | Ran the old SQL, failed 32 times in three minutes, then applied it unattended once it could | Refused before any statement ran and planned again |
 | The spec changed again before approval | Ran the replaced plan, so the database no longer matched the spec | Refused the old fingerprint |
 | Unattended removal of a column with data | Dropped the column and its data | Blocked the plan and kept the data |
-| A hand edit to the database | No migration and no log line in five minutes | Reported in 78 seconds, by category, with a one-minute interval |
+| A hand edit to the database | No migration and no log line in five minutes | Reported in 81 seconds, by category, with a one-minute interval, except a table the login cannot read ([tracked](https://github.com/stokaro/ptah-operator/issues/792)) |
 | A statement that fails | Retried 30 times in two minutes, then ran unattended once it could | Warned in the plan, did not retry, and required a new approval |
 | Who approved | Recorded any name passed to `--actor` | Recorded the Kubernetes identity, and can refuse the author |
 | PostgreSQL objects in one desired schema | No fields for check constraints, partial or expression indexes, enums, generated columns, row-level security, policies, comments or partitioning | All of these created and converged, with a partitioned parent table only: a schema file cannot yet declare `PARTITION OF` ([tracked](https://github.com/stokaro/ptah/issues/5506)) |
