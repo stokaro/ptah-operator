@@ -21,6 +21,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -341,13 +342,20 @@ func (p program) writer(opts options) (*remote.Repository, error) {
 	return repository(opts, &auth.Credential{Username: actor, Password: token})
 }
 
+// registryClient has a transport of its own. retry.DefaultClient rides on
+// http.DefaultTransport, and anything else in the process can close that
+// transport's idle connections under a request about to use one. Closing an
+// httptest.Server does exactly that, which failed a request in a parallel test
+// with "http: CloseIdleConnections called".
+var registryClient = &http.Client{Transport: retry.NewTransport(http.DefaultTransport.(*http.Transport).Clone())}
+
 func repository(opts options, credential *auth.Credential) (*remote.Repository, error) {
 	target, err := remote.NewRepository(opts.repository)
 	if err != nil {
 		return nil, fmt.Errorf("repository %q: %w", opts.repository, err)
 	}
 	target.PlainHTTP = opts.plainHTTP
-	client := &auth.Client{Client: retry.DefaultClient, Cache: auth.NewCache()}
+	client := &auth.Client{Client: registryClient, Cache: auth.NewCache()}
 	if credential != nil {
 		client.Credential = auth.StaticCredential(target.Reference.Registry, *credential)
 	}

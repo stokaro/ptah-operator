@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"oras.land/oras-go/v2/registry/remote/retry"
 
 	"github.com/stokaro/ptah-operator/hack/chartstamp"
 	"github.com/stokaro/ptah-operator/hack/chartstamp/chartstamptest"
@@ -365,4 +368,20 @@ func TestDispatchRefusesWhatItCannotRun(t *testing.T) {
 	f.writeManifest(t, strings.Replace(unrecordedManifest, "version=", "release=", 1))
 	assertError(t, f.call(t, "stamp", "-chart", f.chart), "no version record")
 	assertError(t, f.call(t, "stamp", "-chart", filepath.Join(t.TempDir(), "absent.tgz")), "no version record")
+}
+
+// Closing an httptest.Server closes the idle connections of
+// http.DefaultTransport, and another fixture's registry closes while this one is
+// in use, so a client on that transport can fail with "http:
+// CloseIdleConnections called". The race is too narrow to drive from a test, and
+// what removes it is not sharing the transport.
+func TestTheRegistryClientDoesNotRideOnTheDefaultTransport(t *testing.T) {
+	t.Parallel()
+	transport, ok := registryClient.Transport.(*retry.Transport)
+	if !ok {
+		t.Fatalf("the registry client's transport is %T", registryClient.Transport)
+	}
+	if transport.Base == nil || transport.Base == http.DefaultTransport {
+		t.Errorf("the registry client's transport sits on %v, which is http.DefaultTransport", transport.Base)
+	}
 }
