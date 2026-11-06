@@ -34,10 +34,20 @@ and observes again. The operator does not contain Ptah; it runs one as a Job.
 
 ### We use versioned migrations. Can I point `PtahSchema` at a migration directory so the operator runs `up`? {#ptahschema-and-migration-directory}
 
-No. `PtahSchema` reconciles a desired schema, and no resource applies a migration
-directory today. Run `ptah migrations up` against a pinned artifact from your own
-pipeline or Job; that is a different delivery route, not different content for
-`PtahSchema`.
+No. `PtahSchema` reconciles a desired schema. `PtahMigration` is the resource for
+a migration directory: the operator plans the pending files, and they run under
+the same exact-plan approval.
+
+- [Run versioned migrations](../use/migrations/)
+
+### How does the operator compare with SchemaHero? {#compare-schemahero}
+
+Both declare a schema as Kubernetes resources. Ptah Operator binds an approval
+to the state of the database and refuses to run when that state has moved.
+SchemaHero 0.26.2 binds an approval to the text of the SQL and runs that text.
+SchemaHero is quicker to install and lists more engines.
+
+- [Compared with SchemaHero](../start/compare-schemahero/)
 
 ### Does the operator create the database? {#operator-does-not-provision}
 
