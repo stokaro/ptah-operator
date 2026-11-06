@@ -202,9 +202,9 @@ app.kubernetes.io/component: metrics
       (printf "--webhook-port=%v" .Values.webhook.port)
       "--webhook-cert-dir=/certs"
       (printf "--controller-image=%s" (include "ptah-operator.controllerImage" .))
-      (printf "--executor-image=%s" .Values.execution.executorImage)
-      (printf "--runner-image=%s" .Values.execution.runnerImage)
-      (printf "--ptah-version=%s" .Values.execution.ptahVersion)
+      (printf "--executor-image=%s" (include "ptah-operator.executorImage" .))
+      (printf "--runner-image=%s" (include "ptah-operator.runnerImage" .))
+      (printf "--ptah-version=%s" (include "ptah-operator.ptahVersion" .))
       (printf "--target-lock-namespace=%s" (include "ptah-operator.coordinationNamespace" .))
 	  (printf "--controller-service-account-username=system:serviceaccount:%s:%s" .Release.Namespace (include "ptah-operator.serviceAccountName" .))
       (printf "--default-tolerations-enabled=%t" .Values.admission.defaultTolerationsEnabled)
@@ -670,6 +670,55 @@ Secret it has to refuse.
 {{- $result -}}
 {{- end -}}
 
+{{/*
+The images a release stamped into this chart, as JSON, with every field empty
+in a chart from the source tree. hack/chartpublish writes them into Chart.yaml
+of the chart a release publishes to its OCI registry and changes nothing else.
+
+They are annotations rather than defaults in values.yaml because Helm merges
+values before a template sees them. A stamped default and a value somebody set
+would be the same thing here: an executor override would keep the stamped
+version without anyone choosing it, and a --reuse-values upgrade would carry
+the previous release's digests into the next chart. With values.yaml left as
+it is, an empty value always means nobody set it, and a stamp cannot be reached
+from a values file at all.
+*/}}
+{{- define "ptah-operator.stampedImages" -}}
+{{- $annotations := default dict .Chart.Annotations -}}
+{{- dict
+      "image" (default "" (index $annotations "operator.ptah.run/stamped-image"))
+      "executor" (default "" (index $annotations "operator.ptah.run/stamped-executor-image"))
+      "ptahVersion" (default "" (index $annotations "operator.ptah.run/stamped-ptah-version"))
+    | toJson -}}
+{{- end -}}
+
+{{/*
+A stamped chart names one release: one image for the manager and the runner,
+and one executor with the Ptah version verified for it. Each of those is taken
+whole or replaced whole, so that overriding half of one cannot pair an image
+with a version or a build it was not released with.
+*/}}
+{{- define "ptah-operator.validateStampedSelection" -}}
+{{- $stamp := include "ptah-operator.stampedImages" . | fromJson -}}
+{{- if or $stamp.image $stamp.executor $stamp.ptahVersion -}}
+{{- $pattern := `^[^[:space:]@]+@sha256:[0-9a-f]{64}$` -}}
+{{- if not (and (regexMatch $pattern $stamp.image) (regexMatch $pattern $stamp.executor) $stamp.ptahVersion) -}}
+{{- fail "this chart carries an incomplete release stamp; install a chart a release published, or the release's chart asset with explicit values" -}}
+{{- end -}}
+{{- $digest := default "" .Values.image.digest -}}
+{{- $runner := default "" .Values.execution.runnerImage -}}
+{{- $repositoryMoved := ne .Values.image.repository (first (splitList "@" $stamp.image)) -}}
+{{- if and (or $digest $runner $repositoryMoved) (not (and $digest $runner)) -}}
+{{- fail (printf "this chart runs %s as both the manager and the runner; to select another, set image.digest and execution.runnerImage together, with image.repository if it moved" $stamp.image) -}}
+{{- end -}}
+{{- $executor := default "" .Values.execution.executorImage -}}
+{{- $version := default "" .Values.execution.ptahVersion -}}
+{{- if or (and $executor (not $version)) (and $version (not $executor)) -}}
+{{- fail (printf "this chart runs executor %s as Ptah %s; to select another, set execution.executorImage and execution.ptahVersion together, so the version identifies that image" $stamp.executor $stamp.ptahVersion) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "ptah-operator.managerImage" -}}
 {{- /* Neither key is a chart value: the schema refuses both, and a render
       that skips schema validation still refuses them by name rather than
@@ -680,10 +729,28 @@ Secret it has to refuse.
 {{- if .Values.image.testIdentityDigest -}}
 {{- fail "image.testIdentityDigest is not a chart value; use image.digest with a registry manifest digest, not a Docker image ID" -}}
 {{- end -}}
+{{- include "ptah-operator.validateStampedSelection" . -}}
+{{- $stamp := include "ptah-operator.stampedImages" . | fromJson -}}
+{{- if and $stamp.image (not .Values.image.digest) -}}
+{{- $stamp.image -}}
+{{- else -}}
 {{- if not (regexMatch `^sha256:[0-9a-f]{64}$` (default "" .Values.image.digest)) -}}
 {{- fail "image.digest must pin the manager with sha256:<64 lowercase hex>; use a registry manifest digest, including for local registries" -}}
 {{- end -}}
 {{- printf "%s@%s" .Values.image.repository .Values.image.digest -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "ptah-operator.runnerImage" -}}
+{{- default (include "ptah-operator.stampedImages" . | fromJson).image .Values.execution.runnerImage -}}
+{{- end -}}
+
+{{- define "ptah-operator.executorImage" -}}
+{{- default (include "ptah-operator.stampedImages" . | fromJson).executor .Values.execution.executorImage -}}
+{{- end -}}
+
+{{- define "ptah-operator.ptahVersion" -}}
+{{- default (include "ptah-operator.stampedImages" . | fromJson).ptahVersion .Values.execution.ptahVersion -}}
 {{- end -}}
 
 {{- define "ptah-operator.controllerImage" -}}
@@ -691,18 +758,19 @@ Secret it has to refuse.
 {{- end -}}
 
 {{- define "ptah-operator.validateExecutionImages" -}}
+{{- include "ptah-operator.validateStampedSelection" . -}}
 {{- $pattern := `^[^[:space:]@]+@sha256:[0-9a-f]{64}$` -}}
-{{- if not (regexMatch $pattern .Values.execution.executorImage) -}}
+{{- if not (regexMatch $pattern (include "ptah-operator.executorImage" .)) -}}
 {{- fail "execution.executorImage must be an image pinned with @sha256:<64 lowercase hex>" -}}
 {{- end -}}
 
-{{- if not (regexMatch $pattern .Values.execution.runnerImage) -}}
+{{- if not (regexMatch $pattern (include "ptah-operator.runnerImage" .)) -}}
 {{- fail "execution.runnerImage must be an image pinned with @sha256:<64 lowercase hex>" -}}
 {{- end -}}
 {{- end -}}
 
 {{- define "ptah-operator.validatePtahVersion" -}}
-{{- $version := default "" .Values.execution.ptahVersion -}}
+{{- $version := include "ptah-operator.ptahVersion" . -}}
 {{- if or (eq (trim $version) "") (ne (trim $version) $version) -}}
 {{- fail "execution.ptahVersion is required and must identify the build in execution.executorImage" -}}
 {{- end -}}

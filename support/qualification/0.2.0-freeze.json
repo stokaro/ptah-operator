@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-11-06T15:42:15.348232+00:00",
+  "frozenAt": "2026-11-06T16:13:13.950688+00:00",
   "profileSourceCommit": "1259f4d59343fef049307085e3ea77d2971677cb",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
@@ -28,11 +28,11 @@
     },
     {
       "path": "support/ptah.json",
-      "sha256": "95929944968875a6b86ca0d0ddeffe07c051dc32601dfd983209b30b014d4ad7"
+      "sha256": "d445b7bfa0bcc598a5701391021051d2c8b2114001d5a1e1e78e49394dbe511c"
     },
     {
       "path": "docs/site/src/content/docs/support/databases.md",
-      "sha256": "3d22fa1e835f6b7f7a8ea7f2380c7a740803336433de45ec5a5dadb64f5a1426"
+      "sha256": "03a9cb10b282bb3705974ad23d9fa303bd890787e27731a6a811b529e1a88565"
     },
     {
       "path": "support/qualification/kindnet/Dockerfile",
@@ -79,10 +79,10 @@
     "disposition": "v0.2.9 is the published predecessor of the next candidate. The upgrade from it is walked through both releases' guides by support/qualification/probes/fresh_install.py --upgrade-from on both platforms; the synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 69,
+  "revision": 70,
   "supersedes": {
-    "freezeCommit": "c1776289e1bd94268223d74fa44b69fe654d5e46",
-    "sha256": "3d52fe2f24ef0d0673ab8cdfaa4e70bb4601210764b4db0a01afa9337bea92aa"
+    "freezeCommit": "4a51d7a7879ace9cbee1f6e3fdf3f102fbb25125",
+    "sha256": "4e75c67f1d613d471d8bbaa06a2ea39211afda43bf19be06eb7a3e877c5401bd"
   },
-  "revisionReason": "The databases page now says what the login it documents cannot see at the pinned Ptah v0.18.0, measured on PostgreSQL 17.11 and MySQL 8.4.11 (#792), and no longer says that login has the catalog visibility it needs. It names no new privilege the supported engines require. Phases, scenarios, cells, platforms, the profile and its targets are unchanged."
+  "revisionReason": "Say that the chart a release publishes to its OCI registry carries that release's executor and version, in the edge row's declared statement and in the databases page. The chart asset and the chart in the source tree still require both, and the build under test, phases, scenarios, cells, platforms, the profile and its targets are unchanged."
 }

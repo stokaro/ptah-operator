@@ -84,8 +84,9 @@ about a minute. A stopping manager starts no new Job, and one whose dispatch
 had already begun finishes creating it, so the next leader adopts that Job
 instead of recording a run nobody accounted for.
 
-Supply digest-pinned manager, executor and runner images. The chart refuses all
-three when only a tag is supplied, and there is no local-tag mode:
+Install with digest-pinned manager, executor and runner images. The chart a
+release publishes carries them, and any chart refuses all three when only a tag
+is supplied. There is no local-tag mode:
 `image.allowMutableTag` and `image.testIdentityDigest` are not chart values, so
 a values file that still names either fails schema validation, and a render
 that skips schema validation refuses them by name. Manager Pods, hooks and
@@ -259,9 +260,10 @@ unchanged. Correct the reported conflict or API reachability problem and rerun
 the identical candidate chart, image and values.
 
 A hook that reports the chart and the manager image come from different
-releases refused before it read the cluster. `--reuse-values` keeps the
-previous `image.digest` under a new chart; set `image.digest` to the one
-published with the chart and rerun.
+releases refused before it read the cluster. `--reuse-values` keeps a previous
+`image.digest` you set under a new chart; set `image.digest` to the one
+published with the chart and rerun. A release installed from the published chart
+with no values has none to keep, so its next chart brings its own images.
 
 A CRD that lacks the schema version or the schema digest is refused before any
 CRD mutation, even when its live normalized `spec` matches the candidate

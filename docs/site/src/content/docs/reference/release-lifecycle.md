@@ -71,7 +71,7 @@ In order, it:
    each existing CRD, and waits for both `Established=True` and
    `NamesAccepted=True`.
 
-The first step is what refuses a `--reuse-values` upgrade that keeps the
+The first step is what refuses a `--reuse-values` upgrade that keeps a
 previous `image.digest` under a new chart, and a new image under an old chart.
 Without it, the first pairing would leave the running release to the new
 chart's Deployments, whose verifier refuses to start the old image, and the

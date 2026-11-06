@@ -825,6 +825,7 @@ jobs:
               printf 'support-evidence-run-id=%s\n' "$TESTED_SUPPORT_EVIDENCE_RUN_ID"
               printf 'kubernetes-support-window=%s\n' "$TESTED_KUBERNETES_SUPPORT_WINDOW"
             } > "$manifest"
+            go run ./hack/chartpublish record -chart "$chart_path" -manifest "$manifest"
           fi
           if [[ "$mode" != published && "$RELEASE_ACTION" == prepare ]]; then
             chart_name="$(basename "$chart_path")"
@@ -1141,6 +1142,24 @@ jobs:
         id: image-signature
         if: steps.transaction.outputs.mode != 'published'
         run: cosign sign --yes "${{ steps.artifacts.outputs.image-repository }}@${{ steps.artifacts.outputs.image-digest }}"
+      - name: Stage the stamped chart by digest
+        id: chart-stage
+        if: steps.transaction.outputs.mode != 'published'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: go run ./hack/chartpublish stage -chart '${{ steps.chart-package.outputs.path }}' -manifest dist/release-manifest.txt
+      - name: Attest the stamped chart
+        id: chart-attestation
+        if: steps.transaction.outputs.mode != 'published'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        with:
+          subject-name: ${{ steps.chart-stage.outputs.repository }}
+          subject-digest: ${{ steps.chart-stage.outputs.digest }}
+          push-to-registry: true
+      - name: Sign the stamped chart
+        id: chart-signature
+        if: steps.transaction.outputs.mode != 'published'
+        run: cosign sign --yes "${{ steps.chart-stage.outputs.reference }}"
       - name: Verify final publication and signatures
         id: final-verify
         env:
@@ -1181,6 +1200,11 @@ jobs:
           docker buildx imagetools inspect --raw \
             '${{ steps.artifacts.outputs.image-tag }}' > "$image_dir/final-tag-index.json"
           cmp "$image_dir/final-index.json" "$image_dir/final-tag-index.json"
+      - name: Verify the stamped chart as a reader
+        id: chart-verify
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: go run ./hack/chartpublish verify -manifest dist/release-manifest.txt
       - name: Publish completed release transaction
         id: publish-release
         env:
@@ -1319,3 +1343,11 @@ jobs:
               exit 1
             fi
           done <<<"$expected_names"
+      # After publication, because this is the name a reader installs by. A rerun on
+      # a published release adds it if it is missing, and it refuses to move one.
+      - name: Give the published chart its version tag
+        id: chart-tag
+        if: env.RELEASE_ACTION == 'publish' || steps.transaction.outputs.mode == 'published'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: go run ./hack/chartpublish tag -manifest dist/release-manifest.txt

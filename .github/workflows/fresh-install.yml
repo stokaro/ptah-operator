@@ -5,7 +5,9 @@ name: Fresh installation
 # A fresh kind cluster, the released assets downloaded and verified with the
 # commands the release guide prints, the chart installed by digest, and the
 # first schema applied, approved and converged. The guide's resource is one
-# engine's, so PostgreSQL and MySQL each get a cluster of their own.
+# engine's, so PostgreSQL and MySQL each get a cluster of their own. For a release
+# that publishes its chart to an OCI registry, the PostgreSQL row installs that
+# chart with no values, and the MySQL row the chart asset by digest.
 # support/qualification/probes/fresh_install.py reads those commands out of the
 # documentation at the release commit; what a reader brings -- the database,
 # a registry and the schema published with the pinned Ptah release's own

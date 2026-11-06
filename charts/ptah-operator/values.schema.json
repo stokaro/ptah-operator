@@ -207,17 +207,16 @@
       "properties": {
         "executorImage": {
           "type": "string",
-          "pattern": "^[^\\s@]+@sha256:[0-9a-f]{64}$"
+          "pattern": "^$|^[^\\s@]+@sha256:[0-9a-f]{64}$"
         },
         "runnerImage": {
           "type": "string",
-          "pattern": "^[^\\s@]+@sha256:[0-9a-f]{64}$"
+          "pattern": "^$|^[^\\s@]+@sha256:[0-9a-f]{64}$"
         },
         "ptahVersion": {
           "type": "string",
-          "minLength": 1,
           "maxLength": 128,
-          "pattern": "^\\S(?:.*\\S)?$"
+          "pattern": "^$|^\\S(?:.*\\S)?$"
         }
       }
     },

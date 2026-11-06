@@ -22,6 +22,8 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/stokaro/ptah-operator/hack/chartstamp"
 )
 
 var (
@@ -425,6 +427,9 @@ func verifyRepository(root, tag string) error {
 	}
 	if appVersion != version {
 		return fmt.Errorf("chart version %q and appVersion %q differ", version, appVersion)
+	}
+	if bytes.Contains(chart, []byte(chartstamp.AnnotationPrefix)) {
+		return errors.New("Chart.yaml in the source tree carries a release stamp, so it would install without the values it has to refuse without")
 	}
 	imageTag, err := nestedScalar(values, "image", "tag")
 	if err != nil {
@@ -1595,7 +1600,8 @@ func verifyWorkflowSemantics(document []byte) error {
 			"chart-package", "client", "evidence-download", "evidence-asset", "artifacts", "image-structure",
 			"asset-attestation", "finalize-journal", "asset-auth", "asset-sync",
 			"image-attestation", "setup-cosign", "image-signature",
-			"final-verify", "publish-release",
+			"chart-stage", "chart-attestation", "chart-signature",
+			"final-verify", "chart-verify", "publish-release", "chart-tag",
 		},
 		map[string]string{
 			"checkout":            "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
@@ -1608,6 +1614,7 @@ func verifyWorkflowSemantics(document []byte) error {
 			"asset-attestation":   "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6",
 			"client":              "goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de",
 			"image-attestation":   "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6",
+			"chart-attestation":   "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6",
 			"setup-cosign":        "sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6",
 			"evidence-download":   downloadArtifactAction,
 		}); err != nil {
@@ -1871,10 +1878,37 @@ func verifyWorkflowSemantics(document []byte) error {
 		"the release list does not show the release published and immutable"); err != nil {
 		return err
 	}
-	if publish.Steps[len(publish.Steps)-1].ID != "publish-release" {
-		return errors.New("publishing the draft must be the final release step")
+	return verifyStampedChartSteps(steps)
+}
+
+// verifyStampedChartSteps holds each step of the chart's path to one exact command
+// and its condition, so what they do lives in hack/chartpublish and its tests. The
+// step order above is what keeps the version tag after publication.
+func verifyStampedChartSteps(steps map[string]workflowStep) error {
+	if err := requireRunBindings(steps, "artifacts",
+		`go run ./hack/chartpublish record -chart "$chart_path" -manifest "$manifest"`); err != nil {
+		return err
 	}
-	return nil
+	const unpublished = "steps.transaction.outputs.mode != 'published'"
+	for id, want := range map[string]struct{ condition, run string }{
+		"chart-stage":     {unpublished, "go run ./hack/chartpublish stage -chart '${{ steps.chart-package.outputs.path }}' -manifest dist/release-manifest.txt\n"},
+		"chart-signature": {unpublished, `cosign sign --yes "${{ steps.chart-stage.outputs.reference }}"` + "\n"},
+		"chart-verify":    {"", "go run ./hack/chartpublish verify -manifest dist/release-manifest.txt\n"},
+		"chart-tag":       {"env.RELEASE_ACTION == 'publish' || steps.transaction.outputs.mode == 'published'", "go run ./hack/chartpublish tag -manifest dist/release-manifest.txt\n"},
+	} {
+		step, err := requireStep(steps, id)
+		if err != nil {
+			return err
+		}
+		if step.If != want.condition || strings.TrimSpace(step.Run) != strings.TrimSpace(want.run) {
+			return fmt.Errorf("release step %q must run %q if %q", id, want.run, want.condition)
+		}
+	}
+	return verifyAttestationStep(steps, "chart-attestation", map[string]string{
+		"subject-name":     "${{ steps.chart-stage.outputs.repository }}",
+		"subject-digest":   "${{ steps.chart-stage.outputs.digest }}",
+		"push-to-registry": "true",
+	}, unpublished)
 }
 
 // constantBranch finds a shell branch whose condition is a constant, which
@@ -2236,6 +2270,20 @@ func verifyReleaseAssets(root, manifestPath, checksumsPath, chartPath, tag, sour
 	if filepath.Base(chartPath) != fields["chart-asset"] || chartDigest != fields["chart-asset-sha256"] {
 		return errors.New("packaged chart does not match the release manifest")
 	}
+	// The registry's chart is derived from this one, so the digest the manifest
+	// records has to be the one these bytes and these identities produce.
+	stamped, err := chartstamp.Build(chart, chartstamp.Release{
+		Image:       fields["image"],
+		Executor:    fields["executor"],
+		PtahVersion: fields["executor-ptah-version"],
+		Revision:    sourceSHA,
+	})
+	if err != nil {
+		return fmt.Errorf("stamp the packaged chart: %w", err)
+	}
+	if fields["chart-oci"] != stamped.Reference() {
+		return fmt.Errorf("release manifest chart-oci is %q, and the packaged chart stamps to %q", fields["chart-oci"], stamped.Reference())
+	}
 	// The acceptance evidence sits beside the chart and the checksum file, as
 	// it is uploaded, and it is the bundle of the run the manifest names.
 	evidencePath := filepath.Join(filepath.Dir(checksumsPath), acceptanceEvidenceAsset)
@@ -2347,7 +2395,7 @@ func parseReleaseManifest(
 		"version", "source-repository", "source-ref", "source-sha", "transaction",
 		"image", "image-tag",
 		"executor", "executor-ptah-commit", "executor-ptah-version",
-		"chart-asset", "chart-asset-sha256", "client-assets",
+		"chart-asset", "chart-asset-sha256", "chart-oci", "client-assets",
 		"acceptance-evidence-sha256", "support-evidence-run-id", "kubernetes-support-window",
 	}
 	fields, err := exactRecords(document, wantKeys, "release manifest")
@@ -2394,6 +2442,9 @@ func parseReleaseManifest(
 	wantImageTag := imageName + ":tx-" + sourceSHA + "-" + fields["transaction"]
 	if fields["image-tag"] != wantImageTag {
 		return nil, nil, fmt.Errorf("release manifest image-tag is %q, expected %q", fields["image-tag"], wantImageTag)
+	}
+	if _, err := exactDigest(fields["chart-oci"], chartstamp.Repository); err != nil {
+		return nil, nil, err
 	}
 	return document, fields, nil
 }

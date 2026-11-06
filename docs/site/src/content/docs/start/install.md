@@ -1,11 +1,11 @@
 ---
 title: Install
-description: Installing the chart, and the three values it refuses to guess.
+description: Installing a published release with one command, and the values to set when you select your own images.
 ---
 
 This is the path to your own cluster and your own database. To see the
-operator run against a cluster and database it builds for itself, with no
-digests to choose, read [Try it locally](../try-it/) instead.
+operator run against a cluster and database it builds for itself, read
+[Try it locally](../try-it/) instead.
 
 ## What you need
 
@@ -18,7 +18,6 @@ digests to choose, read [Try it locally](../try-it/) instead.
   life before this operator's first release.
 - `kubectl`, and `jq` for the commands on the pages that follow.
 - The chart, at a version you chose deliberately. The next section is how.
-- Three image digests and one Ptah version, covered below.
 - A database the operator can reach, which [First schema](../first-schema/)
   needs rather than the install. A registry is optional and comes
   [later on that page](../first-schema/#from-a-registry).
@@ -29,8 +28,43 @@ Every command on these pages comes from one version: the chart, the examples
 beside it, and the images it names. Mixing them is the common way a first
 install fails, so choose once and stay there.
 
-A published release is the reproducible choice. Each one ships the chart as a
-`.tgz` with checksums, signatures and build provenance, and
+A published release is the reproducible choice. From v0.2.10, each one publishes
+its chart to an OCI registry with its images already pinned, so installing it
+takes one command and no values. Check who built the chart first:
+
+```sh
+VERSION=<release version, such as 0.2.10>
+gh attestation verify "oci://ghcr.io/stokaro/charts/ptah-operator:$VERSION" \
+  --repo stokaro/ptah-operator \
+  --signer-workflow stokaro/ptah-operator/.github/workflows/release.yml
+helm upgrade --install ptah-operator oci://ghcr.io/stokaro/charts/ptah-operator \
+  --version "$VERSION" \
+  --namespace ptah-system \
+  --create-namespace
+```
+
+The chart carries the manager, runner and executor digests and the verified Ptah
+version of its release, and `helm show chart` prints them. They are the ones the
+release manifest names, and plans and status record them as they record values
+you set. The command above is what most installations need.
+[Install from the registry](../../support/releases/#install-from-the-registry)
+verifies the chart against the release manifest and installs it by digest, with
+its signature checked, for an installation that wants to pin that too. An upgrade
+that moves to a release with a new manager image also needs `--force-conflicts`,
+as [Upgrade](../../use/operations/#upgrade-run) says.
+
+A release before v0.2.10 has no chart in a registry, so it installs from its
+assets with the values below.
+
+### Select your own images
+
+The published chart takes other images, one whole selection at a time:
+`execution.executorImage` together with `execution.ptahVersion`, and
+`image.digest` together with `execution.runnerImage`. It refuses half of either
+pair, so an image and a version cannot drift apart.
+
+To start from no defaults at all, use the chart asset a release ships as a `.tgz`
+with checksums, signatures and build provenance.
 [Releases and provenance](../../support/releases/#verify-before-installation)
 carries the verification.
 
@@ -51,20 +85,20 @@ cd ptah-operator
 git checkout <commit>
 ```
 
-There is no third option: the chart is not published to a Helm repository, and
 `./charts/ptah-operator` without a selected commit is whatever the working tree
 happens to hold.
 
-The manager, runner, and Ptah executor images must be selected explicitly. All
-three are required to use immutable SHA-256 references. The executor version
-is explicit too: it must identify the verified build in the selected executor
-digest and is never inferred from an image tag or supplied by a chart default.
+The chart asset and the chart in the source tree carry no images, so the manager,
+runner, and Ptah executor images must be selected explicitly. All three are
+required to use immutable SHA-256 references. The executor version is explicit
+too: it must identify the verified build in the selected executor digest and is
+never inferred from an image tag.
 
 A release names every one of them in its `release-manifest.txt`. The digest in
 `image` is `<operator-image-digest>`, and the same image is the runner. The
 executor is the Ptah release image the operator was tested with, unchanged:
 the digest in `executor` is `<executor-image-digest>`, and
-`executor-ptah-version` is the `<ptah-version>` to pass with it. The chart does not read the manifest,
+`executor-ptah-version` is the `<ptah-version>` to pass with it. This chart does not read the manifest,
 and it would take any other verified executor just as well; the values below
 are where the choice is made. Authenticate the manifest and verify each image's
 signature first, as
@@ -100,11 +134,12 @@ a GitOps tool that renders with it;
 [What the chart checks](../../use/security/#release-namespace-check) says what
 else they cannot see.
 
-The supplied version is recorded in plans, approvals, Jobs, and applied status
-alongside the executor digest. Verify both values against the Ptah release
-before installation; changing the digest requires verifying and
-supplying its version again. Which Ptah builds have been run against this
-operator is [Ptah compatibility](../../support/ptah/).
+The version is recorded in plans, approvals, Jobs, and applied status alongside
+the executor digest, whichever chart supplied them. When you select an executor
+yourself, verify both values against the Ptah release before installation;
+changing the digest requires verifying and supplying its version again. Which
+Ptah builds have been run against this operator is
+[Ptah compatibility](../../support/ptah/).
 
 The chart supports the Kubernetes window documented in
 [Kubernetes support](../../support/kubernetes/). It intentionally does not

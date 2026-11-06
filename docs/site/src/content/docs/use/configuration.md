@@ -4,8 +4,11 @@ description: What the chart takes, what it requires, and what it deliberately ha
 ---
 
 Every setting below is a Helm value on `charts/ptah-operator`. Three of them
-have no default and the chart refuses to render without them, because each
-names something the operator must not guess.
+have no default in `values.yaml`, and a chart from the source tree or a release's
+chart asset refuses to render without them, because each names something the
+operator must not guess. The chart a release publishes to its OCI registry
+carries that release's answers, as [Install](../../start/install/#choose-a-version-once)
+shows, and takes other images only as a whole selection.
 
 ## The three values with no default
 
@@ -20,13 +23,15 @@ runner protocol version instead. A runner image from a release that speaks
 another protocol refuses every Job before the executor starts, and the resource
 reports `RunnerProtocolMismatch`. Each release
 names the Ptah release image it was tested with by digest in the release
-manifest, as [the executor](../../support/releases/#the-executor) describes;
-the chart still takes it only as an explicit value.
+manifest, as [the executor](../../support/releases/#the-executor) describes.
+The chart in the source tree and the chart asset take it only as an explicit
+value; the published chart carries it as a default.
 
 `execution.ptahVersion` is the identity of the build inside that executor
 digest. It is verified from the image's own provenance and never inferred from
-a tag, so the chart has no default to fall back on. For a release's executor,
-the manifest carries it as `executor-ptah-version`. Which build has actually
+a tag, so `values.yaml` has no default to fall back on. For a release's executor,
+the manifest carries it as `executor-ptah-version`, and the published chart
+refuses an `execution.executorImage` set without it. Which build has actually
 been run against this operator is [Ptah compatibility](../../support/ptah/).
 
 All three are recorded in every plan, approval, Job and applied status, so a
@@ -41,13 +46,13 @@ reader of a converged schema can see exactly what produced it.
 | `image` |  | The image every runtime component runs from: the manager, the certificate rotator and the CRD manager are three commands in one image. |
 | `image.repository` | `ghcr.io/stokaro/ptah-operator` | Repository the manager image is pulled from. |
 | `image.tag` | `"0.2.9"` | Recorded for a reader. The digest below is what is actually pulled. |
-| `image.digest` | `""` | Required registry manifest digest, including for local development. A Docker image ID is not a registry manifest digest. |
+| `image.digest` | `""` | Registry manifest digest, including for local development. A Docker image ID is not a registry manifest digest. Required, unless this chart is one a release published to its OCI registry, which carries the manager and runner image of that release; to replace them there, set this and execution.runnerImage together. |
 | `image.pullPolicy` | `IfNotPresent` | Pull policy for the manager image. AlwaysPullImages in the cluster rewrites this, which is what admission.alwaysPullImagesEnabled declares. |
 | `imagePullSecrets` | `[]` | Pull Secrets added to every Pod this chart creates. |
 | `nameOverride` | `""` | Replaces the chart name in generated object names. |
 | `fullnameOverride` | `""` | Replaces the complete generated name, release prefix included. |
 | `execution` |  | The data plane: the images a database operation runs in, and the Ptah build they carry. The manager dispatches Jobs from these and runs no SQL itself. |
-| `execution.executorImage` | `""` | Both execution images are required and must include @sha256:<64 hex>. ptahVersion is also required, is limited to 128 bytes, and must identify the Ptah build verified for the exact executorImage digest; the chart deliberately has no default. |
+| `execution.executorImage` | `""` | Both execution images must include @sha256:<64 hex>. ptahVersion is limited to 128 bytes and must identify the Ptah build verified for the exact executorImage digest. All three are required, and values.yaml deliberately has no default for them. A chart a release published to its OCI registry carries that release's images; to replace its executor there, set this and ptahVersion together. |
 | `execution.runnerImage` | `""` | The runner image, built from this operator's source, which supervises the executor inside a task Pod and returns its result frame. |
 | `execution.ptahVersion` | `""` | The Ptah build the executorImage digest carries. A plan records it, and an apply is refused when it no longer matches. |
 | `admission` |  | What the cluster's own admission plugins do to the Pods this operator creates. The chart's guards assert the resulting Pod rather than the intent, so these declare what the API server is configured to do. |

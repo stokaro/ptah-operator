@@ -41,7 +41,7 @@ things, and [the next section](#three-states-kept-apart) says what.
 
 The development state. Its guide is at [https://operator.ptah.run/edge/](https://operator.ptah.run/edge/).
 
-**Declared:** No range is claimed. The chart ships no executor default, installation requires both a digest-pinned executorImage and the ptahVersion verified from that image's provenance, and the supported build is exactly the one the lifecycle matrix exercised.
+**Declared:** No range is claimed. The chart in the source tree and the chart asset ship no executor default, and installing either requires both a digest-pinned executorImage and the ptahVersion verified from that image's provenance. The chart a release publishes to its OCI registry carries that release's pair, and refuses half an override. The supported build is exactly the one the lifecycle matrix exercised.
 
 **Verified:**
 
@@ -59,7 +59,7 @@ The development state. Its guide is at [https://operator.ptah.run/edge/](https:/
 
 A released version. Its guide is at [https://operator.ptah.run/v0.2.9/](https://operator.ptah.run/v0.2.9/).
 
-**Declared:** the same as [`edge`](#edge).
+**Declared:** No range is claimed. The chart ships no executor default, installation requires both a digest-pinned executorImage and the ptahVersion verified from that image's provenance, and the supported build is exactly the one the lifecycle matrix exercised.
 
 **Verified:**
 
@@ -71,7 +71,7 @@ A released version. Its guide is at [https://operator.ptah.run/v0.2.9/](https://
 
 A released version. Its guide is at [https://operator.ptah.run/v0.2.8/](https://operator.ptah.run/v0.2.8/).
 
-**Declared:** the same as [`edge`](#edge).
+**Declared:** the same as [`v0.2.9`](#v029).
 
 **Verified:**
 
@@ -83,7 +83,7 @@ A released version. Its guide is at [https://operator.ptah.run/v0.2.8/](https://
 
 A released version. Its guide is at [https://operator.ptah.run/v0.2.7/](https://operator.ptah.run/v0.2.7/).
 
-**Declared:** the same as [`edge`](#edge).
+**Declared:** the same as [`v0.2.9`](#v029).
 
 **Verified:**
 
@@ -95,7 +95,7 @@ A released version. Its guide is at [https://operator.ptah.run/v0.2.7/](https://
 
 A released version. Its guide is at [https://operator.ptah.run/v0.2.6/](https://operator.ptah.run/v0.2.6/).
 
-**Declared:** the same as [`edge`](#edge).
+**Declared:** the same as [`v0.2.9`](#v029).
 
 **Verified:**
 
@@ -107,7 +107,7 @@ A released version. Its guide is at [https://operator.ptah.run/v0.2.6/](https://
 
 A released version. Its guide is at [https://operator.ptah.run/v0.2.5/](https://operator.ptah.run/v0.2.5/).
 
-**Declared:** the same as [`edge`](#edge).
+**Declared:** the same as [`v0.2.9`](#v029).
 
 **Verified:**
 
@@ -119,7 +119,7 @@ A released version. Its guide is at [https://operator.ptah.run/v0.2.5/](https://
 
 A released version. Its guide is at [https://operator.ptah.run/v0.2.4/](https://operator.ptah.run/v0.2.4/).
 
-**Declared:** the same as [`edge`](#edge).
+**Declared:** the same as [`v0.2.9`](#v029).
 
 **Verified:** the same as [`v0.2.5`](#v025).
 
@@ -129,7 +129,7 @@ A released version. Its guide is at [https://operator.ptah.run/v0.2.4/](https://
 
 A released version. Its guide is at [https://operator.ptah.run/v0.2.3/](https://operator.ptah.run/v0.2.3/).
 
-**Declared:** the same as [`edge`](#edge).
+**Declared:** the same as [`v0.2.9`](#v029).
 
 **Verified:** the same as [`v0.2.5`](#v025).
 
@@ -139,7 +139,7 @@ A released version. Its guide is at [https://operator.ptah.run/v0.2.3/](https://
 
 A released version. Its guide is at [https://operator.ptah.run/v0.2.2/](https://operator.ptah.run/v0.2.2/).
 
-**Declared:** the same as [`edge`](#edge).
+**Declared:** the same as [`v0.2.9`](#v029).
 
 **Verified:** the same as [`v0.2.5`](#v025).
 
@@ -149,7 +149,7 @@ A released version. Its guide is at [https://operator.ptah.run/v0.2.2/](https://
 
 A released version. Its guide is at [https://operator.ptah.run/v0.2.1/](https://operator.ptah.run/v0.2.1/).
 
-**Declared:** the same as [`edge`](#edge).
+**Declared:** the same as [`v0.2.9`](#v029).
 
 **Verified:** the same as [`v0.2.5`](#v025).
 
@@ -159,7 +159,7 @@ A released version. Its guide is at [https://operator.ptah.run/v0.2.1/](https://
 
 A released version. Its guide is at [https://operator.ptah.run/v0.2.0/](https://operator.ptah.run/v0.2.0/).
 
-**Declared:** the same as [`edge`](#edge).
+**Declared:** the same as [`v0.2.9`](#v029).
 
 **Verified:** the same as [`v0.2.5`](#v025).
 

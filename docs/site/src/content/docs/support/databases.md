@@ -22,10 +22,11 @@ discovers server capabilities from the live connection and refuses unsupported
 DDL instead of rendering for an asserted version.
 
 Database support is also scoped to the Ptah executor build exercised by the
-matrix. Installation requires both its digest-pinned image and an explicit
-version identity verified from that image's provenance. The chart has no
-executor-version default and cannot silently assign an unrelated version to a
-different digest; both values remain part of every plan and applied binding.
+matrix. Installation requires both its digest-pinned image and a version
+identity verified from that image's provenance: the chart a release publishes
+carries that release's pair, and any other chart takes both as explicit values.
+No chart can silently assign an unrelated version to a different digest; both
+values remain part of every plan and applied binding.
 Which build that is, and what has actually been run against it, is
 [Ptah compatibility](../ptah/).
 
