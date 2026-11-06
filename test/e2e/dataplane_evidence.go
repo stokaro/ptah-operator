@@ -286,14 +286,61 @@ func jobAdmissionBinding(job *batchv1.Job, identity controllerIdentity) error {
 
 // terminalPodEvidence holds a Pod of a terminal Job to complete terminal
 // evidence: the UID the audit selected it by, the Job's controller reference,
-// a terminal phase, no restart, and every declared container terminated, so
-// the logs the audit reads are the whole of what each container wrote.
+// a terminal phase, no restart, and every declared container terminated or
+// never started, so the logs the audit reads are the whole of what each
+// container wrote.
 func terminalPodEvidence(pod *corev1.Pod, podUID, jobUID types.UID) bool {
 	if pod.UID != podUID || !controlledByJob(pod.OwnerReferences, jobUID) ||
 		(pod.Status.Phase != corev1.PodSucceeded && pod.Status.Phase != corev1.PodFailed) || !noRestarts(pod) {
 		return false
 	}
-	return slices.Equal(declaredContainers(pod), terminatedContainers(pod))
+	return slices.Equal(declaredContainers(pod), terminatedContainers(pod)) || stoppedAtInitContainer(pod)
+}
+
+// stoppedAtInitContainer is a failed Pod whose init containers ran in order
+// until one exited nonzero, and in which nothing after that one started. The
+// kubelet leaves the later containers waiting, so they have no log to read. A
+// schema artifact the fetch step cannot parse ends a Pod this way.
+func stoppedAtInitContainer(pod *corev1.Pod) bool {
+	if pod.Status.Phase != corev1.PodFailed {
+		return false
+	}
+	statuses := map[string]corev1.ContainerStatus{}
+	for _, status := range allStatuses(pod) {
+		statuses[status.Name] = status
+	}
+	stopped := false
+	for _, container := range pod.Spec.InitContainers {
+		status := statuses[container.Name]
+		switch {
+		case stopped:
+			if containerStarted(status) {
+				return false
+			}
+		case status.State.Terminated == nil:
+			return false
+		default:
+			stopped = status.State.Terminated.ExitCode != 0
+		}
+	}
+	if !stopped {
+		return false
+	}
+	for _, container := range pod.Spec.Containers {
+		if containerStarted(statuses[container.Name]) {
+			return false
+		}
+	}
+	for _, container := range pod.Spec.EphemeralContainers {
+		if containerStarted(statuses[container.Name]) {
+			return false
+		}
+	}
+	return true
+}
+
+func containerStarted(status corev1.ContainerStatus) bool {
+	return status.State.Running != nil || status.State.Terminated != nil
 }
 
 func declaredContainers(pod *corev1.Pod) []string {
