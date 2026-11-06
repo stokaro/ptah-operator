@@ -46,6 +46,7 @@ export const questionTags = {
   "one-database-two-urls": ["database-access", "configuration"],
   "least-privilege-login": ["database-access", "security"],
   "controller-and-credentials": ["database-access", "security"],
+  "external-secret-store": ["database-access", "security"],
   "reading-convergence-status": ["status"],
   "wait-for-the-operator": ["status"],
   "reporting-an-operator-bug": ["community", "troubleshooting"],

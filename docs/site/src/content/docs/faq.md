@@ -304,6 +304,16 @@ resources, or command arguments.
 
 - [Security model](../use/security/)
 
+### Can I keep database credentials in Vault or a cloud secret manager? {#external-secret-store}
+
+Yes. A tool writes the store's value into a Kubernetes Secret and
+`spec.target.urlFrom` names that Secret. External Secrets Operator and the Vault
+Secrets Operator were both run this way against Vault, with rotation measured.
+No cloud secret manager has been run. The operator has no native integration, so
+it holds no credential for the store.
+
+- [Credentials from an external secret store](../reference/credentials-and-admission/#external-secret-stores)
+
 ## Reading status, and reporting {#g-status}
 
 ### What should my automation read to decide whether a schema is converged? {#reading-convergence-status}

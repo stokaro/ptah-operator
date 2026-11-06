@@ -108,5 +108,5 @@ export const sidebar = [
   { label: 'Conditions', link: '/troubleshoot/conditions/' },
   { label: 'Condition reasons', link: '/troubleshoot/condition-reasons/' },
   { label: 'Events', link: '/troubleshoot/events/' },
-  { label: 'FAQ', link: '/faq/', badge: { text: '31', variant: 'default' } },
+  { label: 'FAQ', link: '/faq/', badge: { text: '32', variant: 'default' } },
 ];
