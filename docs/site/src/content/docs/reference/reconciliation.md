@@ -455,7 +455,8 @@ Every `PtahSchema` and `PtahMigration` keeps a bounded journal of its
 significant events in `status.journal`, so a reader can see when a change was
 planned, approved and applied, how long it took and how it ended, and how
 often something failed, after the Events Kubernetes keeps for about an hour
-and the finished Jobs it keeps for five minutes are gone.
+and the finished Jobs it keeps for five minutes, or 24 hours after a failed Apply a
+person approved, are gone.
 
 | Entry | Written when |
 | --- | --- |

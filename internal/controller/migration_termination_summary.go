@@ -10,6 +10,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/runner"
 )
 
@@ -114,7 +115,10 @@ func summaryMigrationApply(summary runner.Summary) reportedMigrationApply {
 		reported.failure = errors.New(source + what)
 		return reported
 	}
-	run := migrationRunAccount{outcome: migrationRunOutcome(migration.Outcome)}
+	run := migrationRunAccount{log: applyLogHoldsReport, outcome: migrationRunOutcome(migration.Outcome)}
+	if _, known := dataplane.ParseTargetFailureKind(summary.ErrorCode); known {
+		run.log = applyLogSaysNothing
+	}
 	var applied string
 	switch migration.AppliedCount {
 	case 0:

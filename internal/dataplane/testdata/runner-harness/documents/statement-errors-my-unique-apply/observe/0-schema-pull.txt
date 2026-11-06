@@ -1,0 +1,2 @@
+Pulled oci://harness-registry:5000/schemas/statement-errors-my-unique-apply@sha256:c017df75be39923b47879066547fe0d57dbef8f5b627292e7491fd15cddd0df9 to /source/schema.hcl
+Digest: sha256:c017df75be39923b47879066547fe0d57dbef8f5b627292e7491fd15cddd0df9

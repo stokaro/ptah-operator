@@ -268,7 +268,9 @@ deliberately excludes Secrets, plan chunks and ConfigMaps: the chunks are a
 plan's SQL, and a ConfigMap may be the copy of it an Apply mounted. It reads
 the plan manifests, which carry the digests, the statement count and the
 privilege kinds, and operation Pod logs, since
-[Plan results stay out of logs](#pod-logs-carry-plans). Grant the SQL to
+[Plan results stay out of logs](#pod-logs-carry-plans). Those logs can carry row
+values when an Apply fails, as [Output handling](#output-handling) says, so grant
+`pods/log` as you would read access to the rows. Grant the SQL to
 reviewers, with the approver role or `examples/approver-plan-reader-role.yaml`.
 
 These write boundaries reduce the effect of controller bugs and prevent its
@@ -622,7 +624,9 @@ audience is `operator.ptah.run/results`.
 The exact plan is stored in confidential `PtahResultRecord` payloads before
 acknowledgment, then independently validated and published into immutable plan
 chunks. Neither SQL nor reusable delivery credentials belong in diagnostic
-logs, Events, or ordinary status. Access to result records exposes plans; old development credential records
+logs, Events, or ordinary status. A failed Apply's Pod log holds one line of what the
+database answered, with the text the statement holds replaced, as
+[Output handling](#output-handling) says. Access to result records exposes plans; old development credential records
 can also contain private delivery keys. Exclude result records from ordinary
 reader and author roles and cover them with encryption at rest and restricted
 backups. The diagnostic reader example grants no result-record access.
@@ -643,7 +647,8 @@ This legacy transport is outside the stable 0.2.0 qualification profile.
 
 Migration run error text that can disclose database values is removed from the
 structured result in both transports. Failure reports name the outcome and
-affected versions, not the database's free-text description.
+affected versions, not the database's free-text description. Its first line stays
+in the Pod log, as [Output handling](#output-handling) says.
 
 Approval admission fails closed. It binds names to UIDs, rejects a plan whose
 storage commit is incomplete, rejects changed policy bytes or target state, and
@@ -784,8 +789,8 @@ credential-bearing principal DDL.
 
 Native stderr from Plan and Apply is discarded rather than forwarded: under
 `--json` it lists the planned statements, which can carry declared row values.
-Apply native stdout is never copied into the structured result or runner
-diagnostics, including failure paths, and neither is the error sentence its
+Apply native stdout is never copied into the structured result, including failure
+paths, and neither is the error sentence its
 report carries. A failure leaves the runner as a typed code with a sentence of
 the runner's own, apart from the ones listed below. A document
 whose error names why the target could not be opened, from the closed set of
@@ -805,10 +810,14 @@ Ptah's own words reach the frame, a condition and an Event for these failures:
 | A plan that would change a protected table | `protected_table` | The `error.message` of the `schema plan` report, from a command with a database connection, which names the fenced tables | 4 KiB in the frame, then 512 bytes in the Event and 1 KiB in the condition |
 | A Git source a Resolve cannot fetch | `child_exit` | The last line of standard error from the Git pull, which holds the Git credential and no database URL, and names the refusal | 512 bytes, and an Event's 512 include the words in front of it |
 
-One function in the runner handles all of them. It removes the credentials of the
-Pod's environment wherever one appears whole, in any case, replaces control and
-format characters with a space, joins the text onto one line and cuts it at a
-character boundary, in that order.
+One function in the runner handles all of them, and the Pod log line below. It removes
+the credentials of the Pod's environment wherever one appears whole, in any case,
+replaces control and format characters with a space, joins the text onto one line,
+takes the result frame's marker out and cuts it at a character boundary, in that order.
+The marker goes because the manager searches a merged log for it anywhere and these
+lines end in a line break, so a value holding `PTAH_RUNNER_RESULT_V1 12 <digest>` would
+otherwise read as a frame header, and a header naming another digest makes the manager
+refuse the termination summary that stands in for a lost frame.
 
 For a desired file, when Observe, Plan or a migration history read fails and its
 document names no such kind, the runner asks Ptah again in a second child:
@@ -841,6 +850,47 @@ with no runner around them, so their logs hold what Ptah wrote with nothing
 removed. Those containers hold the registry credentials, which is why status and
 Events name only the step and its exit status. Whoever holds `pods/log` reads
 those logs, and whoever reads Pods reads the status.
+
+The first line of a failed Apply's error sentence goes to the operation Pod's log,
+and nowhere else: not to status, an Event, the result frame or the termination
+summary. It is the database's own words, and it can carry a role, a host, a
+database name and row values, such as the value a duplicate key or a failed cast
+quotes. The runner bounds it to 1 KiB. Before that, it compares each quoted part of
+the line with the statement Ptah ends its sentence with, and replaces what they share
+with `[in the statement]`. A database echoes what it refused: measured on MySQL 8.4, a
+statement it could not parse gives `near 'CREAT USER 'app'@'%' IDENTIFIED BY
+'a-password'' at line 1`, and a literal gives `Duplicate entry 'a-literal' for key`.
+Both are replaced, and so is a name the statement declares, because a comparison cannot
+tell a name from a literal. The rest of the sentence is dropped, because it is the
+statement, and a statement is plan SQL, which the diagnostic reader may not read.
+
+What remains is what the database read. A value from a table is not in the statement,
+and no redactor can recognize a row, so the line is exactly as sensitive as the data
+the failed statement touched. Whoever holds `pods/log` in the namespace reads it, the
+diagnostic reader role included, and anything that ships Pod logs elsewhere carries it
+too; decide what such a pipeline may store with that in mind.
+
+The Job keeps that log for 24 hours after it finishes when a person approved the Apply,
+so that person can read it the next morning. Any other Job keeps five minutes.
+What a Pod kept that long still holds: it has no API token, because automatic
+token mounting is disabled. Its projected result token has the receiver as its
+only audience and lasts at most an hour, and the receiver refuses it once the Job
+carries a cleanup TTL or its claim has retired, as it refuses a client certificate
+of the older transport. No credential is in the Pod's spec, but the container runtime
+on the node keeps a stopped container's environment until the Pod is removed, so
+anyone with root on that node can read it for those 24 hours as they could while the
+Pod ran. That is the database URL of the operation container, and for a migration Apply
+the registry or Git credential of its fetch init container as well. Once you have read
+the reason you can end that early: `kubectl delete job -n <namespace> <job>` removes
+the Job and its Pod, and the node drops what it kept. It takes `delete` on `jobs`,
+which the diagnostic reader role does not grant, and no admission policy or webhook
+judges it. The run is already recorded by the time status names the log, so nothing
+waits on the Job, and the resource goes on as it would have. Delete a Job that has
+finished: one that is still running holds a statement. A client other than `kubectl`
+has to ask for `propagationPolicy: Background`, because the API server otherwise leaves
+a Job's Pods behind. Admission lets the
+manager write the long TTL only on an Apply Job, and the webhook refuses it on a run
+whose termination summary reports success and on a claim that names no approval.
 
 A successful Plan frame is the one frame that carries the plan: it transports
 the exact plan bytes through the authenticated receiver before they are

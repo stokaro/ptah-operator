@@ -1,0 +1,63 @@
+{
+  "contract_version": 2,
+  "command": "migrations up",
+  "direction": "up",
+  "outcome": "failed",
+  "planned": [
+    1
+  ],
+  "planned_keys": [
+    "1"
+  ],
+  "error": {
+    "message": "failed to apply migration 1: failed to execute migration SQL: SQL execution failed: Error 1062 (23000): Duplicate entry 'declared-literal-in-plan@example.com' for key 'orders.customer_email'\nSQL: INSERT INTO orders (id, customer_email) VALUES (2, 'declared-literal-in-plan@example.com')"
+  },
+  "failure": {
+    "version": 1,
+    "version_key": "1",
+    "statement": 1,
+    "statements": 1,
+    "sqlstate": "23000",
+    "error_number": 1062
+  },
+  "status": {
+    "current_version": 0,
+    "applied_migrations": [],
+    "pending_migrations": [
+      1
+    ],
+    "pending_migration_keys": [
+      "1"
+    ],
+    "out_of_order_migrations": [],
+    "total_migrations": 1,
+    "has_pending_changes": true,
+    "dirty_revision": {
+      "version": 1,
+      "description": "Change",
+      "state": "failed",
+      "direction": "up",
+      "applied": 0,
+      "total": 1,
+      "error": "failed to execute migration SQL: SQL execution failed: Error 1062 (23000): Duplicate entry 'declared-literal-in-plan@example.com' for key 'orders.customer_email'\nSQL: INSERT INTO orders (id, customer_email) VALUES (2, 'declared-literal-in-plan@example.com')",
+      "error_stmt": "INSERT INTO orders (id, customer_email) VALUES (2, 'declared-literal-in-plan@example.com')",
+      "execution_time": 11000000,
+      "checksum": "e79a2c2ea5d73f816e8f835d9840280a8254419cc9437d3f4a2e2d58431bc8ac",
+      "applied_at": "2026-11-06T19:54:44Z",
+      "dirty": true
+    },
+    "contract_version": 2,
+    "migrations": [
+      {
+        "version": 1,
+        "version_key": "1",
+        "description": "Change",
+        "checksum": "e79a2c2ea5d73f816e8f835d9840280a8254419cc9437d3f4a2e2d58431bc8ac",
+        "applied_at": "2026-11-06T19:54:44Z",
+        "execution_time_ms": 11,
+        "state": "dirty"
+      }
+    ],
+    "current_version_key": "1"
+  }
+}

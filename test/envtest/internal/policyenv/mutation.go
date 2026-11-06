@@ -244,6 +244,30 @@ func SetVariables(policy string, expressions map[string]string) func(context.Con
 	}
 }
 
+// DropValidations removes the policy's validations whose message contains
+// message, and fails the mutation if none does: dropping nothing would prove
+// nothing, and the rows would say so only as a timeout.
+func DropValidations(policy, message string) func(context.Context, *Env) (func(context.Context) error, error) {
+	return func(ctx context.Context, env *Env) (func(context.Context) error, error) {
+		rendered, err := env.renderedPolicy(policy)
+		if err != nil {
+			return nil, err
+		}
+		kept := make([]admissionregistrationv1.Validation, 0, len(rendered.Spec.Validations))
+		for _, validation := range rendered.Spec.Validations {
+			if !strings.Contains(validation.Message, message) {
+				kept = append(kept, validation)
+			}
+		}
+		if len(kept) == len(rendered.Spec.Validations) {
+			return nil, fmt.Errorf("policy %s has no validation saying %q", policy, message)
+		}
+		return editPolicy(policy, func(spec *admissionregistrationv1.ValidatingAdmissionPolicySpec) {
+			spec.Validations = kept
+		})(ctx, env)
+	}
+}
+
 func editPolicy(
 	name string,
 	edit func(*admissionregistrationv1.ValidatingAdmissionPolicySpec),

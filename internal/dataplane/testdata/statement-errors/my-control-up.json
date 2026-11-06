@@ -1,0 +1,63 @@
+{
+  "contract_version": 2,
+  "command": "migrations up",
+  "direction": "up",
+  "outcome": "failed",
+  "planned": [
+    1
+  ],
+  "planned_keys": [
+    "1"
+  ],
+  "error": {
+    "message": "failed to apply migration 1: failed to execute migration SQL: SQL execution failed: Error 1062 (23000): Duplicate entry 'esc-\u001b[2K-\rFORGED-TEXT' for key 'orders.orders_one_per_customer'\nSQL: CREATE UNIQUE INDEX orders_one_per_customer ON orders (customer_email)"
+  },
+  "failure": {
+    "version": 1,
+    "version_key": "1",
+    "statement": 1,
+    "statements": 1,
+    "sqlstate": "23000",
+    "error_number": 1062
+  },
+  "status": {
+    "current_version": 0,
+    "applied_migrations": [],
+    "pending_migrations": [
+      1
+    ],
+    "pending_migration_keys": [
+      "1"
+    ],
+    "out_of_order_migrations": [],
+    "total_migrations": 1,
+    "has_pending_changes": true,
+    "dirty_revision": {
+      "version": 1,
+      "description": "Change",
+      "state": "pending",
+      "direction": "up",
+      "applied": 0,
+      "total": 1,
+      "error": "statement execution outcome is unknown after process interruption",
+      "error_stmt": "CREATE UNIQUE INDEX orders_one_per_customer ON orders (customer_email)",
+      "execution_time": 7000000,
+      "checksum": "a4b1d996525f9948a5da288631d84a28b38b16bbc2c0e90f4f3b2043063d92cf",
+      "applied_at": "2026-11-06T19:54:51Z",
+      "dirty": true
+    },
+    "contract_version": 2,
+    "migrations": [
+      {
+        "version": 1,
+        "version_key": "1",
+        "description": "Change",
+        "checksum": "a4b1d996525f9948a5da288631d84a28b38b16bbc2c0e90f4f3b2043063d92cf",
+        "applied_at": "2026-11-06T19:54:51Z",
+        "execution_time_ms": 7,
+        "state": "dirty"
+      }
+    ],
+    "current_version_key": "1"
+  }
+}

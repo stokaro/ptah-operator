@@ -1,0 +1,7 @@
+{
+  "reference": "oci://harness-registry:5000/migrations/statement-errors-my-unique-up:v1",
+  "pinned_reference": "oci://harness-registry:5000/migrations/statement-errors-my-unique-up@sha256:a5f2e0138ed6a5c9f4f5b72139770b1d6461403d59b0bf86383682fc8e612527",
+  "digest": "sha256:a5f2e0138ed6a5c9f4f5b72139770b1d6461403d59b0bf86383682fc8e612527",
+  "media_type": "application/vnd.oci.image.manifest.v1+json",
+  "size": 1076
+}

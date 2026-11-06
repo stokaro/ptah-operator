@@ -294,13 +294,15 @@ func (v *Validator) validateJobUpdate(ctx context.Context, req admissionv1.Admis
 	if oldJob.Namespace != req.Namespace || oldJob.Name != req.Name || oldJob.UID == "" || oldJob.UID != job.UID {
 		return denyf("Job update does not preserve the request namespace, name, and UID")
 	}
-	if oldJob.Spec.TTLSecondsAfterFinished != nil || job.Spec.TTLSecondsAfterFinished == nil ||
-		*job.Spec.TTLSecondsAfterFinished != cleanupTTLSeconds {
-		return denyf("Job update is not the exact nil-to-300 cleanup TTL transition")
+	if oldJob.Spec.TTLSecondsAfterFinished != nil || job.Spec.TTLSecondsAfterFinished == nil {
+		return denyf("Job update is not the transition that adds a cleanup TTL to a Job carrying none")
 	}
 	owner, ownerKind, err := subjectOwner(oldJob.OwnerReferences)
 	if err != nil {
 		return denyf("old Job does not have one exact operator controller owner: %v", err)
+	}
+	if err := v.validateCleanupTTLChoice(ctx, oldJob, *job.Spec.TTLSecondsAfterFinished, ownerKind); err != nil {
+		return err
 	}
 	if ownerKind == "PtahMigration" {
 		return v.validateMigrationJobUpdate(ctx, oldJob, job, owner)
@@ -314,6 +316,9 @@ func (v *Validator) validateJobUpdate(ctx context.Context, req admissionv1.Admis
 		return err
 	}
 	operation := schema.Status.ActiveOperation
+	if err := validateCleanupTTLApproved(*job.Spec.TTLSecondsAfterFinished, schemaApplyApproved(schema)); err != nil {
+		return err
+	}
 	if !jobTerminal(oldJob) &&
 		(operation == nil || !mutationlifecycle.SchemaOperation(operation.Type).Mutating ||
 			!currentApplyAnnotations(oldJob.Annotations)) {

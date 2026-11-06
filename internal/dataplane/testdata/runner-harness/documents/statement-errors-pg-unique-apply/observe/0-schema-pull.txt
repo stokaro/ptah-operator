@@ -1,0 +1,2 @@
+Pulled oci://harness-registry:5000/schemas/statement-errors-pg-unique-apply@sha256:9b49def18d1d09ce3be058f6dca10f06c03c9686b29ac34b19a70b362f27fd4e to /source/schema.hcl
+Digest: sha256:9b49def18d1d09ce3be058f6dca10f06c03c9686b29ac34b19a70b362f27fd4e

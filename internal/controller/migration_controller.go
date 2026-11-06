@@ -1949,15 +1949,7 @@ func (r *MigrationReconciler) removeMigrationFinalizer(
 }
 
 func (r *MigrationReconciler) markJobHarvested(ctx context.Context, job *batchv1.Job) error {
-	if job == nil || job.Spec.TTLSecondsAfterFinished != nil {
-		return nil
-	}
-	before := job.DeepCopy()
-	job.Spec.TTLSecondsAfterFinished = ptr(jobCleanupTTLSeconds)
-	if err := r.Client.Patch(ctx, job, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})); err != nil {
-		return fmt.Errorf("schedule completed Job cleanup: %w", err)
-	}
-	return nil
+	return scheduleJobCleanup(ctx, r.Client, job, jobCleanupTTLSeconds)
 }
 
 func (r *MigrationReconciler) patchMigrationStatus(

@@ -15,10 +15,14 @@
 package crdupgrade
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	celgo "github.com/google/cel-go/cel"
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
+
+	"github.com/stokaro/ptah-operator/internal/jobclaim"
 )
 
 // The cleanup TTL is the one field the manager may add to a Job it already
@@ -63,26 +67,131 @@ func TestControllerJobGuardCleanupTTLRequiresTerminalExceptForSchemaApply(t *tes
 	}
 }
 
-// A TTL that is not the exact nil-to-300 transition stays refused for every
-// shape, exception included: the exception is about when the field may be
-// added, never about what it may say.
-func TestControllerJobGuardCleanupTTLValueIsExactForSchemaApply(t *testing.T) {
+// The field is added once. The value is the two validations below: the exception
+// is about when the field may be added, never about what it may say.
+func TestControllerJobGuardCleanupTTLIsAddedOnce(t *testing.T) {
 	t.Parallel()
 
-	oldJob := cleanupProbeJob("apply", "schema-operation", false)
-	job := cleanupProbeJob("apply", "schema-operation", false)
-	job["spec"].(map[string]any)["ttlSecondsAfterFinished"] = int64(301)
-	if evaluateCleanupTTLValidation(t, job, oldJob) {
-		t.Fatal("cleanup TTL validation accepted a TTL other than 300 on a running Apply")
-	}
-
 	replaced := cleanupProbeJob("apply", "schema-operation", false)
-	replaced["spec"].(map[string]any)["ttlSecondsAfterFinished"] = int64(300)
+	replaced["spec"].(map[string]any)["ttlSecondsAfterFinished"] = int64(86400)
 	previous := cleanupProbeJob("apply", "schema-operation", false)
 	previous["spec"].(map[string]any)["ttlSecondsAfterFinished"] = int64(300)
 	if evaluateCleanupTTLValidation(t, replaced, previous) {
 		t.Fatal("cleanup TTL validation accepted an update to a Job that already carried a TTL")
 	}
+}
+
+// TestControllerJobGuardNamesWhichCleanupTTLAJobMayCarry evaluates the two
+// validations that say so, each with a message of its own. The guard sees only
+// the Job, which does not say whether an Apply succeeded: the webhook reads that
+// from the Pod's summary, so a terminal Apply passes here whatever its run did.
+func TestControllerJobGuardNamesWhichCleanupTTLAJobMayCarry(t *testing.T) {
+	t.Parallel()
+
+	const (
+		admitted = ""
+		value    = controllerJobCleanupTTLMessage
+		long     = controllerJobRetentionTTLMessage
+	)
+	for _, test := range []struct {
+		name               string
+		operation, subject string
+		ttl                int64
+		refusedBy          string
+	}{
+		{"the short TTL on a read-only Job", "observe", "schema-operation", 300, admitted},
+		{"the short TTL on a schema Apply", "apply", "schema-operation", 300, admitted},
+		{"the short TTL on a migration Apply", "apply", "migration-operation", 300, admitted},
+		{"the long TTL on a schema Apply", "apply", "schema-operation", 86400, admitted},
+		{"the long TTL on a migration Apply", "apply", "migration-operation", 86400, admitted},
+		{"the long TTL on an Observe", "observe", "schema-operation", 86400, long},
+		{"the long TTL on a Plan", "plan", "schema-operation", 86400, long},
+		{"the long TTL on a Resolve", "resolve", "schema-operation", 86400, long},
+		{"the long TTL on a history read", "history", "migration-operation", 86400, long},
+		{"a TTL just over the short one", "apply", "schema-operation", 301, value},
+		{"a TTL just under the long one", "apply", "schema-operation", 86399, value},
+		{"no time at all", "apply", "schema-operation", 0, value},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			job := cleanupProbeJob(test.operation, test.subject, true)
+			job["spec"].(map[string]any)["ttlSecondsAfterFinished"] = test.ttl
+			got := admitted
+			for _, validation := range cleanupTTLValidations(t) {
+				if !evaluateControllerJobUpdate(t, cleanupEnvironment(t), validation, job, cleanupProbeJob(test.operation, test.subject, true)) {
+					got = validation.Message
+					break
+				}
+			}
+			if got != test.refusedBy {
+				t.Fatalf("refused by %q, want %q", got, test.refusedBy)
+			}
+		})
+	}
+
+	t.Run("a Job with no labels", func(t *testing.T) {
+		t.Parallel()
+		job := cleanupProbeJob("apply", "schema-operation", true)
+		delete(job["metadata"].(map[string]any), "labels")
+		job["spec"].(map[string]any)["ttlSecondsAfterFinished"] = int64(86400)
+		if evaluateControllerJobUpdate(t, cleanupEnvironment(t), cleanupTTLValidations(t)[1], job, job) {
+			t.Fatal("the long TTL was admitted on a Job that does not say it is an Apply")
+		}
+	})
+	t.Run("a Job with no TTL", func(t *testing.T) {
+		t.Parallel()
+		job := cleanupProbeJob("observe", "schema-operation", true)
+		for _, validation := range cleanupTTLValidations(t) {
+			if !evaluateControllerJobUpdate(t, cleanupEnvironment(t), validation, job, job) {
+				t.Fatalf("%q refused a Job that names no TTL", validation.Message)
+			}
+		}
+	})
+}
+
+// The guard writes the two values as literals, because a chart template holds
+// them. This keeps them the values the manager writes.
+func TestControllerJobGuardTTLsAreTheOnesTheManagerWrites(t *testing.T) {
+	t.Parallel()
+
+	values := fmt.Sprintf("[%d, %d]", jobclaim.CleanupTTLSeconds, jobclaim.FailedApplyRetentionTTLSeconds)
+	if !strings.Contains(controllerJobCleanupTTLValidation, values) {
+		t.Errorf("the guard does not admit %s: %s", values, controllerJobCleanupTTLValidation)
+	}
+	long := fmt.Sprintf("!= %d", jobclaim.FailedApplyRetentionTTLSeconds)
+	if !strings.Contains(controllerJobRetentionTTLValidation, long) {
+		t.Errorf("the guard does not hold the long TTL %q: %s", long, controllerJobRetentionTTLValidation)
+	}
+}
+
+func cleanupEnvironment(t *testing.T) *celgo.Env {
+	t.Helper()
+	environment, err := celgo.NewEnv(
+		celgo.Variable("object", celgo.DynType),
+		celgo.Variable("oldObject", celgo.DynType),
+		celgo.Variable("request", celgo.DynType),
+		celgo.Variable("variables", celgo.DynType),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return environment
+}
+
+// cleanupTTLValidations are the validations carrying the two messages, found in
+// what the guard installs rather than taken from the constants.
+func cleanupTTLValidations(t *testing.T) []admissionregistrationv1.Validation {
+	t.Helper()
+	var found []admissionregistrationv1.Validation
+	for _, validation := range controllerJobWriteValidations("the guard's own message") {
+		if validation.Message == controllerJobCleanupTTLMessage || validation.Message == controllerJobRetentionTTLMessage {
+			found = append(found, validation)
+		}
+	}
+	if len(found) != 2 {
+		t.Fatalf("the guard installs %d cleanup TTL validations, want 2", len(found))
+	}
+	return found
 }
 
 // The exception reads the Job's labels, and a Job without them must not make

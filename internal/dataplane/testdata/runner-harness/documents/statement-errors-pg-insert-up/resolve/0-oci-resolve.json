@@ -1,0 +1,7 @@
+{
+  "reference": "oci://harness-registry:5000/migrations/statement-errors-pg-insert-up:v1",
+  "pinned_reference": "oci://harness-registry:5000/migrations/statement-errors-pg-insert-up@sha256:3cdf640c412abebfeae543aafce81606076e2c4b8fe34ef1ffb1f12a29047438",
+  "digest": "sha256:3cdf640c412abebfeae543aafce81606076e2c4b8fe34ef1ffb1f12a29047438",
+  "media_type": "application/vnd.oci.image.manifest.v1+json",
+  "size": 1076
+}

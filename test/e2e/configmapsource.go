@@ -46,6 +46,18 @@ const (
 	configMapUnreadableSchemaSource    = "e2e-configmap-unreadable-schema-source"
 	configMapUnreadableMigration       = "e2e-configmap-unreadable-migration"
 	configMapUnreadableMigrationSource = "e2e-configmap-unreadable-migration-source"
+
+	// The resources whose statement the database refuses, on a database of
+	// their own. The schema converges on a table, its rows are made to share a
+	// customer, and a unique index on them is what the plan then asks for.
+	configMapRefusedDatabase        = "ptah_e2e_configmap_refused"
+	configMapRefusedSecret          = "e2e-configmap-refused-database"
+	configMapRefusedSchema          = "e2e-configmap-refused-schema"
+	configMapRefusedSchemaSource    = "e2e-configmap-refused-schema-source"
+	configMapRefusedMigration       = "e2e-configmap-refused-migration"
+	configMapRefusedMigrationSource = "e2e-configmap-refused-migration-source"
+	configMapRefusedTable           = "CREATE TABLE e2e_refused_orders (\n  id bigint NOT NULL PRIMARY KEY,\n  customer_id bigint NOT NULL\n);\n"
+	configMapRefusedIndex           = "CREATE UNIQUE INDEX e2e_refused_one_per_customer ON e2e_refused_orders (customer_id);\n"
 )
 
 // snapshotContentRefusal is what the copy reports when the snapshot does not
@@ -69,6 +81,16 @@ var configMapMigrationFiles = []struct{ key, path, body string }{
 	{"0001-down", "0000000001_create_parts.down.sql", "DROP TABLE e2e_configmap_parts;\n"},
 	{"0002-up", "0000000002_add_part_weight.up.sql", "ALTER TABLE e2e_configmap_parts ADD COLUMN weight INTEGER;\n"},
 	{"0002-down", "0000000002_add_part_weight.down.sql", "ALTER TABLE e2e_configmap_parts DROP COLUMN weight;\n"},
+}
+
+// configMapRefusedMigrationFiles commit a table with rows that share a customer,
+// and then ask for the index those rows refuse.
+var configMapRefusedMigrationFiles = []struct{ key, path, body string }{
+	{"0001-up", "0000000001_create_refused_orders.up.sql", "CREATE TABLE e2e_refused_lines (id bigint NOT NULL PRIMARY KEY, customer_id bigint NOT NULL);\n" +
+		"INSERT INTO e2e_refused_lines (id, customer_id) VALUES (1, 42), (2, 42);\n"},
+	{"0001-down", "0000000001_create_refused_orders.down.sql", "DROP TABLE e2e_refused_lines;\n"},
+	{"0002-up", "0000000002_one_per_customer.up.sql", "CREATE UNIQUE INDEX e2e_refused_one_per_customer ON e2e_refused_lines (customer_id);\n"},
+	{"0002-down", "0000000002_one_per_customer.down.sql", "DROP INDEX e2e_refused_one_per_customer;\n"},
 }
 
 // configMapPlanBound holds a schema plan to the source it was computed from:

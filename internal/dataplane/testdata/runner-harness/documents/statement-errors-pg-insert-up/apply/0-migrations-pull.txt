@@ -1,0 +1,3 @@
+Pulled oci://harness-registry:5000/migrations/statement-errors-pg-insert-up@sha256:3cdf640c412abebfeae543aafce81606076e2c4b8fe34ef1ffb1f12a29047438 to /source/migrations
+Digest: sha256:3cdf640c412abebfeae543aafce81606076e2c4b8fe34ef1ffb1f12a29047438
+Format: auto

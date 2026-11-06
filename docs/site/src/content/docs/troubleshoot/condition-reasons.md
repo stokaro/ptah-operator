@@ -125,8 +125,9 @@ lastRun: outcome Failed
 
 The message names the migration the run stopped in, by its version and the
 description Ptah reads from its file name. It does not carry what Ptah or the
-database said, because that sentence can quote a row, and nothing the operator
-publishes carries one: not the status, not an Event, not the Pod log.
+database said, because that sentence can quote a row, and status and Events do not
+carry one. The sentence is in the Pod log, and the message says how to read it, as
+[A statement the database refused](#a-statement-the-database-refused) explains.
 
 On MySQL or MariaDB the usual cause is the transaction mode. Those engines have
 no transactional DDL, so Ptah will not run a file it cannot witness as one unit
@@ -146,8 +147,45 @@ leaves what it already committed.
 
 A run that failed on a statement says the same, with the migration it failed
 in and the count of those before it that it applied. The statement the
-database refused is in that file, and running the file against a copy of the
-database shows why.
+database refused is in that file, and
+[its Pod log](#a-statement-the-database-refused) holds what the database said.
+
+## A statement the database refused
+
+When a statement in an Apply fails, the operator's handling is the same as for
+any other Apply failure: it does not retry the statement, it reads the database
+again, and a schema asks for a new approval. Status says the outcome, and the Pod
+log says why. The `Applying` condition of a schema, `status.lastRun.message` of a
+migration and the Warning Event end with the command to read it, when the run wrote
+something to read:
+
+```text
+Applying  False  OutcomeUnknown  Apply outcome is uncertain; only read-only observation is permitted. What Ptah reported is in the Pod log for 24 hours after the Job finishes: kubectl logs -n application job/ptah-apply-orders-5d06b0eaaa30addb -c ptah
+```
+
+That log holds one line from the failed run, with the database's words:
+
+```text
+ptah-runner: ptah reported: apply schema changes: failed to execute SQL statement: SQL execution failed: ERROR: could not create unique index "[in the statement]" (SQLSTATE 23505)
+```
+
+`[in the statement]` stands for quoted text the statement also holds, a name or a
+literal, which the runner keeps out of the log. The statement is in the plan, or in the
+migration file. Reading the log takes `pods/log` in the namespace, which the diagnostic
+reader role grants. The line can carry row values, and
+[What a failed Apply leaves in its Pod log](../../use/operations/#failed-apply-log)
+says who else that reaches.
+
+The Job keeps the log for 24 hours after it finishes when a person approved the Apply,
+and for five minutes under `apply: Always`, where the same failure comes around again
+with a fresh log. The message says which. Past that, or on a node that was replaced,
+the log is gone unless something shipped it, and running the statement against a copy
+of the database shows the same error. A Job harvested by the release before this one
+keeps the five minutes it was given.
+
+A migration's status also records `status.lastRun.failure`: the statement's
+position and the SQLSTATE or error number, which hold no row. A schema Apply's
+report carries neither yet.
 
 ## A database the operation could not open
 

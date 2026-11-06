@@ -79,14 +79,25 @@ func TestValidationHandlerAllowsOnlyTheExactCleanupUpdate(t *testing.T) {
 				existing := int32(300)
 				oldJob.Spec.TTLSecondsAfterFinished = &existing
 			},
-			message: "not the exact nil-to-300 cleanup TTL transition",
+			message: "not the transition that adds a cleanup TTL",
 		},
 		{
 			name: "the update removes the TTL instead of stamping it",
 			change: func(_, job *batchv1.Job) {
 				job.Spec.TTLSecondsAfterFinished = nil
 			},
-			message: "not the exact nil-to-300 cleanup TTL transition",
+			message: "not the transition that adds a cleanup TTL",
+		},
+		{
+			// A Job a previous release harvested stays as it was: the long TTL
+			// cannot be added to one that already has the short one.
+			name: "the old object carries the short TTL and the update the long one",
+			change: func(oldJob, job *batchv1.Job) {
+				short, long := int32(300), int32(86400)
+				oldJob.Spec.TTLSecondsAfterFinished = &short
+				job.Spec.TTLSecondsAfterFinished = &long
+			},
+			message: "not the transition that adds a cleanup TTL",
 		},
 		{
 			name: "the update stamps some other TTL",
@@ -94,7 +105,7 @@ func TestValidationHandlerAllowsOnlyTheExactCleanupUpdate(t *testing.T) {
 				other := int32(301)
 				job.Spec.TTLSecondsAfterFinished = &other
 			},
-			message: "not the exact nil-to-300 cleanup TTL transition",
+			message: "Job cleanup TTL 301 is neither",
 		},
 	} {
 		t.Run(row.name, func(t *testing.T) {

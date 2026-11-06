@@ -6,13 +6,16 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
+	"strings"
 	"testing"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
@@ -48,6 +51,7 @@ func TestASuccessorAdoptsAndRetiresTheApplyJobTheBuilderWrote(t *testing.T) {
 		AdmissionSnapshot: snapshot,
 		Plan:              planBindingOf(t, job),
 	}
+	schema.Status.PendingObservation.Plan.Approval = &operatorv1alpha1.ConsumedApprovalStatus{Name: "approval", UID: "approval-uid"}
 	schema.Status.PendingBindingRetirement = &operatorv1alpha1.BindingRetirementStatus{
 		RetiredEpoch: schema.Status.PendingObservation.Plan.ExecutionBindingID,
 		Job: &operatorv1alpha1.RetiredJobStatus{
@@ -73,9 +77,84 @@ func TestASuccessorAdoptsAndRetiresTheApplyJobTheBuilderWrote(t *testing.T) {
 	if err := reconciler.cleanupRetiredApplyJob(context.Background(), stored, stored.Status.PendingObservation); err != nil {
 		t.Fatalf("cleanupRetiredApplyJob() = %v; the built Apply Job was not retired", err)
 	}
-	assertCleanupScheduled(t, api, job)
+	assertCleanupScheduled(t, api, job, failedApplyTTLSeconds)
 	if settled := safetyGetSchema(t, api, schema); settled.Status.PendingBindingRetirement != nil {
 		t.Fatalf("the retirement outlived the cleanup it owed: %#v", settled.Status.PendingBindingRetirement)
+	}
+}
+
+// TestARetiredApplySaysWhereItsLogIs is an Apply a binding change retired while it
+// ran. The claim went with no Job to name, so the cleanup is the first moment there
+// is a time to tell a person, and nobody will read its result, so the sentence
+// promises nothing about what the log holds.
+func TestARetiredApplySaysWhereItsLogIs(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name     string
+		approved bool
+		ttl      int32
+		words    string
+	}{
+		{name: "an Apply a person approved", approved: true, ttl: failedApplyTTLSeconds, words: "24 hours"},
+		{name: "an Apply no approval names", ttl: jobCleanupTTLSeconds, words: "5 minutes"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			job, snapshot := builtSchemaApplyJob(t)
+			job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}}
+			schema := schemaOwning(job)
+			annotations := job.Annotations
+			schema.Status.ActiveOperation = nil
+			schema.Status.ExecutionBinding.Epoch = "v1-99999999999999999999999999999999"
+			schema.Status.PendingObservation = &operatorv1alpha1.PendingObservationStatus{
+				Outcome:           operatorv1alpha1.PendingObservationOutcomeUnknown,
+				ApplyOperationID:  annotations[workload.AnnotationOperationID],
+				ApplyJobName:      job.Name,
+				AdmissionSnapshot: snapshot,
+				Plan:              planBindingOf(t, job),
+			}
+			if test.approved {
+				schema.Status.PendingObservation.Plan.Approval = &operatorv1alpha1.ConsumedApprovalStatus{Name: "approval", UID: "approval-uid"}
+			}
+			schema.Status.PendingBindingRetirement = &operatorv1alpha1.BindingRetirementStatus{
+				RetiredEpoch: schema.Status.PendingObservation.Plan.ExecutionBindingID,
+				Job:          &operatorv1alpha1.RetiredJobStatus{Operation: operatorv1alpha1.OperationApply, Name: job.Name},
+			}
+			reconciler, api := fakeReconciler(t, staticLogs{}, schema, job)
+			reconciler.Client = admittedJobWrites(api.(client.WithWatch), refusingJobBuilder{})
+			recorder := record.NewFakeRecorder(32)
+			reconciler.Recorder = recorder
+
+			stored := safetyGetSchema(t, api, schema)
+			if err := reconciler.adoptRetiredApplyJobUID(context.Background(), stored, stored.Status.PendingObservation); err != nil {
+				t.Fatalf("adoptRetiredApplyJobUID() = %v", err)
+			}
+			stored = safetyGetSchema(t, api, schema)
+			if err := reconciler.cleanupRetiredApplyJob(context.Background(), stored, stored.Status.PendingObservation); err != nil {
+				t.Fatalf("cleanupRetiredApplyJob() = %v", err)
+			}
+			assertCleanupScheduled(t, api, job, test.ttl)
+			// With no approval the long TTL is not even tried, so nothing was refused,
+			// and the webhook's refusal is not what kept it short.
+			close(recorder.Events)
+			var recorded []string
+			for event := range recorder.Events {
+				recorded = append(recorded, event)
+			}
+			if slices.ContainsFunc(recorded, func(event string) bool { return strings.Contains(event, "FailedApplyLogShortened") }) {
+				t.Fatalf("the Events %q say admission shortened a log nothing tried to keep", recorded)
+			}
+			recorder.Events = make(chan string, len(recorded)+1)
+			for _, event := range recorded {
+				recorder.Events <- event
+			}
+			want := "Warning RetiredApplyLogKept The Apply its execution binding retired was not read. Anything the run wrote is in the Pod log for " +
+				test.words + " after the Job finishes: kubectl logs -n " + job.Namespace + " job/" + job.Name + " -c ptah"
+			if event := findEvent(recorder, "Warning RetiredApplyLogKept"); event != want {
+				t.Fatalf("the Event = %q, want %q", event, want)
+			}
+		})
 	}
 }
 
@@ -131,7 +210,7 @@ func TestTheApplyClaimSchedulesCleanupForTheJobTheBuilderWrote(t *testing.T) {
 			if err := reconciler.markJobHarvested(context.Background(), stored); err != nil {
 				t.Fatalf("markJobHarvested() error = %v", err)
 			}
-			assertCleanupScheduled(t, api, job)
+			assertCleanupScheduled(t, api, job, jobCleanupTTLSeconds)
 		})
 	}
 }
@@ -217,15 +296,15 @@ func planBindingOf(t *testing.T, job *batchv1.Job) operatorv1alpha1.CurrentPlanS
 	}
 }
 
-func assertCleanupScheduled(t *testing.T, api client.Client, job *batchv1.Job) {
+func assertCleanupScheduled(t *testing.T, api client.Client, job *batchv1.Job, seconds int32) {
 	t.Helper()
 
 	stored := &batchv1.Job{}
 	if err := api.Get(context.Background(), client.ObjectKeyFromObject(job), stored); err != nil {
 		t.Fatal(err)
 	}
-	if stored.Spec.TTLSecondsAfterFinished == nil || *stored.Spec.TTLSecondsAfterFinished != jobCleanupTTLSeconds {
-		t.Fatalf("the Job's cleanup TTL = %v, want %d", stored.Spec.TTLSecondsAfterFinished, jobCleanupTTLSeconds)
+	if stored.Spec.TTLSecondsAfterFinished == nil || *stored.Spec.TTLSecondsAfterFinished != seconds {
+		t.Fatalf("the Job's cleanup TTL = %v, want %d", stored.Spec.TTLSecondsAfterFinished, seconds)
 	}
 }
 

@@ -1,0 +1,7 @@
+{
+  "reference": "oci://harness-registry:5000/migrations/statement-errors-pg-literal-up:v1",
+  "pinned_reference": "oci://harness-registry:5000/migrations/statement-errors-pg-literal-up@sha256:3734c4b71def1020a42024a39ba684612c298cbaef49b4d73288ca661976c9dc",
+  "digest": "sha256:3734c4b71def1020a42024a39ba684612c298cbaef49b4d73288ca661976c9dc",
+  "media_type": "application/vnd.oci.image.manifest.v1+json",
+  "size": 1076
+}

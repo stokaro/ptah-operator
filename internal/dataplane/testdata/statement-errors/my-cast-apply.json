@@ -1,0 +1,15 @@
+{
+  "contract_version": 4,
+  "command": "schema apply",
+  "outcome": "unknown",
+  "plan_name": "plan_f4543fb7ed18",
+  "plan_digest": "sha256:87c4016ee17ce5317f0b11ec0b2becc5aeddb9a4df79401312622f8492832e36",
+  "units": [
+    {
+      "sql": "-- Modify table: items\n-- Modify column items.qty: type: text -\u003e integer\nALTER TABLE `items` MODIFY COLUMN `qty` integer"
+    }
+  ],
+  "error": {
+    "message": "apply schema changes: failed to execute SQL statement: SQL execution failed: Error 1366 (HY000): Incorrect integer value: 'row-value-not-a-number' for column 'qty' at row 1\nSQL: -- Modify table: items\n-- Modify column items.qty: type: text -\u003e integer\nALTER TABLE `items` MODIFY COLUMN `qty` integer"
+  }
+}

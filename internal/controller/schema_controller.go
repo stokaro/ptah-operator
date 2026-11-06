@@ -67,6 +67,7 @@ const (
 	defaultFailureRetry   = 30 * time.Second
 	terminalPodGrace      = 10 * time.Second
 	jobCleanupTTLSeconds  = jobclaim.CleanupTTLSeconds
+	failedApplyTTLSeconds = jobclaim.FailedApplyRetentionTTLSeconds
 	maxLockContentionPoll = 5 * time.Second
 	// statusPatchRequeue ends a pass whose last act was a status write the
 	// next pass has to start from, and asks for that pass at once. Neither
@@ -2494,9 +2495,13 @@ func (r *SchemaReconciler) finishUncertainApplyWithEvidenceAndBinding(
 	waitForDispatchDeadline bool,
 	replacementBinding *operatorv1alpha1.ExecutionBindingStatus,
 ) (ctrl.Result, error) {
-	if err := r.markJobHarvested(ctx, job); err != nil {
+	approved := schema.Status.Plan != nil && schema.Status.Plan.Approval != nil
+	if err := retainFailedApplyJob(ctx, r.Client, job, approved, func(message string) {
+		r.event(schema, corev1.EventTypeWarning, "FailedApplyLogShortened", "%s", message)
+	}); err != nil {
 		return ctrl.Result{}, err
 	}
+	reading := failedApplyLogReading(ctx, r.directReader(), job, failure)
 	before := schema.DeepCopy()
 	operation := schema.Status.ActiveOperation
 	var observeAfter *metav1.Time
@@ -2531,7 +2536,10 @@ func (r *SchemaReconciler) finishUncertainApplyWithEvidenceAndBinding(
 	} else {
 		schema.Status.Phase = operatorv1alpha1.PhaseVerifyingConvergence
 	}
-	setCondition(schema, operatorv1alpha1.ConditionApplying, metav1.ConditionFalse, operatorv1alpha1.ReasonOutcomeUnknown, "Apply outcome is uncertain; only read-only observation is permitted")
+	// Applying is what stays once the observation has settled the record, so it
+	// is where a person arriving later finds the log.
+	setCondition(schema, operatorv1alpha1.ConditionApplying, metav1.ConditionFalse, operatorv1alpha1.ReasonOutcomeUnknown,
+		withLogPointer("Apply outcome is uncertain; only read-only observation is permitted", job, reading))
 	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonOutcomeUnknown, "Database state must be observed before any next action")
 	setFailure(schema, operatorv1alpha1.ReasonApplyOutcomeUnknown, failure)
 	if err := r.retireClaim(ctx, before, schema, mutationlifecycle.DispositionUnaccounted); err != nil {
@@ -2542,7 +2550,7 @@ func (r *SchemaReconciler) finishUncertainApplyWithEvidenceAndBinding(
 		r.Telemetry.ObserveFailure(telemetry.FamilySchema, telemetry.FailureStageApply, telemetry.FailureUncertain)
 	}
 	r.observeOperation(operation, telemetry.OperationUncertain)
-	r.event(schema, corev1.EventTypeWarning, "ApplyOutcomeUnknown", "%s", uncertainApplyEvent(failure))
+	r.event(schema, corev1.EventTypeWarning, "ApplyOutcomeUnknown", "%s", withLogPointer(uncertainApplyEvent(failure), job, reading))
 	return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
 }
 
@@ -3613,15 +3621,7 @@ func schemaResultReadBudget(schema *operatorv1alpha1.PtahSchema) time.Duration {
 }
 
 func (r *SchemaReconciler) markJobHarvested(ctx context.Context, job *batchv1.Job) error {
-	if job == nil || job.Spec.TTLSecondsAfterFinished != nil {
-		return nil
-	}
-	before := job.DeepCopy()
-	job.Spec.TTLSecondsAfterFinished = ptr(jobCleanupTTLSeconds)
-	if err := r.Client.Patch(ctx, job, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})); err != nil {
-		return fmt.Errorf("schedule completed Job cleanup: %w", err)
-	}
-	return nil
+	return scheduleJobCleanup(ctx, r.Client, job, jobCleanupTTLSeconds)
 }
 
 func (r *SchemaReconciler) removeActiveFinalizer(ctx context.Context, schema *operatorv1alpha1.PtahSchema) error {

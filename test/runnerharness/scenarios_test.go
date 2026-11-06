@@ -636,6 +636,130 @@ func runDirect(t *testing.T, l *lab, row directRow, url string) {
 	l.counts.Commands[command]++
 }
 
+// statementErrors are Applies the database refuses, in both families and on both
+// engines, with what each row of the runner writes to its Pod log. The line has to
+// say what the database answered and hold nothing the statement holds.
+func statementErrors(t *testing.T, l *lab) {
+	t.Helper()
+	const (
+		pgOrders = "CREATE TABLE orders (id bigint PRIMARY KEY, customer_id bigint NOT NULL, note text)"
+		myOrders = "CREATE TABLE orders (id bigint PRIMARY KEY, customer_email varchar(200) NOT NULL)"
+		items    = "CREATE TABLE items (id bigint PRIMARY KEY, qty text)"
+		erased   = "CONCAT('esc-',CHAR(27),'[2K-',CHAR(13),'FORGED-TEXT')"
+	)
+	duplicatePG := []string{pgOrders, "INSERT INTO orders VALUES (1, 42, 'row-note-one'), (2, 42, 'row-note-two')"}
+	duplicateMy := []string{myOrders, "INSERT INTO orders VALUES (1, 'row-value@example.com'), (2, 'row-value@example.com')"}
+	apply := func(t *testing.T, name, engine, file string, seed []string) rowOutcome {
+		t.Helper()
+		family := "statement-errors-" + name
+		database := "harness_" + strings.ReplaceAll(strings.TrimSuffix(name, "-apply"), "-", "_")
+		l.createDatabase(t, engine, database)
+		l.sql(t, engine, database, seed...)
+		reference := l.publish(t, "schema", "schemas/"+family, "v1", "--schema-file", "/fixtures/statement-errors/"+file, "--dialect", engineFile(engine))
+		run := l.newSchema(t, family, engine, l.databaseURL(engine, database), ociSource(reference))
+		run.resolve("resolve")
+		run.schema.Spec.Desired.OCIRef = run.schema.Status.Source.ResolvedReference
+		run.schema.Status.Source.RequestedReference = run.schema.Status.Source.ResolvedReference
+		run.verify("verify", fixture(t, "verification-policy-digest-pin.yaml"))
+		run.observe("observe")
+		planned := run.plan("plan", nil)
+		run.publishPlan("plan", planned.plan)
+		return run.apply("apply", storedAs("schema apply", "statement-errors/"+name+".json"), wantCode("apply_outcome_unknown"))
+	}
+	up := func(t *testing.T, name, engine string, seed []string) rowOutcome {
+		t.Helper()
+		family := "statement-errors-" + name
+		database := "harness_" + strings.ReplaceAll(strings.TrimSuffix(name, "-up"), "-", "_") + "_up"
+		l.createDatabase(t, engine, database)
+		l.sql(t, engine, database, seed...)
+		reference := l.publish(t, "migrations", "migrations/"+family, "v1", "--migrations-dir", "/fixtures/statement-errors/"+name)
+		run := l.newMigration(t, family, engine, l.databaseURL(engine, database), ociSource(reference))
+		run.resolve("resolve")
+		before := run.history("history")
+		return run.applyPlanned("apply", pending(t, family, before), storedAs("migrations up", "statement-errors/"+name+".json"), wantCode("child_exit"))
+	}
+	const hidden = "[in the statement]"
+	for _, row := range []struct {
+		name, want, refuse string
+		run                func(t *testing.T, name string) rowOutcome
+	}{
+		{
+			name: "pg-unique-apply", want: `could not create unique index "` + hidden + `" (SQLSTATE 23505)`, refuse: "orders_one_per_customer",
+			run: func(t *testing.T, name string) rowOutcome {
+				return apply(t, name, enginePostgres, name+".sql", duplicatePG)
+			},
+		},
+		{
+			name: "my-unique-apply", want: `Duplicate entry 'row-value@example.com' for key 'orders.orders_one_per_customer'`, refuse: "CREATE UNIQUE",
+			run: func(t *testing.T, name string) rowOutcome {
+				return apply(t, name, engineMySQL, name+".sql", duplicateMy)
+			},
+		},
+		{
+			name: "my-cast-apply", want: `Incorrect integer value: 'row-value-not-a-number' for column '` + hidden + `' at row 1`, refuse: "MODIFY",
+			run: func(t *testing.T, name string) rowOutcome {
+				return apply(t, name, engineMySQL, name+".sql", []string{items, "INSERT INTO items VALUES (1, 'row-value-not-a-number')"})
+			},
+		},
+		{
+			name: "pg-unique-up", want: `could not create unique index "` + hidden + `" (SQLSTATE 23505)`, refuse: "orders_one_per_customer",
+			run: func(t *testing.T, name string) rowOutcome { return up(t, name, enginePostgres, duplicatePG) },
+		},
+		{
+			name: "pg-rowcast-up", want: `invalid input syntax for type integer: "row-value-not-a-number" (SQLSTATE 22P02)`, refuse: "USING",
+			run: func(t *testing.T, name string) rowOutcome {
+				return up(t, name, enginePostgres, []string{items, "INSERT INTO items VALUES (1, 'row-value-not-a-number')"})
+			},
+		},
+		{
+			name: "pg-insert-up", want: `duplicate key value violates unique constraint "orders_pkey" (SQLSTATE 23505)`, refuse: "literal-in-the-migration-file",
+			run: func(t *testing.T, name string) rowOutcome {
+				return up(t, name, enginePostgres, []string{pgOrders, "INSERT INTO orders VALUES (1, 42, 'row-note-one')"})
+			},
+		},
+		{
+			name: "pg-literal-up", want: `invalid input syntax for type integer: "` + hidden + `" (SQLSTATE 22P02)`, refuse: "declared-literal-in-plan",
+			run: func(t *testing.T, name string) rowOutcome {
+				return up(t, name, enginePostgres, []string{"CREATE TABLE items (id bigint PRIMARY KEY, qty integer)"})
+			},
+		},
+		{
+			name: "my-unique-up", want: `Duplicate entry 'row-value@example.com' for key 'orders.orders_one_per_customer'`, refuse: "CREATE UNIQUE",
+			run: func(t *testing.T, name string) rowOutcome { return up(t, name, engineMySQL, duplicateMy) },
+		},
+		{
+			name: "my-syntax-up", want: `to use near '` + hidden + `' at line 1`, refuse: "plan-secret-literal",
+			run: func(t *testing.T, name string) rowOutcome { return up(t, name, engineMySQL, []string{"SELECT 1"}) },
+		},
+		{
+			name: "my-literal-up", want: `Duplicate entry '` + hidden + `' for key 'orders.customer_email'`, refuse: "declared-literal-in-plan",
+			run: func(t *testing.T, name string) rowOutcome {
+				return up(t, name, engineMySQL, []string{
+					"CREATE TABLE orders (id bigint PRIMARY KEY, customer_email varchar(200) NOT NULL UNIQUE)",
+					"INSERT INTO orders VALUES (1, 'declared-literal-in-plan@example.com')",
+				})
+			},
+		},
+		{
+			name: "my-control-up", want: `Duplicate entry 'esc- [2K- FORGED-TEXT' for key 'orders.orders_one_per_customer'`, refuse: "\x1b",
+			run: func(t *testing.T, name string) rowOutcome {
+				return up(t, name, engineMySQL, []string{myOrders, "INSERT INTO orders VALUES (1, " + erased + "), (2, " + erased + ")"})
+			},
+		},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			logs := string(row.run(t, row.name).logs)
+			if !strings.Contains(logs, "ptah-runner: ptah reported: ") || !strings.Contains(logs, row.want) {
+				t.Errorf("the Pod log does not say %q:\n%s", row.want, logs)
+			}
+			if strings.Contains(logs, row.refuse) {
+				t.Errorf("the Pod log holds %q:\n%s", row.refuse, logs)
+			}
+		})
+	}
+}
+
 // unreadableSources runs the operations over a source Ptah cannot load, so the
 // runner's second child, the one that asks why with no database, is a row. The
 // Job is the real one for a Git source, and the fetch has nothing to add, so the

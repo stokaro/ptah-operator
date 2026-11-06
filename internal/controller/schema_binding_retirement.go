@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -328,8 +329,16 @@ func (r *SchemaReconciler) cleanupRetiredApplyJob(
 		// Pod and the Job controller's terminal condition.
 		return nil
 	default:
-		if err := r.markJobHarvested(ctx, job); err != nil {
+		// This Apply's outcome is unknown, so its log is kept as any such log is.
+		// Nobody will read its result, and the claim was retired with no Job to
+		// name, so this is the first moment there is a time to tell a person.
+		if err := retainFailedApplyJob(ctx, r.Client, job, pending.Plan.Approval != nil, func(message string) {
+			r.event(schema, corev1.EventTypeWarning, "FailedApplyLogShortened", "%s", message)
+		}); err != nil {
 			return err
+		}
+		if pointer := failedApplyLogPointer(job, failedApplyLogReading(ctx, r.directReader(), job, nil)); pointer != "" {
+			r.event(schema, corev1.EventTypeWarning, "RetiredApplyLogKept", "The Apply its execution binding retired was not read. %s", pointer)
 		}
 	}
 	before := schema.DeepCopy()

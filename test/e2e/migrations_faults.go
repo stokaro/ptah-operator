@@ -98,7 +98,7 @@ func stoppedRunNamesItsMigration(run *ptahv1alpha1.MigrationRunStatus, stoppedAt
 	pattern := regexp.MustCompile(fmt.Sprintf(
 		`^Migration %d \(.+\) failed at statement %d of %d`+
 			`(?: with (?:SQLSTATE [0-9A-Z]{5}(?: \(error [1-9][0-9]*\))?|error [1-9][0-9]*))?`+
-			` and committed nothing; %d migrations before it are recorded applied$`,
+			` and committed nothing; %d migrations before it are recorded applied(?:$|\. )`,
 		stoppedAt, statement, statements, max(stoppedAt-1, 0)))
 	return pattern.MatchString(run.Message)
 }

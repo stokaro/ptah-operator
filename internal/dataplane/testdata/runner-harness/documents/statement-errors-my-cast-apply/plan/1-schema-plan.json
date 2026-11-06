@@ -1,0 +1,22 @@
+{
+  "contract_version": 3,
+  "command": "schema plan",
+  "outcome": "changes",
+  "plan_digest": "sha256:87c4016ee17ce5317f0b11ec0b2becc5aeddb9a4df79401312622f8492832e36",
+  "plan_path": "/work/ptah-plan-output-1668111393/first.plan.json",
+  "plan": {
+    "format_version": 1,
+    "name": "plan_f4543fb7ed18",
+    "dialect": "mysql",
+    "from_fingerprint": "sha256:387725b711b4b43d0009194d69f9c9868c5325bafa05d59d28e25cda814e93a7",
+    "to_fingerprint": "sha256:78f080327d72a9f652783a2c0922776cbc6a55cdbc15dd0a72bf89f997b2593e",
+    "destructive": false,
+    "statements": [
+      {
+        "sql": "-- Modify table: items\n-- Modify column items.qty: type: text -\u003e integer\nALTER TABLE `items` MODIFY COLUMN `qty` integer",
+        "severity": "safe",
+        "reason": "does not remove data or tighten constraints"
+      }
+    ]
+  }
+}

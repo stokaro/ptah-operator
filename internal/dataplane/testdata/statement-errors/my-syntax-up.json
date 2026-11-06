@@ -1,0 +1,63 @@
+{
+  "contract_version": 2,
+  "command": "migrations up",
+  "direction": "up",
+  "outcome": "failed",
+  "planned": [
+    1
+  ],
+  "planned_keys": [
+    "1"
+  ],
+  "error": {
+    "message": "failed to apply migration 1: failed to execute migration SQL: SQL execution failed: Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'CREAT USER 'app'@'%' IDENTIFIED BY 'plan-secret-literal'' at line 1\nSQL: CREAT USER 'app'@'%' IDENTIFIED BY 'plan-secret-literal'"
+  },
+  "failure": {
+    "version": 1,
+    "version_key": "1",
+    "statement": 1,
+    "statements": 1,
+    "sqlstate": "42000",
+    "error_number": 1064
+  },
+  "status": {
+    "current_version": 0,
+    "applied_migrations": [],
+    "pending_migrations": [
+      1
+    ],
+    "pending_migration_keys": [
+      "1"
+    ],
+    "out_of_order_migrations": [],
+    "total_migrations": 1,
+    "has_pending_changes": true,
+    "dirty_revision": {
+      "version": 1,
+      "description": "Change",
+      "state": "failed",
+      "direction": "up",
+      "applied": 0,
+      "total": 1,
+      "error": "failed to execute migration SQL: SQL execution failed: Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'CREAT USER 'app'@'%' IDENTIFIED BY 'plan-secret-literal'' at line 1\nSQL: CREAT USER 'app'@'%' IDENTIFIED BY 'plan-secret-literal'",
+      "error_stmt": "CREAT USER 'app'@'%' IDENTIFIED BY 'plan-secret-literal'",
+      "execution_time": 9000000,
+      "checksum": "6ab9f8db23d171f34bee425b6e2985d0ae428d17cedc36cdfa36de404366871c",
+      "applied_at": "2026-11-06T19:55:01Z",
+      "dirty": true
+    },
+    "contract_version": 2,
+    "migrations": [
+      {
+        "version": 1,
+        "version_key": "1",
+        "description": "Change",
+        "checksum": "6ab9f8db23d171f34bee425b6e2985d0ae428d17cedc36cdfa36de404366871c",
+        "applied_at": "2026-11-06T19:55:01Z",
+        "execution_time_ms": 9,
+        "state": "dirty"
+      }
+    ],
+    "current_version_key": "1"
+  }
+}

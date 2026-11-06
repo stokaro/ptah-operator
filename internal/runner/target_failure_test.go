@@ -141,6 +141,14 @@ func targetFailureRuns() map[string]targetFailureRun {
 // termination summary and its own log.
 func runTargetFailure(t *testing.T, run targetFailureRun, failure string, exit int) (Result, string) {
 	t.Helper()
+	result, crossing, log := runTargetFailureApart(t, run, failure, exit)
+	return result, crossing + "\n" + log
+}
+
+// runTargetFailureApart keeps what crosses to the manager, the frame and its
+// termination summary, apart from what stays in the Pod log.
+func runTargetFailureApart(t *testing.T, run targetFailureRun, failure string, exit int) (Result, string, string) {
+	t.Helper()
 	diagnostics := &bytes.Buffer{}
 	result := Run(context.Background(), Config{
 		Operation:   run.operation,
@@ -159,7 +167,7 @@ func runTargetFailure(t *testing.T, run targetFailureRun, failure string, exit i
 	if _, err := ParseResultFor(encoded.Frame, run.operation, result.OperationID); err != nil {
 		t.Fatalf("the frame does not parse: %v", err)
 	}
-	return result, string(encoded.Frame) + "\n" + string(encoded.Summary) + "\n" + diagnostics.String()
+	return result, string(encoded.Frame) + "\n" + string(encoded.Summary), diagnostics.String()
 }
 
 // TestATargetThatCannotBeOpenedIsReportedByItsKind holds each kind, on every
@@ -190,7 +198,8 @@ func TestATargetThatCannotBeOpenedIsReportedByItsKind(t *testing.T) {
 // TestAFailureWithNoKnownKindKeepsItsCode holds a document that names no kind,
 // or one this runner has no sentence for, to the code the operation reported
 // before kinds existed. A kind outside the vocabulary is child text like the
-// message beside it, so it is not repeated either.
+// message beside it, so neither crosses to the manager. An Apply's sentence stays
+// in the Pod log, and every other operation leaves it out of the log as well.
 func TestAFailureWithNoKnownKindKeepsItsCode(t *testing.T) {
 	t.Parallel()
 
@@ -206,7 +215,7 @@ func TestAFailureWithNoKnownKindKeepsItsCode(t *testing.T) {
 		} {
 			t.Run(name+"/"+label, func(t *testing.T) {
 				t.Parallel()
-				result, written := runTargetFailure(t, run, targetFailureError(kind), 2)
+				result, crossing, log := runTargetFailureApart(t, run, targetFailureError(kind), 2)
 				if result.Error == nil {
 					t.Fatalf("Run() = %#v, want a failure", result)
 				}
@@ -219,8 +228,11 @@ func TestAFailureWithNoKnownKindKeepsItsCode(t *testing.T) {
 				if kind != "7" && kind != `{"name":"CHILD-TEXT"}` && result.Error.Code != run.unclassified {
 					t.Fatalf("Run() error code = %q, want %q", result.Error.Code, run.unclassified)
 				}
-				if strings.Contains(written, "CHILD-TEXT") || strings.Contains(written, "db.internal.example") {
-					t.Fatalf("the runner wrote what the child did:\n%s", written)
+				if strings.Contains(crossing, "CHILD-TEXT") || strings.Contains(crossing, "db.internal.example") {
+					t.Fatalf("the frame or the summary carries what the child wrote:\n%s", crossing)
+				}
+				if !run.operation.Mutating() && strings.Contains(log, "CHILD-TEXT") {
+					t.Fatalf("a read-only operation logged what the child wrote:\n%s", log)
 				}
 			})
 		}

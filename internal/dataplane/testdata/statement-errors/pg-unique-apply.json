@@ -1,0 +1,15 @@
+{
+  "contract_version": 4,
+  "command": "schema apply",
+  "outcome": "unknown",
+  "plan_name": "plan_90e6bce85f7d",
+  "plan_digest": "sha256:003a9702f537e0fe956e93a14b54590dc2b048c1401c6f1dfe0233a80398c5d8",
+  "units": [
+    {
+      "sql": "CREATE UNIQUE INDEX IF NOT EXISTS \"orders_one_per_customer\" ON \"orders\" (\"customer_id\")"
+    }
+  ],
+  "error": {
+    "message": "apply schema changes: failed to execute SQL statement: SQL execution failed: ERROR: could not create unique index \"orders_one_per_customer\" (SQLSTATE 23505)\nSQL: CREATE UNIQUE INDEX IF NOT EXISTS \"orders_one_per_customer\" ON \"orders\" (\"customer_id\")"
+  }
+}

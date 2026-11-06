@@ -101,8 +101,14 @@ func TestAnUncertainApplyEventKeepsTheFixedTextForAnyOtherError(t *testing.T) {
 			t.Parallel()
 			_, actual, recorder := harvestApplyFailure(t, failure)
 			assertUnaccountedApply(t, actual)
-			if event := findEvent(recorder, "Warning ApplyOutcomeUnknown"); event != uncertainApplyFixedEvent {
-				t.Fatalf("ApplyOutcomeUnknown event = %q, want the fixed text", event)
+			want := uncertainApplyFixedEvent
+			if runner.LeavesReportedError(failure.Code) {
+				// The run wrote Ptah's sentence, and the Event says where. That sentence
+				// is still not in the Event.
+				want += ". What Ptah reported is in the Pod log"
+			}
+			if event := findEvent(recorder, "Warning ApplyOutcomeUnknown"); event != want && !strings.HasPrefix(event, want+" for ") {
+				t.Fatalf("ApplyOutcomeUnknown event = %q, want %q", event, want)
 			}
 		})
 	}

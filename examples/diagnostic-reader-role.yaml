@@ -27,11 +27,14 @@ rules:
     verbs: ["get", "list", "watch"]
   # Pods, and their logs. A Plan Job's runner seals its plan payload to the
   # manager's own key before writing it, so a Plan Pod's log holds ciphertext,
-  # and the runner drops the free-text database error a migration run or a
-  # dirty revision carries before it ever reaches the frame. Reading an
-  # operation Pod's log is no longer reading a plan or a declared row value;
-  # what the controller made of each result is in status, conditions and
-  # Events, which this role also reads.
+  # and reading an operation Pod's log is not reading a plan: when an Apply fails,
+  # text the failed statement also holds is replaced in the one line it writes. It
+  # can be reading a row: that line is the database's own sentence, which can name
+  # a role, a host and a database and quote values read from a table, for 24 hours
+  # after a run a person approved and five minutes after any other. Bind this role
+  # as you would grant read access to the data. What the
+  # controller made of each result is in status, conditions and Events, which
+  # this role also reads and which carry none of that.
   #
   # Not pods/attach or pods/exec. A live process inside an Observe, Plan or
   # Apply Pod still holds the target database credential in its environment,

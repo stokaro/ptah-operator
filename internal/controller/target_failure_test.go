@@ -257,6 +257,9 @@ func notStartedApply(
 		repolicyPlan(t, migration, plan)
 	}
 	operation := applyClaimFor(t, migration, plan)
+	if policy != operatorv1alpha1.ApplyPolicyAlways {
+		operation.ApprovalRef = &operatorv1alpha1.ImmutableObjectReference{Name: "approval", UID: "approval-uid"}
+	}
 	job, pod := terminalMigrationWorkload(migration, batchv1.JobComplete)
 	frame := migrationFrame(t, runner.Result{
 		ProtocolVersion: runner.ProtocolVersion, Operation: runner.OperationMigrationApply,
@@ -323,6 +326,12 @@ func TestAMigrationRunThatNeverSelectedSaysWhy(t *testing.T) {
 			}
 			actual := readMigration(t, api, migration)
 			want := test.want(migration)
+			// A failure with a kind has its sentence whole. Any other says where
+			// Ptah's own account is.
+			if run := actual.Status.LastRun; run != nil && test.failure.Code == "child_exit" {
+				want += ". What Ptah reported is in the Pod log for 24 hours after the Job finishes: kubectl logs -n " +
+					migration.Namespace + " job/" + run.JobName + " -c ptah"
+			}
 			if run := actual.Status.LastRun; run == nil || run.Outcome != operatorv1alpha1.MigrationRunOutcomeFailed ||
 				run.Message != want || len(run.AppliedVersions) != 0 {
 				t.Fatalf("LastRun = %#v, want a failed run that says %q", run, want)

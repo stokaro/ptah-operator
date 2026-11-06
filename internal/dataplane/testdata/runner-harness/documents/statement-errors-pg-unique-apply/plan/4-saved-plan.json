@@ -1,0 +1,15 @@
+{
+  "format_version": 1,
+  "name": "plan_90e6bce85f7d",
+  "dialect": "postgres",
+  "from_fingerprint": "sha256:30b47a95f8496ea5a065190b8501c4ca9a68a4d62085f1f0684e88b04ec1effa",
+  "to_fingerprint": "sha256:caac4c9e594c622ded5c7346e50e93752f7f5eb6b1cbf835985d07edbc6e872a",
+  "destructive": false,
+  "statements": [
+    {
+      "sql": "CREATE UNIQUE INDEX IF NOT EXISTS \"orders_one_per_customer\" ON \"orders\" (\"customer_id\")",
+      "severity": "warning",
+      "reason": "CREATE UNIQUE INDEX can fail on existing duplicate values"
+    }
+  ]
+}
