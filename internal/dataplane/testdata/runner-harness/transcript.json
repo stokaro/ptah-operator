@@ -187,6 +187,23 @@
     ]
   },
   {
+    "name": "desired-source/scratch-control-bytes",
+    "children": [
+      {
+        "command": "migrations status",
+        "args": [
+          "migrations",
+          "status",
+          "--db-url=sqlite:///:memory:",
+          "--json"
+        ],
+        "exit": 2,
+        "stderr": "error: error registering migrations: failed to load up migration 0000000001_a\u001b]0;pwn\u0007.up.sql: invalid migration directives in 0000000001_a\u001b]0;pwn\u0007.up.sql: invalid +ptah no_transaction value \"sometimes\": expected true or false\n",
+        "stdout": "desired-source/scratch-control-bytes.json"
+      }
+    ]
+  },
+  {
     "name": "desired-source/scratch-directive",
     "children": [
       {
@@ -377,6 +394,22 @@
         "exit": 1,
         "stderr": "1 structural problem\n",
         "stdout": "desired-source/validate-sql.txt"
+      }
+    ]
+  },
+  {
+    "name": "desired-source/validate-sql-folded",
+    "children": [
+      {
+        "command": "schema validate",
+        "args": [
+          "schema",
+          "validate",
+          "--dialect=PostgreSQL"
+        ],
+        "exit": 1,
+        "stderr": "1 structural problem\n",
+        "stdout": "desired-source/validate-sql-folded.txt"
       }
     ]
   },

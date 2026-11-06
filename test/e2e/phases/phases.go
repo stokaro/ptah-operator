@@ -190,6 +190,9 @@ type DataPlaneInputs struct {
 	// the test namespace.
 	PostgresImage string `env:"E2E_POSTGRES_IMAGE"`
 	MySQLImage    string `env:"E2E_MYSQL_IMAGE"`
+	// RegistryHostAddress is the registry as the host reaches it, for the
+	// artifact no product command builds.
+	RegistryHostAddress string `env:"E2E_REGISTRY_HOST_ADDRESS"`
 	// RegistryIP is the registry container's address on the kind network,
 	// RegistryService the Service that routes to it, and RegistryPort the
 	// host port the driver published it on.
@@ -223,8 +226,9 @@ type DataPlaneInputs struct {
 }
 
 // DataPlane proves the PostgreSQL lifecycle, both engines' size limits,
-// four-eyes approval, Pod metadata, and a PostgreSQL extension's drift in
-// Ptah's feature categories. It also prepares the other suites.
+// four-eyes approval, Pod metadata, a PostgreSQL extension's drift in Ptah's
+// feature categories, and what a schema artifact the executor cannot parse says.
+// It also prepares the other suites.
 var DataPlane = define[DataPlaneInputs](Phase{
 	Name:         "dataplane",
 	Test:         "TestDataPlane",
@@ -238,6 +242,7 @@ var DataPlane = define[DataPlaneInputs](Phase{
 		"four-eyes-distinct-approver",
 		"pod-metadata-admission",
 		"postgresql-extension-drift",
+		"oci-unreadable-schema",
 	},
 	Preparation: 1,
 })
@@ -728,8 +733,8 @@ type GitSourceInputs struct {
 // directory from a tag over SSH with a deploy key and pinned known hosts; a
 // credential granted for another host, refused before Ptah runs; and a
 // submodule, an LFS pointer and a host key the known hosts do not pin, each
-// refused at its Resolve; and a schema file Ptah cannot read named in the
-// condition and the Event.
+// refused at its Resolve; and a schema file and a migration directory Ptah
+// cannot read, each named in the condition and the Event.
 var GitSources = define[GitSourceInputs](Phase{
 	Name:    "git-sources",
 	Test:    "TestGitSources",

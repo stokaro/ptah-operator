@@ -9,7 +9,8 @@ const migrationRegistrationPrefix = "error registering migrations: "
 
 // SchemaSourceProblem reads what `schema validate` printed about a desired
 // schema it could not load: `<dialect>: source: <reason>`, in the dialect the
-// engine names. The reason keeps Ptah's words on one line.
+// engine names. The reason is as Ptah printed it, across lines if it spans them:
+// what leaves the runner is the runner's to make, after it has redacted the words.
 //
 // Only that shape is read. Validate also reports structural problems, a
 // `schema` or an `index` line, and `schema drift` and `schema plan` do not
@@ -21,11 +22,7 @@ func SchemaSourceProblem(stdout []byte, engine string) (string, bool) {
 	if !found || !dialectMatches(engine, dialect) {
 		return "", false
 	}
-	reason, isSource := strings.CutPrefix(rest, "source: ")
-	if !isSource {
-		return "", false
-	}
-	return oneLine(reason)
+	return strings.CutPrefix(rest, "source: ")
 }
 
 // MigrationFilesProblem reads the failure document `migrations status --json`
@@ -40,12 +37,6 @@ func MigrationFilesProblem(stdout []byte) (string, bool) {
 	if !loading {
 		return "", false
 	}
-	return oneLine(reason)
-}
-
-// oneLine joins a reason that spans lines, as a YAML parser's does, so that it
-// reads as one sentence in a condition. An empty reason is no reason.
-func oneLine(reason string) (string, bool) {
-	joined := strings.Join(strings.Fields(reason), " ")
-	return joined, joined != ""
+	reason = strings.TrimSpace(reason)
+	return reason, reason != ""
 }

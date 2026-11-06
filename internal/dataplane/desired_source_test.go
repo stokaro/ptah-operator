@@ -44,8 +44,9 @@ func TestSchemaSourceProblemReadsALoadFailure(t *testing.T) {
 			want: "error parsing schema file: parse YAML schema: yaml: line 1: did not find expected '-' indicator",
 		},
 		{
+			// Joining the lines is the runner's, after it has redacted them.
 			name: "a YAML error that spans two lines", fixture: "validate-yaml-value.txt", engine: "PostgreSQL",
-			want: "error parsing schema file: parse YAML schema: yaml: unmarshal errors: line 1: cannot unmarshal !!str `hunter2...` into map[string]yamlschema.tableSpec",
+			want: "error parsing schema file: parse YAML schema: yaml: unmarshal errors:\n  line 1: cannot unmarshal !!str `hunter2...` into map[string]yamlschema.tableSpec",
 		},
 		{
 			name: "HCL that does not parse", fixture: "validate-hcl.txt", engine: "PostgreSQL",
@@ -108,6 +109,9 @@ func TestMigrationFilesProblemReadsALoadFailure(t *testing.T) {
 		"scratch-name.json":      `no migration files matched format "auto"; unrecognized SQL files: init.sql, not-a-migration.down.sql`,
 		"scratch-directive.json": `failed to load up migration 0000000001_init.up.sql: invalid migration directives in 0000000001_init.up.sql: invalid +ptah no_transaction value "sometimes": expected true or false`,
 		"scratch-down.json":      `incomplete migrations found (missing up or down files): [1]`,
+		// What a file name can carry through a registry, as the runner receives it.
+		"scratch-control-bytes.json": "failed to load up migration 0000000001_a\x1b]0;pwn\x07.up.sql: invalid migration directives in " +
+			"0000000001_a\x1b]0;pwn\x07.up.sql: invalid +ptah no_transaction value \"sometimes\": expected true or false",
 	} {
 		t.Run(fixture, func(t *testing.T) {
 			t.Parallel()

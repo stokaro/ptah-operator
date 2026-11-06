@@ -143,9 +143,15 @@ func TestTheUnreadableGitCommitLeavesTheCapturedOnes(t *testing.T) {
 	if spec.Commits[captured].Files[gitUnreadablePath] != unreadablePartitionSchema {
 		t.Errorf("the added commit does not hold the file at %s", gitUnreadablePath)
 	}
+	migrationFile := gitUnreadableMigrationPath + "/" + unreadableMigrationFile
+	if spec.Commits[captured].Files[migrationFile] != unreadableMigrationFiles[0].body {
+		t.Errorf("the added commit does not hold the file at %s", migrationFile)
+	}
 	for index := range captured {
-		if _, present := spec.Commits[index].Files[gitUnreadablePath]; present {
-			t.Errorf("commit %d holds the file the row adds", index)
+		for _, added := range []string{gitUnreadablePath, migrationFile} {
+			if _, present := spec.Commits[index].Files[added]; present {
+				t.Errorf("commit %d holds the file %s the row adds", index, added)
+			}
 		}
 	}
 }
@@ -168,5 +174,85 @@ func TestTheUnreadableFilesAreTheOnesThePinnedImageRefused(t *testing.T) {
 	up := unreadableMigrationFiles[0]
 	if up.path != unreadableMigrationFile || !strings.Contains(up.body, "no_transaction=sometimes") {
 		t.Errorf("the row's up migration is %+v", up)
+	}
+}
+
+// TestFetchStepSaysHoldsTheClaim reads what failedInitBoundary writes, and refuses
+// what the row is there to catch: another step, a message that says nothing of the
+// run, and one that carries the words the step's container wrote.
+func TestFetchStepSaysHoldsTheClaim(t *testing.T) {
+	t.Parallel()
+
+	const named = "the fetch-schema step exited 2, so the run never started"
+	if err := fetchStepSays(named, unreadableFetchStep); err != nil {
+		t.Fatalf("fetchStepSays(%q) = %v", named, err)
+	}
+	for name, message := range map[string]string{
+		"another step":       "the fetch-migrations step exited 2, so the run never started",
+		"a generic Job":      "observe Job failed",
+		"no word of the run": "the fetch-schema step exited 2",
+		"the reason":         named + ": parse schema artifact: parse HCL schema",
+		"the file":           named + ": schema.hcl:3,31-32",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if err := fetchStepSays(message, unreadableFetchStep); err == nil {
+				t.Fatalf("fetchStepSays(%q) accepted it", message)
+			}
+		})
+	}
+}
+
+// TestFetchStepLogSaysReadsTheMeasuredLine holds the log check to what `ptah schema
+// pull` printed for the fixture on the pinned image.
+func TestFetchStepLogSaysReadsTheMeasuredLine(t *testing.T) {
+	t.Parallel()
+
+	measured := []byte("error: parse schema artifact: parse HCL schema: schema.hcl:3,31-32: Invalid single-argument block definition; " +
+		"A single-line block definition must end with a closing brace immediately after its single argument definition.\n")
+	if err := fetchStepLogSays(measured); err != nil {
+		t.Fatalf("fetchStepLogSays() = %v", err)
+	}
+	for name, log := range map[string][]byte{
+		"an empty log":          nil,
+		"a registry refusal":    []byte("error: unauthorized: authentication required\n"),
+		"another layer's parse": []byte("error: parse schema artifact: read managed data layer\n"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if err := fetchStepLogSays(log); err == nil {
+				t.Fatalf("fetchStepLogSays(%q) accepted it", log)
+			}
+		})
+	}
+}
+
+// TestFetchStepEventFindsTheEventOfTheResource keeps the Event search to the
+// resource and the reason it was asked about, and says which way it came up empty.
+func TestFetchStepEventFindsTheEventOfTheResource(t *testing.T) {
+	t.Parallel()
+
+	const named = "the fetch-schema step exited 2, so the run never started"
+	event := func(owner types.UID, reason, eventType, message string) corev1.Event {
+		return corev1.Event{
+			InvolvedObject: corev1.ObjectReference{UID: owner}, Reason: reason, Type: eventType, Message: message,
+		}
+	}
+	if err := fetchStepEvent([]corev1.Event{event("a", "OperationFailed", corev1.EventTypeWarning, named)}, "a", "OperationFailed", unreadableFetchStep); err != nil {
+		t.Fatalf("fetchStepEvent() = %v", err)
+	}
+	for name, events := range map[string][]corev1.Event{
+		"no Event":            nil,
+		"another resource":    {event("b", "OperationFailed", corev1.EventTypeWarning, named)},
+		"another reason":      {event("a", "OperationRetried", corev1.EventTypeWarning, named)},
+		"a Normal Event":      {event("a", "OperationFailed", corev1.EventTypeNormal, named)},
+		"an Event with words": {event("a", "OperationFailed", corev1.EventTypeWarning, named+": parse schema artifact")},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if err := fetchStepEvent(events, "a", "OperationFailed", unreadableFetchStep); err == nil {
+				t.Fatalf("fetchStepEvent() accepted %+v", events)
+			}
+		})
 	}
 }

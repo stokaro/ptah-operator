@@ -189,3 +189,28 @@ func TestAFailedFetchIsNamedAsItsStep(t *testing.T) {
 		})
 	}
 }
+
+// TestBoundedKeepsWholeCharacters cuts in the middle of a two-byte character. An
+// Event or a condition holding half of one is text the API server may refuse.
+func TestBoundedKeepsWholeCharacters(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name, value string
+		limit       int
+		want        string
+	}{
+		{name: "under the bound", value: "abc", limit: 4, want: "abc"},
+		{name: "at the bound", value: "abcd", limit: 4, want: "abcd"},
+		{name: "over the bound", value: "abcde", limit: 4, want: "abcd..."},
+		{name: "a character across the bound", value: "abcé", limit: 4, want: "abc..."},
+		{name: "a character at the bound", value: "abcdé", limit: 4, want: "abcd..."},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if got := bounded(test.value, test.limit); got != test.want {
+				t.Fatalf("bounded(%q, %d) = %q, want %q", test.value, test.limit, got, test.want)
+			}
+		})
+	}
+}

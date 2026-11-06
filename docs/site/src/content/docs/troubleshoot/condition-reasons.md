@@ -231,18 +231,22 @@ waits the same interval.
 
 When Ptah cannot load a desired schema or a migration directory, what the
 operator says starts with the code `desired_source_unreadable` and carries Ptah's
-reason, which names the file:
+reason. For a schema it names the file: the runner puts the file's name in front
+where Ptah's words leave it out, as a YAML parser's do. For a migration directory
+it names the file Ptah stopped at, or the version when a file is missing:
 
 ```
 desired_source_unreadable: error parsing schema file: read SQL schema file /source/schema/schema.sql: expected '(' after table name: expected Operator, got Identifier at position 180
+desired_source_unreadable: schema.yaml: error parsing schema file: parse YAML schema: yaml: line 1: did not find expected '-' indicator
 desired_source_unreadable: failed to load up migration 0000000001_init.up.sql: invalid migration directives in 0000000001_init.up.sql: invalid +ptah no_transaction value "sometimes": expected true or false
+desired_source_unreadable: incomplete migrations found (missing up or down files): [1]
 ```
 
 The path is where the file sits in the operation Pod: `/source/schema/` and the
 path a ConfigMap item names or the last part of a Git path. In a SQL file,
-`position` is the offset in bytes from the start of the file, and
-`head -c 180 schema.sql | tail -n 1` prints the line it stopped on. YAML, HCL and
-DBML name a line.
+`position` is the offset in bytes from the start of the file, counted from zero,
+and `head -c $((180 + 1)) schema.sql | tail -n 1` prints that line up to the first
+byte of the token Ptah stopped at. YAML, HCL and DBML name a line.
 
 | Stage | Where the reason appears, and what follows |
 | --- | --- |
@@ -275,13 +279,24 @@ a table it does not declare, keeps `child_exit`: the runner reports only a load
 failure, because a structural problem `schema validate` finds is not always one
 the failed command refused. `ptah schema validate` prints those.
 
-A schema published to an OCI registry is different, because Ptah reads it before
-the operation starts. `ptah schema push` refuses a file it cannot parse, with the
-same reason, so no such artifact comes from Ptah. An artifact built another way,
-or by a newer Ptah than the executor, fails in the `fetch-schema` init container,
-and the message names only the step: `the fetch-schema step exited 2, so the run
-never started`. That container holds the registry credentials, so what it wrote
-stays in its log:
+A schema published to an OCI registry is the exception, and for it the operator
+gives no reason. Ptah parses the artifact in the `fetch-schema` init container,
+before the operation starts. `ptah schema push` refuses a file it cannot parse, so
+an artifact that fails here comes from a newer Ptah than the executor, or from
+something other than Ptah. The message names only the step, with no file and no
+reason: `the fetch-schema step exited 2, so the run never started`. That container
+holds the registry credentials, so what it wrote does not reach status or an Event.
+
+An author reads the reason without the cluster, by pulling the artifact with the
+Ptah version [the operator pins](../../support/ptah/):
+
+```bash
+ptah schema pull oci://registry.example/schemas/storefront:stable --out /tmp/schema.hcl
+```
+
+The container's log holds the same sentence until the Job is collected, for
+whoever holds `pods/log`. The diagnostic reader role grants that, and the
+desired-state author role does not:
 
 ```bash
 kubectl logs -n application job/<job> -c fetch-schema

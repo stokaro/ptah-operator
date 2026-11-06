@@ -64,8 +64,8 @@ Nothing else.
   lists the kinds and where each stage shows them.
 - **A desired file Ptah could not read.** When a desired schema or a migration
   directory does not load, the condition message and the Warning Event carry
-  Ptah's reason, which names the file, under the code
-  `desired_source_unreadable`. Before, the same failure read `child_exit: ptah
+  Ptah's reason under the code `desired_source_unreadable`, naming a schema's file
+  and a migration's file or version. Before, the same failure read `child_exit: ptah
   exited with code 2`, or `invalid_plan_output` from a Plan. The reason comes
   from a second run of Ptah with no database URL and no credential, and it can
   quote a fragment of the file, which status readers then see:
@@ -73,7 +73,7 @@ Nothing else.
   [A desired file Ptah could not read](../../troubleshoot/condition-reasons/#a-desired-file-ptah-could-not-read)
   says how to read the reason and how to make the resource read the repaired
   file. A schema whose `fetch-schema` step fails now names that step and its
-  exit status.
+  exit status, and gives no reason: that page says how to get one.
 - **`DatabaseReachable` says which kind it was.** `DatabaseReachable` is `False`
   when an operation's result names a kind, with a reason for each:
   `DatabaseUnreachable`, `AuthenticationFailed`, `DatabaseNotFound`,

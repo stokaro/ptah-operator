@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"path"
 	"strings"
 	"time"
 
@@ -23,9 +24,10 @@ const (
 	// maxDesiredSourceCheckBytes is more than a reason takes. A check that
 	// prints more than this is not reporting a reason.
 	maxDesiredSourceCheckBytes = 64 << 10
-	// maxDesiredSourceReasonBytes keeps the reason within what the controller
-	// keeps of a frame's message.
-	maxDesiredSourceReasonBytes = 512
+	// maxDesiredSourceReasonBytes is what fits an Event with the code in front:
+	// the controller keeps 512 bytes of the whole sentence there, so a longer
+	// reason would read differently in the condition and the Event.
+	maxDesiredSourceReasonBytes = 512 - len(CodeDesiredSourceUnreadable) - len(": ")
 	// scratchDatabaseURL is the database a migration check opens: in memory,
 	// private to the child, and gone when it exits. `migrations status` loads
 	// the directory only after it has connected, so it needs one, and this one
@@ -67,8 +69,12 @@ func reportUnreadableSchema(
 	if !unreadable {
 		return false
 	}
-	setDesiredSourceUnreadable(result, reason, redactor, config.Diagnostics)
-	return true
+	// A SQL parser names the file and a YAML parser does not, so the name goes
+	// in front only where Ptah's words leave it out.
+	if name := path.Base(file); !strings.Contains(reason, name) {
+		reason = name + ": " + reason
+	}
+	return setDesiredSourceUnreadable(result, reason, redactor, config.Diagnostics)
 }
 
 // reportUnreadableMigrationFiles is reportUnreadableSchema for a migration
@@ -84,9 +90,6 @@ func reportUnreadableMigrationFiles(
 	result *Result,
 	redactor Redactor,
 ) bool {
-	if inputs.MigrationsDir == "" {
-		return false
-	}
 	stdout, exitCode, finished := runDesiredSourceCheck(ctx, config, CommandSpec{
 		Path: config.PtahBinary,
 		Args: []string{"migrations", "status", "--db-url=" + scratchDatabaseURL, "--json"},
@@ -99,8 +102,7 @@ func reportUnreadableMigrationFiles(
 	if !unreadable {
 		return false
 	}
-	setDesiredSourceUnreadable(result, reason, redactor, config.Diagnostics)
-	return true
+	return setDesiredSourceUnreadable(result, reason, redactor, config.Diagnostics)
 }
 
 // desiredSourceCheckEnvironment is everything a check's child is told: where
@@ -134,13 +136,14 @@ func runDesiredSourceCheck(ctx context.Context, config Config, spec CommandSpec)
 	return stdout.bytes(), exitCode, true
 }
 
-// setDesiredSourceUnreadable reports the reason, redacted and bounded. The
-// redactor knows the credentials of the Pod's environment, which the child does
-// not, in case the file quotes one.
-func setDesiredSourceUnreadable(result *Result, reason string, redactor Redactor, diagnostics io.Writer) {
-	reason = redactor.Redact(reason)
-	if len(reason) > maxDesiredSourceReasonBytes {
-		reason = strings.ToValidUTF8(reason[:maxDesiredSourceReasonBytes], "")
+// setDesiredSourceUnreadable reports the reason, and reports false, changing
+// nothing, when none of it is readable. The redactor knows the credentials of
+// the Pod's environment, which the child does not, in case the file quotes one.
+func setDesiredSourceUnreadable(result *Result, reason string, redactor Redactor, diagnostics io.Writer) bool {
+	text := freeText(reason, redactor, maxDesiredSourceReasonBytes)
+	if text == "" {
+		return false
 	}
-	setResultError(result, CodeDesiredSourceUnreadable, errors.New(reason), redactor, diagnostics)
+	setResultError(result, CodeDesiredSourceUnreadable, errors.New(text), redactor, diagnostics)
+	return true
 }

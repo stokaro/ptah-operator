@@ -770,7 +770,7 @@ func readNativePlan(
 	switch report.Outcome {
 	case dataplane.SchemaPlanOutcomeRefused:
 		if report.Refusal.Code == dataplane.SchemaRefusalProtectedTable {
-			setResultError(result, "protected_table", errors.New(fenceRefusalMessage(report)), redactor, config.Diagnostics)
+			setResultError(result, "protected_table", errors.New(fenceRefusalMessage(report, redactor)), redactor, config.Diagnostics)
 			return nativePlan{}, false
 		}
 		setResultError(result, "plan_refused", fmt.Errorf("ptah refused to plan the change (%s)", report.Refusal.Code), redactor, config.Diagnostics)
@@ -873,14 +873,14 @@ func planStatements(plan dataplane.PlanFile) []string {
 
 // fenceRefusalMessage is the sentence a fence refusal is reported with: the
 // report's own, which names the fenced tables and no row.
-func fenceRefusalMessage(report dataplane.SchemaPlanReport) string {
+func fenceRefusalMessage(report dataplane.SchemaPlanReport, redactor Redactor) string {
 	if report.Error != nil {
-		if message := strings.TrimSpace(report.Error.Message); message != "" {
+		if message := freeText(report.Error.Message, redactor, maxErrorMessageBytes); message != "" {
 			return message
 		}
 	}
 	if len(report.Refusal.Tables) != 0 {
-		return "refusing to change protected table(s) " + strings.Join(report.Refusal.Tables, ", ")
+		return freeText("refusing to change protected table(s) "+strings.Join(report.Refusal.Tables, ", "), redactor, maxErrorMessageBytes)
 	}
 	return "refusing to change a protected table"
 }

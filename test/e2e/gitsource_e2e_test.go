@@ -47,7 +47,7 @@ func TestGitSources(t *testing.T) {
 		{"git-migration-ssh", c.migrationOverSSH},
 		{"git-credential-refused", c.credentialForAnotherHost},
 		{"git-source-refused", c.refusedSources},
-		{"git-source-unreadable", c.unreadableSchema},
+		{"git-source-unreadable", c.unreadableSources},
 	} {
 		if !run.Scenario(scenario.name, c.scenario(scenario.body)) {
 			return
@@ -376,6 +376,7 @@ func (c *gitRun) reset() {
 	namespace := c.in.TestNamespace
 	objects := []client.Object{
 		&ptahv1alpha1.PtahMigration{ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: gitMigration}},
+		&ptahv1alpha1.PtahMigration{ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: gitUnreadableMigration}},
 		&ptahv1alpha1.PtahMigrationApproval{ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: "e2e-git-migration-v1"}},
 	}
 	for _, schema := range []string{gitSchema, gitRefusedSchema, gitPinnedSchema, gitSubmoduleSchema, gitLFSSchema, gitHostKeySchema, gitUnreadableSchema} {
@@ -390,7 +391,7 @@ func (c *gitRun) reset() {
 	for _, object := range objects {
 		c.deleteAndWait(object)
 	}
-	for _, database := range []string{gitSchemaDatabase, gitMigrationDatabase, gitPinnedDatabase, gitUnreadableDatabase} {
+	for _, database := range []string{gitSchemaDatabase, gitMigrationDatabase, gitPinnedDatabase, gitUnreadableDatabase, gitUnreadableMigrationDatabase} {
 		_, err := serverSQL(c.ctx, c.cluster, namespace, c.engine, "DROP DATABASE IF EXISTS "+database+" WITH (FORCE)")
 		c.check(err, "drop database %s", database)
 	}
@@ -896,13 +897,74 @@ func (c *gitRun) refusedSources() {
 	}
 }
 
+// unreadableSources serves the commit that holds both files and reads what each
+// resource says of its own.
+func (c *gitRun) unreadableSources() {
+	c.t.Helper()
+	spec := gitUnreadableSpec()
+	c.serve(spec, len(spec.Commits)-1)
+	c.unreadableSchema()
+	c.unreadableMigration()
+}
+
+// unreadableMigration selects a directory of the branch whose up migration carries
+// a directive the loader refuses. The fetch writes the files, and the reason comes
+// from the operation container, as it does for a schema.
+func (c *gitRun) unreadableMigration() {
+	c.t.Helper()
+	c.createDatabase(gitUnreadableMigrationDatabase, gitUnreadableMigrationSecret)
+	c.check(c.create(map[string]any{
+		"apiVersion": ptahSchemaAPIVersion, "kind": "PtahMigration",
+		"metadata": map[string]any{"namespace": c.in.TestNamespace, "name": gitUnreadableMigration},
+		"spec": map[string]any{
+			"target": map[string]any{
+				"engine": "PostgreSQL", "coordinationKey": "e2e/" + gitUnreadableMigrationDatabase,
+				"urlFrom": map[string]any{"name": gitUnreadableMigrationSecret, "key": "url"},
+			},
+			"artifact": map[string]any{"git": map[string]any{
+				"url": c.ssh, "ref": map[string]any{"branch": "main"}, "path": gitUnreadableMigrationPath,
+				"authFrom":  map[string]any{"name": gitDeployKeyCredential},
+				"transport": map[string]any{"knownHostsFrom": map[string]any{"name": gitKnownHostsConfigMap, "key": "known_hosts"}},
+			}},
+			"interval":  gitInterval,
+			"policy":    map[string]any{"apply": "OnApproval"},
+			"execution": map[string]any{"activeDeadlineSeconds": int64(600)},
+		},
+	}), "create PtahMigration %s", gitUnreadableMigration)
+	migration := &ptahv1alpha1.PtahMigration{}
+	var message string
+	c.wait("the migration to say why it could not load its files", func() (bool, string) {
+		if err := c.get(gitUnreadableMigration, migration); err != nil {
+			return false, err.Error()
+		}
+		progressing := meta.FindStatusCondition(migration.Status.Conditions, ptahv1alpha1.ConditionMigrationProgressing)
+		if progressing == nil || progressing.Reason != string(ptahv1alpha1.ReasonOperationFailed) {
+			return false, fmt.Sprintf("%s, Progressing %+v", migration.Status.Phase, progressing)
+		}
+		message = progressing.Message
+		err := unreadableSourceSays(message, unreadableMigrationFile, unreadableMigrationReason)
+		return err == nil, fmt.Sprint(err)
+	})
+	if strings.Contains(message, gitUnreadableMigrationDatabase) || strings.Contains(message, c.password) || strings.Contains(message, c.keys.Token) {
+		c.fatalf("the reason names the target or the source's credential: %s", message)
+	}
+	c.wait("the OperationRetried Event to say why", func() (bool, string) {
+		events := &corev1.EventList{}
+		if err := c.cluster.Client.List(c.ctx, events, client.InNamespace(c.in.TestNamespace)); err != nil {
+			return false, err.Error()
+		}
+		err := unreadableSourceEvent(events.Items, migration.UID, "OperationRetried", unreadableMigrationFile, unreadableMigrationReason)
+		return err == nil, fmt.Sprint(err)
+	})
+	c.deleteAndWait(migration)
+	c.logf("PASS a migration from Git said why its files could not be loaded: %s", message)
+}
+
 // unreadableSchema selects a file of the branch that Ptah fetches and cannot
 // parse. The fetch succeeds, so the reason comes from the operation container,
 // as a ConfigMap's does, and it names the file at its path in the source volume.
 func (c *gitRun) unreadableSchema() {
 	c.t.Helper()
-	spec := gitUnreadableSpec()
-	c.serve(spec, len(spec.Commits)-1)
 	c.createDatabase(gitUnreadableDatabase, gitUnreadableSecret)
 	c.check(c.create(c.schemaDocumentFor(gitUnreadableSchema, gitUnreadableSecret, gitUnreadableDatabase,
 		c.httpsSource(gitUnreadablePath, gitTokenCredential))), "create PtahSchema %s", gitUnreadableSchema)

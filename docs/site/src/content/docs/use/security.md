@@ -786,7 +786,8 @@ Native stderr from Plan and Apply is discarded rather than forwarded: under
 `--json` it lists the planned statements, which can carry declared row values.
 Apply native stdout is never copied into the structured result or runner
 diagnostics, including failure paths, and neither is the error sentence its
-report carries. Only generic typed failures leave the runner. A document
+report carries. A failure leaves the runner as a typed code with a sentence of
+the runner's own, apart from the ones listed below. A document
 whose error names why the target could not be opened, from the closed set of
 kinds Ptah declares, is reported by that kind and a sentence of the runner's
 own, on every operation that opens the target; the error's message is not
@@ -796,19 +797,30 @@ like every other Apply failure it stays uncertain until an observation settles
 it: another Pod of the same Job may have run, so no one child's report proves
 that nothing was sent.
 
-A desired file Ptah cannot read is the one failure reported in Ptah's words.
-When Observe, Plan or a migration history read fails and its document names no
-such kind, the runner asks Ptah again in a second child: `schema validate` for a
-schema, and `migrations status` against an in-memory SQLite database for a
-migration directory. That child is told the path of the desired files, `HOME`
-and `TMPDIR`, and nothing else of the Pod's environment, so it holds no database
-URL and no credential and has no connection to quote. The failed command's own
-error is still not read: it had a connection, and its sentence could repeat what
-the database answered. When the second child reports that the files do not load,
-the frame carries its reason under the code `desired_source_unreadable`, with
-the credentials of the Pod's environment redacted and cut at 512 bytes, and the
-controller writes that reason to the condition and the Event. Any other answer
-leaves the failure with the code it had.
+Ptah's own words reach the frame, a condition and an Event for these failures:
+
+| Failure | Code | Whose words | Cut at |
+| --- | --- | --- | --- |
+| A desired file Ptah cannot read | `desired_source_unreadable` | A second child with no database URL and no credential | 485 bytes, so the code and the reason fit an Event's 512 |
+| A plan that would change a protected table | `protected_table` | The `error.message` of the `schema plan` report, from a command with a database connection, which names the fenced tables | 4 KiB in the frame, then 512 bytes in the Event and 1 KiB in the condition |
+| A Git source a Resolve cannot fetch | `child_exit` | The last line of standard error from the Git pull, which holds the Git credential and no database URL, and names the refusal | 512 bytes, and an Event's 512 include the words in front of it |
+
+One function in the runner handles all of them. It removes the credentials of the
+Pod's environment wherever one appears whole, in any case, replaces control and
+format characters with a space, joins the text onto one line and cuts it at a
+character boundary, in that order.
+
+For a desired file, when Observe, Plan or a migration history read fails and its
+document names no such kind, the runner asks Ptah again in a second child:
+`schema validate` for a schema, and `migrations status` against an in-memory
+SQLite database for a migration directory. That child is told the path of the
+desired files, `HOME` and `TMPDIR`, and nothing else of the Pod's environment, so
+it holds no database URL and no credential and has no connection to quote. The
+failed command's own error is still not read: it had a connection, and its
+sentence could repeat what the database answered. When the second child reports
+that the files do not load, the frame carries its reason, and the controller
+writes that reason to the condition and the Event. Any other answer leaves the
+failure with the code it had.
 
 That reason can quote the file. A parser names the token it stopped at, and a
 YAML error repeats the start of the value it could not decode:
@@ -816,9 +828,19 @@ YAML error repeats the start of the value it could not decode:
 ``cannot unmarshal !!str `hunter2...` ``. Status and Events are readable by more
 roles than the file is: the diagnostic reader may read them and is denied
 ConfigMaps and plan chunks, so a fragment of a source file can reach someone who
-cannot read the file itself. The redactor removes the credentials the Pod holds.
-It does not know what else in a file is sensitive, so keep a value that must not
-reach status out of a desired file.
+cannot read the file itself. Redaction cannot cover a fragment. The YAML reader
+cuts `Hunter2Hunter2` to `Hunter2...`, and the SQL reader stops at `PASS` in
+`pass word`, and neither leaves a whole credential to match. Redaction does not
+know what else in a file is sensitive either, so keep a value that must not reach
+status out of a desired file.
+
+Outside status and Events, a failed `fetch-git-source` init container writes
+standard error, handled by the same function, to its log, and the kubelet copies
+the end of that log into the Pod's status. The `fetch-schema` and `fetch-migrations` init containers are Ptah itself,
+with no runner around them, so their logs hold what Ptah wrote with nothing
+removed. Those containers hold the registry credentials, which is why status and
+Events name only the step and its exit status. Whoever holds `pods/log` reads
+those logs, and whoever reads Pods reads the status.
 
 A successful Plan frame is the one frame that carries the plan: it transports
 the exact plan bytes through the authenticated receiver before they are

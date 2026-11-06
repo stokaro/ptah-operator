@@ -582,6 +582,7 @@ func desiredSourceRows() []directRow {
 	return []directRow{
 		validate("validate-sql", "PostgreSQL", "schema.sql", true),
 		validate("validate-sql-mysql", "MySQL", "schema.sql", true),
+		validate("validate-sql-folded", "PostgreSQL", "folded.sql", true),
 		validate("validate-yaml", "PostgreSQL", "bad.yaml", true),
 		validate("validate-yaml-value", "PostgreSQL", "yaml-value.yaml", true),
 		validate("validate-hcl", "PostgreSQL", "bad.hcl", true),
@@ -594,6 +595,7 @@ func desiredSourceRows() []directRow {
 		scratch("scratch-name", "migrations-name", true),
 		scratch("scratch-down", "migrations-down", true),
 		scratch("scratch-good", "migrations-good", false),
+		scratch("scratch-control-bytes", controlBytesDirectory, true),
 		drift("drift-sql", "schema.sql"),
 		drift("drift-foreign-key", "structural2.sql"),
 		{

@@ -391,6 +391,18 @@ func copyTree(t *testing.T, from, to string) {
 	}
 }
 
+// controlBytesDirectory holds a migration whose file name sets a terminal's title,
+// which `ptah migrations push` and `pull` carry through a registry. The name is
+// written here rather than committed, so that no checkout holds it.
+const controlBytesDirectory = "migrations-control-bytes"
+
+func writeControlByteMigrations(t *testing.T, directory string) {
+	t.Helper()
+	const name = "0000000001_a\x1b]0;pwn\x07"
+	writeTree(t, filepath.Join(directory, name+".up.sql"), []byte("-- +ptah no_transaction=sometimes\nCREATE TABLE a (id bigint);\n"), 0o444)
+	writeTree(t, filepath.Join(directory, name+".down.sql"), []byte("DROP TABLE a;\n"), 0o444)
+}
+
 // buildTools builds the one image the lab adds: the recorder, the Git server,
 // the fixture sources and the keys generated for this run. It holds no shell.
 func (l *lab) buildTools(t *testing.T, architecture string) string {
@@ -410,6 +422,7 @@ func (l *lab) buildTools(t *testing.T, architecture string) string {
 	sources := filepath.Join("testdata", "sources")
 	copyTree(t, sources, fixtures)
 	copyTree(t, filepath.Join(sources, "desired-source"), filepath.Join(work, "desired-source"))
+	writeControlByteMigrations(t, filepath.Join(work, "desired-source", controlBytesDirectory))
 	e2eFixtures := filepath.Join(repositoryRoot, "testdata", "e2e")
 	for _, name := range []string{
 		"postgresql-v1.sql", "postgresql-v2.sql", "mysql-v1.sql", "mysql-v2.sql", "extension-postgresql-v1.sql",

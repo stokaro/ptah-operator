@@ -71,7 +71,7 @@ func FetchGitSource(ctx context.Context, ptahBinary string, environment []string
 		// Ptah's own message says why, and is what a person reads in the
 		// Pod's status. It is redacted as the main run's output is.
 		redactor := NewRedactor(environment)
-		message, _ := sanitizedCapturedText(stderr.bytes(), redactor, false, maxErrorMessageBytes)
+		message := freeText(string(stderr.bytes()), redactor, maxErrorMessageBytes)
 		if diagnostics != nil && message != "" {
 			_, _ = io.WriteString(diagnostics, message+"\n")
 		}
@@ -119,21 +119,18 @@ const maxGitRefusalBytes = 512
 // gitPullExit says why a Git pull failed: its exit status and the last line
 // Ptah wrote to standard error, which names the refusal -- a submodule or an
 // LFS pointer at the selected path, a host key that does not match, a commit
-// the server no longer has. The line is redacted and bounded, and nothing
-// else of standard error is kept.
+// the server no longer has. Nothing else of standard error is kept.
 func gitPullExit(exitCode int, stderr []byte, redactor Redactor) error {
 	message, _ := sanitizedCapturedText(stderr, redactor, false, maxErrorMessageBytes)
 	reason := ""
 	lines := strings.Split(message, "\n")
 	for index := len(lines) - 1; index >= 0 && reason == ""; index-- {
-		reason = strings.TrimSpace(lines[index])
+		reason = freeText(lines[index], redactor, maxErrorMessageBytes)
 		if prefix := "error:"; len(reason) >= len(prefix) && strings.EqualFold(reason[:len(prefix)], prefix) {
 			reason = strings.TrimSpace(reason[len(prefix):])
 		}
 	}
-	if len(reason) > maxGitRefusalBytes {
-		reason = strings.ToValidUTF8(reason[:maxGitRefusalBytes], "")
-	}
+	reason = freeText(reason, redactor, maxGitRefusalBytes)
 	if reason == "" {
 		return fmt.Errorf("ptah exited with code %d", exitCode)
 	}

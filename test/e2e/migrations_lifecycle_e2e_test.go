@@ -79,6 +79,7 @@ func (m *migrationRun) engineMigrations() {
 	m.lockReleaseFaultProof()
 	m.isolatedNodeProof()
 	m.unknownLayerProof()
+	m.unreadableOCIFiles()
 	m.egressPolicyProof()
 	m.retargetBeforeDispatchProof()
 	m.rebuildDrill()
@@ -521,7 +522,7 @@ func (m *migrationRun) resetAfterAnEarlierRun() {
 	// Every row's Secret, including those the script's own reset missed: a
 	// rerun would otherwise stop at the first row whose database survived.
 	for _, secret := range []string{
-		m.migrationSecret(), "branch", "adopt", "checkpoint", "txmode", "uncertain", "unknown-layer",
+		m.migrationSecret(), "branch", "adopt", "checkpoint", "txmode", "uncertain", "unknown-layer", "unreadable-oci",
 		"egress", "late-dispatch", "isolated-node", "stopped", "lost-log", "apply-guard", "release-fault",
 		"restore", "deletion", "drill", "suspend", "retry", "retarget", "approval-policy", "approval-transaction-mode",
 		"hung-result", "result-progress",
