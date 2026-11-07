@@ -28,9 +28,10 @@ const (
 	// generation, by a read of the database that began after the baseline.
 	TargetInSync Target = "in-sync"
 	// TargetApproval is a resource waiting at the approval gate in the state
-	// approval admission requires of its status, with a plan from a read of
-	// the database that began after the baseline. Admission also checks the
-	// plan object and its bindings, which a wait does not read.
+	// approval admission requires of its status. With a baseline, its plan has
+	// to come from a read of the database that began after that baseline. With
+	// none, the gate as the wait finds it counts. Admission also checks the plan
+	// object and its bindings, which a wait does not read.
 	TargetApproval Target = "approval"
 	// TargetApplied is an Apply or a migration run that ended after the
 	// baseline, recorded applied and settled by the operator's own reading of
@@ -87,7 +88,9 @@ type WaitOptions struct {
 	// Since is the baseline: the resource as it was before the change the
 	// wait is about, such as SuspendResult.Object or RefreshResult.Object.
 	// Nothing it already shows counts. When nil the wait's first read is the
-	// baseline, which can miss a change that completes before it.
+	// baseline, which can miss a change that completes before it, except for
+	// TargetApproval: a person who starts that wait asks whether a plan waits
+	// for them, and a first read that shows one answers it.
 	//
 	// For TargetRead it has to have been read after the request was written,
 	// and a document whose annotation does not hold ReadRequest is refused:
@@ -208,9 +211,9 @@ type TimeoutError struct {
 	// resource. When no read answered at all, LastError says so.
 	LastError error
 	// ReadUnderWay reports that the last document read showed a read of the
-	// database in flight. A wait begun after it skips that read's harvest,
-	// because it may have read the database before the wait began; a read
-	// request is what asks for one that begins later.
+	// database in flight. A wait for TargetInSync begun after it skips that
+	// read's harvest, because it may have read the database before the wait
+	// began; a read request is what asks for one that begins later.
 	ReadUnderWay bool
 }
 
@@ -463,6 +466,12 @@ type waiter struct {
 	minGeneration int64
 	baseline      *snapshot
 	fresh         freshness
+	// gateAsFound ends a wait for an approval on the gate as it stands, whichever
+	// reading its plan came from. Such a wait has no baseline to date that reading
+	// by, and an interval longer than its timeout would otherwise leave it waiting
+	// beside a plan that already waits. A plan replaced meanwhile is answered by
+	// kubectl ptah approve, which holds a decision to the plan it showed.
+	gateAsFound bool
 
 	// The read target's state. When the baseline does not rest, the floor
 	// and failureFloor are raised to the document in which the operator
@@ -499,7 +508,7 @@ func newWaiter(ref Ref, options WaitOptions) (*waiter, error) {
 	if options.Timeout <= 0 {
 		return nil, errors.New("a wait needs a timeout")
 	}
-	w := &waiter{ref: ref, options: options}
+	w := &waiter{ref: ref, options: options, gateAsFound: options.Target == TargetApproval && options.Since == nil}
 	switch {
 	case options.Target == TargetRead:
 		if options.ReadRequest == "" {
@@ -781,8 +790,8 @@ func (w *waiter) approval(s snapshot, fresh bool) verdict {
 		return waitingFor("a reading of the migration history")
 	}
 	// A plan is computed from a reading. One republished from a reading older
-	// than the wait, under the same name and UID or a new one, is not news.
-	if !fresh {
+	// than the baseline, under the same name and UID or a new one, is not news.
+	if !fresh && !w.gateAsFound {
 		return w.staleReading(s)
 	}
 	return verdict{done: true}

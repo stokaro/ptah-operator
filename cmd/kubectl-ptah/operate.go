@@ -521,7 +521,7 @@ func waitFailed(stderr io.Writer, ref operate.Ref, err error) int {
 		if timeout.LastError != nil {
 			field("Last read", statusview.Clean(timeout.LastError.Error()))
 		}
-		if timeout.ReadUnderWay && (timeout.Target == operate.TargetInSync || timeout.Target == operate.TargetApproval) {
+		if timeout.ReadUnderWay && timeout.Target == operate.TargetInSync {
 			fmt.Fprintf(&text, "A read of the database was under way. A wait started again does not count it, since it "+
 				"may have begun before what you are waiting on; %s asks for a read that begins later and waits for "+
 				"it.\n", refreshLine(ref))

@@ -56,6 +56,27 @@ func awaitingApprovalGate(migration *ptahv1alpha1.PtahMigration, digest string, 
 	return nil
 }
 
+// approvalWaitFoundTheGate holds the document kubectl ptah wait --for approval
+// ended on to the gate read just before the wait began: the same resource, the
+// same plan still waiting, and the same reading of the history. A newer reading
+// would mean the wait waited for one.
+func approvalWaitFoundTheGate(reached, before *ptahv1alpha1.PtahMigration) error {
+	status := reached.Status
+	switch {
+	case reached.UID == "" || reached.UID != before.UID:
+		return fmt.Errorf("it is resource %q, not %q", reached.UID, before.UID)
+	case status.Phase != ptahv1alpha1.MigrationPhaseAwaitingApproval:
+		return fmt.Errorf("it is %s", status.Phase)
+	case !conditionIs(status.Conditions, ptahv1alpha1.ConditionMigrationApprovalRequired, metav1.ConditionTrue, "AwaitingApproval"):
+		return fmt.Errorf("its conditions are not an approval gate: %v", conditionSummary(status.Conditions))
+	case status.Plan == nil || before.Status.Plan == nil || *status.Plan != *before.Status.Plan:
+		return fmt.Errorf("its plan is %+v, not %+v", status.Plan, before.Status.Plan)
+	case status.History == nil || before.Status.History == nil || !status.History.ObservedAt.Equal(&before.Status.History.ObservedAt):
+		return fmt.Errorf("its history reading is %+v, not %+v", status.History, before.Status.History)
+	}
+	return nil
+}
+
 // planSequence is the plan a person approves: the migration's, of the
 // published digest and the realm's coordination digest, from version 0, the
 // three migrations in order with checksums and no checkpoint, published by

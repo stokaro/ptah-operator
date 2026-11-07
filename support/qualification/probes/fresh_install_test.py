@@ -237,7 +237,7 @@ class PublishedGuideTest(unittest.TestCase):
         self.assertIn('kubectl -n application create configmap application-schema', create[1])
         self.assertIn('CREATE TABLE customers', create[1])
         substitute(create[2], [('engine: PostgreSQL\n', 'engine: MySQL\n')])
-        self.assertIn('kubectl -n application wait ptahschema/application', create[2])
+        self.assertIn('kubectl ptah wait schema/application --for approval -n application', create[2])
         following = blocks(page, 'The next version')
         self.assertEqual(len(following), 1)
         self.assertIn('kubectl ptah approve schema/application -n application --wait', following[0])

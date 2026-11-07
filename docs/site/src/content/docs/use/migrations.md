@@ -141,8 +141,7 @@ kubectl -n application create secret generic orders-database \
 kubectl -n application create configmap orders-migrations \
   --from-file=examples/configmap-kustomize/db/migrations/
 kubectl -n application apply -f examples/configmap-kustomize/ptahmigration.yaml
-kubectl -n application wait ptahmigration/orders \
-  --for=condition=ApprovalRequired --timeout=5m
+kubectl ptah wait migration/orders --for approval -n application
 kubectl ptah migration orders -n application
 kubectl ptah approve migration/orders -n application --wait
 kubectl ptah migration orders -n application
@@ -154,7 +153,7 @@ condition below, at any stage.
 | Stage | Run | Expect | Then |
 | --- | --- | --- | --- |
 | 1 Source | `kubectl create secret`, `kubectl create configmap` and `kubectl apply` | `Source: ConfigMap orders-migrations`, and its `Snapshot` | Wait for the plan |
-| 2 Plan | `kubectl -n application wait ptahmigration/orders --for=condition=ApprovalRequired --timeout=5m`, then `kubectl ptah migration orders -n application` | Phase `AwaitingApproval`, `ApprovalRequired=True`, reason `AwaitingApproval`, `Pending: 2`, and each version with its description. No SQL: the statements are in the files | Decide |
+| 2 Plan | `kubectl ptah wait migration/orders --for approval -n application`, then `kubectl ptah migration orders -n application` | Phase `AwaitingApproval`, `ApprovalRequired=True`, reason `AwaitingApproval`, `Pending: 2`, and each version with its description. No SQL: the statements are in the files | Decide |
 | 3 Decision | `kubectl ptah approve migration/orders -n application --wait` | Each version with its checksum, then `Approved:`, with the identity admission stamped | The command stays for stages 4 and 5 |
 | 4 Execution | Nothing more. To watch from elsewhere, `kubectl -n application get ptahmigration orders -w` | Phase `Applying`, then `VerifyingHistory` and `Reading` | The command ends with `reached applied` |
 | 5 Verification | `kubectl ptah migration orders -n application` | Phase `InSync`, `Ready=True`, reason `HistoryMatched`, `Pending: 0`, `Last run: Applied` | Read the history |
@@ -176,8 +175,8 @@ says how far back the journal, the Events and the finished Jobs reach.
 A stage can go another way:
 
 - At stage 2, phase `InSync` means nothing is pending, and `Blocked` means
-  [the history refused](#what-the-history-says). The `kubectl wait` times out in
-  both cases.
+  [the history refused](#what-the-history-says). The wait times out with exit
+  status 7 in both cases.
 - At stage 3, an `approve` that approves nothing found the plan replaced, or being
   replaced. Run it again, and it shows the current one.
 - At stage 4, exit status 7 means the run has not ended yet and 8 that it will not

@@ -535,13 +535,15 @@ class Walkthrough:
         url_file.write_text(self.database_url(engine))
         url_file.chmod(0o600)
         from_configmap = starts_from_a_configmap(create)
+        # Before the blocks: they wait for the plan with the plugin, and
+        # "Before you start" asks a reader to have it.
+        self.transcript.run(f'install-plugin-{engine}', self.plugin_install(), self.work, self.env, source='use/read-a-plan.md#install')
         if from_configmap:
             self.create_from_configmap(engine, create, url_file)
         else:
             self.create_from_artifact(engine, create, url_file)
         self.wait_phase('AwaitingApproval', 'ApprovalRequired')
 
-        self.transcript.run(f'install-plugin-{engine}', self.plugin_install(), self.work, self.env, source='use/read-a-plan.md#install')
         for index, block in enumerate(stops):
             # kubectl ptah approve shows the plan and asks for a decision; the
             # reader types yes. A guide from before it created the approval

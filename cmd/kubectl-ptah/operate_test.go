@@ -537,6 +537,72 @@ func requestOn(api *cluster) string {
 	return stored(api.t, api, "schema").GetAnnotations()[operatorv1alpha1.ReadRequestAnnotation]
 }
 
+// atTheGate is a resource resting at the approval gate, from the reading
+// resting has.
+func atTheGate(family string) client.Object {
+	conditions := []metav1.Condition{
+		{Type: operatorv1alpha1.ConditionApprovalRequired, Status: metav1.ConditionTrue,
+			Reason: "AwaitingApproval", Message: "The plan needs an approval", ObservedGeneration: 4},
+		{Type: operatorv1alpha1.ConditionReady, Status: metav1.ConditionFalse,
+			Reason: "AwaitingApproval", Message: "Plan is waiting for approval", ObservedGeneration: 4},
+	}
+	object := resting(family)
+	if migration, ok := object.(*operatorv1alpha1.PtahMigration); ok {
+		migration.Status.Phase = operatorv1alpha1.MigrationPhaseAwaitingApproval
+		migration.Status.Plan = &operatorv1alpha1.ImmutableObjectReference{Name: "ptah-plan-1", UID: "plan-uid"}
+		migration.Status.Conditions = conditions
+		return migration
+	}
+	schema := object.(*operatorv1alpha1.PtahSchema)
+	schema.Status.Phase = operatorv1alpha1.PhaseAwaitingApproval
+	schema.Status.Plan = &operatorv1alpha1.CurrentPlanStatus{Name: "ptah-plan-1", UID: "plan-uid", Fingerprint: "sha256:fp"}
+	schema.Status.Conditions = conditions
+	return schema
+}
+
+// A plan already waiting answers a wait started after it, on the first read,
+// with no read of the database to come: what kubectl ptah wait --for approval
+// missed under an interval longer than its timeout.
+func TestWaitForApprovalEndsOnAPlanAlreadyWaiting(t *testing.T) {
+	for _, family := range []string{"schema", "migration"} {
+		t.Run(family, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				api := newCluster(t, atTheGate(family))
+
+				code, stdout, stderr := runCommand(t, api, "wait", family+"/storefront", "--for", "approval", "--timeout", "1m")
+
+				if code != exitOK {
+					t.Fatalf("wait on a plan already waiting = %d, stdout %q, stderr %q", code, stdout, stderr)
+				}
+				requireSays(t, "the report", stdout, "reached approval.", "Plan:       ptah-plan-1",
+					"kubectl ptah approve "+family+"/storefront -n demo reviews it.")
+			})
+		})
+	}
+}
+
+// A wait with nothing waiting still times out, and a read in flight is not
+// something to work around: when it ends at the gate, a wait started again
+// counts it. Only a wait for in-sync points at a read request.
+func TestWaitForApprovalDoesNotPointAtARefresh(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		observing := resting("schema").(*operatorv1alpha1.PtahSchema)
+		observing.Status.Phase = operatorv1alpha1.PhaseObserving
+		observing.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{Type: "Observe", ID: "read", JobName: "job", JobUID: "job-uid"}
+		api := newCluster(t, observing)
+
+		code, stdout, stderr := runCommand(t, api, "wait", "schema/storefront", "--for", "approval", "--timeout", "1m")
+
+		if code != exitTimedOut || stdout != "" {
+			t.Fatalf("wait = %d, stdout %q, stderr %q", code, stdout, stderr)
+		}
+		requireSays(t, "the timeout", stderr, "did not reach approval within 1m0s.", "Waiting for: the Observe operation (phase Observing) to end")
+		if strings.Contains(stderr, "refresh") || strings.Contains(stderr, "does not count it") {
+			t.Fatalf("the timeout of a wait for approval points at a read request: %q", stderr)
+		}
+	})
+}
+
 // An InSync the resource already showed when the wait began is not an
 // answer, however many times it is read again; a reading taken after it is.
 func TestWaitDoesNotFinishOnAnOldInSync(t *testing.T) {

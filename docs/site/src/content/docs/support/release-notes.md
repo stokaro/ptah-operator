@@ -39,7 +39,9 @@ sentence is left to an update. A script that reads `status.target.inventory` has
 to expect a kind that is not a stem. Ptah Console up to 0.3.x misstates such a kind until
 [ptah-console#166](https://github.com/stokaro/ptah-console/issues/166) is fixed:
 it says a dropped extension's counts and findings disagree, and shows a changed
-policy at 100% coverage with its finding under other findings. A migration Apply
+policy at 100% coverage with its finding under other findings. `kubectl ptah wait
+--for approval` now ends on a plan already waiting, so a script that used it to
+wait for a newer reading has to run `kubectl ptah refresh --wait`. A migration Apply
 now writes the approver's username to the target database, so check what that
 means for the retention of its backups and dumps if the name is an email address.
 A script that reads `ApprovalAccepted` entries in `status.journal` has to tell

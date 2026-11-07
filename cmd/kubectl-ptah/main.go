@@ -538,14 +538,16 @@ Always it runs without a person, except a schema plan that is destructive or
 changes privileges. On a suspended resource nothing of this happens until it
 is resumed.
 
-wait reads a schema or a migration until it reaches a target, and counts
-nothing that was already true when it began: a reading of the database has to
-begin after the wait does, and for in-sync, approval and suspended the
-operator has to have observed the generation the resource had then.
+wait reads a schema or a migration until it reaches a target. Apart from a plan
+already waiting for an approval, it counts nothing that was already true when
+it began: a reading of the database has to begin after the wait does. For
+in-sync, approval and suspended the operator has to have observed the
+generation the resource had then.
 
   --for <target>           required; one of
                              in-sync    the resource rests in sync
-                             approval   a fresh plan waits for an approval
+                             approval   a plan waits for an approval, one
+                                        already waiting included
                              applied    an Apply or a migration run ended
                                         after the wait began, confirmed by
                                         a reading afterwards

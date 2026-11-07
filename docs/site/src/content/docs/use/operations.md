@@ -1722,12 +1722,13 @@ kubectl ptah wait schema/storefront --for in-sync --timeout 10m -n application
 | `--for` | Ends when |
 | --- | --- |
 | `in-sync` | the resource rests in sync at the generation it had when the wait began, from a reading of the database that began after the wait did |
-| `approval` | a plan computed from such a reading waits for an approval, with none recorded on it yet |
+| `approval` | a plan waits for an approval, with none recorded on it yet, at the generation the resource had when the wait began; a plan already waiting counts |
 | `applied` | an Apply or a migration run that ended after the wait began is recorded applied, and the operator's reading afterwards confirms it; one that ended before does not count, even when that reading ends after; `--plan` narrows a schema's to one plan |
 | `suspended` | the operator reports the resource `Suspended` for that generation, with nothing in flight; a schema still owing the proof of an Apply reaches it, since that proof starts no Job until resume |
 | `read` | the read a `kubectl ptah refresh` asked for has ended; `--read-request` names the request |
 
-Nothing that was already true when the wait began counts. A schema that was
+Apart from a plan already waiting for an approval, nothing that was already true
+when the wait began counts. A schema that was
 `InSync` before somebody changed its database by hand stays `InSync` until it
 reads the database again, so waiting for in-sync after such a change waits for
 that reading: ask for it with `kubectl ptah refresh --wait`, or start the wait
@@ -1738,6 +1739,15 @@ is why a wait does not stop at the generation alone. A change made with the
 plugin waits in the same command with `--wait`, from the answer to the change
 itself; `kubectl ptah approve --wait` waits for the Apply of the plan it
 approved.
+
+`--for approval` asks whether a plan waits for you, so a plan that waits already
+answers it, even one computed before the wait began. Started right after an edit
+the operator has not read yet, it can answer with the plan from before that edit:
+an edit that moves the generation holds the wait until the operator has observed
+it, and one that does not, such as a ConfigMap's, does not hold it.
+`kubectl ptah approve` shows the current plan, and refuses a decision about a plan
+that has been replaced since. `set-source` and `resume` wait from the answer to
+their own change, so a plan from before it does not count there.
 
 A wait that times out exits 7 and prints the phase and the condition holding
 the resource as the last read found them, and what the wait still needed:
@@ -1754,9 +1764,9 @@ When the last reads failed, the timeout names that failure as well. The read a
 wait makes at its deadline is cut short by the deadline itself, and is not one
 of them.
 
-A wait started again after a timeout does not count a read that was already
-under way, because that read may have begun before the change being waited
-on. When the timeout found one, it says so and names
+A wait for `in-sync` started again after a timeout does not count a read that
+was already under way, because that read may have begun before the change being
+waited on. When the timeout found one, it says so and names
 `kubectl ptah refresh schema/storefront --wait -n application`, which asks for
 a read that begins later and waits for it.
 
