@@ -185,12 +185,17 @@ func podConfigurationError(ctx context.Context, reader client.Reader, job *batch
 // not start to a failure that says only that no result arrived. The Job's
 // deadline removes the Pod, so what this operation reported is all that is left
 // to say why. judgePodAdmission keeps the condition standing until this reads it.
+//
+// The report can be out of date, so the words say whose they are. The resource
+// looks at a running Pod every 30 seconds and the terminal pass does not look at
+// its waiting state at all, so a Secret that arrived and a Pod that then started
+// and died without a result can fall between two looks.
 func withUnstartedPod(failure error, reported *metav1.Condition) error {
 	if reported == nil || reported.Reason != string(operatorv1alpha1.ReasonPodConfigurationError) ||
 		!errors.Is(failure, runner.ErrFrameNotFound) {
 		return failure
 	}
-	return fmt.Errorf("%w; %s", failure, reported.Message)
+	return fmt.Errorf("%w; last reported before that: %s", failure, reported.Message)
 }
 
 // podAdmissionConditionChange is what one pass decided about a condition that
