@@ -29,6 +29,12 @@ const (
 	// refusalJobLag is how long after a claim its Job may be created. The claim
 	// fixes the next read and the Job dates it, so the bound gives that much up.
 	refusalJobLag = 20 * time.Second
+	// refusalClockSkew is how far the manager's clock, which dates a deadline,
+	// and the API server's, which dates a Job, may disagree on one kind host.
+	refusalClockSkew = 2 * time.Second
+	// refusalAtOnce is how far ahead of the deadline a read has to start to be
+	// one an edit started rather than the interval's own.
+	refusalAtOnce = 10 * time.Second
 )
 
 // nativelyRefusedSchema is a schema Ptah's own verification stopped: blocked,
@@ -80,6 +86,9 @@ func refusalConditions(conditions []metav1.Condition, verifiedType, readyType st
 // interval to read it again: one Resolve, one Verify, nothing of the database,
 // and the next read an interval after the Resolve that started the cycle, however
 // long the failure interval is. A refusal retried as a failure passes neither.
+// The deadline may sit up to half an interval later, where the resource's refresh
+// slot moves it, and no further: a refusal that put it off for good is not one
+// that reads again at its interval.
 func refusedOnce(jobs []batchv1.Job, next *metav1.Time, interval time.Duration) error {
 	if next == nil {
 		return errors.New("the refusal scheduled no next read")
@@ -105,21 +114,76 @@ func refusedOnce(jobs []batchv1.Job, next *metav1.Time, interval time.Duration) 
 		return fmt.Errorf("the next read is at %s, before %s, an interval of %s after the Resolve",
 			next.Format(time.RFC3339), earliest.Format(time.RFC3339), interval)
 	}
+	if latest := resolved.Add(interval + interval/2 + refusalClockSkew); next.Time.After(latest) {
+		return fmt.Errorf("the next read is at %s, after %s, an interval and a half after the Resolve",
+			next.Format(time.RFC3339), latest.Format(time.RFC3339))
+	}
 	return nil
 }
 
-// recoveredFromRefusal is a migration past its refusal, reading the spec it was
-// edited to: its artifact verified, a plan waiting for a person, and no condition
-// left naming what refused it.
+// resolvesOf is when the resource's Resolve Jobs were created, oldest first, by
+// the API server's clock.
+func resolvesOf(jobs []batchv1.Job) []time.Time {
+	var resolves []time.Time
+	for index := range jobs {
+		if jobs[index].Labels[labelOperation] == "resolve" {
+			resolves = append(resolves, jobs[index].CreationTimestamp.Time)
+		}
+	}
+	slices.SortFunc(resolves, time.Time.Compare)
+	return resolves
+}
+
+// rereadAtItsDeadline is the interval's own read of a refused artifact: the
+// second Resolve the resource ran, and none before the deadline the first
+// refusal persisted.
+func rereadAtItsDeadline(jobs []batchv1.Job, deadline *metav1.Time) error {
+	resolves := resolvesOf(jobs)
+	switch {
+	case deadline == nil:
+		return errors.New("the refusal scheduled no next read")
+	case len(resolves) != 2:
+		return fmt.Errorf("the resource ran %d Resolve Jobs, want the refusal's and the interval's", len(resolves))
+	case resolves[1].Before(deadline.Add(-refusalClockSkew)):
+		return fmt.Errorf("it read again at %s, before the deadline %s", resolves[1].Format(time.RFC3339), deadline.Format(time.RFC3339))
+	}
+	return nil
+}
+
+// readAtOnce is a read an edit started: a third Resolve, created well ahead of
+// the deadline the second refusal persisted, where the interval's own read would
+// have started.
+func readAtOnce(jobs []batchv1.Job, deadline *metav1.Time) error {
+	resolves := resolvesOf(jobs)
+	switch {
+	case deadline == nil:
+		return errors.New("the refusal scheduled no next read")
+	case len(resolves) != 3:
+		return fmt.Errorf("the resource ran %d Resolve Jobs, want a third after the edit", len(resolves))
+	case !resolves[2].Before(deadline.Add(-refusalAtOnce)):
+		return fmt.Errorf("the read after the edit began at %s, not %s ahead of the deadline %s",
+			resolves[2].Format(time.RFC3339), refusalAtOnce, deadline.Format(time.RFC3339))
+	}
+	return nil
+}
+
+// recoveredFromRefusal is a migration past its refusal, in sync with the spec it
+// was edited to, with no condition left naming what refused it, and Blocked gone
+// False in the write that verified the artifact. The last is what separates the
+// Verify ending the refusal from the history read after it doing so: a reading
+// rewrites Blocked too, seconds of a Job later, so a resource whose Verify ended
+// nothing reaches the same reasons and dates the transition by the reading.
+// Condition times carry whole seconds, so the two writes of one harvest may sit a
+// second apart.
 func recoveredFromRefusal(migration *ptahv1alpha1.PtahMigration) error {
 	status := migration.Status
 	switch {
 	case status.ObservedGeneration != migration.Generation:
 		return fmt.Errorf("it read generation %d of %d", status.ObservedGeneration, migration.Generation)
-	case status.Phase != ptahv1alpha1.MigrationPhaseAwaitingApproval || status.ActiveOperation != nil:
+	case status.Phase != ptahv1alpha1.MigrationPhaseInSync || status.ActiveOperation != nil:
 		return fmt.Errorf("it is %s, with claim %+v", status.Phase, status.ActiveOperation)
-	case status.Plan == nil:
-		return errors.New("it published no plan")
+	case status.Plan != nil || status.UnresolvedRun != nil:
+		return fmt.Errorf("it holds plan %+v and unresolved run %+v", status.Plan, status.UnresolvedRun)
 	}
 	for _, want := range []struct {
 		conditionType string
@@ -127,7 +191,7 @@ func recoveredFromRefusal(migration *ptahv1alpha1.PtahMigration) error {
 	}{
 		{ptahv1alpha1.ConditionMigrationArtifactVerified, metav1.ConditionTrue},
 		{ptahv1alpha1.ConditionMigrationBlocked, metav1.ConditionFalse},
-		{ptahv1alpha1.ConditionMigrationApprovalRequired, metav1.ConditionTrue},
+		{ptahv1alpha1.ConditionMigrationReady, metav1.ConditionTrue},
 	} {
 		if !conditionStatus(status.Conditions, want.conditionType, want.status) {
 			return fmt.Errorf("%s is not %s: %+v", want.conditionType, want.status, status.Conditions)
@@ -137,6 +201,12 @@ func recoveredFromRefusal(migration *ptahv1alpha1.PtahMigration) error {
 		if condition.Reason == string(ptahv1alpha1.ReasonPolicyRefused) {
 			return fmt.Errorf("%s still names the refusal: %s", condition.Type, condition.Message)
 		}
+	}
+	verified := meta.FindStatusCondition(status.Conditions, ptahv1alpha1.ConditionMigrationArtifactVerified)
+	blocked := meta.FindStatusCondition(status.Conditions, ptahv1alpha1.ConditionMigrationBlocked)
+	if gap := blocked.LastTransitionTime.Sub(verified.LastTransitionTime.Time); gap < 0 || gap > time.Second {
+		return fmt.Errorf("Blocked went False at %s and the artifact passed at %s: the refusal ended with a later write",
+			blocked.LastTransitionTime.Format(time.RFC3339), verified.LastTransitionTime.Format(time.RFC3339))
 	}
 	return nil
 }

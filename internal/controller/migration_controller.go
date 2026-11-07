@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -275,7 +276,7 @@ func (r *MigrationReconciler) reconcile(ctx context.Context, request ctrl.Reques
 		}
 		return r.reconcileMigrationApplyDecision(ctx, migration)
 	case operatorv1alpha1.MigrationPhasePlanning:
-		if due(migration.Status.NextReconciliationTime, now) {
+		if due(migration.Status.NextReconciliationTime, now) || migrationPublicationUnfinished(migration) {
 			return r.claimMigration(ctx, migration, operatorv1alpha1.MigrationOperationResolve)
 		}
 		return r.reconcileMigrationApplyDecision(ctx, migration)
@@ -289,6 +290,20 @@ func (r *MigrationReconciler) reconcile(ctx context.Context, request ctrl.Reques
 	// A moved tag, a changed policy, or a history someone else advanced is only
 	// observable by starting the read-only chain again from resolution.
 	return r.claimMigration(ctx, migration, operatorv1alpha1.MigrationOperationResolve)
+}
+
+// migrationPublicationUnfinished reports a history read whose plan was never
+// published: Planning, with the Progressing reason the harvest writes and the
+// publication rewrites. A pass that stopped between the two writes leaves it, and
+// with it the plan the resource named before, if any, and the full interval the
+// harvest gave a plan about to be published. Under OnApproval that is the gate
+// closed for an interval, since admission takes an approval only at
+// AwaitingApproval, so the chain is read again instead. The claim rewrites
+// Progressing, so the next pass cannot claim again until another publication
+// fails.
+func migrationPublicationUnfinished(migration *operatorv1alpha1.PtahMigration) bool {
+	progressing := meta.FindStatusCondition(migration.Status.Conditions, operatorv1alpha1.ConditionMigrationProgressing)
+	return progressing != nil && progressing.Reason == string(operatorv1alpha1.ReasonMigrationsPending)
 }
 
 // answerMigrationReadRequest records a read request as answered, as
@@ -723,6 +738,7 @@ func (r *MigrationReconciler) claimMigration(
 	migration.Status.Phase = mutationlifecycle.MigrationOperation(operationType).Phase
 	setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionTrue,
 		operatorv1alpha1.ReasonOperationInProgress, fmt.Sprintf("%s operation is in progress", operationType))
+	endMigrationRealmRefusal(migration)
 	if err := r.patchMigrationStatus(ctx, before, migration); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -1146,6 +1162,7 @@ func (r *MigrationReconciler) consumeMigrationResult(
 			pendingPlanReport = result.MigrationHistory
 		} else {
 			migration.Status.Plan = nil
+			endMigrationApprovalRequirement(migration)
 		}
 	default:
 		return r.retryMigrationOperation(ctx, migration, job, fmt.Errorf("unsupported migration operation %q", operation.Type))
@@ -1188,8 +1205,10 @@ func (r *MigrationReconciler) consumeMigrationResult(
 	r.observeMigrationOperation(operation, telemetry.OperationSucceeded)
 	if pendingPlanReport != nil {
 		// A second write, deliberately. Between the two the resource is
-		// Planning with no plan, and a controller that stopped there resolves
-		// again on the next pass rather than acting on a plan nobody published.
+		// Planning with Progressing reason MigrationsPending and the plan it had
+		// before, and a controller that stopped there reads again on the next
+		// pass (migrationPublicationUnfinished) rather than acting on a plan
+		// nobody published or waiting out an interval with the gate closed.
 		planned := migration.DeepCopy()
 		if err := r.publishMigrationPlan(ctx, migration, *pendingPlanReport); err != nil {
 			return r.migrationOperationFailure(ctx, migration, err)
@@ -1275,39 +1294,52 @@ const migrationPlanLeftMessage = "A reading of the database ended somewhere othe
 // or ConfigMap source was read: neither has a verification policy to refuse it.
 const migrationSourceResolvedMessage = "The source was read, and nothing refuses it"
 
-// endMigrationRefusal takes a refusal's reason off the conditions it was written
-// on, once the read-only chain got past what refused: the artifact passed Verify,
-// or the source is another one. Nothing later does it. The history read rewrites
-// Blocked and Ready only when it answers, so a read that keeps failing would
-// leave a refusal named beside a verified artifact, and only a plan rewrites
-// ApprovalRequired, so a resource in sync, which publishes none, would name it
-// for good.
-//
-// A condition with any other reason belongs to whoever set it: a plan waiting
-// for a person keeps ApprovalRequired True through the read that refreshes it.
-// Progressing is not here because the claim of that read rewrote it.
-//
-// A run nobody accounted for is a hold the refusal wrote over and did not end.
-// Nothing runs while status.unresolvedRun stands, so Blocked and Ready say that
-// again rather than False.
+// endMigrationRefusal takes the verification policy's refusal off the
+// conditions it was written on, once the read-only chain got past it: the
+// artifact passed Verify, or the source is another one. Nothing later does it.
+// The history read rewrites Blocked and Ready only when it answers, so a read
+// that keeps failing would leave a refusal named beside a verified artifact.
 func endMigrationRefusal(
 	migration *operatorv1alpha1.PtahMigration,
 	reason operatorv1alpha1.ConditionReason,
 	message string,
 ) {
-	refused := func(conditionType string) bool {
+	liftMigrationRefusal(migration, []operatorv1alpha1.ConditionReason{operatorv1alpha1.ReasonPolicyRefused}, reason, message)
+}
+
+// endMigrationRealmRefusal takes a realm's refusal off the conditions, in the
+// write that claims a read, which only a census that admits the resource lets
+// through. A refusal of the artifact ends later, at Verify, because only Verify
+// answers it; a realm's is over once the census passes, and a Resolve or a Verify
+// that keeps failing would otherwise leave a lifted realm named where a wait's
+// timeout reads it.
+func endMigrationRealmRefusal(migration *operatorv1alpha1.PtahMigration) {
+	liftMigrationRefusal(migration,
+		[]operatorv1alpha1.ConditionReason{operatorv1alpha1.ReasonRealmConflict, operatorv1alpha1.ReasonRealmNotAuthorized},
+		operatorv1alpha1.ReasonOperationInProgress, "The database realm admits this resource again, and it is read again")
+}
+
+// liftMigrationRefusal rewrites Blocked, Ready and ApprovalRequired where they
+// carry one of the refusal's reasons. A condition with any other reason belongs
+// to whoever set it: a plan waiting for a person keeps ApprovalRequired True
+// through the read that refreshes it. Progressing is not here because the claim
+// of that read rewrote it.
+//
+// A run nobody accounted for is a hold the refusal wrote over, and still holds:
+// nothing runs while status.unresolvedRun stands, so Blocked says so again rather
+// than False.
+func liftMigrationRefusal(
+	migration *operatorv1alpha1.PtahMigration,
+	refusals []operatorv1alpha1.ConditionReason,
+	reason operatorv1alpha1.ConditionReason,
+	message string,
+) {
+	held := func(conditionType string) bool {
 		condition := meta.FindStatusCondition(migration.Status.Conditions, conditionType)
-		if condition == nil {
-			return false
-		}
-		switch operatorv1alpha1.ConditionReason(condition.Reason) {
-		case operatorv1alpha1.ReasonPolicyRefused, operatorv1alpha1.ReasonRealmConflict, operatorv1alpha1.ReasonRealmNotAuthorized:
-			return true
-		}
-		return false
+		return condition != nil && slices.Contains(refusals, operatorv1alpha1.ConditionReason(condition.Reason))
 	}
 	unresolved := migration.Status.UnresolvedRun
-	if refused(operatorv1alpha1.ConditionMigrationBlocked) {
+	if held(operatorv1alpha1.ConditionMigrationBlocked) {
 		if unresolved != nil {
 			setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue,
 				operatorv1alpha1.ReasonApplyOutcomeUnknown, unresolvedRunHoldMessage(unresolved))
@@ -1315,7 +1347,7 @@ func endMigrationRefusal(
 			setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionFalse, reason, message)
 		}
 	}
-	if refused(operatorv1alpha1.ConditionMigrationReady) {
+	if held(operatorv1alpha1.ConditionMigrationReady) {
 		if unresolved != nil {
 			setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationReady, metav1.ConditionFalse,
 				operatorv1alpha1.ReasonApplyOutcomeUnknown, unresolvedRunReadyMessage)
@@ -1323,9 +1355,27 @@ func endMigrationRefusal(
 			setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationReady, metav1.ConditionFalse, reason, message)
 		}
 	}
-	if refused(operatorv1alpha1.ConditionMigrationApprovalRequired) {
+	if held(operatorv1alpha1.ConditionMigrationApprovalRequired) {
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationApprovalRequired, metav1.ConditionFalse, reason, message)
 	}
+}
+
+// endMigrationApprovalRequirement is a reading that publishes no plan: nothing
+// is left to approve, whatever ApprovalRequired said. A plan that waited for a
+// person would otherwise leave it True beside Ready True, and the next plan would
+// count no requirement, since only a transition to True counts one. It takes
+// the reason Ready carries, which the reading just wrote, and it writes nothing
+// on a resource that never had the condition.
+func endMigrationApprovalRequirement(migration *operatorv1alpha1.PtahMigration) {
+	if meta.FindStatusCondition(migration.Status.Conditions, operatorv1alpha1.ConditionMigrationApprovalRequired) == nil {
+		return
+	}
+	reason := operatorv1alpha1.ReasonPlanNoLongerCurrent
+	if ready := meta.FindStatusCondition(migration.Status.Conditions, operatorv1alpha1.ConditionMigrationReady); ready != nil {
+		reason = operatorv1alpha1.ConditionReason(ready.Reason)
+	}
+	setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationApprovalRequired, metav1.ConditionFalse,
+		reason, "This reading published no plan, so nothing waits for an approval")
 }
 
 // unresolvedRunReadyMessage is what Ready says while a run nobody accounted for
@@ -1971,8 +2021,8 @@ func (r *MigrationReconciler) migrationOperationFailure(
 // What ends this is another object's change -- a peer's spec, or the realm's
 // grant -- and a peer's events do not reach this one, so the verdict is
 // re-taken on a bounded cadence rather than waited on: the shorter of this
-// resource's interval and a minute. The read that follows takes the reason off
-// the conditions, in endMigrationRefusal.
+// resource's interval and a minute. The claim of the read that follows takes the
+// reason off the conditions, in endMigrationRealmRefusal.
 func (r *MigrationReconciler) migrationRealmBlocked(
 	ctx context.Context,
 	migration *operatorv1alpha1.PtahMigration,

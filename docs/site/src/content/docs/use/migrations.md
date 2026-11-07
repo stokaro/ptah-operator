@@ -512,8 +512,10 @@ changes nothing about the run.
 
 An approval also ends with a read that ends anywhere but its plan: another plan
 published, nothing left to apply, a history nothing may run against, or an artifact
-the verification policy refused. The controller marks it `Stale` with the reason,
-and one a run already consumed stays as it is. A plan with the same fingerprint is
+the verification policy refused. It ends, too, when a run spends another approval
+of the same plan, so a run that fails is not run again under the second approval
+with nobody having seen the failure. The controller marks it `Stale` with the
+reason, and one a run already consumed stays as it is. A plan with the same fingerprint is
 the object already stored, under the same name and UID, so without this an old
 approval would run it the moment it came back; instead it waits for a person. The
 controller acts on an approval at once unless the interval's read is already due,

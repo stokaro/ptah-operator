@@ -47,6 +47,7 @@ func (r *MigrationReconciler) resolveMigrationConfigMapSource(ctx context.Contex
 	migration.Status.Phase = operatorv1alpha1.MigrationPhaseReading
 	meta.RemoveStatusCondition(&migration.Status.Conditions, operatorv1alpha1.ConditionMigrationArtifactVerified)
 	endMigrationRefusal(migration, operatorv1alpha1.ReasonSnapshotTaken, migrationSourceResolvedMessage)
+	endMigrationRealmRefusal(migration)
 	setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionTrue,
 		operatorv1alpha1.ReasonSnapshotTaken,
 		fmt.Sprintf("ConfigMap %s was copied into snapshot %s; the history is read next", resolved.revision.Name, resolved.snapshot.Name))

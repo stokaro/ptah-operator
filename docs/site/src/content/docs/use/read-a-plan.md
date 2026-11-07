@@ -565,8 +565,10 @@ a resource or change its artifact may also edit the rest of its spec, with
 `kubectl edit` or any other client. `examples/desired-state-author-role.yaml`
 carries these verbs for the people who own desired state. The chart's approver ClusterRole does not, and
 the read commands do not need them. `kubectl ptah wait` needs `get` on the
-resource and nothing else, and `approve --wait` reads with the same `get`
-approve already has.
+resource and nothing else. `approve --wait` reads the resource with the same
+`get` approve already has, and for a migration the approval it stored, with the
+`get` on `ptahmigrationapprovals` the approver ClusterRole grants; without that,
+it waits on the resource alone.
 
 ## How the plan is stored
 

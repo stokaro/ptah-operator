@@ -22,9 +22,9 @@ exact plan, and only once.
 | --- | --- | --- |
 | Enforced in | `findApproval` and the Apply claim | `findMigrationApproval` and `claimMigrationApply` |
 | Bound to | plan name and UID, plan fingerprint, artifact digest, coordination and target identity digests, policy fingerprint, execution binding | the same, plus the history fingerprint the sequence was selected against |
-| Spent by | `markRecordedApprovalStale` when the plan stops being current | `consumeMigrationApproval` at the dispatch boundary, and `markMigrationApprovalsStale` when a read ends anywhere but its plan |
+| Spent by | `markRecordedApprovalStale` when the plan stops being current | `consumeMigrationApproval` at the dispatch boundary, which also withdraws the plan's other approvals, and `markMigrationApprovalsStale` when a read ends anywhere but its plan |
 | Failure behavior | the approval goes stale; the resource waits for a decision on the new plan | the same |
-| Proved by | `TestRecordedApprovalStaleIgnoresSameNameReplacementUID` | `TestMigrationApplyClaimsTheApprovedPlan`, `TestAnApprovalDoesNotOutliveTheReadThatEndedItsPlan`, `TestAnApprovalDoesNotCrossAPolicyRefusal` |
+| Proved by | `TestRecordedApprovalStaleIgnoresSameNameReplacementUID` | `TestMigrationApplyClaimsTheApprovedPlan`, `TestAnApprovalDoesNotOutliveTheReadThatEndedItsPlan`, `TestAnApprovalDoesNotCrossAPolicyRefusal`, `TestAnApprovalSpentOnARunWithdrawsTheOthersOfItsPlan` |
 
 An approval names a UID, not just a name. A plan republished under the same
 deterministic name is a different object, and an approval for the previous one

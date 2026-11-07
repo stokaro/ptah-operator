@@ -134,9 +134,12 @@ func TestRefusedOnce(t *testing.T) {
 		at := metav1.NewTime(created.Add(after))
 		return &at
 	}
-	// The claim sets the deadline a moment before the Job exists.
-	if err := refusedOnce(once, deadline(interval-time.Second), interval); err != nil {
-		t.Fatalf("a refusal that waits for its interval was refused: %v", err)
+	// The claim sets the deadline a moment before the Job exists, and a refresh
+	// slot can move it up to half an interval later.
+	for _, next := range []time.Duration{interval - time.Second, interval + interval/2} {
+		if err := refusedOnce(once, deadline(next), interval); err != nil {
+			t.Fatalf("a refusal that reads again %s after its Resolve was refused: %v", next, err)
+		}
 	}
 	for name, test := range map[string]struct {
 		jobs []batchv1.Job
@@ -152,10 +155,61 @@ func TestRefusedOnce(t *testing.T) {
 		"no operation":     {append(append([]batchv1.Job{}, once...), batchv1.Job{}), deadline(interval)},
 		"a failure retry":  {once, deadline(10 * time.Second)},
 		"half an interval": {once, deadline(interval / 2)},
+		"put off for good": {once, deadline(24 * time.Hour)},
+		"two intervals":    {once, deadline(2 * interval)},
 	} {
 		if refusedOnce(test.jobs, test.next, interval) == nil {
 			t.Errorf("%s was accepted", name)
 		}
+	}
+}
+
+func TestRereadAtItsDeadlineAndReadAtOnce(t *testing.T) {
+	t.Parallel()
+	start := time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)
+	job := func(name, operation string, after time.Duration) batchv1.Job {
+		return batchv1.Job{ObjectMeta: metav1.ObjectMeta{
+			Name: name, Labels: map[string]string{labelOperation: operation}, CreationTimestamp: metav1.NewTime(start.Add(after)),
+		}}
+	}
+	at := func(after time.Duration) *metav1.Time {
+		instant := metav1.NewTime(start.Add(after))
+		return &instant
+	}
+	// The refusal at 0 persisted 90s; the interval's read at 91s persisted 181s.
+	twice := []batchv1.Job{job("r1", "resolve", 0), job("v1", "verify", 8*time.Second), job("r2", "resolve", 91*time.Second), job("v2", "verify", 99*time.Second)}
+	if err := rereadAtItsDeadline(twice, at(90*time.Second)); err != nil {
+		t.Fatalf("the interval's read was refused: %v", err)
+	}
+	for name, jobs := range map[string][]batchv1.Job{
+		"no second read":             twice[:2],
+		"a read before the deadline": {twice[0], twice[1], job("r2", "resolve", 60*time.Second)},
+		"a third read":               append(append([]batchv1.Job{}, twice...), job("r3", "resolve", 120*time.Second)),
+	} {
+		if rereadAtItsDeadline(jobs, at(90*time.Second)) == nil {
+			t.Errorf("rereadAtItsDeadline accepted %s", name)
+		}
+	}
+	if rereadAtItsDeadline(twice, nil) == nil {
+		t.Error("rereadAtItsDeadline accepted no deadline")
+	}
+
+	edited := append(append([]batchv1.Job{}, twice...), job("r3", "resolve", 112*time.Second))
+	if err := readAtOnce(edited, at(181*time.Second)); err != nil {
+		t.Fatalf("a read the edit started was refused: %v", err)
+	}
+	for name, jobs := range map[string][]batchv1.Job{
+		"no read after the edit":  twice,
+		"the interval's own read": append(append([]batchv1.Job{}, twice...), job("r3", "resolve", 181*time.Second)),
+		"a read just short of it": append(append([]batchv1.Job{}, twice...), job("r3", "resolve", 175*time.Second)),
+		"a fourth read":           append(append([]batchv1.Job{}, edited...), job("r4", "resolve", 113*time.Second)),
+	} {
+		if readAtOnce(jobs, at(181*time.Second)) == nil {
+			t.Errorf("readAtOnce accepted %s", name)
+		}
+	}
+	if readAtOnce(edited, nil) == nil {
+		t.Error("readAtOnce accepted no deadline")
 	}
 }
 
@@ -192,10 +246,16 @@ func TestRecoveredFromRefusal(t *testing.T) {
 		map[string]func(*ptahv1alpha1.PtahMigration){
 			"the generation before the edit": func(m *ptahv1alpha1.PtahMigration) { m.Generation++ },
 			"still refused":                  func(m *ptahv1alpha1.PtahMigration) { m.Status.Phase = ptahv1alpha1.MigrationPhaseBlocked },
+			"a plan still waiting": func(m *ptahv1alpha1.PtahMigration) {
+				m.Status.Phase = ptahv1alpha1.MigrationPhaseAwaitingApproval
+				m.Status.Plan = &ptahv1alpha1.ImmutableObjectReference{Name: "plan", UID: "plan-uid"}
+			},
 			"a read in flight": func(m *ptahv1alpha1.PtahMigration) {
 				m.Status.ActiveOperation = &ptahv1alpha1.MigrationOperationStatus{Type: ptahv1alpha1.MigrationOperationResolve}
 			},
-			"no plan":       func(m *ptahv1alpha1.PtahMigration) { m.Status.Plan = nil },
+			"a run nobody accounted for": func(m *ptahv1alpha1.PtahMigration) {
+				m.Status.UnresolvedRun = &ptahv1alpha1.UnresolvedMigrationRunStatus{OperationID: "op"}
+			},
 			"no conditions": func(m *ptahv1alpha1.PtahMigration) { m.Status.Conditions = nil },
 			"an artifact not verified": func(m *ptahv1alpha1.PtahMigration) {
 				condition(m, ptahv1alpha1.ConditionMigrationArtifactVerified).Status = metav1.ConditionUnknown
@@ -203,11 +263,21 @@ func TestRecoveredFromRefusal(t *testing.T) {
 			"Blocked still True": func(m *ptahv1alpha1.PtahMigration) {
 				condition(m, ptahv1alpha1.ConditionMigrationBlocked).Status = metav1.ConditionTrue
 			},
-			"no approval asked for": func(m *ptahv1alpha1.PtahMigration) {
-				condition(m, ptahv1alpha1.ConditionMigrationApprovalRequired).Status = metav1.ConditionFalse
+			"not Ready": func(m *ptahv1alpha1.PtahMigration) {
+				condition(m, ptahv1alpha1.ConditionMigrationReady).Status = metav1.ConditionFalse
 			},
-			"a refusal left on Ready": func(m *ptahv1alpha1.PtahMigration) {
-				condition(m, ptahv1alpha1.ConditionMigrationReady).Reason = string(ptahv1alpha1.ReasonPolicyRefused)
+			"a refusal left on ApprovalRequired": func(m *ptahv1alpha1.PtahMigration) {
+				condition(m, ptahv1alpha1.ConditionMigrationApprovalRequired).Reason = string(ptahv1alpha1.ReasonPolicyRefused)
+			},
+			// What a Verify that ended nothing leaves: the reading rewrote Blocked,
+			// a History Job's seconds after the artifact passed.
+			"Blocked gone False with the reading": func(m *ptahv1alpha1.PtahMigration) {
+				blocked := condition(m, ptahv1alpha1.ConditionMigrationBlocked)
+				blocked.LastTransitionTime = metav1.NewTime(blocked.LastTransitionTime.Add(10 * time.Second))
+			},
+			"Blocked gone False before the artifact passed": func(m *ptahv1alpha1.PtahMigration) {
+				blocked := condition(m, ptahv1alpha1.ConditionMigrationBlocked)
+				blocked.LastTransitionTime = metav1.NewTime(blocked.LastTransitionTime.Add(-10 * time.Second))
 			},
 		})
 }

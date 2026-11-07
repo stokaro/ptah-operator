@@ -115,6 +115,10 @@ type WaitOptions struct {
 	// out one approval of one plan. The run has to name both, and a run that
 	// names either differently, a plan that replaces this one, or a run that
 	// names neither stops the wait: nothing else can say this plan completed.
+	// The wait also reads that approval, by name and UID, and an approval the
+	// operator marked stale stops it: nothing runs under one. A read of the
+	// approval that the API server refuses, or that fails, leaves the wait to
+	// the resource alone.
 	Decision *Decision
 	// Source narrows TargetInSync and TargetApproval to the OCI reference
 	// SetSource wrote, pinned by digest. A document counts only while the
@@ -187,10 +191,12 @@ const (
 	// one the wait named.
 	StopOtherPlanApplied StopReason = "OtherPlanApplied"
 	// StopOtherApproval is a migration that ran the plan the wait named under
-	// another approval than the one the wait named.
+	// another approval than the one the wait named, or spent another approval of
+	// it on a run, which leaves the one the wait named stale.
 	StopOtherApproval StopReason = "OtherApprovalConsumed"
-	// StopPlanSuperseded is a migration whose named plan will not run: another
-	// plan took its place, or a reading found nothing left to apply.
+	// StopPlanSuperseded is a migration whose named plan will not run under the
+	// approval the wait named: another plan took its place, a reading found
+	// nothing left to apply, or the operator marked the approval stale.
 	StopPlanSuperseded StopReason = "PlanSuperseded"
 	// StopNotProved is a run that may be the one the wait named, or that was and
 	// has no reading to show for it, with no record that says more: one that names
@@ -340,6 +346,7 @@ func Wait(ctx context.Context, reader client.Reader, ref Ref, options WaitOption
 			if current.deleting {
 				return Result{}, w.stop(current, StopDeleting, "metadata.deletionTimestamp is set").stop
 			}
+			w.readApproval(ctx, reader, deadline, options.Clock == nil)
 			verdict := w.check(current)
 			if verdict.stop != nil {
 				return Result{}, verdict.stop
@@ -394,6 +401,70 @@ func Wait(ctx context.Context, reader client.Reader, ref Ref, options WaitOption
 		case <-clock.After(min(interval, deadline.Sub(now))):
 		}
 	}
+}
+
+// decisionApproval is what a read of the approval a decision names found.
+type decisionApproval struct {
+	stale, consumed bool
+	reason, message string
+}
+
+// readApproval reads the approval the wait's decision names, after each read
+// of the resource. Only an approval with the decision's UID says anything: one
+// gone or replaced under its name is no answer, since deleting an approval
+// after its run's Job exists changes nothing about the run, and neither is a
+// read that fails on the way. A refusal stops the reads for the rest of the wait
+// and leaves it to the resource alone, as before it read approvals.
+func (w *waiter) readApproval(ctx context.Context, reader client.Reader, deadline time.Time, real bool) {
+	decision := w.options.Decision
+	w.decisionApproval = nil
+	if decision == nil || decision.ApprovalName == "" || w.approvalRefused {
+		return
+	}
+	approval := &operatorv1alpha1.PtahMigrationApproval{}
+	key := client.ObjectKey{Namespace: w.ref.Namespace, Name: decision.ApprovalName}
+	var err error
+	if real {
+		bounded, cancel := context.WithDeadline(ctx, deadline)
+		err = reader.Get(bounded, key, approval)
+		cancel()
+	} else {
+		err = reader.Get(ctx, key, approval)
+	}
+	switch {
+	case err == nil && (decision.ApprovalUID == "" || approval.UID == decision.ApprovalUID):
+		reading := &decisionApproval{
+			consumed: meta.IsStatusConditionTrue(approval.Status.Conditions, operatorv1alpha1.ConditionApprovalConsumed),
+		}
+		if stale := meta.FindStatusCondition(approval.Status.Conditions, operatorv1alpha1.ConditionApprovalStale); stale != nil &&
+			stale.Status == metav1.ConditionTrue {
+			reading.stale, reading.reason, reading.message = true, stale.Reason, stale.Message
+		}
+		w.decisionApproval = reading
+	case apierrors.IsForbidden(err) || apierrors.IsUnauthorized(err):
+		w.approvalRefused = true
+	}
+}
+
+// approvalWithdrawn stops a wait whose approval the operator marked stale, which
+// it does when a read ends anywhere but the approved plan, when the verification
+// policy refuses the artifact, and when a run spends another approval of the same
+// plan. Nothing runs under a stale approval, even when its plan comes back under
+// the same UID, so the status alone would leave the wait to its timeout. One a
+// run consumed is that run's, and the wait goes on waiting for it. While the
+// refusal that withdrew it still holds, policyHeld answers, in its own words.
+func (w *waiter) approvalWithdrawn(s snapshot) (verdict, bool) {
+	approval, decision := w.decisionApproval, w.options.Decision
+	if approval == nil || !approval.stale || approval.consumed || w.artifactRefusal(s) != nil {
+		return verdict{}, false
+	}
+	said := fmt.Sprintf("approval %s went stale (%s): %s", decision.ApprovalName, approval.reason, approval.message)
+	if approval.reason == string(operatorv1alpha1.ReasonSupersededApproval) {
+		return w.stop(s, StopOtherApproval, fmt.Sprintf("plan %s is spent on a run under another approval, and %s",
+			decision.PlanName, said)), true
+	}
+	return w.stop(s, StopPlanSuperseded, fmt.Sprintf("plan %s will not run under %s, so it authorizes nothing",
+		decision.PlanName, said)), true
 }
 
 // errNoAnswer is a timeout before which no read was answered: each read ran
@@ -540,6 +611,12 @@ type waiter struct {
 
 	// refusalReads counts the reads in a row that found the artifact refused.
 	refusalReads int
+
+	// decisionApproval is what the last read of the decision's approval found,
+	// nil when none said anything, and approvalRefused that the API server
+	// refused one.
+	decisionApproval *decisionApproval
+	approvalRefused  bool
 }
 
 func newWaiter(ref Ref, options WaitOptions) (*waiter, error) {
@@ -1153,6 +1230,9 @@ func (w *waiter) checkBoundRun(s snapshot) verdict {
 	if stop, superseded := w.planSuperseded(s); superseded {
 		return stop
 	}
+	if stop, withdrawn := w.approvalWithdrawn(s); withdrawn {
+		return stop
+	}
 	for _, entry := range since {
 		if entry.Type == operatorv1alpha1.JournalOperationFailed &&
 			entry.Operation == string(operatorv1alpha1.MigrationOperationApply) && s.operation == "" {
@@ -1262,9 +1342,10 @@ func (w *waiter) anotherRunEnded(s snapshot, identity runIdentity, ended string)
 // planSuperseded reports that the plan a decision names will not run, by what the
 // status says now: another plan claimed or published in its place, or a reading
 // that left nothing to apply. A resource that is only blocked, or that has cleared
-// its plan while a realm refuses it, may come back to the same plan, so it stops
-// nothing and the timeout names it. A verification policy's refusal withdraws the
-// approval, and stops the wait in policyHeld.
+// its plan while a realm refuses it, may come back to the same plan, so its status
+// stops nothing. A verification policy's refusal stops the wait in policyHeld, and
+// whether the approval still authorizes the plan is what the approval says, which
+// approvalWithdrawn reads.
 func (w *waiter) planSuperseded(s snapshot) (verdict, bool) {
 	decision := w.options.Decision
 	if decision == nil {
