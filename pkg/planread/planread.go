@@ -9,17 +9,24 @@
 // a reader asked for, hands the reconstruction to the operator's own store,
 // and returns nothing until every check the plan makes about itself has held.
 //
-// `kubectl ptah plan` reads through this package, so there is one reader.
-// Every read goes through the client the caller passes in, which is how a
-// program reads as the person using it: a reader without the grant on chunks
-// gets the API server's Forbidden, unchanged.
+// `kubectl ptah plan` and `kubectl ptah approve` read through this package, so
+// there is one reader. Every read goes through the client the caller passes in,
+// which is how a program reads as the person using it: a reader without the
+// grant on chunks gets the API server's Forbidden, unchanged.
 //
-// The package carries no compatibility promise before v1, like the API it
-// reads. Pin the module version.
+// Load refuses a document that carries a field this build does not declare,
+// the way the manager and the runner do. An approval is a decision about the
+// whole document, so it reads through Load. LoadForDisplay is for showing a
+// plan: it makes the same checks and names such a field instead of refusing.
+//
+// The Go API carries no compatibility promise before v1, like the API it reads.
+// Pin the module version. The API compatibility page says what LoadForDisplay
+// promises about the documents it reads.
 package planread
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -76,8 +83,9 @@ var (
 	// ErrNoPlan is a selection the schema has no plan for, or a plan that is
 	// gone. Absence is not an empty plan.
 	ErrNoPlan = errors.New("no such plan")
-	// ErrUnsupported is a plan this build cannot read: another plan contract
-	// or another document format.
+	// ErrUnsupported is a plan this build cannot read: another plan contract,
+	// another document format, or, for Load, a field this build does not
+	// declare.
 	ErrUnsupported = errors.New("unsupported plan format")
 	// ErrIntegrity is a stored plan that failed a check: a plan recreated
 	// under the name the status holds, a plan of another schema, a storage
@@ -89,8 +97,12 @@ var (
 // Statement is one statement of a plan, as stored.
 type Statement struct {
 	SQL string
-	// Severity is Ptah's classification of the statement.
+	// Severity is the statement's classification as the operator reads it:
+	// Ptah's, raised where the operator reads the SQL as destructive.
 	Severity string
+	// StoredSeverity is Ptah's classification as the document carries it. It
+	// differs from Severity on a statement the operator raised.
+	StoredSeverity string
 	// Reason is why Ptah classified it so, when it said.
 	Reason string
 }
@@ -149,8 +161,16 @@ type Plan struct {
 	// identifier an approval names.
 	Manifest operatorv1alpha1.PtahSchemaPlan
 	// Document is the bytes the store reconstructed and checked against the
-	// plan's content digest: the plan as it was published.
+	// plan's content digest: the plan as it was published. It is empty when
+	// UnreadFields is not, because those bytes hold the values of fields this
+	// build does not read, and nothing here may print what it has not read.
 	Document []byte
+	// UnreadFields names the fields of the document this build does not
+	// declare, sorted, with a statement's as statements[].NAME. Only
+	// LoadForDisplay sets it. It holds names and never a value: a value could
+	// be what strict decoding keeps away from an Apply, such as the name of a
+	// credential's environment variable in a statement's inputs.
+	UnreadFields []string
 }
 
 // SQL renders the statements as they were stored: one per entry, in order,
@@ -171,11 +191,54 @@ func (p Plan) SQL() string {
 // Nothing reaches the caller before every check has held. A plan whose last
 // chunk is corrupt produces an error and an empty Plan, rather than an error
 // after half the SQL has been handed over.
+//
+// A document with a field this build does not declare is refused with
+// ErrUnsupported. Anything that decides on a plan, an approval first of all,
+// reads through this function.
 func Load(
 	ctx context.Context,
 	reader client.Reader,
 	namespace, name string,
 	selection Selection,
+) (Plan, error) {
+	return load(ctx, reader, namespace, name, selection, decodeStrictly)
+}
+
+// LoadForDisplay is Load for showing a plan to a person, and for nothing else.
+//
+// A stored plan outlives an upgrade, so a reader can meet a document from a
+// Ptah newer than itself, with a field added at the same plan contract and
+// format version. This read makes every check Load makes on the stored objects
+// and on the fields it declares, and answers with the plan, its unknown fields
+// named in UnreadFields, and no Document.
+//
+// Do not offer an approval from it, or decide anything else on it. A person who
+// reads this plan has not read those fields, and a field Ptah added can change
+// what the statements do when they run. Load is the read that decides.
+func LoadForDisplay(
+	ctx context.Context,
+	reader client.Reader,
+	namespace, name string,
+	selection Selection,
+) (Plan, error) {
+	return load(ctx, reader, namespace, name, selection, decodeForDisplay)
+}
+
+// planDecoder reads a stored document against a dialect. It returns the names of
+// the fields it left unread, which only a display read has.
+type planDecoder func(document []byte, dialect string) (dataplane.PlanFile, []string, error)
+
+func decodeStrictly(document []byte, dialect string) (dataplane.PlanFile, []string, error) {
+	decoded, err := dataplane.DecodePlan(document, dialect)
+	return decoded, nil, err
+}
+
+func load(
+	ctx context.Context,
+	reader client.Reader,
+	namespace, name string,
+	selection Selection,
+	decode planDecoder,
 ) (Plan, error) {
 	schema := &operatorv1alpha1.PtahSchema{}
 	if err := reader.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, schema); err != nil {
@@ -205,12 +268,12 @@ func Load(
 	// Against the dialect the manifest recorded, not against the engine the
 	// schema targets now. A plan that was applied is a plan that was applied,
 	// and a target changed since then does not make it unreadable.
-	decoded, err := dataplane.DecodePlan(document, plan.Spec.Dialect)
+	decoded, unread, err := decode(document, plan.Spec.Dialect)
 	if err != nil {
 		return Plan{}, fmt.Errorf("%w: %s: %w", ErrUnsupported, plan.Name, err)
 	}
 
-	return Plan{
+	read := Plan{
 		Namespace:                  schema.Namespace,
 		Schema:                     schema.Name,
 		SchemaUID:                  schema.UID,
@@ -223,14 +286,19 @@ func Load(
 		Destructive:                plan.Spec.Destructive,
 		PrivilegeChanges:           recorded(plan),
 		UnrecordedPrivilegeChanges: unrecorded(plan, decoded),
-		Statements:                 statements(decoded),
+		Statements:                 statements(decoded, storedSeverities(document, len(decoded.Statements))),
 		ManagedRows:                rowSets(decoded),
 		Chunks:                     chunks(plan),
 		CreatedAt:                  plan.CreationTimestamp,
 		CompletedAt:                completedAt,
 		Manifest:                   *plan.DeepCopy(),
 		Document:                   document,
-	}, nil
+		UnreadFields:               unread,
+	}
+	if len(unread) > 0 {
+		read.Document = nil
+	}
+	return read, nil
 }
 
 // recorded is what the plan records, shown as recorded, a kind this build
@@ -259,12 +327,34 @@ func unrecorded(plan *operatorv1alpha1.PtahSchemaPlan, decoded dataplane.PlanFil
 	return kinds
 }
 
-func statements(decoded dataplane.PlanFile) []Statement {
+func statements(decoded dataplane.PlanFile, stored []string) []Statement {
 	out := make([]Statement, 0, len(decoded.Statements))
-	for _, statement := range decoded.Statements {
-		out = append(out, Statement{SQL: statement.SQL, Severity: statement.Severity, Reason: statement.Reason})
+	for index, statement := range decoded.Statements {
+		out = append(out, Statement{
+			SQL: statement.SQL, Severity: statement.Severity, StoredSeverity: stored[index], Reason: statement.Reason,
+		})
 	}
 	return out
+}
+
+// storedSeverities are the severities the document carries, before the operator
+// raised any, one for each of the count statements decoded from it. The decoder
+// has just read the same bytes, so the two lists line up. If they did not, every
+// entry would stay empty and each statement would show the severity decoded.
+func storedSeverities(document []byte, count int) []string {
+	severities := make([]string, count)
+	var stored struct {
+		Statements []struct {
+			Severity string `json:"severity"`
+		} `json:"statements"`
+	}
+	if json.Unmarshal(document, &stored) != nil || len(stored.Statements) != count {
+		return severities
+	}
+	for index, statement := range stored.Statements {
+		severities[index] = statement.Severity
+	}
+	return severities
 }
 
 func rowSets(decoded dataplane.PlanFile) []RowSet {

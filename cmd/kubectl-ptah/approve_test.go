@@ -124,6 +124,175 @@ func runApproveWith(t *testing.T, api client.Client, namespace string, input io.
 // The commands share the package-level connector, so these tests do not run
 // in parallel.
 
+// unreadable is an API server whose current plan waits for a person and carries
+// fields this plugin does not read, as a plan a newer Ptah saved does.
+func unreadable(t *testing.T) (*admitting, string) {
+	t.Helper()
+	lab := planreadtest.NewLab(t, "storefront")
+	plan := lab.PublishDocument(t, planreadtest.DocumentWithUnreadFields(t,
+		[]string{"ALTER TABLE orders DROP COLUMN legacy_note;"}), "unread")
+	lab.SetCurrent(t, plan)
+	schema := &operatorv1alpha1.PtahSchema{}
+	if err := lab.Client().Get(context.Background(), client.ObjectKey{Namespace: planreadtest.Namespace, Name: "storefront"}, schema); err != nil {
+		t.Fatalf("read the schema: %v", err)
+	}
+	schema.Status.Phase = operatorv1alpha1.PhaseAwaitingApproval
+	meta.SetStatusCondition(&schema.Status.Conditions, metav1.Condition{
+		Type: operatorv1alpha1.ConditionApprovalRequired, Status: metav1.ConditionTrue, Reason: "Waiting",
+		Message: "Create an approval bound to the current plan fingerprint",
+	})
+	if err := lab.Client().Status().Update(context.Background(), schema); err != nil {
+		t.Fatalf("update the schema status: %v", err)
+	}
+	return &admitting{Client: lab.Client()}, plan.Spec.Fingerprint
+}
+
+// Every way of asking for an approval ends at the strict read: a person at a
+// terminal who says yes, a script that passes the fingerprint plan printed, and
+// a dry run that would print a manifest to apply later. None creates anything,
+// and none prints a plan a person could take for the one reviewed.
+func TestApproveRefusesAPlanItCannotReadWhole(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		interactive bool
+		arguments   func(fingerprint string) []string
+	}{
+		{"a yes at a terminal", true, func(string) []string { return []string{"schema/storefront"} }},
+		{"the fingerprint plan printed", false, func(fingerprint string) []string {
+			return []string{"schema/storefront", "--plan-fingerprint", fingerprint}
+		}},
+		{"a client dry run", false, func(fingerprint string) []string {
+			return []string{"schema/storefront", "--plan-fingerprint", fingerprint, "--dry-run", "client", "-o", "yaml"}
+		}},
+		{"a server dry run", false, func(fingerprint string) []string {
+			return []string{"schema/storefront", "--plan-fingerprint", fingerprint, "--dry-run", "server"}
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			api, fingerprint := unreadable(t)
+
+			code, stdout, stderr := runApprove(t, api, "yes\n", test.interactive, test.arguments(fingerprint)...)
+
+			if code != exitFailed {
+				t.Fatalf("approve = %d, want %d; stderr %q", code, exitFailed, stderr)
+			}
+			if len(api.created) != 0 {
+				t.Fatalf("approve created %d objects from a plan it cannot read whole", len(api.created))
+			}
+			if stdout != "" {
+				t.Fatalf("approve wrote to stdout: %q", stdout)
+			}
+			if !strings.Contains(stderr, "kubectl ptah plan storefront") || strings.Contains(stderr, planreadtest.UnreadValue) {
+				t.Fatalf("the refusal does not say what to do, or quotes a value: %q", stderr)
+			}
+		})
+	}
+}
+
+// The control for the rows above: the fingerprint and the arguments are good,
+// and the same command approves the same statement in a document it reads whole.
+func TestApproveAcceptsThoseArgumentsOnAPlanItReadsWhole(t *testing.T) {
+	api, fingerprint := approvable(t, nil)
+
+	code, _, stderr := runApprove(t, api, "", false, "schema/storefront", "--plan-fingerprint", fingerprint)
+
+	if code != exitOK || len(api.created) != 1 {
+		t.Fatalf("approve = %d after %d creates; stderr %q", code, len(api.created), stderr)
+	}
+}
+
+// runPlan runs the plan command against an API server that refuses every write.
+func runPlan(t *testing.T, api client.Client, arguments ...string) (int, string, string) {
+	t.Helper()
+	previous := connector
+	connector = func(string, string, string, time.Duration) (client.Client, string, error) {
+		return readOnly{Client: api, t: t}, planreadtest.Namespace, nil
+	}
+	t.Cleanup(func() { connector = previous })
+	var stdout, stderr bytes.Buffer
+	code := run(context.Background(), append([]string{"plan"}, arguments...), &stdout, &stderr)
+	return code, stdout.String(), stderr.String()
+}
+
+// readOnly fails a test on any write that reaches it.
+type readOnly struct {
+	client.Client
+	t *testing.T
+}
+
+func (r readOnly) Create(context.Context, client.Object, ...client.CreateOption) error {
+	r.t.Error("the plan command created an object")
+	return nil
+}
+
+func (r readOnly) Update(context.Context, client.Object, ...client.UpdateOption) error {
+	r.t.Error("the plan command updated an object")
+	return nil
+}
+
+func (r readOnly) Patch(context.Context, client.Object, client.Patch, ...client.PatchOption) error {
+	r.t.Error("the plan command patched an object")
+	return nil
+}
+
+func (r readOnly) Delete(context.Context, client.Object, ...client.DeleteOption) error {
+	r.t.Error("the plan command deleted an object")
+	return nil
+}
+
+// The same plan the rows above refuse to approve is the one a person can read:
+// the statements and the fields' names, in every format that can carry them.
+func TestPlanShowsAPlanItCannotReadWhole(t *testing.T) {
+	const statement = "ALTER TABLE orders DROP COLUMN legacy_note;\n"
+	for _, test := range []struct {
+		name         string
+		arguments    []string
+		code         int
+		onStdout     string
+		wholeStdout  bool
+		onStderr     string
+		cleanStderr  bool
+		refusesPrint bool
+	}{
+		{name: "text", code: exitOK, onStdout: "Unread fields:  annotations, statements[].inputs (", cleanStderr: true},
+		{name: "sql", arguments: []string{"-o", "sql"}, code: exitOK, onStdout: statement, wholeStdout: true, onStderr: "annotations, statements[].inputs"},
+		{name: "json", arguments: []string{"-o", "json"}, code: exitFailed, onStderr: "annotations, statements[].inputs", refusesPrint: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			api, _ := unreadable(t)
+
+			code, stdout, stderr := runPlan(t, api, append([]string{"storefront"}, test.arguments...)...)
+
+			if code != test.code {
+				t.Fatalf("plan = %d, want %d; stderr %q", code, test.code, stderr)
+			}
+			if !strings.Contains(stdout, test.onStdout) || (test.wholeStdout && stdout != test.onStdout) {
+				t.Fatalf("stdout is %q, want %q", stdout, test.onStdout)
+			}
+			if !strings.Contains(stderr, test.onStderr) || (test.cleanStderr && stderr != "") {
+				t.Fatalf("stderr is %q, want %q", stderr, test.onStderr)
+			}
+			if test.refusesPrint && stdout != "" {
+				t.Fatalf("a refused format wrote to stdout: %q", stdout)
+			}
+			if strings.Contains(stdout+stderr, planreadtest.UnreadValue) {
+				t.Fatalf("the command printed a value it did not read:\n%s%s", stdout, stderr)
+			}
+		})
+	}
+}
+
+// A plan read whole prints as it did: no note, and -o json is the document.
+func TestPlanPrintsAPlanItReadsWholeAsItWas(t *testing.T) {
+	api, _ := approvable(t, nil)
+
+	code, stdout, stderr := runPlan(t, api, "storefront", "-o", "json")
+
+	if code != exitOK || stderr != "" || !strings.HasPrefix(stdout, "{") {
+		t.Fatalf("plan = %d; stdout %q; stderr %q", code, stdout, stderr)
+	}
+}
+
 func TestApproveShowsThePlanAndApprovesItOnYes(t *testing.T) {
 	api, fingerprint := approvable(t, nil)
 

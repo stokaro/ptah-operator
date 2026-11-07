@@ -63,6 +63,10 @@ approved under the approval it stored, and exits 8 where it used to report succe
 for another run: a script has to expect `PlanSuperseded`, `OtherPlanApplied` and
 `OtherApprovalConsumed`. It also exits 8 with `CompletionNotProved` against an operator
 that records no plan on a run, so upgrade the operator first.
+`kubectl ptah plan` now prints a plan a newer Ptah added a field to and exits 0,
+naming the field, where it used to exit 1. A script that takes that exit status to
+mean nobody may approve the plan has to ask `kubectl ptah approve`, which still
+refuses it, as `plan -o json` does.
 The move to Ptah v0.22.0 can also change what a running schema reports and plans,
 which the next paragraph covers. Nothing else.
 

@@ -158,7 +158,15 @@ func loadSchema(ctx context.Context, reader client.Reader, namespace, name strin
 	if err != nil {
 		return Review{}, err
 	}
+	// planread.Load and not LoadForDisplay: an approval is a decision about the
+	// whole document, and a field this plugin cannot read may change what the
+	// statements do when they run.
 	plan, err := planread.Load(ctx, reader, namespace, name, planread.Current)
+	if errors.Is(err, planread.ErrUnsupported) {
+		return Review{}, fmt.Errorf("read the current plan of PtahSchema %s/%s: %w; "+
+			"this plugin approves only a plan it reads whole, so move it to the operator's version; "+
+			"kubectl ptah plan %s shows what it can read", namespace, name, err, name)
+	}
 	if err != nil {
 		return Review{}, fmt.Errorf("read the current plan of PtahSchema %s/%s: %w", namespace, name, err)
 	}
