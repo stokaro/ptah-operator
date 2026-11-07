@@ -134,13 +134,20 @@ it would report.
   statement also holds is replaced with `[in the statement]`.
   [What a failed Apply leaves in its Pod log](../../use/operations/#failed-apply-log)
   says who can read it. The operator's handling of the failure does not change.
-- **A failed Apply a person approved keeps its Job 24 hours.** Its Pod log stays for 24
-  hours after the Job finishes, in both families, and every other finished Job keeps
-  five minutes, a failure under `apply: Always` included, since that failure repeats
-  with a fresh log. A retained Job counts toward a `count/jobs.batch` quota, and one
-  Kubernetes marked `Failed` keeps a `KubeJobFailed` alert firing until it is gone. A
-  Job the previous release harvested keeps the TTL it has, and after a rollback a Job
-  that holds 24 hours is collected on that time with nothing further from the manager.
+- **A failed Apply a person approved keeps its Job 24 hours, and so does a migration
+  run that stops its resource.** The Pod log stays for 24 hours after the Job finishes,
+  in both families, when a person approved the Apply, and under `apply: Always` when a
+  migration run reported `Partial` or `Unknown`, or nothing, because the resource runs
+  no other Apply until that run is settled. Every other finished Job keeps five
+  minutes. That includes a schema Apply under `Always`, whose proof can lead to the
+  next Apply, and a migration run under it that reported `Failed`.
+  [Which run keeps what](../../use/operations/#failed-apply-log) says why. A retained
+  Job counts toward a `count/jobs.batch` quota, and one Kubernetes marked `Failed`
+  keeps a `KubeJobFailed` alert firing until it is gone. A Job the previous release
+  harvested keeps the TTL it has. While an upgrade leaves the previous release's
+  webhook or guard answering, a run it refuses the 24 hours keeps five minutes, and a
+  `FailedApplyLogShortened` Warning Event says so. After a rollback a Job that holds 24
+  hours is collected on that time with nothing further from the manager.
 - **A migration run that never started.** A migration Apply that Ptah stopped
   before it selected any migration, as on a database it could not open, is
   now `Failed`. After `spec.execution.failureRetryInterval` the resource reads

@@ -1165,7 +1165,7 @@ The manager's own image digest and source revision, and the runner image
 digest, are recorded and not bound. A plan records the manager that published
 it and a Job the manager that dispatched it; neither is in a plan fingerprint
 or an approval. A Job is collected five minutes after it is harvested, or 24
-hours after a failed Apply a person approved, so the
+hours after [a failed Apply that keeps its log](#failed-apply-log), so the
 harvest copies its dispatcher into status, beside the publisher the plan
 names: `status.pendingObservation.dispatchedBy` and then
 `status.applied.dispatchedBy` for a schema, `status.lastRun.dispatchedBy` and
@@ -1812,7 +1812,10 @@ The record names the attempt (`operationID`), the plan it was
 carrying out, and the credential-free identity of a database. It names the Job
 by name and UID wherever the manager established that one existed, and the Job
 and its logs may be gone by then, which is why the record carries their
-identity rather than pointing at them.
+identity rather than pointing at them. A run that reported `Partial` or `Unknown`,
+or nothing, [keeps its Pod log](#failed-apply-log) for 24 hours after the Job
+finishes, under `apply: Always` as under an approval, and `status.lastRun.message`
+says how to read it.
 
 Which database `targetIdentityDigest` names depends on what the run managed to
 say. A readable result frame reports the database the executor opened, and that
@@ -2134,20 +2137,40 @@ read it, which includes the diagnostic reader role. A target failure with a know
 kind writes no such line, because the operator's own sentence already names what to
 check.
 
-How long the log stays depends on who authorized the run:
+How long the log stays depends on whether anything paces the runs:
 
 | The Apply | Its Job keeps the log |
 | --- | --- |
 | A person approved it, and it failed or its outcome is unknown | 24 hours after the Job finishes |
-| No approval names it, under `apply: Always`, and it failed or its outcome is unknown | 5 minutes |
+| A migration run under `apply: Always` that reported `Partial` or `Unknown`, or reported nothing, which leaves the resource `Blocked` | 24 hours after the Job finishes |
+| Any other Apply no approval names, under `apply: Always`, that failed or whose outcome is unknown | 5 minutes |
 | It succeeded | 5 minutes |
 
-Under `apply: Always` the same failure repeats every cycle and each run writes a fresh
-log, so 24 hours would hold one Job per cycle, about 1,400 to 2,900 Jobs a day per
-resource at a 30 to 60 second cycle. So a run under `Always` that fails and then stops
-repeating keeps its log five minutes: a resource suspended after the failure, or a
-migration run that ended partial or unknown and is blocked. Read the log in that time,
-or ship Pod logs somewhere that keeps them. A plan that changes privileges needs an
+A retained Job holds a place in a namespace's Job quota, so the 24 hours go where Jobs
+cannot pile up. An approval needs a person each time. A migration run that reported
+`Partial` or `Unknown`, or nothing, stops the resource: it dispatches no Apply until
+a History reading or an acknowledgment settles
+[the run](#a-migration-run-nobody-accounted-for), and that is when a person has to read
+the database.
+
+Nothing stops a schema that way. An uncertain Apply under `Always` goes to a proof, the
+proof plans again, and `Always` applies the new plan unless it needs an approval. A
+failure that goes on holds one Job per cycle, about 1,400 to 2,900 Jobs a day per
+resource at a 30 to 60 second cycle, and each run writes a fresh log, so every schema
+Apply no approval names keeps five minutes.
+
+A migration run that reported `Failed` keeps five minutes too. One that stopped before
+it selected a migration runs again after `failureRetryInterval`. One that failed at a
+statement leaves a [dirty revision row](../migrations/#what-the-history-says), so the
+reading that follows blocks the resource with `HistoryDirty` and nothing runs until a
+person repairs the row. That log still goes in five minutes, because the TTL is set
+from the run's outcome, before that reading.
+
+What the run reported decides, not why the resource stopped. A run that reported
+`Failed` or `Applied` and is blocked because the resource was edited during the run, or
+because it opened a database other than the planned one, keeps five minutes, and so
+does a run whose resource was suspended after it failed. Read the log in that time, or
+ship Pod logs somewhere that keeps them. A plan that changes privileges needs an
 approval under `Always` as well, and its Apply keeps the 24 hours.
 
 The `Applying` condition of a schema, `status.lastRun.message` of a migration and the
@@ -2171,9 +2194,9 @@ say so.
 The 24 hours is how long Kubernetes keeps the Job. A node that is replaced takes the
 Pod's log with it sooner, and deleting the resource collects the Job with it. A
 retained Job counts toward a `count/jobs.batch` quota, and a full quota stops every
-operation in the namespace, because each one needs a Job. Approvals bound how many
-pile up, since each needs a person. Once you have read a finished Job's log, `kubectl
-delete job -n <namespace> <job>` frees the quota and takes the Pod with it. The run is
+operation in the namespace, because each one needs a Job. Once you have read a finished
+Job's log, `kubectl delete job -n <namespace> <job>` frees the quota and takes the Pod
+with it. The run is
 already recorded by then, so the resource goes on as it would have. The result records
 of its attempt stay at least as long as the Job does.
 
@@ -2439,8 +2462,9 @@ Plans are owned by the schema, and a plan's chunks by the plan. Old plan objects
 audit evidence until Kubernetes garbage collection removes the owning schema;
 only the exact UID and fingerprint in `status.plan` are current. Completed Jobs
 receive a cleanup TTL before the controller clears the active operation: five
-minutes, or [24 hours](#failed-apply-log) for an Apply a person approved that failed
-or whose outcome is unknown. Failure to schedule that TTL leaves the operation
+minutes, or [24 hours](#failed-apply-log) for an Apply that failed or whose outcome is
+unknown, when a person approved it or its migration run stopped the resource. Failure
+to schedule that TTL leaves the operation
 retryable. A guard that refuses the 24 hours, as the guard of the previous release
 does for a moment during an upgrade, gets the five minutes instead, with a
 `FailedApplyLogShortened` Warning Event, and the resource says which the Job holds.

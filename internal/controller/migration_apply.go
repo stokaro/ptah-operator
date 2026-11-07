@@ -23,6 +23,7 @@ import (
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
+	"github.com/stokaro/ptah-operator/internal/jobclaim"
 	"github.com/stokaro/ptah-operator/internal/migrationplan"
 	"github.com/stokaro/ptah-operator/internal/mutationlifecycle"
 	"github.com/stokaro/ptah-operator/internal/policy"
@@ -521,7 +522,7 @@ func (r *MigrationReconciler) reportedMigrationRun(
 	}
 	run := migrationRunAccount{
 		log:     applyLogHoldsReport,
-		outcome: migrationRunOutcome(report.Outcome),
+		outcome: jobclaim.MigrationRunOutcome(report.Outcome),
 		applied: boundedVersions(report.Applied, 256),
 		message: migrationRunMessage(*report),
 		failure: migrationRunFailure(report.Failure),
@@ -564,7 +565,8 @@ func (r *MigrationReconciler) recordMigrationRun(
 			return ctrl.Result{}, err
 		}
 	default:
-		if err := retainFailedApplyJob(ctx, r.Client, job, operation.ApprovalRef != nil, func(text string) {
+		keepLog := jobclaim.MigrationRunKeepsLog(operation.ApprovalRef != nil, outcome)
+		if err := retainFailedApplyJob(ctx, r.Client, job, keepLog, func(text string) {
 			r.event(migration, corev1.EventTypeWarning, "FailedApplyLogShortened", "%s", text)
 		}); err != nil {
 			return ctrl.Result{}, err
@@ -590,10 +592,7 @@ func (r *MigrationReconciler) recordMigrationRun(
 		setMigrationTargetOpened(migration, "The Apply opened the database")
 	}
 	switch {
-	case outcome == operatorv1alpha1.MigrationRunOutcomePartial || outcome == operatorv1alpha1.MigrationRunOutcomeUnknown:
-		// Neither may be retried. A partial run committed some of a migration's
-		// statements and not the rest, and an unknown one cannot say whether it
-		// did; running the same file again would run those statements twice.
+	case jobclaim.MigrationRunBlocks(outcome):
 		recordUnresolvedMigrationRun(migration, operation, migration.Status.LastRun,
 			reportedTarget, r.now())
 		migration.Status.Phase = operatorv1alpha1.MigrationPhaseBlocked
@@ -1068,7 +1067,8 @@ func (r *MigrationReconciler) retireUncertainMigrationApply(
 		// this Job by UID, which is every Apply that failed before its create
 		// was confirmed. So the failure is reported and the record is written.
 		approved := operation != nil && operation.ApprovalRef != nil
-		if err := retainFailedApplyJob(ctx, r.Client, job, approved, func(text string) {
+		keepLog := jobclaim.MigrationRunKeepsLog(approved, r.reportedMigrationOutcome(ctx, job, operation))
+		if err := retainFailedApplyJob(ctx, r.Client, job, keepLog, func(text string) {
 			r.event(migration, corev1.EventTypeWarning, "FailedApplyLogShortened", "%s", text)
 		}); err != nil {
 			r.event(migration, corev1.EventTypeWarning, "MigrationJobCleanupDeferred",
@@ -1153,6 +1153,29 @@ func (r *MigrationReconciler) retireUncertainMigrationApply(
 	return requeueAtDeadline(migration.Status.NextReconciliationTime, r.now()), nil
 }
 
+// reportedMigrationOutcome is the outcome this Job's Pod reported, read the way the
+// webhook reads it. This path blocks the resource whatever the run reported, because
+// something else may have stopped it: an edit of the resource, a changed component,
+// another database. Only what the run reported earns the long TTL, so an edit cannot,
+// and the manager does not ask for what admission would refuse. A read that fails
+// leaves the outcome unknown, and the webhook, which reads the Pods itself, answers
+// next.
+func (r *MigrationReconciler) reportedMigrationOutcome(
+	ctx context.Context,
+	job *batchv1.Job,
+	operation *operatorv1alpha1.MigrationOperationStatus,
+) operatorv1alpha1.MigrationRunOutcome {
+	if operation == nil {
+		return operatorv1alpha1.MigrationRunOutcomeUnknown
+	}
+	pods := &corev1.PodList{}
+	if err := r.directReader().List(ctx, pods, client.InNamespace(job.Namespace)); err != nil {
+		ctrl.LoggerFrom(ctx).Info("could not read what the dispatched Apply reported", "job", job.Name, "error", err.Error())
+		return operatorv1alpha1.MigrationRunOutcomeUnknown
+	}
+	return jobclaim.ReportedMigrationRun(pods.Items, job.UID, operation.ID)
+}
+
 // discardMigrationPlan drops a plan the current evidence no longer supports.
 // The next reading of the history publishes the plan that does.
 func (r *MigrationReconciler) discardMigrationPlan(
@@ -1225,21 +1248,6 @@ func (r *MigrationReconciler) newMigrationOperationID(inputFingerprint string) (
 		return "", err
 	}
 	return fingerprint.DigestCanonicalJSON(map[string]string{"input": inputFingerprint, "nonce": nonce})
-}
-
-func migrationRunOutcome(outcome string) operatorv1alpha1.MigrationRunOutcome {
-	switch outcome {
-	case dataplane.MigrationOutcomeUpToDate:
-		return operatorv1alpha1.MigrationRunOutcomeUpToDate
-	case dataplane.MigrationOutcomeApplied, dataplane.MigrationOutcomeDryRun:
-		return operatorv1alpha1.MigrationRunOutcomeApplied
-	case dataplane.MigrationOutcomeFailed:
-		return operatorv1alpha1.MigrationRunOutcomeFailed
-	case dataplane.MigrationOutcomePartial:
-		return operatorv1alpha1.MigrationRunOutcomePartial
-	default:
-		return operatorv1alpha1.MigrationRunOutcomeUnknown
-	}
 }
 
 // migrationRunMessage says what happened without carrying database rows or the

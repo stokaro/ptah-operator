@@ -86,7 +86,8 @@ its result and scheduled its bounded cleanup TTL, so a transient API or RBAC
 failure retries the transition instead of orphaning the Job. That TTL is the
 one field the manager may add to a Job it already created, and no result is
 read before the Job carries its terminal condition. It is 300 seconds, or 86400
-for an Apply a person approved that failed or whose outcome is unknown, whose Pod log
+for an Apply that failed or whose outcome is unknown, when a person approved it or its
+migration run stopped the resource, whose Pod log
 [holds what the database answered](../../use/operations/#failed-apply-log).
 
 ### Durable result protocol

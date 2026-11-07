@@ -14,6 +14,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/podintent"
 	"github.com/stokaro/ptah-operator/internal/runner"
 	"github.com/stokaro/ptah-operator/internal/workload"
@@ -180,12 +181,14 @@ func TestControllerWriteWebhookHoldsTheCleanupTTLToItsReason(t *testing.T) {
 	// that left it. The Pod webhook holds an operator Job's Pod to the claim that
 	// names it, and these Jobs are no claim's, so the Pod is stored while its Job
 	// does not yet say whose it is. Nothing below reads the order.
-	finishedApply := func(suffix string, summaryFor func(*batchv1.Job) string) *batchv1.Job {
+	finishedApplyOf := func(owners []metav1.OwnerReference, operationID, suffix string, summaryFor func(*batchv1.Job) string) *batchv1.Job {
 		t.Helper()
 		built := fixture.job.DeepCopy()
 		built.Name = "ptah-apply-" + suffix + "-" + strings.TrimPrefix(built.Name, "ptah-resolve-")
 		built.Labels[workload.LabelOperation] = "apply"
 		built.Spec.Template.Labels[workload.LabelOperation] = "apply"
+		built.Annotations[workload.AnnotationOperationID] = operationID
+		built.OwnerReferences = owners
 		job := built.DeepCopy()
 		// Not empty: an empty set is filled in from the Pod template.
 		job.Labels, job.OwnerReferences = map[string]string{"fixture": "unowned"}, nil
@@ -223,6 +226,10 @@ func TestControllerWriteWebhookHoldsTheCleanupTTLToItsReason(t *testing.T) {
 			t.Fatalf("finish Job %s: %v", job.Name, err)
 		}
 		return job
+	}
+	finishedApply := func(suffix string, summaryFor func(*batchv1.Job) string) *batchv1.Job {
+		t.Helper()
+		return finishedApplyOf(fixture.job.OwnerReferences, fixture.job.Annotations[workload.AnnotationOperationID], suffix, summaryFor)
 	}
 	summary := func(result runner.Result) func(*batchv1.Job) string {
 		return func(job *batchv1.Job) string {
@@ -290,6 +297,78 @@ func TestControllerWriteWebhookHoldsTheCleanupTTLToItsReason(t *testing.T) {
 	})
 	t.Run("the long TTL on an Apply whose Pod is gone passes the outcome check", func(t *testing.T) {
 		requireDenied(t, setTTL(finishedApply("collected", nil), 86400), controllerWriteWebhook, pastTheOutcome)
+	})
+
+	// A migration run no approval names, as `apply: Always` claims one: the claim names
+	// the Job, and the Job's Pod says what the run reported. These Jobs are not what
+	// the claim builds, so the last check refuses each one, and that refusal is the
+	// proof a row passed the outcome.
+	migration := createMigration(t, fixture.namespace, "ledger")
+	controller := true
+	claimedRun := func(suffix string, summaryFor func(*batchv1.Job) string) *batchv1.Job {
+		t.Helper()
+		job := finishedApplyOf([]metav1.OwnerReference{{
+			APIVersion: operatorv1alpha1.GroupVersion.String(), Kind: "PtahMigration", Name: migration.Name, UID: migration.UID,
+			Controller: &controller, BlockOwnerDeletion: &controller,
+		}}, digest("9"), suffix, summaryFor)
+		stored := &operatorv1alpha1.PtahMigration{}
+		if err := admin.Get(ctx, client.ObjectKeyFromObject(migration), stored); err != nil {
+			t.Fatalf("read PtahMigration %s: %v", migration.Name, err)
+		}
+		stored.Status.ObservedGeneration = stored.Generation
+		stored.Status.ExecutionBinding = executionBinding()
+		stored.Status.ActiveOperation = &operatorv1alpha1.MigrationOperationStatus{
+			Type: operatorv1alpha1.MigrationOperationApply, ID: job.Annotations[workload.AnnotationOperationID],
+			InputFingerprint: digest("8"), StartedAt: now(), Attempt: 1, ExecutionBindingID: executionBindingID,
+			JobName: job.Name, JobUID: job.UID,
+		}
+		writeStatus(t, stored)
+		return job
+	}
+	migrationRun := func(outcome string) func(*batchv1.Job) string {
+		return func(job *batchv1.Job) string {
+			t.Helper()
+			encoded, err := runner.EncodeSummary(runner.Result{
+				ProtocolVersion: runner.ProtocolVersion, Operation: runner.OperationMigrationApply,
+				// The full ID, as the runner writes it, and as the claim keeps it.
+				OperationID:        job.Annotations[workload.AnnotationOperationID],
+				CoordinationDigest: digest("c"), TargetIdentityDigest: digest("d"),
+				MutationStarted: true,
+				Uncertain:       outcome == dataplane.MigrationOutcomePartial || outcome == dataplane.MigrationOutcomeUnknown,
+				MigrationRun: &dataplane.MigrationRunReport{
+					ContractVersion: dataplane.SupportedMigrationRunContract, Direction: "up", Outcome: outcome,
+				},
+			})
+			if err != nil {
+				t.Fatalf("EncodeSummary() error = %v", err)
+			}
+			return string(encoded)
+		}
+	}
+	const pastTheRun = "migration Job cleanup is outside the persisted operation claim"
+	t.Run("the long TTL on a migration run that reported Failed is refused", func(t *testing.T) {
+		refused := setTTL(claimedRun("run-failed", migrationRun(dataplane.MigrationOutcomeFailed)), 86400)
+		requireDenied(t, refused, controllerWriteWebhook, "no approval authorized this run and it reported Failed; it keeps 300 seconds")
+		// The manager falls back to the short TTL on this class of error, so the claim
+		// settles even when it asked before the Pod's report arrived.
+		if !apierrors.IsForbidden(refused) && !apierrors.IsInvalid(refused) {
+			t.Fatalf("the webhook's refusal is %T %v, which the manager would not fall back from", refused, refused)
+		}
+	})
+	t.Run("the long TTL on a migration run that reported Applied is refused", func(t *testing.T) {
+		requireDenied(t, setTTL(claimedRun("run-applied", migrationRun(dataplane.MigrationOutcomeApplied)), 86400),
+			controllerWriteWebhook, "this run reported success; it keeps 300 seconds")
+	})
+	t.Run("the long TTL on a migration run that reported Partial passes the outcome", func(t *testing.T) {
+		requireDenied(t, setTTL(claimedRun("run-partial", migrationRun(dataplane.MigrationOutcomePartial)), 86400),
+			controllerWriteWebhook, pastTheRun)
+	})
+	t.Run("the long TTL on a migration run that reported Unknown passes the outcome", func(t *testing.T) {
+		requireDenied(t, setTTL(claimedRun("run-unknown", migrationRun(dataplane.MigrationOutcomeUnknown)), 86400),
+			controllerWriteWebhook, pastTheRun)
+	})
+	t.Run("the long TTL on a migration run whose Pod is gone passes the outcome", func(t *testing.T) {
+		requireDenied(t, setTTL(claimedRun("run-collected", nil), 86400), controllerWriteWebhook, pastTheRun)
 	})
 }
 

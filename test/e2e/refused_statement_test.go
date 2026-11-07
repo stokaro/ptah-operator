@@ -100,6 +100,22 @@ func TestFailedApplyJobRetainedReadsTheTTL(t *testing.T) {
 	}
 }
 
+func TestFinishedJobKeepsShortTTLReadsTheTTL(t *testing.T) {
+	t.Parallel()
+
+	job := func(ttl *int32) *batchv1.Job {
+		return &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "apply"}, Spec: batchv1.JobSpec{TTLSecondsAfterFinished: ttl}}
+	}
+	if err := finishedJobKeepsShortTTL(job(ptr.To(int32(300)))); err != nil {
+		t.Errorf("the short TTL: %v", err)
+	}
+	for name, ttl := range map[string]*int32{"none": nil, "the long TTL": ptr.To(int32(86400)), "another": ptr.To(int32(301))} {
+		if err := finishedJobKeepsShortTTL(job(ttl)); err == nil {
+			t.Errorf("%s was accepted", name)
+		}
+	}
+}
+
 func TestCleanupScheduledReadsEitherTTL(t *testing.T) {
 	t.Parallel()
 

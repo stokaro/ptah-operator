@@ -30,15 +30,15 @@ func scheduleJobCleanup(ctx context.Context, writer client.Client, job *batchv1.
 }
 
 // retainFailedApplyJob schedules the cleanup of an Apply Job whose run did not
-// succeed, in both families.
+// succeed, in both families. keepLog is whether the run keeps
+// jobclaim.FailedApplyRetentionTTLSeconds: for a schema an approval, and for a
+// migration jobclaim.MigrationRunKeepsLog.
 //
-// An Apply a person approved keeps jobclaim.FailedApplyRetentionTTLSeconds: its Pod
-// log is the only place that holds what the database answered, it comes around only
-// when a person approves again, and that person reads it hours later. An Apply no
-// approval names keeps the five minutes every other finished Job keeps. Under
-// `apply: Always` the same failure repeats every cycle and each run writes a fresh
-// log, so a long TTL would hold one Job per cycle and could exhaust a namespace's
-// Job quota.
+// That TTL is for a log a person comes back to: the Pod log is the only place that
+// holds what the database answered, and the run does not come around again by itself.
+// Every other run keeps the five minutes every other finished Job keeps. Under
+// `apply: Always` a failure that does repeat writes a fresh log each cycle, so a long
+// TTL would hold one Job per cycle and could exhaust a namespace's Job quota.
 //
 // A guard that refuses the long TTL still gets a cleanup, and says so through
 // noteShortened and the log. A guard from the release before this one is installed
@@ -51,10 +51,10 @@ func retainFailedApplyJob(
 	ctx context.Context,
 	writer client.Client,
 	job *batchv1.Job,
-	approved bool,
+	keepLog bool,
 	noteShortened func(message string),
 ) error {
-	if !approved {
+	if !keepLog {
 		return scheduleJobCleanup(ctx, writer, job, jobCleanupTTLSeconds)
 	}
 	refused := scheduleJobCleanup(ctx, writer, job, failedApplyTTLSeconds)

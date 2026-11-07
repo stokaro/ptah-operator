@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	cleanupTTLValueMessage = "a Job's cleanup TTL is 300 seconds, or 86400 seconds for the Job of an approved Apply that failed"
+	cleanupTTLValueMessage = "a Job's cleanup TTL is 300 seconds, or 86400 seconds for the Job of an Apply that failed"
 	cleanupTTLLongMessage  = "only an Apply Job keeps 86400 seconds"
 )
 

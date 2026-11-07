@@ -3,6 +3,7 @@ package controllerwrite_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -302,22 +303,32 @@ func consumedApproval() *operatorv1alpha1.ConsumedApprovalStatus {
 	return &operatorv1alpha1.ConsumedApprovalStatus{Name: "approval", UID: "approval-uid"}
 }
 
-// TestOnlyAnApprovedApplyKeepsTheLongTTL holds both families to the approval their
-// claim names. Under `apply: Always` the same failure repeats every cycle, so the
-// long TTL would keep one Job per cycle.
-func TestOnlyAnApprovedApplyKeepsTheLongTTL(t *testing.T) {
+// TestARunThatRepeatsKeepsTheLongTTLOnlyWithAnApproval holds both families to the
+// approval their claim names. Under `apply: Always` such a failure repeats, so the
+// long TTL would keep one Job per cycle. A schema's uncertain Apply is one of them,
+// and for a migration it takes a run that reported Failed:
+// TestAMigrationRunNoApprovalNamesKeepsTheLongTTLOnlyWhenItStopsItsResource holds
+// the rest of what a migration run can report.
+func TestARunThatRepeatsKeepsTheLongTTLOnlyWithAnApproval(t *testing.T) {
 	t.Parallel()
 
 	long, short := jobclaim.FailedApplyRetentionTTLSeconds, jobclaim.CleanupTTLSeconds
-	const want = "Job cleanup TTL 86400 is for the Job of an Apply a person approved, and no approval authorized this run; it keeps 300 seconds"
-	failed := func(t *testing.T, job *batchv1.Job, operation runner.Operation) string {
+	const (
+		schemaRefusal    = "Job cleanup TTL 86400 is for the Job of an Apply a person approved, and no approval authorized this run; it keeps 300 seconds"
+		migrationRefusal = "Job cleanup TTL 86400 is for an Apply a person approved or a migration run that stops its resource, " +
+			"and no approval authorized this run and it reported Failed; it keeps 300 seconds"
+	)
+	uncertain := func(t *testing.T, job *batchv1.Job) string {
 		return summaryOf(t, runner.Result{
-			Operation: operation, OperationID: job.Annotations[workload.AnnotationOperationID],
+			Operation: runner.OperationApply, OperationID: job.Annotations[workload.AnnotationOperationID],
 			ChildExitCode: 2, MutationStarted: true, Uncertain: true,
 			Error: &runner.ResultError{Code: "apply_outcome_unknown", Message: "unknown"},
 		})
 	}
-	check := func(t *testing.T, response admission.Response, ttl int32, approved bool) {
+	failed := func(t *testing.T, job *batchv1.Job) string {
+		return summaryOf(t, migrationRunResult(job, dataplane.MigrationOutcomeFailed))
+	}
+	check := func(t *testing.T, response admission.Response, want string, ttl int32, approved bool) {
 		t.Helper()
 		if ttl == long && !approved {
 			if response.Allowed || !strings.Contains(responseMessage(response), want) {
@@ -348,10 +359,10 @@ func TestOnlyAnApprovedApplyKeepsTheLongTTL(t *testing.T) {
 			oldJob.Status.Conditions = applyComplete
 			job.Status.Conditions = applyComplete
 			job.Spec.TTLSecondsAfterFinished = &test.ttl
-			handler := handlerFixture(t, staticJobBuilder{job: expected}, schema, jobPod("a", oldJob, oldJob.UID, failed(t, oldJob, runner.OperationApply)))
+			handler := handlerFixture(t, staticJobBuilder{job: expected}, schema, jobPod("a", oldJob, oldJob.UID, uncertain(t, oldJob)))
 			request := requestFor(t, admissionv1.Update, job)
 			request.OldObject = rawObject(t, oldJob)
-			check(t, handler.Handle(context.Background(), request), test.ttl, test.approved)
+			check(t, handler.Handle(context.Background(), request), schemaRefusal, test.ttl, test.approved)
 		})
 		t.Run("migration: "+test.name, func(t *testing.T) {
 			t.Parallel()
@@ -362,11 +373,248 @@ func TestOnlyAnApprovedApplyKeepsTheLongTTL(t *testing.T) {
 			if test.approved {
 				migration.Status.ActiveOperation.ApprovalRef = &operatorv1alpha1.ImmutableObjectReference{Name: "approval", UID: "approval-uid"}
 			}
-			handler := migrationHandlerFixture(t, migration, plan, terminal, jobPod("a", terminal, terminal.UID, failed(t, terminal, runner.OperationMigrationApply)))
+			handler := migrationHandlerFixture(t, migration, plan, terminal, jobPod("a", terminal, terminal.UID, failed(t, terminal)))
 			cleaned := terminal.DeepCopy()
 			cleaned.Spec.TTLSecondsAfterFinished = &test.ttl
-			check(t, handler.Handle(context.Background(), migrationUpdateRequest(t, terminal, cleaned)), test.ttl, test.approved)
+			check(t, handler.Handle(context.Background(), migrationUpdateRequest(t, terminal, cleaned)), migrationRefusal, test.ttl, test.approved)
 		})
+	}
+}
+
+// migrationRunResult is a run that reported this outcome, with the flags the
+// runner derives from it, for the attempt this Job's claim made.
+func migrationRunResult(job *batchv1.Job, outcome string) runner.Result {
+	return runner.Result{
+		Operation: runner.OperationMigrationApply, OperationID: job.Annotations[workload.AnnotationOperationID],
+		MutationStarted: outcome != dataplane.MigrationOutcomeUpToDate,
+		Uncertain:       outcome == dataplane.MigrationOutcomePartial || outcome == dataplane.MigrationOutcomeUnknown,
+		MigrationRun: &dataplane.MigrationRunReport{
+			ContractVersion: dataplane.SupportedMigrationRunContract, Direction: "up", Outcome: outcome,
+		},
+	}
+}
+
+// unapprovedMigrationRun is a finished migration Apply no approval names, and the
+// Job with the long TTL the manager would ask for on it.
+func unapprovedMigrationRun(t *testing.T, conditions []batchv1.JobCondition) (
+	*operatorv1alpha1.PtahMigration, *operatorv1alpha1.PtahMigrationPlan, *batchv1.Job, *batchv1.Job,
+) {
+	t.Helper()
+	migration, plan, job := migrationApplyJobFixture(t)
+	terminal := withGeneratedJobIdentity(job)
+	terminal.Status.Conditions = conditions
+	migration.Status.ActiveOperation.JobUID = terminal.UID
+	migration.Status.ActiveOperation.ApprovalRef = nil
+	long := jobclaim.FailedApplyRetentionTTLSeconds
+	cleaned := terminal.DeepCopy()
+	cleaned.Spec.TTLSecondsAfterFinished = &long
+	return migration, plan, terminal, cleaned
+}
+
+// TestAMigrationRunNoApprovalNamesKeepsTheLongTTLOnlyWhenItStopsItsResource reads the
+// rule at the webhook, from what the run's Pod reported, whatever the Job's condition.
+// A runner that delivered its result exits zero whatever it reports, and a run can
+// report Failed under either condition. Silence is admitted, because the manager
+// records such a run as unknown and blocks the resource on it.
+func TestAMigrationRunNoApprovalNamesKeepsTheLongTTLOnlyWhenItStopsItsResource(t *testing.T) {
+	t.Parallel()
+
+	const (
+		repeats = "and no approval authorized this run and it reported %s; it keeps 300 seconds"
+		success = "this run reported success; it keeps 300 seconds"
+	)
+	reported := func(outcome string) func(*testing.T, *batchv1.Job) []client.Object {
+		return func(t *testing.T, job *batchv1.Job) []client.Object {
+			return []client.Object{jobPod("a", job, job.UID, summaryOf(t, migrationRunResult(job, outcome)))}
+		}
+	}
+	for _, test := range []struct {
+		name       string
+		conditions []batchv1.JobCondition
+		pods       func(*testing.T, *batchv1.Job) []client.Object
+		refusal    string
+	}{
+		{name: "a Complete Job that reported Partial", conditions: applyComplete, pods: reported(dataplane.MigrationOutcomePartial)},
+		{name: "a Complete Job that reported Unknown", conditions: applyComplete, pods: reported(dataplane.MigrationOutcomeUnknown)},
+		{name: "a Failed Job that reported Partial", conditions: applyFailed, pods: reported(dataplane.MigrationOutcomePartial)},
+		{name: "a Complete Job with no Pod left", conditions: applyComplete},
+		{name: "a Failed Job with no Pod left", conditions: applyFailed},
+		{
+			name: "a Pod that left no summary", conditions: applyFailed,
+			pods: func(_ *testing.T, job *batchv1.Job) []client.Object {
+				return []client.Object{jobPod("a", job, job.UID, "")}
+			},
+		},
+		{
+			// A summary that names the label's hash does not read for this attempt.
+			name: "a summary naming the label's hash", conditions: applyComplete,
+			pods: func(t *testing.T, job *batchv1.Job) []client.Object {
+				result := migrationRunResult(job, dataplane.MigrationOutcomeFailed)
+				result.OperationID = job.Labels[workload.LabelOperationID]
+				return []client.Object{jobPod("a", job, job.UID, summaryOf(t, result))}
+			},
+		},
+		{
+			name: "a result with no report in it", conditions: applyComplete,
+			pods: func(t *testing.T, job *batchv1.Job) []client.Object {
+				return []client.Object{jobPod("a", job, job.UID, summaryOf(t, runner.Result{
+					Operation: runner.OperationMigrationApply, OperationID: job.Annotations[workload.AnnotationOperationID],
+					ChildExitCode: 2, Error: &runner.ResultError{Code: "invalid_migration_run_output", Message: "failed strict validation"},
+				}))}
+			},
+		},
+		{
+			// The manager takes a Job of more than one Pod as a run nobody accounted for.
+			name: "two Pods that both reported Failed", conditions: applyFailed,
+			pods: func(t *testing.T, job *batchv1.Job) []client.Object {
+				failed := summaryOf(t, migrationRunResult(job, dataplane.MigrationOutcomeFailed))
+				return []client.Object{jobPod("a", job, job.UID, failed), jobPod("b", job, job.UID, failed)}
+			},
+		},
+		{
+			name: "a Complete Job that reported Failed", conditions: applyComplete, pods: reported(dataplane.MigrationOutcomeFailed),
+			refusal: fmt.Sprintf(repeats, "Failed"),
+		},
+		{
+			name: "a Failed Job that reported Failed", conditions: applyFailed, pods: reported(dataplane.MigrationOutcomeFailed),
+			refusal: fmt.Sprintf(repeats, "Failed"),
+		},
+		{
+			name: "a Failed Job that reported Applied", conditions: applyFailed, pods: reported(dataplane.MigrationOutcomeApplied),
+			refusal: fmt.Sprintf(repeats, "Applied"),
+		},
+		{
+			name: "a Failed Job that reported it was up to date", conditions: applyFailed, pods: reported(dataplane.MigrationOutcomeUpToDate),
+			refusal: fmt.Sprintf(repeats, "UpToDate"),
+		},
+		{name: "a Complete Job that reported Applied", conditions: applyComplete, pods: reported(dataplane.MigrationOutcomeApplied), refusal: success},
+		{
+			// The Pod's report is matched by owner, as the manager matches it.
+			name: "a Pod whose job-name label was removed", conditions: applyComplete,
+			pods: func(t *testing.T, job *batchv1.Job) []client.Object {
+				pod := jobPod("a", job, job.UID, summaryOf(t, migrationRunResult(job, dataplane.MigrationOutcomeFailed)))
+				pod.Labels = nil
+				return []client.Object{pod}
+			},
+			refusal: fmt.Sprintf(repeats, "Failed"),
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			migration, plan, terminal, cleaned := unapprovedMigrationRun(t, test.conditions)
+			objects := []client.Object{plan, terminal}
+			if test.pods != nil {
+				objects = append(objects, test.pods(t, terminal)...)
+			}
+			handler := migrationHandlerFixture(t, migration, objects...)
+			response := handler.Handle(context.Background(), migrationUpdateRequest(t, terminal, cleaned))
+			if test.refusal == "" {
+				if !response.Allowed {
+					t.Fatalf("the long TTL was denied: %s", responseMessage(response))
+				}
+				return
+			}
+			if response.Allowed || !strings.Contains(responseMessage(response), test.refusal) {
+				t.Fatalf("response %v %q, want a denial naming %q", response.Allowed, responseMessage(response), test.refusal)
+			}
+		})
+	}
+
+	t.Run("the short TTL on a run that reported Failed", func(t *testing.T) {
+		t.Parallel()
+		short := jobclaim.CleanupTTLSeconds
+		migration, plan, terminal, cleaned := unapprovedMigrationRun(t, applyComplete)
+		cleaned.Spec.TTLSecondsAfterFinished = &short
+		handler := migrationHandlerFixture(t, migration, plan, terminal,
+			jobPod("a", terminal, terminal.UID, summaryOf(t, migrationRunResult(terminal, dataplane.MigrationOutcomeFailed))))
+		if response := handler.Handle(context.Background(), migrationUpdateRequest(t, terminal, cleaned)); !response.Allowed {
+			t.Fatalf("the short TTL was denied: %s", responseMessage(response))
+		}
+	})
+}
+
+// TestNoEditEarnsARunTheLongTTL changes what can be edited and leaves what the run
+// reported, which is the only thing the rule rests on. Each row starts from a run that
+// reported Failed under no approval, or the reverse.
+func TestNoEditEarnsARunTheLongTTL(t *testing.T) {
+	t.Parallel()
+
+	const repeats = "and no approval authorized this run and it reported Failed; it keeps 300 seconds"
+	for _, test := range []struct {
+		name string
+		edit func(*operatorv1alpha1.PtahMigration, *batchv1.Job)
+	}{
+		{
+			name: "a policy that needs an approval now",
+			edit: func(migration *operatorv1alpha1.PtahMigration, _ *batchv1.Job) {
+				migration.Spec.Policy.Apply = operatorv1alpha1.ApplyPolicyOnApproval
+			},
+		},
+		{
+			name: "a status that says the resource is blocked",
+			edit: func(migration *operatorv1alpha1.PtahMigration, _ *batchv1.Job) {
+				migration.Status.Phase = operatorv1alpha1.MigrationPhaseBlocked
+				migration.Status.UnresolvedRun = &operatorv1alpha1.UnresolvedMigrationRunStatus{
+					Outcome: operatorv1alpha1.MigrationRunOutcomeUnknown, OperationID: migration.Status.ActiveOperation.ID,
+				}
+			},
+		},
+		{
+			// Reading the Job's own annotation would make the summary read for nothing.
+			name: "another operation ID on the Job",
+			edit: func(_ *operatorv1alpha1.PtahMigration, job *batchv1.Job) {
+				job.Annotations[workload.AnnotationOperationID] = "another-operation"
+			},
+		},
+		{
+			name: "another operation hash on the Job",
+			edit: func(_ *operatorv1alpha1.PtahMigration, job *batchv1.Job) {
+				job.Labels[workload.LabelOperationID] = "another-operation"
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			migration, plan, terminal, cleaned := unapprovedMigrationRun(t, applyComplete)
+			pod := jobPod("a", terminal, terminal.UID, summaryOf(t, migrationRunResult(terminal, dataplane.MigrationOutcomeFailed)))
+			test.edit(migration, terminal)
+			test.edit(migration, cleaned)
+			handler := migrationHandlerFixture(t, migration, plan, terminal, pod)
+			response := handler.Handle(context.Background(), migrationUpdateRequest(t, terminal, cleaned))
+			if response.Allowed || !strings.Contains(responseMessage(response), repeats) {
+				t.Fatalf("response %v %q, want a denial naming %q", response.Allowed, responseMessage(response), repeats)
+			}
+		})
+	}
+
+	// The reverse edit: an approval stays on the claim that took it, whatever the
+	// policy says by the time the run ends.
+	t.Run("an approved run whose policy moved to Always", func(t *testing.T) {
+		t.Parallel()
+		migration, plan, terminal, cleaned := unapprovedMigrationRun(t, applyComplete)
+		migration.Status.ActiveOperation.ApprovalRef = &operatorv1alpha1.ImmutableObjectReference{Name: "approval", UID: "approval-uid"}
+		migration.Spec.Policy.Apply = operatorv1alpha1.ApplyPolicyAlways
+		pod := jobPod("a", terminal, terminal.UID, summaryOf(t, migrationRunResult(terminal, dataplane.MigrationOutcomeFailed)))
+		handler := migrationHandlerFixture(t, migration, plan, terminal, pod)
+		if response := handler.Handle(context.Background(), migrationUpdateRequest(t, terminal, cleaned)); !response.Allowed {
+			t.Fatalf("the long TTL on an approved run was denied: %s", responseMessage(response))
+		}
+	})
+}
+
+// TestAMigrationRunWhosePodsCannotBeReadIsNotAdmitted fails closed on the Failed Job
+// the success check leaves alone. The manager gets an error it retries, not a refusal
+// it would shorten the log for.
+func TestAMigrationRunWhosePodsCannotBeReadIsNotAdmitted(t *testing.T) {
+	t.Parallel()
+
+	migration, plan, terminal, cleaned := unapprovedMigrationRun(t, applyFailed)
+	reader := fake.NewClientBuilder().WithScheme(controllerWriteScheme(t)).
+		WithObjects(migration, plan, terminal, migrationServiceAccount()).Build()
+	handler := handlerWithReader(migrationJobBuilder(), failingPodReader{Reader: reader})
+	response := handler.Handle(context.Background(), migrationUpdateRequest(t, terminal, cleaned))
+	if response.Allowed || !strings.Contains(responseMessage(response), "read the Pods of Apply Job") {
+		t.Fatalf("response %v %q, want a refusal naming the read", response.Allowed, responseMessage(response))
 	}
 }
 
