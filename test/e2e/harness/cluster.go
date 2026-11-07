@@ -74,7 +74,7 @@ func Connect(kubeconfig string) (*Cluster, error) {
 	if err := apiextensionsv1.AddToScheme(scheme); err != nil {
 		return nil, err
 	}
-	direct, err := client.New(config, client.Options{Scheme: scheme})
+	direct, err := client.NewWithWatch(config, client.Options{Scheme: scheme})
 	if err != nil {
 		return nil, fmt.Errorf("build a client for %s: %w", kubeconfig, err)
 	}
@@ -83,7 +83,7 @@ func Connect(kubeconfig string) (*Cluster, error) {
 		return nil, fmt.Errorf("build a clientset for %s: %w", kubeconfig, err)
 	}
 	return &Cluster{
-		Kubeconfig: kubeconfig, Config: config, Client: direct, Clientset: clientset, Scheme: scheme,
+		Kubeconfig: kubeconfig, Config: config, Client: withStoreFailureRetries(direct, storeFailureBackoff), Clientset: clientset, Scheme: scheme,
 		Namespace: namespace,
 	}, nil
 }
