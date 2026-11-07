@@ -325,7 +325,8 @@ func (r *MigrationReconciler) claimMigrationApply(
 	migration.Status.NextReconciliationTime = nil
 	migration.Status.Phase = operatorv1alpha1.MigrationPhaseApplying
 	setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionTrue,
-		operatorv1alpha1.ReasonApprovedPlan, fmt.Sprintf("Applying %d planned migrations", len(plan.Spec.Migrations)))
+		operatorv1alpha1.ReasonApprovedPlan, fmt.Sprintf("Applying %d planned %s", len(plan.Spec.Migrations),
+			byCount(len(plan.Spec.Migrations), "migration", "migrations")))
 	setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationApprovalRequired, metav1.ConditionFalse,
 		operatorv1alpha1.ReasonSatisfied, "The plan's approval requirements are satisfied")
 	if err := r.patchMigrationStatus(ctx, before, migration); err != nil {
@@ -1466,6 +1467,20 @@ func (r *MigrationReconciler) newMigrationOperationID(inputFingerprint string) (
 	return fingerprint.DigestCanonicalJSON(map[string]string{"input": inputFingerprint, "nonce": nonce})
 }
 
+// byCount picks the words that agree with count in a sentence a person reads in
+// status. Zero takes the plural.
+func byCount(count int, one, other string) string {
+	if count == 1 {
+		return one
+	}
+	return other
+}
+
+// appliedBefore is the end of the sentence about a migration that failed.
+func appliedBefore(count int) string {
+	return fmt.Sprintf("%d %s recorded applied", count, byCount(count, "migration before it is", "migrations before it are"))
+}
+
 // migrationRunMessage says what happened without carrying database rows or the
 // SQL a migration ran.
 func migrationRunMessage(report dataplane.MigrationRunReport) string {
@@ -1473,21 +1488,20 @@ func migrationRunMessage(report dataplane.MigrationRunReport) string {
 	case dataplane.MigrationOutcomeUpToDate:
 		return "The database already had every planned migration"
 	case dataplane.MigrationOutcomeApplied:
-		return fmt.Sprintf("%d migrations are recorded applied", len(report.Applied))
+		return fmt.Sprintf("%d %s recorded applied", len(report.Applied), byCount(len(report.Applied), "migration is", "migrations are"))
 	case dataplane.MigrationOutcomeDryRun:
 		return "The run was a dry run and changed nothing"
 	case dataplane.MigrationOutcomeFailed:
 		version, found := stoppedMigration(report)
 		if !found {
-			return fmt.Sprintf("A migration failed and committed nothing; %d migrations before it are recorded applied",
-				len(report.Applied))
+			return "A migration failed and committed nothing; " + appliedBefore(len(report.Applied))
 		}
 		where := ""
 		if failure := failureIn(report, version); failure != nil {
 			where = fmt.Sprintf(" at statement %d of %d%s", failure.Statement, failure.Statements, databaseAnswer(*failure))
 		}
-		return fmt.Sprintf("%s failed%s and committed nothing; %d migrations before it are recorded applied",
-			migrationName(report, version), where, len(report.Applied))
+		return fmt.Sprintf("%s failed%s and committed nothing; %s",
+			migrationName(report, version), where, appliedBefore(len(report.Applied)))
 	case dataplane.MigrationOutcomePartial:
 		if dirty := dirtyRevision(report); dirty != nil && dirty.Total > 0 {
 			// The statements before the failed one are what the dirty row

@@ -493,7 +493,7 @@ kubectl ptah approve migration/orders -n application --wait
 
 A run that ended `Unknown` needs one more step, because a read that still finds a
 migration pending leaves `status.unresolvedRun` in place: the resource stays `Blocked`
-and says `1 migrations are pending and the last run's outcome was Unknown, so none may
+and says `1 migration is pending and the last run's outcome was Unknown, so it may not
 run again`. Account for the run and
 [acknowledge it](../operations/#clear-unresolved-run) instead of asking for a read. The
 plan follows the acknowledgment.

@@ -62,7 +62,7 @@ func TestAMigrationApplyThatLostTheLockAsksAgainAndSaysSo(t *testing.T) {
 	operation.DispatchStarted = false
 	operation.AdmissionSnapshot = nil
 	setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionTrue,
-		operatorv1alpha1.ReasonApprovedPlan, "Applying 1 planned migrations")
+		operatorv1alpha1.ReasonApprovedPlan, "Applying 1 planned migration")
 	reconciler, api := fakeMigrationReconciler(t, staticLogs{}, migration, plan, verificationPolicyConfigMap())
 	release := holdRealmLeaseForASibling(t, reconciler, operation)
 
@@ -304,7 +304,7 @@ func TestRecordingALeaseEpochIsNotWaitingForTheLock(t *testing.T) {
 	operation.DispatchStarted = false
 	operation.LeaseEpoch = ""
 	setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionTrue,
-		operatorv1alpha1.ReasonApprovedPlan, "Applying 1 planned migrations")
+		operatorv1alpha1.ReasonApprovedPlan, "Applying 1 planned migration")
 	reconciler, api := fakeMigrationReconciler(t, staticLogs{}, migration, plan, verificationPolicyConfigMap())
 
 	stored := readMigration(t, api, migration)

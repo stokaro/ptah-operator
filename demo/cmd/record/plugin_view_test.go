@@ -305,12 +305,15 @@ func demoAwaitingFrom(current int64, planned ...migrationview.PlannedMigrationVi
 	view.Plan = &migrationview.PlanView{
 		Name: "ptah-mplan-0123456789abcdef01234567", CurrentVersion: current, CreatedAt: demoObserved, Migrations: planned,
 	}
+	needs := fmt.Sprintf("%d planned migrations need", len(planned))
+	if len(planned) == 1 {
+		needs = "1 planned migration needs"
+	}
 	view.Conditions = demoConditions(
 		metav1.Condition{Type: "Progressing", Status: "False", Reason: "AwaitingApproval", Message: "Nothing runs until a person writes the approval"},
 		metav1.Condition{Type: "Blocked", Status: "False", Reason: "HistoryMatched", Message: "The history continues this artifact"},
 		metav1.Condition{Type: "Ready", Status: "False", Reason: "AwaitingApproval", Message: "The plan is waiting for the approval its policy requires"},
-		metav1.Condition{Type: "ApprovalRequired", Status: "True", Reason: "AwaitingApproval",
-			Message: fmt.Sprintf("%d planned migrations need an approval naming this plan", len(planned))},
+		metav1.Condition{Type: "ApprovalRequired", Status: "True", Reason: "AwaitingApproval", Message: needs + " an approval naming this plan"},
 	)
 	return view
 }

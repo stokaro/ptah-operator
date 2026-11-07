@@ -95,11 +95,16 @@ func stoppedRunNamesItsMigration(run *ptahv1alpha1.MigrationRunStatus, stoppedAt
 	if run == nil {
 		return false
 	}
+	applied := max(stoppedAt-1, 0)
+	before := fmt.Sprintf("%d migrations before it are", applied)
+	if applied == 1 {
+		before = "1 migration before it is"
+	}
 	pattern := regexp.MustCompile(fmt.Sprintf(
 		`^Migration %d \(.+\) failed at statement %d of %d`+
 			`(?: with (?:SQLSTATE [0-9A-Z]{5}(?: \(error [1-9][0-9]*\))?|error [1-9][0-9]*))?`+
-			` and committed nothing; %d migrations before it are recorded applied(?:$|\. )`,
-		stoppedAt, statement, statements, max(stoppedAt-1, 0)))
+			` and committed nothing; %s recorded applied(?:$|\. )`,
+		stoppedAt, statement, statements, before))
 	return pattern.MatchString(run.Message)
 }
 

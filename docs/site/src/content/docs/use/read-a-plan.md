@@ -379,7 +379,7 @@ Last run:             Applied, started 2026-08-28T12:00:00Z, finished 2026-08-28
 
 Plan ptah-mplan-0123456789abcdef01234567, 1 migration from version 2:
   3                    add the orders index
-  ApprovalRequired: True, AwaitingApproval: 1 planned migrations need an approval naming this plan
+  ApprovalRequired: True, AwaitingApproval: 1 planned migration needs an approval naming this plan
 
 Approvals: none
 
@@ -391,7 +391,7 @@ Conditions:
   ArtifactVerified  True    PolicySatisfied   2026-08-30T12:00:00Z  The resolved artifact satisfied its verification policy
   Blocked           False   HistoryMatched    2026-08-30T12:00:00Z  The history continues this artifact
   Ready             False   AwaitingApproval  2026-08-30T12:00:00Z  The plan is waiting for the approval its policy requires
-  ApprovalRequired  True    AwaitingApproval  2026-08-30T12:00:00Z  1 planned migrations need an approval naming this plan
+  ApprovalRequired  True    AwaitingApproval  2026-08-30T12:00:00Z  1 planned migration needs an approval naming this plan
 
 kubectl events -n application --for ptahmigration/orders prints its Events.
 ```

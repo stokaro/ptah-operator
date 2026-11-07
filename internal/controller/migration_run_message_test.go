@@ -54,65 +54,65 @@ func TestARunMessageNamesTheMigrationItStoppedIn(t *testing.T) {
 		{
 			name:   "the revision row the failed run left dirty",
 			report: failed(described(&dataplane.MigrationDirty{Version: 2, Total: 3}, ledger...)),
-			want:   "Migration 2 (Read Ledger) failed and committed nothing; 1 migrations before it are recorded applied",
+			want:   "Migration 2 (Read Ledger) failed and committed nothing; 1 migration before it is recorded applied",
 		},
 		{
 			// A run that left no dirty row stopped before the migration it
 			// selected next, and that migration is the one it names.
 			name:   "no dirty row, so the first selected version the run did not apply",
 			report: failed(described(nil, ledger...)),
-			want:   "Migration 2 (Read Ledger) failed and committed nothing; 1 migrations before it are recorded applied",
+			want:   "Migration 2 (Read Ledger) failed and committed nothing; 1 migration before it is recorded applied",
 		},
 		{
 			name:   "the dirty row wins over the selection",
 			report: failed(described(&dataplane.MigrationDirty{Version: 3, Total: 1}, ledger...)),
-			want:   "Migration 3 (Index Journal) failed and committed nothing; 1 migrations before it are recorded applied",
+			want:   "Migration 3 (Index Journal) failed and committed nothing; 1 migration before it is recorded applied",
 		},
 		{
 			name:   "no history after the run",
 			report: failed(nil),
-			want:   "Migration 2 failed and committed nothing; 1 migrations before it are recorded applied",
+			want:   "Migration 2 failed and committed nothing; 1 migration before it is recorded applied",
 		},
 		{
 			name: "a version the history does not describe",
 			report: failed(described(nil, dataplane.MigrationRecord{
 				Version: 2, Description: " \t\n", State: dataplane.MigrationStateDirty,
 			})),
-			want: "Migration 2 failed and committed nothing; 1 migrations before it are recorded applied",
+			want: "Migration 2 failed and committed nothing; 1 migration before it is recorded applied",
 		},
 		{
 			name: "a run that selected nothing it did not apply",
 			report: dataplane.MigrationRunReport{
 				Outcome: dataplane.MigrationOutcomeFailed, Planned: []int64{1}, Applied: []int64{1},
 			},
-			want: "A migration failed and committed nothing; 1 migrations before it are recorded applied",
+			want: "A migration failed and committed nothing; 1 migration before it is recorded applied",
 		},
 		{
 			name:   "the statement that failed and the SQLSTATE the database gave",
 			report: failing(failed(described(nil, ledger...)), missingTable),
 			want: "Migration 2 (Read Ledger) failed at statement 2 of 3 with SQLSTATE 42P01 and committed nothing; " +
-				"1 migrations before it are recorded applied",
+				"1 migration before it is recorded applied",
 		},
 		{
 			name: "MySQL's error number beside its SQLSTATE",
 			report: failing(failed(described(&dataplane.MigrationDirty{Version: 2, Total: 3}, ledger...)),
 				dataplane.MigrationRunFailure{Version: 2, Statement: 1, Statements: 3, SQLState: "42S02", ErrorNumber: 1146}),
 			want: "Migration 2 (Read Ledger) failed at statement 1 of 3 with SQLSTATE 42S02 (error 1146) and committed nothing; " +
-				"1 migrations before it are recorded applied",
+				"1 migration before it is recorded applied",
 		},
 		{
 			name: "an error number with no SQLSTATE",
 			report: failing(failed(described(nil, ledger...)),
 				dataplane.MigrationRunFailure{Version: 2, Statement: 1, Statements: 3, ErrorNumber: 1146}),
 			want: "Migration 2 (Read Ledger) failed at statement 1 of 3 with error 1146 and committed nothing; " +
-				"1 migrations before it are recorded applied",
+				"1 migration before it is recorded applied",
 		},
 		{
 			name: "a statement the database never answered",
 			report: failing(failed(described(nil, ledger...)),
 				dataplane.MigrationRunFailure{Version: 2, Statement: 2, Statements: 3}),
 			want: "Migration 2 (Read Ledger) failed at statement 2 of 3 and committed nothing; " +
-				"1 migrations before it are recorded applied",
+				"1 migration before it is recorded applied",
 		},
 		{
 			// The dirty row names migration 3, so the failure about migration 2
@@ -120,7 +120,7 @@ func TestARunMessageNamesTheMigrationItStoppedIn(t *testing.T) {
 			name: "a failure about another migration than the one named",
 			report: failing(failed(described(&dataplane.MigrationDirty{Version: 3, Total: 1}, ledger...)),
 				missingTable),
-			want: "Migration 3 (Index Journal) failed and committed nothing; 1 migrations before it are recorded applied",
+			want: "Migration 3 (Index Journal) failed and committed nothing; 1 migration before it is recorded applied",
 		},
 		{
 			name:   "a partial run's failed statement and the database's answer",
@@ -249,7 +249,7 @@ func TestARunMessageFromPtahsOwnDocuments(t *testing.T) {
 		{
 			file: "migrations-up-failed-postgres.json",
 			want: "Migration 2 (Read Ledger) failed at statement 2 of 3 with SQLSTATE 42P01 and committed nothing; " +
-				"1 migrations before it are recorded applied",
+				"1 migration before it is recorded applied",
 		},
 		{
 			file: "migrations-up-partial-mysql.json",

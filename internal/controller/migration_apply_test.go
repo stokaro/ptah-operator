@@ -82,6 +82,7 @@ func TestMigrationApplyClaimsTheApprovedPlan(t *testing.T) {
 	if actual.Status.Phase != operatorv1alpha1.MigrationPhaseApplying {
 		t.Fatalf("phase = %q, want Applying", actual.Status.Phase)
 	}
+	assertMigrationCondition(t, actual, operatorv1alpha1.ConditionMigrationProgressing, "Applying 1 planned migration")
 }
 
 // An approval wakes the migration it names. The test above is what makes the

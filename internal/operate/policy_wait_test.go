@@ -277,7 +277,7 @@ func neverPublished(generation int64) []metav1.Condition {
 		condition(operatorv1alpha1.ConditionMigrationApprovalRequired, metav1.ConditionFalse, "NotRequired",
 			"The apply policy is Never, so no approval is consulted", generation),
 		condition(operatorv1alpha1.ConditionMigrationReady, metav1.ConditionFalse, "ApplyDisabled",
-			"1 migrations are pending and the apply policy is Never", generation),
+			"1 migration is pending and the apply policy is Never", generation),
 		condition(operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionFalse, "ApplyDisabled",
 			"The apply policy is Never, so nothing runs from here", generation),
 	}
@@ -294,9 +294,9 @@ func migrationClaimed(operation string, conditions []metav1.Condition) []metav1.
 // when versions are pending, in the write that records the reading.
 func historyHarvested(conditions []metav1.Condition) []metav1.Condition {
 	return rewritten(conditions,
-		condition(operatorv1alpha1.ConditionMigrationReady, metav1.ConditionFalse, "MigrationsPending", "1 migrations are pending", 3),
+		condition(operatorv1alpha1.ConditionMigrationReady, metav1.ConditionFalse, "MigrationsPending", "1 migration is pending", 3),
 		condition(operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionTrue, "MigrationsPending",
-			"A plan for 1 pending migrations is being published", 3))
+			"A plan for 1 pending migration is being published", 3))
 }
 
 // A migration under apply policy Never rests in Planning with its plan
@@ -354,7 +354,7 @@ func TestWaitStopsOnAMigrationPlanUnderApplyNever(t *testing.T) {
 			var stop *operate.StopError
 			if !errors.As(err, &stop) || stop.Reason != operate.StopPolicyBlocked || stop.Phase != row.wantPhase ||
 				tl.readCount() != row.wantStop ||
-				!strings.Contains(stop.Message, "spec.policy holds plan shipments-p-14 (ApplyDisabled): 1 migrations are pending and the apply policy is Never") {
+				!strings.Contains(stop.Message, "spec.policy holds plan shipments-p-14 (ApplyDisabled): 1 migration is pending and the apply policy is Never") {
 				t.Fatalf("err = %v after %d reads, want a %s stop in phase %s at read %d", err, tl.readCount(),
 					operate.StopPolicyBlocked, row.wantPhase, row.wantStop)
 			}
