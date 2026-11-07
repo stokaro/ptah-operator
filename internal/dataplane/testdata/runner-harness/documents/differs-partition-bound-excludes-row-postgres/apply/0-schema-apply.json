@@ -1,0 +1,23 @@
+{
+  "contract_version": 4,
+  "command": "schema apply",
+  "outcome": "unknown",
+  "plan_name": "plan_85ed6013f735",
+  "plan_digest": "sha256:e6c7d4def1c9737b0581e5772388ae006a760aea67466be2d5947890917b32cb",
+  "units": [
+    {
+      "sql": "ALTER TABLE \"differs_events\" DETACH PARTITION \"differs_e1\""
+    },
+    {
+      "sql": "ALTER TABLE \"differs_events\" ATTACH PARTITION \"differs_e1\" FOR VALUES FROM ('2027-01-01') TO ('2028-01-01')"
+    }
+  ],
+  "error": {
+    "message": "apply schema changes: failed to execute SQL statement: SQL execution failed: ERROR: partition constraint of relation \"differs_e1\" is violated by some row (SQLSTATE 23514)\nSQL: ALTER TABLE \"differs_events\" ATTACH PARTITION \"differs_e1\" FOR VALUES FROM ('2027-01-01') TO ('2028-01-01')"
+  },
+  "failure": {
+    "statement": 2,
+    "statements": 2,
+    "sqlstate": "23514"
+  }
+}

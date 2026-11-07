@@ -20,8 +20,8 @@ import (
 
 // unreadableReason is the reason the runner reported for the file
 // stokaro/ptah-operator#788 delivers, as the pinned image words it.
-const unreadableReason = "error parsing schema file: read SQL schema file /source/schema/schema.sql: " +
-	"expected '(' after table name: expected Operator, got Identifier at position 180"
+const unreadableReason = "error parsing schema file: read SQL schema file /source/schema/schema.sql:2:29: " +
+	"unsupported table option: INHERITS"
 
 // readOnlySchemaClaim is a schema whose read-only operation has finished.
 func readOnlySchemaClaim(t *testing.T, operation operatorv1alpha1.OperationType) *operatorv1alpha1.PtahSchema {
@@ -137,8 +137,9 @@ func TestAMigrationSaysWhyItsFilesCouldNotBeRead(t *testing.T) {
 }
 
 // TestAFailedFetchIsNamedAsItsStep covers the schema an OCI artifact delivers,
-// which `schema pull` reads in an init container: a file that does not parse
-// ends the Pod there, before the runner can speak. The step and its exit status
+// which `schema pull --skip-parse` checks in an init container: an artifact it
+// refuses, such as a layer of another media type, ends the Pod there, before
+// the runner can speak. The step and its exit status
 // are structured fields, and what the container wrote stays in its log. A Job
 // that failed with no init container to blame keeps the sentence it had.
 func TestAFailedFetchIsNamedAsItsStep(t *testing.T) {

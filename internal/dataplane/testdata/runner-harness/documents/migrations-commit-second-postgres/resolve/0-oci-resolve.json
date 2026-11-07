@@ -1,0 +1,7 @@
+{
+  "reference": "oci://harness-registry:5000/migrations/migrations-commit-second-postgres:v1",
+  "pinned_reference": "oci://harness-registry:5000/migrations/migrations-commit-second-postgres@sha256:3de4ad69b5d03e58fb28de5c4f0f814fa3ee12db322c02a18a1d868e27495989",
+  "digest": "sha256:3de4ad69b5d03e58fb28de5c4f0f814fa3ee12db322c02a18a1d868e27495989",
+  "media_type": "application/vnd.oci.image.manifest.v1+json",
+  "size": 1543
+}

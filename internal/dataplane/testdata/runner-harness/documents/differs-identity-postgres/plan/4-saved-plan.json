@@ -1,18 +1,18 @@
 {
   "format_version": 1,
-  "name": "plan_76a534145518",
+  "name": "plan_ccfe39ce0760",
   "dialect": "postgres",
-  "from_fingerprint": "sha256:ddf48afab29bbd729234ec95293c3b5ef7db9791d4a3379ded1c26631234620f",
+  "from_fingerprint": "sha256:39bc845ea0e92affc7948ead643486146eda058ea98f8b4aa719e3cda3108422",
   "to_fingerprint": "sha256:5c2e6a097d04b06b2b8d0f75059fbb315dd8e3d0316ff47badbf806b29f7ff1d",
   "scope": {
     "kind": "realm"
   },
-  "destructive": false,
+  "destructive": true,
   "statements": [
     {
       "sql": "ALTER TABLE \"differs_items\" ALTER COLUMN \"id\" DROP IDENTITY",
-      "severity": "safe",
-      "reason": "does not remove data or tighten constraints"
+      "severity": "destructive",
+      "reason": "DROP IDENTITY removes the sequence that fills the column and its position; an insert that leaves the column out fails, and one created again can hand out a key a row already holds"
     }
   ]
 }

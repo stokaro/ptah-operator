@@ -1,0 +1,18 @@
+{
+  "contract_version": 1,
+  "command": "schema drift",
+  "error": {
+    "kind": "permission_denied",
+    "message": "error reading database schema: the account harness_login_definer@% cannot see everything in database \"harness_differs_login_other_definer_mysql\": information_schema lists only what an account holds a privilege on, and a comparison reads a hidden object as absent. The account needs:\n  - the bodies of routines differs_hand_fn, unless the account is their definer: SHOW_ROUTINE on *.*",
+    "missing_privileges": [
+      {
+        "database": "harness_differs_login_other_definer_mysql",
+        "objects": "routines",
+        "names": [
+          "differs_hand_fn"
+        ],
+        "privilege": "SHOW_ROUTINE on *.*"
+      }
+    ]
+  }
+}

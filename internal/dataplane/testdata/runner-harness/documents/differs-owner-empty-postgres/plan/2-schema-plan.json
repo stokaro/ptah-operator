@@ -1,0 +1,30 @@
+{
+  "contract_version": 3,
+  "command": "schema plan",
+  "outcome": "changes",
+  "plan_digest": "sha256:2cedfea97b612ab205573b3c09a3df96d2a34330d1d3666006d3eecac9206c90",
+  "plan_path": "/work/ptah-plan-output-2636259862/second.plan.json",
+  "plan": {
+    "format_version": 1,
+    "name": "plan_61c3bf066418",
+    "dialect": "postgres",
+    "from_fingerprint": "sha256:bd00f59df79aeb123544a46a0dc4087417c9df0ccb5a1febab8a39de03b3b051",
+    "to_fingerprint": "sha256:5350d1cd59124fd386f8b317a0676f42368b5367a82708468fb561e5935e28b1",
+    "scope": {
+      "kind": "realm"
+    },
+    "destructive": false,
+    "statements": [
+      {
+        "sql": "CREATE TABLE \"differs_owned\" (\n  \"id\" integer PRIMARY KEY NOT NULL\n)",
+        "severity": "safe",
+        "reason": "does not remove data or tighten constraints"
+      },
+      {
+        "sql": "GRANT SELECT ON TABLE \"differs_owned\" TO \"harness_grantee_b\"",
+        "severity": "safe",
+        "reason": "does not remove data or tighten constraints"
+      }
+    ]
+  }
+}

@@ -1,7 +1,10 @@
 {
   "contract_version": 3,
   "command": "schema plan",
-  "outcome": "failed",
+  "outcome": "refused",
+  "refusal": {
+    "code": "declaration-refused"
+  },
   "error": {
     "message": "compare database schema: postgres requires referenced columns code on table \"parent\" to be declared unique"
   }

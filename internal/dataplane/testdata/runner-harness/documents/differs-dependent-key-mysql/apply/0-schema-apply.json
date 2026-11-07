@@ -11,5 +11,11 @@
   ],
   "error": {
     "message": "apply schema changes: failed to execute SQL statement: SQL execution failed: Error 3730 (HY000): Cannot drop table 'differs_parent' referenced by a foreign key constraint 'child_ibfk_1' on table 'child'.\nSQL: DROP TABLE `differs_parent`"
+  },
+  "failure": {
+    "statement": 1,
+    "statements": 1,
+    "sqlstate": "HY000",
+    "error_number": 3730
   }
 }

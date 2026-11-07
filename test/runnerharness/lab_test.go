@@ -429,6 +429,7 @@ func (l *lab) buildTools(t *testing.T, architecture, work string) string {
 	t.Helper()
 	for binary, source := range map[string]string{
 		"recorder": "./recorder", "runner/ptah-runner": "./recorder", "e2e-git-server": "../e2e/gitserver",
+		"unparsable-schema": "../../hack/unparsableschemafixture",
 	} {
 		output := filepath.Join(work, binary)
 		build := exec.CommandContext(t.Context(), "go", "build", "-o", output, source) // #nosec G204 -- the harness's own command
@@ -492,6 +493,7 @@ func (l *lab) buildTools(t *testing.T, architecture, work string) string {
 COPY recorder /recorder
 COPY runner/ /runner/
 COPY e2e-git-server /e2e-git-server
+COPY unparsable-schema /unparsable-schema
 COPY fixtures/ /fixtures/
 COPY spec/ /spec/
 COPY keys/ /keys/
@@ -534,7 +536,10 @@ func (l *lab) startDatabases(t *testing.T) {
 	l.docker.must(t, []string{"POSTGRES_PASSWORD=" + l.databasePassword}, "run", "--detach", "--pull", "never",
 		"--name", l.name("postgres"), "--network", l.network, "--network-alias", postgresHost,
 		"--env", "POSTGRES_PASSWORD",
-		"--tmpfs", "/var/lib/postgresql/data:rw,size=512m",
+		// Most rows make a database, and CREATE DATABASE also writes its
+		// template to the WAL, which stays until a checkpoint, so the space a
+		// run takes grows with its rows.
+		"--tmpfs", "/var/lib/postgresql/data:rw,size=1g",
 		"--mount", "type=volume,src="+l.name("tls")+",dst=/tls,readonly",
 		l.images.postgres,
 		"-c", "ssl=on", "-c", "ssl_cert_file=/tls/server.crt", "-c", "ssl_key_file=/tls/server.key",
@@ -686,6 +691,8 @@ type rowOutcome struct {
 	refusal string
 	// logs is what the Pod's containers wrote to their logs.
 	logs []byte
+	// children is what each Ptah command printed, before any masking.
+	children []recording.Child
 }
 
 const operationContainer = "ptah"
@@ -734,7 +741,7 @@ func (l *lab) runRow(t *testing.T, row rowSpec) rowOutcome {
 		}
 		finished = true
 	})
-	outcome := rowOutcome{refusal: refusal, logs: logs}
+	outcome := rowOutcome{refusal: refusal, logs: logs, children: children}
 	record := runnerharness.Row{
 		Name: row.name, Operation: string(row.operation), Source: row.source, Engine: row.engine,
 		Refusal: l.masker.Text(refusal),

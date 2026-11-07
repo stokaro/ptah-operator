@@ -10,8 +10,8 @@ import (
 	"github.com/stokaro/ptah-operator/internal/dataplane"
 )
 
-// The plans Ptah f47b2bfa3 saved for five changes to a partition declared in
-// SQL rate every statement a warning. The operator holds the two that take the
+// The plans Ptah v0.23.0 saved for five changes to a partition declared in
+// SQL, as the runner harness captured them, rate every statement a warning. The operator holds the two that take the
 // partition's rows out of the parent, and leaves the bound changes and the
 // attachment as Ptah rated them.
 func TestDecodePlanRatesPtahV023PartitionMoves(t *testing.T) {
@@ -22,11 +22,11 @@ func TestDecodePlanRatesPtahV023PartitionMoves(t *testing.T) {
 		// raised is the severity each statement reads as.
 		raised []string
 	}{
-		{file: "plan-partition-bound.json", raised: []string{"warning", "warning"}},
-		{file: "plan-partition-bound-excludes-row.json", raised: []string{"warning", "warning"}},
-		{file: "plan-partition-attach.json", raised: []string{"warning"}},
-		{file: "plan-partition-detach.json", raised: []string{"destructive"}},
-		{file: "plan-partition-parent.json", raised: []string{"destructive", "warning"}},
+		{file: "differing/plan-partition-bound.json", raised: []string{"warning", "warning"}},
+		{file: "differing/plan-partition-bound-excludes-row.json", raised: []string{"warning", "warning"}},
+		{file: "differing/plan-partition-attach.json", raised: []string{"warning"}},
+		{file: "differing/plan-partition-detach.json", raised: []string{"destructive"}},
+		{file: "differing/plan-partition-parent.json", raised: []string{"destructive", "warning"}},
 	} {
 		t.Run(row.file, func(t *testing.T) {
 			t.Parallel()

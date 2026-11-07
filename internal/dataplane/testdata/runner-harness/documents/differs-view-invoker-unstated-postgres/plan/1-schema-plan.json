@@ -1,7 +1,16 @@
 {
   "contract_version": 3,
   "command": "schema plan",
-  "outcome": "failed",
+  "outcome": "refused",
+  "refusal": {
+    "code": "view-security-option",
+    "view_options": [
+      {
+        "view": "differs_notes_view",
+        "option": "security_invoker"
+      }
+    ]
+  },
   "error": {
     "message": "generate schema apply operations: unsupported feature: view differs_notes_view holds security_invoker=true and the schema does not state it. Without it the view runs with its owner's rights, not the rights of the user who queries it. Declare security_invoker=true to keep it, or security_invoker=false to remove it. An HCL schema states these options in the view's security block, as invoker and barrier"
   }

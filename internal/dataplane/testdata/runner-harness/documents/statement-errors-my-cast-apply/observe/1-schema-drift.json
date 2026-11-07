@@ -4,9 +4,14 @@
   "drift": true,
   "failed": true,
   "failure_threshold": "all",
-  "highest_severity": "warning",
+  "highest_severity": "destructive",
   "dialect": "mysql",
   "findings": [
+    {
+      "category": "column_types_narrowed",
+      "count": 1,
+      "severity": "destructive"
+    },
     {
       "category": "columns_modified",
       "count": 1,
@@ -50,7 +55,9 @@
             "column_name": "qty",
             "changes": {
               "type": "text -\u003e integer"
-            }
+            },
+            "type_narrows": true,
+            "previous_type": "text"
           }
         ],
         "constraints_added": null,

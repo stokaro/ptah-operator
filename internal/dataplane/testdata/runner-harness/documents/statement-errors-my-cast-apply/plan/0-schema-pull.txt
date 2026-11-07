@@ -1,2 +1,3 @@
-Pulled oci://harness-registry:5000/schemas/statement-errors-my-cast-apply@sha256:9cb584d8bbff75f0a9fd8be00d0c87f3a0fd9b507068e372d7fbac94f8051b41 to /source/schema.hcl
-Digest: sha256:9cb584d8bbff75f0a9fd8be00d0c87f3a0fd9b507068e372d7fbac94f8051b41
+Pulled oci://harness-registry:5000/schemas/statement-errors-my-cast-apply@sha256:f07cd979bfcd3b74e8586e3b27d35a9175af0193658c8da004d1824e47eedabe to /source/schema.hcl, /source/managed-data.json
+Digest: sha256:f07cd979bfcd3b74e8586e3b27d35a9175af0193658c8da004d1824e47eedabe
+Not parsed: the next command that reads the file reports what it cannot read.

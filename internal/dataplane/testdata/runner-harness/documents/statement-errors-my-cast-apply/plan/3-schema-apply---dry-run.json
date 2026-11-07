@@ -3,7 +3,7 @@
   "command": "schema apply",
   "outcome": "dry-run",
   "plan_name": "plan_5de14a26faee",
-  "plan_digest": "sha256:ca6c477bf8c0a34e703ddcf000e2081d8a16577d349955230089fc50a22ae3ce",
+  "plan_digest": "sha256:df11f1eab9cc6678dc64818521dc7a67ad7f2547bb6d63885b29fc91ef232622",
   "units": [
     {
       "sql": "ALTER TABLE `items` MODIFY COLUMN `qty` integer"

@@ -15,11 +15,10 @@ import (
 )
 
 // TestARunAccountFromPtahV023Documents writes the message and the status
-// failure for run documents Ptah printed at f47b2bfa3, the commit v0.23.0 is
-// to be tagged on (see testdata/ptah-f47b2bfa3 at the repository root). Each
-// report is decoded and then cut the way the runner cuts it before the frame,
-// with Ptah's sentence and the revision row's text gone;
-// TestMigrationRunCarriesPtahV023CommitFailure and
+// failure for run documents Ptah v0.23.0 printed, as the runner harness
+// captured them under internal/dataplane/testdata. Each report is decoded and
+// then cut the way the runner cuts it before the frame, with Ptah's sentence
+// and the revision row's text gone; TestMigrationRunCarriesPtahV023CommitFailure and
 // TestMigrationRunCarriesPtahV023UnknownMySQLRun in internal/runner hold the
 // runner to that.
 func TestARunAccountFromPtahV023Documents(t *testing.T) {
@@ -43,17 +42,7 @@ func TestARunAccountFromPtahV023Documents(t *testing.T) {
 				"1 migration before it is recorded applied",
 		},
 		{
-			file: "migrations-up-commit-failed-tx-all.json",
-			want: "Migration 1 (Create) failed at its commit with SQLSTATE 23503 and committed nothing; " +
-				"0 migrations before it are recorded applied",
-		},
-		{
-			file: "migrations-up-commit-failed-tx-all-second.json",
-			want: "Migration 2 (Orphan) failed at its commit with SQLSTATE 23503 and committed nothing; " +
-				"0 migrations before it are recorded applied",
-		},
-		{
-			file: "migrations-up-unknown-mysql-ddl.json",
+			file: "statement-errors/my-unique-up.json",
 			want: "Migration 1 (Change) stopped at statement 1 of 1 with SQLSTATE 23000 (error 1062), " +
 				"and whether it committed is not recorded",
 			failure: true,
@@ -61,7 +50,7 @@ func TestARunAccountFromPtahV023Documents(t *testing.T) {
 	} {
 		t.Run(row.file, func(t *testing.T) {
 			t.Parallel()
-			data, err := os.ReadFile(filepath.Join("..", "..", "testdata", "ptah-f47b2bfa3", row.file))
+			data, err := os.ReadFile(filepath.Join("..", "dataplane", "testdata", row.file))
 			if err != nil {
 				t.Fatal(err)
 			}

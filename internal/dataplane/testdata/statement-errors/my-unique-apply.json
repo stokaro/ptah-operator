@@ -11,5 +11,11 @@
   ],
   "error": {
     "message": "apply schema changes: failed to execute SQL statement: SQL execution failed: Error 1062 (23000): Duplicate entry 'row-value@example.com' for key 'orders.orders_one_per_customer'\nSQL: CREATE UNIQUE INDEX `orders_one_per_customer` ON `orders` (`customer_email`)"
+  },
+  "failure": {
+    "statement": 1,
+    "statements": 1,
+    "sqlstate": "23000",
+    "error_number": 1062
   }
 }

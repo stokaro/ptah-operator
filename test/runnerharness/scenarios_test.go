@@ -321,6 +321,25 @@ func migrationFailures(t *testing.T, l *lab) {
 		run.resolve("resolve")
 		run.history("history-pending")
 	})
+	// A deferred foreign key fails at the commit, after every statement ran.
+	// Ptah reports statement 0 beside commit true, and no migration of the
+	// failed transaction is recorded applied.
+	for _, row := range []struct{ name, fixtures, stored string }{
+		{"commit-postgres", "migrations-commit-postgresql", "migrations-up-commit-failed.json"},
+		{"commit-second-postgres", "migrations-commit-second-postgresql", "migrations-up-commit-failed-second.json"},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			family, database := "migrations-"+row.name, "harness_"+strings.ReplaceAll(row.name, "-", "_")
+			l.createDatabase(t, enginePostgres, database)
+			reference := l.publish(t, "migrations", "migrations/"+family, "v1", "--migrations-dir", "/fixtures/"+row.fixtures)
+			run := l.newMigration(t, family, enginePostgres, l.databaseURL(enginePostgres, database), ociSource(reference))
+			run.resolve("resolve")
+			before := run.history("history-pending")
+			run.applyPlanned("apply", pending(t, family, before), storedAs("migrations up", row.stored), wantCode("child_exit"))
+			run.history("history-dirty")
+		})
+	}
 	t.Run("partial-mysql", func(t *testing.T) {
 		t.Parallel()
 		family, database := "migrations-partial-mysql", "harness_partial_mysql"
@@ -836,7 +855,8 @@ func unreadableSources(t *testing.T, l *lab) {
 // refuses. The fault crosses only when the failed command stopped on it, in the
 // words of a child that held no credential. The last rows are the near misses:
 // validate finds a fault there, and drift and plan stop on something else, so
-// the runner has to say what it said before. Its fixed sentences hold neither
+// the runner has to say what it says without the fault: drift's exit status,
+// and the code of the refusal Ptah planned. Its fixed sentences hold neither
 // the row the database was seeded with nor anything drift said of the schema
 // the database holds, which no check of a code would show.
 func structuralFaults(t *testing.T, l *lab) {
@@ -846,6 +866,11 @@ func structuralFaults(t *testing.T, l *lab) {
 		noReason   = "ptah exited with code 2"
 		noPlan     = "plan command did not complete successfully"
 		foreignKey = `invalid foreign key: constraint "t_nope" references unknown table "nope"`
+		// Since Ptah v0.23.0 the plan refuses what it cannot compare as
+		// declaration-refused, and the runner asks the desired-source check
+		// why. Where validate finds the fault in the file, the Plan says that;
+		// where drift stopped on something else, it says the refusal's code.
+		declarationRefused = "ptah refused to plan the change (declaration-refused)"
 	)
 	seed := func(engine string) []string {
 		note := "text"
@@ -894,11 +919,11 @@ func structuralFaults(t *testing.T, l *lab) {
 		},
 		{
 			name: "other-and-key", engine: enginePostgres, file: "other-and-key.sql", extra: otherSchema,
-			observeCode: "child_exit", planCode: "invalid_plan_output", observeWords: noReason, planWords: noPlan,
+			observeCode: "child_exit", planCode: "plan_refused", observeWords: noReason, planWords: declarationRefused,
 		},
 		{
 			name: "other-and-index", engine: enginePostgres, file: "other-and-index.sql", extra: otherSchema,
-			observeCode: "child_exit", planCode: "invalid_plan_output", observeWords: noReason, planWords: noPlan,
+			observeCode: "child_exit", planCode: "plan_refused", observeWords: noReason, planWords: declarationRefused,
 		},
 	} {
 		t.Run(row.name, func(t *testing.T) {

@@ -3,7 +3,7 @@
   "command": "schema apply",
   "outcome": "dry-run",
   "plan_name": "plan_af4638957370",
-  "plan_digest": "sha256:5fd0d3e28c45e53dd1e4110249d983eb92806305b85d25d820ca037bb580527c",
+  "plan_digest": "sha256:95d3697367da53025117c9c3b847a08b6928f06af0df796a7dc85c5c5a42abc9",
   "units": [
     {
       "sql": "ALTER TABLE `differs_events` MODIFY COLUMN `happened_at` timestamp NOT NULL"

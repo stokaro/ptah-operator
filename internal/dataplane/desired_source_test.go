@@ -32,12 +32,12 @@ func TestSchemaSourceProblemReadsALoadFailure(t *testing.T) {
 		name, fixture, engine, want string
 	}{
 		{
-			name: "the SQL file a PARTITION OF statement stops", fixture: "validate-sql.txt", engine: "PostgreSQL",
-			want: "error parsing schema file: read SQL schema file /work/schema.sql: expected '(' after table name: expected Operator, got Identifier at position 180",
+			name: "the SQL file an INHERITS clause stops", fixture: "validate-sql.txt", engine: "PostgreSQL",
+			want: "error parsing schema file: read SQL schema file /work/schema.sql:2:29: unsupported table option: INHERITS",
 		},
 		{
 			name: "the same file for MySQL", fixture: "validate-sql-mysql.txt", engine: "MySQL",
-			want: "error parsing schema file: read SQL schema file /work/schema.sql: expected '(' after table name: expected Operator, got Identifier at position 180",
+			want: "error parsing schema file: read SQL schema file /work/schema.sql:2:29: unsupported table option: INHERITS",
 		},
 		{
 			name: "YAML that does not parse", fixture: "validate-yaml.txt", engine: "PostgreSQL",
@@ -103,14 +103,18 @@ func TestSchemaSourceProblemRefusesWhatDoesNotExplainAFailure(t *testing.T) {
 }
 
 // failedSentence is what a captured failed document says of itself: the
-// sentence a whole-schema fault is compared with.
+// sentence a whole-schema fault is compared with. A plan Ptah v0.23.0 refuses
+// as declaration-refused says it in the same words a failed plan did, and the
+// runner asks the same question of both.
 func failedSentence(t *testing.T, fixture string) string {
 	t.Helper()
 	data := desiredSourceFixture(t, fixture)
 	if strings.HasPrefix(fixture, "plan-") {
 		report, err := dataplane.DecodeSchemaPlan(data)
-		if err != nil || report.Outcome != dataplane.SchemaPlanOutcomeFailed || report.Error == nil {
-			t.Fatalf("%s is not a failed plan: %+v, %v", fixture, report, err)
+		refused := report.Outcome == dataplane.SchemaPlanOutcomeRefused && report.Refusal != nil &&
+			report.Refusal.Code == dataplane.SchemaRefusalDeclarationRefused
+		if err != nil || (report.Outcome != dataplane.SchemaPlanOutcomeFailed && !refused) || report.Error == nil {
+			t.Fatalf("%s is neither a failed plan nor a declaration refusal: %+v, %v", fixture, report, err)
 		}
 		return report.Error.Message
 	}

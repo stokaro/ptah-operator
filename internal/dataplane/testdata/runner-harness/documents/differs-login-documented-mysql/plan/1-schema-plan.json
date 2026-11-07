@@ -1,0 +1,26 @@
+{
+  "contract_version": 3,
+  "command": "schema plan",
+  "outcome": "changes",
+  "plan_digest": "sha256:e6090884de4b3657436b2aa2e1bf5b2fc0ef52757967c74fad96fb98552b7f61",
+  "plan_path": "/work/ptah-plan-output-1006069599/first.plan.json",
+  "plan": {
+    "format_version": 1,
+    "name": "plan_37df5501e6c0",
+    "dialect": "mysql",
+    "from_fingerprint": "sha256:6477d37eb487ae23631bb6481dedf1a665bf7d3565d3b0dec24584e3bd5ab512",
+    "to_fingerprint": "sha256:f535dbf2ebced50535f6f93f533e4bfc043c35a69d0ad614d6cccf4070fdc551",
+    "scope": {
+      "kind": "schema",
+      "name": "harness_differs_login_documented_mysql"
+    },
+    "destructive": false,
+    "statements": [
+      {
+        "sql": "ALTER TABLE `differs_notes` ADD COLUMN `note` varchar(64)",
+        "severity": "safe",
+        "reason": "does not remove data or tighten constraints"
+      }
+    ]
+  }
+}

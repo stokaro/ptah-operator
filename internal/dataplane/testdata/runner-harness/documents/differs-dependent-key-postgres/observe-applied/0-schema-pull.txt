@@ -1,2 +1,3 @@
-Pulled oci://harness-registry:5000/schemas/differs-dependent-key-postgres@sha256:5cbb6e3721aab3126a43add4acde82e4379df2a3ddee81e4244a3da1ba0b296d to /source/schema.hcl
-Digest: sha256:5cbb6e3721aab3126a43add4acde82e4379df2a3ddee81e4244a3da1ba0b296d
+Pulled oci://harness-registry:5000/schemas/differs-dependent-key-postgres@sha256:6f91b08ee4e15405c2d0e98b06efdc9a811a87ddd5eb46d9d5932c0f972fc451 to /source/schema.hcl, /source/managed-data.json
+Digest: sha256:6f91b08ee4e15405c2d0e98b06efdc9a811a87ddd5eb46d9d5932c0f972fc451
+Not parsed: the next command that reads the file reports what it cannot read.

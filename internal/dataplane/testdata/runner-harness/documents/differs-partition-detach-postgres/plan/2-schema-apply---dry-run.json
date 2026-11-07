@@ -1,0 +1,12 @@
+{
+  "contract_version": 4,
+  "command": "schema apply",
+  "outcome": "dry-run",
+  "plan_name": "plan_c1b2e3d7715d",
+  "plan_digest": "sha256:a58a3b28627e1acbac61e04df59161feed176648be2342512165bc8631d96ee3",
+  "units": [
+    {
+      "sql": "ALTER TABLE \"differs_events\" DETACH PARTITION \"differs_e1\""
+    }
+  ]
+}

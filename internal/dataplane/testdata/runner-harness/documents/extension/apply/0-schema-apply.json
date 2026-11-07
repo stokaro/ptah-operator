@@ -2,8 +2,8 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "applied",
-  "plan_name": "plan_8125ca75b609",
-  "plan_digest": "sha256:4ddb6030a8c4ed824ed9a2d329f9ffb45e12550b807b5d18aa9257b298e57a85",
+  "plan_name": "plan_7bf694cae321",
+  "plan_digest": "sha256:98462ce63bcb5d28eb8b29fccebd41eb4178852edd14da108697e6bac6e34860",
   "units": [
     {
       "sql": "CREATE EXTENSION IF NOT EXISTS \"pg_trgm\""

@@ -1,0 +1,15 @@
+{
+  "contract_version": 4,
+  "command": "schema apply",
+  "outcome": "applied",
+  "plan_name": "plan_61c3bf066418",
+  "plan_digest": "sha256:2cedfea97b612ab205573b3c09a3df96d2a34330d1d3666006d3eecac9206c90",
+  "units": [
+    {
+      "sql": "CREATE TABLE \"differs_owned\" (\n  \"id\" integer PRIMARY KEY NOT NULL\n)"
+    },
+    {
+      "sql": "GRANT SELECT ON TABLE \"differs_owned\" TO \"harness_grantee_b\""
+    }
+  ]
+}

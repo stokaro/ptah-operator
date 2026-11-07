@@ -2,8 +2,8 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "dry-run",
-  "plan_name": "plan_9d07b4f0e411",
-  "plan_digest": "sha256:c1ece1b4197385ce01cefebade707c48ad1c26b20dd0d60f682b95a6abf69146",
+  "plan_name": "plan_ca0f39f5f2e4",
+  "plan_digest": "sha256:4600de789c6e4561cb41cb4cf08fdf5d0420b36b8be6884545f63104e7a760c2",
   "units": [
     {
       "sql": "DROP EXTENSION \"postgres_fdw\""

@@ -1,0 +1,21 @@
+{
+  "contract_version": 3,
+  "command": "schema plan",
+  "outcome": "failed",
+  "error": {
+    "kind": "permission_denied",
+    "message": "read database schema: the account harness_login_before@% cannot see everything in database \"harness_differs_login_before_mysql\": information_schema lists only what an account holds a privilege on, and a comparison reads a hidden object as absent. The account needs:\n  - triggers: TRIGGER on `harness_differs_login_before_mysql`.*\n  - procedures and functions: SHOW_ROUTINE on *.*",
+    "missing_privileges": [
+      {
+        "database": "harness_differs_login_before_mysql",
+        "objects": "triggers",
+        "privilege": "TRIGGER on `harness_differs_login_before_mysql`.*"
+      },
+      {
+        "database": "harness_differs_login_before_mysql",
+        "objects": "routines",
+        "privilege": "SHOW_ROUTINE on *.*"
+      }
+    ]
+  }
+}

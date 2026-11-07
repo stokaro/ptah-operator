@@ -1,0 +1,23 @@
+{
+  "reference": "oci://harness-registry:5000/schemas/differs-owner-existing-postgres@sha256:5c64ec848b7b792f696b19dc690cf0f7f7844e05b3d463838bab556d7c71d7b9",
+  "pinned_reference": "oci://harness-registry:5000/schemas/differs-owner-existing-postgres@sha256:5c64ec848b7b792f696b19dc690cf0f7f7844e05b3d463838bab556d7c71d7b9",
+  "digest": "sha256:5c64ec848b7b792f696b19dc690cf0f7f7844e05b3d463838bab556d7c71d7b9",
+  "media_type": "application/vnd.oci.image.manifest.v1+json",
+  "size": 813,
+  "artifact_type": "application/vnd.stokaro.ptah.schema.v1",
+  "annotations": {
+    "io.stokaro.ptah.kind": "application/vnd.stokaro.ptah.schema.v1",
+    "io.stokaro.ptah.schema-format": "hcl",
+    "io.stokaro.ptah.version": "0.23.0",
+    "org.opencontainers.image.created": "2026-11-07T17:04:54Z",
+    "org.opencontainers.image.revision": "f47b2bfa3b696c93730e7d25397987ed0a4a2562"
+  },
+  "layers": [
+    {
+      "name": "schema.hcl",
+      "media_type": "application/vnd.stokaro.ptah.schema.hcl.v1",
+      "size": 360,
+      "digest": "sha256:3db0d71bb4651a3fc6223680673f545d2e6cc1119938cdbcda989b79cf02cd9d"
+    }
+  ]
+}

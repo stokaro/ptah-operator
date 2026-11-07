@@ -27,8 +27,8 @@ func desiredSourceOutput(t *testing.T, name string) string {
 
 const (
 	checkedSchemaFile = "/source/schema/schema.sql"
-	partitionReason   = "error parsing schema file: read SQL schema file /work/schema.sql: " +
-		"expected '(' after table name: expected Operator, got Identifier at position 180"
+	inheritsReason    = "error parsing schema file: read SQL schema file /work/schema.sql:2:29: " +
+		"unsupported table option: INHERITS"
 )
 
 // desiredSourceRun is one operation that reads the desired files, the document
@@ -63,7 +63,7 @@ func desiredSourceRuns() map[string]desiredSourceRun {
 			checkArgs:    []string{"schema", "validate", "--dialect=PostgreSQL"},
 			checkEnv:     schemaCheckEnv,
 			unreadable:   validate,
-			reason:       partitionReason,
+			reason:       inheritsReason,
 			unclassified: "child_exit",
 		},
 		"plan": {
@@ -75,7 +75,7 @@ func desiredSourceRuns() map[string]desiredSourceRun {
 			checkArgs:    []string{"schema", "validate", "--dialect=PostgreSQL"},
 			checkEnv:     schemaCheckEnv,
 			unreadable:   validate,
-			reason:       partitionReason,
+			reason:       inheritsReason,
 			unclassified: "invalid_plan_output",
 		},
 		"migration history": {
@@ -270,9 +270,11 @@ func TestAFaultTheCommandDidNotStopOnKeepsItsCode(t *testing.T) {
 		{"an index on a table nothing declares", "observe", "child_exit", captured("drift-index-table.json", "validate-index-table.txt")},
 		{"an index on a table nothing declares", "plan", "invalid_plan_output", captured("plan-index-table.json", "validate-index-table.txt")},
 		{"a key the database refuses, beside another", "observe", "child_exit", captured("drift-other-and-key.json", "validate-other-and-key.txt")},
-		{"a key the database refuses, beside another", "plan", "invalid_plan_output", captured("plan-other-and-key.json", "validate-other-and-key.txt")},
+		// Ptah v0.23.0 refuses these plans as declaration-refused rather than
+		// failing them, and a refusal the file does not explain keeps its code.
+		{"a key the database refuses, beside another", "plan", "plan_refused", captured("plan-other-and-key.json", "validate-other-and-key.txt")},
 		{"a key the database refuses, beside an index", "observe", "child_exit", captured("drift-other-and-index.json", "validate-other-and-index.txt")},
-		{"a key the database refuses, beside an index", "plan", "invalid_plan_output", captured("plan-other-and-index.json", "validate-other-and-index.txt")},
+		{"a key the database refuses, beside an index", "plan", "plan_refused", captured("plan-other-and-index.json", "validate-other-and-index.txt")},
 		{"a document that does not decode", "observe", "child_exit", func(t *testing.T) (scriptedResponse, scriptedResponse) {
 			return scriptedResponse{stdout: "error comparing schemas: invalid foreign key", exitCode: 2}, foreignKey(t)
 		}},
@@ -452,8 +454,8 @@ func TestAReasonIsRedactedAndBounded(t *testing.T) {
 	// quotes the password: validate-sql-folded.txt is the capture.
 	t.Run("a credential in the file", func(t *testing.T) {
 		t.Parallel()
-		result, _, diagnostics := runDesiredSource(t, run, run.failed(t), source("read SQL schema file "+checkedSchemaFile+": unsupported SQL statement: SECRET at position 0"))
-		want := "read SQL schema file " + checkedSchemaFile + ": unsupported SQL statement: " + RedactionMarker + " at position 0"
+		result, _, diagnostics := runDesiredSource(t, run, run.failed(t), source("read SQL schema file "+checkedSchemaFile+":1:1: unsupported SQL statement: SECRET"))
+		want := "read SQL schema file " + checkedSchemaFile + ":1:1: unsupported SQL statement: " + RedactionMarker
 		if result.Error == nil || result.Error.Message != want {
 			t.Fatalf("Run() error = %#v, want %q", result.Error, want)
 		}
@@ -527,7 +529,7 @@ func TestAReasonNamesTheSchemaFile(t *testing.T) {
 		"validate-yaml.txt": "schema.sql: error parsing schema file: parse YAML schema: yaml: line 1: did not find expected '-' indicator",
 		"validate-yaml-value.txt": "schema.sql: error parsing schema file: parse YAML schema: yaml: unmarshal errors: " +
 			"line 1: cannot unmarshal !!str `hunter2...` into map[string]yamlschema.tableSpec",
-		"validate-sql.txt": partitionReason,
+		"validate-sql.txt": inheritsReason,
 	} {
 		t.Run(fixture, func(t *testing.T) {
 			t.Parallel()

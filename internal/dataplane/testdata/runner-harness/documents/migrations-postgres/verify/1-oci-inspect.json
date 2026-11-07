@@ -1,16 +1,16 @@
 {
-  "reference": "oci://harness-registry:5000/migrations/migrations-postgres@sha256:68b7562e59c25ec445d9573792fe21cf1fb40bc54aa40ab8b284151446f3231d",
-  "pinned_reference": "oci://harness-registry:5000/migrations/migrations-postgres@sha256:68b7562e59c25ec445d9573792fe21cf1fb40bc54aa40ab8b284151446f3231d",
-  "digest": "sha256:68b7562e59c25ec445d9573792fe21cf1fb40bc54aa40ab8b284151446f3231d",
+  "reference": "oci://harness-registry:5000/migrations/migrations-postgres@sha256:f41d488a4dabae0f6612273cfb83e49ac56ad05c44c7ced3860d8c444c7dfe17",
+  "pinned_reference": "oci://harness-registry:5000/migrations/migrations-postgres@sha256:f41d488a4dabae0f6612273cfb83e49ac56ad05c44c7ced3860d8c444c7dfe17",
+  "digest": "sha256:f41d488a4dabae0f6612273cfb83e49ac56ad05c44c7ced3860d8c444c7dfe17",
   "media_type": "application/vnd.oci.image.manifest.v1+json",
   "size": 2074,
   "artifact_type": "application/vnd.stokaro.ptah.migrations.v1",
   "annotations": {
     "io.stokaro.ptah.kind": "application/vnd.stokaro.ptah.migrations.v1",
     "io.stokaro.ptah.migration-format": "auto",
-    "io.stokaro.ptah.version": "0.22.0",
-    "org.opencontainers.image.created": "2026-11-06T19:47:13Z",
-    "org.opencontainers.image.revision": "0dd9190b6477830272c90fd98b2b57b603166fd1"
+    "io.stokaro.ptah.version": "0.23.0",
+    "org.opencontainers.image.created": "2026-11-07T17:01:45Z",
+    "org.opencontainers.image.revision": "f47b2bfa3b696c93730e7d25397987ed0a4a2562"
   },
   "layers": [
     {

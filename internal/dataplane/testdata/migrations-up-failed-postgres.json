@@ -27,6 +27,9 @@
     "statements": 3,
     "sqlstate": "42P01"
   },
+  "migration_log": {
+    "written": 4
+  },
   "status": {
     "current_version": 1,
     "applied_migrations": [
@@ -53,9 +56,9 @@
       "total": 3,
       "error": "failed to execute migration SQL: SQL execution failed: ERROR: relation \"ledger_entries\" does not exist (SQLSTATE 42P01)\nSQL: SELECT count(*) FROM ledger_entries",
       "error_stmt": "SELECT count(*) FROM ledger_entries",
-      "execution_time": 7000000,
+      "execution_time": 9000000,
       "checksum": "1db819cdfd55318996c4747a8b643cc2b940d0113e4f11ceefecdf45ac9bb5f0",
-      "applied_at": "2026-11-06T16:38:44.281962Z",
+      "applied_at": "2026-11-07T17:02:49.949169Z",
       "dirty": true
     },
     "contract_version": 2,
@@ -66,8 +69,8 @@
         "description": "Create Journal",
         "checksum": "67f4527b52ac79b49c44f4aec04c7aee71d39f464407d9fadda8168bb411cc53",
         "applied_checksum": "67f4527b52ac79b49c44f4aec04c7aee71d39f464407d9fadda8168bb411cc53",
-        "applied_at": "2026-11-06T16:38:44.280671Z",
-        "execution_time_ms": 7,
+        "applied_at": "2026-11-07T17:02:49.94762Z",
+        "execution_time_ms": 8,
         "state": "applied"
       },
       {
@@ -75,8 +78,8 @@
         "version_key": "2",
         "description": "Read Ledger",
         "checksum": "1db819cdfd55318996c4747a8b643cc2b940d0113e4f11ceefecdf45ac9bb5f0",
-        "applied_at": "2026-11-06T16:38:44.281962Z",
-        "execution_time_ms": 7,
+        "applied_at": "2026-11-07T17:02:49.949169Z",
+        "execution_time_ms": 9,
         "state": "dirty"
       }
     ],

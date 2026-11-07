@@ -1,0 +1,20 @@
+{
+  "reference": "oci://harness-registry:5000/schemas/boundary-unparsable-oci@sha256:0dc2e35e620a3874ca1100bd611921201d76f26d01d98010ecfc180fe5518001",
+  "pinned_reference": "oci://harness-registry:5000/schemas/boundary-unparsable-oci@sha256:0dc2e35e620a3874ca1100bd611921201d76f26d01d98010ecfc180fe5518001",
+  "digest": "sha256:0dc2e35e620a3874ca1100bd611921201d76f26d01d98010ecfc180fe5518001",
+  "media_type": "application/vnd.oci.image.manifest.v1+json",
+  "size": 634,
+  "artifact_type": "application/vnd.stokaro.ptah.schema.v1",
+  "annotations": {
+    "io.stokaro.ptah.schema-format": "hcl",
+    "org.opencontainers.image.created": "2026-11-07T17:01:45Z"
+  },
+  "layers": [
+    {
+      "name": "schema.hcl",
+      "media_type": "application/vnd.stokaro.ptah.schema.hcl.v1",
+      "size": 88,
+      "digest": "sha256:66b6e970246fab774acd664aa70d3c0126a562e7147f2e8d2fa19ab1c80fc82b"
+    }
+  ]
+}

@@ -1,5 +1,281 @@
 [
   {
+    "name": "boundary-row-file/observe",
+    "operation": "observe",
+    "source": "git",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 2,
+        "stderr": "error: error comparing declared rows: managed data file \"../../proc/self/environ\" for table public.regions: \"/proc/14/environ\" is outside allowed root \"/work\"\n",
+        "stdout": "boundaries/drift-row-file.json"
+      },
+      {
+        "command": "schema validate",
+        "args": [
+          "schema",
+          "validate",
+          "--dialect=PostgreSQL"
+        ],
+        "exit": 0
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "error": {
+        "code": "child_exit",
+        "message": "ptah exited with code 2"
+      },
+      "operation": "observe",
+      "operationId": "sha256:3c7315f7773e3fc968d1a21ba68681733bdcbb27d8a90faf4187b8912340394c",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:c894385a78ac67c7014e12298cda4b734928e9354ce4803f512de1ce97ed2819"
+    }
+  },
+  {
+    "name": "boundary-row-file/plan",
+    "operation": "plan",
+    "source": "git",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--json"
+        ],
+        "exit": 2,
+        "stderr": "error: managed data file \"../../proc/self/environ\" for table public.regions: \"/proc/14/environ\" is outside allowed root \"/work\"\n",
+        "stdout": "boundaries/plan-row-file.json"
+      },
+      {
+        "command": "schema validate",
+        "args": [
+          "schema",
+          "validate",
+          "--dialect=PostgreSQL"
+        ],
+        "exit": 0
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "error": {
+        "code": "invalid_plan_output",
+        "message": "plan command did not complete successfully"
+      },
+      "operation": "plan",
+      "operationId": "sha256:addd53e35fe8d37c680c4e909b8c624cdec50514f0643c0533e2dd677ea5bba6",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:c894385a78ac67c7014e12298cda4b734928e9354ce4803f512de1ce97ed2819"
+    }
+  },
+  {
+    "name": "boundary-unparsable-oci/observe",
+    "operation": "observe",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema pull",
+        "args": [
+          "schema",
+          "pull",
+          "oci://harness-registry:5000/schemas/boundary-unparsable-oci@<digest>",
+          "--out",
+          "/source/schema.hcl",
+          "--skip-parse"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/boundary-unparsable-oci/observe/0-schema-pull.txt"
+      },
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 2,
+        "stderr": "error: error parsing schema file: parse HCL schema: /source/schema.hcl:3,31-32: Invalid single-argument block definition; A single-line block definition must end with a closing brace immediately after its single argument definition.\n",
+        "stdout": "runner-harness/documents/boundary-unparsable-oci/observe/1-schema-drift.json"
+      },
+      {
+        "command": "schema validate",
+        "args": [
+          "schema",
+          "validate",
+          "--dialect=PostgreSQL"
+        ],
+        "exit": 1,
+        "stderr": "1 structural problem\n",
+        "stdout": "runner-harness/documents/boundary-unparsable-oci/observe/2-schema-validate.txt"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "error": {
+        "code": "desired_source_unreadable",
+        "message": "error parsing schema file: parse HCL schema: /source/schema.hcl:3,31-32: Invalid single-argument block definition; A single-line block definition must end with a closing brace immediately after its single argument definition."
+      },
+      "operation": "observe",
+      "operationId": "sha256:a62081407d736091d045b22d0c50d438541608873dc1edbff955f78c8c10d1ce",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:66b7170451d45d5d82fd5daf7a47d05d8d5287d018bca3a8c4c1500275948480"
+    }
+  },
+  {
+    "name": "boundary-unparsable-oci/plan",
+    "operation": "plan",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema pull",
+        "args": [
+          "schema",
+          "pull",
+          "oci://harness-registry:5000/schemas/boundary-unparsable-oci@<digest>",
+          "--out",
+          "/source/schema.hcl",
+          "--skip-parse"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/boundary-unparsable-oci/plan/0-schema-pull.txt"
+      },
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--json"
+        ],
+        "exit": 2,
+        "stderr": "error: error parsing schema file: parse HCL schema: /source/schema.hcl:3,31-32: Invalid single-argument block definition; A single-line block definition must end with a closing brace immediately after its single argument definition.\n",
+        "stdout": "runner-harness/documents/boundary-unparsable-oci/plan/1-schema-plan.json"
+      },
+      {
+        "command": "schema validate",
+        "args": [
+          "schema",
+          "validate",
+          "--dialect=PostgreSQL"
+        ],
+        "exit": 1,
+        "stderr": "1 structural problem\n",
+        "stdout": "runner-harness/documents/boundary-unparsable-oci/plan/2-schema-validate.txt"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "error": {
+        "code": "desired_source_unreadable",
+        "message": "error parsing schema file: parse HCL schema: /source/schema.hcl:3,31-32: Invalid single-argument block definition; A single-line block definition must end with a closing brace immediately after its single argument definition."
+      },
+      "operation": "plan",
+      "operationId": "sha256:5a5f88e8d4d5d5e7f23556c4844dbf44c6083230c553a02da7d1ded4ef4f262c",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:66b7170451d45d5d82fd5daf7a47d05d8d5287d018bca3a8c4c1500275948480"
+    }
+  },
+  {
+    "name": "boundary-unparsable-oci/resolve",
+    "operation": "resolve",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "oci resolve",
+        "args": [
+          "oci",
+          "resolve",
+          "oci://harness-registry:5000/schemas/boundary-unparsable-oci:v1",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/boundary-unparsable-oci/resolve/0-oci-resolve.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "operation": "resolve",
+      "operationId": "sha256:c4eab6da24303eeb3fa8b7a7fa8b59c6650f1bd9feef203b6697f0ee5414a6a5",
+      "protocolVersion": 1,
+      "resolvedDigest": "<volatile>",
+      "resolvedMediaType": "application/vnd.oci.image.manifest.v1+json",
+      "resolvedReference": "oci://harness-registry:5000/schemas/boundary-unparsable-oci@<digest>",
+      "resolvedSize": 634,
+      "stdout": ""
+    }
+  },
+  {
+    "name": "boundary-unparsable-oci/verify",
+    "operation": "verify",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "oci verify",
+        "args": [
+          "oci",
+          "verify",
+          "oci://harness-registry:5000/schemas/boundary-unparsable-oci@<digest>",
+          "--policy",
+          "/work/ptah-verification-policy-<random>.yaml",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/boundary-unparsable-oci/verify/0-oci-verify.json"
+      },
+      {
+        "command": "oci inspect",
+        "args": [
+          "oci",
+          "inspect",
+          "oci://harness-registry:5000/schemas/boundary-unparsable-oci@<digest>",
+          "--format",
+          "json",
+          "--no-referrers"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/boundary-unparsable-oci/verify/1-oci-inspect.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "observedArtifactType": "application/vnd.stokaro.ptah.schema.v1",
+      "operation": "verify",
+      "operationId": "sha256:99fa7f2e330e0f766fb07abb6bb23ebdd638e83cbe37d1cc6fababd97c815cb1",
+      "protocolVersion": 1,
+      "resolvedDigest": "<volatile>",
+      "stdout": "",
+      "verificationPolicyDigest": "sha256:81767d37e728289983aae9da4b00dc0388f1af18a6768c30df5e47f6b2aa0a8d"
+    }
+  },
+  {
     "name": "desired-source-migration/history",
     "operation": "migration-history",
     "source": "git",
@@ -60,7 +336,7 @@
           "json"
         ],
         "exit": 2,
-        "stderr": "error: error parsing schema file: read SQL schema file /source/schema/schema.sql: expected '(' after table name: expected Operator, got Identifier at position 180\n",
+        "stderr": "error: error parsing schema file: read SQL schema file /source/schema/schema.sql:2:29: unsupported table option: INHERITS\n",
         "stdout": "runner-harness/documents/desired-source-schema/observe/0-schema-drift.json"
       },
       {
@@ -80,7 +356,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "error": {
         "code": "desired_source_unreadable",
-        "message": "error parsing schema file: read SQL schema file /source/schema/schema.sql: expected '(' after table name: expected Operator, got Identifier at position 180"
+        "message": "error parsing schema file: read SQL schema file /source/schema/schema.sql:2:29: unsupported table option: INHERITS"
       },
       "operation": "observe",
       "operationId": "sha256:a0de2633f9d4c4a92d3b7105c85abbbb5b1b76451cff80e3ca1fa1b0bcb5081f",
@@ -105,7 +381,7 @@
           "--json"
         ],
         "exit": 2,
-        "stderr": "error: error parsing schema file: read SQL schema file /source/schema/schema.sql: expected '(' after table name: expected Operator, got Identifier at position 180\n",
+        "stderr": "error: error parsing schema file: read SQL schema file /source/schema/schema.sql:2:29: unsupported table option: INHERITS\n",
         "stdout": "runner-harness/documents/desired-source-schema/plan/0-schema-plan.json"
       },
       {
@@ -125,7 +401,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "error": {
         "code": "desired_source_unreadable",
-        "message": "error parsing schema file: read SQL schema file /source/schema/schema.sql: expected '(' after table name: expected Operator, got Identifier at position 180"
+        "message": "error parsing schema file: read SQL schema file /source/schema/schema.sql:2:29: unsupported table option: INHERITS"
       },
       "operation": "plan",
       "operationId": "sha256:dcad76eced76c7ad4f097f1ccc6dc7fb7150b89a945f12a8053e02804c06befc",
@@ -146,7 +422,7 @@
           "json"
         ],
         "exit": 2,
-        "stderr": "error: error parsing schema file: read SQL schema file /work/schema.sql: expected '(' after table name: expected Operator, got Identifier at position 180\n",
+        "stderr": "error: error parsing schema file: read SQL schema file /work/schema.sql:2:29: unsupported table option: INHERITS\n",
         "stdout": "desired-source/drift-sql.json"
       }
     ]
@@ -164,7 +440,7 @@
           "--json"
         ],
         "exit": 2,
-        "stderr": "error: error parsing schema file: read SQL schema file /work/schema.sql: expected '(' after table name: expected Operator, got Identifier at position 180\n",
+        "stderr": "error: error parsing schema file: read SQL schema file /work/schema.sql:2:29: unsupported table option: INHERITS\n",
         "stdout": "desired-source/plan-sql.json"
       }
     ]
@@ -474,7 +750,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/differs-auto-increment-mysql@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/differs-auto-increment-mysql/observe/0-schema-pull.txt"
@@ -543,7 +820,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/differs-auto-increment-mysql@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/differs-auto-increment-mysql/observe-applied/0-schema-pull.txt"
@@ -602,7 +880,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/differs-auto-increment-mysql@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/differs-auto-increment-mysql/plan/0-schema-pull.txt"
@@ -789,7 +1068,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/differs-dependent-key-mysql@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/differs-dependent-key-mysql/observe/0-schema-pull.txt"
@@ -863,7 +1143,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/differs-dependent-key-mysql@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/differs-dependent-key-mysql/observe-applied/0-schema-pull.txt"
@@ -937,7 +1218,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/differs-dependent-key-mysql@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/differs-dependent-key-mysql/plan/0-schema-pull.txt"
@@ -1104,7 +1386,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:2550d1151d6a9c18f622ac02e50484d9a599dab63dedc489acac66a92724d7ba",
-      "planContentDigest": "sha256:e46aa6539423efa6299f494999c29e9bb24d1a3c0977ae7785e79bc1fe646bde",
+      "planContentDigest": "sha256:1852dc527acbf1c774b29ddef1e14a68b1276854567c18de5cf1d5c84d4d301e",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:d1d25431ca30088265a6d7b7b7ee558cea79dedb72593edc255257c75e14173d",
@@ -1124,7 +1406,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/differs-dependent-key-postgres@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/differs-dependent-key-postgres/observe/0-schema-pull.txt"
@@ -1198,7 +1481,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/differs-dependent-key-postgres@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/differs-dependent-key-postgres/observe-applied/0-schema-pull.txt"
@@ -1272,7 +1556,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/differs-dependent-key-postgres@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/differs-dependent-key-postgres/plan/0-schema-pull.txt"
@@ -1324,7 +1609,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:865a9834ce01cb9978f05ef4885e4dfcb9e074527f4dfc9214d1e274cfc6f442",
-      "planContentDigest": "sha256:e46aa6539423efa6299f494999c29e9bb24d1a3c0977ae7785e79bc1fe646bde",
+      "planContentDigest": "sha256:1852dc527acbf1c774b29ddef1e14a68b1276854567c18de5cf1d5c84d4d301e",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -1454,7 +1739,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/differs-dependent-view-mysql@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/differs-dependent-view-mysql/observe/0-schema-pull.txt"
@@ -1528,7 +1814,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/differs-dependent-view-mysql@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/differs-dependent-view-mysql/observe-applied/0-schema-pull.txt"
@@ -1587,7 +1874,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/differs-dependent-view-mysql@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/differs-dependent-view-mysql/plan/0-schema-pull.txt"
@@ -1754,7 +2042,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:f96b70515237d14e1f4d8dd2abb64ea498b662de4e01a6c131b6dd5bbd297e34",
-      "planContentDigest": "sha256:e46aa6539423efa6299f494999c29e9bb24d1a3c0977ae7785e79bc1fe646bde",
+      "planContentDigest": "sha256:1852dc527acbf1c774b29ddef1e14a68b1276854567c18de5cf1d5c84d4d301e",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:453b77dcc790ad308556e0598b6d6495008d16a2471e85ba499e4674717716dc",
@@ -1774,7 +2062,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/differs-dependent-view-postgres@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/differs-dependent-view-postgres/observe/0-schema-pull.txt"
@@ -1848,7 +2137,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/differs-dependent-view-postgres@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/differs-dependent-view-postgres/observe-applied/0-schema-pull.txt"
@@ -1922,7 +2212,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/differs-dependent-view-postgres@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/differs-dependent-view-postgres/plan/0-schema-pull.txt"
@@ -1974,7 +2265,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:d63e4c2b3d4809c63855952c444f5e60724a7c61cb074164c348686d5bfb30dd",
-      "planContentDigest": "sha256:e46aa6539423efa6299f494999c29e9bb24d1a3c0977ae7785e79bc1fe646bde",
+      "planContentDigest": "sha256:1852dc527acbf1c774b29ddef1e14a68b1276854567c18de5cf1d5c84d4d301e",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -2071,7 +2362,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/differs-foreign-table-own-wrapper-postgres@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/differs-foreign-table-own-wrapper-postgres/observe/0-schema-pull.txt"
@@ -2130,7 +2422,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/differs-foreign-table-own-wrapper-postgres@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/differs-foreign-table-own-wrapper-postgres/plan/0-schema-pull.txt"
@@ -2280,7 +2573,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:2add26df07fff3e565c522087b191a399435fbeeca941b4db30d57e74853cbbf",
-      "planContentDigest": "sha256:c1ece1b4197385ce01cefebade707c48ad1c26b20dd0d60f682b95a6abf69146",
+      "planContentDigest": "sha256:4600de789c6e4561cb41cb4cf08fdf5d0420b36b8be6884545f63104e7a760c2",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:c0e572c47d767adb11ccb58b9032bd6d010d2ee8e6f2982c596e13a925d2bde2",
@@ -2300,7 +2593,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/differs-foreign-table-postgres@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/differs-foreign-table-postgres/observe/0-schema-pull.txt"
@@ -2374,7 +2668,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/differs-foreign-table-postgres@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/differs-foreign-table-postgres/observe-applied/0-schema-pull.txt"
@@ -2448,7 +2743,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/differs-foreign-table-postgres@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/differs-foreign-table-postgres/plan/0-schema-pull.txt"
@@ -2500,7 +2796,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:587fcff4edb5377dd5bfa1c75bb6570f2ceb3d19f5335cc759d2c11cd2f304a5",
-      "planContentDigest": "sha256:c1ece1b4197385ce01cefebade707c48ad1c26b20dd0d60f682b95a6abf69146",
+      "planContentDigest": "sha256:4600de789c6e4561cb41cb4cf08fdf5d0420b36b8be6884545f63104e7a760c2",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -2611,7 +2907,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:b6c70edb1a0bbe4a77bea8703e9cdc31ab9ab811a2b7647db0d9d25b605321ea",
-      "planContentDigest": "sha256:29d3b9b1fd86b25b25056b1130e9a0fc4f472d8b2a5703ee9ee31fc3aaaae9f0",
+      "planContentDigest": "sha256:f293c5e9b7b868c16fc2f8155bb39be74669c1c1e75c6152c7687f42e3e4aa3d",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:09f83cfef36b4566ada025e21d90381302bbde52e3423344c1713573ffb1ded9"
@@ -2630,7 +2926,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/differs-identity-postgres@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/differs-identity-postgres/observe/0-schema-pull.txt"
@@ -2644,14 +2941,19 @@
           "json"
         ],
         "exit": 1,
-        "stdout": "runner-harness/documents/differs-identity-postgres/observe/1-schema-drift.json"
+        "stdout": "differing/drift-column-identities-removed-postgres.json"
       }
     ],
     "result": {
       "childExitCode": 0,
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
-      "driftFindingCount": 1,
+      "driftFindingCount": 2,
       "driftFindings": [
+        {
+          "category": "column_identities_removed",
+          "count": 1,
+          "severity": "destructive"
+        },
         {
           "category": "columns_modified",
           "count": 1,
@@ -2676,7 +2978,7 @@
         }
       ],
       "driftReportDigest": "sha256:88e8e85ffe18a6f6091ad1ae00fa590505aa229e69297e4814e5eff872dac200",
-      "highestDriftSeverity": "warning",
+      "highestDriftSeverity": "destructive",
       "observedDialect": "postgres",
       "observedDrift": true,
       "operation": "observe",
@@ -2699,7 +3001,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/differs-identity-postgres@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/differs-identity-postgres/observe-applied/0-schema-pull.txt"
@@ -2758,7 +3061,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/differs-identity-postgres@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/differs-identity-postgres/plan/0-schema-pull.txt"
@@ -2810,7 +3114,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:6cc0f26903c2d052d1de8c65165a7df5a9903af8313ff7dbc4720e588ac2e617",
-      "planContentDigest": "sha256:29d3b9b1fd86b25b25056b1130e9a0fc4f472d8b2a5703ee9ee31fc3aaaae9f0",
+      "planContentDigest": "sha256:f293c5e9b7b868c16fc2f8155bb39be74669c1c1e75c6152c7687f42e3e4aa3d",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -2895,6 +3199,856 @@
     }
   },
   {
+    "name": "differs-login-before-mysql/observe",
+    "operation": "observe",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "schema pull",
+        "args": [
+          "schema",
+          "pull",
+          "oci://harness-registry:5000/schemas/differs-login-before-mysql@<digest>",
+          "--out",
+          "/source/schema.hcl",
+          "--skip-parse"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-login-before-mysql/observe/0-schema-pull.txt"
+      },
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 2,
+        "stderr": "error: error reading database schema: the account harness_login_before@% cannot see everything in database \"harness_differs_login_before_mysql\": information_schema lists only what an account holds a privilege on, and a comparison reads a hidden object as absent. The account needs:\n  - triggers: TRIGGER on `harness_differs_login_before_mysql`.*\n  - procedures and functions: SHOW_ROUTINE on *.*\n",
+        "stdout": "differing/drift-permission-denied-triggers-routines.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "error": {
+        "code": "permission_denied",
+        "message": "the target database server accepted the credentials, and the user cannot see every trigger and routine in the database",
+        "unseenObjects": [
+          "triggers",
+          "routines"
+        ]
+      },
+      "operation": "observe",
+      "operationId": "sha256:aeed80ea0f97d9df671f9f84acbc13d39aa4aedb6f75497a2f2700d1e15dfd61",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:86efd58505f8c9fc7bb01bfe135cb574c5c9b943312494330a11226853ca9d77"
+    }
+  },
+  {
+    "name": "differs-login-before-mysql/plan",
+    "operation": "plan",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "schema pull",
+        "args": [
+          "schema",
+          "pull",
+          "oci://harness-registry:5000/schemas/differs-login-before-mysql@<digest>",
+          "--out",
+          "/source/schema.hcl",
+          "--skip-parse"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-login-before-mysql/plan/0-schema-pull.txt"
+      },
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--json"
+        ],
+        "exit": 2,
+        "stderr": "error: read database schema: the account harness_login_before@% cannot see everything in database \"harness_differs_login_before_mysql\": information_schema lists only what an account holds a privilege on, and a comparison reads a hidden object as absent. The account needs:\n  - triggers: TRIGGER on `harness_differs_login_before_mysql`.*\n  - procedures and functions: SHOW_ROUTINE on *.*\n",
+        "stdout": "differing/plan-permission-denied-triggers-routines.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "error": {
+        "code": "permission_denied",
+        "message": "the target database server accepted the credentials, and the user cannot see every trigger and routine in the database",
+        "unseenObjects": [
+          "triggers",
+          "routines"
+        ]
+      },
+      "operation": "plan",
+      "operationId": "sha256:b0c1a803856149a9976ec2b4438161ad7e1ee4b02c6918dcb9e929c5c64a7040",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:86efd58505f8c9fc7bb01bfe135cb574c5c9b943312494330a11226853ca9d77"
+    }
+  },
+  {
+    "name": "differs-login-before-mysql/resolve",
+    "operation": "resolve",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "oci resolve",
+        "args": [
+          "oci",
+          "resolve",
+          "oci://harness-registry:5000/schemas/differs-login-before-mysql:v1",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-login-before-mysql/resolve/0-oci-resolve.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "operation": "resolve",
+      "operationId": "sha256:7cb4d4b50509837a1f66ae852e50459139d8340a5798b0967828e76b80bac471",
+      "protocolVersion": 1,
+      "resolvedDigest": "<volatile>",
+      "resolvedMediaType": "application/vnd.oci.image.manifest.v1+json",
+      "resolvedReference": "oci://harness-registry:5000/schemas/differs-login-before-mysql@<digest>",
+      "resolvedSize": 813,
+      "stdout": ""
+    }
+  },
+  {
+    "name": "differs-login-before-mysql/verify",
+    "operation": "verify",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "oci verify",
+        "args": [
+          "oci",
+          "verify",
+          "oci://harness-registry:5000/schemas/differs-login-before-mysql@<digest>",
+          "--policy",
+          "/work/ptah-verification-policy-<random>.yaml",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-login-before-mysql/verify/0-oci-verify.json"
+      },
+      {
+        "command": "oci inspect",
+        "args": [
+          "oci",
+          "inspect",
+          "oci://harness-registry:5000/schemas/differs-login-before-mysql@<digest>",
+          "--format",
+          "json",
+          "--no-referrers"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-login-before-mysql/verify/1-oci-inspect.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "observedArtifactType": "application/vnd.stokaro.ptah.schema.v1",
+      "operation": "verify",
+      "operationId": "sha256:d6d26b733584a88495c427f57874efcfd098acc26f4428038835182f5c63c3be",
+      "protocolVersion": 1,
+      "resolvedDigest": "<volatile>",
+      "stdout": "",
+      "verificationPolicyDigest": "sha256:81767d37e728289983aae9da4b00dc0388f1af18a6768c30df5e47f6b2aa0a8d"
+    }
+  },
+  {
+    "name": "differs-login-documented-mysql/apply",
+    "operation": "apply",
+    "source": "none",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "schema apply",
+        "args": [
+          "schema",
+          "apply",
+          "--plan",
+          "/work/ptah-plan-<random>.hcl",
+          "--auto-approve",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nALTER TABLE `differs_notes` ADD COLUMN `note` varchar(64);\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
+        "stdout": "runner-harness/documents/differs-login-documented-mysql/apply/0-schema-apply.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "mutationStarted": true,
+      "operation": "apply",
+      "operationId": "sha256:3057e3967166e2e407c1d2915578cebb237f51bb757d3f8a63a7006312600f58",
+      "planContentDigest": "sha256:e6090884de4b3657436b2aa2e1bf5b2fc0ef52757967c74fad96fb98552b7f61",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:f651e94ad788ba956727a9872d958aec3c0a9df2945ebb3d84a151e0087de9da"
+    }
+  },
+  {
+    "name": "differs-login-documented-mysql/observe",
+    "operation": "observe",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "schema pull",
+        "args": [
+          "schema",
+          "pull",
+          "oci://harness-registry:5000/schemas/differs-login-documented-mysql@<digest>",
+          "--out",
+          "/source/schema.hcl",
+          "--skip-parse"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-login-documented-mysql/observe/0-schema-pull.txt"
+      },
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 1,
+        "stdout": "runner-harness/documents/differs-login-documented-mysql/observe/1-schema-drift.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "driftFindingCount": 1,
+      "driftFindings": [
+        {
+          "category": "columns_added",
+          "count": 1,
+          "severity": "warning"
+        }
+      ],
+      "driftInventory": [
+        {
+          "desired": 3,
+          "kind": "columns",
+          "observed": 2
+        },
+        {
+          "desired": 1,
+          "kind": "constraints",
+          "observed": 1
+        },
+        {
+          "desired": 1,
+          "kind": "tables",
+          "observed": 1
+        },
+        {
+          "desired": 1,
+          "kind": "views",
+          "observed": 1
+        }
+      ],
+      "driftReportDigest": "sha256:c261588bf8b1b3201a4108566ac38165bdb5b6636e273e7124a7ffa51c4d4cb9",
+      "highestDriftSeverity": "warning",
+      "observedDialect": "mysql",
+      "observedDrift": true,
+      "operation": "observe",
+      "operationId": "sha256:0a818f77fba08973042b54263bc639a6546c9891c49012772f928d35a969d005",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:f651e94ad788ba956727a9872d958aec3c0a9df2945ebb3d84a151e0087de9da"
+    }
+  },
+  {
+    "name": "differs-login-documented-mysql/observe-applied",
+    "operation": "observe",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "schema pull",
+        "args": [
+          "schema",
+          "pull",
+          "oci://harness-registry:5000/schemas/differs-login-documented-mysql@<digest>",
+          "--out",
+          "/source/schema.hcl",
+          "--skip-parse"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-login-documented-mysql/observe-applied/0-schema-pull.txt"
+      },
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-login-documented-mysql/observe-applied/1-schema-drift.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "driftInventory": [
+        {
+          "desired": 3,
+          "kind": "columns",
+          "observed": 3
+        },
+        {
+          "desired": 1,
+          "kind": "constraints",
+          "observed": 1
+        },
+        {
+          "desired": 1,
+          "kind": "tables",
+          "observed": 1
+        },
+        {
+          "desired": 1,
+          "kind": "views",
+          "observed": 1
+        }
+      ],
+      "driftReportDigest": "sha256:67fc271568ce4184f7430d72b89bbebb3a58481fe0d88ce78236c5a9a03f287d",
+      "observedDialect": "mysql",
+      "operation": "observe",
+      "operationId": "sha256:6a38f682b305477eb58a64a7e8d081259cfe682224a12219f9394ea85dc44414",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:f651e94ad788ba956727a9872d958aec3c0a9df2945ebb3d84a151e0087de9da"
+    }
+  },
+  {
+    "name": "differs-login-documented-mysql/plan",
+    "operation": "plan",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "schema pull",
+        "args": [
+          "schema",
+          "pull",
+          "oci://harness-registry:5000/schemas/differs-login-documented-mysql@<digest>",
+          "--out",
+          "/source/schema.hcl",
+          "--skip-parse"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-login-documented-mysql/plan/0-schema-pull.txt"
+      },
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nALTER TABLE `differs_notes` ADD COLUMN `note` varchar(64);\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
+        "stdout": "runner-harness/documents/differs-login-documented-mysql/plan/1-schema-plan.json"
+      },
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/second.plan.json",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nALTER TABLE `differs_notes` ADD COLUMN `note` varchar(64);\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
+        "stdout": "runner-harness/documents/differs-login-documented-mysql/plan/2-schema-plan.json"
+      },
+      {
+        "command": "schema apply --dry-run",
+        "args": [
+          "schema",
+          "apply",
+          "--plan",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--auto-approve",
+          "--json",
+          "--dry-run"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nALTER TABLE `differs_notes` ADD COLUMN `note` varchar(64);\n",
+        "stdout": "runner-harness/documents/differs-login-documented-mysql/plan/3-schema-apply---dry-run.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "operation": "plan",
+      "operationId": "sha256:3be5865e9a75333a5d305ae5358c5245b2d90b658b1e52f6e05c66e9d863c8f6",
+      "planContentDigest": "sha256:e6090884de4b3657436b2aa2e1bf5b2fc0ef52757967c74fad96fb98552b7f61",
+      "planOutcome": "Changes",
+      "protocolVersion": 1,
+      "stdout": "<sealed plan>",
+      "targetIdentityDigest": "sha256:f651e94ad788ba956727a9872d958aec3c0a9df2945ebb3d84a151e0087de9da"
+    },
+    "savedPlan": "runner-harness/documents/differs-login-documented-mysql/plan/4-saved-plan.json"
+  },
+  {
+    "name": "differs-login-documented-mysql/resolve",
+    "operation": "resolve",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "oci resolve",
+        "args": [
+          "oci",
+          "resolve",
+          "oci://harness-registry:5000/schemas/differs-login-documented-mysql:v1",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-login-documented-mysql/resolve/0-oci-resolve.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "operation": "resolve",
+      "operationId": "sha256:342dccb63b9e4248f54f1057a53bdfe1e65df9cca6f607bb35b57697a59f8a6e",
+      "protocolVersion": 1,
+      "resolvedDigest": "<volatile>",
+      "resolvedMediaType": "application/vnd.oci.image.manifest.v1+json",
+      "resolvedReference": "oci://harness-registry:5000/schemas/differs-login-documented-mysql@<digest>",
+      "resolvedSize": 813,
+      "stdout": ""
+    }
+  },
+  {
+    "name": "differs-login-documented-mysql/verify",
+    "operation": "verify",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "oci verify",
+        "args": [
+          "oci",
+          "verify",
+          "oci://harness-registry:5000/schemas/differs-login-documented-mysql@<digest>",
+          "--policy",
+          "/work/ptah-verification-policy-<random>.yaml",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-login-documented-mysql/verify/0-oci-verify.json"
+      },
+      {
+        "command": "oci inspect",
+        "args": [
+          "oci",
+          "inspect",
+          "oci://harness-registry:5000/schemas/differs-login-documented-mysql@<digest>",
+          "--format",
+          "json",
+          "--no-referrers"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-login-documented-mysql/verify/1-oci-inspect.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "observedArtifactType": "application/vnd.stokaro.ptah.schema.v1",
+      "operation": "verify",
+      "operationId": "sha256:9356c9c5a7cfeb6eb03f8a0cd6c09fca65ec11057910aa8f86dd19a943bd8191",
+      "protocolVersion": 1,
+      "resolvedDigest": "<volatile>",
+      "stdout": "",
+      "verificationPolicyDigest": "sha256:81767d37e728289983aae9da4b00dc0388f1af18a6768c30df5e47f6b2aa0a8d"
+    }
+  },
+  {
+    "name": "differs-login-no-show-view-mysql/observe",
+    "operation": "observe",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "schema pull",
+        "args": [
+          "schema",
+          "pull",
+          "oci://harness-registry:5000/schemas/differs-login-no-show-view-mysql@<digest>",
+          "--out",
+          "/source/schema.hcl",
+          "--skip-parse"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-login-no-show-view-mysql/observe/0-schema-pull.txt"
+      },
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 2,
+        "stderr": "error: error reading database schema: the account harness_login_no_view@% cannot see everything in database \"harness_differs_login_no_show_view_mysql\": information_schema lists only what an account holds a privilege on, and a comparison reads a hidden object as absent. The account needs:\n  - the definitions of views differs_notes_view: SELECT and SHOW VIEW on `harness_differs_login_no_show_view_mysql`.*\n",
+        "stdout": "differing/drift-permission-denied-named-views.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "error": {
+        "code": "permission_denied",
+        "message": "the target database server accepted the credentials, and the user cannot see every view definition in the database",
+        "unseenObjects": [
+          "views"
+        ]
+      },
+      "operation": "observe",
+      "operationId": "sha256:85cbf742306f740bdeec73bf07d4ac40cba879ef5ed05ef931132b25220a8005",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:5a01da0b7c566c210f689448f70ff52b1191eae62dc4da32e1379843c136d71a"
+    }
+  },
+  {
+    "name": "differs-login-no-show-view-mysql/plan",
+    "operation": "plan",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "schema pull",
+        "args": [
+          "schema",
+          "pull",
+          "oci://harness-registry:5000/schemas/differs-login-no-show-view-mysql@<digest>",
+          "--out",
+          "/source/schema.hcl",
+          "--skip-parse"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-login-no-show-view-mysql/plan/0-schema-pull.txt"
+      },
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--json"
+        ],
+        "exit": 2,
+        "stderr": "error: read database schema: the account harness_login_no_view@% cannot see everything in database \"harness_differs_login_no_show_view_mysql\": information_schema lists only what an account holds a privilege on, and a comparison reads a hidden object as absent. The account needs:\n  - the definitions of views differs_notes_view: SELECT and SHOW VIEW on `harness_differs_login_no_show_view_mysql`.*\n",
+        "stdout": "runner-harness/documents/differs-login-no-show-view-mysql/plan/1-schema-plan.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "error": {
+        "code": "permission_denied",
+        "message": "the target database server accepted the credentials, and the user cannot see every view definition in the database",
+        "unseenObjects": [
+          "views"
+        ]
+      },
+      "operation": "plan",
+      "operationId": "sha256:60b6050024da2fed9831b492b33f8b7d1998abbad206b9a327424d8cde639aca",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:5a01da0b7c566c210f689448f70ff52b1191eae62dc4da32e1379843c136d71a"
+    }
+  },
+  {
+    "name": "differs-login-no-show-view-mysql/resolve",
+    "operation": "resolve",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "oci resolve",
+        "args": [
+          "oci",
+          "resolve",
+          "oci://harness-registry:5000/schemas/differs-login-no-show-view-mysql:v1",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-login-no-show-view-mysql/resolve/0-oci-resolve.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "operation": "resolve",
+      "operationId": "sha256:e4ae17bf582e62439483952a2bd5e75ca5bbfa7ceebe860acc9144aded564af4",
+      "protocolVersion": 1,
+      "resolvedDigest": "<volatile>",
+      "resolvedMediaType": "application/vnd.oci.image.manifest.v1+json",
+      "resolvedReference": "oci://harness-registry:5000/schemas/differs-login-no-show-view-mysql@<digest>",
+      "resolvedSize": 813,
+      "stdout": ""
+    }
+  },
+  {
+    "name": "differs-login-no-show-view-mysql/verify",
+    "operation": "verify",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "oci verify",
+        "args": [
+          "oci",
+          "verify",
+          "oci://harness-registry:5000/schemas/differs-login-no-show-view-mysql@<digest>",
+          "--policy",
+          "/work/ptah-verification-policy-<random>.yaml",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-login-no-show-view-mysql/verify/0-oci-verify.json"
+      },
+      {
+        "command": "oci inspect",
+        "args": [
+          "oci",
+          "inspect",
+          "oci://harness-registry:5000/schemas/differs-login-no-show-view-mysql@<digest>",
+          "--format",
+          "json",
+          "--no-referrers"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-login-no-show-view-mysql/verify/1-oci-inspect.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "observedArtifactType": "application/vnd.stokaro.ptah.schema.v1",
+      "operation": "verify",
+      "operationId": "sha256:d51edccb613e8d841c8fcd9498d43543ed13b9c1875d5941d6d6994b8b1900b9",
+      "protocolVersion": 1,
+      "resolvedDigest": "<volatile>",
+      "stdout": "",
+      "verificationPolicyDigest": "sha256:81767d37e728289983aae9da4b00dc0388f1af18a6768c30df5e47f6b2aa0a8d"
+    }
+  },
+  {
+    "name": "differs-login-other-definer-mysql/observe",
+    "operation": "observe",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "schema pull",
+        "args": [
+          "schema",
+          "pull",
+          "oci://harness-registry:5000/schemas/differs-login-other-definer-mysql@<digest>",
+          "--out",
+          "/source/schema.hcl",
+          "--skip-parse"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-login-other-definer-mysql/observe/0-schema-pull.txt"
+      },
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 2,
+        "stderr": "error: error reading database schema: the account harness_login_definer@% cannot see everything in database \"harness_differs_login_other_definer_mysql\": information_schema lists only what an account holds a privilege on, and a comparison reads a hidden object as absent. The account needs:\n  - the bodies of routines differs_hand_fn, unless the account is their definer: SHOW_ROUTINE on *.*\n",
+        "stdout": "differing/drift-permission-denied-named-routines.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "error": {
+        "code": "permission_denied",
+        "message": "the target database server accepted the credentials, and the user cannot see every routine in the database",
+        "unseenObjects": [
+          "routines"
+        ]
+      },
+      "operation": "observe",
+      "operationId": "sha256:a11bddb5f14df5efd623280adbb14b0ad7d861ae9cb34c6d1b0235806d7a1a06",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:6f3c4662f5e94f88eb87eec6438546f0682255888a0f4d1e4bcc36ecd939f7cf"
+    }
+  },
+  {
+    "name": "differs-login-other-definer-mysql/plan",
+    "operation": "plan",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "schema pull",
+        "args": [
+          "schema",
+          "pull",
+          "oci://harness-registry:5000/schemas/differs-login-other-definer-mysql@<digest>",
+          "--out",
+          "/source/schema.hcl",
+          "--skip-parse"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-login-other-definer-mysql/plan/0-schema-pull.txt"
+      },
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--json"
+        ],
+        "exit": 2,
+        "stderr": "error: read database schema: the account harness_login_definer@% cannot see everything in database \"harness_differs_login_other_definer_mysql\": information_schema lists only what an account holds a privilege on, and a comparison reads a hidden object as absent. The account needs:\n  - the bodies of routines differs_hand_fn, unless the account is their definer: SHOW_ROUTINE on *.*\n",
+        "stdout": "runner-harness/documents/differs-login-other-definer-mysql/plan/1-schema-plan.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "error": {
+        "code": "permission_denied",
+        "message": "the target database server accepted the credentials, and the user cannot see every routine in the database",
+        "unseenObjects": [
+          "routines"
+        ]
+      },
+      "operation": "plan",
+      "operationId": "sha256:cbeb11586d4724be522422914fb178795980c5d14972a5cd8f2aaab5938c4d3c",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:6f3c4662f5e94f88eb87eec6438546f0682255888a0f4d1e4bcc36ecd939f7cf"
+    }
+  },
+  {
+    "name": "differs-login-other-definer-mysql/resolve",
+    "operation": "resolve",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "oci resolve",
+        "args": [
+          "oci",
+          "resolve",
+          "oci://harness-registry:5000/schemas/differs-login-other-definer-mysql:v1",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-login-other-definer-mysql/resolve/0-oci-resolve.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "operation": "resolve",
+      "operationId": "sha256:51d5f4d35e5c83766f1545bc2fc1cbb82755705e3541e3e850882cabfe61016a",
+      "protocolVersion": 1,
+      "resolvedDigest": "<volatile>",
+      "resolvedMediaType": "application/vnd.oci.image.manifest.v1+json",
+      "resolvedReference": "oci://harness-registry:5000/schemas/differs-login-other-definer-mysql@<digest>",
+      "resolvedSize": 813,
+      "stdout": ""
+    }
+  },
+  {
+    "name": "differs-login-other-definer-mysql/verify",
+    "operation": "verify",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "oci verify",
+        "args": [
+          "oci",
+          "verify",
+          "oci://harness-registry:5000/schemas/differs-login-other-definer-mysql@<digest>",
+          "--policy",
+          "/work/ptah-verification-policy-<random>.yaml",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-login-other-definer-mysql/verify/0-oci-verify.json"
+      },
+      {
+        "command": "oci inspect",
+        "args": [
+          "oci",
+          "inspect",
+          "oci://harness-registry:5000/schemas/differs-login-other-definer-mysql@<digest>",
+          "--format",
+          "json",
+          "--no-referrers"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-login-other-definer-mysql/verify/1-oci-inspect.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "observedArtifactType": "application/vnd.stokaro.ptah.schema.v1",
+      "operation": "verify",
+      "operationId": "sha256:40498068667e6dd0a2a34bc24589fc0f4b8c17940ef4685b35503a728aabdbbe",
+      "protocolVersion": 1,
+      "resolvedDigest": "<volatile>",
+      "stdout": "",
+      "verificationPolicyDigest": "sha256:81767d37e728289983aae9da4b00dc0388f1af18a6768c30df5e47f6b2aa0a8d"
+    }
+  },
+  {
     "name": "differs-missing-schema-mysql/observe",
     "operation": "observe",
     "source": "oci",
@@ -2907,7 +4061,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/differs-missing-schema-mysql@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/differs-missing-schema-mysql/observe/0-schema-pull.txt"
@@ -2961,7 +4116,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/differs-missing-schema-mysql@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/differs-missing-schema-mysql/plan/0-schema-pull.txt"
@@ -3106,7 +4262,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:b78f359fb5861baad68f3534bbbb9b5bfd2b594e24f36aed7959519e780ab054",
-      "planContentDigest": "sha256:a177b36cb38a17ffa9924a6c68a50bc35f6aa7290d1adab9e07a0a44978e5ad3",
+      "planContentDigest": "sha256:3e9897f258e9a25fa847279a551b60fe6c2c36a8765535f7dc526d40a3594fdc",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:6d52d7f417bf2ae85610f061a3dbf5d7b2d588e7880b943f8835ccd5ccbc9465"
@@ -3125,7 +4281,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/differs-missing-schema-postgres@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/differs-missing-schema-postgres/observe/0-schema-pull.txt"
@@ -3194,7 +4351,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/differs-missing-schema-postgres@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/differs-missing-schema-postgres/observe-applied/0-schema-pull.txt"
@@ -3253,7 +4411,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/differs-missing-schema-postgres@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/differs-missing-schema-postgres/plan/0-schema-pull.txt"
@@ -3305,7 +4464,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:2f64de993ce1e30aebaa7676534d856357f6eadf91ddde106b948f1d2620e6d5",
-      "planContentDigest": "sha256:a177b36cb38a17ffa9924a6c68a50bc35f6aa7290d1adab9e07a0a44978e5ad3",
+      "planContentDigest": "sha256:3e9897f258e9a25fa847279a551b60fe6c2c36a8765535f7dc526d40a3594fdc",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -3416,7 +4575,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:58efcbe9c64f2e8f054e4ac7d69d05e7cad2f6daefad1fb711ac24400b2c3101",
-      "planContentDigest": "sha256:6f5d16183d2b9810f33d58afd444192578a6d7f0af3521afce3ba0711fef3bc6",
+      "planContentDigest": "sha256:02fd2b9a385e81d4c3479df084b9187194401adf778832d896eec3dda093b7f7",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:b28a81efec4c73992daa5de9988cd6d46031b6fd2e50121726779310fe8555e1"
@@ -3435,7 +4594,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/differs-missing-schema-scoped-postgres@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/differs-missing-schema-scoped-postgres/observe/0-schema-pull.txt"
@@ -3504,7 +4664,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/differs-missing-schema-scoped-postgres@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/differs-missing-schema-scoped-postgres/observe-applied/0-schema-pull.txt"
@@ -3563,7 +4724,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/differs-missing-schema-scoped-postgres@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/differs-missing-schema-scoped-postgres/plan/0-schema-pull.txt"
@@ -3615,7 +4777,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:844b1db4bf431f51a1955e2f39c06ba7c4f5b6d6666c19ae498222113d2e6143",
-      "planContentDigest": "sha256:6f5d16183d2b9810f33d58afd444192578a6d7f0af3521afce3ba0711fef3bc6",
+      "planContentDigest": "sha256:02fd2b9a385e81d4c3479df084b9187194401adf778832d896eec3dda093b7f7",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -3700,6 +4862,1492 @@
     }
   },
   {
+    "name": "differs-owner-empty-postgres/apply",
+    "operation": "apply",
+    "source": "none",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema apply",
+        "args": [
+          "schema",
+          "apply",
+          "--plan",
+          "/work/ptah-plan-<random>.hcl",
+          "--auto-approve",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nCREATE TABLE \"differs_owned\" (\n  \"id\" integer PRIMARY KEY NOT NULL\n);\nGRANT SELECT ON TABLE \"differs_owned\" TO \"harness_grantee_b\";\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
+        "stdout": "runner-harness/documents/differs-owner-empty-postgres/apply/0-schema-apply.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "mutationStarted": true,
+      "operation": "apply",
+      "operationId": "sha256:368671549b5f1b28d62716c59014cf2fce8358160c1aa6cf9747ada5a9ded2d5",
+      "planContentDigest": "sha256:2cedfea97b612ab205573b3c09a3df96d2a34330d1d3666006d3eecac9206c90",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:5670218ba56e2c7b9f19f7288dbfd3c9f469c0b3b0bcec4422251faf734cb8fc"
+    }
+  },
+  {
+    "name": "differs-owner-empty-postgres/observe",
+    "operation": "observe",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema pull",
+        "args": [
+          "schema",
+          "pull",
+          "oci://harness-registry:5000/schemas/differs-owner-empty-postgres@<digest>",
+          "--out",
+          "/source/schema.hcl",
+          "--skip-parse"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-owner-empty-postgres/observe/0-schema-pull.txt"
+      },
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 1,
+        "stdout": "runner-harness/documents/differs-owner-empty-postgres/observe/1-schema-drift.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "driftFindingCount": 2,
+      "driftFindings": [
+        {
+          "category": "grants_added",
+          "count": 1,
+          "severity": "safe"
+        },
+        {
+          "category": "tables_added",
+          "count": 1,
+          "severity": "safe"
+        }
+      ],
+      "driftInventory": [
+        {
+          "desired": 1,
+          "kind": "grants",
+          "observed": 0
+        },
+        {
+          "desired": 2,
+          "kind": "roles",
+          "observed": 2
+        },
+        {
+          "desired": 1,
+          "kind": "tables",
+          "observed": 0
+        }
+      ],
+      "driftReportDigest": "sha256:1194719f779873a8fa17ac0cab76f16a555504dfa03754aebe76839da45a9426",
+      "highestDriftSeverity": "safe",
+      "observedDialect": "postgres",
+      "observedDrift": true,
+      "operation": "observe",
+      "operationId": "sha256:0f66666bab62870783c83f60997b8d01c7ce82261b92e52896028783f80b1f1f",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:5670218ba56e2c7b9f19f7288dbfd3c9f469c0b3b0bcec4422251faf734cb8fc"
+    }
+  },
+  {
+    "name": "differs-owner-empty-postgres/observe-applied",
+    "operation": "observe",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema pull",
+        "args": [
+          "schema",
+          "pull",
+          "oci://harness-registry:5000/schemas/differs-owner-empty-postgres@<digest>",
+          "--out",
+          "/source/schema.hcl",
+          "--skip-parse"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-owner-empty-postgres/observe-applied/0-schema-pull.txt"
+      },
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-owner-empty-postgres/observe-applied/1-schema-drift.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "driftInventory": [
+        {
+          "desired": 1,
+          "kind": "columns",
+          "observed": 1
+        },
+        {
+          "desired": 1,
+          "kind": "constraints",
+          "observed": 1
+        },
+        {
+          "desired": 1,
+          "kind": "grants",
+          "observed": 1
+        },
+        {
+          "desired": 2,
+          "kind": "roles",
+          "observed": 2
+        },
+        {
+          "desired": 1,
+          "kind": "tables",
+          "observed": 1
+        }
+      ],
+      "driftReportDigest": "sha256:dfde61480ed38c7050fe21d163ce62579b3531e7bf010b6a97094f084a815a52",
+      "observedDialect": "postgres",
+      "operation": "observe",
+      "operationId": "sha256:567e8bea12ef37aa47fa1ff4253e70634c6f0892793f67b5e417247e7cb342fe",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:5670218ba56e2c7b9f19f7288dbfd3c9f469c0b3b0bcec4422251faf734cb8fc"
+    }
+  },
+  {
+    "name": "differs-owner-empty-postgres/plan",
+    "operation": "plan",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema pull",
+        "args": [
+          "schema",
+          "pull",
+          "oci://harness-registry:5000/schemas/differs-owner-empty-postgres@<digest>",
+          "--out",
+          "/source/schema.hcl",
+          "--skip-parse"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-owner-empty-postgres/plan/0-schema-pull.txt"
+      },
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nCREATE TABLE \"differs_owned\" (\n  \"id\" integer PRIMARY KEY NOT NULL\n);\nGRANT SELECT ON TABLE \"differs_owned\" TO \"harness_grantee_b\";\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
+        "stdout": "runner-harness/documents/differs-owner-empty-postgres/plan/1-schema-plan.json"
+      },
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/second.plan.json",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nCREATE TABLE \"differs_owned\" (\n  \"id\" integer PRIMARY KEY NOT NULL\n);\nGRANT SELECT ON TABLE \"differs_owned\" TO \"harness_grantee_b\";\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
+        "stdout": "runner-harness/documents/differs-owner-empty-postgres/plan/2-schema-plan.json"
+      },
+      {
+        "command": "schema apply --dry-run",
+        "args": [
+          "schema",
+          "apply",
+          "--plan",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--auto-approve",
+          "--json",
+          "--dry-run"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nCREATE TABLE \"differs_owned\" (\n  \"id\" integer PRIMARY KEY NOT NULL\n);\nGRANT SELECT ON TABLE \"differs_owned\" TO \"harness_grantee_b\";\n",
+        "stdout": "runner-harness/documents/differs-owner-empty-postgres/plan/3-schema-apply---dry-run.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "operation": "plan",
+      "operationId": "sha256:16e2a0f9610aa09035f9e178ea299e9fe55df43befa84598c8ffaf092add5dde",
+      "planContentDigest": "sha256:2cedfea97b612ab205573b3c09a3df96d2a34330d1d3666006d3eecac9206c90",
+      "planOutcome": "Changes",
+      "protocolVersion": 1,
+      "stdout": "<sealed plan>",
+      "targetIdentityDigest": "sha256:5670218ba56e2c7b9f19f7288dbfd3c9f469c0b3b0bcec4422251faf734cb8fc"
+    },
+    "savedPlan": "runner-harness/documents/differs-owner-empty-postgres/plan/4-saved-plan.json"
+  },
+  {
+    "name": "differs-owner-empty-postgres/resolve",
+    "operation": "resolve",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "oci resolve",
+        "args": [
+          "oci",
+          "resolve",
+          "oci://harness-registry:5000/schemas/differs-owner-empty-postgres:v1",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-owner-empty-postgres/resolve/0-oci-resolve.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "operation": "resolve",
+      "operationId": "sha256:067275f9d87ac9367e46298b1f35dd7932942e932f8277de261f21fe550ef047",
+      "protocolVersion": 1,
+      "resolvedDigest": "<volatile>",
+      "resolvedMediaType": "application/vnd.oci.image.manifest.v1+json",
+      "resolvedReference": "oci://harness-registry:5000/schemas/differs-owner-empty-postgres@<digest>",
+      "resolvedSize": 813,
+      "stdout": ""
+    }
+  },
+  {
+    "name": "differs-owner-empty-postgres/verify",
+    "operation": "verify",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "oci verify",
+        "args": [
+          "oci",
+          "verify",
+          "oci://harness-registry:5000/schemas/differs-owner-empty-postgres@<digest>",
+          "--policy",
+          "/work/ptah-verification-policy-<random>.yaml",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-owner-empty-postgres/verify/0-oci-verify.json"
+      },
+      {
+        "command": "oci inspect",
+        "args": [
+          "oci",
+          "inspect",
+          "oci://harness-registry:5000/schemas/differs-owner-empty-postgres@<digest>",
+          "--format",
+          "json",
+          "--no-referrers"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-owner-empty-postgres/verify/1-oci-inspect.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "observedArtifactType": "application/vnd.stokaro.ptah.schema.v1",
+      "operation": "verify",
+      "operationId": "sha256:5b800edd071294a03857a71a80259392899ca1c594dfad488a1bb55842a5809b",
+      "protocolVersion": 1,
+      "resolvedDigest": "<volatile>",
+      "stdout": "",
+      "verificationPolicyDigest": "sha256:81767d37e728289983aae9da4b00dc0388f1af18a6768c30df5e47f6b2aa0a8d"
+    }
+  },
+  {
+    "name": "differs-owner-existing-postgres/observe",
+    "operation": "observe",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema pull",
+        "args": [
+          "schema",
+          "pull",
+          "oci://harness-registry:5000/schemas/differs-owner-existing-postgres@<digest>",
+          "--out",
+          "/source/schema.hcl",
+          "--skip-parse"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-owner-existing-postgres/observe/0-schema-pull.txt"
+      },
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-owner-existing-postgres/observe/1-schema-drift.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "driftInventory": [
+        {
+          "desired": 1,
+          "kind": "columns",
+          "observed": 1
+        },
+        {
+          "desired": 1,
+          "kind": "constraints",
+          "observed": 1
+        },
+        {
+          "desired": 1,
+          "kind": "grants",
+          "observed": 1
+        },
+        {
+          "desired": 2,
+          "kind": "roles",
+          "observed": 2
+        },
+        {
+          "desired": 1,
+          "kind": "tables",
+          "observed": 1
+        }
+      ],
+      "driftReportDigest": "sha256:dfde61480ed38c7050fe21d163ce62579b3531e7bf010b6a97094f084a815a52",
+      "observedDialect": "postgres",
+      "operation": "observe",
+      "operationId": "sha256:efaac49f089deb4e1d03f2a34260be094f16bf56e7cf5ca0e66b3b50cb5183d7",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:c22d4e2e538d617194216186bfb47d1bcb21943562f451b7bd359906ec64af3c"
+    }
+  },
+  {
+    "name": "differs-owner-existing-postgres/plan",
+    "operation": "plan",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema pull",
+        "args": [
+          "schema",
+          "pull",
+          "oci://harness-registry:5000/schemas/differs-owner-existing-postgres@<digest>",
+          "--out",
+          "/source/schema.hcl",
+          "--skip-parse"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-owner-existing-postgres/plan/0-schema-pull.txt"
+      },
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "Schema is synced, no changes to be made.\n",
+        "stdout": "runner-harness/documents/differs-owner-existing-postgres/plan/1-schema-plan.json"
+      },
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/second.plan.json",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "Schema is synced, no changes to be made.\n",
+        "stdout": "runner-harness/documents/differs-owner-existing-postgres/plan/2-schema-plan.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "operation": "plan",
+      "operationId": "sha256:90e4a2462e660481315750b9f4ebb7f2d086ff2945ae1c2b6fef08612ac7bddb",
+      "planOutcome": "NoChanges",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:c22d4e2e538d617194216186bfb47d1bcb21943562f451b7bd359906ec64af3c"
+    }
+  },
+  {
+    "name": "differs-owner-existing-postgres/resolve",
+    "operation": "resolve",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "oci resolve",
+        "args": [
+          "oci",
+          "resolve",
+          "oci://harness-registry:5000/schemas/differs-owner-existing-postgres:v1",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-owner-existing-postgres/resolve/0-oci-resolve.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "operation": "resolve",
+      "operationId": "sha256:aa2b70dd00ed1a16af064613e151dff3886801a22fd35d82e2204c3a6a71e948",
+      "protocolVersion": 1,
+      "resolvedDigest": "<volatile>",
+      "resolvedMediaType": "application/vnd.oci.image.manifest.v1+json",
+      "resolvedReference": "oci://harness-registry:5000/schemas/differs-owner-existing-postgres@<digest>",
+      "resolvedSize": 813,
+      "stdout": ""
+    }
+  },
+  {
+    "name": "differs-owner-existing-postgres/verify",
+    "operation": "verify",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "oci verify",
+        "args": [
+          "oci",
+          "verify",
+          "oci://harness-registry:5000/schemas/differs-owner-existing-postgres@<digest>",
+          "--policy",
+          "/work/ptah-verification-policy-<random>.yaml",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-owner-existing-postgres/verify/0-oci-verify.json"
+      },
+      {
+        "command": "oci inspect",
+        "args": [
+          "oci",
+          "inspect",
+          "oci://harness-registry:5000/schemas/differs-owner-existing-postgres@<digest>",
+          "--format",
+          "json",
+          "--no-referrers"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-owner-existing-postgres/verify/1-oci-inspect.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "observedArtifactType": "application/vnd.stokaro.ptah.schema.v1",
+      "operation": "verify",
+      "operationId": "sha256:3a5e4f7f73b36ea2bab03182df2487f860214cca552bfb141ff0f5854aae43f0",
+      "protocolVersion": 1,
+      "resolvedDigest": "<volatile>",
+      "stdout": "",
+      "verificationPolicyDigest": "sha256:81767d37e728289983aae9da4b00dc0388f1af18a6768c30df5e47f6b2aa0a8d"
+    }
+  },
+  {
+    "name": "differs-partition-attach-postgres/apply",
+    "operation": "apply",
+    "source": "none",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema apply",
+        "args": [
+          "schema",
+          "apply",
+          "--plan",
+          "/work/ptah-plan-<random>.hcl",
+          "--auto-approve",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nALTER TABLE \"differs_events\" ATTACH PARTITION \"differs_loose\" FOR VALUES FROM ('2030-01-01') TO ('2031-01-01');\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
+        "stdout": "runner-harness/documents/differs-partition-attach-postgres/apply/0-schema-apply.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "mutationStarted": true,
+      "operation": "apply",
+      "operationId": "sha256:dcf947df3199a1df74208f04ef83f7876b33b73389b0d5841205ced89aef62a8",
+      "planContentDigest": "sha256:f5dbf91b8170dc379071192cdf9885f34914282345edcf7201dcb9291e1c7635",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:6f49826aae4835af4d0aacbafa4cdca53688a7e270d046e9ee8fed0779ea0306"
+    }
+  },
+  {
+    "name": "differs-partition-attach-postgres/observe",
+    "operation": "observe",
+    "source": "git",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 1,
+        "stdout": "runner-harness/documents/differs-partition-attach-postgres/observe/0-schema-drift.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "driftFindingCount": 1,
+      "driftFindings": [
+        {
+          "category": "feature_changes:ptah.run/postgres/table-partition-member-change",
+          "count": 1,
+          "severity": "warning"
+        }
+      ],
+      "driftInventory": [
+        {
+          "desired": 6,
+          "kind": "columns",
+          "observed": 6
+        },
+        {
+          "desired": 4,
+          "kind": "tables",
+          "observed": 4
+        }
+      ],
+      "driftReportDigest": "sha256:29e372b4f18df7efcbe3c3857f8efbe0467958bcbc4aba3c8b476a473a46f62f",
+      "highestDriftSeverity": "warning",
+      "observedDialect": "postgres",
+      "observedDrift": true,
+      "operation": "observe",
+      "operationId": "sha256:2c954cbae4894ffd7f1bc2fde0e0d77b6756be89a591debf90af517ce89cd066",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:6f49826aae4835af4d0aacbafa4cdca53688a7e270d046e9ee8fed0779ea0306"
+    }
+  },
+  {
+    "name": "differs-partition-attach-postgres/observe-applied",
+    "operation": "observe",
+    "source": "git",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-partition-attach-postgres/observe-applied/0-schema-drift.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "driftInventory": [
+        {
+          "desired": 6,
+          "kind": "columns",
+          "observed": 6
+        },
+        {
+          "desired": 4,
+          "kind": "tables",
+          "observed": 4
+        }
+      ],
+      "driftReportDigest": "sha256:dfde61480ed38c7050fe21d163ce62579b3531e7bf010b6a97094f084a815a52",
+      "observedDialect": "postgres",
+      "operation": "observe",
+      "operationId": "sha256:d61c0c0f31b5eb1fa10d0c1f67d580c9954534ac408d7d0bba6456d9c3a742a7",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:6f49826aae4835af4d0aacbafa4cdca53688a7e270d046e9ee8fed0779ea0306"
+    }
+  },
+  {
+    "name": "differs-partition-attach-postgres/plan",
+    "operation": "plan",
+    "source": "git",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nALTER TABLE \"differs_events\" ATTACH PARTITION \"differs_loose\" FOR VALUES FROM ('2030-01-01') TO ('2031-01-01');\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
+        "stdout": "runner-harness/documents/differs-partition-attach-postgres/plan/0-schema-plan.json"
+      },
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/second.plan.json",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nALTER TABLE \"differs_events\" ATTACH PARTITION \"differs_loose\" FOR VALUES FROM ('2030-01-01') TO ('2031-01-01');\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
+        "stdout": "runner-harness/documents/differs-partition-attach-postgres/plan/1-schema-plan.json"
+      },
+      {
+        "command": "schema apply --dry-run",
+        "args": [
+          "schema",
+          "apply",
+          "--plan",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--auto-approve",
+          "--json",
+          "--dry-run"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nALTER TABLE \"differs_events\" ATTACH PARTITION \"differs_loose\" FOR VALUES FROM ('2030-01-01') TO ('2031-01-01');\n",
+        "stdout": "runner-harness/documents/differs-partition-attach-postgres/plan/2-schema-apply---dry-run.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "operation": "plan",
+      "operationId": "sha256:c7307b7d694d660a61a3e7357efd192724c0b1c0ed937916d517802740fbf5bf",
+      "planContentDigest": "sha256:f5dbf91b8170dc379071192cdf9885f34914282345edcf7201dcb9291e1c7635",
+      "planOutcome": "Changes",
+      "protocolVersion": 1,
+      "stdout": "<sealed plan>",
+      "targetIdentityDigest": "sha256:6f49826aae4835af4d0aacbafa4cdca53688a7e270d046e9ee8fed0779ea0306"
+    },
+    "savedPlan": "differing/plan-partition-attach.json"
+  },
+  {
+    "name": "differs-partition-bound-excludes-row-postgres/apply",
+    "operation": "apply",
+    "source": "none",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema apply",
+        "args": [
+          "schema",
+          "apply",
+          "--plan",
+          "/work/ptah-plan-<random>.hcl",
+          "--auto-approve",
+          "--json"
+        ],
+        "exit": 2,
+        "stderr": "Planned schema changes:\nALTER TABLE \"differs_events\" DETACH PARTITION \"differs_e1\";\nALTER TABLE \"differs_events\" ATTACH PARTITION \"differs_e1\" FOR VALUES FROM ('2027-01-01') TO ('2028-01-01');\nAuto-approval enabled; applying schema changes.\nerror: apply schema changes: failed to execute SQL statement: SQL execution failed: ERROR: partition constraint of relation \"differs_e1\" is violated by some row (SQLSTATE 23514)\nSQL: ALTER TABLE \"differs_events\" ATTACH PARTITION \"differs_e1\" FOR VALUES FROM ('2027-01-01') TO ('2028-01-01')\n",
+        "stdout": "runner-harness/documents/differs-partition-bound-excludes-row-postgres/apply/0-schema-apply.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "error": {
+        "code": "apply_outcome_unknown",
+        "message": "ptah sent the statements and returned an error, so how far they got is unknown"
+      },
+      "mutationStarted": true,
+      "operation": "apply",
+      "operationId": "sha256:776e068dcbeb2eb5c871bdc5ab1553006725664933da2109b33daabf361c10e5",
+      "planContentDigest": "sha256:e6c7d4def1c9737b0581e5772388ae006a760aea67466be2d5947890917b32cb",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:8f312675bedd79c78879d1ff45ed8f6b426a5032215886e4b626d1e5ce7011e7",
+      "uncertain": true
+    }
+  },
+  {
+    "name": "differs-partition-bound-excludes-row-postgres/observe",
+    "operation": "observe",
+    "source": "git",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 1,
+        "stdout": "runner-harness/documents/differs-partition-bound-excludes-row-postgres/observe/0-schema-drift.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "driftFindingCount": 1,
+      "driftFindings": [
+        {
+          "category": "feature_changes:ptah.run/postgres/table-partition-member-change",
+          "count": 1,
+          "severity": "warning"
+        }
+      ],
+      "driftInventory": [
+        {
+          "desired": 9,
+          "kind": "columns",
+          "observed": 9
+        },
+        {
+          "desired": 4,
+          "kind": "tables",
+          "observed": 4
+        }
+      ],
+      "driftReportDigest": "sha256:117b459323ff487de68c8b601b11c24542e2102f9be93cb4732cffca57b416f1",
+      "highestDriftSeverity": "warning",
+      "observedDialect": "postgres",
+      "observedDrift": true,
+      "operation": "observe",
+      "operationId": "sha256:63683795b105991b9c305eff34b343dbeb8539e831184834f9945ce9305663f6",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:8f312675bedd79c78879d1ff45ed8f6b426a5032215886e4b626d1e5ce7011e7"
+    }
+  },
+  {
+    "name": "differs-partition-bound-excludes-row-postgres/observe-applied",
+    "operation": "observe",
+    "source": "git",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 1,
+        "stdout": "runner-harness/documents/differs-partition-bound-excludes-row-postgres/observe-applied/0-schema-drift.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "driftFindingCount": 1,
+      "driftFindings": [
+        {
+          "category": "feature_changes:ptah.run/postgres/table-partition-member-change",
+          "count": 1,
+          "severity": "warning"
+        }
+      ],
+      "driftInventory": [
+        {
+          "desired": 9,
+          "kind": "columns",
+          "observed": 9
+        },
+        {
+          "desired": 4,
+          "kind": "tables",
+          "observed": 4
+        }
+      ],
+      "driftReportDigest": "sha256:117b459323ff487de68c8b601b11c24542e2102f9be93cb4732cffca57b416f1",
+      "highestDriftSeverity": "warning",
+      "observedDialect": "postgres",
+      "observedDrift": true,
+      "operation": "observe",
+      "operationId": "sha256:2be186c291cf38bf9457f6cfe46ba58d93d3d1b5e6f5856a8db5099bfc1d754c",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:8f312675bedd79c78879d1ff45ed8f6b426a5032215886e4b626d1e5ce7011e7"
+    }
+  },
+  {
+    "name": "differs-partition-bound-excludes-row-postgres/plan",
+    "operation": "plan",
+    "source": "git",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nALTER TABLE \"differs_events\" DETACH PARTITION \"differs_e1\";\nALTER TABLE \"differs_events\" ATTACH PARTITION \"differs_e1\" FOR VALUES FROM ('2027-01-01') TO ('2028-01-01');\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
+        "stdout": "runner-harness/documents/differs-partition-bound-excludes-row-postgres/plan/0-schema-plan.json"
+      },
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/second.plan.json",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nALTER TABLE \"differs_events\" DETACH PARTITION \"differs_e1\";\nALTER TABLE \"differs_events\" ATTACH PARTITION \"differs_e1\" FOR VALUES FROM ('2027-01-01') TO ('2028-01-01');\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
+        "stdout": "runner-harness/documents/differs-partition-bound-excludes-row-postgres/plan/1-schema-plan.json"
+      },
+      {
+        "command": "schema apply --dry-run",
+        "args": [
+          "schema",
+          "apply",
+          "--plan",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--auto-approve",
+          "--json",
+          "--dry-run"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nALTER TABLE \"differs_events\" DETACH PARTITION \"differs_e1\";\nALTER TABLE \"differs_events\" ATTACH PARTITION \"differs_e1\" FOR VALUES FROM ('2027-01-01') TO ('2028-01-01');\n",
+        "stdout": "runner-harness/documents/differs-partition-bound-excludes-row-postgres/plan/2-schema-apply---dry-run.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "operation": "plan",
+      "operationId": "sha256:aa418e727ad9314b4b715d93072751507881fcf4455ec1930d898941881b33a0",
+      "planContentDigest": "sha256:e6c7d4def1c9737b0581e5772388ae006a760aea67466be2d5947890917b32cb",
+      "planOutcome": "Changes",
+      "protocolVersion": 1,
+      "stdout": "<sealed plan>",
+      "targetIdentityDigest": "sha256:8f312675bedd79c78879d1ff45ed8f6b426a5032215886e4b626d1e5ce7011e7"
+    },
+    "savedPlan": "differing/plan-partition-bound-excludes-row.json"
+  },
+  {
+    "name": "differs-partition-bound-postgres/apply",
+    "operation": "apply",
+    "source": "none",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema apply",
+        "args": [
+          "schema",
+          "apply",
+          "--plan",
+          "/work/ptah-plan-<random>.hcl",
+          "--auto-approve",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nALTER TABLE \"differs_events\" DETACH PARTITION \"differs_e1\";\nALTER TABLE \"differs_events\" ATTACH PARTITION \"differs_e1\" FOR VALUES FROM ('2026-01-01') TO ('2028-01-01');\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
+        "stdout": "runner-harness/documents/differs-partition-bound-postgres/apply/0-schema-apply.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "mutationStarted": true,
+      "operation": "apply",
+      "operationId": "sha256:4b90096ca709df97f10feb498da8ce82d9c8d384e65f2f7d782fbf5e5b74eb20",
+      "planContentDigest": "sha256:0865e34b965a2cb579e0a9ee8f6bf7a326337b14033a7ca53b6308cfeb963105",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:b98faed4d0d99f57fc124838e4be301a51c6442bdf058af9d081e4be086904b5"
+    }
+  },
+  {
+    "name": "differs-partition-bound-postgres/observe",
+    "operation": "observe",
+    "source": "git",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 1,
+        "stdout": "runner-harness/documents/differs-partition-bound-postgres/observe/0-schema-drift.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "driftFindingCount": 1,
+      "driftFindings": [
+        {
+          "category": "feature_changes:ptah.run/postgres/table-partition-member-change",
+          "count": 1,
+          "severity": "warning"
+        }
+      ],
+      "driftInventory": [
+        {
+          "desired": 9,
+          "kind": "columns",
+          "observed": 9
+        },
+        {
+          "desired": 4,
+          "kind": "tables",
+          "observed": 4
+        }
+      ],
+      "driftReportDigest": "sha256:8edb1b39ea8515698fcca3094fa0ce5adfd17b117dece5ec43a5fb02b70750d6",
+      "highestDriftSeverity": "warning",
+      "observedDialect": "postgres",
+      "observedDrift": true,
+      "operation": "observe",
+      "operationId": "sha256:074c197aa5bcf8c51d4df1e71e405286fd570555d70e669c72eebcee971cc5d0",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:b98faed4d0d99f57fc124838e4be301a51c6442bdf058af9d081e4be086904b5"
+    }
+  },
+  {
+    "name": "differs-partition-bound-postgres/observe-applied",
+    "operation": "observe",
+    "source": "git",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-partition-bound-postgres/observe-applied/0-schema-drift.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "driftInventory": [
+        {
+          "desired": 9,
+          "kind": "columns",
+          "observed": 9
+        },
+        {
+          "desired": 4,
+          "kind": "tables",
+          "observed": 4
+        }
+      ],
+      "driftReportDigest": "sha256:dfde61480ed38c7050fe21d163ce62579b3531e7bf010b6a97094f084a815a52",
+      "observedDialect": "postgres",
+      "operation": "observe",
+      "operationId": "sha256:1a98e3e9196257ffcd8e76a875827f95d662aa8cc138771df5f5276bbc8f2065",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:b98faed4d0d99f57fc124838e4be301a51c6442bdf058af9d081e4be086904b5"
+    }
+  },
+  {
+    "name": "differs-partition-bound-postgres/plan",
+    "operation": "plan",
+    "source": "git",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nALTER TABLE \"differs_events\" DETACH PARTITION \"differs_e1\";\nALTER TABLE \"differs_events\" ATTACH PARTITION \"differs_e1\" FOR VALUES FROM ('2026-01-01') TO ('2028-01-01');\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
+        "stdout": "runner-harness/documents/differs-partition-bound-postgres/plan/0-schema-plan.json"
+      },
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/second.plan.json",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nALTER TABLE \"differs_events\" DETACH PARTITION \"differs_e1\";\nALTER TABLE \"differs_events\" ATTACH PARTITION \"differs_e1\" FOR VALUES FROM ('2026-01-01') TO ('2028-01-01');\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
+        "stdout": "runner-harness/documents/differs-partition-bound-postgres/plan/1-schema-plan.json"
+      },
+      {
+        "command": "schema apply --dry-run",
+        "args": [
+          "schema",
+          "apply",
+          "--plan",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--auto-approve",
+          "--json",
+          "--dry-run"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nALTER TABLE \"differs_events\" DETACH PARTITION \"differs_e1\";\nALTER TABLE \"differs_events\" ATTACH PARTITION \"differs_e1\" FOR VALUES FROM ('2026-01-01') TO ('2028-01-01');\n",
+        "stdout": "runner-harness/documents/differs-partition-bound-postgres/plan/2-schema-apply---dry-run.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "operation": "plan",
+      "operationId": "sha256:3edbf5249c2220f8408e16bb65c54c08f5ee1014b59aeecbe17026de8d2b5082",
+      "planContentDigest": "sha256:0865e34b965a2cb579e0a9ee8f6bf7a326337b14033a7ca53b6308cfeb963105",
+      "planOutcome": "Changes",
+      "protocolVersion": 1,
+      "stdout": "<sealed plan>",
+      "targetIdentityDigest": "sha256:b98faed4d0d99f57fc124838e4be301a51c6442bdf058af9d081e4be086904b5"
+    },
+    "savedPlan": "differing/plan-partition-bound.json"
+  },
+  {
+    "name": "differs-partition-detach-postgres/apply",
+    "operation": "apply",
+    "source": "none",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema apply",
+        "args": [
+          "schema",
+          "apply",
+          "--plan",
+          "/work/ptah-plan-<random>.hcl",
+          "--auto-approve",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nALTER TABLE \"differs_events\" DETACH PARTITION \"differs_e1\";\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
+        "stdout": "runner-harness/documents/differs-partition-detach-postgres/apply/0-schema-apply.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "mutationStarted": true,
+      "operation": "apply",
+      "operationId": "sha256:f4d1a4422caf8b5130bb932195944ac70f8bc2f7e126c97ac4aa686db32e64d9",
+      "planContentDigest": "sha256:a58a3b28627e1acbac61e04df59161feed176648be2342512165bc8631d96ee3",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:b7dda18f9e5422d0cd3ae0584f8fdb2a789dee05889be9578b5630ffec79c052"
+    }
+  },
+  {
+    "name": "differs-partition-detach-postgres/observe",
+    "operation": "observe",
+    "source": "git",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 1,
+        "stdout": "runner-harness/documents/differs-partition-detach-postgres/observe/0-schema-drift.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "driftFindingCount": 1,
+      "driftFindings": [
+        {
+          "category": "feature_changes:ptah.run/postgres/table-partition-member-change",
+          "count": 1,
+          "severity": "warning"
+        }
+      ],
+      "driftInventory": [
+        {
+          "desired": 12,
+          "kind": "columns",
+          "observed": 12
+        },
+        {
+          "desired": 4,
+          "kind": "tables",
+          "observed": 4
+        }
+      ],
+      "driftReportDigest": "sha256:acc75db994f21b7f8f6cc46397120569d305fc94038377a74c6808a51fdb0883",
+      "highestDriftSeverity": "warning",
+      "observedDialect": "postgres",
+      "observedDrift": true,
+      "operation": "observe",
+      "operationId": "sha256:990c4c225b76bb580ebda0ce63a0aede0907c6312286d0d48f308ca3b3db84f1",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:b7dda18f9e5422d0cd3ae0584f8fdb2a789dee05889be9578b5630ffec79c052"
+    }
+  },
+  {
+    "name": "differs-partition-detach-postgres/observe-applied",
+    "operation": "observe",
+    "source": "git",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-partition-detach-postgres/observe-applied/0-schema-drift.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "driftInventory": [
+        {
+          "desired": 12,
+          "kind": "columns",
+          "observed": 12
+        },
+        {
+          "desired": 4,
+          "kind": "tables",
+          "observed": 4
+        }
+      ],
+      "driftReportDigest": "sha256:dfde61480ed38c7050fe21d163ce62579b3531e7bf010b6a97094f084a815a52",
+      "observedDialect": "postgres",
+      "operation": "observe",
+      "operationId": "sha256:b6e5592aea2f6b41080c63fd4bcb308f6b6a163ed348fdb3f9c08b8c9c60aa20",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:b7dda18f9e5422d0cd3ae0584f8fdb2a789dee05889be9578b5630ffec79c052"
+    }
+  },
+  {
+    "name": "differs-partition-detach-postgres/plan",
+    "operation": "plan",
+    "source": "git",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nALTER TABLE \"differs_events\" DETACH PARTITION \"differs_e1\";\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
+        "stdout": "runner-harness/documents/differs-partition-detach-postgres/plan/0-schema-plan.json"
+      },
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/second.plan.json",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nALTER TABLE \"differs_events\" DETACH PARTITION \"differs_e1\";\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
+        "stdout": "runner-harness/documents/differs-partition-detach-postgres/plan/1-schema-plan.json"
+      },
+      {
+        "command": "schema apply --dry-run",
+        "args": [
+          "schema",
+          "apply",
+          "--plan",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--auto-approve",
+          "--json",
+          "--dry-run"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nALTER TABLE \"differs_events\" DETACH PARTITION \"differs_e1\";\n",
+        "stdout": "runner-harness/documents/differs-partition-detach-postgres/plan/2-schema-apply---dry-run.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "operation": "plan",
+      "operationId": "sha256:9a7a33ce4f43ae2c9e53f9dee1c05153d0b77492f9236e3f521cdbbc23e0b580",
+      "planContentDigest": "sha256:a58a3b28627e1acbac61e04df59161feed176648be2342512165bc8631d96ee3",
+      "planOutcome": "Changes",
+      "protocolVersion": 1,
+      "stdout": "<sealed plan>",
+      "targetIdentityDigest": "sha256:b7dda18f9e5422d0cd3ae0584f8fdb2a789dee05889be9578b5630ffec79c052"
+    },
+    "savedPlan": "differing/plan-partition-detach.json"
+  },
+  {
+    "name": "differs-partition-parent-postgres/apply",
+    "operation": "apply",
+    "source": "none",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema apply",
+        "args": [
+          "schema",
+          "apply",
+          "--plan",
+          "/work/ptah-plan-<random>.hcl",
+          "--auto-approve",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nALTER TABLE \"differs_events\" DETACH PARTITION \"differs_e1\";\nALTER TABLE \"differs_other\" ATTACH PARTITION \"differs_e1\" FOR VALUES FROM ('2026-01-01') TO ('2027-01-01');\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
+        "stdout": "runner-harness/documents/differs-partition-parent-postgres/apply/0-schema-apply.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "mutationStarted": true,
+      "operation": "apply",
+      "operationId": "sha256:6040240dd7dee5b37f94b7eb9168dc71e91fdda8236235128106764847fa637a",
+      "planContentDigest": "sha256:f02aad20d5b9ef6a8522cac9150f76c5e2ef8051b7f8c084b59e41dad5c60b03",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:b17d3bbdb47188415d4a1af1f8d71dc68f112b048adcf6d54fd4cc90f6c3f02f"
+    }
+  },
+  {
+    "name": "differs-partition-parent-postgres/observe",
+    "operation": "observe",
+    "source": "git",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 1,
+        "stdout": "runner-harness/documents/differs-partition-parent-postgres/observe/0-schema-drift.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "driftFindingCount": 1,
+      "driftFindings": [
+        {
+          "category": "feature_changes:ptah.run/postgres/table-partition-member-change",
+          "count": 1,
+          "severity": "warning"
+        }
+      ],
+      "driftInventory": [
+        {
+          "desired": 9,
+          "kind": "columns",
+          "observed": 9
+        },
+        {
+          "desired": 4,
+          "kind": "tables",
+          "observed": 4
+        }
+      ],
+      "driftReportDigest": "sha256:680f62ea3f8b8ae38fc03a797f26fadbdeb5c8a74586a05ba1b62eb5c7c0283e",
+      "highestDriftSeverity": "warning",
+      "observedDialect": "postgres",
+      "observedDrift": true,
+      "operation": "observe",
+      "operationId": "sha256:5958f98a12830add172c680c661c63a4199869c642053bd28888f8a492b49dba",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:b17d3bbdb47188415d4a1af1f8d71dc68f112b048adcf6d54fd4cc90f6c3f02f"
+    }
+  },
+  {
+    "name": "differs-partition-parent-postgres/observe-applied",
+    "operation": "observe",
+    "source": "git",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-partition-parent-postgres/observe-applied/0-schema-drift.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "driftInventory": [
+        {
+          "desired": 9,
+          "kind": "columns",
+          "observed": 9
+        },
+        {
+          "desired": 4,
+          "kind": "tables",
+          "observed": 4
+        }
+      ],
+      "driftReportDigest": "sha256:dfde61480ed38c7050fe21d163ce62579b3531e7bf010b6a97094f084a815a52",
+      "observedDialect": "postgres",
+      "operation": "observe",
+      "operationId": "sha256:06010a43ecf517a30fc579feaa55a47f3f1129d3bfe79b1dec3fa20c1073dcb3",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:b17d3bbdb47188415d4a1af1f8d71dc68f112b048adcf6d54fd4cc90f6c3f02f"
+    }
+  },
+  {
+    "name": "differs-partition-parent-postgres/plan",
+    "operation": "plan",
+    "source": "git",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nALTER TABLE \"differs_events\" DETACH PARTITION \"differs_e1\";\nALTER TABLE \"differs_other\" ATTACH PARTITION \"differs_e1\" FOR VALUES FROM ('2026-01-01') TO ('2027-01-01');\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
+        "stdout": "runner-harness/documents/differs-partition-parent-postgres/plan/0-schema-plan.json"
+      },
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/second.plan.json",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nALTER TABLE \"differs_events\" DETACH PARTITION \"differs_e1\";\nALTER TABLE \"differs_other\" ATTACH PARTITION \"differs_e1\" FOR VALUES FROM ('2026-01-01') TO ('2027-01-01');\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
+        "stdout": "runner-harness/documents/differs-partition-parent-postgres/plan/1-schema-plan.json"
+      },
+      {
+        "command": "schema apply --dry-run",
+        "args": [
+          "schema",
+          "apply",
+          "--plan",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--auto-approve",
+          "--json",
+          "--dry-run"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nALTER TABLE \"differs_events\" DETACH PARTITION \"differs_e1\";\nALTER TABLE \"differs_other\" ATTACH PARTITION \"differs_e1\" FOR VALUES FROM ('2026-01-01') TO ('2027-01-01');\n",
+        "stdout": "runner-harness/documents/differs-partition-parent-postgres/plan/2-schema-apply---dry-run.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "operation": "plan",
+      "operationId": "sha256:871cefa98f70e5cdc2d535aee628554e9097bf925c7404fd16b788f81d607c06",
+      "planContentDigest": "sha256:f02aad20d5b9ef6a8522cac9150f76c5e2ef8051b7f8c084b59e41dad5c60b03",
+      "planOutcome": "Changes",
+      "protocolVersion": 1,
+      "stdout": "<sealed plan>",
+      "targetIdentityDigest": "sha256:b17d3bbdb47188415d4a1af1f8d71dc68f112b048adcf6d54fd4cc90f6c3f02f"
+    },
+    "savedPlan": "differing/plan-partition-parent.json"
+  },
+  {
     "name": "differs-precision-mysql/apply",
     "operation": "apply",
     "source": "none",
@@ -3726,7 +6374,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:1b195cc0974829dffb26fc53c0ac3e135b908569dbe4754ca8026fb98d92ac79",
-      "planContentDigest": "sha256:5fd0d3e28c45e53dd1e4110249d983eb92806305b85d25d820ca037bb580527c",
+      "planContentDigest": "sha256:95d3697367da53025117c9c3b847a08b6928f06af0df796a7dc85c5c5a42abc9",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:a633d0cbb96f7fc167057a2e937d75319b627325b0a192f3b89782355557cc6c"
@@ -3745,7 +6393,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/differs-precision-mysql@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/differs-precision-mysql/observe/0-schema-pull.txt"
@@ -3759,14 +6408,19 @@
           "json"
         ],
         "exit": 1,
-        "stdout": "runner-harness/documents/differs-precision-mysql/observe/1-schema-drift.json"
+        "stdout": "differing/drift-column-types-narrowed-mysql.json"
       }
     ],
     "result": {
       "childExitCode": 0,
       "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
-      "driftFindingCount": 1,
+      "driftFindingCount": 2,
       "driftFindings": [
+        {
+          "category": "column_types_narrowed",
+          "count": 1,
+          "severity": "destructive"
+        },
         {
           "category": "columns_modified",
           "count": 1,
@@ -3790,8 +6444,8 @@
           "observed": 1
         }
       ],
-      "driftReportDigest": "sha256:8eeadbcdcd372baf0118bb693fda519f8c1e0d94328ec46b88442b786ac255ad",
-      "highestDriftSeverity": "warning",
+      "driftReportDigest": "sha256:497d591fdca0c0481436e8591a8868471913967753e47c95a8686257ad105931",
+      "highestDriftSeverity": "destructive",
       "observedDialect": "mysql",
       "observedDrift": true,
       "operation": "observe",
@@ -3814,7 +6468,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/differs-precision-mysql@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/differs-precision-mysql/observe-applied/0-schema-pull.txt"
@@ -3873,7 +6528,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/differs-precision-mysql@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/differs-precision-mysql/plan/0-schema-pull.txt"
@@ -3925,7 +6581,7 @@
       "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
       "operation": "plan",
       "operationId": "sha256:482b25448da2ba6d5f8b35b05449bd968e5699ca04251ab932c5a526426c81d3",
-      "planContentDigest": "sha256:5fd0d3e28c45e53dd1e4110249d983eb92806305b85d25d820ca037bb580527c",
+      "planContentDigest": "sha256:95d3697367da53025117c9c3b847a08b6928f06af0df796a7dc85c5c5a42abc9",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -4036,7 +6692,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:42b052257b139be7c61e0775aef03a95da9a10cd3cea51b666fa45403981d24b",
-      "planContentDigest": "sha256:8219f2054280a8f4865911ef125be561e0ea0dadf92507ccc1b1bda4cf0c0815",
+      "planContentDigest": "sha256:341c5f4605f4b1683f9292fadd35b65aee1c0eef40aa741a74c7b1b4042f42a3",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:afbcbdb9fadf6fa8d3158bdcda51f9dee8d57d86c33664fc4b9a9d5bd766c141"
@@ -4055,7 +6711,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/differs-precision-postgres@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/differs-precision-postgres/observe/0-schema-pull.txt"
@@ -4069,14 +6726,19 @@
           "json"
         ],
         "exit": 1,
-        "stdout": "runner-harness/documents/differs-precision-postgres/observe/1-schema-drift.json"
+        "stdout": "differing/drift-column-types-narrowed-postgres.json"
       }
     ],
     "result": {
       "childExitCode": 0,
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
-      "driftFindingCount": 1,
+      "driftFindingCount": 2,
       "driftFindings": [
+        {
+          "category": "column_types_narrowed",
+          "count": 1,
+          "severity": "destructive"
+        },
         {
           "category": "columns_modified",
           "count": 1,
@@ -4100,8 +6762,8 @@
           "observed": 1
         }
       ],
-      "driftReportDigest": "sha256:deabf2ac14f389552e6da47096f05d96732ee69b858f27a0ec39503c8650794b",
-      "highestDriftSeverity": "warning",
+      "driftReportDigest": "sha256:b40a8ed853f4bf0083c5fce22023875fa1a88ffc07883df9237ec32c5d3927a7",
+      "highestDriftSeverity": "destructive",
       "observedDialect": "postgres",
       "observedDrift": true,
       "operation": "observe",
@@ -4124,7 +6786,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/differs-precision-postgres@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/differs-precision-postgres/observe-applied/0-schema-pull.txt"
@@ -4183,7 +6846,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/differs-precision-postgres@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/differs-precision-postgres/plan/0-schema-pull.txt"
@@ -4235,7 +6899,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:fe0135b3d5afe0cc1be923b28009fbc454ee7eccb8d166f7398fd466675d0312",
-      "planContentDigest": "sha256:8219f2054280a8f4865911ef125be561e0ea0dadf92507ccc1b1bda4cf0c0815",
+      "planContentDigest": "sha256:341c5f4605f4b1683f9292fadd35b65aee1c0eef40aa741a74c7b1b4042f42a3",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -4346,7 +7010,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:b75adbc8f7860b16c37baada34f5bcf87516612a9c281c4f3208dbb59b23cc84",
-      "planContentDigest": "sha256:a34403063017fdd1b60503fae5f877d09f72cf0b3f4ceb8f097d33f818931ac2",
+      "planContentDigest": "sha256:0e87cb5f5851776092ca9dccb5409330a85f979496990d6fae943edf3ad67bfb",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:cb6a37f9e0c85daea97ea4c294c7d360618568bfdce9899ac1bcfaaf2fe7e445"
@@ -4365,7 +7029,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/differs-serial-postgres@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/differs-serial-postgres/observe/0-schema-pull.txt"
@@ -4444,7 +7109,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/differs-serial-postgres@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/differs-serial-postgres/observe-applied/0-schema-pull.txt"
@@ -4503,7 +7169,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/differs-serial-postgres@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/differs-serial-postgres/plan/0-schema-pull.txt"
@@ -4555,7 +7222,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:2e3298969c557f3382c2f96deb5334216d6cfc0b4bcf5607c1bd490b8e08be24",
-      "planContentDigest": "sha256:a34403063017fdd1b60503fae5f877d09f72cf0b3f4ceb8f097d33f818931ac2",
+      "planContentDigest": "sha256:0e87cb5f5851776092ca9dccb5409330a85f979496990d6fae943edf3ad67bfb",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -4666,7 +7333,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:4114ba6eca5d1eb7580a19531edba2188f4ea259ca993ccb512d71a01a335449",
-      "planContentDigest": "sha256:a7e753a6402bdcf61027706418107cd927eb018d5d33e2ae00609d3f2f6dcb3a",
+      "planContentDigest": "sha256:d47ef2178b709197187f21e239fc3977247aae06743df1d21dc01c5be58c8b37",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:7fe0cb2bc3f973c0077d7dec9b8f0978a5776b69d32af02e01b338f9d6eea55b"
@@ -4685,7 +7352,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/differs-view-invoker-false-postgres@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/differs-view-invoker-false-postgres/observe/0-schema-pull.txt"
@@ -4759,7 +7427,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/differs-view-invoker-false-postgres@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/differs-view-invoker-false-postgres/observe-applied/0-schema-pull.txt"
@@ -4823,7 +7492,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/differs-view-invoker-false-postgres@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/differs-view-invoker-false-postgres/plan/0-schema-pull.txt"
@@ -4875,7 +7545,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:d69fe2f1f4dc64ff9cda70a036439aa5bf4335896af92b54d0e049f2ec5e3f44",
-      "planContentDigest": "sha256:a7e753a6402bdcf61027706418107cd927eb018d5d33e2ae00609d3f2f6dcb3a",
+      "planContentDigest": "sha256:d47ef2178b709197187f21e239fc3977247aae06743df1d21dc01c5be58c8b37",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -4986,7 +7656,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:652ea471e94b701443ab90e40cfb20a75a45785f02eaa4bb40fcd3a5858d7a3d",
-      "planContentDigest": "sha256:acf900c3bc9516ebe4304a263733d06cab8ef4853aa32187576a726babcfa13f",
+      "planContentDigest": "sha256:f4ed4ddb283df7e100b6639d25c9e8b97a9ee392cfb8e09a4a598a00f94fc4c2",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:8c10f8530a53100380f371664823b3b18abab78d627542be6bcd6812eb0f139e"
@@ -5005,7 +7675,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/differs-view-invoker-true-postgres@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/differs-view-invoker-true-postgres/observe/0-schema-pull.txt"
@@ -5079,7 +7750,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/differs-view-invoker-true-postgres@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/differs-view-invoker-true-postgres/observe-applied/0-schema-pull.txt"
@@ -5143,7 +7815,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/differs-view-invoker-true-postgres@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/differs-view-invoker-true-postgres/plan/0-schema-pull.txt"
@@ -5195,7 +7868,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:ecdfd9250861f5f60477f0d28e8f83828e24b64964b4f8a6979c96d4272449c2",
-      "planContentDigest": "sha256:acf900c3bc9516ebe4304a263733d06cab8ef4853aa32187576a726babcfa13f",
+      "planContentDigest": "sha256:f4ed4ddb283df7e100b6639d25c9e8b97a9ee392cfb8e09a4a598a00f94fc4c2",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -5292,7 +7965,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/differs-view-invoker-unstated-mysql@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/differs-view-invoker-unstated-mysql/observe/0-schema-pull.txt"
@@ -5356,7 +8030,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/differs-view-invoker-unstated-mysql@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/differs-view-invoker-unstated-mysql/plan/0-schema-pull.txt"
@@ -5488,7 +8163,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/differs-view-invoker-unstated-postgres@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/differs-view-invoker-unstated-postgres/observe/0-schema-pull.txt"
@@ -5562,7 +8238,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/differs-view-invoker-unstated-postgres@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/differs-view-invoker-unstated-postgres/plan/0-schema-pull.txt"
@@ -5579,23 +8256,14 @@
         "exit": 2,
         "stderr": "error: generate schema apply operations: unsupported feature: view differs_notes_view holds security_invoker=true and the schema does not state it. Without it the view runs with its owner's rights, not the rights of the user who queries it. Declare security_invoker=true to keep it, or security_invoker=false to remove it. An HCL schema states these options in the view's security block, as invoker and barrier\n",
         "stdout": "runner-harness/documents/differs-view-invoker-unstated-postgres/plan/1-schema-plan.json"
-      },
-      {
-        "command": "schema validate",
-        "args": [
-          "schema",
-          "validate",
-          "--dialect=PostgreSQL"
-        ],
-        "exit": 0
       }
     ],
     "result": {
       "childExitCode": 2,
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "error": {
-        "code": "invalid_plan_output",
-        "message": "plan command did not complete successfully"
+        "code": "plan_refused",
+        "message": "ptah refused to plan the change (view-security-option)"
       },
       "operation": "plan",
       "operationId": "sha256:f41ba30ad0f393ef84cdb2c3dbfd2257fb67926fd95e166ee8f1218814aa9fe1",
@@ -5707,7 +8375,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:4cc539ba36b8dbc6d3e942e31d0815ae4738292d4d38776715cb03c8c80ec849",
-      "planContentDigest": "sha256:4ddb6030a8c4ed824ed9a2d329f9ffb45e12550b807b5d18aa9257b298e57a85",
+      "planContentDigest": "sha256:98462ce63bcb5d28eb8b29fccebd41eb4178852edd14da108697e6bac6e34860",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:94195566117e11d16de007f766e199c401b0032c62e0f65d8bb261ec938f2f44"
@@ -5726,7 +8394,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/extension@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/extension/observe-dropped/0-schema-pull.txt"
@@ -5800,7 +8469,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/extension@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/extension/plan/0-schema-pull.txt"
@@ -5852,7 +8522,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:0b4091197a5864343b8c96a638c3c4cca91d86a8d67145046449758a0b2cbfa8",
-      "planContentDigest": "sha256:4ddb6030a8c4ed824ed9a2d329f9ffb45e12550b807b5d18aa9257b298e57a85",
+      "planContentDigest": "sha256:98462ce63bcb5d28eb8b29fccebd41eb4178852edd14da108697e6bac6e34860",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -7287,7 +9957,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:fb212313f8bff875f4abe80a9a0bab99afc7f39c5a42d52c0f0618bd06811c9a",
-      "planContentDigest": "sha256:00558f524a7c21d09025aaa5c9506b4e03585851d2a1ef6c45c075702e958e6a",
+      "planContentDigest": "sha256:e944735dcae8d4ca343f0d2eb2e9885bde6e2125d8d702e503328d8158be8a16",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:80d608f5e6ce7aeb55e65281edb48af6d87d5ee261d3090cd5f648133c1ae85c",
@@ -7326,7 +9996,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:b4d7ce23b0df16bcee6a0abb74e3237bee2a37dbff9d132d32eec04887bc6896",
-      "planContentDigest": "sha256:00558f524a7c21d09025aaa5c9506b4e03585851d2a1ef6c45c075702e958e6a",
+      "planContentDigest": "sha256:e944735dcae8d4ca343f0d2eb2e9885bde6e2125d8d702e503328d8158be8a16",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:80d608f5e6ce7aeb55e65281edb48af6d87d5ee261d3090cd5f648133c1ae85c",
@@ -7507,7 +10177,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:288ac55de79fe4f00abcc6679b5ffb0777fa186939a66b49a126d563a5edb750",
-      "planContentDigest": "sha256:00558f524a7c21d09025aaa5c9506b4e03585851d2a1ef6c45c075702e958e6a",
+      "planContentDigest": "sha256:e944735dcae8d4ca343f0d2eb2e9885bde6e2125d8d702e503328d8158be8a16",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:a52a0fbbbf6c88117ad74f4b41d6d95737d620d7653232c1c8f08fc69187ad4a",
@@ -7546,7 +10216,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:cb1c11d0f2f608257a84c15a04cf9d8f49d3c985f37cd9514c7d282d0409dde8",
-      "planContentDigest": "sha256:00558f524a7c21d09025aaa5c9506b4e03585851d2a1ef6c45c075702e958e6a",
+      "planContentDigest": "sha256:e944735dcae8d4ca343f0d2eb2e9885bde6e2125d8d702e503328d8158be8a16",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:a52a0fbbbf6c88117ad74f4b41d6d95737d620d7653232c1c8f08fc69187ad4a",
@@ -7727,7 +10397,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:e2f51a9196bd64dae017bd9446b1a41d8466a7a93ac37eda39f455904425140d",
-      "planContentDigest": "sha256:00558f524a7c21d09025aaa5c9506b4e03585851d2a1ef6c45c075702e958e6a",
+      "planContentDigest": "sha256:e944735dcae8d4ca343f0d2eb2e9885bde6e2125d8d702e503328d8158be8a16",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:7261457b875a32e59a05663eac15dfe40891f5e069938dc6d1e41b676ec46671",
@@ -7766,7 +10436,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:915e8c54ec9f79d0ed5394921d0085c12faee0795815ce42c8b5a531cf158a52",
-      "planContentDigest": "sha256:00558f524a7c21d09025aaa5c9506b4e03585851d2a1ef6c45c075702e958e6a",
+      "planContentDigest": "sha256:e944735dcae8d4ca343f0d2eb2e9885bde6e2125d8d702e503328d8158be8a16",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:7261457b875a32e59a05663eac15dfe40891f5e069938dc6d1e41b676ec46671",
@@ -7947,7 +10617,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:d545d3ac60533a8cce3bbcf9ad1bbb209aefac88e06a7e8dd02250164de68388",
-      "planContentDigest": "sha256:00558f524a7c21d09025aaa5c9506b4e03585851d2a1ef6c45c075702e958e6a",
+      "planContentDigest": "sha256:e944735dcae8d4ca343f0d2eb2e9885bde6e2125d8d702e503328d8158be8a16",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:8312c84553d31d366a1a82da7234a1750278845a291a7a4d6e60e0303f098221",
@@ -7986,7 +10656,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:d0fa0dceb0e88c143f6cac71dbf195673d63e1981ed129c0c0aa0aa0849aa509",
-      "planContentDigest": "sha256:00558f524a7c21d09025aaa5c9506b4e03585851d2a1ef6c45c075702e958e6a",
+      "planContentDigest": "sha256:e944735dcae8d4ca343f0d2eb2e9885bde6e2125d8d702e503328d8158be8a16",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:8312c84553d31d366a1a82da7234a1750278845a291a7a4d6e60e0303f098221",
@@ -8167,7 +10837,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:29ba757fa21dd815ebd444226631e1b76b84eb8a661b8987dcec3220a74e6a58",
-      "planContentDigest": "sha256:00558f524a7c21d09025aaa5c9506b4e03585851d2a1ef6c45c075702e958e6a",
+      "planContentDigest": "sha256:e944735dcae8d4ca343f0d2eb2e9885bde6e2125d8d702e503328d8158be8a16",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:7be7c2ce7a4a18e4e2b1cde241904323ff56875659d102f04117f5144c637565",
@@ -8206,7 +10876,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:9f0bfd77b540ebf8a19b20ab381dfb7f804898fba4038faf3043436a9ddc371b",
-      "planContentDigest": "sha256:00558f524a7c21d09025aaa5c9506b4e03585851d2a1ef6c45c075702e958e6a",
+      "planContentDigest": "sha256:e944735dcae8d4ca343f0d2eb2e9885bde6e2125d8d702e503328d8158be8a16",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:7be7c2ce7a4a18e4e2b1cde241904323ff56875659d102f04117f5144c637565",
@@ -8387,7 +11057,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:a4c69d56a0b72a0970378e7bfe1c23b92eee7d42b56f6d2fa58e2e0855c23783",
-      "planContentDigest": "sha256:00558f524a7c21d09025aaa5c9506b4e03585851d2a1ef6c45c075702e958e6a",
+      "planContentDigest": "sha256:e944735dcae8d4ca343f0d2eb2e9885bde6e2125d8d702e503328d8158be8a16",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:fa3fdfc91a40f961bcd0148467bbf46f178d87d633b75f2cbdbc443848704aff",
@@ -8426,7 +11096,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:d3c037310c7dbc7d8957b8124926ea4aeab09cadf1b4641522ab86ff23ba14c8",
-      "planContentDigest": "sha256:00558f524a7c21d09025aaa5c9506b4e03585851d2a1ef6c45c075702e958e6a",
+      "planContentDigest": "sha256:e944735dcae8d4ca343f0d2eb2e9885bde6e2125d8d702e503328d8158be8a16",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:fa3fdfc91a40f961bcd0148467bbf46f178d87d633b75f2cbdbc443848704aff",
@@ -8607,7 +11277,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:cb56e47bc2901c51e3e37b45ca0baae63ce2cea7313fff8a5ec5a1907491a48e",
-      "planContentDigest": "sha256:00558f524a7c21d09025aaa5c9506b4e03585851d2a1ef6c45c075702e958e6a",
+      "planContentDigest": "sha256:e944735dcae8d4ca343f0d2eb2e9885bde6e2125d8d702e503328d8158be8a16",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:eaae4c045da4ab444d9dc20fcb18bf3f805e409b0ca63a5956176ef3b4434e58",
@@ -8646,7 +11316,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:7d5299f84da0a27dc27028f70209d8428de8f17791eb548bff6cb6e24acf17ca",
-      "planContentDigest": "sha256:00558f524a7c21d09025aaa5c9506b4e03585851d2a1ef6c45c075702e958e6a",
+      "planContentDigest": "sha256:e944735dcae8d4ca343f0d2eb2e9885bde6e2125d8d702e503328d8158be8a16",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:eaae4c045da4ab444d9dc20fcb18bf3f805e409b0ca63a5956176ef3b4434e58",
@@ -9166,6 +11836,528 @@
       "resolvedMediaType": "application/vnd.oci.image.manifest.v1+json",
       "resolvedReference": "oci://harness-registry:5000/migrations/migrations-checkpoint-postgres@<digest>",
       "resolvedSize": 2567,
+      "stdout": ""
+    }
+  },
+  {
+    "name": "migrations-commit-postgres/apply",
+    "operation": "migration-apply",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "migrations pull",
+        "args": [
+          "migrations",
+          "pull",
+          "oci://harness-registry:5000/migrations/migrations-commit-postgres@<digest>",
+          "--out",
+          "/source/migrations"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/migrations-commit-postgres/apply/0-migrations-pull.txt"
+      },
+      {
+        "command": "migrations up",
+        "args": [
+          "migrations",
+          "up",
+          "--migrations-dir",
+          "/source/migrations",
+          "--json",
+          "--expect-sequence",
+          "/work/ptah-expected-sequence-<random>.json"
+        ],
+        "exit": 2,
+        "stderr": "=== MIGRATE UP ===\nDatabase: postgres://postgres:***@harness-postgres:5432/harness_commit_postgres?sslmode=disable\nDialect: postgres\nMigrations directory: /source/migrations\nMigration directory format: auto\nTransaction mode: file\n\nCurrent version: 0\nTotal migrations: 1\nPending migrations: 1\n\ntime=<time> level=INFO msg=\"Migrating up\" correlation_id=<random> command=migrations.up currentVersion=0 totalMigrations=1\ntime=<time> level=INFO msg=\"Applying migration\" correlation_id=<random> command=migrations.up version=1 description=Create\nerror: error running migrations: failed to commit transaction for migration 1: ERROR: insert or update on table \"child\" violates foreign key constraint \"child_parent_id_fkey\" (SQLSTATE 23503)\n",
+        "stdout": "migrations-up-commit-failed.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "error": {
+        "code": "child_exit",
+        "message": "ptah exited with code 2"
+      },
+      "migrationRun": {
+        "contract_version": 2,
+        "direction": "up",
+        "failure": {
+          "commit": true,
+          "sqlstate": "23503",
+          "statement": 0,
+          "statements": 3,
+          "version": 1
+        },
+        "outcome": "failed",
+        "planned": [
+          1
+        ],
+        "status": {
+          "contract_version": 2,
+          "current_version": 0,
+          "dirty_revision": {
+            "applied": 0,
+            "total": 3,
+            "version": 1
+          },
+          "has_pending_changes": true,
+          "migrations": [
+            {
+              "applied_at": "<volatile>",
+              "checksum": "33f25c7e11fe8d4443ebe136d82a21689a0f6a70045e5bf5bd50e5c53aa4a4bc",
+              "description": "Create",
+              "execution_time_ms": 0,
+              "state": "dirty",
+              "version": 1,
+              "version_key": "1"
+            }
+          ],
+          "pending_migrations": [
+            1
+          ],
+          "total_migrations": 1
+        }
+      },
+      "mutationStarted": true,
+      "operation": "migration-apply",
+      "operationId": "sha256:d32825f1a2401962ca251f5e719f0ff832407ee1ce16315013eaa30b237bff07",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:aa5df8a293703ccb0ec2f3eb1ee21ce8e0bb702709115c8f81e992e579086cd6"
+    }
+  },
+  {
+    "name": "migrations-commit-postgres/history-dirty",
+    "operation": "migration-history",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "migrations pull",
+        "args": [
+          "migrations",
+          "pull",
+          "oci://harness-registry:5000/migrations/migrations-commit-postgres@<digest>",
+          "--out",
+          "/source/migrations"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/migrations-commit-postgres/history-dirty/0-migrations-pull.txt"
+      },
+      {
+        "command": "migrations status",
+        "args": [
+          "migrations",
+          "status",
+          "--migrations-dir",
+          "/source/migrations",
+          "--json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/migrations-commit-postgres/history-dirty/1-migrations-status.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "migrationHistory": {
+        "contract_version": 2,
+        "current_version": 0,
+        "dirty_revision": {
+          "applied": 0,
+          "total": 3,
+          "version": 1
+        },
+        "has_pending_changes": true,
+        "migrations": [
+          {
+            "applied_at": "<volatile>",
+            "checksum": "33f25c7e11fe8d4443ebe136d82a21689a0f6a70045e5bf5bd50e5c53aa4a4bc",
+            "description": "Create",
+            "execution_time_ms": 0,
+            "state": "dirty",
+            "version": 1,
+            "version_key": "1"
+          }
+        ],
+        "pending_migrations": [
+          1
+        ],
+        "total_migrations": 1
+      },
+      "operation": "migration-history",
+      "operationId": "sha256:cae72da5c33f52868c76c2ee0d26f8bf9789135bc5a1d945f6c315352d0e154f",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:aa5df8a293703ccb0ec2f3eb1ee21ce8e0bb702709115c8f81e992e579086cd6"
+    }
+  },
+  {
+    "name": "migrations-commit-postgres/history-pending",
+    "operation": "migration-history",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "migrations pull",
+        "args": [
+          "migrations",
+          "pull",
+          "oci://harness-registry:5000/migrations/migrations-commit-postgres@<digest>",
+          "--out",
+          "/source/migrations"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/migrations-commit-postgres/history-pending/0-migrations-pull.txt"
+      },
+      {
+        "command": "migrations status",
+        "args": [
+          "migrations",
+          "status",
+          "--migrations-dir",
+          "/source/migrations",
+          "--json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/migrations-commit-postgres/history-pending/1-migrations-status.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "migrationHistory": {
+        "contract_version": 2,
+        "current_version": 0,
+        "has_pending_changes": true,
+        "migrations": [
+          {
+            "checksum": "33f25c7e11fe8d4443ebe136d82a21689a0f6a70045e5bf5bd50e5c53aa4a4bc",
+            "description": "Create",
+            "state": "pending",
+            "version": 1,
+            "version_key": "1"
+          }
+        ],
+        "pending_migrations": [
+          1
+        ],
+        "total_migrations": 1
+      },
+      "operation": "migration-history",
+      "operationId": "sha256:6773187ba3c52809d88ff62a1769f3d1f4a5c5d0466a6972ee3ea80a9f0eb841",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:aa5df8a293703ccb0ec2f3eb1ee21ce8e0bb702709115c8f81e992e579086cd6"
+    }
+  },
+  {
+    "name": "migrations-commit-postgres/resolve",
+    "operation": "resolve",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "oci resolve",
+        "args": [
+          "oci",
+          "resolve",
+          "oci://harness-registry:5000/migrations/migrations-commit-postgres:v1",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/migrations-commit-postgres/resolve/0-oci-resolve.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "operation": "resolve",
+      "operationId": "sha256:47d1cbd3522d29528eeeca482b269e4d275521055cd7aa2ea616e8c66ebc0956",
+      "protocolVersion": 1,
+      "resolvedDigest": "<volatile>",
+      "resolvedMediaType": "application/vnd.oci.image.manifest.v1+json",
+      "resolvedReference": "oci://harness-registry:5000/migrations/migrations-commit-postgres@<digest>",
+      "resolvedSize": 1077,
+      "stdout": ""
+    }
+  },
+  {
+    "name": "migrations-commit-second-postgres/apply",
+    "operation": "migration-apply",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "migrations pull",
+        "args": [
+          "migrations",
+          "pull",
+          "oci://harness-registry:5000/migrations/migrations-commit-second-postgres@<digest>",
+          "--out",
+          "/source/migrations"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/migrations-commit-second-postgres/apply/0-migrations-pull.txt"
+      },
+      {
+        "command": "migrations up",
+        "args": [
+          "migrations",
+          "up",
+          "--migrations-dir",
+          "/source/migrations",
+          "--json",
+          "--expect-sequence",
+          "/work/ptah-expected-sequence-<random>.json"
+        ],
+        "exit": 2,
+        "stderr": "=== MIGRATE UP ===\nDatabase: postgres://postgres:***@harness-postgres:5432/harness_commit_second_postgres?sslmode=disable\nDialect: postgres\nMigrations directory: /source/migrations\nMigration directory format: auto\nTransaction mode: file\n\nCurrent version: 0\nTotal migrations: 2\nPending migrations: 2\n\ntime=<time> level=INFO msg=\"Migrating up\" correlation_id=<random> command=migrations.up currentVersion=0 totalMigrations=2\ntime=<time> level=INFO msg=\"Applying migration\" correlation_id=<random> command=migrations.up version=1 description=Create\ntime=<time> level=INFO msg=\"Applied migration\" correlation_id=<random> command=migrations.up version=1 description=Create\ntime=<time> level=INFO msg=\"Applying migration\" correlation_id=<random> command=migrations.up version=2 description=Orphan\nerror: error running migrations: failed to commit transaction for migration 2: ERROR: insert or update on table \"child\" violates foreign key constraint \"child_parent_id_fkey\" (SQLSTATE 23503)\n",
+        "stdout": "migrations-up-commit-failed-second.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "error": {
+        "code": "child_exit",
+        "message": "ptah exited with code 2"
+      },
+      "migrationRun": {
+        "applied": [
+          1
+        ],
+        "contract_version": 2,
+        "direction": "up",
+        "failure": {
+          "commit": true,
+          "sqlstate": "23503",
+          "statement": 0,
+          "statements": 1,
+          "version": 2
+        },
+        "outcome": "failed",
+        "planned": [
+          1,
+          2
+        ],
+        "status": {
+          "contract_version": 2,
+          "current_version": 1,
+          "dirty_revision": {
+            "applied": 0,
+            "total": 1,
+            "version": 2
+          },
+          "has_pending_changes": true,
+          "migrations": [
+            {
+              "applied_at": "<volatile>",
+              "applied_checksum": "a29a6e34c6b14a1dba5b4b3d44fcc01de7651203e92dd411eb4cc1d859150f00",
+              "checksum": "a29a6e34c6b14a1dba5b4b3d44fcc01de7651203e92dd411eb4cc1d859150f00",
+              "description": "Create",
+              "execution_time_ms": 0,
+              "state": "applied",
+              "version": 1,
+              "version_key": "1"
+            },
+            {
+              "applied_at": "<volatile>",
+              "checksum": "b04d2507b96d95c46cd8317a755c78b2a88d248b5cd20d1b04cfec2dd6289984",
+              "description": "Orphan",
+              "execution_time_ms": 0,
+              "state": "dirty",
+              "version": 2,
+              "version_key": "2"
+            }
+          ],
+          "pending_migrations": [
+            2
+          ],
+          "total_migrations": 2
+        }
+      },
+      "mutationStarted": true,
+      "operation": "migration-apply",
+      "operationId": "sha256:7cc04b7727db573396b8bc5e57c03c2cf8fc354054c7422b578e2c03d1f4ea47",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:79807ee2bdd23b5027edd702252bfda399b875db1ecdedefb4e308d366798b0f"
+    }
+  },
+  {
+    "name": "migrations-commit-second-postgres/history-dirty",
+    "operation": "migration-history",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "migrations pull",
+        "args": [
+          "migrations",
+          "pull",
+          "oci://harness-registry:5000/migrations/migrations-commit-second-postgres@<digest>",
+          "--out",
+          "/source/migrations"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/migrations-commit-second-postgres/history-dirty/0-migrations-pull.txt"
+      },
+      {
+        "command": "migrations status",
+        "args": [
+          "migrations",
+          "status",
+          "--migrations-dir",
+          "/source/migrations",
+          "--json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/migrations-commit-second-postgres/history-dirty/1-migrations-status.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "migrationHistory": {
+        "contract_version": 2,
+        "current_version": 1,
+        "dirty_revision": {
+          "applied": 0,
+          "total": 1,
+          "version": 2
+        },
+        "has_pending_changes": true,
+        "migrations": [
+          {
+            "applied_at": "<volatile>",
+            "applied_checksum": "a29a6e34c6b14a1dba5b4b3d44fcc01de7651203e92dd411eb4cc1d859150f00",
+            "checksum": "a29a6e34c6b14a1dba5b4b3d44fcc01de7651203e92dd411eb4cc1d859150f00",
+            "description": "Create",
+            "execution_time_ms": 0,
+            "state": "applied",
+            "version": 1,
+            "version_key": "1"
+          },
+          {
+            "applied_at": "<volatile>",
+            "checksum": "b04d2507b96d95c46cd8317a755c78b2a88d248b5cd20d1b04cfec2dd6289984",
+            "description": "Orphan",
+            "execution_time_ms": 0,
+            "state": "dirty",
+            "version": 2,
+            "version_key": "2"
+          }
+        ],
+        "pending_migrations": [
+          2
+        ],
+        "total_migrations": 2
+      },
+      "operation": "migration-history",
+      "operationId": "sha256:13b2c317b78cc84c37135af0dca38c78a4dfdbfc72f57cfe8d3ae15ab1cb4cb1",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:79807ee2bdd23b5027edd702252bfda399b875db1ecdedefb4e308d366798b0f"
+    }
+  },
+  {
+    "name": "migrations-commit-second-postgres/history-pending",
+    "operation": "migration-history",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "migrations pull",
+        "args": [
+          "migrations",
+          "pull",
+          "oci://harness-registry:5000/migrations/migrations-commit-second-postgres@<digest>",
+          "--out",
+          "/source/migrations"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/migrations-commit-second-postgres/history-pending/0-migrations-pull.txt"
+      },
+      {
+        "command": "migrations status",
+        "args": [
+          "migrations",
+          "status",
+          "--migrations-dir",
+          "/source/migrations",
+          "--json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/migrations-commit-second-postgres/history-pending/1-migrations-status.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "migrationHistory": {
+        "contract_version": 2,
+        "current_version": 0,
+        "has_pending_changes": true,
+        "migrations": [
+          {
+            "checksum": "a29a6e34c6b14a1dba5b4b3d44fcc01de7651203e92dd411eb4cc1d859150f00",
+            "description": "Create",
+            "state": "pending",
+            "version": 1,
+            "version_key": "1"
+          },
+          {
+            "checksum": "b04d2507b96d95c46cd8317a755c78b2a88d248b5cd20d1b04cfec2dd6289984",
+            "description": "Orphan",
+            "state": "pending",
+            "version": 2,
+            "version_key": "2"
+          }
+        ],
+        "pending_migrations": [
+          1,
+          2
+        ],
+        "total_migrations": 2
+      },
+      "operation": "migration-history",
+      "operationId": "sha256:fa29f31ac347743ae545c34f65815045b6dd0069d0cc75d55812efcd1fb72855",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:79807ee2bdd23b5027edd702252bfda399b875db1ecdedefb4e308d366798b0f"
+    }
+  },
+  {
+    "name": "migrations-commit-second-postgres/resolve",
+    "operation": "resolve",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "oci resolve",
+        "args": [
+          "oci",
+          "resolve",
+          "oci://harness-registry:5000/migrations/migrations-commit-second-postgres:v1",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/migrations-commit-second-postgres/resolve/0-oci-resolve.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "operation": "resolve",
+      "operationId": "sha256:8692bd863edd8a17f0ddad6566fb953247ef71198b97747b3b7582b309450173",
+      "protocolVersion": 1,
+      "resolvedDigest": "<volatile>",
+      "resolvedMediaType": "application/vnd.oci.image.manifest.v1+json",
+      "resolvedReference": "oci://harness-registry:5000/migrations/migrations-commit-second-postgres@<digest>",
+      "resolvedSize": 1543,
       "stdout": ""
     }
   },
@@ -10968,7 +14160,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:e238787c6e103842d8153275747dc4c12139e3c8730398edf350b411c42a9eed",
-      "planContentDigest": "sha256:841b4f5368a374bf6f8679e4c9068a8daf372f0d56cbf76aca59855a379cd0bf",
+      "planContentDigest": "sha256:e1902eac27e8eb3982c8023ec601910c5bccd955ad97a32a672b11ba53ba8194",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:2dccb54e938085ead09e112c6a4fdb717595ab8f5340be1592f9aaf353dc1dc2"
@@ -10987,7 +14179,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/policy-existing-table@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/policy-existing-table/observe-no-policy/0-schema-pull.txt"
@@ -11071,7 +14264,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/policy-existing-table@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/policy-existing-table/plan/0-schema-pull.txt"
@@ -11123,7 +14317,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:695dc0c4396898edf8da9d83af2503823019a01d03bbb44da09696243cb052a9",
-      "planContentDigest": "sha256:841b4f5368a374bf6f8679e4c9068a8daf372f0d56cbf76aca59855a379cd0bf",
+      "planContentDigest": "sha256:e1902eac27e8eb3982c8023ec601910c5bccd955ad97a32a672b11ba53ba8194",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -11234,7 +14428,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:a9021452fd7311fba0e45cffc339db39a6d2b471d4aaa6b4b4743d14e227cf3d",
-      "planContentDigest": "sha256:79b4674262befcfedccf61ef14668c2ac63ee160205057a1172912cbe0b87ccc",
+      "planContentDigest": "sha256:0486dc885c6989ad362cc49f93ca1d22f2150c45698bc7144598b2f37dbf7aa9",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:1922c2ccf1ea8fe4075657954ce0e3c710e2fd059b83cf4e5d41152ed6f52960"
@@ -11253,7 +14447,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/policy-new-table@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/policy-new-table/observe-converged/0-schema-pull.txt"
@@ -11322,7 +14517,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/policy-new-table@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/policy-new-table/plan/0-schema-pull.txt"
@@ -11374,7 +14570,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:76695c3a4cad8737354239ff68526f9c780f309c08af6c1d1c70aac7c4578c52",
-      "planContentDigest": "sha256:79b4674262befcfedccf61ef14668c2ac63ee160205057a1172912cbe0b87ccc",
+      "planContentDigest": "sha256:0486dc885c6989ad362cc49f93ca1d22f2150c45698bc7144598b2f37dbf7aa9",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -11504,7 +14700,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/rows-mysql@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/rows-mysql/observe-edited/0-schema-pull.txt"
@@ -11583,7 +14780,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/rows-mysql@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/rows-mysql/plan/0-schema-pull.txt"
@@ -11656,7 +14854,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/rows-mysql@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/rows-mysql/plan-edited/0-schema-pull.txt"
@@ -11729,7 +14928,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/rows-mysql@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/rows-mysql/plan-fenced/0-schema-pull.txt"
@@ -11866,7 +15066,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:92cf0cfa5b735a043fe6c1e52134263f7bfca3d0b68d2ac08558053dcd270378",
-      "planContentDigest": "sha256:1573872295d7810ba95c2c04d656c6b3d686ff4038daae42c19fd8b1ecb26437",
+      "planContentDigest": "sha256:00352ec4c7f9fb9d379b8e5de64b5f2337394a810040f4880bbe6d3ef4b763e7",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:24ec3e794a34e79469f1c3f51917c79c8e4400d061a6d2cadaa8e8d8efcc565f"
@@ -11885,7 +15085,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/rows-postgres@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/rows-postgres/observe-edited/0-schema-pull.txt"
@@ -11964,7 +15165,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/rows-postgres@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/rows-postgres/plan/0-schema-pull.txt"
@@ -12016,7 +15218,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:99c6bdbf7e31acde15cd5602b377eed4c9e13eccf41cb55236184c466825b5d9",
-      "planContentDigest": "sha256:1573872295d7810ba95c2c04d656c6b3d686ff4038daae42c19fd8b1ecb26437",
+      "planContentDigest": "sha256:00352ec4c7f9fb9d379b8e5de64b5f2337394a810040f4880bbe6d3ef4b763e7",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -12037,7 +15239,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/rows-postgres@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/rows-postgres/plan-edited/0-schema-pull.txt"
@@ -12089,7 +15292,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:e6eedc4397731172935e4a0742efd748fb3c7ca7ce81bd954d6eb30efe91b701",
-      "planContentDigest": "sha256:78e095e77f932c0a443d5fcee747dca691e234212e7e631664a88f34f98ed45a",
+      "planContentDigest": "sha256:df843bc54ede03f5751a5a6c9b1a973e61adc42c86ceeec4ff0ce83008afa222",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -12110,7 +15313,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/rows-postgres@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/rows-postgres/plan-fenced/0-schema-pull.txt"
@@ -12247,7 +15451,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:67d2ba2cbe52acb7ebb6e0d8c3acff1650e804666b86de4b607ae00b063dc8d5",
-      "planContentDigest": "sha256:0554a8d43d1f9c5d09edb98f5c64910014be2ad1b518dc495b5c0459342009b8",
+      "planContentDigest": "sha256:513607f97071ddf576067a06d7a6f08bc423969575dc2a7c45b7795cda43ff21",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:6afcc36a43a5e163556bba7a2ad5a600cc6148c556477a6a1e8ba6521d93d0eb"
@@ -12464,7 +15668,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:5857ccdd77f7a3e1df43cc3f27bd4c332c3e5be39602e0592219a6103c3f3026",
-      "planContentDigest": "sha256:0554a8d43d1f9c5d09edb98f5c64910014be2ad1b518dc495b5c0459342009b8",
+      "planContentDigest": "sha256:513607f97071ddf576067a06d7a6f08bc423969575dc2a7c45b7795cda43ff21",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -12681,7 +15885,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:fb67e4f5224ce06b5aff0949623d6da39ecb0e9b6921fc9a87a8006c1d7959a4",
-      "planContentDigest": "sha256:7f889b089646e87b835554a96739fbfcc4f0255c87d241d47dc9f3fe77abc0fa",
+      "planContentDigest": "sha256:fbd83bdb3572a1e4e6da45040ecfbffdbbe9bfbee2220da15a33a20178865469",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:0aa23be78bda77755ed69cf3dc30a05bac818b41f6403d494cb41e4592bd9218"
@@ -12833,7 +16037,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:3492c5098da26a4c003180db751d6af329e9bb7dabe3b7f87147aafd32dee26b",
-      "planContentDigest": "sha256:7f889b089646e87b835554a96739fbfcc4f0255c87d241d47dc9f3fe77abc0fa",
+      "planContentDigest": "sha256:fbd83bdb3572a1e4e6da45040ecfbffdbbe9bfbee2220da15a33a20178865469",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -12995,7 +16199,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/schema-mysql@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/schema-mysql/observe-column/0-schema-pull.txt"
@@ -13069,7 +16274,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/schema-mysql@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/schema-mysql/observe-converged/0-schema-pull.txt"
@@ -13133,7 +16339,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/schema-mysql@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/schema-mysql/observe-empty/0-schema-pull.txt"
@@ -13202,7 +16409,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/schema-mysql@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/schema-mysql/plan-column/0-schema-pull.txt"
@@ -13275,7 +16483,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/schema-mysql@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/schema-mysql/plan-converged/0-schema-pull.txt"
@@ -13331,7 +16540,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/schema-mysql@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/schema-mysql/plan-v1/0-schema-pull.txt"
@@ -13570,7 +16780,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:420dfc966f0c4faf513a9801736f7581e1cc343ffa8d08d4731fbb36857c28ad",
-      "planContentDigest": "sha256:428ef914c17d50007331d191fc78f2709b60cfbedf7339aecf49cff485017e56",
+      "planContentDigest": "sha256:26ecee715d9c79f6108d6e53d25f5a7c6745df0433ee06f4870c60e799a1e4da",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:0370562d361c3ed89e7a9333144ab50223cc3e15411d70de92259f3febb0d181"
@@ -13593,7 +16803,7 @@
           "--json"
         ],
         "exit": 2,
-        "stderr": "error: pre-planned migration is stale: the target database schema does not match the plan's source fingerprint (plan sha256:f6ca8486111bee58d99c7f9a5ea92e302e655f7e177c7e43fe5dd0f39e7d8af6, database sha256:510b7f6e9cc52bedfb50ca76176bfb6a0e49c257e84f3b741bab3d423eb2b58b); the database changed since the plan was computed, so re-run `schema plan` against the current database and review the fresh plan\n",
+        "stderr": "error: pre-planned migration is stale: the target database schema does not match the plan's source fingerprint (plan sha256:c7f9b4403b9defe033da48c7a37c9eca208e7c547f5336279aa8273bad907639, database sha256:b4a3193b87f06dafc0495a65aabd51166c18e0bf791cf16be72660f54d9eeb16); the database changed since the plan was computed, so re-run `schema plan` against the current database and review the fresh plan\n",
         "stdout": "runner-harness/documents/schema-postgres/apply-stale/0-schema-apply.json"
       }
     ],
@@ -13607,7 +16817,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:a9b48b550116d3bba765b81933285a94622ddcfd3a009db36b574f907f5dd59d",
-      "planContentDigest": "sha256:428ef914c17d50007331d191fc78f2709b60cfbedf7339aecf49cff485017e56",
+      "planContentDigest": "sha256:26ecee715d9c79f6108d6e53d25f5a7c6745df0433ee06f4870c60e799a1e4da",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:0370562d361c3ed89e7a9333144ab50223cc3e15411d70de92259f3febb0d181",
@@ -13641,7 +16851,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:bf09f6a9c67be0d070be66ef450704abc061b300f7fc64b53152f8e1a3f452f8",
-      "planContentDigest": "sha256:00558f524a7c21d09025aaa5c9506b4e03585851d2a1ef6c45c075702e958e6a",
+      "planContentDigest": "sha256:e944735dcae8d4ca343f0d2eb2e9885bde6e2125d8d702e503328d8158be8a16",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:0370562d361c3ed89e7a9333144ab50223cc3e15411d70de92259f3febb0d181"
@@ -13660,7 +16870,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/schema-postgres@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/schema-postgres/observe-column/0-schema-pull.txt"
@@ -13729,7 +16940,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/schema-postgres@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/schema-postgres/observe-converged/0-schema-pull.txt"
@@ -13788,7 +17000,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/schema-postgres@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/schema-postgres/observe-empty/0-schema-pull.txt"
@@ -13847,7 +17060,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/schema-postgres@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/schema-postgres/plan-column/0-schema-pull.txt"
@@ -13899,7 +17113,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:a720e527aa287c781368bd8face5668214e5f626f48e15dff2161a6c61918b68",
-      "planContentDigest": "sha256:428ef914c17d50007331d191fc78f2709b60cfbedf7339aecf49cff485017e56",
+      "planContentDigest": "sha256:26ecee715d9c79f6108d6e53d25f5a7c6745df0433ee06f4870c60e799a1e4da",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -13920,7 +17134,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/schema-postgres@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/schema-postgres/plan-converged/0-schema-pull.txt"
@@ -13976,7 +17191,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/schema-postgres@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/schema-postgres/plan-v1/0-schema-pull.txt"
@@ -14028,7 +17244,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:a3824fcf7333fd272602957b530dbdbf9477084f6ac36f119809d3ed3f6f3bb4",
-      "planContentDigest": "sha256:00558f524a7c21d09025aaa5c9506b4e03585851d2a1ef6c45c075702e958e6a",
+      "planContentDigest": "sha256:e944735dcae8d4ca343f0d2eb2e9885bde6e2125d8d702e503328d8158be8a16",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -14402,7 +17618,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:93d6129860652681dc5e646e3abf3a1c07970bf372ffebe316538875275c0f02",
-      "planContentDigest": "sha256:ca6c477bf8c0a34e703ddcf000e2081d8a16577d349955230089fc50a22ae3ce",
+      "planContentDigest": "sha256:df11f1eab9cc6678dc64818521dc7a67ad7f2547bb6d63885b29fc91ef232622",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:cb752d8d3b6891f65b155ece418db2f71ca31d5765467ce11c382fba44c28ded",
@@ -14422,7 +17638,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/statement-errors-my-cast-apply@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/statement-errors-my-cast-apply/observe/0-schema-pull.txt"
@@ -14442,8 +17659,13 @@
     "result": {
       "childExitCode": 0,
       "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
-      "driftFindingCount": 1,
+      "driftFindingCount": 2,
       "driftFindings": [
+        {
+          "category": "column_types_narrowed",
+          "count": 1,
+          "severity": "destructive"
+        },
         {
           "category": "columns_modified",
           "count": 1,
@@ -14467,8 +17689,8 @@
           "observed": 1
         }
       ],
-      "driftReportDigest": "sha256:ec50a9d3d2c06370c45f7fbc27962a0949b318b4c44ec34ef0f6bb1b0dd3c42c",
-      "highestDriftSeverity": "warning",
+      "driftReportDigest": "sha256:117635ad945b66c511390f5211dce81b59045127f91e82c908a73e365c824530",
+      "highestDriftSeverity": "destructive",
       "observedDialect": "mysql",
       "observedDrift": true,
       "operation": "observe",
@@ -14491,7 +17713,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/statement-errors-my-cast-apply@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/statement-errors-my-cast-apply/plan/0-schema-pull.txt"
@@ -14543,7 +17766,7 @@
       "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
       "operation": "plan",
       "operationId": "sha256:3da5ba2de04d31fef1aabb2b050f0f56ce3fb1a5ce965f5d3d9ab3f6ec0c1746",
-      "planContentDigest": "sha256:ca6c477bf8c0a34e703ddcf000e2081d8a16577d349955230089fc50a22ae3ce",
+      "planContentDigest": "sha256:df11f1eab9cc6678dc64818521dc7a67ad7f2547bb6d63885b29fc91ef232622",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -14678,7 +17901,7 @@
           "statements": 1,
           "version": 1
         },
-        "outcome": "failed",
+        "outcome": "unknown",
         "planned": [
           1
         ],
@@ -14713,7 +17936,8 @@
       "operationId": "sha256:8502eda12a33db5dad1ac56235701429289b0d6087182ff3d3eda3e121d26225",
       "protocolVersion": 1,
       "stdout": "",
-      "targetIdentityDigest": "sha256:5c47620affccd35a12f3d99e70757c3d35b5249c36fef4be69e7e677fc225a84"
+      "targetIdentityDigest": "sha256:5c47620affccd35a12f3d99e70757c3d35b5249c36fef4be69e7e677fc225a84",
+      "uncertain": true
     }
   },
   {
@@ -15215,7 +18439,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/statement-errors-my-unique-apply@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/statement-errors-my-unique-apply/observe/0-schema-pull.txt"
@@ -15289,7 +18514,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/statement-errors-my-unique-apply@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/statement-errors-my-unique-apply/plan/0-schema-pull.txt"
@@ -15476,7 +18702,7 @@
           "statements": 1,
           "version": 1
         },
-        "outcome": "failed",
+        "outcome": "unknown",
         "planned": [
           1
         ],
@@ -15511,7 +18737,8 @@
       "operationId": "sha256:d67ea4e79b217d1626a05d678cffb2b823a0b2e365029078a89e2ef43a2213a9",
       "protocolVersion": 1,
       "stdout": "",
-      "targetIdentityDigest": "sha256:046962fb07d8f0855a59d264fc02543bcd6851769a4cd6d561af0778678fb72c"
+      "targetIdentityDigest": "sha256:046962fb07d8f0855a59d264fc02543bcd6851769a4cd6d561af0778678fb72c",
+      "uncertain": true
     }
   },
   {
@@ -16169,7 +19396,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:c1a99cbcc0db807b9233dc9c299d5b0f0935658aa1aa3e153a11f05f1cb78f61",
-      "planContentDigest": "sha256:8afb27c3428cdda973b1f4b2d627f0b96b305a68c9b375de8ad12d3db66fc6ce",
+      "planContentDigest": "sha256:52faf9471d05d74f638c4e2a09ede0e7ad0487e9e0afd19c3bc6ca8581591089",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:84bc3f41a1da37f178ab17555c21a47c18eeb53429180faee85603f114644842",
@@ -16189,7 +19416,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/statement-errors-pg-unique-apply@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/statement-errors-pg-unique-apply/observe/0-schema-pull.txt"
@@ -16263,7 +19491,8 @@
           "pull",
           "oci://harness-registry:5000/schemas/statement-errors-pg-unique-apply@<digest>",
           "--out",
-          "/source/schema.hcl"
+          "/source/schema.hcl",
+          "--skip-parse"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/statement-errors-pg-unique-apply/plan/0-schema-pull.txt"
@@ -16315,7 +19544,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:a5ea4e54b515c5128026744c7db7ac5db4978f48865cb8f088196f7db076fc6f",
-      "planContentDigest": "sha256:8afb27c3428cdda973b1f4b2d627f0b96b305a68c9b375de8ad12d3db66fc6ce",
+      "planContentDigest": "sha256:52faf9471d05d74f638c4e2a09ede0e7ad0487e9e0afd19c3bc6ca8581591089",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -17101,8 +20330,8 @@
       "childExitCode": 2,
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "error": {
-        "code": "invalid_plan_output",
-        "message": "plan command did not complete successfully"
+        "code": "plan_refused",
+        "message": "ptah refused to plan the change (declaration-refused)"
       },
       "operation": "plan",
       "operationId": "sha256:0bb8578a811e1307ac6cda6f4a8a806cc6b576a523ada0ba5fe08955be1a8336",
@@ -17190,8 +20419,8 @@
       "childExitCode": 2,
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "error": {
-        "code": "invalid_plan_output",
-        "message": "plan command did not complete successfully"
+        "code": "plan_refused",
+        "message": "ptah refused to plan the change (declaration-refused)"
       },
       "operation": "plan",
       "operationId": "sha256:b5658c430190db225d3858e7aa6ed5d611ebec0ad333415c082d534122043312",

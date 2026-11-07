@@ -1,0 +1,55 @@
+{
+  "current_version": 1,
+  "applied_migrations": [
+    1
+  ],
+  "applied_migration_keys": [
+    "1"
+  ],
+  "pending_migrations": [
+    2
+  ],
+  "pending_migration_keys": [
+    "2"
+  ],
+  "out_of_order_migrations": [],
+  "total_migrations": 2,
+  "has_pending_changes": true,
+  "dirty_revision": {
+    "version": 2,
+    "description": "Orphan",
+    "state": "failed",
+    "direction": "up",
+    "applied": 0,
+    "total": 1,
+    "error": "ERROR: insert or update on table \"child\" violates foreign key constraint \"child_parent_id_fkey\" (SQLSTATE 23503)",
+    "execution_time": 8000000,
+    "checksum": "b04d2507b96d95c46cd8317a755c78b2a88d248b5cd20d1b04cfec2dd6289984",
+    "applied_at": "2026-11-07T17:03:00.973052Z",
+    "dirty": true
+  },
+  "contract_version": 2,
+  "command": "migrations status",
+  "migrations": [
+    {
+      "version": 1,
+      "version_key": "1",
+      "description": "Create",
+      "checksum": "a29a6e34c6b14a1dba5b4b3d44fcc01de7651203e92dd411eb4cc1d859150f00",
+      "applied_checksum": "a29a6e34c6b14a1dba5b4b3d44fcc01de7651203e92dd411eb4cc1d859150f00",
+      "applied_at": "2026-11-07T17:03:00.970995Z",
+      "execution_time_ms": 10,
+      "state": "applied"
+    },
+    {
+      "version": 2,
+      "version_key": "2",
+      "description": "Orphan",
+      "checksum": "b04d2507b96d95c46cd8317a755c78b2a88d248b5cd20d1b04cfec2dd6289984",
+      "applied_at": "2026-11-07T17:03:00.973052Z",
+      "execution_time_ms": 8,
+      "state": "dirty"
+    }
+  ],
+  "current_version_key": "2"
+}

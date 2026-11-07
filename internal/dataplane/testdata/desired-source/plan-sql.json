@@ -3,6 +3,6 @@
   "command": "schema plan",
   "outcome": "failed",
   "error": {
-    "message": "error parsing schema file: read SQL schema file /work/schema.sql: expected '(' after table name: expected Operator, got Identifier at position 180"
+    "message": "error parsing schema file: read SQL schema file /work/schema.sql:2:29: unsupported table option: INHERITS"
   }
 }

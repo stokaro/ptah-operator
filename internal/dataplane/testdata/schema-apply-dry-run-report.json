@@ -2,8 +2,8 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "dry-run",
-  "plan_name": "plan_4193a9b06516",
-  "plan_digest": "sha256:428ef914c17d50007331d191fc78f2709b60cfbedf7339aecf49cff485017e56",
+  "plan_name": "plan_6ff64a5ca06a",
+  "plan_digest": "sha256:26ecee715d9c79f6108d6e53d25f5a7c6745df0433ee06f4870c60e799a1e4da",
   "units": [
     {
       "sql": "ALTER TABLE \"e2e_widgets\" ADD COLUMN \"note\" text"

@@ -1,1 +1,1 @@
-postgres: source: error parsing schema file: read SQL schema file /source/schema/schema.sql: expected '(' after table name: expected Operator, got Identifier at position 180
+postgres: source: error parsing schema file: read SQL schema file /source/schema/schema.sql:2:29: unsupported table option: INHERITS

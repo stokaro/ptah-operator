@@ -1,0 +1,7 @@
+{
+  "contract_version": 1,
+  "command": "schema drift",
+  "error": {
+    "message": "error comparing declared rows: managed data file \"../../proc/self/environ\" for table public.regions: \"/proc/14/environ\" is outside allowed root \"/work\""
+  }
+}

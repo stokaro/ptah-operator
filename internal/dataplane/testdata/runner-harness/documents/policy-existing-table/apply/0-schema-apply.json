@@ -2,8 +2,8 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "applied",
-  "plan_name": "plan_cf081ae410b5",
-  "plan_digest": "sha256:841b4f5368a374bf6f8679e4c9068a8daf372f0d56cbf76aca59855a379cd0bf",
+  "plan_name": "plan_9c0b548d683f",
+  "plan_digest": "sha256:e1902eac27e8eb3982c8023ec601910c5bccd955ad97a32a672b11ba53ba8194",
   "units": [
     {
       "sql": "CREATE POLICY \"e2e_policy_notes_owner\" ON \"e2e_policy_notes\"\n    USING (owner_name = current_user)"

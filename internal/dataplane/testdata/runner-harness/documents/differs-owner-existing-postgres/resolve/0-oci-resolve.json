@@ -1,0 +1,7 @@
+{
+  "reference": "oci://harness-registry:5000/schemas/differs-owner-existing-postgres:v1",
+  "pinned_reference": "oci://harness-registry:5000/schemas/differs-owner-existing-postgres@sha256:5c64ec848b7b792f696b19dc690cf0f7f7844e05b3d463838bab556d7c71d7b9",
+  "digest": "sha256:5c64ec848b7b792f696b19dc690cf0f7f7844e05b3d463838bab556d7c71d7b9",
+  "media_type": "application/vnd.oci.image.manifest.v1+json",
+  "size": 813
+}

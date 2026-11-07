@@ -1,2 +1,3 @@
-Pulled oci://harness-registry:5000/schemas/differs-auto-increment-mysql@sha256:771b7352d377f477a07dab05e0039c49cd04aa89198b988f287d1023c278f170 to /source/schema.hcl
-Digest: sha256:771b7352d377f477a07dab05e0039c49cd04aa89198b988f287d1023c278f170
+Pulled oci://harness-registry:5000/schemas/differs-auto-increment-mysql@sha256:18f9e97bb9b6948a7891e4a758dfc1a4c2bb99eca96fbc836953764cb65d8ed9 to /source/schema.hcl, /source/managed-data.json
+Digest: sha256:18f9e97bb9b6948a7891e4a758dfc1a4c2bb99eca96fbc836953764cb65d8ed9
+Not parsed: the next command that reads the file reports what it cannot read.
