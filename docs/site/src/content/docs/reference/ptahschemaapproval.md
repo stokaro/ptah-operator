@@ -17,7 +17,9 @@ disagrees, then stamps who you are and when from the authenticated request.
 ### What a person writes
 
 Three identifiers. Read the plan first, then copy them out of the resources the
-operator already published:
+operator already published. If `kubectl ptah plan` prints an `Unread fields:` line,
+do not approve the plan until a plugin at the operator's version has read it whole:
+admission holds these identifiers to the plan and does not read the plan.
 
 ```sh
 kubectl ptah plan application -n application

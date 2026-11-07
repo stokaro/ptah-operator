@@ -145,9 +145,9 @@ does not record is listed after them, marked `(read by this plugin, not
 recorded)`: the plugin and the manager that published the plan are different
 builds, and the manager did not hold the plan for it.
 
-`-o sql` prints the statements alone, in the order the plan holds them, each
-terminated once, with no line above them: it is the format a script reads and a
-reviewer diffs. Nothing is re-split on a semicolon: a statement may carry one
+`-o sql` prints the statements of a plan this plugin reads whole, in the order
+the plan holds them, each terminated once, with no line above them: it is the
+format a script reads and a reviewer diffs. Nothing is re-split on a semicolon: a statement may carry one
 inside a string, a comment or a function body.
 
 `-o json` prints the stored plan document byte for byte, so what you save still
@@ -163,13 +163,15 @@ ptah plan` still shows it, under a line that names them, and prints no value of
 theirs:
 
 ```text
-Unread fields:  annotations, statements[].inputs (a newer Ptah wrote them; this plugin does not read them and does not approve this plan)
+Unread fields:  annotations, statements[].inputs (a newer Ptah wrote them and this plugin does not read them; read this plan with a plugin at the operator's version before you approve it)
 ```
 
-`-o sql` prints the statements and names the fields on standard error. `-o json`
-exits `1`, because the stored document holds those values. `kubectl ptah approve`
-exits `1` too and approves nothing: an approval is a decision about the whole
-document, so move the plugin to the operator's version to approve this plan.
+`-o sql` and `-o json` exit `1` on such a plan and print nothing. A program takes
+what they print for the whole plan, and a plan with an unread field can run
+differently from what its statements suggest, so a pipe into a database must not
+get them. `kubectl ptah approve` exits `1` too and approves nothing: an approval is
+a decision about the whole document, so move the plugin to the operator's version
+to approve this plan.
 [API compatibility](../../support/api-compatibility/#what-a-display-read-of-a-stored-plan-covers)
 says what this covers.
 

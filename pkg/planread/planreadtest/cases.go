@@ -33,8 +33,7 @@ type Want struct {
 	PlanName   string
 	Document   []byte
 	Statements []string
-	// UnreadFields are the names a display read gives. A plan that has any
-	// comes with no Document.
+	// UnreadFields are the names a display read gives.
 	UnreadFields []string
 }
 
@@ -179,7 +178,7 @@ func withUnreadFields(t testing.TB, display bool) Case {
 	}
 	return Case{
 		Name:        "unread-fields",
-		Description: "A document with fields this build does not declare. Load refuses it, and a display read names the fields and hands over no value of theirs.",
+		Description: "A document with fields this build does not declare. Load refuses it, and a display read names the fields and hands over nothing of what they hold.",
 		Schema:      "storefront",
 		Selection:   planread.Current,
 		Objects:     lab.Objects(t),

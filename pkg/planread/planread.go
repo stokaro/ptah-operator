@@ -17,7 +17,8 @@
 // Load refuses a document that carries a field this build does not declare,
 // the way the manager and the runner do. An approval is a decision about the
 // whole document, so it reads through Load. LoadForDisplay is for showing a
-// plan: it makes the same checks and names such a field instead of refusing.
+// plan: it makes the same checks, names such a field instead of refusing, and
+// returns a DisplayPlan, which an approval cannot be built from.
 //
 // The Go API carries no compatibility promise before v1, like the API it reads.
 // Pin the module version. The API compatibility page says what LoadForDisplay
@@ -29,6 +30,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -87,6 +89,10 @@ var (
 	// another document format, or, for Load, a field this build does not
 	// declare.
 	ErrUnsupported = errors.New("unsupported plan format")
+	// ErrUnreadFields is a document with fields this build does not declare.
+	// Load refuses it and LoadForDisplay reads it. An error that matches this
+	// one also matches ErrUnsupported.
+	ErrUnreadFields = errors.New("the document carries fields this build does not read")
 	// ErrIntegrity is a stored plan that failed a check: a plan recreated
 	// under the name the status holds, a plan of another schema, a storage
 	// commit that did not finish, a chunk that is missing, replaced, owned by
@@ -161,16 +167,66 @@ type Plan struct {
 	// identifier an approval names.
 	Manifest operatorv1alpha1.PtahSchemaPlan
 	// Document is the bytes the store reconstructed and checked against the
-	// plan's content digest: the plan as it was published. It is empty when
-	// UnreadFields is not, because those bytes hold the values of fields this
-	// build does not read, and nothing here may print what it has not read.
+	// plan's content digest: the plan as it was published.
 	Document []byte
-	// UnreadFields names the fields of the document this build does not
-	// declare, sorted, with a statement's as statements[].NAME. Only
-	// LoadForDisplay sets it. It holds names and never a value: a value could
-	// be what strict decoding keeps away from an Apply, such as the name of a
-	// credential's environment variable in a statement's inputs.
+}
+
+// DisplayPlan is what LoadForDisplay shows a person of a stored plan.
+//
+// It is a type of its own so that the compiler holds what that read promises:
+// nothing that takes a Plan takes this. It carries no UID, which an approval
+// binds, no manifest, and no document, whose bytes hold the values of the fields
+// this build did not read. It has no SQL method either, since its statements
+// alone can run differently from the plan they came from.
+type DisplayPlan struct {
+	Namespace string
+	Schema    string
+	Selection Selection
+
+	PlanName      string
+	Fingerprint   string
+	ContentDigest string
+	Dialect       string
+	// Destructive is what the plan object records.
+	Destructive bool
+	// PrivilegeChanges and UnrecordedPrivilegeChanges are Plan's.
+	PrivilegeChanges           []string
+	UnrecordedPrivilegeChanges []string
+
+	Statements  []Statement
+	ManagedRows []RowSet
+	Chunks      []Chunk
+
+	CreatedAt   metav1.Time
+	CompletedAt *metav1.Time
+
+	// UnreadFields names the fields of the document this build does not declare,
+	// sorted, with a statement's as statements[].NAME. It holds names and never
+	// a value: a value could be what strict decoding keeps away from an Apply,
+	// such as the name of a credential's environment variable in a statement's
+	// inputs.
 	UnreadFields []string
+}
+
+// Display is a plan read whole, as a display read would show it.
+func (p Plan) Display() DisplayPlan {
+	return DisplayPlan{
+		Namespace:                  p.Namespace,
+		Schema:                     p.Schema,
+		Selection:                  p.Selection,
+		PlanName:                   p.PlanName,
+		Fingerprint:                p.Fingerprint,
+		ContentDigest:              p.ContentDigest,
+		Dialect:                    p.Dialect,
+		Destructive:                p.Destructive,
+		PrivilegeChanges:           p.PrivilegeChanges,
+		UnrecordedPrivilegeChanges: p.UnrecordedPrivilegeChanges,
+		Statements:                 p.Statements,
+		ManagedRows:                p.ManagedRows,
+		Chunks:                     p.Chunks,
+		CreatedAt:                  p.CreatedAt,
+		CompletedAt:                p.CompletedAt,
+	}
 }
 
 // SQL renders the statements as they were stored: one per entry, in order,
@@ -193,15 +249,23 @@ func (p Plan) SQL() string {
 // after half the SQL has been handed over.
 //
 // A document with a field this build does not declare is refused with
-// ErrUnsupported. Anything that decides on a plan, an approval first of all,
-// reads through this function.
+// ErrUnreadFields, which also matches ErrUnsupported. Anything that decides on a
+// plan, an approval first of all, reads through this function.
 func Load(
 	ctx context.Context,
 	reader client.Reader,
 	namespace, name string,
 	selection Selection,
 ) (Plan, error) {
-	return load(ctx, reader, namespace, name, selection, decodeStrictly)
+	stored, err := readStored(ctx, reader, namespace, name, selection)
+	if err != nil {
+		return Plan{}, err
+	}
+	decoded, err := decodeStrictly(stored.document, stored.dialect)
+	if err != nil {
+		return Plan{}, stored.unsupported(err)
+	}
+	return stored.read(decoded), nil
 }
 
 // LoadForDisplay is Load for showing a plan to a person, and for nothing else.
@@ -209,8 +273,8 @@ func Load(
 // A stored plan outlives an upgrade, so a reader can meet a document from a
 // Ptah newer than itself, with a field added at the same plan contract and
 // format version. This read makes every check Load makes on the stored objects
-// and on the fields it declares, and answers with the plan, its unknown fields
-// named in UnreadFields, and no Document.
+// and on the fields it declares, and answers with the plan and its unknown fields
+// named in UnreadFields.
 //
 // Do not offer an approval from it, or decide anything else on it. A person who
 // reads this plan has not read those fields, and a field Ptah added can change
@@ -220,40 +284,74 @@ func LoadForDisplay(
 	reader client.Reader,
 	namespace, name string,
 	selection Selection,
-) (Plan, error) {
-	return load(ctx, reader, namespace, name, selection, decodeForDisplay)
+) (DisplayPlan, error) {
+	stored, err := readStored(ctx, reader, namespace, name, selection)
+	if err != nil {
+		return DisplayPlan{}, err
+	}
+	decoded, unread, err := decodeForDisplay(stored.document, stored.dialect)
+	if err != nil {
+		return DisplayPlan{}, stored.unsupported(err)
+	}
+	shown := stored.read(decoded).Display()
+	shown.UnreadFields = unread
+	return shown, nil
 }
 
-// planDecoder reads a stored document against a dialect. It returns the names of
-// the fields it left unread, which only a display read has.
-type planDecoder func(document []byte, dialect string) (dataplane.PlanFile, []string, error)
-
-func decodeStrictly(document []byte, dialect string) (dataplane.PlanFile, []string, error) {
+// decodeStrictly is dataplane.DecodePlan with a refusal that names every field it
+// would not read and quotes no key. The decoder's message quotes the first
+// unknown key, whatever it holds, and this message reaches a terminal and a
+// console page.
+func decodeStrictly(document []byte, dialect string) (dataplane.PlanFile, error) {
 	decoded, err := dataplane.DecodePlan(document, dialect)
-	return decoded, nil, err
+	if err == nil {
+		return decoded, nil
+	}
+	_, unread, walkErr := withoutUnreadFields(document)
+	switch {
+	case walkErr != nil:
+		return dataplane.PlanFile{}, walkErr
+	case len(unread) > 0:
+		return dataplane.PlanFile{}, fmt.Errorf("%w: %s", ErrUnreadFields, strings.Join(unread, ", "))
+	default:
+		return dataplane.PlanFile{}, err
+	}
 }
 
-func load(
+// storedPlan is a plan whose every check on the stored objects has held, and the
+// bytes those checks verified.
+type storedPlan struct {
+	schema      *operatorv1alpha1.PtahSchema
+	plan        *operatorv1alpha1.PtahSchemaPlan
+	completedAt *metav1.Time
+	selection   Selection
+	document    []byte
+	// dialect is the one the manifest recorded, not the engine the schema targets
+	// now. A plan that was applied is a plan that was applied, and a target
+	// changed since then does not make it unreadable.
+	dialect string
+}
+
+func readStored(
 	ctx context.Context,
 	reader client.Reader,
 	namespace, name string,
 	selection Selection,
-	decode planDecoder,
-) (Plan, error) {
+) (storedPlan, error) {
 	schema := &operatorv1alpha1.PtahSchema{}
 	if err := reader.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, schema); err != nil {
 		if client.IgnoreNotFound(err) == nil {
-			return Plan{}, fmt.Errorf("%w: %s/%s", ErrSchemaNotFound, namespace, name)
+			return storedPlan{}, fmt.Errorf("%w: %s/%s", ErrSchemaNotFound, namespace, name)
 		}
-		return Plan{}, fmt.Errorf("read schema %s/%s: %w", namespace, name, err)
+		return storedPlan{}, fmt.Errorf("read schema %s/%s: %w", namespace, name, err)
 	}
 
 	plan, completedAt, err := resolve(ctx, reader, schema, selection)
 	if err != nil {
-		return Plan{}, err
+		return storedPlan{}, err
 	}
 	if !SupportedContract(plan.Spec.ContractVersion) {
-		return Plan{}, fmt.Errorf("%w: %s records plan contract %d, which this build does not read",
+		return storedPlan{}, fmt.Errorf("%w: %s records plan contract %d, which this build does not read",
 			ErrUnsupported, plan.Name, plan.Spec.ContractVersion)
 	}
 
@@ -261,44 +359,47 @@ func load(
 	if err != nil {
 		err = fmt.Errorf("read the stored plan %s: %w", plan.Name, err)
 		if errors.Is(err, planstore.ErrVerification) {
-			return Plan{}, integrity(err)
+			return storedPlan{}, integrity(err)
 		}
-		return Plan{}, err
+		return storedPlan{}, err
 	}
-	// Against the dialect the manifest recorded, not against the engine the
-	// schema targets now. A plan that was applied is a plan that was applied,
-	// and a target changed since then does not make it unreadable.
-	decoded, unread, err := decode(document, plan.Spec.Dialect)
-	if err != nil {
-		return Plan{}, fmt.Errorf("%w: %s: %w", ErrUnsupported, plan.Name, err)
-	}
+	return storedPlan{
+		schema:      schema,
+		plan:        plan,
+		completedAt: completedAt,
+		selection:   selection,
+		document:    document,
+		dialect:     plan.Spec.Dialect,
+	}, nil
+}
 
-	read := Plan{
-		Namespace:                  schema.Namespace,
-		Schema:                     schema.Name,
-		SchemaUID:                  schema.UID,
-		Selection:                  selection,
-		PlanName:                   plan.Name,
-		PlanUID:                    plan.UID,
-		Fingerprint:                plan.Spec.Fingerprint,
-		ContentDigest:              plan.Spec.ContentDigest,
-		Dialect:                    plan.Spec.Dialect,
-		Destructive:                plan.Spec.Destructive,
-		PrivilegeChanges:           recorded(plan),
-		UnrecordedPrivilegeChanges: unrecorded(plan, decoded),
-		Statements:                 statements(decoded, storedSeverities(document, len(decoded.Statements))),
+func (s storedPlan) unsupported(err error) error {
+	return fmt.Errorf("%w: %s: %w", ErrUnsupported, s.plan.Name, err)
+}
+
+// read assembles the plan from what a decoder made of its document.
+func (s storedPlan) read(decoded dataplane.PlanFile) Plan {
+	return Plan{
+		Namespace:                  s.schema.Namespace,
+		Schema:                     s.schema.Name,
+		SchemaUID:                  s.schema.UID,
+		Selection:                  s.selection,
+		PlanName:                   s.plan.Name,
+		PlanUID:                    s.plan.UID,
+		Fingerprint:                s.plan.Spec.Fingerprint,
+		ContentDigest:              s.plan.Spec.ContentDigest,
+		Dialect:                    s.plan.Spec.Dialect,
+		Destructive:                s.plan.Spec.Destructive,
+		PrivilegeChanges:           recorded(s.plan),
+		UnrecordedPrivilegeChanges: unrecorded(s.plan, decoded),
+		Statements:                 statements(decoded, storedSeverities(s.document, len(decoded.Statements))),
 		ManagedRows:                rowSets(decoded),
-		Chunks:                     chunks(plan),
-		CreatedAt:                  plan.CreationTimestamp,
-		CompletedAt:                completedAt,
-		Manifest:                   *plan.DeepCopy(),
-		Document:                   document,
-		UnreadFields:               unread,
+		Chunks:                     chunks(s.plan),
+		CreatedAt:                  s.plan.CreationTimestamp,
+		CompletedAt:                s.completedAt,
+		Manifest:                   *s.plan.DeepCopy(),
+		Document:                   s.document,
 	}
-	if len(unread) > 0 {
-		read.Document = nil
-	}
-	return read, nil
 }
 
 // recorded is what the plan records, shown as recorded, a kind this build

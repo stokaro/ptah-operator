@@ -120,8 +120,9 @@ func TestLoadRefusesAPlanItCannotReadWhole(t *testing.T) {
 	if !reflect.DeepEqual(review, approve.Review{}) {
 		t.Fatalf("Load() returned a review with its error: %+v", review)
 	}
-	if !strings.Contains(err.Error(), "kubectl ptah plan storefront") || strings.Contains(err.Error(), planreadtest.UnreadValue) {
-		t.Fatalf("the refusal does not say what to do, or quotes a value: %v", err)
+	hint := "kubectl ptah plan storefront -n " + planreadtest.Namespace
+	if !strings.Contains(err.Error(), hint) || strings.Contains(err.Error(), planreadtest.UnreadValue) {
+		t.Fatalf("the refusal does not say %q, or quotes a value: %v", hint, err)
 	}
 	// The same plan, through the read that shows it, reads: what stops the
 	// approval is the read approve takes, and not the plan.

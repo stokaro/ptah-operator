@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 	"testing"
 
@@ -60,9 +59,6 @@ func holdAnswer(t *testing.T, c planreadtest.Case, plan planread.Plan, err error
 	}
 	if !bytes.Equal(plan.Document, c.Want.Document) {
 		t.Fatal("the document read back is not the document that was stored")
-	}
-	if !slices.Equal(plan.UnreadFields, c.Want.UnreadFields) {
-		t.Fatalf("the read names the unread fields %v, want %v", plan.UnreadFields, c.Want.UnreadFields)
 	}
 	if len(plan.Statements) != len(c.Want.Statements) {
 		t.Fatalf("the read returned %d statements, want %d", len(plan.Statements), len(c.Want.Statements))

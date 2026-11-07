@@ -15,7 +15,6 @@ import (
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/pkg/planread"
@@ -25,6 +24,8 @@ import (
 const (
 	unreadValue = planreadtest.UnreadValue
 	rowsDigest  = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+	// addedKey is the field the rows that keep Ptah's indentation add as text.
+	addedKey = "added_by_a_newer_ptah"
 )
 
 var oneStatement = []string{"CREATE TABLE customers (id BIGINT PRIMARY KEY)"}
@@ -57,6 +58,18 @@ func withMember(t *testing.T, member string) []byte {
 	return append([]byte("{"+member+","), document[1:]...)
 }
 
+// withAddedKey adds one field as text to a document as Ptah writes it, which is
+// indented, so the walk runs over those bytes and not over a recoding of them.
+func withAddedKey(t *testing.T, document []byte) []byte {
+	t.Helper()
+	const top = "{\n  \""
+	if !bytes.HasPrefix(document, []byte(top)) {
+		t.Fatalf("the document does not open as Ptah writes one: %.40q", document)
+	}
+	added := "{\n  \"" + addedKey + "\": \"" + unreadValue + "\",\n  \""
+	return append([]byte(added), document[len(top):]...)
+}
+
 // stored publishes a document as both the current and the applied plan.
 func stored(t *testing.T, document []byte, adjust ...func(*operatorv1alpha1.PtahSchemaPlanSpec)) *planreadtest.Lab {
 	t.Helper()
@@ -67,21 +80,31 @@ func stored(t *testing.T, document []byte, adjust ...func(*operatorv1alpha1.Ptah
 	return lab
 }
 
-func holdNoValue(t *testing.T, plan planread.Plan, err error) {
+func display(lab *planreadtest.Lab, selection planread.Selection) (planread.DisplayPlan, error) {
+	return planread.LoadForDisplay(context.Background(), lab.Client(), planreadtest.Namespace, "storefront", selection)
+}
+
+func strict(lab *planreadtest.Lab, selection planread.Selection) (planread.Plan, error) {
+	return planread.Load(context.Background(), lab.Client(), planreadtest.Namespace, "storefront", selection)
+}
+
+// holdNoValue holds what a read returned, and its error, to not showing the value
+// of a field it did not read.
+func holdNoValue(t *testing.T, read any, err error) {
 	t.Helper()
-	encoded, marshalErr := json.Marshal(plan)
+	encoded, marshalErr := json.Marshal(read)
 	if marshalErr != nil {
 		t.Fatal(marshalErr)
 	}
-	for _, seen := range []string{string(encoded), fmt.Sprintf("%+v", plan), fmt.Sprint(err)} {
+	for _, seen := range []string{string(encoded), fmt.Sprintf("%+v", read), fmt.Sprint(err)} {
 		if strings.Contains(seen, unreadValue) {
 			t.Fatalf("the read handed over the value of a field it did not read:\n%.2000s", seen)
 		}
 	}
 }
 
-// Every stored state answers a display read as the cases declare, and a state
-// that fails a check answers it the way it answers Load.
+// Every stored state answers a display read as the cases declare. The cases that
+// fail a check are the ones Load answers, so a display read loosens none of them.
 func TestLoadForDisplayAnswersEveryCase(t *testing.T) {
 	t.Parallel()
 	for _, c := range planreadtest.DisplayCases(t) {
@@ -91,35 +114,57 @@ func TestLoadForDisplayAnswersEveryCase(t *testing.T) {
 
 			plan, err := planread.LoadForDisplay(context.Background(), reader, planreadtest.Namespace, c.Schema, c.Selection)
 
-			holdAnswer(t, c, plan, err)
 			holdNoValue(t, plan, err)
+			if c.Want.Err != nil {
+				for _, sentinel := range sentinels {
+					if got, want := errors.Is(err, sentinel), sentinel == c.Want.Err; got != want {
+						t.Fatalf("errors.Is(%v, %v) = %t, want %t", err, sentinel, got, want)
+					}
+				}
+				if !reflect.DeepEqual(plan, planread.DisplayPlan{}) {
+					t.Fatalf("the read returned part of a plan with its error: %+v", plan)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("the read returned an error: %v", err)
+			}
+			if plan.PlanName != c.Want.PlanName || !slices.Equal(plan.UnreadFields, c.Want.UnreadFields) {
+				t.Fatalf("the read is %s with the unread fields %v, want %s with %v",
+					plan.PlanName, plan.UnreadFields, c.Want.PlanName, c.Want.UnreadFields)
+			}
+			if len(plan.Statements) != len(c.Want.Statements) {
+				t.Fatalf("the read returned %d statements, want %d", len(plan.Statements), len(c.Want.Statements))
+			}
+			for index, statement := range plan.Statements {
+				if statement.SQL != c.Want.Statements[index] {
+					t.Fatalf("statement %d came back as %.60q..., want %.60q...", index, statement.SQL, c.Want.Statements[index])
+				}
+			}
 		})
 	}
 }
 
-// The two lists are one list of stored states. The only answer that differs is
-// the one for a document with unread fields, so a display read cannot have
-// loosened any check on the stored objects without a case saying so.
-func TestTheTwoReadsDifferOnlyOnUnreadFields(t *testing.T) {
+// A plan read whole is the same plan through either read, so the text format,
+// which takes the display read, prints what the others print.
+func TestAPlanReadWholeIsOnePlanThroughEitherRead(t *testing.T) {
 	t.Parallel()
-	strict, display := planreadtest.Cases(t), planreadtest.DisplayCases(t)
-	if len(strict) != len(display) {
-		t.Fatalf("%d cases for Load and %d for a display read", len(strict), len(display))
-	}
-	differing := 0
-	for index, c := range strict {
-		if c.Name != display[index].Name {
-			t.Fatalf("case %d is %s for Load and %s for a display read", index, c.Name, display[index].Name)
+	lab := stored(t, planreadtest.Document(t, planreadtest.SpanningStatements()))
+	for _, selection := range []planread.Selection{planread.Current, planread.Applied} {
+		whole, err := strict(lab, selection)
+		if err != nil {
+			t.Fatalf("Load(%s) error = %v", selection, err)
 		}
-		if !errors.Is(c.Want.Err, display[index].Want.Err) {
-			differing++
-			if c.Name != "unread-fields" {
-				t.Fatalf("%s: Load answers %v and a display read %v", c.Name, c.Want.Err, display[index].Want.Err)
-			}
+		shown, err := display(lab, selection)
+		if err != nil {
+			t.Fatalf("LoadForDisplay(%s) error = %v", selection, err)
 		}
-	}
-	if differing != 1 {
-		t.Fatalf("%d cases differ; the case with unread fields is the one that should", differing)
+		if !reflect.DeepEqual(shown, whole.Display()) {
+			t.Fatalf("the two reads of %s differ:\n%+v\n%+v", selection, shown, whole.Display())
+		}
+		if len(shown.UnreadFields) != 0 {
+			t.Fatalf("a plan read whole has the unread fields %v", shown.UnreadFields)
+		}
 	}
 }
 
@@ -264,7 +309,7 @@ func TestLoadForDisplayNamesWhatItDoesNotRead(t *testing.T) {
 			document := test.document(t)
 			lab := stored(t, document)
 			for _, selection := range []planread.Selection{planread.Current, planread.Applied} {
-				plan, err := planread.LoadForDisplay(context.Background(), lab.Client(), planreadtest.Namespace, "storefront", selection)
+				plan, err := display(lab, selection)
 				if err != nil {
 					t.Fatalf("LoadForDisplay(%s) error = %v", selection, err)
 				}
@@ -276,60 +321,50 @@ func TestLoadForDisplayNamesWhatItDoesNotRead(t *testing.T) {
 				}
 				holdNoValue(t, plan, err)
 
-				strict, err := planread.Load(context.Background(), lab.Client(), planreadtest.Namespace, "storefront", selection)
+				whole, err := strict(lab, selection)
 				if len(test.unread) == 0 {
 					if err != nil {
 						t.Fatalf("Load(%s) refused a document with nothing unread: %v", selection, err)
 					}
-					if !bytes.Equal(plan.Document, document) || !bytes.Equal(strict.Document, document) {
+					if !bytes.Equal(whole.Document, document) {
 						t.Fatal("a plan with nothing unread did not come back byte for byte")
 					}
 					continue
 				}
-				if !errors.Is(err, planread.ErrUnsupported) || len(strict.Statements) != 0 {
-					t.Fatalf("Load(%s) = %d statements, %v; want ErrUnsupported", selection, len(strict.Statements), err)
+				if !errors.Is(err, planread.ErrUnsupported) || !errors.Is(err, planread.ErrUnreadFields) || len(whole.Statements) != 0 {
+					t.Fatalf("Load(%s) = %d statements, %v; want ErrUnsupported and ErrUnreadFields", selection, len(whole.Statements), err)
 				}
-				holdNoValue(t, strict, err)
-				if len(plan.Document) != 0 {
-					t.Fatalf("LoadForDisplay(%s) handed over the stored document, which holds the unread values", selection)
+				for _, name := range test.unread {
+					if !strings.Contains(err.Error(), name) {
+						t.Fatalf("Load(%s) does not name %s: %v", selection, name, err)
+					}
 				}
+				holdNoValue(t, whole, err)
 			}
 		})
 	}
 }
 
-// A display read shows the plan Load would show without the field: the operator
-// raises what it raises and reads the privileges it reads, so a statement does
-// not look safer because a field beside it went unread.
-func TestLoadForDisplayReadsThePlanAsLoadDoes(t *testing.T) {
+// A refusal that is not about unread fields does not say it is. A caller tells
+// the person a display read would show this plan only on ErrUnreadFields, and a
+// display read would not show either of these.
+func TestAnotherRefusalIsNotUnreadFields(t *testing.T) {
 	t.Parallel()
-	statements := []string{
-		`ALTER TABLE "public"."customers" ALTER COLUMN "email" DROP DEFAULT`,
-		`GRANT SELECT ON TABLE "public"."customers" TO PUBLIC`,
-	}
-	bare := stored(t, planreadtest.Document(t, statements))
-	want, err := planread.Load(context.Background(), bare.Client(), planreadtest.Namespace, "storefront", planread.Current)
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
-	if want.Statements[0].Severity != "destructive" || want.Statements[0].StoredSeverity != "safe" ||
-		len(want.UnrecordedPrivilegeChanges) == 0 {
-		t.Fatalf("the plain read did not raise anything, so this row measures nothing: %+v", want)
-	}
-
-	lab := stored(t, planreadtest.DocumentWithUnreadFields(t, statements))
-	got, err := planread.LoadForDisplay(context.Background(), lab.Client(), planreadtest.Namespace, "storefront", planread.Current)
-	if err != nil {
-		t.Fatalf("LoadForDisplay() error = %v", err)
-	}
-	if !reflect.DeepEqual(got.Statements, want.Statements) {
-		t.Fatalf("the statements read as %+v, and without the fields as %+v", got.Statements, want.Statements)
-	}
-	if got.SQL() != want.SQL() {
-		t.Fatalf("the SQL reads as %q, and without the fields as %q", got.SQL(), want.SQL())
-	}
-	if !slices.Equal(got.UnrecordedPrivilegeChanges, want.UnrecordedPrivilegeChanges) {
-		t.Fatalf("the privileges read as %v, and without the fields as %v", got.UnrecordedPrivilegeChanges, want.UnrecordedPrivilegeChanges)
+	contract := planreadtest.NewLab(t, "storefront")
+	plan, _ := contract.Publish(t, oneStatement, "v1")
+	contract.SetCurrent(t, plan)
+	contract.EditManifest(t, plan, func(spec *operatorv1alpha1.PtahSchemaPlanSpec) { spec.ContractVersion += 2 })
+	for name, lab := range map[string]*planreadtest.Lab{
+		"another format version": stored(t, planreadtest.FutureDocument(t)),
+		"another plan contract":  contract,
+	} {
+		_, err := strict(lab, planread.Current)
+		if !errors.Is(err, planread.ErrUnsupported) || errors.Is(err, planread.ErrUnreadFields) {
+			t.Fatalf("%s: Load() error = %v, want ErrUnsupported and not ErrUnreadFields", name, err)
+		}
+		if _, err := display(lab, planread.Current); !errors.Is(err, planread.ErrUnsupported) {
+			t.Fatalf("%s: LoadForDisplay() error = %v, want ErrUnsupported", name, err)
+		}
 	}
 }
 
@@ -345,21 +380,151 @@ func TestLoadForDisplayKeepsTheOrderOfARepeatedKey(t *testing.T) {
 	bare := append(slices.Clone(written), []byte(again+"}")...)
 	withField := append(slices.Clone(written), []byte(again+`,"annotations":"`+unreadValue+`"}`)...)
 
-	strict, err := planread.Load(context.Background(), stored(t, bare).Client(), planreadtest.Namespace, "storefront", planread.Current)
+	whole, err := strict(stored(t, bare), planread.Current)
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	if strict.Statements[0].SQL != read {
-		t.Fatalf("Load() read %q, so this row does not hold what it says", strict.Statements[0].SQL)
+	if whole.Statements[0].SQL != read {
+		t.Fatalf("Load() read %q, so this row does not hold what it says", whole.Statements[0].SQL)
 	}
 
-	shown, err := planread.LoadForDisplay(context.Background(), stored(t, withField).Client(), planreadtest.Namespace, "storefront", planread.Current)
+	shown, err := display(stored(t, withField), planread.Current)
 	if err != nil {
 		t.Fatalf("LoadForDisplay() error = %v", err)
 	}
-	if !reflect.DeepEqual(shown.Statements, strict.Statements) {
-		t.Fatalf("a display read shows %+v, and Load reads %+v", shown.Statements, strict.Statements)
+	if !reflect.DeepEqual(shown.Statements, whole.Statements) {
+		t.Fatalf("a display read shows %+v, and Load reads %+v", shown.Statements, whole.Statements)
 	}
+}
+
+// A display read shows the plan Load would show without the field: the operator
+// raises what it raises and reads the privileges it reads, so a statement does
+// not look safer because a field beside it went unread.
+func TestLoadForDisplayReadsThePlanAsLoadDoes(t *testing.T) {
+	t.Parallel()
+	statements := []string{
+		`ALTER TABLE "public"."customers" ALTER COLUMN "email" DROP DEFAULT`,
+		`GRANT SELECT ON TABLE "public"."customers" TO PUBLIC`,
+	}
+	want, err := strict(stored(t, planreadtest.Document(t, statements)), planread.Current)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if want.Statements[0].Severity != "destructive" || want.Statements[0].StoredSeverity != "safe" ||
+		len(want.UnrecordedPrivilegeChanges) == 0 {
+		t.Fatalf("the plain read did not raise anything, so this row measures nothing: %+v", want)
+	}
+
+	got, err := display(stored(t, planreadtest.DocumentWithUnreadFields(t, statements)), planread.Current)
+	if err != nil {
+		t.Fatalf("LoadForDisplay() error = %v", err)
+	}
+	if !reflect.DeepEqual(got.Statements, want.Statements) {
+		t.Fatalf("the statements read as %+v, and without the fields as %+v", got.Statements, want.Statements)
+	}
+	if !slices.Equal(got.UnrecordedPrivilegeChanges, want.UnrecordedPrivilegeChanges) {
+		t.Fatalf("the privileges read as %v, and without the fields as %v", got.UnrecordedPrivilegeChanges, want.UnrecordedPrivilegeChanges)
+	}
+}
+
+// Every plan document Ptah wrote that the repository keeps, with one key added as
+// text, runs the walk over Ptah's own indented bytes and over every declared
+// field Ptah wrote. A declared field the walk missed comes back as a second
+// unread name, and a statement it damaged comes back different from what Load
+// reads in the document without the key.
+func TestBothReadsTakeThePlansPtahWrote(t *testing.T) {
+	t.Parallel()
+	var paths []string
+	for _, pattern := range []string{
+		filepath.Join("..", "..", "testdata", "e2e", "readings", "*-plan.json"),
+		filepath.Join("..", "..", "internal", "dataplane", "testdata", "plan-*.json"),
+	} {
+		matches, err := filepath.Glob(pattern)
+		if err != nil {
+			t.Fatal(err)
+		}
+		paths = append(paths, matches...)
+	}
+	const declaredDocuments = 7
+	if len(paths) < declaredDocuments {
+		t.Fatalf("found %d plan documents, and the repository keeps at least %d: %v", len(paths), declaredDocuments, paths)
+	}
+	for _, path := range paths {
+		t.Run(filepath.Base(path), func(t *testing.T) {
+			t.Parallel()
+			document, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var header struct {
+				Dialect string `json:"dialect"`
+			}
+			if err := json.Unmarshal(document, &header); err != nil {
+				t.Fatal(err)
+			}
+			holdKeyAdded(t, document, func(spec *operatorv1alpha1.PtahSchemaPlanSpec) { spec.Dialect = header.Dialect })
+		})
+	}
+}
+
+// No document Ptah wrote that the repository keeps holds schemas_beyond_url, or
+// every declared field at once, so this one does, indented as Ptah writes it.
+func TestBothReadsTakeEveryFieldTheBuildDeclares(t *testing.T) {
+	t.Parallel()
+	var decoded map[string]any
+	if err := json.Unmarshal(planreadtest.Document(t, oneStatement), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	decoded["exclude"] = []any{"audit_*"}
+	decoded["schemas_beyond_url"] = []any{"billing"}
+	decoded["scope"] = map[string]any{"kind": "schema", "name": "shop"}
+	decoded["rows_fingerprint"] = rowsDigest
+	decoded["managed_rows"] = []any{map[string]any{
+		"schema": "shop", "table": "customers", "keys": []any{"id"}, "columns": []any{"id", "email"},
+	}}
+	statement := statementOf(decoded, 0)
+	statement["reason"] = "does not remove data"
+	statement["transactions"] = []any{"none"}
+	statement["owned"] = true
+	statement["access"] = "widens"
+	statement["access_reason"] = "a permissive policy"
+	document, err := json.MarshalIndent(decoded, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	holdKeyAdded(t, document)
+}
+
+// holdKeyAdded holds a document Load reads whole to the same answer with one key
+// added: Load refuses it, and a display read names that key and nothing else and
+// shows what Load reads.
+func holdKeyAdded(t *testing.T, document []byte, adjust ...func(*operatorv1alpha1.PtahSchemaPlanSpec)) {
+	t.Helper()
+	whole, err := strict(stored(t, document, adjust...), planread.Current)
+	if err != nil {
+		t.Fatalf("Load() refused the document as it was written: %v", err)
+	}
+	lab := stored(t, withAddedKey(t, document), adjust...)
+	shown, err := display(lab, planread.Current)
+	if err != nil {
+		t.Fatalf("LoadForDisplay() error = %v", err)
+	}
+	if !slices.Equal(shown.UnreadFields, []string{addedKey}) {
+		t.Fatalf("LoadForDisplay() names %v, want only %s", shown.UnreadFields, addedKey)
+	}
+	if !reflect.DeepEqual(shown.Statements, whole.Statements) {
+		t.Fatalf("the statements read as\n%+v\nand without the key as\n%+v", shown.Statements, whole.Statements)
+	}
+	if !reflect.DeepEqual(shown.ManagedRows, whole.ManagedRows) ||
+		!slices.Equal(shown.UnrecordedPrivilegeChanges, whole.UnrecordedPrivilegeChanges) {
+		t.Fatalf("the row sets or privileges differ: %+v, and without the key %+v", shown, whole.Display())
+	}
+	holdNoValue(t, shown, err)
+	refused, err := strict(lab, planread.Current)
+	if !errors.Is(err, planread.ErrUnreadFields) || len(refused.Statements) != 0 {
+		t.Fatalf("Load() = %d statements, %v; want ErrUnreadFields", len(refused.Statements), err)
+	}
+	holdNoValue(t, refused, err)
 }
 
 // Every document here carries a field this build does not declare, and a read
@@ -390,6 +555,15 @@ func TestLoadForDisplayRefusesWhatTheDecoderRefuses(t *testing.T) {
 		{"credential-bearing DDL", withUnread(func(d map[string]any) { statementOf(d, 0)["sql"] = "CREATE ROLE app PASSWORD 'secret'" })},
 		{"a rows fingerprint with no row set", withUnread(func(d map[string]any) { d["rows_fingerprint"] = rowsDigest })},
 		{
+			// An unread field can take the place of a declared one. The statement
+			// it leaves has no SQL, which the decoder refuses.
+			"a field that takes the place of a statement's SQL",
+			withUnread(func(d map[string]any) {
+				delete(statementOf(d, 0), "sql")
+				statementOf(d, 0)["native"] = unreadValue
+			}),
+		},
+		{
 			"a second JSON value",
 			func(t *testing.T) []byte {
 				return append(edited(t, oneStatement, func(d map[string]any) { d["annotations"] = unreadValue }), []byte(" {}")...)
@@ -407,27 +581,34 @@ func TestLoadForDisplayRefusesWhatTheDecoderRefuses(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			lab := stored(t, test.document(t))
-			for name, read := range map[string]func(context.Context, client.Reader, string, string, planread.Selection) (planread.Plan, error){
-				"Load": planread.Load, "LoadForDisplay": planread.LoadForDisplay,
-			} {
-				plan, err := read(context.Background(), lab.Client(), planreadtest.Namespace, "storefront", planread.Current)
-				if !errors.Is(err, planread.ErrUnsupported) {
-					t.Fatalf("%s() error = %v, want ErrUnsupported", name, err)
-				}
-				if len(plan.Statements) != 0 || len(plan.Document) != 0 || plan.PlanUID != "" {
-					t.Fatalf("%s() returned part of a plan with its error", name)
-				}
-				holdNoValue(t, plan, err)
+
+			shown, err := display(lab, planread.Current)
+			if !errors.Is(err, planread.ErrUnsupported) {
+				t.Fatalf("LoadForDisplay() error = %v, want ErrUnsupported", err)
 			}
+			if !reflect.DeepEqual(shown, planread.DisplayPlan{}) {
+				t.Fatalf("LoadForDisplay() returned part of a plan with its error: %+v", shown)
+			}
+			holdNoValue(t, shown, err)
+
+			whole, err := strict(lab, planread.Current)
+			if !errors.Is(err, planread.ErrUnsupported) {
+				t.Fatalf("Load() error = %v, want ErrUnsupported", err)
+			}
+			if len(whole.Statements) != 0 || len(whole.Document) != 0 || whole.PlanUID != "" {
+				t.Fatal("Load() returned part of a plan with its error")
+			}
+			holdNoValue(t, whole, err)
 		})
 	}
 }
 
 // A display read prints the name of a field it did not read, and a newer Ptah
 // adds an identifier. A key of another shape is not a field added to a plan, and
-// printing it could put a credential or an escape sequence on a terminal, so the
-// read refuses the plan and does not quote the key.
-func TestLoadForDisplayRefusesANameItWouldNotPrint(t *testing.T) {
+// printing it could put a credential or an escape sequence on a terminal. Neither
+// read prints it: a display read refuses the plan, and so does Load, whose
+// refusal reaches a terminal through approve and a page through the console.
+func TestNeitherReadQuotesAKeyItWouldNotPrint(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
 		name     string
@@ -450,19 +631,23 @@ func TestLoadForDisplayRefusesANameItWouldNotPrint(t *testing.T) {
 			t.Parallel()
 			lab := stored(t, test.document(t))
 
-			plan, err := planread.LoadForDisplay(context.Background(), lab.Client(), planreadtest.Namespace, "storefront", planread.Current)
-
+			shown, err := display(lab, planread.Current)
 			if !errors.Is(err, planread.ErrUnsupported) {
 				t.Fatalf("LoadForDisplay() error = %v, want ErrUnsupported", err)
 			}
 			if strings.Contains(err.Error(), test.quoted) {
-				t.Fatalf("the refusal quotes the key: %v", err)
+				t.Fatalf("the display read's refusal quotes the key: %v", err)
 			}
-			if len(plan.Statements) != 0 || plan.PlanUID != "" {
+			if !reflect.DeepEqual(shown, planread.DisplayPlan{}) {
 				t.Fatal("LoadForDisplay() returned part of a plan with its error")
 			}
-			if _, err := planread.Load(context.Background(), lab.Client(), planreadtest.Namespace, "storefront", planread.Current); !errors.Is(err, planread.ErrUnsupported) {
+
+			_, err = strict(lab, planread.Current)
+			if !errors.Is(err, planread.ErrUnsupported) {
 				t.Fatalf("Load() error = %v, want ErrUnsupported", err)
+			}
+			if strings.Contains(err.Error(), test.quoted) {
+				t.Fatalf("Load's refusal quotes the key: %v", err)
 			}
 		})
 	}
@@ -476,7 +661,7 @@ func TestLoadForDisplayReadsAsManyFieldsAsItPrints(t *testing.T) {
 			d[fmt.Sprintf("field_%d", index)] = unreadValue
 		}
 	}))
-	plan, err := planread.LoadForDisplay(context.Background(), lab.Client(), planreadtest.Namespace, "storefront", planread.Current)
+	plan, err := display(lab, planread.Current)
 	if err != nil {
 		t.Fatalf("LoadForDisplay() error = %v", err)
 	}
@@ -521,17 +706,17 @@ func TestLoadForDisplayChecksTheStoredObjects(t *testing.T) {
 			lab := planreadtest.NewLab(t, "storefront")
 			plan := lab.PublishDocument(t, planreadtest.DocumentWithUnreadFields(t, oneStatement), "v1")
 			lab.SetCurrent(t, plan)
-			if _, err := planread.LoadForDisplay(context.Background(), lab.Client(), planreadtest.Namespace, "storefront", planread.Current); err != nil {
+			if _, err := display(lab, planread.Current); err != nil {
 				t.Fatalf("LoadForDisplay() refused the plan before it was changed, so this row measures nothing: %v", err)
 			}
 			test.arrange(t, lab, plan)
 
-			read, err := planread.LoadForDisplay(context.Background(), lab.Client(), planreadtest.Namespace, "storefront", planread.Current)
+			read, err := display(lab, planread.Current)
 
 			if !errors.Is(err, test.want) {
 				t.Fatalf("LoadForDisplay() error = %v, want %v", err, test.want)
 			}
-			if len(read.Statements) != 0 || read.PlanUID != "" {
+			if !reflect.DeepEqual(read, planread.DisplayPlan{}) {
 				t.Fatal("LoadForDisplay() returned part of a plan with its error")
 			}
 		})
@@ -560,58 +745,5 @@ func TestLoadForDisplayReadsAsTheCaller(t *testing.T) {
 	want := "get *v1alpha1.PtahSchema, get *v1alpha1.PtahSchemaPlan, get *v1alpha1.PtahSchemaPlanChunk"
 	if got := strings.Join(reader.distinct(), ", "); got != want {
 		t.Fatalf("the reader asked for %s, and a plan read needs %s", got, want)
-	}
-}
-
-// Every plan document Ptah wrote that the repository keeps reads whole through
-// both reads. A declared field the walk missed would show up here as unread, on
-// the fields Ptah really writes.
-func TestBothReadsTakeThePlansPtahWrote(t *testing.T) {
-	t.Parallel()
-	var paths []string
-	for _, pattern := range []string{
-		filepath.Join("..", "..", "testdata", "e2e", "readings", "*-plan.json"),
-		filepath.Join("..", "..", "internal", "dataplane", "testdata", "plan-*.json"),
-	} {
-		matches, err := filepath.Glob(pattern)
-		if err != nil {
-			t.Fatal(err)
-		}
-		paths = append(paths, matches...)
-	}
-	const declaredDocuments = 7
-	if len(paths) < declaredDocuments {
-		t.Fatalf("found %d plan documents, and the repository keeps at least %d: %v", len(paths), declaredDocuments, paths)
-	}
-	for _, path := range paths {
-		t.Run(filepath.Base(path), func(t *testing.T) {
-			t.Parallel()
-			document, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			var header struct {
-				Dialect string `json:"dialect"`
-			}
-			if err := json.Unmarshal(document, &header); err != nil {
-				t.Fatal(err)
-			}
-			lab := stored(t, document, func(spec *operatorv1alpha1.PtahSchemaPlanSpec) { spec.Dialect = header.Dialect })
-
-			strict, err := planread.Load(context.Background(), lab.Client(), planreadtest.Namespace, "storefront", planread.Current)
-			if err != nil {
-				t.Fatalf("Load() error = %v", err)
-			}
-			shown, err := planread.LoadForDisplay(context.Background(), lab.Client(), planreadtest.Namespace, "storefront", planread.Current)
-			if err != nil {
-				t.Fatalf("LoadForDisplay() error = %v", err)
-			}
-			if len(shown.UnreadFields) != 0 {
-				t.Fatalf("a document Ptah wrote has the unread fields %v", shown.UnreadFields)
-			}
-			if !bytes.Equal(shown.Document, document) || !reflect.DeepEqual(shown.Statements, strict.Statements) {
-				t.Fatal("the two reads of one document differ")
-			}
-		})
 	}
 }

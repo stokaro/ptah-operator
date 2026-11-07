@@ -71,6 +71,13 @@ joins them in index order and checks the whole document against
 reading the SQL they refer to is not an independent review, and neither is
 reading one chunk of a plan that has several.
 
+A plugin older than the Ptah that wrote the plan can show it with an `Unread
+fields:` line, naming fields it did not read. Do not approve that plan until a
+plugin at the operator's version has read it whole, by `kubectl ptah approve` or by
+an approval written by hand. Admission holds an approval to the plan's identity and
+does not read the plan, so it accepts one written from that view, and a field the
+plugin did not read can change what the statements do when they run.
+
 The rule on the chunks is not the only way to a plan's bytes. The Plan Pod
 hands the whole document to the controller through its log, sealed to the
 manager's own key, so the log holds ciphertext and `pods/log` grants nothing a

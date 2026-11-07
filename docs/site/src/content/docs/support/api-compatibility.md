@@ -155,24 +155,27 @@ build does not declare, on the plan, in `scope`, on a statement or on a declared
 row set, does not stop the read. The plan comes back as `planread.Load` would
 return it without that field, after every check on the stored objects and on the
 fields the build declares. The field's name comes back in `UnreadFields`, as
-`annotations` or `statements[].inputs`. Its value comes back nowhere: `Document`
-is empty for that plan, because the stored bytes hold the value. `kubectl ptah
-plan` reads this way.
+`annotations` or `statements[].inputs`. Its value comes back nowhere. The read
+returns a `DisplayPlan`, which has no document, because the stored bytes hold the
+value. The text format of `kubectl ptah plan` reads this way.
 
 The promise stops at the field's name. It does not cover another plan contract or
-`format_version`, or a declared field whose type changed, which are refused with
-`ErrUnsupported`. A key that is not an identifier of at most 128 bytes, and a
-document with more than 64 unread fields, are refused too. It says nothing about
-what an unread field does: a plan shown this way can run differently from what
-its statements alone suggest.
+`format_version`, a declared field whose type changed, or a field that takes the
+place of a declared one, such as a statement with `native` and no `sql`. Those are
+refused with `ErrUnsupported`. A key that is not an identifier of at most 128
+bytes, and a document with more than 64 unread fields, are refused too. It says
+nothing about what an unread field does: a plan shown this way can run differently
+from what its statements alone suggest. So a `DisplayPlan` has no SQL to hand a
+program, and `kubectl ptah plan -o sql` and `-o json` refuse such a plan.
 
 `planread.Load` makes no such promise and refuses any field the build does not
 declare, as the manager and the runner do. That strictness is what keeps a
 statement's `inputs`, which name an environment variable Ptah reads at Apply, and
 a plan's `annotations` out of an Apply Pod. An approval is a decision about the
-whole document, so `kubectl ptah approve` reads through `Load` and a program that
-offers an approval has to read through it too. A test holds `kubectl ptah plan` as
-the only caller of the display read in this module.
+whole document, so `kubectl ptah approve` reads through `Load`. A program that
+offers an approval must read the plan through `Load` too, and must not offer one
+when `Load` refuses. A `DisplayPlan` cannot stand in for that read: it carries no
+UID for an approval to bind and no function that takes a `Plan` takes it.
 
 `PlanFile` keeps `scope` declared while any stored plan can carry it, because a
 field that goes back to undeclared stops every `Load` of such a plan.
