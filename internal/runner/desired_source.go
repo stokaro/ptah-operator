@@ -107,9 +107,7 @@ func reportUnreadableMigrationFiles(
 
 // desiredSourceCheckEnvironment is everything a check's child is told: where
 // the files are, and where it may write. It is built up rather than filtered
-// down, so a credential added to the Pod later does not reach a check. It is
-// never empty, because an empty environment makes exec pass on the runner's
-// whole environment, the database URL with it.
+// down, so a credential added to the Pod later does not reach a check.
 func desiredSourceCheckEnvironment(environment []string, source string) []string {
 	values := environmentMap(environment)
 	checked := []string{source}
