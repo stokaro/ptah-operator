@@ -492,17 +492,13 @@ type MigrationRunStatus struct {
 	// +optional
 	Source *PlanSourceBinding `json:"source,omitempty"`
 	// TargetIdentityDigest is the credential-free identity of the database the
-	// run reported it opened, or the one the plan was computed against where it
-	// reported none. TargetIdentityReported says which.
+	// run's result named. That is the database it opened, unless it refused before
+	// its child started because its Secret had moved: then it is the one the Secret
+	// held, which the run did not touch. A run that left no result names none, since
+	// it may have run nowhere, or against whatever its Secret held by then.
 	// +kubebuilder:validation:Pattern=`^sha256:[0-9a-f]{64}$`
 	// +optional
 	TargetIdentityDigest string `json:"targetIdentityDigest,omitempty"`
-	// TargetIdentityReported is true when the run itself named that database.
-	// Otherwise the digest says what was planned and not what happened: a run that
-	// left no result may have run nowhere, or against whatever its Secret held by
-	// then.
-	// +optional
-	TargetIdentityReported bool `json:"targetIdentityReported,omitempty"`
 	// ExecutionBindingID is the execution epoch the claim was authorized under.
 	// +kubebuilder:validation:Pattern=`^v1-[0-9a-f]{32}$`
 	// +optional
@@ -511,8 +507,8 @@ type MigrationRunStatus struct {
 	// Verification is the first reading of this run's database after the run
 	// ended. What a run claims and what the revision table holds are two
 	// statements, and this records the second. It is absent until that reading,
-	// for a run that did not report its database, since no reading can then be
-	// said to be of it, and for a run a release without this field recorded.
+	// for a run that named no database, since no reading can then be said to be of
+	// it, and for a run a release without this field recorded.
 	// +optional
 	Verification *MigrationRunVerificationStatus `json:"verification,omitempty"`
 
@@ -675,10 +671,10 @@ type UnresolvedMigrationRunStatus struct {
 	PlanRef ImmutableObjectReference `json:"planRef"`
 
 	// TargetIdentityDigest is the credential-free identity of the database this
-	// run reached, as the run itself reported it. Where no result frame was
-	// read at all -- which is most of the ways a run becomes unresolved -- it
-	// is the database the run was dispatched against instead, because that is
-	// then the only thing known about where it went.
+	// run's result named. Where no result frame was read at all -- which is most
+	// of the ways a run becomes unresolved -- it is the database its plan was
+	// computed against instead, because that is then the only thing known about
+	// where it went.
 	//
 	// The reading that settles this record has to be of that database: a
 	// history read somewhere else says nothing about what this run did.

@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
-	"slices"
 
 	"k8s.io/apimachinery/pkg/api/equality"
 
@@ -35,8 +34,6 @@ func runIdentityRecorded(status ptahv1alpha1.PtahMigrationStatus, plan *ptahv1al
 		return fmt.Errorf("the run names source %+v, not %+v", run.Source, plan.Spec.Source)
 	case run.TargetIdentityDigest != plan.Spec.TargetIdentityDigest:
 		return fmt.Errorf("the run names database %q, not %q", run.TargetIdentityDigest, plan.Spec.TargetIdentityDigest)
-	case !run.TargetIdentityReported:
-		return errors.New("the record says the run did not report its database, and this run wrote a result")
 	case run.ExecutionBindingID != plan.Spec.ExecutionBindingID:
 		return fmt.Errorf("the run names execution binding %q, not %q", run.ExecutionBindingID, plan.Spec.ExecutionBindingID)
 	}
@@ -79,11 +76,13 @@ func runAllowedByPolicy(status ptahv1alpha1.PtahMigrationStatus) error {
 }
 
 // runVerifiedInSync is nil when the first reading after the run is recorded on it:
-// in sync, and of a history that holds what the run applied. Its time could not say
-// so: the operator stamps a reading when it harvests it, so one that read the
+// in sync, and of a history that holds the plan the run carried out. Its time could
+// not say so: the operator stamps a reading when it harvests it, so one that read the
 // database before the run and was harvested after it dates after the run too. A
-// history read before the run cannot hold the versions the run went on to apply.
-func runVerifiedInSync(status ptahv1alpha1.PtahMigrationStatus) error {
+// history read before the run stops short of the plan's last version. The run's own
+// list of versions could not say so either: it is empty when the Pod's log is gone
+// and the termination summary could not hold it.
+func runVerifiedInSync(status ptahv1alpha1.PtahMigrationStatus, plan *ptahv1alpha1.PtahMigrationPlan) error {
 	run := status.LastRun
 	if run == nil || run.FinishedAt == nil || run.Verification == nil {
 		return fmt.Errorf("no reading is recorded on the run: %+v", run)
@@ -94,28 +93,25 @@ func runVerifiedInSync(status ptahv1alpha1.PtahMigrationStatus) error {
 		return fmt.Errorf("the reading after the run found %q", verification.Result)
 	case !operationIDForm.MatchString(verification.HistoryFingerprint):
 		return fmt.Errorf("the reading names history %q", verification.HistoryFingerprint)
-	case len(run.AppliedVersions) == 0:
-		return errors.New("the run records no versions applied, so nothing shows the reading followed it")
-	case slices.Max(run.AppliedVersions) > verification.CurrentVersion:
-		return fmt.Errorf("the reading stops at version %d, before version %d the run applied",
-			verification.CurrentVersion, slices.Max(run.AppliedVersions))
+	case len(plan.Spec.Migrations) == 0:
+		return fmt.Errorf("plan %s names no migration, so nothing shows the reading followed its run", plan.Name)
+	case verification.CurrentVersion < plan.Spec.Migrations[len(plan.Spec.Migrations)-1].Version:
+		return fmt.Errorf("the reading stops at version %d, before version %d the plan ends at",
+			verification.CurrentVersion, plan.Spec.Migrations[len(plan.Spec.Migrations)-1].Version)
 	}
 	return nil
 }
 
-// runTargetNotReported is nil when status.lastRun says its run named no database:
-// the digest it holds is the planned one, marked as that, and no reading has been
-// taken as a statement about the run. Call it once a reading of that database has
-// landed, or a record with no reading on it says nothing.
-func runTargetNotReported(status ptahv1alpha1.PtahMigrationStatus) error {
+// runNamesNoDatabase is nil when status.lastRun leaves its run's database absent and
+// no reading has been taken as a statement about the run. Call it once a reading of
+// the planned database has landed, or a record with no reading on it says nothing.
+func runNamesNoDatabase(status ptahv1alpha1.PtahMigrationStatus) error {
 	run := status.LastRun
 	switch {
 	case run == nil:
 		return errors.New("there is no run")
-	case run.TargetIdentityReported:
-		return fmt.Errorf("the record says the run named database %q, and nothing it wrote was read", run.TargetIdentityDigest)
-	case !operationIDForm.MatchString(run.TargetIdentityDigest):
-		return fmt.Errorf("the record names planned database %q", run.TargetIdentityDigest)
+	case run.TargetIdentityDigest != "":
+		return fmt.Errorf("the record names database %q, and nothing the run wrote was read", run.TargetIdentityDigest)
 	case run.Verification != nil:
 		return fmt.Errorf("a reading verified a run that never said which database it reached: %+v", run.Verification)
 	}

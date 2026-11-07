@@ -28,6 +28,7 @@ func mpPlan() *ptahv1alpha1.PtahMigrationPlan {
 	plan.Name, plan.UID = "plan-a", "plan-a-uid"
 	plan.Spec.Fingerprint, plan.Spec.ArtifactDigest = mpFingerprint, mpArtifact
 	plan.Spec.TargetIdentityDigest, plan.Spec.ExecutionBindingID = mpTarget, mpBinding
+	plan.Spec.Migrations = []ptahv1alpha1.PlannedMigration{{Version: 2}, {Version: 3}}
 	return plan
 }
 
@@ -47,7 +48,7 @@ func mpRecorded() ptahv1alpha1.PtahMigrationStatus {
 			Outcome: ptahv1alpha1.MigrationRunOutcomeApplied, JobName: "job-a", JobUID: "job-a-uid",
 			StartedAt: mpTime(2), FinishedAt: &finished, AppliedVersions: []int64{2, 3},
 			OperationID: mpOperation, PlanRef: &ptahv1alpha1.ImmutableObjectReference{Name: "plan-a", UID: "plan-a-uid"},
-			PlanFingerprint: mpFingerprint, ArtifactDigest: mpArtifact, TargetIdentityDigest: mpTarget, TargetIdentityReported: true, ExecutionBindingID: mpBinding,
+			PlanFingerprint: mpFingerprint, ArtifactDigest: mpArtifact, TargetIdentityDigest: mpTarget, ExecutionBindingID: mpBinding,
 			Authorization: &ptahv1alpha1.MigrationRunAuthorizationStatus{
 				Kind:        ptahv1alpha1.MigrationRunAuthorizedByApproval,
 				ApprovalRef: &ptahv1alpha1.ImmutableObjectReference{Name: "approve-a", UID: "approve-a-uid"},
@@ -106,9 +107,9 @@ func TestRunIdentityRecordedRefusesEachClause(t *testing.T) {
 		"a source the plan does not name": {func(s *ptahv1alpha1.PtahMigrationStatus) {
 			s.LastRun.Source = &ptahv1alpha1.PlanSourceBinding{Kind: ptahv1alpha1.SourceKindGit, Revision: mpHistory, ContentDigest: mpHistory}
 		}, "names source"},
-		"another database":                  {func(s *ptahv1alpha1.PtahMigrationStatus) { s.LastRun.TargetIdentityDigest = mpHistory }, "names database"},
-		"a database the run did not report": {func(s *ptahv1alpha1.PtahMigrationStatus) { s.LastRun.TargetIdentityReported = false }, "did not report"},
-		"another binding":                   {func(s *ptahv1alpha1.PtahMigrationStatus) { s.LastRun.ExecutionBindingID = "" }, "names execution binding"},
+		"another database": {func(s *ptahv1alpha1.PtahMigrationStatus) { s.LastRun.TargetIdentityDigest = mpHistory }, "names database"},
+		"no database":      {func(s *ptahv1alpha1.PtahMigrationStatus) { s.LastRun.TargetIdentityDigest = "" }, "names database"},
+		"another binding":  {func(s *ptahv1alpha1.PtahMigrationStatus) { s.LastRun.ExecutionBindingID = "" }, "names execution binding"},
 	})
 }
 
@@ -173,7 +174,8 @@ func TestRunAllowedByPolicyRefusesADecision(t *testing.T) {
 
 func TestRunVerifiedInSyncRefusesEachClause(t *testing.T) {
 	t.Parallel()
-	mpRefused(t, runVerifiedInSync, map[string]mpRow{
+	verifiedAgainst := func(status ptahv1alpha1.PtahMigrationStatus) error { return runVerifiedInSync(status, mpPlan()) }
+	mpRefused(t, verifiedAgainst, map[string]mpRow{
 		"no run":     {func(s *ptahv1alpha1.PtahMigrationStatus) { s.LastRun = nil }, "no reading"},
 		"no end":     {func(s *ptahv1alpha1.PtahMigrationStatus) { s.LastRun.FinishedAt = nil }, "no reading"},
 		"no reading": {func(s *ptahv1alpha1.PtahMigrationStatus) { s.LastRun.Verification = nil }, "no reading"},
@@ -184,32 +186,49 @@ func TestRunVerifiedInSyncRefusesEachClause(t *testing.T) {
 			s.LastRun.Verification.Result = ptahv1alpha1.MigrationRunVerifiedPending
 		}, "found"},
 		"no history":                    {func(s *ptahv1alpha1.PtahMigrationStatus) { s.LastRun.Verification.HistoryFingerprint = "" }, "names history"},
-		"no versions applied":           {func(s *ptahv1alpha1.PtahMigrationStatus) { s.LastRun.AppliedVersions = nil }, "no versions applied"},
 		"a reading from before the run": {func(s *ptahv1alpha1.PtahMigrationStatus) { s.LastRun.Verification.CurrentVersion = 2 }, "before version 3"},
+	})
+
+	// The Pod's log is gone and the termination summary holds no versions: the run
+	// is as good as it was.
+	t.Run("a run with no list of versions", func(t *testing.T) {
+		t.Parallel()
+		status := mpRecorded()
+		status.LastRun.AppliedVersions = nil
+		if err := verifiedAgainst(status); err != nil {
+			t.Fatalf("a correct run was refused: %v", err)
+		}
+	})
+	t.Run("a plan that names no migration", func(t *testing.T) {
+		t.Parallel()
+		plan := mpPlan()
+		plan.Spec.Migrations = nil
+		if err := runVerifiedInSync(mpRecorded(), plan); err == nil || !strings.Contains(err.Error(), "names no migration") {
+			t.Fatalf("error = %v, want one naming the empty plan", err)
+		}
 	})
 }
 
-func TestRunTargetNotReportedRefusesEachClause(t *testing.T) {
+func TestRunNamesNoDatabaseRefusesEachClause(t *testing.T) {
 	t.Parallel()
 	held := func() ptahv1alpha1.PtahMigrationStatus {
 		status := mpRecorded()
-		status.LastRun.TargetIdentityReported, status.LastRun.Verification = false, nil
+		status.LastRun.TargetIdentityDigest, status.LastRun.Verification = "", nil
 		return status
 	}
-	if err := runTargetNotReported(held()); err != nil {
-		t.Fatalf("a run that reported no database was refused: %v", err)
+	if err := runNamesNoDatabase(held()); err != nil {
+		t.Fatalf("a run that named no database was refused: %v", err)
 	}
 	for name, row := range map[string]mpRow{
 		"no run":          {func(s *ptahv1alpha1.PtahMigrationStatus) { s.LastRun = nil }, "no run"},
-		"a report":        {func(s *ptahv1alpha1.PtahMigrationStatus) { s.LastRun.TargetIdentityReported = true }, "named database"},
-		"no planned one":  {func(s *ptahv1alpha1.PtahMigrationStatus) { s.LastRun.TargetIdentityDigest = "" }, "planned database"},
+		"a database":      {func(s *ptahv1alpha1.PtahMigrationStatus) { s.LastRun.TargetIdentityDigest = mpTarget }, "names database"},
 		"a reading on it": {func(s *ptahv1alpha1.PtahMigrationStatus) { s.LastRun.Verification = mpRecorded().LastRun.Verification }, "a reading verified"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			status := held()
 			row.mutate(&status)
-			if err := runTargetNotReported(status); err == nil || !strings.Contains(err.Error(), row.says) {
+			if err := runNamesNoDatabase(status); err == nil || !strings.Contains(err.Error(), row.says) {
 				t.Fatalf("error = %v, want one naming %q", err, row.says)
 			}
 		})

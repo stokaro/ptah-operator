@@ -54,6 +54,49 @@ func TestLoadReadsTheUnresolvedRunAndTheLastRunsJob(t *testing.T) {
 	}
 }
 
+// A hold always names a database, and the record of its run says whether anybody
+// reported it. A hold beside no such record does not say which it is.
+func TestRenderTextSaysWhenAHoldsDatabaseIsAssumed(t *testing.T) {
+	t.Parallel()
+
+	const assumed = "assumed: the run named none"
+	for _, row := range []struct {
+		name    string
+		mutate  func(*operatorv1alpha1.PtahMigrationStatus)
+		assumed bool
+	}{
+		{"its run named none", func(status *operatorv1alpha1.PtahMigrationStatus) {
+			status.LastRun.OperationID = status.UnresolvedRun.OperationID
+		}, true},
+		{"its run named this one", func(status *operatorv1alpha1.PtahMigrationStatus) {
+			status.LastRun.OperationID = status.UnresolvedRun.OperationID
+			status.LastRun.TargetIdentityDigest = status.UnresolvedRun.TargetIdentityDigest
+		}, false},
+		{"the last run is another's", func(status *operatorv1alpha1.PtahMigrationStatus) {
+			status.LastRun.OperationID = "sha256:" + strings.Repeat("f", 64)
+		}, false},
+		{"a release before the field recorded the run", func(*operatorv1alpha1.PtahMigrationStatus) {}, false},
+		{"a restore left no record of the run", func(status *operatorv1alpha1.PtahMigrationStatus) { status.LastRun = nil }, false},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			held := uncertainMigration(t)
+			row.mutate(&held.Status)
+			view, err := migrationview.Load(context.Background(), readerWith(t, held), "team-a", held.Name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			text := render(t, view, migrationview.Text)
+			if !strings.Contains(text, held.Status.UnresolvedRun.TargetIdentityDigest+" (target identity digest") {
+				t.Fatalf("the block does not name the database:\n%s", text)
+			}
+			if strings.Contains(text, assumed) != row.assumed {
+				t.Fatalf("assumed = %t, want %t:\n%s", strings.Contains(text, assumed), row.assumed, text)
+			}
+		})
+	}
+}
+
 // The last run is a history of outcomes and the unresolved run is a hold, and
 // the text keeps them in two blocks: the reader sees which Job ran last, and
 // separately that nothing runs until this one is accounted for, and how the

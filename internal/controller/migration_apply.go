@@ -538,20 +538,6 @@ func (r *MigrationReconciler) settleMigrationApply(
 	return r.recordMigrationRun(ctx, migration, job, *reported.run, reported.targetIdentityDigest)
 }
 
-// consumeMigrationRun records what the database accounted for. The verdict is
-// the one Ptah read from the revision table, never the Job's exit status: a run
-// that stopped is exactly the run whose controller has to be told what the
-// database now holds.
-func (r *MigrationReconciler) consumeMigrationRun(
-	ctx context.Context,
-	migration *operatorv1alpha1.PtahMigration,
-	job *batchv1.Job,
-	result runner.Result,
-) (ctrl.Result, error) {
-	return r.recordMigrationRun(ctx, migration, job,
-		r.reportedMigrationRun(ctx, migration, result.MigrationRun, result.Error), result.TargetIdentityDigest)
-}
-
 // migrationURLSecret is the Secret key the active migration operation read
 // its target URL from.
 func migrationURLSecret(migration *operatorv1alpha1.PtahMigration) corev1.SecretKeySelector {
@@ -611,9 +597,11 @@ func (r *MigrationReconciler) reportedMigrationRun(
 	return run
 }
 
-// recordMigrationRun writes a finished run into status and retires its claim.
-// reportedTarget is the database the run said it opened, which is the one an
-// unresolved record has to name.
+// recordMigrationRun writes a finished run into status and retires its claim. The
+// verdict is the one Ptah read from the revision table, never the Job's exit status:
+// a run that stopped is exactly the run whose controller has to be told what the
+// database now holds. reportedTarget is the database the run's result named, which
+// is the one an unresolved record has to name.
 func (r *MigrationReconciler) recordMigrationRun(
 	ctx context.Context,
 	migration *operatorv1alpha1.PtahMigration,
@@ -825,20 +813,20 @@ func recordUnresolvedMigrationRun(
 	migration.Status.UnresolvedRun = unresolved
 }
 
-// migrationRunTarget is the database a run addressed.
+// migrationRunTarget is the database a hold on a run names.
 //
-// Which database to name is the whole point of a run's record, so the run's own
-// account of it wins. A result frame reports the target the executor opened, and
-// that is not always the one the plan was computed against: Secret content can
-// rotate between the history reading and the Apply. Recording the planned
-// database instead would let a clean reading of it settle a run that never
-// touched it, while a reading of the database that was touched could not match
-// what was stored.
+// Which database to name is the whole point of the record, so the run's own account
+// of it wins. A result frame names the target its Secret held, and that is not
+// always the one the plan was computed against: Secret content can rotate between
+// the history reading and the Apply. Recording the planned database instead would
+// let a clean reading of it settle a run that never touched it, while a reading of
+// the database that was touched could not match what was stored.
 //
 // With no frame, or one that named no target or something the status schema would
 // refuse, the best that is known is the database the plan was computed against,
-// which is the last history this resource read. That says what was planned and not
-// what happened, so a run's record marks it as not reported.
+// which is the last history this resource read. A hold needs somewhere to start
+// looking. The run's own record does not take that value: it says what was planned
+// and not what happened.
 func migrationRunTarget(migration *operatorv1alpha1.PtahMigration, reportedTarget string) string {
 	if sha256Digest.MatchString(reportedTarget) {
 		return reportedTarget
@@ -856,8 +844,8 @@ func migrationRunTarget(migration *operatorv1alpha1.PtahMigration, reportedTarge
 // the approval and the plan, none of which is read here. Two values come from
 // beside it. A ConfigMap or Git source takes its ConfigMap revision and source
 // policy from status, which only a Resolve writes, and no Resolve runs while this
-// claim stands. The database is the one the run reported, or the one the plan was
-// computed against where it reported none, and the record says which.
+// claim stands. The database is the one the run's result named, and stays absent
+// where it named none, since nothing then says where the run went.
 //
 // What the claim does not hold stays absent: a claim written by a release that
 // copied less keeps its run's approver unknown, since an approval that holds the
@@ -873,8 +861,9 @@ func recordMigrationRunProvenance(
 	run.PlanFingerprint = operation.PlanFingerprint
 	run.ArtifactDigest, run.Source = sourcebinding.MigrationPlanSource(
 		operation.Source, migration.Status.ConfigMap, migration.Status.SourcePolicy)
-	run.TargetIdentityDigest = migrationRunTarget(migration, reportedTarget)
-	run.TargetIdentityReported = sha256Digest.MatchString(reportedTarget)
+	if sha256Digest.MatchString(reportedTarget) {
+		run.TargetIdentityDigest = reportedTarget
+	}
 	run.ExecutionBindingID = operation.ExecutionBindingID
 	run.Authorization = &operatorv1alpha1.MigrationRunAuthorizationStatus{
 		Kind: operatorv1alpha1.MigrationRunAuthorizedByPolicy,
@@ -895,17 +884,16 @@ func recordMigrationRunProvenance(
 // beside a finished run began after that run.
 //
 // A reading of another database says nothing about what the run did, so it leaves
-// the run unverified, as it leaves an unresolved one unsettled. So does any reading
-// of a run that did not report its database: its digest is the planned one, and the
-// run may have executed nothing or reached another database, so a clean reading of
-// the planned one is no statement about it. Its outcome is Unknown or Partial, which
-// a wait stops on without a reading, and what settles its hold is not this record.
-// A run with no operation ID was recorded by a release without this field and stays
-// as it was.
+// the run unverified, as it leaves an unresolved one unsettled. That covers a run
+// that named no database, since a reading always names one: the run may have executed
+// nothing or reached another database, so a clean reading of the planned one is no
+// statement about it. Its outcome is Unknown or Partial, which a wait stops on without
+// a reading, and what settles its hold is not this record. A run with no operation ID
+// was recorded by a release without this field and stays as it was.
 func recordMigrationRunVerification(migration *operatorv1alpha1.PtahMigration) {
 	run, history := migration.Status.LastRun, migration.Status.History
 	if run == nil || run.FinishedAt == nil || run.OperationID == "" || run.Verification != nil || history == nil ||
-		!run.TargetIdentityReported || run.TargetIdentityDigest != history.TargetIdentityDigest {
+		run.TargetIdentityDigest != history.TargetIdentityDigest {
 		return
 	}
 	result := operatorv1alpha1.MigrationRunVerifiedPending
@@ -1173,7 +1161,7 @@ func (r *MigrationReconciler) dispatchedApplyMayStillWrite(
 // its workload may still write. A fresh database history or acknowledgment
 // settles the record before another Apply can be authorized.
 //
-// reportedTarget is the database the run said it opened, and is empty wherever
+// reportedTarget is the database the run's result named, and is empty wherever
 // no result frame was read -- which is most of the ways in. A run that reached
 // a database the plan was never computed against arrives here through exactly
 // one of them, and that is the case where naming the planned database instead

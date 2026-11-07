@@ -168,16 +168,12 @@ func migrationClaimRetirements() []claimRetirement {
 			ResourceVersion: "1",
 		}}
 		job.Spec.TTLSecondsAfterFinished = ptr(int32(jobCleanupTTLSeconds))
-		_, err := r.consumeMigrationRun(context.Background(), migration, job, runner.Result{
-			Operation:            runner.OperationMigrationApply,
-			CoordinationDigest:   operation.CoordinationDigest,
-			TargetIdentityDigest: testDigest,
-			MigrationRun: &dataplane.MigrationRunReport{
+		_, err := r.recordMigrationRun(context.Background(), migration, job,
+			r.reportedMigrationRun(context.Background(), migration, &dataplane.MigrationRunReport{
 				ContractVersion: dataplane.SupportedMigrationRunContract,
 				Direction:       "up", Outcome: dataplane.MigrationOutcomeApplied,
 				Planned: []int64{3}, Applied: []int64{3},
-			},
-		})
+			}, nil), testDigest)
 		return err
 	})
 

@@ -4,8 +4,8 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     operator.ptah.run/controller-state-version: "1"
-    operator.ptah.run/crd-schema-version: "15"
-    operator.ptah.run/crd-schema-digest: "sha256:ac1f3447d86ffb20f0fc44bfbb8376b41eefabddb0f75aa79f874957e5b84822"
+    operator.ptah.run/crd-schema-version: "16"
+    operator.ptah.run/crd-schema-digest: "sha256:1229615f6ecd9683a919dc9468df3b3979e06aabe37ff98508f4533b5c5a1b25"
     controller-gen.kubebuilder.io/version: v0.23.0
   name: ptahmigrations.operator.ptah.run
 spec:
@@ -2124,8 +2124,6 @@ spec:
                   targetIdentityDigest:
                     pattern: ^sha256:[0-9a-f]{64}$
                     type: string
-                  targetIdentityReported:
-                    type: boolean
                   verification:
                     properties:
                       currentVersion:
