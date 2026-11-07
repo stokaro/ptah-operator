@@ -158,6 +158,9 @@ type lab struct {
 	// masker masks everything the run records, and counts what each rule did.
 	masker *runnerharness.Masker
 
+	// pulled names the images the host did not hold, which go with the run.
+	pulled []string
+
 	sequence atomic.Int64
 	// slots bounds the containers running at once.
 	slots chan struct{}
@@ -166,7 +169,6 @@ type lab struct {
 	shape     runnerharness.Container
 
 	mu       sync.Mutex
-	pulled   []string
 	rows     []runnerharness.Row
 	docs     map[string][]byte
 	peaks    map[string]int64
@@ -220,7 +222,7 @@ func randomHex(t *testing.T, size int) string {
 
 // startLab stands up the lab, and removes everything it made when the test ends,
 // whatever the outcome. Everything is named under one prefix, and removed by
-// name.
+// name. A run that dies before its cleanup is cleared by its janitor.
 func startLab(t *testing.T, gate runnerharness.Gate) *lab {
 	t.Helper()
 	executor, commit, _ := pinnedExecutor(t)
@@ -230,8 +232,11 @@ func startLab(t *testing.T, gate runnerharness.Gate) *lab {
 	postgres, mysql, registry := drivenImages(t)
 	prefix := gate.Prefix
 	if prefix == "" {
-		prefix = "ptah-runner-harness-" + randomHex(t, 4)
+		prefix = "ptah-runner-harness"
 	}
+	// Random even under a chosen prefix: the janitor of an earlier run with the
+	// same prefix may still be clearing it.
+	prefix += "-" + randomHex(t, 4)
 	keys, err := gitfixture.NewKeys(gitHost, gitHost, gitHost+".cluster.local")
 	if err != nil {
 		t.Fatal(err)
@@ -267,13 +272,14 @@ func startLab(t *testing.T, gate runnerharness.Gate) *lab {
 		}
 	}
 	architecture := l.docker.must(t, nil, "version", "--format", "{{.Server.Arch}}")
-	l.removeLeftovers(t)
-	t.Cleanup(func() { l.removeLeftovers(t) })
+	l.docker.sweepExpired(t.Logf, time.Now())
 
 	start := time.Now()
+	l.pulled = l.missingImages(t, executor, postgres, mysql, registry)
+	work := l.startCleanup(t)
 	var pulls sync.WaitGroup
-	for _, image := range []string{executor, postgres, mysql, registry} {
-		pulls.Go(func() { l.pullOnce(t, image) })
+	for _, image := range l.pulled {
+		pulls.Go(func() { l.pullImage(t, image) })
 	}
 	pulls.Wait()
 	if t.Failed() {
@@ -281,15 +287,14 @@ func startLab(t *testing.T, gate runnerharness.Gate) *lab {
 	}
 	t.Logf("images ready in %s", time.Since(start).Round(time.Millisecond))
 	if commit != "" {
-		version := l.docker.must(t, nil, "run", "--rm", "--pull", "never", "--network", "none", executor, "version")
+		version := l.docker.must(t, nil, "run", "--rm", "--pull", "never", "--name", l.name("version"), "--network", "none", executor, "version")
 		if !strings.Contains(version, "Commit: "+commit) {
 			t.Fatalf("the image says %q, and the catalog pins commit %s", version, commit)
 		}
 	}
-	l.images.tools = l.buildTools(t, architecture)
+	l.images.tools = l.buildTools(t, architecture, work)
 	t.Logf("tools built after %s", time.Since(start).Round(time.Millisecond))
 
-	l.docker.must(t, nil, "network", "create", "--internal", l.network)
 	// A new volume mounted over a directory the image holds starts with that
 	// directory's files, owners and modes.
 	l.docker.must(t, nil, "run", "--rm", "--pull", "never", "--name", l.name("seed"), "--network", "none", "--user", "0:0",
@@ -307,51 +312,66 @@ func startLab(t *testing.T, gate runnerharness.Gate) *lab {
 	return l
 }
 
-// pullOnce pulls an image the host does not hold. One the run pulled is removed
-// with the run, so a shared host keeps what it held and nothing more.
-func (l *lab) pullOnce(t *testing.T, image string) {
+// missingImages names the images the host does not hold. One the run pulls is
+// removed with the run, so a shared host keeps what it held and nothing more.
+func (l *lab) missingImages(t *testing.T, images ...string) []string {
 	t.Helper()
-	if _, _, exit, err := l.docker.run(context.Background(), nil, nil, "image", "inspect", image); err != nil {
-		t.Errorf("look for %s: %v", image, err)
-		return
-	} else if exit == 0 {
-		return
+	var missing []string
+	for _, image := range images {
+		_, _, exit, err := l.docker.run(context.Background(), nil, nil, "image", "inspect", image)
+		if err != nil {
+			t.Fatalf("look for %s: %v", image, err)
+		}
+		if exit != 0 {
+			missing = append(missing, image)
+		}
 	}
-	if _, stderr, exit, err := l.docker.run(context.Background(), nil, nil, "pull", "--quiet", image); err != nil || exit != 0 {
-		t.Errorf("pull %s: exit %d, %v: %s", image, exit, err, stderr)
-		return
-	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.pulled = append(l.pulled, image)
+	return missing
 }
 
-// removeLeftovers removes every container, volume and network the run may have
-// made, by the prefix that names them, and the tools image.
-func (l *lab) removeLeftovers(t *testing.T) {
+func (l *lab) pullImage(t *testing.T, image string) {
 	t.Helper()
-	stdout, _, _, err := l.docker.run(context.Background(), nil, nil, "ps", "--all", "--quiet", "--filter", "name=^"+l.prefix+"-")
+	if _, stderr, exit, err := l.docker.run(context.Background(), nil, nil, "pull", "--quiet", image); err != nil || exit != 0 {
+		t.Errorf("pull %s: exit %d, %v: %s", image, exit, err, stderr)
+	}
+}
+
+// startCleanup arranges for everything the run is about to make to go away, and
+// creates the first of it: the directory the tools image is built in, which it
+// returns, and the network, which records the run for whoever has to clear it.
+// The network goes last, so a run that is cleared halfway can still be found.
+func (l *lab) startCleanup(t *testing.T) string {
+	t.Helper()
+	work, err := os.MkdirTemp("", l.prefix+"-")
 	if err != nil {
-		t.Logf("list the run's containers: %v", err)
+		t.Fatal(err)
 	}
-	if ids := strings.Fields(string(stdout)); len(ids) != 0 {
-		l.docker.quiet(t, append([]string{"rm", "--force", "--volumes"}, ids...)...)
-	}
-	stdout, _, _, err = l.docker.run(context.Background(), nil, nil, "volume", "ls", "--quiet", "--filter", "name=^"+l.prefix+"-")
+	janitor, err := startJanitor(janitorOrder{
+		Context: l.docker.context, Prefix: l.prefix, Pulled: l.pulled, Work: work,
+		Settle: dockerTimeout, Interval: janitorInterval,
+	})
 	if err != nil {
-		t.Logf("list the run's volumes: %v", err)
+		t.Fatal(errors.Join(err, os.RemoveAll(work)))
 	}
-	if names := strings.Fields(string(stdout)); len(names) != 0 {
-		l.docker.quiet(t, append([]string{"volume", "rm", "--force"}, names...)...)
+	t.Cleanup(func() {
+		err := errors.Join(os.RemoveAll(work), l.docker.removeRunObjects(l.prefix))
+		if err == nil {
+			err = l.docker.removeRunRecord(l.prefix, l.pulled)
+		}
+		if err != nil {
+			t.Logf("this run's janitor takes over: %v", err)
+			return
+		}
+		if err := janitor.dismiss(); err != nil {
+			t.Logf("dismiss this run's janitor: %v", err)
+		}
+	})
+	record, err := runnerharness.RunRecord{Prefix: l.prefix, Expires: runExpiry(t), Pulled: l.pulled}.Label()
+	if err != nil {
+		t.Fatal(err)
 	}
-	l.docker.quiet(t, "network", "rm", l.network)
-	l.docker.quiet(t, "image", "rm", "--force", l.prefix+"-tools:run")
-	l.mu.Lock()
-	pulled := slices.Clone(l.pulled)
-	l.mu.Unlock()
-	for _, image := range pulled {
-		l.docker.quiet(t, "image", "rm", image)
-	}
+	l.docker.must(t, nil, "network", "create", "--internal", "--label", runnerharness.RunLabel+"="+record, l.network)
+	return work
 }
 
 func writeTree(t *testing.T, file string, data []byte, mode os.FileMode) {
@@ -405,9 +425,8 @@ func writeControlByteMigrations(t *testing.T, directory string) {
 
 // buildTools builds the one image the lab adds: the recorder, the Git server,
 // the fixture sources and the keys generated for this run. It holds no shell.
-func (l *lab) buildTools(t *testing.T, architecture string) string {
+func (l *lab) buildTools(t *testing.T, architecture, work string) string {
 	t.Helper()
-	work := t.TempDir()
 	for binary, source := range map[string]string{
 		"recorder": "./recorder", "runner/ptah-runner": "./recorder", "e2e-git-server": "../e2e/gitserver",
 	} {

@@ -388,6 +388,8 @@ jobs:
         env:
           DOCKER_CONTEXT: default
           RUNNER_HARNESS_OUT: ${{ runner.temp }}/runner-harness
+          # Inside the job's own limit, so a stuck run still prints its goroutines.
+          RUNNER_HARNESS_TIMEOUT: 15m
         shell: bash
         run: make runner-harness
       # What the run printed, so a change of shape can be read without running

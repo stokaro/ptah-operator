@@ -334,6 +334,11 @@ digest, a fingerprint and a Git content digest are held. CI runs it on every pul
 request and every push to `master`, and a commit that moved the pin without new
 captures fails in `go test` before that job starts.
 
+On CI's own Docker a run takes a few minutes. Over SSH from a loaded machine it
+has taken over twenty, and `RUNNER_HARNESS_TIMEOUT` sets the bound, an hour by
+default. A run that passes the bound or is killed leaves nothing on the daemon:
+a process it started removes everything the run made.
+
 Recapture the SQL readings under `testdata/e2e/readings`, which record every
 statement each schema and migration command sent to the database. Run the probe
 once with `--compare` and the executor the readings were taken with, to show the
