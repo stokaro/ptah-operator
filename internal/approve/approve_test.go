@@ -427,6 +427,11 @@ func TestSubmitSaysWhatHoldsATakenName(t *testing.T) {
 		says   string
 	}{
 		{"an approval of the same plan", func(*operatorv1alpha1.PtahSchemaApproval) {}, "an approval of this plan is recorded, and this request stored nothing"},
+		{"a withdrawn approval of the same plan", func(a *operatorv1alpha1.PtahSchemaApproval) { a.Status.Conditions = staleApproval() }, "went stale, so it authorizes nothing"},
+		{"a kept approval that once was not stale", func(a *operatorv1alpha1.PtahSchemaApproval) {
+			a.Status.Conditions = staleApproval()
+			a.Status.Conditions[0].Status = metav1.ConditionFalse
+		}, "an approval of this plan is recorded, and this request stored nothing"},
 		{"an approval of another plan", func(a *operatorv1alpha1.PtahSchemaApproval) { a.Spec.PlanRef.UID = "uid-an-earlier-plan" }, "binds another plan"},
 		{"the same plan under another fingerprint", func(a *operatorv1alpha1.PtahSchemaApproval) { a.Spec.PlanFingerprint = "sha256:another" }, "binds another plan"},
 		{"the same plan of another schema", func(a *operatorv1alpha1.PtahSchemaApproval) { a.Spec.SchemaRef.UID = "uid-another-storefront" }, "binds another plan"},
@@ -746,6 +751,46 @@ func TestLoadRefusesAMigrationPlanInAContractItCannotRead(t *testing.T) {
 		!strings.Contains(err.Error(), "contract 99") {
 		t.Fatalf("Load() error = %v, want a refusal naming contract 99", err)
 	}
+}
+
+// A refusal of a migration's artifact withdraws its approvals, and the same plan
+// can come back. The name a workflow reuses then holds a decision that authorizes
+// nothing, which is not "an approval of this plan is recorded".
+func TestSubmitSaysAStaleMigrationApprovalHoldsATakenName(t *testing.T) {
+	t.Parallel()
+	objects := waitingMigration(nil)
+	api := &answering{Client: planreadtest.NewClient(t, objects...)}
+	review, err := approve.Load(context.Background(), api, approve.Migration, "application", "shipments")
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	stored := &operatorv1alpha1.PtahMigrationApproval{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "application", Name: "shipments-14"},
+		Spec: operatorv1alpha1.PtahMigrationApprovalSpec{
+			MigrationRef:    operatorv1alpha1.ImmutableObjectReference{Name: "shipments", UID: "uid-shipments"},
+			PlanRef:         operatorv1alpha1.ImmutableObjectReference{Name: "shipments-p-14", UID: "uid-p-14"},
+			PlanFingerprint: "sha256:14",
+		},
+		Status: operatorv1alpha1.PtahMigrationApprovalStatus{Conditions: staleApproval()},
+	}
+	if err := api.Client.Create(context.Background(), stored); err != nil {
+		t.Fatalf("store the approval that holds the name: %v", err)
+	}
+
+	result := approve.Submit(context.Background(), api, review, approve.Options{Name: "shipments-14"})
+
+	if result.Outcome != approve.Refused || !strings.Contains(result.Message, "went stale, so it authorizes nothing") ||
+		strings.Contains(result.Message, "is recorded") || result.Approval != nil {
+		t.Fatalf("Submit() = %+v, want refused saying the name holds a stale approval", result)
+	}
+}
+
+func staleApproval() []metav1.Condition {
+	return []metav1.Condition{{
+		Type: operatorv1alpha1.ConditionApprovalStale, Status: metav1.ConditionTrue,
+		Reason: string(operatorv1alpha1.ReasonPolicyRefused), Message: "The verification policy refused the artifact",
+		LastTransitionTime: metav1.Now(),
+	}}
 }
 
 func TestSubmitApprovesTheReviewedMigrationPlanOnly(t *testing.T) {

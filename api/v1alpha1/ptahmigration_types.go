@@ -24,9 +24,12 @@ const (
 	// MigrationPhaseAwaitingApproval is a published plan waiting for the exact
 	// approval its policy requires.
 	MigrationPhaseAwaitingApproval MigrationPhase = "AwaitingApproval"
-	// MigrationPhaseBlocked is a history this artifact cannot continue: a
-	// modified applied migration, an incompatible branch, or a dirty row. It is
-	// never resolved by the controller.
+	// MigrationPhaseBlocked is a resource the controller stopped: a history this
+	// artifact cannot continue, such as a modified applied migration or a dirty
+	// row, which it never resolves by writing to the database, a run nobody
+	// accounted for, an unsupported engine, a realm that does not admit it, or
+	// an artifact its verification policy refused, which it reads again at its
+	// interval.
 	MigrationPhaseBlocked MigrationPhase = "Blocked"
 	// MigrationPhaseApplying is an execution Job in flight.
 	MigrationPhaseApplying MigrationPhase = "Applying"
@@ -853,8 +856,11 @@ const (
 	ConditionMigrationReady = "Ready"
 	// ConditionMigrationProgressing reports work in flight.
 	ConditionMigrationProgressing = "Progressing"
-	// ConditionMigrationBlocked reports a history this artifact cannot
-	// continue, which the controller never resolves on its own.
+	// ConditionMigrationBlocked reports what stopped the resource: a history
+	// this artifact cannot continue, which the controller never resolves by
+	// writing to the database, a run nobody accounted for, an unsupported engine,
+	// a realm that does not admit it, or an artifact its verification policy
+	// refused. The reason says which.
 	ConditionMigrationBlocked = "Blocked"
 	// ConditionMigrationApprovalRequired reports a plan waiting for the exact
 	// approval its policy requires.

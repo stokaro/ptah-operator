@@ -91,9 +91,21 @@ artifact_types:
 An artifact the policy refuses stops the migration at `Blocked`, before it reads
 the database: `ArtifactVerified` is `False` with the reason `PolicyRefused`, its
 message names each requirement the artifact did not meet, and an
-`ArtifactVerificationRefused` Event says the same. No plan outlives the refusal.
-The operator reads again from the artifact reference at `spec.interval`, so a new
-artifact or a policy edit is noticed then.
+`ArtifactVerificationRefused` Event says the same. No plan outlives the refusal,
+and no approval does: each one still outstanding goes `Stale`, so a plan that comes
+back needs a new one. The operator reads again from the artifact reference at
+`spec.interval`, so a new artifact or a policy edit is noticed then, and an edit to
+the spec is read at once. Once the artifact passes, or the reference resolves to
+another digest, or the source is no longer a verified one, no condition names the
+refusal, whatever the history read goes on to say.
+
+Under `require_signature` a registry fault can read as a refusal. A registry that
+answers 404 from its referrers API looks like one without that API, and with no
+fallback index the artifact has no signature to find. A person sees what a real
+refusal shows: `Blocked` with `PolicyRefused`, `require_signature` named on
+`ArtifactVerified` and in the Event, and each outstanding approval `Stale`. Nothing
+runs. When the registry answers again the next read passes, the same plan is
+published, and it waits for a new approval.
 
 A policy that also listed `application/vnd.stokaro.ptah.schema.v1` would let a
 schema artifact stand in for a migration directory at the same reference, so
@@ -496,9 +508,22 @@ waiting for a decision. An approval authorizes one execution. Deleting or
 replacing it before the run's Job exists withdraws it: the claim is retired, no
 Job runs, and the resource plans again. Once the Job exists, deleting the approval
 changes nothing about the run.
+
+An approval also ends with a read that ends anywhere but its plan: another plan
+published, nothing left to apply, a history nothing may run against, or an artifact
+the verification policy refused. The controller marks it `Stale` with the reason,
+and one a run already consumed stays as it is. A plan with the same fingerprint is
+the object already stored, under the same name and UID, so without this an old
+approval would run it the moment it came back; instead it waits for a person. The
+controller acts on an approval at once unless the interval's read is already due,
+so on a source that keeps moving this costs a person only an approval that lost
+that race. Approving again takes a new name: `kubectl ptah approve` generates one,
+and a workflow that applies a file under a fixed name has to change it, because
+applying the same file again changes nothing.
+
 `kubectl ptah migration orders -n application` lists the approvals that name
-the migration, whether each names the current plan, and the `Consumed`
-condition the controller writes once the approved plan is dispatched.
+the migration, whether each names the current plan, and the `Consumed` or `Stale`
+condition the controller writes on it.
 
 The chart's optional approver ClusterRole grants what an approver needs for
 either family: read on the migration, its plans and approvals, and create on

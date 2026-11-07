@@ -1,9 +1,12 @@
 package e2e
 
 import (
+	"encoding/json"
+	"os"
 	"testing"
 	"time"
 
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -89,7 +92,7 @@ func TestNativeRefusalResult(t *testing.T) {
 			return &runner.Result{
 				ChildExitCode: 2, ResolvedDigest: testGateDigest, VerificationPolicyDigest: testGateFingerprint,
 				VerificationRequirements: []string{"artifact_types"},
-				Error:                    &runner.ResultError{Code: "verification_refused"},
+				Error:                    &runner.ResultError{Code: "verification_refused", Message: refusalFrameMessage},
 			}
 		},
 		func(result *runner.Result) error {
@@ -105,11 +108,107 @@ func TestNativeRefusalResult(t *testing.T) {
 			"the code a diagnostic used to give": func(r *runner.Result) {
 				r.Error.Code = "invalid_verification_output"
 			},
+			"Ptah's words about the artifact": func(r *runner.Result) {
+				r.Error.Message = `the artifact is "application/x", and the policy permits application/y`
+			},
+			"no message":                func(r *runner.Result) { r.Error.Message = "" },
 			"what the executor printed": func(r *runner.Result) { r.Stdout = "{}" },
 			"the artifact read":         func(r *runner.Result) { r.ObservedArtifactType = schemaArtifactType },
 			"a mutation":                func(r *runner.Result) { r.MutationStarted = true },
 			"an uncertain outcome":      func(r *runner.Result) { r.Uncertain = true },
 			"lost output":               func(r *runner.Result) { r.Truncation = &runner.TruncationMetadata{Stdout: true} },
+		})
+}
+
+func TestRefusedOnce(t *testing.T) {
+	t.Parallel()
+	const interval = 90 * time.Second
+	created := time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)
+	job := func(name, operation string, at time.Time) batchv1.Job {
+		return batchv1.Job{ObjectMeta: metav1.ObjectMeta{
+			Name: name, Labels: map[string]string{labelOperation: operation}, CreationTimestamp: metav1.NewTime(at),
+		}}
+	}
+	once := []batchv1.Job{job("resolve", "resolve", created), job("verify", "verify", created.Add(10*time.Second))}
+	deadline := func(after time.Duration) *metav1.Time {
+		at := metav1.NewTime(created.Add(after))
+		return &at
+	}
+	// The claim sets the deadline a moment before the Job exists.
+	if err := refusedOnce(once, deadline(interval-time.Second), interval); err != nil {
+		t.Fatalf("a refusal that waits for its interval was refused: %v", err)
+	}
+	for name, test := range map[string]struct {
+		jobs []batchv1.Job
+		next *metav1.Time
+	}{
+		"no deadline":      {once, nil},
+		"nothing read":     {nil, deadline(interval)},
+		"a second read":    {append(append([]batchv1.Job{}, once...), job("verify-2", "verify", created.Add(20*time.Second))), deadline(interval)},
+		"no Verify":        {once[:1], deadline(interval)},
+		"no Resolve":       {once[1:], deadline(interval)},
+		"a history read":   {append(append([]batchv1.Job{}, once...), job("history", "history", created.Add(20*time.Second))), deadline(interval)},
+		"an Apply":         {append(append([]batchv1.Job{}, once...), job("apply", "apply", created.Add(20*time.Second))), deadline(interval)},
+		"no operation":     {append(append([]batchv1.Job{}, once...), batchv1.Job{}), deadline(interval)},
+		"a failure retry":  {once, deadline(10 * time.Second)},
+		"half an interval": {once, deadline(interval / 2)},
+	} {
+		if refusedOnce(test.jobs, test.next, interval) == nil {
+			t.Errorf("%s was accepted", name)
+		}
+	}
+}
+
+// recoveredFromRefusalReading is what the reconciler wrote for a resource past
+// its refusal. TestTheRefusalRecoveryReadingIsTheReconcilers in internal/controller
+// holds it to that, because this row has not seen a cluster when it is written.
+func recoveredFromRefusalReading(t *testing.T) *ptahv1alpha1.PtahMigration {
+	t.Helper()
+	content, err := os.ReadFile("../../testdata/e2e/readings/native-refusal-recovered-migration.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	migration := &ptahv1alpha1.PtahMigration{}
+	if err := json.Unmarshal(content, migration); err != nil {
+		t.Fatal(err)
+	}
+	return migration
+}
+
+func TestRecoveredFromRefusal(t *testing.T) {
+	t.Parallel()
+	condition := func(m *ptahv1alpha1.PtahMigration, conditionType string) *metav1.Condition {
+		for index := range m.Status.Conditions {
+			if m.Status.Conditions[index].Type == conditionType {
+				return &m.Status.Conditions[index]
+			}
+		}
+		t.Fatalf("the reading has no %s", conditionType)
+		return nil
+	}
+	mtRefusesEach(t,
+		func() *ptahv1alpha1.PtahMigration { return recoveredFromRefusalReading(t) },
+		recoveredFromRefusal,
+		map[string]func(*ptahv1alpha1.PtahMigration){
+			"the generation before the edit": func(m *ptahv1alpha1.PtahMigration) { m.Generation++ },
+			"still refused":                  func(m *ptahv1alpha1.PtahMigration) { m.Status.Phase = ptahv1alpha1.MigrationPhaseBlocked },
+			"a read in flight": func(m *ptahv1alpha1.PtahMigration) {
+				m.Status.ActiveOperation = &ptahv1alpha1.MigrationOperationStatus{Type: ptahv1alpha1.MigrationOperationResolve}
+			},
+			"no plan":       func(m *ptahv1alpha1.PtahMigration) { m.Status.Plan = nil },
+			"no conditions": func(m *ptahv1alpha1.PtahMigration) { m.Status.Conditions = nil },
+			"an artifact not verified": func(m *ptahv1alpha1.PtahMigration) {
+				condition(m, ptahv1alpha1.ConditionMigrationArtifactVerified).Status = metav1.ConditionUnknown
+			},
+			"Blocked still True": func(m *ptahv1alpha1.PtahMigration) {
+				condition(m, ptahv1alpha1.ConditionMigrationBlocked).Status = metav1.ConditionTrue
+			},
+			"no approval asked for": func(m *ptahv1alpha1.PtahMigration) {
+				condition(m, ptahv1alpha1.ConditionMigrationApprovalRequired).Status = metav1.ConditionFalse
+			},
+			"a refusal left on Ready": func(m *ptahv1alpha1.PtahMigration) {
+				condition(m, ptahv1alpha1.ConditionMigrationReady).Reason = string(ptahv1alpha1.ReasonPolicyRefused)
+			},
 		})
 }
 

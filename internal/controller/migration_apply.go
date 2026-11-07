@@ -1320,6 +1320,83 @@ func (r *MigrationReconciler) reportedMigrationOutcome(
 	return jobclaim.ReportedMigrationRun(pods.Items, job.UID, operation.ID)
 }
 
+// markMigrationApprovalsStale withdraws the decisions of this migration that name
+// any plan but keep, so that a plan published later waits for a person even if it
+// is the plan they approved. A plan's name comes from its fingerprint and an
+// identical plan is the object already stored, so without this a plan that a
+// reading replaced comes back with its UID and runs under the old approval, with
+// nobody watching and after the person was told it authorized nothing.
+//
+// It is the one thing that makes a migration approval stale, and it answers where
+// a read ended rather than where the plan went: a refusal and a reading that
+// leaves no plan keep nothing, and a published plan keeps its own. A read that
+// ends at the plan it began with keeps the decision, and so does a plan discarded
+// between two reads, until the next one says what is current.
+//
+// Every approval of the migration, rather than those of the plan its status
+// names, because a discarded plan leaves its status naming none. One already
+// spent stays as the record of the run it authorized, and one being deleted
+// authorizes nothing.
+//
+// The list is read from the API server. An approval admitted just before this
+// pass may not have reached the cache, and it is the one this exists for.
+func (r *MigrationReconciler) markMigrationApprovalsStale(
+	ctx context.Context,
+	migration *operatorv1alpha1.PtahMigration,
+	keep *operatorv1alpha1.ImmutableObjectReference,
+	reason operatorv1alpha1.ConditionReason,
+	message string,
+) error {
+	approvals := &operatorv1alpha1.PtahMigrationApprovalList{}
+	if err := r.directReader().List(ctx, approvals, client.InNamespace(migration.Namespace)); err != nil {
+		return fmt.Errorf("list migration approvals to withdraw: %w", err)
+	}
+	for index := range approvals.Items {
+		approval := &approvals.Items[index]
+		if approval.Spec.MigrationRef.UID != migration.UID || approval.DeletionTimestamp != nil ||
+			(keep != nil && approval.Spec.PlanRef.UID == keep.UID) ||
+			meta.IsStatusConditionTrue(approval.Status.Conditions, operatorv1alpha1.ConditionApprovalStale) ||
+			meta.IsStatusConditionTrue(approval.Status.Conditions, operatorv1alpha1.ConditionApprovalConsumed) {
+			continue
+		}
+		if err := r.markMigrationApprovalStale(ctx, approval, reason, message); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// markMigrationApprovalStale writes the mark on one approval, and answers nothing
+// for one that is gone: a deleted approval authorizes nothing either.
+func (r *MigrationReconciler) markMigrationApprovalStale(
+	ctx context.Context,
+	approval *operatorv1alpha1.PtahMigrationApproval,
+	reason operatorv1alpha1.ConditionReason,
+	message string,
+) error {
+	before := approval.DeepCopy()
+	meta.SetStatusCondition(&approval.Status.Conditions, metav1.Condition{
+		Type:               operatorv1alpha1.ConditionApprovalStale,
+		Status:             metav1.ConditionTrue,
+		Reason:             string(reason),
+		Message:            message,
+		ObservedGeneration: approval.Generation,
+		LastTransitionTime: metav1.NewTime(r.now()),
+	})
+	approval.Status.ObservedGeneration = approval.Generation
+	if err := r.Client.Status().Patch(ctx, approval, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("mark migration approval %s stale: %w", approval.Name, err)
+	}
+	r.event(approval, corev1.EventTypeWarning, "ApprovalStale", "%s", message)
+	if r.Telemetry != nil {
+		r.Telemetry.ObserveApproval(telemetry.FamilyMigration, telemetry.ApprovalStale)
+	}
+	return nil
+}
+
 // discardMigrationPlan drops a plan the current evidence no longer supports.
 // The next reading of the history publishes the plan that does.
 func (r *MigrationReconciler) discardMigrationPlan(

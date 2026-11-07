@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -27,6 +28,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
@@ -872,9 +874,12 @@ func (m *migrationRun) unreadableOCIFiles() {
 // nativePolicyRefusalProof reads the phase's artifact under a policy Ptah itself
 // refuses it by. The migration stops at Blocked before it reads the database, and
 // says which requirement the artifact did not meet, where it would otherwise
-// retry the read as a failure at its failure interval.
+// retry the read as a failure at its failure interval. It reads nothing more
+// until the deadline it persisted, and a spec edit to a policy that accepts the
+// artifact carries it on at once, with nothing left naming the refusal.
 func (m *migrationRun) nativePolicyRefusalProof() {
 	m.t.Helper()
+	const interval = 90 * time.Second
 	name := "e2e-native-refusal-" + m.engine.name
 	secret := "e2e-" + m.engine.name + "-native-refusal-db"
 	policyName := "e2e-native-refusal-policy-" + m.engine.name
@@ -888,13 +893,15 @@ func (m *migrationRun) nativePolicyRefusalProof() {
 	}), "apply the verification policy Ptah refuses by")
 	m.mustCreate(m.migrationDocument(migrationSpec{
 		name: name, secret: secret, reference: m.reference(""),
-		coordinationKey: "e2e/native-refusal/" + m.engine.name, apply: "OnApproval",
+		coordinationKey: "e2e/native-refusal/" + m.engine.name, apply: "OnApproval", interval: interval.String(),
 		edit: func(spec map[string]any) {
 			spec["artifact"].(map[string]any)["verificationPolicyFrom"] = map[string]any{"name": policyName, "key": migrationPolicyKey}
 		},
 	}))
 	refused := m.waitForMigration(name, "the artifact to be refused by Ptah's own verification", time.Second,
 		func(current *ptahv1alpha1.PtahMigration) bool { return nativelyRefusedMigration(current) == nil })
+	jobs := map[types.UID]batchv1.Job{}
+	m.recordMigrationJobs(name, jobs)
 	var last error
 	if !m.miUntil(migrationPoll, func() bool {
 		events := &corev1.EventList{}
@@ -904,8 +911,42 @@ func (m *migrationRun) nativePolicyRefusalProof() {
 	}) {
 		m.fatalf("%s has no Event naming what the policy refused: %v", name, last)
 	}
+	// Up to the deadline the refusal persisted and not past it: the read it
+	// schedules there is not the one this row is about.
+	if refused.Status.NextReconciliationTime == nil {
+		m.fatalf("%s scheduled no next read", name)
+	}
+	for hold := refused.Status.NextReconciliationTime.Add(-5 * time.Second); time.Now().Before(hold); m.sleep(2 * time.Second) {
+		m.recordMigrationJobs(name, jobs)
+	}
+	if err := refusedOnce(slices.Collect(maps.Values(jobs)), refused.Status.NextReconciliationTime, interval); err != nil {
+		m.fatalf("%s did not wait for its interval: %v", name, err)
+	}
+	m.check(retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		current := m.migration(name)
+		before := current.DeepCopy()
+		current.Spec.Artifact.VerificationPolicyFrom.Name = migrationPolicy
+		return m.cluster.Client.Patch(m.ctx, current, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{}))
+	}), "edit %s to a policy that accepts its artifact", name)
+	m.waitForMigration(name, "its artifact to pass the policy it was edited to", time.Second,
+		func(current *ptahv1alpha1.PtahMigration) bool { return recoveredFromRefusal(current) == nil })
 	m.finishFixture(name)
-	m.logf("PASS a %s migration stopped at Ptah's own refusal of its artifact", m.engine.kind)
+	m.logf("PASS a %s migration stopped at Ptah's own refusal of its artifact, and went on when the policy accepted it", m.engine.kind)
+}
+
+// recordMigrationJobs adds the Jobs a migration has now to the set, by UID. A
+// harvested Job carries a TTL, so a list taken once says less than the sum. One
+// failed read is not a finding about the operator, and a Job it missed is seen by
+// the next.
+func (m *migrationRun) recordMigrationJobs(name string, jobs map[types.UID]batchv1.Job) {
+	m.t.Helper()
+	list := &batchv1.JobList{}
+	if m.list(list, client.MatchingLabels{labelMigration: name}) != nil {
+		return
+	}
+	for _, job := range list.Items {
+		jobs[job.UID] = job
+	}
 }
 
 // publishUnknownLayerArtifact builds the artifact no product command builds:

@@ -327,6 +327,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:ad2ae44d405a96e04996a965d390a15764d17460c28a92b9050b70ce6d15839b",
       "reason": "Reword the comment on SettledApplyAnnotation in api/v1alpha1, a package the runner links for its types (the review of #865). No code the runner runs changes: commands, payloads, result frames, delivery identity, SQL authority and retry limits are the same."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:34c7b17e1ef93c671a115968b404e519afa5788e18c73163521484988782d54d",
+      "reason": "Correct the doc comments of MigrationPhaseBlocked and ConditionMigrationBlocked in the API package, which the runner imports for its types. They said a history is the only thing that blocks a migration, and a run nobody accounted for, an unsupported engine, a realm and a refused artifact do too. No constant, type or field changes. The runner neither reads nor writes phases or conditions, so what it accepts, enforces and returns is unchanged, a manager of any release reads its output as it read the last one, and protocol 1 stays."
     }
   ]
 }

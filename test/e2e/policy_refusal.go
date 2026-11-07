@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -21,6 +23,12 @@ const (
 	otherTypePolicyFile = "verification-policy-other-type.yaml"
 	// otherTypeRequirement is the requirement that policy leaves unmet.
 	otherTypeRequirement = "artifact_types"
+	// refusalFrameMessage is the whole of what the runner says of a refusal.
+	// Ptah's own sentence about the artifact stops at the requirement codes.
+	refusalFrameMessage = "artifact does not satisfy the verification policy"
+	// refusalJobLag is how long after a claim its Job may be created. The claim
+	// fixes the next read and the Job dates it, so the bound gives that much up.
+	refusalJobLag = 20 * time.Second
 )
 
 // nativelyRefusedSchema is a schema Ptah's own verification stopped: blocked,
@@ -68,9 +76,74 @@ func refusalConditions(conditions []metav1.Condition, verifiedType, readyType st
 	return nil
 }
 
+// refusedOnce is a refusal that read its artifact once and waits for its
+// interval to read it again: one Resolve, one Verify, nothing of the database,
+// and the next read an interval after the Resolve that started the cycle, however
+// long the failure interval is. A refusal retried as a failure passes neither.
+func refusedOnce(jobs []batchv1.Job, next *metav1.Time, interval time.Duration) error {
+	if next == nil {
+		return errors.New("the refusal scheduled no next read")
+	}
+	var resolves, verifies int
+	var resolved time.Time
+	for index := range jobs {
+		job := &jobs[index]
+		switch operation := job.Labels[labelOperation]; operation {
+		case "resolve":
+			resolves++
+			resolved = job.CreationTimestamp.Time
+		case "verify":
+			verifies++
+		default:
+			return fmt.Errorf("the refusal ran %s Job %s", operation, job.Name)
+		}
+	}
+	if resolves != 1 || verifies != 1 {
+		return fmt.Errorf("the refusal ran %d Resolve and %d Verify Jobs, want one of each", resolves, verifies)
+	}
+	if earliest := resolved.Add(interval - refusalJobLag); next.Time.Before(earliest) {
+		return fmt.Errorf("the next read is at %s, before %s, an interval of %s after the Resolve",
+			next.Format(time.RFC3339), earliest.Format(time.RFC3339), interval)
+	}
+	return nil
+}
+
+// recoveredFromRefusal is a migration past its refusal, reading the spec it was
+// edited to: its artifact verified, a plan waiting for a person, and no condition
+// left naming what refused it.
+func recoveredFromRefusal(migration *ptahv1alpha1.PtahMigration) error {
+	status := migration.Status
+	switch {
+	case status.ObservedGeneration != migration.Generation:
+		return fmt.Errorf("it read generation %d of %d", status.ObservedGeneration, migration.Generation)
+	case status.Phase != ptahv1alpha1.MigrationPhaseAwaitingApproval || status.ActiveOperation != nil:
+		return fmt.Errorf("it is %s, with claim %+v", status.Phase, status.ActiveOperation)
+	case status.Plan == nil:
+		return errors.New("it published no plan")
+	}
+	for _, want := range []struct {
+		conditionType string
+		status        metav1.ConditionStatus
+	}{
+		{ptahv1alpha1.ConditionMigrationArtifactVerified, metav1.ConditionTrue},
+		{ptahv1alpha1.ConditionMigrationBlocked, metav1.ConditionFalse},
+		{ptahv1alpha1.ConditionMigrationApprovalRequired, metav1.ConditionTrue},
+	} {
+		if !conditionStatus(status.Conditions, want.conditionType, want.status) {
+			return fmt.Errorf("%s is not %s: %+v", want.conditionType, want.status, status.Conditions)
+		}
+	}
+	for _, condition := range status.Conditions {
+		if condition.Reason == string(ptahv1alpha1.ReasonPolicyRefused) {
+			return fmt.Errorf("%s still names the refusal: %s", condition.Type, condition.Message)
+		}
+	}
+	return nil
+}
+
 // nativeRefusalResult is the Verify Ptah refused: its exit status, the policy by
-// digest, the one requirement it found unmet, the refusal code, and no word of
-// what Ptah wrote about the artifact.
+// digest, the one requirement it found unmet, the refusal code, and the runner's
+// fixed message, so no word of what Ptah wrote about the artifact.
 func nativeRefusalResult(result runner.Result, digest, policyDigest string) error {
 	switch {
 	case result.ChildExitCode != 2:
@@ -79,7 +152,7 @@ func nativeRefusalResult(result runner.Result, digest, policyDigest string) erro
 		return errors.New("the Verify is not the policy's reading of the digest")
 	case !slices.Equal(result.VerificationRequirements, []string{otherTypeRequirement}):
 		return fmt.Errorf("the Verify names %v", result.VerificationRequirements)
-	case result.Error == nil || result.Error.Code != "verification_refused":
+	case result.Error == nil || result.Error.Code != "verification_refused" || result.Error.Message != refusalFrameMessage:
 		return fmt.Errorf("the Verify ended with %+v", result.Error)
 	case result.Stdout != "" || result.ObservedArtifactType != "" || result.ResolvedReference != "":
 		return errors.New("the frame carries what the executor read")

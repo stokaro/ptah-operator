@@ -385,6 +385,8 @@ func TestRenderTextSaysWhenAGateStopsTheReadingThatWouldClearTheRecord(t *testin
 		{name: "realm conflict", blocked: metav1.ConditionTrue, reason: operatorv1alpha1.ReasonRealmConflict, gate: "Blocked is True, RealmConflict"},
 		{name: "realm not authorized", blocked: metav1.ConditionTrue, reason: operatorv1alpha1.ReasonRealmNotAuthorized, gate: "Blocked is True, RealmNotAuthorized"},
 		{name: "unsupported engine", blocked: metav1.ConditionTrue, reason: operatorv1alpha1.ReasonUnsupportedEngine, gate: "Blocked is True, UnsupportedEngine"},
+		{name: "a refused artifact", blocked: metav1.ConditionTrue, reason: operatorv1alpha1.ReasonPolicyRefused, gate: "Blocked is True, PolicyRefused"},
+		{name: "a refusal that ended", blocked: metav1.ConditionFalse, reason: operatorv1alpha1.ReasonPolicySatisfied},
 		{name: "the hold itself", blocked: metav1.ConditionTrue, reason: operatorv1alpha1.ReasonApplyOutcomeUnknown},
 		{name: "a dirty history", blocked: metav1.ConditionTrue, reason: operatorv1alpha1.ReasonHistoryDirty},
 		{name: "a realm reason not holding", blocked: metav1.ConditionFalse, reason: operatorv1alpha1.ReasonRealmConflict},
@@ -422,7 +424,8 @@ func TestRenderTextSaysWhenAGateStopsTheReadingThatWouldClearTheRecord(t *testin
 }
 
 // The controller writes nothing on a migration approval until its plan is
-// dispatched, so an approval with no condition says so without promising one.
+// dispatched or a read withdraws it, so an approval with no condition says so
+// without promising one.
 func TestRenderTextSaysAMigrationApprovalHasNoCondition(t *testing.T) {
 	t.Parallel()
 
