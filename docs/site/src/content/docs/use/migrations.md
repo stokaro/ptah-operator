@@ -97,7 +97,8 @@ back needs a new one. The operator reads again from the artifact reference at
 `spec.interval`, so a new artifact or a policy edit is noticed then, and an edit to
 the spec is read at once. Once the artifact passes, or the reference resolves to
 another digest, or the source is no longer a verified one, no condition names the
-refusal, whatever the history read goes on to say.
+refusal, whatever the history read goes on to say. [A wait](../operations/#wait)
+for `in-sync`, `approval` or `applied` stops on the refusal with exit status 8.
 
 Under `require_signature` a registry fault can read as a refusal. A registry that
 answers 404 from its referrers API looks like one without that API, and with no

@@ -1298,7 +1298,9 @@ stops either wait with exit status 8 once the operator has published it, with
 the reason and the operator's message: no approval is asked for and nothing
 applies it until the spec changes. Every ending needs the operator to have
 observed the generation the change made and a reading that began after it,
-and a document that carries another artifact does not count. A wait whose
+and a document that carries another artifact does not count. A verification
+policy that refuses the new artifact stops either wait with exit status 8 too,
+without a reading, since it refuses before the database is read. A wait whose
 resource is pointed somewhere else meanwhile stops with exit status 8, as
 [any wait](#wait) does on a target it can no longer reach.
 
@@ -1849,6 +1851,18 @@ kubectl-ptah: ptahschema/storefront in namespace application will not reach in-s
   Why:         spec.policy holds plan ptah-plan-0132bf7579a7c04e68e35110 (DestructiveChangesDisabled): Plan contains destructive changes and policy disallows them; read them with kubectl ptah plan, then either narrow the desired schema or set spec.policy.allowDestructive
 kubectl ptah schema storefront -n application shows where it stands.
 ```
+
+A verification policy that refuses the artifact stops a wait for `in-sync`,
+`approval` or `applied` with the reason `PolicyRefused` and the requirements it
+named. No plan outlives the refusal and no approval does, and the database is not
+read. The wait reads the refusal from `ArtifactVerified`, `False` with
+`PolicyRefused`, for the generation the resource has now, at rest in `Blocked`, on
+two reads in a row. No reading dates it, so a refusal that stands when the wait
+begins stops it too. An older one does not: a spec edited since, a read request
+the operator has not taken, a read under way, or an artifact that passed since
+leaves the wait running, whatever `Ready` or `Blocked` still says. To see whether a
+policy edit helps, ask for a read first: `kubectl ptah refresh --wait` is not stopped
+by the refusal it may end, and its timeout names the refusal if it stands.
 
 A resource its database realm blocks keeps a wait running: another resource's
 change or an administrator's grant ends that refusal, not a change to this

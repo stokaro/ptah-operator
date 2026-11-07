@@ -731,6 +731,59 @@ func TestWaitStopsOnAnOutcomeTheTargetCannotFollow(t *testing.T) {
 		"Why:         spec.suspend is false", "kubectl ptah migration storefront -n demo shows where it stands.")
 }
 
+// A refusal of the source the resource names now ends a wait as other refusals
+// do, on the state the controller writes, and an older one leaves it running to its
+// timeout, which names what holds the resource.
+func TestWaitStopsOnAPolicyRefusalThatHolds(t *testing.T) {
+	const message = "Verification policy refused the artifact with 1 finding(s): require_signature"
+	refused := func(generation int64) []metav1.Condition {
+		return []metav1.Condition{
+			{Type: operatorv1alpha1.ConditionArtifactVerified, Status: metav1.ConditionFalse, Reason: "PolicyRefused", Message: message, ObservedGeneration: generation},
+			{Type: operatorv1alpha1.ConditionReady, Status: metav1.ConditionFalse, Reason: "PolicyRefused",
+				Message: "Artifact verification policy must be satisfied before database access", ObservedGeneration: generation},
+		}
+	}
+	refusedResource := func(family string, generation int64) client.Object {
+		object := resting(family)
+		switch typed := object.(type) {
+		case *operatorv1alpha1.PtahSchema:
+			typed.Status.Phase = operatorv1alpha1.PhaseBlocked
+			typed.Status.Conditions = refused(generation)
+		case *operatorv1alpha1.PtahMigration:
+			typed.Status.Phase = operatorv1alpha1.MigrationPhaseBlocked
+			typed.Status.Conditions = refused(generation)
+		}
+		return object
+	}
+	for _, family := range []string{"schema", "migration"} {
+		for _, target := range []string{"in-sync", "approval"} {
+			t.Run(family+"/"+target, func(t *testing.T) {
+				synctest.Test(t, func(t *testing.T) {
+					api := newCluster(t, refusedResource(family, resting(family).GetGeneration()))
+
+					code, stdout, stderr := runCommand(t, api, "wait", family+"/storefront", "--for", target, "--timeout", "1m")
+
+					if code != exitWillNotReach || stdout != "" {
+						t.Fatalf("wait on a refused artifact = %d, stdout %q, stderr %q", code, stdout, stderr)
+					}
+					requireSays(t, "the stop", stderr, "will not reach "+target+": PolicyRefused.", "Phase:       Blocked",
+						"Why:         "+message, "shows where it stands.")
+				})
+				synctest.Test(t, func(t *testing.T) {
+					api := newCluster(t, refusedResource(family, resting(family).GetGeneration()-1))
+
+					code, stdout, stderr := runCommand(t, api, "wait", family+"/storefront", "--for", target, "--timeout", "1m")
+
+					if code != exitTimedOut || stdout != "" {
+						t.Fatalf("wait on a refusal of an older generation = %d, stdout %q, stderr %q", code, stdout, stderr)
+					}
+					requireSays(t, "the timeout", stderr, "did not reach "+target+" within 1m0s.", "Held by:     Ready=False, PolicyRefused")
+				})
+			})
+		}
+	}
+}
+
 // With -o json stdout carries the resource the wait ended on and nothing
 // else, as kubectl prints one.
 func TestWaitPrintsTheResourceItEndedOn(t *testing.T) {
