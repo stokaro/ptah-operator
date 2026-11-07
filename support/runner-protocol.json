@@ -340,7 +340,12 @@
     },
     {
       "protocolVersion": 1,
-      "sourceDigest": "sha256:bce961eaeebb52be416abee456e698389b7f2c7f146bdd3c443583b066505973",
+      "sourceDigest": "sha256:4be9a023471c9f642e3913ca55536e2ab32a027ef8fd41c07a7eb85b2a865c13",
+      "reason": "Add two optional fields to the journal entry in the API package, which the runner imports for its types. The manager writes replaced and approvalRequired on the PlanPublished entry of a PtahSchema. The runner neither reads nor writes the journal, so what it accepts, enforces and returns is unchanged, a manager of any release reads its output as it read the last one, and protocol 1 stays."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:b54121b1b7b51e780010cc91cbb314c4b353aaa66d54951fee184c14d24d5e21",
       "reason": "Remove status.lastRun.targetIdentityReported and reword comments in api/v1alpha1, a package the runner links for its types (#804). No runner source file changes and the runner reads none of it: commands, payloads, result frames, delivery identity, SQL authority and retry limits are the same."
     }
   ]

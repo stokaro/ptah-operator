@@ -19,7 +19,8 @@ import (
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 )
 
-// The journal's bounds. The API schema holds MaxEntries as well.
+// The journal's bounds, which the plan nothing has carried out yet does not
+// answer to: see [Record]. The API schema holds MaxEntries as well.
 const (
 	MaxEntries = 64
 	MaxAge     = 30 * 24 * time.Hour
@@ -33,6 +34,11 @@ const (
 // entry may be dated by the time its status carries, and the bound must not
 // depend on which clock dated it. Record runs only in a status write that
 // happens anyway, so it never causes a write itself.
+//
+// The bounds keep the entry that published the plan nothing has carried out yet,
+// and the newest approval of it. A plan can wait for a person longer than the
+// bounds last, and those entries are the only record of what a later plan
+// replaces. They add at most two entries past the age bound and none to the count.
 func Record(journal *operatorv1alpha1.LifecycleJournal, entries []operatorv1alpha1.JournalEntry, now time.Time) *operatorv1alpha1.LifecycleJournal {
 	if journal == nil {
 		journal = &operatorv1alpha1.LifecycleJournal{CoveredSince: metav1.NewTime(now)}
@@ -49,22 +55,35 @@ func Record(journal *operatorv1alpha1.LifecycleJournal, entries []operatorv1alph
 		}
 		journal.Entries = append(journal.Entries, entry)
 	}
-	var cutoff time.Time
-	if count := len(journal.Entries); count > 0 {
-		cutoff = latest(journal.Entries[count-1]).Add(-MaxAge)
-	}
-	drop := 0
-	for drop < len(journal.Entries) && (len(journal.Entries)-drop > MaxEntries || latest(journal.Entries[drop]).Before(cutoff)) {
-		drop++
-	}
-	if drop > 0 {
-		dropped := latest(journal.Entries[drop-1])
-		if dropped.After(journal.CoveredSince.Time) {
-			journal.CoveredSince = metav1.NewTime(dropped)
-		}
-		journal.Entries = slices.Clone(journal.Entries[drop:])
-	}
+	applyBounds(journal)
 	return journal
+}
+
+// applyBounds drops the oldest entries past the bounds, and stops at the first
+// entry within them, whatever the entries after it are dated.
+func applyBounds(journal *operatorv1alpha1.LifecycleJournal) {
+	count := len(journal.Entries)
+	if count == 0 {
+		return
+	}
+	cutoff := latest(journal.Entries[count-1]).Add(-MaxAge)
+	published, approval := outstanding(journal.Entries)
+	kept := make([]operatorv1alpha1.JournalEntry, 0, count)
+	for index, entry := range journal.Entries {
+		if index == published || index == approval {
+			kept = append(kept, entry)
+			continue
+		}
+		dropped := index - len(kept)
+		if count-dropped <= MaxEntries && !latest(entry).Before(cutoff) {
+			kept = append(kept, journal.Entries[index:]...)
+			break
+		}
+		if at := latest(entry); at.After(journal.CoveredSince.Time) {
+			journal.CoveredSince = metav1.NewTime(at)
+		}
+	}
+	journal.Entries = kept
 }
 
 // folds reports whether entry is another attempt of the failure newest
@@ -96,6 +115,8 @@ func SchemaEntries(before, after *operatorv1alpha1.PtahSchemaStatus, journal *op
 		entries = append(entries, operatorv1alpha1.JournalEntry{
 			Type: operatorv1alpha1.JournalPlanPublished, At: publishedAt(plan.CreatedAt, journal, now),
 			Plan: plan.Name, Statements: plan.StatementCount, Destructive: plan.Destructive,
+			ApprovalRequired: meta.IsStatusConditionTrue(after.Conditions, operatorv1alpha1.ConditionApprovalRequired),
+			Replaced:         replacedPlan(before, journal),
 		})
 	}
 	if plan := after.Plan; plan != nil && plan.Approval != nil &&
@@ -387,18 +408,84 @@ func OutstandingPlan(journal *operatorv1alpha1.LifecycleJournal) (plan string, a
 	if journal == nil {
 		return "", false
 	}
-	var approvals []string
-	for index := len(journal.Entries) - 1; index >= 0; index-- {
-		switch entry := journal.Entries[index]; entry.Type {
+	published, approval := outstanding(journal.Entries)
+	if published < 0 {
+		return "", false
+	}
+	return journal.Entries[published].Plan, approval >= 0
+}
+
+// outstanding locates the entry that published the plan nothing has carried out
+// since, and the newest approval of that plan. An index is -1 when entries hold
+// no such entry.
+func outstanding(entries []operatorv1alpha1.JournalEntry) (published, approval int) {
+	var approvals []int
+	for index := len(entries) - 1; index >= 0; index-- {
+		switch entries[index].Type {
 		case operatorv1alpha1.JournalPlanPublished:
-			return entry.Plan, slices.Contains(approvals, entry.Plan)
+			newest := slices.IndexFunc(approvals, func(candidate int) bool {
+				return entries[candidate].Plan == entries[index].Plan
+			})
+			if newest < 0 {
+				return index, -1
+			}
+			return index, approvals[newest]
 		case operatorv1alpha1.JournalApprovalAccepted:
-			approvals = append(approvals, entry.Plan)
+			approvals = append(approvals, index)
 		case operatorv1alpha1.JournalApplyFinished, operatorv1alpha1.JournalRunFinished:
-			return "", false
+			return -1, -1
 		}
 	}
-	return "", false
+	return -1, -1
+}
+
+// replacedPlan names the plan that a plan published now takes the place of, when
+// a person could approve it or had approved it.
+//
+// status.plan goes nil on every read of the database, and the next Plan publishes
+// the same object again when nothing changed, so the plan going away says
+// nothing. A plan's name is its fingerprint, so publishing another name than the
+// journal's outstanding one is the replacement. A plan an Apply ran is not
+// outstanding.
+//
+// ApprovalRequired holds what the outstanding plan asked for, because neither a
+// refresh nor a failed read moves it. The write that finds the database converged
+// moves it to NoChanges: that plan went away and nothing replaced it. An Apply
+// claim moves it to False, so the journal answers for a plan that was approved and
+// then withdrawn before it ran. A realm refusal also moves it to False and leaves
+// the plan where it was, so the entry that published the plan answers for what it
+// asked. The refusals are named: another reason says nothing about a person until
+// someone decides that it does.
+func replacedPlan(before *operatorv1alpha1.PtahSchemaStatus, journal *operatorv1alpha1.LifecycleJournal) string {
+	if journal == nil {
+		return ""
+	}
+	published, approval := outstanding(journal.Entries)
+	if published < 0 {
+		return ""
+	}
+	entry := journal.Entries[published]
+	asked := meta.FindStatusCondition(before.Conditions, operatorv1alpha1.ConditionApprovalRequired)
+	switch {
+	case asked != nil && asked.Reason == string(operatorv1alpha1.ReasonNoChanges):
+		return ""
+	case approval >= 0, meta.IsStatusConditionTrue(before.Conditions, operatorv1alpha1.ConditionApprovalRequired):
+		return entry.Plan
+	case asked != nil && entry.ApprovalRequired && realmRefusal(asked.Reason):
+		return entry.Plan
+	}
+	return ""
+}
+
+// realmRefusal reports a reason that withholds a plan's approval only for as long
+// as the database realm refuses the resource.
+func realmRefusal(reason string) bool {
+	switch operatorv1alpha1.ConditionReason(reason) {
+	case operatorv1alpha1.ReasonRealmConflict, operatorv1alpha1.ReasonRealmNotAuthorized:
+		return true
+	default:
+		return false
+	}
 }
 
 // approvalRecorded reports whether the journal already records the approval

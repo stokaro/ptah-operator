@@ -126,6 +126,212 @@ func TestRecordDropsWhatIsAMonthOlderThanTheNewest(t *testing.T) {
 	}
 }
 
+// A plan can wait for a person longer than the bounds last. The entry that
+// published it and the newest approval of it are the only record of what a later
+// plan replaces, so they stay until something carries the plan out or another plan
+// is published. Everything else answers to the bounds as before.
+func TestRecordKeepsThePlanNothingCarriedOut(t *testing.T) {
+	t.Parallel()
+	const month = 30 * 24 * time.Hour
+	approval := func(plan, uid string, offset time.Duration) operatorv1alpha1.JournalEntry {
+		return operatorv1alpha1.JournalEntry{
+			Type: operatorv1alpha1.JournalApprovalAccepted, At: at(offset), Plan: plan,
+			Approval: "approve-" + plan, ApprovalUID: types.UID(uid),
+		}
+	}
+	failures := func(count int) []operatorv1alpha1.JournalEntry {
+		entries := make([]operatorv1alpha1.JournalEntry, 0, count)
+		for index := range count {
+			entries = append(entries, failure("Observe", fmt.Sprintf("Reason%02d", index), time.Duration(index)*time.Minute))
+		}
+		return entries
+	}
+	for _, test := range []struct {
+		name         string
+		entries      []operatorv1alpha1.JournalEntry
+		wantKept     []operatorv1alpha1.JournalEntry
+		wantDropped  int
+		wantCoverage metav1.Time
+	}{
+		{
+			name:         "past the age bound",
+			entries:      []operatorv1alpha1.JournalEntry{published("plan-a", -month-time.Hour), failure("Observe", "Failed", 0)},
+			wantKept:     []operatorv1alpha1.JournalEntry{published("plan-a", -month-time.Hour)},
+			wantCoverage: at(-2 * month),
+		},
+		{
+			name: "past the age bound, with the approvals of it",
+			entries: []operatorv1alpha1.JournalEntry{
+				failure("Observe", "Early", -month-3*time.Hour),
+				published("plan-a", -month-2*time.Hour),
+				approval("plan-a", "first", -month-90*time.Minute),
+				approval("plan-a", "second", -month-time.Hour),
+				failure("Observe", "Later", -month-time.Minute),
+				failure("Observe", "Failed", 0),
+			},
+			wantKept:     []operatorv1alpha1.JournalEntry{published("plan-a", -month-2*time.Hour), approval("plan-a", "second", -month-time.Hour)},
+			wantDropped:  3,
+			wantCoverage: at(-month - time.Minute),
+		},
+		{
+			name:         "past the count",
+			entries:      append([]operatorv1alpha1.JournalEntry{published("plan-a", -time.Hour)}, failures(lifecyclejournal.MaxEntries+2)...),
+			wantKept:     []operatorv1alpha1.JournalEntry{published("plan-a", -time.Hour)},
+			wantDropped:  3,
+			wantCoverage: at(2 * time.Minute),
+		},
+		{
+			name: "past the count, with the approval of it",
+			entries: append([]operatorv1alpha1.JournalEntry{
+				published("plan-a", -2*time.Hour), approval("plan-a", "only", -time.Hour),
+			}, failures(lifecyclejournal.MaxEntries)...),
+			wantKept: []operatorv1alpha1.JournalEntry{
+				published("plan-a", -2*time.Hour), approval("plan-a", "only", -time.Hour),
+			},
+			wantDropped:  2,
+			wantCoverage: at(time.Minute),
+		},
+		{
+			name: "an approval of an earlier plan stays no longer than it would",
+			entries: []operatorv1alpha1.JournalEntry{
+				published("plan-z", -month-3*time.Hour), approval("plan-z", "z", -month-2*time.Hour),
+				published("plan-a", -month-time.Hour), failure("Observe", "Failed", 0),
+			},
+			wantKept:     []operatorv1alpha1.JournalEntry{published("plan-a", -month-time.Hour)},
+			wantDropped:  2,
+			wantCoverage: at(-month - 2*time.Hour),
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			journal := lifecyclejournal.Record(&operatorv1alpha1.LifecycleJournal{CoveredSince: at(-2 * month)}, test.entries, now)
+			if len(journal.Entries) > lifecyclejournal.MaxEntries {
+				t.Fatalf("kept %d entries, past the bound of %d", len(journal.Entries), lifecyclejournal.MaxEntries)
+			}
+			if !reflect.DeepEqual(journal.Entries[:len(test.wantKept)], test.wantKept) {
+				t.Fatalf("the journal starts with %+v, want %+v", journal.Entries[:len(test.wantKept)], test.wantKept)
+			}
+			if !slices.IsSortedFunc(journal.Entries, func(a, b operatorv1alpha1.JournalEntry) int { return a.At.Compare(b.At.Time) }) {
+				t.Fatalf("the entries are out of order: %+v", journal.Entries)
+			}
+			if len(journal.Entries) != len(test.entries)-test.wantDropped {
+				t.Fatalf("kept %d entries of %d, want %d dropped", len(journal.Entries), len(test.entries), test.wantDropped)
+			}
+			if !journal.CoveredSince.Equal(&test.wantCoverage) {
+				t.Fatalf("covered since %s, want %s", journal.CoveredSince.Time, test.wantCoverage.Time)
+			}
+			if plan, _ := lifecyclejournal.OutstandingPlan(journal); plan != test.wantKept[0].Plan {
+				t.Fatalf("OutstandingPlan() = %q, want %q", plan, test.wantKept[0].Plan)
+			}
+		})
+	}
+
+	// The bounds treat these like any other entry: nothing is left to keep them for.
+	for _, test := range []struct {
+		name  string
+		ended operatorv1alpha1.JournalEntry
+	}{
+		{"an Apply ran it", operatorv1alpha1.JournalEntry{Type: operatorv1alpha1.JournalApplyFinished, At: at(-month - time.Minute), Plan: "plan-a"}},
+		{"a migration run carried it out", operatorv1alpha1.JournalEntry{Type: operatorv1alpha1.JournalRunFinished, At: at(-month - time.Minute)}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			journal := lifecyclejournal.Record(&operatorv1alpha1.LifecycleJournal{CoveredSince: at(-2 * month)}, []operatorv1alpha1.JournalEntry{
+				published("plan-a", -month-time.Hour), test.ended, failure("Observe", "Failed", 0),
+			}, now)
+			if names := planNames(journal.Entries); !slices.Equal(names, []string{""}) {
+				t.Fatalf("entries = %+v, want only the failure", journal.Entries)
+			}
+		})
+	}
+}
+
+// What a publication records about the plan before it, for a reader whose Event
+// was lost. Each row that stays quiet is a plan nobody could have approved, or one
+// that went away with nothing in its place.
+func TestSchemaEntriesNameThePlanAPublicationReplaced(t *testing.T) {
+	t.Parallel()
+	asked := func(plan string) operatorv1alpha1.JournalEntry {
+		entry := published(plan, -time.Hour)
+		entry.ApprovalRequired = true
+		return entry
+	}
+	approved := operatorv1alpha1.JournalEntry{Type: operatorv1alpha1.JournalApprovalAccepted, At: at(-time.Minute), Plan: "plan-a", Approval: "approve-a"}
+	applied := operatorv1alpha1.JournalEntry{Type: operatorv1alpha1.JournalApplyFinished, At: at(-time.Minute), Plan: "plan-a"}
+	condition := func(status metav1.ConditionStatus, reason operatorv1alpha1.ConditionReason) []metav1.Condition {
+		return []metav1.Condition{{Type: operatorv1alpha1.ConditionApprovalRequired, Status: status, Reason: string(reason)}}
+	}
+	for _, test := range []struct {
+		name         string
+		journal      []operatorv1alpha1.JournalEntry
+		noJournal    bool
+		before       []metav1.Condition
+		wantReplaced string
+	}{
+		{name: "a plan waiting", journal: []operatorv1alpha1.JournalEntry{asked("plan-a")}, before: condition(metav1.ConditionTrue, operatorv1alpha1.ReasonPlanReady), wantReplaced: "plan-a"},
+		{name: "a plan waiting since a policy started asking", journal: []operatorv1alpha1.JournalEntry{published("plan-a", -time.Hour)}, before: condition(metav1.ConditionTrue, operatorv1alpha1.ReasonWaiting), wantReplaced: "plan-a"},
+		{name: "a contested realm", journal: []operatorv1alpha1.JournalEntry{asked("plan-a")}, before: condition(metav1.ConditionFalse, operatorv1alpha1.ReasonRealmConflict), wantReplaced: "plan-a"},
+		{name: "a realm that does not admit the resource", journal: []operatorv1alpha1.JournalEntry{asked("plan-a")}, before: condition(metav1.ConditionFalse, operatorv1alpha1.ReasonRealmNotAuthorized), wantReplaced: "plan-a"},
+		{name: "an approved plan withdrawn", journal: []operatorv1alpha1.JournalEntry{asked("plan-a"), approved}, before: condition(metav1.ConditionFalse, operatorv1alpha1.ReasonSatisfied), wantReplaced: "plan-a"},
+		{name: "no condition, approved", journal: []operatorv1alpha1.JournalEntry{asked("plan-a"), approved}, wantReplaced: "plan-a"},
+		{name: "no journal", noJournal: true, before: condition(metav1.ConditionTrue, operatorv1alpha1.ReasonPlanReady)},
+		{name: "a journal that names no plan", journal: []operatorv1alpha1.JournalEntry{failure("Observe", "Failed", 0)}, before: condition(metav1.ConditionTrue, operatorv1alpha1.ReasonPlanReady)},
+		{name: "a plan an Apply ran", journal: []operatorv1alpha1.JournalEntry{asked("plan-a"), applied}, before: condition(metav1.ConditionTrue, operatorv1alpha1.ReasonPlanReady)},
+		{name: "a refusal of a plan that asked for nothing", journal: []operatorv1alpha1.JournalEntry{published("plan-a", -time.Hour)}, before: condition(metav1.ConditionFalse, operatorv1alpha1.ReasonRealmConflict)},
+		{name: "a plan the database converged past", journal: []operatorv1alpha1.JournalEntry{asked("plan-a")}, before: condition(metav1.ConditionFalse, operatorv1alpha1.ReasonNoChanges)},
+		{name: "an approved plan the database converged past", journal: []operatorv1alpha1.JournalEntry{asked("plan-a"), approved}, before: condition(metav1.ConditionFalse, operatorv1alpha1.ReasonNoChanges)},
+		{name: "a policy that stopped asking", journal: []operatorv1alpha1.JournalEntry{asked("plan-a")}, before: condition(metav1.ConditionFalse, operatorv1alpha1.ReasonApplyDisabled)},
+		{name: "a reason nobody has decided about", journal: []operatorv1alpha1.JournalEntry{asked("plan-a")}, before: condition(metav1.ConditionFalse, operatorv1alpha1.ConditionReason("SomethingNew"))},
+		{name: "no condition, not approved", journal: []operatorv1alpha1.JournalEntry{asked("plan-a")}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			var journal *operatorv1alpha1.LifecycleJournal
+			if !test.noJournal {
+				journal = &operatorv1alpha1.LifecycleJournal{CoveredSince: at(-time.Hour), Entries: test.journal}
+			}
+			before := &operatorv1alpha1.PtahSchemaStatus{Conditions: test.before}
+			after := &operatorv1alpha1.PtahSchemaStatus{
+				Plan: &operatorv1alpha1.CurrentPlanStatus{Name: "plan-b"},
+				// The new plan's own answer is not what decides this.
+				Conditions: []metav1.Condition{{Type: operatorv1alpha1.ConditionApprovalRequired, Status: metav1.ConditionTrue, Reason: string(operatorv1alpha1.ReasonPlanReady)}},
+			}
+			entries := lifecyclejournal.SchemaEntries(before, after, journal, now)
+			if len(entries) != 1 || entries[0].Type != operatorv1alpha1.JournalPlanPublished || entries[0].Plan != "plan-b" {
+				t.Fatalf("SchemaEntries() = %+v, want plan-b published", entries)
+			}
+			if entries[0].Replaced != test.wantReplaced {
+				t.Fatalf("Replaced = %q, want %q", entries[0].Replaced, test.wantReplaced)
+			}
+			if !entries[0].ApprovalRequired {
+				t.Fatalf("the entry of a plan that asks for an approval says it does not: %+v", entries[0])
+			}
+		})
+	}
+
+	t.Run("a plan that asks for nothing says so", func(t *testing.T) {
+		t.Parallel()
+		entries := lifecyclejournal.SchemaEntries(&operatorv1alpha1.PtahSchemaStatus{}, &operatorv1alpha1.PtahSchemaStatus{
+			Plan:       &operatorv1alpha1.CurrentPlanStatus{Name: "plan-b"},
+			Conditions: []metav1.Condition{{Type: operatorv1alpha1.ConditionApprovalRequired, Status: metav1.ConditionFalse, Reason: string(operatorv1alpha1.ReasonNotRequired)}},
+		}, nil, now)
+		if len(entries) != 1 || entries[0].ApprovalRequired || entries[0].Replaced != "" {
+			t.Fatalf("SchemaEntries() = %+v, want plan-b published, asking for nothing and replacing nothing", entries)
+		}
+	})
+
+	// The same plan coming back publishes nothing, so it cannot replace anything.
+	t.Run("the same plan comes back", func(t *testing.T) {
+		t.Parallel()
+		entries := lifecyclejournal.SchemaEntries(&operatorv1alpha1.PtahSchemaStatus{Conditions: condition(metav1.ConditionTrue, operatorv1alpha1.ReasonPlanReady)},
+			&operatorv1alpha1.PtahSchemaStatus{Plan: &operatorv1alpha1.CurrentPlanStatus{Name: "plan-a"}},
+			&operatorv1alpha1.LifecycleJournal{CoveredSince: at(-time.Hour), Entries: []operatorv1alpha1.JournalEntry{asked("plan-a")}}, now)
+		if len(entries) != 0 {
+			t.Fatalf("SchemaEntries() = %+v, want nothing", entries)
+		}
+	})
+}
+
 // Entries dated by the time their status carries may run on another clock
 // than the write's: two months behind it, a day apart, both stay.
 func TestRecordKeepsEntriesDatedByAnotherClock(t *testing.T) {
@@ -135,6 +341,22 @@ func TestRecordKeepsEntriesDatedByAnotherClock(t *testing.T) {
 	}, now)
 	if names := planNames(journal.Entries); !slices.Equal(names, []string{"plan-a", "plan-b"}) {
 		t.Fatalf("entries = %v, want both kept", names)
+	}
+}
+
+// The bounds drop from the oldest end and stop at the first entry within them. A
+// plan dated by its own creation can sit behind one dated by the manager's clock,
+// and taking it out of the middle would leave a gap coverage does not state.
+func TestRecordStopsDroppingAtTheFirstEntryWithinTheBounds(t *testing.T) {
+	t.Parallel()
+	journal := lifecyclejournal.Record(&operatorv1alpha1.LifecycleJournal{CoveredSince: at(-90 * 24 * time.Hour)}, []operatorv1alpha1.JournalEntry{
+		failure("Observe", "Young", -24*time.Hour), failure("Observe", "Old", -40*24*time.Hour), published("plan-a", 0),
+	}, now)
+	if len(journal.Entries) != 3 {
+		t.Fatalf("entries = %+v, want all three kept", journal.Entries)
+	}
+	if !journal.CoveredSince.Equal(ptr(at(-90 * 24 * time.Hour))) {
+		t.Fatalf("covered since %s, want it unmoved", journal.CoveredSince.Time)
 	}
 }
 
@@ -211,6 +433,11 @@ func TestOutstandingPlanIsTheNewestPlanNothingCarriedOut(t *testing.T) {
 			name:     "an approved plan",
 			entries:  []operatorv1alpha1.JournalEntry{published("plan-a", -time.Minute), approval("plan-a")},
 			wantPlan: "plan-a", wantApproved: true,
+		},
+		{
+			name:     "an approval of another plan since",
+			entries:  []operatorv1alpha1.JournalEntry{published("plan-a", -time.Minute), approval("plan-z")},
+			wantPlan: "plan-a",
 		},
 		{
 			name:     "a plan after an approved one",

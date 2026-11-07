@@ -14,11 +14,14 @@ type LifecycleJournal struct {
 	// CoveredSince is the instant from which the journal is complete: when a
 	// manager that keeps a journal first wrote this resource's status, moved
 	// forward past the newest entry a bound has since dropped. A reader states
-	// the period the journal covers from it and assumes nothing before.
+	// the period the journal covers from it and assumes nothing before, though
+	// the entries of a plan nothing has carried out yet can be older.
 	CoveredSince metav1.Time `json:"coveredSince"`
 
 	// Entries are the events, oldest first. There are at most 64, and none is
-	// more than 30 days older than the newest.
+	// more than 30 days older than the newest, apart from the plan nothing has
+	// carried out yet: the entry that published it and the newest approval of it
+	// stay until something carries it out or another plan is published.
 	// +listType=atomic
 	// +kubebuilder:validation:MaxItems=64
 	// +optional
@@ -144,6 +147,16 @@ type JournalEntry struct {
 	// Destructive reports a published PtahSchema plan that destroys data.
 	// +optional
 	Destructive bool `json:"destructive,omitempty"`
+	// ApprovalRequired reports a published PtahSchema plan that asked for a
+	// person's approval when it was published.
+	// +optional
+	ApprovalRequired bool `json:"approvalRequired,omitempty"`
+	// Replaced names the plan a published PtahSchema plan took the place of: one
+	// a person could approve, or had approved, and that never ran. A PlanStale
+	// Warning reports the same replacement, and an Event can be lost.
+	// +kubebuilder:validation:MaxLength=253
+	// +optional
+	Replaced string `json:"replaced,omitempty"`
 
 	// Authorization is what allowed a PtahMigration's run.
 	// +optional

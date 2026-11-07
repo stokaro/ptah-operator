@@ -41,6 +41,27 @@ func planWarnedReplaced(warnings []corev1.Event, replaced, replacement string) e
 	return nil
 }
 
+// planReplacedOnRecord holds a journal to the replacement it has to keep when the
+// Warning is lost: the newest PlanPublished entry names the new plan and the plan
+// it replaced, and says the new plan asks for an approval.
+func planReplacedOnRecord(journal *ptahv1alpha1.LifecycleJournal, replaced, replacement string) error {
+	if journal == nil {
+		return fmt.Errorf("the schema keeps no journal")
+	}
+	for index := len(journal.Entries) - 1; index >= 0; index-- {
+		entry := journal.Entries[index]
+		if entry.Type != ptahv1alpha1.JournalPlanPublished {
+			continue
+		}
+		if entry.Plan != replacement || entry.Replaced != replaced || !entry.ApprovalRequired {
+			return fmt.Errorf("the newest PlanPublished entry names plan %q replacing %q, approvalRequired %t; want plan %s replacing %s, approvalRequired true",
+				entry.Plan, entry.Replaced, entry.ApprovalRequired, replacement, replaced)
+		}
+		return nil
+	}
+	return fmt.Errorf("the journal holds no PlanPublished entry among %d", len(journal.Entries))
+}
+
 // readKeptPlan is a schema that read its database after since and is waiting on
 // the same plan again: the same object, under the same fingerprint.
 func readKeptPlan(schema *ptahv1alpha1.PtahSchema, plan *ptahv1alpha1.CurrentPlanStatus, since metav1.Time) bool {
