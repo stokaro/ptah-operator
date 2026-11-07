@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-11-07T14:52:22.529106+00:00",
+  "frozenAt": "2026-11-07T15:55:15.859981+00:00",
   "profileSourceCommit": "1259f4d59343fef049307085e3ea77d2971677cb",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
@@ -32,7 +32,7 @@
     },
     {
       "path": "docs/site/src/content/docs/support/databases.md",
-      "sha256": "44657643a287e2057dbd33bc9c81565b1fddf64a6e7ab435b03e4725f6aef582"
+      "sha256": "6d911a0e1199ef9d0075a644afde8fa8170c982719586084bf3710d1cafb16d8"
     },
     {
       "path": "support/qualification/kindnet/Dockerfile",
@@ -79,10 +79,10 @@
     "disposition": "v0.2.9 is the published predecessor of the next candidate. The upgrade from it is walked through both releases' guides by support/qualification/probes/fresh_install.py --upgrade-from on both platforms; the synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 82,
+  "revision": 83,
   "supersedes": {
-    "freezeCommit": "3a7496cb280b01aacf32573bcac282ecd6ebe85e",
-    "sha256": "82d55c631dd4cbd62f8a9ed51d7789efbcb952cc8a17abf51d94f3154ff2336f"
+    "freezeCommit": "b7272792b67a205ee271f94a9f6a8af24a80de3f",
+    "sha256": "14b753309feca3d80df72aa4a22911061dd073602ad7a9f9cf2323e9fbeb83e9"
   },
-  "revisionReason": "Split the suites near the 90-minute job limit into fourteen: sources, schema-runtime, migration-authority-postgresql, migration-authority-mysql, migration-faults-postgresql and migration-faults-mysql. Every scenario still runs once per cell; platforms, minors, the profile and its targets are unchanged."
+  "revisionReason": "Rewrite the MySQL authority section of the databases page: the login takes TRIGGER, EXECUTE and SHOW VIEW on the database, and global SHOW_ROUTINE where another account defines a routine, so drift sees every object Ptah v0.23.0 requires it to see. The baseline lines, phases, cells, platforms, the profile and its targets are unchanged."
 }

@@ -46,3 +46,37 @@ func TestEachKindHasItsSentence(t *testing.T) {
 		}
 	}
 }
+
+// A permission_denied that names what the user cannot see says so, and names
+// no database, object or privilege; anything else reads as Message does.
+func TestUnseenObjectsHaveTheirSentence(t *testing.T) {
+	t.Parallel()
+
+	url := corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "demo-database"}, Key: "url"}
+	got := targetfailure.UnseenObjectsMessage(dataplane.TargetPermissionDenied,
+		[]string{dataplane.UnseenTriggers, dataplane.UnseenRoutines}, url)
+	want := "permission_denied: the target database server accepted the credentials, and the user cannot see every " +
+		`trigger and routine in the database. Grant the user in the URL that Secret "demo-database" holds under key "url" ` +
+		"the privileges that show them, which the MySQL authority section of the operator's supported databases page lists"
+	if got != want {
+		t.Fatalf("UnseenObjectsMessage() =\n%q\nwant\n%q", got, want)
+	}
+	for _, row := range []struct {
+		name    string
+		kind    dataplane.TargetFailureKind
+		objects []string
+	}{
+		{name: "another kind", kind: dataplane.TargetAuthenticationFailed, objects: []string{dataplane.UnseenTriggers}},
+		{name: "no objects", kind: dataplane.TargetPermissionDenied},
+		{name: "an object outside the vocabulary", kind: dataplane.TargetPermissionDenied, objects: []string{"events"}},
+		{name: "objects out of order", kind: dataplane.TargetPermissionDenied,
+			objects: []string{dataplane.UnseenRoutines, dataplane.UnseenTriggers}},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			if got, want := targetfailure.UnseenObjectsMessage(row.kind, row.objects, url), targetfailure.Message(row.kind, url); got != want {
+				t.Fatalf("UnseenObjectsMessage() = %q, want Message's %q", got, want)
+			}
+		})
+	}
+}

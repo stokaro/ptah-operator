@@ -1,0 +1,11 @@
+{
+  "contract_version": 3,
+  "command": "schema plan",
+  "outcome": "refused",
+  "refusal": {
+    "code": "declaration-refused"
+  },
+  "error": {
+    "message": "compare database schema: invalid foreign key: constraint \"t_nope\" references unknown table \"nope\""
+  }
+}

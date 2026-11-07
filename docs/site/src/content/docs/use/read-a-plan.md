@@ -127,8 +127,15 @@ The plugin also reads each statement, by the rules the manager reads a plan
 with, and rates destructive any that has a `DROP` or a `TRUNCATE` in it, an
 `ALTER COLUMN ... TYPE`, a MySQL `MODIFY COLUMN` or `CHANGE COLUMN` whatever it
 changes, a `DISABLE ROW LEVEL SECURITY` or a `DELETE FROM pg_enum`, whatever
-Ptah said. Where that rating is higher than Ptah's, the line says whose each
-one is, because Ptah's reason still explains the lower one. It names this
+Ptah said. It rates a PostgreSQL `DETACH PARTITION` destructive too, unless the
+next statement that moves the same table attaches it to the same parent, as a
+bound change does: a detached partition keeps its rows, and the parent stops
+returning them. Ptah v0.23.0 rates that statement a warning. A bound change stays
+a warning because both statements run in one transaction, and an `ATTACH` the
+bound refuses rolls the `DETACH` back. Under `transactionMode: none` they commit
+one at a time, and a refused `ATTACH` leaves the partition detached. Where that
+rating is higher than Ptah's, the line says whose each one is, because Ptah's
+reason still explains the lower one. It names this
 plugin rather than the operator for the reason the `Privileges` line does: the
 plugin and the manager that published the plan are separate builds.
 

@@ -141,6 +141,11 @@ func (o PlanOutcome) Valid() bool {
 type ResultError struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
+	// UnseenObjects are the kinds of object a permission_denied read of a
+	// MySQL target could not see, from dataplane's closed vocabulary, in its
+	// order. It is absent on every other failure, and on a frame from a runner
+	// that predates it, which reads as the plain permission_denied.
+	UnseenObjects []string `json:"unseenObjects,omitempty"`
 }
 
 // TruncationMetadata records output that was drained but intentionally not
@@ -749,6 +754,14 @@ func validateResult(result Result, options ParseOptions) error {
 	}
 	if result.Error != nil && (result.Error.Code == "" || result.Error.Message == "") {
 		return fmt.Errorf("%w: incomplete error metadata", ErrMalformedFrame)
+	}
+	if result.Error != nil && result.Error.UnseenObjects != nil {
+		if result.Error.Code != string(dataplane.TargetPermissionDenied) {
+			return fmt.Errorf("%w: unseen objects on a failure other than permission_denied", ErrMalformedFrame)
+		}
+		if err := dataplane.ValidateUnseenObjects(result.Error.UnseenObjects); err != nil {
+			return fmt.Errorf("%w: the unseen objects list %v", ErrMalformedFrame, err)
+		}
 	}
 	if result.Truncation != nil {
 		stdoutValid := result.Truncation.Stdout == (result.Truncation.StdoutBytesDropped > 0)

@@ -1,0 +1,21 @@
+{
+  "contract_version": 3,
+  "command": "schema plan",
+  "outcome": "failed",
+  "error": {
+    "kind": "permission_denied",
+    "message": "read database schema: the account l_doc@% cannot see everything in database \"c_login_clean\": information_schema lists only what an account holds a privilege on, and a comparison reads a hidden object as absent. The account needs:\n  - triggers: TRIGGER on `c_login_clean`.*\n  - procedures and functions: SHOW_ROUTINE on *.*",
+    "missing_privileges": [
+      {
+        "database": "c_login_clean",
+        "objects": "triggers",
+        "privilege": "TRIGGER on `c_login_clean`.*"
+      },
+      {
+        "database": "c_login_clean",
+        "objects": "routines",
+        "privilege": "SHOW_ROUTINE on *.*"
+      }
+    ]
+  }
+}

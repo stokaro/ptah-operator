@@ -347,6 +347,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:b54121b1b7b51e780010cc91cbb314c4b353aaa66d54951fee184c14d24d5e21",
       "reason": "Remove status.lastRun.targetIdentityReported and reword comments in api/v1alpha1, a package the runner links for its types (#804). No runner source file changes and the runner reads none of it: commands, payloads, result frames, delivery identity, SQL authority and retry limits are the same."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:bde2fd2a04e78aa00d32cae1cbfe2cc8bb90b0eb8d5544485e3e812fca8848db",
+      "reason": "Read Ptah v0.23.0's documents ahead of the pin, which stays v0.22.0. A migration run whose commit failed, statement 0 beside commit true, is accepted and carried in the frame; a plan refused as declaration-refused goes through the desired-source check a failed plan goes through; a permission_denied naming the kinds of object a MySQL user cannot see carries them as error.unseenObjects, from a closed vocabulary and with no names; a partition DETACH not put back under its parent reads as destructive; Observe strips PTAH_INCLUDE beside PTAH_EXCLUDE. Ptah v0.22.0 writes none of these documents or statements, and the runner harness holds every frame to its captures, so what this runner writes with the pinned executor is unchanged and protocol 1 stays. A manager without this change refuses a frame with a commit failure, and one with unseenObjects through result delivery, so the repin decides whether it needs protocol 2."
     }
   ]
 }

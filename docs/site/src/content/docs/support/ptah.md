@@ -266,6 +266,15 @@ status pattern and the CRD schema version in the same change. The pattern keeps
 every category an earlier release stored, so a summary written before an
 upgrade still validates. A pin that leaves those files alone needs no edit.
 
+The operator can take a release's categories before the pin moves to it.
+`ReadAhead` in `hack/ptahdriftcategories` names them with the Ptah commit they
+come from and a copy of that commit's `docs/drift-findings.json`, and the
+record stays the pinned list. The unit tests hold the vocabulary to the record
+plus those categories, and hold the declaration to the copy: the newer build
+has to differ from the pinned one by exactly the declared categories. Once the
+record is written from a build that emits a declared category, the tests
+refuse the declaration until the category leaves it.
+
 Any change to the file changes the table, so regenerate it in the same commit:
 
 ```sh

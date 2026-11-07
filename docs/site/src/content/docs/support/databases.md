@@ -61,21 +61,50 @@ broadening its DDL authority.
 
 ## MySQL authority
 
-Use a dedicated account scoped to the one managed database. Grant only the DDL
-verbs required by the desired object kinds. A typical table-and-index schema
-needs `SELECT`, `CREATE`, `ALTER`, `DROP`, `INDEX`, and `REFERENCES` on that
-database. Add `CREATE VIEW` and `SHOW VIEW`, `TRIGGER`, `EVENT`, or routine
-privileges only if those objects are managed.
+Use a dedicated account scoped to the one managed database. Grant the DDL verbs
+the desired object kinds need, and the privileges that let the account see every
+object a comparison reads. A typical table-and-index schema needs `SELECT`,
+`CREATE`, `ALTER`, `DROP`, `INDEX`, and `REFERENCES` on that database, and every
+schema needs `TRIGGER`, `EXECUTE`, and `SHOW VIEW` there as well:
+
+```sql
+GRANT SELECT, CREATE, ALTER, DROP, INDEX, REFERENCES, TRIGGER, EXECUTE, SHOW VIEW ON app.* TO 'ptah'@'%';
+```
+
+MySQL lists in `information_schema` only what an account holds a privilege on,
+and a comparison reads an object it cannot see as absent. `TRIGGER` is the only
+privilege that shows triggers, so it also lets the account create and drop them.
+`EXECUTE` lets the read prove it listed every routine in the database; it also
+lets the account call any routine there, including a `SQL SECURITY DEFINER` one
+another account defines later. `SHOW VIEW` shows the definitions of views. Add
+`CREATE VIEW`, `EVENT`, `CREATE ROUTINE`, or `ALTER ROUTINE` only if those
+objects are managed.
 
 Do not grant global administration, user-management, file, replication, or
-grant-option privileges. The operator rejects credential-bearing principal DDL
-and MySQL connection parameters that can inject session SQL. `multiStatements`
-is always rejected. Conventional IPv6 MySQL URLs must include an explicit port;
-the network DSN form remains supported without one.
+grant-option privileges. `SHOW_ROUTINE` is the one global privilege the account
+may need. `EXECUTE` does not show the body of a routine another account defined,
+so where the managed database holds one, the read fails at exit 2 and Ptah's
+message names the routine and `SHOW_ROUTINE`. Grant it then, and only then:
 
-The privileges above decide which object kinds the account can see, and a kind
-it cannot see stays out of the drift report:
-[What the login cannot see](#what-the-login-cannot-see).
+```sql
+GRANT SHOW_ROUTINE ON *.* TO 'ptah'@'%';
+```
+
+`SHOW_ROUTINE` reads routine definitions in every database on the server and
+writes nothing.
+
+The operator rejects credential-bearing principal DDL and MySQL connection
+parameters that can inject session SQL. `multiStatements` is always rejected.
+Conventional IPv6 MySQL URLs must include an explicit port; the network DSN form
+remains supported without one.
+
+The privileges above decide which object kinds the account can see. Under the
+Ptah v0.22.0 executor this build pins, a kind it cannot see stays out of the
+drift report: [What the login cannot see](#what-the-login-cannot-see). Ptah
+v0.23.0 refuses such a read instead, with `permission_denied`, and the operator
+then says which kinds of object the account cannot see. With the grants above
+both builds give the same answer, including the refusal of a routine another
+account defined.
 
 ## What the login cannot see
 

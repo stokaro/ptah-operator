@@ -1,0 +1,18 @@
+{
+  "contract_version": 1,
+  "command": "schema drift",
+  "error": {
+    "kind": "permission_denied",
+    "message": "error reading database schema: the account l_exec@% cannot see everything in database \"c_login_view\": information_schema lists only what an account holds a privilege on, and a comparison reads a hidden object as absent. The account needs:\n  - the definitions of views parent_names: SELECT and SHOW VIEW on `c_login_view`.*",
+    "missing_privileges": [
+      {
+        "database": "c_login_view",
+        "objects": "views",
+        "names": [
+          "parent_names"
+        ],
+        "privilege": "SELECT and SHOW VIEW on `c_login_view`.*"
+      }
+    ]
+  }
+}

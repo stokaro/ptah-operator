@@ -738,12 +738,14 @@ type nativePlan struct {
 // file is what binds the two.
 //
 // A fence refusal is reported as protected_table with the report's own
-// sentence, which names the tables and no row. Any other refusal is reported
-// by its code, and a failure, a report this runner cannot read, a plan saved
-// somewhere else and a file whose digest is not the reported one are all
-// invalid plan output. A failure that names no target failure kind first asks
-// reportProblem whether the desired schema explains it. The exit status decides
-// nothing; see noteReportedSuccess.
+// sentence, which names the tables and no row. A declaration refusal first asks
+// reportProblem whether the desired schema explains it, as a failure does: it
+// is the refusal Ptah v0.23.0 writes where v0.22.0 failed with the same message.
+// Any other refusal is reported by its code, and a failure, a report this runner
+// cannot read, a plan saved somewhere else and a file whose digest is not the
+// reported one are all invalid plan output. A failure that names no target
+// failure kind first asks reportProblem whether the desired schema explains it.
+// The exit status decides nothing; see noteReportedSuccess.
 func readNativePlan(
 	ctx context.Context,
 	config Config,
@@ -775,11 +777,15 @@ func readNativePlan(
 			setResultError(result, "protected_table", errors.New(fenceRefusalMessage(report, redactor)), redactor, config.Diagnostics)
 			return nativePlan{}, false
 		}
+		if report.Refusal.Code == dataplane.SchemaRefusalDeclarationRefused && report.Error != nil &&
+			reportProblem(report.Error.Message) {
+			return nativePlan{}, false
+		}
 		setResultError(result, "plan_refused", fmt.Errorf("ptah refused to plan the change (%s)", report.Refusal.Code), redactor, config.Diagnostics)
 		return nativePlan{}, false
 	case dataplane.SchemaPlanOutcomeFailed:
 		if kind, known := targetFailureOf(report.Error, outcome); known {
-			setTargetFailure(result, kind, redactor, config.Diagnostics)
+			setReportedTargetFailure(result, report.Error, kind, redactor, config.Diagnostics)
 			return nativePlan{}, false
 		}
 		failed := ""
@@ -843,7 +849,7 @@ func validatePlanDryRun(
 		return false
 	}
 	if kind, known := targetFailureOf(report.Error, outcome); known && report.Outcome == dataplane.SchemaApplyOutcomeFailed {
-		setTargetFailure(result, kind, redactor, config.Diagnostics)
+		setReportedTargetFailure(result, report.Error, kind, redactor, config.Diagnostics)
 		return false
 	}
 	switch {
@@ -1127,10 +1133,13 @@ func runObserve(ctx context.Context, config Config, environment []string, inputs
 		setResultError(&result, "invalid_input", err, redactor, config.Diagnostics)
 		return result
 	}
-	// Exclusions belong to the managed planning scope. The drift command does
-	// not share that selector language, so it intentionally observes the raw
-	// target and Plan performs the authoritative scoped classification.
-	driftSpec.Env = environmentWithout(childEnvironment(environment), "PTAH_EXCLUDE")
+	// Exclusions belong to the managed planning scope, and an Observe reads the
+	// raw target: Plan performs the authoritative scoped classification. Since
+	// Ptah v0.23.0 the drift command takes --exclude and --include and reads
+	// them from PTAH_EXCLUDE and PTAH_INCLUDE, so both leave its environment.
+	// The operator sets no PTAH_INCLUDE, and removing it keeps a variable added
+	// to the Job later from narrowing what the Observe reports.
+	driftSpec.Env = environmentWithout(childEnvironment(environment), "PTAH_EXCLUDE", "PTAH_INCLUDE")
 	driftOutcome := executeCommand(ctx, config, driftSpec)
 	// The raw structural diff may contain arbitrary schema literals. Validate
 	// it in-process, but never copy it into the framed Pod log result.
@@ -1151,7 +1160,7 @@ func runObserve(ctx context.Context, config Config, environment []string, inputs
 		failed := ""
 		if failure, err := dataplane.DecodeDriftFailure(driftOutcome.stdout.bytes()); err == nil {
 			if kind, known := failure.TargetFailure(); known {
-				setTargetFailure(&result, kind, redactor, config.Diagnostics)
+				setReportedTargetFailure(&result, failure, kind, redactor, config.Diagnostics)
 				return result
 			}
 			failed = failure.Message
@@ -1430,7 +1439,7 @@ func finishSchemaApply(result *Result, outcome commandOutcome, redactor Redactor
 			fmt.Errorf("ptah refused the approved plan (%s)", report.Refusal.Code), redactor, diagnostics)
 	case dataplane.SchemaApplyOutcomeFailed:
 		if kind, known := targetFailureOf(report.Error, outcome); known {
-			setTargetFailure(result, kind, redactor, diagnostics)
+			setReportedTargetFailure(result, report.Error, kind, redactor, diagnostics)
 			return
 		}
 		logReportedError(report.Error, redactor, diagnostics)
@@ -1501,6 +1510,24 @@ func targetFailureOf(failure *dataplane.CommandError, outcome commandOutcome) (d
 // the vocabulary, which is no kind at all.
 func setTargetFailure(result *Result, kind dataplane.TargetFailureKind, redactor Redactor, diagnostics io.Writer) {
 	setResultError(result, string(kind), errors.New(kind.Description()), redactor, diagnostics)
+}
+
+// setReportedTargetFailure is setTargetFailure for a schema read whose
+// document described the failure. A permission_denied that names what a MySQL
+// account cannot see carries the kinds of object, from a closed vocabulary, in
+// the error's unseenObjects, and a sentence built from them: the plain sentence
+// would read as an account refused the database, when the documented login
+// reached it and could not see every object in it. The database, the objects
+// and the privilege Ptah named stay in the child's output.
+func setReportedTargetFailure(result *Result, failure *dataplane.CommandError, kind dataplane.TargetFailureKind,
+	redactor Redactor, diagnostics io.Writer) {
+	unseen, named := failure.UnseenObjects()
+	if !named {
+		setTargetFailure(result, kind, redactor, diagnostics)
+		return
+	}
+	setResultError(result, string(kind), errors.New(dataplane.UnseenObjectsDescription(unseen)), redactor, diagnostics)
+	result.Error.UnseenObjects = unseen
 }
 
 // childFailure says why a child has no exit status to report. The operation

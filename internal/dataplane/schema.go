@@ -60,6 +60,11 @@ const (
 const (
 	SchemaRefusalStalePlan      = "stale-plan"
 	SchemaRefusalProtectedTable = "protected-table"
+	// SchemaRefusalDeclarationRefused is Ptah v0.23.0's refusal of a desired
+	// schema whose declarations contradict each other, such as a foreign key
+	// that references an unknown table. Ptah v0.22.0 reported the same fault
+	// as a failed plan, with the same error message.
+	SchemaRefusalDeclarationRefused = "declaration-refused"
 )
 
 var (

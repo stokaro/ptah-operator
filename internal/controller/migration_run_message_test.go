@@ -44,7 +44,16 @@ func TestARunMessageNamesTheMigrationItStoppedIn(t *testing.T) {
 		report.Failure = &failure
 		return report
 	}
+	unknown := func(status *dataplane.MigrationStatusReport) dataplane.MigrationRunReport {
+		return dataplane.MigrationRunReport{
+			Outcome: dataplane.MigrationOutcomeUnknown, Planned: []int64{2, 3},
+			Error: &dataplane.CommandError{Message: `Duplicate entry 'DE' for key 'countries.code'`}, Status: status,
+		}
+	}
 	missingTable := dataplane.MigrationRunFailure{Version: 2, Statement: 2, Statements: 3, SQLState: "42P01"}
+	failedCommit := dataplane.MigrationRunFailure{Version: 2, Statement: 0, Statements: 3, Commit: true, SQLState: "23503"}
+	inFlight := dataplane.MigrationRunFailure{Version: 2, Statement: 2, Statements: 3, SQLState: "23000", ErrorNumber: 1062}
+	const unread = "The database's own account of the run could not be read"
 	duplicateKey := dataplane.MigrationRunFailure{Version: 2, Statement: 3, Statements: 5, SQLState: "23000", ErrorNumber: 1062}
 	for _, row := range []struct {
 		name   string
@@ -121,6 +130,63 @@ func TestARunMessageNamesTheMigrationItStoppedIn(t *testing.T) {
 			report: failing(failed(described(&dataplane.MigrationDirty{Version: 3, Total: 1}, ledger...)),
 				missingTable),
 			want: "Migration 3 (Index Journal) failed and committed nothing; 1 migration before it is recorded applied",
+		},
+		{
+			name:   "a failed commit names no statement",
+			report: failing(failed(described(&dataplane.MigrationDirty{Version: 2, Total: 3}, ledger...)), failedCommit),
+			want: "Migration 2 (Read Ledger) failed at its commit with SQLSTATE 23503 and committed nothing; " +
+				"1 migration before it is recorded applied",
+		},
+		{
+			// Under --tx-mode all one commit ends every selected migration:
+			// the failure names the last, and none is applied.
+			name: "a failed commit that ended every selected migration",
+			report: failing(dataplane.MigrationRunReport{
+				Outcome: dataplane.MigrationOutcomeFailed, Planned: []int64{2, 3}, Status: described(nil, ledger...),
+			}, dataplane.MigrationRunFailure{Version: 3, Statement: 0, Statements: 1, Commit: true, SQLState: "23503"}),
+			want: "Migration 3 (Index Journal) failed at its commit with SQLSTATE 23503 and committed nothing; " +
+				"0 migrations before it are recorded applied",
+		},
+		{
+			name:   "an unknown run with a statement in flight",
+			report: failing(unknown(described(&dataplane.MigrationDirty{Version: 2, Applied: 1, Total: 3}, ledger...)), inFlight),
+			want: "Migration 2 (Read Ledger) stopped at statement 2 of 3 with SQLSTATE 23000 (error 1062), " +
+				"and whether it committed is not recorded",
+		},
+		{
+			name:   "an unknown run with no dirty row",
+			report: failing(unknown(described(nil, ledger...)), inFlight),
+			want:   unread,
+		},
+		{
+			name:   "an unknown run whose failure is about another migration",
+			report: failing(unknown(described(&dataplane.MigrationDirty{Version: 3, Applied: 1, Total: 3}, ledger...)), inFlight),
+			want:   unread,
+		},
+		{
+			name:   "an unknown run whose failure is not the statement after the counted ones",
+			report: failing(unknown(described(&dataplane.MigrationDirty{Version: 2, Applied: 0, Total: 3}, ledger...)), inFlight),
+			want:   unread,
+		},
+		{
+			name:   "an unknown run whose row counts other statements than the failure",
+			report: failing(unknown(described(&dataplane.MigrationDirty{Version: 2, Applied: 1, Total: 4}, ledger...)), inFlight),
+			want:   unread,
+		},
+		{
+			name:   "an unknown run whose row counts no statements",
+			report: failing(unknown(described(&dataplane.MigrationDirty{Version: 2, Applied: 1}, ledger...)), inFlight),
+			want:   unread,
+		},
+		{
+			name:   "an unknown run that lost its commit",
+			report: failing(unknown(described(&dataplane.MigrationDirty{Version: 2, Applied: 0, Total: 3}, ledger...)), failedCommit),
+			want:   unread,
+		},
+		{
+			name:   "an unknown run with no failure",
+			report: unknown(described(&dataplane.MigrationDirty{Version: 2, Applied: 1, Total: 3}, ledger...)),
+			want:   unread,
 		},
 		{
 			name:   "a partial run's failed statement and the database's answer",
@@ -208,6 +274,27 @@ func TestARunMessageKeepsItsPointInsideTheEvent(t *testing.T) {
 			},
 			tail: " committed 2147483646 of its 2147483647 statements, then failed with SQLSTATE HY000 (error 65535); " +
 				"retrying the file would run them twice",
+		},
+		{
+			name: "a failed commit with the database's answer",
+			report: dataplane.MigrationRunReport{
+				Outcome: dataplane.MigrationOutcomeFailed, Planned: []int64{version},
+				Failure: &dataplane.MigrationRunFailure{
+					Version: version, Statement: 0, Statements: 2147483647, Commit: true, SQLState: "HY000", ErrorNumber: 65535,
+				},
+				Status: status(&dataplane.MigrationDirty{Version: version, Total: 2147483647}),
+			},
+			tail: " failed at its commit with SQLSTATE HY000 (error 65535) and committed nothing; " +
+				"0 migrations before it are recorded applied",
+		},
+		{
+			name: "an unknown run with a statement in flight",
+			report: dataplane.MigrationRunReport{
+				Outcome: dataplane.MigrationOutcomeUnknown, Planned: []int64{version}, Failure: failure,
+				Status: status(&dataplane.MigrationDirty{Version: version, Applied: 2147483646, Total: 2147483647}),
+			},
+			tail: " stopped at statement 2147483647 of 2147483647 with SQLSTATE HY000 (error 65535), " +
+				"and whether it committed is not recorded",
 		},
 		{
 			name: "a failed run with the statement and the database's answer",

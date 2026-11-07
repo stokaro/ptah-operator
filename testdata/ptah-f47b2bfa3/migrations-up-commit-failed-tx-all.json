@@ -1,0 +1,49 @@
+{
+  "contract_version": 2,
+  "command": "migrations up",
+  "direction": "up",
+  "outcome": "failed",
+  "planned": [
+    1
+  ],
+  "planned_keys": [
+    "1"
+  ],
+  "error": {
+    "message": "failed to commit tx-mode all transaction: ERROR: insert or update on table \"child\" violates foreign key constraint \"child_parent_id_fkey\" (SQLSTATE 23503)"
+  },
+  "failure": {
+    "version": 1,
+    "version_key": "1",
+    "statement": 0,
+    "statements": 3,
+    "commit": true,
+    "sqlstate": "23503"
+  },
+  "migration_log": {
+    "written": 2
+  },
+  "status": {
+    "current_version": 0,
+    "applied_migrations": [],
+    "pending_migrations": [
+      1
+    ],
+    "pending_migration_keys": [
+      "1"
+    ],
+    "out_of_order_migrations": [],
+    "total_migrations": 1,
+    "has_pending_changes": true,
+    "contract_version": 2,
+    "migrations": [
+      {
+        "version": 1,
+        "version_key": "1",
+        "description": "Create",
+        "checksum": "33f25c7e11fe8d4443ebe136d82a21689a0f6a70045e5bf5bd50e5c53aa4a4bc",
+        "state": "pending"
+      }
+    ]
+  }
+}

@@ -38,3 +38,19 @@ func Message(kind dataplane.TargetFailureKind, url corev1.SecretKeySelector) str
 	}
 	return fmt.Sprintf("%s: %s. "+check, kind, kind.Description(), url.Name, url.Key)
 }
+
+// unseenObjectsCheck is where a person looks when the user reached the
+// database and could not see every object in it.
+const unseenObjectsCheck = "Grant the user in the URL that Secret %q holds under key %q the privileges that show them, " +
+	"which the MySQL authority section of the operator's supported databases page lists"
+
+// UnseenObjectsMessage is the sentence for a permission_denied failure that
+// names the kinds of object the user cannot see, from dataplane's closed
+// vocabulary. Any other kind, and a list dataplane.ValidateUnseenObjects
+// refuses, gets Message's sentence instead.
+func UnseenObjectsMessage(kind dataplane.TargetFailureKind, objects []string, url corev1.SecretKeySelector) string {
+	if kind != dataplane.TargetPermissionDenied || dataplane.ValidateUnseenObjects(objects) != nil {
+		return Message(kind, url)
+	}
+	return fmt.Sprintf("%s: %s. "+unseenObjectsCheck, kind, dataplane.UnseenObjectsDescription(objects), url.Name, url.Key)
+}

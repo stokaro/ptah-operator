@@ -459,6 +459,37 @@ func TestDecodeMigrationRun_FailurePath(t *testing.T) {
 			message:  "migration run reports statement 0 of 3 failed",
 		},
 		{
+			name:     "statement zero beside a commit that did not fail",
+			document: runWithFailure("failed", `[2]`, `[]`, `{"version":2,"statement":0,"statements":3,"commit":false}`),
+			message:  "migration run reports statement 0 of 3 failed",
+		},
+		{
+			name:     "a failed commit that also blames a statement",
+			document: runWithFailure("failed", `[2]`, `[]`, `{"version":2,"statement":2,"statements":3,"commit":true,"sqlstate":"23503"}`),
+			message:  "migration run reports statement 2 of 3 and the commit after them failed",
+		},
+		{
+			name:     "a failed commit that blames the last statement",
+			document: runWithFailure("failed", `[2]`, `[]`, `{"version":2,"statement":3,"statements":3,"commit":true}`),
+			message:  "migration run reports statement 3 of 3 and the commit after them failed",
+		},
+		{
+			name:     "a failed commit after no statement",
+			document: runWithFailure("failed", `[2]`, `[]`, `{"version":2,"statement":0,"statements":0,"commit":true}`),
+			message:  "migration run reports statement 0 of 0 failed",
+		},
+		{
+			name:     "a failed commit in a version the run applied",
+			document: runWithFailure("failed", `[1,2]`, `[1]`, `{"version":1,"statement":0,"statements":1,"commit":true}`),
+			message: "migration run reports a statement of version 1 failed, " +
+				"and that version is not one it selected and left unapplied",
+		},
+		{
+			name:     "a failed commit in a run that applied everything",
+			document: runWithFailure("applied", `[2]`, `[2]`, `{"version":2,"statement":0,"statements":1,"commit":true}`),
+			message:  `migration run reports outcome "applied" and a failed statement`,
+		},
+		{
 			name:     "a statement past the last one",
 			document: runWithFailure("failed", `[2]`, `[]`, `{"version":2,"statement":4,"statements":3}`),
 			message:  "migration run reports statement 4 of 3 failed",
