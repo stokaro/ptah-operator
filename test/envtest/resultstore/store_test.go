@@ -13,13 +13,16 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	authorizationv1 "k8s.io/api/authorization/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 
@@ -61,6 +64,25 @@ func newBinding(t *testing.T) resultstore.Binding {
 	return resultstore.Binding{Namespace: ns.Name, Kind: "PtahSchema", Name: "schema", UID: "schema-uid",
 		Generation: 1, ExecutionBindingID: "v1-" + strings.Repeat("a", 32), InputFingerprint: "sha256:" + strings.Repeat("b", 64),
 		Operation: "plan", OperationID: "plan-1", JobName: "plan-job", JobUID: "job-uid", PodName: "plan-pod", PodUID: "pod-uid"}
+}
+
+// awaitAllowed returns once the authorizer lets user make the request. RBAC
+// reaches it through the API server's own informers, so a request sent right
+// after its grant is created can still be refused. A review asks the same
+// authorizer without sending the request a test is about.
+func awaitAllowed(ctx context.Context, t *testing.T, user string, request authorizationv1.ResourceAttributes) {
+	t.Helper()
+	var last authorizationv1.SubjectAccessReviewStatus
+	if err := wait.PollUntilContextTimeout(ctx, 50*time.Millisecond, 20*time.Second, true, func(ctx context.Context) (bool, error) {
+		review := &authorizationv1.SubjectAccessReview{Spec: authorizationv1.SubjectAccessReviewSpec{User: user, ResourceAttributes: &request}}
+		if err := api.Create(ctx, review); err != nil {
+			return false, err
+		}
+		last = review.Status
+		return last.Allowed, nil
+	}); err != nil {
+		t.Fatalf("wait for the authorizer to let %s %s %s in namespace %q: %v; last review: %+v", user, request.Verb, request.Resource, request.Namespace, err, last)
+	}
 }
 
 func digest(payload []byte) string {
@@ -280,6 +302,9 @@ func TestPublicationWithNoSecretReadPermission(t *testing.T) {
 	grant := &rbacv1.RoleBinding{ObjectMeta: metav1.ObjectMeta{Namespace: b.Namespace, Name: role.Name}, RoleRef: rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "Role", Name: role.Name}, Subjects: []rbacv1.Subject{{Kind: "User", APIGroup: rbacv1.GroupName, Name: username}}}
 	if err := api.Create(ctx, grant); err != nil {
 		t.Fatal(err)
+	}
+	for _, verb := range role.Rules[0].Verbs {
+		awaitAllowed(ctx, t, username, authorizationv1.ResourceAttributes{Namespace: b.Namespace, Group: recordapi.GroupVersion.Group, Resource: "ptahresultrecords", Verb: verb})
 	}
 	databaseSecret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: b.Namespace, Name: "database"}, Data: map[string][]byte{"password": []byte("test-only")}}
 	if err := api.Create(ctx, databaseSecret); err != nil {
