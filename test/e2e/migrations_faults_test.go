@@ -123,7 +123,7 @@ func TestStoppedRunNamesItsMigrationRefusesEachClause(t *testing.T) {
 	t.Parallel()
 	// The record both engines left on kind with the Ptah v0.14.0 executor.
 	const named = `{"status":{"lastRun":{"outcome":"Failed","jobUID":"u-apply","appliedVersions":[1],
-  "message":"Migration 2 (Wait To Be Stopped) failed at statement 1 of 1 and committed nothing; 1 migrations before it are recorded applied"}}}`
+  "message":"Migration 2 (Wait To Be Stopped) failed at statement 1 of 1 and committed nothing; 1 migration before it is recorded applied"}}}`
 	accepts := func(migration *ptahv1alpha1.PtahMigration) bool {
 		return stoppedRunNamesItsMigration(migration.Status.LastRun, 2, 1, 1)
 	}
@@ -134,43 +134,45 @@ func TestStoppedRunNamesItsMigrationRefusesEachClause(t *testing.T) {
 		{"no run recorded", func(m *ptahv1alpha1.PtahMigration) { m.Status.LastRun = nil }},
 		{"no message", message("")},
 		{"the message before #678", message(
-			"A migration failed and committed nothing; 1 migrations before it are recorded applied")},
+			"A migration failed and committed nothing; 1 migration before it is recorded applied")},
 		{"the message without a failure, as Ptah v0.13.0 left it", message(
-			"Migration 2 (Wait To Be Stopped) failed and committed nothing; 1 migrations before it are recorded applied")},
+			"Migration 2 (Wait To Be Stopped) failed and committed nothing; 1 migration before it is recorded applied")},
 		{"the version without its description", message(
-			"Migration 2 failed at statement 1 of 1 and committed nothing; 1 migrations before it are recorded applied")},
+			"Migration 2 failed at statement 1 of 1 and committed nothing; 1 migration before it is recorded applied")},
 		{"an empty description", message(
-			"Migration 2 () failed at statement 1 of 1 and committed nothing; 1 migrations before it are recorded applied")},
+			"Migration 2 () failed at statement 1 of 1 and committed nothing; 1 migration before it is recorded applied")},
 		{"another version", message(
 			"Migration 3 (Wait To Be Stopped) failed at statement 1 of 1 and committed nothing; 2 migrations before it are recorded applied")},
 		{"another count", message(
 			"Migration 2 (Wait To Be Stopped) failed at statement 1 of 1 and committed nothing; 0 migrations before it are recorded applied")},
+		{"the plural the operator wrote for one", message(
+			"Migration 2 (Wait To Be Stopped) failed at statement 1 of 1 and committed nothing; 1 migrations before it are recorded applied")},
 		{"a version that only starts with the one stopped", message(
-			"Migration 21 (x) failed at statement 1 of 1 and committed nothing; 1 migrations before it are recorded applied")},
+			"Migration 21 (x) failed at statement 1 of 1 and committed nothing; 1 migration before it is recorded applied")},
 		{"another statement", message(
-			"Migration 2 (Wait To Be Stopped) failed at statement 2 of 2 and committed nothing; 1 migrations before it are recorded applied")},
+			"Migration 2 (Wait To Be Stopped) failed at statement 2 of 2 and committed nothing; 1 migration before it is recorded applied")},
 		{"another statement count", message(
-			"Migration 2 (Wait To Be Stopped) failed at statement 1 of 10 and committed nothing; 1 migrations before it are recorded applied")},
+			"Migration 2 (Wait To Be Stopped) failed at statement 1 of 10 and committed nothing; 1 migration before it is recorded applied")},
 		{"a SQLSTATE of the wrong form", message(
-			"Migration 2 (Wait To Be Stopped) failed at statement 1 of 1 with SQLSTATE 57014x and committed nothing; 1 migrations before it are recorded applied")},
+			"Migration 2 (Wait To Be Stopped) failed at statement 1 of 1 with SQLSTATE 57014x and committed nothing; 1 migration before it is recorded applied")},
 		{"a database answer that is not a code", message(
-			"Migration 2 (Wait To Be Stopped) failed at statement 1 of 1 with canceling statement due to user request and committed nothing; 1 migrations before it are recorded applied")},
+			"Migration 2 (Wait To Be Stopped) failed at statement 1 of 1 with canceling statement due to user request and committed nothing; 1 migration before it is recorded applied")},
 		{"a partial run's message", message(
 			"Migration 2 (Wait To Be Stopped) committed 1 of its 2 statements and not the rest; " +
 				"retrying the file would run them twice")},
 		{"a word run on to the sentence", message(
-			"Migration 2 (Wait To Be Stopped) failed at statement 1 of 1 and committed nothing; 1 migrations before it are recorded appliedly")},
+			"Migration 2 (Wait To Be Stopped) failed at statement 1 of 1 and committed nothing; 1 migration before it is recorded appliedly")},
 	})
 	// Whether a canceled statement comes back with a code depends on the
 	// driver, so each shape the controller writes for one is admitted.
 	for _, text := range []string{
-		"Migration 2 (Wait To Be Stopped) failed at statement 1 of 1 with SQLSTATE 57014 and committed nothing; 1 migrations before it are recorded applied",
-		"Migration 2 (Wait To Be Stopped) failed at statement 1 of 1 with SQLSTATE 70100 (error 1317) and committed nothing; 1 migrations before it are recorded applied",
-		"Migration 2 (Wait To Be Stopped) failed at statement 1 of 1 with error 2013 and committed nothing; 1 migrations before it are recorded applied",
+		"Migration 2 (Wait To Be Stopped) failed at statement 1 of 1 with SQLSTATE 57014 and committed nothing; 1 migration before it is recorded applied",
+		"Migration 2 (Wait To Be Stopped) failed at statement 1 of 1 with SQLSTATE 70100 (error 1317) and committed nothing; 1 migration before it is recorded applied",
+		"Migration 2 (Wait To Be Stopped) failed at statement 1 of 1 with error 2013 and committed nothing; 1 migration before it is recorded applied",
 		// What the controller ends a failed run's message with, under each policy.
-		"Migration 2 (Wait To Be Stopped) failed at statement 1 of 1 and committed nothing; 1 migrations before it are recorded applied. " +
+		"Migration 2 (Wait To Be Stopped) failed at statement 1 of 1 and committed nothing; 1 migration before it is recorded applied. " +
 			"What Ptah reported is in the Pod log for 24 hours after the Job finishes: kubectl logs -n team-a job/ptah-m-apply-orders-1 -c ptah",
-		"Migration 2 (Wait To Be Stopped) failed at statement 1 of 1 and committed nothing; 1 migrations before it are recorded applied. " +
+		"Migration 2 (Wait To Be Stopped) failed at statement 1 of 1 and committed nothing; 1 migration before it is recorded applied. " +
 			"What Ptah reported is in the Pod log for 5 minutes after the Job finishes: kubectl logs -n team-a job/ptah-m-apply-orders-1 -c ptah",
 	} {
 		reading := mfMigration(t, named)

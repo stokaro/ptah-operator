@@ -30,7 +30,9 @@ store first. A plan waiting for approval has to be approved again
 once the executor moves to Ptah v0.22.0, a database audit that lists what the
 executor sends to PostgreSQL has to expect reads of `pg_catalog` in place of
 `information_schema`, and `kubectl ptah` and Ptah Console have to move with the
-operator. A script that passes the output of `kubectl ptah approve --dry-run
+operator. A script that matches a sentence about a count of migrations in a
+status message has to expect the singular for one: `1 migration is pending`, not
+`1 migrations are pending`. A script that passes the output of `kubectl ptah approve --dry-run
 client` to `kubectl apply` has to pass `--name`, since the printed approval now
 carries a `generateName`. A script that matches the whole text
 of `result publication retention has not authorized deletion` has to match its

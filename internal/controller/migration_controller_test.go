@@ -461,7 +461,7 @@ func TestMigrationHistoryResultClassifiesWhatTheDatabaseSaid(t *testing.T) {
 			wantReason:            operatorv1alpha1.ReasonHistoryModified,
 			wantProgressing:       metav1.ConditionFalse,
 			wantProgressingReason: operatorv1alpha1.ReasonHistoryModified,
-			wantDirection:         "restore the files the database recorded",
+			wantDirection:         "restore the file the database recorded",
 		},
 		{
 			// Ptah executes in linear order and refuses the whole run while a
@@ -484,7 +484,7 @@ func TestMigrationHistoryResultClassifiesWhatTheDatabaseSaid(t *testing.T) {
 			wantOutOfOrder:        []int64{2},
 			wantProgressing:       metav1.ConditionFalse,
 			wantProgressingReason: operatorv1alpha1.ReasonHistoryOutOfOrder,
-			wantDirection:         "renumber them above it",
+			wantDirection:         "renumber it above that version",
 		},
 		{
 			// Nothing here is pending, modified or dirty, because every one of

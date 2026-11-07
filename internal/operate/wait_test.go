@@ -1116,7 +1116,7 @@ func TestWaitTargets(t *testing.T) {
 					{phase: "VerifyingHistory", observedAt: at(0), lastRun: run},
 					{phase: "Planning", observedAt: at(90), lastRun: run, conditions: []metav1.Condition{
 						condition(operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionTrue, "MigrationsPending",
-							"A plan for 1 pending migrations is being published", 3),
+							"A plan for 1 pending migration is being published", 3),
 					}},
 					{phase: "AwaitingApproval", observedAt: at(90), lastRun: run, plan: &planDoc{name: "plan-2", uid: "plan-uid-2"}, conditions: approvalConditions(metav1.ConditionTrue)},
 				}
