@@ -1745,6 +1745,14 @@ func (r *SchemaReconciler) consumeResultWithTransport(ctx context.Context, schem
 			schema.Status.Plan = nil
 			setCondition(schema, operatorv1alpha1.ConditionDriftDetected, metav1.ConditionFalse, operatorv1alpha1.ReasonScopedConverged, "The authoritative managed scope has no changes")
 			setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse, operatorv1alpha1.ReasonNoChanges, "No executable plan is required")
+			// The database converged without an Apply, so the plan that was waiting
+			// went away and nobody can approve it. Left standing, the condition
+			// would keep asking for an approval and a later plan would read as
+			// having replaced this one.
+			if outstandingPlan, _ := lifecyclejournal.OutstandingPlan(schema.Status.Journal); outstandingPlan != "" ||
+				meta.IsStatusConditionTrue(schema.Status.Conditions, operatorv1alpha1.ConditionApprovalRequired) {
+				setCondition(schema, operatorv1alpha1.ConditionApprovalRequired, metav1.ConditionFalse, operatorv1alpha1.ReasonNoChanges, "No plan is waiting: the managed scope has no changes")
+			}
 			if pending != nil && pending.Outcome == operatorv1alpha1.PendingObservationApplySucceeded && pending.Plan.Fingerprint != "" {
 				schema.Status.Applied = appliedStatusFor(pending.Plan, now)
 				schema.Status.Applied.DispatchedBy = pending.DispatchedBy.DeepCopy()
@@ -4065,16 +4073,18 @@ func (r *SchemaReconciler) patchStatus(ctx context.Context, before, after *opera
 	// The journal is stamped by the wall clock, as conditions are: the
 	// injected clock decides deadlines, and a journal entry decides nothing.
 	now := metav1.Now().Time
-	after.Status.Journal = lifecyclejournal.Record(after.Status.Journal,
-		lifecyclejournal.SchemaEntries(&before.Status, &after.Status, before.Status.Journal, now), now)
+	entries := lifecyclejournal.SchemaEntries(&before.Status, &after.Status, before.Status.Journal, now)
+	after.Status.Journal = lifecyclejournal.Record(after.Status.Journal, entries, now)
 	if err := r.Client.Status().Patch(ctx, after, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})); err != nil {
 		return fmt.Errorf("update PtahSchema status: %w", err)
 	}
-	r.observeStatusTransitions(before, after)
+	r.observeStatusTransitions(before, after, entries)
 	return nil
 }
 
-func (r *SchemaReconciler) observeStatusTransitions(before, after *operatorv1alpha1.PtahSchema) {
+// observeStatusTransitions reports what a stored status write changed, given the
+// journal entries that write recorded.
+func (r *SchemaReconciler) observeStatusTransitions(before, after *operatorv1alpha1.PtahSchema, recorded []operatorv1alpha1.JournalEntry) {
 	newPlan := planChanged(before.Status.Plan, after.Status.Plan)
 	if newPlan && after.Status.Plan != nil && r.Telemetry != nil {
 		r.Telemetry.ObservePlan(telemetry.FamilySchema, after.Spec.Target.Engine,
@@ -4100,10 +4110,14 @@ func (r *SchemaReconciler) observeStatusTransitions(before, after *operatorv1alp
 			r.Telemetry.ObserveApproval(telemetry.FamilySchema, telemetry.ApprovalAccepted)
 		}
 	}
-	if replaced, ok := replacedApprovablePlan(&before.Status, &after.Status); ok {
-		r.event(after, corev1.EventTypeWarning, "PlanStale",
-			"Plan %s will not be applied: plan %s replaced it before it ran, so an approval of %s no longer counts",
-			replaced, after.Status.Plan.Name, replaced)
+	// This Event fires once per replacement, and the recorder's spam filter or a
+	// restart can lose it. The journal entry is the record.
+	for _, entry := range recorded {
+		if entry.Type == operatorv1alpha1.JournalPlanPublished && entry.Replaced != "" {
+			r.event(after, corev1.EventTypeWarning, "PlanStale",
+				"Plan %s will not be applied: plan %s replaced it before it ran, so an approval of %s no longer counts",
+				entry.Replaced, entry.Plan, entry.Replaced)
+		}
 	}
 	if conditionBecame(before.Status.Conditions, after.Status.Conditions, operatorv1alpha1.ConditionArtifactVerified, metav1.ConditionFalse, string(operatorv1alpha1.ReasonPolicyChanged)) {
 		r.event(after, corev1.EventTypeWarning, "VerificationPolicyInvalidated", "Verification policy no longer matches the plan; artifact and plan verification were invalidated")
@@ -4123,32 +4137,6 @@ func planChanged(before, after *operatorv1alpha1.CurrentPlanStatus) bool {
 		return false
 	}
 	return before == nil || before.UID != after.UID || before.Fingerprint != after.Fingerprint
-}
-
-// replacedApprovablePlan names the plan a status write replaced, when a reader
-// could have approved it.
-//
-// status.plan goes nil on every read of the database, and the next Plan
-// publishes the same object again when nothing changed, so the plan going away
-// says nothing. A plan's name is its fingerprint, so the write that publishes a
-// plan under another name than the journal's outstanding one is the replacement.
-// A plan an Apply ran is not outstanding.
-//
-// ApprovalRequired still holds what the replaced plan asked for, because neither
-// a refresh nor a failed read moves it. An Apply claim moves it to False, so the
-// journal answers for a plan that was approved and then withdrawn before it ran.
-func replacedApprovablePlan(before, after *operatorv1alpha1.PtahSchemaStatus) (string, bool) {
-	if after.Plan == nil {
-		return "", false
-	}
-	outstanding, approved := lifecyclejournal.OutstandingPlan(before.Journal)
-	if outstanding == "" || outstanding == after.Plan.Name {
-		return "", false
-	}
-	if !approved && !meta.IsStatusConditionTrue(before.Conditions, operatorv1alpha1.ConditionApprovalRequired) {
-		return "", false
-	}
-	return outstanding, true
 }
 
 func approvalChanged(before, after *operatorv1alpha1.CurrentPlanStatus) bool {

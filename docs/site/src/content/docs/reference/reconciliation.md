@@ -708,7 +708,7 @@ and the finished Jobs it keeps for five minutes, or 24 hours after
 
 | Entry | Written when |
 | --- | --- |
-| `PlanPublished` | `status.plan` names a plan the journal does not already hold. A plan republished while the resource refreshes is the same plan and writes nothing. |
+| `PlanPublished` | `status.plan` names a plan the journal does not already hold. A plan republished while the resource refreshes is the same plan and writes nothing. On a schema, `approvalRequired` says the plan asked for a person's approval when it was published, and `replaced` names the plan it took the place of, when a person could approve that plan or had approved it and it never ran. That is the record of what a [`PlanStale`](../../troubleshoot/events/) Warning reports, since the Event [can be lost](../../troubleshoot/events/#an-event-can-be-lost). |
 | `ApprovalAccepted` | An Apply consumes an approval: the one a schema's plan records, or the one a migration's Apply claim names, with the approver admission stamped. `approvalUID` is what tells two decisions apart: a later approval may take the name of an earlier one, and writes its own entry. |
 | `ApplyFinished` | A schema's Apply ends and its post-Apply observation takes its place: `Succeeded`, or `Unknown` when its outcome is unknown. An Apply withdrawn before dispatch changed nothing and writes nothing. |
 | `Verified` | That observation settles: `InSync`, `DriftRemains`, `Superseded` when a newer generation, policy or execution binding took over, or `Unknown` when a person [gave it up](../../use/recovery/#a-schema-whose-target-moved) because its target moved. For a migration, the first reading after the run of the database the run reported: `InSync`, `Pending` when the source has more to apply, or `Blocked`. A run that reported none writes no such entry. |
@@ -735,6 +735,12 @@ newest, and drops the oldest first. `coveredSince` is the instant from which it
 is complete: the first status write a manager that keeps a journal made,
 moved forward past the newest entry a bound dropped. A reader states the
 period the journal covers from it rather than assuming a week or a month.
+
+The plan nothing has carried out yet stays past the age and the count, because a
+plan can wait for a person longer than they last and a later plan has to be able
+to say what it replaced. The entry that published it and the newest approval of
+it stay until an Apply or a run ends it or another plan is published, so those
+two can be older than `coveredSince`.
 
 The journal is written in the status write that records the transition, so it
 costs no request of its own. Its times come from that status, such as a plan's
