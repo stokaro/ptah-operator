@@ -2143,6 +2143,9 @@ carry Ptah's words:
   quote a fragment of the file.
   [A desired file Ptah could not read](../../troubleshoot/condition-reasons/#a-desired-file-ptah-could-not-read)
   says what a person does with them.
+- A desired schema Ptah read and refuses as a whole, under
+  `desired_schema_invalid`, when that fault is the one the failed command stopped
+  on. The words come from the same second run and name what the file declares.
 - A plan that would change a protected table, under `protected_table`. The words
   are the sentence of the `schema plan` report, which names the fenced tables.
 - A Git source a Resolve cannot fetch, under `child_exit`. The words are the last

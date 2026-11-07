@@ -46,6 +46,8 @@ const (
 	configMapUnreadableSchemaSource    = "e2e-configmap-unreadable-schema-source"
 	configMapUnreadableMigration       = "e2e-configmap-unreadable-migration"
 	configMapUnreadableMigrationSource = "e2e-configmap-unreadable-migration-source"
+	configMapInvalidSchema             = "e2e-configmap-invalid-schema"
+	configMapInvalidSchemaSource       = "e2e-configmap-invalid-schema-source"
 
 	// The resources whose statement the database refuses, on a database of
 	// their own. The schema converges on a table, its rows are made to share a

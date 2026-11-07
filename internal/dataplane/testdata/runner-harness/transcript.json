@@ -135,23 +135,6 @@
     }
   },
   {
-    "name": "desired-source/drift-foreign-key",
-    "children": [
-      {
-        "command": "schema drift",
-        "args": [
-          "schema",
-          "drift",
-          "--format",
-          "json"
-        ],
-        "exit": 2,
-        "stderr": "error: error comparing schemas: invalid foreign key: field \"id\" references unknown table \"nope\"\n",
-        "stdout": "desired-source/drift-foreign-key.json"
-      }
-    ]
-  },
-  {
     "name": "desired-source/drift-sql",
     "children": [
       {
@@ -299,22 +282,6 @@
         "exit": 1,
         "stderr": "1 structural problem\n",
         "stdout": "desired-source/validate-dbml.txt"
-      }
-    ]
-  },
-  {
-    "name": "desired-source/validate-foreign-key",
-    "children": [
-      {
-        "command": "schema validate",
-        "args": [
-          "schema",
-          "validate",
-          "--dialect=PostgreSQL"
-        ],
-        "exit": 1,
-        "stderr": "1 structural problem\n",
-        "stdout": "desired-source/validate-foreign-key.txt"
       }
     ]
   },
@@ -11356,6 +11323,629 @@
       "resolvedReference": "oci://harness-registry:5000/migrations/statement-errors-pg-unique-up@<digest>",
       "resolvedSize": 1076,
       "stdout": ""
+    }
+  },
+  {
+    "name": "structural-foreign-key/observe",
+    "operation": "observe",
+    "source": "git",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 2,
+        "stderr": "error: error comparing schemas: invalid foreign key: field \"id\" references unknown table \"nope\"\n",
+        "stdout": "desired-source/drift-foreign-key.json"
+      },
+      {
+        "command": "schema validate",
+        "args": [
+          "schema",
+          "validate",
+          "--dialect=PostgreSQL"
+        ],
+        "exit": 1,
+        "stderr": "1 structural problem\n",
+        "stdout": "desired-source/validate-foreign-key.txt"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "error": {
+        "code": "desired_schema_invalid",
+        "message": "schema.sql: invalid foreign key: field \"id\" references unknown table \"nope\""
+      },
+      "operation": "observe",
+      "operationId": "sha256:47cdfb18bed396481f4039ca9dfc14f70b8e0a6445fac475ca3ee391589e0e86",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:6a946ad65f2bc29496746545bc6a1b361323017c53e8f9adcc467303d32394c3"
+    }
+  },
+  {
+    "name": "structural-foreign-key/plan",
+    "operation": "plan",
+    "source": "git",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--json"
+        ],
+        "exit": 2,
+        "stderr": "error: compare database schema: invalid foreign key: field \"id\" references unknown table \"nope\"\n",
+        "stdout": "desired-source/plan-foreign-key.json"
+      },
+      {
+        "command": "schema validate",
+        "args": [
+          "schema",
+          "validate",
+          "--dialect=PostgreSQL"
+        ],
+        "exit": 1,
+        "stderr": "1 structural problem\n",
+        "stdout": "runner-harness/documents/structural-foreign-key/plan/1-schema-validate.txt"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "error": {
+        "code": "desired_schema_invalid",
+        "message": "schema.sql: invalid foreign key: field \"id\" references unknown table \"nope\""
+      },
+      "operation": "plan",
+      "operationId": "sha256:b8f52f5e9ef942262e9073adb5997b43c315e5bd1eaa1306a086ba8ba2e238c8",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:6a946ad65f2bc29496746545bc6a1b361323017c53e8f9adcc467303d32394c3"
+    }
+  },
+  {
+    "name": "structural-index-table/observe",
+    "operation": "observe",
+    "source": "git",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 2,
+        "stderr": "error: error comparing schemas: invalid schema diff: target index reference at position 0 requires a name and owning table\n",
+        "stdout": "desired-source/drift-index-table.json"
+      },
+      {
+        "command": "schema validate",
+        "args": [
+          "schema",
+          "validate",
+          "--dialect=PostgreSQL"
+        ],
+        "exit": 1,
+        "stderr": "1 structural problem\n",
+        "stdout": "desired-source/validate-index-table.txt"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "error": {
+        "code": "child_exit",
+        "message": "ptah exited with code 2"
+      },
+      "operation": "observe",
+      "operationId": "sha256:aa04c670add9dc15c09a0ec17a337de38a296b05632d18f483121f0483b89c83",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:f947bd1d2b42a2e3886edba2e1f62ceca52876060de18e5099a89b6362c19d12"
+    }
+  },
+  {
+    "name": "structural-index-table/plan",
+    "operation": "plan",
+    "source": "git",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--json"
+        ],
+        "exit": 2,
+        "stderr": "error: invalid schema projection: index \"i\" has no resolved owner\n",
+        "stdout": "desired-source/plan-index-table.json"
+      },
+      {
+        "command": "schema validate",
+        "args": [
+          "schema",
+          "validate",
+          "--dialect=PostgreSQL"
+        ],
+        "exit": 1,
+        "stderr": "1 structural problem\n",
+        "stdout": "runner-harness/documents/structural-index-table/plan/1-schema-validate.txt"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "error": {
+        "code": "invalid_plan_output",
+        "message": "plan command did not complete successfully"
+      },
+      "operation": "plan",
+      "operationId": "sha256:8218794dbe6fff0c5f85a8aa21eb1f8341b0be552468780cd542e24f4571694f",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:f947bd1d2b42a2e3886edba2e1f62ceca52876060de18e5099a89b6362c19d12"
+    }
+  },
+  {
+    "name": "structural-key-and-index/observe",
+    "operation": "observe",
+    "source": "git",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 2,
+        "stderr": "error: error comparing schemas: invalid foreign key: constraint \"t_nope\" references unknown table \"nope\"\n",
+        "stdout": "desired-source/drift-key-and-index.json"
+      },
+      {
+        "command": "schema validate",
+        "args": [
+          "schema",
+          "validate",
+          "--dialect=PostgreSQL"
+        ],
+        "exit": 1,
+        "stderr": "2 structural problems\n",
+        "stdout": "desired-source/validate-key-and-index.txt"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "error": {
+        "code": "desired_schema_invalid",
+        "message": "schema.sql: invalid foreign key: constraint \"t_nope\" references unknown table \"nope\""
+      },
+      "operation": "observe",
+      "operationId": "sha256:4143be0c3059b6c808e6feeea3ceeb83cdb5e1f145e272ed980744659e555e70",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:e9328a5f96e03adb449ffeb018dc7592ce9e58bf63dfa6d40b5c21d4a18bb562"
+    }
+  },
+  {
+    "name": "structural-key-and-index/plan",
+    "operation": "plan",
+    "source": "git",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--json"
+        ],
+        "exit": 2,
+        "stderr": "error: compare database schema: invalid foreign key: constraint \"t_nope\" references unknown table \"nope\"\n",
+        "stdout": "desired-source/plan-key-and-index.json"
+      },
+      {
+        "command": "schema validate",
+        "args": [
+          "schema",
+          "validate",
+          "--dialect=PostgreSQL"
+        ],
+        "exit": 1,
+        "stderr": "2 structural problems\n",
+        "stdout": "runner-harness/documents/structural-key-and-index/plan/1-schema-validate.txt"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "error": {
+        "code": "desired_schema_invalid",
+        "message": "schema.sql: invalid foreign key: constraint \"t_nope\" references unknown table \"nope\""
+      },
+      "operation": "plan",
+      "operationId": "sha256:a69b990a99355042627a8db65520f1725ff6746a7654eea733e42f039c039e41",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:e9328a5f96e03adb449ffeb018dc7592ce9e58bf63dfa6d40b5c21d4a18bb562"
+    }
+  },
+  {
+    "name": "structural-key-mysql/observe",
+    "operation": "observe",
+    "source": "git",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 2,
+        "stderr": "error: error comparing schemas: invalid foreign key: constraint \"t_nope\" references unknown table \"nope\"\n",
+        "stdout": "desired-source/drift-key-mysql.json"
+      },
+      {
+        "command": "schema validate",
+        "args": [
+          "schema",
+          "validate",
+          "--dialect=MySQL"
+        ],
+        "exit": 1,
+        "stderr": "1 structural problem\n",
+        "stdout": "desired-source/validate-key-mysql.txt"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "error": {
+        "code": "desired_schema_invalid",
+        "message": "schema.sql: invalid foreign key: constraint \"t_nope\" references unknown table \"nope\""
+      },
+      "operation": "observe",
+      "operationId": "sha256:4507edd045145d84bdd3eb870a735c1a9df322c3ee09e72b3e1aeab1db9c318d",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:d4bd1d80836d3915a44ba2ddfed345eb992a2f890f73c7413a09bc6eb9791665"
+    }
+  },
+  {
+    "name": "structural-key-mysql/plan",
+    "operation": "plan",
+    "source": "git",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--json"
+        ],
+        "exit": 2,
+        "stderr": "error: compare database schema: invalid foreign key: constraint \"t_nope\" references unknown table \"nope\"\n",
+        "stdout": "desired-source/plan-key-mysql.json"
+      },
+      {
+        "command": "schema validate",
+        "args": [
+          "schema",
+          "validate",
+          "--dialect=MySQL"
+        ],
+        "exit": 1,
+        "stderr": "1 structural problem\n",
+        "stdout": "runner-harness/documents/structural-key-mysql/plan/1-schema-validate.txt"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "error": {
+        "code": "desired_schema_invalid",
+        "message": "schema.sql: invalid foreign key: constraint \"t_nope\" references unknown table \"nope\""
+      },
+      "operation": "plan",
+      "operationId": "sha256:e00e1e20695e3c37d3feeacd361b2e7f2b08b5368703150237c4d697d8146000",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:d4bd1d80836d3915a44ba2ddfed345eb992a2f890f73c7413a09bc6eb9791665"
+    }
+  },
+  {
+    "name": "structural-not-unique/observe",
+    "operation": "observe",
+    "source": "git",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 2,
+        "stderr": "error: error comparing schemas: postgres requires referenced columns code on table \"parent\" to be declared unique\n",
+        "stdout": "desired-source/drift-not-unique.json"
+      },
+      {
+        "command": "schema validate",
+        "args": [
+          "schema",
+          "validate",
+          "--dialect=PostgreSQL"
+        ],
+        "exit": 1,
+        "stderr": "1 structural problem\n",
+        "stdout": "desired-source/validate-not-unique.txt"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "error": {
+        "code": "desired_schema_invalid",
+        "message": "schema.sql: postgres requires referenced columns code on table \"parent\" to be declared unique"
+      },
+      "operation": "observe",
+      "operationId": "sha256:8a8ece560154c0d7cf0b3400590fff8066eca5e825f8dc1f59042b982e54ca71",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:45a425372c332474c264d142c6a6d6b96a38f84ccba0151c872d5b6f6a40a753"
+    }
+  },
+  {
+    "name": "structural-not-unique/plan",
+    "operation": "plan",
+    "source": "git",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--json"
+        ],
+        "exit": 2,
+        "stderr": "error: compare database schema: postgres requires referenced columns code on table \"parent\" to be declared unique\n",
+        "stdout": "desired-source/plan-not-unique.json"
+      },
+      {
+        "command": "schema validate",
+        "args": [
+          "schema",
+          "validate",
+          "--dialect=PostgreSQL"
+        ],
+        "exit": 1,
+        "stderr": "1 structural problem\n",
+        "stdout": "runner-harness/documents/structural-not-unique/plan/1-schema-validate.txt"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "error": {
+        "code": "desired_schema_invalid",
+        "message": "schema.sql: postgres requires referenced columns code on table \"parent\" to be declared unique"
+      },
+      "operation": "plan",
+      "operationId": "sha256:2bbd5ec8f8f3f36724ce24f74709155718cc0dd6685057622e7a33b1f50318cf",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:45a425372c332474c264d142c6a6d6b96a38f84ccba0151c872d5b6f6a40a753"
+    }
+  },
+  {
+    "name": "structural-other-and-index/observe",
+    "operation": "observe",
+    "source": "git",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 2,
+        "stderr": "error: error comparing schemas: invalid foreign key: constraint \"t_other\" references unknown table \"other.nope\": the database compared holds schema \"other\" and the desired schema declares nothing of it\n",
+        "stdout": "desired-source/drift-other-and-index.json"
+      },
+      {
+        "command": "schema validate",
+        "args": [
+          "schema",
+          "validate",
+          "--dialect=PostgreSQL"
+        ],
+        "exit": 1,
+        "stderr": "1 structural problem\n",
+        "stdout": "desired-source/validate-other-and-index.txt"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "error": {
+        "code": "child_exit",
+        "message": "ptah exited with code 2"
+      },
+      "operation": "observe",
+      "operationId": "sha256:508dcf31fdd63df3ded2de4e93ae21daeb9b00b7efb1ab1a89624345bb38d736",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:e34d0789aaca8f44e8ac41a8d6f08c4edd1df4c02039ac0c320432e36ea88638"
+    }
+  },
+  {
+    "name": "structural-other-and-index/plan",
+    "operation": "plan",
+    "source": "git",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--json"
+        ],
+        "exit": 2,
+        "stderr": "error: compare database schema: invalid foreign key: constraint \"t_other\" references unknown table \"other.nope\": the database compared holds schema \"other\" and the desired schema declares nothing of it\n",
+        "stdout": "desired-source/plan-other-and-index.json"
+      },
+      {
+        "command": "schema validate",
+        "args": [
+          "schema",
+          "validate",
+          "--dialect=PostgreSQL"
+        ],
+        "exit": 1,
+        "stderr": "1 structural problem\n",
+        "stdout": "runner-harness/documents/structural-other-and-index/plan/1-schema-validate.txt"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "error": {
+        "code": "invalid_plan_output",
+        "message": "plan command did not complete successfully"
+      },
+      "operation": "plan",
+      "operationId": "sha256:0bb8578a811e1307ac6cda6f4a8a806cc6b576a523ada0ba5fe08955be1a8336",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:e34d0789aaca8f44e8ac41a8d6f08c4edd1df4c02039ac0c320432e36ea88638"
+    }
+  },
+  {
+    "name": "structural-other-and-key/observe",
+    "operation": "observe",
+    "source": "git",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 2,
+        "stderr": "error: error comparing schemas: invalid foreign key: constraint \"t_other\" references unknown table \"other.nope\": the database compared holds schema \"other\" and the desired schema declares nothing of it\n",
+        "stdout": "desired-source/drift-other-and-key.json"
+      },
+      {
+        "command": "schema validate",
+        "args": [
+          "schema",
+          "validate",
+          "--dialect=PostgreSQL"
+        ],
+        "exit": 1,
+        "stderr": "1 structural problem\n",
+        "stdout": "desired-source/validate-other-and-key.txt"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "error": {
+        "code": "child_exit",
+        "message": "ptah exited with code 2"
+      },
+      "operation": "observe",
+      "operationId": "sha256:18c8e0117d9995c86828aff297814dd2b02dd70e64b3ac89e17bdf2c86d175ba",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:cb0033c342f96341993e7fb61d532b13958f5a0b534b007ccfc8508a0133efdf"
+    }
+  },
+  {
+    "name": "structural-other-and-key/plan",
+    "operation": "plan",
+    "source": "git",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--json"
+        ],
+        "exit": 2,
+        "stderr": "error: compare database schema: invalid foreign key: constraint \"t_other\" references unknown table \"other.nope\": the database compared holds schema \"other\" and the desired schema declares nothing of it\n",
+        "stdout": "desired-source/plan-other-and-key.json"
+      },
+      {
+        "command": "schema validate",
+        "args": [
+          "schema",
+          "validate",
+          "--dialect=PostgreSQL"
+        ],
+        "exit": 1,
+        "stderr": "1 structural problem\n",
+        "stdout": "runner-harness/documents/structural-other-and-key/plan/1-schema-validate.txt"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "error": {
+        "code": "invalid_plan_output",
+        "message": "plan command did not complete successfully"
+      },
+      "operation": "plan",
+      "operationId": "sha256:b5658c430190db225d3858e7aa6ed5d611ebec0ad333415c082d534122043312",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:cb0033c342f96341993e7fb61d532b13958f5a0b534b007ccfc8508a0133efdf"
     }
   }
 ]

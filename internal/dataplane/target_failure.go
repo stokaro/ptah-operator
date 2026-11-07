@@ -82,7 +82,9 @@ type CommandError struct {
 	// absent when the failure has none.
 	Kind string `json:"kind,omitempty"`
 	// Message is Ptah's sentence for a person. It can quote what the database
-	// said, so nothing but a protected-table refusal's tables is read from it.
+	// said, so nothing but a protected-table refusal's tables is copied from
+	// it. SchemaStructuralProblem compares it with words from a run that had no
+	// database, and copies none of it.
 	Message string `json:"message"`
 }
 

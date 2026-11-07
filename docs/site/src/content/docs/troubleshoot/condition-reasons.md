@@ -318,11 +318,33 @@ as [Output handling](../../use/security/#output-handling) describes.
 
 Not everything that stops a desired file reaches this code. Ptah reads no SQL
 statement of a migration file until it runs it, so a statement that does not
-parse passes the history read and fails the Apply on the database. A desired
-schema that loads and that the comparison then refuses, such as a foreign key to
-a table it does not declare, keeps `child_exit`: the runner reports only a load
-failure, because a structural problem `schema validate` finds is not always one
-the failed command refused. `ptah schema validate` prints those.
+parse passes the history read and fails the Apply on the database.
+
+A desired schema that loads and that Ptah refuses as a whole, such as a foreign
+key to a table it does not declare, reads the same way under the code
+`desired_schema_invalid`, in the same places and on the same retry:
+
+```
+desired_schema_invalid: schema.sql: invalid foreign key: field "id" references unknown table "nope"
+desired_schema_invalid: schema.sql: postgres requires referenced columns code on table "parent" to be declared unique
+```
+
+The fault comes from the same second run, and the operator reports it only when
+it is the one the failed command stopped on: the words have to end that command's
+own sentence, and nothing of that sentence is copied. Some faults of a file do
+not reach this code:
+
+- An index on a column no table declares does not stop `schema drift` or
+  `schema plan`, so the plan holds an index the server has to refuse.
+- An index on a table no declaration defines stops them in other words, so the
+  failure keeps `child_exit`, or `invalid_plan_output` from a Plan.
+- A foreign key into a schema the database holds and the file declares nothing of
+  is refused by the comparison with that database, which the second run does not
+  have. It keeps those codes too, and a fault the second run finds elsewhere in the
+  same file is not why the command stopped.
+
+`ptah schema validate --dialect=<engine> --schema-file <file>` prints what the
+file alone can be refused for, indexes included, with no database.
 
 A schema published to an OCI registry is the exception, and for it the operator
 gives no reason. Ptah parses the artifact in the `fetch-schema` init container,

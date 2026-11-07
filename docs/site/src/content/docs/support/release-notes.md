@@ -23,7 +23,8 @@ on the upgrade. An alert or a script that matches `child_exit: ptah exited
 with code 2` to find a database the operator could not open has to match the
 kind of failure instead, and one that matches it or `invalid_plan_output` to
 find a desired file Ptah could not read has to match
-`desired_source_unreadable`. A pipeline that ships Pod logs now receives what the
+`desired_source_unreadable`, or `desired_schema_invalid` for a schema it read and
+refuses. A pipeline that ships Pod logs now receives what the
 database answered when an Apply fails, row values included, so decide what it may
 store first. A plan waiting for approval has to be approved again
 once the executor moves to Ptah v0.22.0, a database audit that lists what the
@@ -131,6 +132,14 @@ it would report.
   says how to read the reason and how to make the resource read the repaired
   file. A schema whose `fetch-schema` step fails now names that step and its
   exit status, and gives no reason: that page says how to get one.
+- **A schema Ptah read and refuses.** When drift or a Plan stops on a fault of the
+  schema as a whole, such as a foreign key into a table it does not declare, the
+  condition message and the Warning Event carry that fault under the code
+  `desired_schema_invalid`. Such a schema used to read as the two codes above, with
+  no reason. The words come from the same second run of Ptah. A fault that run finds
+  and the failed command did not stop on keeps the code it had, and
+  [the same page](../../troubleshoot/condition-reasons/#a-desired-file-ptah-could-not-read)
+  lists those.
 - **A read that keeps failing reads the repaired source.** A read-only operation
   that keeps failing used to hold its snapshot, commit or digest until a spec edit
   or a suspension ended it, and `kubectl ptah refresh` got no answer meanwhile. It

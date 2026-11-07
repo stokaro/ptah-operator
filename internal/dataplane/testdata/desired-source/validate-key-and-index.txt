@@ -1,0 +1,2 @@
+postgres: index "i": names column "missing_column", which table "t" does not declare
+postgres: schema: invalid foreign key: constraint "t_nope" references unknown table "nope"

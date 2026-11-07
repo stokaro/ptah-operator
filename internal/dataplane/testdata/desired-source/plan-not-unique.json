@@ -1,0 +1,8 @@
+{
+  "contract_version": 3,
+  "command": "schema plan",
+  "outcome": "failed",
+  "error": {
+    "message": "compare database schema: postgres requires referenced columns code on table \"parent\" to be declared unique"
+  }
+}
