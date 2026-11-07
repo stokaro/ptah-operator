@@ -1,11 +1,16 @@
 package e2e
 
 import (
+	"errors"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
 )
 
@@ -58,6 +63,183 @@ func TestFailedApplyPointerSaysNamesTheJobAndTheTime(t *testing.T) {
 			t.Parallel()
 			if err := failedApplyPointerSays(test.message, test.namespace, test.job); err == nil {
 				t.Fatalf("failedApplyPointerSays(%q) accepted it", test.message)
+			}
+		})
+	}
+}
+
+// printedMessage is the pointer as the manager writes it, in a condition, an Event and
+// status.lastRun.message alike.
+const printedMessage = "Apply outcome is uncertain. What Ptah reported is in the Pod log for 24 hours after the Job finishes: " +
+	"kubectl logs -n team-a job/ptah-apply-orders-0123 -c ptah"
+
+func TestPrintedLogCommandReadsTheMessageAndNothingElse(t *testing.T) {
+	t.Parallel()
+
+	got, err := printedLogCommand(printedMessage)
+	if err != nil {
+		t.Fatalf("the pointer: %v", err)
+	}
+	want := []string{"logs", "-n", "team-a", "job/ptah-apply-orders-0123", "-c", "ptah"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("printedLogCommand() = %q, want %q", got, want)
+	}
+	for name, message := range map[string]string{
+		"no command":        "Apply outcome is uncertain",
+		"an empty message":  "",
+		"cut short":         strings.TrimSuffix(printedMessage, " -c ptah"),
+		"cut inside a word": strings.TrimSuffix(printedMessage, "tah"),
+		"text after it":     printedMessage + ".",
+		"a sentence after":  printedMessage + ". Then delete the Job.",
+		"two commands":      "kubectl logs -n team-a job/first -c ptah or " + printedMessage,
+		"another verb":      strings.ReplaceAll(printedMessage, "kubectl logs", "kubectl delete"),
+		"a second command":  printedMessage + "; kubectl delete -n team-a job/ptah-apply-orders-0123",
+		"a shell behind it": printedMessage + " | sh",
+		"another container": strings.ReplaceAll(printedMessage, "-c ptah", "-c fetch"),
+		"no container":      strings.ReplaceAll(printedMessage, " -c ptah", ""),
+		"a Pod, not a Job":  strings.ReplaceAll(printedMessage, "job/", "pod/"),
+		"no namespace":      strings.ReplaceAll(printedMessage, "-n team-a ", ""),
+		"another flag":      strings.ReplaceAll(printedMessage, "logs -n", "logs --previous -n"),
+		"no Job name":       strings.ReplaceAll(printedMessage, "job/ptah-apply-orders-0123", "job/"),
+		"not lower case":    strings.ReplaceAll(printedMessage, "team-a", "Team-A"),
+		"glued to a word":   strings.ReplaceAll(printedMessage, " kubectl", "xkubectl"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if got, err := printedLogCommand(message); err == nil {
+				t.Fatalf("printedLogCommand(%q) accepted it: %q", message, got)
+			}
+		})
+	}
+}
+
+func TestReadPrintedLogRunsWhatTheMessagePrints(t *testing.T) {
+	t.Parallel()
+
+	var ran [][]string
+	kubectl := func(arguments ...string) ([]byte, []byte, error) {
+		ran = append(ran, arguments)
+		return []byte(refusedLine), []byte("kubectl wrote this to standard error"), nil
+	}
+	log, err := readPrintedLog(printedMessage, kubectl)
+	if err != nil {
+		t.Fatalf("readPrintedLog() error = %v", err)
+	}
+	if string(log) != refusedLine {
+		t.Errorf("readPrintedLog() = %q, want standard output and nothing else", log)
+	}
+	want := []string{"logs", "-n", "team-a", "job/ptah-apply-orders-0123", "-c", "ptah"}
+	if len(ran) != 1 || !slices.Equal(ran[0], want) {
+		t.Errorf("ran %q, want the one command the message prints", ran)
+	}
+
+	// A message that prints something else runs nothing at all.
+	ran = nil
+	if _, err := readPrintedLog(strings.ReplaceAll(printedMessage, "kubectl logs", "kubectl delete"), kubectl); err == nil {
+		t.Error("another verb was accepted")
+	}
+	if len(ran) != 0 {
+		t.Errorf("a refused message ran %q", ran)
+	}
+
+	_, err = readPrintedLog(printedMessage, func(...string) ([]byte, []byte, error) {
+		return nil, []byte("Error from server (NotFound): jobs.batch not found"), errors.New("exit status 1")
+	})
+	if err == nil || !strings.Contains(err.Error(), "NotFound") || !strings.Contains(err.Error(), "logs -n team-a") {
+		t.Errorf("a command that failed reported %v, want the command and its standard error", err)
+	}
+}
+
+func TestJobFinishedAtReadsWhatTheTTLControllerReads(t *testing.T) {
+	t.Parallel()
+
+	finished := metav1.NewTime(time.Date(2026, 11, 7, 10, 0, 0, 0, time.UTC))
+	job := func(conditions ...batchv1.JobCondition) *batchv1.Job {
+		return &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "apply"}, Status: batchv1.JobStatus{Conditions: conditions}}
+	}
+	earlier := metav1.NewTime(finished.Add(-time.Minute))
+	for name, test := range map[string]*batchv1.Job{
+		"complete": job(batchv1.JobCondition{Type: batchv1.JobComplete, Status: corev1.ConditionTrue, LastTransitionTime: finished}),
+		"failed":   job(batchv1.JobCondition{Type: batchv1.JobFailed, Status: corev1.ConditionTrue, LastTransitionTime: finished}),
+		"complete, after its success criteria": job(
+			batchv1.JobCondition{Type: batchv1.JobSuccessCriteriaMet, Status: corev1.ConditionTrue, LastTransitionTime: earlier},
+			batchv1.JobCondition{Type: batchv1.JobComplete, Status: corev1.ConditionTrue, LastTransitionTime: finished}),
+		"failed, after its failure target": job(
+			batchv1.JobCondition{Type: batchv1.JobFailureTarget, Status: corev1.ConditionTrue, LastTransitionTime: earlier},
+			batchv1.JobCondition{Type: batchv1.JobFailed, Status: corev1.ConditionTrue, LastTransitionTime: finished}),
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			got, err := jobFinishedAt(test)
+			if err != nil || !got.Equal(finished.Time) {
+				t.Fatalf("jobFinishedAt() = %v, %v, want %v", got, err, finished)
+			}
+		})
+	}
+	for name, test := range map[string]*batchv1.Job{
+		"no conditions":        job(),
+		"complete, not true":   job(batchv1.JobCondition{Type: batchv1.JobComplete, Status: corev1.ConditionFalse, LastTransitionTime: finished}),
+		"failed, unknown":      job(batchv1.JobCondition{Type: batchv1.JobFailed, Status: corev1.ConditionUnknown, LastTransitionTime: finished}),
+		"success criteria met": job(batchv1.JobCondition{Type: batchv1.JobSuccessCriteriaMet, Status: corev1.ConditionTrue, LastTransitionTime: finished}),
+		"failure target":       job(batchv1.JobCondition{Type: batchv1.JobFailureTarget, Status: corev1.ConditionTrue, LastTransitionTime: finished}),
+		"suspended":            job(batchv1.JobCondition{Type: batchv1.JobSuspended, Status: corev1.ConditionTrue, LastTransitionTime: finished}),
+		"no time":              job(batchv1.JobCondition{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}),
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if got, err := jobFinishedAt(test); err == nil {
+				t.Fatalf("jobFinishedAt() accepted it: %v", got)
+			}
+		})
+	}
+}
+
+func TestFailedApplyJobOutlivedShortTTLMeasuresFromTheJob(t *testing.T) {
+	t.Parallel()
+
+	finished := metav1.NewTime(time.Date(2026, 11, 7, 10, 0, 0, 0, time.UTC))
+	deadline := finished.Add(5 * time.Minute)
+	job := func() *batchv1.Job {
+		return &batchv1.Job{
+			ObjectMeta: metav1.ObjectMeta{Name: "apply", UID: types.UID("the-run")},
+			Spec:       batchv1.JobSpec{TTLSecondsAfterFinished: ptr.To(int32(86400))},
+			Status: batchv1.JobStatus{Conditions: []batchv1.JobCondition{
+				{Type: batchv1.JobComplete, Status: corev1.ConditionTrue, LastTransitionTime: finished},
+			}},
+		}
+	}
+	kept := job()
+	for name, readAt := range map[string]time.Time{"at the deadline": deadline, "after it": deadline.Add(time.Hour)} {
+		if err := failedApplyJobOutlivedShortTTL(kept, job(), readAt); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	for name, test := range map[string]struct {
+		mutate func(*batchv1.Job)
+		readAt time.Time
+	}{
+		"read a second early": {readAt: deadline.Add(-time.Second)},
+		"read as it finished": {readAt: finished.Time},
+		"another Job":         {mutate: func(job *batchv1.Job) { job.UID = "a-later-run" }, readAt: deadline},
+		"the short TTL":       {mutate: func(job *batchv1.Job) { job.Spec.TTLSecondsAfterFinished = ptr.To(int32(300)) }, readAt: deadline},
+		"no TTL":              {mutate: func(job *batchv1.Job) { job.Spec.TTLSecondsAfterFinished = nil }, readAt: deadline},
+		"being deleted":       {mutate: func(job *batchv1.Job) { job.DeletionTimestamp = &finished }, readAt: deadline},
+		"not finished":        {mutate: func(job *batchv1.Job) { job.Status.Conditions = nil }, readAt: deadline},
+		"finished later than the row took it to": {
+			mutate: func(job *batchv1.Job) {
+				job.Status.Conditions[0].LastTransitionTime = metav1.NewTime(finished.Add(time.Minute))
+			},
+			readAt: deadline,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			read := job()
+			if test.mutate != nil {
+				test.mutate(read)
+			}
+			if err := failedApplyJobOutlivedShortTTL(kept, read, test.readAt); err == nil {
+				t.Fatal("failedApplyJobOutlivedShortTTL() accepted it")
 			}
 		})
 	}

@@ -3,6 +3,7 @@
 package e2e
 
 import (
+	"context"
 	"strings"
 	"time"
 
@@ -63,10 +64,17 @@ func (m *migrationRun) stoppedRunKeepsItsLog(fixture string, outcome ptahv1alpha
 	m.check(failedApplyJobRetained(job), "the %s %s run under Always", m.engine.name, outcome)
 	m.check(failedApplyPointerSays(run.Message, m.in.TestNamespace, run.JobName), "status.lastRun.message of %s", name)
 
-	// The 24 hours are for this: what the database answered is there to read.
-	pod := m.readStopRowPod(string(run.JobUID))
-	logs, err := m.stopRowLog(pod.Name)
-	m.check(err, "read the log of the %s run", outcome)
+	// The 24 hours are for this: what the database answered is there to read, by the
+	// command the run's record prints. This row runs on both engines, so it is where
+	// the command meets MySQL. One Pod, so kubectl's choice among a Job's Pods is no
+	// choice here.
+	m.readStopRowPod(string(run.JobUID))
+	logs, err := readPrintedLog(run.Message, func(arguments ...string) ([]byte, []byte, error) {
+		ctx, cancel := context.WithTimeout(m.ctx, time.Minute)
+		defer cancel()
+		return m.cluster.Kubectl(ctx, arguments...)
+	})
+	m.check(err, "run the command the %s run prints", outcome)
 	m.scan(logs, "the "+name+" Apply's log")
 	m.check(failedApplyLogReports(logs), "the log of the %s run", outcome)
 
