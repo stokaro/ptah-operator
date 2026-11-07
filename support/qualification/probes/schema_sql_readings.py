@@ -68,9 +68,23 @@ class Lab:
         self.created = []
 
     def __enter__(self):
-        run(self.docker + ['network', 'create', self.name])
+        # A with statement calls __exit__ only after __enter__ has returned, so
+        # a start that fails or is interrupted removes here what it created.
+        try:
+            self.start()
+        except BaseException:
+            self.__exit__()
+            raise
+        return self
+
+    def start(self):
+        # Each is registered before it is made: a docker run that fails can
+        # still leave its container behind.
         self.created.append(('network', self.name))
+        run(self.docker + ['network', 'create', self.name])
         server = self.name + '-server'
+        self.created.append(('container', server))
+        self.server = server
         if self.engine == 'postgresql':
             run(self.docker + ['run', '-d', '--name', server, '--network', self.name,
                                '-e', f'POSTGRES_USER={ACCOUNT}', '-e', f'POSTGRES_PASSWORD={self.password}', '-e', f'POSTGRES_DB={self.database}',
@@ -81,8 +95,6 @@ class Lab:
                                '-e', f'MYSQL_ROOT_PASSWORD={self.password}', '-e', f'MYSQL_DATABASE={self.database}',
                                '-e', f'MYSQL_USER={ACCOUNT}', '-e', f'MYSQL_PASSWORD={self.password}', self.server_image,
                                '--general-log=1', '--log-output=TABLE'])
-        self.created.append(('container', server))
-        self.server = server
         deadline = time.time() + 180
         while time.time() < deadline:
             # Over TCP: the image's temporary init server listens on the
@@ -98,7 +110,6 @@ class Lab:
             # The image's own initialization connected through the socket; the
             # journal begins empty for the readings.
             self.sql('TRUNCATE mysql.general_log', root=True)
-        return self
 
     def __exit__(self, *_):
         for kind, name in reversed(self.created):
