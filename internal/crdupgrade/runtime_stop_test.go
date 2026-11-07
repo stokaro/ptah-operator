@@ -56,6 +56,11 @@ type stopCluster struct {
 
 	reads   map[string]int
 	lingers map[string]int
+
+	// heldOn, held and endHold are what endWhenHeldOn set.
+	heldOn  string
+	held    int
+	endHold context.CancelFunc
 }
 
 func newStopCluster(deployments ...*appsv1.Deployment) *stopCluster {
@@ -134,6 +139,7 @@ func (c *stopCluster) List(_ context.Context, options metav1.ListOptions) (*core
 	if !instance || component == "" {
 		return nil, fmt.Errorf("selector %q does not name the release's runtime", options.LabelSelector)
 	}
+	defer c.noteHeld(component)
 	name := stopController
 	if component == "certificate-rotation" {
 		name = stopCertificate
@@ -146,6 +152,41 @@ func (c *stopCluster) List(_ context.Context, options metav1.ListOptions) (*core
 		}
 	}
 	return &corev1.PodList{Items: append([]corev1.Pod(nil), c.pods[component]...)}, nil
+}
+
+// endWhenHeldOn ends the stop once its wait has found this component's Pods still
+// there on this many polls. The stop's first look at the Pods comes before it scales
+// anything, so a list counts only after a Deployment was updated, and the wait lists a
+// component's Pods only once its Deployment reports the stop. So this says where the
+// stop is, which no amount of time can: on a loaded machine a deadline passes while the
+// stop is still at the Deployment before.
+func (c *stopCluster) endWhenHeldOn(component string, polls int, end context.CancelFunc) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.heldOn, c.held, c.endHold = component, polls, end
+}
+
+// noteHeld counts a list that found the component's Pods. The caller holds mu.
+func (c *stopCluster) noteHeld(component string) {
+	if c.endHold == nil || component != c.heldOn || len(c.updates) == 0 || len(c.pods[component]) == 0 {
+		return
+	}
+	if c.held--; c.held == 0 {
+		c.endHold()
+	}
+}
+
+// stopContext is the context a stop that cannot finish runs under, for a test to end
+// by endWhenHeldOn. The minute is no bound on the stop: nothing in a passing run reads
+// it, and it only turns a stop that never reaches those Pods from a hang into a failure,
+// which the test tells by the deadline error it does not expect.
+func stopContext(t *testing.T) (context.Context, context.CancelFunc) {
+	t.Helper()
+	guard, release := context.WithTimeout(context.Background(), time.Minute)
+	t.Cleanup(release)
+	ctx, end := context.WithCancel(guard)
+	t.Cleanup(end)
+	return ctx, end
 }
 
 func (c *stopCluster) replicas(name string) int32 {
@@ -330,11 +371,11 @@ func TestRuntimeStopRefusesOrphanedPodsOfTheReleaseBefore(t *testing.T) {
 	orphan := stopDeployment(stopController, "controller", stopPreviousImage)
 	cluster := newStopCluster(orphan, stopDeployment(stopCertificate, "certificate-rotation", stopReleaseImage))
 	delete(cluster.deployments, stopController)
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
+	ctx, end := stopContext(t)
+	cluster.endWhenHeldOn("controller", 3, end)
 	err := newRuntimeStop(cluster).Run(ctx)
-	if err == nil || !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), stopController+"-0") {
-		t.Fatalf("Run() = %v, want the deadline naming the orphaned Pod", err)
+	if err == nil || !errors.Is(err, context.Canceled) || !strings.Contains(err.Error(), stopController+"-0") {
+		t.Fatalf("Run() = %v, want the end of its context naming the orphaned Pod", err)
 	}
 	if got := strings.Join(cluster.updates, ","); got != stopCertificate {
 		t.Fatalf("Run() updated %q, want only the rotator's Deployment scaled", got)
@@ -431,7 +472,7 @@ func TestRuntimeStopRefusesADeploymentAnotherReleaseOwns(t *testing.T) {
 	}
 }
 
-func TestRuntimeStopNamesThePodsThatOutliveTheDeadline(t *testing.T) {
+func TestRuntimeStopNamesThePodsThatOutliveItsContext(t *testing.T) {
 	t.Parallel()
 
 	cluster := newStopCluster(
@@ -439,11 +480,31 @@ func TestRuntimeStopNamesThePodsThatOutliveTheDeadline(t *testing.T) {
 		stopDeployment(stopCertificate, "certificate-rotation", stopPreviousImage),
 	)
 	cluster.podsLinger = -1
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	ctx, end := stopContext(t)
+	cluster.endWhenHeldOn("certificate-rotation", 3, end)
+	err := newRuntimeStop(cluster).Run(ctx)
+	if err == nil || !errors.Is(err, context.Canceled) ||
+		!strings.Contains(err.Error(), stopCertificate+"-0") {
+		t.Fatalf("Run() = %v, want the end of its context naming the Pod still there", err)
+	}
+}
+
+// A deadline ends the wait by the same path a cancellation does, and the manager's own
+// timeout is a deadline. One that has already passed lets the wait look exactly once, so
+// nothing here depends on how fast this machine is, and what it finds is the first thing
+// a stop waits for.
+func TestRuntimeStopReportsThePassedDeadlineAndWhatItWaitedFor(t *testing.T) {
+	t.Parallel()
+
+	cluster := newStopCluster(
+		stopDeployment(stopController, "controller", stopPreviousImage),
+		stopDeployment(stopCertificate, "certificate-rotation", stopPreviousImage),
+	)
+	ctx, cancel := context.WithDeadline(context.Background(), time.Unix(0, 0))
 	defer cancel()
 	err := newRuntimeStop(cluster).Run(ctx)
 	if err == nil || !errors.Is(err, context.DeadlineExceeded) ||
-		!strings.Contains(err.Error(), stopCertificate+"-0") {
-		t.Fatalf("Run() = %v, want the deadline naming the Pod still there", err)
+		!strings.Contains(err.Error(), stopCertificate+" did not stop: its status reports 1 replicas") {
+		t.Fatalf("Run() = %v, want the deadline naming what the first look found", err)
 	}
 }
