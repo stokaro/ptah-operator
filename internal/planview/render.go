@@ -3,10 +3,13 @@
 // Reading the plan is not this package's job: pkg/planread resolves it,
 // reconstructs it and verifies it, and only a plan that held every check
 // reaches Render.
+//
+// A plan a newer Ptah wrote can carry fields this plugin does not read. They are
+// named and their values are not printed: planread hands over no document for
+// such a plan, and the JSON format, which is that document, refuses it.
 package planview
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -35,7 +38,8 @@ var Formats = []Format{Text, SQL, JSON}
 //
 // Every format is written from the document the store verified. The JSON one
 // is that document unchanged rather than a re-serialization of the decoded
-// plan, so what a reader saves still matches the content digest above it.
+// plan, so what a reader saves still matches the content digest above it. A
+// document with unread fields is not printed, since it holds their values.
 func Render(out io.Writer, plan planread.Plan, format Format) error {
 	switch format {
 	case Text:
@@ -44,6 +48,12 @@ func Render(out io.Writer, plan planread.Plan, format Format) error {
 		_, err := io.WriteString(out, plan.SQL())
 		return err
 	case JSON:
+		if len(plan.UnreadFields) > 0 {
+			return fmt.Errorf(
+				"this plugin does not read the fields %s, so it does not print the stored document; "+
+					"use -o text or -o sql, or a plugin that reads them",
+				strings.Join(plan.UnreadFields, ", "))
+		}
 		document := plan.Document
 		if len(document) == 0 || document[len(document)-1] != '\n' {
 			document = append(append([]byte(nil), document...), '\n')
@@ -100,6 +110,10 @@ func renderText(out io.Writer, plan planread.Plan) error {
 	field("Statements", fmt.Sprintf("%d", len(plan.Statements)))
 	field("Destructive", fmt.Sprintf("%t", plan.Destructive))
 	field("Privileges", privilegesLine(plan))
+	if len(plan.UnreadFields) > 0 {
+		field("Unread fields", strings.Join(plan.UnreadFields, ", ")+
+			" (a newer Ptah wrote them; this plugin does not read them and does not approve this plan)")
+	}
 	if !plan.CreatedAt.IsZero() {
 		field("Stored", plan.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"))
 	}
@@ -116,7 +130,6 @@ func renderText(out io.Writer, plan planread.Plan) error {
 // rendered by the same code as `-o sql`, so the SQL under the lines is the SQL
 // that format prints, and a statement it skips is skipped here too.
 func writeStatements(text *strings.Builder, plan planread.Plan) {
-	stored := storedSeverities(plan)
 	written := 0
 	for index, statement := range plan.Statements {
 		sql := planread.Plan{Statements: []planread.Statement{statement}}.SQL()
@@ -127,7 +140,7 @@ func writeStatements(text *strings.Builder, plan planread.Plan) {
 			text.WriteString("\n")
 		}
 		written++
-		fmt.Fprintf(text, "Statement %d of %d: %s\n", index+1, len(plan.Statements), classification(statement, stored[index]))
+		fmt.Fprintf(text, "Statement %d of %d: %s\n", index+1, len(plan.Statements), classification(statement))
 		text.WriteString(sql)
 	}
 }
@@ -142,10 +155,10 @@ func writeStatements(text *strings.Builder, plan planread.Plan) {
 // data" would contradict each other, so a raised severity says whose each one
 // is. It says "this plugin" rather than "the operator" for the reason the
 // privileges line does: the plugin and the manager are separate builds.
-func classification(statement planread.Statement, stored string) string {
+func classification(statement planread.Statement) string {
 	severity := statusview.Clean(strings.TrimSpace(statement.Severity))
 	reason := statusview.Clean(strings.TrimSpace(statement.Reason))
-	stored = statusview.Clean(strings.TrimSpace(stored))
+	stored := statusview.Clean(strings.TrimSpace(statement.StoredSeverity))
 	if stored != "" && !strings.EqualFold(stored, severity) {
 		raised := severity + " as this plugin reads it; Ptah rated it " + stored
 		if reason != "" {
@@ -157,25 +170,4 @@ func classification(statement planread.Statement, stored string) string {
 		return severity + " (" + reason + ")"
 	}
 	return severity
-}
-
-// storedSeverities are the severities the plan document carries, before the
-// operator raised any, one for each statement. The document is the one the
-// store verified, and planread decodes its statements one for one, so the two
-// lists line up; a document that does not read as one leaves every entry
-// empty, and each statement then prints the severity this plugin decoded.
-func storedSeverities(plan planread.Plan) []string {
-	severities := make([]string, len(plan.Statements))
-	var document struct {
-		Statements []struct {
-			Severity string `json:"severity"`
-		} `json:"statements"`
-	}
-	if json.Unmarshal(plan.Document, &document) != nil || len(document.Statements) != len(plan.Statements) {
-		return severities
-	}
-	for index, statement := range document.Statements {
-		severities[index] = statement.Severity
-	}
-	return severities
 }

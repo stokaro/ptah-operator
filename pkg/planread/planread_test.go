@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -31,39 +32,48 @@ func TestLoadAnswersEveryCase(t *testing.T) {
 
 			plan, err := planread.Load(context.Background(), reader, planreadtest.Namespace, c.Schema, c.Selection)
 
-			if c.Want.Err != nil {
-				for _, sentinel := range sentinels {
-					if got, want := errors.Is(err, sentinel), sentinel == c.Want.Err; got != want {
-						t.Fatalf("errors.Is(%v, %v) = %t, want %t", err, sentinel, got, want)
-					}
-				}
-				if len(plan.Document) != 0 || len(plan.Statements) != 0 || plan.PlanUID != "" {
-					t.Fatalf("Load() returned part of a plan with its error: %d bytes, %d statements",
-						len(plan.Document), len(plan.Statements))
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("Load() error = %v", err)
-			}
-			if plan.PlanName != c.Want.PlanName {
-				t.Fatalf("Load() resolved %s, want %s", plan.PlanName, c.Want.PlanName)
-			}
-			if !bytes.Equal(plan.Document, c.Want.Document) {
-				t.Fatal("the document read back is not the document that was stored")
-			}
-			if len(plan.Statements) != len(c.Want.Statements) {
-				t.Fatalf("Load() returned %d statements, want %d", len(plan.Statements), len(c.Want.Statements))
-			}
-			for index, statement := range plan.Statements {
-				if statement.SQL != c.Want.Statements[index] {
-					t.Fatalf("statement %d came back as %.60q..., want %.60q...", index, statement.SQL, c.Want.Statements[index])
-				}
-			}
-			if plan.Manifest.UID != plan.PlanUID || plan.Manifest.Spec.Fingerprint != plan.Fingerprint {
-				t.Fatal("the manifest returned is not the plan that was read")
-			}
+			holdAnswer(t, c, plan, err)
 		})
+	}
+}
+
+// holdAnswer holds what a read returned to the answer the case declares.
+func holdAnswer(t *testing.T, c planreadtest.Case, plan planread.Plan, err error) {
+	t.Helper()
+	if c.Want.Err != nil {
+		for _, sentinel := range sentinels {
+			if got, want := errors.Is(err, sentinel), sentinel == c.Want.Err; got != want {
+				t.Fatalf("errors.Is(%v, %v) = %t, want %t", err, sentinel, got, want)
+			}
+		}
+		if len(plan.Document) != 0 || len(plan.Statements) != 0 || plan.PlanUID != "" {
+			t.Fatalf("the read returned part of a plan with its error: %d bytes, %d statements",
+				len(plan.Document), len(plan.Statements))
+		}
+		return
+	}
+	if err != nil {
+		t.Fatalf("the read returned an error: %v", err)
+	}
+	if plan.PlanName != c.Want.PlanName {
+		t.Fatalf("the read resolved %s, want %s", plan.PlanName, c.Want.PlanName)
+	}
+	if !bytes.Equal(plan.Document, c.Want.Document) {
+		t.Fatal("the document read back is not the document that was stored")
+	}
+	if !slices.Equal(plan.UnreadFields, c.Want.UnreadFields) {
+		t.Fatalf("the read names the unread fields %v, want %v", plan.UnreadFields, c.Want.UnreadFields)
+	}
+	if len(plan.Statements) != len(c.Want.Statements) {
+		t.Fatalf("the read returned %d statements, want %d", len(plan.Statements), len(c.Want.Statements))
+	}
+	for index, statement := range plan.Statements {
+		if statement.SQL != c.Want.Statements[index] {
+			t.Fatalf("statement %d came back as %.60q..., want %.60q...", index, statement.SQL, c.Want.Statements[index])
+		}
+	}
+	if plan.Manifest.UID != plan.PlanUID || plan.Manifest.Spec.Fingerprint != plan.Fingerprint {
+		t.Fatal("the manifest returned is not the plan that was read")
 	}
 }
 

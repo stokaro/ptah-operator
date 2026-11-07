@@ -158,6 +158,21 @@ Kubernetes object:
 kubectl ptah plan storefront --applied -n application -o json > plan.json
 ```
 
+A plan a newer Ptah wrote can carry fields this plugin does not read. `kubectl
+ptah plan` still shows it, under a line that names them, and prints no value of
+theirs:
+
+```text
+Unread fields:  annotations, statements[].inputs (a newer Ptah wrote them; this plugin does not read them and does not approve this plan)
+```
+
+`-o sql` prints the statements and names the fields on standard error. `-o json`
+exits `1`, because the stored document holds those values. `kubectl ptah approve`
+exits `1` too and approves nothing: an approval is a decision about the whole
+document, so move the plugin to the operator's version to approve this plan.
+[API compatibility](../../support/api-compatibility/#what-a-display-read-of-a-stored-plan-covers)
+says what this covers.
+
 Diagnostics go to standard error. Nothing reaches standard output until every
 check has held, so a plan whose last chunk is corrupt leaves you with an error
 rather than half its SQL.

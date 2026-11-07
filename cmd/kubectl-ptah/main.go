@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/pflag"
@@ -149,7 +150,7 @@ func plan(ctx context.Context, arguments []string, stdout, stderr io.Writer) int
 		return exitUsage
 	}
 
-	reader, resolved, err := connect(*kubeconfig, *kubeContext, *namespace, *timeout)
+	reader, resolved, err := connector(*kubeconfig, *kubeContext, *namespace, *timeout)
 	if err != nil {
 		fmt.Fprintf(stderr, "kubectl-ptah: %v\n", err)
 		return exitFailed
@@ -158,13 +159,21 @@ func plan(ctx context.Context, arguments []string, stdout, stderr io.Writer) int
 	ctx, cancel := context.WithTimeout(ctx, *timeout)
 	defer cancel()
 
-	view, err := planread.Load(ctx, reader, resolved, flags.Arg(0), selection)
+	// This command only prints, so it reads a plan a newer Ptah added a field
+	// to. Approve reads the same plan through planread.Load and refuses it.
+	view, err := planread.LoadForDisplay(ctx, reader, resolved, flags.Arg(0), selection)
 	if err != nil {
 		fmt.Fprintf(stderr, "kubectl-ptah: %v\n", err)
 		if errors.Is(err, planread.ErrNoPlan) || errors.Is(err, planread.ErrSchemaNotFound) {
 			return exitAbsent
 		}
 		return exitFailed
+	}
+	// The SQL format carries nothing but SQL, so the note goes to stderr. The
+	// text format says it, and the JSON one refuses.
+	if format == planview.SQL && len(view.UnreadFields) > 0 {
+		fmt.Fprintf(stderr, "kubectl-ptah: this plugin does not read the fields %s of this plan\n",
+			strings.Join(view.UnreadFields, ", "))
 	}
 	// Only here. Every check the store makes has held, so nothing half-verified
 	// has reached the reader's terminal or the file they redirected it to.
@@ -403,6 +412,11 @@ log of what each statement did, and not a fresh reading of the database.
 
 -o sql prints the statements alone, with no review line, for a script or a
 diff.
+
+A plan a newer Ptah wrote can carry fields this plugin does not read. plan names
+them and prints no value of theirs, -o json refuses such a plan because the
+stored document holds those values, and approve refuses it because an approval
+is a decision about the whole document.
 
 schema and migration each take -o text (the default) or json, plus the same
 -n, --kubeconfig, --context and --timeout flags. Neither prints SQL or a table

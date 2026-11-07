@@ -33,10 +33,27 @@ type Want struct {
 	PlanName   string
 	Document   []byte
 	Statements []string
+	// UnreadFields are the names a display read gives. A plan that has any
+	// comes with no Document.
+	UnreadFields []string
 }
 
-// Cases builds every case. Each starts from its own API server.
+// Cases builds every case with the answer planread.Load gives. Each starts from
+// its own API server.
 func Cases(t testing.TB) []Case {
+	t.Helper()
+	return append(storedStates(t), withUnreadFields(t, false))
+}
+
+// DisplayCases builds the same cases with the answer planread.LoadForDisplay
+// gives, which differs on the one stored state that has unread fields.
+func DisplayCases(t testing.TB) []Case {
+	t.Helper()
+	return append(storedStates(t), withUnreadFields(t, true))
+}
+
+// storedStates are the cases both reads answer alike.
+func storedStates(t testing.TB) []Case {
 	t.Helper()
 	cases := []Case{
 		spansChunks(t),
@@ -146,6 +163,27 @@ func absentPlans(t testing.TB) []Case {
 			Schema:      "storefront", Selection: planread.Applied,
 			Objects: gone.Objects(t), Want: Want{Err: planread.ErrNoPlan},
 		},
+	}
+}
+
+// A field a newer Ptah added at the same format version stops the read that
+// decides on a plan, and not the read that shows it.
+func withUnreadFields(t testing.TB, display bool) Case {
+	statements := []string{"CREATE TABLE customers (id BIGINT PRIMARY KEY)"}
+	lab := NewLab(t, "storefront")
+	plan := lab.PublishDocument(t, DocumentWithUnreadFields(t, statements), "v1")
+	lab.SetCurrent(t, plan)
+	want := Want{Err: planread.ErrUnsupported}
+	if display {
+		want = Want{PlanName: plan.Name, Statements: statements, UnreadFields: UnreadFieldNames()}
+	}
+	return Case{
+		Name:        "unread-fields",
+		Description: "A document with fields this build does not declare. Load refuses it, and a display read names the fields and hands over no value of theirs.",
+		Schema:      "storefront",
+		Selection:   planread.Current,
+		Objects:     lab.Objects(t),
+		Want:        want,
 	}
 }
 
