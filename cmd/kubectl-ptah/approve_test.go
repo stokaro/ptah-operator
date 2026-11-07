@@ -353,6 +353,39 @@ func TestApproveShowsThePlanAndApprovesItOnYes(t *testing.T) {
 	}
 }
 
+// A plan Ptah wrote since v0.19.0 carries scope, which the operator declares.
+// approve reads such a plan whole, shows it and approves it, and plan prints it
+// with no notice of a field it did not read. The document is the one approve
+// shows above, with the scope added.
+func TestApproveShowsAndApprovesAPlanThatCarriesScope(t *testing.T) {
+	var decoded map[string]any
+	if err := json.Unmarshal(planreadtest.Document(t, []string{"ALTER TABLE orders DROP COLUMN legacy_note;"}), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	decoded["scope"] = map[string]any{"kind": "schema", "name": "shop"}
+	document, err := json.Marshal(decoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	api, fingerprint := waitingOn(t, document)
+
+	code, stdout, stderr := runPlan(t, api, "storefront")
+	if code != exitOK || !strings.Contains(stdout, "ALTER TABLE orders DROP COLUMN legacy_note;") ||
+		strings.Contains(stdout+stderr, "scope") {
+		t.Fatalf("plan = %d; stdout %q; stderr %q", code, stdout, stderr)
+	}
+
+	code, stdout, stderr = runApprove(t, api, "yes\n", true, "schema/storefront")
+	if code != exitOK || len(api.created) != 1 {
+		t.Fatalf("approve = %d after %d creates; stderr %q", code, len(api.created), stderr)
+	}
+	for _, want := range []string{"ALTER TABLE orders DROP COLUMN legacy_note;", fingerprint, "It binds plan"} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("approve printed %q, missing %q", stdout, want)
+		}
+	}
+}
+
 func TestApproveSendsNothingWithoutAYes(t *testing.T) {
 	for _, answer := range []string{"\n", "no\n", "y\n", "YES please\n", ""} {
 		api, _ := approvable(t, nil)
