@@ -271,9 +271,7 @@ func (r *MigrationReconciler) claimMigrationApply(
 		// Blocked rather than an error: this is where the resource belongs
 		// while the record stands, and a pass that refuses without saying so
 		// leaves a resource that reads as ready and never moves.
-		return r.migrationBlocked(ctx, migration, operatorv1alpha1.ReasonApplyOutcomeUnknown,
-			fmt.Sprintf("A %s run nobody accounted for is recorded against this database; "+
-				"establish what it did before another Apply", unresolved.Outcome))
+		return r.migrationBlocked(ctx, migration, operatorv1alpha1.ReasonApplyOutcomeUnknown, unresolvedRunHoldMessage(unresolved))
 	}
 	inputFingerprint, err := r.migrationInputFingerprint(ctx, migration, operatorv1alpha1.MigrationOperationApply)
 	if err != nil {
