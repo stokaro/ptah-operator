@@ -210,6 +210,11 @@ const (
 	// runs, and every later reading of the same database plans the same,
 	// until the spec changes.
 	StopPolicyBlocked StopReason = "PolicyBlocked"
+	// StopPolicyRefused is a resource whose verification policy refused the
+	// artifact it names now. No plan outlives the refusal, no approval does, and
+	// the database is not read, until the operator reads an artifact the policy
+	// accepts: at spec.interval, on a read request, or at once after a spec edit.
+	StopPolicyRefused StopReason = "PolicyRefused"
 	// StopDeleting is a resource that is being deleted.
 	StopDeleting StopReason = "Deleting"
 	// StopDeleted is a resource that was deleted while the wait read it.
@@ -532,6 +537,9 @@ type waiter struct {
 	// again later in the wait is another Apply, and counts.
 	earlier        *planRecord
 	earlierApplied bool
+
+	// refusalReads counts the reads in a row that found the artifact refused.
+	refusalReads int
 }
 
 func newWaiter(ref Ref, options WaitOptions) (*waiter, error) {
@@ -633,6 +641,11 @@ func (w *waiter) begin(baseline snapshot) {
 }
 
 func (w *waiter) check(s snapshot) verdict {
+	if w.artifactRefusal(s) == nil {
+		w.refusalReads = 0
+	} else {
+		w.refusalReads++
+	}
 	if w.options.Source == "" {
 		return w.checkTarget(s)
 	}
@@ -753,7 +766,15 @@ func (w *waiter) checkInSync(s snapshot) verdict {
 // A database realm that blocks the resource does not stop the wait: another
 // resource's change or the realm's grant ends that refusal, not this
 // resource's spec, and the timeout names it.
+//
+// A verification policy that refuses the artifact stops the wait as well, with
+// StopPolicyRefused: no plan and no approval outlives that refusal, and nothing
+// reads the database until an artifact passes. See artifactRefusal.
 func (w *waiter) policyHeld(s snapshot, fresh bool) (verdict, bool) {
+	if refused := w.artifactRefusal(s); refused != nil && w.refusalReads >= refusalReadsToStop {
+		return w.stop(s, StopPolicyRefused, fmt.Sprintf("%s; a new artifact or a policy edit is read at spec.interval "+
+			"or on a read request, and a spec edit at once", refused.Message)), true
+	}
 	if s.plan == nil || !fresh {
 		return verdict{}, false
 	}
@@ -767,6 +788,41 @@ func (w *waiter) policyHeld(s snapshot, fresh bool) (verdict, bool) {
 	}
 	return w.stop(s, StopPolicyBlocked, fmt.Sprintf("spec.policy holds plan %s (%s): %s",
 		s.plan.name, held.Reason, held.Message)), true
+}
+
+// refusalReadsToStop is how many reads in a row have to find the artifact refused.
+// The pass that answers a read request leaves the refusal as it found it and only
+// brings the next read forward, so one document says nothing of the claim the next
+// pass writes. That pass runs within a read's interval, and the second read sees it.
+const refusalReadsToStop = 2
+
+// artifactRefusal is the condition that says the verification policy's refusal of
+// the source the resource names now holds, or nil.
+//
+// Only ArtifactVerified False for PolicyRefused says so, for the generation the
+// resource has now and at rest in Blocked. It is the one condition every later
+// step rewrites: a Resolve's harvest takes the verdict off, a Verify gives a new
+// one, and a Git or ConfigMap source removes it. Blocked, Ready and ApprovalRequired
+// carry the same reason and go at other times, so they date nothing. The refusal
+// comes before the database is read, so no reading dates it either, and one that
+// stands when the wait begins counts: a person who starts a wait on a refused
+// resource asks whether anything will come of it. A read under way, or a read
+// request the operator has not taken, may give another answer, and a spec edited
+// since the refusal may be the edit that allows the artifact.
+//
+// A wait for a source holds the refusal to the artifact it is for.
+func (w *waiter) artifactRefusal(s snapshot) *metav1.Condition {
+	refused := s.condition(operatorv1alpha1.ConditionArtifactVerified)
+	if refused == nil || refused.Status != metav1.ConditionFalse || refused.Reason != string(operatorv1alpha1.ReasonPolicyRefused) ||
+		refused.ObservedGeneration < s.generation || s.phase != phaseBlocked || !s.resting() || s.readRequestPending() {
+		return nil
+	}
+	if w.options.Source != "" {
+		if source, err := SourceOf(s.object); err != nil || source.Digest != w.sourceDigest {
+			return nil
+		}
+	}
+	return refused
 }
 
 // policyHold is the condition that says the resource's own policy holds its
@@ -1206,8 +1262,9 @@ func (w *waiter) anotherRunEnded(s snapshot, identity runIdentity, ended string)
 // planSuperseded reports that the plan a decision names will not run, by what the
 // status says now: another plan claimed or published in its place, or a reading
 // that left nothing to apply. A resource that is only blocked, or that has cleared
-// its plan while it refuses something else, may come back to the same plan, so it
-// stops nothing and the timeout names it.
+// its plan while a realm refuses it, may come back to the same plan, so it stops
+// nothing and the timeout names it. A verification policy's refusal withdraws the
+// approval, and stops the wait in policyHeld.
 func (w *waiter) planSuperseded(s snapshot) (verdict, bool) {
 	decision := w.options.Decision
 	if decision == nil {
@@ -1295,6 +1352,7 @@ func (w *waiter) checkSchemaSuspended(s snapshot) verdict {
 // The phases this file compares by name. Both families spell them alike.
 const (
 	phaseInSync           = string(operatorv1alpha1.PhaseInSync)
+	phaseBlocked          = string(operatorv1alpha1.PhaseBlocked)
 	phaseAwaitingApproval = string(operatorv1alpha1.PhaseAwaitingApproval)
 	phaseFailed           = string(operatorv1alpha1.PhaseFailed)
 	phaseSuspended        = string(operatorv1alpha1.PhaseSuspended)

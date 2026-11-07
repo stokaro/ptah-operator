@@ -306,6 +306,12 @@ func (s snapshot) readingDatabase() bool {
 	return false
 }
 
+// readRequestPending reports an annotation value the operator has not recorded as
+// answered.
+func (s snapshot) readRequestPending() bool {
+	return s.readRequest != "" && operatorv1alpha1.ReadRequestToken(s.readRequest) != s.lastReadRequest
+}
+
 func (s snapshot) condition(conditionType string) *metav1.Condition {
 	return meta.FindStatusCondition(s.conditions, conditionType)
 }
