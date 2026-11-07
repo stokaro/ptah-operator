@@ -3,6 +3,7 @@ package e2e
 import (
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -194,22 +195,42 @@ func TestRereadAtItsDeadlineAndReadAtOnce(t *testing.T) {
 		t.Error("rereadAtItsDeadline accepted no deadline")
 	}
 
-	edited := append(append([]batchv1.Job{}, twice...), job("r3", "resolve", 112*time.Second))
-	if err := readAtOnce(edited, at(181*time.Second)); err != nil {
-		t.Fatalf("a read the edit started was refused: %v", err)
+	// The edit at 110s; the next deadline is 181s, so a read at 170s is well ahead
+	// of it and still no read the edit started.
+	editedAt := start.Add(110 * time.Second)
+	for _, after := range []time.Duration{110 * time.Second, 112 * time.Second, 130 * time.Second} {
+		edited := append(append([]batchv1.Job{}, twice...), job("r3", "resolve", after))
+		if err := readAtOnce(edited, editedAt); err != nil {
+			t.Fatalf("a read %s after the start was refused: %v", after, err)
+		}
 	}
+	edited := append(append([]batchv1.Job{}, twice...), job("r3", "resolve", 112*time.Second))
 	for name, jobs := range map[string][]batchv1.Job{
-		"no read after the edit":  twice,
-		"the interval's own read": append(append([]batchv1.Job{}, twice...), job("r3", "resolve", 181*time.Second)),
-		"a read just short of it": append(append([]batchv1.Job{}, twice...), job("r3", "resolve", 175*time.Second)),
-		"a fourth read":           append(append([]batchv1.Job{}, edited...), job("r4", "resolve", 113*time.Second)),
+		"no read after the edit":         twice,
+		"the interval's own read":        append(append([]batchv1.Job{}, twice...), job("r3", "resolve", 181*time.Second)),
+		"a read a minute after the edit": append(append([]batchv1.Job{}, twice...), job("r3", "resolve", 170*time.Second)),
+		"a read before the edit":         append(append([]batchv1.Job{}, twice...), job("r3", "resolve", 100*time.Second)),
+		"a fourth read":                  append(append([]batchv1.Job{}, edited...), job("r4", "resolve", 113*time.Second)),
 	} {
-		if readAtOnce(jobs, at(181*time.Second)) == nil {
+		if readAtOnce(jobs, editedAt) == nil {
 			t.Errorf("readAtOnce accepted %s", name)
 		}
 	}
-	if readAtOnce(edited, nil) == nil {
-		t.Error("readAtOnce accepted no deadline")
+	if readAtOnce(edited, time.Time{}) == nil {
+		t.Error("readAtOnce accepted no edit")
+	}
+}
+
+func TestRefusalTransitionsNamesBothTimes(t *testing.T) {
+	t.Parallel()
+	said := refusalTransitions(recoveredFromRefusalReading(t))
+	for _, want := range []string{"ArtifactVerified=True/PolicySatisfied since 2026-11-07T10:31:12Z", "Blocked=False/HistoryMatched since 2026-11-07T10:31:12Z"} {
+		if !strings.Contains(said, want) {
+			t.Errorf("refusalTransitions says %q, want %q", said, want)
+		}
+	}
+	if refusalTransitions(nil) == "" {
+		t.Error("refusalTransitions says nothing of no document")
 	}
 }
 

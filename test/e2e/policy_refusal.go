@@ -32,9 +32,6 @@ const (
 	// refusalClockSkew is how far the manager's clock, which dates a deadline,
 	// and the API server's, which dates a Job, may disagree on one kind host.
 	refusalClockSkew = 2 * time.Second
-	// refusalAtOnce is how far ahead of the deadline a read has to start to be
-	// one an edit started rather than the interval's own.
-	refusalAtOnce = 10 * time.Second
 )
 
 // nativelyRefusedSchema is a schema Ptah's own verification stopped: blocked,
@@ -150,21 +147,45 @@ func rereadAtItsDeadline(jobs []batchv1.Job, deadline *metav1.Time) error {
 	return nil
 }
 
-// readAtOnce is a read an edit started: a third Resolve, created well ahead of
-// the deadline the second refusal persisted, where the interval's own read would
-// have started.
-func readAtOnce(jobs []batchv1.Job, deadline *metav1.Time) error {
+// readAtOnce is a read an edit started: a third Resolve, created no earlier than
+// the edit and within refusalJobLag of it, which is the lag a claim's Job is
+// allowed anywhere else. The edit is dated by the patch that made it, on the
+// same host as the API server that dates the Job.
+func readAtOnce(jobs []batchv1.Job, edited time.Time) error {
 	resolves := resolvesOf(jobs)
 	switch {
-	case deadline == nil:
-		return errors.New("the refusal scheduled no next read")
+	case edited.IsZero():
+		return errors.New("no edit is dated")
 	case len(resolves) != 3:
 		return fmt.Errorf("the resource ran %d Resolve Jobs, want a third after the edit", len(resolves))
-	case !resolves[2].Before(deadline.Add(-refusalAtOnce)):
-		return fmt.Errorf("the read after the edit began at %s, not %s ahead of the deadline %s",
-			resolves[2].Format(time.RFC3339), refusalAtOnce, deadline.Format(time.RFC3339))
+	case resolves[2].Before(edited.Add(-refusalClockSkew)):
+		return fmt.Errorf("the third read began at %s, before the edit at %s", resolves[2].Format(time.RFC3339), edited.Format(time.RFC3339))
+	case resolves[2].After(edited.Add(refusalJobLag)):
+		return fmt.Errorf("the read after the edit began at %s, more than %s after the edit at %s",
+			resolves[2].Format(time.RFC3339), refusalJobLag, edited.Format(time.RFC3339))
 	}
 	return nil
+}
+
+// refusalTransitions names when the conditions a recovery is judged by last
+// moved, for a row that failed to see one.
+func refusalTransitions(migration *ptahv1alpha1.PtahMigration) string {
+	if migration == nil {
+		return "no document was read"
+	}
+	var said []string
+	for _, conditionType := range []string{
+		ptahv1alpha1.ConditionMigrationArtifactVerified, ptahv1alpha1.ConditionMigrationBlocked, ptahv1alpha1.ConditionMigrationReady,
+	} {
+		condition := meta.FindStatusCondition(migration.Status.Conditions, conditionType)
+		if condition == nil {
+			said = append(said, conditionType+" absent")
+			continue
+		}
+		said = append(said, fmt.Sprintf("%s=%s/%s since %s", condition.Type, condition.Status, condition.Reason,
+			condition.LastTransitionTime.UTC().Format(time.RFC3339)))
+	}
+	return fmt.Sprintf("phase %s, %s", migration.Status.Phase, strings.Join(said, ", "))
 }
 
 // recoveredFromRefusal is a migration past its refusal, in sync with the spec it

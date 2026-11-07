@@ -1016,6 +1016,79 @@ func TestARealmRefusalEndsWithTheReadOfAConfigMapSource(t *testing.T) {
 	assertNoConditionNamesARefusal(t, read)
 }
 
+// A read the census lets through can fail before its claim is written, as a
+// source the source policy refuses does. The census admitted the resource, so the
+// failure is what the resource names, not a realm that let go of it.
+func TestARealmRefusalEndsWhenTheReadItLetThroughIsRefused(t *testing.T) {
+	t.Parallel()
+
+	for _, row := range []struct {
+		name   string
+		source func(*operatorv1alpha1.PtahMigration) []client.Object
+		says   string
+	}{
+		{
+			name: "a ConfigMap source the source policy does not allow",
+			source: func(migration *operatorv1alpha1.PtahMigration) []client.Object {
+				migration.Spec.Artifact = operatorv1alpha1.SourceSpec{ConfigMap: &operatorv1alpha1.ConfigMapSourceSpec{
+					Name:  "app-schema",
+					Items: []operatorv1alpha1.ConfigMapSourceItem{{Key: "0001.up.sql", Path: "0001_init.up.sql"}},
+				}}
+				withSourcePolicy(&migration.Spec.Artifact, "source-policy")
+				source := sourceConfigMap("unused")
+				source.Data = map[string]string{"0001.up.sql": "CREATE TABLE a (id int);\n"}
+				return []client.Object{source, sourcePolicyConfigMap("source-policy", "policy-uid", "allowedConfigMaps:\n  - other\n")}
+			},
+			says: "allowedConfigMaps",
+		},
+		{
+			name: "a Git host the source policy does not allow",
+			source: func(migration *operatorv1alpha1.PtahMigration) []client.Object {
+				spec := gitSourceSpec()
+				spec.Path = "db/migrations"
+				migration.Spec.Artifact = operatorv1alpha1.SourceSpec{Git: spec}
+				withSourcePolicy(&migration.Spec.Artifact, "source-policy")
+				return []client.Object{sourcePolicyConfigMap("source-policy", "policy-uid", "allowedGitHosts:\n  - git.internal.example\n")}
+			},
+			says: "allowedGitHosts",
+		},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+
+			migration := migrationFixture()
+			objects := append(row.source(migration), migration,
+				realmSchemaFixture(migration.Namespace, "orders", migration.Spec.Target.CoordinationKey, false))
+			competitor := objects[len(objects)-1]
+			logs := &replayLogs{}
+			reconciler, api := fakeMigrationReconciler(t, logs, objects...)
+			harness := &migrationLifecycle{t: t, reconciler: reconciler, api: api, logs: logs, key: client.ObjectKeyFromObject(migration)}
+			harness.settle()
+			clock := movableMigrationClock(reconciler, api)
+			wantMigrationCondition(t, harness.migration(), operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue, operatorv1alpha1.ReasonRealmConflict)
+
+			if err := api.Delete(context.Background(), competitor); err != nil {
+				t.Fatal(err)
+			}
+			harness.dueNow(clock)
+			if _, err := reconciler.Reconcile(context.Background(), migrationRequest(harness.migrationObject())); err != nil {
+				t.Fatalf("Reconcile() error = %v", err)
+			}
+			refused := harness.migration()
+			if refused.Status.Phase != operatorv1alpha1.MigrationPhaseFailed || refused.Status.ActiveOperation != nil {
+				t.Fatalf("phase %s, claim %#v, want the refused read recorded as Failed", refused.Status.Phase, refused.Status.ActiveOperation)
+			}
+			wantMigrationCondition(t, refused, operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionFalse, operatorv1alpha1.ReasonOperationFailed)
+			wantMigrationCondition(t, refused, operatorv1alpha1.ConditionMigrationApprovalRequired, metav1.ConditionFalse, operatorv1alpha1.ReasonOperationFailed)
+			ready := meta.FindStatusCondition(refused.Status.Conditions, operatorv1alpha1.ConditionMigrationReady)
+			if ready == nil || ready.Reason != string(operatorv1alpha1.ReasonOperationFailed) || !strings.Contains(ready.Message, row.says) {
+				t.Fatalf("Ready = %#v, want the refusal naming %s", ready, row.says)
+			}
+			assertNoConditionNamesARefusal(t, refused)
+		})
+	}
+}
+
 // A run nobody accounted for is a hold a refusal writes over and does not end.
 // Once the refusal ends, the hold is what Blocked says again, whatever the read
 // does next, and nothing claims an Apply while status.unresolvedRun stands. The

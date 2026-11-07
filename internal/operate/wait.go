@@ -419,6 +419,10 @@ type decisionApproval struct {
 // after its run's Job exists changes nothing about the run, and neither is a
 // read that fails on the way. A refusal stops the reads for the rest of the wait
 // and leaves it to the resource alone, as before it read approvals.
+//
+// The reading is cleared before each read. That is defensive: a stale reading
+// ends the wait and a consumed one stays consumed, so no answer a later read
+// could give depends on what an earlier one left.
 func (w *waiter) readApproval(ctx context.Context, reader client.Reader, deadline time.Time, real bool) {
 	decision := w.options.Decision
 	w.decisionApproval = nil

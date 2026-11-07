@@ -193,7 +193,10 @@ func TestWaitForADecisionReadsItsApproval(t *testing.T) {
 			wantStop:     operate.StopPlanSuperseded, wantMessage: "went stale (PolicyRefused)", wantApprovalReads: 2,
 		},
 		{
-			// A failed read says nothing, rather than what the last one said.
+			// A failed read between two answers does not end the wait, which reads
+			// again. What the reading holds after the failure decides nothing here:
+			// the earlier answer is consumed, which is terminal, so clearing it is
+			// defensive and no row can see it.
 			name: "a read that fails between two answers", docs: []doc{running},
 			approvals:    []*approvalDoc{{stale: "PlanNoLongerCurrent", consumed: true}, {stale: "PlanNoLongerCurrent"}},
 			approvalErrs: map[int]error{1: apierrors.NewServerTimeout(operatorv1alpha1.GroupVersion.WithResource("ptahmigrationapprovals").GroupResource(), "get", 1)},

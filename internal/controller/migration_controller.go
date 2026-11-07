@@ -680,14 +680,14 @@ func (r *MigrationReconciler) claimMigration(
 		}
 		if err != nil {
 			if errors.Is(err, errSourceRefused) {
-				return r.migrationOperationFailure(ctx, migration, err)
+				return r.claimRefused(ctx, migration, err)
 			}
 			return ctrl.Result{}, err
 		}
 	}
 	inputFingerprint, err := r.migrationInputFingerprint(ctx, migration, operationType)
 	if err != nil {
-		return r.migrationOperationFailure(ctx, migration, err)
+		return r.claimRefused(ctx, migration, err)
 	}
 	id, err := r.newMigrationOperationID(inputFingerprint)
 	if err != nil {
@@ -703,14 +703,14 @@ func (r *MigrationReconciler) claimMigration(
 	}
 	if operationType != operatorv1alpha1.MigrationOperationResolve {
 		if migration.Status.Artifact == nil {
-			return r.migrationOperationFailure(ctx, migration, errors.New("the artifact has not been resolved to a digest"))
+			return r.claimRefused(ctx, migration, errors.New("the artifact has not been resolved to a digest"))
 		}
 		operation.Source = migrationSourceBinding(migration)
 	}
 	if operationType == operatorv1alpha1.MigrationOperationHistory {
 		coordinationDigest, digestErr := coordination.Digest(migration.Namespace, migration.Spec.Target)
 		if digestErr != nil {
-			return r.migrationOperationFailure(ctx, migration, fmt.Errorf("derive coordination digest: %w", digestErr))
+			return r.claimRefused(ctx, migration, fmt.Errorf("derive coordination digest: %w", digestErr))
 		}
 		operation.CoordinationDigest = coordinationDigest
 		operation.Target = &operatorv1alpha1.DatabaseTargetBinding{
@@ -719,11 +719,11 @@ func (r *MigrationReconciler) claimMigration(
 		}
 	}
 	if r.Jobs == nil {
-		return r.migrationOperationFailure(ctx, migration, errors.New("Job builder is not configured"))
+		return r.claimRefused(ctx, migration, errors.New("Job builder is not configured"))
 	}
 	operation.JobName, err = r.Jobs.NameForMigration(migration, *operation)
 	if err != nil {
-		return r.migrationOperationFailure(ctx, migration, fmt.Errorf("name %s Job: %w", operationType, err))
+		return r.claimRefused(ctx, migration, fmt.Errorf("name %s Job: %w", operationType, err))
 	}
 	if err := r.ensureMigrationFinalizer(ctx, migration); err != nil {
 		return ctrl.Result{}, err
@@ -738,7 +738,7 @@ func (r *MigrationReconciler) claimMigration(
 	migration.Status.Phase = mutationlifecycle.MigrationOperation(operationType).Phase
 	setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionTrue,
 		operatorv1alpha1.ReasonOperationInProgress, fmt.Sprintf("%s operation is in progress", operationType))
-	endMigrationRealmRefusal(migration)
+	endMigrationRealmRefusal(migration, operatorv1alpha1.ReasonOperationInProgress, migrationRealmReadMessage)
 	if err := r.patchMigrationStatus(ctx, before, migration); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -1308,16 +1308,21 @@ func endMigrationRefusal(
 }
 
 // endMigrationRealmRefusal takes a realm's refusal off the conditions, in the
-// write that claims a read, which only a census that admits the resource lets
-// through. A refusal of the artifact ends later, at Verify, because only Verify
-// answers it; a realm's is over once the census passes, and a Resolve or a Verify
-// that keeps failing would otherwise leave a lifted realm named where a wait's
-// timeout reads it.
-func endMigrationRealmRefusal(migration *operatorv1alpha1.PtahMigration) {
+// write that follows a census that admits the resource: the claim of the read it
+// lets through, a ConfigMap source's read, or that read's failure before any claim
+// (claimRefused). A refusal of the artifact ends later, at Verify, because only
+// Verify answers it; a realm's is over once the census passes, and a read that
+// keeps failing would otherwise leave a lifted realm named where a wait's timeout
+// and kubectl ptah migration read it.
+func endMigrationRealmRefusal(migration *operatorv1alpha1.PtahMigration, reason operatorv1alpha1.ConditionReason, message string) {
 	liftMigrationRefusal(migration,
 		[]operatorv1alpha1.ConditionReason{operatorv1alpha1.ReasonRealmConflict, operatorv1alpha1.ReasonRealmNotAuthorized},
-		operatorv1alpha1.ReasonOperationInProgress, "The database realm admits this resource again, and it is read again")
+		reason, message)
 }
+
+// migrationRealmReadMessage is what a lifted realm's conditions say once the read
+// the census let through is claimed.
+const migrationRealmReadMessage = "The database realm admits this resource again, and it is read again"
 
 // liftMigrationRefusal rewrites Blocked, Ready and ApprovalRequired where they
 // carry one of the refusal's reasons. A condition with any other reason belongs
@@ -1983,12 +1988,40 @@ func (r *MigrationReconciler) discardMigrationOperation(
 
 // migrationOperationFailure records a configuration or dispatch failure the
 // controller cannot resolve by retrying immediately.
+//
+// It leaves a realm's reason as it is, because reconcileMigrationExecutionBinding
+// reaches it before the census has said anything; a failure after the census
+// goes through claimRefused.
 func (r *MigrationReconciler) migrationOperationFailure(
 	ctx context.Context,
 	migration *operatorv1alpha1.PtahMigration,
 	failure error,
 ) (ctrl.Result, error) {
+	return r.recordMigrationOperationFailure(ctx, migration.DeepCopy(), migration, failure)
+}
+
+// claimRefused is migrationOperationFailure for a read the census let through
+// that failed before its claim was written: a source the source policy refuses,
+// inputs that cannot be read, a Job that cannot be named. The census admitted
+// the resource, so a realm's reason goes in the same write, and the failure is
+// what Blocked, Ready and a wait's timeout name rather than a realm that let go.
+func (r *MigrationReconciler) claimRefused(
+	ctx context.Context,
+	migration *operatorv1alpha1.PtahMigration,
+	failure error,
+) (ctrl.Result, error) {
 	before := migration.DeepCopy()
+	endMigrationRealmRefusal(migration, operatorv1alpha1.ReasonOperationFailed,
+		"The database realm admits this resource again; the read it let through failed before it started")
+	return r.recordMigrationOperationFailure(ctx, before, migration, failure)
+}
+
+// recordMigrationOperationFailure writes the failure over before.
+func (r *MigrationReconciler) recordMigrationOperationFailure(
+	ctx context.Context,
+	before, migration *operatorv1alpha1.PtahMigration,
+	failure error,
+) (ctrl.Result, error) {
 	migration.Status.Phase = operatorv1alpha1.MigrationPhaseFailed
 	migration.Status.ObservedGeneration = migration.Generation
 	next := metav1.NewTime(r.now().Add(migrationFailureRetry(migration)))
