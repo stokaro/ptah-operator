@@ -41,6 +41,11 @@ means for the retention of its backups and dumps if the name is an email address
 The move to Ptah v0.22.0 can also change what a running schema reports and plans,
 which the next paragraph covers. Nothing else.
 
+PostgreSQL 18.x joins the supported release lines, and a cluster on 17.x has
+nothing to change for that. Its official image keeps its data under
+`/var/lib/postgresql`, not `/var/lib/postgresql/data`, which matters only to a
+manifest of your own.
+
 Ptah v0.22.0 compares more than the executor before it, so a database nobody
 touched can leave `InSync` on its first read after the upgrade if it differs from
 its declaration, as an adopted one or one with a hand change can. It now finds a

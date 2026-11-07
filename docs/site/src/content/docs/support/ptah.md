@@ -53,7 +53,8 @@ The development state. Its guide is at [https://operator.ptah.run/edge/](https:/
 - The verified build contains stokaro/ptah#5173, which names in every document why a command could not open its target database: plan contract 3, apply 4, migration status and run 2, and a drift report of version 1. The operator reads those versions and no others, so an executor without #5173, v0.17.0 included, fails every Observe, Plan, Apply and migration read on a document it refuses.
 - The verified build contains stokaro/ptah#5499, which reads a PostgreSQL schema through pg_catalog for every role, so the login the databases page documents reports a table another role created, as a superuser does. An executor without #5499, v0.21.0 included, leaves that table out of the report under that login, and the data-plane row that creates one fails. MySQL accounts still see what their privileges show (stokaro/ptah#5497).
 - The migration machine contracts -- `migrations status --json` carrying contract_version and a per-migration record, and `migrations up --json` carrying an outcome -- reached Ptah after v0.3.0-201, and `migrations up --expect-sequence`, which the operator passes on every migration Apply, reached it in v0.9.0. A build older than v0.9.0 resolves and verifies a migration artifact and then fails at its own history document or at the flag every migration Apply passes, so the versioned workflow needs at least v0.9.0 rather than any build that has the commands.
-- The verified scope is the operator's database support window, PostgreSQL 17.x and MySQL 8.4.x LTS. Other engines Ptah addresses are unverified here, whatever the Ptah build.
+- The verified scope is the operator's database support window, the release lines on that version's databases page. Other engines Ptah addresses are unverified here, whatever the Ptah build.
+- PostgreSQL 18.x is evidenced by the Added database lines workflow rather than by the lifecycle matrix every push runs: run 42319655955 passed on every supported Kubernetes minor at this build.
 - The published verified set is a repository document. It is not compiled into the manager, and nothing compares a running executor's ptahVersion against it, so a combination outside this set is outside what the matrix measured rather than something the operator refuses. What is refused before a database is mutated is a change of any bound execution component between the plan and the apply -- Ptah, the executor image, the runner protocol version, the controller-state version -- checked before the Job is created. The manager's image and revision and the runner image are recorded and not bound: a manager release that changes only them applies the plans and approvals its predecessor left. What is refused after a Job has run is a runner speaking another protocol version, which is a rejected result frame rather than a prevented mutation. Pinning both the executor image and its ptahVersion at install is a requirement on whoever installs, not a check at runtime.
 
 ### v0.2.9
@@ -66,7 +67,7 @@ A released version. Its guide is at [https://operator.ptah.run/v0.2.9/](https://
 
 - Ptah `v0.17.0`. Commit [`38bd6e91cfe3a70543046da9c3ada05a0460a103`](https://github.com/stokaro/ptah/commit/38bd6e91cfe3a70543046da9c3ada05a0460a103), runner protocol version 1, evidence `kubernetes-e2e`. The scope is the same as for [`edge`](#edge).
 
-**Limitations:** the same as [`edge`](#edge) without its second and third limitations.
+**Limitations:** the same as [`edge`](#edge) without its second, third and sixth limitations.
 
 ### v0.2.8
 

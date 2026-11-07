@@ -28,11 +28,11 @@
     },
     {
       "path": "support/ptah.json",
-      "sha256": "7296f555f5f904cfe74a4897c6c12ae6db03e1ac76bbfb1d0fd9ee46a5d174c7"
+      "sha256": "08ac16e6674c8a77e7e62748e9bee49a04885d1e472a63c03ceaad3cff03879a"
     },
     {
       "path": "docs/site/src/content/docs/support/databases.md",
-      "sha256": "13a5d6f76d961cd0bca6b2b7807864b9817994fbdd8d1c05865705e3bcfeb4a4"
+      "sha256": "44657643a287e2057dbd33bc9c81565b1fddf64a6e7ab435b03e4725f6aef582"
     },
     {
       "path": "support/qualification/kindnet/Dockerfile",
@@ -79,10 +79,10 @@
     "disposition": "v0.2.9 is the published predecessor of the next candidate. The upgrade from it is walked through both releases' guides by support/qualification/probes/fresh_install.py --upgrade-from on both platforms; the synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 76,
+  "revision": 77,
   "supersedes": {
-    "freezeCommit": "f513fd30e941179bdcd05456e9c73b64fc0f50e3",
-    "sha256": "49156dd0dc919a64e9a930ac34043c857832b43e6c22581a5d002e4cc14abf5c"
+    "freezeCommit": "dfccfca3353ee3f57627bbb63f4f90db9be2b26a",
+    "sha256": "e74b83a1054f7c8cf974bdc0a689edea6d27e26794d6cb168a8e11b85cc90aae"
   },
-  "revisionReason": "Move the Ptah build under test to the v0.22.0 release image, commit 0dd9190b, which reads a PostgreSQL schema through pg_catalog for every role and records a scope in the plan it saves. It moves no document contract version and adds no drift category. The data-plane phase gains the scenario postgresql-login-visibility-drift, and the databases page describes the new build. Phases, cells, platforms, the profile and its targets are unchanged."
+  "revisionReason": "Add PostgreSQL 18.x to the supported release lines after run 42319655955 passed the whole lifecycle on every supported Kubernetes minor at the v0.22.0 build. The baseline lines, phases, cells, platforms, the profile and its targets are unchanged."
 }
