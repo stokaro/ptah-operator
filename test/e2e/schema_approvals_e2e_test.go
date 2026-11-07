@@ -27,6 +27,7 @@ func TestSchemaApprovals(t *testing.T) {
 		{"watches", f.prepareWatches},
 		{"approval-resource-replacement", func() { f.schemaIdentityReplacement() }},
 		{"approval-target-secret-change", func() { f.targetSecretChanges() }},
+		{"approval-target-login-change", func() { f.targetLoginChanges() }},
 		{"approval-destructive-policy-change", func() { f.destructivePolicyChanges() }},
 		{"approval-exclusion-policy-change", func() { f.exclusionPolicyChanges() }},
 		{"approval-verification-policy-change", func() { f.verificationPolicyChanges() }},

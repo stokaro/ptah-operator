@@ -186,8 +186,11 @@ func schemaStates(schemas []operatorv1alpha1.PtahSchema) []resourceState {
 	states := make([]resourceState, 0, len(schemas))
 	for _, schema := range schemas {
 		state := resourceState{
-			phase:           phaseLabel(string(schema.Status.Phase)),
-			failed:          schema.Status.Phase == operatorv1alpha1.PhaseFailed,
+			phase: phaseLabel(string(schema.Status.Phase)),
+			// A proof whose target moved keeps its claim while it waits for a
+			// person, as a failed read does until its retry, and fails each attempt.
+			failed: schema.Status.Phase == operatorv1alpha1.PhaseFailed ||
+				(schema.Status.Phase == operatorv1alpha1.PhaseBlocked && schema.Status.PendingObservation != nil),
 			suspended:       schema.Spec.Suspend,
 			owesLockRelease: schema.Status.PendingLockRelease != nil,
 		}

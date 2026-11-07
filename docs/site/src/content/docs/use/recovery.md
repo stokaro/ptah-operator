@@ -273,6 +273,65 @@ did not, in which case the plan includes it again.
 Neither family is rolled back. The operator repairs forward from what the
 database holds.
 
+## A schema whose target moved under an Apply {#a-schema-whose-target-moved}
+
+A `PtahSchema` proves an Apply by reading the target that Apply was planned for.
+The login is part of that target, with the host, the port, the database and the
+connection's security settings. If `spec.target.urlFrom` names another one after a
+plan was approved or while its Apply ran, no read can say what the Apply did, and
+the resource stops:
+
+- `status.phase` is `Blocked`, and `ReconciliationFailed=True` has the reason
+  `TargetIdentityChanged` and a message holding the command below.
+- `status.pendingObservation` stays, and the resource keeps its database realm, so
+  another claimant of that database waits.
+- It reads again every `spec.execution.failureRetryInterval`, so it finds the first
+  target if that comes back. No plan is published and no Apply runs.
+
+**Put the first login or address back.** The next read matches, and the proof runs
+as it would have. An Apply that succeeded is recorded in `status.applied`. This
+loses nothing, so prefer it while the first login still works, and move to the new
+one after the resource settles.
+
+**Settle it.** When the first login is gone, or the move was the point, name the
+Apply in an annotation:
+
+```sh
+kubectl annotate ptahschemas storefront -n application \
+  operator.ptah.run/settled-apply="$(kubectl get ptahschemas storefront -n application \
+    -o jsonpath='{.status.pendingObservation.applyOperationID}')"
+```
+
+That statement says you account for what the Apply did to the first target. A read
+under the new target says nothing about it, and `status.journal` says whether the
+Apply reported `Succeeded` or `Unknown`, so check the first target first if it
+matters. The operator then waits for every Pod the Apply could still be running,
+gives up the proof, the plan and the realm in one status write, records `Verified`,
+`Unknown` in the journal with a `ProofSettled` Event, and starts again from
+`Resolve` under whatever the Secret names now. Nothing is written to
+`status.applied`.
+
+The plan that follows binds the new target. It waits for an approval of its own
+under `apply: OnApproval`, and the approval of the old plan does not carry over.
+Under `apply: Always` it runs with nobody looking, so a Secret pointed at the wrong
+database gets the schema applied there. Check what the Secret names before you
+settle, and set `apply: OnApproval` first if you are not sure.
+
+The value names one Apply, and an operation ID is never reused, so the annotation
+cannot settle a later one, and it can stay on the resource. It does nothing while
+the proof is failing for another reason. Unlike a
+`PtahMigrationRunAcknowledgment`, it records no identity: the API server's audit log
+says who wrote it, if its audit policy records writes to `PtahSchema`. Anyone who
+may patch the resource may settle it, as they may delete it or change its target.
+
+Deleting the resource also ends the proof, once the Apply's Pods have stopped, and
+a resource created again reads the database afresh. It takes the plans, the approvals
+and `status.journal` with it, so settling is the better record.
+
+A `PtahMigration` is different. Its history read is not bound to the plan the run
+came from, and a run nobody accounted for is settled by a
+[`PtahMigrationRunAcknowledgment`](../operations/#a-migration-run-nobody-accounted-for).
+
 ## Verify the recovery
 
 Read these before letting anything run.

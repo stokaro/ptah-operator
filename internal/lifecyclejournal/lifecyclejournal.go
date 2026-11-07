@@ -126,9 +126,13 @@ func SchemaEntries(before, after *operatorv1alpha1.PtahSchemaStatus, journal *op
 		// A proof that settles into Pending or Verifying settled under a newer
 		// generation, policy or execution binding, which decides what follows.
 		outcome := operatorv1alpha1.JournalSuperseded
+		ready := meta.FindStatusCondition(after.Conditions, operatorv1alpha1.ConditionReady)
 		switch {
 		case after.Phase == operatorv1alpha1.PhaseInSync:
 			outcome = operatorv1alpha1.JournalInSync
+		case ready != nil && ready.Reason == string(operatorv1alpha1.ReasonProofSettled):
+			// A person gave the proof up, so nothing established what the Apply did.
+			outcome = operatorv1alpha1.JournalUnknown
 		case after.Phase == operatorv1alpha1.PhasePending || after.Phase == operatorv1alpha1.PhaseVerifying:
 		case meta.IsStatusConditionTrue(after.Conditions, operatorv1alpha1.ConditionDriftDetected):
 			outcome = operatorv1alpha1.JournalDriftRemains

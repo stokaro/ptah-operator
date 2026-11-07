@@ -21,6 +21,7 @@ row that matches is where to go.
 | A resource in `Blocked`, or a condition you do not recognize | [Condition reasons](../../troubleshoot/condition-reasons/) |
 | A migration `Blocked` with `HistoryDirty` | [A migration that failed at a statement](../recovery/#failed-statement) |
 | A migration whose Apply ended `Partial` or `Unknown` | [A migration run nobody accounted for](#a-migration-run-nobody-accounted-for) |
+| A schema `Blocked` with `TargetIdentityChanged` after its URL Secret moved | [A schema whose target moved](../recovery/#a-schema-whose-target-moved) |
 | A new artifact to roll out | [Moving to a new artifact](#set-source) |
 | Writes failing because the webhook cannot be reached | [Webhook certificate lifecycle](#webhook-certificate-lifecycle) |
 | A write the admission refused, with a message | The message names the guard; [Security model](../security/) says what each one protects |

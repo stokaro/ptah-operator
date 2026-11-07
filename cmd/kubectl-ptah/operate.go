@@ -623,14 +623,15 @@ func refreshLine(ref operate.Ref) string {
 }
 
 // blockedBeforeRequests is the reason a resource is Blocked by a check the
-// controller makes before it reaches a read request, its engine or its
-// database realm, or "" when it is not.
+// controller makes before it reaches a read request, its engine, its database
+// realm or a proof whose target moved, or "" when it is not.
 func blockedBeforeRequests(status resourceStatus) string {
 	if status.phase != string(operatorv1alpha1.PhaseBlocked) {
 		return ""
 	}
 	switch operatorv1alpha1.ConditionReason(status.readyReason) {
-	case operatorv1alpha1.ReasonUnsupportedEngine, operatorv1alpha1.ReasonRealmConflict, operatorv1alpha1.ReasonRealmNotAuthorized:
+	case operatorv1alpha1.ReasonUnsupportedEngine, operatorv1alpha1.ReasonRealmConflict, operatorv1alpha1.ReasonRealmNotAuthorized,
+		operatorv1alpha1.ReasonTargetIdentityChanged:
 		return statusview.Clean(status.readyReason)
 	}
 	return ""

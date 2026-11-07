@@ -561,6 +561,11 @@ func (r *SchemaReconciler) reconcilePendingObservation(ctx context.Context, sche
 	}
 	wait := until(pending.ObserveAfter, r.now())
 
+	// Ahead of suspension: settling reads no database, so a suspended resource
+	// still ends what a person accounted for.
+	if !activePod && wait <= 0 && proofSettlementAsked(schema) {
+		return r.settleProofOnMovedTarget(ctx, schema)
+	}
 	if schema.Spec.Suspend {
 		before := schema.DeepCopy()
 		schema.Status.Phase = operatorv1alpha1.PhaseSuspended
@@ -931,6 +936,15 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 			return ctrl.Result{RequeueAfter: maxLockContentionPoll}, nil
 		}
 		operation = schema.Status.ActiveOperation
+		if proofSettlementAsked(schema) {
+			between, err := r.proofClaimBetweenAttempts(ctx, schema)
+			if err != nil {
+				return ctrl.Result{}, err
+			}
+			if between {
+				return r.settleProofOnMovedTarget(ctx, schema)
+			}
+		}
 	}
 	if schemaOperation(operation).Mutating && !schemaMayHaveDispatched(operation) &&
 		schema.Status.Plan != nil {
@@ -938,7 +952,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 			return r.executionBindingChanged(ctx, schema, bindingErr)
 		}
 	}
-	if !schema.Spec.Suspend && schema.Status.Phase == operatorv1alpha1.PhaseFailed {
+	if !schema.Spec.Suspend && (schema.Status.Phase == operatorv1alpha1.PhaseFailed || schemaProofBlocked(schema)) {
 		failedRetryTime := r.now()
 		if reason, err := r.failedSchemaReadGivesWay(ctx, schema, failedRetryTime); err != nil {
 			return ctrl.Result{}, err
@@ -1164,6 +1178,12 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 				meta.FindStatusCondition(schema.Status.Conditions, operatorv1alpha1.ConditionReady)))
 		}
 		return r.retryOperation(ctx, schema, job, fmt.Errorf("%s Job failed", operation.Type))
+	}
+	// Ahead of the child's own error: the runner names the target before the
+	// child starts, and a login that cannot connect reads no more of what the
+	// Apply did than one that can.
+	if schemaClaimServesProof(schema) && proofReadAnotherTarget(schema.Status.PendingObservation, result.TargetIdentityDigest) {
+		return r.blockProofOnMovedTarget(ctx, schema, job)
 	}
 	if result.Error != nil {
 		err := resultFailure(result.Error, operationURLSecret(operation.Target, schema.Spec.Target.URLFrom))

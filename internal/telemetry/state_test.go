@@ -120,6 +120,13 @@ func TestTheStateGaugesReportTheFleetAsItIs(t *testing.T) {
 			Phase:           "Failed",
 			ActiveOperation: &operatorv1alpha1.ActiveOperationStatus{Type: "Resolve", StartedAt: *minutesBefore(60)},
 		}},
+		// A proof whose target moved, which waits for a person between attempts.
+		// Its claim is no more in flight than the one above.
+		{Status: operatorv1alpha1.PtahSchemaStatus{
+			Phase:              "Blocked",
+			PendingObservation: &operatorv1alpha1.PendingObservationStatus{},
+			ActiveOperation:    &operatorv1alpha1.ActiveOperationStatus{Type: "Plan", StartedAt: *minutesBefore(60)},
+		}},
 	}
 	migrations := []operatorv1alpha1.PtahMigration{
 		{Status: operatorv1alpha1.PtahMigrationStatus{
@@ -154,7 +161,7 @@ func TestTheStateGaugesReportTheFleetAsItIs(t *testing.T) {
 			t.Errorf("the scrape does not carry %q:\n%s", want, out)
 		}
 	}
-	if strings.Contains(out, "{operation=Resolve}") {
+	if strings.Contains(out, "{operation=Resolve}") || strings.Contains(out, "{operation=Plan}") {
 		t.Errorf("a failed attempt waiting for its retry was published as in flight:\n%s", out)
 	}
 	// No overdue migration, so no age for one: zero would read as "one is due
