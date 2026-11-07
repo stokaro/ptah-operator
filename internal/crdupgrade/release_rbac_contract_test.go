@@ -153,6 +153,7 @@ func controllerClusterRoleRules(durable bool) []rbacv1.PolicyRule {
 		privilegePolicyRule([]string{"operator.ptah.run"}, []string{"ptahrealms"}, nil, []string{"get", "list", "watch"}),
 		privilegePolicyRule([]string{"batch"}, []string{"jobs"}, nil, []string{"get", "list", "watch", "create", "patch"}),
 		privilegePolicyRule([]string{""}, []string{"pods"}, nil, []string{"get", "list", "watch"}),
+		privilegePolicyRule([]string{"operator.ptah.run"}, []string{"ptahresultrecords"}, nil, []string{"get", "list", "create", "delete"}),
 		privilegePolicyRule([]string{""}, []string{"pods/log"}, nil, []string{"get"}),
 		privilegePolicyRule([]string{""}, []string{"serviceaccounts"}, nil, []string{"get"}),
 		privilegePolicyRule([]string{""}, []string{"limitranges"}, nil, []string{"list"}),
@@ -165,7 +166,6 @@ func controllerClusterRoleRules(durable bool) []rbacv1.PolicyRule {
 		for i, rule := range rules {
 			if slices.Equal(rule.Resources, []string{"pods/log"}) {
 				rules = slices.Replace(rules, i, i+1,
-					privilegePolicyRule([]string{"operator.ptah.run"}, []string{"ptahresultrecords"}, nil, []string{"get", "list", "create", "delete"}),
 					privilegePolicyRule([]string{"authentication.k8s.io"}, []string{"tokenreviews"}, nil, []string{"create"}))
 				break
 			}
@@ -297,6 +297,45 @@ type renderedRBACSettings struct {
 	controllerServiceAccountCreate bool
 	certificateRuntimeEnabled      bool
 	resultDeliveryEnabled          bool
+}
+
+// The collector runs with delivery on or off, so the record grant does not move
+// with that setting, and only the transport's own grant does. This reads the
+// compiled contract the rendered chart is held to, and the gate renders both.
+func TestControllerRoleKeepsTheRecordGrantInBothDeliveryModes(t *testing.T) {
+	t.Parallel()
+	verbs := func(rules []rbacv1.PolicyRule, resource string) []string {
+		var found []string
+		for _, rule := range rules {
+			if slices.Contains(rule.Resources, resource) {
+				found = append(found, rule.Verbs...)
+			}
+		}
+		slices.Sort(found)
+		return found
+	}
+	for _, row := range []struct {
+		name               string
+		durable            bool
+		tokenReviews, logs []string
+	}{
+		{name: "delivery on", durable: true, tokenReviews: []string{"create"}},
+		{name: "delivery off", durable: false, logs: []string{"get"}},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			rules := controllerClusterRoleRules(row.durable)
+			if got, want := verbs(rules, "ptahresultrecords"), []string{"create", "delete", "get", "list"}; !slices.Equal(got, want) {
+				t.Errorf("record grant = %v, want %v", got, want)
+			}
+			if got := verbs(rules, "tokenreviews"); !slices.Equal(got, row.tokenReviews) {
+				t.Errorf("tokenreviews grant = %v, want %v", got, row.tokenReviews)
+			}
+			if got := verbs(rules, "pods/log"); !slices.Equal(got, row.logs) {
+				t.Errorf("pods/log grant = %v, want %v", got, row.logs)
+			}
+		})
+	}
 }
 
 func renderedReleaseRBACInventory(t *testing.T) releaseRBACInventory {

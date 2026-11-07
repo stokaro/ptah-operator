@@ -88,8 +88,23 @@ absent on a run that left no result.
 After a manual `kubectl rollout undo` to an earlier manager, a run keeps the attribution
 of the run before it, because [its merge patch leaves the fields it does not
 know](../../use/operations/#rollback-stop).
+An installation with `resultDelivery.enabled=false` that still holds result records
+loses them about an hour after the upgrade, unless a resource still pins them, so copy
+any you want first. Its manager's ClusterRole gains `get`, `list`, `create` and
+`delete` on `ptahresultrecords`, so check that against whatever audits the role.
 The move to Ptah v0.22.0 can also change what a running schema reports and plans,
 which the next paragraph covers. Nothing else.
+
+The manager now retires and collects result records whether delivery is on or off,
+because a record outlives the setting that wrote it. With delivery off they used to
+stay for good, and a namespace holding them stayed `Terminating` until delivery came
+back or the release was uninstalled, and an installation with `webhook.existingSecret`
+could turn delivery on only by giving up its own webhook trust. The window stays one
+hour. A `credential` record now keeps it too: with delivery off it used to be deleted
+at once. Admission lets a delivery-off manager create a retirement and no other record,
+and the collector adds a metadata list of records every 5 seconds to that installation,
+with or without records to find.
+[While result delivery is off](../../use/operations/#delivery-off) has what was measured.
 
 PostgreSQL 18.x joins the supported release lines, and a cluster on 17.x has
 nothing to change for that. Its official image keeps its data under

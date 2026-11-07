@@ -97,7 +97,9 @@ type Validator struct {
 	// ResultCredentials remains nil until the installation has delivery trust.
 	// Reserved credential writes are still guarded while issuance is disabled.
 	ResultCredentials ResultCredentialValidator
-	ResultCleanup     *resultcleanup.Policy
+	// ResultCleanup judges every deletion of a result record. The manager sets it
+	// with delivery on or off; with none, no record can be deleted.
+	ResultCleanup *resultcleanup.Policy
 }
 
 // ValidationHandler adapts Validator to controller-runtime admission.

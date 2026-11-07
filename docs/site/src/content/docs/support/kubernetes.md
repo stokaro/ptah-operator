@@ -90,4 +90,5 @@ Explicitly setting `resultDelivery.enabled=false` selects the legacy log
 transport for new Jobs. That mode still needs `containerLogMaxSize: 64Mi` or
 larger and intact logs until collection. It does not provide the default
 installation's acknowledged-result durability and is outside the stable 0.2.0
-qualification profile.
+qualification profile. Records an earlier setting wrote are
+[retired and collected the same way](../../use/operations/#delivery-off).

@@ -84,12 +84,15 @@ rules:
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list", "watch"]
-  {{- if .Values.resultDelivery.enabled }}
   # The receiver reads immutable records directly; it never caches or watches
-  # payloads. The leader scans metadata and admission guards every deletion.
+  # payloads. The leader scans metadata and admission guards every deletion. A
+  # record outlives the setting that wrote it, so the collector holds this grant
+  # with delivery off too, where admission lets it create a retirement and nothing
+  # else.
   - apiGroups: ["operator.ptah.run"]
     resources: ["ptahresultrecords"]
     verbs: ["get", "list", "create", "delete"]
+  {{- if .Values.resultDelivery.enabled }}
   # Only the receiver authenticates projected Pod tokens. Runners have no
   # Kubernetes API audience or API permissions; no operation Secret is issued.
   - apiGroups: ["authentication.k8s.io"]

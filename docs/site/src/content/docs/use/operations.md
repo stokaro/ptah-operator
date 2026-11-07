@@ -123,7 +123,10 @@ the chart and set both `webhook.existingSecret` and the PEM-encoded
 existing Secret. Setting `webhook.existingSecret` completely disables the
 built-in certificate lifecycle resources, so disabling
 `certificateRotation.enabled` requires it; the chart refuses an unmanaged
-generated certificate. A first interactive install can instead generate a
+generated certificate. Moving a release from the built-in rotator to a Secret of its
+own needs delivery off and `--force-conflicts` on the upgrade, because the rotator's
+field manager holds each webhook's `caBundle`. A first interactive install can instead
+generate a
 self-signed Secret and its built-in rotation Deployment. Argo CD and Flux
 should depend on the CRDs and an externally managed TLS Secret before
 synchronizing the Deployment and webhook configurations.
@@ -1627,8 +1630,8 @@ With the operator installed, nothing does. These look as though they should:
 - Scaling the manager to zero leaves the webhook unanswered. Its `failurePolicy`
   is `Fail`, so every deletion is refused until the manager returns, and nothing
   collects the records meanwhile.
-- `resultDelivery.enabled=false` makes it worse:
-  [nothing removes these records while delivery is off](#delivery-off).
+- `resultDelivery.enabled=false` changes nothing about the window.
+  [Retention runs the same with delivery off](#delivery-off).
 
 Do not remove the webhook configuration by hand to get past this. That leaves a
 release running without any of the guards the configuration holds, and it says
@@ -1636,35 +1639,24 @@ nothing to whoever owns the installation.
 
 #### While result delivery is off {#delivery-off}
 
-A record written while delivery was on stays when `resultDelivery.enabled` goes to
-`false`. The manager then runs no collector and holds no grant on records, so nothing
-starts a window or ends one, and its webhook refuses to delete `intent`, `chunk`,
-`complete` and `retired` records with the message that names no time. A namespace
-holding them stays `Terminating` for as long as delivery stays off. On kind with
-Kubernetes 1.37.0, a namespace deleted that way read the same refusal five minutes on,
-with those records unchanged. Its `credential` records were deleted at once: with
-delivery off the webhook asks of one only whether its resource still pins it, so the
-window does not hold them.
+A record outlives the setting that wrote it, so retention runs with
+`resultDelivery.enabled=false` as it does with delivery on. The collector runs on the
+leader, the manager holds the same grant on records, and the webhook judges every
+deletion by the same window, a `credential` record included. Operations write no
+records while delivery is off, so what this collects is what an earlier setting left.
+Nothing has to be turned on: a namespace holding such records reads the refusal above,
+with its time, and goes about an hour after they were retired.
 
-A namespace nobody is deleting can wait. For one that is `Terminating`, turn delivery
-on until its records are gone:
+On kind with Kubernetes 1.37.0, a resource deleted with delivery off got its `retired`
+record on the collector's next pass. A namespace deleted with delivery off read the
+refusal with a time within a minute, and the manager started its window with a
+foreground deletion. A release moved to `webhook.existingSecret` with rotation off did
+the same for a namespace deleted after the move. Each was over within a minute past the
+hour from that retirement or that `DELETING` time.
 
-```sh
-helm upgrade <release> <chart> --values <values> --set resultDelivery.enabled=true
-```
-
-The collector then treats them as it treats any others. In that run the refusal named
-a time within a minute of the upgrade, the manager started the window with a foreground
-deletion of the records nothing had retired, and the list above showed that time under
-`DELETING`. The namespace was gone 61 minutes after the upgrade, 19 seconds past the
-end of that window. New operations report through the receiver while delivery is on,
-so set it back only once `kubectl get ptahresultrecords -A` lists nothing you are
-waiting for.
-
-The chart refuses `resultDelivery.enabled=true` beside
-`certificateRotation.enabled=false` or a `webhook.existingSecret`. An installation that
-manages its own webhook trust has [the uninstall below](#teardown), at the cost that
-section gives, or a move to the built-in rotator.
+An installation that manages its own webhook trust, with `webhook.existingSecret`,
+runs the same collector. The chart refuses `resultDelivery.enabled=true` there, so
+this is the only way its records go short of [an uninstall](#teardown).
 
 #### Tearing down CI and labs {#teardown}
 

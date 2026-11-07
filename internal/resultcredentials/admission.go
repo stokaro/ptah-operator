@@ -129,17 +129,6 @@ func ValidateRecordUpdate(old, next *api.PtahResultRecord) error {
 	return ValidateUpdate(a, b)
 }
 
-func ValidateRecordDelete(ctx context.Context, reader client.Reader, record *api.PtahResultRecord) error {
-	if _, err := decodePodBinding(record, true); err == nil {
-		return validatePodBindingDelete(ctx, reader, record)
-	}
-	secret, err := recordSecret(record)
-	if err != nil {
-		return err
-	}
-	return ValidateDelete(ctx, reader, secret)
-}
-
 // ValidateUpdate protects the public binding and owner as well as the key.
 // Kubernetes' immutable Secret flag protects data only, not this metadata.
 func ValidateUpdate(old, next *corev1.Secret) error {
