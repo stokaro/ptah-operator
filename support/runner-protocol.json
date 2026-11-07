@@ -352,6 +352,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:bde2fd2a04e78aa00d32cae1cbfe2cc8bb90b0eb8d5544485e3e812fca8848db",
       "reason": "Read Ptah v0.23.0's documents ahead of the pin, which stays v0.22.0. A migration run whose commit failed, statement 0 beside commit true, is accepted and carried in the frame; a plan refused as declaration-refused goes through the desired-source check a failed plan goes through; a permission_denied naming the kinds of object a MySQL user cannot see carries them as error.unseenObjects, from a closed vocabulary and with no names; a partition DETACH not put back under its parent reads as destructive; Observe strips PTAH_INCLUDE beside PTAH_EXCLUDE. Ptah v0.22.0 writes none of these documents or statements, and the runner harness holds every frame to its captures, so what this runner writes with the pinned executor is unchanged and protocol 1 stays. A manager without this change refuses a frame with a commit failure, and one with unseenObjects through result delivery, so the repin decides whether it needs protocol 2."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:f2ffdf87693ce3b419782671d15bc1f049710ec4b048c7cd24297d2a7f28f0be",
+      "reason": "Pin Ptah v0.23.0 (#848). The only change in a package the runner links is a comment in internal/dataplane that drops the drift read-ahead now that the pin carries those categories; commands, payloads, delivery identity and SQL authority are the same. Protocol 1 stays. With this executor the runner can write the frames #936 added, a commit failure and error.unseenObjects. A manager without #936 refuses either as malformed, which the counter rule keeps under the same number, and a v0.2.9 manager does not reach them: it harvests a Job only when its own execution binding rebuilds it, and the binding names the Ptah version, the executor image and the runner image, which all differ, so it records a dispatched Apply as Unknown and runs a read again."
     }
   ]
 }
