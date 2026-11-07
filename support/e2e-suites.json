@@ -12,7 +12,7 @@
     "together: the CRD upgrade and the uninstall that follows it, the schema",
     "faults and their shared watches. Reference data uses separate databases",
     "and has no migration prerequisite. PostgreSQL reference data shares the",
-    "data-plane job; MySQL reference data shares certificates. High",
+    "lifecycle job; MySQL reference data shares certificates. High",
     "availability belongs with the upgrade rather than with the other",
     "control-plane phases, because it asserts what an upgrade leaves behind:",
     "the Resolve metric sources of the release it replaced. The control-plane",
@@ -21,6 +21,19 @@
     "closing assertions must still hold afterward. They own schema-faults;",
     "the ordinary PostgreSQL, plan-size, and admission rows",
     "remain in data-plane.",
+    "",
+    "A suite has to finish inside the 90-minute job limit with room for a slow",
+    "runner. On CI run 42372668755 data-plane passed that limit, three more of",
+    "the nine suites this file then held came within five minutes of it and a",
+    "fifth within ten. So a suite splits where its rows own their state: the",
+    "ConfigMap and Git sources read their own databases and leave data-plane",
+    "for sources; the schema executor rows roll the manager and stand up their",
+    "own fixtures and watches in schema-runtime; each engine's migration",
+    "authority rows get a suite of their own; and the migration rows that",
+    "create their own migration and database, from late dispatch to the",
+    "rebuild drill, leave the lifecycle that reads the engine's own migration",
+    "for migration-faults. A phase split this way publishes every artifact it",
+    "reads.",
     "",
     "The migration path runs one engine per suite. Reference-data acceptance",
     "uses the prepared namespace, registry and databases. Plan-store alerting",
@@ -47,8 +60,9 @@
     "",
     "isolationWorker gives a suite's cluster a second worker node, labelled and",
     "tainted so that only the Pods a proof places there run on it. The migration",
-    "phases cut that node off from the API server in the middle of an Apply;",
-    "both resource families hold its log responses unfinished. Cutting off",
+    "fault phases cut that node off from the API server in the middle of an",
+    "Apply; the migration and schema fault phases hold its log responses",
+    "unfinished. Cutting off",
     "the worker everything else runs on would take the manager, the",
     "databases and the registry down with it. A suite declares it exactly when",
     "it runs a phase that isolates a node beyond its preparation boundary, and",
@@ -87,37 +101,74 @@
     {
       "name": "schema-approvals",
       "slug": "schema-approvals",
-      "summary": "Schema approval bindings and runtime refusals on both engines",
+      "summary": "Schema approval bindings on both engines",
       "phases": ["schema-approvals"],
       "prepare": ["assert", "dataplane"]
     },
     {
-      "name": "migration-authority",
-      "slug": "migration-authority",
-      "summary": "Migration approval identities, input changes, and runtime bindings on both engines",
-      "phases": ["migration-runtime-postgresql", "migration-runtime-mysql"],
+      "name": "schema-runtime",
+      "slug": "schema-runtime",
+      "summary": "Schema executor and runtime bindings and refusals on both engines",
+      "phases": ["schema-runtime"],
+      "prepare": ["assert", "dataplane"]
+    },
+    {
+      "name": "migration-authority-postgresql",
+      "slug": "migration-authority-postgresql",
+      "summary": "Migration approval identities, input changes, and runtime bindings on PostgreSQL",
+      "phases": ["migration-runtime-postgresql"],
+      "prepare": ["dataplane"]
+    },
+    {
+      "name": "migration-authority-mysql",
+      "slug": "migration-authority-mysql",
+      "summary": "Migration approval identities, input changes, and runtime bindings on MySQL",
+      "phases": ["migration-runtime-mysql"],
       "prepare": ["dataplane"]
     },
     {
       "name": "data-plane",
       "slug": "data-plane",
-      "summary": "The control-plane contract, the PostgreSQL lifecycle, plan-size and admission boundaries, and ConfigMap and Git sources",
-      "phases": ["assert", "dataplane", "configmap-sources", "git-sources"],
+      "summary": "The control-plane contract, the PostgreSQL lifecycle, and plan-size and admission boundaries",
+      "phases": ["assert", "dataplane"],
       "prepare": []
+    },
+    {
+      "name": "sources",
+      "slug": "sources",
+      "summary": "Schemas and migration sequences read from ConfigMaps and from Git",
+      "phases": ["configmap-sources", "git-sources"],
+      "prepare": ["dataplane"]
     },
     {
       "name": "migrations-postgresql",
       "slug": "migrations-postgresql",
-      "summary": "The versioned migration rows on PostgreSQL",
+      "summary": "The versioned migration lifecycle and history refusals on PostgreSQL",
       "phases": ["migrations-postgresql"],
+      "prepare": ["dataplane"],
+      "isolationWorker": true
+    },
+    {
+      "name": "migration-faults-postgresql",
+      "slug": "migration-faults-postgresql",
+      "summary": "The versioned migration fault rows and the rebuild drill on PostgreSQL",
+      "phases": ["migration-faults-postgresql"],
       "prepare": ["dataplane"],
       "isolationWorker": true
     },
     {
       "name": "migrations-mysql",
       "slug": "migrations-mysql",
-      "summary": "The versioned migration rows on MySQL",
+      "summary": "The versioned migration lifecycle and history refusals on MySQL",
       "phases": ["migrations-mysql"],
+      "prepare": ["dataplane"],
+      "isolationWorker": true
+    },
+    {
+      "name": "migration-faults-mysql",
+      "slug": "migration-faults-mysql",
+      "summary": "The versioned migration fault rows and the rebuild drill on MySQL",
+      "phases": ["migration-faults-mysql"],
       "prepare": ["dataplane"],
       "isolationWorker": true
     }

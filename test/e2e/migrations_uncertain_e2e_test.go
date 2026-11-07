@@ -47,9 +47,9 @@ func (m *migrationRun) within(interval time.Duration, ready func() bool) bool {
 // uncertainApplyProof removes the Apply Job of a run that has committed part
 // of its work, and holds the operator to stopping on a run whose evidence it
 // could not read, to keeping that refusal once another refusal overwrote its
-// reason, and to settling it only on a person's acknowledgment. Later rows
-// reuse the artifact it publishes: its third migration sleeps, which is the
-// window they need.
+// reason, and to settling it only on a person's acknowledgment. The fault
+// rows read the same artifact, which their own phase publishes: its third
+// migration sleeps, which is the window they need.
 func (m *migrationRun) uncertainApplyProof() {
 	m.t.Helper()
 	m.isolatedDatabase(m.uncertainDatabase(), m.uncertainSecret())

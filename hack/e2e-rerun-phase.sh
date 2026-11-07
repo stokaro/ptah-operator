@@ -16,12 +16,13 @@ set -eu
 # were built from the commit the run snapshotted, so a change under cmd/ or
 # internal/ still needs a full run. It says so rather than pretending.
 #
-# A phase that creates state cannot simply run a second time. The migrations and
-# reference-data phases each want a database nothing has touched, create their
-# fixtures rather than apply them, and publish to version tags the registry will
-# not move. So this sets E2E_PHASE_RERUN, and those two phases clear what the
-# earlier run of themselves left behind and publish under a repository of their
-# own before they start. The other phases are rerun as they are.
+# A phase that creates state cannot simply run a second time. The migrations,
+# migration-faults and reference-data phases each want a database nothing has
+# touched, create their fixtures rather than apply them, and publish to version
+# tags the registry will not move. So this sets E2E_PHASE_RERUN, and those
+# phases clear what the earlier run of themselves left behind and publish under
+# a repository of their own before they start. The other phases are rerun as
+# they are.
 #
 # A phase that never started has no recorded environment, so it cannot be rerun
 # here: a run that failed in migrations recorded nothing for reference-data.
@@ -60,6 +61,7 @@ fi
 case $RERUN_PHASE in
 	upgrade | ha | uninstall | assert | cert-rotation | dataplane) ;;
 	migrations-postgresql | migrations-mysql) ;;
+	migration-faults-postgresql | migration-faults-mysql) ;;
 	reference-data-postgresql | reference-data-mysql) ;;
 	*) fail "unsupported phase $RERUN_PHASE" ;;
 esac
