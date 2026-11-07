@@ -906,6 +906,92 @@ func TestARefusalWithdrawsApprovalsBeforeItSaysSo(t *testing.T) {
 	})
 }
 
+// A run nobody accounted for is a hold a refusal writes over and does not end.
+// Once the refusal ends, the hold is what Blocked says again, whatever the read
+// does next, and nothing claims an Apply while status.unresolvedRun stands. The
+// realm row is the acceptance row in migrations_uncertain_e2e_test.go, where a
+// rival claimant overwrites the hold's reason and is then deleted.
+func TestALiftedRefusalLeavesAnUnresolvedRunHolding(t *testing.T) {
+	t.Parallel()
+
+	recorded := func(migration *operatorv1alpha1.PtahMigration) *operatorv1alpha1.PtahMigration {
+		migration.Status.UnresolvedRun = &operatorv1alpha1.UnresolvedMigrationRunStatus{
+			OperationID:          testDigest,
+			Outcome:              operatorv1alpha1.MigrationRunOutcomeUnknown,
+			PlanRef:              operatorv1alpha1.ImmutableObjectReference{Name: "ptah-mplan-x", UID: "plan-x"},
+			TargetIdentityDigest: testDigest,
+			RecordedAt:           metav1.Now(),
+		}
+		migration.Status.Phase = operatorv1alpha1.MigrationPhaseBlocked
+		return migration
+	}
+	holding := func(t *testing.T, actual *operatorv1alpha1.PtahMigration) {
+		t.Helper()
+		if actual.Status.UnresolvedRun == nil {
+			t.Fatal("the record went")
+		}
+		wantMigrationCondition(t, actual, operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue, operatorv1alpha1.ReasonApplyOutcomeUnknown)
+		wantMigrationCondition(t, actual, operatorv1alpha1.ConditionMigrationReady, metav1.ConditionFalse, operatorv1alpha1.ReasonApplyOutcomeUnknown)
+		if operation := actual.Status.ActiveOperation; operation != nil && operation.Type == operatorv1alpha1.MigrationOperationApply {
+			t.Fatalf("an Apply was claimed beside the record: %#v", operation)
+		}
+	}
+	historyFails := func(harness *migrationLifecycle) {
+		harness.claimed(operatorv1alpha1.MigrationOperationHistory)
+		harness.answer(runner.Result{
+			Operation: runner.OperationMigrationHistory, ChildExitCode: 1,
+			CoordinationDigest: harness.coordinationDigest(),
+			Error:              &runner.ResultError{Code: "child_exit", Message: "ptah exited with code 1"},
+		})
+	}
+
+	t.Run("a realm conflict, lifted, then Verify passes", func(t *testing.T) {
+		t.Parallel()
+
+		migration := recorded(migrationFixture())
+		competitor := realmSchemaFixture(migration.Namespace, "orders", migration.Spec.Target.CoordinationKey, false)
+		logs := &replayLogs{}
+		reconciler, api := fakeMigrationReconciler(t, logs, migration, verificationPolicyConfigMap(), competitor)
+		harness := &migrationLifecycle{t: t, reconciler: reconciler, api: api, logs: logs, key: client.ObjectKeyFromObject(migration)}
+		harness.settle()
+		clock := movableMigrationClock(reconciler, api)
+		overwritten := harness.migration()
+		wantMigrationCondition(t, overwritten, operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue, operatorv1alpha1.ReasonRealmConflict)
+		if overwritten.Status.UnresolvedRun == nil {
+			t.Fatal("the realm refusal erased the record")
+		}
+
+		if err := api.Delete(context.Background(), competitor); err != nil {
+			t.Fatal(err)
+		}
+		harness.dueNow(clock)
+		harness.claimed(operatorv1alpha1.MigrationOperationResolve)
+		harness.answer(resolvedTo(testDigest))
+		harness.claimed(operatorv1alpha1.MigrationOperationVerify)
+		harness.answer(acceptedBy(testDigest))
+		// Reading, with the History claim not answered yet: the document the
+		// acceptance row read.
+		holding(t, harness.migration())
+		historyFails(harness)
+		holding(t, harness.migration())
+	})
+
+	t.Run("a refused artifact, then Verify passes", func(t *testing.T) {
+		t.Parallel()
+
+		harness := newMigrationLifecycle(t, recorded(migrationFixture()))
+		clock := movableMigrationClock(harness.reconciler, harness.api)
+		harness.refuse(clock)
+		harness.claimed(operatorv1alpha1.MigrationOperationResolve)
+		harness.answer(resolvedTo(testDigest))
+		harness.claimed(operatorv1alpha1.MigrationOperationVerify)
+		harness.answer(acceptedBy(testDigest))
+		holding(t, harness.migration())
+		historyFails(harness)
+		holding(t, harness.migration())
+	})
+}
+
 // A run nobody accounted for is somewhere a refusal cannot reach. The refusal
 // stops the history read that would clear the record, keeps the record, and
 // leaves both other ways out of it standing.

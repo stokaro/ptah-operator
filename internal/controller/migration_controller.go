@@ -1286,6 +1286,10 @@ const migrationSourceResolvedMessage = "The source was read, and nothing refuses
 // A condition with any other reason belongs to whoever set it: a plan waiting
 // for a person keeps ApprovalRequired True through the read that refreshes it.
 // Progressing is not here because the claim of that read rewrote it.
+//
+// A run nobody accounted for is a hold the refusal wrote over and did not end.
+// Nothing runs while status.unresolvedRun stands, so Blocked and Ready say that
+// again rather than False.
 func endMigrationRefusal(
 	migration *operatorv1alpha1.PtahMigration,
 	reason operatorv1alpha1.ConditionReason,
@@ -1302,15 +1306,37 @@ func endMigrationRefusal(
 		}
 		return false
 	}
+	unresolved := migration.Status.UnresolvedRun
 	if refused(operatorv1alpha1.ConditionMigrationBlocked) {
-		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionFalse, reason, message)
+		if unresolved != nil {
+			setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue,
+				operatorv1alpha1.ReasonApplyOutcomeUnknown, unresolvedRunHoldMessage(unresolved))
+		} else {
+			setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionFalse, reason, message)
+		}
 	}
 	if refused(operatorv1alpha1.ConditionMigrationReady) {
-		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationReady, metav1.ConditionFalse, reason, message)
+		if unresolved != nil {
+			setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationReady, metav1.ConditionFalse,
+				operatorv1alpha1.ReasonApplyOutcomeUnknown, unresolvedRunReadyMessage)
+		} else {
+			setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationReady, metav1.ConditionFalse, reason, message)
+		}
 	}
 	if refused(operatorv1alpha1.ConditionMigrationApprovalRequired) {
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationApprovalRequired, metav1.ConditionFalse, reason, message)
 	}
+}
+
+// unresolvedRunReadyMessage is what Ready says while a run nobody accounted for
+// stands.
+const unresolvedRunReadyMessage = "What the last run did is unknown until the database is read by a person"
+
+// unresolvedRunHoldMessage is what Blocked says while a run nobody accounted for
+// stands and no reading has said more.
+func unresolvedRunHoldMessage(unresolved *operatorv1alpha1.UnresolvedMigrationRunStatus) string {
+	return fmt.Sprintf("A %s run nobody accounted for is recorded against this database; "+
+		"establish what it did before another Apply", unresolved.Outcome)
 }
 
 // migrationUnresolvedRunSettledBy reports that this reading is the proof the
@@ -1459,7 +1485,7 @@ func (r *MigrationReconciler) recordMigrationHistory(
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue,
 			operatorv1alpha1.ReasonApplyOutcomeUnknown, refusal)
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationReady, metav1.ConditionFalse,
-			operatorv1alpha1.ReasonApplyOutcomeUnknown, "What the last run did is unknown until the database is read by a person")
+			operatorv1alpha1.ReasonApplyOutcomeUnknown, unresolvedRunReadyMessage)
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionFalse,
 			operatorv1alpha1.ReasonApplyOutcomeUnknown, "The dispatched run is over and may not be retried")
 	case report.CurrentVersion > artifactVersion:
