@@ -1,0 +1,12 @@
+{
+  "contract_version": 4,
+  "command": "schema apply",
+  "outcome": "dry-run",
+  "plan_name": "plan_547149ceb2e3",
+  "plan_digest": "sha256:8219f2054280a8f4865911ef125be561e0ea0dadf92507ccc1b1bda4cf0c0815",
+  "units": [
+    {
+      "sql": "ALTER TABLE \"differs_events\" ALTER COLUMN \"happened_at\" TYPE timestamp(0)"
+    }
+  ]
+}

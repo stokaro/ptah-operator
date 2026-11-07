@@ -1,0 +1,18 @@
+{
+  "format_version": 1,
+  "name": "plan_547149ceb2e3",
+  "dialect": "postgres",
+  "from_fingerprint": "sha256:d23b72ce66e252bec93f92f7617fa2fd2caa3c8a2c09d917c1a4306d61e1831d",
+  "to_fingerprint": "sha256:b60dd8afa715d794475b702e380d52aa29e3b97994ce08e46e3bf2bc35f409e8",
+  "scope": {
+    "kind": "realm"
+  },
+  "destructive": false,
+  "statements": [
+    {
+      "sql": "ALTER TABLE \"differs_events\" ALTER COLUMN \"happened_at\" TYPE timestamp(0)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    }
+  ]
+}

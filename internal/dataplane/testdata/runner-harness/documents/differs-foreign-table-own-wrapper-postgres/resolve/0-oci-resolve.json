@@ -1,0 +1,7 @@
+{
+  "reference": "oci://harness-registry:5000/schemas/differs-foreign-table-own-wrapper-postgres:v1",
+  "pinned_reference": "oci://harness-registry:5000/schemas/differs-foreign-table-own-wrapper-postgres@sha256:ecfc02b06e20640bd6fc93f818b155a9178245ca01b6d80a8ebb49323fd46ff4",
+  "digest": "sha256:ecfc02b06e20640bd6fc93f818b155a9178245ca01b6d80a8ebb49323fd46ff4",
+  "media_type": "application/vnd.oci.image.manifest.v1+json",
+  "size": 813
+}

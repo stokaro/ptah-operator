@@ -1,0 +1,26 @@
+{
+  "contract_version": 3,
+  "command": "schema plan",
+  "outcome": "changes",
+  "plan_digest": "sha256:e46aa6539423efa6299f494999c29e9bb24d1a3c0977ae7785e79bc1fe646bde",
+  "plan_path": "/work/ptah-plan-output-1649351832/second.plan.json",
+  "plan": {
+    "format_version": 1,
+    "name": "plan_c46f5a7f77c9",
+    "dialect": "postgres",
+    "from_fingerprint": "sha256:86f6a13897308a44f91a97e1aeed3de927a97a145fc2990020ce699a24323908",
+    "to_fingerprint": "sha256:d613394cc3c2cf3b9439059cc5702f6f9a18a7d763fa0b82fd3fc4f6a603c59b",
+    "scope": {
+      "kind": "schema",
+      "name": "public"
+    },
+    "destructive": true,
+    "statements": [
+      {
+        "sql": "DROP TABLE \"differs_parent\"",
+        "severity": "destructive",
+        "reason": "DROP TABLE removes the table and all rows"
+      }
+    ]
+  }
+}

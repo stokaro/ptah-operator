@@ -1,0 +1,25 @@
+{
+  "contract_version": 3,
+  "command": "schema plan",
+  "outcome": "changes",
+  "plan_digest": "sha256:a7e753a6402bdcf61027706418107cd927eb018d5d33e2ae00609d3f2f6dcb3a",
+  "plan_path": "/work/ptah-plan-output-3602602183/first.plan.json",
+  "plan": {
+    "format_version": 1,
+    "name": "plan_a343d7a072a7",
+    "dialect": "postgres",
+    "from_fingerprint": "sha256:98e015eb8dc00355c45057207817a19d26029bcfbc3cfea767069de0d70a603d",
+    "to_fingerprint": "sha256:1841d8b3bb50fe494f13fe26fc2b8e272dda9cda4c7c59287ec3905373d052a5",
+    "scope": {
+      "kind": "realm"
+    },
+    "destructive": false,
+    "statements": [
+      {
+        "sql": "ALTER VIEW \"differs_notes_view\" SET (security_invoker=false)",
+        "severity": "safe",
+        "reason": "does not remove data or tighten constraints"
+      }
+    ]
+  }
+}

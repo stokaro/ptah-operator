@@ -1,0 +1,9 @@
+{
+  "reference": "oci://harness-registry:5000/schemas/differs-dependent-key-mysql@sha256:0c3dab83cecd815d54bd6785414165dfecba9077a548670836f69d907910ea58",
+  "digest": "sha256:0c3dab83cecd815d54bd6785414165dfecba9077a548670836f69d907910ea58",
+  "satisfied": [
+    "require_digest_pin",
+    "artifact_types"
+  ],
+  "findings": []
+}

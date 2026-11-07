@@ -1,0 +1,9 @@
+{
+  "reference": "oci://harness-registry:5000/schemas/differs-foreign-table-postgres@sha256:5432fb4f07cfbe214717f5f84216819242818a19881a428480410f7eed710697",
+  "digest": "sha256:5432fb4f07cfbe214717f5f84216819242818a19881a428480410f7eed710697",
+  "satisfied": [
+    "require_digest_pin",
+    "artifact_types"
+  ],
+  "findings": []
+}

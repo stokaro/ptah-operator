@@ -1,0 +1,8 @@
+{
+  "contract_version": 3,
+  "command": "schema plan",
+  "outcome": "failed",
+  "error": {
+    "message": "the document declares database \"differs_app\", but the target URL is limited to database \"harness_differs_missing_schema_mysql\"; name no database in the URL to reach the whole server, or leave the database out of the name"
+  }
+}

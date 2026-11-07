@@ -1,0 +1,7 @@
+{
+  "reference": "oci://harness-registry:5000/schemas/differs-dependent-key-mysql:v1",
+  "pinned_reference": "oci://harness-registry:5000/schemas/differs-dependent-key-mysql@sha256:0c3dab83cecd815d54bd6785414165dfecba9077a548670836f69d907910ea58",
+  "digest": "sha256:0c3dab83cecd815d54bd6785414165dfecba9077a548670836f69d907910ea58",
+  "media_type": "application/vnd.oci.image.manifest.v1+json",
+  "size": 813
+}

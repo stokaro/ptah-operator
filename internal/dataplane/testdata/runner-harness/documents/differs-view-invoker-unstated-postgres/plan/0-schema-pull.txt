@@ -1,0 +1,2 @@
+Pulled oci://harness-registry:5000/schemas/differs-view-invoker-unstated-postgres@sha256:4ce2bfbaf16325ed3d883e2eda97b7375bac6bf3783a21277ecf62ce818df72d to /source/schema.hcl
+Digest: sha256:4ce2bfbaf16325ed3d883e2eda97b7375bac6bf3783a21277ecf62ce818df72d

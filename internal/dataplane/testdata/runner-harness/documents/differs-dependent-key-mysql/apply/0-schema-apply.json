@@ -1,0 +1,15 @@
+{
+  "contract_version": 4,
+  "command": "schema apply",
+  "outcome": "unknown",
+  "plan_name": "plan_56acdc5347c1",
+  "plan_digest": "sha256:a5b9d7c225c0f58c8762a4d5f1ddc3688a8b03c0329f86530f495ce4419945d7",
+  "units": [
+    {
+      "sql": "DROP TABLE `differs_parent`"
+    }
+  ],
+  "error": {
+    "message": "apply schema changes: failed to execute SQL statement: SQL execution failed: Error 3730 (HY000): Cannot drop table 'differs_parent' referenced by a foreign key constraint 'child_ibfk_1' on table 'child'.\nSQL: DROP TABLE `differs_parent`"
+  }
+}

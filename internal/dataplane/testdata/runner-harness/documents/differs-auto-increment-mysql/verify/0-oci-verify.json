@@ -1,0 +1,9 @@
+{
+  "reference": "oci://harness-registry:5000/schemas/differs-auto-increment-mysql@sha256:771b7352d377f477a07dab05e0039c49cd04aa89198b988f287d1023c278f170",
+  "digest": "sha256:771b7352d377f477a07dab05e0039c49cd04aa89198b988f287d1023c278f170",
+  "satisfied": [
+    "require_digest_pin",
+    "artifact_types"
+  ],
+  "findings": []
+}

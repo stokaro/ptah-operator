@@ -1,0 +1,15 @@
+{
+  "contract_version": 4,
+  "command": "schema apply",
+  "outcome": "applied",
+  "plan_name": "plan_aa267326a95d",
+  "plan_digest": "sha256:a34403063017fdd1b60503fae5f877d09f72cf0b3f4ceb8f097d33f818931ac2",
+  "units": [
+    {
+      "sql": "ALTER TABLE \"differs_items\" ALTER COLUMN \"id\" DROP DEFAULT"
+    },
+    {
+      "sql": "DROP SEQUENCE \"differs_items_id_seq\""
+    }
+  ]
+}
