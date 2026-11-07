@@ -431,8 +431,8 @@ never establishes that the database changed the way the plan said it would.
 is reached from eight places: a realm conflict, a `PtahRealm` that does not
 admit the resource, an unsupported engine, a
 verification policy that refused the artifact, a plan that would change a
-protected table, a destructive plan the policy disallows, a proof that read
-another target than its plan's, and `apply: Never`,
+protected table, a destructive plan the policy disallows, [a proof whose target
+moved](../../use/recovery/#a-schema-whose-target-moved), and `apply: Never`,
 which is not a problem at all — it is the policy that records plans and applies
 none, and a resource can sit there for as long as somebody wants. `Failed` is
 different again: something went wrong and a retry is reasonable.
@@ -442,15 +442,17 @@ its interval through the complete Resolve → Verify → Observe → Plan pipeli
 a policy edit or a new artifact is noticed without anybody touching the resource.
 A realm refusal is taken again at least once a minute instead, and the pipeline
 starts once it ends. An unsupported engine waits for an edit, because the engine
-is in the spec. A proof that read another target keeps its claim and reads again
-at `spec.execution.failureRetryInterval`.
+is in the spec. A proof whose target moved keeps its claim: only its own read runs, at
+`spec.execution.failureRetryInterval`, until the first target is back or a person
+settles it.
 
 ### Suspended, and losing a lock
 
 `spec.suspend` prevents new Jobs. A Job already applying is still observed to a
 terminal result, because abandoning it would leave the database in a state
-nothing recorded; suspension while an operation is live stages the Lease
-release first.
+nothing recorded. So is a read that serves a proof, and the proof keeps the
+Lease until it ends. Any other read under way is dropped, and the status write
+that drops it stages the release of any Lease it holds.
 
 `leaseContinuityLost` is set before any result can be harvested when the
 persisted epoch no longer owns an uninterrupted lock interval. A result
@@ -648,8 +650,9 @@ A resource `Blocked` because its engine is not supported (`UnsupportedEngine`)
 or because its database realm does not admit it (`RealmConflict`,
 `RealmNotAuthorized`) does not answer: the controller checks the engine and the
 realm before it reaches the request, and the request waits until those checks
-pass. `Blocked` for any other reason, such as a policy that refuses the plan,
-answers as above.
+pass. A resource `Blocked` with `TargetIdentityChanged` does not answer either:
+its proof comes first, and the request waits until the proof ends. `Blocked` for
+any other reason, such as a policy that refuses the plan, answers as above.
 
 The request never starts a mutating operation and does not shorten a retry
 delay: a `Failed` resource answers it when its retry starts. A read already

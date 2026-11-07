@@ -158,12 +158,15 @@ it would report.
   `spec.interval` when its retry delay ends. An Apply and the read that proves it
   keep their binding. A dashboard that reads `status.activeOperation.attempt`
   sees it restart from 1.
-- **A schema whose target moved after approval.** A login or address that changes
-  in the URL Secret after a plan was approved, or while its Apply ran, used to
-  leave the resource `Failed` for good, retrying `post-apply observation target
-  does not match the applied plan`. It now stops `Blocked` with reason
-  `TargetIdentityChanged` and says how to end it: put the first target back, or name
-  the Apply in the `operator.ptah.run/settled-apply` annotation.
+- **A schema whose target moved after approval.** A login, host, port, database or
+  URL parameter that changes in the URL Secret after a plan was approved, or while
+  its Apply ran, used to leave the resource `Failed` for good, retrying `post-apply
+  observation target does not match the applied plan`. It now stops `Blocked` with
+  reason `TargetIdentityChanged` and says how to end it: put the first URL back, or
+  run the command it prints, which writes the `operator.ptah.run/settled-apply`
+  annotation. Under `apply: Always` the next plan then applies with no approval
+  unless it is destructive or changes privileges, and `patch` on the resource is
+  enough to do this.
   [A schema whose target moved](../../use/recovery/#a-schema-whose-target-moved) says
   what settling means. An alert or a script that matches that sentence has to match
   the reason instead. A `Verified` journal entry can now read `Unknown`.
