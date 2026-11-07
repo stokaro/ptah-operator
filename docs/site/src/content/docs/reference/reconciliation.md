@@ -692,10 +692,12 @@ it was approved for. Neither does the read that proves an Apply, which stays
 bound to what that Apply ran from. A Job under the claim's reserved name is an
 attempt under way, and it is left to finish.
 
-A value that is not an RFC 3339 instant starts nothing. It is recorded as
-answered, with a `ReadRequestInvalid` Warning Event that names it, so it is
-reported once rather than on every pass. A value longer than 64 bytes is
-recorded as its SHA-256 digest, written `sha256:<hex>`.
+A value that is not an RFC 3339 instant starts nothing and ends nothing. It is
+recorded as answered, with a `ReadRequestInvalid` Warning Event that names it,
+so it is reported once rather than on every pass. A read-only operation between
+failed attempts answers it the same way at once, inside its retry delay too, and
+goes on retrying. A value longer than 64 bytes is recorded as its SHA-256 digest,
+written `sha256:<hex>`.
 
 ## The lifecycle journal
 

@@ -10,6 +10,7 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
@@ -379,13 +380,79 @@ func TestRefreshWhileAReadFailsIsTakenWhenTheDelayEnds(t *testing.T) {
 	}
 }
 
-// A value that is not an instant starts nothing, so it cannot end a claim.
-func TestAReadRequestThatIsNotAnInstantLeavesAFailedReadRunning(t *testing.T) {
+// A value that is not an instant starts nothing, so it cannot end a claim, and
+// nothing has to end for the operator to say so. A failing read answers it as a
+// resource at rest does: recorded as answered, with one Warning Event, inside the
+// retry delay and after it.
+func TestAReadRequestThatIsNotAnInstantIsAnsweredWhileAReadFails(t *testing.T) {
 	t.Parallel()
 	failed, reconciler, api := failedOCISchemaRead(t, refreshPeriod/2)
+	recorder := record.NewFakeRecorder(8)
+	reconciler.Recorder = recorder
 	annotateSchema(t, api, failed, "now please")
+
+	answered := reconcileSchema(t, reconciler, api, failed)
+	assertClaimStands(t, answered, failed)
+	if answered.Status.LastReadRequest != "now please" {
+		t.Fatalf("lastReadRequest = %q, want the value recorded", answered.Status.LastReadRequest)
+	}
+	if !answered.Status.NextReconciliationTime.Equal(failed.Status.NextReconciliationTime) {
+		t.Fatalf("next = %v, want the retry deadline %v kept", answered.Status.NextReconciliationTime, failed.Status.NextReconciliationTime)
+	}
+	if event := findEvent(recorder, corev1.EventTypeWarning+" ReadRequestInvalid"); !strings.Contains(event, `"now please"`) {
+		t.Fatalf("Warning Event = %q, want it to name the value", event)
+	}
+
 	endRetryDelay(t, reconciler, failed)
 	assertClaimStands(t, reconcileSchema(t, reconciler, api, failed), failed)
+	if event := findEvent(recorder, corev1.EventTypeWarning+" ReadRequestInvalid"); event != "" {
+		t.Fatalf("the same value was reported twice: %q", event)
+	}
+}
+
+// The read that proves an Apply keeps its binding, and an answer leaves it
+// alone. An Apply between attempts is not a read that fails, so the filter
+// refuses it, and the request waits for the claim to end as it always did.
+func TestAReadRequestThatIsNotAnInstantWhileAClaimOwesItsBinding(t *testing.T) {
+	t.Parallel()
+	t.Run("the read that proves an Apply answers it", func(t *testing.T) {
+		t.Parallel()
+		schema := safetyPostApplyObserveSchema(t)
+		schema.Spec.Execution.FailureRetryInterval = metav1.Duration{Duration: retryDelay}
+		reconciler, api := fakeReconciler(t, staticLogs{}, schema)
+		if _, err := reconciler.retryOperation(context.Background(), storedSchema(t, api, schema), nil, errFailedRead); err != nil {
+			t.Fatal(err)
+		}
+		failed := storedSchema(t, api, schema)
+		annotateSchema(t, api, failed, "now please")
+
+		actual := reconcileSchema(t, reconciler, api, schema)
+
+		assertClaimStands(t, actual, failed)
+		if actual.Status.LastReadRequest != "now please" {
+			t.Fatalf("lastReadRequest = %q, want the value recorded", actual.Status.LastReadRequest)
+		}
+		if actual.Status.PendingObservation == nil || actual.Status.PendingObservation.ApplyOperationID != "apply-operation" {
+			t.Fatalf("the proof was lost: %#v", actual.Status.PendingObservation)
+		}
+	})
+	t.Run("an Apply does not", func(t *testing.T) {
+		t.Parallel()
+		schema := safetyApplySchema(t)
+		schema.Status.Phase = operatorv1alpha1.PhaseFailed
+		schema.Annotations = map[string]string{operatorv1alpha1.ReadRequestAnnotation: "now please"}
+		if _, unreadable := unreadableRequestOfFailedSchemaRead(schema); unreadable {
+			t.Fatal("an Apply claim would answer the request")
+		}
+	})
+	t.Run("an instant does not: it gives way when the delay ends", func(t *testing.T) {
+		t.Parallel()
+		failed, _, api := failedOCISchemaRead(t, refreshPeriod/2)
+		annotateSchema(t, api, failed, requestedAt)
+		if _, unreadable := unreadableRequestOfFailedSchemaRead(storedSchema(t, api, failed)); unreadable {
+			t.Fatal("an instant would be answered as a value that starts nothing")
+		}
+	})
 }
 
 // What keeps its binding, each against a source edited under it. Each row is a
@@ -726,6 +793,70 @@ func TestAMigrationReadRequestIsAnsweredBetweenFailedAttempts(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The same answer for a migration: at once, inside the retry delay, once, and
+// the claim stands past the delay.
+func TestAMigrationReadRequestThatIsNotAnInstantIsAnsweredWhileAReadFails(t *testing.T) {
+	t.Parallel()
+	for _, operationType := range []operatorv1alpha1.MigrationOperationType{
+		operatorv1alpha1.MigrationOperationHistory, operatorv1alpha1.MigrationOperationResolve,
+	} {
+		t.Run(string(operationType), func(t *testing.T) {
+			t.Parallel()
+			failed, reconciler, api := failedOCIMigrationRead(t, 30*time.Minute, operationType)
+			recorder := record.NewFakeRecorder(8)
+			reconciler.Recorder = recorder
+			annotated := failed.DeepCopy()
+			annotated.Annotations = map[string]string{operatorv1alpha1.ReadRequestAnnotation: "now please"}
+			if err := api.Update(context.Background(), annotated); err != nil {
+				t.Fatal(err)
+			}
+			stands := func(actual *operatorv1alpha1.PtahMigration) {
+				t.Helper()
+				got := actual.Status.ActiveOperation
+				if got == nil || got.ID != failed.Status.ActiveOperation.ID || !got.RetryNotBefore.Equal(failed.Status.ActiveOperation.RetryNotBefore) {
+					t.Fatalf("the claim did not stand: got %#v, want %#v", got, failed.Status.ActiveOperation)
+				}
+			}
+
+			answered := reconcileMigration(t, reconciler, api, failed)
+			stands(answered)
+			if answered.Status.LastReadRequest != "now please" {
+				t.Fatalf("lastReadRequest = %q, want the value recorded", answered.Status.LastReadRequest)
+			}
+			if event := findEvent(recorder, corev1.EventTypeWarning+" ReadRequestInvalid"); !strings.Contains(event, `"now please"`) {
+				t.Fatalf("Warning Event = %q, want it to name the value", event)
+			}
+
+			again := reconcileMigration(t, reconciler, api, failed)
+			stands(again)
+			if event := findEvent(recorder, corev1.EventTypeWarning+" ReadRequestInvalid"); event != "" {
+				t.Fatalf("the same value was reported twice: %q", event)
+			}
+		})
+	}
+	t.Run("an Apply does not answer it", func(t *testing.T) {
+		t.Parallel()
+		migration, plan := awaitingApprovalFixture(t)
+		operation := applyClaimFor(t, migration, plan)
+		operation.DispatchStarted = false
+		notBefore := metav1.NewTime(readRequestClock.Add(retryDelay))
+		operation.RetryNotBefore = &notBefore
+		migration.Status.ActiveOperation = operation
+		migration.Status.Phase = operatorv1alpha1.MigrationPhaseFailed
+		migration.Annotations = map[string]string{operatorv1alpha1.ReadRequestAnnotation: "now please"}
+		reconciler, api := fakeMigrationReconciler(t, staticLogs{}, migration, plan, verificationPolicyConfigMap())
+
+		actual := reconcileMigration(t, reconciler, api, migration)
+
+		if actual.Status.ActiveOperation == nil || actual.Status.ActiveOperation.Type != operatorv1alpha1.MigrationOperationApply {
+			t.Fatalf("the Apply claim did not stand: %#v", actual.Status.ActiveOperation)
+		}
+		if actual.Status.LastReadRequest != "" {
+			t.Fatalf("an Apply answered the request: %q", actual.Status.LastReadRequest)
+		}
+	})
 }
 
 // What a migration keeps: a claim on its first attempt has not failed, and an
