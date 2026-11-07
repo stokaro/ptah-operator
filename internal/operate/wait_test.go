@@ -868,6 +868,23 @@ func TestWaitTargets(t *testing.T) {
 			wantStop: operate.StopNotConverged, wantMessage: "still differs",
 		},
 		{
+			name: "applied: a schema Apply whose proof a person gave up stops the wait", target: operate.TargetApplied,
+			only: operate.FamilySchema,
+			docs: func(f operate.Family) []doc {
+				return []doc{
+					{phase: "Applying", operation: "Apply", observedAt: at(0)},
+					{
+						phase: "Pending", observedAt: at(80),
+						journal: []operatorv1alpha1.JournalEntry{
+							{Type: operatorv1alpha1.JournalApplyFinished, At: metav1.NewTime(at(60)), Plan: "plan-1", Outcome: operatorv1alpha1.JournalSucceeded},
+							{Type: operatorv1alpha1.JournalVerified, At: metav1.NewTime(at(80)), Plan: "plan-1", Outcome: operatorv1alpha1.JournalUnknown},
+						},
+					},
+				}
+			},
+			wantStop: operate.StopUnresolved, wantMessage: "gave up the proof",
+		},
+		{
 			name: "applied: outcomes the journal held before the wait began do not stop it", target: operate.TargetApplied,
 			only: operate.FamilySchema,
 			docs: func(f operate.Family) []doc {

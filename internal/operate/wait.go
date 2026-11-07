@@ -856,6 +856,9 @@ func (w *waiter) checkApplied(s snapshot) verdict {
 		case entry.Type == operatorv1alpha1.JournalVerified && entry.Outcome == operatorv1alpha1.JournalSuperseded:
 			return w.stop(s, StopNotConverged, fmt.Sprintf("the proof after the Apply of plan %s settled under a "+
 				"newer generation, policy or execution binding", entry.Plan))
+		case entry.Type == operatorv1alpha1.JournalVerified && entry.Outcome == operatorv1alpha1.JournalUnknown:
+			return w.stop(s, StopUnresolved, fmt.Sprintf("a person gave up the proof after the Apply of plan %s, "+
+				"and no Apply is recorded for it", entry.Plan))
 		}
 	}
 	if held, ok := w.policyHeld(s, fresh); ok {

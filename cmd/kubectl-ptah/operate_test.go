@@ -456,6 +456,7 @@ func TestRefreshSaysTheRequestIsNotTheRead(t *testing.T) {
 		{operatorv1alpha1.MigrationPhaseBlocked, "RealmConflict", true},
 		{operatorv1alpha1.MigrationPhaseBlocked, "RealmNotAuthorized", true},
 		{operatorv1alpha1.MigrationPhaseBlocked, "UnsupportedEngine", true},
+		{operatorv1alpha1.MigrationPhaseBlocked, string(operatorv1alpha1.ReasonTargetIdentityChanged), true},
 		{operatorv1alpha1.MigrationPhaseBlocked, "DestructiveChangesDisabled", false},
 		// A Ready reason left from a realm block on a resource that has
 		// moved on is not a block.

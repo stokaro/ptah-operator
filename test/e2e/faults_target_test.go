@@ -66,7 +66,10 @@ func TestFreshApprovalWaitsForObservedConvergence(t *testing.T) {
 
 func TestRetargetProofKeepsTheDispatchedApplyBinding(t *testing.T) {
 	t.Parallel()
+	const refusal = "the URL Secret names another target; kubectl annotate ptahschema x -n y " +
+		ptahv1alpha1.SettledApplyAnnotation + "=apply-original"
 	base := &ptahv1alpha1.PtahSchema{Status: ptahv1alpha1.PtahSchemaStatus{
+		Phase: ptahv1alpha1.PhaseBlocked,
 		PendingObservation: &ptahv1alpha1.PendingObservationStatus{
 			Outcome:          ptahv1alpha1.PendingObservationOutcomeUnknown,
 			ApplyOperationID: "apply-original", ApplyJobUID: "job-original",
@@ -74,12 +77,12 @@ func TestRetargetProofKeepsTheDispatchedApplyBinding(t *testing.T) {
 		},
 		Conditions: []metav1.Condition{{
 			Type: ptahv1alpha1.ConditionReconciliationFailed, Status: metav1.ConditionTrue,
-			Reason:  string(ptahv1alpha1.ReasonOperationFailed),
-			Message: "post-apply observation target does not match the applied plan",
+			Reason:  string(ptahv1alpha1.ReasonTargetIdentityChanged),
+			Message: refusal,
 		}},
 	}}
 	accepts := func(r *ptahv1alpha1.PtahSchema) bool {
-		return retargetProofRefused(r, "apply-original", "job-original", ftDigest)
+		return retargetProofRefused(r, ptahv1alpha1.PendingObservationOutcomeUnknown, "apply-original", "job-original", ftDigest)
 	}
 	ftRefusesEach(t, base.DeepCopy, accepts, []ftMutation[*ptahv1alpha1.PtahSchema]{
 		{"proof abandoned", func(r *ptahv1alpha1.PtahSchema) { r.Status.PendingObservation = nil }},
@@ -91,25 +94,154 @@ func TestRetargetProofKeepsTheDispatchedApplyBinding(t *testing.T) {
 		{"success attributed", func(r *ptahv1alpha1.PtahSchema) {
 			r.Status.PendingObservation.Outcome = ptahv1alpha1.PendingObservationApplySucceeded
 		}},
+		{"not stopped", func(r *ptahv1alpha1.PtahSchema) { r.Status.Phase = ptahv1alpha1.PhaseFailed }},
 		{"no refusal", func(r *ptahv1alpha1.PtahSchema) { r.Status.Conditions = nil }},
 		{"old refusal cleared", func(r *ptahv1alpha1.PtahSchema) { r.Status.Conditions[0].Status = metav1.ConditionFalse }},
-		{"another failure", func(r *ptahv1alpha1.PtahSchema) { r.Status.Conditions[0].Message = "database is unavailable" }},
-		{"Apply failure alone", func(r *ptahv1alpha1.PtahSchema) {
-			r.Status.Conditions[0].Reason = string(ptahv1alpha1.ReasonApplyOutcomeUnknown)
+		{"another failure", func(r *ptahv1alpha1.PtahSchema) {
+			r.Status.Conditions[0].Reason = string(ptahv1alpha1.ReasonOperationFailed)
+		}},
+		{"no way out named", func(r *ptahv1alpha1.PtahSchema) {
+			r.Status.Conditions[0].Message = "the URL Secret names another target"
+		}},
+		{"the way out of another Apply", func(r *ptahv1alpha1.PtahSchema) {
+			r.Status.Conditions[0].Message = ptahv1alpha1.SettledApplyAnnotation + "=another-apply"
 		}},
 	})
-	// A retry can change the phase and the active observation while this
-	// refusal remains true; neither is evidence that the proof was settled.
+	// The read goes on while this refusal remains true, and the claim doing it is
+	// no evidence that the proof was settled.
 	ftAcceptsEach(t, base.DeepCopy, accepts, []ftMutation[*ptahv1alpha1.PtahSchema]{
-		{"retry observing", func(r *ptahv1alpha1.PtahSchema) {
-			r.Status.Phase = ptahv1alpha1.PhaseObserving
+		{"reading again", func(r *ptahv1alpha1.PtahSchema) {
 			r.Status.ActiveOperation = &ptahv1alpha1.ActiveOperationStatus{Type: ptahv1alpha1.OperationObserve}
 		}},
 	})
 	for _, bindings := range [][3]string{{"", "job-original", ftDigest}, {"apply-original", "", ftDigest}, {"apply-original", "job-original", ""}} {
-		if retargetProofRefused(base, bindings[0], bindings[1], bindings[2]) {
+		if retargetProofRefused(base, ptahv1alpha1.PendingObservationOutcomeUnknown, bindings[0], bindings[1], bindings[2]) {
 			t.Fatal("accepted missing expected proof bindings")
 		}
+	}
+}
+
+func TestAProofReadAgainIsALaterAttemptOfTheSameProof(t *testing.T) {
+	t.Parallel()
+	base := &ptahv1alpha1.PtahSchema{Status: ptahv1alpha1.PtahSchemaStatus{
+		Phase:              ptahv1alpha1.PhaseBlocked,
+		PendingObservation: &ptahv1alpha1.PendingObservationStatus{ApplyOperationID: "apply-original"},
+		ActiveOperation:    &ptahv1alpha1.ActiveOperationStatus{Attempt: 3},
+	}}
+	ftRefusesEach(t, base.DeepCopy, func(r *ptahv1alpha1.PtahSchema) bool {
+		return proofReadAgain(r, "apply-original", 2)
+	}, []ftMutation[*ptahv1alpha1.PtahSchema]{
+		{"the attempt the row saw", func(r *ptahv1alpha1.PtahSchema) { r.Status.ActiveOperation.Attempt = 2 }},
+		{"no claim", func(r *ptahv1alpha1.PtahSchema) { r.Status.ActiveOperation = nil }},
+		{"proof gone", func(r *ptahv1alpha1.PtahSchema) { r.Status.PendingObservation = nil }},
+		{"another proof", func(r *ptahv1alpha1.PtahSchema) { r.Status.PendingObservation.ApplyOperationID = "another-apply" }},
+		{"no longer stopped", func(r *ptahv1alpha1.PtahSchema) { r.Status.Phase = ptahv1alpha1.PhasePending }},
+	})
+}
+
+func TestAPlanUnderAnotherTargetIsNotTheFirstPlan(t *testing.T) {
+	t.Parallel()
+	other := "sha256:" + strings.Repeat("c", 64)
+	base := &ptahv1alpha1.PtahSchema{Status: ptahv1alpha1.PtahSchemaStatus{
+		Phase: ptahv1alpha1.PhaseAwaitingApproval,
+		Plan:  &ptahv1alpha1.CurrentPlanStatus{Name: "current-plan", TargetIdentityDigest: other},
+	}}
+	accepts := func(r *ptahv1alpha1.PtahSchema) bool { return planUnderAnotherTarget(r, ftDigest) }
+	ftRefusesEach(t, base.DeepCopy, accepts, []ftMutation[*ptahv1alpha1.PtahSchema]{
+		{"the first target", func(r *ptahv1alpha1.PtahSchema) { r.Status.Plan.TargetIdentityDigest = ftDigest }},
+		{"no target", func(r *ptahv1alpha1.PtahSchema) { r.Status.Plan.TargetIdentityDigest = "" }},
+		{"no plan", func(r *ptahv1alpha1.PtahSchema) { r.Status.Plan = nil }},
+		{"not waiting", func(r *ptahv1alpha1.PtahSchema) { r.Status.Phase = ptahv1alpha1.PhaseBlocked }},
+		{"a read in flight", func(r *ptahv1alpha1.PtahSchema) {
+			r.Status.ActiveOperation = &ptahv1alpha1.ActiveOperationStatus{Type: ptahv1alpha1.OperationObserve}
+		}},
+		{"proof still owed", func(r *ptahv1alpha1.PtahSchema) {
+			r.Status.PendingObservation = &ptahv1alpha1.PendingObservationStatus{}
+		}},
+	})
+	if planUnderAnotherTarget(base, "") {
+		t.Fatal("accepted a plan with no target to compare it to")
+	}
+}
+
+func TestAJournalSaysAProofWasSettledOnlyForThatPlan(t *testing.T) {
+	t.Parallel()
+	base := &ptahv1alpha1.PtahSchema{Status: ptahv1alpha1.PtahSchemaStatus{Journal: &ptahv1alpha1.LifecycleJournal{
+		Entries: []ptahv1alpha1.JournalEntry{
+			{Type: ptahv1alpha1.JournalApplyFinished, Plan: "plan-a", Outcome: ptahv1alpha1.JournalUnknown},
+			{Type: ptahv1alpha1.JournalVerified, Plan: "plan-a", Outcome: ptahv1alpha1.JournalUnknown},
+		},
+	}}}
+	accepts := func(r *ptahv1alpha1.PtahSchema) bool { return proofSettledInJournal(r, "plan-a") }
+	ftRefusesEach(t, base.DeepCopy, accepts, []ftMutation[*ptahv1alpha1.PtahSchema]{
+		{"no journal", func(r *ptahv1alpha1.PtahSchema) { r.Status.Journal = nil }},
+		{"only the Apply is unknown", func(r *ptahv1alpha1.PtahSchema) { r.Status.Journal.Entries = r.Status.Journal.Entries[:1] }},
+		{"proved", func(r *ptahv1alpha1.PtahSchema) { r.Status.Journal.Entries[1].Outcome = ptahv1alpha1.JournalInSync }},
+		{"another plan", func(r *ptahv1alpha1.PtahSchema) { r.Status.Journal.Entries[1].Plan = "plan-b" }},
+	})
+	if proofSettledInJournal(base, "") {
+		t.Fatal("accepted no plan name")
+	}
+}
+
+func TestAProofFinishedUnderItsTargetCreditsThatPlan(t *testing.T) {
+	t.Parallel()
+	base := &ptahv1alpha1.PtahSchema{Status: ptahv1alpha1.PtahSchemaStatus{
+		Phase:      ptahv1alpha1.PhaseInSync,
+		Applied:    &ptahv1alpha1.AppliedStatus{PlanFingerprint: "first-plan"},
+		Conditions: []metav1.Condition{{Type: "Ready", Status: metav1.ConditionTrue}},
+	}}
+	accepts := func(r *ptahv1alpha1.PtahSchema) bool { return proofFinishedUnderItsTarget(r, "first-plan") }
+	ftRefusesEach(t, base.DeepCopy, accepts, []ftMutation[*ptahv1alpha1.PtahSchema]{
+		{"not in sync", func(r *ptahv1alpha1.PtahSchema) { r.Status.Phase = ptahv1alpha1.PhaseBlocked }},
+		{"nothing credited", func(r *ptahv1alpha1.PtahSchema) { r.Status.Applied = nil }},
+		{"another plan credited", func(r *ptahv1alpha1.PtahSchema) { r.Status.Applied.PlanFingerprint = "another-plan" }},
+		{"proof still owed", func(r *ptahv1alpha1.PtahSchema) {
+			r.Status.PendingObservation = &ptahv1alpha1.PendingObservationStatus{}
+		}},
+		{"a read in flight", func(r *ptahv1alpha1.PtahSchema) {
+			r.Status.ActiveOperation = &ptahv1alpha1.ActiveOperationStatus{Type: ptahv1alpha1.OperationObserve}
+		}},
+		{"not ready", func(r *ptahv1alpha1.PtahSchema) { r.Status.Conditions = nil }},
+	})
+	if proofFinishedUnderItsTarget(base, "") {
+		t.Fatal("accepted no fingerprint")
+	}
+}
+
+func TestAURLWithAnotherLoginChangesOnlyTheLogin(t *testing.T) {
+	t.Parallel()
+	const first = "postgres://first:e2ePg%2F1@e2e-postgresql.ns.svc.cluster.local:5432/db?sslmode=disable"
+	got, err := urlWithLogin(first, "second")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "postgres://second:e2ePg%2F1@e2e-postgresql.ns.svc.cluster.local:5432/db?sslmode=disable"; got != want {
+		t.Fatalf("urlWithLogin() = %q, want %q", got, want)
+	}
+	before, err := runner.TargetIdentityDigest(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := runner.TargetIdentityDigest(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before == after {
+		t.Fatal("the login did not move the target identity, so the row would measure nothing")
+	}
+	for name, raw := range map[string]string{
+		"no login":       "postgres://e2e-postgresql:5432/db",
+		"no password":    "postgres://first@e2e-postgresql:5432/db",
+		"the same login": "postgres://second:pw@e2e-postgresql:5432/db",
+		"not a URL":      "postgres://first:pw@host:notaport/db",
+	} {
+		if _, err := urlWithLogin(raw, "second"); err == nil {
+			t.Errorf("%s: accepted %q", name, raw)
+		}
+	}
+	if _, err := urlWithLogin(first, ""); err == nil {
+		t.Error("accepted no login")
 	}
 }
 

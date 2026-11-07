@@ -368,6 +368,17 @@ func TestSchemaEntriesRecordEachTransitionOnce(t *testing.T) {
 			}},
 		},
 		{
+			// Pending as well, so the row holds the reason ahead of the phase.
+			name:   "a proof a person gave up",
+			before: operatorv1alpha1.PtahSchemaStatus{PendingObservation: observing("apply-1", operatorv1alpha1.PendingObservationApplySucceeded)},
+			after: operatorv1alpha1.PtahSchemaStatus{Phase: operatorv1alpha1.PhasePending, Conditions: []metav1.Condition{
+				{Type: operatorv1alpha1.ConditionReady, Status: metav1.ConditionFalse, Reason: string(operatorv1alpha1.ReasonProofSettled)},
+			}},
+			want: []operatorv1alpha1.JournalEntry{{
+				Type: operatorv1alpha1.JournalVerified, At: at(0), Plan: "plan-a", Outcome: operatorv1alpha1.JournalUnknown,
+			}},
+		},
+		{
 			name:   "a failure",
 			before: operatorv1alpha1.PtahSchemaStatus{ActiveOperation: resolve},
 			after:  operatorv1alpha1.PtahSchemaStatus{ActiveOperation: retried, Conditions: failed("ObservationFailed")},

@@ -31,7 +31,9 @@ var uncertaintyRecords = []struct {
 	{
 		field:   "PendingObservation",
 		writers: []string{"consumeResultWithTransport", "finishUncertainApplyWithEvidenceAndBinding"},
-		clears:  []string{"consumeResultWithTransport", "reconcileDeletion", "verificationPolicyChanged"},
+		// settleProofOnMovedTarget is the way out of a proof no read can finish,
+		// and a person chooses it by naming the Apply.
+		clears: []string{"consumeResultWithTransport", "reconcileDeletion", "settleProofOnMovedTarget", "verificationPolicyChanged"},
 	},
 	// A migration's record has a second writer and a second way out, both
 	// declared on purpose. reconcileUnresolvedRunCopy puts back the record a

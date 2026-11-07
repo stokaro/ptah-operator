@@ -564,7 +564,9 @@ orders are safe.
 The proof is a prioritized operation for a schema and an ordinary reading for a
 migration. `reconcilePendingObservation` runs before suspension, before the
 generation gate and before the realm census, so a schema owing proof cannot be
-overtaken by anything. A migration's unresolved record is consulted only when a
+overtaken by anything. Only deletion and [a person's
+settlement](../../use/recovery/#a-schema-whose-target-moved) end a proof that no
+read can finish. A migration's unresolved record is consulted only when a
 History reading happens to run, and a suspended migration does not read at all,
 so the record cannot clear while suspension stands.
 

@@ -3,6 +3,8 @@
 package e2e
 
 import (
+	"strings"
+
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -63,7 +65,7 @@ func (f *faultRun) targetSecretChanges() {
 		f.assertColumn(engine, other, "fault_token", 0)
 		f.mustResumeStatusWrites("restore status writes after the target-binding refusal")
 		f.waitForSchema(name, "the substituted target to be refused as post-Apply proof", func(resource *ptahv1alpha1.PtahSchema) bool {
-			return retargetProofRefused(resource, operationID, jobUID, old.Spec.TargetIdentityDigest)
+			return retargetProofRefused(resource, ptahv1alpha1.PendingObservationOutcomeUnknown, operationID, jobUID, old.Spec.TargetIdentityDigest)
 		})
 		if f.addedJobCount(name, "apply") != 1 {
 			f.fatalf("%s replayed its Apply while the original target was unavailable", name)
@@ -118,6 +120,149 @@ func (f *faultRun) targetSecretChanges() {
 		f.logf("PASS %s target Secret changed after approval: runner refused; original target proved unchanged; fresh approval changed only its newly declared target", engine)
 		audit.close()
 	}
+}
+
+// targetLoginChanges is what a store does when it moves a resource to another
+// login: the database stays and the plan's target identity does not. The proof the
+// Apply owes cannot be read under the new login, so the resource stops, and each
+// row takes one of the two ways out: a person settles an Apply the runner refused,
+// and an Apply that finished is proved once the first login is back.
+func (f *faultRun) targetLoginChanges() {
+	f.t.Helper()
+	_, err := f.execIn(pgService, "sh", "-ec",
+		`PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -Atqc `+
+			`"CREATE ROLE $1 LOGIN SUPERUSER PASSWORD '$POSTGRES_PASSWORD'"`,
+		"sh", targetChangeLogin)
+	f.check(err, "create the second login %s", targetChangeLogin)
+	f.refusedApplySettledUnderANewLogin()
+	f.finishedApplyProvedUnderTheFirstLogin()
+}
+
+// setTargetURL rewrites the URL a resource's Secret holds, as a store does.
+func (f *faultRun) setTargetURL(secret, url, description string) {
+	f.t.Helper()
+	object := &corev1.Secret{}
+	object.Namespace, object.Name = f.in.TestNamespace, secret
+	patch := f.jsonBytes(map[string]any{"stringData": map[string]any{"url": url}})
+	if err := f.cluster.Client.Patch(f.ctx, object, client.RawPatch(types.MergePatchType, patch)); err != nil {
+		f.fatalf("could not %s", description)
+	}
+}
+
+// loginURL is the database's URL under the second login.
+func (f *faultRun) loginURL(database string) string {
+	f.t.Helper()
+	url, err := urlWithLogin(f.databaseURLFor("postgresql", database), targetChangeLogin)
+	f.check(err, "name the second login in the URL of %s", database)
+	return url
+}
+
+// refusedApplySettledUnderANewLogin moves the login behind an approved Apply's
+// Pod, so the runner refuses it and the proof reads the new login. A value that
+// names another Apply settles nothing, and the value that names this one lets the
+// resource read the database afresh. Its next plan binds the new login and runs on
+// an approval of its own, and the first approval does not carry over.
+func (f *faultRun) refusedApplySettledUnderANewLogin() {
+	f.t.Helper()
+	const name, database, secret = "e2e-target-login-settled", "e2e_target_login_settled", "e2e-target-login-settled-db"
+	f.createDatabase("postgresql", database, secret)
+	before := f.fingerprint("postgresql", database, "the database under the first login")
+	f.createSchema(faultSchema{name: name, engine: "PostgreSQL", reference: f.pgReference, secret: secret, coordinationKey: "e2e/target-login/settled"})
+	old := f.schemaPlan(f.waitForPlan(name))
+	f.startReadBarrier()
+	f.createApproval(name, name+"-first")
+	active := f.waitForSchema(name, "the Apply claimed behind the scheduling barrier", applyDispatched).Status.ActiveOperation
+	operationID, jobUID := active.ID, string(active.JobUID)
+	f.assertReadBlocked(jobUID, "the approved Apply before its login changes")
+	f.setTargetURL(secret, f.loginURL(database), "move the Secret to the second login")
+	f.stopReadBarrier()
+
+	blocked := f.waitForSchema(name, "the proof to stop on the new login", func(resource *ptahv1alpha1.PtahSchema) bool {
+		return retargetProofRefused(resource, ptahv1alpha1.PendingObservationOutcomeUnknown, operationID, jobUID, old.Spec.TargetIdentityDigest)
+	})
+	if blocked.Status.Applied != nil {
+		f.fatalf("%s credited an Apply nothing proved: %+v", name, blocked.Status.Applied)
+	}
+	if f.addedJobCount(name, "apply") != 1 {
+		f.fatalf("%s replayed its Apply under the new login", name)
+	}
+	if f.fingerprint("postgresql", database, "the database after the refused Apply") != before {
+		f.fatalf("%s changed the database under an approval of the first login", name)
+	}
+
+	f.patchSchema(name, map[string]any{"metadata": map[string]any{"annotations": map[string]any{
+		ptahv1alpha1.SettledApplyAnnotation: "sha256:" + strings.Repeat("0", 64),
+	}}})
+	f.waitForSchema(name, "a later read to find the proof still owed", func(resource *ptahv1alpha1.PtahSchema) bool {
+		return proofReadAgain(resource, operationID, blocked.Status.ActiveOperation.Attempt)
+	})
+
+	f.patchSchema(name, map[string]any{"metadata": map[string]any{"annotations": map[string]any{
+		ptahv1alpha1.SettledApplyAnnotation: operationID,
+	}}})
+	current := f.waitForSchema(name, "a plan under the new login", func(resource *ptahv1alpha1.PtahSchema) bool {
+		return planUnderAnotherTarget(resource, old.Spec.TargetIdentityDigest)
+	})
+	if !proofSettledInJournal(current, old.Name) {
+		f.fatalf("%s does not record that nobody established the Apply: %+v", name, current.Status.Journal)
+	}
+	if current.Status.Applied != nil {
+		f.fatalf("%s credited an Apply after its proof was given up: %+v", name, current.Status.Applied)
+	}
+	if f.addedJobCount(name, "apply") != 1 {
+		f.fatalf("%s ran an Apply with no approval of the new login's plan", name)
+	}
+	f.assertColumn("postgresql", database, "fault_token", 0)
+
+	f.createApproval(name, name+"-second")
+	f.waitForSchema(name, "the new login's plan to converge", freshApprovalConverged)
+	f.assertColumn("postgresql", database, "fault_token", 1)
+	if f.addedJobCount(name, "apply") != 2 {
+		f.fatalf("%s did not run exactly the refused Apply and the freshly approved one", name)
+	}
+	f.logf("PASS a login moved after approval: the runner refused, the proof stopped, a person settled it, and a fresh approval ran under the new login")
+}
+
+// finishedApplyProvedUnderTheFirstLogin moves the login after the Apply's Pod has
+// run to its end and before the manager can read the result, which is the Apply
+// nothing could credit: the statement finished, and every read named another
+// target. Putting the first login back proves it and credits it.
+func (f *faultRun) finishedApplyProvedUnderTheFirstLogin() {
+	f.t.Helper()
+	const name, database, secret = "e2e-target-login-restored", "e2e_target_login_restored", "e2e-target-login-restored-db"
+	f.createDatabase("postgresql", database, secret)
+	first := f.databaseURLFor("postgresql", database)
+	f.createSchema(faultSchema{name: name, engine: "PostgreSQL", reference: f.pgReference, secret: secret, coordinationKey: "e2e/target-login/restored"})
+	old := f.schemaPlan(f.waitForPlan(name))
+	f.startReadBarrier()
+	f.createApproval(name, name+"-first")
+	active := f.waitForSchema(name, "the Apply claimed behind the scheduling barrier", applyDispatched).Status.ActiveOperation
+	jobName, operationID, jobUID := active.JobName, active.ID, string(active.JobUID)
+	f.assertReadBlocked(jobUID, "the approved Apply before it runs")
+	f.pauseStatusWrites()
+	f.stopReadBarrier()
+	applied := f.captureExactJobResult(jobName, jobUID, "apply")
+	f.check(automaticApplyResult(applied.result, old.Spec.ContentDigest, old.Spec.CoordinationDigest, old.Spec.TargetIdentityDigest),
+		"hold the finished Apply to its plan")
+	f.setTargetURL(secret, f.loginURL(database), "move the Secret to the second login")
+	f.mustResumeStatusWrites("restore status writes after the Apply finished")
+
+	blocked := f.waitForSchema(name, "the proof of a finished Apply to stop on the new login", func(resource *ptahv1alpha1.PtahSchema) bool {
+		return retargetProofRefused(resource, ptahv1alpha1.PendingObservationApplySucceeded, operationID, jobUID, old.Spec.TargetIdentityDigest)
+	})
+	if blocked.Status.Applied != nil {
+		f.fatalf("%s credited an Apply from a read of another target: %+v", name, blocked.Status.Applied)
+	}
+	f.assertColumn("postgresql", database, "fault_token", 1)
+
+	f.setTargetURL(secret, first, "put the first login back")
+	f.waitForSchema(name, "the proof to finish under the first login", func(resource *ptahv1alpha1.PtahSchema) bool {
+		return proofFinishedUnderItsTarget(resource, old.Spec.Fingerprint)
+	})
+	if f.addedJobCount(name, "apply") != 1 {
+		f.fatalf("%s ran a second Apply", name)
+	}
+	f.logf("PASS a login moved after an Apply finished: the proof stopped, and putting the first login back proved and credited the Apply")
 }
 
 func (f *faultRun) mysqlDriftBeforeDispatch() {

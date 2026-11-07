@@ -65,6 +65,7 @@ decision.
 | `PolicySatisfied` | Artifact type and verification policy checks succeeded. |
 | `PrivilegeChanges` | Apply policy `Always` waits for an approval because the plan changes privileges; the message names the kinds. |
 | `ProofInputsChanged` | Post-Apply proof will restart from its durable immutable binding. |
+| `ProofSettled` | A person gave up the post-Apply proof of an Apply whose target moved, so nothing established what that Apply did and none is recorded. The resource reads the database again under the target the URL Secret names. |
 | `ProtectedTable` | The artifact asks for a change to a table `spec.policy.protectedTables` fences off. |
 | `Published` | Exact plan bytes were committed to immutable storage. |
 | `RealmConflict` | More than one resource claims this database and at least one has not set `spec.target.sharedRealm`, or the `PtahRealm` they name admits one claimant at a time. |
@@ -93,6 +94,7 @@ decision.
 | `SupersededApproval` | A duplicate approval lost to another approval for the same plan. |
 | `SupportedEngine` | The selected database engine has an implemented operator lifecycle. |
 | `Suspended` | Reconciliation is suspended and no new operation may start. |
+| `TargetIdentityChanged` | The URL Secret names another login or address than the plan an Apply ran from, so its post-Apply proof cannot be read. The resource is `Blocked` and keeps its proof and its database realm. Put the first target back, or [settle it](../../use/recovery/#a-schema-whose-target-moved). |
 | `TLSFailed` | `DatabaseReachable` is false because the TLS handshake with the target database did not complete. |
 | `UnsupportedEngine` | The selected engine has no implemented operator lifecycle. |
 | `VerifyingConvergence` | Apply completed but independent read-only proof has not. |

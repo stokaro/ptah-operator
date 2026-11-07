@@ -283,6 +283,7 @@ var SchemaApprovals = define[DataPlaneInputs](Phase{
 		"watches",
 		"approval-resource-replacement",
 		"approval-target-secret-change",
+		"approval-target-login-change",
 		"approval-destructive-policy-change",
 		"approval-exclusion-policy-change",
 		"approval-verification-policy-change",

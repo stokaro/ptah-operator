@@ -135,7 +135,9 @@ The operator rolls nothing back. Each branch has its own recovery, and
   `ApplyOutcomeUnknown`, and the plan is never replayed. A fresh read-only
   observation comes before anything else. If it finds no change the schema is
   `InSync`, with reason `ConvergedAfterUnknownOutcome`; otherwise it plans
-  again.
+  again. An observation that reads another target than the plan's stops the
+  resource, `Blocked`, until [a person ends
+  it](../../use/recovery/#a-schema-whose-target-moved).
 - **Migration, `Failed`.** [`status.lastRun`](../../use/migrations/#what-the-run-reports)
   says how far the run got. A migration that failed at a statement leaves a
   dirty revision row, and the history read that follows holds the resource
@@ -494,7 +496,7 @@ and the finished Jobs it keeps for five minutes, or 24 hours after
 | `PlanPublished` | `status.plan` names a plan the journal does not already hold. A plan republished while the resource refreshes is the same plan and writes nothing. |
 | `ApprovalAccepted` | An Apply consumes an approval: the one a schema's plan records, with the approver admission stamped, or the one a migration's Apply claim names, without one, since a migration's status does not carry it. `approvalUID` is what tells two decisions apart: a later approval may take the name of an earlier one, and writes its own entry. |
 | `ApplyFinished` | A schema's Apply ends and its post-Apply observation takes its place: `Succeeded`, or `Unknown` when its outcome is unknown. An Apply withdrawn before dispatch changed nothing and writes nothing. |
-| `Verified` | That observation settles: `InSync`, `DriftRemains`, or `Superseded` when a newer generation, policy or execution binding took over. |
+| `Verified` | That observation settles: `InSync`, `DriftRemains`, `Superseded` when a newer generation, policy or execution binding took over, or `Unknown` when a person [gave it up](../../use/recovery/#a-schema-whose-target-moved) because its target moved. |
 | `RunFinished` | A migration run ends, with its outcome, the plan it carried out, how many versions it applied, and where it stopped. One run writes one entry: a run that ends `Partial` or `Unknown` also holds the resource in `status.unresolvedRun`, which writes none of its own. A hold a restore brings back without status writes the entry the lost status held, with the outcome and time the hold recorded. |
 | `RunAcknowledged` | A person acknowledges an unresolved run. |
 | `OperationFailed` | An attempt fails. Attempts that fail with the same operation and reason in a row are one entry with a `count` and the time of the last one. |

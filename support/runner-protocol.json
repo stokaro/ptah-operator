@@ -307,6 +307,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:a2d04b7f28e242576fc68d7c8fe1869551ad265977c3ccfa3808f9e4559c944d",
       "reason": "Report Ptah's own policy refusal as a refusal (#806). `ptah oci verify` writes its report, the same findings on standard error, and exits 2, and the runner read that text as invalid_verification_output before it read the report. It now reads the report first and accepts standard error only when it is exactly what the report makes, at exit status 2. Everything else on standard error keeps that code and that message, and the text still reaches no frame or log. The frame this produces is one protocol 1 has always defined: verification_refused, childExitCode 2 and sorted requirement codes, which every manager of this protocol parses. No code, field, argument or retry limit changes, no refusal becomes an acceptance, and a plan or approval binds nothing a Verify refusal writes. Protocol 1 stays."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:676639241413d17add6b4531f2ecad5d10829af5f5ed636868811604fbbd5870",
+      "reason": "Add the TargetIdentityChanged and ProofSettled condition reasons and the settled-apply annotation to api/v1alpha1, a package the runner links for its types (#819). No runner source file changes and the runner reads none of them: commands, payloads, result frames, delivery identity, SQL authority and retry limits are the same."
     }
   ]
 }
