@@ -36,7 +36,7 @@ func (d *dataPlane) unreadableOCISchema() {
 	d.createIsolatedPostgreSQLDatabase(unreadableOCIPGDatabase, unreadableOCIPGSecret, d.credentials.unreadableOCIPGURL)
 	d.createSchemaResource(schemaResource{
 		name: schemaName, engine: "PostgreSQL", secret: unreadableOCIPGSecret, reference: d.registryReference(repository),
-		coordinationKey: key, failureRetry: "5s", interval: reconcileInterval,
+		coordinationKey: key, failureRetry: "5s", interval: "1m",
 	})
 	var message string
 	matched := d.waitForSchema(schemaName, "the schema to name the step that stopped it", func(s *ptahv1alpha1.PtahSchema) bool {
@@ -49,8 +49,39 @@ func (d *dataPlane) unreadableOCISchema() {
 	})
 	d.waitForFetchStepEvent(matched.UID)
 	d.readFetchStepLog(schemaName)
+	d.repairedTagIsRead(schemaName, repository)
 	d.deleteAndWait(schemaName, 2*time.Minute)
 	d.logf("PASS a schema artifact the executor cannot parse named its step, and the step's log holds why: %s", message)
+}
+
+// repairedTagIsRead pushes a schema the executor reads to the tag the failing
+// read came from, and waits for the interval to find it. Only a read of the
+// source can show a moved tag, so the interval is what ends the failed claim here,
+// and nothing writes to the resource. The wait cannot stop on phase Failed as
+// waitForSchema does: the attempts it waits through are the point. It audits as
+// that wait does.
+func (d *dataPlane) repairedTagIsRead(schemaName, repository string) {
+	d.t.Helper()
+	failing := &ptahv1alpha1.PtahSchema{}
+	d.check(d.get(schemaName, failing), "read %s before its tag moved", schemaName)
+	generation, failedSource := failing.Generation, schemaSourceIdentity(failing)
+	repaired := filepath.Join(repositoryRoot, "testdata", "e2e", "postgresql-v1.sql")
+	digest := d.publishSchema("postgresql", "unreadable-repair", "postgres", d.registryReference(repository), repaired)
+	deadline := time.Now().Add(waitTimeout)
+	var last error
+	for time.Now().Before(deadline) {
+		d.auditCompletedJobs()
+		schema := &ptahv1alpha1.PtahSchema{}
+		d.check(d.get(schemaName, schema), "read %s while its tag is read again", schemaName)
+		if last = schemaReadTheRepair(schema, generation, failedSource); last == nil {
+			if schema.Status.Source.Digest != digest {
+				d.fatalf("%s planned from digest %s, not the pushed %s", schemaName, schema.Status.Source.Digest, digest)
+			}
+			return
+		}
+		d.sleep(2 * time.Second)
+	}
+	d.fatalf("%s never read the repaired tag: %v", schemaName, last)
 }
 
 // publishUnparsableSchema runs the fixture on the host, against the registry as

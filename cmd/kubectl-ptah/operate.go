@@ -322,8 +322,9 @@ func writeRefreshReport(out io.Writer, result operate.RefreshResult, waiting boo
 	}
 	field("Observed", fmt.Sprintf("phase %s, %s", orNone(statusview.Clean(status.phase)), lastRead(status.observedAt)))
 	text.WriteString("The request is written, not answered. The operator takes it once no operation is running, " +
-		"the resource is not suspended and no retry delay is pending, and a read already under way does not " +
-		"answer it. It starts no Apply and approves nothing.\n")
+		"the resource is not suspended and no retry delay is pending. A read-only operation that failed gives way " +
+		"to it when its retry delay ends, and a read already under way does not answer it. " +
+		"It starts no Apply and approves nothing.\n")
 	if result.Suspended {
 		text.WriteString("The resource is suspended: the operator takes the request after it is resumed.\n")
 	}

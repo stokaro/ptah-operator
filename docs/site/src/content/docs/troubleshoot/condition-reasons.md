@@ -294,18 +294,17 @@ byte of the token Ptah stopped at. YAML, HCL and DBML name a line.
 | `PtahMigration` history read | `Progressing=True` with reason `OperationFailed`, and an `OperationRetried` Warning Event. |
 
 The operation runs again after `spec.execution.failureRetryInterval`, on the same
-files. **Repairing the source does not end that by itself:** a read that keeps
-failing holds the snapshot, commit or digest it was given, and the source is read
-again only once that read is gone. After you repair the file, suspend and resume
-the resource, or make any other edit to its spec:
+files. Repairing the source ends that with no edit to the resource. An edit to a
+ConfigMap is read at once. A new commit or a moved tag is read when the retry
+delay ends after `spec.interval` has passed since the source was last read, or
+sooner if you ask:
 
 ```bash
-kubectl ptah suspend schema/storefront -n application --wait
-kubectl ptah resume schema/storefront -n application
+kubectl ptah refresh schema/storefront -n application --wait
 ```
 
-`kubectl ptah refresh` does not do this: a read request is answered between
-operations, and this operation does not end.
+A `ReadRestarted` Event says the failed operation gave way and why, and
+`status.activeOperation` starts again at attempt 1.
 
 The reason comes from a second run of Ptah that holds no database URL and no
 credential, so it cannot quote the database. It can quote a fragment of the file,

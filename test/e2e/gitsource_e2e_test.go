@@ -25,6 +25,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/operate"
 	"github.com/stokaro/ptah-operator/test/e2e/gitrefusal"
 	"github.com/stokaro/ptah-operator/test/e2e/gitrepo"
 	"github.com/stokaro/ptah-operator/test/e2e/harness"
@@ -993,8 +994,41 @@ func (c *gitRun) unreadableSchema() {
 		err := unreadableSourceEvent(events.Items, schema.UID, "OperationFailed", unreadablePartitionFile, unreadablePartitionReason)
 		return err == nil, fmt.Sprint(err)
 	})
+	c.repairedCommitIsRead(schema)
 	c.deleteAndWait(schema)
 	c.logf("PASS a schema from Git said why its file could not be read: %s", message)
+}
+
+// repairedCommitIsRead pushes a fix to the branch the failing read is on and asks
+// for a read. The interval is an hour, so a request is the only thing that can
+// show the new commit before the row times out, and the failed claim is what used
+// to keep the request from being taken. The spec does not change.
+func (c *gitRun) repairedCommitIsRead(schema *ptahv1alpha1.PtahSchema) {
+	c.t.Helper()
+	c.wait("the read to fail again under its claim", func() (bool, string) {
+		if err := c.get(gitUnreadableSchema, schema); err != nil {
+			return false, err.Error()
+		}
+		return schemaReadRetried(schema, ""), fmt.Sprintf("%s, operation %+v", schema.Status.Phase, schema.Status.ActiveOperation)
+	})
+	generation, failedSource := schema.Generation, schemaSourceIdentity(schema)
+	repaired := gitRepairedSpec()
+	c.serve(repaired, len(repaired.Commits)-1)
+	request := operate.NextReadRequest(time.Now(), schema.Annotations[ptahv1alpha1.ReadRequestAnnotation], schema.Status.LastReadRequest)
+	patch := fmt.Appendf(nil, `{"metadata":{"annotations":{%q:%q}}}`, ptahv1alpha1.ReadRequestAnnotation, request)
+	target := &ptahv1alpha1.PtahSchema{ObjectMeta: metav1.ObjectMeta{Namespace: c.in.TestNamespace, Name: gitUnreadableSchema}}
+	c.check(c.cluster.Client.Patch(c.ctx, target, client.RawPatch(types.MergePatchType, patch), client.FieldOwner(harness.FieldOwner)),
+		"request a read of %s", target.Name)
+	c.wait("the schema to plan from the repaired commit", func() (bool, string) {
+		if err := c.get(gitUnreadableSchema, schema); err != nil {
+			return false, err.Error()
+		}
+		err := schemaReadTheRepair(schema, generation, failedSource)
+		return err == nil, fmt.Sprint(err)
+	})
+	if schema.Status.LastReadRequest != request {
+		c.fatalf("the read of the repaired commit did not answer request %s: lastReadRequest %q", request, schema.Status.LastReadRequest)
+	}
 }
 
 // deploymentLogs is the latest log of a Deployment's Pod.

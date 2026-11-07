@@ -23,6 +23,7 @@ import (
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/jobclaim"
+	"github.com/stokaro/ptah-operator/internal/operate"
 	"github.com/stokaro/ptah-operator/internal/sourcecontent"
 	"github.com/stokaro/ptah-operator/internal/sourcesnapshot"
 	"github.com/stokaro/ptah-operator/test/e2e/harness"
@@ -650,10 +651,10 @@ func (c *configMapRun) replacedSnapshotRefused() {
 
 // unreadableSources delivers a schema file Ptah cannot read and a migration
 // file it cannot load, each through a ConfigMap, and reads the reason where a
-// person reads it. Repairing the schema file lets the same resource plan, so a
-// reason that is true of one revision does not outlive it. A read that keeps
-// failing holds the snapshot it was given, so the repair is the edit and then
-// the suspend and resume the troubleshooting page gives. The resources are
+// person reads it. A read request is taken while the read fails. Repairing the
+// file is then all it takes: the edit alone ends the failed claim, with no spec
+// edit and no suspension, and the same resource plans from the repaired file, so
+// a reason that is true of one revision does not outlive it. The resources are
 // removed afterward: neither is a state a later scenario reads.
 func (c *configMapRun) unreadableSources() {
 	c.t.Helper()
@@ -695,22 +696,29 @@ func (c *configMapRun) unreadableSources() {
 	})
 	c.checkUnreadableText(message)
 	c.waitForUnreadableEvent(schema.UID, "OperationFailed", unreadablePartitionFile, unreadablePartitionReason)
-	c.editSource(configMapUnreadableSchemaSource, "schema.sql", configMapSchemaRevisions[0])
-	c.setUnreadableSchemaSuspended(true)
-	c.wait("the schema to be suspended with nothing in flight", func() (bool, string) {
-		if err := c.get(configMapUnreadableSchema, schema); err != nil {
-			return false, err.Error()
+	retried := c.waitForUnreadableSchema("the read to fail again under its claim", func(s *ptahv1alpha1.PtahSchema) error {
+		if !schemaReadRetried(s, "") {
+			return fmt.Errorf("%s, operation %+v", s.Status.Phase, s.Status.ActiveOperation)
 		}
-		return schema.Status.Phase == ptahv1alpha1.PhaseSuspended && schema.Status.ActiveOperation == nil, string(schema.Status.Phase)
+		return nil
 	})
-	c.setUnreadableSchemaSuspended(false)
-	c.wait("the schema to plan once its file reads", func() (bool, string) {
-		if err := c.get(configMapUnreadableSchema, schema); err != nil {
-			return false, err.Error()
+	generation, failedSource := retried.Generation, schemaSourceIdentity(retried)
+	request := c.requestUnreadableSchemaRead(retried)
+	c.waitForUnreadableSchema("the read request to be taken while the read fails", func(s *ptahv1alpha1.PtahSchema) error {
+		if !readRequestTakenWhileFailing(s, request) {
+			return fmt.Errorf("lastReadRequest %q, phase %s", s.Status.LastReadRequest, s.Status.Phase)
 		}
-		failed := meta.FindStatusCondition(schema.Status.Conditions, ptahv1alpha1.ConditionReconciliationFailed)
-		repaired := schema.Status.Plan != nil && failed != nil && failed.Status == metav1.ConditionFalse
-		return repaired, fmt.Sprintf("%s, ReconciliationFailed %+v", schema.Status.Phase, failed)
+		return nil
+	})
+	c.waitForUnreadableSchema("the read the request started to fail in its turn", func(s *ptahv1alpha1.PtahSchema) error {
+		if !schemaReadRetried(s, retried.Status.ActiveOperation.ID) {
+			return fmt.Errorf("%s, operation %+v", s.Status.Phase, s.Status.ActiveOperation)
+		}
+		return nil
+	})
+	c.editSource(configMapUnreadableSchemaSource, "schema.sql", configMapSchemaRevisions[0])
+	c.waitForUnreadableSchema("the schema to plan from the edit alone", func(s *ptahv1alpha1.PtahSchema) error {
+		return schemaReadTheRepair(s, generation, failedSource)
 	})
 	c.deleteAndWait(schema)
 	c.logf("PASS a schema from a ConfigMap said why its file could not be read: %s", message)
@@ -745,15 +753,55 @@ func (c *configMapRun) unreadableSources() {
 	})
 	c.checkUnreadableText(message)
 	c.waitForUnreadableEvent(migration.UID, "OperationRetried", unreadableMigrationFile, unreadableMigrationReason)
+	c.wait("the migration's read to fail again under its claim", func() (bool, string) {
+		if err := c.get(configMapUnreadableMigration, migration); err != nil {
+			return false, err.Error()
+		}
+		return migrationReadRetried(migration, ""), fmt.Sprintf("%s, operation %+v", migration.Status.Phase, migration.Status.ActiveOperation)
+	})
+	generation = migration.Generation
+	failedSource = migration.Status.Artifact.Snapshot.ContentDigest
+	c.editSource(configMapUnreadableMigrationSource, unreadableMigrationFiles[0].key, "CREATE TABLE e2e_unreadable_events (id bigint);\n")
+	c.wait("the migration to plan from the edit alone", func() (bool, string) {
+		if err := c.get(configMapUnreadableMigration, migration); err != nil {
+			return false, err.Error()
+		}
+		err := migrationReadTheRepair(migration, generation, failedSource)
+		return err == nil, fmt.Sprint(err)
+	})
 	c.deleteAndWait(migration)
 	c.logf("PASS a migration from a ConfigMap said why its file could not be loaded: %s", message)
 }
 
-func (c *configMapRun) setUnreadableSchemaSuspended(suspended bool) {
+// waitForUnreadableSchema returns the reading that satisfied holds, so a claim is
+// asserted against the document that matched. holds says what is missing.
+func (c *configMapRun) waitForUnreadableSchema(what string, holds func(*ptahv1alpha1.PtahSchema) error) *ptahv1alpha1.PtahSchema {
 	c.t.Helper()
-	patch := client.RawPatch(types.MergePatchType, fmt.Appendf(nil, `{"spec":{"suspend":%t}}`, suspended))
-	schema := &ptahv1alpha1.PtahSchema{ObjectMeta: metav1.ObjectMeta{Namespace: c.in.TestNamespace, Name: configMapUnreadableSchema}}
-	c.check(c.cluster.Client.Patch(c.ctx, schema, patch, client.FieldOwner(harness.FieldOwner)), "set spec.suspend on %s", schema.Name)
+	var matched *ptahv1alpha1.PtahSchema
+	c.wait(what, func() (bool, string) {
+		schema := &ptahv1alpha1.PtahSchema{}
+		if err := c.get(configMapUnreadableSchema, schema); err != nil {
+			return false, err.Error()
+		}
+		if err := holds(schema); err != nil {
+			return false, err.Error()
+		}
+		matched = schema
+		return true, ""
+	})
+	return matched
+}
+
+// requestUnreadableSchemaRead writes a read request the way kubectl ptah refresh
+// does, later than any the resource answered, and returns its value.
+func (c *configMapRun) requestUnreadableSchemaRead(schema *ptahv1alpha1.PtahSchema) string {
+	c.t.Helper()
+	request := operate.NextReadRequest(time.Now(), schema.Annotations[ptahv1alpha1.ReadRequestAnnotation], schema.Status.LastReadRequest)
+	patch := fmt.Appendf(nil, `{"metadata":{"annotations":{%q:%q}}}`, ptahv1alpha1.ReadRequestAnnotation, request)
+	target := &ptahv1alpha1.PtahSchema{ObjectMeta: metav1.ObjectMeta{Namespace: c.in.TestNamespace, Name: configMapUnreadableSchema}}
+	c.check(c.cluster.Client.Patch(c.ctx, target, client.RawPatch(types.MergePatchType, patch), client.FieldOwner(harness.FieldOwner)),
+		"request a read of %s", target.Name)
+	return request
 }
 
 // checkUnreadableText holds a reason to what the run that wrote it could know:
