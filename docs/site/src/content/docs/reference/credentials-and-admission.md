@@ -253,38 +253,36 @@ A value the operator cannot use is reported when the operation that reads it run
 
 | What the Secret holds | What the run reported |
 | --- | --- |
-| No key `url` | The Pod waits, as below, with `couldn't find key url in Secret` |
+| No key `url` | The operation waits, as below, with `couldn't find key url in Secret` |
 | A `/` in the password, not escaped | `Failed`, `OperationFailed`: `invalid_target: database URL is invalid` |
 | A newline after the URL | The same |
 
 ### Before the Secret exists {#external-secret-stores-not-synced}
 
 Created before the tool has written the Secret, a `PtahSchema` stands in `Observing`
-with `Ready=False`, reason `OperationInProgress`, and `ReconciliationFailed=False`.
-A `PtahMigration` stands in `Reading` with `Progressing=True`, reason
-`OperationInProgress`. No condition and no Event on the resource names the Secret.
-The operation Pod does:
+with `Ready=False`, reason `PodConfigurationError`, and `ReconciliationFailed=False`.
+A `PtahMigration` stands in `Reading` with `Progressing=False` and the same reason.
+The message carries what the kubelet wrote on the operation Pod's container:
 
-```sh
-kubectl -n application get pods
-kubectl -n application describe pod <the Pod in CreateContainerConfigError>
+```text
+Job <the Job> cannot start its Pod: secret "application-database" not found
 ```
 
-Its container waits in `CreateContainerConfigError` with `secret
-"application-database" not found`, and the Pod carries a `Failed` Warning Event
-with the same words. When the Secret appears, the kubelet starts the container and
-the operation goes on: in the run the Observe finished within 30 seconds of the
-Secret being written, and nobody had to touch anything.
+A `PodConfigurationError` Warning Event says the same. Those words hold the names
+of the Secret and the key and nothing the Secret holds. The resource reports this
+within 30 seconds of the Pod reaching that state, which is how often it looks at a
+running read-only operation. When the Secret appears, the kubelet starts the
+container and the operation goes on, and nobody has to touch anything.
 
 The Job still has its `spec.execution.activeDeadlineSeconds`. Past that, a
 `PtahSchema` read reports `Failed`, `OperationFailed`: `read Observe result: ptah
-runner result frame not found`, which does not name the Secret either, and tries
-again after `spec.execution.failureRetryInterval`. An Apply in the same position,
-approved while the Secret was gone, reports `ApplyOutcomeUnknown` with `apply result
-is uncertain: ptah runner result frame not found`, though its container never
-started. It observes the database, publishes the same plan again and asks for a new
-approval. An Apply whose Secret returned before the deadline went on under the
-approval it had.
+runner result frame not found;` followed by what it reported before, and tries again
+after `spec.execution.failureRetryInterval`. An Apply in the same position, approved
+while the Secret was gone, reports `ApplyOutcomeUnknown` with `apply result is
+uncertain: ptah runner result frame not found;` and the same words, though its
+container never started. It observes the database, publishes the same plan again and
+asks for a new approval. An Apply whose Secret returned before the deadline went on
+under the approval it had.
 
 ### When the credential rotates {#external-secret-stores-rotation}
 

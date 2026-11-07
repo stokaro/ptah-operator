@@ -909,7 +909,8 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 		} else if boundary != "" {
 			return r.retryMigrationOperation(ctx, migration, job, errors.New(boundary))
 		}
-		return r.retryMigrationOperation(ctx, migration, job, fmt.Errorf("read %s result: %w", operation.Type, parseErr))
+		return r.retryMigrationOperation(ctx, migration, job, withUnstartedPod(fmt.Errorf("read %s result: %w", operation.Type, parseErr),
+			meta.FindStatusCondition(migration.Status.Conditions, operatorv1alpha1.ConditionMigrationProgressing)))
 	}
 	if !jobSucceeded(job) {
 		return r.retryMigrationOperation(ctx, migration, job, fmt.Errorf("the %s Job failed", operation.Type))
@@ -2364,8 +2365,7 @@ func (r *MigrationReconciler) reportMigrationPodAdmission(
 	}
 	before := migration.DeepCopy()
 	if change.refused {
-		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionFalse,
-			operatorv1alpha1.ReasonPodAdmissionRefused, change.message)
+		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionFalse, change.reason, change.message)
 	} else {
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionTrue,
 			operatorv1alpha1.ReasonOperationInProgress, fmt.Sprintf("%s operation is in progress", operation.Type))
@@ -2373,7 +2373,11 @@ func (r *MigrationReconciler) reportMigrationPodAdmission(
 	if err := r.patchMigrationStatus(ctx, before, migration); err != nil {
 		return err
 	}
-	if change.refused {
+	switch {
+	case !change.refused:
+	case change.reason == operatorv1alpha1.ReasonPodConfigurationError:
+		r.event(migration, corev1.EventTypeWarning, "PodConfigurationError", "%s", change.message)
+	default:
 		r.event(migration, corev1.EventTypeWarning, "PodAdmissionRefused", "%s", change.message)
 	}
 	return nil

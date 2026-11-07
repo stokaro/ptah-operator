@@ -66,6 +66,8 @@ const (
 	fourEyesPGSecret           = "e2e-postgresql-four-eyes-db"
 	podMetadataPGDatabase      = "ptah_e2e_pod_metadata"
 	podMetadataPGSecret        = "e2e-postgresql-pod-metadata-db"
+	podConfigurationPGDatabase = "ptah_e2e_pod_configuration"
+	podConfigurationPGSecret   = "e2e-postgresql-pod-configuration-db"
 	extensionPGDatabase        = "ptah_e2e_extension"
 	extensionPGSecret          = "e2e-postgresql-extension-db"
 	unreadableOCIPGDatabase    = "ptah_e2e_unreadable_oci"
@@ -131,13 +133,16 @@ var cksumTable = func() (table [256]uint32) {
 // fixtures. Every one of them is a protected pattern: none may reach a status,
 // an Event, a log, a metric or a non-Secret object.
 type fixtureCredentials struct {
-	pgPassword         string
-	pgURL              string
-	customCAPGURL      string
-	fourEyesPGURL      string
-	podMetadataPGURL   string
-	extensionPGURL     string
-	unreadableOCIPGURL string
+	pgPassword       string
+	pgURL            string
+	customCAPGURL    string
+	fourEyesPGURL    string
+	podMetadataPGURL string
+	// podConfigurationPGURL is held under another key than the Job asks for, so
+	// the row can read what the kubelet says about a Secret that has a value.
+	podConfigurationPGURL string
+	extensionPGURL        string
+	unreadableOCIPGURL    string
 	// loginVisibilityPGURL connects as the login support/databases.md documents,
 	// with the password every other PostgreSQL URL here carries.
 	loginVisibilityPGURL string
@@ -155,13 +160,14 @@ func deriveFixtureCredentials(namespace string) fixtureCredentials {
 			".svc.cluster.local:5432/" + database + "?sslmode=disable"
 	}
 	return fixtureCredentials{
-		pgPassword:         pgPassword,
-		pgURL:              pgURL(pgDatabase),
-		customCAPGURL:      pgURL(customCAPGDatabase),
-		fourEyesPGURL:      pgURL(fourEyesPGDatabase),
-		podMetadataPGURL:   pgURL(podMetadataPGDatabase),
-		extensionPGURL:     pgURL(extensionPGDatabase),
-		unreadableOCIPGURL: pgURL(unreadableOCIPGDatabase),
+		pgPassword:            pgPassword,
+		pgURL:                 pgURL(pgDatabase),
+		customCAPGURL:         pgURL(customCAPGDatabase),
+		fourEyesPGURL:         pgURL(fourEyesPGDatabase),
+		podMetadataPGURL:      pgURL(podMetadataPGDatabase),
+		podConfigurationPGURL: pgURL(podConfigurationPGDatabase),
+		extensionPGURL:        pgURL(extensionPGDatabase),
+		unreadableOCIPGURL:    pgURL(unreadableOCIPGDatabase),
 		loginVisibilityPGURL: "postgres://" + loginVisibilityPGLogin + ":" + pgPassword + "@" + pgService + "." + namespace +
 			".svc.cluster.local:5432/" + loginVisibilityPGDatabase + "?sslmode=disable",
 		mysqlPassword:     mysqlPassword,

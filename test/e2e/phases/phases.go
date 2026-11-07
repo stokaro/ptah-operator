@@ -241,6 +241,7 @@ var DataPlane = define[DataPlaneInputs](Phase{
 		"closing-audits",
 		"four-eyes-distinct-approver",
 		"pod-metadata-admission",
+		"pod-configuration-error",
 		"postgresql-extension-drift",
 		"oci-unreadable-schema",
 		"postgresql-login-visibility-drift",
@@ -375,6 +376,7 @@ var MigrationRuntimePostgreSQL = define[MigrationsInputs](Phase{
 	Timeout: 45 * time.Minute,
 	Scenarios: []string{
 		"runtime-artifact",
+		"pod-configuration-past-deadline",
 		"approval-resource-replacement",
 		"approval-policy-change",
 		"approval-transaction-mode-change",
@@ -397,6 +399,7 @@ var MigrationRuntimeMySQL = define[MigrationsInputs](Phase{
 	Timeout: 45 * time.Minute,
 	Scenarios: []string{
 		"runtime-artifact",
+		"pod-configuration-past-deadline",
 		"approval-resource-replacement",
 		"approval-policy-change",
 		"approval-transaction-mode-change",

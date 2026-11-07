@@ -904,6 +904,25 @@ func TestWaitTargets(t *testing.T) {
 			wantTimeout: true, wantMessage: `(PodAdmissionRefused): pods "apply-1" is forbidden`,
 		},
 		{
+			name: "applied: a claim whose Pod the kubelet cannot configure keeps its claim, and the timeout names the Secret", target: operate.TargetApplied,
+			docs: func(f operate.Family) []doc {
+				// reportPodAdmission again: the Pod exists and its container waits.
+				conditionType := operatorv1alpha1.ConditionReady
+				if f == operate.FamilyMigration {
+					conditionType = operatorv1alpha1.ConditionMigrationProgressing
+				}
+				return []doc{
+					{phase: "AwaitingApproval", observedAt: at(0)},
+					{
+						phase: "Applying", operation: "Apply", observedAt: at(0),
+						conditions: []metav1.Condition{condition(conditionType, metav1.ConditionFalse, "PodConfigurationError",
+							`Job apply-1 cannot start its Pod: secret "application-database" not found`, 3)},
+					},
+				}
+			},
+			wantTimeout: true, wantMessage: `(PodConfigurationError): Job apply-1 cannot start its Pod: secret "application-database" not found`,
+		},
+		{
 			name: "applied: a schema Apply whose dispatch was refused keeps its claim, and the timeout names it", target: operate.TargetApplied,
 			only: operate.FamilySchema,
 			docs: func(f operate.Family) []doc {

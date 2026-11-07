@@ -55,6 +55,7 @@ func TestDataPlane(t *testing.T) {
 		{"closing-audits", d.closingCredentialAudits},
 		{"four-eyes-distinct-approver", d.fourEyesDistinctApprover},
 		{"pod-metadata-admission", d.podMetadataAdmission},
+		{"pod-configuration-error", d.podConfigurationNamedOnResource},
 		{"postgresql-extension-drift", d.postgresqlExtensionDrift},
 		{"oci-unreadable-schema", d.unreadableOCISchema},
 		{"postgresql-login-visibility-drift", d.postgresqlLoginVisibilityDrift},
@@ -254,7 +255,7 @@ func newDataPlane(t *testing.T, run *harness.Run, in phases.DataPlaneInputs) *da
 		d.registry.Password,
 		d.credentials.pgPassword, d.credentials.pgURL, d.credentials.customCAPGURL,
 		d.credentials.fourEyesPGURL, d.credentials.podMetadataPGURL, d.credentials.extensionPGURL, d.credentials.unreadableOCIPGURL,
-		d.credentials.loginVisibilityPGURL,
+		d.credentials.loginVisibilityPGURL, d.credentials.podConfigurationPGURL,
 		d.credentials.mysqlPassword, d.credentials.mysqlRootPassword, d.credentials.mysqlURL,
 		d.external.Password, d.external.URL,
 	); err != nil {

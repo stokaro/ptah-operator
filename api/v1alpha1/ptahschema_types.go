@@ -1708,6 +1708,7 @@ const (
 	ReasonPlanPublicationRefused       ConditionReason = "PlanPublicationRefused"
 	ReasonPlanReady                    ConditionReason = "PlanReady"
 	ReasonPodAdmissionRefused          ConditionReason = "PodAdmissionRefused"
+	ReasonPodConfigurationError        ConditionReason = "PodConfigurationError"
 	ReasonPolicyBlocked                ConditionReason = "PolicyBlocked"
 	ReasonPolicyChanged                ConditionReason = "PolicyChanged"
 	ReasonPolicyRefused                ConditionReason = "PolicyRefused"
