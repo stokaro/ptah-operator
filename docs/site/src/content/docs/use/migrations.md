@@ -98,7 +98,9 @@ back needs a new one. The operator reads again from the artifact reference at
 the spec is read at once. Once the artifact passes, or the reference resolves to
 another digest, or the source is no longer a verified one, no condition names the
 refusal, whatever the history read goes on to say. [A wait](../operations/#wait)
-for `in-sync`, `approval` or `applied` stops on the refusal with exit status 8.
+for `in-sync`, `approval` or `applied` stops on the refusal with exit status 8. One
+for a run that applied before the refusal says the run applied and that no reading
+of the history has followed it, with `CompletionNotProved`.
 
 Under `require_signature` a registry fault can read as a refusal. A registry that
 answers 404 from its referrers API looks like one without that API, and with no

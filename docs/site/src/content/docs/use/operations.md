@@ -1802,7 +1802,7 @@ reads those rather than the order or the time of what happened.
 | `OtherPlanApplied` | another plan's run ended |
 | `OtherApprovalConsumed` | the same plan ran under another approval, as when two people approved it and the operator took the oldest |
 | `PlanSuperseded` | a migration's plan will not run: another plan replaced it or is running, or a reading left nothing to apply |
-| `CompletionNotProved` | a run ended that may be this one and no record says so: its record names no plan because an operator older than 0.2.10 wrote it, it names this plan and not what allowed the run, as the entry of a hold a restore brought back does, it names no fingerprint and `--plan` gave one, or a later run replaced it and the journal holds no reading after it. Also this very run, when the database moved before the next reading, since a reading of another database cannot verify it |
+| `CompletionNotProved` | a run ended that may be this one and no record says so: its record names no plan because an operator older than 0.2.10 wrote it, it names this plan and not what allowed the run, as the entry of a hold a restore brought back does, it names no fingerprint and `--plan` gave one, or a later run replaced it and the journal holds no reading after it. Also this very run, when the database moved before the next reading, since a reading of another database cannot verify it, or when a verification policy refused the artifact before any reading followed the run, since nothing reads the database until an artifact passes |
 
 `--for approval` asks whether a plan waits for you, so a plan that waits already
 answers it, even one computed before the wait began. Started right after an edit
@@ -1861,7 +1861,10 @@ kubectl ptah schema storefront -n application shows where it stands.
 A verification policy that refuses the artifact stops a wait for `in-sync`,
 `approval` or `applied` with the reason `PolicyRefused` and the requirements it
 named. No plan outlives the refusal and no approval does, and the database is not
-read. The wait reads the refusal from `ArtifactVerified`, `False` with
+read. A wait for `applied` whose migration run has already ended goes by that run
+instead: one that applied stops with `CompletionNotProved`, naming the run, since
+the database changed and the refusal holds back the reading that would confirm it.
+The wait reads the refusal from `ArtifactVerified`, `False` with
 `PolicyRefused`, for the generation the resource has now, at rest in `Blocked`, on
 two reads in a row. No reading dates it, so a refusal that stands when the wait
 begins stops it too. An older one does not: a spec edited since, a read request

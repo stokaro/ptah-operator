@@ -57,8 +57,12 @@ until it ships a fix, so read a blocked reading from `status.journal` or
 `kubectl ptah migration`. `kubectl ptah wait
 --for approval` now ends on a plan already waiting, so a script that used it to
 wait for a newer reading has to run `kubectl ptah refresh --wait`. `kubectl ptah
-wait` and `kubectl ptah approve --wait` now exit 8 with `PolicyRefused` on an
-artifact the verification policy refuses, where they ran to the timeout and exited 7.
+wait --for in-sync`, `approval` or `applied`, `approve --wait`, `set-source --wait`
+and `resume --wait` now exit 8 with `PolicyRefused` on an artifact the verification
+policy refuses, where they ran to the timeout and exited 7. A wait for a migration
+run that applied before the refusal exits 8 with `CompletionNotProved` and names the
+run, so a script that reads exit status 8 as a plan that did not run has to read the
+reason as well.
 A migration Apply
 now writes the approver's username to the target database, so check what that
 means for the retention of its backups and dumps if the name is an email address.

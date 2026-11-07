@@ -599,7 +599,9 @@ cannot reach its target, such as an Apply that failed or a run whose outcome
 nobody established, stops at once. So does a wait on a plan the resource's own
 policy holds (a schema plan that is destructive while allowDestructive is
 false, or any plan under apply Never), once the operator has planned it again
-after the wait began.
+after the wait began, and one for in-sync, approval or applied on an artifact
+the verification policy refuses. A run that applied before such a refusal ends
+the wait with CompletionNotProved, naming the run.
 
 suspend, resume, refresh and set-source patch the resource as you: they need
 get and patch on ptahschemas or ptahmigrations. wait needs get. The resource is
