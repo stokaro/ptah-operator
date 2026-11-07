@@ -128,9 +128,15 @@ func runApproveWith(t *testing.T, api client.Client, namespace string, input io.
 // fields this plugin does not read, as a plan a newer Ptah saved does.
 func unreadable(t *testing.T) (*admitting, string) {
 	t.Helper()
+	return waitingOn(t, planreadtest.DocumentWithUnreadFields(t, []string{"ALTER TABLE orders DROP COLUMN legacy_note;"}))
+}
+
+// waitingOn is an API server whose current plan is this document, waiting for a
+// person.
+func waitingOn(t *testing.T, document []byte) (*admitting, string) {
+	t.Helper()
 	lab := planreadtest.NewLab(t, "storefront")
-	plan := lab.PublishDocument(t, planreadtest.DocumentWithUnreadFields(t,
-		[]string{"ALTER TABLE orders DROP COLUMN legacy_note;"}), "unread")
+	plan := lab.PublishDocument(t, document, "unread")
 	lab.SetCurrent(t, plan)
 	schema := &operatorv1alpha1.PtahSchema{}
 	if err := lab.Client().Get(context.Background(), client.ObjectKey{Namespace: planreadtest.Namespace, Name: "storefront"}, schema); err != nil {
@@ -182,10 +188,30 @@ func TestApproveRefusesAPlanItCannotReadWhole(t *testing.T) {
 			if stdout != "" {
 				t.Fatalf("approve wrote to stdout: %q", stdout)
 			}
-			if !strings.Contains(stderr, "kubectl ptah plan storefront") || strings.Contains(stderr, planreadtest.UnreadValue) {
-				t.Fatalf("the refusal does not say what to do, or quotes a value: %q", stderr)
+			hint := "kubectl ptah plan storefront -n " + planreadtest.Namespace
+			if !strings.Contains(stderr, hint) || strings.Contains(stderr, planreadtest.UnreadValue) {
+				t.Fatalf("the refusal does not say %q, or quotes a value: %q", hint, stderr)
 			}
 		})
+	}
+}
+
+// A key this plugin would not print does not reach the terminal through approve,
+// or through plan, in any format.
+func TestNeitherCommandQuotesAKeyItWouldNotPrint(t *testing.T) {
+	document := planreadtest.Document(t, []string{"ALTER TABLE orders DROP COLUMN legacy_note;"})
+	document = append([]byte(`{"postgres://app:hunter2@db/shop":1,`), document[1:]...)
+	api, _ := waitingOn(t, document)
+
+	code, stdout, stderr := runApprove(t, api, "yes\n", true, "schema/storefront")
+	if code != exitFailed || len(api.created) != 0 || strings.Contains(stdout+stderr, "hunter2") {
+		t.Fatalf("approve = %d after %d creates; stdout %q; stderr %q", code, len(api.created), stdout, stderr)
+	}
+	for _, format := range []string{"text", "sql", "json"} {
+		code, stdout, stderr := runPlan(t, api, "storefront", "-o", format)
+		if code != exitFailed || stdout != "" || strings.Contains(stderr, "hunter2") {
+			t.Fatalf("plan -o %s = %d; stdout %q; stderr %q", format, code, stdout, stderr)
+		}
 	}
 }
 
@@ -241,55 +267,68 @@ func (r readOnly) Delete(context.Context, client.Object, ...client.DeleteOption)
 }
 
 // The same plan the rows above refuse to approve is the one a person can read:
-// the statements and the fields' names, in every format that can carry them.
-func TestPlanShowsAPlanItCannotReadWhole(t *testing.T) {
-	const statement = "ALTER TABLE orders DROP COLUMN legacy_note;\n"
-	for _, test := range []struct {
-		name         string
-		arguments    []string
-		code         int
-		onStdout     string
-		wholeStdout  bool
-		onStderr     string
-		cleanStderr  bool
-		refusesPrint bool
-	}{
-		{name: "text", code: exitOK, onStdout: "Unread fields:  annotations, statements[].inputs (", cleanStderr: true},
-		{name: "sql", arguments: []string{"-o", "sql"}, code: exitOK, onStdout: statement, wholeStdout: true, onStderr: "annotations, statements[].inputs"},
-		{name: "json", arguments: []string{"-o", "json"}, code: exitFailed, onStderr: "annotations, statements[].inputs", refusesPrint: true},
-	} {
-		t.Run(test.name, func(t *testing.T) {
+// the statements and the fields' names, and only as text. The other formats are
+// for a program, which would take what they print for the whole plan: a pipe into
+// a database would run the statements of a plan that can run differently from
+// them. Before a display read existed, each of them exited 1 too.
+func TestPlanShowsAPlanItCannotReadWholeAsTextAlone(t *testing.T) {
+	t.Run("text", func(t *testing.T) {
+		api, _ := unreadable(t)
+
+		code, stdout, stderr := runPlan(t, api, "storefront")
+
+		if code != exitOK || stderr != "" {
+			t.Fatalf("plan = %d, want %d; stderr %q", code, exitOK, stderr)
+		}
+		for _, want := range []string{"Unread fields:  annotations, statements[].inputs (", "ALTER TABLE orders DROP COLUMN legacy_note;"} {
+			if !strings.Contains(stdout, want) {
+				t.Fatalf("stdout does not carry %q:\n%s", want, stdout)
+			}
+		}
+		if strings.Contains(stdout, planreadtest.UnreadValue) {
+			t.Fatalf("the command printed a value it did not read:\n%s", stdout)
+		}
+	})
+	for _, format := range []string{"sql", "json"} {
+		t.Run(format, func(t *testing.T) {
 			api, _ := unreadable(t)
 
-			code, stdout, stderr := runPlan(t, api, append([]string{"storefront"}, test.arguments...)...)
+			code, stdout, stderr := runPlan(t, api, "storefront", "-o", format)
 
-			if code != test.code {
-				t.Fatalf("plan = %d, want %d; stderr %q", code, test.code, stderr)
+			if code != exitFailed || stdout != "" {
+				t.Fatalf("plan = %d, want %d; stdout %q", code, exitFailed, stdout)
 			}
-			if !strings.Contains(stdout, test.onStdout) || (test.wholeStdout && stdout != test.onStdout) {
-				t.Fatalf("stdout is %q, want %q", stdout, test.onStdout)
+			for _, want := range []string{"annotations, statements[].inputs", "-o " + format + " prints the whole plan"} {
+				if !strings.Contains(stderr, want) {
+					t.Fatalf("stderr does not carry %q: %q", want, stderr)
+				}
 			}
-			if !strings.Contains(stderr, test.onStderr) || (test.cleanStderr && stderr != "") {
-				t.Fatalf("stderr is %q, want %q", stderr, test.onStderr)
-			}
-			if test.refusesPrint && stdout != "" {
-				t.Fatalf("a refused format wrote to stdout: %q", stdout)
-			}
-			if strings.Contains(stdout+stderr, planreadtest.UnreadValue) {
-				t.Fatalf("the command printed a value it did not read:\n%s%s", stdout, stderr)
+			if strings.Contains(stderr, planreadtest.UnreadValue) {
+				t.Fatalf("the command printed a value it did not read: %q", stderr)
 			}
 		})
 	}
 }
 
-// A plan read whole prints as it did: no note, and -o json is the document.
+// A plan read whole prints as it did, in every format, with no note.
 func TestPlanPrintsAPlanItReadsWholeAsItWas(t *testing.T) {
-	api, _ := approvable(t, nil)
+	const statement = "ALTER TABLE orders DROP COLUMN legacy_note;\n"
+	for format, holds := range map[string]func(string) bool{
+		"text": func(stdout string) bool {
+			return strings.Contains(stdout, statement) && !strings.Contains(stdout, "Unread")
+		},
+		"sql":  func(stdout string) bool { return stdout == statement },
+		"json": func(stdout string) bool { return strings.HasPrefix(stdout, "{") },
+	} {
+		t.Run(format, func(t *testing.T) {
+			api, _ := approvable(t, nil)
 
-	code, stdout, stderr := runPlan(t, api, "storefront", "-o", "json")
+			code, stdout, stderr := runPlan(t, api, "storefront", "-o", format)
 
-	if code != exitOK || stderr != "" || !strings.HasPrefix(stdout, "{") {
-		t.Fatalf("plan = %d; stdout %q; stderr %q", code, stdout, stderr)
+			if code != exitOK || stderr != "" || !holds(stdout) {
+				t.Fatalf("plan = %d; stdout %q; stderr %q", code, stdout, stderr)
+			}
+		})
 	}
 }
 

@@ -14,49 +14,40 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"k8s.io/apimachinery/pkg/types"
+
+	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/pkg/planread"
 )
 
-const planreadImportPath = "github.com/stokaro/ptah-operator/pkg/planread"
+// authorityFields names the fields of a struct an approval could be built from:
+// the UIDs it binds, the plan object, and the stored bytes.
+func authorityFields(of reflect.Type) []string {
+	var found []string
+	for index := range of.NumField() {
+		field := of.Field(index)
+		switch field.Type {
+		case reflect.TypeFor[types.UID](), reflect.TypeFor[operatorv1alpha1.PtahSchemaPlan](), reflect.TypeFor[[]byte]():
+			found = append(found, field.Name)
+		}
+	}
+	return found
+}
 
-// displayReadUses names the top-level declarations of one source file that reach
-// the display read, by call or by function value. A dot import hides every use,
-// so it counts as one.
-func displayReadUses(file *ast.File) []string {
-	alias := ""
-	for _, spec := range file.Imports {
-		imported, err := strconv.Unquote(spec.Path.Value)
-		if err != nil || imported != planreadImportPath {
-			continue
-		}
-		alias = path.Base(imported)
-		if spec.Name != nil {
-			alias = spec.Name.Name
-		}
+// The compiler holds a tolerant read away from approval only while the two types
+// stay apart: internal/approve takes a Plan, and LoadForDisplay returns a
+// DisplayPlan. A field added to DisplayPlan that an approval needs would bring
+// back what the type took away, and the compiler would say nothing. Plan is the
+// control: it carries each of these, so the filter is seen to find them.
+func TestADisplayPlanCarriesNothingAnApprovalBinds(t *testing.T) {
+	t.Parallel()
+	if got, want := authorityFields(reflect.TypeFor[planread.Plan]()), []string{"SchemaUID", "PlanUID", "Manifest", "Document"}; !slices.Equal(got, want) {
+		t.Fatalf("the filter finds %v in a Plan, want %v", got, want)
 	}
-	switch alias {
-	case "", "_":
-		return nil
-	case ".":
-		return []string{"a dot import"}
+	if got := authorityFields(reflect.TypeFor[planread.DisplayPlan]()); len(got) != 0 {
+		t.Fatalf("a DisplayPlan carries %v, which an approval can be built from", got)
 	}
-	var uses []string
-	for _, decl := range file.Decls {
-		where := "package level"
-		if function, ok := decl.(*ast.FuncDecl); ok {
-			where = function.Name.Name
-		}
-		ast.Inspect(decl, func(node ast.Node) bool {
-			selector, ok := node.(*ast.SelectorExpr)
-			if !ok || selector.Sel.Name != "LoadForDisplay" {
-				return true
-			}
-			if name, ok := selector.X.(*ast.Ident); ok && name.Name == alias {
-				uses = append(uses, where)
-			}
-			return true
-		})
-	}
-	return uses
 }
 
 func parseSource(t *testing.T, source string) *ast.File {
@@ -68,32 +59,56 @@ func parseSource(t *testing.T, source string) *ast.File {
 	return file
 }
 
-// The filter below decides what may read tolerantly, so it has to be seen to
-// refuse each way of reaching the read, and to pass the strict one.
-func TestDisplayReadUsesFindsEveryWayToReachIt(t *testing.T) {
-	t.Parallel()
-	const anImport = `import "` + planreadImportPath + `"` + "\n"
-	for _, test := range []struct {
-		name   string
-		source string
-		want   []string
-	}{
-		{"a call", anImport + `func decide() { planread.LoadForDisplay(nil, nil, "", "", "") }`, []string{"decide"}},
-		{"a call under another name", `import reader "` + planreadImportPath + `"` + "\n" + `func decide() { reader.LoadForDisplay(nil, nil, "", "", "") }`, []string{"decide"}},
-		{"a function value", anImport + `func decide() { read := planread.LoadForDisplay; _ = read }`, []string{"decide"}},
-		{"a value at package level", anImport + `var read = planread.LoadForDisplay`, []string{"package level"}},
-		{"a dot import", `import . "` + planreadImportPath + `"` + "\n" + `func decide() { LoadForDisplay(nil, nil, "", "", "") }`, []string{"a dot import"}},
-		{"the strict read", anImport + `func decide() { planread.Load(nil, nil, "", "", "") }`, nil},
-		{"another package of that name", `import planread "example.com/other"` + "\n" + `func decide() { planread.LoadForDisplay() }`, nil},
-		{"no import of it", `func decide() { planread.LoadForDisplay() }`, nil},
-		{"a blank import", `import _ "` + planreadImportPath + `"`, nil},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-			if got := displayReadUses(parseSource(t, "package x\n"+test.source)); !slices.Equal(got, test.want) {
-				t.Fatalf("displayReadUses() = %v, want %v", got, test.want)
+// displayDecoderUses names what reaches the tolerant path inside this package:
+// for each of its identifiers, the top-level declarations that mention it.
+func displayDecoderUses(files []*ast.File) map[string][]string {
+	uses := map[string][]string{}
+	for _, file := range files {
+		for _, decl := range file.Decls {
+			var body ast.Node = decl
+			where := "package level"
+			if function, ok := decl.(*ast.FuncDecl); ok {
+				body, where = function.Body, function.Name.Name
 			}
-		})
+			ast.Inspect(body, func(node ast.Node) bool {
+				if name, ok := node.(*ast.Ident); ok {
+					switch name.Name {
+					case "LoadForDisplay", "decodeForDisplay", "withoutUnreadFields":
+						uses[name.Name] = append(uses[name.Name], where)
+					}
+				}
+				return true
+			})
+		}
+	}
+	for _, callers := range uses {
+		slices.Sort(callers)
+	}
+	return uses
+}
+
+// The type holds what leaves LoadForDisplay. It cannot hold a second read in this
+// package that strips the fields and returns a Plan, so this does. The walk has
+// two callers: the display read, and the strict read, which uses it only to name
+// what it refuses.
+func TestTheDisplayDecoderHasOneWayIn(t *testing.T) {
+	t.Parallel()
+	got := displayDecoderUses(parseDir(t, ".", false))
+	want := map[string][]string{
+		"decodeForDisplay":    {"LoadForDisplay"},
+		"withoutUnreadFields": {"decodeForDisplay", "decodeStrictly"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("the tolerant path is reached by %v, and only %v may reach it", got, want)
+	}
+
+	second := parseSource(t, `package planread
+func LoadLenient() (Plan, error) {
+	declared, _, _ := withoutUnreadFields(nil)
+	return stored.read(dataplane.DecodePlan(declared, "")), nil
+}`)
+	if got := displayDecoderUses([]*ast.File{second}); !slices.Equal(got["withoutUnreadFields"], []string{"LoadLenient"}) {
+		t.Fatalf("the filter misses a second tolerant read: %v", got)
 	}
 }
 
@@ -115,8 +130,14 @@ var moduleSources = sync.OnceValues(func() (map[string]*ast.File, error) {
 			return err
 		}
 		if entry.IsDir() {
+			if file == root {
+				return nil
+			}
 			name := entry.Name()
-			if file != root && (strings.HasPrefix(name, ".") || name == "testdata" || name == "node_modules" || name == "bin") {
+			// bin holds build output at the module's root, and a package
+			// anywhere else may have that name.
+			if strings.HasPrefix(name, ".") || name == "testdata" || name == "node_modules" ||
+				(name == "bin" && filepath.Dir(file) == root) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -138,144 +159,105 @@ var moduleSources = sync.OnceValues(func() (map[string]*ast.File, error) {
 	return sources, err
 })
 
-// The display read decides nothing, so nothing that decides may call it. An
-// approval is the decision this read could reach: approve shows a person the
-// plan, and the person's yes is bound to its fingerprint. The one use in this
-// module is the command that prints a plan and exits.
-//
-// Test files are left out because they make no decision. A use anywhere else
-// fails here, whichever package it is in, and whoever adds one has to say here
-// why it decides nothing.
-func TestOnlyThePlanCommandReadsForDisplay(t *testing.T) {
-	t.Parallel()
-	sources := goSources(t)
-	for _, required := range []string{"cmd/kubectl-ptah/main.go", "cmd/kubectl-ptah/approve.go", "internal/approve/approve.go", "internal/controller/schema_controller.go", "internal/runner/runner.go"} {
-		if sources[required] == nil {
-			t.Fatalf("the walk did not read %s, so it measured nothing about it", required)
-		}
-	}
-	found := map[string][]string{}
-	for name, file := range sources {
-		if uses := displayReadUses(file); len(uses) > 0 {
-			found[name] = uses
-		}
-	}
-	want := map[string][]string{"cmd/kubectl-ptah/main.go": {"plan"}}
-	if !reflect.DeepEqual(found, want) {
-		t.Fatalf("the display read is used by %v, and only %v may use it", found, want)
-	}
-}
+const moduleImportPath = "github.com/stokaro/ptah-operator"
 
-// The file that holds the one use cannot reach an approval. It does not import
-// the package that builds one, and the function makes no call that writes.
-func TestThePlanCommandCannotApprove(t *testing.T) {
-	t.Parallel()
-	file := goSources(t)["cmd/kubectl-ptah/main.go"]
-	for _, spec := range file.Imports {
-		if imported, _ := strconv.Unquote(spec.Path.Value); strings.HasSuffix(imported, "/internal/approve") {
-			t.Fatalf("the file that reads for display imports %s", imported)
-		}
-	}
-	checked := false
-	for _, decl := range file.Decls {
-		function, ok := decl.(*ast.FuncDecl)
-		if !ok || function.Name.Name != "plan" {
-			continue
-		}
-		checked = true
-		ast.Inspect(function.Body, func(node ast.Node) bool {
-			call, ok := node.(*ast.CallExpr)
-			if !ok {
-				return true
-			}
-			switch callee := call.Fun.(type) {
-			case *ast.Ident:
-				if callee.Name == "approveCommand" {
-					t.Error("the plan command calls approveCommand")
-				}
-			case *ast.SelectorExpr:
-				if slices.Contains([]string{"Create", "Update", "Patch", "Delete", "DeleteAllOf", "Status", "SubResource"}, callee.Sel.Name) {
-					t.Errorf("the plan command calls %s", callee.Sel.Name)
-				}
-			}
-			return true
-		})
-	}
-	if !checked {
-		t.Fatal("cmd/kubectl-ptah/main.go has no function plan, so this measured nothing")
-	}
-}
-
-// Inside this package the decoder that tolerates a field has one way in, and
-// the exported read has no other caller here that could wrap it.
-func TestTheDisplayDecoderHasOneWayIn(t *testing.T) {
-	t.Parallel()
-	callers := map[string][]string{}
-	for _, file := range parseDir(t, ".", false) {
-		for _, decl := range file.Decls {
-			function, isFunction := decl.(*ast.FuncDecl)
-			var body ast.Node = decl
-			where := "package level"
-			if isFunction {
-				body, where = function.Body, function.Name.Name
-			}
-			ast.Inspect(body, func(node ast.Node) bool {
-				if name, ok := node.(*ast.Ident); ok && (name.Name == "decodeForDisplay" || name.Name == "LoadForDisplay") {
-					callers[name.Name] = append(callers[name.Name], where)
-				}
-				return true
-			})
-		}
-	}
-	want := map[string][]string{"decodeForDisplay": {"LoadForDisplay"}}
-	if !reflect.DeepEqual(callers, want) {
-		t.Fatalf("the display read is reached by %v, and only %v may reach it", callers, want)
-	}
-}
-
-// The package this read lives in is not linked into the programs that act on a
-// plan. Every path from the manager, the runner, the certificate rotator and the
-// CRD manager is followed through this module's packages by their imports, so a
-// new import that brings it in fails here.
-func TestTheActingProgramsDoNotLinkThisPackage(t *testing.T) {
-	t.Parallel()
-	const module = "github.com/stokaro/ptah-operator"
+// moduleImports is, for each directory, the module's packages its files import.
+func moduleImports(sources map[string]*ast.File) map[string][]string {
 	imports := map[string][]string{}
-	for name, file := range goSources(t) {
+	for name, file := range sources {
 		directory := path.Dir(name)
 		for _, spec := range file.Imports {
 			imported, err := strconv.Unquote(spec.Path.Value)
-			if err == nil && strings.HasPrefix(imported, module+"/") {
-				imports[directory] = append(imports[directory], strings.TrimPrefix(imported, module+"/"))
+			if err == nil && strings.HasPrefix(imported, moduleImportPath+"/") {
+				imports[directory] = append(imports[directory], strings.TrimPrefix(imported, moduleImportPath+"/"))
 			}
 		}
+	}
+	return imports
+}
+
+// linkPath follows imports from a package to a target, and says which package
+// imports it, or nothing when none on the way does.
+func linkPath(imports map[string][]string, from, target string) string {
+	seen := map[string]bool{from: true}
+	for queue := []string{from}; len(queue) > 0; queue = queue[1:] {
+		for _, imported := range imports[queue[0]] {
+			if imported == target {
+				return queue[0]
+			}
+			if !seen[imported] {
+				seen[imported] = true
+				queue = append(queue, imported)
+			}
+		}
+	}
+	return ""
+}
+
+func TestLinkPathFollowsImports(t *testing.T) {
+	t.Parallel()
+	imports := map[string][]string{"a": {"b", "c"}, "b": {"d"}, "c": {"a"}, "e": {"f"}}
+	for _, test := range []struct{ from, target, want string }{
+		{"a", "b", "a"},
+		{"a", "d", "b"},
+		{"c", "d", "b"},
+		{"a", "f", ""},
+		{"d", "a", ""},
+	} {
+		if got := linkPath(imports, test.from, test.target); got != test.want {
+			t.Fatalf("linkPath(%s, %s) = %q, want %q", test.from, test.target, got, test.want)
+		}
+	}
+}
+
+// holdsAProgram says whether a directory holds a main package that imports
+// anything, which a walk from it can start at.
+func holdsAProgram(sources map[string]*ast.File, directory string) bool {
+	for name, file := range sources {
+		if path.Dir(name) == directory && file.Name.Name == "main" && len(file.Imports) > 0 {
+			for _, decl := range file.Decls {
+				if function, ok := decl.(*ast.FuncDecl); ok && function.Recv == nil && function.Name.Name == "main" {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// A DisplayPlan is not a Plan, but the type does not stop a manager reading one
+// and deciding on its fields. This does: no program but the plugin links this
+// package. Each root has to be a program, or a manager moved a directory down
+// would leave an empty root that links nothing and passes, and the plugin is the
+// control that the walk finds a link where there is one.
+func TestTheActingProgramsDoNotLinkThisPackage(t *testing.T) {
+	t.Parallel()
+	const reader = "pkg/planread"
+	sources := goSources(t)
+	imports := moduleImports(sources)
+	if linkPath(imports, "cmd/kubectl-ptah", reader) == "" {
+		t.Fatal("the walk from the plugin does not reach this package, so it measures nothing")
 	}
 	entries, err := os.ReadDir(filepath.Join("..", "..", "cmd"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	checked := 0
+	var programs []string
 	for _, entry := range entries {
-		if !entry.IsDir() || entry.Name() == "kubectl-ptah" {
-			continue
-		}
-		checked++
-		root := "cmd/" + entry.Name()
-		seen := map[string]bool{root: true}
-		for queue := []string{root}; len(queue) > 0; queue = queue[1:] {
-			for _, imported := range imports[queue[0]] {
-				if imported == "pkg/planread" {
-					t.Errorf("%s links pkg/planread, through %s", root, queue[0])
-				}
-				if !seen[imported] {
-					seen[imported] = true
-					queue = append(queue, imported)
-				}
-			}
+		if entry.IsDir() && entry.Name() != "kubectl-ptah" {
+			programs = append(programs, entry.Name())
 		}
 	}
-	const declaredPrograms = 4
-	if checked != declaredPrograms {
-		t.Fatalf("followed %d programs, and the module ships %d beside the plugin", checked, declaredPrograms)
+	if want := []string{"manager", "ptah-cert-rotator", "ptah-crd-manager", "ptah-runner"}; !slices.Equal(programs, want) {
+		t.Fatalf("the programs beside the plugin are %v, want %v; say here whether a new one may read plans", programs, want)
+	}
+	for _, program := range programs {
+		root := "cmd/" + program
+		if !holdsAProgram(sources, root) {
+			t.Errorf("%s holds no main package with imports, so a walk from it proves nothing", root)
+		}
+		if via := linkPath(imports, root, reader); via != "" {
+			t.Errorf("%s links %s, through %s", root, reader, via)
+		}
 	}
 }

@@ -69,7 +69,7 @@ that records no plan on a run, so upgrade the operator first.
 `kubectl ptah plan` now prints a plan a newer Ptah added a field to and exits 0,
 naming the field, where it used to exit 1. A script that takes that exit status to
 mean nobody may approve the plan has to ask `kubectl ptah approve`, which still
-refuses it, as `plan -o json` does.
+refuses it, as `plan -o sql` and `plan -o json` do.
 A migration's journal now has `Verified` entries, for the first reading after a run,
 and a `RunAcknowledged` entry now carries `outcome`, so a script that filters
 `status.journal` on `.outcome` alone has to filter on `.type` as well.

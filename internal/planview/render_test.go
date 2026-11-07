@@ -14,7 +14,7 @@ import (
 
 // loadForDisplay reads a plan a newer Ptah could have written, the way the plan
 // command does.
-func loadForDisplay(t *testing.T, statements []string) planread.Plan {
+func loadForDisplay(t *testing.T, statements []string) planread.DisplayPlan {
 	t.Helper()
 	lab := planreadtest.NewLab(t, "storefront")
 	lab.SetCurrent(t, lab.PublishDocument(t, planreadtest.DocumentWithUnreadFields(t, statements), "v1"))
@@ -25,20 +25,20 @@ func loadForDisplay(t *testing.T, statements []string) planread.Plan {
 	return plan
 }
 
-// The reader is told which fields went unread, by name, and is told that this
-// plugin does not approve the plan. The statements read as they always do.
+// The reader is told which fields went unread, by name, and is told to read the
+// plan whole before approving it. The statements read as they always do.
 func TestRenderTextNamesUnreadFieldsAndPrintsNoValue(t *testing.T) {
 	t.Parallel()
 	view := loadForDisplay(t, []string{"CREATE TABLE customers (id BIGINT PRIMARY KEY)"})
 
 	var rendered bytes.Buffer
-	if err := planview.Render(&rendered, view, planview.Text); err != nil {
-		t.Fatalf("Render(text) error = %v", err)
+	if err := planview.RenderDisplay(&rendered, view); err != nil {
+		t.Fatalf("RenderDisplay() error = %v", err)
 	}
 
 	for _, want := range []string{
 		"Unread fields:  annotations, statements[].inputs (",
-		"does not approve this plan",
+		"read this plan with a plugin at the operator's version before you approve it",
 		"Statement 1 of 1: safe\nCREATE TABLE customers (id BIGINT PRIMARY KEY);\n",
 	} {
 		if !strings.Contains(rendered.String(), want) {
@@ -67,35 +67,27 @@ func TestRenderTextHasNoUnreadLineForAPlanItReadsWhole(t *testing.T) {
 	}
 }
 
-// The SQL format is the statements and nothing else, for a script.
-func TestRenderSQLOfAPlanWithUnreadFieldsIsItsStatements(t *testing.T) {
+// A plan read whole prints one text through either read, which is what lets the
+// plan command take the display read for it and approve take Load.
+func TestRenderPrintsTheSameTextThroughEitherRead(t *testing.T) {
 	t.Parallel()
-	view := loadForDisplay(t, []string{"CREATE TABLE customers (id BIGINT PRIMARY KEY)"})
-
-	var rendered bytes.Buffer
-	if err := planview.Render(&rendered, view, planview.SQL); err != nil {
-		t.Fatalf("Render(sql) error = %v", err)
+	lab := planreadtest.NewLab(t, "storefront")
+	plan, _ := lab.Publish(t, []string{"CREATE TABLE customers (id BIGINT PRIMARY KEY)"}, "v1")
+	lab.SetCurrent(t, plan)
+	shown, err := planread.LoadForDisplay(context.Background(), lab.Client(), planreadtest.Namespace, "storefront", planread.Current)
+	if err != nil {
+		t.Fatalf("LoadForDisplay() error = %v", err)
 	}
-	if want := "CREATE TABLE customers (id BIGINT PRIMARY KEY);\n"; rendered.String() != want {
-		t.Fatalf("the SQL output is %q, want %q", rendered.String(), want)
+
+	var whole, displayed bytes.Buffer
+	if err := planview.Render(&whole, load(t, lab, planread.Current), planview.Text); err != nil {
+		t.Fatalf("Render(text) error = %v", err)
 	}
-}
-
-// The JSON format is the stored document or nothing, and the stored document
-// holds the values of the fields this plugin did not read. It writes nothing:
-// an empty line a script took for a document would be worse than the refusal.
-func TestRenderJSONRefusesAPlanWithUnreadFields(t *testing.T) {
-	t.Parallel()
-	view := loadForDisplay(t, []string{"CREATE TABLE customers (id BIGINT PRIMARY KEY)"})
-
-	var rendered bytes.Buffer
-	err := planview.Render(&rendered, view, planview.JSON)
-
-	if err == nil || !strings.Contains(err.Error(), "annotations, statements[].inputs") {
-		t.Fatalf("Render(json) error = %v, want a refusal that names the fields", err)
+	if err := planview.RenderDisplay(&displayed, shown); err != nil {
+		t.Fatalf("RenderDisplay() error = %v", err)
 	}
-	if rendered.Len() != 0 || strings.Contains(err.Error(), planreadtest.UnreadValue) {
-		t.Fatalf("Render(json) wrote %q and said %v", rendered.String(), err)
+	if whole.Len() == 0 || whole.String() != displayed.String() {
+		t.Fatalf("the two reads print\n%s\nand\n%s", whole.String(), displayed.String())
 	}
 }
 
@@ -106,8 +98,8 @@ func TestRenderTextSaysWhoRatedAStatementOfAPlanWithUnreadFields(t *testing.T) {
 	view := loadForDisplay(t, []string{`ALTER TABLE "customers" ALTER COLUMN "email" DROP DEFAULT`})
 
 	var rendered bytes.Buffer
-	if err := planview.Render(&rendered, view, planview.Text); err != nil {
-		t.Fatalf("Render(text) error = %v", err)
+	if err := planview.RenderDisplay(&rendered, view); err != nil {
+		t.Fatalf("RenderDisplay() error = %v", err)
 	}
 	if want := "destructive as this plugin reads it; Ptah rated it safe"; !strings.Contains(rendered.String(), want) {
 		t.Fatalf("the text output does not carry %q:\n%s", want, rendered.String())
