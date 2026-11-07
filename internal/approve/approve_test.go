@@ -13,7 +13,6 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/validation"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
@@ -496,48 +495,11 @@ func TestManifestCarriesTheDecisionAndNothingElse(t *testing.T) {
 		if got := approve.Manifest(review, "shipments-approval").Object; !reflect.DeepEqual(got, want) {
 			t.Fatalf("Manifest() of a %s = %v, want exactly %v", test.family, got, want)
 		}
-		if name := approve.Manifest(review, "").GetName(); name != "shipments-0123456789ab" {
-			t.Fatalf("Manifest() without a name is named %q, want shipments-0123456789ab", name)
-		}
-	}
-}
-
-func TestDefaultNameIsOneValidNamePerPlan(t *testing.T) {
-	t.Parallel()
-	const fingerprint = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-	review := func(name, fingerprint string) approve.Review {
-		return approve.Review{Family: approve.Schema, Name: name, Fingerprint: fingerprint}
-	}
-	// A cut at the bound lands on a dot, then on a dash: neither may end a
-	// label, so neither may precede the suffix.
-	long := strings.Repeat("a", 239) + ".b" + strings.Repeat("c", 20)
-	dashed := strings.Repeat("a", 239) + "-b" + strings.Repeat("c", 20)
-	for _, test := range []struct {
-		name, fingerprint, want string
-	}{
-		{"storefront", fingerprint, "storefront-0123456789ab"},
-		{"storefront", "SHA256:ABCDEF0123456789ABCDEF", "storefront-abcdef012345"},
-		{long, fingerprint, strings.Repeat("a", 239) + "-0123456789ab"},
-		{dashed, fingerprint, strings.Repeat("a", 239) + "-0123456789ab"},
-	} {
-		if got := approve.DefaultName(review(test.name, test.fingerprint)); got != test.want {
-			t.Fatalf("DefaultName(%q, %q) = %q, want %q", test.name, test.fingerprint, got, test.want)
-		}
-	}
-	// Whatever a fingerprint is written in, the name stays one name per
-	// fingerprint and a valid one.
-	seen := map[string]string{}
-	for _, value := range []string{fingerprint, "sha256:aa", "v2:Not_Hex!", "", "sha256:1123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"} {
-		name := approve.DefaultName(review(long, value))
-		if problems := validation.IsDNS1123Subdomain(name); len(problems) > 0 {
-			t.Fatalf("DefaultName(%q) = %q, which is not a name: %v", value, name, problems)
-		}
-		if other, ok := seen[name]; ok {
-			t.Fatalf("DefaultName gives %q for both %q and %q", name, other, value)
-		}
-		seen[name] = value
-		if again := approve.DefaultName(review(long, value)); again != name {
-			t.Fatalf("DefaultName(%q) = %q, then %q", value, name, again)
+		// With no name given the metadata holds no name at all: the API
+		// server generates one each time the file is created.
+		wantGenerated := map[string]any{"generateName": "shipments-", "namespace": "application"}
+		if got := approve.Manifest(review, "").Object["metadata"]; !reflect.DeepEqual(got, wantGenerated) {
+			t.Fatalf("Manifest() of a %s without a name has metadata %v, want exactly %v", test.family, got, wantGenerated)
 		}
 	}
 }

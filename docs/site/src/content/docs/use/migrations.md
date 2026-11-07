@@ -461,7 +461,7 @@ after the same decision, to keep in a repository:
 apiVersion: operator.ptah.run/v1alpha1
 kind: PtahMigrationApproval
 metadata:
-  name: orders-<the first 12 hex digits of the plan's fingerprint>
+  generateName: orders-
   namespace: application
 spec:
   migrationRef:
@@ -475,7 +475,10 @@ spec:
 
 Create it with `kubectl create -f`, as the person who decided: admission
 records whoever creates it as the approver, and a controller that applies it
-from the repository is recorded in that person's place.
+from the repository is recorded in that person's place. The API server names
+it, as it names what the command sends, so one file can be created again after
+an uncertain run consumed the first approval. `kubectl apply` refuses a
+generated name: a workflow that applies its files passes `--name`.
 
 The webhook refuses an approval the evidence no longer supports: a replaced
 plan, a history somebody else moved in the meantime, a re-resolved artifact, a
