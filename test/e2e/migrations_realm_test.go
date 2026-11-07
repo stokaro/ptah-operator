@@ -100,6 +100,45 @@ func TestPartialRunRecordedReadsTheRecord(t *testing.T) {
 	}
 }
 
+func TestPartialRunJournaledOnceRefusesEachClause(t *testing.T) {
+	t.Parallel()
+	started := metav1.NewTime(time.Date(2026, 10, 24, 7, 40, 0, 0, time.UTC))
+	finished := metav1.NewTime(started.Add(2 * time.Minute))
+	end := func(outcome ptahv1alpha1.JournalOutcome, plan string, at metav1.Time) ptahv1alpha1.JournalEntry {
+		return ptahv1alpha1.JournalEntry{Type: ptahv1alpha1.JournalRunFinished, At: at, Outcome: outcome, Plan: plan}
+	}
+	journaled := func() ptahv1alpha1.PtahMigrationStatus {
+		return ptahv1alpha1.PtahMigrationStatus{
+			LastRun: &ptahv1alpha1.MigrationRunStatus{Outcome: ptahv1alpha1.MigrationRunOutcomePartial, StartedAt: started, FinishedAt: &finished},
+			Journal: &ptahv1alpha1.LifecycleJournal{Entries: []ptahv1alpha1.JournalEntry{
+				// An earlier run of another plan belongs to no claim of this one.
+				end(ptahv1alpha1.JournalSucceeded, "plan-before", metav1.NewTime(started.Add(-time.Hour))),
+				{Type: ptahv1alpha1.JournalPlanPublished, At: started, Plan: "plan-a"},
+				end(ptahv1alpha1.JournalPartial, "plan-a", finished),
+			}},
+		}
+	}
+	accepts := func(status ptahv1alpha1.PtahMigrationStatus) bool { return partialRunJournaledOnce(status, "plan-a") }
+	newest := func(status *ptahv1alpha1.PtahMigrationStatus) *ptahv1alpha1.JournalEntry {
+		return &status.Journal.Entries[len(status.Journal.Entries)-1]
+	}
+	mrRefusesEach(t, journaled, accepts, []mrMutation[ptahv1alpha1.PtahMigrationStatus]{
+		{"no run recorded", func(s *ptahv1alpha1.PtahMigrationStatus) { s.LastRun = nil }},
+		{"a run not read yet", func(s *ptahv1alpha1.PtahMigrationStatus) { s.LastRun.FinishedAt = nil }},
+		{"no journal", func(s *ptahv1alpha1.PtahMigrationStatus) { s.Journal = nil }},
+		{"no end journaled", func(s *ptahv1alpha1.PtahMigrationStatus) { s.Journal.Entries = s.Journal.Entries[:2] }},
+		{"the hold journaled as a second run", func(s *ptahv1alpha1.PtahMigrationStatus) {
+			s.Journal.Entries = append(s.Journal.Entries, end(ptahv1alpha1.JournalUnknown, "plan-a", finished))
+		}},
+		{"the end journaled as unknown", func(s *ptahv1alpha1.PtahMigrationStatus) { newest(s).Outcome = ptahv1alpha1.JournalUnknown }},
+		{"the end names no plan", func(s *ptahv1alpha1.PtahMigrationStatus) { newest(s).Plan = "" }},
+		{"the end names another plan", func(s *ptahv1alpha1.PtahMigrationStatus) { newest(s).Plan = "plan-b" }},
+		{"the end of another reading", func(s *ptahv1alpha1.PtahMigrationStatus) {
+			newest(s).At = metav1.NewTime(finished.Add(time.Minute))
+		}},
+	})
+}
+
 func TestDirtyReadingHoldsTheRefusalNotThePhase(t *testing.T) {
 	t.Parallel()
 	if !dirtyReading(mrRecordedReading(t), 3) {

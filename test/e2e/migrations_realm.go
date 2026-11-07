@@ -35,6 +35,26 @@ func partialRunRecorded(status ptahv1alpha1.PtahMigrationStatus) bool {
 		len(status.LastRun.AppliedVersions) == 0
 }
 
+// partialRunJournaledOnce is how the journal records that run: one end since
+// the claim started, Partial, on the plan the run carried out, dated when
+// lastRun finished. The hold the run put on the resource is a safety state, so
+// a second RunFinished for it, which an unknown outcome would be, is one
+// execution counted as two.
+func partialRunJournaledOnce(status ptahv1alpha1.PtahMigrationStatus, plan string) bool {
+	run := status.LastRun
+	if run == nil || run.FinishedAt == nil || status.Journal == nil {
+		return false
+	}
+	var ends []ptahv1alpha1.JournalEntry
+	for _, entry := range status.Journal.Entries {
+		if entry.Type == ptahv1alpha1.JournalRunFinished && !entry.At.Before(&run.StartedAt) {
+			ends = append(ends, entry)
+		}
+	}
+	return len(ends) == 1 && ends[0].Outcome == ptahv1alpha1.JournalPartial && ends[0].Plan == plan &&
+		ends[0].At.Equal(run.FinishedAt)
+}
+
 // dirtyReading is the reading a
 // partially applied migration leaves behind. The history says a revision is
 // dirty, it says which version the run stopped at, and the refusal names that

@@ -405,22 +405,36 @@ func TestMigrationEntriesRecordEachTransitionOnce(t *testing.T) {
 			}},
 			want: []operatorv1alpha1.JournalEntry{{
 				Type: operatorv1alpha1.JournalRunFinished, At: at(-time.Minute), StartedAt: ptr(at(-3 * time.Minute)),
-				Outcome: operatorv1alpha1.JournalFailed, AppliedVersions: 2, Failure: run.Failure,
+				Plan: "billing-plan", Outcome: operatorv1alpha1.JournalFailed, AppliedVersions: 2, Failure: run.Failure,
+			}},
+		},
+		{
+			name:   "a run that started the second its predecessor did, under another Job",
+			before: operatorv1alpha1.PtahMigrationStatus{LastRun: run, ActiveOperation: apply},
+			after: operatorv1alpha1.PtahMigrationStatus{LastRun: &operatorv1alpha1.MigrationRunStatus{
+				Outcome: run.Outcome, JobUID: "job-3", StartedAt: run.StartedAt, FinishedAt: run.FinishedAt,
+				AppliedVersions: run.AppliedVersions, Failure: run.Failure,
+			}},
+			want: []operatorv1alpha1.JournalEntry{{
+				Type: operatorv1alpha1.JournalRunFinished, At: at(-time.Minute), StartedAt: ptr(at(-3 * time.Minute)),
+				Plan: "billing-plan", Outcome: operatorv1alpha1.JournalFailed, AppliedVersions: 2, Failure: run.Failure,
+			}},
+		},
+		{
+			name: "a run the status held unfinished, finished",
+			before: operatorv1alpha1.PtahMigrationStatus{ActiveOperation: apply, LastRun: &operatorv1alpha1.MigrationRunStatus{
+				Outcome: run.Outcome, JobUID: run.JobUID, StartedAt: run.StartedAt,
+			}},
+			after: operatorv1alpha1.PtahMigrationStatus{LastRun: run},
+			want: []operatorv1alpha1.JournalEntry{{
+				Type: operatorv1alpha1.JournalRunFinished, At: at(-time.Minute), StartedAt: ptr(at(-3 * time.Minute)),
+				Plan: "billing-plan", Outcome: operatorv1alpha1.JournalFailed, AppliedVersions: 2, Failure: run.Failure,
 			}},
 		},
 		{
 			name:   "the same run written again",
 			before: operatorv1alpha1.PtahMigrationStatus{LastRun: run},
 			after:  operatorv1alpha1.PtahMigrationStatus{LastRun: run, NextReconciliationTime: ptr(at(time.Minute))},
-		},
-		{
-			name: "a run recorded as unresolved",
-			after: operatorv1alpha1.PtahMigrationStatus{UnresolvedRun: &operatorv1alpha1.UnresolvedMigrationRunStatus{
-				OperationID: "apply-1", PlanRef: *planRef, RecordedAt: at(-time.Minute),
-			}},
-			want: []operatorv1alpha1.JournalEntry{{
-				Type: operatorv1alpha1.JournalRunFinished, At: at(-time.Minute), Outcome: operatorv1alpha1.JournalUnknown, Plan: "billing-plan",
-			}},
 		},
 		{
 			name: "a run a person acknowledged",
@@ -731,5 +745,242 @@ func TestRecordKeepsTwoDecisionsUnderOneName(t *testing.T) {
 	}
 	if want := []string{"plan-a/uid-a", "plan-b/uid-b"}; !slices.Equal(decisions, want) {
 		t.Fatalf("decisions = %v, want %v", decisions, want)
+	}
+}
+
+// A status write that records a run nobody accounted for writes two records of
+// one execution: lastRun, the run's account, and unresolvedRun, the hold it puts
+// on the resource. These rows hold the journal to one end for the two together,
+// which neither record shows alone.
+func TestMigrationEntriesRecordOneEndPerExecution(t *testing.T) {
+	t.Parallel()
+	planRef := operatorv1alpha1.ImmutableObjectReference{Name: "billing-plan", UID: "plan-uid"}
+	stop := &operatorv1alpha1.MigrationRunFailureStatus{Version: 16, Statement: 2, Statements: 3, SQLState: "42P01"}
+	apply := func(id string) *operatorv1alpha1.MigrationOperationStatus {
+		return &operatorv1alpha1.MigrationOperationStatus{Type: operatorv1alpha1.MigrationOperationApply, ID: id, PlanRef: &planRef}
+	}
+	partial := &operatorv1alpha1.MigrationRunStatus{
+		Outcome: operatorv1alpha1.MigrationRunOutcomePartial, JobName: "job-a", JobUID: "job-a-uid", StartedAt: at(-3 * time.Minute),
+		FinishedAt: ptr(at(-time.Minute)), AppliedVersions: []int64{14, 15}, Failure: stop,
+	}
+	partialHold := &operatorv1alpha1.UnresolvedMigrationRunStatus{
+		Outcome: operatorv1alpha1.MigrationRunOutcomePartial, OperationID: "apply-1", JobName: "job-a", JobUID: "job-a-uid",
+		PlanRef: planRef, RecordedAt: at(-time.Minute),
+	}
+	// An uncertain Apply whose create was never confirmed names no Job.
+	unknown := &operatorv1alpha1.MigrationRunStatus{
+		Outcome: operatorv1alpha1.MigrationRunOutcomeUnknown, StartedAt: at(-3 * time.Minute), FinishedAt: ptr(at(-time.Minute)),
+	}
+	unknownHold := &operatorv1alpha1.UnresolvedMigrationRunStatus{
+		Outcome: operatorv1alpha1.MigrationRunOutcomeUnknown, OperationID: "apply-1", PlanRef: planRef, RecordedAt: at(-time.Minute),
+	}
+	partialEnd := operatorv1alpha1.JournalEntry{
+		Type: operatorv1alpha1.JournalRunFinished, At: at(-time.Minute), StartedAt: ptr(at(-3 * time.Minute)), Plan: "billing-plan",
+		Outcome: operatorv1alpha1.JournalPartial, AppliedVersions: 2, Failure: stop,
+	}
+	unknownEnd := operatorv1alpha1.JournalEntry{
+		Type: operatorv1alpha1.JournalRunFinished, At: at(-time.Minute), StartedAt: ptr(at(-3 * time.Minute)), Plan: "billing-plan",
+		Outcome: operatorv1alpha1.JournalUnknown,
+	}
+	holdEnd := func(outcome operatorv1alpha1.JournalOutcome) []operatorv1alpha1.JournalEntry {
+		return []operatorv1alpha1.JournalEntry{{
+			Type: operatorv1alpha1.JournalRunFinished, At: at(-time.Minute), Plan: "billing-plan", Outcome: outcome,
+		}}
+	}
+	kept := &operatorv1alpha1.LifecycleJournal{CoveredSince: at(-time.Hour)}
+	for _, test := range []struct {
+		name          string
+		before, after operatorv1alpha1.PtahMigrationStatus
+		journal       *operatorv1alpha1.LifecycleJournal
+		want          []operatorv1alpha1.JournalEntry
+	}{
+		{
+			name:    "a partial run and its hold, written together",
+			before:  operatorv1alpha1.PtahMigrationStatus{ActiveOperation: apply("apply-1")},
+			after:   operatorv1alpha1.PtahMigrationStatus{LastRun: partial, UnresolvedRun: partialHold},
+			journal: kept,
+			want:    []operatorv1alpha1.JournalEntry{partialEnd},
+		},
+		{
+			name:    "an unknown run and its hold, written together",
+			before:  operatorv1alpha1.PtahMigrationStatus{ActiveOperation: apply("apply-1")},
+			after:   operatorv1alpha1.PtahMigrationStatus{LastRun: unknown, UnresolvedRun: unknownHold},
+			journal: kept,
+			want:    []operatorv1alpha1.JournalEntry{unknownEnd},
+		},
+		{
+			// The claim stays while its workload may still write, so the run
+			// and its hold are written first and the claim retires later.
+			name:    "an uncertain retirement that keeps its claim",
+			before:  operatorv1alpha1.PtahMigrationStatus{ActiveOperation: apply("apply-1")},
+			after:   operatorv1alpha1.PtahMigrationStatus{ActiveOperation: apply("apply-1"), LastRun: unknown, UnresolvedRun: unknownHold},
+			journal: kept,
+			want:    []operatorv1alpha1.JournalEntry{unknownEnd},
+		},
+		{
+			name:    "the claim retired once its workload stopped",
+			before:  operatorv1alpha1.PtahMigrationStatus{ActiveOperation: apply("apply-1"), LastRun: unknown, UnresolvedRun: unknownHold},
+			after:   operatorv1alpha1.PtahMigrationStatus{LastRun: unknown, UnresolvedRun: unknownHold},
+			journal: kept,
+		},
+		{
+			name:    "the run and its hold, written again",
+			before:  operatorv1alpha1.PtahMigrationStatus{LastRun: partial, UnresolvedRun: partialHold},
+			after:   operatorv1alpha1.PtahMigrationStatus{LastRun: partial, UnresolvedRun: partialHold, NextReconciliationTime: ptr(at(time.Minute))},
+			journal: kept,
+		},
+		{
+			// A restore that drops status drops the journal with it. The hold
+			// keeps the outcome the run reported, and a known partial run does
+			// not become an unknown one.
+			name:  "a partial hold restored without status",
+			after: operatorv1alpha1.PtahMigrationStatus{UnresolvedRun: partialHold},
+			want:  holdEnd(operatorv1alpha1.JournalPartial),
+		},
+		{
+			name:  "an unknown hold restored without status",
+			after: operatorv1alpha1.PtahMigrationStatus{UnresolvedRun: unknownHold},
+			want:  holdEnd(operatorv1alpha1.JournalUnknown),
+		},
+		{
+			name:    "a hold restored beside a journal that holds no end for it",
+			after:   operatorv1alpha1.PtahMigrationStatus{UnresolvedRun: partialHold},
+			journal: kept,
+			want:    holdEnd(operatorv1alpha1.JournalPartial),
+		},
+		{
+			name:    "a hold restored beside the run that recorded its end",
+			before:  operatorv1alpha1.PtahMigrationStatus{LastRun: partial},
+			after:   operatorv1alpha1.PtahMigrationStatus{LastRun: partial, UnresolvedRun: partialHold},
+			journal: kept,
+		},
+		{
+			name:    "a hold restored beside the run of another execution",
+			before:  operatorv1alpha1.PtahMigrationStatus{LastRun: partial},
+			after:   operatorv1alpha1.PtahMigrationStatus{LastRun: partial, UnresolvedRun: unknownHold},
+			journal: kept,
+			want:    holdEnd(operatorv1alpha1.JournalUnknown),
+		},
+		{
+			name:   "a hold restored beside a run of another Job, with the same outcome",
+			before: operatorv1alpha1.PtahMigrationStatus{LastRun: partial},
+			after: operatorv1alpha1.PtahMigrationStatus{LastRun: partial, UnresolvedRun: &operatorv1alpha1.UnresolvedMigrationRunStatus{
+				Outcome: operatorv1alpha1.MigrationRunOutcomePartial, OperationID: "apply-2", JobUID: "job-b-uid", PlanRef: planRef, RecordedAt: at(-time.Minute),
+			}},
+			journal: kept,
+			want:    holdEnd(operatorv1alpha1.JournalPartial),
+		},
+		{
+			name:   "a hold restored beside a run of its Job, with another outcome",
+			before: operatorv1alpha1.PtahMigrationStatus{LastRun: partial},
+			after: operatorv1alpha1.PtahMigrationStatus{LastRun: partial, UnresolvedRun: &operatorv1alpha1.UnresolvedMigrationRunStatus{
+				Outcome: operatorv1alpha1.MigrationRunOutcomeUnknown, OperationID: "apply-1", JobUID: "job-a-uid", PlanRef: planRef, RecordedAt: at(-time.Minute),
+			}},
+			journal: kept,
+			want:    holdEnd(operatorv1alpha1.JournalUnknown),
+		},
+		{
+			// A manager that kept no journal left the hold standing: the first
+			// write of one that does records it from the run beside it.
+			name:   "a hold and its run from before the journal",
+			before: operatorv1alpha1.PtahMigrationStatus{LastRun: partial, UnresolvedRun: partialHold},
+			after:  operatorv1alpha1.PtahMigrationStatus{LastRun: partial, UnresolvedRun: partialHold},
+			want:   []operatorv1alpha1.JournalEntry{partialEnd},
+		},
+		{
+			name:   "a hold from before the journal, with no run beside it",
+			before: operatorv1alpha1.PtahMigrationStatus{UnresolvedRun: partialHold},
+			after:  operatorv1alpha1.PtahMigrationStatus{UnresolvedRun: partialHold},
+			want:   holdEnd(operatorv1alpha1.JournalPartial),
+		},
+		{
+			name:    "a hold the journal has seen, with the run it came from gone",
+			before:  operatorv1alpha1.PtahMigrationStatus{UnresolvedRun: partialHold},
+			after:   operatorv1alpha1.PtahMigrationStatus{UnresolvedRun: partialHold},
+			journal: kept,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			got := lifecyclejournal.MigrationEntries(&test.before, &test.after, test.journal, now)
+			if !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("entries = %#v\nwant %#v", got, test.want)
+			}
+		})
+	}
+}
+
+// Two executions stay two runs, whatever they have in common. Each row walks a
+// resource through both, settling the first in between, and the journal has to
+// end with one RunFinished for each.
+func TestMigrationEntriesKeepTwoExecutionsApart(t *testing.T) {
+	t.Parallel()
+	planRef := operatorv1alpha1.ImmutableObjectReference{Name: "billing-plan", UID: "plan-uid"}
+	type job struct {
+		name string
+		uid  types.UID
+	}
+	execution := func(id string, offset time.Duration, ran job, outcome operatorv1alpha1.MigrationRunOutcome) (
+		*operatorv1alpha1.MigrationOperationStatus, *operatorv1alpha1.MigrationRunStatus, *operatorv1alpha1.UnresolvedMigrationRunStatus,
+	) {
+		apply := &operatorv1alpha1.MigrationOperationStatus{Type: operatorv1alpha1.MigrationOperationApply, ID: id, PlanRef: &planRef, StartedAt: at(offset)}
+		run := &operatorv1alpha1.MigrationRunStatus{
+			Outcome: outcome, JobName: ran.name, JobUID: ran.uid, StartedAt: at(offset), FinishedAt: ptr(at(offset + time.Minute)),
+		}
+		hold := &operatorv1alpha1.UnresolvedMigrationRunStatus{
+			Outcome: outcome, OperationID: id, JobName: ran.name, JobUID: ran.uid, PlanRef: planRef, RecordedAt: at(offset + time.Minute),
+		}
+		return apply, run, hold
+	}
+	for _, test := range []struct {
+		name          string
+		first, second job
+		outcome       operatorv1alpha1.MigrationRunOutcome
+		want          operatorv1alpha1.JournalOutcome
+	}{
+		{
+			name: "same plan and outcome, another Job", first: job{"job-a", "job-a-uid"}, second: job{"job-b", "job-b-uid"},
+			outcome: operatorv1alpha1.MigrationRunOutcomePartial, want: operatorv1alpha1.JournalPartial,
+		},
+		{
+			name: "same Job name, another UID", first: job{"job-a", "job-a-uid"}, second: job{"job-a", "job-a-other-uid"},
+			outcome: operatorv1alpha1.MigrationRunOutcomeUnknown, want: operatorv1alpha1.JournalUnknown,
+		},
+		{
+			name: "neither names a Job", first: job{}, second: job{},
+			outcome: operatorv1alpha1.MigrationRunOutcomeUnknown, want: operatorv1alpha1.JournalUnknown,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			firstApply, firstRun, firstHold := execution("apply-1", -2*time.Hour, test.first, test.outcome)
+			secondApply, secondRun, secondHold := execution("apply-2", -time.Hour, test.second, test.outcome)
+			writes := []operatorv1alpha1.PtahMigrationStatus{
+				{ActiveOperation: firstApply},
+				{LastRun: firstRun, UnresolvedRun: firstHold},
+				{LastRun: firstRun, ResolvedRun: &operatorv1alpha1.ResolvedMigrationRunStatus{
+					OperationID: "apply-1", Resolution: operatorv1alpha1.MigrationRunResolvedByHistoryRead,
+				}},
+				{LastRun: firstRun, ActiveOperation: secondApply},
+				{LastRun: secondRun, UnresolvedRun: secondHold},
+				{LastRun: secondRun, UnresolvedRun: secondHold, NextReconciliationTime: ptr(at(time.Minute))},
+			}
+			var journal *operatorv1alpha1.LifecycleJournal
+			before := operatorv1alpha1.PtahMigrationStatus{}
+			for index := range writes {
+				after := writes[index]
+				journal = lifecyclejournal.Record(journal, lifecyclejournal.MigrationEntries(&before, &after, journal, now), now)
+				before = after
+			}
+			var outcomes []operatorv1alpha1.JournalOutcome
+			for _, entry := range journal.Entries {
+				if entry.Type == operatorv1alpha1.JournalRunFinished {
+					outcomes = append(outcomes, entry.Outcome)
+				}
+			}
+			if want := []operatorv1alpha1.JournalOutcome{test.want, test.want}; !slices.Equal(outcomes, want) {
+				t.Fatalf("runs = %v, want %v, from %#v", outcomes, want, journal.Entries)
+			}
+		})
 	}
 }
