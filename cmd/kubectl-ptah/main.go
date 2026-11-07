@@ -555,7 +555,7 @@ generation the resource had then.
                                         with nothing in flight
                              read       the read a refresh asked for ended
   --read-request <value>   with --for read: the request refresh printed
-  --plan <name|fp>         with --for applied, for a schema: only this plan
+  --plan <name|fp>         with --for applied: only this plan
   --timeout <duration>     how long to wait (default 5m)
   -o, --output <format>    text (the default), yaml or json
 

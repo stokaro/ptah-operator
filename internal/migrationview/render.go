@@ -131,6 +131,23 @@ func renderLastRun(text *strings.Builder, run *RunView) {
 	statusview.FieldWriter(text, "", statusview.LabelWidth)("Last run", run.Outcome+", "+when)
 	field := subField(text)
 	field("Job", jobText(run.JobName, run.JobUID))
+	if run.OperationID != "" {
+		field("Operation", run.OperationID)
+	}
+	if plan := run.PlanRef; plan != nil {
+		named := plan.Name
+		if run.PlanFingerprint != "" {
+			named += ", fingerprint " + statusview.Clean(run.PlanFingerprint)
+		}
+		field("Plan", named)
+	}
+	if authorized := authorizationText(run.Authorization); authorized != "" {
+		field("Authorized", authorized)
+	}
+	if verification := run.Verification; verification != nil {
+		field("Read back", fmt.Sprintf("%s at version %d, %s", verification.Result, verification.CurrentVersion,
+			statusview.Time(verification.ObservedAt)))
+	}
 	// Not "Applied": the history above counts applied migrations under that
 	// label, and these are the versions this run applied.
 	if len(run.AppliedVersions) > 0 {
@@ -147,6 +164,27 @@ func renderLastRun(text *strings.Builder, run *RunView) {
 		field("Stopped at", stopped)
 	}
 	field("Message", statusview.Clean(run.Message))
+}
+
+// authorizationText says what allowed a run, and leaves out what its record does
+// not hold rather than reading it from an approval that holds the name today.
+func authorizationText(authorization *operatorv1alpha1.MigrationRunAuthorizationStatus) string {
+	switch {
+	case authorization == nil:
+		return ""
+	case authorization.Kind == operatorv1alpha1.MigrationRunAuthorizedByPolicy:
+		return "spec.policy.apply Always, with no approval"
+	case authorization.ApprovalRef == nil:
+		return ""
+	}
+	text := "approval " + authorization.ApprovalRef.Name + " (UID " + string(authorization.ApprovalRef.UID) + ")"
+	if authorization.Approver != nil {
+		text += " by " + statusview.Clean(authorization.Approver.Username)
+	}
+	if authorization.ApprovedAt != nil {
+		text += " at " + statusview.Time(*authorization.ApprovedAt)
+	}
+	return text
 }
 
 // renderUnresolvedRun writes the run nobody has accounted for, and what the

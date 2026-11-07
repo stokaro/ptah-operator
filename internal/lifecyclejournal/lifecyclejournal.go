@@ -11,6 +11,7 @@ package lifecyclejournal
 import (
 	"slices"
 	"time"
+	"unicode/utf8"
 
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -173,19 +174,42 @@ func MigrationEntries(before, after *operatorv1alpha1.PtahMigrationStatus, journ
 		!approvalRecorded(journal, operation.ApprovalRef.UID) {
 		entry := operatorv1alpha1.JournalEntry{
 			Type: operatorv1alpha1.JournalApprovalAccepted, At: metav1.NewTime(now),
-			Approval: operation.ApprovalRef.Name, ApprovalUID: operation.ApprovalRef.UID,
+			Approval: operation.ApprovalRef.Name, ApprovalUID: operation.ApprovalRef.UID, PlanFingerprint: operation.PlanFingerprint,
 		}
 		if operation.PlanRef != nil {
-			entry.Plan = operation.PlanRef.Name
+			entry.Plan, entry.PlanUID = operation.PlanRef.Name, operation.PlanRef.UID
+		}
+		if operation.ApprovedBy != nil {
+			entry.Approver = boundedApprover(operation.ApprovedBy.Username)
 		}
 		entries = append(entries, entry)
 	}
 	if entry, finished := finishedRun(before, after, journal, now); finished {
 		entries = append(entries, entry)
 	}
+	// The first reading after a run, which a later run replacing lastRun does not
+	// take away from the journal.
+	if run := after.LastRun; run != nil && run.Verification != nil && (before.LastRun == nil || before.LastRun.Verification == nil) {
+		entry := operatorv1alpha1.JournalEntry{
+			Type: operatorv1alpha1.JournalVerified, At: run.Verification.ObservedAt, OperationID: run.OperationID,
+			Outcome: verificationOutcome(run.Verification.Result), JobName: run.JobName, JobUID: run.JobUID,
+		}
+		if run.PlanRef != nil {
+			entry.Plan, entry.PlanUID = run.PlanRef.Name, run.PlanRef.UID
+		}
+		entries = append(entries, entry)
+	}
 	if resolved := after.ResolvedRun; resolved != nil && resolved.Resolution == operatorv1alpha1.MigrationRunResolvedByAcknowledgment &&
 		(before.ResolvedRun == nil || before.ResolvedRun.OperationID != resolved.OperationID) {
-		entry := operatorv1alpha1.JournalEntry{Type: operatorv1alpha1.JournalRunAcknowledged, At: orNow(resolved.ResolvedAt, now)}
+		entry := operatorv1alpha1.JournalEntry{
+			Type: operatorv1alpha1.JournalRunAcknowledged, At: orNow(resolved.ResolvedAt, now),
+			OperationID: resolved.OperationID, Outcome: runOutcome(resolved.Outcome),
+		}
+		// The run this acknowledges, as the record it settles named it.
+		if held := before.UnresolvedRun; held != nil && held.OperationID == resolved.OperationID {
+			entry.Plan, entry.PlanUID = held.PlanRef.Name, held.PlanRef.UID
+			entry.JobName, entry.JobUID = held.JobName, held.JobUID
+		}
 		if resolved.AcknowledgmentRef != nil {
 			entry.Acknowledgment = resolved.AcknowledgmentRef.Name
 		}
@@ -234,13 +258,7 @@ func finishedRun(
 ) (operatorv1alpha1.JournalEntry, bool) {
 	run := after.LastRun
 	if run != nil && run.FinishedAt != nil && !sameRun(before.LastRun, run) {
-		entry := runFinished(run)
-		// Both writers of a finished run retire an Apply claim, and an Apply
-		// claim names its plan.
-		if operation := before.ActiveOperation; operation != nil && operation.PlanRef != nil {
-			entry.Plan = operation.PlanRef.Name
-		}
-		return entry, true
+		return runFinished(run), true
 	}
 	hold := after.UnresolvedRun
 	if hold == nil {
@@ -253,13 +271,16 @@ func finishedRun(
 		if journal != nil {
 			return operatorv1alpha1.JournalEntry{}, false
 		}
+		// A run a release before its identity recorded: the hold beside it names
+		// the same execution.
 		entry := runFinished(run)
-		entry.Plan = hold.PlanRef.Name
+		entry.OperationID, entry.Plan, entry.PlanUID = hold.OperationID, hold.PlanRef.Name, hold.PlanRef.UID
 		return entry, true
 	}
 	return operatorv1alpha1.JournalEntry{
-		Type: operatorv1alpha1.JournalRunFinished, At: orNow(hold.RecordedAt, now),
-		Outcome: runOutcome(hold.Outcome), Plan: hold.PlanRef.Name,
+		Type: operatorv1alpha1.JournalRunFinished, At: orNow(hold.RecordedAt, now), OperationID: hold.OperationID,
+		Outcome: runOutcome(hold.Outcome), Plan: hold.PlanRef.Name, PlanUID: hold.PlanRef.UID,
+		JobName: hold.JobName, JobUID: hold.JobUID,
 	}, true
 }
 
@@ -274,6 +295,7 @@ func runFinished(run *operatorv1alpha1.MigrationRunStatus) operatorv1alpha1.Jour
 	if run.Failure != nil {
 		entry.Failure = run.Failure.DeepCopy()
 	}
+	withRunIdentity(&entry, run)
 	return entry
 }
 
@@ -291,6 +313,58 @@ func sameRun(previous, current *operatorv1alpha1.MigrationRunStatus) bool {
 // Job or the outcome says otherwise.
 func accountsFor(run *operatorv1alpha1.MigrationRunStatus, hold *operatorv1alpha1.UnresolvedMigrationRunStatus) bool {
 	return run.JobUID == hold.JobUID && run.Outcome == hold.Outcome
+}
+
+// withRunIdentity writes what status.lastRun says about which run this was into
+// its entry, so the entry still says so after a later run replaces lastRun and
+// the Job, its results and the plan are gone. A record with none of it, from a
+// release before those fields, leaves the entry saying nothing, and nothing here
+// fills it in from the entries around it.
+func withRunIdentity(entry *operatorv1alpha1.JournalEntry, run *operatorv1alpha1.MigrationRunStatus) {
+	entry.OperationID = run.OperationID
+	entry.JobName, entry.JobUID = run.JobName, run.JobUID
+	entry.PlanFingerprint = run.PlanFingerprint
+	if run.PlanRef != nil {
+		entry.Plan, entry.PlanUID = run.PlanRef.Name, run.PlanRef.UID
+	}
+	authorization := run.Authorization
+	if authorization == nil {
+		return
+	}
+	entry.Authorization = authorization.Kind
+	if authorization.ApprovalRef != nil {
+		entry.Approval, entry.ApprovalUID = authorization.ApprovalRef.Name, authorization.ApprovalRef.UID
+	}
+	if authorization.Approver != nil {
+		entry.Approver = boundedApprover(authorization.Approver.Username)
+	}
+}
+
+// maxApproverBytes is the API's bound on an entry's approver. A username has
+// none, and a status write the API server refuses would leave the claim that
+// carried it standing, so a name that does not fit is cut between characters.
+const maxApproverBytes = 512
+
+func boundedApprover(username string) string {
+	if len(username) <= maxApproverBytes {
+		return username
+	}
+	cut := maxApproverBytes
+	for cut > 0 && !utf8.RuneStart(username[cut]) {
+		cut--
+	}
+	return username[:cut]
+}
+
+func verificationOutcome(result operatorv1alpha1.MigrationRunVerificationResult) operatorv1alpha1.JournalOutcome {
+	switch result {
+	case operatorv1alpha1.MigrationRunVerifiedInSync:
+		return operatorv1alpha1.JournalInSync
+	case operatorv1alpha1.MigrationRunVerifiedBlocked:
+		return operatorv1alpha1.JournalBlocked
+	default:
+		return operatorv1alpha1.JournalPending
+	}
 }
 
 // planRecorded reports whether the journal's newest PlanPublished names plan

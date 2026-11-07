@@ -379,9 +379,14 @@ The lines under `Phase` and the plan's `ApprovalRequired` line read as they do
 for a schema. `Policy` is `spec.policy.apply`.
 
 `Last run` is the most recent execution: its outcome, when it started and
-finished, the Job it ran as by name and UID, the versions it applied, where it
-stopped when a statement failed there, and its message. The UID is what tells a
-later Job under the same name apart from this one.
+finished, the Job it ran as by name and UID, the Apply claim it ran under, the
+plan it carried out, the approval or the policy that allowed it, what the first
+reading after it found, the versions it applied, where it stopped when a statement
+failed there, and its message. The UID is what tells a later Job under the same
+name apart from this one. A run an operator older than 0.2.10 recorded names none
+of the claim, the plan, the authorization or the reading, and a run dispatched by
+one and recorded after an upgrade names its approval without the approver: the
+view leaves out what the record does not hold.
 
 A run that ended `Partial` or `Unknown` is also recorded as unresolved, and the
 view prints that record as a block of its own, because it is a hold and not an

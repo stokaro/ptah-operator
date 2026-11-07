@@ -867,7 +867,7 @@ func TestOperateUsage(t *testing.T) {
 		{"wait", "schema/storefront", "--for", "read"},
 		{"wait", "schema/storefront", "--for", "read", "--read-request", "yesterday"},
 		{"wait", "schema/storefront", "--for", "in-sync", "--read-request", "2026-11-01T10:00:00Z"},
-		{"wait", "migration/orders", "--for", "applied", "--plan", "ptah-mplan-1"},
+		{"wait", "migration/orders", "--for", "in-sync", "--plan", "ptah-mplan-1"},
 		{"wait", "schema/storefront", "--for", "approval", "--plan", "ptah-plan-1"},
 		{"wait", "schema/storefront", "--for", "in-sync", "--timeout", "0s"},
 		{"approve", "schema/storefront", "--wait", "--dry-run", "client"},

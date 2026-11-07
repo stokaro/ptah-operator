@@ -254,6 +254,118 @@ func TestRenderTextSaysWhereTheLastRunStopped(t *testing.T) {
 	}
 }
 
+// The record of a run says what it carried out and who allowed it, and the view
+// leaves out what the record does not hold rather than making it up.
+func TestRenderTextSaysWhatTheLastRunCarriedOut(t *testing.T) {
+	t.Parallel()
+
+	stamped := metav1.NewTime(time.Date(2026, 8, 30, 11, 50, 0, 0, time.UTC))
+	read := metav1.NewTime(time.Date(2026, 8, 30, 12, 5, 0, 0, time.UTC))
+	const (
+		operation   = "sha256:" + "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		fingerprint = "sha256:" + "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	)
+	provenance := func(run *operatorv1alpha1.MigrationRunStatus) {
+		run.OperationID = operation
+		run.PlanRef = &operatorv1alpha1.ImmutableObjectReference{Name: "orders-plan", UID: "plan-uid"}
+		run.PlanFingerprint = fingerprint
+		run.Authorization = &operatorv1alpha1.MigrationRunAuthorizationStatus{
+			Kind:        operatorv1alpha1.MigrationRunAuthorizedByApproval,
+			ApprovalRef: &operatorv1alpha1.ImmutableObjectReference{Name: "orders-approval", UID: "approval-uid"},
+			Approver:    &operatorv1alpha1.ApprovalIdentity{Username: "alice@example.test"},
+			ApprovedAt:  &stamped,
+		}
+		run.Verification = &operatorv1alpha1.MigrationRunVerificationStatus{
+			ObservedAt: read, HistoryFingerprint: fingerprint, CurrentVersion: 3, Result: operatorv1alpha1.MigrationRunVerifiedInSync,
+		}
+	}
+	for _, row := range []struct {
+		name     string
+		change   func(*operatorv1alpha1.MigrationRunStatus)
+		want     []string
+		wantJSON []string
+		refuse   []string
+		// refuseJSON is what the JSON view leaves out of everything it carries.
+		refuseJSON []string
+	}{
+		{
+			name:   "an approved run read back",
+			change: provenance,
+			want: []string{
+				"  Operation:          " + operation + "\n",
+				"  Plan:               orders-plan, fingerprint " + fingerprint + "\n",
+				"  Authorized:         approval orders-approval (UID approval-uid) by alice@example.test at 2026-08-30T11:50:00Z\n",
+				"  Read back:          InSync at version 3, 2026-08-30T12:05:00Z\n",
+			},
+			wantJSON: []string{
+				`"operationID": "` + operation + `"`, `"planFingerprint": "` + fingerprint + `"`, `"kind": "Approval"`,
+				`"username": "alice@example.test"`, `"historyFingerprint": "` + fingerprint + `"`,
+			},
+		},
+		{
+			name: "a run under the policy",
+			change: func(run *operatorv1alpha1.MigrationRunStatus) {
+				provenance(run)
+				run.Authorization = &operatorv1alpha1.MigrationRunAuthorizationStatus{Kind: operatorv1alpha1.MigrationRunAuthorizedByPolicy}
+			},
+			want:     []string{"  Authorized:         spec.policy.apply Always, with no approval\n"},
+			wantJSON: []string{`"kind": "Policy"`},
+		},
+		{
+			// An approval's stamp nobody copied stays unknown.
+			name: "a claim that copied no stamp",
+			change: func(run *operatorv1alpha1.MigrationRunStatus) {
+				provenance(run)
+				run.PlanFingerprint = ""
+				run.Authorization.Approver, run.Authorization.ApprovedAt = nil, nil
+				run.Verification = nil
+			},
+			want:   []string{"  Plan:               orders-plan\n", "  Authorized:         approval orders-approval (UID approval-uid)\n"},
+			refuse: []string{"fingerprint", "alice", "Read back"},
+		},
+		{
+			name:       "a run from before the record",
+			change:     func(*operatorv1alpha1.MigrationRunStatus) {},
+			refuse:     []string{"Operation:", "Plan:", "Authorized:", "Read back:"},
+			refuseJSON: []string{"operationID", "authorization", "verification"},
+		},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+
+			migration, plan := fixture()
+			row.change(migration.Status.LastRun)
+			view, err := migrationview.Load(context.Background(), readerWith(t, migration, plan), "team-a", "orders")
+			if err != nil {
+				t.Fatal(err)
+			}
+			text := render(t, view, migrationview.Text)
+			for _, want := range row.want {
+				if !strings.Contains(text, want) {
+					t.Fatalf("text view is missing %q:\n%s", want, text)
+				}
+			}
+			document := render(t, view, migrationview.JSON)
+			for _, want := range row.wantJSON {
+				if !strings.Contains(document, want) {
+					t.Fatalf("json view is missing %s:\n%s", want, document)
+				}
+			}
+			block, _, _ := strings.Cut(text[strings.Index(text, "Last run"):], "\n\n")
+			for _, refuse := range row.refuse {
+				if strings.Contains(block, refuse) {
+					t.Fatalf("the view says %q, which the record does not hold:\n%s", refuse, block)
+				}
+			}
+			for _, refuse := range row.refuseJSON {
+				if strings.Contains(document, refuse) {
+					t.Fatalf("the json view says %q, which the record does not hold:\n%s", refuse, document)
+				}
+			}
+		})
+	}
+}
+
 // A resource held before any reading -- suspended, or refused for its engine or
 // its realm -- never reaches the history read that would clear the record, and
 // the view says so, and that an acknowledgment still settles it. The near

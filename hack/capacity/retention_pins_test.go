@@ -29,7 +29,7 @@ func TestRetentionPinsMatchEveryDocumentedField(t *testing.T) {
 		t.Fatal("missing pin contract")
 	}
 	rows := regexp.MustCompile("\\| `([^`]+)` \\|").FindAllStringSubmatch(string(raw)[start:end], -1)
-	if len(rows) != 9 || len(retentionPinFields) != 9 {
+	if len(rows) != 10 || len(retentionPinFields) != 10 {
 		t.Fatal("pin denominator changed", len(rows), len(retentionPinFields))
 	}
 	seen := map[string]bool{}

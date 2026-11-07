@@ -124,6 +124,20 @@ type RunView struct {
 	// Failure is where a failed or partial run stopped, when a statement
 	// reached the database and failed there.
 	Failure *operatorv1alpha1.MigrationRunFailureStatus `json:"failure,omitempty"`
+	// OperationID, PlanRef, PlanFingerprint, Authorization, ArtifactDigest,
+	// Source, TargetIdentityDigest, ExecutionBindingID and Verification are what
+	// the run's record says it carried out, who allowed it and what the reading
+	// after it found. Each is absent where the record does not hold it, which is
+	// every one of them on a run a release before those fields recorded.
+	OperationID          string                                            `json:"operationID,omitempty"`
+	PlanRef              *operatorv1alpha1.ImmutableObjectReference        `json:"planRef,omitempty"`
+	PlanFingerprint      string                                            `json:"planFingerprint,omitempty"`
+	Authorization        *operatorv1alpha1.MigrationRunAuthorizationStatus `json:"authorization,omitempty"`
+	ArtifactDigest       string                                            `json:"artifactDigest,omitempty"`
+	Source               *operatorv1alpha1.PlanSourceBinding               `json:"source,omitempty"`
+	TargetIdentityDigest string                                            `json:"targetIdentityDigest,omitempty"`
+	ExecutionBindingID   string                                            `json:"executionBindingID,omitempty"`
+	Verification         *operatorv1alpha1.MigrationRunVerificationStatus  `json:"verification,omitempty"`
 }
 
 // UnresolvedRunView is the execution whose effect on the database nobody has
@@ -304,6 +318,16 @@ func runOf(run *operatorv1alpha1.MigrationRunStatus) *RunView {
 		FinishedAt:      run.FinishedAt,
 		AppliedVersions: append([]int64(nil), run.AppliedVersions...),
 		Message:         run.Message,
+
+		OperationID:          run.OperationID,
+		PlanRef:              run.PlanRef.DeepCopy(),
+		PlanFingerprint:      run.PlanFingerprint,
+		Authorization:        run.Authorization.DeepCopy(),
+		ArtifactDigest:       run.ArtifactDigest,
+		Source:               run.Source.DeepCopy(),
+		TargetIdentityDigest: run.TargetIdentityDigest,
+		ExecutionBindingID:   run.ExecutionBindingID,
+		Verification:         run.Verification.DeepCopy(),
 	}
 	if run.Failure != nil {
 		failure := *run.Failure

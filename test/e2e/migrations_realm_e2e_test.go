@@ -346,6 +346,11 @@ func (m *migrationRun) partialRunBlocksAndRecovers() {
 	if !partialRunJournaledOnce(stopped.Status, plan.Name) {
 		m.fatalf("%s did not journal the partial run of plan %s once: %#v", migration, plan.Name, stopped.Status.Journal)
 	}
+	// A partial run keeps what it carried out and who allowed it, as a run that
+	// finished does. It may or may not have been read back by now.
+	if err := runIdentityRecorded(stopped.Status, plan); err != nil {
+		m.fatalf("%s: the record of its partial run: %v", migration, err)
+	}
 	m.scanObject(stopped, "the partial-run refusal")
 
 	// Partial is a fact about the database, not a label the run chose: the

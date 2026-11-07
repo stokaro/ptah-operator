@@ -670,6 +670,7 @@ spec:
 | `status.journal.entries[].approvalUID` | `string` | ApprovalUID is the UID of that approval. An entry a release before this field wrote has none: it is incomplete evidence, and is not to be joined to an object that holds the name today. |
 | `status.journal.entries[].approver` | `string` | Approver is the user admission stamped on that approval. |
 | `status.journal.entries[].at` | `string`, required | At is when the event happened. For an Apply, a run or a failed attempt it is when that ended. |
+| `status.journal.entries[].authorization` | `string`, one of `Approval`, `Policy` | Authorization is what allowed a PtahMigration's run. |
 | `status.journal.entries[].count` | `integer` | Count is how many attempts an OperationFailed entry stands for. A single failure has none. |
 | `status.journal.entries[].destructive` | `boolean` | Destructive reports a published PtahSchema plan that destroys data. |
 | `status.journal.entries[].failure` | `object` | Failure is where a run stopped, as status.lastRun.failure said. |
@@ -678,10 +679,15 @@ spec:
 | `status.journal.entries[].failure.statement` | `integer`, required | Statement is the position of the failed statement in that migration, counting from one. |
 | `status.journal.entries[].failure.statements` | `integer`, required | Statements is how many statements that migration has. |
 | `status.journal.entries[].failure.version` | `integer`, required | Version is the migration the run stopped in. |
+| `status.journal.entries[].jobName` | `string` | JobName is the Job a PtahMigration's run ran as. It is absent when no Job was confirmed. |
+| `status.journal.entries[].jobUID` | `string` | JobUID is that Job's UID, which outlives the Job and tells it from a later Job that takes the name. |
 | `status.journal.entries[].lastAt` | `string` | LastAt is the latest attempt an OperationFailed entry folds. A single failure has none. |
 | `status.journal.entries[].operation` | `string`, one of `Resolve`, `Verify`, `Observe`, `Plan`, `History`, `Apply` | Operation is the operation that failed, when one was claimed. |
-| `status.journal.entries[].outcome` | `string`, one of `Succeeded`, `Failed`, `Partial`, `Unknown`, `UpToDate`, `InSync`, `DriftRemains`, `Superseded` | Outcome is how an Apply, a proof or a run ended. |
+| `status.journal.entries[].operationID` | `string` | OperationID is the Apply claim a PtahMigration's RunFinished, Verified or RunAcknowledged entry concerns. It is what joins them: entries of one execution carry the same one, and neither their order nor their times are the join. ApprovalUID is what joins an ApprovalAccepted entry to the run that consumed it, since a claim withdrawn before dispatch leaves the approval to the next one. An entry a release before this field wrote has none. |
+| `status.journal.entries[].outcome` | `string`, one of `Succeeded`, `Failed`, `Partial`, `Unknown`, `UpToDate`, `InSync`, `DriftRemains`, `Superseded`, `Pending`, `Blocked` | Outcome is how an Apply, a proof or a run ended. |
 | `status.journal.entries[].plan` | `string` | Plan names the plan the event concerns. |
+| `status.journal.entries[].planFingerprint` | `string` | PlanFingerprint is the spec.fingerprint of the plan a PtahMigration's run carried out, when the claim recorded it. |
+| `status.journal.entries[].planUID` | `string` | PlanUID is the UID of a PtahMigration's plan. |
 | `status.journal.entries[].reason` | `string` | Reason is the condition reason the failure set. It is a code, never the message: a message can carry what status must not. |
 | `status.journal.entries[].startedAt` | `string` | StartedAt is when an Apply or a run began. |
 | `status.journal.entries[].statements` | `integer` | Statements is how many statements a published PtahSchema plan holds. |

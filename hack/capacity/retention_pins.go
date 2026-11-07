@@ -32,7 +32,7 @@ type pinField struct {
 	requiredParent     bool
 }
 
-// Keep the nine fields in the operations runbook explicit. The metadata copy
+// Keep the ten fields in the operations runbook explicit. The metadata copy
 // of an unresolved migration is an additional conservative pin, even if status
 // says it was settled: pruning is not authorized to discard conflicting evidence.
 var retentionPinFields = []pinField{
@@ -45,6 +45,7 @@ var retentionPinFields = []pinField{
 	{"PtahMigration", "migration", "status.plan", false},
 	{"PtahMigration", "migration", "status.activeOperation.planRef", false},
 	{"PtahMigration", "migration", "status.unresolvedRun.planRef", true},
+	{"PtahMigration", "migration", "status.lastRun.planRef", false},
 }
 
 func planID(object *unstructured.Unstructured, family string) retainedPlanID {

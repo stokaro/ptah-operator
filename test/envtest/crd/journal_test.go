@@ -56,6 +56,18 @@ func TestStatusRefusesAMalformedJournal(t *testing.T) {
 			cause{"status.journal.entries[0].count", "greater than or equal to 2"}},
 		{"an unbounded approval UID", journal(journalEntry(map[string]any{"type": "ApprovalAccepted", "approvalUID": strings.Repeat("a", 129)})),
 			cause{"status.journal.entries[0].approvalUID", "Too long"}},
+		{"an operation ID that is not one", journal(journalEntry(map[string]any{"type": "RunFinished", "operationID": "apply-1"})),
+			cause{"status.journal.entries[0].operationID", "should match"}},
+		{"an authorization the API does not name", journal(journalEntry(map[string]any{"type": "RunFinished", "authorization": "Somebody"})),
+			cause{"status.journal.entries[0].authorization", "Unsupported value"}},
+		{"an unbounded plan UID", journal(journalEntry(map[string]any{"type": "RunFinished", "planUID": strings.Repeat("a", 129)})),
+			cause{"status.journal.entries[0].planUID", "Too long"}},
+		{"an unbounded plan fingerprint", journal(journalEntry(map[string]any{"type": "RunFinished", "planFingerprint": strings.Repeat("a", 129)})),
+			cause{"status.journal.entries[0].planFingerprint", "Too long"}},
+		{"an unbounded Job name", journal(journalEntry(map[string]any{"type": "RunFinished", "jobName": strings.Repeat("a", 254)})),
+			cause{"status.journal.entries[0].jobName", "Too long"}},
+		{"an unbounded Job UID", journal(journalEntry(map[string]any{"type": "RunFinished", "jobUID": strings.Repeat("a", 129)})),
+			cause{"status.journal.entries[0].jobUID", "Too long"}},
 		{"an unbounded approver", journal(journalEntry(map[string]any{"type": "ApprovalAccepted", "approver": strings.Repeat("a", 513)})),
 			cause{"status.journal.entries[0].approver", "Too long"}},
 		{"a 65th entry", journal(tooMany...),
@@ -85,7 +97,15 @@ func TestStatusRefusesAMalformedJournal(t *testing.T) {
 				"type": "RunFinished", "outcome": "Failed", "appliedVersions": int64(2), "startedAt": "2026-10-24T07:41:53Z",
 				"failure": map[string]any{"version": int64(16), "statement": int64(2), "statements": int64(3), "sqlState": "42P01"},
 			}),
-			journalEntry(map[string]any{"type": "RunAcknowledged", "acknowledgment": "ack-a", "acknowledgedBy": "bob"}),
+			journalEntry(map[string]any{
+				"type": "RunFinished", "outcome": "Succeeded", "operationID": "sha256:" + strings.Repeat("a", 64),
+				"plan": "plan-a", "planUID": "plan-uid", "planFingerprint": "sha256:" + strings.Repeat("b", 64),
+				"authorization": "Approval", "approval": "approve-a", "approvalUID": "approval-uid", "approver": "alice",
+				"jobName": "job-a", "jobUID": "job-uid",
+			}),
+			journalEntry(map[string]any{"type": "Verified", "outcome": "Pending", "operationID": "sha256:" + strings.Repeat("a", 64)}),
+			journalEntry(map[string]any{"type": "Verified", "outcome": "Blocked", "operationID": "sha256:" + strings.Repeat("a", 64)}),
+			journalEntry(map[string]any{"type": "RunAcknowledged", "acknowledgment": "ack-a", "acknowledgedBy": "bob", "operationID": "sha256:" + strings.Repeat("a", 64)}),
 			journalEntry(map[string]any{
 				"type": "OperationFailed", "operation": "Observe", "reason": "ObservationFailed",
 				"lastAt": "2026-10-24T08:14:00Z", "count": int64(5),
@@ -97,6 +117,104 @@ func TestStatusRefusesAMalformedJournal(t *testing.T) {
 			if err := api.Status().Update(context.Background(), observed, client.DryRunAll); err != nil {
 				t.Fatalf("the API server refused a well-formed journal on %s %s: %v", object.GetKind(), object.GetName(), err)
 			}
+		}
+	})
+}
+
+// status.lastRun names what a run carried out, and the schema keeps a malformed
+// identity and a contradictory authorization from being published.
+func TestPtahMigrationStatusHoldsARunsProvenance(t *testing.T) {
+	plane.Require(t)
+	t.Parallel()
+
+	namespace := newNamespace(t, "run-provenance")
+	migration := migrationBase(namespace)()
+	if err := api.Create(context.Background(), migration); err != nil {
+		t.Fatalf("store PtahMigration %s: %v", migration.GetName(), err)
+	}
+	digest := "sha256:" + strings.Repeat("a", 64)
+	approval := map[string]any{"name": "approve-a", "uid": "approve-a-uid"}
+	run := func(extra map[string]any) map[string]any {
+		return merged(map[string]any{"outcome": "Applied", "startedAt": "2026-10-24T07:41:53Z"}, extra)
+	}
+	const contradictory = "an approval authorization names its approval, and a policy authorization names no decision"
+	for _, test := range []struct {
+		name  string
+		extra map[string]any
+		want  cause
+	}{
+		{"an operation ID that is not one", map[string]any{"operationID": "apply-1"}, cause{"status.lastRun.operationID", "should match"}},
+		{"a database that is not a digest", map[string]any{"targetIdentityDigest": "somewhere"}, cause{"status.lastRun.targetIdentityDigest", "should match"}},
+		{"an execution binding that is not one", map[string]any{"executionBindingID": "v2"}, cause{"status.lastRun.executionBindingID", "should match"}},
+		{"an unbounded fingerprint", map[string]any{"planFingerprint": strings.Repeat("a", 129)}, cause{"status.lastRun.planFingerprint", "Too long"}},
+		{"a plan with no UID", map[string]any{"planRef": map[string]any{"name": "plan-a"}}, cause{"status.lastRun.planRef.uid", "Required value"}},
+		{"an authorization the API does not name", map[string]any{"authorization": map[string]any{"kind": "Somebody"}}, cause{"status.lastRun.authorization.kind", "Unsupported value"}},
+		{"an approval that names no approval", map[string]any{"authorization": map[string]any{"kind": "Approval"}}, cause{"status.lastRun.authorization", contradictory}},
+		{"a policy that names an approval", map[string]any{"authorization": map[string]any{"kind": "Policy", "approvalRef": approval}}, cause{"status.lastRun.authorization", contradictory}},
+		{"a policy that names an approver", map[string]any{"authorization": map[string]any{"kind": "Policy", "approver": map[string]any{"username": "alice"}}}, cause{"status.lastRun.authorization", contradictory}},
+		{"a policy with a stamp time", map[string]any{"authorization": map[string]any{"kind": "Policy", "approvedAt": "2026-10-24T07:41:53Z"}}, cause{"status.lastRun.authorization", contradictory}},
+		{"a reading that found something the API does not name", map[string]any{"verification": map[string]any{
+			"observedAt": "2026-10-24T07:41:53Z", "historyFingerprint": digest, "currentVersion": int64(3), "result": "Fine",
+		}}, cause{"status.lastRun.verification.result", "Unsupported value"}},
+		{"a reading of no history", map[string]any{"verification": map[string]any{
+			"observedAt": "2026-10-24T07:41:53Z", "historyFingerprint": "none", "currentVersion": int64(3), "result": "InSync",
+		}}, cause{"status.lastRun.verification.historyFingerprint", "should match"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			observed := reread(t, migration)
+			set(t, observed, run(test.extra), "status", "lastRun")
+			err := api.Status().Update(context.Background(), observed, client.DryRunAll)
+			if mismatch := refusalMismatch(err, test.want); mismatch != nil {
+				t.Errorf("status of PtahMigration %s: %v", migration.GetName(), mismatch)
+			}
+		})
+	}
+
+	for _, test := range []struct {
+		name  string
+		extra map[string]any
+	}{
+		{"a run from before the record, which names none of it", nil},
+		{"a run under an approval, read back", map[string]any{
+			"operationID": digest, "planRef": map[string]any{"name": "plan-a", "uid": "plan-a-uid"}, "planFingerprint": digest,
+			"artifactDigest": digest, "targetIdentityDigest": digest, "executionBindingID": "v1-" + strings.Repeat("a", 32),
+			"authorization": map[string]any{
+				"kind": "Approval", "approvalRef": approval, "approver": map[string]any{"username": "alice"}, "approvedAt": "2026-10-24T07:41:53Z",
+			},
+			"verification": map[string]any{
+				"observedAt": "2026-10-24T07:41:53Z", "historyFingerprint": digest, "currentVersion": int64(3), "result": "Pending",
+			},
+		}},
+		{"a run under an approval whose stamp nobody copied", map[string]any{
+			"authorization": map[string]any{"kind": "Approval", "approvalRef": approval},
+		}},
+		{"a run under the policy", map[string]any{"authorization": map[string]any{"kind": "Policy"}}},
+		{"a run from a Git source", map[string]any{"source": map[string]any{
+			"kind": "Git", "revision": digest, "contentDigest": digest,
+		}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			observed := reread(t, migration)
+			set(t, observed, run(test.extra), "status", "lastRun")
+			if err := api.Status().Update(context.Background(), observed, client.DryRunAll); err != nil {
+				t.Fatalf("the API server refused a well-formed run on PtahMigration %s: %v", migration.GetName(), err)
+			}
+		})
+	}
+
+	// A claim carries the same copies.
+	t.Run("a claim that copies what its run will name", func(t *testing.T) {
+		t.Parallel()
+		observed := reread(t, migration)
+		set(t, observed, map[string]any{
+			"type": "Apply", "id": digest, "inputFingerprint": digest, "jobName": "job-a", "startedAt": "2026-10-24T07:41:53Z",
+			"attempt": int64(1), "executionBindingID": "v1-" + strings.Repeat("a", 32),
+			"planFingerprint": digest, "approvedBy": map[string]any{"username": "alice"}, "approvedAt": "2026-10-24T07:41:53Z",
+		}, "status", "activeOperation")
+		if err := api.Status().Update(context.Background(), observed, client.DryRunAll); err != nil {
+			t.Fatalf("the API server refused a well-formed claim on PtahMigration %s: %v", migration.GetName(), err)
 		}
 	})
 }
