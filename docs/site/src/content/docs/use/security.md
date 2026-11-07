@@ -872,9 +872,10 @@ too; decide what such a pipeline may store with that in mind.
 
 The Job keeps that log for 24 hours after it finishes when a person approved the Apply,
 so that person can read it the next morning, and when a migration run under
-`apply: Always` reported `Partial` or `Unknown`, or nothing, which stops the resource
-until someone reads the database. Any other Job
-[keeps five minutes](../operations/#failed-apply-log).
+`apply: Always` stopped the resource: it reported `Partial` or `Unknown`, or nothing, or
+it failed at a statement and left a dirty revision row. Someone has to read the database
+then, so what that statement's failure quoted stays readable for those 24 hours under
+`Always` as well. Any other Job [keeps five minutes](../operations/#failed-apply-log).
 What a Pod kept that long still holds: it has no API token, because automatic
 token mounting is disabled. Its projected result token has the receiver as its
 only audience and lasts at most an hour, and the receiver refuses it once the Job

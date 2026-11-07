@@ -137,10 +137,13 @@ it would report.
 - **A failed Apply a person approved keeps its Job 24 hours, and so does a migration
   run that stops its resource.** The Pod log stays for 24 hours after the Job finishes,
   in both families, when a person approved the Apply, and under `apply: Always` when a
-  migration run reported `Partial` or `Unknown`, or nothing, because the resource runs
-  no other Apply until that run is settled. Every other finished Job keeps five
-  minutes. That includes a schema Apply under `Always`, whose proof can lead to the
-  next Apply, and a migration run under it that reported `Failed`.
+  migration run stops the resource: it reported `Partial` or `Unknown`, or nothing, or
+  it failed at a statement and left a dirty revision row, because no other Apply runs
+  until the run is settled or a person repairs the row. Every other finished Job keeps
+  five minutes. That includes a schema Apply under `Always`, whose proof can lead to the
+  next Apply, and a migration run under it that reported `Failed` and left no row, as
+  one that stopped before it selected a migration does, because that run comes around
+  again.
   [Which run keeps what](../../use/operations/#failed-apply-log) says why. A retained
   Job counts toward a `count/jobs.batch` quota, and one Kubernetes marked `Failed`
   keeps a `KubeJobFailed` alert firing until it is gone. A Job the previous release

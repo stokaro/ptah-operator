@@ -1,6 +1,9 @@
 package jobclaim_test
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -19,31 +22,110 @@ const (
 )
 
 // TestOnlyARunThatStopsItsResourceKeepsItsLogWithoutAnApproval is the rule, for every
-// outcome the API has. A run that repeats under `apply: Always` writes a fresh log
-// each cycle, and a long TTL would hold one Job per cycle.
+// outcome the API has, with and without a dirty revision. A run that repeats under
+// `apply: Always` writes a fresh log each cycle, and a long TTL would hold one Job per
+// cycle. Admission is coarser, because its reading cannot see the dirty revision.
 func TestOnlyARunThatStopsItsResourceKeepsItsLogWithoutAnApproval(t *testing.T) {
 	t.Parallel()
 
+	const (
+		upToDate = operatorv1alpha1.MigrationRunOutcomeUpToDate
+		applied  = operatorv1alpha1.MigrationRunOutcomeApplied
+		failed   = operatorv1alpha1.MigrationRunOutcomeFailed
+		partial  = operatorv1alpha1.MigrationRunOutcomePartial
+		unknown  = operatorv1alpha1.MigrationRunOutcomeUnknown
+	)
 	for _, test := range []struct {
-		outcome operatorv1alpha1.MigrationRunOutcome
-		blocks  bool
+		outcome    operatorv1alpha1.MigrationRunOutcome
+		dirty      bool
+		unresolved bool
+		stops      bool
+		admitted   bool
 	}{
-		{outcome: operatorv1alpha1.MigrationRunOutcomeUpToDate},
-		{outcome: operatorv1alpha1.MigrationRunOutcomeApplied},
-		{outcome: operatorv1alpha1.MigrationRunOutcomeFailed},
-		{outcome: operatorv1alpha1.MigrationRunOutcomePartial, blocks: true},
-		{outcome: operatorv1alpha1.MigrationRunOutcomeUnknown, blocks: true},
+		{outcome: upToDate},
+		{outcome: applied},
+		// A row a later run read does not make a run that succeeded a run that stopped.
+		{outcome: applied, dirty: true},
+		// It stopped before it selected a migration, or Ptah refused the selection.
+		{outcome: failed, admitted: true},
+		// It failed at a statement: the reading that follows refuses on the row.
+		{outcome: failed, dirty: true, stops: true, admitted: true},
+		{outcome: partial, unresolved: true, stops: true, admitted: true},
+		{outcome: partial, dirty: true, unresolved: true, stops: true, admitted: true},
+		{outcome: unknown, unresolved: true, stops: true, admitted: true},
 	} {
-		t.Run(string(test.outcome), func(t *testing.T) {
+		t.Run(fmt.Sprintf("%s, dirty %v", test.outcome, test.dirty), func(t *testing.T) {
 			t.Parallel()
-			if got := jobclaim.MigrationRunBlocks(test.outcome); got != test.blocks {
-				t.Errorf("MigrationRunBlocks() = %v, want %v", got, test.blocks)
+			if got := jobclaim.MigrationRunUnresolved(test.outcome); got != test.unresolved {
+				t.Errorf("MigrationRunUnresolved() = %v, want %v", got, test.unresolved)
 			}
-			if got := jobclaim.MigrationRunKeepsLog(false, test.outcome); got != test.blocks {
-				t.Errorf("MigrationRunKeepsLog() with no approval = %v, want %v", got, test.blocks)
+			if got := jobclaim.MigrationRunStops(test.outcome, test.dirty); got != test.stops {
+				t.Errorf("MigrationRunStops() = %v, want %v", got, test.stops)
 			}
-			if !jobclaim.MigrationRunKeepsLog(true, test.outcome) {
+			if got := jobclaim.MigrationRunKeepsLog(false, test.outcome, test.dirty); got != test.stops {
+				t.Errorf("MigrationRunKeepsLog() with no approval = %v, want %v", got, test.stops)
+			}
+			if !jobclaim.MigrationRunKeepsLog(true, test.outcome, test.dirty) {
 				t.Error("MigrationRunKeepsLog() with an approval = false")
+			}
+			if got := jobclaim.MigrationRunMayKeepLog(test.outcome); got != test.admitted {
+				t.Errorf("MigrationRunMayKeepLog() = %v, want %v", got, test.admitted)
+			}
+			// Whatever the manager may ask for, admission has to let through.
+			if jobclaim.MigrationRunKeepsLog(false, test.outcome, test.dirty) && !test.admitted {
+				t.Error("the manager keeps a log admission would refuse")
+			}
+		})
+	}
+}
+
+// TestWhatPtahReportedTellsAFailedRunThatStopsFromOneThatRepeats reads the documents
+// the pinned Ptah wrote, which the rule was written against. A statement it could not
+// run leaves a dirty revision in the report's status. A database it could not open
+// leaves no status at all, and that run comes around again.
+func TestWhatPtahReportedTellsAFailedRunThatStopsFromOneThatRepeats(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name    string
+		pattern string
+		outcome string
+		keeps   bool
+	}{
+		{name: "a statement refused", pattern: "../dataplane/testdata/statement-errors/*-up.json", outcome: dataplane.MigrationOutcomeFailed, keeps: true},
+		{name: "a statement refused after another migration applied", pattern: "../dataplane/testdata/migrations-up-failed-postgres.json", outcome: dataplane.MigrationOutcomeFailed, keeps: true},
+		{name: "a migration that committed half of itself", pattern: "../dataplane/testdata/migrations-up-partial-mysql.json", outcome: dataplane.MigrationOutcomePartial, keeps: true},
+		{name: "a database it could not open", pattern: "../dataplane/testdata/target-failures/*/up.json", outcome: dataplane.MigrationOutcomeFailed},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			documents, err := filepath.Glob(test.pattern)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(documents) == 0 {
+				t.Fatalf("no document matches %s, so this row read nothing", test.pattern)
+			}
+			for _, document := range documents {
+				content, err := os.ReadFile(document)
+				if err != nil {
+					t.Fatal(err)
+				}
+				report, err := dataplane.DecodeMigrationRun(content)
+				if err != nil {
+					t.Fatalf("%s: DecodeMigrationRun() error = %v", document, err)
+				}
+				if report.Outcome != test.outcome {
+					t.Fatalf("%s reports %q, want %q", document, report.Outcome, test.outcome)
+				}
+				dirty := report.Status != nil && report.Status.DirtyRevision != nil
+				got := jobclaim.MigrationRunKeepsLog(false, jobclaim.MigrationRunOutcome(report.Outcome), dirty)
+				if got != test.keeps {
+					t.Errorf("%s: MigrationRunKeepsLog() = %v with dirty %v, want %v", document, got, dirty, test.keeps)
+				}
+				if report.StoppedBeforeSelecting() && got {
+					t.Errorf("%s stopped before it selected a migration, and it repeats", document)
+				}
 			}
 		})
 	}

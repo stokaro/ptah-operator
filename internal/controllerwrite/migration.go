@@ -113,7 +113,7 @@ func (v *Validator) validateMigrationJobUpdate(
 	if operation == nil || operation.JobName != oldJob.Name || operation.JobUID != oldJob.UID {
 		return denyf("Job is not the exact active migration operation instance")
 	}
-	if err := v.validateMigrationRunKeepsLog(ctx, oldJob, *job.Spec.TTLSecondsAfterFinished, operation); err != nil {
+	if err := v.validateMigrationRunMayKeepLog(ctx, oldJob, *job.Spec.TTLSecondsAfterFinished, operation); err != nil {
 		return err
 	}
 	if err := validateClaimBoundMigrationJobCleanup(migration, operation, oldJob); err != nil {
