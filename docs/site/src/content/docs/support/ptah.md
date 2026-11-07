@@ -21,11 +21,11 @@ things, and [the next section](#three-states-kept-apart) says what.
 <!-- BEGIN GENERATED COMPATIBILITY -->
 **Axis:** Operator version to the Ptah build the operator executes, identified by the digest-pinned executorImage and the ptahVersion bound beside it. It is not the Ptah CLI a person used to build the OCI artifact. The runner is not a third axis: it is built from the operator source this row names, and the exact protocol both halves speak is in runnerProtocolVersion.
 
-**Last measured:** 2026-11-06.
+**Last measured:** 2026-11-07.
 
 | Operator | Declared range | Verified builds | Guide |
 | --- | --- | --- | --- |
-| `edge` | No range | `v0.22.0` | [edge](https://operator.ptah.run/edge/) |
+| `edge` | No range | `v0.23.0` | [edge](https://operator.ptah.run/edge/) |
 | `v0.2.9` | No range | `v0.17.0` | [v0.2.9](https://operator.ptah.run/v0.2.9/) |
 | `v0.2.8` | No range | `v0.16.0` | [v0.2.8](https://operator.ptah.run/v0.2.8/) |
 | `v0.2.7` | No range | `v0.15.0` | [v0.2.7](https://operator.ptah.run/v0.2.7/) |
@@ -45,16 +45,17 @@ The development state. Its guide is at [https://operator.ptah.run/edge/](https:/
 
 **Verified:**
 
-- Ptah `v0.22.0`. Commit [`0dd9190b6477830272c90fd98b2b57b603166fd1`](https://github.com/stokaro/ptah/commit/0dd9190b6477830272c90fd98b2b57b603166fd1), runner protocol version 1, evidence `kubernetes-e2e`. The complete OCI resolution and verification, observation, planning, approval, apply, failure-recovery and convergence lifecycle against PostgreSQL and MySQL, on every supported Kubernetes minor, for both artifact formats this operator reads: application/vnd.stokaro.ptah.schema.v1 for a declared schema, whose declared rows converge on both engines, and application/vnd.stokaro.ptah.migrations.v1 for a versioned migration directory, whose history read, approval gate and applied sequence run against PostgreSQL and MySQL.
+- Ptah `v0.23.0`. Commit [`f47b2bfa3b696c93730e7d25397987ed0a4a2562`](https://github.com/stokaro/ptah/commit/f47b2bfa3b696c93730e7d25397987ed0a4a2562), runner protocol version 1, evidence `kubernetes-e2e`. The complete OCI resolution and verification, observation, planning, approval, apply, failure-recovery and convergence lifecycle against PostgreSQL and MySQL, on every supported Kubernetes minor, for both artifact formats this operator reads: application/vnd.stokaro.ptah.schema.v1 for a declared schema, whose declared rows converge on both engines, and application/vnd.stokaro.ptah.migrations.v1 for a versioned migration directory, whose history read, approval gate and applied sequence run against PostgreSQL and MySQL.
 
 **Limitations:**
 
 - The verified build is the release image of the Ptah version under Verified, pinned by digest and run as Ptah published it: the operator builds no executor of its own. It contains stokaro/ptah#3777 and #3794, the complete `--json` documents of `schema plan` and `schema apply` that the operator reads on every declared-schema Plan and Apply. An executor without #3777, v0.9.0 included, rejects `--json` with exit code 2.
 - The verified build contains stokaro/ptah#5173, which names in every document why a command could not open its target database: plan contract 3, apply 4, migration status and run 2, and a drift report of version 1. The operator reads those versions and no others, so an executor without #5173, v0.17.0 included, fails every Observe, Plan, Apply and migration read on a document it refuses.
-- The verified build contains stokaro/ptah#5499, which reads a PostgreSQL schema through pg_catalog for every role, so the login the databases page documents reports a table another role created, as a superuser does. An executor without #5499, v0.21.0 included, leaves that table out of the report under that login, and the data-plane row that creates one fails. MySQL accounts still see what their privileges show (stokaro/ptah#5497).
+- The verified build contains stokaro/ptah#5499, which reads a PostgreSQL schema through pg_catalog for every role, so the login the databases page documents reports a table another role created, as a superuser does. An executor without #5499, v0.21.0 included, leaves that table out of the report under that login, and the data-plane row that creates one fails.
+- The verified build contains stokaro/ptah#5545: a MySQL read that cannot see every trigger, routine or view definition in the database fails with permission_denied and names what it could not see, where an executor without #5545, v0.22.0 included, reported those objects as absent. The login the databases page documents holds TRIGGER, EXECUTE and SHOW VIEW on the database for that reason, and the narrower login it documented before fails every Observe and Plan at this build.
 - The migration machine contracts -- `migrations status --json` carrying contract_version and a per-migration record, and `migrations up --json` carrying an outcome -- reached Ptah after v0.3.0-201, and `migrations up --expect-sequence`, which the operator passes on every migration Apply, reached it in v0.9.0. A build older than v0.9.0 resolves and verifies a migration artifact and then fails at its own history document or at the flag every migration Apply passes, so the versioned workflow needs at least v0.9.0 rather than any build that has the commands.
 - The verified scope is the operator's database support window, the release lines on that version's databases page. Other engines Ptah addresses are unverified here, whatever the Ptah build.
-- PostgreSQL 18.x is evidenced by the Added database lines workflow rather than by the lifecycle matrix every push runs: run 42319655955 passed on every supported Kubernetes minor at this build.
+- PostgreSQL 18.x is evidenced by the Added database lines workflow rather than by the lifecycle matrix every push runs: run 42319655955 passed on every supported Kubernetes minor at Ptah v0.22.0, the build before this one. The release preflight needs a run at this build.
 - The published verified set is a repository document. It is not compiled into the manager, and nothing compares a running executor's ptahVersion against it, so a combination outside this set is outside what the matrix measured rather than something the operator refuses. What is refused before a database is mutated is a change of any bound execution component between the plan and the apply -- Ptah, the executor image, the runner protocol version, the controller-state version -- checked before the Job is created. The manager's image and revision and the runner image are recorded and not bound: a manager release that changes only them applies the plans and approvals its predecessor left. What is refused after a Job has run is a runner speaking another protocol version, which is a rejected result frame rather than a prevented mutation. Pinning both the executor image and its ptahVersion at install is a requirement on whoever installs, not a check at runtime.
 
 ### v0.2.9
@@ -67,7 +68,7 @@ A released version. Its guide is at [https://operator.ptah.run/v0.2.9/](https://
 
 - Ptah `v0.17.0`. Commit [`38bd6e91cfe3a70543046da9c3ada05a0460a103`](https://github.com/stokaro/ptah/commit/38bd6e91cfe3a70543046da9c3ada05a0460a103), runner protocol version 1, evidence `kubernetes-e2e`. The scope is the same as for [`edge`](#edge).
 
-**Limitations:** the same as [`edge`](#edge) without its second, third and sixth limitations.
+**Limitations:** the same as [`edge`](#edge) without its second, third, fourth and seventh limitations.
 
 ### v0.2.8
 
@@ -265,15 +266,6 @@ category the new build adds therefore joins the vocabulary, the `PtahSchema`
 status pattern and the CRD schema version in the same change. The pattern keeps
 every category an earlier release stored, so a summary written before an
 upgrade still validates. A pin that leaves those files alone needs no edit.
-
-The operator can take a release's categories before the pin moves to it.
-`ReadAhead` in `hack/ptahdriftcategories` names them with the Ptah commit they
-come from and a copy of that commit's `docs/drift-findings.json`, and the
-record stays the pinned list. The unit tests hold the vocabulary to the record
-plus those categories, and hold the declaration to the copy: the newer build
-has to differ from the pinned one by exactly the declared categories. Once the
-record is written from a build that emits a declared category, the tests
-refuse the declaration until the category leaves it.
 
 Any change to the file changes the table, so regenerate it in the same commit:
 
