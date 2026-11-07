@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -66,9 +67,9 @@ func TestFreshApprovalWaitsForObservedConvergence(t *testing.T) {
 
 func TestRetargetProofKeepsTheDispatchedApplyBinding(t *testing.T) {
 	t.Parallel()
-	const refusal = "the URL Secret names another target; kubectl annotate ptahschema x -n y " +
-		ptahv1alpha1.SettledApplyAnnotation + "=apply-original"
-	base := &ptahv1alpha1.PtahSchema{Status: ptahv1alpha1.PtahSchemaStatus{
+	refusal := "the URL Secret holds another target: kubectl annotate ptahschema x -n y " +
+		ptahv1alpha1.SettledApplyAnnotation + "=apply-original/" + ftDigest + " --overwrite"
+	base := &ptahv1alpha1.PtahSchema{ObjectMeta: metav1.ObjectMeta{Name: "x", Namespace: "y"}, Status: ptahv1alpha1.PtahSchemaStatus{
 		Phase: ptahv1alpha1.PhaseBlocked,
 		PendingObservation: &ptahv1alpha1.PendingObservationStatus{
 			Outcome:          ptahv1alpha1.PendingObservationOutcomeUnknown,
@@ -101,10 +102,10 @@ func TestRetargetProofKeepsTheDispatchedApplyBinding(t *testing.T) {
 			r.Status.Conditions[0].Reason = string(ptahv1alpha1.ReasonOperationFailed)
 		}},
 		{"no way out named", func(r *ptahv1alpha1.PtahSchema) {
-			r.Status.Conditions[0].Message = "the URL Secret names another target"
+			r.Status.Conditions[0].Message = "the URL Secret holds another target"
 		}},
 		{"the way out of another Apply", func(r *ptahv1alpha1.PtahSchema) {
-			r.Status.Conditions[0].Message = ptahv1alpha1.SettledApplyAnnotation + "=another-apply"
+			r.Status.Conditions[0].Message = strings.ReplaceAll(r.Status.Conditions[0].Message, "apply-original", "another-apply")
 		}},
 	})
 	// The read goes on while this refusal remains true, and the claim doing it is
@@ -118,6 +119,40 @@ func TestRetargetProofKeepsTheDispatchedApplyBinding(t *testing.T) {
 		if retargetProofRefused(base, ptahv1alpha1.PendingObservationOutcomeUnknown, bindings[0], bindings[1], bindings[2]) {
 			t.Fatal("accepted missing expected proof bindings")
 		}
+	}
+}
+
+// A row runs what the message prints, so the reading has to refuse anything a person
+// could not run as it stands, and a command that would not replace a value already
+// there.
+func TestThePrintedSettleCommandIsTheOneARowRuns(t *testing.T) {
+	t.Parallel()
+	value := ptahv1alpha1.SettledApplyAnnotation + "=apply-original/" + ftDigest
+	command := "kubectl annotate ptahschema x -n y " + value + " --overwrite"
+	got, err := printedSettleCommand("reads the database under the new URL: "+command, "x", "y", "apply-original")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"annotate", "ptahschema", "x", "-n", "y", value, "--overwrite"}; !slices.Equal(got, want) {
+		t.Fatalf("arguments = %q, want %q", got, want)
+	}
+	for name, message := range map[string]string{
+		"no command":      "the URL Secret holds another target",
+		"another schema":  strings.Replace(command, " x ", " z ", 1),
+		"another scope":   strings.Replace(command, " y ", " z ", 1),
+		"another Apply":   strings.Replace(command, "apply-original", "another-apply", 1),
+		"no target":       strings.Replace(command, "/"+ftDigest, "", 1),
+		"not a digest":    strings.Replace(command, ftDigest, "sha256:short", 1),
+		"no overwrite":    strings.TrimSuffix(command, " --overwrite"),
+		"words after it":  command + " to settle it",
+		"another command": strings.Replace(command, "annotate ptahschema", "annotate ptahmigration", 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if _, err := printedSettleCommand(message, "x", "y", "apply-original"); err == nil {
+				t.Fatalf("accepted %q", message)
+			}
+		})
 	}
 }
 

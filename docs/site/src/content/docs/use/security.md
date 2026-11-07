@@ -356,6 +356,14 @@ identity untouched. When the installation's flag is true, the approval webhook
 refuses an approval whose approver is exactly that identity, or whose resource
 carries no recorded identity at all.
 
+The `operator.ptah.run/settled-apply` annotation is such an update, so nothing
+records who wrote it except the API server's audit log, if its policy records writes
+to `PtahSchema`. `patch` on `ptahschemas` alone can use it to [end a proof whose target
+moved](../recovery/#a-schema-whose-target-moved) and release the database realm. It
+is not the same power as deleting the resource, which takes `delete`, and patching the
+target does not end a proof. Under `apply: Always` the next plan then applies with no
+approval unless it is destructive or changes privileges.
+
 The chart installs that mutating webhook's two entries under the same flag,
 rather than leaving them bound whatever the flag says. An entry with
 `failurePolicy: Fail` refuses every `PtahSchema` and `PtahMigration` write

@@ -322,6 +322,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:ea175652d66eec5018d8023e707e37d61952eeb6bcd4d66983ba393674a25d06",
       "reason": "Add status.lastRun.targetIdentityReported and reword comments in api/v1alpha1, a package the runner links for its types (#804). No runner source file changes and the runner reads none of it: commands, payloads, result frames, delivery identity, SQL authority and retry limits are the same."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:3d1e50748d4f21be1260566440134f1e8e2e70eec5ea6a3437249132fc19e592",
+      "reason": "Reword the comment on SettledApplyAnnotation in api/v1alpha1, a package the runner links for its types (the review of #865). No code the runner runs changes: commands, payloads, result frames, delivery identity, SQL authority and retry limits are the same."
     }
   ]
 }

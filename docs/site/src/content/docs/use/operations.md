@@ -1135,7 +1135,9 @@ an exact approval is required, and under `Always` reason `PrivilegeChanges` says
 the plan's privilege changes are why.
 `Blocked` distinguishes deliberate policy refusal from an execution failure.
 `ReadyToApply`, `AwaitingApproval`, and `Blocked` all retain a read-only refresh
-deadline so the cadence survives controller restarts. An eligible Apply can be
+deadline so the cadence survives controller restarts. A resource `Blocked` with
+`TargetIdentityChanged` retains a proof to read instead, at its failure retry
+interval. An eligible Apply can be
 reserved immediately before that deadline; once it is due, a fresh resolution
 and observation take priority over automatic policy or approval consumption.
 After policy and, when required, the exact recorded approval pass final
@@ -1365,7 +1367,9 @@ approval, or `Blocked`: read-only verification, observation, and planning
 continue, the same immutable plan returns as current when its inputs are
 unchanged, and no `Apply` Job is created during the refresh. A moved tag or
 database drift observed by a due refresh therefore invalidates stale plan or
-approval evidence before mutation can begin.
+approval evidence before mutation can begin. A resource `Blocked` with
+`TargetIdentityChanged` is the exception: it reads no source until [its proof
+ends](../recovery/#a-schema-whose-target-moved).
 
 Native verification always inspects the resolved digest. When the selected
 policy requires `require_digest_pin`, the runner also evaluates the original

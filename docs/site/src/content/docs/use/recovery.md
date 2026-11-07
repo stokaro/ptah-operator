@@ -275,57 +275,79 @@ database holds.
 
 ## A schema whose target moved under an Apply {#a-schema-whose-target-moved}
 
-A `PtahSchema` proves an Apply by reading the target that Apply was planned for.
-The login is part of that target, with the host, the port, the database and the
-connection's security settings. If `spec.target.urlFrom` names another one after a
-plan was approved or while its Apply ran, no read can say what the Apply did, and
-the resource stops:
+A `PtahSchema` proves an Apply by reading the target that Apply was planned for,
+through the Secret the Apply read, which `status.pendingObservation.target` names.
+Editing `spec.target.urlFrom` does not move the proof. What does is that Secret
+holding a URL of another target, after a plan was approved or while its Apply ran.
+The target's identity covers the login, the host, the port, the database and every
+URL parameter except the ones that only carry a credential or time a connection:
+`connect_timeout`, `password` and `sslpassword` on PostgreSQL, and
+`checkConnLiveness`, `maxAllowedPacket`, `readTimeout`, `timeout` and `writeTimeout`
+on MySQL. So a new password alone is the same target, and a new `sslmode` is not.
+
+No read of another target can say what the Apply did, and the resource stops:
 
 - `status.phase` is `Blocked`, and `ReconciliationFailed=True` has the reason
-  `TargetIdentityChanged` and a message holding the command below.
+  `TargetIdentityChanged` and a message that ends with the command below.
 - `status.pendingObservation` stays, and the resource keeps its database realm, so
   another claimant of that database waits.
 - It reads again every `spec.execution.failureRetryInterval`, so it finds the first
-  target if that comes back. No plan is published and no Apply runs.
+  target if that comes back, and it connects to the new one each time. No source is
+  read, no plan is published, no Apply runs and a read request waits.
 
-**Put the first login or address back.** The next read matches, and the proof runs
-as it would have. An Apply that succeeded is recorded in `status.applied`. This
-loses nothing, so prefer it while the first login still works, and move to the new
-one after the resource settles.
+**Put the first URL back.** The next read matches, and the proof runs as it would
+have. An Apply that succeeded is recorded in `status.applied`. This loses nothing,
+so prefer it while the first login still works, and move to the new one after the
+resource settles.
 
-**Settle it.** When the first login is gone, or the move was the point, name the
-Apply in an annotation:
+**Settle it.** When the first login is gone, or the move was the point, run the
+command the message ends with:
 
 ```sh
-kubectl annotate ptahschemas storefront -n application \
-  operator.ptah.run/settled-apply="$(kubectl get ptahschemas storefront -n application \
-    -o jsonpath='{.status.pendingObservation.applyOperationID}')"
+kubectl get ptahschemas storefront -n application \
+  -o jsonpath='{.status.conditions[?(@.type=="ReconciliationFailed")].message}'
 ```
+
+It writes the `operator.ptah.run/settled-apply` annotation with a value only this
+stop prints: the Apply's operation ID and the digest of the target the read named. A
+value written earlier, the Apply's ID on its own for one, settles nothing and arms
+nothing, so a later move by the store cannot use it. If the store moves again, the
+value no longer matches and the resource prints another.
 
 That statement says you account for what the Apply did to the first target. A read
 under the new target says nothing about it, and `status.journal` says whether the
 Apply reported `Succeeded` or `Unknown`, so check the first target first if it
-matters. The operator then waits for every Pod the Apply could still be running,
-gives up the proof, the plan and the realm in one status write, records `Verified`,
-`Unknown` in the journal with a `ProofSettled` Event, and starts again from
-`Resolve` under whatever the Secret names now. Nothing is written to
-`status.applied`.
+matters. The operator takes the statement at the next read that names that target,
+up to `failureRetryInterval` later. A suspended resource runs no reads, so it takes
+it after it resumes. By then every Pod the Apply could still be running has stopped.
+It gives up the proof, the plan and the realm in one status write, records
+`Verified`, `Unknown` in the journal with a `ProofSettled` Event, and starts again
+from `Resolve` under the URL the Secret holds. Nothing is written to `status.applied`.
 
-The plan that follows binds the new target. It waits for an approval of its own
-under `apply: OnApproval`, and the approval of the old plan does not carry over.
-Under `apply: Always` it runs with nobody looking, so a Secret pointed at the wrong
-database gets the schema applied there. Check what the Secret names before you
-settle, and set `apply: OnApproval` first if you are not sure.
+The plan that follows binds the new target, and the approval of the old plan does not
+carry over. Under `apply: OnApproval` it waits for an approval of its own. Under
+`apply: Always` it applies with nobody looking, unless it is destructive or changes
+privileges, so a Secret pointed at the wrong database gets the schema applied there.
+Check what the Secret holds before you settle, and set `apply: OnApproval` first if
+you are not sure.
 
-The value names one Apply, and an operation ID is never reused, so the annotation
-cannot settle a later one, and it can stay on the resource. It does nothing while
-the proof is failing for another reason. Unlike a
-`PtahMigrationRunAcknowledgment`, it records no identity: the API server's audit log
-says who wrote it, if its audit policy records writes to `PtahSchema`. Anyone who
-may patch the resource may settle it, as they may delete it or change its target.
+Writing the annotation takes `patch` on `ptahschemas` and records no identity, unlike
+a `PtahMigrationRunAcknowledgment`. The API server's audit log says who wrote it, if
+its audit policy records writes to `PtahSchema`. It is something `patch` could not do
+otherwise: deleting the resource takes `delete`, and patching its target does not end
+a proof. So `patch` alone can end a proof hold and release the database realm.
 
-Deleting the resource also ends the proof, once the Apply's Pods have stopped, and
-a resource created again reads the database afresh. It takes the plans, the approvals
+A read names a target only if its Pod starts and the URL parses. If you point
+`spec.target.urlFrom` at a new Secret and delete the old one, which is the natural way
+to move, the proof still reads the old one: its Pod cannot start, and the resource
+reports `PodConfigurationError`, holds its realm and prints no command. A URL that
+does not parse reports `invalid_target` the same way, and in neither state does the
+annotation do anything. Create the Secret `status.pendingObservation.target` names
+again, with any valid URL. The first URL finishes the proof, and any other one leads
+to `Blocked` and the command above.
+
+Deleting the resource also ends the proof, once the Apply's Pods have stopped, and a
+resource created again reads the database afresh. It takes the plans, the approvals
 and `status.journal` with it, so settling is the better record.
 
 A `PtahMigration` is different. Its history read is not bound to the plan the run

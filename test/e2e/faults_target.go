@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"errors"
+	"fmt"
 	"net/url"
 	"strings"
 
@@ -36,12 +37,29 @@ func retargetProofRefused(
 	}
 	for _, condition := range resource.Status.Conditions {
 		if condition.Type == ptahv1alpha1.ConditionReconciliationFailed && condition.Status == metav1.ConditionTrue &&
-			condition.Reason == string(ptahv1alpha1.ReasonTargetIdentityChanged) &&
-			strings.Contains(condition.Message, ptahv1alpha1.SettledApplyAnnotation+"="+operationID) {
-			return true
+			condition.Reason == string(ptahv1alpha1.ReasonTargetIdentityChanged) {
+			_, err := printedSettleCommand(condition.Message, resource.Name, resource.Namespace, operationID)
+			return err == nil
 		}
 	}
 	return false
+}
+
+// printedSettleCommand is the kubectl arguments the stop's message ends with, held
+// to this resource and this Apply, so that a row runs what a person would copy.
+func printedSettleCommand(message, name, namespace, operationID string) ([]string, error) {
+	at := strings.LastIndex(message, "kubectl annotate ")
+	if at < 0 {
+		return nil, errors.New("the message prints no command")
+	}
+	fields := strings.Fields(message[at:])
+	prefix := ptahv1alpha1.SettledApplyAnnotation + "=" + operationID + "/"
+	if len(fields) != 8 || fields[2] != "ptahschema" || fields[3] != name || fields[4] != "-n" || fields[5] != namespace ||
+		!strings.HasPrefix(fields[6], prefix) || !sha256Pattern.MatchString(strings.TrimPrefix(fields[6], prefix)) ||
+		fields[7] != "--overwrite" {
+		return nil, fmt.Errorf("the message prints another command: %q", message[at:])
+	}
+	return fields[1:], nil
 }
 
 // proofReadAgain is the proof of operationID still owed by an attempt later than
