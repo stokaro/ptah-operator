@@ -1719,7 +1719,9 @@ install.
   eviction, its deadline -- is recorded with the account Ptah wrote as it
   stopped, when it managed to write one inside the Pod's grace: a run stopped
   between two files is a failed run with the versions it applied, and the
-  history read that follows confirms it. Where the log holding that account is
+  history read that follows confirms it. One stopped inside a statement that
+  runs outside a transaction is unknown, because Ptah cannot tell whether the
+  server applied it. Where the log holding that account is
   gone, the summary in the Pod's termination message stands in for it
   ([The termination summary](../../reference/execution/#the-termination-summary)).
 - A stale-plan refusal is read from the `refusal` Ptah's apply report carries,

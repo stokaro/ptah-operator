@@ -310,7 +310,12 @@ writes its account of the run. A run stopped between two files, or inside one
 that rolled back, reports a failed run with the versions it applied, which the
 history read that follows confirms, instead of a run nobody can account for.
 One stopped inside a file that committed part of its statements reports a
-partial run and blocks the resource, as a partial run always has. A child that
+partial run and blocks the resource, as a partial run always has. One stopped
+inside a statement that runs outside a transaction, in a file marked
+`-- +ptah no_transaction`, reports an unknown run with the versions before it
+applied and the statement it stopped in: Ptah stopped waiting for that statement
+and cannot tell whether the server applied it. The resource blocks until a person
+checks the database and [acknowledges the run](../../use/recovery/#failed-pending-row). A child that
 does not stop in time writes nothing, and the run is unknown. A schema Apply
 that was stopped is unknown either way, because its account is only ever the
 whole frame of a run that completed.

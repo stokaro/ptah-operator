@@ -191,6 +191,12 @@ leaves `status.unresolvedRun`, the resource reads `Blocked` with reason
 `ApplyOutcomeUnknown`, and the retry needs an acknowledgment
 ([A row in `state=pending`](../../use/recovery/#failed-pending-row)). A later Ptah
 release is expected to read it as `Failed`.
+A migration run whose Pod is stopped, by a node drain, an eviction or its deadline,
+while a statement runs outside a transaction (`-- +ptah no_transaction`) also ends
+`Unknown` rather than `Failed`, on both engines, and needs the same acknowledgment.
+Ptah v0.23.0 cancels the statement and cannot tell whether the server applied it.
+This one is Ptah's intent, so no later release is expected to change it. A
+migration that runs in a transaction rolls back and still ends `Failed`.
 A PostgreSQL migration whose commit fails, such as one a deferred foreign key stops,
 reads `Failed` with a message that names the migration and says nothing committed.
 A narrowed column type and a dropped identity now carry `column_types_narrowed` and

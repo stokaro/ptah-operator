@@ -436,7 +436,7 @@ The row's state and count say which path applies:
 | The row | What the database holds | `status.lastRun.outcome` | What ends it |
 | --- | --- | --- | --- |
 | `state=failed applied=0/2` | Nothing of this migration: its transaction rolled back | `Failed` | [Retry the migration](#retry-failed-migration) |
-| `state=pending applied=0/2` | Nothing, once you have [checked](#failed-pending-row) | `Unknown`, where a MySQL DDL statement returned an error and where the session died | [Retry the migration](#retry-failed-migration) and acknowledge the run |
+| `state=pending applied=0/2` | Nothing, once you have [checked](#failed-pending-row) | `Unknown`, where a MySQL DDL statement returned an error, where a stopped Pod cut a statement outside a transaction short, and where the session died | [Retry the migration](#retry-failed-migration) and acknowledge the run |
 | `state=failed applied=1/2` | The statement before the failure. MySQL commits each DDL statement on its own, and `transactionMode: none` commits every statement | `Partial` | [Finish what it started](#failed-partial) |
 
 A run that ended `Unknown` or `Partial` also leaves
@@ -552,6 +552,15 @@ for a `CREATE UNIQUE INDEX` that met a duplicate key:
 On PostgreSQL the same statement leaves `state=failed` and the run `Failed`. A
 MySQL statement that changes rows, or one the server refuses to parse, still
 leaves the run `Failed`.
+
+A run whose Pod was stopped while a statement ran outside a transaction, in a
+file marked `-- +ptah no_transaction`, leaves the same row on both engines. Ptah
+canceled the statement when the runner passed SIGTERM on, and since v0.23.0 it
+keeps the mark, because a client that stopped waiting cannot know whether the
+server applied the statement. Measured on kind with a sleep that each engine cut
+short: `Migration 2 (Wait To Be Stopped) stopped at statement 1 of 1, and whether it committed is not recorded`.
+A migration that runs in a transaction rolls back when it is stopped and still
+leaves `state=failed` and the run `Failed`.
 
 `ptah migrations status` calls that run interrupted, and tells you to apply what is
 missing by hand and then run `ptah migrations repair --version 2`. Do that only if you
