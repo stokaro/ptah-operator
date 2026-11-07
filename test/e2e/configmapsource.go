@@ -56,8 +56,12 @@ const (
 	configMapRefusedSchemaSource    = "e2e-configmap-refused-schema-source"
 	configMapRefusedMigration       = "e2e-configmap-refused-migration"
 	configMapRefusedMigrationSource = "e2e-configmap-refused-migration-source"
-	configMapRefusedTable           = "CREATE TABLE e2e_refused_orders (\n  id bigint NOT NULL PRIMARY KEY,\n  customer_id bigint NOT NULL\n);\n"
-	configMapRefusedIndex           = "CREATE UNIQUE INDEX e2e_refused_one_per_customer ON e2e_refused_orders (customer_id);\n"
+	// The migration has a database of its own because the schema is still there
+	// when it runs, and one database admits one of them.
+	configMapRefusedMigrationDatabase = "ptah_e2e_configmap_refused_migration"
+	configMapRefusedMigrationSecret   = "e2e-configmap-refused-migration-database"
+	configMapRefusedTable             = "CREATE TABLE e2e_refused_orders (\n  id bigint NOT NULL PRIMARY KEY,\n  customer_id bigint NOT NULL\n);\n"
+	configMapRefusedIndex             = "CREATE UNIQUE INDEX e2e_refused_one_per_customer ON e2e_refused_orders (customer_id);\n"
 )
 
 // snapshotContentRefusal is what the copy reports when the snapshot does not

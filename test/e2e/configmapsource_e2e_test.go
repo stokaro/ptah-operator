@@ -245,7 +245,7 @@ func (c *configMapRun) reset() {
 		c.deleteAndWait(object)
 	}
 	for _, database := range []string{configMapSchemaDatabase, configMapMigrationDatabase, configMapUnreadableDatabase,
-		configMapRefusedDatabase, reachabilitySchemaDatabase, reachabilityMigrationDatabase} {
+		configMapRefusedDatabase, configMapRefusedMigrationDatabase, reachabilitySchemaDatabase, reachabilityMigrationDatabase} {
 		_, err := serverSQL(c.ctx, c.cluster, c.in.TestNamespace, c.engine, "DROP DATABASE IF EXISTS "+database+" WITH (FORCE)")
 		c.check(err, "drop database %s", database)
 	}
@@ -829,20 +829,114 @@ func (c *configMapRun) waitForUnreadableEvent(owner types.UID, reason, file, wan
 }
 
 // refusedStatements makes a database refuse a statement of an approved plan, for
-// a schema and for a migration, and reads the reason where a person reads it: the
-// Pod log of a Job kept for 24 hours, pointed at from status and the Event. The
-// resources are removed afterward, and their Jobs with them.
+// a schema and for a migration, and reads the reason the way a person does: by running
+// the command the status and the Event print, as they print it.
+//
+// What the 24 hours can show here is less than the 24 hours. The row reads the TTL
+// from the Job the controller collects by, and the words from the message, and they
+// have to agree. It holds both Jobs past the five minutes any other finished Job
+// keeps, counted from each Job's own finish time, and runs the commands again, after
+// the Job that kept those five minutes has been collected in the same cluster. So
+// nothing takes these Jobs or their Pods early, and the TTL controller was at work
+// while it did not. Nothing here waits for the collection at 24 hours, or shows that a
+// node keeps the log that long: that rests on the controller honoring the field.
+//
+// The resources are removed afterward, and their Jobs with them. The Job audit
+// (auditCompletedJobs) belongs to the data plane's phases, which run before this one,
+// and no Job of this row outlives it for a rerun of one of them to find.
 func (c *configMapRun) refusedStatements() {
 	c.t.Helper()
 	c.createDatabase(configMapRefusedDatabase, configMapRefusedSecret)
-	c.refusedSchemaStatement()
-	c.refusedMigrationStatement()
+	c.createDatabase(configMapRefusedMigrationDatabase, configMapRefusedMigrationSecret)
+	schema, collected := c.refusedSchemaStatement()
+	migration := c.refusedMigrationStatement()
+
+	c.holdPastShortTTL(schema, migration)
+	c.wait("the Apply Job that kept the short TTL to be collected", func() (bool, string) {
+		current := &batchv1.Job{}
+		err := c.get(collected.Name, current)
+		switch {
+		case apierrors.IsNotFound(err):
+			return true, ""
+		case err != nil:
+			return false, err.Error()
+		case current.UID != collected.UID:
+			return true, ""
+		}
+		return false, fmt.Sprintf("Job %s is still there, with TTL %v", collected.Name, current.Spec.TTLSecondsAfterFinished)
+	})
+	c.keptPastShortTTL(schema)
+	c.keptPastShortTTL(migration)
+	c.logf("PASS the Jobs of the refused statements outlived the short TTL by their own finish times, and printed the same log")
+
+	c.deleteRetainedJob(schema.job)
+	c.deleteAndWait(schema.resource)
+	c.deleteRetainedJob(migration.job)
+	read := &ptahv1alpha1.PtahMigration{}
+	c.check(c.get(configMapRefusedMigration, read), "read PtahMigration %s", configMapRefusedMigration)
+	if read.Status.LastRun == nil || read.Status.LastRun.Outcome != ptahv1alpha1.MigrationRunOutcomeFailed {
+		c.fatalf("deleting the Job moved the record of the run: %+v", read.Status.LastRun)
+	}
+	c.deleteAndWait(migration.resource)
 }
 
-func (c *configMapRun) refusedTarget() map[string]any {
+// refusedRun is one refused Apply the row keeps until its hold has passed: the Job
+// that ran, the resource that owns it, and the messages that say where its log is.
+type refusedRun struct {
+	job      *batchv1.Job
+	resource client.Object
+	// printed maps where a person reads a message to the message.
+	printed map[string]string
+}
+
+// holdPastShortTTL waits until the short TTL would have collected every Job, had they
+// kept it. The hold comes from each Job's own finish time, as the controller's would.
+func (c *configMapRun) holdPastShortTTL(runs ...*refusedRun) {
+	c.t.Helper()
+	var until time.Time
+	for _, run := range runs {
+		deadline, err := shortTTLDeadline(run.job)
+		c.check(err, "date the finish of Job %s", run.job.Name)
+		if deadline.After(until) {
+			until = deadline
+		}
+	}
+	c.logf("holding %s, until the short TTL of the refused runs would have ended", time.Until(until).Round(time.Second))
+	select {
+	case <-time.After(time.Until(until)):
+	case <-c.ctx.Done():
+		c.fatalf("the phase ended during the hold until %s: %v", until, c.ctx.Err())
+	}
+}
+
+// keptPastShortTTL reads a Job after the hold and runs what it printed again.
+func (c *configMapRun) keptPastShortTTL(run *refusedRun) {
+	c.t.Helper()
+	readAt := time.Now()
+	read := &batchv1.Job{}
+	c.check(c.get(run.job.Name, read), "read Job %s after the hold", run.job.Name)
+	c.check(failedApplyJobOutlivedShortTTL(run.job, read, readAt), "the Job after the hold")
+	c.readPrintedLogs(run)
+}
+
+// readPrintedLogs runs the command each message prints and holds what it wrote to the
+// claim. The Job has one Pod, asserted where the row first reads it, so kubectl's
+// choice among a Job's Pods is no choice here.
+func (c *configMapRun) readPrintedLogs(run *refusedRun) {
+	c.t.Helper()
+	for where, message := range run.printed {
+		log, err := readPrintedLog(message, func(arguments ...string) ([]byte, []byte, error) {
+			return c.cluster.Kubectl(c.ctx, arguments...)
+		})
+		c.check(err, "run the command %s prints", where)
+		c.check(failedApplyLogSays(log), "what the command %s prints wrote", where)
+	}
+}
+
+func (c *configMapRun) refusedTarget(database, secret string) map[string]any {
 	return map[string]any{
-		"engine": "PostgreSQL", "coordinationKey": "e2e/" + configMapRefusedDatabase,
-		"urlFrom": map[string]any{"name": configMapRefusedSecret, "key": "url"},
+		"engine": "PostgreSQL", "coordinationKey": "e2e/" + database,
+		"urlFrom": map[string]any{"name": secret, "key": "url"},
 	}
 }
 
@@ -883,8 +977,9 @@ func (c *configMapRun) applyJobs(label, name string) []batchv1.Job {
 
 // refusedSchemaStatement is the reproduction of stokaro/ptah-operator#787: a
 // schema in sync on a table whose rows share a customer, and a plan that adds a
-// unique index on them.
-func (c *configMapRun) refusedSchemaStatement() {
+// unique index on them. It returns the refused run and the Job of the Apply that
+// succeeded before it, which keeps the short TTL.
+func (c *configMapRun) refusedSchemaStatement() (*refusedRun, *batchv1.Job) {
 	c.t.Helper()
 	c.check(c.apply(c.sourceDocument(configMapRefusedSchemaSource, map[string]string{"schema.sql": configMapRefusedTable})),
 		"apply ConfigMap %s", configMapRefusedSchemaSource)
@@ -892,7 +987,7 @@ func (c *configMapRun) refusedSchemaStatement() {
 		"apiVersion": ptahSchemaAPIVersion, "kind": "PtahSchema",
 		"metadata": map[string]any{"namespace": c.in.TestNamespace, "name": configMapRefusedSchema},
 		"spec": map[string]any{
-			"target": c.refusedTarget(),
+			"target": c.refusedTarget(configMapRefusedDatabase, configMapRefusedSecret),
 			"desired": map[string]any{"configMap": map[string]any{
 				"name":  configMapRefusedSchemaSource,
 				"items": []any{map[string]any{"key": "schema.sql", "path": "schema.sql"}},
@@ -911,7 +1006,7 @@ func (c *configMapRun) refusedSchemaStatement() {
 		*applied[0].Spec.TTLSecondsAfterFinished != jobclaim.CleanupTTLSeconds {
 		c.fatalf("the Apply that succeeded left %+v, want one Job with the short cleanup TTL", applied)
 	}
-	succeeded := applied[0].Name
+	succeeded := applied[0].DeepCopy()
 
 	_, err := databaseSQL(c.ctx, c.cluster, c.in.TestNamespace, c.engine, configMapRefusedDatabase,
 		"INSERT INTO e2e_refused_orders (id, customer_id) VALUES (1, 42), (2, 42)")
@@ -928,7 +1023,7 @@ func (c *configMapRun) refusedSchemaStatement() {
 	applying := meta.FindStatusCondition(refused.Status.Conditions, ptahv1alpha1.ConditionApplying)
 	var job *batchv1.Job
 	for _, candidate := range c.applyJobs(labelSchema, configMapRefusedSchema) {
-		if candidate.Name != succeeded {
+		if candidate.Name != succeeded.Name {
 			job = candidate.DeepCopy()
 		}
 	}
@@ -936,15 +1031,15 @@ func (c *configMapRun) refusedSchemaStatement() {
 		c.fatalf("the refused Apply left no Job of its own")
 	}
 	c.check(failedApplyPointerSays(applying.Message, c.in.TestNamespace, job.Name), "Applying")
-	c.assertFailedApplyEvidence(job, refused.UID, refused.Status, "ApplyOutcomeUnknown")
-	c.deleteRetainedJob(job)
-	c.deleteAndWait(refused)
+	run := &refusedRun{job: job, resource: refused, printed: map[string]string{"the Applying condition": applying.Message}}
+	c.assertFailedApplyEvidence(run, refused.UID, refused.Status, "ApplyOutcomeUnknown")
 	c.logf("PASS a statement the database refused left its answer in the Pod log of %s, and said where", job.Name)
+	return run, succeeded
 }
 
 // refusedMigrationStatement is the same refusal on a migration's second file. A
 // run that failed is read back, not retried, and the run's record names it.
-func (c *configMapRun) refusedMigrationStatement() {
+func (c *configMapRun) refusedMigrationStatement() *refusedRun {
 	c.t.Helper()
 	data := map[string]string{}
 	items := []any{}
@@ -957,7 +1052,8 @@ func (c *configMapRun) refusedMigrationStatement() {
 		"apiVersion": ptahSchemaAPIVersion, "kind": "PtahMigration",
 		"metadata": map[string]any{"namespace": c.in.TestNamespace, "name": configMapRefusedMigration},
 		"spec": map[string]any{
-			"target": c.refusedTarget(), "artifact": map[string]any{"configMap": map[string]any{"name": configMapRefusedMigrationSource, "items": items}},
+			"target":   c.refusedTarget(configMapRefusedMigrationDatabase, configMapRefusedMigrationSecret),
+			"artifact": map[string]any{"configMap": map[string]any{"name": configMapRefusedMigrationSource, "items": items}},
 			"interval": configMapInterval, "policy": map[string]any{"apply": "OnApproval"},
 			"execution": map[string]any{"activeDeadlineSeconds": int64(600)},
 		},
@@ -984,27 +1080,19 @@ func (c *configMapRun) refusedMigrationStatement() {
 	wait("the run to be recorded as failed", func(read *ptahv1alpha1.PtahMigration) bool {
 		return read.Status.LastRun != nil && read.Status.LastRun.Outcome == ptahv1alpha1.MigrationRunOutcomeFailed
 	})
-	run := migration.Status.LastRun
-	if run.Failure == nil || run.Failure.SQLState != refusedStatementSQLState {
-		c.fatalf("the run recorded failure %+v, want SQLSTATE %s", run.Failure, refusedStatementSQLState)
+	record := migration.Status.LastRun
+	if record.Failure == nil || record.Failure.SQLState != refusedStatementSQLState {
+		c.fatalf("the run recorded failure %+v, want SQLSTATE %s", record.Failure, refusedStatementSQLState)
 	}
-	c.check(failedApplyPointerSays(run.Message, c.in.TestNamespace, run.JobName), "status.lastRun.message")
+	c.check(failedApplyPointerSays(record.Message, c.in.TestNamespace, record.JobName), "status.lastRun.message")
 	job := &batchv1.Job{}
-	c.check(c.get(run.JobName, job), "read Job %s", run.JobName)
-	c.assertFailedApplyEvidence(job, migration.UID, migration.Status, "MigrationRunFinished")
-	c.deleteRetainedJob(job)
-	read := &ptahv1alpha1.PtahMigration{}
-	c.check(c.get(migration.Name, read), "read PtahMigration %s", migration.Name)
-	if read.Status.LastRun == nil || read.Status.LastRun.Outcome != ptahv1alpha1.MigrationRunOutcomeFailed {
-		c.fatalf("deleting the Job moved the record of the run: %+v", read.Status.LastRun)
-	}
-	c.deleteAndWait(migration)
+	c.check(c.get(record.JobName, job), "read Job %s", record.JobName)
+	run := &refusedRun{job: job, resource: migration, printed: map[string]string{"status.lastRun.message": record.Message}}
+	c.assertFailedApplyEvidence(run, migration.UID, migration.Status, "MigrationRunFinished")
 	c.logf("PASS a migration statement the database refused left its answer in the Pod log of %s", job.Name)
+	return run
 }
 
-// assertFailedApplyEvidence reads what stays where: the Job kept, the answer in
-// its Pod's log without the statement, and neither in status or in an Event, whose
-// message says where the log is.
 // deleteRetainedJob does what the security page tells a person who has read the log:
 // `kubectl delete job`, which takes the Pod with it, and with the Pod what the node
 // keeps of its containers.
@@ -1024,8 +1112,13 @@ func (c *configMapRun) deleteRetainedJob(job *batchv1.Job) {
 	})
 }
 
-func (c *configMapRun) assertFailedApplyEvidence(job *batchv1.Job, owner types.UID, status any, eventReason string) {
+// assertFailedApplyEvidence reads what stays where: the Job kept, the answer in the
+// log the printed command reads without the statement, and neither in status or in an
+// Event, whose message says where the log is. It adds that Event's message to what the
+// run printed, and runs each command.
+func (c *configMapRun) assertFailedApplyEvidence(run *refusedRun, owner types.UID, status any, eventReason string) {
 	c.t.Helper()
+	job := run.job
 	c.check(failedApplyJobRetained(job), "the failed Apply's Job")
 	pods := &corev1.PodList{}
 	c.check(c.cluster.Client.List(c.ctx, pods, client.InNamespace(c.in.TestNamespace)), "list the Pods of Job %s", job.Name)
@@ -1033,9 +1126,6 @@ func (c *configMapRun) assertFailedApplyEvidence(job *batchv1.Job, owner types.U
 	if len(owned) != 1 {
 		c.fatalf("Job %s has %d Pods, want the one that ran", job.Name, len(owned))
 	}
-	log, err := c.cluster.ContainerLog(c.ctx, c.in.TestNamespace, owned[0].Name, "ptah")
-	c.check(err, "read the log of Pod %s", owned[0].Name)
-	c.check(failedApplyLogSays(log), "the log of Pod %s", owned[0].Name)
 	encoded, err := json.Marshal(status)
 	c.check(err, "encode the status")
 	c.check(statusKeepsTheAnswerOut("the status", string(encoded)), "the status")
@@ -1053,11 +1143,13 @@ func (c *configMapRun) assertFailedApplyEvidence(job *batchv1.Job, owner types.U
 			examined++
 			c.check(statusKeepsTheAnswerOut("the "+event.Reason+" Event", event.Message), "an Event of the resource")
 			if event.Reason == eventReason && failedApplyPointerSays(event.Message, c.in.TestNamespace, job.Name) == nil {
+				run.printed["the "+eventReason+" Event"] = event.Message
 				return true, ""
 			}
 		}
 		return false, fmt.Sprintf("%d Events of the resource, none says where the log is", examined)
 	})
+	c.readPrintedLogs(run)
 }
 
 // finish suspends both resources, so no read of theirs lands inside a later
