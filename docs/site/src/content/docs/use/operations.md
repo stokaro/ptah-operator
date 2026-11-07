@@ -1800,8 +1800,8 @@ reads those rather than the order or the time of what happened.
 | It ends with | When |
 | --- | --- |
 | `OtherPlanApplied` | another plan's run ended |
-| `OtherApprovalConsumed` | the same plan ran under another approval, as when two people approved it and the operator took the oldest |
-| `PlanSuperseded` | a migration's plan will not run: another plan replaced it or is running, or a reading left nothing to apply |
+| `OtherApprovalConsumed` | the same plan ran under another approval, as when two people approved it and the operator took the oldest, or a run spent that other approval, which leaves this one `Stale` |
+| `PlanSuperseded` | a migration's plan will not run under this approval: another plan replaced it or is running, a reading left nothing to apply, or the operator marked the approval `Stale`, as it does when a read ends anywhere but its plan or the verification policy refuses the artifact; while that refusal holds, the wait ends with `PolicyRefused` instead |
 | `CompletionNotProved` | a run ended that may be this one and no record says so: its record names no plan because an operator older than 0.2.10 wrote it, it names this plan and not what allowed the run, as the entry of a hold a restore brought back does, it names no fingerprint and `--plan` gave one, or a later run replaced it and the journal holds no reading after it. Also this very run, when the database moved before the next reading, since a reading of another database cannot verify it, or when a verification policy refused the artifact before any reading followed the run, since nothing reads the database until an artifact passes |
 
 `--for approval` asks whether a plan waits for you, so a plan that waits already
@@ -1879,7 +1879,9 @@ one, and a timeout names it.
 
 With `-o yaml` or `-o json` the command prints the resource as the wait last
 read it, and nothing when it did not reach the target. Waiting needs `get` on
-the resource and nothing else.
+the resource and nothing else. `kubectl ptah approve --wait` on a migration also
+reads the approval it stored, which the approver ClusterRole lets it do; a read
+of the approval that is refused leaves the wait to the resource alone.
 
 ## A migration run nobody accounted for
 
@@ -2151,7 +2153,8 @@ apply wants; add `family="migration"` to ask about one.
   `required` is a plan that asked for a decision, `accepted` is a decision the
   controller consumed at the dispatch boundary, and `stale` is an approval the
   controller marked unusable, one count each, because the plan it named stopped
-  being current or the verification policy refused the artifact. A policy
+  being current, the verification policy refused the artifact, or a run spent
+  another approval of the same migration plan. A policy
   of `Always` waives the requirement and counts nothing, except for a schema
   plan that changes privileges, which still asks and counts as `required`.
 - `ptah_operator_applies_total{family,outcome}` counts started, completed,

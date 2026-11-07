@@ -24,14 +24,14 @@ func (r *MigrationReconciler) resolveMigrationConfigMapSource(ctx context.Contex
 	policy, policyBinding, err := sourcePolicyFor(ctx, r.directReader(), migration.Namespace, migration.Spec.Artifact)
 	if err != nil {
 		if errors.Is(err, errSourceRefused) {
-			return r.migrationOperationFailure(ctx, migration, err)
+			return r.claimRefused(ctx, migration, err)
 		}
 		return ctrl.Result{}, err
 	}
 	resolved, err := readConfigMapSource(ctx, r.directReader(), r.Client, migration.Namespace, owner, *migration.Spec.Artifact.ConfigMap, false, policy)
 	if err != nil {
 		if errors.Is(err, errSourceRefused) {
-			return r.migrationOperationFailure(ctx, migration, err)
+			return r.claimRefused(ctx, migration, err)
 		}
 		return ctrl.Result{}, err
 	}
@@ -47,6 +47,7 @@ func (r *MigrationReconciler) resolveMigrationConfigMapSource(ctx context.Contex
 	migration.Status.Phase = operatorv1alpha1.MigrationPhaseReading
 	meta.RemoveStatusCondition(&migration.Status.Conditions, operatorv1alpha1.ConditionMigrationArtifactVerified)
 	endMigrationRefusal(migration, operatorv1alpha1.ReasonSnapshotTaken, migrationSourceResolvedMessage)
+	endMigrationRealmRefusal(migration, operatorv1alpha1.ReasonOperationInProgress, migrationRealmReadMessage)
 	setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionTrue,
 		operatorv1alpha1.ReasonSnapshotTaken,
 		fmt.Sprintf("ConfigMap %s was copied into snapshot %s; the history is read next", resolved.revision.Name, resolved.snapshot.Name))

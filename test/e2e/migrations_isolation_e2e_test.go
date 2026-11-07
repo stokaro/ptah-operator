@@ -875,8 +875,10 @@ func (m *migrationRun) unreadableOCIFiles() {
 // refuses it by. The migration stops at Blocked before it reads the database, and
 // says which requirement the artifact did not meet, where it would otherwise
 // retry the read as a failure at its failure interval. It reads nothing more
-// until the deadline it persisted, and a spec edit to a policy that accepts the
-// artifact carries it on at once, with nothing left naming the refusal.
+// until the deadline it persisted, and reads again then. A spec edit to a policy
+// that accepts the artifact then starts a read well ahead of the next deadline,
+// and under apply policy Always the migration applies and rests in sync, with
+// nothing left naming the refusal.
 func (m *migrationRun) nativePolicyRefusalProof() {
 	m.t.Helper()
 	const interval = 90 * time.Second
@@ -893,7 +895,7 @@ func (m *migrationRun) nativePolicyRefusalProof() {
 	}), "apply the verification policy Ptah refuses by")
 	m.mustCreate(m.migrationDocument(migrationSpec{
 		name: name, secret: secret, reference: m.reference(""),
-		coordinationKey: "e2e/native-refusal/" + m.engine.name, apply: "OnApproval", interval: interval.String(),
+		coordinationKey: "e2e/native-refusal/" + m.engine.name, apply: "Always", interval: interval.String(),
 		edit: func(spec map[string]any) {
 			spec["artifact"].(map[string]any)["verificationPolicyFrom"] = map[string]any{"name": policyName, "key": migrationPolicyKey}
 		},
@@ -902,14 +904,14 @@ func (m *migrationRun) nativePolicyRefusalProof() {
 		func(current *ptahv1alpha1.PtahMigration) bool { return nativelyRefusedMigration(current) == nil })
 	jobs := map[types.UID]batchv1.Job{}
 	m.recordMigrationJobs(name, jobs)
-	var last error
+	var lastEvent error
 	if !m.miUntil(migrationPoll, func() bool {
 		events := &corev1.EventList{}
 		m.check(m.list(events), "read the Events of %s", name)
-		last = nativeRefusalEvent(events.Items, refused.UID)
-		return last == nil
+		lastEvent = nativeRefusalEvent(events.Items, refused.UID)
+		return lastEvent == nil
 	}) {
-		m.fatalf("%s has no Event naming what the policy refused: %v", name, last)
+		m.fatalf("%s has no Event naming what the policy refused: %v", name, lastEvent)
 	}
 	// Up to the deadline the refusal persisted and not past it: the read it
 	// schedules there is not the one this row is about.
@@ -922,16 +924,50 @@ func (m *migrationRun) nativePolicyRefusalProof() {
 	if err := refusedOnce(slices.Collect(maps.Values(jobs)), refused.Status.NextReconciliationTime, interval); err != nil {
 		m.fatalf("%s did not wait for its interval: %v", name, err)
 	}
+	// The interval's own read, refused again, so the edit below lands with the
+	// next deadline an interval away, and a read the edit did not start would come
+	// long after the lag readAtOnce allows.
+	m.waitForMigration(name, "the interval's read to refuse the artifact again", time.Second,
+		func(current *ptahv1alpha1.PtahMigration) bool {
+			m.recordMigrationJobs(name, jobs)
+			return len(resolvesOf(slices.Collect(maps.Values(jobs)))) == 2 && nativelyRefusedMigration(current) == nil &&
+				current.Status.NextReconciliationTime != nil && current.Status.NextReconciliationTime.After(refused.Status.NextReconciliationTime.Time)
+		})
+	if err := rereadAtItsDeadline(slices.Collect(maps.Values(jobs)), refused.Status.NextReconciliationTime); err != nil {
+		m.fatalf("%s did not read again at its deadline: %v", name, err)
+	}
+	var editedAt time.Time
 	m.check(retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		current := m.migration(name)
 		before := current.DeepCopy()
 		current.Spec.Artifact.VerificationPolicyFrom.Name = migrationPolicy
+		editedAt = time.Now()
 		return m.cluster.Client.Patch(m.ctx, current, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{}))
 	}), "edit %s to a policy that accepts its artifact", name)
-	m.waitForMigration(name, "its artifact to pass the policy it was edited to", time.Second,
-		func(current *ptahv1alpha1.PtahMigration) bool { return recoveredFromRefusal(current) == nil })
+	m.waitForMigration(name, "a read after the edit", time.Second, func(*ptahv1alpha1.PtahMigration) bool {
+		m.recordMigrationJobs(name, jobs)
+		return len(resolvesOf(slices.Collect(maps.Values(jobs)))) >= 3
+	})
+	if err := readAtOnce(slices.Collect(maps.Values(jobs)), editedAt); err != nil {
+		m.fatalf("%s did not read at once when its policy was edited: %v", name, err)
+	}
+	var last error
+	var recovered *ptahv1alpha1.PtahMigration
+	if !m.miUntil(time.Second, func() bool {
+		current := &ptahv1alpha1.PtahMigration{}
+		if err := m.get(name, current); err != nil {
+			last = err
+			return false
+		}
+		m.scanObject(current, name+" status")
+		recovered, last = current, recoveredFromRefusal(current)
+		return last == nil
+	}) {
+		m.fatalf("%s did not rest in sync past its refusal within %s: %v; %s", name, waitTimeout, last, refusalTransitions(recovered))
+	}
 	m.finishFixture(name)
-	m.logf("PASS a %s migration stopped at Ptah's own refusal of its artifact, and went on when the policy accepted it", m.engine.kind)
+	m.logf("PASS a %s migration stopped at Ptah's own refusal of its artifact, read again at its deadline, and went on at once when the policy accepted it (generation %d)",
+		m.engine.kind, recovered.Generation)
 }
 
 // recordMigrationJobs adds the Jobs a migration has now to the set, by UID. A

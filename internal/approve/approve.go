@@ -408,9 +408,9 @@ func schemaReading(schema *operatorv1alpha1.PtahSchema) bool {
 // migrationReading is schemaReading for a migration: Resolve, Verify and the
 // read of the history, and the phases between them, with ApprovalRequired
 // True. Only the publication of a plan sets it True. An Apply, a discarded plan,
-// and a refusal by the realm or the verification policy set it False, and a
-// read that gets past such a refusal rewrites its reason and leaves it False;
-// the claims of a read and the harvest of the history do not write it. A
+// a refusal by the realm or the verification policy, and a history harvest that
+// publishes no plan set it False; a read that gets past such a refusal rewrites
+// its reason and leaves it False, and nothing else in a read writes it. A
 // migration whose plan waited for a person keeps it
 // True through the read, and Planning is then the write between the history
 // and the plan published from it. Under apply policy Always or Never a

@@ -1341,6 +1341,21 @@ func (r *MigrationReconciler) markMigrationApprovalsStale(
 	reason operatorv1alpha1.ConditionReason,
 	message string,
 ) error {
+	return r.markMigrationApprovalsStaleWhere(ctx, migration, reason, message,
+		func(approval *operatorv1alpha1.PtahMigrationApproval) bool {
+			return keep == nil || approval.Spec.PlanRef.UID != keep.UID
+		})
+}
+
+// markMigrationApprovalsStaleWhere is the writer, for the approvals of this
+// migration that withdraw selects among those still able to authorize a run.
+func (r *MigrationReconciler) markMigrationApprovalsStaleWhere(
+	ctx context.Context,
+	migration *operatorv1alpha1.PtahMigration,
+	reason operatorv1alpha1.ConditionReason,
+	message string,
+	withdraw func(*operatorv1alpha1.PtahMigrationApproval) bool,
+) error {
 	approvals := &operatorv1alpha1.PtahMigrationApprovalList{}
 	if err := r.directReader().List(ctx, approvals, client.InNamespace(migration.Namespace)); err != nil {
 		return fmt.Errorf("list migration approvals to withdraw: %w", err)
@@ -1348,7 +1363,7 @@ func (r *MigrationReconciler) markMigrationApprovalsStale(
 	for index := range approvals.Items {
 		approval := &approvals.Items[index]
 		if approval.Spec.MigrationRef.UID != migration.UID || approval.DeletionTimestamp != nil ||
-			(keep != nil && approval.Spec.PlanRef.UID == keep.UID) ||
+			!withdraw(approval) ||
 			meta.IsStatusConditionTrue(approval.Status.Conditions, operatorv1alpha1.ConditionApprovalStale) ||
 			meta.IsStatusConditionTrue(approval.Status.Conditions, operatorv1alpha1.ConditionApprovalConsumed) {
 			continue
@@ -1413,6 +1428,12 @@ func (r *MigrationReconciler) discardMigrationPlan(
 
 // consumeMigrationApproval records that the decision was acted on. An approval
 // authorizes one execution: a second Apply needs a second decision.
+//
+// That holds for the plan too. Another approval of the same plan would otherwise
+// run it again once this run ended, if the reading after it ended at the same plan,
+// as it does after a run that failed with nothing applied, and nobody would have
+// seen the failure. So the plan's other approvals go stale here, after this one
+// is spent, and a pass that finds it spent already finishes them.
 func (r *MigrationReconciler) consumeMigrationApproval(
 	ctx context.Context,
 	migration *operatorv1alpha1.PtahMigration,
@@ -1432,9 +1453,23 @@ func (r *MigrationReconciler) consumeMigrationApproval(
 	if approval.UID != reference.UID {
 		return errMigrationApprovalWithdrawn
 	}
-	if meta.IsStatusConditionTrue(approval.Status.Conditions, operatorv1alpha1.ConditionApprovalConsumed) {
-		return nil
+	if !meta.IsStatusConditionTrue(approval.Status.Conditions, operatorv1alpha1.ConditionApprovalConsumed) {
+		if err := r.recordMigrationApprovalConsumed(ctx, approval); err != nil {
+			return err
+		}
 	}
+	return r.markMigrationApprovalsStaleWhere(ctx, migration, operatorv1alpha1.ReasonSupersededApproval,
+		fmt.Sprintf("Approval %s of the same plan was spent on a run, and an approval authorizes one run of a plan", approval.Name),
+		func(other *operatorv1alpha1.PtahMigrationApproval) bool {
+			return other.Spec.PlanRef.UID == approval.Spec.PlanRef.UID && other.UID != approval.UID
+		})
+}
+
+// recordMigrationApprovalConsumed writes Consumed on the approval a claim spends.
+func (r *MigrationReconciler) recordMigrationApprovalConsumed(
+	ctx context.Context,
+	approval *operatorv1alpha1.PtahMigrationApproval,
+) error {
 	before := approval.DeepCopy()
 	meta.SetStatusCondition(&approval.Status.Conditions, metav1.Condition{
 		Type:               operatorv1alpha1.ConditionApprovalConsumed,
@@ -1448,9 +1483,9 @@ func (r *MigrationReconciler) consumeMigrationApproval(
 	if err := r.Client.Status().Patch(ctx, approval, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})); err != nil {
 		return fmt.Errorf("record the consumed approval: %w", err)
 	}
-	// One increment per decision. The guard above returns early for an
-	// approval already marked consumed, so a pass that re-reads this one after
-	// a lost answer counts nothing.
+	// One increment per decision. consumeMigrationApproval calls this only for
+	// an approval not yet marked consumed, so a pass that re-reads this one
+	// after a lost answer counts nothing.
 	if r.Telemetry != nil {
 		r.Telemetry.ObserveApproval(telemetry.FamilyMigration, telemetry.ApprovalAccepted)
 	}

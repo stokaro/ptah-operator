@@ -155,7 +155,7 @@ func TestMigrationResumesAfterAPolicyRefusalAtItsInterval(t *testing.T) {
 					t.Fatalf("phase = %q, want InSync", actual.Status.Phase)
 				}
 				wantMigrationCondition(t, actual, operatorv1alpha1.ConditionMigrationReady, metav1.ConditionTrue, operatorv1alpha1.ReasonHistoryMatched)
-				wantMigrationCondition(t, actual, operatorv1alpha1.ConditionMigrationApprovalRequired, metav1.ConditionFalse, operatorv1alpha1.ReasonPolicySatisfied)
+				wantMigrationCondition(t, actual, operatorv1alpha1.ConditionMigrationApprovalRequired, metav1.ConditionFalse, operatorv1alpha1.ReasonHistoryMatched)
 			},
 		},
 		{
@@ -192,7 +192,7 @@ func TestMigrationResumesAfterAPolicyRefusalAtItsInterval(t *testing.T) {
 			settled: func(t *testing.T, actual *operatorv1alpha1.PtahMigration) {
 				t.Helper()
 				wantMigrationCondition(t, actual, operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue, operatorv1alpha1.ReasonHistoryDirty)
-				wantMigrationCondition(t, actual, operatorv1alpha1.ConditionMigrationApprovalRequired, metav1.ConditionFalse, operatorv1alpha1.ReasonPolicySatisfied)
+				wantMigrationCondition(t, actual, operatorv1alpha1.ConditionMigrationApprovalRequired, metav1.ConditionFalse, operatorv1alpha1.ReasonHistoryDirty)
 			},
 		},
 		{
@@ -205,7 +205,7 @@ func TestMigrationResumesAfterAPolicyRefusalAtItsInterval(t *testing.T) {
 			settled: func(t *testing.T, actual *operatorv1alpha1.PtahMigration) {
 				t.Helper()
 				wantMigrationCondition(t, actual, operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue, operatorv1alpha1.ReasonHistoryAhead)
-				wantMigrationCondition(t, actual, operatorv1alpha1.ConditionMigrationApprovalRequired, metav1.ConditionFalse, operatorv1alpha1.ReasonPolicySatisfied)
+				wantMigrationCondition(t, actual, operatorv1alpha1.ConditionMigrationApprovalRequired, metav1.ConditionFalse, operatorv1alpha1.ReasonHistoryAhead)
 			},
 		},
 		{
@@ -255,10 +255,18 @@ func TestMigrationResumesAfterAPolicyRefusalAtItsInterval(t *testing.T) {
 // cluster runs it, so a predicate cannot pass a document the controller never
 // writes. A change that moves these conditions has to move the reading and say
 // what the row now waits for.
+//
+// The row recovers under apply policy Always into InSync, as here. Whether Blocked
+// went False with the Verify that ended the refusal or only with the history read
+// after it is in its transition time, which a unit test's single second cannot
+// show; TestRecoveredFromRefusal holds the row's predicate to that, and the rows
+// of TestMigrationResumesAfterAPolicyRefusalAtItsInterval hold the reconciler.
 func TestTheRefusalRecoveryReadingIsTheReconcilers(t *testing.T) {
 	t.Parallel()
 
-	harness := newMigrationLifecycle(t, migrationFixture())
+	migration := migrationFixture()
+	migration.Spec.Policy.Apply = operatorv1alpha1.ApplyPolicyAlways
+	harness := newMigrationLifecycle(t, migration)
 	clock := movableMigrationClock(harness.reconciler, harness.api)
 	harness.refuse(clock)
 	harness.claimed(operatorv1alpha1.MigrationOperationResolve)
@@ -267,6 +275,18 @@ func TestTheRefusalRecoveryReadingIsTheReconcilers(t *testing.T) {
 	harness.answer(acceptedBy(testDigest))
 	harness.claimed(operatorv1alpha1.MigrationOperationHistory)
 	harness.answer(historyAnswer(harness, pendingReport()))
+	harness.claimed(operatorv1alpha1.MigrationOperationApply)
+	harness.answer(runner.Result{
+		Operation: runner.OperationMigrationApply, ChildExitCode: 0,
+		CoordinationDigest: harness.coordinationDigest(), TargetIdentityDigest: testDigest,
+		MigrationRun: &dataplane.MigrationRunReport{
+			ContractVersion: dataplane.SupportedMigrationRunContract,
+			Direction:       "up", Outcome: dataplane.MigrationOutcomeApplied,
+			Planned: []int64{1}, Applied: []int64{1},
+		},
+	})
+	harness.claimed(operatorv1alpha1.MigrationOperationHistory)
+	harness.answer(historyAnswer(harness, inSyncReport()))
 	actual := harness.migration()
 
 	content, err := os.ReadFile("../../testdata/e2e/readings/native-refusal-recovered-migration.json")
@@ -420,10 +440,71 @@ func TestAnotherSourceEndsAPolicyRefusal(t *testing.T) {
 	})
 }
 
-// A realm refusal writes ApprovalRequired too, and a resource that goes on to
-// read in sync publishes no plan to rewrite it.
+// A realm refusal ends in the write that claims the read the census lets
+// through, whatever that read does next: a Resolve or a Verify that keeps failing
+// would otherwise leave a lifted realm named on Blocked, which a wait's timeout
+// reads, rather than the failure. And a reading in sync leaves no reason of it.
 func TestARealmRefusalLeavesNoReasonOnAResourceInSync(t *testing.T) {
 	t.Parallel()
+
+	failed := runner.Result{ChildExitCode: 1, Error: &runner.ResultError{Code: "child_exit", Message: "ptah exited with code 1"}}
+	type outcome struct {
+		name string
+		read func(*migrationLifecycle)
+		want func(*testing.T, *operatorv1alpha1.PtahMigration)
+	}
+	stillFailing := func(t *testing.T, actual *operatorv1alpha1.PtahMigration) {
+		t.Helper()
+		for _, conditionType := range []string{
+			operatorv1alpha1.ConditionMigrationBlocked, operatorv1alpha1.ConditionMigrationReady,
+			operatorv1alpha1.ConditionMigrationApprovalRequired,
+		} {
+			wantMigrationCondition(t, actual, conditionType, metav1.ConditionFalse, operatorv1alpha1.ReasonOperationInProgress)
+		}
+		wantMigrationCondition(t, actual, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionTrue, operatorv1alpha1.ReasonOperationFailed)
+	}
+	outcomes := []outcome{
+		{
+			name: "a read in sync",
+			read: func(harness *migrationLifecycle) {
+				harness.claimed(operatorv1alpha1.MigrationOperationResolve)
+				harness.answer(resolvedTo(testDigest))
+				harness.claimed(operatorv1alpha1.MigrationOperationVerify)
+				harness.answer(acceptedBy(testDigest))
+				harness.claimed(operatorv1alpha1.MigrationOperationHistory)
+				harness.answer(historyAnswer(harness, inSyncReport()))
+			},
+			want: func(t *testing.T, actual *operatorv1alpha1.PtahMigration) {
+				t.Helper()
+				if actual.Status.Phase != operatorv1alpha1.MigrationPhaseInSync {
+					t.Fatalf("phase = %q, want InSync", actual.Status.Phase)
+				}
+				wantMigrationCondition(t, actual, operatorv1alpha1.ConditionMigrationApprovalRequired, metav1.ConditionFalse, operatorv1alpha1.ReasonHistoryMatched)
+			},
+		},
+		{
+			name: "a Resolve that keeps failing",
+			read: func(harness *migrationLifecycle) {
+				harness.claimed(operatorv1alpha1.MigrationOperationResolve)
+				answer := failed
+				answer.Operation = runner.OperationResolve
+				harness.answer(answer)
+			},
+			want: stillFailing,
+		},
+		{
+			name: "a Verify of the same digest that keeps failing",
+			read: func(harness *migrationLifecycle) {
+				harness.claimed(operatorv1alpha1.MigrationOperationResolve)
+				harness.answer(resolvedTo(testDigest))
+				harness.claimed(operatorv1alpha1.MigrationOperationVerify)
+				answer := failed
+				answer.Operation, answer.ResolvedDigest = runner.OperationVerify, testDigest
+				harness.answer(answer)
+			},
+			want: stillFailing,
+		},
+	}
 
 	for _, row := range []struct {
 		name   string
@@ -460,40 +541,34 @@ func TestARealmRefusalLeavesNoReasonOnAResourceInSync(t *testing.T) {
 			},
 		},
 	} {
-		t.Run(row.name, func(t *testing.T) {
-			t.Parallel()
+		for _, then := range outcomes {
+			t.Run(row.name+", then "+then.name, func(t *testing.T) {
+				t.Parallel()
 
-			migration, competitor := row.setup()
-			logs := &replayLogs{}
-			objects := []client.Object{migration, verificationPolicyConfigMap()}
-			if competitor != nil {
-				objects = append(objects, competitor)
-			}
-			reconciler, api := fakeMigrationReconciler(t, logs, objects...)
-			harness := &migrationLifecycle{t: t, reconciler: reconciler, api: api, logs: logs, key: client.ObjectKeyFromObject(migration)}
-			harness.settle()
-			clock := movableMigrationClock(reconciler, api)
+				migration, competitor := row.setup()
+				logs := &replayLogs{}
+				objects := []client.Object{migration, verificationPolicyConfigMap()}
+				if competitor != nil {
+					objects = append(objects, competitor)
+				}
+				reconciler, api := fakeMigrationReconciler(t, logs, objects...)
+				harness := &migrationLifecycle{t: t, reconciler: reconciler, api: api, logs: logs, key: client.ObjectKeyFromObject(migration)}
+				harness.settle()
+				clock := movableMigrationClock(reconciler, api)
 
-			refused := harness.migration()
-			wantMigrationCondition(t, refused, operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue, row.reason)
-			wantMigrationCondition(t, refused, operatorv1alpha1.ConditionMigrationApprovalRequired, metav1.ConditionFalse, row.reason)
+				refused := harness.migration()
+				wantMigrationCondition(t, refused, operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue, row.reason)
+				wantMigrationCondition(t, refused, operatorv1alpha1.ConditionMigrationApprovalRequired, metav1.ConditionFalse, row.reason)
 
-			row.lift(t, api, competitor)
-			harness.dueNow(clock)
-			harness.claimed(operatorv1alpha1.MigrationOperationResolve)
-			harness.answer(resolvedTo(testDigest))
-			harness.claimed(operatorv1alpha1.MigrationOperationVerify)
-			harness.answer(acceptedBy(testDigest))
-			harness.claimed(operatorv1alpha1.MigrationOperationHistory)
-			harness.answer(historyAnswer(harness, inSyncReport()))
+				row.lift(t, api, competitor)
+				harness.dueNow(clock)
+				then.read(harness)
 
-			actual := harness.migration()
-			if actual.Status.Phase != operatorv1alpha1.MigrationPhaseInSync {
-				t.Fatalf("phase = %q, want InSync", actual.Status.Phase)
-			}
-			wantMigrationCondition(t, actual, operatorv1alpha1.ConditionMigrationApprovalRequired, metav1.ConditionFalse, operatorv1alpha1.ReasonPolicySatisfied)
-			assertNoConditionNamesARefusal(t, actual)
-		})
+				actual := harness.migration()
+				then.want(t, actual)
+				assertNoConditionNamesARefusal(t, actual)
+			})
+		}
 	}
 }
 
@@ -906,6 +981,114 @@ func TestARefusalWithdrawsApprovalsBeforeItSaysSo(t *testing.T) {
 	})
 }
 
+// A ConfigMap source is read by the manager with no claim, so that read is the
+// one that ends a lifted realm's reason, in its own write.
+func TestARealmRefusalEndsWithTheReadOfAConfigMapSource(t *testing.T) {
+	t.Parallel()
+
+	migration := migrationFixture()
+	migration.Spec.Artifact = operatorv1alpha1.SourceSpec{ConfigMap: &operatorv1alpha1.ConfigMapSourceSpec{
+		Name:  "app-schema",
+		Items: []operatorv1alpha1.ConfigMapSourceItem{{Key: "0001.up.sql", Path: "0001_init.up.sql"}},
+	}}
+	source := sourceConfigMap("unused")
+	source.Data = map[string]string{"0001.up.sql": "CREATE TABLE a (id int);\n"}
+	competitor := realmSchemaFixture(migration.Namespace, "orders", migration.Spec.Target.CoordinationKey, false)
+	logs := &replayLogs{}
+	reconciler, api := fakeMigrationReconciler(t, logs, migration, source, competitor)
+	harness := &migrationLifecycle{t: t, reconciler: reconciler, api: api, logs: logs, key: client.ObjectKeyFromObject(migration)}
+	harness.settle()
+	clock := movableMigrationClock(reconciler, api)
+	wantMigrationCondition(t, harness.migration(), operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue, operatorv1alpha1.ReasonRealmConflict)
+
+	if err := api.Delete(context.Background(), competitor); err != nil {
+		t.Fatal(err)
+	}
+	harness.dueNow(clock)
+	if _, err := reconciler.Reconcile(context.Background(), migrationRequest(harness.migrationObject())); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	read := harness.migration()
+	if read.Status.Phase != operatorv1alpha1.MigrationPhaseReading || read.Status.ActiveOperation != nil {
+		t.Fatalf("phase %s, claim %#v, want the source read with the history read next", read.Status.Phase, read.Status.ActiveOperation)
+	}
+	wantMigrationCondition(t, read, operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionFalse, operatorv1alpha1.ReasonOperationInProgress)
+	assertNoConditionNamesARefusal(t, read)
+}
+
+// A read the census lets through can fail before its claim is written, as a
+// source the source policy refuses does. The census admitted the resource, so the
+// failure is what the resource names, not a realm that let go of it.
+func TestARealmRefusalEndsWhenTheReadItLetThroughIsRefused(t *testing.T) {
+	t.Parallel()
+
+	for _, row := range []struct {
+		name   string
+		source func(*operatorv1alpha1.PtahMigration) []client.Object
+		says   string
+	}{
+		{
+			name: "a ConfigMap source the source policy does not allow",
+			source: func(migration *operatorv1alpha1.PtahMigration) []client.Object {
+				migration.Spec.Artifact = operatorv1alpha1.SourceSpec{ConfigMap: &operatorv1alpha1.ConfigMapSourceSpec{
+					Name:  "app-schema",
+					Items: []operatorv1alpha1.ConfigMapSourceItem{{Key: "0001.up.sql", Path: "0001_init.up.sql"}},
+				}}
+				withSourcePolicy(&migration.Spec.Artifact, "source-policy")
+				source := sourceConfigMap("unused")
+				source.Data = map[string]string{"0001.up.sql": "CREATE TABLE a (id int);\n"}
+				return []client.Object{source, sourcePolicyConfigMap("source-policy", "policy-uid", "allowedConfigMaps:\n  - other\n")}
+			},
+			says: "allowedConfigMaps",
+		},
+		{
+			name: "a Git host the source policy does not allow",
+			source: func(migration *operatorv1alpha1.PtahMigration) []client.Object {
+				spec := gitSourceSpec()
+				spec.Path = "db/migrations"
+				migration.Spec.Artifact = operatorv1alpha1.SourceSpec{Git: spec}
+				withSourcePolicy(&migration.Spec.Artifact, "source-policy")
+				return []client.Object{sourcePolicyConfigMap("source-policy", "policy-uid", "allowedGitHosts:\n  - git.internal.example\n")}
+			},
+			says: "allowedGitHosts",
+		},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+
+			migration := migrationFixture()
+			objects := append(row.source(migration), migration,
+				realmSchemaFixture(migration.Namespace, "orders", migration.Spec.Target.CoordinationKey, false))
+			competitor := objects[len(objects)-1]
+			logs := &replayLogs{}
+			reconciler, api := fakeMigrationReconciler(t, logs, objects...)
+			harness := &migrationLifecycle{t: t, reconciler: reconciler, api: api, logs: logs, key: client.ObjectKeyFromObject(migration)}
+			harness.settle()
+			clock := movableMigrationClock(reconciler, api)
+			wantMigrationCondition(t, harness.migration(), operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue, operatorv1alpha1.ReasonRealmConflict)
+
+			if err := api.Delete(context.Background(), competitor); err != nil {
+				t.Fatal(err)
+			}
+			harness.dueNow(clock)
+			if _, err := reconciler.Reconcile(context.Background(), migrationRequest(harness.migrationObject())); err != nil {
+				t.Fatalf("Reconcile() error = %v", err)
+			}
+			refused := harness.migration()
+			if refused.Status.Phase != operatorv1alpha1.MigrationPhaseFailed || refused.Status.ActiveOperation != nil {
+				t.Fatalf("phase %s, claim %#v, want the refused read recorded as Failed", refused.Status.Phase, refused.Status.ActiveOperation)
+			}
+			wantMigrationCondition(t, refused, operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionFalse, operatorv1alpha1.ReasonOperationFailed)
+			wantMigrationCondition(t, refused, operatorv1alpha1.ConditionMigrationApprovalRequired, metav1.ConditionFalse, operatorv1alpha1.ReasonOperationFailed)
+			ready := meta.FindStatusCondition(refused.Status.Conditions, operatorv1alpha1.ConditionMigrationReady)
+			if ready == nil || ready.Reason != string(operatorv1alpha1.ReasonOperationFailed) || !strings.Contains(ready.Message, row.says) {
+				t.Fatalf("Ready = %#v, want the refusal naming %s", ready, row.says)
+			}
+			assertNoConditionNamesARefusal(t, refused)
+		})
+	}
+}
+
 // A run nobody accounted for is a hold a refusal writes over and does not end.
 // Once the refusal ends, the hold is what Blocked says again, whatever the read
 // does next, and nothing claims an Apply while status.unresolvedRun stands. The
@@ -966,6 +1149,8 @@ func TestALiftedRefusalLeavesAnUnresolvedRunHolding(t *testing.T) {
 		}
 		harness.dueNow(clock)
 		harness.claimed(operatorv1alpha1.MigrationOperationResolve)
+		// The claim ends the realm's reason, and the hold is what it says.
+		holding(t, harness.migration())
 		harness.answer(resolvedTo(testDigest))
 		harness.claimed(operatorv1alpha1.MigrationOperationVerify)
 		harness.answer(acceptedBy(testDigest))

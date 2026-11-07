@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
@@ -78,6 +79,158 @@ func atTheGate(earlier *runDoc, journal ...operatorv1alpha1.JournalEntry) *doc {
 	return &doc{
 		phase: "AwaitingApproval", observedAt: at(0), plan: planDocOf("plan-a"), lastRun: earlier, journal: journal,
 		conditions: approvalConditions(metav1.ConditionTrue),
+	}
+}
+
+// The approval the decision names is read beside the resource, because a read
+// that ends anywhere but its plan, a refused artifact and another approval's run
+// each mark it stale, and nothing runs under a stale approval even when its plan
+// comes back under its UID. Only that approval, stale and not spent, stops the
+// wait, and a read of it that is refused or fails changes nothing the status says.
+func TestWaitForADecisionReadsItsApproval(t *testing.T) {
+	t.Parallel()
+
+	refusal := doc{phase: "Blocked", observedAt: at(0), conditions: refused(operate.FamilyMigration, 3)}
+	// The read after a refusal, failing at Resolve: the refusal no longer holds,
+	// and the status alone may still come back to the same plan.
+	reread := doc{phase: "Resolving", observedAt: at(0), operation: "Resolve", conditions: resolvedAgain(operate.FamilyMigration)}
+	dirty := doc{
+		phase: "Blocked", observedAt: at(30),
+		conditions: []metav1.Condition{
+			condition(operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue, "HistoryDirty", "Revision 1 is recorded dirty", 3),
+		},
+	}
+	back := doc{
+		phase: "AwaitingApproval", observedAt: at(60), plan: planDocOf("plan-a"),
+		conditions: approvalConditions(metav1.ConditionTrue),
+	}
+	running := doc{phase: "Applying", observedAt: at(0), operation: "Apply", operationPlan: planDocOf("plan-a"), plan: planDocOf("plan-a")}
+	realm := doc{
+		phase: "Blocked", observedAt: at(30),
+		conditions: []metav1.Condition{condition(operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue, "RealmConflict", "This database realm is claimed by 2 resources", 3)},
+	}
+	stale := func(reason string) []*approvalDoc { return []*approvalDoc{{stale: reason}} }
+	forbidden := apierrors.NewForbidden(operatorv1alpha1.GroupVersion.WithResource("ptahmigrationapprovals").GroupResource(), "approve-a", errors.New("RBAC"))
+
+	for _, row := range []struct {
+		name         string
+		docs         []doc
+		approvals    []*approvalDoc
+		approvalErrs map[int]error
+		wantStop     operate.StopReason
+		wantMessage  string
+		// wantApprovalReads is how many times the approval was read, when it matters.
+		wantApprovalReads int
+		// wantReached is a wait that meets its target.
+		wantReached bool
+	}{
+		{
+			// Once the run the wait is for has ended, its record decides. A mark the
+			// writer never makes on a spent approval, and here not even on a spent
+			// one, changes nothing about a run already applied and read back.
+			name:      "an applied run whose approval was later marked stale",
+			docs:      []doc{{phase: "InSync", observedAt: at(90), lastRun: verified(run(operatorv1alpha1.MigrationRunOutcomeApplied, "op-a", "plan-a", "approve-a", 20), "InSync", 90)}},
+			approvals: stale("PlanNoLongerCurrent"), wantReached: true,
+		},
+		{
+			// A refusal that holds back the reading after the run is the run's
+			// record to answer, which says what the run did; the stale approval
+			// says nothing about a run that already ran.
+			name: "an applied run whose read-back a refusal holds, with its approval marked stale",
+			docs: []doc{{phase: "Blocked", observedAt: at(0), lastRun: run(operatorv1alpha1.MigrationRunOutcomeApplied, "op-a", "plan-a", "approve-a", 20),
+				conditions: refused(operate.FamilyMigration, 3)}},
+			approvals: stale("PolicyRefused"),
+			wantStop:  operate.StopNotProved, wantMessage: "run job-op-a recorded its migrations applied, and no reading of its database has followed",
+		},
+		{
+			// The refusal answers in its own words while it holds.
+			name: "a refusal that holds is the policy's to name", docs: []doc{refusal}, approvals: stale("PolicyRefused"),
+			wantStop: operate.StopPolicyRefused, wantMessage: "require_signature",
+		},
+		{
+			name: "a refusal that withdrew it and no longer holds", docs: []doc{reread}, approvals: stale("PolicyRefused"),
+			wantStop: operate.StopPlanSuperseded, wantMessage: "plan plan-a will not run under approval approve-a went stale (PolicyRefused)",
+		},
+		{
+			name: "a reading a person has to repair withdrew it", docs: []doc{dirty}, approvals: stale("PlanNoLongerCurrent"),
+			wantStop: operate.StopPlanSuperseded, wantMessage: "approve-a went stale (PlanNoLongerCurrent)",
+		},
+		{
+			// The status alone reads as a plan waiting for the approval stored.
+			name: "the same plan back under its UID", docs: []doc{back}, approvals: stale("PolicyRefused"),
+			wantStop: operate.StopPlanSuperseded, wantMessage: "so it authorizes nothing",
+		},
+		{
+			name: "another approval of the plan spent on its run", docs: []doc{running}, approvals: stale("SupersededApproval"),
+			wantStop: operate.StopOtherApproval, wantMessage: "plan plan-a is spent on a run under another approval",
+		},
+		{
+			name: "a realm's refusal leaves it as it is", docs: []doc{realm}, approvals: []*approvalDoc{{}},
+			wantMessage: "RealmConflict",
+		},
+		{
+			// The writer never marks a spent approval; if one did, the run is still this one.
+			name: "one its own run spent is waited for", docs: []doc{running}, approvals: []*approvalDoc{{stale: "PlanNoLongerCurrent", consumed: true}},
+			wantMessage: "the run of plan plan-a; now the Apply operation",
+		},
+		{
+			name: "another approval under its name is no answer", docs: []doc{reread},
+			approvals:   []*approvalDoc{{uid: "approve-b-uid", stale: "PolicyRefused"}},
+			wantMessage: "the run of plan plan-a",
+		},
+		{
+			name: "a deleted approval is no answer", docs: []doc{reread},
+			wantMessage: "the run of plan plan-a",
+		},
+		{
+			// It reads as before it read approvals, and asks once.
+			name: "the API server refuses it", docs: []doc{reread}, approvals: stale("PolicyRefused"),
+			approvalErrs: map[int]error{0: forbidden}, wantMessage: "the run of plan plan-a", wantApprovalReads: 1,
+		},
+		{
+			name: "a read of it that fails on the way", docs: []doc{reread}, approvals: stale("PolicyRefused"),
+			approvalErrs: map[int]error{0: apierrors.NewServerTimeout(operatorv1alpha1.GroupVersion.WithResource("ptahmigrationapprovals").GroupResource(), "get", 1)},
+			wantStop:     operate.StopPlanSuperseded, wantMessage: "went stale (PolicyRefused)", wantApprovalReads: 2,
+		},
+		{
+			// A failed read between two answers does not end the wait, which reads
+			// again. What the reading holds after the failure decides nothing here:
+			// the earlier answer is consumed, which is terminal, so clearing it is
+			// defensive and no row can see it.
+			name: "a read that fails between two answers", docs: []doc{running},
+			approvals:    []*approvalDoc{{stale: "PlanNoLongerCurrent", consumed: true}, {stale: "PlanNoLongerCurrent"}},
+			approvalErrs: map[int]error{1: apierrors.NewServerTimeout(operatorv1alpha1.GroupVersion.WithResource("ptahmigrationapprovals").GroupResource(), "get", 1)},
+			wantStop:     operate.StopPlanSuperseded, wantMessage: "went stale (PlanNoLongerCurrent)", wantApprovalReads: 3,
+		},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			tl := &timeline{family: operate.FamilyMigration, docs: row.docs, approvals: row.approvals, approvalErrs: row.approvalErrs}
+			named := decisionA
+			result, err := operate.Wait(context.Background(), tl.reader(t), refOf(operate.FamilyMigration), operate.WaitOptions{
+				Target: operate.TargetApplied, Timeout: timeout, Interval: interval, Clock: newStepClock(),
+				Since: atTheGate(nil).object(operate.FamilyMigration), Decision: &named,
+			})
+			switch {
+			case row.wantReached:
+				if err != nil || result.Run == nil || result.Run.JobName != "job-op-a" {
+					t.Fatalf("err = %v, run %+v, want the run of approve-a reached", err, result.Run)
+				}
+			case row.wantStop != "":
+				var stop *operate.StopError
+				if !errors.As(err, &stop) || stop.Reason != row.wantStop || !strings.Contains(stop.Message, row.wantMessage) {
+					t.Fatalf("err = %v, want %s naming %q", err, row.wantStop, row.wantMessage)
+				}
+			default:
+				var timedOut *operate.TimeoutError
+				if !errors.As(err, &timedOut) || !strings.Contains(timedOut.Error(), row.wantMessage) {
+					t.Fatalf("err = %v, want a timeout naming %q", err, row.wantMessage)
+				}
+			}
+			if reads := tl.approvalReadCount(); reads == 0 || row.wantApprovalReads > 0 && reads != row.wantApprovalReads {
+				t.Fatalf("the approval was read %d times, want %d", reads, row.wantApprovalReads)
+			}
+		})
 	}
 }
 
@@ -243,8 +396,10 @@ func TestWaitForADecisionIsTheRunThatCarriedItOut(t *testing.T) {
 			wantTimeout: true, wantMessage: "the run of plan plan-a",
 		},
 		{
-			// A refusal somebody else lifts may bring the same plan back, so it
-			// is not an answer. The timeout names it.
+			// A refusal somebody else lifts may bring the same plan back, so the
+			// status alone is not an answer, and a realm's refusal leaves the
+			// approval as it is. The timeout names it. TestWaitForADecisionReadsItsApproval
+			// has the refusals that withdraw the approval.
 			name: "a resource blocked with its plan cleared is not an answer", since: atTheGate(nil),
 			docs: []doc{{
 				phase: "Blocked", observedAt: at(30),

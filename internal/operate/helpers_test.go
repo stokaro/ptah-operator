@@ -278,6 +278,42 @@ type timeline struct {
 	docs   []doc
 	reads  int
 	errs   map[int]error
+
+	// approvals answer reads of a decision's approval, which the wait takes
+	// after each read of the resource: the one after the resource's nth read
+	// gets the nth, and later ones the last. None leaves the approval not
+	// found, and a nil entry answers that read with not found.
+	approvals []*approvalDoc
+	// approvalErrs fails the approval read after the resource's nth read.
+	approvalErrs  map[int]error
+	approvalReads int
+}
+
+// approvalDoc is the approval a decision names, as a wait reads it.
+type approvalDoc struct {
+	uid types.UID
+	// stale is the reason of a Stale condition that is True; empty is none.
+	stale    string
+	consumed bool
+}
+
+func (a approvalDoc) object() *operatorv1alpha1.PtahMigrationApproval {
+	uid := a.uid
+	if uid == "" {
+		uid = "approve-a-uid"
+	}
+	approval := &operatorv1alpha1.PtahMigrationApproval{
+		ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: "approve-a", UID: uid},
+	}
+	if a.stale != "" {
+		approval.Status.Conditions = append(approval.Status.Conditions,
+			condition(operatorv1alpha1.ConditionApprovalStale, metav1.ConditionTrue, a.stale, "the operator withdrew it", 1))
+	}
+	if a.consumed {
+		approval.Status.Conditions = append(approval.Status.Conditions,
+			condition(operatorv1alpha1.ConditionApprovalConsumed, metav1.ConditionTrue, "DispatchCommitted", "The approved plan was dispatched", 1))
+	}
+	return approval
 }
 
 func (tl *timeline) reader(t *testing.T) client.Reader {
@@ -286,6 +322,9 @@ func (tl *timeline) reader(t *testing.T) client.Reader {
 		WithStatusSubresource(&operatorv1alpha1.PtahSchema{}, &operatorv1alpha1.PtahMigration{}).
 		WithInterceptorFuncs(interceptor.Funcs{
 			Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+				if _, ok := obj.(*operatorv1alpha1.PtahMigrationApproval); ok {
+					return tl.approval(ctx, c, key, obj)
+				}
 				tl.mu.Lock()
 				index := tl.reads
 				tl.reads++
@@ -313,6 +352,35 @@ func (tl *timeline) reader(t *testing.T) client.Reader {
 				return c.Get(ctx, key, obj, opts...)
 			},
 		}).Build()
+}
+
+// approval answers a read of the decision's approval.
+func (tl *timeline) approval(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object) error {
+	tl.mu.Lock()
+	index := max(tl.reads-1, 0)
+	tl.approvalReads++
+	err := tl.approvalErrs[index]
+	var next *approvalDoc
+	if len(tl.approvals) > 0 {
+		next = tl.approvals[min(index, len(tl.approvals)-1)]
+	}
+	tl.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	if next == nil {
+		return apierrors.NewNotFound(operatorv1alpha1.GroupVersion.WithResource("ptahmigrationapprovals").GroupResource(), key.Name)
+	}
+	if err := replace(ctx, c, next.object()); err != nil {
+		return err
+	}
+	return c.Get(ctx, key, obj)
+}
+
+func (tl *timeline) approvalReadCount() int {
+	tl.mu.Lock()
+	defer tl.mu.Unlock()
+	return tl.approvalReads
 }
 
 // replace stores object in place of what is there, finalizer or not.

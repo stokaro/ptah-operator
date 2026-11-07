@@ -46,7 +46,12 @@ to find an artifact the verification policy refused has to match the reason
 the artifact, and a plan that comes back needs a new one, so a workflow that applies
 an approval under a fixed name has to change the name. `ptah_operator_approvals_total`
 with `family="migration"` and `outcome="stale"` now counts those approvals, and no
-longer a plan discarded with nobody having approved it. A script that reads
+longer a plan discarded with nobody having approved it. A run that spends one
+approval of a plan marks the plan's other approvals `Stale` too, and
+`kubectl ptah approve migration/... --wait` reads the approval it stored and ends
+with `PlanSuperseded` or `OtherApprovalConsumed` once it is stale, where it used to
+run to its timeout. `ApprovalRequired` on a migration goes `False` when a reading
+publishes no plan, with the reason that reading wrote on `Ready`. A script that reads
 `status.target.inventory` has
 to expect a kind that is not a stem. Ptah Console up to 0.3.x misstates such a kind until
 [ptah-console#166](https://github.com/stokaro/ptah-console/issues/166) is fixed:
