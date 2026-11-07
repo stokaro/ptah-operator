@@ -19,6 +19,7 @@ row that matches is where to go.
 | A namespace stuck in `Terminating`, or tearing one down in CI or a lab | [Deleting a namespace](#delete-namespace) |
 | A resource that is not converging, and no obvious refusal | [Finding a resource that has stopped converging](#finding-a-resource-that-has-stopped-converging) |
 | A resource in `Blocked`, or a condition you do not recognize | [Condition reasons](../../troubleshoot/condition-reasons/) |
+| A migration `Blocked` with `HistoryDirty` | [A migration that failed at a statement](../recovery/#failed-statement) |
 | A migration whose Apply ended `Partial` or `Unknown` | [A migration run nobody accounted for](#a-migration-run-nobody-accounted-for) |
 | A new artifact to roll out | [Moving to a new artifact](#set-source) |
 | Writes failing because the webhook cannot be reached | [Webhook certificate lifecycle](#webhook-certificate-lifecycle) |
@@ -1876,9 +1877,10 @@ accounted for could still be writing while it is accounted for.
 
 On its own, from a read-only reading of that same database with nothing of the
 artifact left to apply. That happens after a person repairs whatever the run
-left half-done -- the recovery for a partial migration is to undo what it
-committed, drop the unfinished revision, and publish the sequence without it --
-and the operator settles on its next reading with no spec edit.
+left half-done -- the recovery for a partial migration is to
+[run what is left](../recovery/#failed-partial), or to undo what it committed, drop
+the unfinished revision, and publish the sequence without it -- and the operator
+settles on its next reading with no spec edit.
 
 A reading of a different database does not clear a record that names one, and a
 record always names one: the plan that run was carrying out
@@ -2156,8 +2158,8 @@ until a History reading or an acknowledgment settles
 [the run](#a-migration-run-nobody-accounted-for). A run that reported `Failed` at a
 statement leaves a [dirty revision row](../migrations/#what-the-history-says), so the
 reading that follows blocks the resource with `HistoryDirty`, and nothing runs until a
-person repairs the row. Each is when a person has to read the database, and each holds
-one Job.
+person [clears the row](../recovery/#retry-failed-migration). Each is when a person has
+to read the database, and each holds one Job.
 
 Nothing stops a schema that way. An uncertain Apply under `Always` goes to a proof, the
 proof plans again, and `Always` applies the new plan unless it needs an approval. A

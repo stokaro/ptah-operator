@@ -101,6 +101,17 @@ var runbookGroups = []runbookGroup{
 		runbooks:  []runbookEntry{{"adopt", "adopt"}},
 		reference: nil,
 	},
+	{
+		page:     recoveryRunbook,
+		heading:  "A migration that failed at a statement",
+		runbooks: []runbookEntry{{"retry-failed-migration", "retry-failed"}},
+		reference: []string{
+			"Retrying outside the operator",
+			"A row in `state=pending`",
+			"Finish what it started",
+			"What repair records",
+		},
+	},
 }
 
 var markdownHeading = regexp.MustCompile(`^(#{2,4}) (.+?)(?: \{#([a-z0-9-]+)\})?$`)
@@ -408,6 +419,7 @@ var runbookAccess = map[string]string{
 	"clear-unresolved-run":        "`create` on `ptahmigrationrunacknowledgments`",
 	"prune-plans":                 "delete access",
 	"adopt":                       "write access to the target database",
+	"retry-failed-migration":      "write access to the target database",
 }
 
 // Every runbook says what access it needs, before it says anything else.
