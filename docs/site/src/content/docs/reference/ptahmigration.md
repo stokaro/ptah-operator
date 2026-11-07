@@ -497,6 +497,11 @@ spec:
 | `status.activeOperation.approvalRef` | `object` | ApprovalRef is the approval that authorized this Apply, recorded before dispatch so the run is attributable to the decision that permitted it. |
 | `status.activeOperation.approvalRef.name` | `string`, required | Name of the referenced object in the same namespace. |
 | `status.activeOperation.approvalRef.uid` | `string`, required | UID the object had when the reference was written. An object deleted and recreated under the same name is a different object, and this says so. |
+| `status.activeOperation.approvedAt` | `string` | ApprovedAt is when admission stamped it. |
+| `status.activeOperation.approvedBy` | `object` | ApprovedBy is the identity admission stamped on that approval, copied when the claim is written so the record of the run can name it after the approval is gone. A claim written by a release without this field has none. |
+| `status.activeOperation.approvedBy.groups` | `[]string` | Groups the authenticated user belonged to at that moment. |
+| `status.activeOperation.approvedBy.uid` | `string` | UID of that user, where the authenticator provides one. |
+| `status.activeOperation.approvedBy.username` | `string`, required | Username the API server authenticated the request as. |
 | `status.activeOperation.attempt` | `integer`, required | Attempt counts this claim among the retries of the same operation. |
 | `status.activeOperation.coordinationDigest` | `string` | CoordinationDigest is that realm, hashed. |
 | `status.activeOperation.dispatchNotAfter` | `string` | DispatchNotAfter and ExecutionNotAfter bound the claim in time. |
@@ -510,6 +515,7 @@ spec:
 | `status.activeOperation.leaseContinuityLost` | `boolean` | LeaseContinuityLost records that the epoch changed under this claim. |
 | `status.activeOperation.leaseDurationSeconds` | `integer` | LeaseDurationSeconds is how long that acquisition was taken for. |
 | `status.activeOperation.leaseEpoch` | `string` | LeaseEpoch is the database lock acquisition this claim was authorized under, and LeaseDurationSeconds how long that acquisition was taken for. A result produced across an epoch change is discarded rather than read: the lock it held was somebody else's by then. |
+| `status.activeOperation.planFingerprint` | `string` | PlanFingerprint is that plan's spec.fingerprint, copied when the claim is written so the record of the run can name it after the plan is gone. A claim written by a release without this field has none. |
 | `status.activeOperation.planRef` | `object` | PlanRef is the immutable plan an Apply carries out. |
 | `status.activeOperation.planRef.name` | `string`, required | Name of the referenced object in the same namespace. |
 | `status.activeOperation.planRef.uid` | `string`, required | UID the object had when the reference was written. An object deleted and recreated under the same name is a different object, and this says so. |
@@ -650,6 +656,7 @@ spec:
 | `status.journal.entries[].approvalUID` | `string` | ApprovalUID is the UID of that approval. An entry a release before this field wrote has none: it is incomplete evidence, and is not to be joined to an object that holds the name today. |
 | `status.journal.entries[].approver` | `string` | Approver is the user admission stamped on that approval. |
 | `status.journal.entries[].at` | `string`, required | At is when the event happened. For an Apply, a run or a failed attempt it is when that ended. |
+| `status.journal.entries[].authorization` | `string`, one of `Approval`, `Policy` | Authorization is what allowed a PtahMigration's run. |
 | `status.journal.entries[].count` | `integer` | Count is how many attempts an OperationFailed entry stands for. A single failure has none. |
 | `status.journal.entries[].destructive` | `boolean` | Destructive reports a published PtahSchema plan that destroys data. |
 | `status.journal.entries[].failure` | `object` | Failure is where a run stopped, as status.lastRun.failure said. |
@@ -658,10 +665,15 @@ spec:
 | `status.journal.entries[].failure.statement` | `integer`, required | Statement is the position of the failed statement in that migration, counting from one. |
 | `status.journal.entries[].failure.statements` | `integer`, required | Statements is how many statements that migration has. |
 | `status.journal.entries[].failure.version` | `integer`, required | Version is the migration the run stopped in. |
+| `status.journal.entries[].jobName` | `string` | JobName is the Job a PtahMigration's run ran as. It is absent when no Job was confirmed. |
+| `status.journal.entries[].jobUID` | `string` | JobUID is that Job's UID, which outlives the Job and tells it from a later Job that takes the name. |
 | `status.journal.entries[].lastAt` | `string` | LastAt is the latest attempt an OperationFailed entry folds. A single failure has none. |
 | `status.journal.entries[].operation` | `string`, one of `Resolve`, `Verify`, `Observe`, `Plan`, `History`, `Apply` | Operation is the operation that failed, when one was claimed. |
-| `status.journal.entries[].outcome` | `string`, one of `Succeeded`, `Failed`, `Partial`, `Unknown`, `UpToDate`, `InSync`, `DriftRemains`, `Superseded` | Outcome is how an Apply, a proof or a run ended. |
+| `status.journal.entries[].operationID` | `string` | OperationID is the Apply claim a PtahMigration's RunFinished, Verified or RunAcknowledged entry concerns. It is what joins them: entries of one execution carry the same one, and neither their order nor their times are the join. ApprovalUID is what joins an ApprovalAccepted entry to the run that consumed it, since a claim withdrawn before dispatch leaves the approval to the next one. An entry a release before this field wrote has none. |
+| `status.journal.entries[].outcome` | `string`, one of `Succeeded`, `Failed`, `Partial`, `Unknown`, `UpToDate`, `InSync`, `DriftRemains`, `Superseded`, `Pending`, `Blocked` | Outcome is how an Apply, a proof or a run ended. |
 | `status.journal.entries[].plan` | `string` | Plan names the plan the event concerns. |
+| `status.journal.entries[].planFingerprint` | `string` | PlanFingerprint is the spec.fingerprint of the plan a PtahMigration's run carried out, when the claim recorded it. |
+| `status.journal.entries[].planUID` | `string` | PlanUID is the UID of a PtahMigration's plan. |
 | `status.journal.entries[].reason` | `string` | Reason is the condition reason the failure set. It is a code, never the message: a message can carry what status must not. |
 | `status.journal.entries[].startedAt` | `string` | StartedAt is when an Apply or a run began. |
 | `status.journal.entries[].statements` | `integer` | Statements is how many statements a published PtahSchema plan holds. |
@@ -669,10 +681,22 @@ spec:
 | `status.lastReadRequest` | `string` | LastReadRequest is the last value of the operator.ptah.run/read-requested-at annotation the controller answered, so an answered request is not answered again. A value longer than MaxReadRequestLength is recorded as its SHA-256 digest, and a value that is not an RFC 3339 instant is recorded with a Warning Event and starts nothing. |
 | `status.lastRun` | `object` | LastRun is the evidence of the most recent execution, kept across later reconciliations so an operator can see what happened without the Job. |
 | `status.lastRun.appliedVersions` | `[]integer` | AppliedVersions names the selected migrations the history recorded afterwards, so a migration the history already held is not reported as this run's work. |
+| `status.lastRun.artifactDigest` | `string` | ArtifactDigest is the OCI artifact the run read its files from. |
+| `status.lastRun.authorization` | `object` | Authorization is what allowed the run: a person's approval, or the resource's own policy. |
+| `status.lastRun.authorization.approvalRef` | `object` | ApprovalRef is the approval the run consumed. |
+| `status.lastRun.authorization.approvalRef.name` | `string`, required | Name of the referenced object in the same namespace. |
+| `status.lastRun.authorization.approvalRef.uid` | `string`, required | UID the object had when the reference was written. An object deleted and recreated under the same name is a different object, and this says so. |
+| `status.lastRun.authorization.approvedAt` | `string` | ApprovedAt is when admission stamped it. |
+| `status.lastRun.authorization.approver` | `object` | Approver is the identity admission stamped on it. |
+| `status.lastRun.authorization.approver.groups` | `[]string` | Groups the authenticated user belonged to at that moment. |
+| `status.lastRun.authorization.approver.uid` | `string` | UID of that user, where the authenticator provides one. |
+| `status.lastRun.authorization.approver.username` | `string`, required | Username the API server authenticated the request as. |
+| `status.lastRun.authorization.kind` | `string`, required, one of `Approval`, `Policy` | Kind is Approval or Policy. |
 | `status.lastRun.dispatchedBy` | `object` | DispatchedBy is the manager that built and dispatched the run's Job, read from the Job's Pod template when the run was harvested. The plan the run carried out names the manager that published it, which a later release sharing the execution binding need not be. It is absent when the run was settled without its Job. |
 | `status.lastRun.dispatchedBy.controllerImage` | `string`, required | ControllerImage is the digest-pinned manager image. |
 | `status.lastRun.dispatchedBy.controllerRevision` | `string`, required | ControllerRevision is the source revision the manager was built from. |
 | `status.lastRun.dispatchedBy.runnerImage` | `string`, required | RunnerImage is the digest-pinned runner image the manager installed in the task Pod. |
+| `status.lastRun.executionBindingID` | `string` | ExecutionBindingID is the execution epoch the claim was authorized under. |
 | `status.lastRun.failure` | `object` | Failure is where a failed or partial run stopped, when a statement reached the database and failed there. It is what Message says in words, for a reader that should not depend on their wording. |
 | `status.lastRun.failure.errorNumber` | `integer` | ErrorNumber is MySQL's own error number, zero on every other protocol. |
 | `status.lastRun.failure.sqlState` | `string` | SQLState is the SQLSTATE the database answered with, empty when it gave none. |
@@ -683,8 +707,26 @@ spec:
 | `status.lastRun.jobName` | `string` | JobName and JobUID identify the execution this evidence came from. The UID is what makes a replacement Job with the same name a different run. |
 | `status.lastRun.jobUID` | `string` | JobUID is that Job's UID. |
 | `status.lastRun.message` | `string` | Message is a safe explanation. It never carries database rows, and never carries the SQL a migration ran. |
+| `status.lastRun.operationID` | `string` | OperationID is the Apply claim that ran. It is what makes two executions of a byte-identical plan two runs. A run a release without this field recorded has none, and neither that nor anything else below is guessed for it. |
 | `status.lastRun.outcome` | `string`, required, one of `UpToDate`, `Applied`, `Failed`, `Partial`, `Unknown` | Outcome is the verdict Ptah read from the revision table. |
+| `status.lastRun.planFingerprint` | `string` | PlanFingerprint is that plan's spec.fingerprint when the claim was written, which binds the sequence, the history it was computed against, the source, the policy, the target and the execution binding. It is absent for a claim a release without the field wrote. |
+| `status.lastRun.planRef` | `object` | PlanRef is the immutable plan the run carried out. It stays readable after the plan is gone, and the plan store reuses a byte-identical plan, so it says what was planned and not which execution this was: OperationID does. |
+| `status.lastRun.planRef.name` | `string`, required | Name of the referenced object in the same namespace. |
+| `status.lastRun.planRef.uid` | `string`, required | UID the object had when the reference was written. An object deleted and recreated under the same name is a different object, and this says so. |
+| `status.lastRun.source` | `object` | Source is the source the run read its files from, for a ConfigMap or a Git commit. |
+| `status.lastRun.source.contentDigest` | `string`, required | ContentDigest is the content digest of the files the plan was computed from. |
+| `status.lastRun.source.kind` | `string`, required, one of `ConfigMap`, `Git` | Kind of source the plan was computed from. |
+| `status.lastRun.source.policy` | `object` | Policy is the source policy the source was checked against, when the resource names one. |
+| `status.lastRun.source.policy.digest` | `string`, required | Digest is "sha256:" and the SHA-256 of the policy document. |
+| `status.lastRun.source.policy.uid` | `string`, required | UID of the policy ConfigMap. Another ConfigMap under the same name is another policy. |
+| `status.lastRun.source.revision` | `string`, required | Revision is the source object the files were read from. For a ConfigMap it is the ConfigMap's UID: an edit to a key the source does not select keeps the plan, while another ConfigMap, or the same name deleted and created again, retires it even when the files match. For Git it is "sha256:" and the SHA-256 of the repository URL and the selected path, joined by a newline: another repository or another path retires the plan even when the files match, while a commit that leaves the selected files as they were keeps it, as an edit to an unselected key keeps a ConfigMap's. |
 | `status.lastRun.startedAt` | `string`, required | StartedAt is when the run began. |
+| `status.lastRun.targetIdentityDigest` | `string` | TargetIdentityDigest is the credential-free identity of the database the run reported it opened, or the one it was dispatched against where it reported none. |
+| `status.lastRun.verification` | `object` | Verification is the first reading of this run's database after the run ended. What a run claims and what the revision table holds are two statements, and this records the second. It is absent until that reading, and for a run a release without this field recorded. |
+| `status.lastRun.verification.currentVersion` | `integer`, required | CurrentVersion is the highest version that reading recorded. |
+| `status.lastRun.verification.historyFingerprint` | `string`, required | HistoryFingerprint is that reading of the revision table. |
+| `status.lastRun.verification.observedAt` | `string`, required | ObservedAt is when the history was read. |
+| `status.lastRun.verification.result` | `string`, required, one of `InSync`, `Pending`, `Blocked` | Result is what the reading found. |
 | `status.nextReconciliationTime` | `string` | NextReconciliationTime is when the controller intends to look again. |
 | `status.observedGeneration` | `integer` | ObservedGeneration is the spec generation this status describes. |
 | `status.pendingLockRelease` | `object` | PendingLockRelease is a database-realm Lease this resource still owes back, kept whole so the release survives the process that owed it. The release is written here in the same status patch that clears the claim holding the Lease, and removed only once a release has succeeded, so a manager that stops in between hands the realm back on its next pass instead of leaving every other claimant to wait out the full lease. It is never written for a run that may still be executing. A Lease under a live executor is the one thing the Lease exists to prevent, and such a Lease is left to expire rather than recorded as owed. |

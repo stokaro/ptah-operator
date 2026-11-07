@@ -4,8 +4,8 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     operator.ptah.run/controller-state-version: "1"
-    operator.ptah.run/crd-schema-version: "12"
-    operator.ptah.run/crd-schema-digest: "sha256:d99847a4f266d6cb3971aa936ba68f973b84f4667720c18cbe2693eaadb43745"
+    operator.ptah.run/crd-schema-version: "13"
+    operator.ptah.run/crd-schema-digest: "sha256:abbbca2bad0491ad3b3606d4aa555b0eb3bea3f0e15507b5c0936aa0a392490b"
     controller-gen.kubebuilder.io/version: v0.23.0
   name: ptahmigrations.operator.ptah.run
 spec:
@@ -1190,6 +1190,23 @@ spec:
                     - name
                     - uid
                     type: object
+                  approvedAt:
+                    format: date-time
+                    type: string
+                  approvedBy:
+                    properties:
+                      groups:
+                        items:
+                          type: string
+                        maxItems: 64
+                        type: array
+                      uid:
+                        type: string
+                      username:
+                        type: string
+                    required:
+                    - username
+                    type: object
                   attempt:
                     format: int32
                     minimum: 1
@@ -1227,6 +1244,9 @@ spec:
                     type: integer
                   leaseEpoch:
                     pattern: ^v1-[0-9a-f]{32}$
+                    type: string
+                  planFingerprint:
+                    maxLength: 128
                     type: string
                   planRef:
                     properties:
@@ -1811,6 +1831,11 @@ spec:
                         at:
                           format: date-time
                           type: string
+                        authorization:
+                          enum:
+                          - Approval
+                          - Policy
+                          type: string
                         count:
                           format: int32
                           minimum: 2
@@ -1844,6 +1869,12 @@ spec:
                           - statements
                           - version
                           type: object
+                        jobName:
+                          maxLength: 253
+                          type: string
+                        jobUID:
+                          maxLength: 128
+                          type: string
                         lastAt:
                           format: date-time
                           type: string
@@ -1856,6 +1887,9 @@ spec:
                           - History
                           - Apply
                           type: string
+                        operationID:
+                          pattern: ^sha256:[0-9a-f]{64}$
+                          type: string
                         outcome:
                           enum:
                           - Succeeded
@@ -1866,9 +1900,17 @@ spec:
                           - InSync
                           - DriftRemains
                           - Superseded
+                          - Pending
+                          - Blocked
                           type: string
                         plan:
                           maxLength: 253
+                          type: string
+                        planFingerprint:
+                          maxLength: 128
+                          type: string
+                        planUID:
+                          maxLength: 128
                           type: string
                         reason:
                           maxLength: 128
@@ -1913,6 +1955,50 @@ spec:
                     maxItems: 256
                     type: array
                     x-kubernetes-list-type: set
+                  artifactDigest:
+                    type: string
+                  authorization:
+                    properties:
+                      approvalRef:
+                        properties:
+                          name:
+                            type: string
+                          uid:
+                            type: string
+                        required:
+                        - name
+                        - uid
+                        type: object
+                      approvedAt:
+                        format: date-time
+                        type: string
+                      approver:
+                        properties:
+                          groups:
+                            items:
+                              type: string
+                            maxItems: 64
+                            type: array
+                          uid:
+                            type: string
+                          username:
+                            type: string
+                        required:
+                        - username
+                        type: object
+                      kind:
+                        enum:
+                        - Approval
+                        - Policy
+                        type: string
+                    required:
+                    - kind
+                    type: object
+                    x-kubernetes-validations:
+                    - message: an approval authorization names its approval, and a
+                        policy authorization names no decision
+                      rule: 'self.kind == ''Approval'' ? has(self.approvalRef) : !has(self.approvalRef)
+                        && !has(self.approver) && !has(self.approvedAt)'
                   dispatchedBy:
                     properties:
                       controllerImage:
@@ -1933,6 +2019,9 @@ spec:
                     - controllerRevision
                     - runnerImage
                     type: object
+                  executionBindingID:
+                    pattern: ^v1-[0-9a-f]{32}$
+                    type: string
                   failure:
                     properties:
                       errorNumber:
@@ -1970,6 +2059,9 @@ spec:
                   message:
                     maxLength: 1024
                     type: string
+                  operationID:
+                    pattern: ^sha256:[0-9a-f]{64}$
+                    type: string
                   outcome:
                     enum:
                     - UpToDate
@@ -1978,9 +2070,79 @@ spec:
                     - Partial
                     - Unknown
                     type: string
+                  planFingerprint:
+                    maxLength: 128
+                    type: string
+                  planRef:
+                    properties:
+                      name:
+                        type: string
+                      uid:
+                        type: string
+                    required:
+                    - name
+                    - uid
+                    type: object
+                  source:
+                    properties:
+                      contentDigest:
+                        pattern: ^sha256:[0-9a-f]{64}$
+                        type: string
+                      kind:
+                        enum:
+                        - ConfigMap
+                        - Git
+                        type: string
+                      policy:
+                        properties:
+                          digest:
+                            pattern: ^sha256:[0-9a-f]{64}$
+                            type: string
+                          uid:
+                            type: string
+                        required:
+                        - digest
+                        - uid
+                        type: object
+                      revision:
+                        maxLength: 128
+                        minLength: 1
+                        type: string
+                    required:
+                    - contentDigest
+                    - kind
+                    - revision
+                    type: object
                   startedAt:
                     format: date-time
                     type: string
+                  targetIdentityDigest:
+                    pattern: ^sha256:[0-9a-f]{64}$
+                    type: string
+                  verification:
+                    properties:
+                      currentVersion:
+                        format: int64
+                        minimum: 0
+                        type: integer
+                      historyFingerprint:
+                        pattern: ^sha256:[0-9a-f]{64}$
+                        type: string
+                      observedAt:
+                        format: date-time
+                        type: string
+                      result:
+                        enum:
+                        - InSync
+                        - Pending
+                        - Blocked
+                        type: string
+                    required:
+                    - currentVersion
+                    - historyFingerprint
+                    - observedAt
+                    - result
+                    type: object
                 required:
                 - outcome
                 - startedAt

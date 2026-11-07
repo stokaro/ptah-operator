@@ -4,8 +4,8 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     operator.ptah.run/controller-state-version: "1"
-    operator.ptah.run/crd-schema-version: "12"
-    operator.ptah.run/crd-schema-digest: "sha256:220e1ce2d6c5e44f98926065a006d697c3c53fcfebd66d75bf91b540b2ed86de"
+    operator.ptah.run/crd-schema-version: "13"
+    operator.ptah.run/crd-schema-digest: "sha256:1cc90c3f6fbc2443cfea2df65a20927263435caf371ee986e2ddbdf47443981f"
     controller-gen.kubebuilder.io/version: v0.23.0
   name: ptahschemas.operator.ptah.run
 spec:
@@ -1727,6 +1727,11 @@ spec:
                         at:
                           format: date-time
                           type: string
+                        authorization:
+                          enum:
+                          - Approval
+                          - Policy
+                          type: string
                         count:
                           format: int32
                           minimum: 2
@@ -1760,6 +1765,12 @@ spec:
                           - statements
                           - version
                           type: object
+                        jobName:
+                          maxLength: 253
+                          type: string
+                        jobUID:
+                          maxLength: 128
+                          type: string
                         lastAt:
                           format: date-time
                           type: string
@@ -1772,6 +1783,9 @@ spec:
                           - History
                           - Apply
                           type: string
+                        operationID:
+                          pattern: ^sha256:[0-9a-f]{64}$
+                          type: string
                         outcome:
                           enum:
                           - Succeeded
@@ -1782,9 +1796,17 @@ spec:
                           - InSync
                           - DriftRemains
                           - Superseded
+                          - Pending
+                          - Blocked
                           type: string
                         plan:
                           maxLength: 253
+                          type: string
+                        planFingerprint:
+                          maxLength: 128
+                          type: string
+                        planUID:
+                          maxLength: 128
                           type: string
                         reason:
                           maxLength: 128

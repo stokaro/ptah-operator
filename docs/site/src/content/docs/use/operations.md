@@ -1756,7 +1756,7 @@ kubectl ptah wait schema/storefront --for in-sync --timeout 10m -n application
 | --- | --- |
 | `in-sync` | the resource rests in sync at the generation it had when the wait began, from a reading of the database that began after the wait did |
 | `approval` | a plan waits for an approval, with none recorded on it yet, at the generation the resource had when the wait began; a plan already waiting counts |
-| `applied` | an Apply or a migration run that ended after the wait began is recorded applied, and the operator's reading afterwards confirms it; one that ended before does not count, even when that reading ends after; `--plan` narrows a schema's to one plan |
+| `applied` | an Apply or a migration run that ended after the wait began is recorded applied, and the operator's reading afterwards confirms it; one that ended before does not count, even when that reading ends after; `--plan` narrows it to one plan, by name or fingerprint, and another plan's run ends the wait |
 | `suspended` | the operator reports the resource `Suspended` for that generation, with nothing in flight; a schema still owing the proof of an Apply reaches it, since that proof starts no Job until resume |
 | `read` | the read a `kubectl ptah refresh` asked for has ended; `--read-request` names the request |
 
@@ -1771,7 +1771,16 @@ on MySQL a schema can stay `InSync` after a change the account cannot read. Appr
 is why a wait does not stop at the generation alone. A change made with the
 plugin waits in the same command with `--wait`, from the answer to the change
 itself; `kubectl ptah approve --wait` waits for the Apply of the plan it
-approved.
+approved. For a migration it also waits for that approval: `status.lastRun` and
+the journal name the plan and the approval each run carried out, and the wait
+reads those rather than the order or the time of what happened.
+
+| It ends with | When |
+| --- | --- |
+| `OtherPlanApplied` | another plan's run ended |
+| `OtherApprovalConsumed` | the same plan ran under another approval, as when two people approved it and the operator took the oldest |
+| `PlanSuperseded` | a migration's plan will not run: another plan replaced it or is running, or a reading left nothing to apply |
+| `CompletionNotProved` | a run ended that may be this one and no record says so: its record names no plan because an operator older than 0.2.10 wrote it, or a later run replaced it and the journal holds no reading after it |
 
 `--for approval` asks whether a plan waits for you, so a plan that waits already
 answers it, even one computed before the wait began. Started right after an edit
@@ -2573,8 +2582,9 @@ so the set is checkable with `kubectl` rather than inferred:
 | `ptahmigration.status.plan` | published and awaiting approval, or being applied |
 | `ptahmigration.status.activeOperation.planRef` | an Apply is in flight against it |
 | `ptahmigration.status.unresolvedRun.planRef` | a run nobody accounted for may have executed it |
+| `ptahmigration.status.lastRun.planRef` | the evidence of what the last run carried out |
 
-The last row is the one that matters most and is easiest to miss. An
+The `unresolvedRun` row is the one that matters most and is easiest to miss. An
 unresolved run is a migration that may already have changed the database, and
 its plan is what a person reads to find out what it would have done. Deleting
 it destroys the only record of the work in question.
@@ -2614,7 +2624,8 @@ kubectl get ptahschemas,ptahmigrations -A -o json |
     ($s.applied.planRef.name // empty),
     ($s.pendingBindingRetirement.plan.name // empty),
     ($s.activeOperation.planRef.name // empty),
-    ($s.unresolvedRun.planRef.name // empty)' |
+    ($s.unresolvedRun.planRef.name // empty),
+    ($s.lastRun.planRef.name // empty)' |
   sort -u > pinned.txt
 kubectl get ptahschemaapprovals,ptahmigrationapprovals -A \
   -o jsonpath='{range .items[*]}{.spec.planRef.name}{"\n"}{end}' |

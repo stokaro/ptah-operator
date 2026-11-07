@@ -382,7 +382,7 @@ func waitCommand(ctx context.Context, arguments []string, stdout, stderr io.Writ
 		forTarget   = flags.String("for", "", "what to wait for: read, in-sync, approval, applied or suspended")
 		timeout     = flags.Duration("timeout", defaultWaitTimeout, "how long to wait")
 		readRequest = flags.String("read-request", "", "with --for read: the request kubectl ptah refresh wrote")
-		plan        = flags.String("plan", "", "with --for applied, for a schema: the name or fingerprint of the plan")
+		plan        = flags.String("plan", "", "with --for applied: the name or fingerprint of the plan")
 	)
 	ref, code, done := flags.parse(arguments, stderr)
 	if done {
@@ -424,8 +424,8 @@ func checkWaitOptions(ref operate.Ref, options operate.WaitOptions) error {
 		if _, err := time.Parse(time.RFC3339, options.ReadRequest); err != nil {
 			return fmt.Errorf("--read-request %q is not an RFC 3339 instant, so it asked for no read", options.ReadRequest)
 		}
-	case options.Plan != "" && (options.Target != operate.TargetApplied || ref.Family != operate.FamilySchema):
-		return errors.New("--plan goes with --for applied on a schema: a migration run records no plan")
+	case options.Plan != "" && options.Target != operate.TargetApplied:
+		return errors.New("--plan goes with --for applied")
 	}
 	return nil
 }

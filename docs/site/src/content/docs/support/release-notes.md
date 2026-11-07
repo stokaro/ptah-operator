@@ -56,6 +56,13 @@ A script that counts `RunFinished` entries in `status.journal` as runs now gets
 one entry per run, on its plan, where a `Partial` or `Unknown` run used to write
 a second `Unknown` entry; entries already stored stay as they are until the
 journal's bounds drop them.
+`status.lastRun` and `status.journal` of a migration now carry the same username, and
+the identity admission stamped, so treat them as you treat a schema's `status.plan.approval`.
+`kubectl ptah approve migration/... --wait` now waits for the run of the plan it
+approved under the approval it stored, and exits 8 where it used to report success
+for another run: a script has to expect `PlanSuperseded`, `OtherPlanApplied` and
+`OtherApprovalConsumed`. It also exits 8 with `CompletionNotProved` against an operator
+that records no plan on a run, so upgrade the operator first.
 The move to Ptah v0.22.0 can also change what a running schema reports and plans,
 which the next paragraph covers. Nothing else.
 

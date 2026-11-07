@@ -300,6 +300,7 @@ func (r *MigrationReconciler) claimMigrationApply(
 		DispatchNotAfter:     &dispatchNotAfter,
 		ExecutionNotAfter:    dispatchNotAfter.DeepCopy(),
 		PlanRef:              &operatorv1alpha1.ImmutableObjectReference{Name: plan.Name, UID: plan.UID},
+		PlanFingerprint:      plan.Spec.Fingerprint,
 		Target: &operatorv1alpha1.DatabaseTargetBinding{
 			Engine:  migration.Spec.Target.Engine,
 			URLFrom: *migration.Spec.Target.URLFrom.DeepCopy(),
@@ -307,6 +308,8 @@ func (r *MigrationReconciler) claimMigrationApply(
 	}
 	if approval != nil {
 		operation.ApprovalRef = &operatorv1alpha1.ImmutableObjectReference{Name: approval.Name, UID: approval.UID}
+		operation.ApprovedBy = approval.Spec.Approver.DeepCopy()
+		operation.ApprovedAt = approval.Spec.ApprovedAt.DeepCopy()
 	}
 	operation.Actor = workload.MigrationActor(migration, approval)
 	operation.JobName, err = r.Jobs.NameForMigration(migration, *operation)
@@ -641,6 +644,7 @@ func (r *MigrationReconciler) recordMigrationRun(
 		Message:         bounded(message, 1024),
 		Failure:         run.failure,
 	}
+	recordMigrationRunProvenance(migration.Status.LastRun, migration, operation, reportedTarget)
 	migration.Status.Plan = nil
 	setMigrationTargetFailure(migration, run.targetFailure)
 	if run.openedTarget {
@@ -810,23 +814,94 @@ func recordUnresolvedMigrationRun(
 		DispatchedBy: run.DispatchedBy.DeepCopy(),
 		RecordedAt:   metav1.NewTime(now),
 	}
-	// Which database to name is the whole point of the record, so the run's own
-	// account of it wins. A result frame reports the target the executor opened,
-	// and that is not always the one the plan was computed against: Secret
-	// content can rotate between the history reading and the Apply. Recording
-	// the planned database instead would let a clean reading of it settle a run
-	// that never touched it, while a reading of the database that was touched
-	// could not match what was stored.
-	unresolved.TargetIdentityDigest = reportedTarget
-	if unresolved.TargetIdentityDigest == "" {
-		// No frame, or one that named no target: the best that is known is the
-		// database the plan was computed against, which is the last history
-		// this resource read.
-		if history := migration.Status.History; history != nil {
-			unresolved.TargetIdentityDigest = history.TargetIdentityDigest
+	unresolved.TargetIdentityDigest = migrationRunTarget(migration, reportedTarget)
+	migration.Status.UnresolvedRun = unresolved
+}
+
+// migrationRunTarget is the database a run addressed.
+//
+// Which database to name is the whole point of a run's record, so the run's own
+// account of it wins. A result frame reports the target the executor opened, and
+// that is not always the one the plan was computed against: Secret content can
+// rotate between the history reading and the Apply. Recording the planned
+// database instead would let a clean reading of it settle a run that never
+// touched it, while a reading of the database that was touched could not match
+// what was stored.
+//
+// With no frame, or one that named no target or something the status schema would
+// refuse, the best that is known is the database the plan was computed against,
+// which is the last history this resource read.
+func migrationRunTarget(migration *operatorv1alpha1.PtahMigration, reportedTarget string) string {
+	if sha256Digest.MatchString(reportedTarget) {
+		return reportedTarget
+	}
+	if history := migration.Status.History; history != nil {
+		return history.TargetIdentityDigest
+	}
+	return ""
+}
+
+// recordMigrationRunProvenance writes what the claim knows about the run it
+// dispatched into the run's record.
+//
+// The claim is the only source. It was written before the Job existed and it
+// outlives the Job, the result, the approval and the plan, none of which is read
+// here. What the claim does not hold stays absent: a claim written by a release
+// that copied less keeps its run's approver unknown, since an approval that holds
+// the name today may be another decision.
+func recordMigrationRunProvenance(
+	run *operatorv1alpha1.MigrationRunStatus,
+	migration *operatorv1alpha1.PtahMigration,
+	operation *operatorv1alpha1.MigrationOperationStatus,
+	reportedTarget string,
+) {
+	run.OperationID = operation.ID
+	run.PlanRef = operation.PlanRef.DeepCopy()
+	run.PlanFingerprint = operation.PlanFingerprint
+	run.ArtifactDigest, run.Source = sourcebinding.MigrationPlanSource(
+		operation.Source, migration.Status.ConfigMap, migration.Status.SourcePolicy)
+	run.TargetIdentityDigest = migrationRunTarget(migration, reportedTarget)
+	run.ExecutionBindingID = operation.ExecutionBindingID
+	run.Authorization = &operatorv1alpha1.MigrationRunAuthorizationStatus{
+		Kind: operatorv1alpha1.MigrationRunAuthorizedByPolicy,
+	}
+	if operation.ApprovalRef != nil {
+		run.Authorization = &operatorv1alpha1.MigrationRunAuthorizationStatus{
+			Kind:        operatorv1alpha1.MigrationRunAuthorizedByApproval,
+			ApprovalRef: operation.ApprovalRef.DeepCopy(),
+			Approver:    operation.ApprovedBy.DeepCopy(),
+			ApprovedAt:  operation.ApprovedAt.DeepCopy(),
 		}
 	}
-	migration.Status.UnresolvedRun = unresolved
+}
+
+// recordMigrationRunVerification records the first reading of a run's database
+// after the run ended, in the status write that records the reading. A History
+// claim is only ever taken with no Apply claim standing, so a reading harvested
+// beside a finished run began after that run.
+//
+// A reading of another database says nothing about what the run did, so it leaves
+// the run unverified, as it leaves an unresolved one unsettled. A run with no
+// operation ID was recorded by a release without this field and stays as it was.
+func recordMigrationRunVerification(migration *operatorv1alpha1.PtahMigration) {
+	run, history := migration.Status.LastRun, migration.Status.History
+	if run == nil || run.FinishedAt == nil || run.OperationID == "" || run.Verification != nil || history == nil ||
+		(run.TargetIdentityDigest != "" && run.TargetIdentityDigest != history.TargetIdentityDigest) {
+		return
+	}
+	result := operatorv1alpha1.MigrationRunVerifiedPending
+	switch migration.Status.Phase {
+	case operatorv1alpha1.MigrationPhaseInSync:
+		result = operatorv1alpha1.MigrationRunVerifiedInSync
+	case operatorv1alpha1.MigrationPhaseBlocked:
+		result = operatorv1alpha1.MigrationRunVerifiedBlocked
+	}
+	run.Verification = &operatorv1alpha1.MigrationRunVerificationStatus{
+		ObservedAt:         history.ObservedAt,
+		HistoryFingerprint: history.Fingerprint,
+		CurrentVersion:     history.CurrentVersion,
+		Result:             result,
+	}
 }
 
 // targetLockReleaseForMigrationOperation builds the complete credential-free
@@ -1169,6 +1244,7 @@ func (r *MigrationReconciler) retireUncertainMigrationApply(
 		run.JobName = operation.JobName
 		run.JobUID = operation.JobUID
 	}
+	recordMigrationRunProvenance(run, migration, operation, reportedTarget)
 	migration.Status.LastRun = run
 	recordUnresolvedMigrationRun(migration, operation, run, reportedTarget, r.now())
 	migration.Status.Plan = nil

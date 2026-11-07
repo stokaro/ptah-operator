@@ -1543,6 +1543,10 @@ func (m *migrationRun) rebuildDrill() {
 	// Nobody approved that run, and the database's own log says so: it names the
 	// policy and the resource rather than a person or the user the process ran as.
 	m.assertRunLogNames(r.database, alwaysPolicyActor(m.in.TestNamespace, r.name), 1, 2)
+	// And its record says the same: the resource's policy, and no decision.
+	if err := runAllowedByPolicy(m.migration(r.name).Status); err != nil {
+		m.fatalf("%s: %v", r.name, err)
+	}
 
 	// An approval for [3], its Apply claimed and held.
 	moved := &ptahv1alpha1.PtahMigration{}

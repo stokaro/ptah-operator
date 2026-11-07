@@ -312,6 +312,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:676639241413d17add6b4531f2ecad5d10829af5f5ed636868811604fbbd5870",
       "reason": "Add the TargetIdentityChanged and ProofSettled condition reasons and the settled-apply annotation to api/v1alpha1, a package the runner links for its types (#819). No runner source file changes and the runner reads none of them: commands, payloads, result frames, delivery identity, SQL authority and retry limits are the same."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:8977cdabf25e292e428548526fef127ec434c01aa4e19a3db48452df780c166c",
+      "reason": "Add a migration run's provenance to api/v1alpha1, a package the runner links for its types (#804): fields on status.activeOperation, status.lastRun and status.journal entries, and two journal outcomes. No runner source file changes and the runner reads none of them: commands, payloads, result frames, delivery identity, SQL authority and retry limits are the same."
     }
   ]
 }

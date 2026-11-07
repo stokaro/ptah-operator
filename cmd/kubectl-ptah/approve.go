@@ -216,7 +216,7 @@ func approveCommand(ctx context.Context, arguments []string, stdin io.Reader, in
 			if code := printObject(stdout, stderr, result.Approval, *output); code != exitOK || !*wait {
 				return code
 			}
-			return waitForApply(ctx, cluster, target, review, baseline, *waitTimeout, false, stdout, stderr)
+			return waitForApply(ctx, cluster, target, review, result.Approval, baseline, *waitTimeout, false, stdout, stderr)
 		}
 		approver, at := result.Approver()
 		verb := "Approved"
@@ -231,7 +231,7 @@ func approveCommand(ctx context.Context, arguments []string, stdin io.Reader, in
 			verb, family.ApprovalKind(), resolved, result.Approval.GetName(), statusview.Clean(approver), when,
 			review.PlanName, statusview.Clean(review.Fingerprint))
 		if *wait {
-			return waitForApply(ctx, cluster, target, review, baseline, *waitTimeout, true, stdout, stderr)
+			return waitForApply(ctx, cluster, target, review, result.Approval, baseline, *waitTimeout, true, stdout, stderr)
 		}
 		if result.Outcome == approve.Admitted {
 			fmt.Fprintf(stdout, "The operator runs it under the resource's policy; kubectl ptah %s %s -n %s shows how far it got.\n", family, resource, resolved)
@@ -292,12 +292,18 @@ func printObject(stdout, stderr io.Writer, object client.Object, format string) 
 
 // waitForApply waits for the operator to apply the plan an approval was
 // stored for, and to read the database afterwards. For a schema only that
-// plan counts; a migration run records no plan.
-func waitForApply(ctx context.Context, reader client.Reader, ref operate.Ref, review approve.Review, baseline client.Object,
+// plan counts. For a migration only the run that carried out that plan under
+// this approval counts, since a run records both.
+func waitForApply(ctx context.Context, reader client.Reader, ref operate.Ref, review approve.Review, approval, baseline client.Object,
 	timeout time.Duration, text bool, stdout, stderr io.Writer) int {
 	options := operate.WaitOptions{Target: operate.TargetApplied, Timeout: timeout, Since: baseline}
 	if ref.Family == operate.FamilySchema {
 		options.Plan = review.PlanName
+	} else {
+		options.Decision = &operate.Decision{
+			PlanName: review.PlanName, PlanUID: review.PlanUID, PlanFingerprint: review.Fingerprint,
+			ApprovalName: approval.GetName(), ApprovalUID: approval.GetUID(),
+		}
 	}
 	result, code := waitFor(ctx, reader, ref, options, text, stderr)
 	if code == exitOK && text {

@@ -32,6 +32,8 @@ type snapshot struct {
 	// operation is the type of status.activeOperation, empty when nothing is
 	// in flight.
 	operation string
+	// operationPlan is the plan a migration's Apply claim in flight carries out.
+	operationPlan planRecord
 	// dispatched reports that the Job of the operation in flight may exist,
 	// by the rule the controller decides it with
 	// (mutationlifecycle.MayHaveDispatched).
@@ -77,6 +79,22 @@ type runRecord struct {
 	finished   bool
 	finishedAt time.Time
 	message    string
+	identity   runIdentity
+	// verified is the first reading of the database after the run, and
+	// verification what it found.
+	verified     bool
+	verification operatorv1alpha1.MigrationRunVerificationResult
+}
+
+// runIdentity is what a record says a run carried out and who allowed it. All of
+// it is empty on a record a release before these fields wrote.
+type runIdentity struct {
+	operationID string
+	plan        string
+	planUID     types.UID
+	fingerprint string
+	approval    string
+	approvalUID types.UID
 }
 
 // unresolvedRecord is a migration's status.unresolvedRun.
@@ -85,6 +103,7 @@ type unresolvedRecord struct {
 	outcome     operatorv1alpha1.MigrationRunOutcome
 	jobName     string
 	plan        string
+	planUID     types.UID
 }
 
 func snapshotOf(object client.Object) (snapshot, error) {
@@ -162,6 +181,9 @@ func migrationSnapshot(migration *operatorv1alpha1.PtahMigration) snapshot {
 		s.dispatched = mutationlifecycle.MayHaveDispatched(mutationlifecycle.DispatchState{
 			DispatchStarted: operation.DispatchStarted, JobUID: string(operation.JobUID),
 		})
+		if plan := operation.PlanRef; plan != nil {
+			s.operationPlan = planRecord{name: plan.Name, uid: plan.UID, fingerprint: operation.PlanFingerprint}
+		}
 	}
 	if plan := status.Plan; plan != nil {
 		s.plan = &planRecord{name: plan.Name, uid: plan.UID}
@@ -170,15 +192,38 @@ func migrationSnapshot(migration *operatorv1alpha1.PtahMigration) snapshot {
 		s.lastRun = &runRecord{
 			outcome: run.Outcome, jobName: run.JobName, jobUID: run.JobUID,
 			startedAt: run.StartedAt.Time, finished: run.FinishedAt != nil,
-			finishedAt: timeOf(run.FinishedAt), message: run.Message,
+			finishedAt: timeOf(run.FinishedAt), message: run.Message, identity: identityOfRun(run),
+			verified: run.Verification != nil,
+		}
+		if run.Verification != nil {
+			s.lastRun.verification = run.Verification.Result
 		}
 	}
 	if run := status.UnresolvedRun; run != nil {
 		s.unresolved = &unresolvedRecord{
-			operationID: run.OperationID, outcome: run.Outcome, jobName: run.JobName, plan: run.PlanRef.Name,
+			operationID: run.OperationID, outcome: run.Outcome, jobName: run.JobName,
+			plan: run.PlanRef.Name, planUID: run.PlanRef.UID,
 		}
 	}
 	return s
+}
+
+func identityOfRun(run *operatorv1alpha1.MigrationRunStatus) runIdentity {
+	identity := runIdentity{operationID: run.OperationID, fingerprint: run.PlanFingerprint}
+	if plan := run.PlanRef; plan != nil {
+		identity.plan, identity.planUID = plan.Name, plan.UID
+	}
+	if authorization := run.Authorization; authorization != nil && authorization.ApprovalRef != nil {
+		identity.approval, identity.approvalUID = authorization.ApprovalRef.Name, authorization.ApprovalRef.UID
+	}
+	return identity
+}
+
+func identityOfEntry(entry operatorv1alpha1.JournalEntry) runIdentity {
+	return runIdentity{
+		operationID: entry.OperationID, plan: entry.Plan, planUID: entry.PlanUID, fingerprint: entry.PlanFingerprint,
+		approval: entry.Approval, approvalUID: entry.ApprovalUID,
+	}
 }
 
 func timeOf(value *metav1.Time) time.Time {
@@ -392,7 +437,7 @@ func journalThrough(journal *operatorv1alpha1.LifecycleJournal, entry operatorv1
 // folds into an OperationFailed entry.
 func sameEvent(a, b operatorv1alpha1.JournalEntry) bool {
 	return a.Type == b.Type && a.At.Equal(&b.At) && timeOf(a.StartedAt).Equal(timeOf(b.StartedAt)) &&
-		a.Plan == b.Plan && a.Approval == b.Approval && a.ApprovalUID == b.ApprovalUID && a.Outcome == b.Outcome &&
+		a.OperationID == b.OperationID && a.Plan == b.Plan && a.Approval == b.Approval && a.ApprovalUID == b.ApprovalUID && a.Outcome == b.Outcome &&
 		a.Operation == b.Operation && a.Reason == b.Reason && a.Acknowledgment == b.Acknowledgment
 }
 

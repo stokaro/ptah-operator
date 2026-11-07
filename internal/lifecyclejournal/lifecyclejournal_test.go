@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -429,6 +430,12 @@ func TestMigrationEntriesRecordEachTransitionOnce(t *testing.T) {
 		Type: operatorv1alpha1.MigrationOperationApply, ID: "apply-1", PlanRef: planRef,
 		ApprovalRef: &operatorv1alpha1.ImmutableObjectReference{Name: "billing-approval", UID: "approval-uid"},
 	}
+	stamped := apply.DeepCopy()
+	stamped.PlanFingerprint = "sha256:plan"
+	stamped.ApprovedBy = &operatorv1alpha1.ApprovalIdentity{Username: "alice"}
+	longName := strings.Repeat("a", 511) + "é" + "b"
+	over := apply.DeepCopy()
+	over.ApprovedBy = &operatorv1alpha1.ApprovalIdentity{Username: longName}
 	history := &operatorv1alpha1.MigrationOperationStatus{Type: operatorv1alpha1.MigrationOperationHistory, ID: "history-1", Attempt: 1}
 	retried := history.DeepCopy()
 	retried.Attempt = 2
@@ -465,8 +472,32 @@ func TestMigrationEntriesRecordEachTransitionOnce(t *testing.T) {
 			after:   operatorv1alpha1.PtahMigrationStatus{Plan: planRef, ActiveOperation: apply},
 			journal: &operatorv1alpha1.LifecycleJournal{Entries: []operatorv1alpha1.JournalEntry{published("billing-plan", -time.Hour)}},
 			want: []operatorv1alpha1.JournalEntry{{
-				Type: operatorv1alpha1.JournalApprovalAccepted, At: at(0), Plan: "billing-plan",
-				Approval: "billing-approval", ApprovalUID: "approval-uid",
+				Type: operatorv1alpha1.JournalApprovalAccepted, At: at(0),
+				Plan: "billing-plan", PlanUID: "plan-uid", Approval: "billing-approval", ApprovalUID: "approval-uid",
+			}},
+		},
+		{
+			name:    "an Apply that consumed an approval and copied its stamp",
+			before:  operatorv1alpha1.PtahMigrationStatus{Plan: planRef},
+			after:   operatorv1alpha1.PtahMigrationStatus{Plan: planRef, ActiveOperation: stamped},
+			journal: &operatorv1alpha1.LifecycleJournal{Entries: []operatorv1alpha1.JournalEntry{published("billing-plan", -time.Hour)}},
+			want: []operatorv1alpha1.JournalEntry{{
+				Type: operatorv1alpha1.JournalApprovalAccepted, At: at(0),
+				Plan: "billing-plan", PlanUID: "plan-uid", PlanFingerprint: "sha256:plan",
+				Approval: "billing-approval", ApprovalUID: "approval-uid", Approver: "alice",
+			}},
+		},
+		{
+			// A username has no bound of its own, and a status write the API
+			// server refused would leave the claim standing.
+			name:    "an approver longer than the entry holds, cut between characters",
+			before:  operatorv1alpha1.PtahMigrationStatus{Plan: planRef},
+			after:   operatorv1alpha1.PtahMigrationStatus{Plan: planRef, ActiveOperation: over},
+			journal: &operatorv1alpha1.LifecycleJournal{Entries: []operatorv1alpha1.JournalEntry{published("billing-plan", -time.Hour)}},
+			want: []operatorv1alpha1.JournalEntry{{
+				Type: operatorv1alpha1.JournalApprovalAccepted, At: at(0),
+				Plan: "billing-plan", PlanUID: "plan-uid",
+				Approval: "billing-approval", ApprovalUID: "approval-uid", Approver: strings.Repeat("a", 511),
 			}},
 		},
 		{
@@ -478,7 +509,7 @@ func TestMigrationEntriesRecordEachTransitionOnce(t *testing.T) {
 			}},
 			want: []operatorv1alpha1.JournalEntry{{
 				Type: operatorv1alpha1.JournalRunFinished, At: at(-time.Minute), StartedAt: ptr(at(-3 * time.Minute)),
-				Plan: "billing-plan", Outcome: operatorv1alpha1.JournalFailed, AppliedVersions: 2, Failure: run.Failure,
+				JobUID: "job-2", Outcome: operatorv1alpha1.JournalFailed, AppliedVersions: 2, Failure: run.Failure,
 			}},
 		},
 		{
@@ -490,7 +521,7 @@ func TestMigrationEntriesRecordEachTransitionOnce(t *testing.T) {
 			}},
 			want: []operatorv1alpha1.JournalEntry{{
 				Type: operatorv1alpha1.JournalRunFinished, At: at(-time.Minute), StartedAt: ptr(at(-3 * time.Minute)),
-				Plan: "billing-plan", Outcome: operatorv1alpha1.JournalFailed, AppliedVersions: 2, Failure: run.Failure,
+				JobUID: "job-3", Outcome: operatorv1alpha1.JournalFailed, AppliedVersions: 2, Failure: run.Failure,
 			}},
 		},
 		{
@@ -501,7 +532,7 @@ func TestMigrationEntriesRecordEachTransitionOnce(t *testing.T) {
 			after: operatorv1alpha1.PtahMigrationStatus{LastRun: run},
 			want: []operatorv1alpha1.JournalEntry{{
 				Type: operatorv1alpha1.JournalRunFinished, At: at(-time.Minute), StartedAt: ptr(at(-3 * time.Minute)),
-				Plan: "billing-plan", Outcome: operatorv1alpha1.JournalFailed, AppliedVersions: 2, Failure: run.Failure,
+				JobUID: "job-2", Outcome: operatorv1alpha1.JournalFailed, AppliedVersions: 2, Failure: run.Failure,
 			}},
 		},
 		{
@@ -517,8 +548,130 @@ func TestMigrationEntriesRecordEachTransitionOnce(t *testing.T) {
 				AcknowledgedBy:    &operatorv1alpha1.ApprovalIdentity{Username: "bob"},
 			}},
 			want: []operatorv1alpha1.JournalEntry{{
-				Type: operatorv1alpha1.JournalRunAcknowledged, At: at(-time.Minute), Acknowledgment: "billing-ack", AcknowledgedBy: "bob",
+				Type: operatorv1alpha1.JournalRunAcknowledged, At: at(-time.Minute), OperationID: "apply-1",
+				Acknowledgment: "billing-ack", AcknowledgedBy: "bob", Outcome: operatorv1alpha1.JournalUnknown,
 			}},
+		},
+		{
+			name: "a run a person acknowledged, from the record that named it",
+			before: operatorv1alpha1.PtahMigrationStatus{UnresolvedRun: &operatorv1alpha1.UnresolvedMigrationRunStatus{
+				OperationID: "apply-1", PlanRef: *planRef, JobName: "job-a", JobUID: "job-a-uid",
+			}},
+			after: operatorv1alpha1.PtahMigrationStatus{ResolvedRun: &operatorv1alpha1.ResolvedMigrationRunStatus{
+				OperationID: "apply-1", Outcome: operatorv1alpha1.MigrationRunOutcomePartial,
+				Resolution: operatorv1alpha1.MigrationRunResolvedByAcknowledgment, ResolvedAt: at(-time.Minute),
+				AcknowledgmentRef: &operatorv1alpha1.ImmutableObjectReference{Name: "billing-ack"},
+				AcknowledgedBy:    &operatorv1alpha1.ApprovalIdentity{Username: "bob"},
+			}},
+			want: []operatorv1alpha1.JournalEntry{{
+				Type: operatorv1alpha1.JournalRunAcknowledged, At: at(-time.Minute), OperationID: "apply-1",
+				Plan: "billing-plan", PlanUID: "plan-uid", JobName: "job-a", JobUID: "job-a-uid",
+				Acknowledgment: "billing-ack", AcknowledgedBy: "bob", Outcome: operatorv1alpha1.JournalPartial,
+			}},
+		},
+		{
+			name:    "a person acknowledging one run with a record of another standing",
+			journal: &operatorv1alpha1.LifecycleJournal{},
+			before: operatorv1alpha1.PtahMigrationStatus{UnresolvedRun: &operatorv1alpha1.UnresolvedMigrationRunStatus{
+				OperationID: "apply-2", PlanRef: *planRef, JobName: "job-b", JobUID: "job-b-uid",
+			}},
+			after: operatorv1alpha1.PtahMigrationStatus{
+				UnresolvedRun: &operatorv1alpha1.UnresolvedMigrationRunStatus{
+					OperationID: "apply-2", PlanRef: *planRef, JobName: "job-b", JobUID: "job-b-uid",
+				},
+				ResolvedRun: &operatorv1alpha1.ResolvedMigrationRunStatus{
+					OperationID: "apply-1", Outcome: operatorv1alpha1.MigrationRunOutcomePartial,
+					Resolution: operatorv1alpha1.MigrationRunResolvedByAcknowledgment, ResolvedAt: at(-time.Minute),
+					AcknowledgmentRef: &operatorv1alpha1.ImmutableObjectReference{Name: "billing-ack"},
+					AcknowledgedBy:    &operatorv1alpha1.ApprovalIdentity{Username: "bob"},
+				},
+			},
+			want: []operatorv1alpha1.JournalEntry{{
+				Type: operatorv1alpha1.JournalRunAcknowledged, At: at(-time.Minute), OperationID: "apply-1",
+				Acknowledgment: "billing-ack", AcknowledgedBy: "bob", Outcome: operatorv1alpha1.JournalPartial,
+			}},
+		},
+		{
+			name:   "a run with its identity",
+			before: operatorv1alpha1.PtahMigrationStatus{ActiveOperation: apply},
+			after: operatorv1alpha1.PtahMigrationStatus{LastRun: &operatorv1alpha1.MigrationRunStatus{
+				Outcome: operatorv1alpha1.MigrationRunOutcomeApplied, JobName: "job-a", JobUID: "job-a-uid",
+				StartedAt: at(-3 * time.Minute), FinishedAt: ptr(at(-time.Minute)),
+				OperationID: "apply-1", PlanRef: planRef, PlanFingerprint: "sha256:plan",
+				Authorization: &operatorv1alpha1.MigrationRunAuthorizationStatus{
+					Kind:        operatorv1alpha1.MigrationRunAuthorizedByApproval,
+					ApprovalRef: &operatorv1alpha1.ImmutableObjectReference{Name: "billing-approval", UID: "approval-uid"},
+					Approver:    &operatorv1alpha1.ApprovalIdentity{Username: "alice"},
+				},
+			}},
+			journal: &operatorv1alpha1.LifecycleJournal{Entries: []operatorv1alpha1.JournalEntry{
+				{Type: operatorv1alpha1.JournalApprovalAccepted, Approval: "billing-approval"},
+			}},
+			want: []operatorv1alpha1.JournalEntry{{
+				Type: operatorv1alpha1.JournalRunFinished, At: at(-time.Minute), StartedAt: ptr(at(-3 * time.Minute)),
+				Outcome: operatorv1alpha1.JournalSucceeded, OperationID: "apply-1", JobName: "job-a", JobUID: "job-a-uid",
+				Plan: "billing-plan", PlanUID: "plan-uid", PlanFingerprint: "sha256:plan",
+				Authorization: operatorv1alpha1.MigrationRunAuthorizedByApproval,
+				Approval:      "billing-approval", ApprovalUID: "approval-uid", Approver: "alice",
+			}},
+		},
+		{
+			name:   "a run under the resource's policy",
+			before: operatorv1alpha1.PtahMigrationStatus{},
+			after: operatorv1alpha1.PtahMigrationStatus{LastRun: &operatorv1alpha1.MigrationRunStatus{
+				Outcome: operatorv1alpha1.MigrationRunOutcomeApplied, JobUID: "job-a-uid",
+				StartedAt: at(-3 * time.Minute), FinishedAt: ptr(at(-time.Minute)),
+				OperationID: "apply-1", PlanRef: planRef,
+				Authorization: &operatorv1alpha1.MigrationRunAuthorizationStatus{Kind: operatorv1alpha1.MigrationRunAuthorizedByPolicy},
+			}},
+			want: []operatorv1alpha1.JournalEntry{{
+				Type: operatorv1alpha1.JournalRunFinished, At: at(-time.Minute), StartedAt: ptr(at(-3 * time.Minute)),
+				Outcome: operatorv1alpha1.JournalSucceeded, OperationID: "apply-1", JobUID: "job-a-uid",
+				Plan: "billing-plan", PlanUID: "plan-uid", Authorization: operatorv1alpha1.MigrationRunAuthorizedByPolicy,
+			}},
+		},
+		{
+			// Nothing fills in what a record from before these fields does not
+			// hold, from the entries around it or otherwise.
+			name:   "a run that names nothing",
+			before: operatorv1alpha1.PtahMigrationStatus{},
+			after:  operatorv1alpha1.PtahMigrationStatus{LastRun: run},
+			journal: &operatorv1alpha1.LifecycleJournal{Entries: []operatorv1alpha1.JournalEntry{
+				published("billing-plan", -time.Hour), {Type: operatorv1alpha1.JournalApprovalAccepted, Plan: "billing-plan", Approval: "billing-approval"},
+			}},
+			want: []operatorv1alpha1.JournalEntry{{
+				Type: operatorv1alpha1.JournalRunFinished, At: at(-time.Minute), StartedAt: ptr(at(-3 * time.Minute)), JobUID: "job-2",
+				Outcome: operatorv1alpha1.JournalFailed, AppliedVersions: 2, Failure: run.Failure,
+			}},
+		},
+		{
+			name: "the first reading after a run",
+			before: operatorv1alpha1.PtahMigrationStatus{LastRun: &operatorv1alpha1.MigrationRunStatus{
+				Outcome: operatorv1alpha1.MigrationRunOutcomeApplied, JobUID: "job-a-uid", StartedAt: at(-3 * time.Minute), FinishedAt: ptr(at(-time.Minute)),
+				OperationID: "apply-1", PlanRef: planRef,
+			}},
+			after: operatorv1alpha1.PtahMigrationStatus{LastRun: &operatorv1alpha1.MigrationRunStatus{
+				Outcome: operatorv1alpha1.MigrationRunOutcomeApplied, JobName: "job-a", JobUID: "job-a-uid", StartedAt: at(-3 * time.Minute), FinishedAt: ptr(at(-time.Minute)),
+				OperationID: "apply-1", PlanRef: planRef,
+				Verification: &operatorv1alpha1.MigrationRunVerificationStatus{ObservedAt: at(-30 * time.Second), Result: operatorv1alpha1.MigrationRunVerifiedPending},
+			}},
+			want: []operatorv1alpha1.JournalEntry{{
+				Type: operatorv1alpha1.JournalVerified, At: at(-30 * time.Second), OperationID: "apply-1", JobName: "job-a", JobUID: "job-a-uid",
+				Plan: "billing-plan", PlanUID: "plan-uid", Outcome: operatorv1alpha1.JournalPending,
+			}},
+		},
+		{
+			name: "a reading written again",
+			before: operatorv1alpha1.PtahMigrationStatus{LastRun: &operatorv1alpha1.MigrationRunStatus{
+				Outcome: operatorv1alpha1.MigrationRunOutcomeApplied, JobUID: "job-a-uid", StartedAt: at(-3 * time.Minute), FinishedAt: ptr(at(-time.Minute)),
+				OperationID: "apply-1", PlanRef: planRef,
+				Verification: &operatorv1alpha1.MigrationRunVerificationStatus{ObservedAt: at(-30 * time.Second), Result: operatorv1alpha1.MigrationRunVerifiedInSync},
+			}},
+			after: operatorv1alpha1.PtahMigrationStatus{LastRun: &operatorv1alpha1.MigrationRunStatus{
+				Outcome: operatorv1alpha1.MigrationRunOutcomeApplied, JobUID: "job-a-uid", StartedAt: at(-3 * time.Minute), FinishedAt: ptr(at(-time.Minute)),
+				OperationID: "apply-1", PlanRef: planRef,
+				Verification: &operatorv1alpha1.MigrationRunVerificationStatus{ObservedAt: at(-30 * time.Second), Result: operatorv1alpha1.MigrationRunVerifiedInSync},
+			}, NextReconciliationTime: ptr(at(time.Minute))},
 		},
 		{
 			name: "a run the history read settled",
@@ -692,7 +845,8 @@ func TestMigrationEntriesTellDecisionsApartByUID(t *testing.T) {
 	}
 	entryFor := func(plan string, uid types.UID) []operatorv1alpha1.JournalEntry {
 		return []operatorv1alpha1.JournalEntry{{
-			Type: operatorv1alpha1.JournalApprovalAccepted, At: at(0), Plan: plan, Approval: "release-approval", ApprovalUID: uid,
+			Type: operatorv1alpha1.JournalApprovalAccepted, At: at(0), Plan: plan, PlanUID: types.UID(plan + "-uid"),
+			Approval: "release-approval", ApprovalUID: uid,
 		}}
 	}
 	journalOf := func(entries ...operatorv1alpha1.JournalEntry) *operatorv1alpha1.LifecycleJournal {
@@ -832,10 +986,13 @@ func TestMigrationEntriesRecordOneEndPerExecution(t *testing.T) {
 	apply := func(id string) *operatorv1alpha1.MigrationOperationStatus {
 		return &operatorv1alpha1.MigrationOperationStatus{Type: operatorv1alpha1.MigrationOperationApply, ID: id, PlanRef: &planRef}
 	}
-	partial := &operatorv1alpha1.MigrationRunStatus{
+	// A run a release before its identity recorded.
+	partialBefore := &operatorv1alpha1.MigrationRunStatus{
 		Outcome: operatorv1alpha1.MigrationRunOutcomePartial, JobName: "job-a", JobUID: "job-a-uid", StartedAt: at(-3 * time.Minute),
 		FinishedAt: ptr(at(-time.Minute)), AppliedVersions: []int64{14, 15}, Failure: stop,
 	}
+	partial := partialBefore.DeepCopy()
+	partial.OperationID, partial.PlanRef = "apply-1", planRef.DeepCopy()
 	partialHold := &operatorv1alpha1.UnresolvedMigrationRunStatus{
 		Outcome: operatorv1alpha1.MigrationRunOutcomePartial, OperationID: "apply-1", JobName: "job-a", JobUID: "job-a-uid",
 		PlanRef: planRef, RecordedAt: at(-time.Minute),
@@ -843,22 +1000,33 @@ func TestMigrationEntriesRecordOneEndPerExecution(t *testing.T) {
 	// An uncertain Apply whose create was never confirmed names no Job.
 	unknown := &operatorv1alpha1.MigrationRunStatus{
 		Outcome: operatorv1alpha1.MigrationRunOutcomeUnknown, StartedAt: at(-3 * time.Minute), FinishedAt: ptr(at(-time.Minute)),
+		OperationID: "apply-1", PlanRef: planRef.DeepCopy(),
 	}
 	unknownHold := &operatorv1alpha1.UnresolvedMigrationRunStatus{
 		Outcome: operatorv1alpha1.MigrationRunOutcomeUnknown, OperationID: "apply-1", PlanRef: planRef, RecordedAt: at(-time.Minute),
 	}
 	partialEnd := operatorv1alpha1.JournalEntry{
-		Type: operatorv1alpha1.JournalRunFinished, At: at(-time.Minute), StartedAt: ptr(at(-3 * time.Minute)), Plan: "billing-plan",
+		Type: operatorv1alpha1.JournalRunFinished, At: at(-time.Minute), StartedAt: ptr(at(-3 * time.Minute)),
+		OperationID: "apply-1", Plan: "billing-plan", PlanUID: "plan-uid", JobName: "job-a", JobUID: "job-a-uid",
 		Outcome: operatorv1alpha1.JournalPartial, AppliedVersions: 2, Failure: stop,
 	}
 	unknownEnd := operatorv1alpha1.JournalEntry{
-		Type: operatorv1alpha1.JournalRunFinished, At: at(-time.Minute), StartedAt: ptr(at(-3 * time.Minute)), Plan: "billing-plan",
+		Type: operatorv1alpha1.JournalRunFinished, At: at(-time.Minute), StartedAt: ptr(at(-3 * time.Minute)),
+		OperationID: "apply-1", Plan: "billing-plan", PlanUID: "plan-uid",
 		Outcome: operatorv1alpha1.JournalUnknown,
 	}
-	holdEnd := func(outcome operatorv1alpha1.JournalOutcome) []operatorv1alpha1.JournalEntry {
+	// A hold names the execution, not its times, its versions or its stop.
+	holdEnd := func(hold *operatorv1alpha1.UnresolvedMigrationRunStatus, outcome operatorv1alpha1.JournalOutcome) []operatorv1alpha1.JournalEntry {
 		return []operatorv1alpha1.JournalEntry{{
-			Type: operatorv1alpha1.JournalRunFinished, At: at(-time.Minute), Plan: "billing-plan", Outcome: outcome,
+			Type: operatorv1alpha1.JournalRunFinished, At: at(-time.Minute), OperationID: hold.OperationID,
+			Plan: "billing-plan", PlanUID: "plan-uid", JobName: hold.JobName, JobUID: hold.JobUID, Outcome: outcome,
 		}}
+	}
+	partialOfAnotherJob := &operatorv1alpha1.UnresolvedMigrationRunStatus{
+		Outcome: operatorv1alpha1.MigrationRunOutcomePartial, OperationID: "apply-2", JobUID: "job-b-uid", PlanRef: planRef, RecordedAt: at(-time.Minute),
+	}
+	unknownOfThisJob := &operatorv1alpha1.UnresolvedMigrationRunStatus{
+		Outcome: operatorv1alpha1.MigrationRunOutcomeUnknown, OperationID: "apply-1", JobUID: "job-a-uid", PlanRef: planRef, RecordedAt: at(-time.Minute),
 	}
 	kept := &operatorv1alpha1.LifecycleJournal{CoveredSince: at(-time.Hour)}
 	for _, test := range []struct {
@@ -908,18 +1076,18 @@ func TestMigrationEntriesRecordOneEndPerExecution(t *testing.T) {
 			// not become an unknown one.
 			name:  "a partial hold restored without status",
 			after: operatorv1alpha1.PtahMigrationStatus{UnresolvedRun: partialHold},
-			want:  holdEnd(operatorv1alpha1.JournalPartial),
+			want:  holdEnd(partialHold, operatorv1alpha1.JournalPartial),
 		},
 		{
 			name:  "an unknown hold restored without status",
 			after: operatorv1alpha1.PtahMigrationStatus{UnresolvedRun: unknownHold},
-			want:  holdEnd(operatorv1alpha1.JournalUnknown),
+			want:  holdEnd(unknownHold, operatorv1alpha1.JournalUnknown),
 		},
 		{
 			name:    "a hold restored beside a journal that holds no end for it",
 			after:   operatorv1alpha1.PtahMigrationStatus{UnresolvedRun: partialHold},
 			journal: kept,
-			want:    holdEnd(operatorv1alpha1.JournalPartial),
+			want:    holdEnd(partialHold, operatorv1alpha1.JournalPartial),
 		},
 		{
 			name:    "a hold restored beside the run that recorded its end",
@@ -932,39 +1100,35 @@ func TestMigrationEntriesRecordOneEndPerExecution(t *testing.T) {
 			before:  operatorv1alpha1.PtahMigrationStatus{LastRun: partial},
 			after:   operatorv1alpha1.PtahMigrationStatus{LastRun: partial, UnresolvedRun: unknownHold},
 			journal: kept,
-			want:    holdEnd(operatorv1alpha1.JournalUnknown),
+			want:    holdEnd(unknownHold, operatorv1alpha1.JournalUnknown),
 		},
 		{
-			name:   "a hold restored beside a run of another Job, with the same outcome",
-			before: operatorv1alpha1.PtahMigrationStatus{LastRun: partial},
-			after: operatorv1alpha1.PtahMigrationStatus{LastRun: partial, UnresolvedRun: &operatorv1alpha1.UnresolvedMigrationRunStatus{
-				Outcome: operatorv1alpha1.MigrationRunOutcomePartial, OperationID: "apply-2", JobUID: "job-b-uid", PlanRef: planRef, RecordedAt: at(-time.Minute),
-			}},
+			name:    "a hold restored beside a run of another Job, with the same outcome",
+			before:  operatorv1alpha1.PtahMigrationStatus{LastRun: partial},
+			after:   operatorv1alpha1.PtahMigrationStatus{LastRun: partial, UnresolvedRun: partialOfAnotherJob},
 			journal: kept,
-			want:    holdEnd(operatorv1alpha1.JournalPartial),
+			want:    holdEnd(partialOfAnotherJob, operatorv1alpha1.JournalPartial),
 		},
 		{
-			name:   "a hold restored beside a run of its Job, with another outcome",
-			before: operatorv1alpha1.PtahMigrationStatus{LastRun: partial},
-			after: operatorv1alpha1.PtahMigrationStatus{LastRun: partial, UnresolvedRun: &operatorv1alpha1.UnresolvedMigrationRunStatus{
-				Outcome: operatorv1alpha1.MigrationRunOutcomeUnknown, OperationID: "apply-1", JobUID: "job-a-uid", PlanRef: planRef, RecordedAt: at(-time.Minute),
-			}},
+			name:    "a hold restored beside a run of its Job, with another outcome",
+			before:  operatorv1alpha1.PtahMigrationStatus{LastRun: partial},
+			after:   operatorv1alpha1.PtahMigrationStatus{LastRun: partial, UnresolvedRun: unknownOfThisJob},
 			journal: kept,
-			want:    holdEnd(operatorv1alpha1.JournalUnknown),
+			want:    holdEnd(unknownOfThisJob, operatorv1alpha1.JournalUnknown),
 		},
 		{
 			// A manager that kept no journal left the hold standing: the first
 			// write of one that does records it from the run beside it.
 			name:   "a hold and its run from before the journal",
-			before: operatorv1alpha1.PtahMigrationStatus{LastRun: partial, UnresolvedRun: partialHold},
-			after:  operatorv1alpha1.PtahMigrationStatus{LastRun: partial, UnresolvedRun: partialHold},
+			before: operatorv1alpha1.PtahMigrationStatus{LastRun: partialBefore, UnresolvedRun: partialHold},
+			after:  operatorv1alpha1.PtahMigrationStatus{LastRun: partialBefore, UnresolvedRun: partialHold},
 			want:   []operatorv1alpha1.JournalEntry{partialEnd},
 		},
 		{
 			name:   "a hold from before the journal, with no run beside it",
 			before: operatorv1alpha1.PtahMigrationStatus{UnresolvedRun: partialHold},
 			after:  operatorv1alpha1.PtahMigrationStatus{UnresolvedRun: partialHold},
-			want:   holdEnd(operatorv1alpha1.JournalPartial),
+			want:   holdEnd(partialHold, operatorv1alpha1.JournalPartial),
 		},
 		{
 			name:    "a hold the journal has seen, with the run it came from gone",

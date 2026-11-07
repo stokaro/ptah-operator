@@ -459,8 +459,10 @@ or the operator would not admit an approval now. An answer given while the
 operator reads the history again at its interval is sent when that read ends,
 if the same plan is waiting again: approve waits up to five minutes for that
 before it sends, and `--timeout` bounds each request it makes rather than that
-wait. With `--wait` it then stays until the run has ended and the operator has
-read the history back.
+wait. With `--wait` it then stays until the run of that plan under that approval
+has ended and the operator has read the history back. Another run does not satisfy
+it. A later plan that replaces this one, another plan's run, or the same plan run
+under another approval ends the wait with exit status 8 and says which.
 `--dry-run client` prints the approval as YAML with the identifiers filled in,
 after the same decision, to keep in a repository:
 

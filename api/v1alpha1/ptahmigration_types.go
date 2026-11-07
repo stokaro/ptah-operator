@@ -155,6 +155,12 @@ type MigrationOperationStatus struct {
 
 	// PlanRef is the immutable plan an Apply carries out.
 	PlanRef *ImmutableObjectReference `json:"planRef,omitempty"`
+	// PlanFingerprint is that plan's spec.fingerprint, copied when the claim is
+	// written so the record of the run can name it after the plan is gone. A
+	// claim written by a release without this field has none.
+	// +kubebuilder:validation:MaxLength=128
+	// +optional
+	PlanFingerprint string `json:"planFingerprint,omitempty"`
 
 	// DispatchStarted records that the one permitted Job create attempt was
 	// made. An Apply that crossed this boundary is never recreated, because
@@ -181,6 +187,14 @@ type MigrationOperationStatus struct {
 	// ApprovalRef is the approval that authorized this Apply, recorded before
 	// dispatch so the run is attributable to the decision that permitted it.
 	ApprovalRef *ImmutableObjectReference `json:"approvalRef,omitempty"`
+	// ApprovedBy is the identity admission stamped on that approval, copied when
+	// the claim is written so the record of the run can name it after the
+	// approval is gone. A claim written by a release without this field has none.
+	// +optional
+	ApprovedBy *ApprovalIdentity `json:"approvedBy,omitempty"`
+	// ApprovedAt is when admission stamped it.
+	// +optional
+	ApprovedAt *metav1.Time `json:"approvedAt,omitempty"`
 
 	// Actor is the name this Apply writes to the database's own migration log:
 	// the username admission stamped on the approval ApprovalRef names, or,
@@ -438,6 +452,57 @@ type MigrationRunStatus struct {
 	// JobUID is that Job's UID.
 	JobUID types.UID `json:"jobUID,omitempty"`
 
+	// OperationID is the Apply claim that ran. It is what makes two executions
+	// of a byte-identical plan two runs. A run a release without this field
+	// recorded has none, and neither that nor anything else below is guessed
+	// for it.
+	// +kubebuilder:validation:Pattern=`^sha256:[0-9a-f]{64}$`
+	// +optional
+	OperationID string `json:"operationID,omitempty"`
+
+	// PlanRef is the immutable plan the run carried out. It stays readable after
+	// the plan is gone, and the plan store reuses a byte-identical plan, so it
+	// says what was planned and not which execution this was: OperationID does.
+	// +optional
+	PlanRef *ImmutableObjectReference `json:"planRef,omitempty"`
+	// PlanFingerprint is that plan's spec.fingerprint when the claim was written,
+	// which binds the sequence, the history it was computed against, the source,
+	// the policy, the target and the execution binding. It is absent for a claim
+	// a release without the field wrote.
+	// +kubebuilder:validation:MaxLength=128
+	// +optional
+	PlanFingerprint string `json:"planFingerprint,omitempty"`
+
+	// Authorization is what allowed the run: a person's approval, or the
+	// resource's own policy.
+	// +optional
+	Authorization *MigrationRunAuthorizationStatus `json:"authorization,omitempty"`
+
+	// ArtifactDigest is the OCI artifact the run read its files from.
+	// +optional
+	ArtifactDigest string `json:"artifactDigest,omitempty"`
+	// Source is the source the run read its files from, for a ConfigMap or a Git
+	// commit.
+	// +optional
+	Source *PlanSourceBinding `json:"source,omitempty"`
+	// TargetIdentityDigest is the credential-free identity of the database the
+	// run reported it opened, or the one it was dispatched against where it
+	// reported none.
+	// +kubebuilder:validation:Pattern=`^sha256:[0-9a-f]{64}$`
+	// +optional
+	TargetIdentityDigest string `json:"targetIdentityDigest,omitempty"`
+	// ExecutionBindingID is the execution epoch the claim was authorized under.
+	// +kubebuilder:validation:Pattern=`^v1-[0-9a-f]{32}$`
+	// +optional
+	ExecutionBindingID string `json:"executionBindingID,omitempty"`
+
+	// Verification is the first reading of this run's database after the run
+	// ended. What a run claims and what the revision table holds are two
+	// statements, and this records the second. It is absent until that reading,
+	// and for a run a release without this field recorded.
+	// +optional
+	Verification *MigrationRunVerificationStatus `json:"verification,omitempty"`
+
 	// StartedAt is when the run began.
 	StartedAt metav1.Time `json:"startedAt"`
 	// FinishedAt is when its result was read. An unfinished run has none.
@@ -468,6 +533,67 @@ type MigrationRunStatus struct {
 	// for a reader that should not depend on their wording.
 	// +optional
 	Failure *MigrationRunFailureStatus `json:"failure,omitempty"`
+}
+
+// MigrationRunAuthorizationKind says what allowed a run.
+// +kubebuilder:validation:Enum=Approval;Policy
+type MigrationRunAuthorizationKind string
+
+const (
+	// MigrationRunAuthorizedByApproval is a run a person's approval allowed.
+	MigrationRunAuthorizedByApproval MigrationRunAuthorizationKind = "Approval"
+	// MigrationRunAuthorizedByPolicy is a run spec.policy.apply Always allowed,
+	// with nobody's decision in it.
+	MigrationRunAuthorizedByPolicy MigrationRunAuthorizationKind = "Policy"
+)
+
+// MigrationRunAuthorizationStatus is what allowed a run. An approval's name and
+// UID are always known. The identity and time admission stamped on it are absent
+// for a claim a release without those fields wrote: they stay unknown, since
+// reading them back from an approval that holds the name today would be a guess.
+// +kubebuilder:validation:XValidation:rule="self.kind == 'Approval' ? has(self.approvalRef) : !has(self.approvalRef) && !has(self.approver) && !has(self.approvedAt)",message="an approval authorization names its approval, and a policy authorization names no decision"
+type MigrationRunAuthorizationStatus struct {
+	// Kind is Approval or Policy.
+	Kind MigrationRunAuthorizationKind `json:"kind"`
+	// ApprovalRef is the approval the run consumed.
+	// +optional
+	ApprovalRef *ImmutableObjectReference `json:"approvalRef,omitempty"`
+	// Approver is the identity admission stamped on it.
+	// +optional
+	Approver *ApprovalIdentity `json:"approver,omitempty"`
+	// ApprovedAt is when admission stamped it.
+	// +optional
+	ApprovedAt *metav1.Time `json:"approvedAt,omitempty"`
+}
+
+// MigrationRunVerificationResult is what the reading after a run found.
+// +kubebuilder:validation:Enum=InSync;Pending;Blocked
+type MigrationRunVerificationResult string
+
+const (
+	// MigrationRunVerifiedInSync is a database with every migration the artifact
+	// carries.
+	MigrationRunVerifiedInSync MigrationRunVerificationResult = "InSync"
+	// MigrationRunVerifiedPending is a database the artifact has more to apply
+	// to, as when a source moved on while the run ran.
+	MigrationRunVerifiedPending MigrationRunVerificationResult = "Pending"
+	// MigrationRunVerifiedBlocked is a history nothing may run against.
+	MigrationRunVerifiedBlocked MigrationRunVerificationResult = "Blocked"
+)
+
+// MigrationRunVerificationStatus is the first reading of a run's database after
+// the run ended.
+type MigrationRunVerificationStatus struct {
+	// ObservedAt is when the history was read.
+	ObservedAt metav1.Time `json:"observedAt"`
+	// HistoryFingerprint is that reading of the revision table.
+	// +kubebuilder:validation:Pattern=`^sha256:[0-9a-f]{64}$`
+	HistoryFingerprint string `json:"historyFingerprint"`
+	// CurrentVersion is the highest version that reading recorded.
+	// +kubebuilder:validation:Minimum=0
+	CurrentVersion int64 `json:"currentVersion"`
+	// Result is what the reading found.
+	Result MigrationRunVerificationResult `json:"result"`
 }
 
 // MigrationRunFailureStatus is the statement a run stopped at and the code the

@@ -1606,10 +1606,6 @@ func TestWaitRefusesOptionsItCannotHonor(t *testing.T) {
 			options: operate.WaitOptions{Target: operate.TargetInSync, Timeout: timeout, ReadRequest: request}, want: "only waited on",
 		},
 		{
-			name: "a plan for a migration", family: operate.FamilyMigration,
-			options: operate.WaitOptions{Target: operate.TargetApplied, Timeout: timeout, Plan: "plan-1"}, want: "records no plan",
-		},
-		{
 			name: "a read baseline from before the request was written",
 			options: operate.WaitOptions{
 				Target: operate.TargetRead, Timeout: timeout, ReadRequest: request,

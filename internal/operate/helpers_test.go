@@ -64,6 +64,8 @@ type doc struct {
 	phase      string
 	observedAt time.Time
 	operation  string
+	// operationPlan is the plan a migration's claim in flight carries out.
+	operationPlan *planDoc
 	// dispatched records a Job UID on the claim in flight.
 	dispatched bool
 	proof      bool
@@ -101,6 +103,17 @@ type runDoc struct {
 	startedAt  time.Time
 	finishedAt time.Time
 	message    string
+
+	// What the run's record says it carried out: all empty on a record from a
+	// release before those fields.
+	operationID  string
+	plan         string
+	planUID      types.UID
+	fingerprint  string
+	approval     string
+	approvalUID  types.UID
+	verification operatorv1alpha1.MigrationRunVerificationResult
+	verifiedAt   time.Time
 }
 
 type unresolvedDoc struct {
@@ -108,6 +121,7 @@ type unresolvedDoc struct {
 	outcome     operatorv1alpha1.MigrationRunOutcome
 	job         string
 	plan        string
+	planUID     types.UID
 }
 
 func (d doc) object(family operate.Family) client.Object {
@@ -200,6 +214,9 @@ func (d doc) object(family operate.Family) client.Object {
 		if d.dispatched {
 			status.ActiveOperation.JobUID = "job-uid"
 		}
+		if p := d.operationPlan; p != nil {
+			status.ActiveOperation.PlanRef = &operatorv1alpha1.ImmutableObjectReference{Name: p.name, UID: p.uid}
+		}
 	}
 	if p := d.plan; p != nil {
 		status.Plan = &operatorv1alpha1.ImmutableObjectReference{Name: p.name, UID: p.uid}
@@ -207,16 +224,31 @@ func (d doc) object(family operate.Family) client.Object {
 	if r := d.lastRun; r != nil {
 		status.LastRun = &operatorv1alpha1.MigrationRunStatus{
 			Outcome: r.outcome, JobName: r.job, JobUID: r.jobUID, StartedAt: metav1.NewTime(r.startedAt), Message: r.message,
+			OperationID: r.operationID, PlanFingerprint: r.fingerprint,
 		}
 		if !r.finishedAt.IsZero() {
 			finished := metav1.NewTime(r.finishedAt)
 			status.LastRun.FinishedAt = &finished
 		}
+		if r.plan != "" || r.planUID != "" {
+			status.LastRun.PlanRef = &operatorv1alpha1.ImmutableObjectReference{Name: r.plan, UID: r.planUID}
+		}
+		if r.approval != "" {
+			status.LastRun.Authorization = &operatorv1alpha1.MigrationRunAuthorizationStatus{
+				Kind:        operatorv1alpha1.MigrationRunAuthorizedByApproval,
+				ApprovalRef: &operatorv1alpha1.ImmutableObjectReference{Name: r.approval, UID: r.approvalUID},
+			}
+		}
+		if r.verification != "" {
+			status.LastRun.Verification = &operatorv1alpha1.MigrationRunVerificationStatus{
+				ObservedAt: metav1.NewTime(r.verifiedAt), Result: r.verification,
+			}
+		}
 	}
 	if u := d.unresolved; u != nil {
 		status.UnresolvedRun = &operatorv1alpha1.UnresolvedMigrationRunStatus{
 			Outcome: u.outcome, OperationID: u.operationID, JobName: u.job,
-			PlanRef: operatorv1alpha1.ImmutableObjectReference{Name: u.plan}, RecordedAt: metav1.NewTime(at(100)),
+			PlanRef: operatorv1alpha1.ImmutableObjectReference{Name: u.plan, UID: u.planUID}, RecordedAt: metav1.NewTime(at(100)),
 		}
 	}
 	return migration

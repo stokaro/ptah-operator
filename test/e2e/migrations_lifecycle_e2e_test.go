@@ -56,6 +56,7 @@ func (m *migrationRun) engineMigrations() {
 	m.assertApprovalStamped(approval)
 	m.waitForPhase(ptahv1alpha1.MigrationPhaseInSync)
 	settled := m.assertInSync()
+	m.assertRunProvenance(settled, plan, approval)
 	m.assertDatabaseMigrated()
 	m.assertRepeatedReconciliationRunsNothing(settled)
 	m.assertMigrationJobIsolation()
@@ -421,6 +422,25 @@ func (m *migrationRun) assertRunLogNames(database, actor string, versions ...int
 	if err := runLogNames(rows, actor, versions...); err != nil {
 		m.fatalf("schema_migrations_log in %s does not name %q for versions %v: %v; it holds %+v", database, actor, versions, err, rows)
 	}
+}
+
+// assertRunProvenance holds the record of the approved run to the plan and the
+// approval it carried out, as the operator wrote it through the API server's schema.
+func (m *migrationRun) assertRunProvenance(settled *ptahv1alpha1.PtahMigration, plan *ptahv1alpha1.PtahMigrationPlan, approvalName string) {
+	m.t.Helper()
+	approval := &ptahv1alpha1.PtahMigrationApproval{}
+	m.check(m.get(approvalName, approval), "read approval %s", approvalName)
+	for _, check := range []error{
+		runIdentityRecorded(settled.Status, plan),
+		runApprovedBy(settled.Status, approval),
+		runVerifiedInSync(settled.Status),
+		runJournaled(settled.Status),
+	} {
+		if check != nil {
+			m.fatalf("%s: the record of its approved run: %v", m.migrationName(), check)
+		}
+	}
+	m.logf("PASS %s records the plan, the approval and the reading of its run", m.engine.kind)
 }
 
 // assertInSync holds the settled status, and returns it.

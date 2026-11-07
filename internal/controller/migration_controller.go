@@ -1124,6 +1124,7 @@ func (r *MigrationReconciler) consumeMigrationResult(
 		if err := r.recordMigrationHistory(migration, *result.MigrationHistory, result.TargetIdentityDigest); err != nil {
 			return r.retryMigrationOperation(ctx, migration, job, err)
 		}
+		recordMigrationRunVerification(migration)
 		setMigrationTargetOpened(migration, "The migration history was read")
 		// The plan is published after this status is persisted, not here. A
 		// plan names the evidence it was computed from, and the admission
