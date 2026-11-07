@@ -342,7 +342,7 @@ func (l *lab) pullImage(t *testing.T, image string) {
 // The network goes last, so a run that is cleared halfway can still be found.
 func (l *lab) startCleanup(t *testing.T) string {
 	t.Helper()
-	work, err := os.MkdirTemp("", l.prefix+"-")
+	work, err := os.MkdirTemp("", runWorkPattern(l.prefix))
 	if err != nil {
 		t.Fatal(err)
 	}
