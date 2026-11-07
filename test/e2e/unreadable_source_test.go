@@ -7,8 +7,10 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
+	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/runner"
 	"github.com/stokaro/ptah-operator/test/e2e/gitrepo"
@@ -153,6 +155,195 @@ func TestTheUnreadableGitCommitLeavesTheCapturedOnes(t *testing.T) {
 				t.Errorf("commit %d holds the file %s the row adds", index, added)
 			}
 		}
+	}
+}
+
+// TestTheRepairedGitCommitRepairsOnlyTheSchemaFile holds the commit the row pushes
+// to what the row claims of it: the schema file changed, and the migration row
+// that runs after it still finds the file it cannot load.
+func TestTheRepairedGitCommitRepairsOnlyTheSchemaFile(t *testing.T) {
+	t.Parallel()
+	unreadable, repaired := gitUnreadableSpec(), gitRepairedSpec()
+	if len(repaired.Commits) != len(unreadable.Commits)+1 {
+		t.Fatalf("the repair has %d commits, want one more than %d", len(repaired.Commits), len(unreadable.Commits))
+	}
+	if repaired.Branches["main"] != len(repaired.Commits)-1 {
+		t.Fatalf("main names commit %d, not the repair", repaired.Branches["main"])
+	}
+	files := repaired.Commits[len(repaired.Commits)-1].Files
+	if body := files[gitUnreadablePath]; body == "" || body == unreadablePartitionSchema {
+		t.Fatalf("the repair left %q at %s", body, gitUnreadablePath)
+	}
+	migrationFile := gitUnreadableMigrationPath + "/" + unreadableMigrationFile
+	if files[migrationFile] != unreadableMigrationFiles[0].body {
+		t.Fatalf("the repair changed %s, which the next row needs unreadable", migrationFile)
+	}
+}
+
+// schemaReadRetried and migrationReadRetried tell a read that failed and goes on
+// from one that has not failed yet, and from the claim a request ended.
+func TestAReadRetriedIsOneTheClaimStillHolds(t *testing.T) {
+	t.Parallel()
+	failed := []metav1.Condition{{Type: ptahv1alpha1.ConditionReconciliationFailed, Status: metav1.ConditionTrue}}
+	schema := func(operation *ptahv1alpha1.ActiveOperationStatus, conditions []metav1.Condition) *ptahv1alpha1.PtahSchema {
+		return &ptahv1alpha1.PtahSchema{Status: ptahv1alpha1.PtahSchemaStatus{ActiveOperation: operation, Conditions: conditions}}
+	}
+	retried := &ptahv1alpha1.ActiveOperationStatus{ID: "second", Attempt: 2}
+	if !schemaReadRetried(schema(retried, failed), "") || !schemaReadRetried(schema(retried, failed), "first") {
+		t.Fatal("refused a claim on its second attempt")
+	}
+	for name, reading := range map[string]*ptahv1alpha1.PtahSchema{
+		"no claim":      schema(nil, failed),
+		"first attempt": schema(&ptahv1alpha1.ActiveOperationStatus{ID: "second", Attempt: 1}, failed),
+		"no failure":    schema(retried, nil),
+	} {
+		if schemaReadRetried(reading, "") {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	if schemaReadRetried(schema(retried, failed), "second") {
+		t.Error("accepted the claim the request was asked to end")
+	}
+
+	progressing := []metav1.Condition{{
+		Type: ptahv1alpha1.ConditionMigrationProgressing, Status: metav1.ConditionTrue,
+		Reason: string(ptahv1alpha1.ReasonOperationFailed),
+	}}
+	migration := func(operation *ptahv1alpha1.MigrationOperationStatus, conditions []metav1.Condition) *ptahv1alpha1.PtahMigration {
+		return &ptahv1alpha1.PtahMigration{Status: ptahv1alpha1.PtahMigrationStatus{ActiveOperation: operation, Conditions: conditions}}
+	}
+	retriedRun := &ptahv1alpha1.MigrationOperationStatus{ID: "second", Attempt: 2}
+	if !migrationReadRetried(migration(retriedRun, progressing), "") {
+		t.Fatal("refused a migration claim on its second attempt")
+	}
+	for name, reading := range map[string]*ptahv1alpha1.PtahMigration{
+		"no claim":      migration(nil, progressing),
+		"first attempt": migration(&ptahv1alpha1.MigrationOperationStatus{ID: "second", Attempt: 1}, progressing),
+		"in progress": migration(retriedRun, []metav1.Condition{{
+			Type: ptahv1alpha1.ConditionMigrationProgressing, Status: metav1.ConditionTrue,
+			Reason: string(ptahv1alpha1.ReasonOperationInProgress),
+		}}),
+	} {
+		if migrationReadRetried(reading, "") {
+			t.Errorf("migration %s: accepted", name)
+		}
+	}
+	if migrationReadRetried(migration(retriedRun, progressing), "second") {
+		t.Error("accepted the migration claim the row was asked to leave behind")
+	}
+}
+
+func TestARequestTakenWhileFailingNeedsTheFailureBesideIt(t *testing.T) {
+	t.Parallel()
+	const request = "2026-11-07T12:00:00Z"
+	reading := func(answered string, failure metav1.ConditionStatus) *ptahv1alpha1.PtahSchema {
+		return &ptahv1alpha1.PtahSchema{Status: ptahv1alpha1.PtahSchemaStatus{
+			LastReadRequest: answered,
+			Conditions:      []metav1.Condition{{Type: ptahv1alpha1.ConditionReconciliationFailed, Status: failure}},
+		}}
+	}
+	if !readRequestTakenWhileFailing(reading(request, metav1.ConditionTrue), request) {
+		t.Fatal("refused a request answered beside its failure")
+	}
+	for name, schema := range map[string]*ptahv1alpha1.PtahSchema{
+		"not answered":     reading("", metav1.ConditionTrue),
+		"another request":  reading("2026-11-07T11:00:00Z", metav1.ConditionTrue),
+		"failure is gone":  reading(request, metav1.ConditionFalse),
+		"no failure known": {Status: ptahv1alpha1.PtahSchemaStatus{LastReadRequest: request}},
+	} {
+		if readRequestTakenWhileFailing(schema, request) {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	if readRequestTakenWhileFailing(reading("", metav1.ConditionTrue), "") {
+		t.Error("an empty request matched an empty answer")
+	}
+}
+
+// A repair the row counts is one the source carried: a plan from another source,
+// with the failure gone, under the spec the failure was reported on. The last
+// rows are the two a suspension or a spec edit would pass.
+func TestARepairIsReadFromTheSourceAlone(t *testing.T) {
+	t.Parallel()
+	const failedSource = "sha256:failed"
+	base := func() *ptahv1alpha1.PtahSchema {
+		return &ptahv1alpha1.PtahSchema{
+			ObjectMeta: metav1.ObjectMeta{Generation: 3},
+			Status: ptahv1alpha1.PtahSchemaStatus{
+				Plan:       &ptahv1alpha1.CurrentPlanStatus{Name: "plan"},
+				Source:     ptahv1alpha1.SchemaSourceStatus{Digest: "sha256:repaired"},
+				Conditions: []metav1.Condition{{Type: ptahv1alpha1.ConditionReconciliationFailed, Status: metav1.ConditionFalse}},
+			},
+		}
+	}
+	if err := schemaReadTheRepair(base(), 3, failedSource); err != nil {
+		t.Fatalf("refused a repaired read: %v", err)
+	}
+	for name, edit := range map[string]func(*ptahv1alpha1.PtahSchema){
+		"still failing": func(s *ptahv1alpha1.PtahSchema) { s.Status.Conditions[0].Status = metav1.ConditionTrue },
+		"no condition":  func(s *ptahv1alpha1.PtahSchema) { s.Status.Conditions = nil },
+		"no plan":       func(s *ptahv1alpha1.PtahSchema) { s.Status.Plan = nil },
+		"same source":   func(s *ptahv1alpha1.PtahSchema) { s.Status.Source.Digest = failedSource },
+		"no source":     func(s *ptahv1alpha1.PtahSchema) { s.Status.Source = ptahv1alpha1.SchemaSourceStatus{} },
+		"a spec edit":   func(s *ptahv1alpha1.PtahSchema) { s.Generation = 4 },
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			schema := base()
+			edit(schema)
+			if err := schemaReadTheRepair(schema, 3, failedSource); err == nil {
+				t.Fatal("accepted a reading that is no repair")
+			}
+		})
+	}
+	for name, source := range map[string]ptahv1alpha1.SchemaSourceStatus{
+		"a snapshot": {Snapshot: &ptahv1alpha1.SourceSnapshotBinding{ContentDigest: failedSource}},
+		"a commit":   {Git: &ptahv1alpha1.GitSourceRevision{Commit: failedSource}},
+	} {
+		schema := base()
+		schema.Status.Source = source
+		if err := schemaReadTheRepair(schema, 3, failedSource); err == nil {
+			t.Errorf("%s: accepted the source that failed", name)
+		}
+	}
+}
+
+func TestAMigrationRepairIsReadFromTheSourceAlone(t *testing.T) {
+	t.Parallel()
+	const failedSource = "sha256:failed"
+	base := func() *ptahv1alpha1.PtahMigration {
+		return &ptahv1alpha1.PtahMigration{
+			ObjectMeta: metav1.ObjectMeta{Generation: 3},
+			Status: ptahv1alpha1.PtahMigrationStatus{
+				Plan: &ptahv1alpha1.ImmutableObjectReference{Name: "plan"},
+				Artifact: &ptahv1alpha1.SourceAccessBinding{
+					Snapshot: &ptahv1alpha1.SourceSnapshotBinding{ContentDigest: "sha256:repaired"},
+				},
+			},
+		}
+	}
+	if err := migrationReadTheRepair(base(), 3, failedSource); err != nil {
+		t.Fatalf("refused a repaired read: %v", err)
+	}
+	for name, edit := range map[string]func(*ptahv1alpha1.PtahMigration){
+		"still failing": func(m *ptahv1alpha1.PtahMigration) {
+			m.Status.Conditions = []metav1.Condition{{
+				Type: ptahv1alpha1.ConditionMigrationProgressing, Reason: string(ptahv1alpha1.ReasonOperationFailed),
+			}}
+		},
+		"no plan":     func(m *ptahv1alpha1.PtahMigration) { m.Status.Plan = nil },
+		"no artifact": func(m *ptahv1alpha1.PtahMigration) { m.Status.Artifact = nil },
+		"same source": func(m *ptahv1alpha1.PtahMigration) { m.Status.Artifact.Snapshot.ContentDigest = failedSource },
+		"a spec edit": func(m *ptahv1alpha1.PtahMigration) { m.Generation = 4 },
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			migration := base()
+			edit(migration)
+			if err := migrationReadTheRepair(migration, 3, failedSource); err == nil {
+				t.Fatal("accepted a reading that is no repair")
+			}
+		})
 	}
 }
 

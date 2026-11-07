@@ -1714,6 +1714,12 @@ func (r *MigrationReconciler) retryMigrationOperationAs(
 	}
 	next.JobName = name
 	migration.Status.ActiveOperation = next
+	// A read with no refresh deadline, the one after an Apply, starts the
+	// interval that makes its source due again from its first failure.
+	if migration.Status.NextReconciliationTime == nil {
+		deadline := metav1.NewTime(r.now().Add(migrationInterval(migration)))
+		migration.Status.NextReconciliationTime = &deadline
+	}
 	// The condition keeps 1024 bytes, as a schema's does, so a failure to open
 	// the target is whole in status whatever the Secret name and key; the
 	// Event below keeps 512.

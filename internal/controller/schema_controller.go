@@ -940,6 +940,11 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 	}
 	if !schema.Spec.Suspend && schema.Status.Phase == operatorv1alpha1.PhaseFailed {
 		failedRetryTime := r.now()
+		if reason, err := r.failedSchemaReadGivesWay(ctx, schema, failedRetryTime); err != nil {
+			return ctrl.Result{}, err
+		} else if reason != "" {
+			return r.giveWayToResolve(ctx, schema, reason)
+		}
 		if !due(schema.Status.NextReconciliationTime, failedRetryTime) {
 			result := requeueAtDeadline(schema.Status.NextReconciliationTime, failedRetryTime)
 			if schemaClaimServesProof(schema) {

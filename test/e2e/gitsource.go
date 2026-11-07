@@ -130,6 +130,19 @@ func gitUnreadableSpec() gitrepo.Spec {
 	return spec
 }
 
+// gitRepairedSpec is gitUnreadableSpec with one more commit, which repairs the
+// schema file and leaves the migration directory alone, as an author pushes a
+// fix to the branch a failing read is on.
+func gitRepairedSpec() gitrepo.Spec {
+	spec := gitUnreadableSpec()
+	last := spec.Commits[len(spec.Commits)-1]
+	files := maps.Clone(last.Files)
+	files[gitUnreadablePath] = gitSchemaRevisions[0]
+	spec.Commits = append(spec.Commits, gitrepo.CommitSpec{Message: "Repair the schema file", Files: files, Submodules: last.Submodules})
+	spec.Branches = map[string]int{"main": len(spec.Commits) - 1}
+	return spec
+}
+
 // gitResolvedTo holds a schema's Git status to the commit and content the
 // phase expects, and to the repository, ref and path it asked for.
 func gitResolvedTo(status *ptahv1alpha1.GitSourceRevision, url, path string, ref ptahv1alpha1.GitRef, commit, content string) error {

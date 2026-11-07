@@ -1691,7 +1691,8 @@ kubectl ptah refresh schema/storefront -n application --wait
 `operator.ptah.run/read-requested-at` annotation, later than any value the
 resource already holds, so two requests a moment apart are two requests. The
 operator takes it once no operation is running, the resource is not suspended
-and no retry delay is pending. A read that was already under way when the
+and no retry delay is pending. A read-only operation that failed gives way to
+the request when its retry delay ends. A read that was already under way when the
 request arrived does not answer it, because it may have read the database
 before the repair. Without `--wait` the command says only that the request was
 written, which is not the read; with it, the command stays until the read the
@@ -1855,7 +1856,10 @@ at which the operator gives up, so a resource failing one of them never reaches
 the history read either. If the record is not clearing after the database was
 repaired, read `status.activeOperation` first: the operation it names and the
 attempt it is on say whether the chain is stuck rather than the record, and an
-attempt climbing quickly is a Job failing as fast as it can be recreated.
+attempt climbing quickly is a Job failing as fast as it can be recreated. An
+attempt that restarts from 1 is [a read that gave
+way](../../reference/reconciliation/#a-read-that-keeps-failing) and started the
+chain again.
 
 Other resources may also be working against the same database if every claimant
 declares a shared realm. So the record stops this resource from changing the

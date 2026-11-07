@@ -57,9 +57,11 @@ operation that is already running reads its snapshot, so replacing or deleting
 the source ConfigMap does not disturb it.
 
 An edit to a selected key is read at once, and the plan it retires is replaced
-by a new one. An edit to any other key changes nothing. A ConfigMap deleted and
-created again under the same name is a new source too: a plan binds the
-ConfigMap's UID with the content.
+by a new one. That includes a read that keeps failing on the file you are
+repairing: it gives way to the edit. An Apply and the read that proves it keep
+the snapshot they started from. An edit to any other key changes nothing. A
+ConfigMap deleted and created again under the same name is a new source too: a
+plan binds the ConfigMap's UID with the content.
 
 ### With Kustomize
 

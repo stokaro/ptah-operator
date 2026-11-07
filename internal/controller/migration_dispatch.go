@@ -78,6 +78,11 @@ func (d *migrationDispatch) Authorize(ctx context.Context) mutationlifecycle.Out
 	// inputs cannot be read yet -- a reference that does not parse, a
 	// verification policy nobody has created -- retires the claim now rather
 	// than waiting out the interval it was meant to end.
+	if reason, err := r.failedMigrationReadGivesWay(ctx, migration); err != nil {
+		return mutationlifecycle.Stop(ctrl.Result{}, err)
+	} else if reason != "" {
+		return mutationlifecycle.Stop(r.giveWayMigrationToResolve(ctx, migration, reason))
+	}
 	current, currentErr := r.migrationInputFingerprint(ctx, migration, operation.Type)
 	inputsChanged := migration.Generation != migration.Status.ObservedGeneration ||
 		(currentErr == nil && current != operation.InputFingerprint)

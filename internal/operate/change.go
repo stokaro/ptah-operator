@@ -198,10 +198,10 @@ type RefreshResult struct {
 // The controller answers the request when no operation is running, the
 // resource is not suspended and no retry delay is pending, and not while its
 // engine is unsupported or its database realm does not admit it: those
-// checks come before the request. A read that was already running when the
-// request arrived does not answer it. That the
-// annotation was written says nothing about whether the read completed; Wait
-// with TargetRead does.
+// checks come before the request. A read-only operation that failed gives way
+// to the request when its retry delay ends. A read that was already running when
+// the request arrived does not answer it. That the annotation was written says
+// nothing about whether the read completed; Wait with TargetRead does.
 func Refresh(ctx context.Context, c client.Client, ref Ref, now time.Time) (RefreshResult, error) {
 	const attempts = 3
 	var lastErr error

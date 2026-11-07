@@ -444,6 +444,37 @@ the database before the change the request is about; the request waits for the
 read that starts after it. An annotation does not change the generation, so
 nothing else about the resource changes.
 
+A read-only operation that failed gives way to the request when its retry delay
+ends, rather than running again. [A read that keeps
+failing](#a-read-that-keeps-failing) says when else it does. An Apply and the
+read that proves it do not, so a request made during either waits until they
+end.
+
+## A read that keeps failing
+
+A read-only operation that fails runs again under the same claim after
+`spec.execution.failureRetryInterval`, on the snapshot, commit or digest it was
+given. Between two attempts, with no Job of its own, it gives way to a new
+`Resolve` in these cases:
+
+| What happened | When it gives way |
+| --- | --- |
+| The source ConfigMap or the source policy changed | At once, as with no claim. The ConfigMap watch is what wakes the resource |
+| A person asked for a read | When the retry delay ends |
+| `spec.interval` has passed since an OCI or Git source was last read | When the retry delay ends. Only a read of the source can show a moved tag or branch, so this is what a healthy resource does on the same cadence |
+
+Giving way retires the claim and writes a `ReadRestarted` Event. The phase goes
+to `Pending` for the pass that starts the `Resolve`, and the failure stays on the
+conditions until a later operation replaces it. A plan that waits for approval
+stays, and the `Resolve` decides whether it still holds, as at any interval. A
+`Resolve` that failed reads the source on every attempt, so only a read request
+ends it.
+
+A mutating claim never gives way: an Apply stays bound to the plan and the source
+it was approved for. Neither does the read that proves an Apply, which stays
+bound to what that Apply ran from. A Job under the claim's reserved name is an
+attempt under way, and it is left to finish.
+
 A value that is not an RFC 3339 instant starts nothing. It is recorded as
 answered, with a `ReadRequestInvalid` Warning Event that names it, so it is
 reported once rather than on every pass. A value longer than 64 bytes is

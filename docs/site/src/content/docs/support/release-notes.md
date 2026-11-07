@@ -114,6 +114,14 @@ it would report.
   says how to read the reason and how to make the resource read the repaired
   file. A schema whose `fetch-schema` step fails now names that step and its
   exit status, and gives no reason: that page says how to get one.
+- **A read that keeps failing reads the repaired source.** A read-only operation
+  that keeps failing used to hold its snapshot, commit or digest until a spec edit
+  or a suspension ended it, and `kubectl ptah refresh` got no answer meanwhile. It
+  now [gives way](../../reference/reconciliation/#a-read-that-keeps-failing) to an
+  edited ConfigMap or source policy at once, and to a read request or a passed
+  `spec.interval` when its retry delay ends. An Apply and the read that proves it
+  keep their binding. A dashboard that reads `status.activeOperation.attempt`
+  sees it restart from 1.
 - **`DatabaseReachable` says which kind it was.** `DatabaseReachable` is `False`
   when an operation's result names a kind, with a reason for each:
   `DatabaseUnreachable`, `AuthenticationFailed`, `DatabaseNotFound`,
