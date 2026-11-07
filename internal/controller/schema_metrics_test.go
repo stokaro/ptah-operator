@@ -226,6 +226,10 @@ func TestStalePlanAndVerificationPolicyTransitionsAreReported(t *testing.T) {
 			Name: "plan", UID: "plan-uid", Fingerprint: testDigest,
 			Approval: &operatorv1alpha1.ConsumedApprovalStatus{Name: "approval", UID: "approval-uid"},
 		}
+		schema.Status.Journal = &operatorv1alpha1.LifecycleJournal{CoveredSince: metav1.Now(), Entries: []operatorv1alpha1.JournalEntry{
+			{Type: operatorv1alpha1.JournalPlanPublished, At: metav1.Now(), Plan: "plan"},
+			{Type: operatorv1alpha1.JournalApprovalAccepted, At: metav1.Now(), Plan: "plan", Approval: "approval"},
+		}}
 		setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionTrue, "Published", "Plan is ready")
 		reconciler, _ := fakeReconciler(t, staticLogs{}, schema)
 		recorder := record.NewFakeRecorder(10)
@@ -234,14 +238,14 @@ func TestStalePlanAndVerificationPolicyTransitionsAreReported(t *testing.T) {
 		reconciler.Telemetry = observations
 
 		after := schema.DeepCopy()
-		after.Status.Plan = nil
-		setCondition(after, operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse, "Stale", "Plan is stale")
+		after.Status.Plan = &operatorv1alpha1.CurrentPlanStatus{Name: "next-plan", UID: "next-plan-uid", Fingerprint: safetyOtherDigest}
+		setCondition(after, operatorv1alpha1.ConditionPlanReady, metav1.ConditionTrue, "Published", "Another plan is ready")
 		if err := reconciler.patchStatus(context.Background(), schema, after); err != nil {
 			t.Fatal(err)
 		}
 		assertEvent(t, recorder, corev1.EventTypeWarning+" PlanStale")
 		if len(observations.approvals) != 0 {
-			t.Fatalf("plan invalidation double-counted approval status telemetry: %#v", observations.approvals)
+			t.Fatalf("plan replacement double-counted approval status telemetry: %#v", observations.approvals)
 		}
 	})
 

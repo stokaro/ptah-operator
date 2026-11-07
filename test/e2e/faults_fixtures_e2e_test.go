@@ -507,6 +507,8 @@ type faultSchema struct {
 	sharedRealm bool
 	// isolatedNode places this row's operations on the dedicated fault worker.
 	isolatedNode string
+	// interval is 1h when unset.
+	interval string
 }
 
 // createSchema creates the schema under approval, every hour, against the
@@ -549,7 +551,7 @@ func (f *faultRun) createSchema(schema faultSchema) {
 				"apply": "OnApproval", "allowDestructive": schema.allowDestructive, "driftSeverity": "all",
 				"lockTimeout": lockTimeout, "transactionMode": "file",
 			},
-			"interval":  "1h",
+			"interval":  cmp.Or(schema.interval, "1h"),
 			"execution": execution,
 		},
 	}), "create PtahSchema %s", schema.name)

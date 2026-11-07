@@ -2929,7 +2929,7 @@ func (r *SchemaReconciler) reobserveAfterStalePlan(
 			return ctrl.Result{}, err
 		}
 	}
-	r.event(schema, corev1.EventTypeWarning, "PlanStale", "Database state changed while the plan was generated; observing again")
+	r.event(schema, corev1.EventTypeWarning, "PlanTargetChanged", "The database target changed while the plan was generated, so the plan was not published; observing again")
 	return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
 }
 
@@ -4052,8 +4052,10 @@ func (r *SchemaReconciler) observeStatusTransitions(before, after *operatorv1alp
 			r.Telemetry.ObserveApproval(telemetry.FamilySchema, telemetry.ApprovalAccepted)
 		}
 	}
-	if planInvalidated(before.Status.Plan, after.Status.Plan) {
-		r.event(after, corev1.EventTypeWarning, "PlanStale", "The immutable plan became stale and will not be applied")
+	if replaced, ok := replacedApprovablePlan(&before.Status, &after.Status); ok {
+		r.event(after, corev1.EventTypeWarning, "PlanStale",
+			"Plan %s will not be applied: plan %s replaced it before it ran, so an approval of %s no longer counts",
+			replaced, after.Status.Plan.Name, replaced)
 	}
 	if conditionBecame(before.Status.Conditions, after.Status.Conditions, operatorv1alpha1.ConditionArtifactVerified, metav1.ConditionFalse, string(operatorv1alpha1.ReasonPolicyChanged)) {
 		r.event(after, corev1.EventTypeWarning, "VerificationPolicyInvalidated", "Verification policy no longer matches the plan; artifact and plan verification were invalidated")
@@ -4075,11 +4077,30 @@ func planChanged(before, after *operatorv1alpha1.CurrentPlanStatus) bool {
 	return before == nil || before.UID != after.UID || before.Fingerprint != after.Fingerprint
 }
 
-func planInvalidated(before, after *operatorv1alpha1.CurrentPlanStatus) bool {
-	if before == nil {
-		return false
+// replacedApprovablePlan names the plan a status write replaced, when a reader
+// could have approved it.
+//
+// status.plan goes nil on every read of the database, and the next Plan
+// publishes the same object again when nothing changed, so the plan going away
+// says nothing. A plan's name is its fingerprint, so the write that publishes a
+// plan under another name than the journal's outstanding one is the replacement.
+// A plan an Apply ran is not outstanding.
+//
+// ApprovalRequired still holds what the replaced plan asked for, because neither
+// a refresh nor a failed read moves it. An Apply claim moves it to False, so the
+// journal answers for a plan that was approved and then withdrawn before it ran.
+func replacedApprovablePlan(before, after *operatorv1alpha1.PtahSchemaStatus) (string, bool) {
+	if after.Plan == nil {
+		return "", false
 	}
-	return after == nil || before.UID != after.UID || before.Fingerprint != after.Fingerprint
+	outstanding, approved := lifecyclejournal.OutstandingPlan(before.Journal)
+	if outstanding == "" || outstanding == after.Plan.Name {
+		return "", false
+	}
+	if !approved && !meta.IsStatusConditionTrue(before.Conditions, operatorv1alpha1.ConditionApprovalRequired) {
+		return "", false
+	}
+	return outstanding, true
 }
 
 func approvalChanged(before, after *operatorv1alpha1.CurrentPlanStatus) bool {

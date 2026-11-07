@@ -30,6 +30,7 @@ func TestSchemaApprovals(t *testing.T) {
 		{"approval-destructive-policy-change", func() { f.destructivePolicyChanges() }},
 		{"approval-exclusion-policy-change", func() { f.exclusionPolicyChanges() }},
 		{"approval-verification-policy-change", func() { f.verificationPolicyChanges() }},
+		{"plan-stale-only-on-replacement", f.planStaleOnlyOnReplacement},
 		{"approval-history-audit", f.closeApprovalWatches},
 		{"approval-executor-image-change", func() { f.executorImageChanges() }},
 		{"approval-ptah-version-change", func() { f.ptahVersionChanges() }},

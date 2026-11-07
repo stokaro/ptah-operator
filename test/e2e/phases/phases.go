@@ -285,6 +285,7 @@ var SchemaApprovals = define[DataPlaneInputs](Phase{
 		"approval-destructive-policy-change",
 		"approval-exclusion-policy-change",
 		"approval-verification-policy-change",
+		"plan-stale-only-on-replacement",
 		"approval-history-audit",
 		"approval-executor-image-change",
 		"approval-ptah-version-change",

@@ -266,6 +266,13 @@ it would report.
   long, so the CRD schema version moves, and
   [a rollback](../../use/operations/#rollback) to an earlier version is refused
   once this one has updated the CRDs.
+- **`PlanStale` means a plan was replaced.** The Warning fired on every scheduled
+  read of a waiting plan and after every Apply, though the plan had not changed.
+  It now fires once, when another plan takes the place of one a person could
+  approve or had approved, and its message names both. A plan discarded before it
+  was published, because the database target moved during the read, records
+  `PlanTargetChanged` instead. A script that counts `PlanStale` to see reads has to
+  read `status.target.lastObservedAt`.
 
 ## 0.2.9
 

@@ -146,7 +146,7 @@ var failureReasons = []string{"OperationFailed", "ConfigurationError", "ApplyOut
 // diagnosedEventReasons are the Events a failure diagnosis reads, and the
 // first three of them open their message with a machine code.
 var diagnosedEventReasons = []string{
-	"OperationFailed", "ReconciliationFailed", "ApplyOutcomeUnknown", "PlanStale", "LeaseContinuityLost",
+	"OperationFailed", "ReconciliationFailed", "ApplyOutcomeUnknown", "PlanStale", "PlanTargetChanged", "LeaseContinuityLost",
 }
 
 // projectCleanupDiagnostic is what a failed phase prints about the schemas it

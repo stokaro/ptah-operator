@@ -23,6 +23,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -1536,6 +1537,8 @@ func TestStalePlanEvidenceForcesFreshObservation(t *testing.T) {
 				Data:      map[string]string{schema.Spec.Desired.VerificationPolicyFrom.Key: policyBytes},
 			}
 			reconciler, api := fakeReconciler(t, staticLogs{content: frame}, schema, job, pod, policyConfigMap)
+			recorder := record.NewFakeRecorder(16)
+			reconciler.Recorder = recorder
 
 			result, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)})
 			if err != nil {
@@ -1543,6 +1546,20 @@ func TestStalePlanEvidenceForcesFreshObservation(t *testing.T) {
 			}
 			if result.RequeueAfter != statusPatchRequeue {
 				t.Fatalf("Reconcile() result = %#v, want the next pass after %s", result, statusPatchRequeue)
+			}
+			// Nobody saw this plan, so nothing was replaced: the Event says what
+			// happened to the target rather than PlanStale, which a reader acts on.
+			var targetChanged bool
+			for len(recorder.Events) > 0 {
+				switch event := <-recorder.Events; {
+				case strings.HasPrefix(event, corev1.EventTypeWarning+" PlanTargetChanged "):
+					targetChanged = true
+				case strings.Contains(event, " PlanStale "):
+					t.Fatalf("an unpublished plan recorded %q", event)
+				}
+			}
+			if !targetChanged {
+				t.Fatal("no PlanTargetChanged Warning for a plan discarded because its target moved")
 			}
 
 			actual := safetyGetSchema(t, api, schema)
