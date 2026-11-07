@@ -97,6 +97,7 @@ decision.
 | `UnsupportedEngine` | The selected engine has no implemented operator lifecycle. |
 | `VerifyingConvergence` | Apply completed but independent read-only proof has not. |
 | `Waiting` | The controller is waiting for an approval bound to the current plan. |
+| `WaitingForDatabaseLock` | A migration's Apply is claimed and another operation on this database holds the realm's Lease, which the message names. No Job exists yet, and the claim asks for the Lease every five seconds, so it goes on within seconds of the Lease coming free. A wait that does not end is what `PtahOperatorOperationStalled` covers. |
 
 ## A migration history that stops everything
 

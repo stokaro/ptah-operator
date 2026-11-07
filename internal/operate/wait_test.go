@@ -923,6 +923,21 @@ func TestWaitTargets(t *testing.T) {
 			wantTimeout: true, wantMessage: `(PodConfigurationError): Job apply-1 cannot start its Pod: secret "application-database" not found`,
 		},
 		{
+			name: "applied: a migration Apply waiting for the database lock keeps its claim, and the timeout says so", target: operate.TargetApplied,
+			only: operate.FamilyMigration,
+			docs: func(operate.Family) []doc {
+				return []doc{
+					{phase: "AwaitingApproval", observedAt: at(0)},
+					{
+						phase: "Applying", operation: "Apply", observedAt: at(0),
+						conditions: []metav1.Condition{condition(operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionTrue, "WaitingForDatabaseLock",
+							"Apply is waiting for the database lock: another operation on this database holds Lease ptah-t-abc", 3)},
+					},
+				}
+			},
+			wantTimeout: true, wantMessage: "(WaitingForDatabaseLock): Apply is waiting for the database lock",
+		},
+		{
 			name: "applied: a schema Apply whose dispatch was refused keeps its claim, and the timeout names it", target: operate.TargetApplied,
 			only: operate.FamilySchema,
 			docs: func(f operate.Family) []doc {

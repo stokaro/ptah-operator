@@ -331,6 +331,40 @@ func (r *MigrationReconciler) claimMigrationApply(
 	return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
 }
 
+// waitForMigrationApplyLock is acquireMigrationApplyLock for a pass that can do
+// nothing else until it holds the Lease, and it says so on the resource. A claim
+// that lost the Lease has no Job and no Event, and the wait can outlast the Job
+// it is waiting to create.
+func (r *MigrationReconciler) waitForMigrationApplyLock(
+	ctx context.Context,
+	migration *operatorv1alpha1.PtahMigration,
+) (bool, time.Duration, error) {
+	acquired, contended, requeue, err := r.tryMigrationApplyLock(ctx, migration)
+	if err != nil || !contended {
+		return acquired, requeue, err
+	}
+	operation := migration.Status.ActiveOperation
+	before := migration.DeepCopy()
+	setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionTrue,
+		operatorv1alpha1.ReasonWaitingForDatabaseLock, migrationLockWaitMessage(operation))
+	if err := r.patchMigrationStatus(ctx, before, migration); err != nil {
+		return false, 0, err
+	}
+	return false, requeue, nil
+}
+
+// migrationLockWaitMessage says what a claim is waiting for. It names the Lease,
+// which names its holder to whoever may read the operator's namespace, and not
+// the holder: the holder can be another team's resource in a shared realm.
+func migrationLockWaitMessage(operation *operatorv1alpha1.MigrationOperationStatus) string {
+	lease, err := targetlock.LeaseName(operation.CoordinationDigest)
+	if err != nil {
+		lease = "of this database's realm"
+	}
+	return fmt.Sprintf("%s is waiting for the database lock: another operation on this database holds Lease %s. It asks again every %s",
+		operation.Type, lease, maxLockContentionPoll)
+}
+
 // acquireMigrationApplyLock serializes execution against every other operator
 // operation that addresses the same database. The Lease is taken before the
 // Job exists and its epoch is compared on every pass: a result produced across
@@ -339,15 +373,26 @@ func (r *MigrationReconciler) acquireMigrationApplyLock(
 	ctx context.Context,
 	migration *operatorv1alpha1.PtahMigration,
 ) (bool, time.Duration, error) {
+	acquired, _, requeue, err := r.tryMigrationApplyLock(ctx, migration)
+	return acquired, requeue, err
+}
+
+// tryMigrationApplyLock is one attempt at the Lease. contended is a Lease another
+// operation holds, as apart from the write this pass makes to record an epoch,
+// which also ends the pass without the Lease in hand.
+func (r *MigrationReconciler) tryMigrationApplyLock(
+	ctx context.Context,
+	migration *operatorv1alpha1.PtahMigration,
+) (acquired, contended bool, requeue time.Duration, err error) {
 	operation := migration.Status.ActiveOperation
 	if !migrationOperation(operation).HoldsLock(false) {
-		return true, 0, nil
+		return true, false, 0, nil
 	}
 	if r.Locks == nil || strings.TrimSpace(r.LockNamespace) == "" {
-		return false, 0, errors.New("the database lock coordinator is not configured")
+		return false, false, 0, errors.New("the database lock coordinator is not configured")
 	}
 	if operation.CoordinationDigest == "" || operation.LeaseDurationSeconds < 1 {
-		return false, 0, errors.New("the Apply claim carries no database lock binding")
+		return false, false, 0, errors.New("the Apply claim carries no database lock binding")
 	}
 	result, err := r.Locks.Acquire(ctx, targetlock.Request{
 		CoordinationNamespace: r.LockNamespace,
@@ -357,17 +402,13 @@ func (r *MigrationReconciler) acquireMigrationApplyLock(
 		ExpectedEpoch:         operation.LeaseEpoch,
 	})
 	if err != nil {
-		return false, 0, fmt.Errorf("acquire the database lock: %w", err)
+		return false, false, 0, fmt.Errorf("acquire the database lock: %w", err)
 	}
 	if !result.Acquired {
-		requeue := maxLockContentionPoll
-		if result.Contention != nil && result.Contention.RequeueAfter > 0 {
-			requeue = result.Contention.RequeueAfter
-		}
-		return false, requeue, nil
+		return false, true, lockContentionRequeue(result.Contention), nil
 	}
 	if result.Epoch == operation.LeaseEpoch && !result.ContinuityLost {
-		return true, 0, nil
+		return true, false, 0, nil
 	}
 	continuityLost := operation.LeaseEpoch == "" || result.ContinuityLost || result.Epoch != operation.LeaseEpoch
 	if continuityLost && operation.LeaseEpoch != "" && !migrationMayHaveDispatched(operation) {
@@ -379,15 +420,22 @@ func (r *MigrationReconciler) acquireMigrationApplyLock(
 	}
 	before := migration.DeepCopy()
 	migration.Status.ActiveOperation.LeaseEpoch = result.Epoch
+	// A wait ends here: taking the Lease from anybody else rotates its epoch, so
+	// a claim that was waiting always reaches this write.
+	if progressing := meta.FindStatusCondition(migration.Status.Conditions, operatorv1alpha1.ConditionMigrationProgressing); progressing != nil &&
+		progressing.Reason == string(operatorv1alpha1.ReasonWaitingForDatabaseLock) {
+		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionTrue,
+			operatorv1alpha1.ReasonOperationInProgress, fmt.Sprintf("%s operation is in progress", operation.Type))
+	}
 	migration.Status.ActiveOperation.LeaseContinuityLost = continuityLost
 	if continuityLost {
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationReady, metav1.ConditionFalse,
 			operatorv1alpha1.ReasonLeaseContinuityLost, "The database lock epoch changed under the running operation")
 	}
 	if err := r.patchMigrationStatus(ctx, before, migration); err != nil {
-		return false, 0, err
+		return false, false, 0, err
 	}
-	return false, statusPatchRequeue, nil
+	return false, false, statusPatchRequeue, nil
 }
 
 // reportedMigrationApply is what a migration Apply's runner said about it, in

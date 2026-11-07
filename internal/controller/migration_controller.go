@@ -770,7 +770,7 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 	// Every other verdict is about a Job that may be running under the realm
 	// the claim holds, so the Lease is renewed before the pass acts on it.
 	if kind.HoldsLock(false) {
-		acquired, requeue, lockErr := r.acquireMigrationApplyLock(ctx, migration)
+		acquired, requeue, lockErr := r.waitForMigrationApplyLock(ctx, migration)
 		if lockErr != nil {
 			return ctrl.Result{}, lockErr
 		}

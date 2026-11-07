@@ -285,6 +285,11 @@ it would report.
   like this: [Before the Secret exists](../../reference/credentials-and-admission/#external-secret-stores-not-synced).
   A script that reads `Ready` or `Progressing` while a Secret is missing sees the new
   reason, and on a `PtahMigration` `Progressing` is `False` meanwhile.
+- **A migration Apply that lost the lock.** It waited for all the time the Lease
+  had left, about five minutes, though the holder usually finished in seconds, and
+  it said nothing while it did. It now asks every five seconds, as a schema always
+  has, and `Progressing` reads reason `WaitingForDatabaseLock` and names the Lease
+  while it waits.
 
 ## 0.2.9
 

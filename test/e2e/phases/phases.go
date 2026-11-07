@@ -377,6 +377,7 @@ var MigrationRuntimePostgreSQL = define[MigrationsInputs](Phase{
 	Scenarios: []string{
 		"runtime-artifact",
 		"pod-configuration-past-deadline",
+		"apply-asks-for-the-realm-lease",
 		"approval-resource-replacement",
 		"approval-policy-change",
 		"approval-transaction-mode-change",
@@ -400,6 +401,7 @@ var MigrationRuntimeMySQL = define[MigrationsInputs](Phase{
 	Scenarios: []string{
 		"runtime-artifact",
 		"pod-configuration-past-deadline",
+		"apply-asks-for-the-realm-lease",
 		"approval-resource-replacement",
 		"approval-policy-change",
 		"approval-transaction-mode-change",

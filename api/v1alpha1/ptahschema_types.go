@@ -1746,6 +1746,7 @@ const (
 	ReasonUnsupportedEngine       ConditionReason = "UnsupportedEngine"
 	ReasonVerifyingConvergence    ConditionReason = "VerifyingConvergence"
 	ReasonWaiting                 ConditionReason = "Waiting"
+	ReasonWaitingForDatabaseLock  ConditionReason = "WaitingForDatabaseLock"
 	// The reasons DatabaseReachable carries when an operation could not open
 	// its target database, one for each kind of failure Ptah reports.
 	ReasonDatabaseUnreachable  ConditionReason = "DatabaseUnreachable"

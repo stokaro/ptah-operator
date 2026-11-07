@@ -3825,14 +3825,20 @@ func (r *SchemaReconciler) acquireLockEpoch(ctx context.Context, request targetl
 	if result.Contention == nil {
 		return false, 0, "", false, fmt.Errorf("database target lock returned no acquisition result")
 	}
-	requeue := result.Contention.RequeueAfter
-	if requeue < time.Second {
-		requeue = time.Second
+	return false, lockContentionRequeue(result.Contention), "", false, nil
+}
+
+// lockContentionRequeue is how long a claim that lost a realm Lease waits before
+// it asks again. The time a Lease has left is the longest its holder can keep it
+// without renewing, and not how long it will: a holder that finishes clears the
+// Lease at once, and nothing wakes the waiter, because Leases are not watched.
+// So a claim asks every few seconds, which costs one read, rather than sleeping
+// through the five minutes a sibling's short Plan left on the clock.
+func lockContentionRequeue(contention *targetlock.Contention) time.Duration {
+	if contention == nil {
+		return maxLockContentionPoll
 	}
-	if requeue > maxLockContentionPoll {
-		requeue = maxLockContentionPoll
-	}
-	return false, requeue, "", false, nil
+	return min(max(contention.RequeueAfter, time.Second), maxLockContentionPoll)
 }
 
 func targetLockReleaseForOperation(
