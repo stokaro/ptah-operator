@@ -10,7 +10,6 @@ import (
 	"github.com/stokaro/ptah-operator/internal/resultauthority"
 	"github.com/stokaro/ptah-operator/internal/resultdelivery"
 	"github.com/stokaro/ptah-operator/internal/resultdelivery/jobconfig"
-	"github.com/stokaro/ptah-operator/internal/resultretention"
 	"github.com/stokaro/ptah-operator/internal/resultstore"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -147,12 +146,4 @@ func (p PodBindings) AuthorizePublication(ctx context.Context, binding resultsto
 		return resultdelivery.Identity{}, err
 	}
 	return identity, nil
-}
-
-func validatePodBindingDelete(ctx context.Context, reader client.Reader, record *api.PtahResultRecord) error {
-	identity, err := decodePodBinding(record, true)
-	if err != nil {
-		return err
-	}
-	return resultretention.CheckUnpinned(ctx, reader, identity.Binding)
 }

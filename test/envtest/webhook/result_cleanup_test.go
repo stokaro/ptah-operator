@@ -189,11 +189,13 @@ func (r namespaceReader) List(ctx context.Context, list client.ObjectList, opts 
 }
 
 func TestResultCollectorThroughAPIAdmission(t *testing.T) {
-	t.Run("chunked", func(t *testing.T) { testResultCollectorThroughAPIAdmission(t, false) })
-	t.Run("inline", func(t *testing.T) { testResultCollectorThroughAPIAdmission(t, true) })
+	t.Run("chunked", func(t *testing.T) { testResultCollectorThroughAPIAdmission(t, false, false) })
+	t.Run("inline", func(t *testing.T) { testResultCollectorThroughAPIAdmission(t, true, false) })
+	t.Run("chunked, then delivery off", func(t *testing.T) { testResultCollectorThroughAPIAdmission(t, false, true) })
+	t.Run("inline, then delivery off", func(t *testing.T) { testResultCollectorThroughAPIAdmission(t, true, true) })
 }
 
-func testResultCollectorThroughAPIAdmission(t *testing.T, inline bool) {
+func testResultCollectorThroughAPIAdmission(t *testing.T, inline, deliveryOff bool) {
 	f, identity, store := publicationFixture(t, true)
 	payload := chunkedPublicationPayload(t, identity)
 	activeRecords := 4
@@ -204,6 +206,9 @@ func testResultCollectorThroughAPIAdmission(t *testing.T, inline bool) {
 	receipt, err := store.Publish(t.Context(), identity.Binding, payload, publicationDigest(payload))
 	if err != nil {
 		t.Fatal(err)
+	}
+	if deliveryOff {
+		withDeliveryOff(t)
 	}
 	p := cleanupPolicy()
 	p.Reader = namespaceReader{store.Reader, f.namespace}

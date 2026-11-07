@@ -651,7 +651,9 @@ does not discard the stored result or require its original process key.
 When `resultDelivery.enabled=false`, legacy Jobs instead write one frame to
 stdout. A Plan payload in that frame is sealed to a manager process key;
 logs hold ciphertext. Loss of that key can require another read-only Plan.
-This legacy transport is outside the stable 0.2.0 qualification profile.
+This legacy transport is outside the stable 0.2.0 qualification profile. The manager
+keeps its grant on result records in that mode, to retire and collect what an earlier
+setting left, and admission lets it create a retirement and no other record.
 
 Migration run error text that can disclose database values is removed from the
 structured result in both transports. Failure reports name the outcome and

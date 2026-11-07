@@ -110,6 +110,16 @@ func TestResultRecordDenialNamesATimeOnlyWhenTimeIsTheReason(t *testing.T) {
 		{name: "an old credential whose foreground retirement is refused", object: record("credential", old), operation: admissionv1.Delete, options: `{"propagationPolicy":"Foreground"}`, want: plain},
 		{name: "a credential in an installation with no retention policy", object: record("credential", young), operation: admissionv1.Delete, noPolicy: true, want: plain},
 		{
+			name: "the garbage collector finishing a foreground deletion with no retention policy", operation: admissionv1.Update, noPolicy: true,
+			object: retiring("intent", old),
+			next: func() *operatorv1alpha1.PtahResultRecord {
+				object := retiring("intent", old)
+				object.Finalizers = nil
+				return object
+			}(),
+			want: plain,
+		},
+		{
 			name: "the garbage collector finishing an old foreground deletion that cannot be bound", operation: admissionv1.Update,
 			object: retiring("intent", old),
 			next: func() *operatorv1alpha1.PtahResultRecord {
@@ -294,6 +304,53 @@ func TestResultWriteDenialSaysWhatWasRefused(t *testing.T) {
 			response := (&controllerwrite.ValidationHandler{Validator: validator}).Handle(t.Context(), request)
 			if response.Allowed {
 				t.Fatal("the write was admitted")
+			}
+			if response.Result == nil || response.Result.Message != row.want {
+				t.Fatalf("denial = %#v, want %q", response.Result, row.want)
+			}
+		})
+	}
+}
+
+// With delivery off an installation holds no trust to issue or publish with, and
+// the collector still has to start a window. A retirement reads only the API, so
+// it reaches the checks that judge it, and nothing else gets that far.
+func TestOnlyARetirementIsJudgedWithoutDeliveryTrust(t *testing.T) {
+	t.Parallel()
+
+	for _, row := range []struct {
+		name, object, kind, want string
+	}{
+		{name: "a retirement", object: "ptah-result-record-retired", kind: "retired", want: "result record creation is not authorized for its operation"},
+		{name: "an intent", object: "ptah-result-record", kind: "intent", want: "result publication trust is not configured"},
+		{name: "a chunk", object: "ptah-result-record-0", kind: "chunk", want: "result publication trust is not configured"},
+		{name: "a credential", object: jobconfig.SecretPrefix + "record", kind: "credential", want: "result credential trust is not configured"},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+
+			validator := &controllerwrite.Validator{
+				Reader: failingReader{}, Jobs: staticJobBuilder{}, ManagerUsername: managerUsername,
+				ResultCleanup: &resultcleanup.Policy{Reader: failingReader{}, Window: resultretention.MinimumWindow},
+			}
+			request := cradmission.Request{AdmissionRequest: admissionv1.AdmissionRequest{
+				UID:       "request-uid",
+				Name:      row.object,
+				Namespace: "application",
+				Operation: admissionv1.Create,
+				Kind:      metav1.GroupVersionKind{Group: "operator.ptah.run", Version: "v1alpha1", Kind: "PtahResultRecord"},
+				Resource:  metav1.GroupVersionResource{Group: "operator.ptah.run", Version: "v1alpha1", Resource: "ptahresultrecords"},
+				UserInfo:  authenticationv1.UserInfo{Username: managerUsername},
+				Object: rawObject(t, &operatorv1alpha1.PtahResultRecord{
+					TypeMeta:   metav1.TypeMeta{APIVersion: operatorv1alpha1.GroupVersion.String(), Kind: "PtahResultRecord"},
+					ObjectMeta: metav1.ObjectMeta{Namespace: "application", Name: row.object},
+					Spec:       operatorv1alpha1.PtahResultRecordSpec{Type: row.kind, Data: []byte(`{}`)},
+				}),
+			}}
+
+			response := (&controllerwrite.ValidationHandler{Validator: validator}).Handle(t.Context(), request)
+			if response.Allowed {
+				t.Fatal("the create was admitted")
 			}
 			if response.Result == nil || response.Result.Message != row.want {
 				t.Fatalf("denial = %#v, want %q", response.Result, row.want)

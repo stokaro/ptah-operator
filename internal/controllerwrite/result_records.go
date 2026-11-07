@@ -7,6 +7,7 @@ import (
 	"time"
 
 	api "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/resultcleanup"
 	"github.com/stokaro/ptah-operator/internal/resultcredentials"
 	"github.com/stokaro/ptah-operator/internal/resultdelivery"
 	"github.com/stokaro/ptah-operator/internal/resultdelivery/jobconfig"
@@ -46,9 +47,8 @@ func (v *Validator) validateResultRecord(ctx context.Context, req admissionv1.Ad
 			return decodeErr
 		}
 		if record.Spec.Type == "retired" {
-			if v.ResultCredentials == nil {
-				return denyf("result publication trust is not configured")
-			}
+			// Retirement issues nothing and reads only the API, so it needs no
+			// delivery trust: records outlive the setting that wrote them.
 			err = v.validateResultRetirement(ctx, record)
 		} else if record.Spec.Type == "credential" {
 			if !strings.HasPrefix(record.Name, jobconfig.SecretPrefix) {
@@ -91,8 +91,8 @@ func (v *Validator) validateResultRecord(ctx context.Context, req admissionv1.Ad
 		// API finalizer until the full window and current pins permit deletion.
 		// What this update asks for is the deletion, so that is what it is told.
 		if err == nil && !old.DeletionTimestamp.IsZero() && len(old.Finalizers) == 1 &&
-			old.Finalizers[0] == metav1.FinalizerDeleteDependents && len(next.Finalizers) == 0 && v.ResultCleanup != nil {
-			if err := v.ResultCleanup.AuthorizeDelete(ctx, old); err != nil {
+			old.Finalizers[0] == metav1.FinalizerDeleteDependents && len(next.Finalizers) == 0 {
+			if err := v.authorizeResultDeletion(ctx, old); err != nil {
 				return retentionDenial(old, err)
 			}
 		}
@@ -109,18 +109,12 @@ func (v *Validator) validateResultRecord(ctx context.Context, req admissionv1.Ad
 		if err := validateCredentialDeleteOptions(req); err != nil {
 			return err
 		}
-		if v.ResultCleanup != nil {
-			err = v.ResultCleanup.AuthorizeDelete(ctx, old)
-			var options metav1.DeleteOptions
-			if err != nil && len(req.Options.Raw) != 0 && json.Unmarshal(req.Options.Raw, &options) == nil &&
-				options.PropagationPolicy != nil && *options.PropagationPolicy == metav1.DeletePropagationForeground &&
-				v.ResultCleanup.AuthorizeForegroundRetirement(ctx, old) == nil {
-				err = nil
-			}
-		} else if old.Spec.Type == "credential" {
-			err = resultcredentials.ValidateRecordDelete(ctx, v.Reader, old)
-		} else {
-			return retentionDenial(old, nil)
+		err = v.authorizeResultDeletion(ctx, old)
+		var options metav1.DeleteOptions
+		if err != nil && v.ResultCleanup != nil && len(req.Options.Raw) != 0 && json.Unmarshal(req.Options.Raw, &options) == nil &&
+			options.PropagationPolicy != nil && *options.PropagationPolicy == metav1.DeletePropagationForeground &&
+			v.ResultCleanup.AuthorizeForegroundRetirement(ctx, old) == nil {
+			err = nil
 		}
 		if err != nil {
 			return retentionDenial(old, err)
@@ -132,6 +126,16 @@ func (v *Validator) validateResultRecord(ctx context.Context, req admissionv1.Ad
 		return resultWriteDenial("result record", req.Operation)
 	}
 	return nil
+}
+
+// authorizeResultDeletion asks the retention policy. With no policy nothing can
+// authorize a deletion, whichever kind of record it is: the window has no other
+// keeper.
+func (v *Validator) authorizeResultDeletion(ctx context.Context, record *api.PtahResultRecord) error {
+	if v.ResultCleanup == nil {
+		return resultcleanup.ErrRetained
+	}
+	return v.ResultCleanup.AuthorizeDelete(ctx, record)
 }
 
 // resultWriteDenial words a refused create or update by what was refused. The

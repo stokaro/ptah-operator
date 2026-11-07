@@ -43,9 +43,6 @@ func TestCredentialCleanupPreservesRecoveryAfterClaimRetires(t *testing.T) {
 			if err := c.Get(t.Context(), client.ObjectKeyFromObject(canonical), record); err != nil {
 				t.Fatal(err)
 			}
-			if err := ValidateRecordDelete(t.Context(), secretForbiddenReader{Reader: c}, record); !errors.Is(err, resultretention.ErrPinned) {
-				t.Fatalf("unsettled operation lost its credential record: %v", err)
-			}
 			// Even a lost parent must not let collection erase the projection
 			// while the resource still needs the original execution evidence.
 			if err := c.Client.Delete(t.Context(), record); err != nil {

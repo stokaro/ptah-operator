@@ -3,6 +3,7 @@ package certrotation_test
 import (
 	"maps"
 	"slices"
+	"strings"
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -124,6 +125,59 @@ func TestResultDeliveryChartWiresTrustAndScopedPermissions(t *testing.T) {
 		if !slices.Contains(rotator.Spec.Template.Spec.Containers[0].Args, arg) {
 			t.Fatalf("missing rotator argument %s", arg)
 		}
+	}
+}
+
+// The collector runs with delivery off, so the manager's grant on records does not
+// move with that setting. An installation that manages its own webhook trust cannot
+// turn delivery on at all, so that row is the one with no other way to retire them.
+func TestTheRecordGrantHoldsWithDeliveryOff(t *testing.T) {
+	t.Parallel()
+	external := []string{"--set-string", "webhook.existingSecret=mine", "--set-string", "webhook.caBundle=mine"}
+	for _, row := range []struct {
+		name string
+		args []string
+	}{
+		{name: "built-in rotation", args: nil},
+		{name: "a webhook Secret of its own", args: external},
+		{name: "rotation off, with a webhook Secret of its own", args: append([]string{"--set", "certificateRotation.enabled=false"}, external...)},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			objects := renderChart(t, append([]string{"--set", "resultDelivery.enabled=false"}, row.args...)...)
+			base := releaseName + "-ptah-operator"
+			var role rbacv1.ClusterRole
+			resultChartObject(t, objects, "ClusterRole", base, &role)
+			permissions := func(resource string) []string {
+				var verbs []string
+				for _, rule := range role.Rules {
+					if slices.Contains(rule.Resources, resource) {
+						verbs = append(verbs, rule.Verbs...)
+					}
+				}
+				slices.Sort(verbs)
+				return verbs
+			}
+			if got, want := permissions("ptahresultrecords"), []string{"create", "delete", "get", "list"}; !slices.Equal(got, want) {
+				t.Errorf("record grant = %v, want %v", got, want)
+			}
+			if got := permissions("tokenreviews"); len(got) != 0 {
+				t.Errorf("tokenreviews grant = %v, and only the receiver needs one", got)
+			}
+			if got := permissions("secrets"); len(got) != 0 {
+				t.Errorf("Secret grant = %v", got)
+			}
+			if got, want := permissions("pods/log"), []string{"get"}; !slices.Equal(got, want) {
+				t.Errorf("pods/log grant = %v, want %v", got, want)
+			}
+			var deployment appsv1.Deployment
+			resultChartObject(t, objects, "Deployment", base, &deployment)
+			for _, arg := range deployment.Spec.Template.Spec.Containers[0].Args {
+				if strings.HasPrefix(arg, "--result-") {
+					t.Errorf("manager argument %s with delivery off", arg)
+				}
+			}
+		})
 	}
 }
 

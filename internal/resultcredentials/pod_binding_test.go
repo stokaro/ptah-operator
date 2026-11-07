@@ -54,9 +54,6 @@ func TestPodBindingStoresNoSecretForAnyOperation(t *testing.T) {
 			if err := pins.ValidateRecordCreate(t.Context(), stored); err != nil {
 				t.Fatal(err)
 			}
-			if err := ValidateRecordDelete(t.Context(), c, stored); err == nil {
-				t.Fatal("the active first-Pod pin could be deleted")
-			}
 		})
 	}
 }

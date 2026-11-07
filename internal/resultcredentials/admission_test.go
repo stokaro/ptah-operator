@@ -180,13 +180,6 @@ func TestCredentialDeleteAdmission(t *testing.T) {
 					if (err == nil) != allow {
 						t.Fatalf("allow=%v, error=%v", allow, err)
 					}
-					record, err := credentialRecord(secret)
-					if err != nil {
-						t.Fatal(err)
-					}
-					if err := ValidateRecordDelete(t.Context(), reader, record); (err == nil) != allow {
-						t.Fatalf("record allow=%v, error=%v", allow, err)
-					}
 				})
 			}
 		})
@@ -237,9 +230,6 @@ func TestCredentialRecordAdmission(t *testing.T) {
 			}
 		})
 	}
-	if err := ValidateRecordDelete(t.Context(), c, record); err == nil {
-		t.Fatal("active record deletion admitted")
-	}
 	// Another valid certificate for the same identity is not the persisted key.
 	other, err := issuer.issue(f.Identity, secret.Name, time.Now(), time.Now().Add(time.Hour))
 	if err != nil {
@@ -253,8 +243,5 @@ func TestCredentialRecordAdmission(t *testing.T) {
 	owner.Status.ActiveOperation = nil
 	if err := c.Update(t.Context(), owner); err != nil {
 		t.Fatal(err)
-	}
-	if err := ValidateRecordDelete(t.Context(), c, record); err != nil {
-		t.Fatalf("retired record cleanup refused: %v", err)
 	}
 }
