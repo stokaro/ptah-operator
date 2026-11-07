@@ -297,6 +297,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:62ee3976426a4de3eaa18ec686e4556fab0a368b0a0707db09e90d0f6be4fecd",
       "reason": "Add the condition reason PodConfigurationError to the API package, which the runner imports for its types (#821). The manager sets it when the kubelet cannot configure an operation Pod, as with a missing Secret, and the runner has not started by then. It neither reads nor writes conditions, so what it accepts, enforces and returns is unchanged, a manager of any release reads its output as it read the last one, and protocol 1 stays."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:fe7cb2ef96fb1804dfd06bdfa5507df065a0d265c9abb4702fc55c5a9cb96d27",
+      "reason": "Add the condition reason WaitingForDatabaseLock to the API package, which the runner imports for its types (#822). The manager sets it on a migration Apply that lost the realm Lease. The runner neither reads nor writes conditions, so what it accepts, enforces and returns is unchanged, a manager of any release reads its output as it read the last one, and protocol 1 stays."
     }
   ]
 }

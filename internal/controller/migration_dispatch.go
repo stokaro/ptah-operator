@@ -112,7 +112,7 @@ func (d *migrationDispatch) Authorize(ctx context.Context) mutationlifecycle.Out
 }
 
 func (d *migrationDispatch) AcquireLease(ctx context.Context) mutationlifecycle.Outcome {
-	acquired, requeue, err := d.r.acquireMigrationApplyLock(ctx, d.migration)
+	acquired, requeue, err := d.r.waitForMigrationApplyLock(ctx, d.migration)
 	if err != nil {
 		return mutationlifecycle.Stop(ctrl.Result{}, err)
 	}

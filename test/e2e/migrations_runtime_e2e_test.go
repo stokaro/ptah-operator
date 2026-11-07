@@ -32,6 +32,7 @@ func runMigrationRuntimePhase(t *testing.T, phase phases.Of[phases.MigrationsInp
 			m.publish("runtime-source", m.fixtureDir(""), m.reference(""))
 		}},
 		{"pod-configuration-past-deadline", m.podConfigurationPastDeadline},
+		{"apply-asks-for-the-realm-lease", m.applyAsksForTheRealmLease},
 		{"approval-resource-replacement", m.approvalIdentityReplacement},
 		{"approval-policy-change", func() { m.approvalInputChange("policy") }},
 		{"approval-transaction-mode-change", func() { m.approvalInputChange("transaction-mode") }},
