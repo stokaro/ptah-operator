@@ -300,7 +300,8 @@ func terminalPodEvidence(pod *corev1.Pod, podUID, jobUID types.UID) bool {
 // stoppedAtInitContainer is a failed Pod whose init containers ran in order
 // until one exited nonzero, and in which nothing after that one started. The
 // kubelet leaves the later containers waiting, so they have no log to read. A
-// schema artifact the fetch step cannot parse ends a Pod this way.
+// schema artifact the fetch step refuses, such as a layer of another media
+// type, ends a Pod this way.
 func stoppedAtInitContainer(pod *corev1.Pod) bool {
 	if pod.Status.Phase != corev1.PodFailed {
 		return false

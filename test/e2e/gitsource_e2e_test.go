@@ -980,7 +980,7 @@ func (c *gitRun) unreadableSchema() {
 			return false, fmt.Sprintf("%s, ReconciliationFailed %+v", schema.Status.Phase, failed)
 		}
 		message = failed.Message
-		err := unreadableSourceSays(message, unreadablePartitionFile, unreadablePartitionReason)
+		err := unreadableSourceSays(message, unreadableSchemaFile, unreadableInheritsReason)
 		return err == nil, fmt.Sprint(err)
 	})
 	if strings.Contains(message, gitUnreadableDatabase) || strings.Contains(message, c.password) || strings.Contains(message, c.keys.Token) {
@@ -991,7 +991,7 @@ func (c *gitRun) unreadableSchema() {
 		if err := c.cluster.Client.List(c.ctx, events, client.InNamespace(c.in.TestNamespace)); err != nil {
 			return false, err.Error()
 		}
-		err := unreadableSourceEvent(events.Items, schema.UID, "OperationFailed", unreadablePartitionFile, unreadablePartitionReason)
+		err := unreadableSourceEvent(events.Items, schema.UID, "OperationFailed", unreadableSchemaFile, unreadableInheritsReason)
 		return err == nil, fmt.Sprint(err)
 	})
 	c.repairedCommitIsRead(schema)

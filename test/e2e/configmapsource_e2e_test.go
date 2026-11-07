@@ -667,7 +667,7 @@ func (c *configMapRun) unreadableSources() {
 	// A short retry: the proof waits through the failed attempts it reads.
 	execution := map[string]any{"activeDeadlineSeconds": int64(600), "failureRetryInterval": "10s"}
 
-	c.check(c.apply(c.sourceDocument(configMapUnreadableSchemaSource, map[string]string{"schema.sql": unreadablePartitionSchema})),
+	c.check(c.apply(c.sourceDocument(configMapUnreadableSchemaSource, map[string]string{"schema.sql": unreadableInheritsSchema})),
 		"apply ConfigMap %s", configMapUnreadableSchemaSource)
 	c.check(c.create(map[string]any{
 		"apiVersion": ptahSchemaAPIVersion, "kind": "PtahSchema",
@@ -692,11 +692,11 @@ func (c *configMapRun) unreadableSources() {
 			return false, fmt.Sprintf("%s, ReconciliationFailed %+v", schema.Status.Phase, failed)
 		}
 		message = failed.Message
-		err := unreadableSourceSays(message, unreadablePartitionFile, unreadablePartitionReason)
+		err := unreadableSourceSays(message, unreadableSchemaFile, unreadableInheritsReason)
 		return err == nil, fmt.Sprint(err)
 	})
 	c.checkUnreadableText(message)
-	c.waitForUnreadableEvent(schema.UID, "OperationFailed", unreadablePartitionFile, unreadablePartitionReason)
+	c.waitForUnreadableEvent(schema.UID, "OperationFailed", unreadableSchemaFile, unreadableInheritsReason)
 	retried := c.waitForUnreadableSchema("the read to fail again under its claim", func(s *ptahv1alpha1.PtahSchema) error {
 		if !schemaReadRetried(s, "") {
 			return fmt.Errorf("%s, operation %+v", s.Status.Phase, s.Status.ActiveOperation)
@@ -807,7 +807,7 @@ func (c *configMapRun) invalidSchema(target, execution map[string]any) {
 			return false, fmt.Sprintf("%s, ReconciliationFailed %+v", schema.Status.Phase, failed)
 		}
 		message = failed.Message
-		err := invalidSchemaSays(message, unreadablePartitionFile, invalidKeyReason)
+		err := invalidSchemaSays(message, unreadableSchemaFile, invalidKeyReason)
 		return err == nil, fmt.Sprint(err)
 	})
 	c.checkUnreadableText(message)
@@ -816,7 +816,7 @@ func (c *configMapRun) invalidSchema(target, execution map[string]any) {
 		if err := c.cluster.Client.List(c.ctx, events, client.InNamespace(c.in.TestNamespace)); err != nil {
 			return false, err.Error()
 		}
-		err := invalidSchemaEvent(events.Items, schema.UID, "OperationFailed", unreadablePartitionFile, invalidKeyReason)
+		err := invalidSchemaEvent(events.Items, schema.UID, "OperationFailed", unreadableSchemaFile, invalidKeyReason)
 		return err == nil, fmt.Sprint(err)
 	})
 	c.deleteAndWait(schema)
