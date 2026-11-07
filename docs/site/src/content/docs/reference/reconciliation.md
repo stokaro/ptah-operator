@@ -140,7 +140,7 @@ The operator rolls nothing back. Each branch has its own recovery, and
   says how far the run got. A migration that failed at a statement leaves a
   dirty revision row, and the history read that follows holds the resource
   `Blocked`, reason `HistoryDirty`, until a person
-  [repairs it with Ptah](../../use/migrations/#what-the-history-says). A run
+  [clears it with Ptah](../../use/recovery/#failed-statement). A run
   that stopped before it selected a migration leaves no row, and the resource
   starts again after `spec.execution.failureRetryInterval`. Either way a later
   plan needs its own approval under `apply: OnApproval`, because the run spent
@@ -406,7 +406,7 @@ never holds a shadow credential.
 
 A resource reads its database again at `status.nextReconciliationTime`. After
 a person changes the database outside the operator, such as clearing a dirty
-revision row with `ptah migrations repair`, the annotation
+revision row with `ptah migrations set`, the annotation
 `operator.ptah.run/read-requested-at`, set to an RFC 3339 instant, asks for
 that read now:
 

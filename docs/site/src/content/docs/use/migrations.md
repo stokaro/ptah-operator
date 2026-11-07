@@ -252,8 +252,9 @@ status:
 **Dirty.** A failed or interrupted run left a revision row behind. Nothing
 applies while one exists, and the operator never removes it: what a
 half-applied migration did to your data is a question for a person with the
-database in front of them. Ptah's own `migrations repair` and
-`migrations baseline` are how that ends.
+database in front of them.
+[A migration that failed at a statement](../recovery/#failed-statement) says how that
+ends, and what `ptah migrations repair --force` records instead.
 
 **Modified.** An applied migration's file no longer hashes to what the database
 recorded for it. This is the refusal the whole versioned workflow exists to
@@ -515,7 +516,7 @@ matters most:
 | --- | --- |
 | `UpToDate` | The database already had every planned migration |
 | `Applied` | Every selected migration is recorded applied |
-| `Failed` | A migration failed and committed nothing, or the run stopped before it selected one, as on a database it could not open. The first leaves a [dirty revision row](#what-the-history-says), which a person has to repair before anything else runs. After the second, fix the cause and the resource plans the run again |
+| `Failed` | A migration failed and committed nothing, or the run stopped before it selected one, as on a database it could not open. The first leaves a [dirty revision row](#what-the-history-says), which a person has to [clear](../recovery/#retry-failed-migration) before anything else runs. After the second, fix the cause and the resource plans the run again |
 | `Partial` | A migration committed some of its statements and not the rest |
 | `Unknown` | The evidence could not be read |
 

@@ -1,6 +1,6 @@
 ---
 title: Recover operator state
-description: What to preserve after losing a cluster or a namespace, in what order to restore it, and what the operator refuses to assume.
+description: What to preserve after losing a cluster or a namespace, in what order to restore it, what the operator refuses to assume, and how to retry a migration whose statement failed.
 ---
 
 The operations guide covers failures the operator recovers from on its own. This
@@ -13,6 +13,9 @@ epochs, policy and artifact digests, and the record of an Apply whose outcome
 nobody established. Reapplying spec-only YAML recreates the desired state and
 none of those, so it cannot tell you whether the migration you approved last
 week ran.
+
+[A migration that failed at a statement](#failed-statement) is the other case at
+this point: the cluster is intact, and the resource waits on a row in the database.
 
 ## What the operator keeps
 
@@ -297,6 +300,197 @@ Then start the manager and confirm each resource reaches a phase you expect. A
 resource that goes to `Blocked` is telling you which assumption did not hold;
 [Condition reasons](../../troubleshoot/condition-reasons/) says what each refusal
 means.
+
+## A migration that failed at a statement {#failed-statement}
+
+Nothing in the cluster is lost here. A migration failed at a statement, Ptah left
+a row in its revision table, and the resource stopped on that row:
+`status.lastRun.outcome` reads `Failed`, and the history read that follows sets
+`Blocked=True` with reason `HistoryDirty` and publishes no plan. A corrected
+artifact does not lift it, and neither does another read. The operator never
+writes to the revision table, so nothing runs until a person changes the row.
+
+Ask Ptah what the row records, at the version in
+`status.executionBinding.ptahVersion`. `./migrations` here and below is a local
+copy of the files the resource reads:
+
+```sh
+ptah migrations status --db-url "$DATABASE_URL" --migrations-dir ./migrations
+```
+
+```text
+Dirty Migration: version=2 state=failed direction=up applied=0/2
+Error Statement: INSERT INTO no_such_table (id) VALUES (1)
+```
+
+The row's state and count say which path applies:
+
+| The row | What the database holds | `status.lastRun.outcome` | What ends it |
+| --- | --- | --- | --- |
+| `state=failed applied=0/2` | Nothing of this migration: its transaction rolled back | `Failed` | [Retry the migration](#retry-failed-migration) |
+| `state=pending applied=0/2` | Nothing, once you have [checked](#failed-pending-row) | `Failed` where a MySQL DDL statement returned an error. `Unknown` where the session died and Ptah could not write the failure | [Retry the migration](#retry-failed-migration) |
+| `state=failed applied=1/2` | The statement before the failure. MySQL commits each DDL statement on its own, and `transactionMode: none` commits every statement | `Partial` | [Finish what it started](#failed-partial) |
+
+A run that ended `Unknown` or `Partial` also leaves
+[`status.unresolvedRun`](../operations/#a-migration-run-nobody-accounted-for), and the
+resource reads `Blocked` with reason `ApplyOutcomeUnknown` until a later read rewrites
+the reason.
+
+Everything below was measured with Ptah v0.22.0, directly and under this operator's
+edge build on Kubernetes 1.37.0, against PostgreSQL 17.11 and MySQL 8.4.11.
+
+### Retry the migration {#retry-failed-migration}
+
+The retry goes through the operator, so it gets a new plan, the approval the
+policy asks for, and a Job the resource records.
+
+#### Before you start {#retry-failed-before}
+
+You need write access to the target database, a local copy of the files, and `ptah`
+at the version above.
+
+The count has to read zero, and a [`state=pending` row](#failed-pending-row) has to be
+checked first. Then fix what made the statement fail: correct the file
+and publish it, or correct the database. `status.lastRun.message` names the
+statement and its SQLSTATE, and [the Pod log](../operations/#failed-apply-log) holds
+what the database answered. Retrying an unchanged file against an unchanged database
+fails the same way and leaves the same row.
+
+#### Run it {#retry-failed-run}
+
+If the file changed, point the resource at the corrected artifact. It stays
+`Blocked`.
+
+Then remove the row. `ptah migrations set` moves the revision boundary to the version
+before the one that failed and runs no SQL. Where the first migration is the one that
+failed, that is `--version 0`.
+
+```sh
+ptah migrations set --version 1 --db-url "$DATABASE_URL" --migrations-dir ./migrations
+```
+
+```text
+Current version is 1 (1 removed):
+
+  - 2 (Add Extras)
+```
+
+Ask for a read, then approve the plan it publishes. Under `apply: Always` the plan
+runs without an approval.
+
+```sh
+kubectl ptah refresh migration/orders -n application --wait
+kubectl ptah approve migration/orders -n application --wait
+```
+
+A run that ended `Unknown` needs one more step, because a read that still finds a
+migration pending leaves `status.unresolvedRun` in place: the resource stays `Blocked`
+and says `1 migrations are pending and the last run's outcome was Unknown, so none may
+run again`. Account for the run and
+[acknowledge it](../operations/#clear-unresolved-run) instead of asking for a read. The
+plan follows the acknowledgment.
+
+#### What proves it worked {#retry-failed-evidence}
+
+`status.lastRun.outcome` reads `Applied`, `status.lastRun.appliedVersions` names the
+version, and the resource reads `Ready=True` with reason `HistoryMatched`.
+
+Look in the database as well for what the migration creates. `Ready` says the
+revision table and the artifact agree, and [a forced repair](#what-repair-records)
+earns it too.
+
+#### Where to stop {#retry-failed-stop}
+
+Stop if the count is above zero: a second run repeats what committed. Stop if a
+version below the one that failed does not read `applied` in the status output,
+because `ptah migrations set` records every version up to `--version` as applied,
+whether it ran or not.
+
+#### If it fails {#retry-failed-recovery}
+
+A second failure leaves the state this section started from: `Failed`, `Blocked`,
+`HistoryDirty`, and the row with the new error. Nothing committed, so read the row
+again and go back to the cause.
+
+### Retrying outside the operator
+
+`ptah migrations up --allow-dirty` is the retry Ptah's own messages name. It reuses
+the row, and it runs the SQL under your login with no plan, no approval and no Job.
+The resource reads the result at its next read and reaches `Ready=True`, and
+`status.lastRun` goes on saying `Failed` until a later run replaces it. With nothing
+left pending, that read also settles a `status.unresolvedRun`, with no acknowledgment.
+
+```sh
+ptah migrations up --allow-dirty --to-version 2 --db-url "$DATABASE_URL" --migrations-dir ./migrations
+```
+
+Keep `--to-version`. Without it the command also applies every later migration that
+is pending.
+
+### A row in `state=pending` {#failed-pending-row}
+
+A MySQL DDL statement that returns an error leaves this row, with the error
+`statement execution outcome is unknown after process interruption`, although the
+process was alive and heard the answer. `status.lastRun.message` has the answer:
+`failed at statement 1 of 2 with SQLSTATE 42S02 (error 1146) and committed nothing`.
+On PostgreSQL the same statement leaves `state=failed`.
+
+`ptah migrations status` calls that run interrupted, and tells you to apply what is
+missing by hand and then run `ptah migrations repair --version 2`. Do that only if you
+do apply it by hand: [that repair](#what-repair-records) records the migration applied
+and runs nothing. `ptah migrations up --allow-dirty` refuses the row. Look in the
+database for what the statement would have changed, and where it changed nothing,
+[remove the row](#retry-failed-run).
+
+A session killed while its transaction was open leaves `state=pending` with no error.
+That transaction rolled back, and the retry above takes the row.
+
+### Finish what it started {#failed-partial}
+
+A count above zero means the first statements committed. The retry above runs what
+is left. It skips the committed statements, once it has checked that they are
+unchanged, and the statements after them may be corrected.
+`ptah migrations repair --version 2 --resume-from 2` does the same. When the committed
+statements did change, Ptah refuses:
+
+```text
+migration 2 cannot resume automatically: the already committed statement prefix changed after 1 of 2 statements committed; inspect the database before choosing a repair point
+```
+
+Do not remove the row here unless you have also undone what committed. Without that,
+the resource holds `status.unresolvedRun` until you acknowledge the run, and the next
+run starts from the first statement. On MySQL it stopped at
+`Table 'extras' already exists`, committed nothing, and left the resource `Blocked`
+again.
+
+### What repair records {#what-repair-records}
+
+:::caution
+Do not use `ptah migrations repair --force` for a statement that did not run. It
+records the migration as applied, and nothing runs it afterwards.
+:::
+
+`ptah migrations repair --version 2 --force` runs no SQL. It writes the row as
+`state=applied`, `applied=2/2`, prints `Repaired migration 2` and exits 0. On
+PostgreSQL and on MySQL, with the table that migration creates absent:
+
+- `ptah migrations status` says the database is up to date.
+- `ptah migrations up` says it is already up to date, and runs nothing.
+- The resource reaches `InSync`, with `Ready=True` and reason `HistoryMatched`.
+- A `status.unresolvedRun` settles at the next read, because nothing is left pending,
+  so nobody is asked to account for the run.
+- A corrected file later reads as modified, and the resource `Blocked` with
+  `HistoryModified`, because the row now holds the checksum of the file that failed.
+
+The flag is right when a person ran every statement by hand and wants that recorded.
+To take the record back, remove the row as in [Run it](#retry-failed-run), and the
+migration is pending again.
+
+Without `--force`, `repair` follows the row, and the refusal covers one shape. At
+`state=failed applied=0/2` it refuses and names the retry. At `state=failed applied=1/2`,
+and at the [MySQL row above](#failed-pending-row), it prints `Repaired migration 2` and
+writes `applied=2/2` without running what is left, because it takes you to have
+finished the migration by hand. Use `--resume-from` if you want Ptah to run the rest.
 
 ## What this page does not promise
 

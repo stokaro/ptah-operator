@@ -104,11 +104,13 @@ that a `PtahMigration` will not act on. Both set `Blocked=True`, leave `Ready`
 false, publish no plan, and dispatch nothing.
 
 The operator never writes to the revision table to clear either one. A dirty
-row says a run stopped without recording what it did, and a modified version
-says an applied migration's file no longer matches what the database recorded
-for it; in both cases the answer is in the database, not in the resource. The
-operator keeps reading the history at `spec.interval`, so a database somebody
-fixed converges on its own, and a spec edit is not part of the recovery.
+row says a run stopped, how far Ptah recorded it getting, and what failed, and a
+modified version says an applied migration's file no longer matches what the
+database recorded for it; in both cases the answer is in the database, not in the
+resource. The operator keeps reading the history at `spec.interval`, so a database
+somebody fixed converges on its own, and a spec edit alone does not end either.
+[A migration that failed at a statement](../../use/recovery/#failed-statement) says
+how a dirty row ends.
 
 [Run versioned migrations](../../use/migrations/#what-the-history-says) carries
 what each state means and which Ptah commands end it.
