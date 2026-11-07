@@ -2,6 +2,7 @@ package runnerharness_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -166,6 +167,34 @@ func TestCompareDocumentsIgnoresOnlyTheVolatileValues(t *testing.T) {
 
 // A row's whole record is compared, so an exit status, an argument, a line of
 // standard error and the frame's payload are held as a document's fields are.
+func TestDecodeDocumentReadsAVerificationItsOwnWay(t *testing.T) {
+	t.Parallel()
+	args := []string{"oci", "verify", "oci://registry/schema@sha256:" + strings.Repeat("a", 64), "--format", "json"}
+	reference := args[2]
+	report := fmt.Sprintf(`{"reference":%q,"digest":%q,"satisfied":[],"findings":[{"requirement":"artifact_types","detail":"refused"}]}`,
+		reference, "sha256:"+strings.Repeat("a", 64))
+	for _, test := range []struct {
+		name   string
+		exit   int
+		stdout string
+		want   bool
+	}{
+		{"a refusal's report", 2, report, true},
+		{"a verification that could not run", 2, "", true},
+		{"a success with no report", 0, "", false},
+		{"a failure with half a report", 2, `{"reference":`, false},
+		{"a failure with another document", 2, `{"findings":[]}`, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			err := runnerharness.DecodeDocument(args, test.exit, []byte(test.stdout))
+			if (err == nil) != test.want {
+				t.Fatalf("DecodeDocument() = %v, want accepted %t", err, test.want)
+			}
+		})
+	}
+}
+
 func TestCompareCapturesRefusesAChangedRecord(t *testing.T) {
 	t.Parallel()
 	row := func(mutate func(*runnerharness.Row)) runnerharness.Captures {

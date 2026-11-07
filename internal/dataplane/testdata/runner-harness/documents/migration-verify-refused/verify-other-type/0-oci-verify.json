@@ -1,0 +1,11 @@
+{
+  "reference": "oci://harness-registry:5000/migrations/migration-verify-refused@sha256:a1ff1bd38ad699e28dbd87ba09f2346b3ca6ff9b3602fefff3c690bf0afecebb",
+  "digest": "sha256:a1ff1bd38ad699e28dbd87ba09f2346b3ca6ff9b3602fefff3c690bf0afecebb",
+  "satisfied": [],
+  "findings": [
+    {
+      "requirement": "artifact_types",
+      "detail": "the artifact is \"application/vnd.stokaro.ptah.migrations.v1\", and the policy permits application/vnd.stokaro.ptah.harness.other.v1"
+    }
+  ]
+}

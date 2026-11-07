@@ -304,6 +304,14 @@ document the operator's decoders refuse fails the run instead of being written:
 fix the decoder first, and move any contract counter the
 [API compatibility page](../api-compatibility/#contract-counters) asks for.
 
+A verification's standard error is compared and never forwarded. On a refusal
+`ptah oci verify` writes its report to standard output and the same findings to
+standard error, and exits 2. The runner reads that as the policy's refusal, and
+passes on the requirement codes alone, only when the text is what
+`dataplane.VerifyRefusalDiagnostics` makes of the report; anything else reads as
+`invalid_verification_output`. A release that rewords that sentence moves the
+`schema-verify-refused` rows, and the capture fails until the function agrees.
+
 `make runner-harness` runs the same rows and compares. A change of shape is any
 difference left once the volatile values are masked: a field added, removed or
 retyped, an element added or removed, a contract version, an outcome, an exit

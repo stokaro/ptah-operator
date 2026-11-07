@@ -35,7 +35,11 @@ carries a `generateName`. A script that matches the whole text
 of `result publication retention has not authorized deletion` has to match its
 start, and one that matches `immutable operation binding` to find a refused
 deletion has to match that text too: a credential record now says it, and that
-sentence is left to an update. A script that reads `status.target.inventory` has
+sentence is left to an update. A script that matches `invalid_verification_output`
+to find an artifact the verification policy refused has to match the reason
+`PolicyRefused`, and one that waits on a `PtahMigration` so refused has to expect
+`Blocked` at its interval rather than a retry. A script that reads
+`status.target.inventory` has
 to expect a kind that is not a stem. Ptah Console up to 0.3.x misstates such a kind until
 [ptah-console#166](https://github.com/stokaro/ptah-console/issues/166) is fixed:
 it says a dropped extension's counts and findings disagree, and shows a changed

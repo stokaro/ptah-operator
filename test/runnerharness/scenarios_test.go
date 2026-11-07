@@ -4,6 +4,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -139,14 +140,15 @@ func engineFile(engine string) string {
 	return "postgresql"
 }
 
-// verificationRefusals are the two ways a Verify ends short of success: the
-// runner's own refusal of a requested tag, and Ptah's.
+// verificationRefusals are the ways a Verify ends short of success: the runner's
+// own refusal of a requested tag, Ptah's refusal, with one finding and with
+// several, and a verification Ptah could not run.
 //
-// Ptah's refusal writes its report and exits 2, and also writes the refusal to
-// standard error. The runner treats anything on a verification's standard error
-// as invalid output, so this row reads invalid_verification_output where the
-// runner's own unit tests, which script a refusal with nothing on standard
-// error, read verification_refused. This records what happens today.
+// Ptah's refusal writes its report and exits 2, and also writes the findings to
+// standard error. The runner reads that text as a refusal only when it is what
+// dataplane.VerifyRefusalDiagnostics makes of the report, so these rows hold that
+// text to the pinned image. A failure that is no verdict has a line on standard
+// error too, and no report.
 func verificationRefusals(t *testing.T, l *lab) {
 	t.Helper()
 	family := "schema-verify-refused"
@@ -156,7 +158,26 @@ func verificationRefusals(t *testing.T, l *lab) {
 	run.verify("verify-digest-pin", fixture(t, "verification-policy-digest-pin.yaml"), wantCode("verification_refused"))
 	run.schema.Spec.Desired.OCIRef = run.schema.Status.Source.ResolvedReference
 	run.schema.Status.Source.RequestedReference = run.schema.Status.Source.ResolvedReference
-	run.verify("verify-other-type", harnessFixture(t, "verification-policy-other-type.yaml"), wantCode("invalid_verification_output"))
+	refused := run.verify("verify-other-type", harnessFixture(t, "verification-policy-other-type.yaml"), wantCode("verification_refused"))
+	requireRequirements(t, refused, "artifact_types")
+	refused = run.verify("verify-two-findings", harnessFixture(t, "verification-policy-two-findings.yaml"), wantCode("verification_refused"))
+	requireRequirements(t, refused, "artifact_types", "require_signature")
+	run.verify("verify-unreadable-policy", harnessFixture(t, "verification-policy-unreadable.yaml"), wantCode("invalid_verification_output"))
+
+	migrationFamily := "migration-verify-refused"
+	migrations := l.publish(t, "migrations", "migrations/"+migrationFamily, "v1", "--migrations-dir", "/fixtures/migrations-"+engineFile(enginePostgres))
+	migration := l.newMigration(t, migrationFamily, enginePostgres, l.databaseURL(enginePostgres, "harness_absent"), ociSource(migrations))
+	migration.resolve("resolve")
+	refused = migration.verify("verify-other-type", harnessFixture(t, "verification-policy-other-type.yaml"), wantCode("verification_refused"))
+	requireRequirements(t, refused, "artifact_types")
+}
+
+// requireRequirements holds a refusal's frame to the requirements Ptah named.
+func requireRequirements(t *testing.T, outcome rowOutcome, want ...string) {
+	t.Helper()
+	if !slices.Equal(outcome.result.VerificationRequirements, want) {
+		t.Errorf("the refusal names %v, want %v", outcome.result.VerificationRequirements, want)
+	}
 }
 
 // featureLifecycle is what earlier repins missed: statements a feature owner

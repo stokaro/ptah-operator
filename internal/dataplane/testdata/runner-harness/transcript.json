@@ -3578,6 +3578,76 @@
     }
   },
   {
+    "name": "migration-verify-refused/resolve",
+    "operation": "resolve",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "oci resolve",
+        "args": [
+          "oci",
+          "resolve",
+          "oci://harness-registry:5000/migrations/migration-verify-refused:v1",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/migration-verify-refused/resolve/0-oci-resolve.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "operation": "resolve",
+      "operationId": "sha256:a1c679374c5522851e18c0ee3fccd7ead2d78f160797d0d684a5d74650d8efe2",
+      "protocolVersion": 1,
+      "resolvedDigest": "<volatile>",
+      "resolvedMediaType": "application/vnd.oci.image.manifest.v1+json",
+      "resolvedReference": "oci://harness-registry:5000/migrations/migration-verify-refused@<digest>",
+      "resolvedSize": 2074,
+      "stdout": ""
+    }
+  },
+  {
+    "name": "migration-verify-refused/verify-other-type",
+    "operation": "verify",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "oci verify",
+        "args": [
+          "oci",
+          "verify",
+          "oci://harness-registry:5000/migrations/migration-verify-refused@<digest>",
+          "--policy",
+          "/work/ptah-verification-policy-<random>.yaml",
+          "--format",
+          "json"
+        ],
+        "exit": 2,
+        "stderr": "error: the artifact does not satisfy the verification policy (oci://harness-registry:5000/migrations/migration-verify-refused@<digest>)\n  artifact_types: the artifact is \"application/vnd.stokaro.ptah.migrations.v1\", and the policy permits application/vnd.stokaro.ptah.harness.other.v1\n",
+        "stdout": "runner-harness/documents/migration-verify-refused/verify-other-type/0-oci-verify.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "error": {
+        "code": "verification_refused",
+        "message": "artifact does not satisfy the verification policy"
+      },
+      "operation": "verify",
+      "operationId": "sha256:7ec78623647f5e4b8c2a774ead4475080ee4a76ec904a1547c7a50a0662464e9",
+      "protocolVersion": 1,
+      "resolvedDigest": "<volatile>",
+      "stdout": "",
+      "verificationPolicyDigest": "sha256:5c26424746ad176d68e5d7c64ee3603f3d8ed4a3045acb15d44600acf8aaec07",
+      "verificationRequirements": [
+        "artifact_types"
+      ]
+    }
+  },
+  {
     "name": "migrations-checkpoint-postgres/apply",
     "operation": "migration-apply",
     "source": "oci",
@@ -8993,15 +9063,93 @@
     "result": {
       "childExitCode": 2,
       "error": {
-        "code": "invalid_verification_output",
-        "message": "verification command emitted unexpected diagnostics"
+        "code": "verification_refused",
+        "message": "artifact does not satisfy the verification policy"
       },
       "operation": "verify",
       "operationId": "sha256:a9dcd86265665709e2f9a565142d169477d858c77e0a21d6bd1350db2242b72e",
       "protocolVersion": 1,
       "resolvedDigest": "<volatile>",
       "stdout": "",
-      "verificationPolicyDigest": "sha256:5c26424746ad176d68e5d7c64ee3603f3d8ed4a3045acb15d44600acf8aaec07"
+      "verificationPolicyDigest": "sha256:5c26424746ad176d68e5d7c64ee3603f3d8ed4a3045acb15d44600acf8aaec07",
+      "verificationRequirements": [
+        "artifact_types"
+      ]
+    }
+  },
+  {
+    "name": "schema-verify-refused/verify-two-findings",
+    "operation": "verify",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "oci verify",
+        "args": [
+          "oci",
+          "verify",
+          "oci://harness-registry:5000/schemas/schema-verify-refused@<digest>",
+          "--policy",
+          "/work/ptah-verification-policy-<random>.yaml",
+          "--format",
+          "json"
+        ],
+        "exit": 2,
+        "stderr": "error: the artifact does not satisfy the verification policy (oci://harness-registry:5000/schemas/schema-verify-refused@<digest>)\n  artifact_types: the artifact is \"application/vnd.stokaro.ptah.schema.v1\", and the policy permits application/vnd.stokaro.ptah.harness.other.v1\n  require_signature: no signature is attached; note that this checks a signature EXISTS and never that it is valid, which stays with the signing tool\n",
+        "stdout": "runner-harness/documents/schema-verify-refused/verify-two-findings/0-oci-verify.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "error": {
+        "code": "verification_refused",
+        "message": "artifact does not satisfy the verification policy"
+      },
+      "operation": "verify",
+      "operationId": "sha256:06ed7d6c2fdab829cf952bde3b5e532f455d9802096c7b9251eea8e2b76051da",
+      "protocolVersion": 1,
+      "resolvedDigest": "<volatile>",
+      "stdout": "",
+      "verificationPolicyDigest": "sha256:16be49cd84bda476519ced334bf36eccb7e535095f2804f0a8a53cd3eda83de3",
+      "verificationRequirements": [
+        "artifact_types",
+        "require_signature"
+      ]
+    }
+  },
+  {
+    "name": "schema-verify-refused/verify-unreadable-policy",
+    "operation": "verify",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "oci verify",
+        "args": [
+          "oci",
+          "verify",
+          "oci://harness-registry:5000/schemas/schema-verify-refused@<digest>",
+          "--policy",
+          "/work/ptah-verification-policy-<random>.yaml",
+          "--format",
+          "json"
+        ],
+        "exit": 2,
+        "stderr": "error: verification policy /work/ptah-verification-policy-<random>.yaml: unsupported version 99: expected 1\n"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "error": {
+        "code": "invalid_verification_output",
+        "message": "verification command emitted unexpected diagnostics"
+      },
+      "operation": "verify",
+      "operationId": "sha256:e659a5756ee55bee934245b7f27b9ae957304f8ac635c906c2f600bb267b5cf6",
+      "protocolVersion": 1,
+      "resolvedDigest": "<volatile>",
+      "stdout": "",
+      "verificationPolicyDigest": "sha256:21a4d27abf6ea5774a3dd8f669d6e907655004bc391da668517ddfb9bec116c6"
     }
   },
   {

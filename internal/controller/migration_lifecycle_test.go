@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -181,6 +182,71 @@ func TestAHistoryPastTheArtifactIsRefusedRatherThanCalledInSync(t *testing.T) {
 		actual.Status.History.AppliedCount != 1 {
 		t.Fatalf("history = %#v, want the reading that disagrees with itself kept as read",
 			actual.Status.History)
+	}
+}
+
+// A refused artifact holds the resource until the next cycle, and that cycle
+// starts from resolution, so an artifact the policy accepts carries it on: the
+// Blocked condition goes with the reading that follows, and a plan is published.
+func TestMigrationResumesAfterAPolicyRefusalAtItsInterval(t *testing.T) {
+	t.Parallel()
+
+	migration := migrationFixture()
+	harness := newMigrationLifecycle(t, migration)
+	clock := movableMigrationClock(harness.reconciler, harness.api)
+
+	resolved := runner.Result{
+		Operation: runner.OperationResolve, ChildExitCode: 0,
+		ResolvedDigest:    testDigest,
+		ResolvedReference: "oci://registry.example/team/migrations@" + testDigest,
+		ResolvedMediaType: "application/vnd.oci.image.manifest.v1+json", ResolvedSize: 321,
+	}
+	harness.claimed(operatorv1alpha1.MigrationOperationResolve)
+	harness.answer(resolved)
+	harness.claimed(operatorv1alpha1.MigrationOperationVerify)
+	harness.answer(runner.Result{
+		Operation: runner.OperationVerify, ChildExitCode: 2, ResolvedDigest: testDigest,
+		VerificationRequirements: []string{"artifact_types"}, VerificationPolicyDigest: migrationVerificationPolicyDigest(),
+		Error: &runner.ResultError{Code: "verification_refused", Message: "artifact does not satisfy the verification policy"},
+	})
+	harness.phase(operatorv1alpha1.MigrationPhaseBlocked)
+	if harness.migration().Status.ActiveOperation != nil {
+		t.Fatalf("the refusal left a claim: %#v", harness.migration().Status.ActiveOperation)
+	}
+
+	next := harness.migration().Status.NextReconciliationTime
+	if next == nil {
+		t.Fatal("the refusal scheduled no next read")
+	}
+	clock.now = next.Add(time.Second)
+	harness.claimed(operatorv1alpha1.MigrationOperationResolve)
+	harness.answer(resolved)
+	harness.claimed(operatorv1alpha1.MigrationOperationVerify)
+	harness.answer(runner.Result{
+		Operation: runner.OperationVerify, ChildExitCode: 0,
+		ObservedArtifactType: dataplane.MigrationArtifactType, ResolvedDigest: testDigest,
+	})
+	harness.phase(operatorv1alpha1.MigrationPhaseReading)
+	verified := meta.FindStatusCondition(harness.migration().Status.Conditions, operatorv1alpha1.ConditionMigrationArtifactVerified)
+	if verified == nil || verified.Status != metav1.ConditionTrue {
+		t.Fatalf("ArtifactVerified after an accepted artifact = %#v", verified)
+	}
+
+	harness.claimed(operatorv1alpha1.MigrationOperationHistory)
+	pending := dataplane.MigrationStatusReport{
+		ContractVersion: dataplane.SupportedMigrationStatusContract,
+		TotalMigrations: 1, HasPendingChanges: true,
+		Migrations: []dataplane.MigrationRecord{{Version: 1, Checksum: "checksum-1", State: dataplane.MigrationStatePending}},
+	}
+	harness.answer(runner.Result{
+		Operation: runner.OperationMigrationHistory, ChildExitCode: 0,
+		CoordinationDigest: harness.coordinationDigest(), TargetIdentityDigest: testDigest,
+		MigrationHistory: &pending,
+	})
+	actual := harness.migration()
+	blocked := meta.FindStatusCondition(actual.Status.Conditions, operatorv1alpha1.ConditionMigrationBlocked)
+	if blocked == nil || blocked.Status != metav1.ConditionFalse || actual.Status.Plan == nil {
+		t.Fatalf("after the reading: Blocked %#v, plan %#v, phase %s", blocked, actual.Status.Plan, actual.Status.Phase)
 	}
 }
 

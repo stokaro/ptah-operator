@@ -19,6 +19,11 @@ func DecodeDocument(args []string, exit int, stdout []byte) error {
 		_, err := dataplane.DecodeResolve(stdout)
 		return err
 	case "oci verify":
+		// A verification Ptah could not run stops before its report, and says
+		// why on standard error. A verdict always has a report.
+		if exit != 0 && len(stdout) == 0 {
+			return nil
+		}
 		_, err := dataplane.DecodeVerify(stdout)
 		return err
 	case "oci inspect":

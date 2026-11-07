@@ -1,0 +1,15 @@
+{
+  "reference": "oci://harness-registry:5000/schemas/schema-verify-refused@sha256:26c4d9a91535787269d7508b207ac4f144812b7ceaa8b1d8c18bdcd6b1b7e0f0",
+  "digest": "sha256:26c4d9a91535787269d7508b207ac4f144812b7ceaa8b1d8c18bdcd6b1b7e0f0",
+  "satisfied": [],
+  "findings": [
+    {
+      "requirement": "artifact_types",
+      "detail": "the artifact is \"application/vnd.stokaro.ptah.schema.v1\", and the policy permits application/vnd.stokaro.ptah.harness.other.v1"
+    },
+    {
+      "requirement": "require_signature",
+      "detail": "no signature is attached; note that this checks a signature EXISTS and never that it is valid, which stays with the signing tool"
+    }
+  ]
+}
