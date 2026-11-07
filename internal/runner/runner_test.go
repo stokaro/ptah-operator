@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stokaro/ptah-operator/internal/dataplane"
@@ -1798,30 +1799,36 @@ func TestApplyRechecksDispatchDeadlineImmediatelyBeforeExecution(t *testing.T) {
 func TestApplyExecutionDeadlineCancelsAStartedChild(t *testing.T) {
 	t.Parallel()
 
-	planDir := t.TempDir()
-	plan := []byte(validPlanDocument("CREATE TABLE deadline_guard (id bigint)"))
-	if err := os.WriteFile(filepath.Join(planDir, "chunk-001"), plan, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	deadline := time.Now().UTC().Add(250 * time.Millisecond)
-	executor := &contextDeadlineExecutor{}
-	environment := append(
-		databaseEnvironment("execution-deadline"),
-		envPlanDir+"="+planDir,
-		envExpectedPlanDigest+"="+sha256Digest(plan),
-		envExpectedCoordination+"="+testCoordinationDigest(),
-		envExpectedTargetDigest+"="+databaseTargetDigest(t),
-		envDispatchNotAfter+"="+deadline.Format(time.RFC3339Nano),
-		envExecutionNotAfter+"="+deadline.Format(time.RFC3339Nano),
-	)
-	started := time.Now()
-	result := Run(context.Background(), Config{Operation: OperationApply, Environment: withRunnerProtocol(environment), Executor: executor})
-	if elapsed := time.Since(started); elapsed > 2*time.Second {
-		t.Fatalf("deadline cancellation took %s", elapsed)
-	}
-	if executor.calls != 1 || result.Error == nil || !result.MutationStarted || !result.Uncertain {
-		t.Fatalf("Run() = %#v, calls = %d", result, executor.calls)
-	}
+	// The clock of a synctest bubble moves only when everything in it is blocked,
+	// so the window cannot end before the child starts and the child stops at
+	// the deadline itself.
+	synctest.Test(t, func(t *testing.T) {
+		planDir := t.TempDir()
+		plan := []byte(validPlanDocument("CREATE TABLE deadline_guard (id bigint)"))
+		if err := os.WriteFile(filepath.Join(planDir, "chunk-001"), plan, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		const window = time.Minute
+		started := time.Now()
+		deadline := started.UTC().Add(window)
+		executor := &contextDeadlineExecutor{}
+		environment := append(
+			databaseEnvironment("execution-deadline"),
+			envPlanDir+"="+planDir,
+			envExpectedPlanDigest+"="+sha256Digest(plan),
+			envExpectedCoordination+"="+testCoordinationDigest(),
+			envExpectedTargetDigest+"="+databaseTargetDigest(t),
+			envDispatchNotAfter+"="+deadline.Format(time.RFC3339Nano),
+			envExecutionNotAfter+"="+deadline.Format(time.RFC3339Nano),
+		)
+		result := Run(context.Background(), Config{Operation: OperationApply, Environment: withRunnerProtocol(environment), Executor: executor})
+		if elapsed := time.Since(started); elapsed != window {
+			t.Fatalf("the child stopped %s after the start, want its %s window", elapsed, window)
+		}
+		if executor.calls != 1 || result.Error == nil || !result.MutationStarted || !result.Uncertain {
+			t.Fatalf("Run() = %#v, calls = %d", result, executor.calls)
+		}
+	})
 }
 
 func TestApplyFailureIsUncertainAndMustNotBeReplayed(t *testing.T) {
@@ -4292,34 +4299,41 @@ func TestMigrationApplyRechecksDeadlinesImmediatelyBeforeExecution(t *testing.T)
 }
 
 // The execution deadline is the child's, not only the dispatch decision's: a
-// migration that started inside its window is cancelled when the window ends.
+// migration that started inside its window is canceled when the window ends.
+//
+// The clock of a synctest bubble moves only when everything in it is blocked, so
+// the window cannot end before the child starts and the child stops at the
+// deadline itself.
 func TestMigrationApplyExecutionDeadlineCancelsAStartedChild(t *testing.T) {
 	t.Parallel()
 
-	deadline := time.Now().UTC().Add(250 * time.Millisecond)
-	executor := &contextDeadlineExecutor{}
-	environment := append(migrationApplyEnvironment(t, "migration-execution-deadline"),
-		envDispatchNotAfter+"="+deadline.Format(time.RFC3339Nano),
-		envExecutionNotAfter+"="+deadline.Format(time.RFC3339Nano),
-	)
-	started := time.Now()
-	result := Run(context.Background(), Config{
-		Operation:   OperationMigrationApply,
-		Environment: withRunnerProtocol(environment),
-		Executor:    executor,
+	synctest.Test(t, func(t *testing.T) {
+		const window = time.Minute
+		started := time.Now()
+		deadline := started.UTC().Add(window)
+		executor := &contextDeadlineExecutor{}
+		environment := append(migrationApplyEnvironment(t, "migration-execution-deadline"),
+			envDispatchNotAfter+"="+deadline.Format(time.RFC3339Nano),
+			envExecutionNotAfter+"="+deadline.Format(time.RFC3339Nano),
+		)
+		result := Run(context.Background(), Config{
+			Operation:   OperationMigrationApply,
+			Environment: withRunnerProtocol(environment),
+			Executor:    executor,
+		})
+		if executor.calls != 1 {
+			t.Fatalf("executor calls = %d, want the child to have started", executor.calls)
+		}
+		if elapsed := time.Since(started); elapsed != window {
+			t.Fatalf("the child stopped %s after the start, want its %s window", elapsed, window)
+		}
+		if result.Error == nil {
+			t.Fatalf("Run() = %#v, want the canceled child reported", result)
+		}
+		// A canceled migration may already have committed statements, and nothing
+		// outside the database can say which.
+		if !result.MutationStarted || !result.Uncertain {
+			t.Fatalf("a canceled migration child reported MutationStarted=%t Uncertain=%t", result.MutationStarted, result.Uncertain)
+		}
 	})
-	if executor.calls != 1 {
-		t.Fatalf("executor calls = %d, want the child to have started", executor.calls)
-	}
-	if elapsed := time.Since(started); elapsed > 10*time.Second {
-		t.Fatalf("the child ran %s past its execution deadline", elapsed)
-	}
-	if result.Error == nil {
-		t.Fatalf("Run() = %#v, want the cancelled child reported", result)
-	}
-	// A cancelled migration may already have committed statements, and nothing
-	// outside the database can say which.
-	if !result.MutationStarted || !result.Uncertain {
-		t.Fatalf("a cancelled migration child reported MutationStarted=%t Uncertain=%t", result.MutationStarted, result.Uncertain)
-	}
 }
