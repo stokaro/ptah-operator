@@ -111,11 +111,19 @@ controller runs there, so what they prove is the API server's own verdict:
   chart's approver ClusterRole it is admitted and stamped, without create it is
   refused by the authorizer, a server dry run is named and not stored, and a
   schema that moves after the last read is admission's refusal.
-- `resultstore` publishes immutable result Secrets against the API server and
-  tests interrupted writes, concurrent redelivery, payload limits, and readback
-  after explicit Job/Pod deletion. It runs as the test administrator, so it
-  proves storage semantics, not receiver authorization, RBAC, or garbage
-  collection. The result receiver is not yet connected to the operator.
+- `resultstore` publishes immutable `PtahResultRecord` objects against the API
+  server and tests interrupted writes, concurrent redelivery, payload limits,
+  readback after explicit Job/Pod deletion, and the API server's preconditions
+  on the collector's deletions. Those tests run as the test administrator, so
+  they prove storage semantics. `TestPublicationWithNoSecretReadPermission`
+  publishes and reads as a user granted only get and create on result records,
+  and `TestPodBoundReceiverTokenCannotAuthenticateToAPI` verifies a Pod-bound
+  token as a user granted only TokenReview create and Pod get. Both hold the
+  grants they name, and neither proves the chart's RBAC. No receiver, controller
+  or garbage collector runs here. `cmd/manager/main.go` starts the receiver and
+  the collector when `--result-endpoint` is set, which the chart does while
+  `resultDelivery.enabled` holds its default, so installed delivery is proven in
+  `test/e2e`.
 
 The API server reports only the first policy that refused a request, in no
 fixed order, so a refusal row is shaped so that one policy refuses it.

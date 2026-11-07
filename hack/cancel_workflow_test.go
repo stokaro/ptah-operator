@@ -179,6 +179,12 @@ func TestCancelWorkflowCancelsOnlyTheClosedPullRequestsRuns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The script starts a process per run, and a loaded machine stretches that
+	// without bound. It has the job's own limit here, as it has in a pull request.
+	limit := time.Duration(workflow.Jobs["cancel"].TimeoutMinutes) * time.Minute
+	if limit <= 0 {
+		t.Fatalf("%s: job cancel has no timeout-minutes", cancelWorkflowPath)
+	}
 
 	type run struct {
 		ID         int64  `json:"id"`
@@ -344,7 +350,7 @@ esac
 		if err := os.Mkdir(runnerTemp, 0o700); err != nil {
 			t.Fatal(err)
 		}
-		ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), limit)
 		defer cancel()
 		command := exec.CommandContext(ctx, "bash", "--noprofile", "--norc", "-c", step.Run)
 		command.Env = []string{
@@ -358,7 +364,7 @@ esac
 		}
 		output, err := command.CombinedOutput()
 		if ctx.Err() != nil {
-			t.Fatalf("the cancellation did not finish: %v", ctx.Err())
+			t.Fatalf("the cancellation did not finish within the job's %s: %v\n%s", limit, ctx.Err(), output)
 		}
 		result := outcome{output: string(output)}
 		if err != nil {
