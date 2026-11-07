@@ -1082,6 +1082,7 @@ func (r *MigrationReconciler) consumeMigrationResult(
 			// step: the history is read next.
 			migration.Status.Phase = operatorv1alpha1.MigrationPhaseReading
 			meta.RemoveStatusCondition(&migration.Status.Conditions, operatorv1alpha1.ConditionMigrationArtifactVerified)
+			endMigrationRefusal(migration, operatorv1alpha1.ReasonCommitResolved, migrationSourceResolvedMessage)
 			setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionTrue,
 				operatorv1alpha1.ReasonCommitResolved,
 				fmt.Sprintf("The Git ref resolved to commit %s; the history is read next", revision.Commit))
@@ -1093,6 +1094,9 @@ func (r *MigrationReconciler) consumeMigrationResult(
 		if _, err := ocireference.Parse(result.ResolvedReference); err != nil {
 			return r.retryMigrationOperation(ctx, migration, job, errors.New("the resolved reference is not a credential-free OCI reference"))
 		}
+		// A refusal is an answer about one artifact. Another digest under the
+		// reference is another artifact, whatever Verify goes on to say of it.
+		moved := migration.Status.Artifact != nil && migration.Status.Artifact.Digest != result.ResolvedDigest
 		migration.Status.Artifact = &operatorv1alpha1.SourceAccessBinding{
 			ResolvedReference: result.ResolvedReference,
 			Digest:            result.ResolvedDigest,
@@ -1106,6 +1110,10 @@ func (r *MigrationReconciler) consumeMigrationResult(
 		migration.Status.Phase = operatorv1alpha1.MigrationPhaseVerifying
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationArtifactVerified, metav1.ConditionUnknown,
 			operatorv1alpha1.ReasonDigestPinned, "The artifact resolved to a digest and has not been verified yet")
+		if moved {
+			endMigrationRefusal(migration, operatorv1alpha1.ReasonDigestPinned,
+				"The reference resolved to another digest, and nothing has refused that artifact")
+		}
 	case operatorv1alpha1.MigrationOperationVerify:
 		if result.ObservedArtifactType != dataplane.MigrationArtifactType {
 			return r.retryMigrationOperation(ctx, migration, job,
@@ -1114,6 +1122,8 @@ func (r *MigrationReconciler) consumeMigrationResult(
 		migration.Status.Phase = operatorv1alpha1.MigrationPhaseReading
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationArtifactVerified, metav1.ConditionTrue,
 			operatorv1alpha1.ReasonPolicySatisfied, "The resolved artifact satisfied its verification policy")
+		endMigrationRefusal(migration, operatorv1alpha1.ReasonPolicySatisfied,
+			"The resolved artifact satisfied its verification policy, and nothing refuses it")
 	case operatorv1alpha1.MigrationOperationHistory:
 		if result.MigrationHistory == nil {
 			return r.retryMigrationOperation(ctx, migration, job, errors.New("the history result carries no status document"))
@@ -1159,6 +1169,14 @@ func (r *MigrationReconciler) consumeMigrationResult(
 	if err := r.markJobHarvested(ctx, job); err != nil {
 		return ctrl.Result{}, err
 	}
+	// A reading that leaves nothing to apply, or a history nothing may run
+	// against, leaves no plan for an approval to name. The plan can still come
+	// back, and a decision does not wait for it.
+	if operation.Type == operatorv1alpha1.MigrationOperationHistory && migration.Status.Phase != operatorv1alpha1.MigrationPhasePlanning {
+		if err := r.markMigrationApprovalsStale(ctx, migration, nil, operatorv1alpha1.ReasonPlanNoLongerCurrent, migrationPlanLeftMessage); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
 	if err := r.retireMigrationClaim(ctx, before, migration, mutationlifecycle.DispositionAccounted, false); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -1176,6 +1194,11 @@ func (r *MigrationReconciler) consumeMigrationResult(
 		if err := r.publishMigrationPlan(ctx, migration, *pendingPlanReport); err != nil {
 			return r.migrationOperationFailure(ctx, migration, err)
 		}
+		// Before the status names the plan, for the reason a refusal does. A pass
+		// that stops here finds the old plan's evidence moved and reads again.
+		if err := r.markMigrationApprovalsStale(ctx, migration, migration.Status.Plan, operatorv1alpha1.ReasonPlanNoLongerCurrent, migrationPlanLeftMessage); err != nil {
+			return ctrl.Result{}, err
+		}
 		if err := r.patchMigrationStatus(ctx, planned, migration); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -1187,11 +1210,18 @@ func (r *MigrationReconciler) consumeMigrationResult(
 // Another attempt reads the same answer from the same artifact and policy, so
 // the resource stops at Blocked with the requirements the policy named, and
 // starts the read-only chain again from resolution at its interval, when a moved
-// tag or a changed policy can give another. No plan outlives the refusal.
+// tag or a changed policy can give another. No plan outlives the refusal, and
+// no decision does: the same artifact accepted later publishes the same plan
+// under the same fingerprint, so an approval left standing would run it with
+// nobody having looked again.
 //
 // The harvest compared the claim's inputs a moment ago, so a policy read here
 // that differs from the result's digest is a policy that just moved, and the
 // claim's retry reads it.
+//
+// The approvals go before the status that says why. A pass that stops between
+// the two harvests this Job again and finds them stale already; in the other
+// order a resource reads as refused with a decision still good.
 func (r *MigrationReconciler) refuseMigrationArtifact(
 	ctx context.Context,
 	migration *operatorv1alpha1.PtahMigration,
@@ -1204,6 +1234,10 @@ func (r *MigrationReconciler) refuseMigrationArtifact(
 		return r.retryMigrationOperation(ctx, migration, job, errVerificationRefusalEvidence)
 	}
 	if err := r.markJobHarvested(ctx, job); err != nil {
+		return ctrl.Result{}, err
+	}
+	if err := r.markMigrationApprovalsStale(ctx, migration, nil, operatorv1alpha1.ReasonPolicyRefused,
+		"The verification policy refused the artifact after this approval was written, so a plan published after the refusal needs a new approval"); err != nil {
 		return ctrl.Result{}, err
 	}
 	operation := migration.Status.ActiveOperation
@@ -1231,6 +1265,52 @@ func (r *MigrationReconciler) refuseMigrationArtifact(
 	r.observeMigrationOperation(operation, telemetry.OperationSucceeded)
 	r.event(migration, corev1.EventTypeWarning, "ArtifactVerificationRefused", "%s", message)
 	return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
+}
+
+// migrationPlanLeftMessage is what an approval says once a reading ended somewhere
+// other than the plan it names.
+const migrationPlanLeftMessage = "A reading of the database ended somewhere other than the plan this approval names, so that plan needs a new approval if it is published again"
+
+// migrationSourceResolvedMessage is what a refusal's conditions say once a Git
+// or ConfigMap source was read: neither has a verification policy to refuse it.
+const migrationSourceResolvedMessage = "The source was read, and nothing refuses it"
+
+// endMigrationRefusal takes a refusal's reason off the conditions it was written
+// on, once the read-only chain got past what refused: the artifact passed Verify,
+// or the source is another one. Nothing later does it. The history read rewrites
+// Blocked and Ready only when it answers, so a read that keeps failing would
+// leave a refusal named beside a verified artifact, and only a plan rewrites
+// ApprovalRequired, so a resource in sync, which publishes none, would name it
+// for good.
+//
+// A condition with any other reason belongs to whoever set it: a plan waiting
+// for a person keeps ApprovalRequired True through the read that refreshes it.
+// Progressing is not here because the claim of that read rewrote it.
+func endMigrationRefusal(
+	migration *operatorv1alpha1.PtahMigration,
+	reason operatorv1alpha1.ConditionReason,
+	message string,
+) {
+	refused := func(conditionType string) bool {
+		condition := meta.FindStatusCondition(migration.Status.Conditions, conditionType)
+		if condition == nil {
+			return false
+		}
+		switch operatorv1alpha1.ConditionReason(condition.Reason) {
+		case operatorv1alpha1.ReasonPolicyRefused, operatorv1alpha1.ReasonRealmConflict, operatorv1alpha1.ReasonRealmNotAuthorized:
+			return true
+		}
+		return false
+	}
+	if refused(operatorv1alpha1.ConditionMigrationBlocked) {
+		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionFalse, reason, message)
+	}
+	if refused(operatorv1alpha1.ConditionMigrationReady) {
+		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationReady, metav1.ConditionFalse, reason, message)
+	}
+	if refused(operatorv1alpha1.ConditionMigrationApprovalRequired) {
+		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationApprovalRequired, metav1.ConditionFalse, reason, message)
+	}
 }
 
 // migrationUnresolvedRunSettledBy reports that this reading is the proof the
@@ -1858,7 +1938,8 @@ func (r *MigrationReconciler) migrationOperationFailure(
 // What ends this is another object's change -- a peer's spec, or the realm's
 // grant -- and a peer's events do not reach this one, so the verdict is
 // re-taken on a bounded cadence rather than waited on: the shorter of this
-// resource's interval and a minute.
+// resource's interval and a minute. The read that follows takes the reason off
+// the conditions, in endMigrationRefusal.
 func (r *MigrationReconciler) migrationRealmBlocked(
 	ctx context.Context,
 	migration *operatorv1alpha1.PtahMigration,
@@ -2055,22 +2136,14 @@ func (r *MigrationReconciler) observeMigrationStatusTransitions(before, after *o
 		// the impact is reported as unexamined rather than as safe.
 		r.Telemetry.ObservePlan(telemetry.FamilyMigration, after.Spec.Target.Engine, telemetry.PlanImpactUnknown)
 	}
-	if migrationConditionBecame(before, after, operatorv1alpha1.ConditionMigrationApprovalRequired,
-		metav1.ConditionTrue, "") {
+	if migrationConditionBecame(before, after, operatorv1alpha1.ConditionMigrationApprovalRequired, metav1.ConditionTrue) {
 		r.Telemetry.ObserveApproval(telemetry.FamilyMigration, telemetry.ApprovalRequired)
 	}
-	// An accepted approval is counted where the decision is consumed, not
-	// here. This condition also goes False with Satisfied under an Always
-	// policy, where the requirement was waived and nobody approved anything.
-	// The plan an approval was being gathered for stopped being current, so
-	// whatever a person had written for it no longer authorizes anything. The
-	// requirement has to have been outstanding: a plan discarded before any
-	// approval was asked for costs nobody an approval.
-	if migrationConditionWas(before, operatorv1alpha1.ConditionMigrationApprovalRequired, metav1.ConditionTrue) &&
-		migrationConditionBecame(before, after, operatorv1alpha1.ConditionMigrationApprovalRequired,
-			metav1.ConditionFalse, string(operatorv1alpha1.ReasonPlanNoLongerCurrent)) {
-		r.Telemetry.ObserveApproval(telemetry.FamilyMigration, telemetry.ApprovalStale)
-	}
+	// An accepted approval is counted where the decision is consumed, and a stale
+	// one where it is marked, not here. This condition also goes False with
+	// Satisfied under an Always policy, where the requirement was waived and
+	// nobody approved anything, and with PlanNoLongerCurrent for a plan discarded
+	// before anyone decided, which costs nobody an approval.
 }
 
 // observeMigrationOperation records how long one logical operation took. An
@@ -2096,35 +2169,19 @@ func migrationPlanPublished(before, after *operatorv1alpha1.ImmutableObjectRefer
 	return before == nil || before.UID != after.UID
 }
 
-func migrationConditionWas(
-	migration *operatorv1alpha1.PtahMigration,
-	conditionType string,
-	status metav1.ConditionStatus,
-) bool {
-	condition := meta.FindStatusCondition(migration.Status.Conditions, conditionType)
-	return condition != nil && condition.Status == status
-}
-
 // migrationConditionBecame reports a condition that now holds the given status
-// and did not before. An empty reason matches any reason.
+// and did not before.
 func migrationConditionBecame(
 	before, after *operatorv1alpha1.PtahMigration,
 	conditionType string,
 	status metav1.ConditionStatus,
-	reason string,
 ) bool {
 	current := meta.FindStatusCondition(after.Status.Conditions, conditionType)
 	if current == nil || current.Status != status {
 		return false
 	}
-	if reason != "" && current.Reason != reason {
-		return false
-	}
 	previous := meta.FindStatusCondition(before.Status.Conditions, conditionType)
-	if previous == nil {
-		return true
-	}
-	return previous.Status != status || reason != "" && previous.Reason != reason
+	return previous == nil || previous.Status != status
 }
 
 func (r *MigrationReconciler) directReader() client.Reader {

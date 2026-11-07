@@ -391,13 +391,22 @@ func taken(ctx context.Context, c client.Reader, review Review, name string) str
 	}
 	var owner, plan operatorv1alpha1.ImmutableObjectReference
 	var fingerprint string
+	var conditions []metav1.Condition
 	switch approval := existing.(type) {
 	case *operatorv1alpha1.PtahMigrationApproval:
 		owner, plan, fingerprint = approval.Spec.MigrationRef, approval.Spec.PlanRef, approval.Spec.PlanFingerprint
+		conditions = approval.Status.Conditions
 	case *operatorv1alpha1.PtahSchemaApproval:
 		owner, plan, fingerprint = approval.Spec.SchemaRef, approval.Spec.PlanRef, approval.Spec.PlanFingerprint
+		conditions = approval.Status.Conditions
 	}
 	if owner.UID == review.ResourceUID && plan.Name == review.PlanName && plan.UID == review.PlanUID && fingerprint == review.Fingerprint {
+		if conditionTrue(conditions, operatorv1alpha1.ConditionApprovalStale) {
+			// The same plan can come back after its approval was withdrawn, and
+			// the name then holds a decision that authorizes nothing.
+			return fmt.Sprintf("%s %s bound plan %s and went stale, so it authorizes nothing, and this request stored nothing. Nothing was approved; pass another --name.",
+				review.Family.ApprovalKind(), name, review.PlanName)
+		}
 		return fmt.Sprintf("%s %s already binds plan %s with fingerprint %s: an approval of this plan is recorded, and this request stored nothing. %s who approved it.",
 			review.Family.ApprovalKind(), name, review.PlanName, statusview.Clean(review.Fingerprint), listsApprovals(review))
 	}

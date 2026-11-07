@@ -463,8 +463,9 @@ retry, because the operator never makes one. Once the record is settled,
 
 `Approvals` lists the `PtahMigrationApproval` objects that name this migration,
 the way the schema view lists its approvals. A migration approval carries only
-`Consumed`, written when its plan is dispatched, so one with no condition says
-just that; whether the plan it names is the current one is printed beside it,
+`Consumed`, written when its plan is dispatched, or `Stale`, written when a read
+ended anywhere but that plan, so one with no condition says just that; whether
+the plan it names is the current one is printed beside it,
 and whether it matches that plan is the migration's own `ApprovalRequired`.
 `Run acknowledgments` lists the `PtahMigrationRunAcknowledgment` objects, each
 with the operation it names, marked when that is the unresolved run, and its
