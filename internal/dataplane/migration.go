@@ -172,13 +172,21 @@ func (r MigrationRunReport) StoppedBeforeSelecting() bool {
 }
 
 // MigrationRunFailure is the statement a run stopped at and the code the
-// database answered with. Ptah writes it only when a statement reached the
-// database and failed. Unlike Error's message it carries no text, so it names
+// database answered with. Ptah writes it when a statement reached the database
+// and failed, and since v0.23.0 also when the statements ran and the commit
+// that ends them failed. Unlike Error's message it carries no text, so it names
 // no row and may reach status and Events (#69, #678).
 type MigrationRunFailure struct {
 	Version    int64 `json:"version"`
 	Statement  int   `json:"statement"`
 	Statements int   `json:"statements"`
+	// Commit is true when every statement ran and the commit that ends them
+	// failed, as a deferred constraint does. No statement is to blame then,
+	// and Statement is 0: that is Ptah's documented contract (docs/
+	// exit_codes.md, "Where a Run Stopped", introduced in stokaro/ptah#5562).
+	// Under --tx-mode all the one commit ends every selected migration, and
+	// Version names the last of them.
+	Commit bool `json:"commit,omitempty"`
 	// SQLState is empty when the server gave no answer, and ErrorNumber is
 	// zero on every protocol but MySQL's.
 	SQLState    string `json:"sqlstate,omitempty"`
@@ -207,7 +215,15 @@ func (f MigrationRunFailure) validate(report MigrationRunReport) error {
 		return fmt.Errorf("migration run reports a statement of version %d failed, "+
 			"and that version is not one it selected and left unapplied", f.Version)
 	}
-	if f.Statement < 1 || f.Statement > f.Statements || f.Statements > maxMigrationStatements {
+	switch {
+	case f.Statements < 1 || f.Statements > maxMigrationStatements:
+		return fmt.Errorf("migration run reports statement %d of %d failed", f.Statement, f.Statements)
+	case f.Commit && f.Statement != 0:
+		// The commit runs after every statement, so a document that blames
+		// one of them as well says two things about the same failure.
+		return fmt.Errorf("migration run reports statement %d of %d and the commit after them failed",
+			f.Statement, f.Statements)
+	case !f.Commit && (f.Statement < 1 || f.Statement > f.Statements):
 		return fmt.Errorf("migration run reports statement %d of %d failed", f.Statement, f.Statements)
 	}
 	if f.SQLState != "" && !sqlStatePattern.MatchString(f.SQLState) {

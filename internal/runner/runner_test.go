@@ -740,7 +740,7 @@ func TestObserveDriftExitOneIsAFramedResult(t *testing.T) {
 	executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: report, exitCode: 1}}}
 	result := Run(context.Background(), Config{
 		Operation:   OperationObserve,
-		Environment: withRunnerProtocol(append(databaseEnvironment("observe-1"), "PTAH_EXCLUDE=audit.*,\"legacy,archive\"")),
+		Environment: withRunnerProtocol(append(databaseEnvironment("observe-1"), "PTAH_EXCLUDE=audit.*,\"legacy,archive\"", "PTAH_INCLUDE=app.*")),
 		Executor:    executor,
 	})
 	if result.ChildExitCode != 0 || result.Error != nil {
@@ -757,8 +757,13 @@ func TestObserveDriftExitOneIsAFramedResult(t *testing.T) {
 	if result.Stdout != "" {
 		t.Fatal("raw drift report was copied into the credential-free frame")
 	}
-	if _, present := environmentMap(executor.calls[0].Env)["PTAH_EXCLUDE"]; present {
-		t.Fatal("raw drift command received planning-only exclusion selectors")
+	for _, selector := range []string{"PTAH_EXCLUDE", "PTAH_INCLUDE"} {
+		if _, present := environmentMap(executor.calls[0].Env)[selector]; present {
+			t.Fatalf("raw drift command received the planning selector %s", selector)
+		}
+	}
+	if _, present := environmentMap(executor.calls[0].Env)[envDatabaseURL]; !present {
+		t.Fatal("the drift command's environment lost the database URL, so the selector check reads an empty list")
 	}
 	frame, err := MarshalFrame(result)
 	if err != nil {

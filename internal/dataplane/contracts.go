@@ -37,7 +37,12 @@ const (
 	// adds their categories: comments, grants and grant options, index
 	// visibility and renames, materialized views, role memberships,
 	// sequences, triggers, views and validated constraints.
-	DriftFindingVocabularyVersion = 3
+	// Version 4 is Ptah v0.23.0's: a column whose type narrows and a column
+	// that loses its identity get categories of their own beside
+	// columns_modified. The operator reads them before the pin moves to that
+	// release, so hack/ptahdriftcategories declares them read ahead of the
+	// pinned list.
+	DriftFindingVocabularyVersion = 4
 
 	// SupportedDriftContract is the version of the document `ptah schema
 	// drift --format json` prints that this operator reads, and DriftCommand
@@ -58,6 +63,8 @@ var (
 	mediaTypePattern               = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}$`)
 	verificationRequirementPattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
 	driftFindingCategories         = []string{
+		"column_identities_removed",
+		"column_types_narrowed",
 		"columns_added",
 		"columns_modified",
 		"columns_removed",
@@ -152,10 +159,12 @@ const DriftFindingKindPattern = `[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-
 // DriftFindingCategories returns a copy of the closed machine vocabulary's
 // fixed categories.
 //
-// It is the list the pinned Ptah can emit: support/ptah-drift-categories.json
-// records that list, and hack/ptahdriftcategories holds the record to the
-// pinned source. An unknown category is refused rather than published or
-// dropped. The status pattern could not store it, and leaving it out would
+// It is the list the pinned Ptah can emit, plus the categories
+// hack/ptahdriftcategories declares read ahead of it: a release the operator
+// prepares for before the pin moves to it. support/ptah-drift-categories.json
+// records the pinned list, and hack/ptahdriftcategories holds the record to the
+// pinned source and this list to the record and the read-ahead declaration.
+// An unknown category is refused rather than published or dropped. The status pattern could not store it, and leaving it out would
 // understate the report's count and its highest severity.
 //
 // Changing the list moves DriftFindingVocabularyVersion, the PtahSchema
@@ -609,6 +618,7 @@ func DecodePlan(data []byte, expectedDialect string) (PlanFile, error) {
 	}
 	hasDestructive := false
 	privileges := make(map[string]bool)
+	leavesParent := partitionDetachmentsLeavingParent(plan.Statements, plan.Dialect)
 	for i, statement := range plan.Statements {
 		if strings.TrimSpace(statement.SQL) == "" || !knownSeverity(statement.Severity) {
 			return PlanFile{}, fmt.Errorf("plan statement %d is empty or has unknown severity %q", i, statement.Severity)
@@ -616,7 +626,7 @@ func DecodePlan(data []byte, expectedDialect string) (PlanFile, error) {
 		if credentialBearingPrincipalDDL(statement.SQL, plan.Dialect) {
 			return PlanFile{}, fmt.Errorf("plan statement %d contains credential-bearing principal DDL", i)
 		}
-		if conservativelyDestructiveDDL(statement.SQL, plan.Dialect) {
+		if conservativelyDestructiveDDL(statement.SQL, plan.Dialect) || leavesParent[i] {
 			plan.Statements[i].Severity = "destructive"
 		}
 		hasDestructive = hasDestructive || strings.EqualFold(plan.Statements[i].Severity, "destructive")

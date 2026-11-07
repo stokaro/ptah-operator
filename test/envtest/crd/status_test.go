@@ -45,6 +45,16 @@ func TestPtahSchemaStatusRefusesAMalformedDriftSummary(t *testing.T) {
 			want:   cause{"status.target.driftFindings[0].category", "should match"},
 		},
 		{
+			name:   "a near miss of a Ptah v0.23.0 category",
+			target: map[string]any{"driftFindingCount": int64(1), "driftFindings": []any{finding("column_types_narrowing")}},
+			want:   cause{"status.target.driftFindings[0].category", "should match"},
+		},
+		{
+			name:   "a Ptah v0.23.0 category with a kind",
+			target: map[string]any{"driftFindingCount": int64(1), "driftFindings": []any{finding("column_identities_removed:ptah.run/postgres/identity")}},
+			want:   cause{"status.target.driftFindings[0].category", "should match"},
+		},
+		{
 			name:   "a feature category whose kind has no path",
 			target: map[string]any{"driftFindingCount": int64(1), "driftFindings": []any{finding("feature_changes:ptah.run")}},
 			want:   cause{"status.target.driftFindings[0].category", "should match"},

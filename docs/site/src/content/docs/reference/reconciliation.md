@@ -784,4 +784,9 @@ database still settles its hold.
 statement reached the database and failed there: the migration's version, the
 statement's position, and the SQLSTATE and MySQL error number the database
 answered with. It carries no text, for the reason the run's message carries
-none.
+none. A run whose statements all ran and whose commit failed, as a deferred
+constraint does, has no statement to point at, so the field stays unset and the
+message names the migration and the database's answer. Since Ptah v0.23.0 a
+MySQL statement whose failure may still have committed, such as a `CREATE UNIQUE
+INDEX` stopped by a duplicate key, makes the run `unknown`; the field records
+that statement, and the message says it is not recorded whether it committed.

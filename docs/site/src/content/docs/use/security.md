@@ -773,7 +773,8 @@ Observe exposes one canonical category aggregate for each category the report
 found, each containing only a category from the closed v1 machine vocabulary, a
 positive count, and a severity. A syntactically valid but unknown category fails the operation rather
 than being published or dropped. The vocabulary is the list the pinned Ptah can
-emit, recorded in `support/ptah-drift-categories.json`, and a Ptah pin that grows
+emit, recorded in `support/ptah-drift-categories.json`, plus the categories of a
+release the operator reads ahead of the pin, and a Ptah pin that grows
 that list cannot merge until the vocabulary, the status enum and the CRD schema
 version follow it. The frame never carries
 object names, SQL, schema literals, or the native diff. The vocabulary fits

@@ -231,6 +231,21 @@ and key together stay under 230 bytes.
 | `permission_denied` | `PermissionDenied` | The server accepted the credentials and refused the user the database: no `CONNECT` privilege on PostgreSQL, no privilege on the database on MySQL. MySQL answers this way whether or not the database exists. | The user in the URL, and what the database grants it. |
 | `tls_failed` | `TLSFailed` | The TLS handshake did not complete: the server's certificate did not verify, or the server and the URL disagree about TLS. | The TLS parameters in the URL, and the certificate the server presents. |
 
+Since Ptah v0.23.0 a MySQL read of the target also reports `permission_denied`
+when the user reached the database and cannot see every object the comparison
+reads, because `information_schema` lists only what a user holds a privilege on.
+Ptah names the kinds of object, and the operator says which, from a fixed list of
+tables, view definitions, constraints, triggers and routines, with no database,
+object or privilege name:
+
+```
+permission_denied: the target database server accepted the credentials, and the user cannot see every trigger and routine in the database. Grant the user in the URL that Secret "orders-database" holds under key "url" the privileges that show them, which the MySQL authority section of the operator's supported databases page lists
+```
+
+[The MySQL authority](../../support/databases/#mysql-authority) lists what to
+grant. The Pod log keeps Ptah's own sentence, which names the database and the
+privileges, for whoever holds `pods/log`.
+
 An alert keys on the reason of `DatabaseReachable`, because a message may change
 without an API version. `ReconciliationFailed`, `Ready` and `Progressing` keep
 saying whether the operation failed, with the reasons in the table above.
@@ -342,6 +357,12 @@ not reach this code:
   is refused by the comparison with that database, which the second run does not
   have. It keeps those codes too, and a fault the second run finds elsewhere in the
   same file is not why the command stopped.
+
+Ptah v0.23.0 refuses such a file with the refusal code `declaration-refused`
+rather than failing the plan, and keeps the same sentence. The operator asks the
+second run about that refusal as it asks about a failure, so the faults above
+read the same with either version. A declaration refusal the second run does not
+explain reads `plan_refused: ptah refused to plan the change (declaration-refused)`.
 
 `ptah schema validate --dialect=<engine> --schema-file <file>` prints what the
 file alone can be refused for, indexes included, with no database.

@@ -2,7 +2,10 @@ package dataplane
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"slices"
+	"strings"
 )
 
 // TargetFailureKind names why a Ptah command could not open its connection to
@@ -86,6 +89,110 @@ type CommandError struct {
 	// it. SchemaStructuralProblem compares it with words from a run that had no
 	// database, and copies none of it.
 	Message string `json:"message"`
+	// MissingPrivileges is what a MySQL or MariaDB account could not see when
+	// Ptah reports permission_denied for a read of the target, one entry for
+	// each kind of object. Ptah v0.23.0 adds it.
+	MissingPrivileges []MissingPrivilege `json:"missing_privileges,omitempty"`
+}
+
+// MissingPrivilege is one entry of missing_privileges. Only the kind of object
+// is read. The entry also names the database, the objects the account could
+// list and not read, and the privilege spelled with the database's name, and
+// none of those may leave the Pod.
+type MissingPrivilege struct {
+	Objects string `json:"objects"`
+}
+
+// The kinds of object a missing_privileges entry names, in the order the
+// runner's sentence lists them. Ptah's tables entry covers the list of views as
+// well; its views entry is about their definitions.
+const (
+	UnseenTables      = "tables"
+	UnseenViews       = "views"
+	UnseenConstraints = "constraints"
+	UnseenTriggers    = "triggers"
+	UnseenRoutines    = "routines"
+)
+
+// unseenObjectKinds is the closed vocabulary, in order, with the noun the
+// sentence uses for one object of each kind.
+var unseenObjectKinds = []struct{ kind, noun string }{
+	{UnseenTables, "table"},
+	{UnseenViews, "view definition"},
+	{UnseenConstraints, "constraint"},
+	{UnseenTriggers, "trigger"},
+	{UnseenRoutines, "routine"},
+}
+
+func unseenObjectIndex(kind string) int {
+	return slices.IndexFunc(unseenObjectKinds, func(entry struct{ kind, noun string }) bool { return entry.kind == kind })
+}
+
+// UnseenObjects is the kinds of object a permission_denied failure says the
+// account cannot see, in vocabulary order and each once. It is false when the
+// failure is not permission_denied, names no kind, or names one outside the
+// vocabulary: a list without that kind would understate what is missing, so
+// the failure then reads as the plain permission_denied.
+func (e *CommandError) UnseenObjects() ([]string, bool) {
+	if kind, known := e.TargetFailure(); !known || kind != TargetPermissionDenied || len(e.MissingPrivileges) == 0 {
+		return nil, false
+	}
+	seen := make([]bool, len(unseenObjectKinds))
+	for _, entry := range e.MissingPrivileges {
+		index := unseenObjectIndex(entry.Objects)
+		if index < 0 {
+			return nil, false
+		}
+		seen[index] = true
+	}
+	var objects []string
+	for index, entry := range unseenObjectKinds {
+		if seen[index] {
+			objects = append(objects, entry.kind)
+		}
+	}
+	return objects, true
+}
+
+// ValidateUnseenObjects refuses a list UnseenObjects could not have returned:
+// empty, a kind outside the vocabulary, a repeated kind, or one out of order.
+func ValidateUnseenObjects(objects []string) error {
+	if len(objects) == 0 {
+		return errors.New("names no kind of object")
+	}
+	previous := -1
+	for _, kind := range objects {
+		index := unseenObjectIndex(kind)
+		switch {
+		case index < 0:
+			return fmt.Errorf("names %q, which is not a kind of object", kind)
+		case index <= previous:
+			return errors.New("does not list each kind of object once, in order")
+		}
+		previous = index
+	}
+	return nil
+}
+
+// UnseenObjectsDescription is the runner's sentence for a permission_denied
+// failure that names what the account cannot see. Like every description it is
+// fixed text: the kinds come from the vocabulary, and no database, object or
+// privilege Ptah named is in it. It is empty for a list ValidateUnseenObjects
+// refuses.
+func UnseenObjectsDescription(objects []string) string {
+	if ValidateUnseenObjects(objects) != nil {
+		return ""
+	}
+	nouns := make([]string, len(objects))
+	for index, kind := range objects {
+		nouns[index] = unseenObjectKinds[unseenObjectIndex(kind)].noun
+	}
+	listed := nouns[len(nouns)-1]
+	if len(nouns) > 1 {
+		listed = strings.Join(nouns[:len(nouns)-1], ", ") + " and " + listed
+	}
+	return "the target database server accepted the credentials, and the user cannot see every " + listed +
+		" in the database"
 }
 
 // TargetFailure is the kind of the error, when it is one of the vocabulary. A

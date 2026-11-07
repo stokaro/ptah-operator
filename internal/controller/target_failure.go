@@ -26,10 +26,11 @@ func operationURLSecret(bound *operatorv1alpha1.DatabaseTargetBinding, spec core
 // Event: its code and its bounded message, as the runner wrote them, or, for
 // a target the operation could not open, the operator's own sentence
 // (targetfailure.Message). The runner's message for that code is not read, so
-// the kind, from a closed vocabulary, is all that crosses from the Pod.
+// the kind and, for a MySQL user that cannot see every object, the kinds of
+// object, each from a closed vocabulary, are all that cross from the Pod.
 func resultFailure(failure *runner.ResultError, url corev1.SecretKeySelector) error {
 	if kind, known := dataplane.ParseTargetFailureKind(failure.Code); known {
-		return &targetFailureError{kind: kind, url: url}
+		return &targetFailureError{kind: kind, url: url, unseenObjects: failure.UnseenObjects}
 	}
 	return resultCodeError{code: failure.Code, message: fmt.Sprintf("%s: %s", failure.Code, bounded(failure.Message, 512))}
 }
@@ -41,9 +42,17 @@ func resultFailure(failure *runner.ResultError, url corev1.SecretKeySelector) er
 type targetFailureError struct {
 	kind dataplane.TargetFailureKind
 	url  corev1.SecretKeySelector
+	// unseenObjects are the kinds of object a permission_denied read could
+	// not see, when the runner named them.
+	unseenObjects []string
 }
 
-func (e *targetFailureError) Error() string { return targetfailure.Message(e.kind, e.url) }
+func (e *targetFailureError) Error() string {
+	if len(e.unseenObjects) != 0 {
+		return targetfailure.UnseenObjectsMessage(e.kind, e.unseenObjects, e.url)
+	}
+	return targetfailure.Message(e.kind, e.url)
+}
 
 // uncertainApplyEvent is the text of the ApplyOutcomeUnknown Event. A result that
 // named a kind says why the Pod that reported it could not open the target, and

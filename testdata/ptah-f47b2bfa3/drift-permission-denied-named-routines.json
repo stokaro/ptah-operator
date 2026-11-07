@@ -1,0 +1,19 @@
+{
+  "contract_version": 1,
+  "command": "schema drift",
+  "error": {
+    "kind": "permission_denied",
+    "message": "error reading database schema: the account l_exec@% cannot see everything in database \"c_login_hand\": information_schema lists only what an account holds a privilege on, and a comparison reads a hidden object as absent. The account needs:\n  - the bodies of routines hand_fn, hand_proc, unless the account is their definer: SHOW_ROUTINE on *.*",
+    "missing_privileges": [
+      {
+        "database": "c_login_hand",
+        "objects": "routines",
+        "names": [
+          "hand_fn",
+          "hand_proc"
+        ],
+        "privilege": "SHOW_ROUTINE on *.*"
+      }
+    ]
+  }
+}

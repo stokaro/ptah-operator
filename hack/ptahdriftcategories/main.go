@@ -29,6 +29,10 @@
 // then shows which categories moved. CI runs the comparison where it already
 // has the pinned source, in the job that builds the executor from it.
 //
+// The operator can read a release's categories before the pin moves to it.
+// ReadAhead declares them with the commit they come from, the vendored file
+// stays the pinned list, and the vocabulary is the two together.
+//
 // Usage:
 //
 //	go run ./hack/ptahdriftcategories -ptah <Ptah checkout> [-write]
@@ -86,7 +90,7 @@ type VendoredSource struct {
 const vendoredComment = "The drift finding categories the Ptah build pinned in support/ptah.json can emit, and the digests of the files that produce them. " +
 	"A qualified category is written bare or followed by \":<kind>\". " +
 	"Written by `go run ./hack/ptahdriftcategories -ptah <checkout> -write`; CI compares it with the pinned source. " +
-	"internal/dataplane's vocabulary has to equal these lists, and the PtahSchema status pattern has to admit them."
+	"internal/dataplane's vocabulary has to equal these lists plus the categories hack/ptahdriftcategories declares read ahead of the pin, and the PtahSchema status pattern has to admit them."
 
 func main() {
 	if err := run(context.Background(), os.Args[1:], ".", os.Stdout); err != nil {

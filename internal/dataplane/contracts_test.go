@@ -18,10 +18,11 @@ const digest = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef012345678
 func TestDriftFindingVocabulary(t *testing.T) {
 	t.Parallel()
 
-	if dataplane.DriftFindingVocabularyVersion != 3 {
-		t.Fatalf("DriftFindingVocabularyVersion = %d, want 3", dataplane.DriftFindingVocabularyVersion)
+	if dataplane.DriftFindingVocabularyVersion != 4 {
+		t.Fatalf("DriftFindingVocabularyVersion = %d, want 4", dataplane.DriftFindingVocabularyVersion)
 	}
 	want := []string{
+		"column_identities_removed", "column_types_narrowed",
 		"columns_added", "columns_modified", "columns_removed", "comments_changed", "constraints_added",
 		"constraints_removed", "constraints_validated", "data_rows_deleted", "data_rows_inserted",
 		"data_rows_updated", "enum_values_added", "enum_values_removed", "enums_added", "enums_removed",

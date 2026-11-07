@@ -1525,6 +1525,15 @@ func migrationRunMessage(report dataplane.MigrationRunReport) string {
 	case dataplane.MigrationOutcomeDryRun:
 		return "The run was a dry run and changed nothing"
 	case dataplane.MigrationOutcomeFailed:
+		if failure := report.Failure; failure != nil && failure.Commit {
+			// Every statement ran and the commit that ends them failed, so no
+			// statement is to blame. The failure names the migration whose
+			// commit it was: under --tx-mode all that is the last selected
+			// one, and nothing before it is applied either, which the count
+			// says.
+			return fmt.Sprintf("%s failed at its commit%s and committed nothing; %s",
+				migrationName(report, failure.Version), databaseAnswer(*failure), appliedBefore(len(report.Applied)))
+		}
 		version, found := stoppedMigration(report)
 		if !found {
 			return "A migration failed and committed nothing; " + appliedBefore(len(report.Applied))
@@ -1547,9 +1556,35 @@ func migrationRunMessage(report dataplane.MigrationRunReport) string {
 				migrationName(report, dirty.Version), dirty.Applied, dirty.Total, rest)
 		}
 		return "A migration committed some of its statements and not the rest; retrying the file would run them twice"
+	case dataplane.MigrationOutcomeUnknown:
+		if dirty, failure := statementInFlight(report); failure != nil {
+			return fmt.Sprintf("%s stopped at statement %d of %d%s, and whether it committed is not recorded",
+				migrationName(report, dirty.Version), failure.Statement, failure.Statements, databaseAnswer(*failure))
+		}
+		return "The database's own account of the run could not be read"
 	default:
 		return "The database's own account of the run could not be read"
 	}
+}
+
+// statementInFlight is the revision row and the failure of a run that stopped
+// with a statement whose fate the database did not record. Since v0.23.0 Ptah
+// reports such a run unknown: on MySQL a failed DDL statement such as CREATE
+// UNIQUE INDEX may have committed on its own. The row it left counts the
+// statements before the failed one as committed, and the failure names the
+// next one in the same migration. The runner clears the row's text, Ptah's
+// in-flight marker, so the shape is what identifies it. Anything else returns
+// nil, and the message says the account could not be read.
+func statementInFlight(report dataplane.MigrationRunReport) (*dataplane.MigrationDirty, *dataplane.MigrationRunFailure) {
+	dirty := dirtyRevision(report)
+	if dirty == nil {
+		return nil, nil
+	}
+	failure := failureIn(report, dirty.Version)
+	if failure == nil || failure.Commit || failure.Statement != dirty.Applied+1 || failure.Statements != dirty.Total {
+		return nil, nil
+	}
+	return dirty, failure
 }
 
 // migrationDescriptionBytes bounds the description a run message quotes, so a
@@ -1580,14 +1615,15 @@ func stoppedMigration(report dataplane.MigrationRunReport) (int64, bool) {
 	return 0, false
 }
 
-// failureIn is the run's failure when it is about the migration the message
-// names, and nil otherwise, so a sentence never puts one migration's name and
-// another's statement together.
 // migrationRunFailure is where the report says the run stopped, in the terms
 // status keeps. The decoder already held the statement position, the SQLSTATE
 // and the error number to the forms the API schema admits.
+//
+// A failed commit has no statement position, and the schema's statement
+// counts from one, so it stays out of status: the run's message names the
+// migration and the database's answer instead.
 func migrationRunFailure(failure *dataplane.MigrationRunFailure) *operatorv1alpha1.MigrationRunFailureStatus {
-	if failure == nil {
+	if failure == nil || failure.Commit {
 		return nil
 	}
 	return &operatorv1alpha1.MigrationRunFailureStatus{
@@ -1599,6 +1635,9 @@ func migrationRunFailure(failure *dataplane.MigrationRunFailure) *operatorv1alph
 	}
 }
 
+// failureIn is the run's failure when it is about the migration the message
+// names, and nil otherwise, so a sentence never puts one migration's name and
+// another's statement together.
 func failureIn(report dataplane.MigrationRunReport, version int64) *dataplane.MigrationRunFailure {
 	if report.Failure == nil || report.Failure.Version != version {
 		return nil
