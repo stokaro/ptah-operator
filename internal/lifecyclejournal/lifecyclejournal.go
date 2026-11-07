@@ -293,18 +293,33 @@ func accountsFor(run *operatorv1alpha1.MigrationRunStatus, hold *operatorv1alpha
 // and nothing has carried it out since: the controller clears and republishes
 // the plan it is waiting on while it refreshes.
 func planRecorded(journal *operatorv1alpha1.LifecycleJournal, plan string) bool {
+	outstanding, _ := OutstandingPlan(journal)
+	return outstanding == plan
+}
+
+// OutstandingPlan names the plan the journal's newest PlanPublished records
+// when nothing has carried it out since, and says whether an approval of that
+// plan was accepted. The name is empty when the journal holds no such plan.
+//
+// A status write cannot answer this from status alone: the controller clears
+// the plan it is waiting on while it refreshes, so a write that publishes a
+// plan usually sees no plan before it.
+func OutstandingPlan(journal *operatorv1alpha1.LifecycleJournal) (plan string, approved bool) {
 	if journal == nil {
-		return false
+		return "", false
 	}
+	var approvals []string
 	for index := len(journal.Entries) - 1; index >= 0; index-- {
 		switch entry := journal.Entries[index]; entry.Type {
 		case operatorv1alpha1.JournalPlanPublished:
-			return entry.Plan == plan
+			return entry.Plan, slices.Contains(approvals, entry.Plan)
+		case operatorv1alpha1.JournalApprovalAccepted:
+			approvals = append(approvals, entry.Plan)
 		case operatorv1alpha1.JournalApplyFinished, operatorv1alpha1.JournalRunFinished:
-			return false
+			return "", false
 		}
 	}
-	return false
+	return "", false
 }
 
 // approvalRecorded reports whether the journal already records the approval

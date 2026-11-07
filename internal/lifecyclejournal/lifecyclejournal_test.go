@@ -182,6 +182,68 @@ func failed(reason string) []metav1.Condition {
 	return []metav1.Condition{{Type: operatorv1alpha1.ConditionReconciliationFailed, Status: metav1.ConditionTrue, Reason: reason}}
 }
 
+// OutstandingPlan is what tells a plan replaced before it ran from one an Apply
+// carried out, across the writes that clear status.plan in between.
+func TestOutstandingPlanIsTheNewestPlanNothingCarriedOut(t *testing.T) {
+	t.Parallel()
+	approval := func(plan string) operatorv1alpha1.JournalEntry {
+		return operatorv1alpha1.JournalEntry{Type: operatorv1alpha1.JournalApprovalAccepted, At: at(0), Plan: plan, Approval: "approve-" + plan}
+	}
+	for _, test := range []struct {
+		name         string
+		entries      []operatorv1alpha1.JournalEntry
+		noJournal    bool
+		wantPlan     string
+		wantApproved bool
+	}{
+		{name: "no journal", noJournal: true},
+		{name: "a journal that names no plan", entries: []operatorv1alpha1.JournalEntry{failure("Observe", "OperationFailed", 0)}},
+		{name: "a plan", entries: []operatorv1alpha1.JournalEntry{published("plan-a", 0)}, wantPlan: "plan-a"},
+		{name: "the newest of two plans", entries: []operatorv1alpha1.JournalEntry{published("plan-a", -time.Minute), published("plan-b", 0)}, wantPlan: "plan-b"},
+		{
+			name:     "entries after the plan that carry nothing out",
+			entries:  []operatorv1alpha1.JournalEntry{published("plan-a", -time.Minute), failure("Observe", "OperationFailed", 0)},
+			wantPlan: "plan-a",
+		},
+		{
+			name:     "an approved plan",
+			entries:  []operatorv1alpha1.JournalEntry{published("plan-a", -time.Minute), approval("plan-a")},
+			wantPlan: "plan-a", wantApproved: true,
+		},
+		{
+			name:     "a plan after an approved one",
+			entries:  []operatorv1alpha1.JournalEntry{published("plan-a", -time.Minute), approval("plan-a"), published("plan-b", 0)},
+			wantPlan: "plan-b",
+		},
+		{
+			name: "a plan an Apply carried out",
+			entries: []operatorv1alpha1.JournalEntry{
+				published("plan-a", -time.Minute), approval("plan-a"),
+				{Type: operatorv1alpha1.JournalApplyFinished, At: at(0), Plan: "plan-a"},
+			},
+		},
+		{
+			name: "a plan a migration run carried out",
+			entries: []operatorv1alpha1.JournalEntry{
+				published("plan-a", -time.Minute),
+				{Type: operatorv1alpha1.JournalRunFinished, At: at(0)},
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			var journal *operatorv1alpha1.LifecycleJournal
+			if !test.noJournal {
+				journal = &operatorv1alpha1.LifecycleJournal{CoveredSince: at(-time.Hour), Entries: test.entries}
+			}
+			plan, approved := lifecyclejournal.OutstandingPlan(journal)
+			if plan != test.wantPlan || approved != test.wantApproved {
+				t.Fatalf("OutstandingPlan() = %q, %t, want %q, %t", plan, approved, test.wantPlan, test.wantApproved)
+			}
+		})
+	}
+}
+
 func TestSchemaEntriesRecordEachTransitionOnce(t *testing.T) {
 	t.Parallel()
 	plan := schemaPlan("plan-a")
