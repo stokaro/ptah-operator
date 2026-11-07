@@ -11,6 +11,17 @@ import (
 	"github.com/stokaro/ptah-operator/internal/telemetry"
 )
 
+// unreadableRequestOfFailedMigrationRead is unreadableRequestOfFailedSchemaRead
+// for a migration, whose retried claim carries its retry deadline.
+func unreadableRequestOfFailedMigrationRead(migration *operatorv1alpha1.PtahMigration) (readRequest, bool) {
+	operation := migration.Status.ActiveOperation
+	if migrationOperation(operation).Mutating || operation.RetryNotBefore == nil {
+		return readRequest{}, false
+	}
+	request := readRequestOf(migration.Annotations, migration.Status.LastReadRequest)
+	return request, request.unreadable()
+}
+
 // failedMigrationReadGivesWay is failedSchemaReadGivesWay for a migration, under
 // the rules written beside that function. It runs where a retried claim would be
 // dispatched, so no Job exists under the claim's name. A retry leaves a deadline

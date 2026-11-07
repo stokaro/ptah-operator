@@ -43,6 +43,18 @@ const (
 	failedReadIntervalEnded = "the interval to read its source again has passed"
 )
 
+// unreadableRequestOfFailedSchemaRead is a read request a failed read-only claim
+// answers while it stands. The answer writes the request and nothing else, so the
+// read that proves an Apply keeps its binding through it. An Apply is no read, and
+// leaves the request to the pass after its claim.
+func unreadableRequestOfFailedSchemaRead(schema *operatorv1alpha1.PtahSchema) (readRequest, bool) {
+	if !isReadOnlyOperation(schema.Status.ActiveOperation) {
+		return readRequest{}, false
+	}
+	request := readRequestOf(schema.Annotations, schema.Status.LastReadRequest)
+	return request, request.unreadable()
+}
+
 // failedSchemaReadGivesWay says why the failed schema's claim gives way, or ""
 // when it stands. now is the instant the caller measures the retry delay by.
 func (r *SchemaReconciler) failedSchemaReadGivesWay(ctx context.Context, schema *operatorv1alpha1.PtahSchema, now time.Time) (string, error) {

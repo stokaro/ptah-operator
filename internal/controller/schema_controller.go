@@ -939,6 +939,9 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 		}
 	}
 	if !schema.Spec.Suspend && (schema.Status.Phase == operatorv1alpha1.PhaseFailed || schemaProofBlocked(schema)) {
+		if request, unreadable := unreadableRequestOfFailedSchemaRead(schema); unreadable {
+			return r.answerReadRequest(ctx, schema, request, false)
+		}
 		failedRetryTime := r.now()
 		if reason, err := r.failedSchemaReadGivesWay(ctx, schema, failedRetryTime); err != nil {
 			return ctrl.Result{}, err

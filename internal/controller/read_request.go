@@ -21,6 +21,14 @@ type readRequest struct {
 	instant bool
 }
 
+// unreadable is a pending value that is not an instant. It starts nothing and
+// ends nothing, so no state of the resource has to pass before the operator says
+// so: a resource at rest answers it on the pass that sees it, and so does a read
+// between two failed attempts.
+func (r readRequest) unreadable() bool {
+	return r.pending && !r.instant
+}
+
 func readRequestOf(annotations map[string]string, answered string) readRequest {
 	value, ok := annotations[operatorv1alpha1.ReadRequestAnnotation]
 	if !ok {

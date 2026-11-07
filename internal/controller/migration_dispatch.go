@@ -78,6 +78,9 @@ func (d *migrationDispatch) Authorize(ctx context.Context) mutationlifecycle.Out
 	// inputs cannot be read yet -- a reference that does not parse, a
 	// verification policy nobody has created -- retires the claim now rather
 	// than waiting out the interval it was meant to end.
+	if request, unreadable := unreadableRequestOfFailedMigrationRead(migration); unreadable {
+		return mutationlifecycle.Stop(r.answerMigrationReadRequest(ctx, migration, request, false))
+	}
 	if reason, err := r.failedMigrationReadGivesWay(ctx, migration); err != nil {
 		return mutationlifecycle.Stop(ctrl.Result{}, err)
 	} else if reason != "" {

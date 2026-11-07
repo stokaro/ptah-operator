@@ -313,6 +313,36 @@ func TestAMigrationReadRequestBringsTheHistoryReadForward(t *testing.T) {
 	}
 }
 
+func TestAMigrationReadRequestThatIsNotAnInstantStartsNothingAndSaysSoOnce(t *testing.T) {
+	t.Parallel()
+	migration := requestedMigration(operatorv1alpha1.MigrationPhaseInSync)
+	migration.Annotations[operatorv1alpha1.ReadRequestAnnotation] = "now please"
+	reconciler, api := fakeMigrationReconciler(t, staticLogs{}, migration)
+	recorder := record.NewFakeRecorder(8)
+	reconciler.Recorder = recorder
+
+	if _, err := reconciler.Reconcile(context.Background(), migrationRequest(migration)); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	answered := readMigration(t, api, migration)
+	if answered.Status.LastReadRequest != "now please" || !answered.Status.NextReconciliationTime.Time.Equal(readRequestClock.Add(time.Hour)) {
+		t.Fatalf("lastReadRequest=%q next=%v, want the value recorded and the interval kept",
+			answered.Status.LastReadRequest, answered.Status.NextReconciliationTime)
+	}
+	if event := findEvent(recorder, corev1.EventTypeWarning+" ReadRequestInvalid"); !strings.Contains(event, `"now please"`) {
+		t.Fatalf("Warning Event = %q, want it to name the value", event)
+	}
+	if _, err := reconciler.Reconcile(context.Background(), migrationRequest(migration)); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	if again := readMigration(t, api, migration); again.Status.ActiveOperation != nil {
+		t.Fatalf("a value that is not an instant started %#v", again.Status.ActiveOperation)
+	}
+	if event := findEvent(recorder, corev1.EventTypeWarning+" ReadRequestInvalid"); event != "" {
+		t.Fatalf("the same value was reported twice: %q", event)
+	}
+}
+
 func TestAMigrationReadRequestWaitsForAReadThatStartsAfterIt(t *testing.T) {
 	t.Parallel()
 	for _, phase := range []operatorv1alpha1.MigrationPhase{
