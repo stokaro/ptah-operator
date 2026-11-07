@@ -17,8 +17,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -31,12 +29,10 @@ import (
 	"github.com/stokaro/ptah-operator/internal/dataplane"
 )
 
-// The operator's closed vocabulary is the list the pinned Ptah can emit plus
-// the categories declared read ahead of it, no more and no less. A category
-// Ptah emits and the vocabulary lacks fails Observe for every change in it;
-// one the vocabulary keeps after Ptah dropped it is an enum value nothing can
-// produce. TestReadAheadDescribesItsPtah holds the read-ahead categories to
-// the build they come from.
+// The operator's closed vocabulary is the list the pinned Ptah can emit, no
+// more and no less. A category Ptah emits and the vocabulary lacks fails
+// Observe for every change in it; one the vocabulary keeps after Ptah dropped
+// it is an enum value nothing can produce.
 func TestVendoredCategoriesAreTheOperatorVocabulary(t *testing.T) {
 	t.Parallel()
 
@@ -50,9 +46,8 @@ func TestVendoredCategoriesAreTheOperatorVocabulary(t *testing.T) {
 	if !slices.IsSorted(vendored.Categories) || len(slices.Compact(slices.Clone(vendored.Categories))) != len(vendored.Categories) {
 		t.Fatalf("vendored categories are not sorted and unique: %q", vendored.Categories)
 	}
-	want := slices.Sorted(slices.Values(append(slices.Clone(vendored.Categories), ReadAhead.Categories...)))
-	if got := dataplane.DriftFindingCategories(); !reflect.DeepEqual(got, want) {
-		t.Fatalf("operator vocabulary = %q\npinned Ptah emits    %q\nand reads ahead      %q", got, vendored.Categories, ReadAhead.Categories)
+	if got := dataplane.DriftFindingCategories(); !reflect.DeepEqual(got, vendored.Categories) {
+		t.Fatalf("operator vocabulary = %q\npinned Ptah emits    %q", got, vendored.Categories)
 	}
 	if len(vendored.Qualified) == 0 {
 		t.Fatal("the vendored file lists no qualified category")
@@ -70,119 +65,6 @@ func TestVendoredCategoriesAreTheOperatorVocabulary(t *testing.T) {
 	}
 	if want := []string{vocabularyPath}; !reflect.DeepEqual(paths, want) {
 		t.Fatalf("vendored sources = %q, want the file this program reads, %q", paths, want)
-	}
-}
-
-// The read-ahead categories are what the declared Ptah build adds to the
-// pinned list, read from that build's own vocabulary file.
-func TestReadAheadDescribesItsPtah(t *testing.T) {
-	t.Parallel()
-
-	vendored, err := LoadVendored(filepath.Join("..", "..", vendoredPath))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(ReadAhead.Categories) == 0 {
-		if err := CheckReadAhead(vendored, ReadAhead, nil); err != nil {
-			t.Fatal(err)
-		}
-		return
-	}
-	content, err := os.ReadFile(filepath.Join("..", "..", ReadAhead.Vocabulary))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := CheckReadAhead(vendored, ReadAhead, content); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// CheckReadAhead refuses each way a declaration can stop describing the
-// build it names.
-func TestCheckReadAheadRefuses(t *testing.T) {
-	t.Parallel()
-
-	pinned := Vendored{
-		Categories: []string{"columns_added", "tables_added"},
-		Qualified:  []string{"feature_changes"},
-	}
-	newer := vocabulary(
-		`{"category": "column_types_narrowed", "severities": ["destructive"], "bare": true}`,
-		`{"category": "columns_added", "severities": ["safe"], "bare": true}`,
-		`{"category": "feature_changes", "severities": ["warning"], "bare": true, "qualified": true}`,
-		`{"category": "tables_added", "severities": ["safe"], "bare": true}`,
-	)
-	declare := func(content string, categories ...string) ReadAheadDeclaration {
-		digest := sha256.Sum256([]byte(content))
-		return ReadAheadDeclaration{
-			PtahCommit:       strings.Repeat("a", 40),
-			VocabularySHA256: hex.EncodeToString(digest[:]),
-			Vocabulary:       "testdata/drift-findings.json",
-			Categories:       categories,
-		}
-	}
-	if err := CheckReadAhead(pinned, declare(newer, "column_types_narrowed"), []byte(newer)); err != nil {
-		t.Fatalf("CheckReadAhead(a declaration that describes its build) = %v", err)
-	}
-	if err := CheckReadAhead(pinned, ReadAheadDeclaration{}, nil); err != nil {
-		t.Fatalf("CheckReadAhead(no declaration) = %v", err)
-	}
-
-	dropped := vocabulary(
-		`{"category": "column_types_narrowed", "severities": ["destructive"], "bare": true}`,
-		`{"category": "feature_changes", "severities": ["warning"], "bare": true, "qualified": true}`,
-		`{"category": "tables_added", "severities": ["safe"], "bare": true}`,
-	)
-	qualifiedNew := vocabulary(
-		`{"category": "column_types_narrowed", "severities": ["destructive"], "bare": true, "qualified": true}`,
-		`{"category": "columns_added", "severities": ["safe"], "bare": true}`,
-		`{"category": "feature_changes", "severities": ["warning"], "bare": true, "qualified": true}`,
-		`{"category": "tables_added", "severities": ["safe"], "bare": true}`,
-	)
-	twoNew := vocabulary(
-		`{"category": "column_identities_removed", "severities": ["destructive"], "bare": true}`,
-		`{"category": "column_types_narrowed", "severities": ["destructive"], "bare": true}`,
-		`{"category": "columns_added", "severities": ["safe"], "bare": true}`,
-		`{"category": "feature_changes", "severities": ["warning"], "bare": true, "qualified": true}`,
-		`{"category": "tables_added", "severities": ["safe"], "bare": true}`,
-	)
-	stale := declare(newer, "column_types_narrowed")
-	stale.VocabularySHA256 = strings.Repeat("0", 64)
-	tests := []struct {
-		name        string
-		declaration ReadAheadDeclaration
-		content     string
-		says        string
-	}{
-		{name: "a category the pinned build emits", declaration: declare(newer, "column_types_narrowed", "columns_added"),
-			content: newer, says: "the pinned Ptah already emits columns_added"},
-		{name: "a category the newer build does not list", declaration: declare(newer, "column_identities_removed", "column_types_narrowed"),
-			content: newer, says: "Ptah no longer emits column_identities_removed"},
-		{name: "a commit with no category", declaration: declare(newer),
-			content: newer, says: "names a commit and no category"},
-		{name: "a newer category left undeclared", declaration: declare(twoNew, "column_types_narrowed"),
-			content: twoNew, says: "Ptah emits column_identities_removed"},
-		{name: "a newer build that drops a pinned category", declaration: declare(dropped, "column_types_narrowed"),
-			content: dropped, says: "Ptah no longer emits columns_added"},
-		{name: "a newer category written with a kind", declaration: declare(qualifiedNew, "column_types_narrowed"),
-			content: qualifiedNew, says: "Ptah emits column_types_narrowed with a kind"},
-		{name: "unsorted categories", declaration: declare(newer, "column_types_narrowed", "column_identities_removed"),
-			content: newer, says: "are not sorted and unique"},
-		{name: "a digest of another file", declaration: stale, content: newer, says: "the declaration records " + strings.Repeat("0", 64)},
-		{name: "an abbreviated commit", declaration: func() ReadAheadDeclaration {
-			declaration := declare(newer, "column_types_narrowed")
-			declaration.PtahCommit = "f47b2bfa3"
-			return declaration
-		}(), content: newer, says: `"f47b2bfa3" is not an exact commit`},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-			err := CheckReadAhead(pinned, test.declaration, []byte(test.content))
-			if err == nil || !strings.Contains(err.Error(), test.says) {
-				t.Fatalf("CheckReadAhead() = %v, want an error saying %q", err, test.says)
-			}
-		})
 	}
 }
 

@@ -39,9 +39,7 @@ const (
 	// sequences, triggers, views and validated constraints.
 	// Version 4 is Ptah v0.23.0's: a column whose type narrows and a column
 	// that loses its identity get categories of their own beside
-	// columns_modified. The operator reads them before the pin moves to that
-	// release, so hack/ptahdriftcategories declares them read ahead of the
-	// pinned list.
+	// columns_modified.
 	DriftFindingVocabularyVersion = 4
 
 	// SupportedDriftContract is the version of the document `ptah schema
@@ -159,11 +157,9 @@ const DriftFindingKindPattern = `[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-
 // DriftFindingCategories returns a copy of the closed machine vocabulary's
 // fixed categories.
 //
-// It is the list the pinned Ptah can emit, plus the categories
-// hack/ptahdriftcategories declares read ahead of it: a release the operator
-// prepares for before the pin moves to it. support/ptah-drift-categories.json
-// records the pinned list, and hack/ptahdriftcategories holds the record to the
-// pinned source and this list to the record and the read-ahead declaration.
+// It is the list the pinned Ptah can emit. support/ptah-drift-categories.json
+// records that list, and hack/ptahdriftcategories holds the record to the
+// pinned source and this list to the record.
 // An unknown category is refused rather than published or dropped. The status pattern could not store it, and leaving it out would
 // understate the report's count and its highest severity.
 //

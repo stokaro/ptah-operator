@@ -1,12 +1,14 @@
 {
-  "comment": "The drift finding categories the Ptah build pinned in support/ptah.json can emit, and the digests of the files that produce them. A qualified category is written bare or followed by \":<kind>\". Written by `go run ./hack/ptahdriftcategories -ptah <checkout> -write`; CI compares it with the pinned source. internal/dataplane's vocabulary has to equal these lists plus the categories hack/ptahdriftcategories declares read ahead of the pin, and the PtahSchema status pattern has to admit them.",
+  "comment": "The drift finding categories the Ptah build pinned in support/ptah.json can emit, and the digests of the files that produce them. A qualified category is written bare or followed by \":<kind>\". Written by `go run ./hack/ptahdriftcategories -ptah <checkout> -write`; CI compares it with the pinned source. internal/dataplane's vocabulary has to equal these lists, and the PtahSchema status pattern has to admit them.",
   "sources": [
     {
       "path": "docs/drift-findings.json",
-      "sha256": "3c28441c012f63dad1ff118c3716c57adec03c0d8883d21a36f5a3bd956f6c36"
+      "sha256": "2e304874143613792ed92cf9f0a5d4dd29999e2aa2ed709c8d92a7d9be4ca868"
     }
   ],
   "categories": [
+    "column_identities_removed",
+    "column_types_narrowed",
     "columns_added",
     "columns_modified",
     "columns_removed",
