@@ -136,6 +136,27 @@ func TestApproveWaitsForTheRunOfTheDecisionItStored(t *testing.T) {
 			}},
 			code: exitWillNotReach, says: "CompletionNotProved",
 		},
+		{
+			// status.lastRun names the later run by now, and the journal this one.
+			name: "this run, replaced in status.lastRun by a later one",
+			steps: []func(*operatorv1alpha1.PtahMigrationStatus){func(status *operatorv1alpha1.PtahMigrationStatus) {
+				runOfPlan("shipments-p-15", "uid-p-15", "uid-approval-15")(status)
+				status.LastRun.JobName = "run-of-p-15"
+				status.Journal = &operatorv1alpha1.LifecycleJournal{Entries: []operatorv1alpha1.JournalEntry{
+					{
+						Type: operatorv1alpha1.JournalRunFinished, At: metav1.NewTime(readAgainAt), OperationID: "sha256:op-14",
+						Outcome: operatorv1alpha1.JournalSucceeded, Plan: decidedPlan, PlanUID: decidedPlanUID,
+						Authorization: operatorv1alpha1.MigrationRunAuthorizedByApproval, Approval: "approval", ApprovalUID: storedApprovalUID,
+						JobName: "run-of-p-14",
+					},
+					{
+						Type: operatorv1alpha1.JournalVerified, At: metav1.NewTime(readAgainAt), OperationID: "sha256:op-14",
+						Outcome: operatorv1alpha1.JournalInSync, Plan: decidedPlan, PlanUID: decidedPlanUID,
+					},
+				}}
+			}},
+			code: exitOK, says: "Applied, Job run-of-p-14\n  Last run:   Applied, Job run-of-p-15\n",
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {

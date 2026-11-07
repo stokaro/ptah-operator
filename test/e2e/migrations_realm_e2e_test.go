@@ -328,8 +328,8 @@ func (m *migrationRun) partialRunBlocksAndRecovers() {
 	if plan.UID == "" || plan.Spec.Fingerprint == "" {
 		m.fatalf("migration plan %s has no UID or fingerprint", plan.Name)
 	}
-	m.check(m.approve("e2e-migrations-"+m.engine.name+"-partial-approval", migration, plan.Name, string(plan.UID),
-		plan.Spec.Fingerprint), "approve %s", plan.Name)
+	approvalName := "e2e-migrations-" + m.engine.name + "-partial-approval"
+	m.check(m.approve(approvalName, migration, plan.Name, string(plan.UID), plan.Spec.Fingerprint), "approve %s", plan.Name)
 
 	m.waitForPhase(ptahv1alpha1.MigrationPhaseBlocked)
 	stopped := m.migration(migration)
@@ -349,6 +349,11 @@ func (m *migrationRun) partialRunBlocksAndRecovers() {
 	// A partial run keeps what it carried out and who allowed it, as a run that
 	// finished does. It may or may not have been read back by now.
 	if err := runIdentityRecorded(stopped.Status, plan); err != nil {
+		m.fatalf("%s: the record of its partial run: %v", migration, err)
+	}
+	approval := &ptahv1alpha1.PtahMigrationApproval{}
+	m.check(m.get(approvalName, approval), "read approval %s", approvalName)
+	if err := runApprovedBy(stopped.Status, approval); err != nil {
 		m.fatalf("%s: the record of its partial run: %v", migration, err)
 	}
 	m.scanObject(stopped, "the partial-run refusal")

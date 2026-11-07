@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -418,6 +419,83 @@ func TestSchemaEntriesRecordEachTransitionOnce(t *testing.T) {
 	}
 }
 
+// The API's maxLength counts characters, so a name that fits stays whole however
+// many bytes it takes, or the same person has two spellings a reader compares as
+// strings. One that does not fit is cut, or the status write it rides on is refused
+// and the resource stays where it stood. Each writer of a username is held to both.
+func TestJournalUsernamesFitTheAPIsBound(t *testing.T) {
+	t.Parallel()
+
+	stamped := func(username string) *operatorv1alpha1.ApprovalIdentity {
+		return &operatorv1alpha1.ApprovalIdentity{Username: username}
+	}
+	journalWith := func(entries ...operatorv1alpha1.JournalEntry) *operatorv1alpha1.LifecycleJournal {
+		return &operatorv1alpha1.LifecycleJournal{CoveredSince: at(-24 * time.Hour), Entries: entries}
+	}
+	planRef := &operatorv1alpha1.ImmutableObjectReference{Name: "plan-a", UID: "plan-uid"}
+	approval := &operatorv1alpha1.ImmutableObjectReference{Name: "approve-a", UID: "approval-uid"}
+	writers := map[string]func(username string) []operatorv1alpha1.JournalEntry{
+		"a schema's ApprovalAccepted": func(username string) []operatorv1alpha1.JournalEntry {
+			plan := approved(schemaPlan("plan-a"), "approve-a")
+			plan.Approval.Approver.Username = username
+			return lifecyclejournal.SchemaEntries(&operatorv1alpha1.PtahSchemaStatus{}, &operatorv1alpha1.PtahSchemaStatus{Plan: plan},
+				journalWith(published("plan-a", -time.Hour)), now)
+		},
+		"a migration's ApprovalAccepted": func(username string) []operatorv1alpha1.JournalEntry {
+			claim := &operatorv1alpha1.MigrationOperationStatus{
+				Type: operatorv1alpha1.MigrationOperationApply, ID: "apply-1", PlanRef: planRef, ApprovalRef: approval, ApprovedBy: stamped(username),
+			}
+			return lifecyclejournal.MigrationEntries(&operatorv1alpha1.PtahMigrationStatus{Plan: planRef},
+				&operatorv1alpha1.PtahMigrationStatus{Plan: planRef, ActiveOperation: claim}, journalWith(published("plan-a", -time.Hour)), now)
+		},
+		"a RunFinished": func(username string) []operatorv1alpha1.JournalEntry {
+			run := &operatorv1alpha1.MigrationRunStatus{
+				Outcome: operatorv1alpha1.MigrationRunOutcomeApplied, StartedAt: at(-time.Minute), FinishedAt: ptr(at(0)), PlanRef: planRef,
+				Authorization: &operatorv1alpha1.MigrationRunAuthorizationStatus{
+					Kind: operatorv1alpha1.MigrationRunAuthorizedByApproval, ApprovalRef: approval, Approver: stamped(username),
+				},
+			}
+			return lifecyclejournal.MigrationEntries(&operatorv1alpha1.PtahMigrationStatus{}, &operatorv1alpha1.PtahMigrationStatus{LastRun: run}, journalWith(), now)
+		},
+		"a RunAcknowledged": func(username string) []operatorv1alpha1.JournalEntry {
+			resolved := &operatorv1alpha1.ResolvedMigrationRunStatus{
+				Resolution: operatorv1alpha1.MigrationRunResolvedByAcknowledgment, OperationID: "op-a", Outcome: operatorv1alpha1.MigrationRunOutcomeUnknown,
+				ResolvedAt: at(0), AcknowledgedBy: stamped(username),
+			}
+			return lifecyclejournal.MigrationEntries(&operatorv1alpha1.PtahMigrationStatus{}, &operatorv1alpha1.PtahMigrationStatus{ResolvedRun: resolved}, journalWith(), now)
+		},
+	}
+	names := map[string]struct{ username, want string }{
+		"short":                        {"alice", "alice"},
+		"at the bound":                 {strings.Repeat("a", 512), strings.Repeat("a", 512)},
+		"at the bound, of many bytes":  {strings.Repeat("日", 512), strings.Repeat("日", 512)},
+		"600 bytes and 200 characters": {strings.Repeat("日", 200), strings.Repeat("日", 200)},
+		"one past the bound":           {strings.Repeat("a", 513), strings.Repeat("a", 512)},
+		"one past it, of many bytes":   {strings.Repeat("日", 513), strings.Repeat("日", 512)},
+	}
+	for writer, write := range writers {
+		for name, row := range names {
+			t.Run(writer+": "+name, func(t *testing.T) {
+				t.Parallel()
+				var got []string
+				for _, entry := range write(row.username) {
+					for _, username := range []string{entry.Approver, entry.AcknowledgedBy} {
+						if username != "" {
+							got = append(got, username)
+						}
+					}
+				}
+				if len(got) != 1 {
+					t.Fatalf("the writer recorded %d usernames, want one", len(got))
+				}
+				if got[0] != row.want {
+					t.Fatalf("the entry holds %d characters %.12q, want %d", utf8.RuneCountInString(got[0]), got[0], utf8.RuneCountInString(row.want))
+				}
+			})
+		}
+	}
+}
+
 func TestMigrationEntriesRecordEachTransitionOnce(t *testing.T) {
 	t.Parallel()
 	planRef := &operatorv1alpha1.ImmutableObjectReference{Name: "billing-plan", UID: "plan-uid"}
@@ -490,14 +568,14 @@ func TestMigrationEntriesRecordEachTransitionOnce(t *testing.T) {
 		{
 			// A username has no bound of its own, and a status write the API
 			// server refused would leave the claim standing.
-			name:    "an approver longer than the entry holds, cut between characters",
+			name:    "an approver longer than the entry holds, cut at the characters it holds",
 			before:  operatorv1alpha1.PtahMigrationStatus{Plan: planRef},
 			after:   operatorv1alpha1.PtahMigrationStatus{Plan: planRef, ActiveOperation: over},
 			journal: &operatorv1alpha1.LifecycleJournal{Entries: []operatorv1alpha1.JournalEntry{published("billing-plan", -time.Hour)}},
 			want: []operatorv1alpha1.JournalEntry{{
 				Type: operatorv1alpha1.JournalApprovalAccepted, At: at(0),
 				Plan: "billing-plan", PlanUID: "plan-uid",
-				Approval: "billing-approval", ApprovalUID: "approval-uid", Approver: strings.Repeat("a", 511),
+				Approval: "billing-approval", ApprovalUID: "approval-uid", Approver: strings.Repeat("a", 511) + "é",
 			}},
 		},
 		{

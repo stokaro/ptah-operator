@@ -103,7 +103,7 @@ func SchemaEntries(before, after *operatorv1alpha1.PtahSchemaStatus, journal *op
 		!(journal != nil && schemaHeldApproval(before, plan.Approval.UID)) && !approvalRecorded(journal, plan.Approval.UID) {
 		entries = append(entries, operatorv1alpha1.JournalEntry{
 			Type: operatorv1alpha1.JournalApprovalAccepted, At: orNow(plan.Approval.ApprovedAt, now),
-			Plan: plan.Name, Approval: plan.Approval.Name, ApprovalUID: plan.Approval.UID, Approver: plan.Approval.Approver.Username,
+			Plan: plan.Name, Approval: plan.Approval.Name, ApprovalUID: plan.Approval.UID, Approver: boundedUsername(plan.Approval.Approver.Username),
 		})
 	}
 	// An Apply ends where its claim does, and it ran only if the observation
@@ -180,7 +180,7 @@ func MigrationEntries(before, after *operatorv1alpha1.PtahMigrationStatus, journ
 			entry.Plan, entry.PlanUID = operation.PlanRef.Name, operation.PlanRef.UID
 		}
 		if operation.ApprovedBy != nil {
-			entry.Approver = boundedApprover(operation.ApprovedBy.Username)
+			entry.Approver = boundedUsername(operation.ApprovedBy.Username)
 		}
 		entries = append(entries, entry)
 	}
@@ -214,7 +214,7 @@ func MigrationEntries(before, after *operatorv1alpha1.PtahMigrationStatus, journ
 			entry.Acknowledgment = resolved.AcknowledgmentRef.Name
 		}
 		if resolved.AcknowledgedBy != nil {
-			entry.AcknowledgedBy = resolved.AcknowledgedBy.Username
+			entry.AcknowledgedBy = boundedUsername(resolved.AcknowledgedBy.Username)
 		}
 		entries = append(entries, entry)
 	}
@@ -336,24 +336,29 @@ func withRunIdentity(entry *operatorv1alpha1.JournalEntry, run *operatorv1alpha1
 		entry.Approval, entry.ApprovalUID = authorization.ApprovalRef.Name, authorization.ApprovalRef.UID
 	}
 	if authorization.Approver != nil {
-		entry.Approver = boundedApprover(authorization.Approver.Username)
+		entry.Approver = boundedUsername(authorization.Approver.Username)
 	}
 }
 
-// maxApproverBytes is the API's bound on an entry's approver. A username has
-// none, and a status write the API server refuses would leave the claim that
-// carried it standing, so a name that does not fit is cut between characters.
-const maxApproverBytes = 512
+// maxUsernameLength is the API's bound on an entry's approver and acknowledgedBy,
+// which counts characters and not bytes. A username has no bound of its own, and a
+// status write the API server refuses would leave the resource where it stood, so a
+// name that does not fit is cut. One that fits stays whole, since a reader compares
+// these names as strings with the ones on the decisions.
+const maxUsernameLength = 512
 
-func boundedApprover(username string) string {
-	if len(username) <= maxApproverBytes {
+func boundedUsername(username string) string {
+	if utf8.RuneCountInString(username) <= maxUsernameLength {
 		return username
 	}
-	cut := maxApproverBytes
-	for cut > 0 && !utf8.RuneStart(username[cut]) {
-		cut--
+	characters := 0
+	for index := range username {
+		if characters == maxUsernameLength {
+			return username[:index]
+		}
+		characters++
 	}
-	return username[:cut]
+	return username
 }
 
 func verificationOutcome(result operatorv1alpha1.MigrationRunVerificationResult) operatorv1alpha1.JournalOutcome {
