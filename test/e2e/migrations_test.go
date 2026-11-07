@@ -340,6 +340,34 @@ func mtAwaiting() *ptahv1alpha1.PtahMigration {
 	}}
 }
 
+func TestApprovalWaitFoundTheGate(t *testing.T) {
+	t.Parallel()
+	read := metav1.NewTime(time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC))
+	gate := func() *ptahv1alpha1.PtahMigration {
+		migration := mtAwaiting()
+		migration.UID = "migration-uid"
+		migration.Status.History.ObservedAt = read
+		return migration
+	}
+	mtRefusesEach(t, gate,
+		func(reached *ptahv1alpha1.PtahMigration) error { return approvalWaitFoundTheGate(reached, gate()) },
+		map[string]func(*ptahv1alpha1.PtahMigration){
+			"nothing decoded":                 func(m *ptahv1alpha1.PtahMigration) { *m = ptahv1alpha1.PtahMigration{} },
+			"another resource under the name": func(m *ptahv1alpha1.PtahMigration) { m.UID = "other-uid" },
+			"another phase":                   func(m *ptahv1alpha1.PtahMigration) { m.Status.Phase = ptahv1alpha1.MigrationPhaseInSync },
+			"approval no longer required": func(m *ptahv1alpha1.PtahMigration) {
+				m.Status.Conditions[0].Status = metav1.ConditionFalse
+			},
+			"no plan":         func(m *ptahv1alpha1.PtahMigration) { m.Status.Plan = nil },
+			"another plan":    func(m *ptahv1alpha1.PtahMigration) { m.Status.Plan.Name = "ptah-mplan-def" },
+			"a replaced plan": func(m *ptahv1alpha1.PtahMigration) { m.Status.Plan.UID = "other-plan-uid" },
+			"no history":      func(m *ptahv1alpha1.PtahMigration) { m.Status.History = nil },
+			"a newer reading, which the wait should not have needed": func(m *ptahv1alpha1.PtahMigration) {
+				m.Status.History.ObservedAt = metav1.NewTime(read.Add(time.Minute))
+			},
+		})
+}
+
 func TestAwaitingApprovalGate(t *testing.T) {
 	t.Parallel()
 	mtRefusesEach(t, mtAwaiting,

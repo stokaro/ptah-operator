@@ -331,8 +331,9 @@ the reasons are the stable interface.
 
 `kubectl ptah wait schema/<name> --for in-sync -n <namespace>` reads the
 resource until the operator reports it in sync, and gives up at `--timeout`;
-`--for` also takes `approval`, `applied` and `suspended`. It counts nothing
-that was already true when it began. A condition that is `True` says what the
+`--for` also takes `approval`, `applied` and `suspended`. Apart from a plan
+already waiting for an approval, it counts nothing that was already true when it
+began. A condition that is `True` says what the
 operator saw last, so a schema that was `InSync` before somebody changed its
 database stays `InSync` until it reads the database again: ask for that read
 with `kubectl ptah refresh schema/<name> --wait`. That read covers

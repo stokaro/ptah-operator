@@ -36,7 +36,7 @@ approved what, and `migration` reads the same for a `PtahMigration`.
 
 [From source to verified change](../../reference/reconciliation/#from-source-to-verified-change)
 shows where each command fits in a change's life: these read stages 2, 5 and 6,
-`approve` records stage 3, and `wait` watches stage 4.
+`approve` records stage 3, and `wait` watches stages 2 and 4.
 [Ptah Console](https://github.com/stokaro/ptah-console) is an optional interface
 to the same resources, and nothing on this page needs it.
 

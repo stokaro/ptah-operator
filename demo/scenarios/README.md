@@ -116,12 +116,14 @@ synchronous: copied, they read the old state. So a step that depends on the
 operator having acted waits in a command of its own, where it is published:
 `kubectl ptah wait`, or the `--wait` of the command that made the change.
 
-Those waits count only what happened after they began. `--for in-sync` and
-`--for approval` need a reading of the database that began after the wait
-did, which is what makes them right after a change only the database saw --
-drift, an incident, a hand-run statement -- where no generation moves and a
-condition stays true throughout. `kubectl ptah refresh --wait` asks for such a
-reading now instead of at the operator's interval.
+Those waits count only what happened after they began. `--for in-sync` needs a
+reading of the database that began after the wait did, which is what makes it
+right after a change only the database saw -- drift, an incident, a hand-run
+statement -- where no generation moves and a condition stays true throughout.
+`kubectl ptah refresh --wait` asks for such a reading now instead of at the
+operator's interval. `--for approval` also ends on a plan already waiting, so a
+step uses it after an edit that moves the generation, which holds the wait until
+the operator has observed the edit, or where no plan waited before.
 
 Where no `kubectl ptah` target fits, the step uses `kubectl wait` on a
 condition or a phase that cannot have held before the change, and says why.

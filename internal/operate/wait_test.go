@@ -108,6 +108,11 @@ func readPhase(family operate.Family) (string, string) {
 	return "Observing", "Observe"
 }
 
+// gateAt is a plan waiting for a person, from a reading at seconds.
+func gateAt(seconds int) doc {
+	return doc{phase: "AwaitingApproval", observedAt: at(seconds), plan: &planDoc{name: "plan-1", uid: "plan-uid-1"}, conditions: approvalConditions(metav1.ConditionTrue)}
+}
+
 func failure(seconds int, operation, reason string) operatorv1alpha1.JournalEntry {
 	return operatorv1alpha1.JournalEntry{
 		Type: operatorv1alpha1.JournalOperationFailed, At: metav1.NewTime(at(seconds)), Operation: operation, Reason: reason,
@@ -561,24 +566,33 @@ func TestWaitTargets(t *testing.T) {
 			wantTimeout: true, wantMessage: "plan plan-1 already has one",
 		},
 		{
-			name: "approval: the gate as it stood when the wait began is not the target, a newer reading is", target: operate.TargetApproval,
+			name: "approval: with a baseline, the gate it shows is not the target, a newer reading is", target: operate.TargetApproval,
+			since: func(operate.Family) *doc {
+				waiting := gateAt(0)
+				return &waiting
+			},
 			docs: func(f operate.Family) []doc {
-				waiting := doc{phase: "AwaitingApproval", observedAt: at(0), plan: &planDoc{name: "plan-1", uid: "plan-uid-1"}, conditions: approvalConditions(metav1.ConditionTrue)}
-				reread := waiting
-				reread.observedAt = at(600)
-				return []doc{waiting, waiting, reread}
+				return []doc{gateAt(0), gateAt(0), gateAt(600)}
 			},
 			wantReads: 3,
 		},
 		{
-			name: "approval: the gate as it stood when the wait began never becomes the target", target: operate.TargetApproval,
+			name: "approval: with a baseline, the gate it shows never becomes the target", target: operate.TargetApproval,
+			since: func(operate.Family) *doc {
+				waiting := gateAt(0)
+				return &waiting
+			},
 			docs: func(f operate.Family) []doc {
-				return []doc{{phase: "AwaitingApproval", observedAt: at(0), plan: &planDoc{name: "plan-1", uid: "plan-uid-1"}, conditions: approvalConditions(metav1.ConditionTrue)}}
+				return []doc{gateAt(0)}
 			},
 			wantTimeout: true, wantMessage: "a read of the database that began after the wait did",
 		},
 		{
-			name: "approval: a plan republished from the read in flight when the wait began is not the target", target: operate.TargetApproval,
+			name: "approval: with a baseline, a plan republished from the read it shows in flight is not the target", target: operate.TargetApproval,
+			since: func(f operate.Family) *doc {
+				phase, operation := readPhase(f)
+				return &doc{phase: phase, operation: operation, observedAt: at(0), plan: &planDoc{name: "plan-1", uid: "plan-uid-1"}}
+			},
 			docs: func(f operate.Family) []doc {
 				phase, operation := readPhase(f)
 				plan := &planDoc{name: "plan-1", uid: "plan-uid-1"}
@@ -590,7 +604,11 @@ func TestWaitTargets(t *testing.T) {
 			wantTimeout: true, wantMessage: "a read of the database that began after the wait did",
 		},
 		{
-			name: "approval: a new plan computed from the read in flight when the wait began is not the target", target: operate.TargetApproval,
+			name: "approval: with a baseline, a new plan computed from the read it shows in flight is not the target", target: operate.TargetApproval,
+			since: func(f operate.Family) *doc {
+				phase, operation := readPhase(f)
+				return &doc{phase: phase, operation: operation, observedAt: at(0)}
+			},
 			docs: func(f operate.Family) []doc {
 				phase, operation := readPhase(f)
 				return []doc{
@@ -601,7 +619,77 @@ func TestWaitTargets(t *testing.T) {
 			wantTimeout: true, wantMessage: "a read of the database that began after the wait did",
 		},
 		{
-			name: "approval: the plan from the read after the one in flight is the target", target: operate.TargetApproval,
+			name: "approval: with no baseline, a plan already waiting when the wait began is the target", target: operate.TargetApproval,
+			docs: func(f operate.Family) []doc {
+				return []doc{gateAt(0)}
+			},
+			wantReads: 1,
+		},
+		{
+			// What #823 measured: the read had begun before the wait, and the
+			// interval is longer than the wait's timeout, so no later read comes.
+			name: "approval: with no baseline, the plan from the read in flight when the wait began is the target", target: operate.TargetApproval,
+			docs: func(f operate.Family) []doc {
+				phase, operation := readPhase(f)
+				return []doc{
+					{phase: phase, operation: operation, observedAt: at(0)},
+					gateAt(10),
+				}
+			},
+			wantReads: 2,
+		},
+		{
+			name: "approval: with no baseline, a plan already approved is not the target", target: operate.TargetApproval,
+			only: operate.FamilySchema,
+			docs: func(f operate.Family) []doc {
+				approved := gateAt(0)
+				approved.plan = &planDoc{name: "plan-1", uid: "plan-uid-1", approved: true}
+				return []doc{approved}
+			},
+			wantTimeout: true, wantMessage: "plan plan-1 already has one",
+		},
+		{
+			name: "approval: with no baseline, a gate from before the spec changed is not the target", target: operate.TargetApproval,
+			docs: func(f operate.Family) []doc {
+				edited := gateAt(0)
+				edited.generation, edited.observedGeneration = 4, 3
+				return []doc{edited}
+			},
+			wantTimeout: true, wantMessage: "the operator to observe generation 4",
+		},
+		{
+			name: "approval: with no baseline, a gate waits for the operation in flight to end", target: operate.TargetApproval,
+			docs: func(f operate.Family) []doc {
+				reading := gateAt(0)
+				reading.operation = "Resolve"
+				return []doc{reading, gateAt(0)}
+			},
+			wantReads: 2,
+		},
+		{
+			name: "approval: with no baseline, a resource with no plan waiting is not the target", target: operate.TargetApproval,
+			docs: func(f operate.Family) []doc {
+				return []doc{{phase: "InSync", observedAt: at(0), conditions: inSyncConditions(f, 3)}}
+			},
+			wantTimeout: true, wantMessage: "phase AwaitingApproval with ApprovalRequired True",
+		},
+		{
+			// The refusal may be from before the edit that ends it, and the wait
+			// has no baseline to tell. Only the plan a later reading computed
+			// stops the wait, as TestWaitStopsOnAPlanThePolicyHolds holds.
+			name: "approval: with no baseline, a policy refusal from an earlier reading does not stop the wait", target: operate.TargetApproval,
+			only: operate.FamilySchema,
+			docs: func(f operate.Family) []doc {
+				return []doc{{phase: "Blocked", observedAt: at(0), plan: refusedPlan, conditions: destructiveBlocked(3)}}
+			},
+			wantTimeout: true, wantMessage: "phase AwaitingApproval with ApprovalRequired True",
+		},
+		{
+			name: "approval: with a baseline, the plan from the read after the one it shows in flight is the target", target: operate.TargetApproval,
+			since: func(f operate.Family) *doc {
+				phase, operation := readPhase(f)
+				return &doc{phase: phase, operation: operation, observedAt: at(0), plan: &planDoc{name: "plan-1", uid: "plan-uid-1"}}
+			},
 			docs: func(f operate.Family) []doc {
 				phase, operation := readPhase(f)
 				plan := &planDoc{name: "plan-1", uid: "plan-uid-1"}

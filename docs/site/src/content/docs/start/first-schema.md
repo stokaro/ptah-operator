@@ -88,8 +88,7 @@ spec:
   policy:
     apply: OnApproval
 YAML
-kubectl -n application wait ptahschema/application \
-  --for=condition=ApprovalRequired --timeout=5m
+kubectl ptah wait schema/application --for approval -n application
 ```
 
 For MySQL, use a MySQL database URL in the Secret and set `engine` to `MySQL`.
@@ -202,7 +201,7 @@ condition below, at any stage.
 | Stage | Run | Expect | Then |
 | --- | --- | --- | --- |
 | 1 Source | The commands in [Create what the schema reads](#create-what-the-schema-reads) | `ArtifactResolved=True`, reason `SnapshotTaken` | Wait for the plan |
-| 2 Plan | `kubectl -n application wait ptahschema/application --for=condition=ApprovalRequired --timeout=5m`, then `kubectl ptah plan application -n application` | Phase `AwaitingApproval`, `PlanReady=True`, reason `Published`, and each statement with its severity | Decide |
+| 2 Plan | `kubectl ptah wait schema/application --for approval -n application`, then `kubectl ptah plan application -n application` | Phase `AwaitingApproval`, `PlanReady=True`, reason `Published`, and each statement with its severity | Decide |
 | 3 Decision | `kubectl ptah approve schema/application -n application --wait` | `Approved:`, with the identity admission stamped | The command stays for stages 4 and 5 |
 | 4 Execution | Nothing more. To watch from elsewhere, `kubectl -n application get ptahschema application -w` | Phase `Applying`, then `VerifyingConvergence` | The command ends with `reached applied` |
 | 5 Verification | `kubectl ptah schema application -n application` | Phase `InSync`, `InSync=True`, reason `ScopedConverged` | Read what happened |
@@ -211,7 +210,7 @@ condition below, at any stage.
 A stage can go another way:
 
 - At stage 2, phase `InSync` with no plan means the database already matches, and
-  the `kubectl wait` times out. There is nothing to approve.
+  the wait times out with exit status 7. There is nothing to approve.
 - At stage 2, [`Blocked`](../../reference/reconciliation/#blocked-is-a-refusal-not-a-fault)
   means something refuses the plan. `kubectl ptah schema` says what, and nothing
   runs until an input changes.
@@ -237,8 +236,7 @@ SQL
 kubectl -n application create configmap application-schema \
   --from-file=schema.sql=schema.sql --dry-run=client -o yaml |
   kubectl replace -f -
-kubectl -n application wait ptahschema/application \
-  --for=condition=ApprovalRequired --timeout=5m
+kubectl ptah wait schema/application --for approval -n application
 kubectl ptah approve schema/application -n application --wait
 ```
 

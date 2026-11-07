@@ -3,8 +3,11 @@
 package e2e
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -41,6 +44,7 @@ func (m *migrationRun) engineMigrations() {
 	m.assertAwaitingApproval()
 	m.assertPlanSequence()
 	m.assertKubectlPtahMigration(ptahv1alpha1.MigrationPhaseAwaitingApproval)
+	m.assertApprovalWaitFindsTheGate()
 	plan := m.planOf(m.plan)
 	if plan.UID == "" || plan.Spec.Fingerprint == "" {
 		m.fatalf("migration plan %s has no UID or fingerprint", m.plan)
@@ -304,6 +308,44 @@ func (m *migrationRun) assertKubectlPtahMigration(phase ptahv1alpha1.MigrationPh
 	m.t.Helper()
 	if err := kubectlPtahMigrationView(m.kubectlPtahView(m.migrationName()), m.in.TestNamespace, m.migrationName(), phase, m.plan); err != nil {
 		m.fatalf("kubectl ptah migration: %v", err)
+	}
+}
+
+// assertApprovalWaitFindsTheGate starts the plugin's wait for an approval after
+// the migration reached the gate. Its timeout is half the time left until the
+// read the operator has scheduled next, the deadline the resource persisted, so
+// a wait that needs a newer reading times out here.
+func (m *migrationRun) assertApprovalWaitFindsTheGate() {
+	m.t.Helper()
+	name := m.migrationName()
+	var (
+		before *ptahv1alpha1.PtahMigration
+		left   time.Duration
+	)
+	m.poll("a gate whose next read is at least a minute away", 2*time.Second, func() bool {
+		before = m.migration(name)
+		if before.Status.NextReconciliationTime == nil || before.Status.ActiveOperation != nil {
+			return false
+		}
+		left = time.Until(before.Status.NextReconciliationTime.Time)
+		return left >= time.Minute && awaitingApprovalGate(before, m.published, m.stateVersion) == nil
+	})
+	timeout := (left / 2).Truncate(time.Second)
+	command := exec.CommandContext(m.ctx, m.kubectlPtah, "wait", "migration/"+name, "--for", "approval", //nolint:gosec // The phase's own build.
+		"--timeout", timeout.String(), "-o", "json", "--kubeconfig", m.in.Kubeconfig, "-n", m.in.TestNamespace)
+	var stdout, stderr bytes.Buffer
+	command.Stdout, command.Stderr = &stdout, &stderr
+	err := command.Run()
+	m.scan(stdout.Bytes(), "the kubectl ptah wait document")
+	m.scan(stderr.Bytes(), "the kubectl ptah wait diagnostics")
+	if err != nil {
+		m.fatalf("kubectl ptah wait --for approval did not end on the plan waiting at %s within %s, %s before its next read: %v\n%s",
+			name, timeout, left, err, stderr.String())
+	}
+	reached := &ptahv1alpha1.PtahMigration{}
+	m.check(json.Unmarshal(stdout.Bytes(), reached), "decode what kubectl ptah wait printed")
+	if err := approvalWaitFoundTheGate(reached, before); err != nil {
+		m.fatalf("kubectl ptah wait --for approval ended on another document than the gate it began at: %v", err)
 	}
 }
 
