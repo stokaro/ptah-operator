@@ -27,6 +27,12 @@ const (
 	childStopsOnTerm = "stops-on-term"
 	// childIgnoresTerm notes the signal and keeps running.
 	childIgnoresTerm = "ignores-term"
+
+	// childPrintsEnvironment, the child's first argument, makes it print every
+	// variable it holds after environmentHeader. A variable cannot select this
+	// mode, because a child given no variable has to reach it.
+	childPrintsEnvironment = "prints-environment"
+	environmentHeader      = "environment:"
 )
 
 // stoppedBetweenFiles is what `ptah migrations up --json` writes when it is
@@ -37,6 +43,13 @@ const stoppedBetweenFiles = `{"contract_version":2,"command":"migrations up","di
 	`"has_pending_changes":true}}` + "\n"
 
 func TestMain(m *testing.M) {
+	if len(os.Args) > 1 && os.Args[1] == childPrintsEnvironment {
+		fmt.Println(environmentHeader)
+		for _, variable := range os.Environ() {
+			fmt.Println(variable)
+		}
+		os.Exit(0)
+	}
 	if mode := os.Getenv(testChildEnv); mode != "" {
 		os.Exit(runTestChild(mode))
 	}
@@ -140,6 +153,58 @@ func executeAndCancel(t *testing.T, executor OSExecutor, child testChild) execut
 		t.Fatal("Execute did not return within 30s of its context being canceled")
 		return executed{}
 	}
+}
+
+// The list a spec carries is everything its child holds. The runner's own
+// variable stands for the database URL a child must not inherit, and the row
+// with one variable shows the child printed what it holds, so an empty answer
+// from the other rows is a child that holds nothing.
+func TestOSExecutorGivesAChildOnlyTheListedEnvironment(t *testing.T) {
+	const inherited = "PTAH_RUNNER_TEST_INHERITED"
+	t.Setenv(inherited, "postgres://runner:secret@database/app")
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range []struct {
+		name string
+		env  []string
+		want []string
+	}{
+		{name: "an empty list", env: []string{}, want: nil},
+		{name: "no list", env: nil, want: nil},
+		{name: "one variable", env: []string{"ONLY=this"}, want: []string{"ONLY=this"}},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			stdout := newBoundedBuffer(1 << 20)
+			stderr := newBoundedBuffer(1 << 20)
+			code, err := OSExecutor{}.Execute(context.Background(), CommandSpec{
+				Path: self, Args: []string{childPrintsEnvironment}, Env: row.env,
+			}, stdout, stderr)
+			if err != nil || code != 0 {
+				t.Fatalf("Execute = %d, %v; stderr %q", code, err, stderr.bytes())
+			}
+			header, listed, found := strings.Cut(string(stdout.bytes()), "\n")
+			if !found || header != environmentHeader {
+				t.Fatalf("the child did not print its environment: %q", stdout.bytes())
+			}
+			got := strings.Fields(listed)
+			if !slices.Equal(got, row.want) {
+				// Names only: a failure here would print the runner's own
+				// environment into a build log.
+				t.Fatalf("the child holds %q, want %q", variableNames(got), variableNames(row.want))
+			}
+		})
+	}
+}
+
+func variableNames(variables []string) []string {
+	names := make([]string, 0, len(variables))
+	for _, variable := range variables {
+		name, _, _ := strings.Cut(variable, "=")
+		names = append(names, name)
+	}
+	return names
 }
 
 // A child that answers SIGTERM stops before the delay runs out, and what it

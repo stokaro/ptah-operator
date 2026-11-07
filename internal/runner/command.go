@@ -421,13 +421,17 @@ type Executor interface {
 // the child where it stands and leaves nothing to read. A zero StopDelay keeps
 // that default, because a SIGTERM with no bound on what follows would let a
 // child that ignores it outlive every deadline the runner enforces.
+//
+// spec.Env is everything the child holds, and no list means no variable. The
+// copy is never nil, because exec reads a nil Env as "inherit", which would hand
+// the child every credential the runner holds.
 type OSExecutor struct {
 	StopDelay time.Duration
 }
 
 func (e OSExecutor) Execute(ctx context.Context, spec CommandSpec, stdout, stderr io.Writer) (int, error) {
 	command := exec.CommandContext(ctx, spec.Path, spec.Args...)
-	command.Env = append([]string(nil), spec.Env...)
+	command.Env = append([]string{}, spec.Env...)
 	command.Stdout = stdout
 	command.Stderr = stderr
 	if e.StopDelay > 0 {
