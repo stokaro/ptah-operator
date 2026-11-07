@@ -211,7 +211,7 @@ whose run finished, a bisect cannot assume a commit it lands on was ever built,
 and a change that needs its own verdict — a release candidate, or a change to
 the lifecycle path itself — goes through a pull request and is merged after its
 run finishes. The pull request fans out over the same three minors and the same
-nine suites.
+fourteen suites.
 
 ## The acceptance suites
 
@@ -224,16 +224,16 @@ unless every phase the driver runs belongs to exactly one suite.
 ```bash
 make e2e                                   # every phase, in the driver's order, as before
 E2E_SUITE=data-plane make e2e              # one suite, against a cluster of its own
-E2E_SUITE=migrations-postgresql make e2e   # one engine's migration rows
+E2E_SUITE=migrations-postgresql make e2e   # one engine's migration lifecycle
 ```
 
 Phases that share mutable state stay together: the CRD upgrade and the uninstall
 that follows it and the schema faults and their shared watches. MySQL and external PostgreSQL
 stay with schema faults because their closing assertions must still hold after
 fault injection. They run in `schema-faults`. The data-plane job runs the ordinary
-PostgreSQL lifecycle, plan-size boundaries, admission rows, and the ConfigMap
-and Git sources, which read their own databases. PostgreSQL reference data runs
-in `lifecycle` after leader failover. Certificate rotation, MySQL reference
+PostgreSQL lifecycle, plan-size boundaries and admission rows. The ConfigMap
+and Git sources read their own databases and run in `sources`. PostgreSQL
+reference data runs in `lifecycle` after leader failover. Certificate rotation, MySQL reference
 data, plan-storage alerts, and certificate-expiry alerts share `certificates`. The reference-data rows use
 separate databases and need no migration acceptance. Alerting runs in lifecycle
 before the final next-release upgrade and uninstall. It publishes and plans its own schema and migration
@@ -243,23 +243,31 @@ scrape/admission loss, manager loss, and interrupted upgrades stay
 in `lifecycle`. Separate clusters let those groups overlap without global faults
 contaminating another incident's history. Each group owns its producer identities
 and monitoring namespace, so the unpartitioned driver also runs them safely.
-The matrix has nine suites.
+The matrix has fourteen suites. Each has to finish inside the 90-minute job
+timeout with room for a slow runner, so a suite that comes near it splits where
+its rows own their state, and a phase split off that way publishes every
+artifact it reads.
 
-The independent schema approval rows run in `schema-approvals`; deadline,
-restart, deletion, and shared-realm histories stay together in `schema-faults`.
-Migration approval and executor/runner changes own their artifacts and
-databases, so both engines run in `migration-authority`. Their Secret names
-include the resource family to prevent collisions. Neither runtime phase
-repeats the migration lifecycle.
+The independent schema approval rows run in `schema-approvals`. The executor
+and runtime rows roll the manager and run in `schema-runtime`, which stands up
+its own fixtures and watches. Deadline, restart, deletion, and shared-realm
+histories stay together in `schema-faults`. Migration approval and
+executor/runner changes own their artifacts and databases, so each engine runs
+in a suite of its own, `migration-authority-postgresql` and
+`migration-authority-mysql`. Their Secret names include the resource family to
+prevent collisions. Neither runtime phase repeats the migration lifecycle.
 
-The two migration engines run in separate suites. Reference-data acceptance
-runs outside those suites, so it adds no serial work to either migration suite.
+The two migration engines run in separate suites, and each engine's rows in
+two. `migrations-<engine>` takes the engine's own migration through its
+lifecycle and the refusals that read its history. `migration-faults-<engine>`
+runs the rows that create a migration of their own, from late dispatch to the
+rebuild drill, against artifacts its phase publishes. Reference-data acceptance
+runs outside those suites, so it adds no serial work to any migration suite.
 The engine is a phase input rather than a default: the driver names it,
 and a phase asked to run with none refuses instead of covering one engine and
 reporting two.
 
-The migration, migration-authority, certificates, schema-faults, schema-approvals,
-lifecycle, and alerting-operations suites need the namespace the data plane stands
+Every suite but `data-plane` needs the namespace the data plane stands
 up — its registry Service, its databases, its admission fixtures — so those suites run
 the data-plane phase in preparation mode (`E2E_DATAPLANE_MODE=prepare`), which
 creates those prerequisites and executes none of its own acceptance. Preparation

@@ -379,10 +379,11 @@ Job.
 Every phase is a Go test in this directory: the lifecycle suite's `upgrade`,
 `ha` and `uninstall`, the control-plane phase, `assert`, the certificate
 rotation, the data plane itself, `dataplane`, restart and fault injection
-included, the migration phases, `migrations-postgresql` and
-`migrations-mysql`, the reference-data phases, `reference-data-postgresql` and
-`reference-data-mysql`, and `alerting`. The driver keeps the bootstrap: the
-kind cluster, the images, the registry, the databases and the chart install.
+included, the migration phases, `migrations-postgresql`, `migrations-mysql`,
+`migration-faults-postgresql` and `migration-faults-mysql`, the reference-data
+phases, `reference-data-postgresql` and `reference-data-mysql`, and
+`alerting`. The driver keeps the bootstrap: the kind cluster, the images, the
+registry, the databases and the chart install.
 Before it creates the cluster it builds one test binary from the snapshot:
 
 ```bash
@@ -474,8 +475,12 @@ start with `migration-policy`; MySQL then runs `mysql-transaction-mode`, since
 the sequence it applies names a transaction mode. The lifecycle publishes the
 migration directory with the Ptah the operator runs, takes a database nothing
 has migrated through the approval gate, the run and the history it leaves, and
-then runs every row that holds the path to a refusal or a fault, in the
-namespace the data plane prepared:
+then runs the rows that refuse what that history contradicts, in the namespace
+the data plane prepared. `TestMigrationFaultsPostgreSQL` and
+`TestMigrationFaultsMySQL` run the rows that hold the path to a fault. Each row
+creates its own migration and database, so the phase needs no lifecycle before
+it: its first scenario, `fault-artifact`, applies the verification policy and
+publishes the engine's main and uncertain artifacts to a repository of its own.
 
 - `migrations_lifecycle_e2e_test.go`: the main lifecycle, the approval stamp,
   and the refusal of an approval that names a consumed plan.
@@ -483,19 +488,20 @@ namespace the data plane prepared:
   artifact, the modified file and the branch applied out of order.
 - `migrations_guard_e2e_test.go`: the apply-policy guard, adoption of an
   existing schema and the checkpoint bootstrap.
-- `migrations_uncertain_e2e_test.go`: the uncertain Apply, the late dispatch
-  and the restored history.
-- `migrations_faults_e2e_test.go`: deletion, a stopped Apply, a lost log, the
-  retry interval, suspension and the lock-release fault.
-- `migrations_isolation_e2e_test.go`: the isolated node, the unknown layer,
-  egress, the retarget before dispatch, the rebuild drill and the transaction
-  mode.
+- `migrations_uncertain_e2e_test.go`: the uncertain Apply, and in the fault
+  phases the late dispatch and the restored history.
+- `migrations_faults_e2e_test.go`: in the fault phases, deletion, a stopped
+  Apply, a lost log, the retry interval, suspension and the lock-release fault.
+- `migrations_isolation_e2e_test.go`: the transaction mode, and in the fault
+  phases the isolated node, the unknown layer, egress, the retarget before
+  dispatch and the rebuild drill.
 
-The phase stops at its first failure, as the script did, and a cleanup
+Each phase stops at its first failure, as the script did, and a cleanup
 registered before it creates anything puts back the isolation rules, the
 egress policies and the apply gate however it ends. The isolated-node row cuts
-the isolation worker's node container off from the API server, which is why
-the phase reads the Docker context and the kind cluster's name, and why only a
-suite that declares the worker may run it. The Job and status filters are Go
+the isolation worker's node container off from the API server, and the hung
+result-read row holds that node's log responses unfinished, which is why the
+phases read the Docker context and the kind cluster's name, and why only a
+suite that declares the worker may run them. The Job and status filters are Go
 predicates beside the rows that use them, each held by a unit test to the
 readings it accepts and the mistakes it refuses.

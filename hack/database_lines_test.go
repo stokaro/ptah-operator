@@ -313,6 +313,13 @@ func TestOnlyASuiteOnAnotherEngineCanBeLeftOut(t *testing.T) {
 	if err := verifyDatabaseLeftOutSuites(loadFixtureDatabaseCatalog(t), suites, e2eHarnessPath, driver); err != nil {
 		t.Fatalf("leaving out the MySQL migration suite was refused: %v", err)
 	}
+	// No suite in the catalog runs both engines, so the refusal of one that
+	// does is measured on a suite added here: its MySQL phase comes first, so
+	// the check has to read past a phase it would accept.
+	suites.Suites = append(suites.Suites, e2eSuite{
+		Name: "both-engines", Slug: "both-engines", Summary: "Migration runtime rows on both engines",
+		Phases: []string{"migration-runtime-mysql", "migration-runtime-postgresql"},
+	})
 	const reason = "it proves nothing here"
 	tests := map[string]struct {
 		leftOut []databaseLeftOutSuite
@@ -322,7 +329,7 @@ func TestOnlyASuiteOnAnotherEngineCanBeLeftOut(t *testing.T) {
 			[]databaseLeftOutSuite{{"migrations-postgresql", reason}}, "can run on postgresql",
 		},
 		"a suite on both engines": {
-			[]databaseLeftOutSuite{{"migration-authority", reason}}, "can run on postgresql",
+			[]databaseLeftOutSuite{{"both-engines", reason}}, "can run on postgresql",
 		},
 		"a suite that names no engine": {
 			[]databaseLeftOutSuite{{"data-plane", reason}}, "can run on postgresql",

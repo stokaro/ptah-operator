@@ -58,6 +58,14 @@
         {
           "suite": "migrations-mysql",
           "reason": "Its one phase is the versioned migration rows on MySQL. Its data-plane preparation starts PostgreSQL, and no row reads it."
+        },
+        {
+          "suite": "migration-faults-mysql",
+          "reason": "Its one phase is the versioned migration fault rows on MySQL. Its data-plane preparation starts PostgreSQL, and no row reads it."
+        },
+        {
+          "suite": "migration-authority-mysql",
+          "reason": "Its one phase is the migration approval and runtime rows on MySQL. Its data-plane preparation starts PostgreSQL, and no row reads it."
         }
       ]
     }

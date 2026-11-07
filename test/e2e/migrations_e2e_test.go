@@ -80,6 +80,44 @@ func runMigrationPhase(t *testing.T, phase phases.Of[phases.MigrationsInputs], e
 		m.engine.kind)
 }
 
+// TestMigrationFaultsPostgreSQL is the migration-faults-postgresql phase.
+func TestMigrationFaultsPostgreSQL(t *testing.T) {
+	runMigrationFaultsPhase(t, phases.MigrationFaultsPostgreSQL, "postgresql")
+}
+
+// TestMigrationFaultsMySQL is the migration-faults-mysql phase.
+func TestMigrationFaultsMySQL(t *testing.T) {
+	runMigrationFaultsPhase(t, phases.MigrationFaultsMySQL, "mysql")
+}
+
+// The fault rows own their migrations, databases and Secrets. They read the
+// engine's artifact through the main tag and the slow artifact through the
+// uncertain tag, which the migrations phase publishes in its own rows, so this
+// phase publishes both itself, to a repository of its own: in an unpartitioned
+// run the migrations phase's tags stay where its rows left them.
+func runMigrationFaultsPhase(t *testing.T, phase phases.Of[phases.MigrationsInputs], engine string) {
+	run, inputs := harness.Begin(t, phase)
+	m := newMigrationRun(t, run, inputs, engine)
+	m.repository += "-faults"
+	for _, scenario := range []struct {
+		name string
+		body func()
+	}{
+		{"fault-artifact", func() {
+			m.migrationPolicy()
+			m.publish("fault-source", m.fixtureDir(""), m.reference(""))
+			m.publish("fault-uncertain", m.fixtureDir("-uncertain"), m.reference("-uncertain"))
+		}},
+		{engine + "-migration-faults", m.engineMigrationFaults},
+	} {
+		if !run.Scenario(scenario.name, m.scenario(scenario.body)) {
+			return
+		}
+	}
+	run.Logf("e2e migration faults: PASS %s dispatch, history, lock, node, artifact, policy and egress faults, and the rebuild drill",
+		m.engine.kind)
+}
+
 // migrationRun is what the migration proofs share. Each scenario runs as a
 // subtest, and t is that subtest while it runs.
 type migrationRun struct {

@@ -4895,11 +4895,11 @@ func verifyPhaseEnvironmentContracts(files e2eWiringFiles) error {
 // leave the other unproven, with both jobs green.
 func goPhaseBinding(phase, input string) (string, bool) {
 	// Schema faults reuse the data-plane inputs but never stop at preparation.
-	if (phase == "schema-faults" || phase == "schema-approvals") && input == "E2E_DATAPLANE_MODE" {
+	if (phase == "schema-faults" || phase == "schema-approvals" || phase == "schema-runtime") && input == "E2E_DATAPLANE_MODE" {
 		return "full", true
 	}
 	if input == engineInput {
-		for _, family := range []string{"migrations-", "migration-runtime-", "reference-data-"} {
+		for _, family := range []string{"migrations-", "migration-faults-", "migration-runtime-", "reference-data-"} {
 			if engine, ok := strings.CutPrefix(phase, family); ok && (engine == "postgresql" || engine == "mysql") {
 				return engine, true
 			}

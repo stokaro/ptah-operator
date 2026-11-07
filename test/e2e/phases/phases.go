@@ -272,8 +272,9 @@ var SchemaFaults = define[DataPlaneInputs](Phase{
 	},
 })
 
-// SchemaApprovals proves independent approval and executor changes on both
-// engines, without waiting for the unrelated interruption sequence.
+// SchemaApprovals proves that a schema approval stops binding when what it
+// approved changes, on both engines, without waiting for the unrelated
+// interruption sequence.
 var SchemaApprovals = define[DataPlaneInputs](Phase{
 	Name:         "schema-approvals",
 	Test:         "TestSchemaApprovals",
@@ -289,6 +290,22 @@ var SchemaApprovals = define[DataPlaneInputs](Phase{
 		"approval-verification-policy-change",
 		"plan-stale-only-on-replacement",
 		"approval-history-audit",
+	},
+})
+
+// SchemaRuntime proves the executor and runtime bindings of a schema approval
+// on both engines: a changed executor image or Ptah version, a controller
+// state or runner protocol the manager no longer supports, and an executor
+// change while an Apply runs. Each row rolls the manager, so the phase stands
+// up its own fixtures and watches rather than sharing the approval rows'.
+var SchemaRuntime = define[DataPlaneInputs](Phase{
+	Name:         "schema-runtime",
+	Test:         "TestSchemaRuntime",
+	Timeout:      60 * time.Minute,
+	RequiresFull: []string{"assert"},
+	Scenarios: []string{
+		"watches",
+		"watch-history-audit",
 		"approval-executor-image-change",
 		"approval-ptah-version-change",
 		"unsupported-controller-state-after-approval",
@@ -339,17 +356,17 @@ type MigrationsInputs struct {
 
 // MigrationsPostgreSQL proves the versioned-migration path against
 // PostgreSQL: the approval gate, the applied sequence, the history it leaves,
-// and every refusal and fault the path owes a person.
+// and the refusals that read that history.
 var MigrationsPostgreSQL = define[MigrationsInputs](Phase{
 	Name:    "migrations-postgresql",
 	Test:    "TestMigrationsPostgreSQL",
-	Timeout: 150 * time.Minute,
+	Timeout: 90 * time.Minute,
 	Scenarios: []string{
 		"migration-policy",
 		"postgresql-migrations",
 	},
-	// The isolated-node row cuts the isolation worker off from the API
-	// server, so only a suite that declares the worker may run the phase.
+	// The hung result-read row holds the isolation worker's log responses
+	// unfinished, so only a suite that declares the worker may run the phase.
 	IsolatesNode: true,
 })
 
@@ -358,11 +375,44 @@ var MigrationsPostgreSQL = define[MigrationsInputs](Phase{
 var MigrationsMySQL = define[MigrationsInputs](Phase{
 	Name:    "migrations-mysql",
 	Test:    "TestMigrationsMySQL",
-	Timeout: 150 * time.Minute,
+	Timeout: 90 * time.Minute,
 	Scenarios: []string{
 		"migration-policy",
 		"mysql-transaction-mode",
 		"mysql-migrations",
+	},
+	// The hung result-read row holds the isolation worker's log responses
+	// unfinished, so only a suite that declares the worker may run the phase.
+	IsolatesNode: true,
+})
+
+// MigrationFaultsPostgreSQL proves the faults of the versioned-migration path
+// against PostgreSQL: late dispatch, restored history, Apply faults, lock
+// release, a lost node, unreadable artifacts, policy and egress refusals,
+// retargeting, and the rebuild drill. Every row owns its migration and
+// database, so the phase needs an artifact and the verification policy, not
+// the lifecycle the migrations phase leaves behind.
+var MigrationFaultsPostgreSQL = define[MigrationsInputs](Phase{
+	Name:    "migration-faults-postgresql",
+	Test:    "TestMigrationFaultsPostgreSQL",
+	Timeout: 90 * time.Minute,
+	Scenarios: []string{
+		"fault-artifact",
+		"postgresql-migration-faults",
+	},
+	// The isolated-node row cuts the isolation worker off from the API
+	// server, so only a suite that declares the worker may run the phase.
+	IsolatesNode: true,
+})
+
+// MigrationFaultsMySQL proves the same faults against MySQL.
+var MigrationFaultsMySQL = define[MigrationsInputs](Phase{
+	Name:    "migration-faults-mysql",
+	Test:    "TestMigrationFaultsMySQL",
+	Timeout: 90 * time.Minute,
+	Scenarios: []string{
+		"fault-artifact",
+		"mysql-migration-faults",
 	},
 	// The isolated-node row cuts the isolation worker off from the API
 	// server, so only a suite that declares the worker may run the phase.
@@ -776,8 +826,11 @@ var all = []Phase{
 	DataPlane.Phase,
 	SchemaFaults.Phase,
 	SchemaApprovals.Phase,
+	SchemaRuntime.Phase,
 	MigrationsPostgreSQL.Phase,
+	MigrationFaultsPostgreSQL.Phase,
 	MigrationsMySQL.Phase,
+	MigrationFaultsMySQL.Phase,
 	MigrationRuntimePostgreSQL.Phase,
 	MigrationRuntimeMySQL.Phase,
 	ReferenceDataPostgreSQL.Phase,

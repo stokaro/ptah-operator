@@ -33,6 +33,33 @@ func TestSchemaApprovals(t *testing.T) {
 		{"approval-verification-policy-change", func() { f.verificationPolicyChanges() }},
 		{"plan-stale-only-on-replacement", f.planStaleOnlyOnReplacement},
 		{"approval-history-audit", f.closeApprovalWatches},
+	} {
+		if !run.Scenario(scenario.name, d.scenario(scenario.body)) {
+			return
+		}
+	}
+	run.Logf("e2e schema approvals: PASS every authority change on both engines")
+}
+
+// TestSchemaRuntime owns the executor and runtime bindings on both engines.
+// Every row rolls the manager and owns its schemas and databases, so it needs
+// the fault artifacts, the principal Secret and a closed watch history, which
+// the phase builds and audits itself before the first rollout, rather than the
+// authority rows TestSchemaApprovals runs.
+func TestSchemaRuntime(t *testing.T) {
+	run, inputs := harness.Begin(t, phases.SchemaRuntime)
+	if inputs.Mode != "full" {
+		t.Fatal("schema runtime bindings require full acceptance")
+	}
+	d := newDataPlane(t, run, inputs)
+	f := newFaultRun(d)
+	f.fixtureSuffix = "-runtime"
+	for _, scenario := range []struct {
+		name string
+		body func()
+	}{
+		{"watches", f.prepareWatches},
+		{"watch-history-audit", f.closeApprovalWatches},
 		{"approval-executor-image-change", func() { f.executorImageChanges() }},
 		{"approval-ptah-version-change", func() { f.ptahVersionChanges() }},
 		{"unsupported-controller-state-after-approval", func() { f.unsupportedControllerStates() }},
@@ -43,5 +70,5 @@ func TestSchemaApprovals(t *testing.T) {
 			return
 		}
 	}
-	run.Logf("e2e schema approvals: PASS every authority change and its executing allowed control on both engines")
+	run.Logf("e2e schema runtime: PASS every executor and runtime change and its executing allowed control on both engines")
 }

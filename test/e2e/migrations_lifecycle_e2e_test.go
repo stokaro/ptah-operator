@@ -29,7 +29,9 @@ import (
 
 // engineMigrations takes the engine's migration from a database nothing has
 // migrated through its approval gate, its run and the history it leaves, and
-// then runs every row that holds the path to a refusal or a fault.
+// then runs the rows that refuse what that history contradicts. The rows that
+// own a migration of their own run in engineMigrationFaults, in a phase of
+// their own.
 func (m *migrationRun) engineMigrations() {
 	m.t.Helper()
 	m.logf("starting the %s lifecycle on a database nothing has migrated", m.engine.kind)
@@ -79,6 +81,17 @@ func (m *migrationRun) engineMigrations() {
 	m.existingSchemaAdoptionProof()
 	m.checkpointBootstrapProof()
 	m.uncertainApplyProof()
+	m.logf("PASS %s approval gate, applied sequence, and matching history", m.engine.kind)
+}
+
+// engineMigrationFaults runs the rows that hold the path to a fault: each
+// creates its own migration, database and Secret, and reads the artifacts the
+// phase published to the main and uncertain tags or publishes its own. None
+// reads the engine's own migration.
+func (m *migrationRun) engineMigrationFaults() {
+	m.t.Helper()
+	m.logf("starting the %s fault rows", m.engine.kind)
+	m.jobs = map[types.UID]batchv1.Job{}
 	m.lateDispatchProof()
 	m.restoredHistoryProof()
 	m.independentApplyFaults()
@@ -90,7 +103,7 @@ func (m *migrationRun) engineMigrations() {
 	m.egressPolicyProof()
 	m.retargetBeforeDispatchProof()
 	m.rebuildDrill()
-	m.logf("PASS %s approval gate, applied sequence, and matching history", m.engine.kind)
+	m.logf("PASS %s dispatch, history, lock, node, artifact, policy and egress faults, and the rebuild drill", m.engine.kind)
 }
 
 // publish publishes a migration directory with the Ptah the operator runs,

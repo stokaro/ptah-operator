@@ -3,7 +3,7 @@ title: Kubernetes support
 description: The supported minor window, how it is declared, and how it moves.
 ---
 
-Ptah Operator supports the three minor Kubernetes release branches that the Kubernetes project currently maintains. Every pull request and the weekly default-branch run execute the same complete PostgreSQL and MySQL reconciliation lifecycle against a real cluster for each supported minor; a version is not part of the supported window unless its matrix job is required and green. Every matrix cluster has three control-plane nodes and one worker. The two migration suites add a second worker that carries a label and a taint of its own, so the only thing on it is the Apply a proof cuts off from the API server.
+Ptah Operator supports the three minor Kubernetes release branches that the Kubernetes project currently maintains. Every pull request and the weekly default-branch run execute the same complete PostgreSQL and MySQL reconciliation lifecycle against a real cluster for each supported minor; a version is not part of the supported window unless its matrix job is required and green. Every matrix cluster has three control-plane nodes and one worker. The schema-faults suite and the migration and migration-faults suites add a second worker that carries a label and a taint of its own, so the only thing on it is the operation a proof cuts off from the API server or whose log it holds.
 
 The current window is:
 
