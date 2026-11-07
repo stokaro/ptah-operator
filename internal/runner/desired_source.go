@@ -16,6 +16,11 @@ import (
 // credential and could not reach the target (see the checks below).
 const CodeDesiredSourceUnreadable = "desired_source_unreadable"
 
+// CodeDesiredSchemaInvalid reports a desired schema Ptah read and refuses as a
+// whole, such as a foreign key into a table it does not declare, when that
+// fault stopped the command that failed. Its message comes from the same run.
+const CodeDesiredSchemaInvalid = "desired_schema_invalid"
+
 const (
 	// desiredSourceCheckTimeout bounds a check that reads local files. The
 	// failure it explains has already happened, so a check that hangs costs
@@ -24,9 +29,9 @@ const (
 	// maxDesiredSourceCheckBytes is more than a reason takes. A check that
 	// prints more than this is not reporting a reason.
 	maxDesiredSourceCheckBytes = 64 << 10
-	// maxDesiredSourceReasonBytes is what fits an Event with the code in front:
-	// the controller keeps 512 bytes of the whole sentence there, so a longer
-	// reason would read differently in the condition and the Event.
+	// maxDesiredSourceReasonBytes is what fits an Event with the longer code in
+	// front: the controller keeps 512 bytes of the whole sentence there, so a
+	// longer reason would read differently in the condition and the Event.
 	maxDesiredSourceReasonBytes = 512 - len(CodeDesiredSourceUnreadable) - len(": ")
 	// scratchDatabaseURL is the database a migration check opens: in memory,
 	// private to the child, and gone when it exits. `migrations status` loads
@@ -35,19 +40,23 @@ const (
 	scratchDatabaseURL = "sqlite:///:memory:"
 )
 
-// reportUnreadableSchema asks Ptah whether the desired schema loads, in a child
-// that holds no database URL, and reports the reason when it does not. It
-// returns false, and changes nothing, when the file loads or the check says
-// anything else, so a failure with another cause keeps the code it had.
+// reportSchemaProblem asks Ptah what is wrong with the desired schema, in a
+// child that holds no database URL. It reports a file that does not load, and a
+// fault of the schema as a whole when failed, the failed command's own sentence,
+// ends with the same words. It returns false, and changes nothing, when the file
+// is sound or the check says anything else, so a failure with another cause
+// keeps the code it had.
 //
-// A failed command's own error sentence could say the same, and could as well
-// quote what the database answered: the command had a connection, and nothing
-// in the sentence separates the two. This child has no connection to quote.
-func reportUnreadableSchema(
+// The failed command's sentence could say the same, and could as well quote what
+// the database answered: the command had a connection, and nothing in the
+// sentence separates the two. So it is compared and not copied, and every word
+// that leaves comes from this child, which has no connection to quote.
+func reportSchemaProblem(
 	ctx context.Context,
 	config Config,
 	environment []string,
 	inputs Inputs,
+	failed string,
 	result *Result,
 	redactor Redactor,
 ) bool {
@@ -65,19 +74,24 @@ func reportUnreadableSchema(
 	if !finished || exitCode != 1 {
 		return false
 	}
-	reason, unreadable := dataplane.SchemaSourceProblem(stdout, inputs.ExpectedDatabaseEngine)
-	if !unreadable {
+	code := CodeDesiredSourceUnreadable
+	reason, found := dataplane.SchemaSourceProblem(stdout, inputs.ExpectedDatabaseEngine)
+	if !found {
+		code = CodeDesiredSchemaInvalid
+		reason, found = dataplane.SchemaStructuralProblem(stdout, inputs.ExpectedDatabaseEngine, failed)
+	}
+	if !found {
 		return false
 	}
-	// A SQL parser names the file and a YAML parser does not, so the name goes
-	// in front only where Ptah's words leave it out.
+	// A SQL parser names the file and a YAML parser or the validator does not,
+	// so the name goes in front only where Ptah's words leave it out.
 	if name := path.Base(file); !strings.Contains(reason, name) {
 		reason = name + ": " + reason
 	}
-	return setDesiredSourceUnreadable(result, reason, redactor, config.Diagnostics)
+	return setDesiredSourceProblem(result, code, reason, redactor, config.Diagnostics)
 }
 
-// reportUnreadableMigrationFiles is reportUnreadableSchema for a migration
+// reportUnreadableMigrationFiles is reportSchemaProblem for a migration
 // directory. `migrations validate` does not answer this: it compares the
 // directory with its ptah.sum and reads neither a file name nor a directive.
 // `migrations status` does, and it is the command that failed, so the same
@@ -102,7 +116,7 @@ func reportUnreadableMigrationFiles(
 	if !unreadable {
 		return false
 	}
-	return setDesiredSourceUnreadable(result, reason, redactor, config.Diagnostics)
+	return setDesiredSourceProblem(result, CodeDesiredSourceUnreadable, reason, redactor, config.Diagnostics)
 }
 
 // desiredSourceCheckEnvironment is everything a check's child is told: where
@@ -134,14 +148,14 @@ func runDesiredSourceCheck(ctx context.Context, config Config, spec CommandSpec)
 	return stdout.bytes(), exitCode, true
 }
 
-// setDesiredSourceUnreadable reports the reason, and reports false, changing
+// setDesiredSourceProblem reports the reason, and reports false, changing
 // nothing, when none of it is readable. The redactor knows the credentials of
 // the Pod's environment, which the child does not, in case the file quotes one.
-func setDesiredSourceUnreadable(result *Result, reason string, redactor Redactor, diagnostics io.Writer) bool {
+func setDesiredSourceProblem(result *Result, code, reason string, redactor Redactor, diagnostics io.Writer) bool {
 	text := freeText(reason, redactor, maxDesiredSourceReasonBytes)
 	if text == "" {
 		return false
 	}
-	setResultError(result, CodeDesiredSourceUnreadable, errors.New(text), redactor, diagnostics)
+	setResultError(result, code, errors.New(text), redactor, diagnostics)
 	return true
 }

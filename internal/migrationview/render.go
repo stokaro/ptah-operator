@@ -240,10 +240,12 @@ func renderUnresolvedRun(text *strings.Builder, migrationUID, gate string, run *
 
 // readingGate names what holds the resource before the history read that
 // would clear an unresolved run, as the operations guide lists the gates and
-// as the status shows them: the suspension the spec asks for, and an engine or
-// a realm the controller refused, which it reports as Blocked with the
-// refusal's reason. The fourth gate, stored state a newer manager wrote, is
-// refused before any status is written, so nothing here can show it.
+// as the status shows them: the suspension the spec asks for, and an engine, a
+// realm or an artifact the controller refused, which it reports as Blocked with
+// the refusal's reason. An artifact is refused after Resolve and Verify have run,
+// and the history read is what never starts. The gate of stored state a newer
+// manager wrote is refused before any status is written, so nothing here can
+// show it.
 func readingGate(view View) string {
 	if view.Suspended {
 		return "spec.suspend is set"
@@ -254,7 +256,7 @@ func readingGate(view View) string {
 	}
 	switch operatorv1alpha1.ConditionReason(blocked.Reason) {
 	case operatorv1alpha1.ReasonUnsupportedEngine, operatorv1alpha1.ReasonRealmConflict,
-		operatorv1alpha1.ReasonRealmNotAuthorized:
+		operatorv1alpha1.ReasonRealmNotAuthorized, operatorv1alpha1.ReasonPolicyRefused:
 		return "Blocked is True, " + blocked.Reason
 	default:
 		return ""

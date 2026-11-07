@@ -1,0 +1,8 @@
+{
+  "contract_version": 3,
+  "command": "schema plan",
+  "outcome": "failed",
+  "error": {
+    "message": "invalid schema projection: index \"i\" has no resolved owner"
+  }
+}

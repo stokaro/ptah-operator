@@ -276,13 +276,18 @@ container and the operation goes on, and nobody has to touch anything.
 
 The Job still has its `spec.execution.activeDeadlineSeconds`. Past that, a
 `PtahSchema` read reports `Failed`, `OperationFailed`: `read Observe result: ptah
-runner result frame not found;` followed by what it reported before, and tries again
-after `spec.execution.failureRetryInterval`. An Apply in the same position, approved
-while the Secret was gone, reports `ApplyOutcomeUnknown` with `apply result is
-uncertain: ptah runner result frame not found;` and the same words, though its
-container never started. It observes the database, publishes the same plan again and
-asks for a new approval. An Apply whose Secret returned before the deadline went on
-under the approval it had.
+runner result frame not found; last reported before that:` followed by what it
+reported before, and tries again after `spec.execution.failureRetryInterval`. An
+Apply in the same position, approved while the Secret was gone, reports
+`ApplyOutcomeUnknown` with `apply result is uncertain: ptah runner result frame not
+found; last reported before that:` and the same words, though its container never
+started. It observes the database, publishes the same plan again and asks for a new
+approval. An Apply whose Secret returned before the deadline went on under the
+approval it had.
+
+Those words are the last report and not a reading taken at the end. The Secret can
+arrive and the Pod can start and die without a result between two looks, and the
+failure reads the same, so check whether the Secret exists now before you change it.
 
 ### When the credential rotates {#external-secret-stores-rotation}
 

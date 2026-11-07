@@ -815,6 +815,7 @@ Ptah's own words reach the frame, a condition and an Event for these failures:
 | Failure | Code | Whose words | Cut at |
 | --- | --- | --- | --- |
 | A desired file Ptah cannot read | `desired_source_unreadable` | A second child with no database URL and no credential | 485 bytes, so the code and the reason fit an Event's 512 |
+| A desired schema Ptah read and refuses as a whole | `desired_schema_invalid` | The same second child, when its words end the failed command's own sentence | 485 bytes, as above |
 | A plan that would change a protected table | `protected_table` | The `error.message` of the `schema plan` report, from a command with a database connection, which names the fenced tables | 4 KiB in the frame, then 512 bytes in the Event and 1 KiB in the condition |
 | A Git source a Resolve cannot fetch | `child_exit` | The last line of standard error from the Git pull, which holds the Git credential and no database URL, and names the refusal | 512 bytes, and an Event's 512 include the words in front of it |
 
@@ -833,11 +834,18 @@ document names no such kind, the runner asks Ptah again in a second child:
 SQLite database for a migration directory. That child is told the path of the
 desired files, `HOME` and `TMPDIR`, and nothing else of the Pod's environment, so
 it holds no database URL and no credential and has no connection to quote. The
-failed command's own error is still not read: it had a connection, and its
-sentence could repeat what the database answered. When the second child reports
-that the files do not load, the frame carries its reason, and the controller
-writes that reason to the condition and the Event. Any other answer leaves the
-failure with the code it had.
+failed command's own error is not copied: it had a connection, and its sentence
+could repeat what the database answered. When the second child reports that the
+files do not load, the frame carries its reason, and the controller writes that
+reason to the condition and the Event.
+
+When the second child reports a fault of the schema as a whole, the frame carries
+its words only if they end the failed command's sentence. That sentence is
+compared and goes no further, so a refusal that came from reading the database,
+such as a foreign key into a schema it holds, stays out, and so does a fault of the
+file that did not stop the command. A fault names what the file declares. The
+second child reads no row of the database, and the validator quotes no row a
+schema declares. Any other answer leaves the failure with the code it had.
 
 That reason can quote the file. A parser names the token it stopped at, and a
 YAML error repeats the start of the value it could not decode:

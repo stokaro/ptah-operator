@@ -330,7 +330,17 @@
     },
     {
       "protocolVersion": 1,
-      "sourceDigest": "sha256:0dede15940a58bcfbc96fc0d3c9ec20001ebd52fe569e6009e7aad115b7c9618",
+      "sourceDigest": "sha256:34c7b17e1ef93c671a115968b404e519afa5788e18c73163521484988782d54d",
+      "reason": "Correct the doc comments of MigrationPhaseBlocked and ConditionMigrationBlocked in the API package, which the runner imports for its types. They said a history is the only thing that blocks a migration, and a run nobody accounted for, an unsupported engine, a realm and a refused artifact do too. No constant, type or field changes. The runner neither reads nor writes phases or conditions, so what it accepts, enforces and returns is unchanged, a manager of any release reads its output as it read the last one, and protocol 1 stays."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:ae4e47c9245d297d95ed5a36356028e5653b72bec8a3a051edd58e0303137145",
+      "reason": "Name a whole-schema fault in the desired schema (#840). When drift or a Plan fails with no target failure kind, the runner already asks `schema validate` in a child with no URL and no credential. It now also reports that child's `schema:` line under the code desired_schema_invalid, when the failed command's own sentence ends with its words, and copies nothing from that sentence. No argument, field, retry or plan binding changes, and no child runs that did not run before. A manager of this protocol reads a result code as text and writes it with its message to the condition and the Event, as it does for desired_source_unreadable, so a manager of any release reads this frame, and protocol 1 stays."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:4be9a023471c9f642e3913ca55536e2ab32a027ef8fd41c07a7eb85b2a865c13",
       "reason": "Add two optional fields to the journal entry in the API package, which the runner imports for its types. The manager writes replaced and approvalRequired on the PlanPublished entry of a PtahSchema. The runner neither reads nor writes the journal, so what it accepts, enforces and returns is unchanged, a manager of any release reads its output as it read the last one, and protocol 1 stays."
     }
   ]

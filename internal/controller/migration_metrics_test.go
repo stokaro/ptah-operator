@@ -390,12 +390,10 @@ func TestMigrationApprovalCountersFollowTheDecision(t *testing.T) {
 	})
 }
 
-// A plan that stops being current takes the decision owed for it with it.
-//
-// The requirement has to have been outstanding. A plan discarded under an
-// Always policy, or before anyone was asked, costs nobody an approval, and
-// counting one there would report decisions nobody had made.
-func TestADiscardedMigrationPlanRetiresTheDecisionOwedForIt(t *testing.T) {
+// A stale decision is counted where it is marked. A discarded plan marks nothing,
+// because the next read says what is current and may end at that same plan, so
+// discarding one with an approval standing reports no decision lost.
+func TestADiscardedMigrationPlanCountsNoDecisionUntilAReadWithdrawsIt(t *testing.T) {
 	t.Parallel()
 
 	migration, plan := awaitingApprovalFixture(t)
@@ -419,9 +417,15 @@ func TestADiscardedMigrationPlanRetiresTheDecisionOwedForIt(t *testing.T) {
 	if actual := readMigration(t, api, migration); actual.Status.Plan != nil {
 		t.Fatal("a plan the evidence no longer supports was retained, so this proof measured nothing")
 	}
-	want := []telemetry.ApprovalOutcome{telemetry.ApprovalStale}
-	if !reflect.DeepEqual(observed.approvals, want) {
-		t.Fatalf("approval observations = %#v, want %#v", observed.approvals, want)
+	if len(observed.approvals) != 0 {
+		t.Fatalf("approval observations = %#v, want none", observed.approvals)
+	}
+	stored := &operatorv1alpha1.PtahMigrationApproval{}
+	if err := api.Get(context.Background(), types.NamespacedName{Namespace: approval.Namespace, Name: approval.Name}, stored); err != nil {
+		t.Fatal(err)
+	}
+	if meta.IsStatusConditionTrue(stored.Status.Conditions, operatorv1alpha1.ConditionApprovalStale) {
+		t.Fatalf("the discard withdrew the approval: %#v", stored.Status.Conditions)
 	}
 }
 

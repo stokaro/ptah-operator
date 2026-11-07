@@ -23,7 +23,8 @@ on the upgrade. An alert or a script that matches `child_exit: ptah exited
 with code 2` to find a database the operator could not open has to match the
 kind of failure instead, and one that matches it or `invalid_plan_output` to
 find a desired file Ptah could not read has to match
-`desired_source_unreadable`. A pipeline that ships Pod logs now receives what the
+`desired_source_unreadable`, or `desired_schema_invalid` for a schema it read and
+refuses. A pipeline that ships Pod logs now receives what the
 database answered when an Apply fails, row values included, so decide what it may
 store first. A plan waiting for approval has to be approved again
 once the executor moves to Ptah v0.22.0, a database audit that lists what the
@@ -38,7 +39,12 @@ deletion has to match that text too: a credential record now says it, and that
 sentence is left to an update. A script that matches `invalid_verification_output`
 to find an artifact the verification policy refused has to match the reason
 `PolicyRefused`, and one that waits on a `PtahMigration` so refused has to expect
-`Blocked` at its interval rather than a retry. A script that reads
+`Blocked` at its interval rather than a retry. A `PtahMigrationApproval` now goes
+`Stale` when a read ends anywhere but its plan or the verification policy refuses
+the artifact, and a plan that comes back needs a new one, so a workflow that applies
+an approval under a fixed name has to change the name. `ptah_operator_approvals_total`
+with `family="migration"` and `outcome="stale"` now counts those approvals, and no
+longer a plan discarded with nobody having approved it. A script that reads
 `status.target.inventory` has
 to expect a kind that is not a stem. Ptah Console up to 0.3.x misstates such a kind until
 [ptah-console#166](https://github.com/stokaro/ptah-console/issues/166) is fixed:
@@ -150,6 +156,14 @@ it would report.
   says how to read the reason and how to make the resource read the repaired
   file. A schema whose `fetch-schema` step fails now names that step and its
   exit status, and gives no reason: that page says how to get one.
+- **A schema Ptah read and refuses.** When drift or a Plan stops on a fault of the
+  schema as a whole, such as a foreign key into a table it does not declare, the
+  condition message and the Warning Event carry that fault under the code
+  `desired_schema_invalid`. Such a schema used to read as the two codes above, with
+  no reason. The words come from the same second run of Ptah. A fault that run finds
+  and the failed command did not stop on keeps the code it had, and
+  [the same page](../../troubleshoot/condition-reasons/#a-desired-file-ptah-could-not-read)
+  lists those.
 - **A read that keeps failing reads the repaired source.** A read-only operation
   that keeps failing used to hold its snapshot, commit or digest until a spec edit
   or a suspension ended it, and `kubectl ptah refresh` got no answer meanwhile. It
@@ -327,8 +341,8 @@ it would report.
   `ptah runner result frame not found`. Its condition now reads
   `PodConfigurationError` and carries the kubelet's words, such as `secret
   "application-database" not found`, with a Warning Event of the same name, and the
-  failure past the deadline carries them too. A Secret that arrives still lets the
-  operation go on by itself. An external secret store that has not synced yet looks
+  failure past the deadline carries them as what the resource last reported. A Secret
+  that arrives still lets the operation go on by itself. An external secret store that has not synced yet looks
   like this: [Before the Secret exists](../../reference/credentials-and-admission/#external-secret-stores-not-synced).
   A script that reads `Ready` or `Progressing` while a Secret is missing sees the new
   reason, and on a `PtahMigration` `Progressing` is `False` meanwhile.
@@ -336,7 +350,7 @@ it would report.
   had left, about five minutes, though the holder usually finished in seconds, and
   it said nothing while it did. It now asks every five seconds, as a schema always
   has, and `Progressing` reads reason `WaitingForDatabaseLock` and names the Lease
-  while it waits.
+  while it waits, and the Job when the Apply had started one before it lost the Lease.
 
 ## 0.2.9
 

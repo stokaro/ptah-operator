@@ -79,6 +79,10 @@ func TestRunnerAgainstThePinnedImage(t *testing.T) {
 			t.Parallel()
 			unreadableSources(t, l)
 		})
+		t.Run("structural-faults", func(t *testing.T) {
+			t.Parallel()
+			structuralFaults(t, l)
+		})
 		t.Run("pulls", func(t *testing.T) {
 			t.Parallel()
 			for _, row := range rows {

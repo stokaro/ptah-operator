@@ -3877,8 +3877,11 @@ func (r *SchemaReconciler) acquireLockEpoch(ctx context.Context, request targetl
 // it asks again. The time a Lease has left is the longest its holder can keep it
 // without renewing, and not how long it will: a holder that finishes clears the
 // Lease at once, and nothing wakes the waiter, because Leases are not watched.
-// So a claim asks every few seconds, which costs one read, rather than sleeping
-// through the five minutes a sibling's short Plan left on the clock.
+// So a claim asks every few seconds rather than sleeping through the five minutes
+// a sibling's short Plan left on the clock. Each look reads four or five objects
+// straight from the API server, the resource, its plan, its Job and the Lease, and
+// for a migration a ConfigMap, so a waiting claim costs about one GET a second of
+// the manager's allowance, which is 80 a second by default (see package apipace).
 func lockContentionRequeue(contention *targetlock.Contention) time.Duration {
 	if contention == nil {
 		return maxLockContentionPoll

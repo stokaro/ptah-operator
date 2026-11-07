@@ -198,7 +198,7 @@ func TestMigrationPodConfigurationReadingsHoldTheConditionToTheWords(t *testing.
 		resource.Status.Conditions = []metav1.Condition{{Type: ptahv1alpha1.ConditionMigrationProgressing, Status: metav1.ConditionTrue, Reason: reason, Message: message}}
 		return resource
 	}
-	said := "read History result: ptah runner result frame not found; Job history-job cannot start its Pod: " + missingSecretWords
+	said := "read History result: ptah runner result frame not found; last reported before that: Job history-job cannot start its Pod: " + missingSecretWords
 	if !migrationFailureNamesUnstartedPod(failed("OperationFailed", said), missingSecretWords) {
 		t.Fatal("migrationFailureNamesUnstartedPod() refused the failure the operator writes")
 	}

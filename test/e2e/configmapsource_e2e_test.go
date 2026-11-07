@@ -227,6 +227,7 @@ func (c *configMapRun) reset() {
 	objects := []client.Object{
 		&ptahv1alpha1.PtahSchema{ObjectMeta: metav1.ObjectMeta{Namespace: c.in.TestNamespace, Name: configMapSchema}},
 		&ptahv1alpha1.PtahSchema{ObjectMeta: metav1.ObjectMeta{Namespace: c.in.TestNamespace, Name: configMapUnreadableSchema}},
+		&ptahv1alpha1.PtahSchema{ObjectMeta: metav1.ObjectMeta{Namespace: c.in.TestNamespace, Name: configMapInvalidSchema}},
 		&ptahv1alpha1.PtahSchema{ObjectMeta: metav1.ObjectMeta{Namespace: c.in.TestNamespace, Name: configMapRefusedSchema}},
 		&ptahv1alpha1.PtahMigration{ObjectMeta: metav1.ObjectMeta{Namespace: c.in.TestNamespace, Name: configMapMigration}},
 		&ptahv1alpha1.PtahMigration{ObjectMeta: metav1.ObjectMeta{Namespace: c.in.TestNamespace, Name: configMapUnreadableMigration}},
@@ -722,6 +723,7 @@ func (c *configMapRun) unreadableSources() {
 	})
 	c.deleteAndWait(schema)
 	c.logf("PASS a schema from a ConfigMap said why its file could not be read: %s", message)
+	c.invalidSchema(target, execution)
 
 	data := map[string]string{}
 	items := []any{}
@@ -771,6 +773,54 @@ func (c *configMapRun) unreadableSources() {
 	})
 	c.deleteAndWait(migration)
 	c.logf("PASS a migration from a ConfigMap said why its file could not be loaded: %s", message)
+}
+
+// invalidSchema delivers a schema that loads and declares a foreign key into a
+// table it does not hold, and reads the fault where a person reads it. The file
+// is not repaired: a repair reaches the same read the row above proves. The
+// resource is removed afterward, so the target's Lease and database are as the
+// row above left them.
+func (c *configMapRun) invalidSchema(target, execution map[string]any) {
+	c.t.Helper()
+	c.check(c.apply(c.sourceDocument(configMapInvalidSchemaSource, map[string]string{"schema.sql": invalidKeySchema})),
+		"apply ConfigMap %s", configMapInvalidSchemaSource)
+	c.check(c.create(map[string]any{
+		"apiVersion": ptahSchemaAPIVersion, "kind": "PtahSchema",
+		"metadata": map[string]any{"namespace": c.in.TestNamespace, "name": configMapInvalidSchema},
+		"spec": map[string]any{
+			"target": target,
+			"desired": map[string]any{"configMap": map[string]any{
+				"name":  configMapInvalidSchemaSource,
+				"items": []any{map[string]any{"key": "schema.sql", "path": "schema.sql"}},
+			}},
+			"interval": configMapInterval, "policy": map[string]any{"apply": "OnApproval"}, "execution": execution,
+		},
+	}), "create PtahSchema %s", configMapInvalidSchema)
+	schema := &ptahv1alpha1.PtahSchema{}
+	var message string
+	c.wait("the schema to name the fault in its file", func() (bool, string) {
+		if err := c.get(configMapInvalidSchema, schema); err != nil {
+			return false, err.Error()
+		}
+		failed := meta.FindStatusCondition(schema.Status.Conditions, ptahv1alpha1.ConditionReconciliationFailed)
+		if failed == nil || failed.Status != metav1.ConditionTrue || failed.Reason != string(ptahv1alpha1.ReasonOperationFailed) {
+			return false, fmt.Sprintf("%s, ReconciliationFailed %+v", schema.Status.Phase, failed)
+		}
+		message = failed.Message
+		err := invalidSchemaSays(message, unreadablePartitionFile, invalidKeyReason)
+		return err == nil, fmt.Sprint(err)
+	})
+	c.checkUnreadableText(message)
+	c.wait("the OperationFailed Event to name the fault", func() (bool, string) {
+		events := &corev1.EventList{}
+		if err := c.cluster.Client.List(c.ctx, events, client.InNamespace(c.in.TestNamespace)); err != nil {
+			return false, err.Error()
+		}
+		err := invalidSchemaEvent(events.Items, schema.UID, "OperationFailed", unreadablePartitionFile, invalidKeyReason)
+		return err == nil, fmt.Sprint(err)
+	})
+	c.deleteAndWait(schema)
+	c.logf("PASS a schema from a ConfigMap named the fault in its file: %s", message)
 }
 
 // waitForUnreadableSchema returns the reading that satisfied holds, so a claim is

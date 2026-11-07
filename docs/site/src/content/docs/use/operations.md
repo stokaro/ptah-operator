@@ -1917,11 +1917,20 @@ resource claims, and stored state written by a newer manager than the one
 running. The first three do not stop a person's acknowledgment, which reads no
 database and is taken ahead of them.
 
+An artifact the verification policy refuses holds the resource further along:
+resolve and verify run at the interval, and the history read does not start.
+`kubectl ptah migration` names it with the gates, as `Blocked` with
+`PolicyRefused`. The record stays, an acknowledgment still settles it, and the
+reading clears it once the artifact passes.
+
 Passing those gates is not the same as getting the reading. Resolve, verify and
 the history read are retried for as long as they keep failing, with no attempt
 at which the operator gives up, so a resource failing one of them never reaches
 the history read either. If the record is not clearing after the database was
-repaired, read `status.activeOperation` first: the operation it names and the
+repaired, read the `Blocked` condition first: a refused resource rests with no
+claim between its reads, so `PolicyRefused` is the answer and
+`status.activeOperation` is empty. Otherwise read `status.activeOperation`: the
+operation it names and the
 attempt it is on say whether the chain is stuck rather than the record, and an
 attempt climbing quickly is a Job failing as fast as it can be recreated. An
 attempt that restarts from 1 is [a read that gave
@@ -2118,8 +2127,9 @@ apply wants; add `family="migration"` to ask about one.
   hand-written migrations for data loss.
 - `ptah_operator_approvals_total{family,outcome}` counts approval transitions.
   `required` is a plan that asked for a decision, `accepted` is a decision the
-  controller consumed at the dispatch boundary, and `stale` is a decision that
-  stopped being usable because the plan it named is no longer current. A policy
+  controller consumed at the dispatch boundary, and `stale` is an approval the
+  controller marked unusable, one count each, because the plan it named stopped
+  being current or the verification policy refused the artifact. A policy
   of `Always` waives the requirement and counts nothing, except for a schema
   plan that changes privileges, which still asks and counts as `required`.
 - `ptah_operator_applies_total{family,outcome}` counts started, completed,
@@ -2158,6 +2168,9 @@ carry Ptah's words:
   quote a fragment of the file.
   [A desired file Ptah could not read](../../troubleshoot/condition-reasons/#a-desired-file-ptah-could-not-read)
   says what a person does with them.
+- A desired schema Ptah read and refuses as a whole, under
+  `desired_schema_invalid`, when that fault is the one the failed command stopped
+  on. The words come from the same second run and name what the file declares.
 - A plan that would change a protected table, under `protected_table`. The words
   are the sentence of the `schema plan` report, which names the fenced tables.
 - A Git source a Resolve cannot fetch, under `child_exit`. The words are the last
@@ -2493,7 +2506,8 @@ A claimed Apply that is waiting for its realm's Lease holds its operation
 claim while it waits, so contention for a realm reads as an Apply in flight for
 longer than its Job would take, and `PtahOperatorOperationStalled` covers a
 wait that does not end. A `PtahMigration` also says so itself: `Progressing=True`
-with reason `WaitingForDatabaseLock`, naming the Lease. Either family asks for the
+with reason `WaitingForDatabaseLock`, naming the Lease, and the Job when one may
+still be running. Either family asks for the
 Lease every five seconds, so it goes on within seconds of the Lease coming free.
 The Lease names its holder: `kubectl -n <operator namespace> get leases -o wide`. Two resources claiming
 one realm without `spec.target.sharedRealm` is a refusal instead, and reads as

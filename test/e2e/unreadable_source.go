@@ -37,6 +37,13 @@ CREATE TABLE events_2026 PARTITION OF events
 	// stops, and unreadableFetchLogReason how Ptah words that in the step's log.
 	unreadableFetchStep      = "fetch-schema"
 	unreadableFetchLogReason = "parse schema artifact: parse HCL schema: schema.hcl:"
+
+	// invalidKeySchema loads, and declares a foreign key into a table it does
+	// not hold. invalidKeyWords is how Ptah opens the fault, which the capture
+	// holds to, and invalidKeyReason the whole of it for this file.
+	invalidKeySchema = "CREATE TABLE e2e_invalid_orders (id bigint REFERENCES e2e_no_such_table (id));\n"
+	invalidKeyWords  = `invalid foreign key: field "id" references unknown table `
+	invalidKeyReason = invalidKeyWords + `"e2e_no_such_table"`
 )
 
 // unreadableMigrationFiles is a migration directory the loader refuses: the
@@ -140,6 +147,22 @@ func unreadableSourceSays(message, file, reason string) error {
 	return nil
 }
 
+// invalidSchemaSays holds a condition's or an Event's message to the claim: the
+// result code that means Ptah read the file and refuses it, the file by name, and
+// the fault. It refuses a file Ptah could not read, whose code says something
+// else, and the exit status a fault read as before.
+func invalidSchemaSays(message, file, reason string) error {
+	switch {
+	case !strings.Contains(message, runner.CodeDesiredSchemaInvalid+": "):
+		return fmt.Errorf("the message does not carry %s: %q", runner.CodeDesiredSchemaInvalid, message)
+	case !strings.Contains(message, file):
+		return fmt.Errorf("the message does not name file %s: %q", file, message)
+	case !strings.Contains(message, reason):
+		return fmt.Errorf("the message does not say %q: %q", reason, message)
+	}
+	return nil
+}
+
 // fetchStepSays holds a condition's or an Event's message to what a failed fetch
 // says: the step by name, and nothing the step wrote, since its container holds
 // the registry credentials. A message carrying the reason would read better and
@@ -170,6 +193,14 @@ func fetchStepLogSays(log []byte) error {
 func unreadableSourceEvent(events []corev1.Event, owner types.UID, reason, file, want string) error {
 	return warningEventSays(events, owner, reason, func(message string) error {
 		return unreadableSourceSays(message, file, want)
+	})
+}
+
+// invalidSchemaEvent finds the Warning Event a failure wrote on one resource
+// with the fault in it.
+func invalidSchemaEvent(events []corev1.Event, owner types.UID, reason, file, want string) error {
+	return warningEventSays(events, owner, reason, func(message string) error {
+		return invalidSchemaSays(message, file, want)
 	})
 }
 

@@ -7,6 +7,10 @@ import "strings"
 // after the prefix is its sentence.
 const migrationRegistrationPrefix = "error registering migrations: "
 
+// wholeSchemaKind opens what `schema validate` says of a schema as a whole,
+// after the dialect. A fault of one declaration names its kind and the object.
+const wholeSchemaKind = "schema: "
+
 // SchemaSourceProblem reads what `schema validate` printed about a desired
 // schema it could not load: `<dialect>: source: <reason>`, in the dialect the
 // engine names. The reason is as Ptah printed it, across lines if it spans them:
@@ -23,6 +27,41 @@ func SchemaSourceProblem(stdout []byte, engine string) (string, bool) {
 		return "", false
 	}
 	return strings.CutPrefix(rest, "source: ")
+}
+
+// SchemaStructuralProblem reads what `schema validate` printed about a schema
+// as a whole, such as a foreign key into a table it does not declare, when that
+// fault is the one the command that failed stopped on: a `<dialect>: schema:
+// <fault>` line, in the dialect the engine names, whose words end failed, the
+// sentence the failed command's own document holds. Validate prints an index
+// line first for each index it refuses, and the fault runs to the end of its
+// output.
+//
+// Validate reports a fault of the file whether or not it stopped anything, and
+// the command that failed may have stopped on the database or on another fault
+// validate does not know. Comparing the words is what ties the two: drift and
+// plan run the validator that wrote this line, and wrap its sentence and nothing
+// else around it. An index line has no such tie, so it is not read: drift
+// accepts an index on a column no table declares, and on a table none declares it
+// fails in other words.
+//
+// failed is compared and never returned. Its command had a connection, so it
+// could quote the database. What is returned comes from a run that had none.
+func SchemaStructuralProblem(stdout []byte, engine, failed string) (string, bool) {
+	text := strings.TrimSpace(string(stdout))
+	for offset := 0; offset < len(text); {
+		line, _, _ := strings.Cut(text[offset:], "\n")
+		dialect, rest, found := strings.Cut(line, ": ")
+		if found && dialectMatches(engine, dialect) && strings.HasPrefix(rest, wholeSchemaKind) {
+			fault := text[offset+len(dialect)+len(": ")+len(wholeSchemaKind):]
+			if !strings.HasSuffix(failed, ": "+fault) {
+				return "", false
+			}
+			return fault, true
+		}
+		offset += len(line) + len("\n")
+	}
+	return "", false
 }
 
 // MigrationFilesProblem reads the failure document `migrations status --json`
