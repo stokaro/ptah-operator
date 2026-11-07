@@ -53,6 +53,59 @@ func TestPlanStaleWarningsCountOnlyThisSchemasWarnings(t *testing.T) {
 	})
 }
 
+func TestPlanReplacedOnRecordHoldsTheJournalToTheReplacement(t *testing.T) {
+	t.Parallel()
+	published := func(plan, replaced string, asked bool) ptahv1alpha1.JournalEntry {
+		return ptahv1alpha1.JournalEntry{Type: ptahv1alpha1.JournalPlanPublished, Plan: plan, Replaced: replaced, ApprovalRequired: asked}
+	}
+	failed := ptahv1alpha1.JournalEntry{Type: ptahv1alpha1.JournalOperationFailed, Reason: "OperationFailed"}
+	for _, row := range []struct {
+		name    string
+		journal *ptahv1alpha1.LifecycleJournal
+		refused bool
+	}{
+		{
+			name:    "the entry that records it",
+			journal: &ptahv1alpha1.LifecycleJournal{Entries: []ptahv1alpha1.JournalEntry{published("plan-old", "", true), published("plan-new", "plan-old", true)}},
+		},
+		{
+			name:    "a failed read after it",
+			journal: &ptahv1alpha1.LifecycleJournal{Entries: []ptahv1alpha1.JournalEntry{published("plan-new", "plan-old", true), failed}},
+		},
+		{name: "no journal", refused: true},
+		{name: "an empty journal", journal: &ptahv1alpha1.LifecycleJournal{}, refused: true},
+		{name: "a journal of no plan", journal: &ptahv1alpha1.LifecycleJournal{Entries: []ptahv1alpha1.JournalEntry{failed}}, refused: true},
+		{
+			name:    "the new plan with nothing replaced",
+			journal: &ptahv1alpha1.LifecycleJournal{Entries: []ptahv1alpha1.JournalEntry{published("plan-new", "", true)}},
+			refused: true,
+		},
+		{
+			name:    "the new plan replacing another",
+			journal: &ptahv1alpha1.LifecycleJournal{Entries: []ptahv1alpha1.JournalEntry{published("plan-new", "plan-other", true)}},
+			refused: true,
+		},
+		{
+			name:    "the new plan asking for nothing",
+			journal: &ptahv1alpha1.LifecycleJournal{Entries: []ptahv1alpha1.JournalEntry{published("plan-new", "plan-old", false)}},
+			refused: true,
+		},
+		{
+			name:    "another plan published since",
+			journal: &ptahv1alpha1.LifecycleJournal{Entries: []ptahv1alpha1.JournalEntry{published("plan-new", "plan-old", true), published("plan-newer", "plan-new", true)}},
+			refused: true,
+		},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			err := planReplacedOnRecord(row.journal, "plan-old", "plan-new")
+			if row.refused != (err != nil) {
+				t.Fatalf("planReplacedOnRecord() = %v, want refused %t", err, row.refused)
+			}
+		})
+	}
+}
+
 func TestPlanWarnedReplacedHoldsTheWarningToOneReplacement(t *testing.T) {
 	t.Parallel()
 	for _, row := range []struct {

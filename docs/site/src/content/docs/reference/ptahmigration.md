@@ -647,12 +647,13 @@ spec:
 | `status.history.revisions[].version` | `integer`, required | Version is the migration the row records. |
 | `status.history.targetIdentityDigest` | `string`, required | TargetIdentityDigest is the credential-free identity of the database this history was read from, as the executor derived it. A plan that was made against one database is never executed against another. |
 | `status.journal` | `object` | Journal is the bounded record of this migration's significant lifecycle events. |
-| `status.journal.coveredSince` | `string`, required | CoveredSince is the instant from which the journal is complete: when a manager that keeps a journal first wrote this resource's status, moved forward past the newest entry a bound has since dropped. A reader states the period the journal covers from it and assumes nothing before. |
-| `status.journal.entries` | `[]object` | Entries are the events, oldest first. There are at most 64, and none is more than 30 days older than the newest. |
+| `status.journal.coveredSince` | `string`, required | CoveredSince is the instant from which the journal is complete: when a manager that keeps a journal first wrote this resource's status, moved forward past the newest entry a bound has since dropped. A reader states the period the journal covers from it and assumes nothing before, though the entries of a plan nothing has carried out yet can be older. |
+| `status.journal.entries` | `[]object` | Entries are the events, oldest first. There are at most 64, and none is more than 30 days older than the newest, apart from the plan nothing has carried out yet: the entry that published it and the newest approval of it stay until something carries it out or another plan is published. |
 | `status.journal.entries[].acknowledgedBy` | `string` | AcknowledgedBy is the user admission stamped on that acknowledgment, cut to the first 512 characters where the name is longer. |
 | `status.journal.entries[].acknowledgment` | `string` | Acknowledgment names the acknowledgment that settled an unresolved run. |
 | `status.journal.entries[].appliedVersions` | `integer` | AppliedVersions is how many migrations a run recorded applied. |
 | `status.journal.entries[].approval` | `string` | Approval names the approval an Apply consumed. A name can be used again by a later decision, so it does not say which object it was: ApprovalUID does. |
+| `status.journal.entries[].approvalRequired` | `boolean` | ApprovalRequired reports a published PtahSchema plan that asked for a person's approval when it was published. |
 | `status.journal.entries[].approvalUID` | `string` | ApprovalUID is the UID of that approval. An entry a release before this field wrote has none: it is incomplete evidence, and is not to be joined to an object that holds the name today. |
 | `status.journal.entries[].approver` | `string` | Approver is the user admission stamped on that approval, cut to the first 512 characters where the name is longer. |
 | `status.journal.entries[].at` | `string`, required | At is when the event happened. For an Apply, a run or a failed attempt it is when that ended. |
@@ -675,6 +676,7 @@ spec:
 | `status.journal.entries[].planFingerprint` | `string` | PlanFingerprint is the spec.fingerprint of the plan a PtahMigration's run carried out, when the claim recorded it. |
 | `status.journal.entries[].planUID` | `string` | PlanUID is the UID of a PtahMigration's plan. |
 | `status.journal.entries[].reason` | `string` | Reason is the condition reason the failure set. It is a code, never the message: a message can carry what status must not. |
+| `status.journal.entries[].replaced` | `string` | Replaced names the plan a published PtahSchema plan took the place of: one a person could approve, or had approved, and that never ran. A PlanStale Warning reports the same replacement, and an Event can be lost. |
 | `status.journal.entries[].startedAt` | `string` | StartedAt is when an Apply or a run began. |
 | `status.journal.entries[].statements` | `integer` | Statements is how many statements a published PtahSchema plan holds. |
 | `status.journal.entries[].type` | `string`, required, one of `PlanPublished`, `ApprovalAccepted`, `ApplyFinished`, `Verified`, `RunFinished`, `RunAcknowledged`, `OperationFailed` | Type is the kind of event. |

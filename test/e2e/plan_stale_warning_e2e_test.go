@@ -12,7 +12,8 @@ import (
 // planStaleOnlyOnReplacement holds PlanStale to its meaning on a real read of a
 // real database: two scheduled reads of a waiting plan record no Warning, and
 // the read that finds the database changed records exactly one, naming both
-// plans (#820). It stays quiet for the reads after that one as well.
+// plans (#820), and the status write that published the new plan records the
+// replacement in the journal. It stays quiet for the reads after that one as well.
 func (f *faultRun) planStaleOnlyOnReplacement() {
 	f.t.Helper()
 	const name, database, secret = "e2e-plan-stale", "e2e_plan_stale", "e2e-plan-stale-db"
@@ -56,6 +57,9 @@ func (f *faultRun) planStaleOnlyOnReplacement() {
 	})
 	second := replaced.Status.Plan.Name
 	var verdict error
+	if verdict = planReplacedOnRecord(replaced.Status.Journal, first, second); verdict != nil {
+		f.fatalf("%s published plan %s: %v", name, second, verdict)
+	}
 	f.poll("one PlanStale Warning naming "+first+" and "+second, func() bool {
 		verdict = planWarnedReplaced(warningsOf(replaced), first, second)
 		return verdict == nil

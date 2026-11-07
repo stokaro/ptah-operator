@@ -46,7 +46,7 @@ decision.
 | `JobCompleted` | Apply exited and independent convergence proof remains pending. |
 | `LeaseContinuityLost` | Database lock ownership was not continuous, so evidence was discarded. |
 | `MigrationsPending` | The migration artifact carries versions the database has not applied. |
-| `NoChanges` | Scoped planning produced no executable statements. |
+| `NoChanges` | Scoped planning produced no executable statements. On `ApprovalRequired` it says the database converged while a plan was outstanding, so nothing is left to approve. |
 | `NotRequired` | Policy allows this plan without separate approval: it destroys nothing and changes no privilege. |
 | `Observed` | `DatabaseReachable` is true because an operation opened the target database: an Observe, a Plan or an Apply on a schema, a history read or an Apply that ran on a migration. |
 | `OperationFailed` | A read-only or mutating operation failed. When it could not open the target database, the message starts with the kind of failure; see [A database the operation could not open](#a-database-the-operation-could-not-open). |

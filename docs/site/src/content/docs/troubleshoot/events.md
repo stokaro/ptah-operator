@@ -45,7 +45,7 @@ The log-loss window and summary fallback apply only to
 | `OperationRetried` | Warning | `PtahMigration` | An attempt failed and another will follow. The message names the attempt number and the failure, as `OperationFailed` does. |
 | `OperationStarted` | Normal | `PtahSchema`, `PtahMigration` | A Job was created for the named operation. |
 | `PlanPublicationRefused` | Warning | `PtahSchema` | The API server refused to store the plan a Plan operation computed, and the message carries the refusal: an admission policy or webhook, a quota, RBAC, or the object's size. The Plan runs again after the failure interval, so a policy or quota that stops refusing lets the next plan through. |
-| `PlanStale` | Warning | `PtahSchema` | Another plan replaced a plan a person could approve, or had approved, before it ran. The message names both. An approval of the old plan no longer counts, so read the new one with `kubectl ptah plan` and approve that if it still needs an approval. A scheduled read that publishes the same plan records nothing, and neither does an Apply that ran its plan. A plan that apply policy `Always` or `Never` would never wait on, or that `allowDestructive` blocks, records nothing either: nobody could have approved it. |
+| `PlanStale` | Warning | `PtahSchema` | Another plan replaced a plan a person could approve, or had approved, before it ran. A plan a realm refusal held back counts as well. The message names both. An approval of the old plan no longer counts, so read the new one with `kubectl ptah plan` and approve that if it still needs an approval. A scheduled read that publishes the same plan records nothing, and neither does an Apply that ran its plan or a database that converged, which leaves nothing in the plan's place. A plan that apply policy `Always` or `Never` would never wait on, or that `allowDestructive` blocks, records nothing either: nobody could have approved it. This Event fires once for each replacement and [can be lost](#an-event-can-be-lost), and the `PlanPublished` entry in `status.journal` names the replaced plan as `replaced`. |
 | `PlanTargetChanged` | Warning | `PtahSchema` | The database target changed between the read and the plan computed from it, so that plan was not published and the database is read again. |
 | `PodAdmissionRefused` | Warning | `PtahSchema`, `PtahMigration` | The Job controller could not create the operation Pod because the API server refused it, and the message carries the refusal: a policy the namespace runs, a mutating admission whose change the operator's own Pod webhook refused, a quota. The Job keeps its deadline and the Job controller keeps trying; declare what the Pod has to carry in `spec.execution.podMetadata`, or change the policy. [Execution](../../reference/execution/#meshes-and-policy-engines) says what a Pod may carry. |
 | `PodConfigurationError` | Warning | `PtahSchema`, `PtahMigration` | The operation Pod exists and the kubelet cannot start its container, and the message carries the kubelet's words: usually a Secret or a key that does not exist yet. The kubelet keeps trying and the Job keeps its deadline, so a Secret that arrives lets the operation go on. [Before the Secret exists](../../reference/credentials-and-admission/#external-secret-stores-not-synced) has the detail. |
@@ -66,6 +66,15 @@ The log-loss window and summary fallback apply only to
 | `UnresolvedRunDiscarded` | Warning | `PtahMigration` | Deleting this resource discarded the record of a run nobody accounted for. The message names the outcome, the version, and the database. |
 | `UnresolvedRunRestored` | Warning | `PtahMigration` | The resource came back without the record of a run nobody accounted for in its status -- a restore that dropped status -- and the manager put it back from the copy in its `operator.ptah.run/unresolved-run` annotation. Nothing is planned until a reading or an acknowledgment settles it. |
 | `VerificationPolicyInvalidated` | Warning | `PtahSchema` | The verification policy stopped matching the plan, so artifact and plan verification were invalidated. |
+
+## An Event can be lost {#an-event-can-be-lost}
+
+The API server keeps an Event for about an hour, and the manager's recorder drops
+some before they get there. It lets 25 Warnings through for each resource and then
+one every five minutes, so a read that keeps failing through a long outage leaves
+little for the Warning that follows it. A manager that stops just after a status
+write sends nothing for that write. Read status when a decision depends on it:
+`status.journal` is written in the status write that records the transition.
 
 ## A Warning is not always a fault
 

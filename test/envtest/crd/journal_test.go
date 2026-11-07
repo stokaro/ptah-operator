@@ -54,6 +54,8 @@ func TestStatusRefusesAMalformedJournal(t *testing.T) {
 			cause{"status.journal.entries[0].outcome", "Unsupported value"}},
 		{"a fold of one attempt", journal(journalEntry(map[string]any{"type": "OperationFailed", "operation": "Observe", "reason": "Failed", "count": int64(1)})),
 			cause{"status.journal.entries[0].count", "greater than or equal to 2"}},
+		{"an unbounded replaced plan", journal(journalEntry(map[string]any{"replaced": strings.Repeat("a", 254)})),
+			cause{"status.journal.entries[0].replaced", "Too long"}},
 		{"an unbounded approval UID", journal(journalEntry(map[string]any{"type": "ApprovalAccepted", "approvalUID": strings.Repeat("a", 129)})),
 			cause{"status.journal.entries[0].approvalUID", "Too long"}},
 		{"an operation ID that is not one", journal(journalEntry(map[string]any{"type": "RunFinished", "operationID": "apply-1"})),
@@ -93,7 +95,7 @@ func TestStatusRefusesAMalformedJournal(t *testing.T) {
 	t.Run("a complete journal is published", func(t *testing.T) {
 		t.Parallel()
 		complete := journal(
-			journalEntry(map[string]any{"statements": int64(2), "destructive": true}),
+			journalEntry(map[string]any{"statements": int64(2), "destructive": true, "approvalRequired": true, "replaced": "ptah-plan-z"}),
 			journalEntry(map[string]any{"type": "ApprovalAccepted", "approval": "approve-a", "approvalUID": "uid-a", "approver": "alice"}),
 			// The bound counts characters, so 1,536 bytes fit it. The journal cuts a name
 			// at this length and no sooner, and this is what makes that the right place.
@@ -124,6 +126,16 @@ func TestStatusRefusesAMalformedJournal(t *testing.T) {
 			set(t, observed, complete, "status", "journal")
 			if err := api.Status().Update(context.Background(), observed, client.DryRunAll); err != nil {
 				t.Fatalf("the API server refused a well-formed journal on %s %s: %v", object.GetKind(), object.GetName(), err)
+			}
+			// A field the schema does not declare is pruned without a complaint, so
+			// what came back is what says these two reached the CRD.
+			kept, _, err := unstructured.NestedSlice(observed.Object, "status", "journal", "entries")
+			if err != nil || len(kept) == 0 {
+				t.Fatalf("the journal of %s %s came back as %v: %v", object.GetKind(), object.GetName(), kept, err)
+			}
+			first, _ := kept[0].(map[string]any)
+			if first["approvalRequired"] != true || first["replaced"] != "ptah-plan-z" {
+				t.Fatalf("the first entry of %s %s came back as %v, want approvalRequired and replaced kept", object.GetKind(), object.GetName(), first)
 			}
 		}
 	})

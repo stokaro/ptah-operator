@@ -316,7 +316,12 @@ it would report.
   approve or had approved, and its message names both. A plan discarded before it
   was published, because the database target moved during the read, records
   `PlanTargetChanged` instead. A script that counts `PlanStale` to see reads has to
-  read `status.target.lastObservedAt`.
+  read `status.target.lastObservedAt`. An Event can be lost, so the `PlanPublished`
+  entry in `status.journal` now records `replaced` and `approvalRequired`, which
+  moves the CRD schema version. That entry and the newest approval of a plan nothing
+  has carried out stay past the journal's bounds, so a script that reads the journal
+  can meet an entry older than `coveredSince`. `ApprovalRequired` reads `False` with
+  reason `NoChanges` once the database converges on its own, where it stayed `True`.
 - **A Secret that does not exist yet.** An operation whose Pod the kubelet cannot
   configure reported only that it was in progress, and past the Job's deadline read
   `ptah runner result frame not found`. Its condition now reads

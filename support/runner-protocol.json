@@ -327,6 +327,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:ad2ae44d405a96e04996a965d390a15764d17460c28a92b9050b70ce6d15839b",
       "reason": "Reword the comment on SettledApplyAnnotation in api/v1alpha1, a package the runner links for its types (the review of #865). No code the runner runs changes: commands, payloads, result frames, delivery identity, SQL authority and retry limits are the same."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:0dede15940a58bcfbc96fc0d3c9ec20001ebd52fe569e6009e7aad115b7c9618",
+      "reason": "Add two optional fields to the journal entry in the API package, which the runner imports for its types. The manager writes replaced and approvalRequired on the PlanPublished entry of a PtahSchema. The runner neither reads nor writes the journal, so what it accepts, enforces and returns is unchanged, a manager of any release reads its output as it read the last one, and protocol 1 stays."
     }
   ]
 }
