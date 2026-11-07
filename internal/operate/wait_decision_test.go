@@ -161,6 +161,17 @@ func TestWaitForADecisionIsTheRunThatCarriedItOut(t *testing.T) {
 			wantStop: operate.StopNotProved, wantMessage: "a later reading did not verify it",
 		},
 		{
+			// A failover to a manager whose clock is behind: status.history is from
+			// before the run, dated after its end. The write that verifies the run is
+			// on its way, so that document is not a later reading.
+			name: "a reading from before the run, dated after it by another manager's clock", since: atTheGate(nil),
+			docs: []doc{
+				{phase: "VerifyingHistory", observedAt: at(90), lastRun: run(applied, "op-a", "plan-a", "approve-a", 20)},
+				{phase: "InSync", observedAt: at(100), lastRun: verified(run(applied, "op-a", "plan-a", "approve-a", 20), "InSync", 100)},
+			},
+			wantReads: 2,
+		},
+		{
 			// A status time has whole seconds, so a reading in the second the run
 			// ended may be the one before it. The next reading is what says.
 			name: "a reading dated the second the run ended says nothing yet", since: atTheGate(nil),

@@ -372,9 +372,8 @@ of these checks and leaves the newer CRDs in place, and a manager writes status 
 JSON merge patch of the fields it knows, so whatever nested field it does not know
 stays as it was. A manager older than 0.2.10 that records a run leaves the
 `operationID`, `planRef`, `planFingerprint`, `authorization`, `source`,
-`targetIdentityDigest`, `targetIdentityReported`, `executionBindingID` and
-`verification` of the run before it on `status.lastRun`, beside its own Job and
-outcome. Read those as the earlier run's, including where `kubectl ptah approve
+`targetIdentityDigest`, `executionBindingID` and `verification` of the run before it
+on `status.lastRun`, beside its own Job and outcome. Read those as the earlier run's, including where `kubectl ptah approve
 --wait` and `kubectl ptah wait --plan` read them, until a manager that knows the
 fields records the next run and replaces them.
 

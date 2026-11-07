@@ -221,13 +221,14 @@ func TestARunRecordsWhatItsClaimKnew(t *testing.T) {
 			if run.ExecutionBindingID != migration.Status.ExecutionBinding.Epoch {
 				t.Fatalf("execution binding = %q, want %q", run.ExecutionBindingID, migration.Status.ExecutionBinding.Epoch)
 			}
-			if run.TargetIdentityDigest != migration.Status.History.TargetIdentityDigest {
-				t.Fatalf("target = %q, want %q", run.TargetIdentityDigest, migration.Status.History.TargetIdentityDigest)
+			// Only a result frame says which database a run went to. With none, the
+			// record names none.
+			target := migration.Status.History.TargetIdentityDigest
+			if row.report == nil {
+				target = ""
 			}
-			// Only a result frame says which database a run opened. With none, that
-			// digest is the plan's, and the record says so.
-			if reported := row.report != nil; run.TargetIdentityReported != reported {
-				t.Fatalf("target reported = %t, want %t: the record has to say whether the run named it", run.TargetIdentityReported, reported)
+			if run.TargetIdentityDigest != target {
+				t.Fatalf("target = %q, want %q", run.TargetIdentityDigest, target)
 			}
 			if run.ArtifactDigest != migration.Status.Artifact.Digest || run.Source != nil {
 				t.Fatalf("source = %q, %#v, want the OCI digest %q", run.ArtifactDigest, run.Source, migration.Status.Artifact.Digest)
@@ -288,7 +289,8 @@ func TestAnUncertainRetirementWithNoJobKeepsWhatItsClaimKnew(t *testing.T) {
 	if _, err := reconciler.Reconcile(context.Background(), migrationRequest(migration)); err != nil {
 		t.Fatalf("Reconcile() error = %v", err)
 	}
-	run := readMigration(t, api, migration).Status.LastRun
+	held := readMigration(t, api, migration)
+	run := held.Status.LastRun
 	if run == nil || run.Outcome != operatorv1alpha1.MigrationRunOutcomeUnknown {
 		t.Fatalf("last run = %#v, want Unknown", run)
 	}
@@ -299,21 +301,18 @@ func TestAnUncertainRetirementWithNoJobKeepsWhatItsClaimKnew(t *testing.T) {
 		run.Authorization == nil || run.Authorization.ApprovalRef == nil || run.Authorization.ApprovalRef.UID != "approval-uid" {
 		t.Fatalf("the run does not keep what its claim knew: %#v", run)
 	}
-	if run.TargetIdentityDigest != migration.Status.History.TargetIdentityDigest {
-		t.Fatalf("target = %q, want the database its plan was computed against", run.TargetIdentityDigest)
+	if run.TargetIdentityDigest != "" {
+		t.Fatalf("target = %q, and nothing ran that could have named one", run.TargetIdentityDigest)
 	}
-	if run.TargetIdentityReported {
-		t.Fatal("the record says the run named a database, and nothing ran that could")
+	// The hold still needs somewhere to start looking.
+	if hold := held.Status.UnresolvedRun; hold == nil || hold.TargetIdentityDigest != migration.Status.History.TargetIdentityDigest {
+		t.Fatalf("hold = %#v, want the database its plan was computed against", hold)
 	}
 }
 
-// A run that reported no database may have run nowhere, or against what its Secret
-// held by then. A clean reading of the planned database settles the hold, by the rule
-// that has always settled it, and says nothing about the run.
-func TestAReadingDoesNotVerifyARunThatReportedNoDatabase(t *testing.T) {
-	t.Parallel()
-
-	inSync := dataplane.MigrationStatusReport{
+// migrationHistoryInSync is a reading with nothing pending.
+func migrationHistoryInSync() dataplane.MigrationStatusReport {
+	return dataplane.MigrationStatusReport{
 		ContractVersion: dataplane.SupportedMigrationStatusContract,
 		CurrentVersion:  3, TotalMigrations: 2, PendingMigrations: []int64{},
 		Migrations: []dataplane.MigrationRecord{
@@ -321,6 +320,14 @@ func TestAReadingDoesNotVerifyARunThatReportedNoDatabase(t *testing.T) {
 			{Version: 3, Checksum: "checksum-3", State: dataplane.MigrationStateApplied},
 		},
 	}
+}
+
+// A run that named no database may have run nowhere, or against what its Secret
+// held by then. A clean reading of the planned database settles the hold, by the rule
+// that has always settled it, and says nothing about the run.
+func TestAReadingDoesNotVerifyARunThatNamedNoDatabase(t *testing.T) {
+	t.Parallel()
+
 	retiredWithNoJob := func(t *testing.T) *operatorv1alpha1.PtahMigration {
 		t.Helper()
 		migration, plan := awaitingApprovalFixture(t)
@@ -351,10 +358,10 @@ func TestAReadingDoesNotVerifyARunThatReportedNoDatabase(t *testing.T) {
 			t.Parallel()
 
 			held := retired(t)
-			if held.Status.UnresolvedRun == nil || held.Status.LastRun == nil || held.Status.LastRun.TargetIdentityReported {
-				t.Fatalf("the fixture is not a held run that reported no database: %#v", held.Status.LastRun)
+			if held.Status.UnresolvedRun == nil || held.Status.LastRun == nil || held.Status.LastRun.TargetIdentityDigest != "" {
+				t.Fatalf("the fixture is not a held run that named no database: %#v", held.Status.LastRun)
 			}
-			read, _ := readMigrationHistory(t, held, inSync)
+			read, _ := readMigrationHistory(t, held, migrationHistoryInSync())
 			if read.Status.UnresolvedRun != nil {
 				t.Fatalf("a clean reading of that database did not settle the hold: %#v", read.Status.UnresolvedRun)
 			}
@@ -373,14 +380,7 @@ func TestAReadingDoesNotVerifyARunThatReportedNoDatabase(t *testing.T) {
 func TestTheReadingAfterARunIsRecordedOnIt(t *testing.T) {
 	t.Parallel()
 
-	inSync := dataplane.MigrationStatusReport{
-		ContractVersion: dataplane.SupportedMigrationStatusContract,
-		CurrentVersion:  3, TotalMigrations: 2, PendingMigrations: []int64{},
-		Migrations: []dataplane.MigrationRecord{
-			{Version: 2, Checksum: "checksum-2", State: dataplane.MigrationStateApplied},
-			{Version: 3, Checksum: "checksum-3", State: dataplane.MigrationStateApplied},
-		},
-	}
+	inSync := migrationHistoryInSync()
 	dirty := pendingMigrationHistory()
 	dirty.DirtyRevision = &dataplane.MigrationDirty{Version: 3}
 	for _, row := range []struct {
@@ -485,9 +485,61 @@ func TestAnAcknowledgmentNamesTheRunInTheJournal(t *testing.T) {
 	}
 }
 
+// The Secret moved to another database before the Pod started, and the runner refused
+// before its child started, naming the digest of what the Secret holds. The record
+// keeps what the result named, as the hold always has, so the two agree: the record is
+// about which database the run named, which the run did not touch. A reading of that
+// database verifies it, and the run still reads Unknown, which is what a wait stops on.
+func TestARunThatRefusedBeforeStartingNamesWhatItsSecretHeld(t *testing.T) {
+	t.Parallel()
+
+	migration, plan := awaitingApprovalFixture(t)
+	operation := applyClaimFor(t, migration, plan)
+	planned := migration.Status.History.TargetIdentityDigest
+	moved := "sha256:" + strings.Repeat("b", 64)
+	job, pod := terminalMigrationWorkload(migration, batchv1.JobComplete)
+	logs := migrationFrame(t, runner.Result{
+		ProtocolVersion: runner.ProtocolVersion, Operation: runner.OperationMigrationApply,
+		OperationID: operation.ID, ChildExitCode: 0,
+		CoordinationDigest:   operation.CoordinationDigest,
+		TargetIdentityDigest: moved,
+		Error:                &runner.ResultError{Code: "target_binding_mismatch", Message: "database target identity changed after planning"},
+	})
+	reconciler, api := fakeMigrationReconciler(t, staticLogs{content: logs}, migration, plan, job, pod, verificationPolicyConfigMap())
+	holdMigrationApplyLease(t, reconciler, api, migration)
+	if _, err := reconciler.Reconcile(context.Background(), migrationRequest(migration)); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	held := readMigration(t, api, migration)
+	run := held.Status.LastRun
+	if run == nil || run.Outcome != operatorv1alpha1.MigrationRunOutcomeUnknown || run.TargetIdentityDigest != moved {
+		t.Fatalf("last run = %#v, want Unknown naming %q", run, moved)
+	}
+	if hold := held.Status.UnresolvedRun; hold == nil || hold.TargetIdentityDigest != moved {
+		t.Fatalf("hold = %#v, want it naming %q", hold, moved)
+	}
+
+	// The history status still holds the planned database, so this reads that one.
+	if held.Status.History.TargetIdentityDigest != planned {
+		t.Fatalf("the reading before the run names %q, want %q", held.Status.History.TargetIdentityDigest, planned)
+	}
+	other, _ := readMigrationHistory(t, held, migrationHistoryInSync())
+	if other.Status.LastRun.Verification != nil {
+		t.Fatalf("a reading of the planned database verified a run that named another: %#v", other.Status.LastRun.Verification)
+	}
+
+	named := held.DeepCopy()
+	named.Status.History.TargetIdentityDigest = moved
+	read, _ := readMigrationHistory(t, named, migrationHistoryInSync())
+	if read.Status.LastRun.Verification == nil || read.Status.LastRun.Outcome != operatorv1alpha1.MigrationRunOutcomeUnknown {
+		t.Fatalf("a reading of the database the run named: %#v", read.Status.LastRun)
+	}
+}
+
 // A run's record names the database by a digest the schema holds it to, so what a
 // frame says stands only when it is one: a status write the API server refused
-// would leave the claim standing over a run that ended.
+// would leave the claim standing over a run that ended. With nothing to go on the
+// record names none, and a hold names the planned database as somewhere to start.
 func TestARunNamesTheDatabaseItReportedWhenThatIsADigest(t *testing.T) {
 	t.Parallel()
 
@@ -496,23 +548,26 @@ func TestARunNamesTheDatabaseItReportedWhenThatIsADigest(t *testing.T) {
 	withHistory := &operatorv1alpha1.PtahMigration{}
 	withHistory.Status.History = &operatorv1alpha1.MigrationHistoryStatus{TargetIdentityDigest: planned}
 	for _, row := range []struct {
-		name         string
-		migration    *operatorv1alpha1.PtahMigration
-		reported     string
-		want         string
-		wantReported bool
+		name      string
+		migration *operatorv1alpha1.PtahMigration
+		reported  string
+		wantRun   string
+		wantHold  string
 	}{
-		{"a digest", withHistory, reported, reported, true},
-		{"nothing", withHistory, "", planned, false},
-		{"something else", withHistory, "postgres://somewhere", planned, false},
-		{"nothing, with no history", &operatorv1alpha1.PtahMigration{}, "", "", false},
+		{"a digest", withHistory, reported, reported, reported},
+		{"nothing", withHistory, "", "", planned},
+		{"something else", withHistory, "postgres://somewhere", "", planned},
+		{"nothing, with no history", &operatorv1alpha1.PtahMigration{}, "", "", ""},
 	} {
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
 			run := &operatorv1alpha1.MigrationRunStatus{}
 			recordMigrationRunProvenance(run, row.migration, &operatorv1alpha1.MigrationOperationStatus{}, row.reported)
-			if run.TargetIdentityDigest != row.want || run.TargetIdentityReported != row.wantReported {
-				t.Fatalf("target = %q, reported %t; want %q, %t", run.TargetIdentityDigest, run.TargetIdentityReported, row.want, row.wantReported)
+			if run.TargetIdentityDigest != row.wantRun {
+				t.Fatalf("the run names %q, want %q", run.TargetIdentityDigest, row.wantRun)
+			}
+			if got := migrationRunTarget(row.migration, row.reported); got != row.wantHold {
+				t.Fatalf("a hold names %q, want %q", got, row.wantHold)
 			}
 		})
 	}

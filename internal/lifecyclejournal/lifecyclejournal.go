@@ -11,7 +11,6 @@ package lifecyclejournal
 import (
 	"slices"
 	"time"
-	"unicode/utf8"
 
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -348,9 +347,6 @@ func withRunIdentity(entry *operatorv1alpha1.JournalEntry, run *operatorv1alpha1
 const maxUsernameLength = 512
 
 func boundedUsername(username string) string {
-	if utf8.RuneCountInString(username) <= maxUsernameLength {
-		return username
-	}
 	characters := 0
 	for index := range username {
 		if characters == maxUsernameLength {

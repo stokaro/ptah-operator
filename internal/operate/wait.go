@@ -1114,8 +1114,10 @@ func (w *waiter) boundRunEnded(s snapshot, run *runRecord) verdict {
 	if !run.verified {
 		// A reading records itself on the run in the status write that records the
 		// reading, so a later one with nothing recorded was of another database, and
-		// only that database's next reading is left to wait for, if it ever comes.
-		if s.observedAt.After(run.finishedAt) {
+		// only that database's next reading is left to wait for, if it ever comes. Two
+		// managers' clocks date these, so a resource still on its way to that reading
+		// may show one from before the run dated after it: only a resting document says.
+		if s.resting() && s.observedAt.After(run.finishedAt) {
 			return w.stop(s, StopNotProved, fmt.Sprintf("run %s recorded its migrations applied, and a later reading "+
 				"did not verify it: it read another database, so no record says what the run's database holds", run.jobName))
 		}

@@ -83,8 +83,8 @@ and a `RunAcknowledged` entry now carries `outcome`, so a script that filters
 written from an earlier copy of [the guide](../../use/operations/#prune-run): a plan
 such a script deletes leaves the field naming nothing, which the retention audit in
 `hack/capacity` refuses.
-`status.lastRun.targetIdentityDigest` is the database a run reported only where
-`targetIdentityReported` is true, and otherwise the one its plan was computed against.
+`status.lastRun.targetIdentityDigest` is the database a run's result named, and it is
+absent on a run that left no result.
 After a manual `kubectl rollout undo` to an earlier manager, a run keeps the attribution
 of the run before it, because [its merge patch leaves the fields it does not
 know](../../use/operations/#rollback-stop).

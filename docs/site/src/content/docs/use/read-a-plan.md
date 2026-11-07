@@ -409,12 +409,10 @@ of the claim, the plan, the authorization or the reading, and a run dispatched b
 one and recorded after an upgrade names its approval without the approver: the
 view leaves out what the record does not hold.
 
-`-o json` also carries the database under `targetIdentityDigest`. It is the database
-the run reported only where `targetIdentityReported` is true. Where it is absent the
-run left no result to say so, and the digest is the database the plan was computed
-against, which the run may not have reached: it may have run nowhere, or against
-what its Secret held by then. No reading is recorded on such a run, so it has no
-`Read back` line.
+`-o json` also carries the database under `targetIdentityDigest`, as the run's result
+named it. A run that left no result names none, since it may have run nowhere, or
+against what its Secret held by then. No reading is recorded on such a run, so it has
+no `Read back` line.
 
 A run that ended `Partial` or `Unknown` is also recorded as unresolved, and the
 view prints that record as a block of its own, because it is a hold and not an
@@ -434,10 +432,10 @@ Unresolved run:       Unknown, recorded 2026-09-30T06:30:43Z
   Database:           sha256:dd3598d94799d326af49fb6f455ea24c3959af067ca4cff5219f1987480e4abd (target identity digest)
   While this record stands no plan is published and no Apply is dispatched;
   resolve, verify and the history read go on.
-  The database is the one the run reported reaching or, where it reported
-  nothing, the one it was dispatched against: where to start looking, not
-  proof of where the run went. A reader who inspects the wrong database finds
-  nothing wrong and settles a record that was telling the truth.
+  The database is the one the run named or, where it named none, the one its
+  plan was computed against: where to start looking, not proof of where the
+  run went. A reader who inspects the wrong database finds nothing wrong and
+  settles a record that was telling the truth.
   Establish what the run did there first. A history read of that database that
   finds nothing of the artifact left to apply clears the record by itself. If
   the database is accounted for and still has work pending, settle it with a
@@ -448,9 +446,10 @@ Unresolved run:       Unknown, recorded 2026-09-30T06:30:43Z
 ```
 
 It names the attempt, the Job, the plan the run was carrying out and the
-database it addressed. That database is the one the run reported or, where it
-reported nothing, the one it was dispatched against, so it is where to start
-looking rather than proof of where the run went. A resource that is suspended,
+database it addressed. That database is the one the run named or, where it
+named none, the one its plan was computed against, so it is where to start
+looking rather than proof of where the run went. The `Database` line says
+`assumed` where the record of that same run names none. A resource that is suspended,
 or refused for its engine or its realm, never reaches the history read that
 would clear the record, and the block says so; an acknowledgment still settles
 it. The block ends with what the operations guide says to do:

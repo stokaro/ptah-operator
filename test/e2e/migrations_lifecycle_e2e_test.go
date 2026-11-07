@@ -433,7 +433,7 @@ func (m *migrationRun) assertRunProvenance(settled *ptahv1alpha1.PtahMigration, 
 	for _, check := range []error{
 		runIdentityRecorded(settled.Status, plan),
 		runApprovedBy(settled.Status, approval),
-		runVerifiedInSync(settled.Status),
+		runVerifiedInSync(settled.Status, plan),
 		runJournaled(settled.Status),
 	} {
 		if check != nil {

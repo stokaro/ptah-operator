@@ -125,10 +125,10 @@ type RunView struct {
 	// reached the database and failed there.
 	Failure *operatorv1alpha1.MigrationRunFailureStatus `json:"failure,omitempty"`
 	// OperationID, PlanRef, PlanFingerprint, Authorization, ArtifactDigest,
-	// Source, TargetIdentityDigest, TargetIdentityReported, ExecutionBindingID and
-	// Verification are what the run's record says it carried out, who allowed it and
-	// what the reading after it found. Each is absent where the record does not hold
-	// it, which is every one of them on a run a release before those fields recorded.
+	// Source, TargetIdentityDigest, ExecutionBindingID and Verification are what
+	// the run's record says it carried out, who allowed it and what the reading
+	// after it found. Each is absent where the record does not hold it, which is
+	// every one of them on a run a release before those fields recorded.
 	OperationID          string                                            `json:"operationID,omitempty"`
 	PlanRef              *operatorv1alpha1.ImmutableObjectReference        `json:"planRef,omitempty"`
 	PlanFingerprint      string                                            `json:"planFingerprint,omitempty"`
@@ -136,11 +136,8 @@ type RunView struct {
 	ArtifactDigest       string                                            `json:"artifactDigest,omitempty"`
 	Source               *operatorv1alpha1.PlanSourceBinding               `json:"source,omitempty"`
 	TargetIdentityDigest string                                            `json:"targetIdentityDigest,omitempty"`
-	// TargetIdentityReported is true when the run itself named that database, and
-	// otherwise the digest is the one its plan was computed against.
-	TargetIdentityReported bool                                             `json:"targetIdentityReported,omitempty"`
-	ExecutionBindingID     string                                           `json:"executionBindingID,omitempty"`
-	Verification           *operatorv1alpha1.MigrationRunVerificationStatus `json:"verification,omitempty"`
+	ExecutionBindingID   string                                            `json:"executionBindingID,omitempty"`
+	Verification         *operatorv1alpha1.MigrationRunVerificationStatus  `json:"verification,omitempty"`
 }
 
 // UnresolvedRunView is the execution whose effect on the database nobody has
@@ -154,8 +151,8 @@ type UnresolvedRunView struct {
 	JobUID  string                                    `json:"jobUID,omitempty"`
 	PlanRef operatorv1alpha1.ImmutableObjectReference `json:"planRef"`
 	// TargetIdentityDigest is the credential-free identity of the database
-	// the run reached, or the one it was dispatched against where the run
-	// reported nothing.
+	// the run's result named, or the one its plan was computed against where
+	// it named none.
 	TargetIdentityDigest string      `json:"targetIdentityDigest,omitempty"`
 	RecordedAt           metav1.Time `json:"recordedAt"`
 }
@@ -323,16 +320,15 @@ func runOf(run *operatorv1alpha1.MigrationRunStatus) *RunView {
 		AppliedVersions: append([]int64(nil), run.AppliedVersions...),
 		Message:         run.Message,
 
-		OperationID:            run.OperationID,
-		PlanRef:                run.PlanRef.DeepCopy(),
-		PlanFingerprint:        run.PlanFingerprint,
-		Authorization:          run.Authorization.DeepCopy(),
-		ArtifactDigest:         run.ArtifactDigest,
-		Source:                 run.Source.DeepCopy(),
-		TargetIdentityDigest:   run.TargetIdentityDigest,
-		TargetIdentityReported: run.TargetIdentityReported,
-		ExecutionBindingID:     run.ExecutionBindingID,
-		Verification:           run.Verification.DeepCopy(),
+		OperationID:          run.OperationID,
+		PlanRef:              run.PlanRef.DeepCopy(),
+		PlanFingerprint:      run.PlanFingerprint,
+		Authorization:        run.Authorization.DeepCopy(),
+		ArtifactDigest:       run.ArtifactDigest,
+		Source:               run.Source.DeepCopy(),
+		TargetIdentityDigest: run.TargetIdentityDigest,
+		ExecutionBindingID:   run.ExecutionBindingID,
+		Verification:         run.Verification.DeepCopy(),
 	}
 	if run.Failure != nil {
 		failure := *run.Failure

@@ -86,7 +86,7 @@ func renderText(out io.Writer, view View) error {
 		}
 	}
 	renderLastRun(&text, view.LastRun)
-	renderUnresolvedRun(&text, view.UID, readingGate(view), view.UnresolvedRun)
+	renderUnresolvedRun(&text, view.UID, readingGate(view), view.UnresolvedRun, view.LastRun)
 	renderResolvedRun(&text, view.ResolvedRun)
 	renderPlan(&text, view.Plan, statusview.Find(view.Conditions, operatorv1alpha1.ConditionMigrationApprovalRequired))
 	if statusview.WriteListHeading(&text, "Approvals", "ptahmigrationapprovals", view.Namespace,
@@ -193,8 +193,9 @@ func authorizationText(authorization *operatorv1alpha1.MigrationRunAuthorization
 // stands until a reading or a person settles it.
 //
 // gate is what stops the resource before the history read that would clear
-// the record, or empty when nothing the status shows does.
-func renderUnresolvedRun(text *strings.Builder, migrationUID, gate string, run *UnresolvedRunView) {
+// the record, or empty when nothing the status shows does. last is the last run,
+// which says whether the hold's database was named or assumed.
+func renderUnresolvedRun(text *strings.Builder, migrationUID, gate string, run *UnresolvedRunView, last *RunView) {
 	if run == nil {
 		return
 	}
@@ -210,7 +211,7 @@ func renderUnresolvedRun(text *strings.Builder, migrationUID, gate string, run *
 	field("Job", job)
 	field("Plan", jobText(run.PlanRef.Name, string(run.PlanRef.UID)))
 	if run.TargetIdentityDigest != "" {
-		field("Database", run.TargetIdentityDigest+" (target identity digest)")
+		field("Database", holdDatabaseText(run, last))
 	}
 	uid := migrationUID
 	if uid == "" {
@@ -219,8 +220,8 @@ func renderUnresolvedRun(text *strings.Builder, migrationUID, gate string, run *
 	guidance := []string{
 		"While this record stands no plan is published and no Apply is dispatched; " +
 			"resolve, verify and the history read go on.",
-		"The database is the one the run reported reaching or, where it reported nothing, " +
-			"the one it was dispatched against: where to start looking, not proof of where the run went. " +
+		"The database is the one the run named or, where it named none, " +
+			"the one its plan was computed against: where to start looking, not proof of where the run went. " +
 			"A reader who inspects the wrong database finds nothing wrong and settles a record that was " +
 			"telling the truth.",
 		"Establish what the run did there first. A history read of that database that finds nothing " +
@@ -236,6 +237,16 @@ func renderUnresolvedRun(text *strings.Builder, migrationUID, gate string, run *
 	for _, paragraph := range guidance {
 		writeWrapped(text, "  ", 78, paragraph)
 	}
+}
+
+// holdDatabaseText says which database a hold names, and that it is assumed when
+// the record of that same run names none. A hold beside no record of its run, or one
+// a release before that field recorded, does not say which it is, so neither does this.
+func holdDatabaseText(run *UnresolvedRunView, last *RunView) string {
+	if last != nil && last.OperationID == run.OperationID && last.TargetIdentityDigest == "" {
+		return run.TargetIdentityDigest + " (target identity digest, assumed: the run named none, and its plan was computed against this one)"
+	}
+	return run.TargetIdentityDigest + " (target identity digest)"
 }
 
 // readingGate names what holds the resource before the history read that

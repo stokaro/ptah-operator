@@ -153,7 +153,6 @@ func TestPtahMigrationStatusHoldsARunsProvenance(t *testing.T) {
 	}{
 		{"an operation ID that is not one", map[string]any{"operationID": "apply-1"}, cause{"status.lastRun.operationID", "should match"}},
 		{"a database that is not a digest", map[string]any{"targetIdentityDigest": "somewhere"}, cause{"status.lastRun.targetIdentityDigest", "should match"}},
-		{"a report that is not a yes or a no", map[string]any{"targetIdentityReported": "yes"}, cause{"status.lastRun.targetIdentityReported", "must be of type boolean"}},
 		{"an execution binding that is not one", map[string]any{"executionBindingID": "v2"}, cause{"status.lastRun.executionBindingID", "should match"}},
 		{"an unbounded fingerprint", map[string]any{"planFingerprint": strings.Repeat("a", 129)}, cause{"status.lastRun.planFingerprint", "Too long"}},
 		{"a plan with no UID", map[string]any{"planRef": map[string]any{"name": "plan-a"}}, cause{"status.lastRun.planRef.uid", "Required value"}},
@@ -187,7 +186,7 @@ func TestPtahMigrationStatusHoldsARunsProvenance(t *testing.T) {
 		{"a run from before the record, which names none of it", nil},
 		{"a run under an approval, read back", map[string]any{
 			"operationID": digest, "planRef": map[string]any{"name": "plan-a", "uid": "plan-a-uid"}, "planFingerprint": digest,
-			"artifactDigest": digest, "targetIdentityDigest": digest, "targetIdentityReported": true, "executionBindingID": "v1-" + strings.Repeat("a", 32),
+			"artifactDigest": digest, "targetIdentityDigest": digest, "executionBindingID": "v1-" + strings.Repeat("a", 32),
 			"authorization": map[string]any{
 				"kind": "Approval", "approvalRef": approval, "approver": map[string]any{"username": "alice"}, "approvedAt": "2026-10-24T07:41:53Z",
 			},
