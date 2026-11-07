@@ -13,6 +13,7 @@ Kubernetes minor.
 | --- | --- | --- |
 | PostgreSQL | 17.x | `postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73` |
 | MySQL | 8.4.x LTS | `mysql:8.4@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb` |
+| PostgreSQL | 18.x | `postgres:18-alpine@sha256:898c60cb390d1085bc97bdd6a1ae968757421df394b071848b52b1c09c89d6a5` |
 
 The immutable references identify the current matrix environments; they do
 not restrict production to one image vendor. Other release lines are
@@ -85,7 +86,8 @@ says the login found no difference. It does not say that nobody added anything.
 This section describes Ptah v0.22.0, the executor this operator build pins
 ([Ptah compatibility](../ptah/)), measured with `schema drift` and `schema plan`,
 the commands an Observe and a Plan run, against PostgreSQL 17.11 and MySQL
-8.4.11. Another executor build can answer differently. PostgreSQL has no gap at
+8.4.11. The acceptance row for it also runs on PostgreSQL 18. Another executor
+build can answer differently. PostgreSQL has no gap at
 this build, and
 [stokaro/ptah#5497](https://github.com/stokaro/ptah/issues/5497) tracks MySQL.
 
