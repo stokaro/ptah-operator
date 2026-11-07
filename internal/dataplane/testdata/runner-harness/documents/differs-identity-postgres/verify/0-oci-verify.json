@@ -1,0 +1,9 @@
+{
+  "reference": "oci://harness-registry:5000/schemas/differs-identity-postgres@sha256:beb45450a6aef0b7a0e7faec7ad0f0de8d249d4757c2a46275aa9b798b292423",
+  "digest": "sha256:beb45450a6aef0b7a0e7faec7ad0f0de8d249d4757c2a46275aa9b798b292423",
+  "satisfied": [
+    "require_digest_pin",
+    "artifact_types"
+  ],
+  "findings": []
+}

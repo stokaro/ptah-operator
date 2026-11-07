@@ -640,6 +640,10 @@ type rowSpec struct {
 	cluster   runnerharness.Cluster
 	// wantCode is the frame's error code; empty means no error.
 	wantCode string
+	// anyOutcome records whichever code the frame carries, for a row whose
+	// reading is the point, so that a release that moves it reaches the diff
+	// rather than stopping the run that would have written it.
+	anyOutcome bool
 	// wantRefusal is a word the refusal of a fetch has to hold; set, the row
 	// ends at that fetch and writes no frame.
 	wantRefusal string
@@ -747,6 +751,7 @@ func (l *lab) runRow(t *testing.T, row rowSpec) rowOutcome {
 	}
 	outcome.result = result
 	switch {
+	case row.anyOutcome:
 	case row.wantCode == "" && result.Error != nil:
 		t.Errorf("%s: the frame says %s: %s\n%s", row.name, result.Error.Code, result.Error.Message, childrenText(children))
 	case row.wantCode != "" && (result.Error == nil || result.Error.Code != row.wantCode):

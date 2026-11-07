@@ -1,0 +1,7 @@
+{
+  "reference": "oci://harness-registry:5000/schemas/differs-missing-schema-scoped-postgres:v1",
+  "pinned_reference": "oci://harness-registry:5000/schemas/differs-missing-schema-scoped-postgres@sha256:e2f5137c62310464ce73c655f0aba5596a6e0210f8fa3b30aaf7b633d6b007c3",
+  "digest": "sha256:e2f5137c62310464ce73c655f0aba5596a6e0210f8fa3b30aaf7b633d6b007c3",
+  "media_type": "application/vnd.oci.image.manifest.v1+json",
+  "size": 813
+}

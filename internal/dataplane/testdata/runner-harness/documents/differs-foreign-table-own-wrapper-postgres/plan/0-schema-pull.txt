@@ -1,0 +1,2 @@
+Pulled oci://harness-registry:5000/schemas/differs-foreign-table-own-wrapper-postgres@sha256:ecfc02b06e20640bd6fc93f818b155a9178245ca01b6d80a8ebb49323fd46ff4 to /source/schema.hcl
+Digest: sha256:ecfc02b06e20640bd6fc93f818b155a9178245ca01b6d80a8ebb49323fd46ff4

@@ -1,0 +1,12 @@
+{
+  "contract_version": 4,
+  "command": "schema apply",
+  "outcome": "dry-run",
+  "plan_name": "plan_a343d7a072a7",
+  "plan_digest": "sha256:a7e753a6402bdcf61027706418107cd927eb018d5d33e2ae00609d3f2f6dcb3a",
+  "units": [
+    {
+      "sql": "ALTER VIEW \"differs_notes_view\" SET (security_invoker=false)"
+    }
+  ]
+}

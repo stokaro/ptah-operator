@@ -312,6 +312,16 @@ passes on the requirement codes alone, only when the text is what
 `invalid_verification_output`. A release that rewords that sentence moves the
 `schema-verify-refused` rows, and the capture fails until the function agrees.
 
+Read the `differs-*` rows first. They run a database that differs from its
+declaration, in the ways `differingRows` in `test/runnerharness/differing_test.go`
+lists, because a comparison a release adds never fires on a database the operator
+converged. Each records whatever its steps answer, so a moved outcome reaches the
+diff. `go test ./test/runnerharness` then fails on a row whose reading no longer
+holds the shape it is named for, or whose plan the manager now rates differently.
+Decide whether the move is wanted, then change `want` beside the row. A plan the
+manager reads as neither destructive nor a change of privileges runs unattended
+under `apply: Always`, so read any row that moves there as a finding.
+
 `make runner-harness` runs the same rows and compares. A change of shape is any
 difference left once the volatile values are masked: a field added, removed or
 retyped, an element added or removed, a contract version, an outcome, an exit

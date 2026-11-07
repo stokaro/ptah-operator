@@ -1,0 +1,34 @@
+{
+  "contract_version": 3,
+  "command": "schema plan",
+  "outcome": "changes",
+  "plan_digest": "sha256:6f5d16183d2b9810f33d58afd444192578a6d7f0af3521afce3ba0711fef3bc6",
+  "plan_path": "/work/ptah-plan-output-277140017/second.plan.json",
+  "plan": {
+    "format_version": 1,
+    "name": "plan_f44cfd5e8e10",
+    "dialect": "postgres",
+    "from_fingerprint": "sha256:b53f16e6e4f3187bd68e99db9d33403d529c47336604bfeaeb46582515f9efa8",
+    "to_fingerprint": "sha256:30c2e55f90bf866504532b86117af2dcaa69bcdec82bff1d12ba45d7a28449ae",
+    "schemas_beyond_url": [
+      "differs_app"
+    ],
+    "scope": {
+      "kind": "schema",
+      "name": "public"
+    },
+    "destructive": false,
+    "statements": [
+      {
+        "sql": "CREATE SCHEMA IF NOT EXISTS \"differs_app\"",
+        "severity": "safe",
+        "reason": "does not remove data or tighten constraints"
+      },
+      {
+        "sql": "CREATE TABLE \"differs_app\".\"differs_widgets\" (\n  \"id\" bigint PRIMARY KEY NOT NULL\n)",
+        "severity": "safe",
+        "reason": "does not remove data or tighten constraints"
+      }
+    ]
+  }
+}

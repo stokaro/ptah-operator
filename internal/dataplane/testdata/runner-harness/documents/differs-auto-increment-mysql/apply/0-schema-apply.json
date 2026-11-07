@@ -1,0 +1,12 @@
+{
+  "contract_version": 4,
+  "command": "schema apply",
+  "outcome": "applied",
+  "plan_name": "plan_6502b32dbd91",
+  "plan_digest": "sha256:3b155994f42494d9a99d0560d08efc623da396c3be9698692d8b6c657a491842",
+  "units": [
+    {
+      "sql": "ALTER TABLE `differs_items` MODIFY COLUMN `id` bigint NOT NULL"
+    }
+  ]
+}

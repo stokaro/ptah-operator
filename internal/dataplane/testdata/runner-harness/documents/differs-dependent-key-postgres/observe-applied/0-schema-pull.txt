@@ -1,0 +1,2 @@
+Pulled oci://harness-registry:5000/schemas/differs-dependent-key-postgres@sha256:5cbb6e3721aab3126a43add4acde82e4379df2a3ddee81e4244a3da1ba0b296d to /source/schema.hcl
+Digest: sha256:5cbb6e3721aab3126a43add4acde82e4379df2a3ddee81e4244a3da1ba0b296d

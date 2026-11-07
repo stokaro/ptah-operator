@@ -1,0 +1,2 @@
+Pulled oci://harness-registry:5000/schemas/differs-view-invoker-unstated-mysql@sha256:58e2bc2f8ba36e07b96583a97a6bd6990d90a2884f4ec93f4b815fbbd5df48dd to /source/schema.hcl
+Digest: sha256:58e2bc2f8ba36e07b96583a97a6bd6990d90a2884f4ec93f4b815fbbd5df48dd

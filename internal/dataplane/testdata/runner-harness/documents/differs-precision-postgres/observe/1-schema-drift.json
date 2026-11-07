@@ -1,0 +1,104 @@
+{
+  "contract_version": 1,
+  "command": "schema drift",
+  "drift": true,
+  "failed": true,
+  "failure_threshold": "all",
+  "highest_severity": "warning",
+  "dialect": "postgres",
+  "findings": [
+    {
+      "category": "columns_modified",
+      "count": 1,
+      "severity": "warning"
+    }
+  ],
+  "inventory": [
+    {
+      "kind": "columns",
+      "desired": 2,
+      "observed": 2
+    },
+    {
+      "kind": "constraints",
+      "desired": 1,
+      "observed": 1
+    },
+    {
+      "kind": "tables",
+      "desired": 1,
+      "observed": 1
+    }
+  ],
+  "diff": {
+    "identifier_semantics": {
+      "default_schema": "public",
+      "search_path": [
+        "public"
+      ],
+      "index_namespace": "schema",
+      "index_names": "exact",
+      "table_names": "exact",
+      "column_names": "exact"
+    },
+    "tables_added": null,
+    "tables_removed": null,
+    "tables_modified": [
+      {
+        "table_name": "differs_events",
+        "columns_added": null,
+        "columns_removed": null,
+        "columns_modified": [
+          {
+            "column_name": "happened_at",
+            "changes": {
+              "type": "timestamp -\u003e timestamp(0)"
+            }
+          }
+        ],
+        "constraints_added": null,
+        "constraints_removed": null
+      }
+    ],
+    "enums_added": null,
+    "enums_removed": null,
+    "enums_modified": null,
+    "indexes_added": null,
+    "indexes_removed": null,
+    "index_visibility_changed": null,
+    "functions_added": null,
+    "functions_removed": null,
+    "functions_modified": null,
+    "sequences_added": null,
+    "sequences_removed": null,
+    "sequences_modified": null,
+    "views_added": null,
+    "views_removed": null,
+    "views_modified": null,
+    "materialized_views_added": null,
+    "materialized_views_removed": null,
+    "materialized_views_modified": null,
+    "triggers_added": null,
+    "triggers_removed": null,
+    "triggers_modified": null,
+    "rls_policies_added": null,
+    "rls_policies_removed": null,
+    "rls_policies_modified": null,
+    "object_comments_changed": null,
+    "rls_enabled_tables_added": null,
+    "rls_enabled_tables_removed": null,
+    "rls_force_changed": null,
+    "roles_added": null,
+    "roles_removed": null,
+    "roles_modified": null,
+    "grants_added": null,
+    "grants_removed": null,
+    "grant_options_added": null,
+    "grant_options_revoked": null,
+    "constraints_added": null,
+    "constraints_removed": null,
+    "foreign_keys_removed_with_tables": null,
+    "constraint_comments_changed": null,
+    "constraints_validated": null
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "reference": "oci://harness-registry:5000/schemas/differs-precision-postgres:v1",
+  "pinned_reference": "oci://harness-registry:5000/schemas/differs-precision-postgres@sha256:78ab0b58fed02a113c977b43b1633cefccc53f4c3ae07dc249896399210af3ef",
+  "digest": "sha256:78ab0b58fed02a113c977b43b1633cefccc53f4c3ae07dc249896399210af3ef",
+  "media_type": "application/vnd.oci.image.manifest.v1+json",
+  "size": 813
+}

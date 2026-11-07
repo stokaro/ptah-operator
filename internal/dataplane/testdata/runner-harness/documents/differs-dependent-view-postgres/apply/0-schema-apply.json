@@ -1,0 +1,15 @@
+{
+  "contract_version": 4,
+  "command": "schema apply",
+  "outcome": "unknown",
+  "plan_name": "plan_c46f5a7f77c9",
+  "plan_digest": "sha256:e46aa6539423efa6299f494999c29e9bb24d1a3c0977ae7785e79bc1fe646bde",
+  "units": [
+    {
+      "sql": "DROP TABLE \"differs_parent\""
+    }
+  ],
+  "error": {
+    "message": "apply schema changes: failed to execute SQL statement: SQL execution failed: ERROR: cannot drop table differs_parent because other objects depend on it (SQLSTATE 2BP01)\nSQL: DROP TABLE \"differs_parent\""
+  }
+}

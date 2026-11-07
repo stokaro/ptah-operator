@@ -1,0 +1,26 @@
+{
+  "contract_version": 3,
+  "command": "schema plan",
+  "outcome": "changes",
+  "plan_digest": "sha256:5fd0d3e28c45e53dd1e4110249d983eb92806305b85d25d820ca037bb580527c",
+  "plan_path": "/work/ptah-plan-output-3147360010/first.plan.json",
+  "plan": {
+    "format_version": 1,
+    "name": "plan_af4638957370",
+    "dialect": "mysql",
+    "from_fingerprint": "sha256:9563aaa707a18d3020a39401debe760421ea06601607fab6e5a71fb033d34974",
+    "to_fingerprint": "sha256:74b999c4b94a11806da706adb6527d336a997142a7c4e054e9ed9d42bceeaa42",
+    "scope": {
+      "kind": "schema",
+      "name": "harness_differs_precision_mysql"
+    },
+    "destructive": false,
+    "statements": [
+      {
+        "sql": "ALTER TABLE `differs_events` MODIFY COLUMN `happened_at` timestamp NOT NULL",
+        "severity": "warning",
+        "reason": "MODIFY or CHANGE ... NOT NULL fails when a row holds NULL; outside strict SQL mode MySQL and MariaDB rewrite the NULL to the type's zero value instead"
+      }
+    ]
+  }
+}
