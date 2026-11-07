@@ -540,10 +540,12 @@ is pending.
 
 A MySQL DDL statement that returns an error leaves this row, with the error
 `statement execution outcome is unknown after process interruption`, although the
-process was alive and heard the answer. MySQL commits a DDL statement on its own,
-so Ptah v0.23.0 reports the run `unknown` rather than `failed`
-([stokaro/ptah#5661](https://github.com/stokaro/ptah/issues/5661)), and the run
-leaves `status.unresolvedRun` like any other unknown run. `status.lastRun.message`
+process was alive and heard the answer and the statement did not commit. Ptah
+v0.23.0 records a DDL statement the server refused as interrupted and reports the
+run `unknown` rather than `failed`
+([stokaro/ptah#5661](https://github.com/stokaro/ptah/issues/5661)), so the run
+leaves `status.unresolvedRun` like any other unknown run and needs an
+acknowledgment. A later Ptah release is expected to read it as `failed`. `status.lastRun.message`
 names the statement and the database's answer, measured with the runner harness
 for a `CREATE UNIQUE INDEX` that met a duplicate key:
 `Migration 1 (Change) stopped at statement 1 of 1 with SQLSTATE 23000 (error 1062), and whether it committed is not recorded`.

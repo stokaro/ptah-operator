@@ -189,10 +189,10 @@ object name.
 
 | Account, on the managed database unless noted | Only the declared tables | A trigger and routines another account made | A view |
 | --- | --- | --- | --- |
-| `SELECT`, `CREATE`, `ALTER`, `DROP`, `INDEX`, `REFERENCES`, the login this page documented before this build | refused: triggers, routines | refused: triggers, routines | |
+| `SELECT`, `CREATE`, `ALTER`, `DROP`, `INDEX`, `REFERENCES`, the login this page documented before this build | refused: triggers, routines | refused: triggers, routines | refused: views, triggers, routines |
 | The above with `TRIGGER`, `EXECUTE`, `SHOW VIEW`, the login this page documents | read | refused: routines | read |
 | The above without `SHOW VIEW` | read | refused: routines | refused: views |
-| `TRIGGER`, `SHOW VIEW`, and `SHOW_ROUTINE` granted globally | read | read: `triggers_removed`, `functions_removed` | read |
+| The login this page documents, and `SHOW_ROUTINE` on `*.*`, its only global grant | read | read: `triggers_removed`, `functions_removed` | read |
 
 The login this page documented before this build fails every Observe and Plan,
 on an empty database too, because it cannot show that it saw every trigger and
