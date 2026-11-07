@@ -43,7 +43,10 @@ to find an artifact the verification policy refused has to match the reason
 to expect a kind that is not a stem. Ptah Console up to 0.3.x misstates such a kind until
 [ptah-console#166](https://github.com/stokaro/ptah-console/issues/166) is fixed:
 it says a dropped extension's counts and findings disagree, and shows a changed
-policy at 100% coverage with its finding under other findings. `kubectl ptah wait
+policy at 100% coverage with its finding under other findings. It also titles a
+migration's `Verified` entry with the outcome `Blocked` or `Pending` as "Verified"
+until it ships a fix, so read a blocked reading from `status.journal` or
+`kubectl ptah migration`. `kubectl ptah wait
 --for approval` now ends on a plan already waiting, so a script that used it to
 wait for a newer reading has to run `kubectl ptah refresh --wait`. A migration Apply
 now writes the approver's username to the target database, so check what that
@@ -63,6 +66,18 @@ approved under the approval it stored, and exits 8 where it used to report succe
 for another run: a script has to expect `PlanSuperseded`, `OtherPlanApplied` and
 `OtherApprovalConsumed`. It also exits 8 with `CompletionNotProved` against an operator
 that records no plan on a run, so upgrade the operator first.
+A migration's journal now has `Verified` entries, for the first reading after a run,
+and a `RunAcknowledged` entry now carries `outcome`, so a script that filters
+`status.journal` on `.outcome` alone has to filter on `.type` as well.
+`status.lastRun.planRef` is a new pin on a stored plan, so add it to a pruning script
+written from an earlier copy of [the guide](../../use/operations/#prune-run): a plan
+such a script deletes leaves the field naming nothing, which the retention audit in
+`hack/capacity` refuses.
+`status.lastRun.targetIdentityDigest` is the database a run reported only where
+`targetIdentityReported` is true, and otherwise the one its plan was computed against.
+After a manual `kubectl rollout undo` to an earlier manager, a run keeps the attribution
+of the run before it, because [its merge patch leaves the fields it does not
+know](../../use/operations/#rollback-stop).
 The move to Ptah v0.22.0 can also change what a running schema reports and plans,
 which the next paragraph covers. Nothing else.
 

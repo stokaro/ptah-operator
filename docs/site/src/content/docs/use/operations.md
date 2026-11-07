@@ -367,6 +367,17 @@ available with manager Pods carrying the restored revision's image.
 
 #### Where to stop {#rollback-stop}
 
+Do not go back with `kubectl rollout undo` on the manager's Deployment. It passes none
+of these checks and leaves the newer CRDs in place, and a manager writes status as a
+JSON merge patch of the fields it knows, so whatever nested field it does not know
+stays as it was. A manager older than 0.2.10 that records a run leaves the
+`operationID`, `planRef`, `planFingerprint`, `authorization`, `source`,
+`targetIdentityDigest`, `targetIdentityReported`, `executionBindingID` and
+`verification` of the run before it on `status.lastRun`, beside its own Job and
+outcome. Read those as the earlier run's, including where `kubectl ptah approve
+--wait` and `kubectl ptah wait --plan` read them, until a manager that knows the
+fields records the next run and replaces them.
+
 Do not edit the stored state or the CRD annotations to let a refused rollback
 through. The refusal says the cluster holds state the older release cannot
 read, and the way forward is a release that reads it.
@@ -1780,7 +1791,7 @@ reads those rather than the order or the time of what happened.
 | `OtherPlanApplied` | another plan's run ended |
 | `OtherApprovalConsumed` | the same plan ran under another approval, as when two people approved it and the operator took the oldest |
 | `PlanSuperseded` | a migration's plan will not run: another plan replaced it or is running, or a reading left nothing to apply |
-| `CompletionNotProved` | a run ended that may be this one and no record says so: its record names no plan because an operator older than 0.2.10 wrote it, or a later run replaced it and the journal holds no reading after it |
+| `CompletionNotProved` | a run ended that may be this one and no record says so: its record names no plan because an operator older than 0.2.10 wrote it, it names this plan and not what allowed the run, as the entry of a hold a restore brought back does, it names no fingerprint and `--plan` gave one, or a later run replaced it and the journal holds no reading after it. Also this very run, when the database moved before the next reading, since a reading of another database cannot verify it |
 
 `--for approval` asks whether a plan waits for you, so a plan that waits already
 answers it, even one computed before the wait began. Started right after an edit
@@ -2583,6 +2594,12 @@ so the set is checkable with `kubectl` rather than inferred:
 | `ptahmigration.status.activeOperation.planRef` | an Apply is in flight against it |
 | `ptahmigration.status.unresolvedRun.planRef` | a run nobody accounted for may have executed it |
 | `ptahmigration.status.lastRun.planRef` | the evidence of what the last run carried out |
+
+A list of pins from before 0.2.10 leaves `status.lastRun.planRef` out, so a prune
+that used one can delete the plan that field names. The operator goes on working, and
+the field names bytes nothing holds: [the check below](#prune-evidence) reports it as
+a pinned plan that was deleted, and the retention audit in `hack/capacity` refuses
+it as a missing plan.
 
 The `unresolvedRun` row is the one that matters most and is easiest to miss. An
 unresolved run is a migration that may already have changed the database, and

@@ -70,6 +70,10 @@ func TestStatusRefusesAMalformedJournal(t *testing.T) {
 			cause{"status.journal.entries[0].jobUID", "Too long"}},
 		{"an unbounded approver", journal(journalEntry(map[string]any{"type": "ApprovalAccepted", "approver": strings.Repeat("a", 513)})),
 			cause{"status.journal.entries[0].approver", "Too long"}},
+		{"an approver one character past the bound, of three bytes each", journal(journalEntry(map[string]any{"type": "ApprovalAccepted", "approver": strings.Repeat("日", 513)})),
+			cause{"status.journal.entries[0].approver", "Too long"}},
+		{"an unbounded acknowledgment author", journal(journalEntry(map[string]any{"type": "RunAcknowledged", "acknowledgedBy": strings.Repeat("a", 513)})),
+			cause{"status.journal.entries[0].acknowledgedBy", "Too long"}},
 		{"a 65th entry", journal(tooMany...),
 			cause{"status.journal.entries", "must have at most 64 items"}},
 	} {
@@ -91,6 +95,10 @@ func TestStatusRefusesAMalformedJournal(t *testing.T) {
 		complete := journal(
 			journalEntry(map[string]any{"statements": int64(2), "destructive": true}),
 			journalEntry(map[string]any{"type": "ApprovalAccepted", "approval": "approve-a", "approvalUID": "uid-a", "approver": "alice"}),
+			// The bound counts characters, so 1,536 bytes fit it. The journal cuts a name
+			// at this length and no sooner, and this is what makes that the right place.
+			journalEntry(map[string]any{"type": "ApprovalAccepted", "approval": "approve-b", "approvalUID": "uid-b", "approver": strings.Repeat("日", 512)}),
+			journalEntry(map[string]any{"type": "RunAcknowledged", "acknowledgment": "ack-b", "acknowledgedBy": strings.Repeat("日", 512)}),
 			journalEntry(map[string]any{"type": "ApplyFinished", "startedAt": "2026-10-24T07:41:53Z", "outcome": "Succeeded"}),
 			journalEntry(map[string]any{"type": "Verified", "outcome": "InSync"}),
 			journalEntry(map[string]any{
@@ -145,6 +153,7 @@ func TestPtahMigrationStatusHoldsARunsProvenance(t *testing.T) {
 	}{
 		{"an operation ID that is not one", map[string]any{"operationID": "apply-1"}, cause{"status.lastRun.operationID", "should match"}},
 		{"a database that is not a digest", map[string]any{"targetIdentityDigest": "somewhere"}, cause{"status.lastRun.targetIdentityDigest", "should match"}},
+		{"a report that is not a yes or a no", map[string]any{"targetIdentityReported": "yes"}, cause{"status.lastRun.targetIdentityReported", "must be of type boolean"}},
 		{"an execution binding that is not one", map[string]any{"executionBindingID": "v2"}, cause{"status.lastRun.executionBindingID", "should match"}},
 		{"an unbounded fingerprint", map[string]any{"planFingerprint": strings.Repeat("a", 129)}, cause{"status.lastRun.planFingerprint", "Too long"}},
 		{"a plan with no UID", map[string]any{"planRef": map[string]any{"name": "plan-a"}}, cause{"status.lastRun.planRef.uid", "Required value"}},
@@ -178,7 +187,7 @@ func TestPtahMigrationStatusHoldsARunsProvenance(t *testing.T) {
 		{"a run from before the record, which names none of it", nil},
 		{"a run under an approval, read back", map[string]any{
 			"operationID": digest, "planRef": map[string]any{"name": "plan-a", "uid": "plan-a-uid"}, "planFingerprint": digest,
-			"artifactDigest": digest, "targetIdentityDigest": digest, "executionBindingID": "v1-" + strings.Repeat("a", 32),
+			"artifactDigest": digest, "targetIdentityDigest": digest, "targetIdentityReported": true, "executionBindingID": "v1-" + strings.Repeat("a", 32),
 			"authorization": map[string]any{
 				"kind": "Approval", "approvalRef": approval, "approver": map[string]any{"username": "alice"}, "approvedAt": "2026-10-24T07:41:53Z",
 			},

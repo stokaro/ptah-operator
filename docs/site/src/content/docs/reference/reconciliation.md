@@ -708,14 +708,18 @@ and the finished Jobs it keeps for five minutes, or 24 hours after
 | `PlanPublished` | `status.plan` names a plan the journal does not already hold. A plan republished while the resource refreshes is the same plan and writes nothing. |
 | `ApprovalAccepted` | An Apply consumes an approval: the one a schema's plan records, or the one a migration's Apply claim names, with the approver admission stamped. `approvalUID` is what tells two decisions apart: a later approval may take the name of an earlier one, and writes its own entry. |
 | `ApplyFinished` | A schema's Apply ends and its post-Apply observation takes its place: `Succeeded`, or `Unknown` when its outcome is unknown. An Apply withdrawn before dispatch changed nothing and writes nothing. |
-| `Verified` | That observation settles: `InSync`, `DriftRemains`, `Superseded` when a newer generation, policy or execution binding took over, or `Unknown` when a person [gave it up](../../use/recovery/#a-schema-whose-target-moved) because its target moved. For a migration, the first reading of the run's database after the run: `InSync`, `Pending` when the source has more to apply, or `Blocked`. |
+| `Verified` | That observation settles: `InSync`, `DriftRemains`, `Superseded` when a newer generation, policy or execution binding took over, or `Unknown` when a person [gave it up](../../use/recovery/#a-schema-whose-target-moved) because its target moved. For a migration, the first reading after the run of the database the run reported: `InSync`, `Pending` when the source has more to apply, or `Blocked`. A run that reported none writes no such entry. |
 | `RunFinished` | A migration run ends, with its outcome, the plan it carried out, how many versions it applied, and where it stopped. One run writes one entry: a run that ends `Partial` or `Unknown` also holds the resource in `status.unresolvedRun`, which writes none of its own. A hold a restore brings back without status writes the entry the lost status held, with the outcome and time the hold recorded. |
-| `RunAcknowledged` | A person acknowledges an unresolved run, named by its operation, its plan and its Job. |
+| `RunAcknowledged` | A person acknowledges an unresolved run, named by its operation, its plan and its Job, with the `outcome` that run ended with. |
 | `OperationFailed` | An attempt fails. Attempts that fail with the same operation and reason in a row are one entry with a `count` and the time of the last one. |
 
-A cycle that reads the database and finds nothing to do writes no entry. An
+A cycle that reads the database and finds nothing to do writes no entry, unless it
+is the first reading after a migration run, which writes that run's `Verified`. An
 entry names objects in the resource's namespace and carries condition reasons,
 never messages: a message can carry what status must not.
+
+`outcome` means something different on each type of entry, so filter on `type` as
+well: `Verified` and `RunAcknowledged` carry one too, and neither is the end of a run.
 
 An `ApprovalAccepted` entry with no `approvalUID` was written by a release before
 0.2.10. Its name says what the approval was called then and not which object it
@@ -750,6 +754,14 @@ run ends, with the source, the database and the execution binding it ran under, 
 outlives the Job, the plan and the approval, so none of them has to exist for the
 record to be true. A later run replaces `lastRun`, and the journal is what still
 names the one before it.
+
+The database is the one thing the claim cannot vouch for. `targetIdentityDigest` is
+what the run's result reported, with `targetIdentityReported` true. A run that left
+no result names the database its plan was computed against, with
+`targetIdentityReported` absent, since the Secret may have moved or the run may
+never have started. A reading verifies only a run that reported its database, so
+that run gets no `verification` and no `Verified` entry. A clean reading of the
+planned database still settles its `status.unresolvedRun`.
 
 `status.lastRun.failure` records where a failed or partial run stopped, when a
 statement reached the database and failed there: the migration's version, the

@@ -87,14 +87,16 @@ type runRecord struct {
 }
 
 // runIdentity is what a record says a run carried out and who allowed it. All of
-// it is empty on a record a release before these fields wrote.
+// it is empty on a record a release before these fields wrote, and what allowed the
+// run is empty on the entry a hold brought back by a restore writes, since a hold
+// does not hold it.
 type runIdentity struct {
-	operationID string
-	plan        string
-	planUID     types.UID
-	fingerprint string
-	approval    string
-	approvalUID types.UID
+	plan          string
+	planUID       types.UID
+	fingerprint   string
+	authorization operatorv1alpha1.MigrationRunAuthorizationKind
+	approval      string
+	approvalUID   types.UID
 }
 
 // unresolvedRecord is a migration's status.unresolvedRun.
@@ -182,7 +184,7 @@ func migrationSnapshot(migration *operatorv1alpha1.PtahMigration) snapshot {
 			DispatchStarted: operation.DispatchStarted, JobUID: string(operation.JobUID),
 		})
 		if plan := operation.PlanRef; plan != nil {
-			s.operationPlan = planRecord{name: plan.Name, uid: plan.UID, fingerprint: operation.PlanFingerprint}
+			s.operationPlan = planRecord{name: plan.Name, uid: plan.UID}
 		}
 	}
 	if plan := status.Plan; plan != nil {
@@ -209,20 +211,23 @@ func migrationSnapshot(migration *operatorv1alpha1.PtahMigration) snapshot {
 }
 
 func identityOfRun(run *operatorv1alpha1.MigrationRunStatus) runIdentity {
-	identity := runIdentity{operationID: run.OperationID, fingerprint: run.PlanFingerprint}
+	identity := runIdentity{fingerprint: run.PlanFingerprint}
 	if plan := run.PlanRef; plan != nil {
 		identity.plan, identity.planUID = plan.Name, plan.UID
 	}
-	if authorization := run.Authorization; authorization != nil && authorization.ApprovalRef != nil {
-		identity.approval, identity.approvalUID = authorization.ApprovalRef.Name, authorization.ApprovalRef.UID
+	if authorization := run.Authorization; authorization != nil {
+		identity.authorization = authorization.Kind
+		if approval := authorization.ApprovalRef; approval != nil {
+			identity.approval, identity.approvalUID = approval.Name, approval.UID
+		}
 	}
 	return identity
 }
 
 func identityOfEntry(entry operatorv1alpha1.JournalEntry) runIdentity {
 	return runIdentity{
-		operationID: entry.OperationID, plan: entry.Plan, planUID: entry.PlanUID, fingerprint: entry.PlanFingerprint,
-		approval: entry.Approval, approvalUID: entry.ApprovalUID,
+		plan: entry.Plan, planUID: entry.PlanUID, fingerprint: entry.PlanFingerprint,
+		authorization: entry.Authorization, approval: entry.Approval, approvalUID: entry.ApprovalUID,
 	}
 }
 

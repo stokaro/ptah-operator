@@ -830,7 +830,8 @@ func recordUnresolvedMigrationRun(
 //
 // With no frame, or one that named no target or something the status schema would
 // refuse, the best that is known is the database the plan was computed against,
-// which is the last history this resource read.
+// which is the last history this resource read. That says what was planned and not
+// what happened, so a run's record marks it as not reported.
 func migrationRunTarget(migration *operatorv1alpha1.PtahMigration, reportedTarget string) string {
 	if sha256Digest.MatchString(reportedTarget) {
 		return reportedTarget
@@ -844,11 +845,16 @@ func migrationRunTarget(migration *operatorv1alpha1.PtahMigration, reportedTarge
 // recordMigrationRunProvenance writes what the claim knows about the run it
 // dispatched into the run's record.
 //
-// The claim is the only source. It was written before the Job existed and it
-// outlives the Job, the result, the approval and the plan, none of which is read
-// here. What the claim does not hold stays absent: a claim written by a release
-// that copied less keeps its run's approver unknown, since an approval that holds
-// the name today may be another decision.
+// The claim was written before the Job existed and it outlives the Job, the result,
+// the approval and the plan, none of which is read here. Two values come from
+// beside it. A ConfigMap or Git source takes its ConfigMap revision and source
+// policy from status, which only a Resolve writes, and no Resolve runs while this
+// claim stands. The database is the one the run reported, or the one the plan was
+// computed against where it reported none, and the record says which.
+//
+// What the claim does not hold stays absent: a claim written by a release that
+// copied less keeps its run's approver unknown, since an approval that holds the
+// name today may be another decision.
 func recordMigrationRunProvenance(
 	run *operatorv1alpha1.MigrationRunStatus,
 	migration *operatorv1alpha1.PtahMigration,
@@ -861,6 +867,7 @@ func recordMigrationRunProvenance(
 	run.ArtifactDigest, run.Source = sourcebinding.MigrationPlanSource(
 		operation.Source, migration.Status.ConfigMap, migration.Status.SourcePolicy)
 	run.TargetIdentityDigest = migrationRunTarget(migration, reportedTarget)
+	run.TargetIdentityReported = sha256Digest.MatchString(reportedTarget)
 	run.ExecutionBindingID = operation.ExecutionBindingID
 	run.Authorization = &operatorv1alpha1.MigrationRunAuthorizationStatus{
 		Kind: operatorv1alpha1.MigrationRunAuthorizedByPolicy,
@@ -881,12 +888,17 @@ func recordMigrationRunProvenance(
 // beside a finished run began after that run.
 //
 // A reading of another database says nothing about what the run did, so it leaves
-// the run unverified, as it leaves an unresolved one unsettled. A run with no
-// operation ID was recorded by a release without this field and stays as it was.
+// the run unverified, as it leaves an unresolved one unsettled. So does any reading
+// of a run that did not report its database: its digest is the planned one, and the
+// run may have executed nothing or reached another database, so a clean reading of
+// the planned one is no statement about it. Its outcome is Unknown or Partial, which
+// a wait stops on without a reading, and what settles its hold is not this record.
+// A run with no operation ID was recorded by a release without this field and stays
+// as it was.
 func recordMigrationRunVerification(migration *operatorv1alpha1.PtahMigration) {
 	run, history := migration.Status.LastRun, migration.Status.History
 	if run == nil || run.FinishedAt == nil || run.OperationID == "" || run.Verification != nil || history == nil ||
-		(run.TargetIdentityDigest != "" && run.TargetIdentityDigest != history.TargetIdentityDigest) {
+		!run.TargetIdentityReported || run.TargetIdentityDigest != history.TargetIdentityDigest {
 		return
 	}
 	result := operatorv1alpha1.MigrationRunVerifiedPending

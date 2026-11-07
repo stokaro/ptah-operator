@@ -7,11 +7,13 @@ import (
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/runner"
+	"github.com/stokaro/ptah-operator/internal/sourcebinding"
 )
 
 var provenanceStamp = metav1.NewTime(time.Date(2026, 8, 30, 11, 50, 0, 0, time.UTC))
@@ -222,6 +224,11 @@ func TestARunRecordsWhatItsClaimKnew(t *testing.T) {
 			if run.TargetIdentityDigest != migration.Status.History.TargetIdentityDigest {
 				t.Fatalf("target = %q, want %q", run.TargetIdentityDigest, migration.Status.History.TargetIdentityDigest)
 			}
+			// Only a result frame says which database a run opened. With none, that
+			// digest is the plan's, and the record says so.
+			if reported := row.report != nil; run.TargetIdentityReported != reported {
+				t.Fatalf("target reported = %t, want %t: the record has to say whether the run named it", run.TargetIdentityReported, reported)
+			}
 			if run.ArtifactDigest != migration.Status.Artifact.Digest || run.Source != nil {
 				t.Fatalf("source = %q, %#v, want the OCI digest %q", run.ArtifactDigest, run.Source, migration.Status.Artifact.Digest)
 			}
@@ -293,7 +300,71 @@ func TestAnUncertainRetirementWithNoJobKeepsWhatItsClaimKnew(t *testing.T) {
 		t.Fatalf("the run does not keep what its claim knew: %#v", run)
 	}
 	if run.TargetIdentityDigest != migration.Status.History.TargetIdentityDigest {
-		t.Fatalf("target = %q, want the database it was dispatched against", run.TargetIdentityDigest)
+		t.Fatalf("target = %q, want the database its plan was computed against", run.TargetIdentityDigest)
+	}
+	if run.TargetIdentityReported {
+		t.Fatal("the record says the run named a database, and nothing ran that could")
+	}
+}
+
+// A run that reported no database may have run nowhere, or against what its Secret
+// held by then. A clean reading of the planned database settles the hold, by the rule
+// that has always settled it, and says nothing about the run.
+func TestAReadingDoesNotVerifyARunThatReportedNoDatabase(t *testing.T) {
+	t.Parallel()
+
+	inSync := dataplane.MigrationStatusReport{
+		ContractVersion: dataplane.SupportedMigrationStatusContract,
+		CurrentVersion:  3, TotalMigrations: 2, PendingMigrations: []int64{},
+		Migrations: []dataplane.MigrationRecord{
+			{Version: 2, Checksum: "checksum-2", State: dataplane.MigrationStateApplied},
+			{Version: 3, Checksum: "checksum-3", State: dataplane.MigrationStateApplied},
+		},
+	}
+	retiredWithNoJob := func(t *testing.T) *operatorv1alpha1.PtahMigration {
+		t.Helper()
+		migration, plan := awaitingApprovalFixture(t)
+		operation := applyClaimFor(t, migration, plan)
+		approvedClaim(operation, plan)
+		reconciler, api := uncertainApplyUnderBindingChange(t, migration, plan)
+		if _, err := reconciler.Reconcile(context.Background(), migrationRequest(migration)); err != nil {
+			t.Fatalf("Reconcile() error = %v", err)
+		}
+		held := readMigration(t, api, migration)
+		// The binding change is how the fixture gets a claim retired with no Job. A
+		// reading runs under the manager's own binding.
+		held.Status.ExecutionBinding = migrationExecutionBinding()
+		return held
+	}
+	retiredWithNoResult := func(t *testing.T) *operatorv1alpha1.PtahMigration {
+		t.Helper()
+		migration, _ := finishedMigrationRun(t, nil, func(operation *operatorv1alpha1.MigrationOperationStatus, plan *operatorv1alpha1.PtahMigrationPlan) {
+			approvedClaim(operation, plan)
+		})
+		return migration
+	}
+	for name, retired := range map[string]func(*testing.T) *operatorv1alpha1.PtahMigration{
+		"no Job":    retiredWithNoJob,
+		"no result": retiredWithNoResult,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			held := retired(t)
+			if held.Status.UnresolvedRun == nil || held.Status.LastRun == nil || held.Status.LastRun.TargetIdentityReported {
+				t.Fatalf("the fixture is not a held run that reported no database: %#v", held.Status.LastRun)
+			}
+			read, _ := readMigrationHistory(t, held, inSync)
+			if read.Status.UnresolvedRun != nil {
+				t.Fatalf("a clean reading of that database did not settle the hold: %#v", read.Status.UnresolvedRun)
+			}
+			if read.Status.LastRun.Verification != nil {
+				t.Fatalf("the reading verified a run that never said which database it reached: %#v", read.Status.LastRun.Verification)
+			}
+			if entries := journalEntriesOf(read, operatorv1alpha1.JournalVerified); len(entries) != 0 {
+				t.Fatalf("the journal records a reading after a run that never said which database it reached: %#v", entries)
+			}
+		})
 	}
 }
 
@@ -425,20 +496,86 @@ func TestARunNamesTheDatabaseItReportedWhenThatIsADigest(t *testing.T) {
 	withHistory := &operatorv1alpha1.PtahMigration{}
 	withHistory.Status.History = &operatorv1alpha1.MigrationHistoryStatus{TargetIdentityDigest: planned}
 	for _, row := range []struct {
-		name      string
-		migration *operatorv1alpha1.PtahMigration
-		reported  string
-		want      string
+		name         string
+		migration    *operatorv1alpha1.PtahMigration
+		reported     string
+		want         string
+		wantReported bool
 	}{
-		{"a digest", withHistory, reported, reported},
-		{"nothing", withHistory, "", planned},
-		{"something else", withHistory, "postgres://somewhere", planned},
-		{"nothing, with no history", &operatorv1alpha1.PtahMigration{}, "", ""},
+		{"a digest", withHistory, reported, reported, true},
+		{"nothing", withHistory, "", planned, false},
+		{"something else", withHistory, "postgres://somewhere", planned, false},
+		{"nothing, with no history", &operatorv1alpha1.PtahMigration{}, "", "", false},
 	} {
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
-			if got := migrationRunTarget(row.migration, row.reported); got != row.want {
-				t.Fatalf("target = %q, want %q", got, row.want)
+			run := &operatorv1alpha1.MigrationRunStatus{}
+			recordMigrationRunProvenance(run, row.migration, &operatorv1alpha1.MigrationOperationStatus{}, row.reported)
+			if run.TargetIdentityDigest != row.want || run.TargetIdentityReported != row.wantReported {
+				t.Fatalf("target = %q, reported %t; want %q, %t", run.TargetIdentityDigest, run.TargetIdentityReported, row.want, row.wantReported)
+			}
+		})
+	}
+}
+
+// A run names the source it read. An OCI artifact is a digest; a ConfigMap or a Git
+// commit is a binding, and it comes from the claim with the revision and the policy
+// status holds, which is what the plan bound.
+func TestARunNamesTheSourceItRead(t *testing.T) {
+	t.Parallel()
+
+	digest := "sha256:" + strings.Repeat("a", 64)
+	content := "sha256:" + strings.Repeat("b", 64)
+	policy := &operatorv1alpha1.SourcePolicyBinding{UID: "policy-uid", Digest: "sha256:" + strings.Repeat("c", 64)}
+	revision := &operatorv1alpha1.ConfigMapSourceRevision{Name: "orders-migrations", UID: "configmap-uid", ResourceVersion: "3"}
+	git := &operatorv1alpha1.GitSourceBinding{URL: "https://git.example/orders.git", Path: "db/migrations", ContentDigest: content}
+	gitRevision := sourcebinding.GitRevision(git.URL, git.Path)
+	for _, row := range []struct {
+		name         string
+		claim        *operatorv1alpha1.SourceAccessBinding
+		revision     *operatorv1alpha1.ConfigMapSourceRevision
+		policy       *operatorv1alpha1.SourcePolicyBinding
+		wantArtifact string
+		wantSource   *operatorv1alpha1.PlanSourceBinding
+	}{
+		{name: "an OCI artifact", claim: &operatorv1alpha1.SourceAccessBinding{Digest: digest}, wantArtifact: digest},
+		{
+			name:       "a Git commit",
+			claim:      &operatorv1alpha1.SourceAccessBinding{Git: git},
+			wantSource: &operatorv1alpha1.PlanSourceBinding{Kind: operatorv1alpha1.SourceKindGit, Revision: gitRevision, ContentDigest: content},
+		},
+		{
+			name:   "a Git commit under a source policy",
+			claim:  &operatorv1alpha1.SourceAccessBinding{Git: git},
+			policy: policy,
+			wantSource: &operatorv1alpha1.PlanSourceBinding{
+				Kind: operatorv1alpha1.SourceKindGit, Revision: gitRevision, ContentDigest: content, Policy: policy,
+			},
+		},
+		{
+			name:       "a ConfigMap",
+			claim:      &operatorv1alpha1.SourceAccessBinding{Snapshot: &operatorv1alpha1.SourceSnapshotBinding{ContentDigest: content}},
+			revision:   revision,
+			wantSource: &operatorv1alpha1.PlanSourceBinding{Kind: operatorv1alpha1.SourceKindConfigMap, Revision: "configmap-uid", ContentDigest: content},
+		},
+		{
+			name:  "a ConfigMap whose revision status does not hold, named by neither",
+			claim: &operatorv1alpha1.SourceAccessBinding{Snapshot: &operatorv1alpha1.SourceSnapshotBinding{ContentDigest: content}},
+		},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			migration := &operatorv1alpha1.PtahMigration{}
+			migration.Status.ConfigMap, migration.Status.SourcePolicy = row.revision, row.policy
+			// What status resolves next is not what the claim ran.
+			migration.Status.Artifact = &operatorv1alpha1.SourceAccessBinding{Digest: "sha256:" + strings.Repeat("d", 64)}
+			run := &operatorv1alpha1.MigrationRunStatus{}
+			recordMigrationRunProvenance(run, migration, &operatorv1alpha1.MigrationOperationStatus{Source: row.claim}, "")
+			if run.ArtifactDigest != row.wantArtifact {
+				t.Fatalf("artifact = %q, want %q", run.ArtifactDigest, row.wantArtifact)
+			}
+			if !equality.Semantic.DeepEqual(run.Source, row.wantSource) {
+				t.Fatalf("source = %#v, want %#v", run.Source, row.wantSource)
 			}
 		})
 	}

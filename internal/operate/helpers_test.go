@@ -106,12 +106,15 @@ type runDoc struct {
 
 	// What the run's record says it carried out: all empty on a record from a
 	// release before those fields.
-	operationID  string
-	plan         string
-	planUID      types.UID
-	fingerprint  string
-	approval     string
-	approvalUID  types.UID
+	operationID string
+	plan        string
+	planUID     types.UID
+	fingerprint string
+	approval    string
+	approvalUID types.UID
+	// policy is a record that says the resource's policy allowed the run. A record
+	// with neither this nor an approval says nothing about what did.
+	policy       bool
 	verification operatorv1alpha1.MigrationRunVerificationResult
 	verifiedAt   time.Time
 }
@@ -238,6 +241,9 @@ func (d doc) object(family operate.Family) client.Object {
 				Kind:        operatorv1alpha1.MigrationRunAuthorizedByApproval,
 				ApprovalRef: &operatorv1alpha1.ImmutableObjectReference{Name: r.approval, UID: r.approvalUID},
 			}
+		}
+		if r.policy {
+			status.LastRun.Authorization = &operatorv1alpha1.MigrationRunAuthorizationStatus{Kind: operatorv1alpha1.MigrationRunAuthorizedByPolicy}
 		}
 		if r.verification != "" {
 			status.LastRun.Verification = &operatorv1alpha1.MigrationRunVerificationStatus{
