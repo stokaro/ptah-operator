@@ -431,8 +431,9 @@ func TestApproveHelpNamesTheGateWait(t *testing.T) {
 	}
 }
 
-// The manifest is the decision and nothing else, under a name kubectl create
-// takes: no generateName, no empty approver, no null time, no status.
+// The manifest is the decision and nothing else, under a name the API server
+// generates when it is created: no fixed name, no empty approver, no null time,
+// no status.
 func TestApprovePrintsTheManifestOnAClientDryRun(t *testing.T) {
 	api, fingerprint := approvable(t, nil)
 	schema := &operatorv1alpha1.PtahSchema{}
@@ -453,8 +454,8 @@ func TestApprovePrintsTheManifestOnAClientDryRun(t *testing.T) {
 		"apiVersion": "operator.ptah.run/v1alpha1",
 		"kind":       "PtahSchemaApproval",
 		"metadata": map[string]any{
-			"name":      "storefront-" + strings.TrimPrefix(fingerprint, "sha256:")[:12],
-			"namespace": planreadtest.Namespace,
+			"generateName": "storefront-",
+			"namespace":    planreadtest.Namespace,
 		},
 		"spec": map[string]any{
 			"schemaRef":       map[string]any{"name": "storefront", "uid": string(schema.UID)},
@@ -478,8 +479,53 @@ func TestApprovePrintsTheManifestOnAClientDryRun(t *testing.T) {
 
 	_, again, _ := runApprove(t, api, "", false, "schema/storefront", "--dry-run", "client", "--plan-fingerprint", fingerprint)
 	_, named, _ := runApprove(t, api, "", false, "schema/storefront", "--dry-run", "client", "--plan-fingerprint", fingerprint, "--name", "storefront-reviewed")
-	if again != stdout || !strings.Contains(named, "name: storefront-reviewed\n") {
+	if again != stdout || !strings.Contains(named, "  name: storefront-reviewed\n") || strings.Contains(named, "generateName") {
 		t.Fatalf("printing the approval of one plan again gave\n%s\nand --name gave\n%s", again, named)
+	}
+}
+
+// A printed approval and a sent one are named the same way, so a file behaves
+// as the command does when it is created. The metadata is compared with what
+// the command sent, not with a name written here.
+func TestApproveNamesAPrintedApprovalAsItNamesASentOne(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		flags []string
+	}{
+		{name: "no name given"},
+		{name: "a name given", flags: []string{"--name", "storefront-reviewed"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			api, fingerprint := approvable(t, nil)
+			arguments := append([]string{"schema/storefront", "--plan-fingerprint", fingerprint}, test.flags...)
+
+			code, stdout, stderr := runApprove(t, api, "", false, append(arguments, "--dry-run", "client")...)
+			if code != exitOK {
+				t.Fatalf("approve --dry-run=client = %d, stderr %q", code, stderr)
+			}
+			var manifest struct {
+				Metadata map[string]string `json:"metadata"`
+			}
+			if err := yaml.Unmarshal([]byte(stdout), &manifest); err != nil {
+				t.Fatalf("the manifest %q is not YAML: %v", stdout, err)
+			}
+
+			code, _, stderr = runApprove(t, api, "", false, arguments...)
+			if code != exitOK || len(api.created) != 1 {
+				t.Fatalf("approve = %d after %d creates, stderr %q", code, len(api.created), stderr)
+			}
+			sent := api.created[0]
+			if got := manifest.Metadata["generateName"]; got != sent.GetGenerateName() {
+				t.Fatalf("the manifest has generateName %q, the command sent %q", got, sent.GetGenerateName())
+			}
+			if len(test.flags) == 0 && (sent.GetGenerateName() == "" || manifest.Metadata["name"] != "") {
+				t.Fatalf("with no name given the command sent generateName %q and the manifest has name %q",
+					sent.GetGenerateName(), manifest.Metadata["name"])
+			}
+			if len(test.flags) != 0 && manifest.Metadata["name"] != sent.GetName() {
+				t.Fatalf("the manifest is named %q, the command sent %q", manifest.Metadata["name"], sent.GetName())
+			}
+		})
 	}
 }
 

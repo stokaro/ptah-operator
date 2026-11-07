@@ -143,7 +143,9 @@ waiting again. A script that reviewed the plan passes its fingerprint with
 `--dry-run client` prints the approval as YAML instead, to keep in a
 repository and create later with `kubectl create -f`. Admission records
 whoever creates it as the approver, so create it as the person who decided:
-a controller that applies it is recorded in their place.
+a controller that applies it is recorded in their place. The API server names
+it when it is created, and `kubectl apply` refuses that: a workflow that applies
+its files passes `--name`.
 
 Creating it requires a binding that grants the approval verbs, which the
 chart's approver ClusterRole carries together with read access to the plan and

@@ -229,6 +229,48 @@ func bindApproverRole(t *testing.T, namespace, user string) {
 	}
 }
 
+// One printed file approves a plan again, which a fixed name would refuse: the
+// API server generates a name each time, and admission stamps each approval.
+// A name given on the command line is the caller's to keep unique.
+func TestPrintedApprovalCanBeCreatedTwice(t *testing.T) {
+	plane.Require(t)
+	ctx := context.Background()
+	installApproverRole(t)
+	fixture := newApprovalFixture(t)
+	const person = "erin@example.com"
+	bindApproverRole(t, fixture.namespace, person)
+	api := clientAs(t, person)
+	review := fixture.review(t)
+
+	first, second := approve.Manifest(review, ""), approve.Manifest(review, "")
+	for _, printed := range []*unstructured.Unstructured{first, second} {
+		if err := api.Create(ctx, printed); err != nil {
+			t.Fatalf("create the printed approval: %v", err)
+		}
+		if !strings.HasPrefix(printed.GetName(), fixture.schema.Name+"-") {
+			t.Fatalf("the printed approval was stored as %q, not under a name generated from %s-", printed.GetName(), fixture.schema.Name)
+		}
+		stored := &operatorv1alpha1.PtahSchemaApproval{}
+		if err := admin.Get(ctx, client.ObjectKeyFromObject(printed), stored); err != nil {
+			t.Fatalf("read the approval %s back: %v", printed.GetName(), err)
+		}
+		if stored.Spec.Approver.Username != person || stored.Spec.PlanRef.UID != review.PlanUID {
+			t.Fatalf("stored %s with %+v, want the reviewed plan approved by %s", stored.Name, stored.Spec, person)
+		}
+	}
+	if first.GetName() == second.GetName() {
+		t.Fatalf("both creates were stored as %s", first.GetName())
+	}
+
+	named := "reviewed-by-erin"
+	if err := api.Create(ctx, approve.Manifest(review, named)); err != nil {
+		t.Fatalf("create the approval named %s: %v", named, err)
+	}
+	if err := api.Create(ctx, approve.Manifest(review, named)); !apierrors.IsAlreadyExists(err) {
+		t.Fatalf("a second create of the approval named %s = %v, want AlreadyExists", named, err)
+	}
+}
+
 // requireNoApprovals holds namespace to no stored approval, and says what the
 // list read so an empty answer is not mistaken for no answer.
 func requireNoApprovals(t *testing.T, namespace string) {

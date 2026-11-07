@@ -111,9 +111,13 @@ it stamped, or the refusal in RBAC's or admission's own words.
   and sends nothing, for a workflow that keeps decisions in a repository. It
   takes the same decision as an approval: the fingerprint of the plan you
   reviewed, or the review answered with yes. The object carries the API
-  version, the kind, a name made of the schema's name and the start of the
-  fingerprint, the namespace and the three references, and nothing else.
-  `examples/approval.yaml` is the same object written by hand.
+  version, the kind, a `generateName` made of the schema's name, the namespace
+  and the three references, and nothing else. It is named as the command names
+  what it sends, so `kubectl create -f` can create one file again, for example
+  after an uncertain Apply consumed the first approval. `kubectl apply` refuses
+  a generated name: a workflow that applies its files passes `--name`, and needs
+  a new name to approve the same plan again.
+  `examples/approval.yaml` is the same decision written by hand, under a name.
 - `--wait` stays, once the approval is stored, until the operator has applied
   the plan and read the database afterwards, for five minutes unless
   `--wait-timeout` says otherwise. It counts only an Apply recorded after the

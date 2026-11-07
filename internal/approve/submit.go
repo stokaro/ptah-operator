@@ -2,18 +2,14 @@ package approve
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
-	"strings"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/util/validation"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
@@ -106,11 +102,17 @@ const pollInterval = 2 * time.Second
 // written here would be sent back by a later apply as an edit of an approval,
 // which is immutable.
 //
-// Without a name it is DefaultName, so the approval of one plan is printed
-// under one name however often it is printed.
+// It is named as Submit names what it sends, by approvalMeta. Without a name
+// the API server generates one each time it is created, so one file can approve
+// a plan again after an uncertain Apply consumed the first approval. kubectl
+// apply refuses a generated name; a workflow that applies its files passes one.
 func Manifest(review Review, name string) *unstructured.Unstructured {
-	if name == "" {
-		name = DefaultName(review)
+	meta := approvalMeta(review, name)
+	metadata := map[string]any{"namespace": meta.Namespace}
+	if meta.Name != "" {
+		metadata["name"] = meta.Name
+	} else {
+		metadata["generateName"] = meta.GenerateName
 	}
 	owner := "schemaRef"
 	if review.Family == Migration {
@@ -119,7 +121,7 @@ func Manifest(review Review, name string) *unstructured.Unstructured {
 	return &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": operatorv1alpha1.GroupVersion.String(),
 		"kind":       review.Family.ApprovalKind(),
-		"metadata":   map[string]any{"name": name, "namespace": review.Namespace},
+		"metadata":   metadata,
 		"spec": map[string]any{
 			owner:             map[string]any{"name": review.Name, "uid": string(review.ResourceUID)},
 			"planRef":         map[string]any{"name": review.PlanName, "uid": string(review.PlanUID)},
@@ -128,37 +130,19 @@ func Manifest(review Review, name string) *unstructured.Unstructured {
 	}}
 }
 
-// shortFingerprint is how many characters of the fingerprint a default name
-// carries: enough to tell two plans of one resource apart at a glance.
-const shortFingerprint = 12
-
-// DefaultName names the approval of a reviewed plan after the resource and
-// the plan's fingerprint, as a DNS-1123 subdomain within its length: one plan
-// gives one name, so a second copy of the same decision is refused as a name
-// already taken instead of being stored beside the first.
-func DefaultName(review Review) string {
-	digest := strings.ToLower(review.Fingerprint[strings.LastIndex(review.Fingerprint, ":")+1:])
-	if len(digest) < shortFingerprint || strings.Trim(digest, "0123456789abcdef") != "" {
-		// Not the hex a fingerprint is written in: name it by a hash of
-		// what it is instead, which is still one name per fingerprint.
-		sum := sha256.Sum256([]byte(review.Fingerprint))
-		digest = hex.EncodeToString(sum[:])
-	}
-	base := review.Name
-	if room := validation.DNS1123SubdomainMaxLength - 1 - shortFingerprint; len(base) > room {
-		// A cut can leave a dot or a dash last, and neither may end a label.
-		base = strings.TrimRight(base[:room], ".-")
-	}
-	return base + "-" + digest[:shortFingerprint]
-}
-
-// approvalObject is the approval Submit sends, named as given or by the API
+// approvalMeta names an approval, printed or sent: as given, or by the API
 // server from the resource's name. The API server cuts a long base itself.
-func approvalObject(review Review, name string) client.Object {
+func approvalMeta(review Review, name string) metav1.ObjectMeta {
 	meta := metav1.ObjectMeta{Namespace: review.Namespace, Name: name}
 	if name == "" {
 		meta.GenerateName = review.Name + "-"
 	}
+	return meta
+}
+
+// approvalObject is the approval Submit sends.
+func approvalObject(review Review, name string) client.Object {
+	meta := approvalMeta(review, name)
 	plan := operatorv1alpha1.ImmutableObjectReference{Name: review.PlanName, UID: review.PlanUID}
 	owner := operatorv1alpha1.ImmutableObjectReference{Name: review.Name, UID: review.ResourceUID}
 	var approval client.Object
