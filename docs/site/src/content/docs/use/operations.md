@@ -1612,13 +1612,44 @@ With the operator installed, nothing does. These look as though they should:
 - Scaling the manager to zero leaves the webhook unanswered. Its `failurePolicy`
   is `Fail`, so every deletion is refused until the manager returns, and nothing
   collects the records meanwhile.
-- `resultDelivery.enabled=false` makes it worse. The manager then runs no
-  collector, and its webhook refuses to delete these records and names no time,
-  so the namespace waits until delivery is back on or the release is uninstalled.
+- `resultDelivery.enabled=false` makes it worse:
+  [nothing removes these records while delivery is off](#delivery-off).
 
 Do not remove the webhook configuration by hand to get past this. That leaves a
 release running without any of the guards the configuration holds, and it says
 nothing to whoever owns the installation.
+
+#### While result delivery is off {#delivery-off}
+
+A record written while delivery was on stays when `resultDelivery.enabled` goes to
+`false`. The manager then runs no collector and holds no grant on records, so nothing
+starts a window or ends one, and its webhook refuses to delete `intent`, `chunk`,
+`complete` and `retired` records with the message that names no time. A namespace
+holding them stays `Terminating` for as long as delivery stays off. On kind with
+Kubernetes 1.37.0, a namespace deleted that way read the same refusal five minutes on,
+with those records unchanged. Its `credential` records were deleted at once: with
+delivery off the webhook asks of one only whether its resource still pins it, so the
+window does not hold them.
+
+A namespace nobody is deleting can wait. For one that is `Terminating`, turn delivery
+on until its records are gone:
+
+```sh
+helm upgrade <release> <chart> --values <values> --set resultDelivery.enabled=true
+```
+
+The collector then treats them as it treats any others. In that run the refusal named
+a time within a minute of the upgrade, the manager started the window with a foreground
+deletion of the records nothing had retired, and the list above showed that time under
+`DELETING`. The namespace was gone 61 minutes after the upgrade, 19 seconds past the
+end of that window. New operations report through the receiver while delivery is on,
+so set it back only once `kubectl get ptahresultrecords -A` lists nothing you are
+waiting for.
+
+The chart refuses `resultDelivery.enabled=true` beside
+`certificateRotation.enabled=false` or a `webhook.existingSecret`. An installation that
+manages its own webhook trust has [the uninstall below](#teardown), at the cost that
+section gives, or a move to the built-in rotator.
 
 #### Tearing down CI and labs {#teardown}
 
