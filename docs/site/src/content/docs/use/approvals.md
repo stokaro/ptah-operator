@@ -112,7 +112,11 @@ it stamped, or the refusal in RBAC's or admission's own words.
 - `--plan-fingerprint <fingerprint>` approves without asking, and only if the
   current plan carries that fingerprint. It is for a script that reviewed the
   plan; there is no option that approves whatever plan is current. It waits
-  for an interval read to end the same way, up to five minutes.
+  for an interval read to end the same way, up to five minutes. `kubectl ptah
+  plan NAME -n NAMESPACE` prints a schema plan's fingerprint, and `kubectl ptah
+  migration NAME -n NAMESPACE -o json` prints a migration plan's as
+  `plan.fingerprint`. Without a terminal, approve prints the command with its
+  namespace.
 - `--dry-run server` lets admission check the approval and stores nothing.
 - `--dry-run client` prints the approval as YAML with the identifiers filled in
   and sends nothing, for a workflow that keeps decisions in a repository. It
