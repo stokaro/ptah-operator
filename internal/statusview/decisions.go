@@ -121,7 +121,8 @@ func WriteListHeading[T any](
 // the resource's plans that is, and every condition the controller wrote on
 // it. none is what to say when there is no condition, which differs by
 // family: the controller answers a schema approval as soon as it reads it, and
-// writes nothing on a migration approval until its plan is dispatched.
+// writes nothing on a migration approval until its plan is dispatched or a read
+// withdraws it.
 func WriteApproval(text *strings.Builder, approval Approval, none string) {
 	fmt.Fprintf(text, "  %s\n", Clean(approval.Name))
 	fmt.Fprintf(text, "    approved by %s at %s\n", identity(approval.Approver.Username), Time(approval.ApprovedAt))

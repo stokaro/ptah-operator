@@ -39,7 +39,12 @@ deletion has to match that text too: a credential record now says it, and that
 sentence is left to an update. A script that matches `invalid_verification_output`
 to find an artifact the verification policy refused has to match the reason
 `PolicyRefused`, and one that waits on a `PtahMigration` so refused has to expect
-`Blocked` at its interval rather than a retry. A script that reads
+`Blocked` at its interval rather than a retry. A `PtahMigrationApproval` now goes
+`Stale` when a read ends anywhere but its plan or the verification policy refuses
+the artifact, and a plan that comes back needs a new one, so a workflow that applies
+an approval under a fixed name has to change the name. `ptah_operator_approvals_total`
+with `family="migration"` and `outcome="stale"` now counts those approvals, and no
+longer a plan discarded with nobody having approved it. A script that reads
 `status.target.inventory` has
 to expect a kind that is not a stem. Ptah Console up to 0.3.x misstates such a kind until
 [ptah-console#166](https://github.com/stokaro/ptah-console/issues/166) is fixed:

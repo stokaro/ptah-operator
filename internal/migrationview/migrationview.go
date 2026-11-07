@@ -176,8 +176,9 @@ type ResolvedRunView struct {
 type ConditionView = statusview.Condition
 
 // ApprovalView is one PtahMigrationApproval that names this migration.
-// A migration approval carries only Consumed; whether it matches the plan is
-// what CurrentPlan and the migration's own ApprovalRequired say.
+// A migration approval carries only Consumed, or Stale when a read withdrew it;
+// whether it matches the plan is what CurrentPlan and the migration's own
+// ApprovalRequired say.
 type ApprovalView = statusview.Approval
 
 // AcknowledgmentView is one PtahMigrationRunAcknowledgment that names this
