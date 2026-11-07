@@ -345,10 +345,12 @@ func (m *migrationRun) waitForStopRowLastRun(name, jobUID string) *ptahv1alpha1.
 	return nil
 }
 
-// mfPrintLastRun prints the phase and the runs a migration recorded, scanned.
+// mfPrintLastRun prints the phase, the runs a migration recorded and its
+// journal, scanned.
 func (m *migrationRun) mfPrintLastRun(name string, migration *ptahv1alpha1.PtahMigration) {
 	content, err := json.Marshal(map[string]any{
 		"phase": migration.Status.Phase, "lastRun": migration.Status.LastRun, "unresolvedRun": migration.Status.UnresolvedRun,
+		"journal": migration.Status.Journal,
 	})
 	if err != nil {
 		return
@@ -402,8 +404,9 @@ func (m *migrationRun) stoppedApplyProof() {
 	if m.query("SELECT count(*) FROM schema_migrations WHERE version = 1 AND state = 'applied'", database) != "1" {
 		m.fatalf("the %s database does not record the first migration of the stopped run as applied", m.engine.name)
 	}
-	if m.query("SELECT count(*) FROM schema_migrations WHERE version = 2 AND state <> 'applied' AND applied = 0", database) != "1" {
-		m.fatalf("the %s database does not record the stopped migration as unfinished with nothing checkpointed", m.engine.name)
+	if m.query("SELECT count(*) FROM schema_migrations WHERE version = 2 AND state = 'pending' AND applied = 0 AND error = '"+
+		ptahInFlightMark+"'", database) != "1" {
+		m.fatalf("the %s database does not hold Ptah's in-flight mark on the stopped migration", m.engine.name)
 	}
 	m.endStopRowSleepingSessions(database)
 

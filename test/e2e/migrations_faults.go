@@ -27,6 +27,12 @@ import (
 // that ends the run is the window closing.
 const stoppedApplyWindowSeconds = 90
 
+// ptahInFlightMark is the error Ptah writes into a revision row before it runs
+// a statement that commits on its own, and keeps when it cannot tell whether
+// the statement did (unknownStatementOutcomeError in Ptah's
+// migration/migrator/revisions.go).
+const ptahInFlightMark = "statement execution outcome is unknown after process interruption"
+
 // mfResultMarker opens the runner's result frame in its log, and
 // mfSummaryMarker the summary it leaves in the termination message.
 const (

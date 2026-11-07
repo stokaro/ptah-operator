@@ -184,19 +184,23 @@ with `DROP INDEX ..., ADD ...` in one statement and rates it safe, and the opera
 holds it as destructive for its `DROP`, so a plan that adds a unique key or an index
 on such a column now asks for `allowDestructive` and an approval. A MySQL migration
 whose DDL statement the server refuses now ends `Unknown` rather than `Failed`.
-The statement did not commit, but Ptah v0.23.0 records a DDL statement the server
-refused as interrupted
+The statement did not commit, but Ptah keeps its in-flight mark on a DDL statement
+the server refused, and v0.23.0 reports the run unknown over that mark
 ([stokaro/ptah#5661](https://github.com/stokaro/ptah/issues/5661)), so the run
 leaves `status.unresolvedRun`, the resource reads `Blocked` with reason
 `ApplyOutcomeUnknown`, and the retry needs an acknowledgment
 ([A row in `state=pending`](../../use/recovery/#failed-pending-row)). A later Ptah
 release is expected to read it as `Failed`.
 A migration run whose Pod is stopped, by a node drain, an eviction or its deadline,
-while a statement runs outside a transaction (`-- +ptah no_transaction`) also ends
-`Unknown` rather than `Failed`, on both engines, and needs the same acknowledgment.
-Ptah v0.23.0 cancels the statement and cannot tell whether the server applied it.
-This one is Ptah's intent, so no later release is expected to change it. A
-migration that runs in a transaction rolls back and still ends `Failed`.
+inside a statement that commits on its own also ends `Unknown` rather than `Failed`
+or `Partial`, and needs the same acknowledgment: a statement outside a transaction
+(`-- +ptah no_transaction`, or `spec.transactionMode: none`) on either engine, or a
+DDL statement on MySQL, so a drain during a long MySQL `ALTER TABLE` is one. Ptah
+always left an in-flight mark on such a statement, since it cannot tell whether the
+server applied it, and reported the run failed over it; v0.23.0 reports it unknown
+([stokaro/ptah#5569](https://github.com/stokaro/ptah/pull/5569)). This one is Ptah's
+intent, so no later release is expected to change it. A PostgreSQL migration that
+runs in a transaction rolls back and still ends `Failed`.
 A PostgreSQL migration whose commit fails, such as one a deferred foreign key stops,
 reads `Failed` with a message that names the migration and says nothing committed.
 A narrowed column type and a dropped identity now carry `column_types_narrowed` and
