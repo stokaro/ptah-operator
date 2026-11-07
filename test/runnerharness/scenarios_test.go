@@ -610,7 +610,6 @@ func desiredSourceRows() []directRow {
 		validate("validate-dbml", "PostgreSQL", "bad.dbml", true),
 		validate("validate-missing", "PostgreSQL", "absent.sql", true),
 		validate("validate-index", "PostgreSQL", "structural.sql", true),
-		validate("validate-foreign-key", "PostgreSQL", "structural2.sql", true),
 		validate("validate-good", "PostgreSQL", "good.sql", false),
 		scratch("scratch-directive", "migrations-directive", true),
 		scratch("scratch-name", "migrations-name", true),
@@ -618,7 +617,6 @@ func desiredSourceRows() []directRow {
 		scratch("scratch-good", "migrations-good", false),
 		scratch("scratch-control-bytes", controlBytesDirectory, true),
 		drift("drift-sql", "schema.sql"),
-		drift("drift-foreign-key", "structural2.sql"),
 		{
 			name: "plan-sql.json", args: []string{"schema", "plan", "--output", "/fetch-work/plan.json", "--json"},
 			env: literal(runner.EnvSchemaFile, "/work/schema.sql"), target: true, refused: true,
@@ -832,6 +830,105 @@ func unreadableSources(t *testing.T, l *lab) {
 		URL: migrationGit.URL, Ref: migrationGit.Ref, Path: migrationGit.Path, Commit: commit, ContentDigest: migrationContent,
 	})}
 	migration.history("history", unreadable(migrationVolume))
+}
+
+// structuralFaults runs Observe and Plan on schemas that load and that Ptah
+// refuses. The fault crosses only when the failed command stopped on it, in the
+// words of a child that held no credential. The last rows are the near misses:
+// validate finds a fault there, and drift and plan stop on something else, so
+// the runner has to say what it said before. Its fixed sentences hold neither
+// the row the database was seeded with nor anything drift said of the schema
+// the database holds, which no check of a code would show.
+func structuralFaults(t *testing.T, l *lab) {
+	t.Helper()
+	const (
+		invalid    = runner.CodeDesiredSchemaInvalid
+		noReason   = "ptah exited with code 2"
+		noPlan     = "plan command did not complete successfully"
+		foreignKey = `invalid foreign key: constraint "t_nope" references unknown table "nope"`
+	)
+	seed := func(engine string) []string {
+		note := "text"
+		if engine == engineMySQL {
+			note = "varchar(64)"
+		}
+		return []string{
+			"CREATE TABLE seeded (id bigint PRIMARY KEY, note " + note + ")",
+			"INSERT INTO seeded VALUES (1, 'row-value-of-the-target')",
+		}
+	}
+	otherSchema := []string{"CREATE SCHEMA other", "CREATE TABLE other.nope (id bigint PRIMARY KEY)"}
+	commit, content := fetchShapeRevision(t)
+	for _, row := range []struct {
+		name, engine, file string
+		// extra is what the database holds besides the seeded row.
+		extra                   []string
+		observeCode, planCode   string
+		observeWords, planWords string
+	}{
+		{
+			name: "foreign-key", engine: enginePostgres, file: "structural2.sql",
+			observeCode: invalid, planCode: invalid,
+			observeWords: `schema.sql: invalid foreign key: field "id" references unknown table "nope"`,
+			planWords:    `schema.sql: invalid foreign key: field "id" references unknown table "nope"`,
+		},
+		{
+			name: "key-and-index", engine: enginePostgres, file: "key-and-index.sql",
+			observeCode: invalid, planCode: invalid,
+			observeWords: "schema.sql: " + foreignKey, planWords: "schema.sql: " + foreignKey,
+		},
+		{
+			name: "key-mysql", engine: engineMySQL, file: "key-constraint.sql",
+			observeCode: invalid, planCode: invalid,
+			observeWords: "schema.sql: " + foreignKey, planWords: "schema.sql: " + foreignKey,
+		},
+		{
+			name: "not-unique", engine: enginePostgres, file: "not-unique.sql",
+			observeCode: invalid, planCode: invalid,
+			observeWords: `schema.sql: postgres requires referenced columns code on table "parent" to be declared unique`,
+			planWords:    `schema.sql: postgres requires referenced columns code on table "parent" to be declared unique`,
+		},
+		{
+			name: "index-table", engine: enginePostgres, file: "index-table.sql",
+			observeCode: "child_exit", planCode: "invalid_plan_output", observeWords: noReason, planWords: noPlan,
+		},
+		{
+			name: "other-and-key", engine: enginePostgres, file: "other-and-key.sql", extra: otherSchema,
+			observeCode: "child_exit", planCode: "invalid_plan_output", observeWords: noReason, planWords: noPlan,
+		},
+		{
+			name: "other-and-index", engine: enginePostgres, file: "other-and-index.sql", extra: otherSchema,
+			observeCode: "child_exit", planCode: "invalid_plan_output", observeWords: noReason, planWords: noPlan,
+		},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			family := "structural-" + row.name
+			database := "harness_structural_" + strings.ReplaceAll(row.name, "-", "_")
+			l.createDatabase(t, row.engine, database)
+			l.sql(t, row.engine, database, append(seed(row.engine), row.extra...)...)
+			volume := l.name(family)
+			l.fillSource(t, volume, map[string][]byte{"schema/schema.sql": harnessFixture(t, "desired-source/"+row.file)})
+			schema := l.newSchema(t, family, row.engine, l.databaseURL(row.engine, database),
+				operatorv1alpha1.SourceSpec{Git: l.gitHTTPS(gitfixture.SchemaPath, operatorv1alpha1.GitRef{Branch: "main"})})
+			git := schema.schema.Spec.Desired.Git
+			schema.schema.Status.Source = operatorv1alpha1.SchemaSourceStatus{Git: &operatorv1alpha1.GitSourceRevision{
+				URL: git.URL, Ref: git.Ref, Path: git.Path, Commit: commit, ContentDigest: content,
+			}}
+			shared := func(spec *rowSpec) { spec.sharedSource = volume }
+			says := func(stage string, outcome rowOutcome, want string) {
+				t.Helper()
+				if outcome.result.Error == nil || outcome.result.Error.Message != want {
+					t.Errorf("%s said %+v, want %q", stage, outcome.result.Error, want)
+				}
+			}
+			says("Observe", schema.observe("observe", shared, wantCode(row.observeCode),
+				storedAs("schema drift", "desired-source/drift-"+row.name+".json"),
+				storedAs("schema validate", "desired-source/validate-"+row.name+".txt")), row.observeWords)
+			says("Plan", schema.plan("plan", nil, shared, wantCode(row.planCode),
+				storedAs("schema plan", "desired-source/plan-"+row.name+".json")), row.planWords)
+		})
+	}
 }
 
 // fillSource makes a source volume holding these files, readable by the Pod.

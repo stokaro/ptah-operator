@@ -53,7 +53,8 @@ func DecodeDocument(args []string, exit int, stdout []byte) error {
 		_, err := dataplane.DecodeMigrationRun(stdout)
 		return err
 	case "schema validate":
-		// Text for a person, which SchemaSourceProblem reads for one shape. A
+		// Text for a person, which SchemaSourceProblem and
+		// SchemaStructuralProblem read for one shape each. A
 		// release that changes it is a change of shape, not a refusal.
 		return nil
 	case "schema pull", "migrations pull":

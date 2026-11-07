@@ -70,6 +70,91 @@ func TestUnreadableSourceSaysHoldsTheClaim(t *testing.T) {
 	}
 }
 
+// capturedFault is the fault the pinned Ptah image gave for a file, read the way
+// the runner reads it: from validate's output, held to what drift said.
+func capturedFault(t *testing.T, validated, failed string) string {
+	t.Helper()
+	read := func(fixture string) []byte {
+		data, err := os.ReadFile(filepath.Join("..", "..", "internal", "dataplane", "testdata", "desired-source", fixture))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return data
+	}
+	failure, err := dataplane.DecodeDriftFailure(read(failed))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fault, found := dataplane.SchemaStructuralProblem(read(validated), "PostgreSQL", failure.Message)
+	if !found {
+		t.Fatalf("%s holds no fault %s stopped on", validated, failed)
+	}
+	return fault
+}
+
+func TestInvalidSchemaSaysHoldsTheClaim(t *testing.T) {
+	t.Parallel()
+
+	const code = runner.CodeDesiredSchemaInvalid + ": "
+	fault := capturedFault(t, "validate-foreign-key.txt", "drift-foreign-key.json")
+	if !strings.HasPrefix(fault, invalidKeyWords) {
+		t.Fatalf("the capture says %q, and the row waits for %q", fault, invalidKeyWords)
+	}
+	said := code + "schema.sql: " + fault
+	if err := invalidSchemaSays(said, "schema.sql", invalidKeyWords); err != nil {
+		t.Errorf("the fault: %v", err)
+	}
+	if err := invalidSchemaSays("OperationFailed: "+said, "schema.sql", invalidKeyWords); err != nil {
+		t.Errorf("the fault inside an Event's sentence: %v", err)
+	}
+	for name, message := range map[string]string{
+		"the exit status it replaced": "child_exit: ptah exited with code 2",
+		"the Plan code it replaced":   "invalid_plan_output: plan command did not complete successfully",
+		"the code with no fault":      code + "schema.sql: the file",
+		"another file":                code + "other.sql: " + fault,
+		"a file that does not load":   runner.CodeDesiredSourceUnreadable + ": schema.sql: " + fault,
+		"another fault":               code + `schema.sql: postgres requires referenced columns code on table "parent" to be declared unique`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if err := invalidSchemaSays(message, "schema.sql", invalidKeyWords); err == nil {
+				t.Fatalf("invalidSchemaSays(%q) accepted it", message)
+			}
+		})
+	}
+}
+
+func TestInvalidSchemaEventFindsTheEventOfTheResource(t *testing.T) {
+	t.Parallel()
+
+	const owner = types.UID("schema-uid")
+	said := runner.CodeDesiredSchemaInvalid + ": schema.sql: " + capturedFault(t, "validate-foreign-key.txt", "drift-foreign-key.json")
+	event := func(uid types.UID, kind, reason, message string) corev1.Event {
+		return corev1.Event{InvolvedObject: corev1.ObjectReference{UID: uid}, Type: kind, Reason: reason, Message: message}
+	}
+	check := func(events ...corev1.Event) error {
+		return invalidSchemaEvent(events, owner, "OperationFailed", "schema.sql", invalidKeyWords)
+	}
+	if err := check(event(owner, corev1.EventTypeWarning, "OperationFailed", "child_exit: ptah exited with code 2"),
+		event(owner, corev1.EventTypeWarning, "OperationFailed", said)); err != nil {
+		t.Errorf("the Event among others: %v", err)
+	}
+	for name, events := range map[string][]corev1.Event{
+		"no Events":                      nil,
+		"another resource's Event":       {event("other-uid", corev1.EventTypeWarning, "OperationFailed", said)},
+		"another reason":                 {event(owner, corev1.EventTypeWarning, "OperationRetried", said)},
+		"a Normal Event":                 {event(owner, corev1.EventTypeNormal, "OperationFailed", said)},
+		"an Event that does not say why": {event(owner, corev1.EventTypeWarning, "OperationFailed", "child_exit: ptah exited with code 2")},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if err := check(events...); err == nil {
+				t.Fatal("it accepted the list")
+			}
+		})
+	}
+}
+
 func TestUnreadableSourceEventFindsTheEventOfTheResource(t *testing.T) {
 	t.Parallel()
 

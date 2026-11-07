@@ -627,8 +627,8 @@ func runPlan(
 		}
 		return spec, nil
 	}
-	reportUnreadable := func() bool {
-		return reportUnreadableSchema(ctx, config, environment, inputs, &result, redactor)
+	reportProblem := func(failed string) bool {
+		return reportSchemaProblem(ctx, config, environment, inputs, failed, &result, redactor)
 	}
 	var reads [2]nativePlan
 	for index, name := range []string{"first.plan.json", "second.plan.json"} {
@@ -642,7 +642,7 @@ func runPlan(
 			setResultError(&result, "credential_in_arguments", err, redactor, config.Diagnostics)
 			return result
 		}
-		read, ok := readNativePlan(ctx, config, spec, outputPath, &result, redactor, reportUnreadable)
+		read, ok := readNativePlan(ctx, config, spec, outputPath, &result, redactor, reportProblem)
 		if !ok {
 			return result
 		}
@@ -742,7 +742,7 @@ type nativePlan struct {
 // by its code, and a failure, a report this runner cannot read, a plan saved
 // somewhere else and a file whose digest is not the reported one are all
 // invalid plan output. A failure that names no target failure kind first asks
-// reportUnreadable whether the desired schema loads. The exit status decides
+// reportProblem whether the desired schema explains it. The exit status decides
 // nothing; see noteReportedSuccess.
 func readNativePlan(
 	ctx context.Context,
@@ -751,7 +751,7 @@ func readNativePlan(
 	outputPath string,
 	result *Result,
 	redactor Redactor,
-	reportUnreadable func() bool,
+	reportProblem func(failed string) bool,
 ) (nativePlan, bool) {
 	outcome := executeReportCommand(ctx, config, spec, planReportLimit(config.MaxPlanBytes))
 	result.ChildExitCode = outcome.exitCode
@@ -782,7 +782,11 @@ func readNativePlan(
 			setTargetFailure(result, kind, redactor, config.Diagnostics)
 			return nativePlan{}, false
 		}
-		if reportUnreadable() {
+		failed := ""
+		if report.Error != nil {
+			failed = report.Error.Message
+		}
+		if reportProblem(failed) {
 			return nativePlan{}, false
 		}
 		setResultError(result, "invalid_plan_output", errors.New("plan command did not complete successfully"), redactor, config.Diagnostics)
@@ -1144,13 +1148,15 @@ func runObserve(ctx context.Context, config Config, environment []string, inputs
 		// report. Its kind names a target that could not be opened. With no
 		// kind, the desired schema is asked about in a run that has no target;
 		// any other failure is reported by its exit status alone.
+		failed := ""
 		if failure, err := dataplane.DecodeDriftFailure(driftOutcome.stdout.bytes()); err == nil {
 			if kind, known := failure.TargetFailure(); known {
 				setTargetFailure(&result, kind, redactor, config.Diagnostics)
 				return result
 			}
+			failed = failure.Message
 		}
-		if reportUnreadableSchema(ctx, config, environment, inputs, &result, redactor) {
+		if reportSchemaProblem(ctx, config, environment, inputs, failed, &result, redactor) {
 			return result
 		}
 		setResultError(&result, "child_exit", fmt.Errorf("ptah exited with code %d", driftOutcome.exitCode), redactor, config.Diagnostics)

@@ -70,6 +70,11 @@ func TestResultFailureReadsOnlyTheKindOfATargetFailure(t *testing.T) {
 			want:    "desired_source_unreadable: read SQL schema file schema.sql: expected '('",
 		},
 		{
+			name:    "a desired schema Ptah read and refuses",
+			failure: runner.ResultError{Code: runner.CodeDesiredSchemaInvalid, Message: `schema.sql: invalid foreign key: field "id" references unknown table "nope"`},
+			want:    `desired_schema_invalid: schema.sql: invalid foreign key: field "id" references unknown table "nope"`,
+		},
+		{
 			name:    "a code that only resembles a kind",
 			failure: runner.ResultError{Code: "Database_Unreachable", Message: "ptah exited with code 2"},
 			want:    "Database_Unreachable: ptah exited with code 2",

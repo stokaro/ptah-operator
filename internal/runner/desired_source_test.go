@@ -211,6 +211,94 @@ func TestAFailureACheckCannotExplainKeepsItsCode(t *testing.T) {
 	}
 }
 
+// TestASchemaFaultTheCommandStoppedOnIsNamed runs Observe and Plan on the output
+// the pinned image printed for a schema that loads and that drift and plan
+// refuse. The child that said it is the same check, with the same environment.
+func TestASchemaFaultTheCommandStoppedOnIsNamed(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		operation, failed, validated, want string
+	}{
+		{"observe", "drift-foreign-key.json", "validate-foreign-key.txt", `schema.sql: invalid foreign key: field "id" references unknown table "nope"`},
+		{"plan", "plan-foreign-key.json", "validate-foreign-key.txt", `schema.sql: invalid foreign key: field "id" references unknown table "nope"`},
+		{"observe", "drift-key-and-index.json", "validate-key-and-index.txt", `schema.sql: invalid foreign key: constraint "t_nope" references unknown table "nope"`},
+		{"plan", "plan-key-and-index.json", "validate-key-and-index.txt", `schema.sql: invalid foreign key: constraint "t_nope" references unknown table "nope"`},
+	} {
+		t.Run(test.operation+"/"+test.failed, func(t *testing.T) {
+			t.Parallel()
+			run := desiredSourceRuns()[test.operation]
+			result, executor, diagnostics := runDesiredSource(t, run,
+				scriptedResponse{stdout: desiredSourceOutput(t, test.failed), exitCode: 2},
+				scriptedResponse{stdout: desiredSourceOutput(t, test.validated), stderr: "1 structural problem\n", exitCode: 1})
+			if result.Error == nil || result.Error.Code != CodeDesiredSchemaInvalid || result.Error.Message != test.want {
+				t.Fatalf("Run() error = %#v, want code %s and %q", result.Error, CodeDesiredSchemaInvalid, test.want)
+			}
+			if result.ChildExitCode != 2 || result.Uncertain || result.MutationStarted {
+				t.Fatalf("Run() = exit %d, uncertain %v, mutation %v", result.ChildExitCode, result.Uncertain, result.MutationStarted)
+			}
+			if !strings.Contains(diagnostics, test.want) {
+				t.Fatalf("the Pod log does not say why:\n%s", diagnostics)
+			}
+			if len(executor.calls) != 2 || !slices.Equal(executor.calls[1].Env, run.checkEnv) {
+				t.Fatalf("ran %+v, want the failed command and a check told only %q", executor.calls, run.checkEnv)
+			}
+		})
+	}
+}
+
+// TestAFaultTheCommandDidNotStopOnKeepsItsCode gives each operation the captures
+// of a file validate faults while drift and plan stop on something else, and
+// documents that hold no sentence to compare. Nothing either child printed
+// reaches the frame or the Pod log.
+func TestAFaultTheCommandDidNotStopOnKeepsItsCode(t *testing.T) {
+	t.Parallel()
+
+	foreignKey := func(t *testing.T) scriptedResponse {
+		return scriptedResponse{stdout: desiredSourceOutput(t, "validate-foreign-key.txt"), exitCode: 1}
+	}
+	captured := func(failed, validated string) func(*testing.T) (scriptedResponse, scriptedResponse) {
+		return func(t *testing.T) (scriptedResponse, scriptedResponse) {
+			return scriptedResponse{stdout: desiredSourceOutput(t, failed), exitCode: 2},
+				scriptedResponse{stdout: desiredSourceOutput(t, validated), exitCode: 1}
+		}
+	}
+	for _, test := range []struct {
+		name, operation, code string
+		answers               func(*testing.T) (scriptedResponse, scriptedResponse)
+	}{
+		{"an index on a table nothing declares", "observe", "child_exit", captured("drift-index-table.json", "validate-index-table.txt")},
+		{"an index on a table nothing declares", "plan", "invalid_plan_output", captured("plan-index-table.json", "validate-index-table.txt")},
+		{"a key the database refuses, beside another", "observe", "child_exit", captured("drift-other-and-key.json", "validate-other-and-key.txt")},
+		{"a key the database refuses, beside another", "plan", "invalid_plan_output", captured("plan-other-and-key.json", "validate-other-and-key.txt")},
+		{"a key the database refuses, beside an index", "observe", "child_exit", captured("drift-other-and-index.json", "validate-other-and-index.txt")},
+		{"a key the database refuses, beside an index", "plan", "invalid_plan_output", captured("plan-other-and-index.json", "validate-other-and-index.txt")},
+		{"a document that does not decode", "observe", "child_exit", func(t *testing.T) (scriptedResponse, scriptedResponse) {
+			return scriptedResponse{stdout: "error comparing schemas: invalid foreign key", exitCode: 2}, foreignKey(t)
+		}},
+		{"a failed plan with no error", "plan", "invalid_plan_output", func(t *testing.T) (scriptedResponse, scriptedResponse) {
+			return scriptedResponse{stdout: `{"contract_version":3,"command":"schema plan","outcome":"failed"}`, exitCode: 2}, foreignKey(t)
+		}},
+	} {
+		t.Run(test.name+"/"+test.operation, func(t *testing.T) {
+			t.Parallel()
+			failed, validated := test.answers(t)
+			result, executor, diagnostics := runDesiredSource(t, desiredSourceRuns()[test.operation], failed, validated)
+			if result.Error == nil || result.Error.Code != test.code {
+				t.Fatalf("Run() error = %#v, want code %s", result.Error, test.code)
+			}
+			if len(executor.calls) != 2 {
+				t.Fatalf("ran %d children, want the failed command and its check", len(executor.calls))
+			}
+			for _, word := range []string{"invalid foreign key", "names table", "names column", "holds schema"} {
+				if strings.Contains(result.Error.Message, word) || strings.Contains(diagnostics, word) {
+					t.Fatalf("the runner repeated %q: %q\n%s", word, result.Error.Message, diagnostics)
+				}
+			}
+		})
+	}
+}
+
 // TestATargetFailureAsksNoQuestion holds the order: a kind says why, so nothing
 // else runs. The scripted executor fails on a second child.
 func TestATargetFailureAsksNoQuestion(t *testing.T) {
@@ -373,6 +461,22 @@ func TestAReasonIsRedactedAndBounded(t *testing.T) {
 			t.Fatalf("the Pod log carries the password:\n%s", diagnostics)
 		}
 	})
+	// A fault's words come from the same child, whatever the failed command said
+	// beside them, and go through the same function.
+	t.Run("a credential in a fault", func(t *testing.T) {
+		t.Parallel()
+		const fault = `invalid foreign key: field "id" references unknown table "secret"`
+		failed := scriptedResponse{stdout: `{"contract_version":1,"command":"schema drift","error":{"message":"error comparing schemas: invalid foreign key: ` +
+			`field \"id\" references unknown table \"secret\""}}`, exitCode: 2}
+		result, _, diagnostics := runDesiredSource(t, run, failed, scriptedResponse{stdout: "postgres: schema: " + fault + "\n", exitCode: 1})
+		want := `schema.sql: invalid foreign key: field "id" references unknown table "` + RedactionMarker + `"`
+		if result.Error == nil || result.Error.Code != CodeDesiredSchemaInvalid || result.Error.Message != want {
+			t.Fatalf("Run() error = %#v, want %q", result.Error, want)
+		}
+		if strings.Contains(diagnostics, "secret") {
+			t.Fatalf("the Pod log carries the password:\n%s", diagnostics)
+		}
+	})
 	t.Run("the capture of a credential in capitals", func(t *testing.T) {
 		t.Parallel()
 		folded := run
@@ -398,6 +502,11 @@ func TestAReasonIsRedactedAndBounded(t *testing.T) {
 		// at the bound reads the same in the condition and the Event.
 		if whole := len(CodeDesiredSourceUnreadable+": ") + maxDesiredSourceReasonBytes; whole != 512 {
 			t.Fatalf("the code and the longest reason take %d bytes, want the 512 an Event keeps", whole)
+		}
+		for _, code := range []string{CodeDesiredSourceUnreadable, CodeDesiredSchemaInvalid} {
+			if whole := len(code+": ") + maxDesiredSourceReasonBytes; whole > 512 {
+				t.Fatalf("%s and the longest reason take %d bytes, past the 512 an Event keeps", code, whole)
+			}
 		}
 		result, _, _ := runDesiredSource(t, run, run.failed(t), source(strings.Repeat("x", maxDesiredSourceReasonBytes-1)+"é and more"))
 		if result.Error == nil || len(result.Error.Message) > maxDesiredSourceReasonBytes ||
