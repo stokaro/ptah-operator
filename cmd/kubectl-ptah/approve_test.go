@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"reflect"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -381,19 +382,46 @@ func TestApproveWithoutATerminalNeedsTheReviewedFingerprint(t *testing.T) {
 }
 
 // Without a terminal, approve says where the fingerprint is. Each family's row
-// runs the command the message names against the same plan, and finds the
-// fingerprint there: kubectl ptah plan reads a schema's plan and no other.
+// runs the command the message names, as printed, against the same plan, and
+// finds the fingerprint there: kubectl ptah plan reads a schema's plan and no
+// other. The resource lives outside the context's namespace, so a command that
+// leaves out the namespace approve read finds nothing.
 func TestApproveWithoutATerminalNamesACommandThatShowsTheFingerprint(t *testing.T) {
+	// printed is the command the message names, as arguments to the plugin.
+	printed := func(t *testing.T, stderr string) []string {
+		t.Helper()
+		match := regexp.MustCompile(`\((kubectl ptah [^()]+?) shows it`).FindStringSubmatch(stderr)
+		if match == nil {
+			t.Fatalf("approve names no command: %q", stderr)
+		}
+		return strings.Fields(match[1])[2:]
+	}
+	// contextNamespace is the kubeconfig context's namespace, which holds no
+	// resource of these names.
+	const contextNamespace = "default"
 	t.Run("schema", func(t *testing.T) {
 		api, fingerprint := approvable(t, nil)
-
-		code, _, stderr := runApprove(t, api, "", false, "schema/storefront")
-
-		if code != exitUsage || !strings.Contains(stderr, "(kubectl ptah plan storefront shows it)") {
-			t.Fatalf("approve = %d, stderr %q", code, stderr)
+		previous := connector
+		connector = func(_, _, namespace string, _ time.Duration) (client.Client, string, error) {
+			if namespace == "" {
+				namespace = contextNamespace
+			}
+			return api, namespace, nil
 		}
-		if code, stdout, stderr := runPlan(t, api.Client, "storefront"); code != exitOK || !strings.Contains(stdout, fingerprint) {
-			t.Fatalf("the command it names = %d, stdout %q, stderr %q; want the fingerprint %s", code, stdout, stderr, fingerprint)
+		t.Cleanup(func() { connector = previous })
+
+		var stdout, stderr bytes.Buffer
+		code := approveCommand(context.Background(), []string{"schema/storefront", "-n", planreadtest.Namespace},
+			strings.NewReader(""), false, &stdout, &stderr)
+
+		says := "(kubectl ptah plan storefront -n " + planreadtest.Namespace + " shows it)"
+		if code != exitUsage || !strings.Contains(stderr.String(), says) {
+			t.Fatalf("approve = %d, stderr %q; want it to name %s", code, stderr.String(), says)
+		}
+		arguments := printed(t, stderr.String())
+		var shown, failed bytes.Buffer
+		if status := run(context.Background(), arguments, &shown, &failed); status != exitOK || !strings.Contains(shown.String(), fingerprint) {
+			t.Fatalf("%v = %d, stdout %q, stderr %q; want the fingerprint %s", arguments, status, shown.String(), failed.String(), fingerprint)
 		}
 	})
 	t.Run("migration", func(t *testing.T) {
@@ -403,21 +431,22 @@ func TestApproveWithoutATerminalNamesACommandThatShowsTheFingerprint(t *testing.
 		named := server.namespaced["ptahmigrations/orders"].(*operatorv1alpha1.PtahMigration)
 		api := &admitting{Client: planreadtest.NewClient(t, named.DeepCopy(), stored.DeepCopy())}
 
-		code, _, stderr := runApproveWith(t, api, "application", strings.NewReader(""), false, "migration/orders")
+		code, _, stderr := runApproveWith(t, api, "application", strings.NewReader(""), false, "migration/orders", "-n", "application")
 
-		const names = "(kubectl ptah migration orders -o json shows it as plan.fingerprint)"
-		if code != exitUsage || !strings.Contains(stderr, names) || strings.Contains(stderr, "kubectl ptah plan") {
-			t.Fatalf("approve = %d, stderr %q; want it to name %s", code, stderr, names)
+		const says = "(kubectl ptah migration orders -n application -o json shows it as plan.fingerprint)"
+		if code != exitUsage || !strings.Contains(stderr, says) || strings.Contains(stderr, "kubectl ptah plan") {
+			t.Fatalf("approve = %d, stderr %q; want it to name %s", code, stderr, says)
 		}
-
 		if code, stdout, _ := runPlan(t, api.Client, "orders"); code != exitAbsent || stdout != "" {
 			t.Fatalf("kubectl ptah plan on a migration = %d, stdout %q; want it to have nothing to say", code, stdout)
 		}
 
+		// The kubeconfig reaches the fake API server, whose context names no
+		// namespace, so the plugin reads default unless the command says otherwise.
+		arguments := append(printed(t, stderr), "--kubeconfig", writeKubeconfig(t, server.URL))
 		var stdout, viewErr bytes.Buffer
-		arguments := []string{"migration", "orders", "-o", "json", "-n", "application", "--kubeconfig", writeKubeconfig(t, server.URL)}
 		if status := run(context.Background(), arguments, &stdout, &viewErr); status != exitOK {
-			t.Fatalf("the command it names = %d, stderr %q", status, viewErr.String())
+			t.Fatalf("%v = %d, stderr %q", arguments, status, viewErr.String())
 		}
 		var view struct {
 			Plan struct {
