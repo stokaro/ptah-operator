@@ -84,6 +84,54 @@ func approvedApplyJournaled(journal *ptahv1alpha1.LifecycleJournal, plan string)
 	return nil
 }
 
+// approvalJournaledOnce is the decision in the journal: exactly one
+// ApprovalAccepted carrying the approval's UID, under its name and on its plan.
+// The name alone cannot say so, since a later decision may take it, and an entry
+// that lost the UID on its way through the API server would read the same.
+func approvalJournaledOnce(journal *ptahv1alpha1.LifecycleJournal, name, uid, plan string) error {
+	if journal == nil {
+		return fmt.Errorf("the resource keeps no journal")
+	}
+	count := 0
+	for _, entry := range journal.Entries {
+		if entry.Type != ptahv1alpha1.JournalApprovalAccepted || string(entry.ApprovalUID) != uid {
+			continue
+		}
+		count++
+		if entry.Approval != name || entry.Plan != plan {
+			return fmt.Errorf("the entry of approval UID %s names approval %q on plan %q, want %q on %q", uid, entry.Approval, entry.Plan, name, plan)
+		}
+	}
+	if count != 1 {
+		return fmt.Errorf("the journal holds %d %s entries for approval UID %s, want one", count, ptahv1alpha1.JournalApprovalAccepted, uid)
+	}
+	return nil
+}
+
+// everyApprovalJournaledByUID holds the approvals journaled for a plan to the
+// identity no later approval can take. A fresh cluster's manager wrote each of
+// them, so an entry without a UID is the field lost on its way through the API
+// server.
+func everyApprovalJournaledByUID(journal *ptahv1alpha1.LifecycleJournal, plan string) error {
+	if journal == nil {
+		return fmt.Errorf("the resource keeps no journal")
+	}
+	examined := 0
+	for _, entry := range journal.Entries {
+		if entry.Type != ptahv1alpha1.JournalApprovalAccepted || entry.Plan != plan {
+			continue
+		}
+		examined++
+		if entry.ApprovalUID == "" {
+			return fmt.Errorf("the journal records approval %q of plan %s with no UID: %s", entry.Approval, plan, journalOf(journal, plan))
+		}
+	}
+	if examined == 0 {
+		return fmt.Errorf("the journal records no approval of plan %s: %s", plan, journalOf(journal, plan))
+	}
+	return nil
+}
+
 // journalOf is the plan's entries as a failure prints them, in order, so a
 // refusal says what the journal held rather than only what it lacked.
 func journalOf(journal *ptahv1alpha1.LifecycleJournal, plan string) string {

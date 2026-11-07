@@ -354,6 +354,10 @@ func (m *migrationRun) assertLogOutlivesTheApproval(name string) {
 	if stamped != loggedPerson {
 		m.fatalf("admission stamped approval %s with %q, and the row approved it as %q", name, stamped, loggedPerson)
 	}
+	// The decision the run consumed, by the identity no later approval can take.
+	if err := approvalJournaledOnce(m.migration(m.migrationName()).Status.Journal, name, string(approval.UID), approval.Spec.PlanRef.Name); err != nil {
+		m.fatalf("%s: %v", m.migrationName(), err)
+	}
 	m.deleteAndWait(approval, "the consumed approval "+name)
 	m.assertRunLogNames(m.migrationDatabase(), loggedPersonInTheLog, 1, 2, 3)
 	if err := loggedNameDecodesTo(loggedPersonInTheLog, stamped); err != nil {

@@ -1,6 +1,9 @@
 package v1alpha1
 
-import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+import (
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+)
 
 // LifecycleJournal is the bounded record of a resource's significant lifecycle
 // events: a plan published, an approval accepted, an Apply or a run and how it
@@ -31,7 +34,9 @@ const (
 	JournalPlanPublished JournalEntryType = "PlanPublished"
 	// JournalApprovalAccepted is the approval an Apply consumed: the one a
 	// PtahSchema's plan recorded, or the one a PtahMigration's Apply claim
-	// names. A PtahMigration's status does not carry the approver.
+	// names. A PtahMigration's status does not carry the approver. One entry
+	// stands for one decision, told apart by the approval's UID: a later
+	// decision may take the same name.
 	JournalApprovalAccepted JournalEntryType = "ApprovalAccepted"
 	// JournalApplyFinished is a PtahSchema Apply that ended.
 	JournalApplyFinished JournalEntryType = "ApplyFinished"
@@ -110,10 +115,18 @@ type JournalEntry struct {
 	// +optional
 	Destructive bool `json:"destructive,omitempty"`
 
-	// Approval names the approval an Apply consumed.
+	// Approval names the approval an Apply consumed. A name can be used again by
+	// a later decision, so it does not say which object it was: ApprovalUID does.
 	// +kubebuilder:validation:MaxLength=253
 	// +optional
 	Approval string `json:"approval,omitempty"`
+	// ApprovalUID is the UID of that approval. An entry a release before this
+	// field wrote has none: it is incomplete evidence, and is not to be joined
+	// to an object that holds the name today.
+	// +kubebuilder:validation:Type=string
+	// +kubebuilder:validation:MaxLength=128
+	// +optional
+	ApprovalUID types.UID `json:"approvalUID,omitempty"`
 	// Approver is the user admission stamped on that approval.
 	// +kubebuilder:validation:MaxLength=512
 	// +optional

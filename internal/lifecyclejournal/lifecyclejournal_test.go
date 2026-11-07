@@ -8,6 +8,7 @@ import (
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/lifecyclejournal"
@@ -244,14 +245,14 @@ func TestSchemaEntriesRecordEachTransitionOnce(t *testing.T) {
 			journal: journalWith(published("plan-a", -10*time.Minute)),
 			want: []operatorv1alpha1.JournalEntry{{
 				Type: operatorv1alpha1.JournalApprovalAccepted, At: at(-5 * time.Minute), Plan: "plan-a",
-				Approval: "approve-a", Approver: "alice",
+				Approval: "approve-a", ApprovalUID: "approval-uid", Approver: "alice",
 			}},
 		},
 		{
 			name:    "an approval already recorded",
 			before:  operatorv1alpha1.PtahSchemaStatus{},
 			after:   operatorv1alpha1.PtahSchemaStatus{Plan: approved(plan, "approve-a")},
-			journal: journalWith(published("plan-a", -10*time.Minute), operatorv1alpha1.JournalEntry{Type: operatorv1alpha1.JournalApprovalAccepted, Approval: "approve-a"}),
+			journal: journalWith(published("plan-a", -10*time.Minute), operatorv1alpha1.JournalEntry{Type: operatorv1alpha1.JournalApprovalAccepted, Approval: "approve-a", ApprovalUID: "approval-uid"}),
 		},
 		{
 			name:   "an Apply that succeeded",
@@ -391,7 +392,8 @@ func TestMigrationEntriesRecordEachTransitionOnce(t *testing.T) {
 			after:   operatorv1alpha1.PtahMigrationStatus{Plan: planRef, ActiveOperation: apply},
 			journal: &operatorv1alpha1.LifecycleJournal{Entries: []operatorv1alpha1.JournalEntry{published("billing-plan", -time.Hour)}},
 			want: []operatorv1alpha1.JournalEntry{{
-				Type: operatorv1alpha1.JournalApprovalAccepted, At: at(0), Plan: "billing-plan", Approval: "billing-approval",
+				Type: operatorv1alpha1.JournalApprovalAccepted, At: at(0), Plan: "billing-plan",
+				Approval: "billing-approval", ApprovalUID: "approval-uid",
 			}},
 		},
 		{
@@ -463,5 +465,271 @@ func TestMigrationEntriesRecordEachTransitionOnce(t *testing.T) {
 				t.Fatalf("entries = %#v\nwant %#v", got, test.want)
 			}
 		})
+	}
+}
+
+// accepted is the entry an earlier decision left: under the name the rows reuse,
+// on an earlier plan, with its own approver. uid is empty for one a release before
+// the field wrote.
+func accepted(uid types.UID) operatorv1alpha1.JournalEntry {
+	return operatorv1alpha1.JournalEntry{
+		Type: operatorv1alpha1.JournalApprovalAccepted, At: at(-time.Hour), Plan: "plan-a",
+		Approval: "release-approval", ApprovalUID: uid, Approver: "alice",
+	}
+}
+
+// A decision is its UID. Each row asks one thing of the journal about one more
+// write, from a resource that already carried a decision under the same name, whose
+// approval object is gone by then: nothing here can read it.
+func TestSchemaEntriesTellDecisionsApartByUID(t *testing.T) {
+	t.Parallel()
+	plan := func(name string, uid types.UID, approver string) *operatorv1alpha1.CurrentPlanStatus {
+		current := schemaPlan(name)
+		current.Approval = &operatorv1alpha1.ConsumedApprovalStatus{
+			Name: "release-approval", UID: uid, ApprovedAt: at(-5 * time.Minute),
+			Approver: operatorv1alpha1.ApprovalIdentity{Username: approver},
+		}
+		return current
+	}
+	entryFor := func(name string, uid types.UID, approver string) []operatorv1alpha1.JournalEntry {
+		return []operatorv1alpha1.JournalEntry{{
+			Type: operatorv1alpha1.JournalApprovalAccepted, At: at(-5 * time.Minute), Plan: name,
+			Approval: "release-approval", ApprovalUID: uid, Approver: approver,
+		}}
+	}
+	// Published for the rows that name another plan, so only the decision is new.
+	published := func(entries ...operatorv1alpha1.JournalEntry) *operatorv1alpha1.LifecycleJournal {
+		return &operatorv1alpha1.LifecycleJournal{CoveredSince: at(-2 * time.Hour), Entries: append(entries,
+			operatorv1alpha1.JournalEntry{Type: operatorv1alpha1.JournalPlanPublished, At: at(-10 * time.Minute), Plan: "plan-b"},
+			operatorv1alpha1.JournalEntry{Type: operatorv1alpha1.JournalPlanPublished, At: at(-9 * time.Minute), Plan: "plan-a"})}
+	}
+	bare := func(name string) *operatorv1alpha1.CurrentPlanStatus { return schemaPlan(name) }
+	for _, test := range []struct {
+		name          string
+		before, after *operatorv1alpha1.CurrentPlanStatus
+		journal       *operatorv1alpha1.LifecycleJournal
+		want          []operatorv1alpha1.JournalEntry
+	}{
+		{
+			name:    "the name reused, for another plan, by another person",
+			before:  bare("plan-b"),
+			after:   plan("plan-b", "uid-b", "bob"),
+			journal: &operatorv1alpha1.LifecycleJournal{Entries: []operatorv1alpha1.JournalEntry{accepted("uid-a"), {Type: operatorv1alpha1.JournalPlanPublished, Plan: "plan-b"}}},
+			want:    entryFor("plan-b", "uid-b", "bob"),
+		},
+		{
+			// An Apply of unknown outcome spends its approval, and the same plan
+			// comes back for a fresh one, under whatever name that one takes.
+			name:    "the name reused, for the same plan",
+			before:  bare("plan-a"),
+			after:   plan("plan-a", "uid-b", "bob"),
+			journal: published(accepted("uid-a")),
+			want:    entryFor("plan-a", "uid-b", "bob"),
+		},
+		{
+			name:    "the same decision, written again",
+			before:  plan("plan-a", "uid-a", "alice"),
+			after:   plan("plan-a", "uid-a", "alice"),
+			journal: published(accepted("uid-a")),
+		},
+		{
+			// The controller clears and republishes a plan while it refreshes.
+			name:    "the same decision, back after a refresh",
+			before:  nil,
+			after:   plan("plan-a", "uid-a", "alice"),
+			journal: published(accepted("uid-a")),
+		},
+		{
+			// Status already named this decision, so this write is no news about
+			// it, whatever the entry that recorded it says or whether a bound has
+			// dropped it.
+			name:    "the same decision, its entry dropped by the bound",
+			before:  plan("plan-a", "uid-a", "alice"),
+			after:   plan("plan-a", "uid-a", "alice"),
+			journal: published(),
+		},
+		{
+			name:    "a decision current across the upgrade, its entry written before the field",
+			before:  plan("plan-a", "uid-a", "alice"),
+			after:   plan("plan-a", "uid-a", "alice"),
+			journal: published(accepted("")),
+		},
+		{
+			// The entry says what the approval was called and not which object it
+			// was, so it cannot be read as having recorded this one.
+			name:    "a later decision under the name of an entry written before the field",
+			before:  bare("plan-a"),
+			after:   plan("plan-a", "uid-b", "bob"),
+			journal: published(accepted("")),
+			want:    entryFor("plan-a", "uid-b", "bob"),
+		},
+		{
+			name:    "another decision taking its place in status",
+			before:  plan("plan-a", "uid-a", "alice"),
+			after:   plan("plan-a", "uid-b", "bob"),
+			journal: published(accepted("uid-a")),
+			want:    entryFor("plan-a", "uid-b", "bob"),
+		},
+		{
+			name:   "a decision status already holds, on the first write of a manager that keeps a journal",
+			before: plan("plan-a", "uid-a", "alice"),
+			after:  plan("plan-a", "uid-a", "alice"),
+			want:   append([]operatorv1alpha1.JournalEntry{}, entryFor("plan-a", "uid-a", "alice")...),
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			got := lifecyclejournal.SchemaEntries(
+				&operatorv1alpha1.PtahSchemaStatus{Plan: test.before}, &operatorv1alpha1.PtahSchemaStatus{Plan: test.after}, test.journal, now)
+			var decisions []operatorv1alpha1.JournalEntry
+			for _, entry := range got {
+				if entry.Type == operatorv1alpha1.JournalApprovalAccepted {
+					decisions = append(decisions, entry)
+				}
+			}
+			if !reflect.DeepEqual(decisions, test.want) {
+				t.Fatalf("decisions = %#v\nwant %#v", decisions, test.want)
+			}
+		})
+	}
+}
+
+func TestMigrationEntriesTellDecisionsApartByUID(t *testing.T) {
+	t.Parallel()
+	apply := func(id, plan string, uid types.UID) *operatorv1alpha1.MigrationOperationStatus {
+		return &operatorv1alpha1.MigrationOperationStatus{
+			Type: operatorv1alpha1.MigrationOperationApply, ID: id,
+			PlanRef:     &operatorv1alpha1.ImmutableObjectReference{Name: plan, UID: types.UID(plan + "-uid")},
+			ApprovalRef: &operatorv1alpha1.ImmutableObjectReference{Name: "release-approval", UID: uid},
+		}
+	}
+	entryFor := func(plan string, uid types.UID) []operatorv1alpha1.JournalEntry {
+		return []operatorv1alpha1.JournalEntry{{
+			Type: operatorv1alpha1.JournalApprovalAccepted, At: at(0), Plan: plan, Approval: "release-approval", ApprovalUID: uid,
+		}}
+	}
+	journalOf := func(entries ...operatorv1alpha1.JournalEntry) *operatorv1alpha1.LifecycleJournal {
+		return &operatorv1alpha1.LifecycleJournal{CoveredSince: at(-2 * time.Hour), Entries: entries}
+	}
+	for _, test := range []struct {
+		name          string
+		before, after *operatorv1alpha1.MigrationOperationStatus
+		journal       *operatorv1alpha1.LifecycleJournal
+		want          []operatorv1alpha1.JournalEntry
+	}{
+		{
+			name:    "the name reused, for another plan",
+			after:   apply("apply-2", "plan-b", "uid-b"),
+			journal: journalOf(accepted("uid-a")),
+			want:    entryFor("plan-b", "uid-b"),
+		},
+		{
+			name:    "the name reused, for the same plan",
+			after:   apply("apply-2", "plan-a", "uid-b"),
+			journal: journalOf(accepted("uid-a")),
+			want:    entryFor("plan-a", "uid-b"),
+		},
+		{
+			name:    "the same decision, its claim written again",
+			before:  apply("apply-1", "plan-a", "uid-a"),
+			after:   apply("apply-1", "plan-a", "uid-a"),
+			journal: journalOf(accepted("uid-a")),
+		},
+		{
+			// A claim withdrawn before dispatch leaves the approval to be claimed
+			// again, with no claim in the status between the two.
+			name:    "the same decision under a new claim",
+			after:   apply("apply-2", "plan-a", "uid-a"),
+			journal: journalOf(accepted("uid-a")),
+		},
+		{
+			name:    "the same decision, its entry dropped by the bound",
+			before:  apply("apply-1", "plan-a", "uid-a"),
+			after:   apply("apply-1", "plan-a", "uid-a"),
+			journal: journalOf(),
+		},
+		{
+			name:    "a claim current across the upgrade, its entry written before the field",
+			before:  apply("apply-1", "plan-a", "uid-a"),
+			after:   apply("apply-1", "plan-a", "uid-a"),
+			journal: journalOf(accepted("")),
+		},
+		{
+			name:    "a later decision under the name of an entry written before the field",
+			after:   apply("apply-2", "plan-b", "uid-b"),
+			journal: journalOf(accepted("")),
+			want:    entryFor("plan-b", "uid-b"),
+		},
+		{
+			name:    "another decision under the claim that replaced this one",
+			before:  apply("apply-1", "plan-a", "uid-a"),
+			after:   apply("apply-2", "plan-a", "uid-b"),
+			journal: journalOf(accepted("uid-a")),
+			want:    entryFor("plan-a", "uid-b"),
+		},
+		{
+			// Only an acceptance records a decision: an entry of another kind may
+			// name the approval it concerns.
+			name:  "a decision another kind of entry mentions",
+			after: apply("apply-2", "plan-a", "uid-b"),
+			journal: journalOf(operatorv1alpha1.JournalEntry{
+				Type: operatorv1alpha1.JournalRunFinished, At: at(-time.Hour), Approval: "release-approval", ApprovalUID: "uid-b",
+			}),
+			want: entryFor("plan-a", "uid-b"),
+		},
+		{
+			name:   "a claim status already holds, on the first write of a manager that keeps a journal",
+			before: apply("apply-1", "plan-a", "uid-a"),
+			after:  apply("apply-1", "plan-a", "uid-a"),
+			want:   entryFor("plan-a", "uid-a"),
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			got := lifecyclejournal.MigrationEntries(
+				&operatorv1alpha1.PtahMigrationStatus{ActiveOperation: test.before},
+				&operatorv1alpha1.PtahMigrationStatus{ActiveOperation: test.after}, test.journal, now)
+			if !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("entries = %#v\nwant %#v", got, test.want)
+			}
+		})
+	}
+}
+
+// The whole of it through Record: two decisions under one name, each written
+// repeatedly, leave one entry each.
+func TestRecordKeepsTwoDecisionsUnderOneName(t *testing.T) {
+	t.Parallel()
+	apply := func(id, plan string, uid types.UID) operatorv1alpha1.PtahMigrationStatus {
+		return operatorv1alpha1.PtahMigrationStatus{ActiveOperation: &operatorv1alpha1.MigrationOperationStatus{
+			Type: operatorv1alpha1.MigrationOperationApply, ID: id,
+			PlanRef:     &operatorv1alpha1.ImmutableObjectReference{Name: plan, UID: types.UID(plan + "-uid")},
+			ApprovalRef: &operatorv1alpha1.ImmutableObjectReference{Name: "release-approval", UID: uid},
+		}}
+	}
+	writes := []operatorv1alpha1.PtahMigrationStatus{
+		apply("apply-1", "plan-a", "uid-a"),
+		apply("apply-1", "plan-a", "uid-a"),
+		{},
+		apply("apply-2", "plan-b", "uid-b"),
+		apply("apply-2", "plan-b", "uid-b"),
+		{},
+		{},
+	}
+	var journal *operatorv1alpha1.LifecycleJournal
+	before := operatorv1alpha1.PtahMigrationStatus{}
+	for index := range writes {
+		after := writes[index]
+		journal = lifecyclejournal.Record(journal, lifecyclejournal.MigrationEntries(&before, &after, journal, now), now)
+		before = after
+	}
+	var decisions []string
+	for _, entry := range journal.Entries {
+		if entry.Type == operatorv1alpha1.JournalApprovalAccepted {
+			decisions = append(decisions, entry.Plan+"/"+string(entry.ApprovalUID))
+		}
+	}
+	if want := []string{"plan-a/uid-a", "plan-b/uid-b"}; !slices.Equal(decisions, want) {
+		t.Fatalf("decisions = %v, want %v", decisions, want)
 	}
 }

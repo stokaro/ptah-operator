@@ -8,9 +8,81 @@ import (
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 )
+
+func TestApprovalJournaledOnceRefusesEachClause(t *testing.T) {
+	t.Parallel()
+	accepted := func(name, uid, plan string) ptahv1alpha1.JournalEntry {
+		return ptahv1alpha1.JournalEntry{Type: ptahv1alpha1.JournalApprovalAccepted, Approval: name, ApprovalUID: types.UID(uid), Plan: plan}
+	}
+	for _, test := range []struct {
+		name    string
+		journal *ptahv1alpha1.LifecycleJournal
+		want    string
+	}{
+		{"the decision's entry", &ptahv1alpha1.LifecycleJournal{Entries: []ptahv1alpha1.JournalEntry{accepted("approve", "uid-a", "plan-a")}}, ""},
+		{"an earlier decision under the same name beside it", &ptahv1alpha1.LifecycleJournal{Entries: []ptahv1alpha1.JournalEntry{
+			accepted("approve", "uid-old", "plan-old"), accepted("approve", "uid-a", "plan-a"),
+		}}, ""},
+		{"no journal", nil, "keeps no journal"},
+		{"no entry", &ptahv1alpha1.LifecycleJournal{}, "holds 0"},
+		{"an entry that lost its UID", &ptahv1alpha1.LifecycleJournal{Entries: []ptahv1alpha1.JournalEntry{accepted("approve", "", "plan-a")}}, "holds 0"},
+		{"another decision under the name", &ptahv1alpha1.LifecycleJournal{Entries: []ptahv1alpha1.JournalEntry{accepted("approve", "uid-old", "plan-a")}}, "holds 0"},
+		{"the decision twice", &ptahv1alpha1.LifecycleJournal{Entries: []ptahv1alpha1.JournalEntry{
+			accepted("approve", "uid-a", "plan-a"), accepted("approve", "uid-a", "plan-a"),
+		}}, "holds 2"},
+		{"another type carrying the UID", &ptahv1alpha1.LifecycleJournal{Entries: []ptahv1alpha1.JournalEntry{
+			{Type: ptahv1alpha1.JournalRunFinished, Approval: "approve", ApprovalUID: "uid-a", Plan: "plan-a"},
+		}}, "holds 0"},
+		{"another name on the UID", &ptahv1alpha1.LifecycleJournal{Entries: []ptahv1alpha1.JournalEntry{accepted("other", "uid-a", "plan-a")}}, "names approval"},
+		{"another plan on the UID", &ptahv1alpha1.LifecycleJournal{Entries: []ptahv1alpha1.JournalEntry{accepted("approve", "uid-a", "plan-b")}}, "names approval"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			err := approvalJournaledOnce(test.journal, "approve", "uid-a", "plan-a")
+			switch {
+			case test.want == "" && err != nil:
+				t.Fatalf("refused: %v", err)
+			case test.want != "" && (err == nil || !strings.Contains(err.Error(), test.want)):
+				t.Fatalf("error = %v, want one naming %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestEveryApprovalJournaledByUIDProvesItReadOne(t *testing.T) {
+	t.Parallel()
+	accepted := func(uid, plan string) ptahv1alpha1.JournalEntry {
+		return ptahv1alpha1.JournalEntry{Type: ptahv1alpha1.JournalApprovalAccepted, Approval: "approve", ApprovalUID: types.UID(uid), Plan: plan}
+	}
+	for _, test := range []struct {
+		name    string
+		journal *ptahv1alpha1.LifecycleJournal
+		want    string
+	}{
+		{"one with its UID", &ptahv1alpha1.LifecycleJournal{Entries: []ptahv1alpha1.JournalEntry{accepted("uid-a", "plan-a")}}, ""},
+		{"another plan's entry with none", &ptahv1alpha1.LifecycleJournal{Entries: []ptahv1alpha1.JournalEntry{
+			accepted("", "plan-old"), accepted("uid-a", "plan-a"),
+		}}, ""},
+		{"no journal", nil, "keeps no journal"},
+		{"no approval of the plan", &ptahv1alpha1.LifecycleJournal{Entries: []ptahv1alpha1.JournalEntry{accepted("uid-a", "plan-old")}}, "records no approval"},
+		{"one with no UID", &ptahv1alpha1.LifecycleJournal{Entries: []ptahv1alpha1.JournalEntry{accepted("uid-a", "plan-a"), accepted("", "plan-a")}}, "with no UID"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			err := everyApprovalJournaledByUID(test.journal, "plan-a")
+			switch {
+			case test.want == "" && err != nil:
+				t.Fatalf("refused: %v", err)
+			case test.want != "" && (err == nil || !strings.Contains(err.Error(), test.want)):
+				t.Fatalf("error = %v, want one naming %q", err, test.want)
+			}
+		})
+	}
+}
 
 func TestApprovedApplyJournaledReadsThePlansLifeInOrder(t *testing.T) {
 	t.Parallel()

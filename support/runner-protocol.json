@@ -282,6 +282,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:f726edf2cabd4840837da204d0b115bcb68d786bc2c4a0a44b72a7d6bf7a6d42",
       "reason": "Make an empty CommandSpec.Env mean an empty environment (#841). OSExecutor copied the list with append([]string(nil), ...), so a child given an empty list inherited the runner's whole environment, the database URL with it. It now always gives the child a non-nil list, so such a child holds no variable. Every child the runner starts today carries a non-empty list, so each one runs with the environment it ran with before. Arguments, exit statuses, frames and result codes are unchanged, so a manager of any release reads this runner's output as it read the last one. Protocol 1 stays."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:ce6c143d327026fe0d1406f200baa9848d4767c0dab5c1288000985830289641",
+      "reason": "Add status.journal.entries[].approvalUID to api/v1alpha1, a package the runner links for its types (#803). No runner source file changes and the runner reads no journal: commands, payloads, result frames, delivery identity, SQL authority and retry limits are the same."
     }
   ]
 }

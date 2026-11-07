@@ -388,7 +388,7 @@ func journalThrough(journal *operatorv1alpha1.LifecycleJournal, entry operatorv1
 // folds into an OperationFailed entry.
 func sameEvent(a, b operatorv1alpha1.JournalEntry) bool {
 	return a.Type == b.Type && a.At.Equal(&b.At) && timeOf(a.StartedAt).Equal(timeOf(b.StartedAt)) &&
-		a.Plan == b.Plan && a.Approval == b.Approval && a.Outcome == b.Outcome &&
+		a.Plan == b.Plan && a.Approval == b.Approval && a.ApprovalUID == b.ApprovalUID && a.Outcome == b.Outcome &&
 		a.Operation == b.Operation && a.Reason == b.Reason && a.Acknowledgment == b.Acknowledgment
 }
 

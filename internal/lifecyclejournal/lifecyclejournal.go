@@ -14,6 +14,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 )
@@ -97,10 +98,11 @@ func SchemaEntries(before, after *operatorv1alpha1.PtahSchemaStatus, journal *op
 			Plan: plan.Name, Statements: plan.StatementCount, Destructive: plan.Destructive,
 		})
 	}
-	if plan := after.Plan; plan != nil && plan.Approval != nil && !approvalRecorded(journal, plan.Approval.Name) {
+	if plan := after.Plan; plan != nil && plan.Approval != nil &&
+		!(journal != nil && schemaHeldApproval(before, plan.Approval.UID)) && !approvalRecorded(journal, plan.Approval.UID) {
 		entries = append(entries, operatorv1alpha1.JournalEntry{
 			Type: operatorv1alpha1.JournalApprovalAccepted, At: orNow(plan.Approval.ApprovedAt, now),
-			Plan: plan.Name, Approval: plan.Approval.Name, Approver: plan.Approval.Approver.Username,
+			Plan: plan.Name, Approval: plan.Approval.Name, ApprovalUID: plan.Approval.UID, Approver: plan.Approval.Approver.Username,
 		})
 	}
 	// An Apply ends where its claim does, and it ran only if the observation
@@ -163,9 +165,11 @@ func MigrationEntries(before, after *operatorv1alpha1.PtahMigrationStatus, journ
 	// A migration's approval is recorded on the approval; what its status says
 	// is which approval the Apply it dispatched consumed.
 	if operation := after.ActiveOperation; operation != nil && operation.Type == operatorv1alpha1.MigrationOperationApply &&
-		operation.ApprovalRef != nil && !approvalRecorded(journal, operation.ApprovalRef.Name) {
+		operation.ApprovalRef != nil && !(journal != nil && migrationHeldApproval(before, operation.ApprovalRef.UID)) &&
+		!approvalRecorded(journal, operation.ApprovalRef.UID) {
 		entry := operatorv1alpha1.JournalEntry{
-			Type: operatorv1alpha1.JournalApprovalAccepted, At: metav1.NewTime(now), Approval: operation.ApprovalRef.Name,
+			Type: operatorv1alpha1.JournalApprovalAccepted, At: metav1.NewTime(now),
+			Approval: operation.ApprovalRef.Name, ApprovalUID: operation.ApprovalRef.UID,
 		}
 		if operation.PlanRef != nil {
 			entry.Plan = operation.PlanRef.Name
@@ -242,14 +246,32 @@ func planRecorded(journal *operatorv1alpha1.LifecycleJournal, plan string) bool 
 	return false
 }
 
-// approvalRecorded reports whether the journal already records approval.
-func approvalRecorded(journal *operatorv1alpha1.LifecycleJournal, approval string) bool {
+// approvalRecorded reports whether the journal already records the approval
+// with this UID. A decision is its UID and never its name: a later approval may
+// take the name of an earlier one, for another plan and from another person. An
+// entry with no UID, from a release before the field, says nothing about which
+// object it recorded, so it is never read as having recorded this one.
+func approvalRecorded(journal *operatorv1alpha1.LifecycleJournal, approval types.UID) bool {
 	if journal == nil {
 		return false
 	}
 	return slices.ContainsFunc(journal.Entries, func(entry operatorv1alpha1.JournalEntry) bool {
-		return entry.Type == operatorv1alpha1.JournalApprovalAccepted && entry.Approval == approval
+		return entry.Type == operatorv1alpha1.JournalApprovalAccepted && entry.ApprovalUID == approval
 	})
+}
+
+// schemaHeldApproval reports that the status before this write already named the
+// approval with this UID. The write is then no news about it, whether the entry
+// that recorded it carries a UID or was written by a release before the field,
+// or has aged out of the journal.
+func schemaHeldApproval(before *operatorv1alpha1.PtahSchemaStatus, approval types.UID) bool {
+	return before.Plan != nil && before.Plan.Approval != nil && before.Plan.Approval.UID == approval
+}
+
+// migrationHeldApproval is schemaHeldApproval for an Apply claim.
+func migrationHeldApproval(before *operatorv1alpha1.PtahMigrationStatus, approval types.UID) bool {
+	operation := before.ActiveOperation
+	return operation != nil && operation.ApprovalRef != nil && operation.ApprovalRef.UID == approval
 }
 
 func schemaOperation(before, after *operatorv1alpha1.PtahSchemaStatus) string {

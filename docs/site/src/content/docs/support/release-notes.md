@@ -40,6 +40,10 @@ it says a dropped extension's counts and findings disagree, and shows a changed
 policy at 100% coverage with its finding under other findings. A migration Apply
 now writes the approver's username to the target database, so check what that
 means for the retention of its backups and dumps if the name is an email address.
+A script that reads `ApprovalAccepted` entries in `status.journal` has to tell
+decisions apart by `approvalUID`, since an approval that reuses a name now writes
+an entry of its own, and has to treat an entry with no `approvalUID` as evidence
+of a name and not of an object.
 The move to Ptah v0.22.0 can also change what a running schema reports and plans,
 which the next paragraph covers. Nothing else.
 

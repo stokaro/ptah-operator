@@ -887,6 +887,29 @@ func TestWaitTargets(t *testing.T) {
 			wantStop: operate.StopApplyFailed, wantMessage: "the runner image is not configured",
 		},
 		{
+			// The newest entry the baseline holds and a later one differ only in
+			// the approval's UID: the same name, in the same second. Reading them
+			// as one event would skip the failure between them.
+			name: "applied: a later approval under the same name is not the baseline's newest entry", target: operate.TargetApplied,
+			only: operate.FamilyMigration,
+			docs: func(f operate.Family) []doc {
+				first := operatorv1alpha1.JournalEntry{
+					Type: operatorv1alpha1.JournalApprovalAccepted, At: metav1.NewTime(at(-10)), Approval: "release-approval", ApprovalUID: "uid-a",
+				}
+				second := first
+				second.ApprovalUID = "uid-b"
+				return []doc{
+					{phase: "AwaitingApproval", observedAt: at(0), journal: []operatorv1alpha1.JournalEntry{first}},
+					{
+						phase: "Failed", observedAt: at(0),
+						conditions: failedConditions(f, "OperationFailed", "build Apply Job: the runner image is not configured"),
+						journal:    []operatorv1alpha1.JournalEntry{first, failure(5, "Apply", "OperationFailed"), second},
+					},
+				}
+			},
+			wantStop: operate.StopApplyFailed, wantMessage: "the runner image is not configured",
+		},
+		{
 			name: "applied: another plan applied than the one named stops the wait", target: operate.TargetApplied,
 			only: operate.FamilySchema, plan: "plan-1",
 			docs: func(f operate.Family) []doc {
