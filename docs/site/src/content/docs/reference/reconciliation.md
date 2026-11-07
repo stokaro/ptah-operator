@@ -461,7 +461,7 @@ and the finished Jobs it keeps for five minutes, or 24 hours after
 | Entry | Written when |
 | --- | --- |
 | `PlanPublished` | `status.plan` names a plan the journal does not already hold. A plan republished while the resource refreshes is the same plan and writes nothing. |
-| `ApprovalAccepted` | An Apply consumes an approval: the one a schema's plan records, with the approver admission stamped, or the one a migration's Apply claim names, without one, since a migration's status does not carry it. |
+| `ApprovalAccepted` | An Apply consumes an approval: the one a schema's plan records, with the approver admission stamped, or the one a migration's Apply claim names, without one, since a migration's status does not carry it. `approvalUID` is what tells two decisions apart: a later approval may take the name of an earlier one, and writes its own entry. |
 | `ApplyFinished` | A schema's Apply ends and its post-Apply observation takes its place: `Succeeded`, or `Unknown` when its outcome is unknown. An Apply withdrawn before dispatch changed nothing and writes nothing. |
 | `Verified` | That observation settles: `InSync`, `DriftRemains`, or `Superseded` when a newer generation, policy or execution binding took over. |
 | `RunFinished` | A migration run ends, with its outcome, how many versions it applied, and where it stopped; or it is recorded as unresolved, as `Unknown`. |
@@ -471,6 +471,12 @@ and the finished Jobs it keeps for five minutes, or 24 hours after
 A cycle that reads the database and finds nothing to do writes no entry. An
 entry names objects in the resource's namespace and carries condition reasons,
 never messages: a message can carry what status must not.
+
+An `ApprovalAccepted` entry with no `approvalUID` was written by a release before
+0.2.10. Its name says what the approval was called then and not which object it
+was, so do not join it to an approval that holds the name today. It also does not
+stop a later entry: an approval that was current across the upgrade and is
+recorded again after it appears twice, once without its UID and once with it.
 
 The journal holds at most 64 entries, none more than 30 days older than the
 newest, and drops the oldest first. `coveredSince` is the instant from which it

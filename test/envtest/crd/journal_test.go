@@ -54,6 +54,8 @@ func TestStatusRefusesAMalformedJournal(t *testing.T) {
 			cause{"status.journal.entries[0].outcome", "Unsupported value"}},
 		{"a fold of one attempt", journal(journalEntry(map[string]any{"type": "OperationFailed", "operation": "Observe", "reason": "Failed", "count": int64(1)})),
 			cause{"status.journal.entries[0].count", "greater than or equal to 2"}},
+		{"an unbounded approval UID", journal(journalEntry(map[string]any{"type": "ApprovalAccepted", "approvalUID": strings.Repeat("a", 129)})),
+			cause{"status.journal.entries[0].approvalUID", "Too long"}},
 		{"an unbounded approver", journal(journalEntry(map[string]any{"type": "ApprovalAccepted", "approver": strings.Repeat("a", 513)})),
 			cause{"status.journal.entries[0].approver", "Too long"}},
 		{"a 65th entry", journal(tooMany...),
@@ -76,7 +78,7 @@ func TestStatusRefusesAMalformedJournal(t *testing.T) {
 		t.Parallel()
 		complete := journal(
 			journalEntry(map[string]any{"statements": int64(2), "destructive": true}),
-			journalEntry(map[string]any{"type": "ApprovalAccepted", "approval": "approve-a", "approver": "alice"}),
+			journalEntry(map[string]any{"type": "ApprovalAccepted", "approval": "approve-a", "approvalUID": "uid-a", "approver": "alice"}),
 			journalEntry(map[string]any{"type": "ApplyFinished", "startedAt": "2026-10-24T07:41:53Z", "outcome": "Succeeded"}),
 			journalEntry(map[string]any{"type": "Verified", "outcome": "InSync"}),
 			journalEntry(map[string]any{

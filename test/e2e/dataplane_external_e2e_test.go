@@ -467,6 +467,9 @@ func (d *dataPlane) waitForApprovedPlanConverged(schema, digest, fingerprint, pl
 	if err := approvedApplyJournaled(converged.Status.Journal, converged.Status.Applied.PlanRef.Name); err != nil {
 		d.fatalf("%s: %v", schema, err)
 	}
+	if err := everyApprovalJournaledByUID(converged.Status.Journal, converged.Status.Applied.PlanRef.Name); err != nil {
+		d.fatalf("%s: %v", schema, err)
+	}
 }
 
 // assertGrantOnlyChangePlansUnderAlways proves a change that touches only a

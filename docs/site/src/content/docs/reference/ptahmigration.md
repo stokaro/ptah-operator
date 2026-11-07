@@ -646,7 +646,8 @@ spec:
 | `status.journal.entries[].acknowledgedBy` | `string` | AcknowledgedBy is the user admission stamped on that acknowledgment. |
 | `status.journal.entries[].acknowledgment` | `string` | Acknowledgment names the acknowledgment that settled an unresolved run. |
 | `status.journal.entries[].appliedVersions` | `integer` | AppliedVersions is how many migrations a run recorded applied. |
-| `status.journal.entries[].approval` | `string` | Approval names the approval an Apply consumed. |
+| `status.journal.entries[].approval` | `string` | Approval names the approval an Apply consumed. A name can be used again by a later decision, so it does not say which object it was: ApprovalUID does. |
+| `status.journal.entries[].approvalUID` | `string` | ApprovalUID is the UID of that approval. An entry a release before this field wrote has none: it is incomplete evidence, and is not to be joined to an object that holds the name today. |
 | `status.journal.entries[].approver` | `string` | Approver is the user admission stamped on that approval. |
 | `status.journal.entries[].at` | `string`, required | At is when the event happened. For an Apply, a run or a failed attempt it is when that ended. |
 | `status.journal.entries[].count` | `integer` | Count is how many attempts an OperationFailed entry stands for. A single failure has none. |
